@@ -381,7 +381,7 @@ export function ChatView(): JSX.Element {
 
   return (
     <div className="chat">
-      <div className="chat__toolbar">
+      <div className="chat__topbar">
         <span className="chat__session" title={sessionId}>
           会话 {sessionId.slice(0, 8)}
         </span>
