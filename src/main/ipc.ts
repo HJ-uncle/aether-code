@@ -12,6 +12,7 @@ import type {
   CopyIntoWorkspaceInput,
   EngineRequestInput,
   EngineSnapshot,
+  FilesExclude,
   SearchOptions,
   StreamEvent,
   StreamStartInput,
@@ -149,6 +150,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.invoke.fsRename, (_event, src: string, dest: string) =>
     fileService.renamePath(src, dest)
   )
+  ipcMain.handle(IPC.invoke.fsCopy, (_event, src: string, dest: string) =>
+    fileService.copyPath(src, dest)
+  )
   ipcMain.handle(IPC.invoke.fsTrash, (_event, target: string) => fileService.trashPath(target))
   ipcMain.handle(IPC.invoke.fsStat, (_event, target: string) => fileService.statPath(target))
   ipcMain.handle(IPC.invoke.fsListAll, (_event, root: string) => fileService.listAllFiles(root))
@@ -165,20 +169,34 @@ export function registerIpcHandlers(): void {
   )
 
   // ── 全局搜索 ──
+  // 排除表由渲染层随选项一起传来（主进程不读设置，保持无状态）：
+  // 渲染层手上有最新的 settings，改完设置立刻生效，无需等主进程缓存刷新。
   ipcMain.handle(
     IPC.invoke.searchQuery,
-    (_event, root: string, query: string, options?: SearchOptions) =>
-      searchWorkspace(root, query, options)
+    (_event, root: string, query: string, options?: SearchOptions, excludes?: FilesExclude) =>
+      searchWorkspace(root, query, options, excludes)
   )
   ipcMain.handle(
     IPC.invoke.searchReplace,
-    (_event, root: string, query: string, options: SearchOptions, replaceText: string) =>
-      replaceWorkspace(root, query, options, replaceText)
+    (
+      _event,
+      root: string,
+      query: string,
+      options: SearchOptions,
+      replaceText: string,
+      excludes?: FilesExclude
+    ) => replaceWorkspace(root, query, options, replaceText, excludes)
   )
   ipcMain.handle(
     IPC.invoke.searchReplacePreview,
-    (_event, root: string, query: string, options: SearchOptions, replaceText: string) =>
-      previewReplaceWorkspace(root, query, options, replaceText)
+    (
+      _event,
+      root: string,
+      query: string,
+      options: SearchOptions,
+      replaceText: string,
+      excludes?: FilesExclude
+    ) => previewReplaceWorkspace(root, query, options, replaceText, excludes)
   )
 
   // ── 终端（node-pty，多实例按 id 路由）──

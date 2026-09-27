@@ -1,8 +1,14 @@
-import { useRef, useState, useSyncExternalStore, type JSX } from 'react'
-import { showEditorView } from '@renderer/core/platform/layout-state'
+import { useState, useSyncExternalStore, type JSX } from 'react'
+import {
+  DEFAULT_SETTINGS_SECTION,
+  getSectionRequest,
+  subscribeSectionRequest
+} from './app-settings-navigation'
 import { EngineSettingsView } from './EngineSettingsView'
 import { AppearanceSettingsView } from './AppearanceSettingsView'
 import { CodeGraphSettingsView } from './CodeGraphSettingsView'
+import { FilesExcludeSettingsView } from './FilesExcludeSettingsView'
+import { SearchExcludeSettingsView } from './SearchExcludeSettingsView'
 import { ModelsSettingsView } from '../models/ModelsSettingsView'
 import { SecurityView } from '../security/SecurityView'
 
@@ -12,6 +18,8 @@ import { SecurityView } from '../security/SecurityView'
  * 聚合各配置域的入口，避免功能散落在多个视图里：
  *   - 通用：引擎运行方式 / 端口 / 启停（复用侧栏的引擎设置组件）
  *   - 外观：明暗模式与强调色
+ *   - 文件：文件排除规则（files.exclude）
+ *   - 搜索：搜索排除规则（search.exclude）
  *   - 模型：API Key 与模型管理
  *   - 安全：安全策略模式
  *   - 代码图：索引状态与重建
@@ -28,44 +36,20 @@ interface Section {
 const SECTIONS: Section[] = [
   { id: 'general', label: '通用', component: EngineSettingsView },
   { id: 'appearance', label: '外观', component: AppearanceSettingsView },
+  { id: 'files', label: '文件', component: FilesExcludeSettingsView },
+  { id: 'search', label: '搜索', component: SearchExcludeSettingsView },
   { id: 'models', label: '模型', component: ModelsSettingsView },
   { id: 'security', label: '安全', component: SecurityView },
   { id: 'codegraph', label: '代码图', component: CodeGraphSettingsView }
 ]
 
-// ── 打开设置时定位到指定分区 ────────────────────────────────────────────────
-// 原先「模型」「安全」是主区独立标签，现已并入本视图；命令/快捷键/对话页的
-// 跳转统一走 openAppSettings(section)，既处理未打开时的初始定位，也处理
-// 已打开时再次触发（如 Ctrl+Shift+M 切到模型分区）的分区切换。
-
-interface SectionRequest {
-  section: string
-  nonce: number
-}
-
-let sectionRequest: SectionRequest | null = null
-let nonceCounter = 0
-const sectionListeners = new Set<() => void>()
-
-/** 打开设置主区视图；传分区 id 时定位到该分区（默认通用） */
-export function openAppSettings(section?: string): void {
-  sectionRequest = { section: section ?? SECTIONS[0].id, nonce: ++nonceCounter }
-  showEditorView('app-settings')
-  for (const listener of sectionListeners) listener()
-}
-
-function subscribeSectionRequest(listener: () => void): () => void {
-  sectionListeners.add(listener)
-  return () => sectionListeners.delete(listener)
-}
-
 export function AppSettingsView(): JSX.Element {
-  const request = useSyncExternalStore(subscribeSectionRequest, () => sectionRequest)
-  const [active, setActive] = useState(request?.section ?? SECTIONS[0].id)
-  const consumedRef = useRef(request?.nonce ?? 0)
-  // 渲染期消费新请求（React 官方模式）：覆盖「已挂载时再次跳转」的场景
-  if (request && request.nonce !== consumedRef.current) {
-    consumedRef.current = request.nonce
+  const request = useSyncExternalStore(subscribeSectionRequest, getSectionRequest)
+  const [active, setActive] = useState(request?.section ?? DEFAULT_SETTINGS_SECTION)
+  const [consumedNonce, setConsumedNonce] = useState(request?.nonce ?? 0)
+  // 渲染期消费新请求（React 官方「渲染时调整 state」模式）：覆盖「已挂载时再次跳转」的场景
+  if (request && request.nonce !== consumedNonce) {
+    setConsumedNonce(request.nonce)
     setActive(request.section)
   }
   const section = SECTIONS.find((item) => item.id === active) ?? SECTIONS[0]

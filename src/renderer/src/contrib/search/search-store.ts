@@ -8,7 +8,14 @@
  * 用于：点击结果时计算列号 → 编辑器选中高亮；以及结果行的片段着色。
  */
 import { useSyncExternalStore } from 'react'
-import type { ReplacePreviewOutcome, SearchHit, SearchOptions, SearchOutcome } from '@shared/ipc'
+import type {
+  FilesExclude,
+  ReplacePreviewOutcome,
+  SearchHit,
+  SearchOptions,
+  SearchOutcome
+} from '@shared/ipc'
+import { getAppSettings, onAppSettingsChanged } from '@renderer/core/app-context'
 import { documentKey, openFile, reloadDocuments } from '@renderer/core/editor/editor-store'
 import { setLayout } from '@renderer/core/platform/layout-state'
 import { paths } from '@renderer/core/workspace/fs-client'
@@ -21,6 +28,8 @@ export interface SearchState {
   useRegex: boolean
   include: string
   exclude: string
+  /** 是否套用设置里的排除规则（对应 VS Code 的 Use Exclude Settings and Ignore Files） */
+  useExcludeSettings: boolean
   replaceVisible: boolean
   filtersVisible: boolean
   hits: SearchHit[]
@@ -57,6 +66,7 @@ let state: SearchState = {
   useRegex: false,
   include: '',
   exclude: '',
+  useExcludeSettings: true,
   replaceVisible: false,
   filtersVisible: false,
   hits: [],
@@ -88,14 +98,18 @@ function setState(patch: Partial<SearchState>): void {
 
 export function getSearchState(): SearchSnapshot {
   if (!snapshotCache) {
-    const { query, caseSensitive, wholeWord, useRegex, include, exclude } = state
+    const { query, caseSensitive, wholeWord, useRegex, include, exclude, useExcludeSettings } =
+      state
     const optionsKey = JSON.stringify({
       query,
       caseSensitive,
       wholeWord,
       useRegex,
       include,
-      exclude
+      exclude,
+      useExcludeSettings,
+      // 设置里的排除表也进 key：在设置页改完规则，回到搜索页应立刻按新规则重搜
+      excludes: activeExcludes()
     })
     snapshotCache = { ...state, optionsKey }
   }
@@ -131,6 +145,36 @@ export function getSearchOptions(): SearchOptions {
   }
 }
 
+/**
+ * 传给主进程的递归排除表：settings 的 files.exclude 与 search.exclude 合并，
+ * search 侧同名键覆盖 files 侧 —— 与 VS Code 的 search.exclude 语义一致。
+ *
+ * 渲染层读设置、随请求传参，而不是让主进程自己读：主进程保持无状态，
+ * 且改完设置立刻生效，不必等主进程的缓存刷新。
+ */
+export function getSearchExcludes(): FilesExclude {
+  const settings = getAppSettings()
+  return { ...settings.filesExclude, ...settings.searchExclude }
+}
+
+/** 关掉「使用排除设置」时不带排除规则（用户的临时排除框仍然有效） */
+function activeExcludes(): FilesExclude {
+  return state.useExcludeSettings ? getSearchExcludes() : {}
+}
+
+/**
+ * 设置一变就作废快照并广播。
+ *
+ * optionsKey 里含排除表，但它是在 getSearchState 里惰性算出来的 ——
+ * 只有 snapshotCache 失效、订阅者被通知，React 才会重算 optionsKey，
+ * SearchView 的 effect 才会按新规则重搜。改设置不碰 search-store 的 state，
+ * 没有这条订阅就得等下次输入才生效。
+ */
+onAppSettingsChanged(() => {
+  snapshotCache = null
+  for (const listener of listeners) listener()
+})
+
 // ── 搜索执行 ──
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -162,7 +206,12 @@ export async function runSearch(root: string): Promise<void> {
   setState({ searching: true })
 
   try {
-    const outcome: SearchOutcome = await window.aether.search.query(root, query, getSearchOptions())
+    const outcome: SearchOutcome = await window.aether.search.query(
+      root,
+      query,
+      getSearchOptions(),
+      activeExcludes()
+    )
     if (seq !== runSeq) return // 已有更新的搜索，丢弃过期响应
     setState({
       hits: outcome.hits,
@@ -301,7 +350,8 @@ export async function openReplacePreview(root: string): Promise<void> {
       root,
       query,
       getSearchOptions(),
-      state.replaceQuery
+      state.replaceQuery,
+      activeExcludes()
     )
     setState({ previewBusy: false, previewOutcome: outcome })
   } catch {
@@ -334,7 +384,8 @@ export async function replaceAll(root: string): Promise<void> {
       root,
       query,
       getSearchOptions(),
-      state.replaceQuery
+      state.replaceQuery,
+      activeExcludes()
     )
     if (outcome.error) {
       setState({ replaceBusy: false, replaceMessage: outcome.error })

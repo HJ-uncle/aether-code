@@ -34,3 +34,4 @@ export function useApp(): AppContextValue {
 }
 
 export { AppProvider } from './app-provider'
+export { getAppSettings, onAppSettingsChanged } from './app-provider'

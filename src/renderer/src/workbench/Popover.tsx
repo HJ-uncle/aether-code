@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type JSX, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type JSX,
+  type ReactNode
+} from 'react'
 import { createPortal } from 'react-dom'
 
 /** 浮层展开方向 */
@@ -67,6 +75,14 @@ export function Popover({
   const triggerRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
 
+  // 关闭时清掉上一次的定位（React 官方「渲染时调整 state」模式），
+  // 避免在 effect 里同步 setState 触发级联渲染
+  const [prevOpen, setPrevOpen] = useState(open)
+  if (open !== prevOpen) {
+    setPrevOpen(open)
+    if (!open) setPos(null)
+  }
+
   /**
    * 计算面板坐标。
    * 用 useLayoutEffect 在绘制前完成，因此用户看不到"先出现在错误位置再跳回来"。
@@ -105,10 +121,7 @@ export function Popover({
 
   // 打开后先量一次；面板尺寸可能因内容异步变化（列表加载完成），用 ResizeObserver 跟随
   useLayoutEffect(() => {
-    if (!open) {
-      setPos(null)
-      return
-    }
+    if (!open) return
     reposition()
     const panel = panelRef.current
     if (!panel) return

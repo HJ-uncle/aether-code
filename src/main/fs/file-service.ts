@@ -225,7 +225,7 @@ const ATTACHMENT_DIR = path.join('.aether', 'attachments')
 
 /** 文件名里不能出现的字符（Windows 限制 + 路径穿越） */
 function sanitizeFileName(name: string): string {
-  const base = path.basename(name).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')
+  const base = path.basename(name).replace(/[\\/:*?"<>|\p{Cc}]/gu, '_')
   return base || 'file'
 }
 
@@ -233,7 +233,7 @@ function sanitizeFileName(name: string): string {
  * 把本地文件的字节流落盘到工作区，返回相对根目录的路径。
  *
  * 为什么需要它：聊天里的 File 对象拿不到真实磁盘路径（浏览器安全模型），
- * 只能把字节流传到主进程。落盘后交给引擎的 /workspace/upload 读取 —— 
+ * 只能把字节流传到主进程。落盘后交给引擎的 /workspace/upload 读取 ——
  * 引擎的路径白名单只认它自己的沙箱/工作区，所以必须有一份在工作区内。
  *
  * 重名时自动加序号，避免覆盖用户已有附件。
@@ -284,6 +284,22 @@ export async function renamePath(srcPath: string, destPath: string): Promise<voi
   if (existsSync(safeDest)) throw new Error('目标已存在')
   await fsp.mkdir(path.dirname(safeDest), { recursive: true })
   await fsp.rename(safeSrc, safeDest)
+}
+
+/**
+ * 复制文件或目录到新位置。
+ *
+ * 用 `fsp.cp` 的 recursive 而不是自己写递归遍历：Node 已内置处理
+ * 目录树、符号链接与权限位，手写版本在这些边界上更容易出错。
+ * 与 renamePath 一致地拒绝覆盖已存在目标 —— 用户更可能想要"改名保留两份"
+ * 而不是"悄悄覆盖掉一份"，覆盖造成的损失不可逆。
+ */
+export async function copyPath(srcPath: string, destPath: string): Promise<void> {
+  const safeSrc = assertAllowed(srcPath)
+  const safeDest = assertAllowed(destPath)
+  if (existsSync(safeDest)) throw new Error('目标已存在')
+  await fsp.mkdir(path.dirname(safeDest), { recursive: true })
+  await fsp.cp(safeSrc, safeDest, { recursive: true })
 }
 
 /**

@@ -72,7 +72,7 @@ export function CodeGraphSettingsView(): JSX.Element {
       const s = await requestOrThrow<CgStatus>({
         method: 'GET',
         path: '/codegraph/status',
-        query: { path: workspace.root ?? undefined },
+        query: { path: workspace.root ?? undefined }
       })
       setStatus(s)
       setLoadError(null)
@@ -90,7 +90,7 @@ export function CodeGraphSettingsView(): JSX.Element {
           const s = await requestOrThrow<CgStatus>({
             method: 'GET',
             path: '/codegraph/status',
-            query: { path: workspace.root ?? undefined },
+            query: { path: workspace.root ?? undefined }
           })
           setStatus(s)
           if (!s.indexing) {
@@ -109,9 +109,10 @@ export function CodeGraphSettingsView(): JSX.Element {
   // 切换页面会让本组件卸载再挂载：卸载时必须停掉旧定时器，否则会泄漏多个轮询。
   useEffect(() => stopPoll, [stopPoll])
 
-  // 打开设置页 / 切换项目 / 重新挂载时加载一次
+  // 打开设置页 / 切换项目 / 重新挂载时加载一次。
+  // refresh 开头可能同步 setState，挪进微任务避免 effect 执行期内联触发级联渲染
   useEffect(() => {
-    void refresh()
+    void Promise.resolve().then(refresh)
   }, [refresh])
 
   // 挂载时若任务仍在进行，续上轮询 —— 否则进度会永远停在离开页面那一刻的快照上。
@@ -129,7 +130,7 @@ export function CodeGraphSettingsView(): JSX.Element {
       const r = await requestOrThrow<{ started: boolean; alreadyRunning?: boolean }>({
         method: 'POST',
         path: '/codegraph/index',
-        body: { path: workspace.root, force: true },
+        body: { path: workspace.root, force: true }
       })
       if (r.started) {
         poll()
@@ -168,11 +169,7 @@ export function CodeGraphSettingsView(): JSX.Element {
             </dd>
             <dt>状态</dt>
             <dd>
-              {status?.initialized
-                ? '已建立索引'
-                : loadError
-                  ? '状态查询失败'
-                  : '未建立索引'}
+              {status?.initialized ? '已建立索引' : loadError ? '状态查询失败' : '未建立索引'}
             </dd>
             {status?.stats ? (
               <>

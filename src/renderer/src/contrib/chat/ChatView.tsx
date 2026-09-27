@@ -10,7 +10,7 @@ import { toolDisplayName, toolParamSummary } from './tool-names'
 import { useModels } from '@renderer/core/engine/model-store'
 import { changeSecurityMode } from '@renderer/core/engine/security-store'
 import { requestOrThrow } from '@renderer/core/engine/client'
-import { openAppSettings } from '@renderer/contrib/settings/AppSettingsView'
+import { openAppSettings } from '@renderer/contrib/settings/app-settings-navigation'
 import { refreshGit } from '@renderer/core/git/git-store'
 import { currentWorkspacePaths, useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { Icon } from '@renderer/workbench/icons'
@@ -151,7 +151,8 @@ export function ChatView(): JSX.Element {
     const text = input.trim()
     // 允许「只发附件」：丢张截图直接问，是视觉模型的常见用法
     const files = attach.attachments
-    if ((!text && files.length === 0) || attach.uploading || streaming || !ready || !sessionId) return
+    if ((!text && files.length === 0) || attach.uploading || streaming || !ready || !sessionId)
+      return
     setInput('')
     attach.clear()
     void send(text, {
@@ -275,7 +276,7 @@ export function ChatView(): JSX.Element {
       const s = await requestOrThrow<{ initialized: boolean; indexing: boolean }>({
         method: 'GET',
         path: '/codegraph/status',
-        query: { sessionId, path: workspace.root },
+        query: { sessionId, path: workspace.root }
       })
       setCgIndex((prev) => ({ ...prev, initialized: s.initialized, known: true, busy: s.indexing }))
       if (s.indexing) pollCgStatus()
@@ -295,11 +296,24 @@ export function ChatView(): JSX.Element {
           const s = await requestOrThrow<{
             initialized: boolean
             indexing: boolean
-            run: { phase: string; progress: { current: number; total: number } | null; error?: string } | null
-          }>({ method: 'GET', path: '/codegraph/status', query: { sessionId, path: workspace.root || undefined } })
+            run: {
+              phase: string
+              progress: { current: number; total: number } | null
+              error?: string
+            } | null
+          }>({
+            method: 'GET',
+            path: '/codegraph/status',
+            query: { sessionId, path: workspace.root || undefined }
+          })
           if (s.indexing && s.run) {
             const p = s.run.progress
-            setCgIndex((prev) => ({ ...prev, busy: true, known: true, label: p ? `索引中 ${p.current}/${p.total}` : '索引中…' }))
+            setCgIndex((prev) => ({
+              ...prev,
+              busy: true,
+              known: true,
+              label: p ? `索引中 ${p.current}/${p.total}` : '索引中…'
+            }))
             return
           }
           stopCgPoll()
@@ -309,7 +323,9 @@ export function ChatView(): JSX.Element {
             busy: false,
             initialized: s.initialized,
             known: true,
-            label: failed ? `索引失败${s.run?.error ? `: ${s.run.error.slice(0, 30)}` : ''}` : '索引完成',
+            label: failed
+              ? `索引失败${s.run?.error ? `: ${s.run.error.slice(0, 30)}` : ''}`
+              : '索引完成'
           }))
         } catch {
           stopCgPoll()
@@ -324,19 +340,33 @@ export function ChatView(): JSX.Element {
     if (!sessionId || !workspace.root || cgIndex.busy) return
     setCgIndex((prev) => ({ ...prev, busy: true, label: '启动中…' }))
     try {
-      const r = await requestOrThrow<{ started: boolean; alreadyRunning?: boolean; alreadyInitialized?: boolean }>({
+      const r = await requestOrThrow<{
+        started: boolean
+        alreadyRunning?: boolean
+        alreadyInitialized?: boolean
+      }>({
         method: 'POST',
         path: '/codegraph/index',
-        body: { sessionId, path: workspace.root },
+        body: { sessionId, path: workspace.root }
       })
       if (r.alreadyInitialized && !r.started) {
         // 已有索引：只需把状态标记为已建，页脚按钮随之收起
-        setCgIndex((prev) => ({ ...prev, busy: false, initialized: true, known: true, label: null }))
+        setCgIndex((prev) => ({
+          ...prev,
+          busy: false,
+          initialized: true,
+          known: true,
+          label: null
+        }))
         return
       }
       pollCgStatus()
     } catch (e) {
-      setCgIndex((prev) => ({ ...prev, busy: false, label: e instanceof Error ? e.message.slice(0, 40) : '请求失败' }))
+      setCgIndex((prev) => ({
+        ...prev,
+        busy: false,
+        label: e instanceof Error ? e.message.slice(0, 40) : '请求失败'
+      }))
       setTimeout(() => setCgIndex((prev) => ({ ...prev, busy: false, label: null })), 4000)
     }
   }, [sessionId, workspace.root, cgIndex.busy, pollCgStatus])
@@ -532,7 +562,9 @@ export function ChatView(): JSX.Element {
                   </button>
                 </span>
               ))}
-              {attach.uploading ? <span className="attach-chip attach-chip--busy">上传中…</span> : null}
+              {attach.uploading ? (
+                <span className="attach-chip attach-chip--busy">上传中…</span>
+              ) : null}
             </div>
           ) : null}
 
@@ -540,7 +572,9 @@ export function ChatView(): JSX.Element {
             ref={inputRef}
             className="chat__input"
             value={input}
-            placeholder={ready ? '输入消息，Enter 发送，Shift+Enter 换行；可拖入或粘贴文件' : '引擎未就绪…'}
+            placeholder={
+              ready ? '输入消息，Enter 发送，Shift+Enter 换行；可拖入或粘贴文件' : '引擎未就绪…'
+            }
             rows={1}
             disabled={!ready}
             onChange={(event) => setInput(event.target.value)}
@@ -578,14 +612,21 @@ export function ChatView(): JSX.Element {
               type="button"
               className={`chat__icon-btn${attach.dragging ? ' is-active' : ''}`}
               disabled={!ready || attach.uploading || !workspace.root}
-              title={workspace.root ? '添加附件（图片 / 文本 / 文档），也可直接拖入或粘贴' : '先打开一个项目目录再添加附件'}
+              title={
+                workspace.root
+                  ? '添加附件（图片 / 文本 / 文档），也可直接拖入或粘贴'
+                  : '先打开一个项目目录再添加附件'
+              }
               aria-label="添加附件"
               onClick={attach.pick}
             >
               <Icon name="plus" size={16} />
             </button>
 
-            <SecurityModePicker sessionId={sessionId} onManage={() => openAppSettings('security')} />
+            <SecurityModePicker
+              sessionId={sessionId}
+              onManage={() => openAppSettings('security')}
+            />
             <ThinkingModePicker
               value={settings.thinkingMode}
               onChange={(next) => void updateSettings({ thinkingMode: next })}
@@ -597,9 +638,11 @@ export function ChatView(): JSX.Element {
                 type="button"
                 className={`chat__index-cta${cgIndex.busy ? ' is-active' : ''}`}
                 disabled={!ready || !sessionId || !workspace.root || cgIndex.busy}
-                title={workspace.root
-                  ? `为「${workspace.root.replace(/\\/g, '/').split('/').pop()}」创建代码图索引（Agent 随之可查询符号 / 调用关系 / 影响面）`
-                  : '先打开一个项目目录再创建索引'}
+                title={
+                  workspace.root
+                    ? `为「${workspace.root.replace(/\\/g, '/').split('/').pop()}」创建代码图索引（Agent 随之可查询符号 / 调用关系 / 影响面）`
+                    : '先打开一个项目目录再创建索引'
+                }
                 onClick={() => void startCgIndex()}
               >
                 <Icon name="search" size={13} />
@@ -629,7 +672,9 @@ export function ChatView(): JSX.Element {
               <button
                 type="button"
                 className="chat__send"
-                disabled={!ready || attach.uploading || (!input.trim() && attach.attachments.length === 0)}
+                disabled={
+                  !ready || attach.uploading || (!input.trim() && attach.attachments.length === 0)
+                }
                 title="发送（Enter）"
                 aria-label="发送"
                 onClick={submit}
@@ -1040,9 +1085,7 @@ function PendingCard({
           <span className="pending-card__summary-choice">{answeredText}</span>
         </summary>
         <div className="pending-card__detail">
-          <div className="pending-card__detail-label">
-            {isPermission ? '被拦截的操作' : '问题'}
-          </div>
+          <div className="pending-card__detail-label">{isPermission ? '被拦截的操作' : '问题'}</div>
           <div className="pending-card__question">{pending.question}</div>
         </div>
       </details>
@@ -1050,9 +1093,7 @@ function PendingCard({
   }
 
   return (
-    <div
-      className={`pending-card${isPermission ? ' pending-card--permission' : ''}`}
-    >
+    <div className={`pending-card${isPermission ? ' pending-card--permission' : ''}`}>
       <div className="pending-card__title">
         <span>{isPermission ? '安全策略需要你确认' : 'Agent 需要你的回答'}</span>
         <span className="pending-card__state">等待你的选择</span>
@@ -1125,9 +1166,7 @@ function PendingCard({
         </div>
       ) : null}
 
-      {disabled ? (
-        <div className="pending-card__hint">等待上一轮响应结束后可继续操作</div>
-      ) : null}
+      {disabled ? <div className="pending-card__hint">等待上一轮响应结束后可继续操作</div> : null}
     </div>
   )
 }

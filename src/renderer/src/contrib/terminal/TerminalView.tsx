@@ -29,19 +29,25 @@ export function TerminalView(): JSX.Element {
   const root = workspace.root
   const state = useTerminalStore()
 
-  // 面板打开时无会话则自动建一个；creating 守卫住 StrictMode/竞态
+  // 面板打开时无会话则自动建一个；creating 守卫住 StrictMode/竞态。
+  // createFailed 必须一并检查：创建失败（如环境不支持 ConPTY）后若还自动重试，
+  // 会陷入"失败→复位→再触发"的无限循环，这里改为停下来等显式操作。
   useEffect(() => {
-    if (state.sessions.length === 0 && !state.creating) {
+    if (state.sessions.length === 0 && !state.creating && !state.createFailed) {
       void createLocalSession(root ?? undefined)
     }
-  }, [state.sessions.length, state.creating, root])
+  }, [state.sessions.length, state.creating, state.createFailed, root])
 
   // 外观/强调色变化（含 'system' 模式的系统切换）→ 热更新全部存活会话的主题
-  useEffect(() => watchTheme(() => {
-    for (const session of getTerminalState().sessions) {
-      session.term.options.theme = buildTerminalTheme()
-    }
-  }), [])
+  useEffect(
+    () =>
+      watchTheme(() => {
+        for (const session of getTerminalState().sessions) {
+          session.term.options.theme = buildTerminalTheme()
+        }
+      }),
+    []
+  )
 
   return (
     <div className="terminal-view" aria-label="终端">
@@ -49,6 +55,21 @@ export function TerminalView(): JSX.Element {
         {state.sessions.map((session) => (
           <SessionSlot key={session.id} session={session} active={session.id === state.activeId} />
         ))}
+        {/* 创建失败时不再静默留白：用户至少要知道"终端没起来，以及为什么"，
+            并有一个显式的重试入口（自动重试会陷入无限循环，见上方 effect）。 */}
+        {state.sessions.length === 0 && state.createFailed ? (
+          <div className="terminal-view__error" role="alert">
+            <p className="terminal-view__error-title">终端启动失败</p>
+            <p className="terminal-view__error-detail">{state.createFailed}</p>
+            <button
+              type="button"
+              className="terminal-view__error-retry"
+              onClick={() => void createLocalSession(root ?? undefined)}
+            >
+              重试
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <aside className="terminal-view__side" aria-label="终端列表">

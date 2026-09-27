@@ -16,14 +16,32 @@ import {
   togglePanel,
   toggleSidebarView
 } from '@renderer/core/platform/layout-state'
-import { restartEngine, startEngine, stopEngine, updateSettings } from '@renderer/core/engine/client'
-import { getDocument, saveActiveDocument } from '@renderer/core/editor/editor-store'
+import {
+  restartEngine,
+  startEngine,
+  stopEngine,
+  updateSettings
+} from '@renderer/core/engine/client'
+import {
+  getDocument,
+  reopenLastClosedFile,
+  saveActiveDocument,
+  saveAllDocuments
+} from '@renderer/core/editor/editor-store'
+import {
+  closeAllFileTabs,
+  closeOtherFileTabs,
+  closeTabByKey,
+  closeTabsToRightOfActive,
+  switchActiveTab
+} from '@renderer/workbench/EditorArea'
 import { diagnoseDocument } from '@renderer/core/lsp/diagnostics'
-import { undoLastFileOp, trashEntries } from '@renderer/core/workspace/file-ops'
+import { undoLastFileOp, trashEntries, pasteFromClipboard } from '@renderer/core/workspace/file-ops'
 import {
   getSelection,
   getWorkspaceState,
-  pickAndOpenFolder
+  pickAndOpenFolder,
+  setClipboard
 } from '@renderer/core/workspace/workspace-store'
 import { requestSearchFocus } from './search/search-store'
 import { registerDocumentRenderer, registerViews } from '@renderer/workbench/view-registry'
@@ -35,7 +53,8 @@ import { SessionHistoryView } from './history/SessionHistoryView'
 import { OutputView } from './output/OutputView'
 import { ProblemsView } from './problems/ProblemsView'
 import { SearchView } from './search/SearchView'
-import { AppSettingsView, openAppSettings } from './settings/AppSettingsView'
+import { AppSettingsView } from './settings/AppSettingsView'
+import { openAppSettings } from './settings/app-settings-navigation'
 import { KeybindingsSettingsView } from './settings/KeybindingsSettingsView'
 import { createLocalSession } from './terminal/terminal-store'
 import { TerminalView } from './terminal/TerminalView'
@@ -144,6 +163,12 @@ export function registerContributions(): () => void {
       run: () => saveActiveDocument()
     },
     {
+      id: 'aether.file.saveAll',
+      title: '保存全部文件',
+      category: '文件',
+      run: () => saveAllDocuments()
+    },
+    {
       id: 'aether.file.undo',
       title: '撤销文件操作',
       category: '文件',
@@ -166,6 +191,35 @@ export function registerContributions(): () => void {
         if (!window.confirm(question)) return
         await trashEntries(targets)
       }
+    },
+    {
+      id: 'aether.explorer.cut',
+      title: '剪切选中的文件',
+      category: '文件',
+      when: 'explorerHasSelection',
+      run: () => {
+        const targets = [...getSelection()]
+        if (targets.length > 0) setClipboard(targets, 'cut')
+      }
+    },
+    {
+      id: 'aether.explorer.copy',
+      title: '复制选中的文件',
+      category: '文件',
+      when: 'explorerHasSelection',
+      run: () => {
+        const targets = [...getSelection()]
+        if (targets.length > 0) setClipboard(targets, 'copy')
+      }
+    },
+    {
+      // 粘贴的落点由资源管理器视图决定（光标行所在的目录），这里只负责触发；
+      // 没有剪贴板内容时命令不生效，避免"点了没反应"
+      id: 'aether.explorer.paste',
+      title: '粘贴文件',
+      category: '文件',
+      when: 'explorerClipboardReady',
+      run: () => pasteFromClipboard()
     },
     // ── 引擎 ──
     {
@@ -213,7 +267,68 @@ export function registerContributions(): () => void {
         await diagnoseDocument(doc.path, doc.content)
       }
     },
+    // ── 编辑器标签 ──
+    // 统一用 editorTabsCount 做 when：没有文件标签时这些命令在命令面板里
+    // 就应该是置灰的，而不是点了没反应
+    {
+      id: 'aether.editor.closeTab',
+      title: '关闭编辑器',
+      category: '编辑器',
+      when: 'editorTabsCount > 0',
+      run: () => closeTabByKey(getLayout().activeEditorView)
+    },
+    {
+      id: 'aether.editor.closeOthers',
+      title: '关闭其他编辑器',
+      category: '编辑器',
+      when: 'editorTabsCount > 1',
+      run: () => {
+        const active = getLayout().activeEditorView
+        if (!active.startsWith('doc:')) return
+        closeOtherFileTabs(active.slice(4))
+      }
+    },
+    {
+      id: 'aether.editor.closeToRight',
+      title: '关闭右侧编辑器',
+      category: '编辑器',
+      when: 'editorTabsCount > 1',
+      run: () => closeTabsToRightOfActive()
+    },
+    {
+      id: 'aether.editor.closeAll',
+      title: '全部关闭编辑器',
+      category: '编辑器',
+      when: 'editorTabsCount > 0',
+      run: () => closeAllFileTabs()
+    },
+    {
+      id: 'aether.editor.reopenClosed',
+      title: '重新打开已关闭的编辑器',
+      category: '编辑器',
+      run: () => reopenLastClosedFile().then(() => undefined)
+    },
+    {
+      id: 'aether.editor.nextTab',
+      title: '切换到下一个编辑器',
+      category: '编辑器',
+      when: 'editorTabsCount > 1',
+      run: () => switchActiveTab(1)
+    },
+    {
+      id: 'aether.editor.previousTab',
+      title: '切换到上一个编辑器',
+      category: '编辑器',
+      when: 'editorTabsCount > 1',
+      run: () => switchActiveTab(-1)
+    },
     // ── 视图 ──
+    {
+      id: 'aether.view.toggleSidebar',
+      title: '切换侧边栏可见性',
+      category: '视图',
+      run: () => toggleSidebarView(getLayout().activeView)
+    },
     {
       id: 'aether.view.explorer',
       title: '显示资源管理器',
@@ -317,11 +432,35 @@ export function registerContributions(): () => void {
     // 全局监听在捕获阶段先于 Monaco 拿到按键，无条件绑定会抢掉代码撤销
     { key: 'ctrl+z', command: 'aether.file.undo', when: 'explorerFocused' },
     { key: 'delete', command: 'aether.explorer.deleteSelected', when: 'explorerFocused' },
+    // 剪贴板三键同样只在资源管理器持有焦点时生效：
+    // 全局监听在捕获阶段先于编辑器拿到按键，无条件绑定会抢掉 Monaco 的复制粘贴
+    // （Ctrl+C 拷代码、Ctrl+V 粘贴都得留给编辑器）。
+    { key: 'ctrl+x', command: 'aether.explorer.cut', when: 'explorerFocused' },
+    { key: 'ctrl+c', command: 'aether.explorer.copy', when: 'explorerFocused' },
+    { key: 'ctrl+v', command: 'aether.explorer.paste', when: 'explorerFocused' },
+    // ── 编辑器标签（对齐 VS Code EditorTab 的默认键位） ──
+    // Ctrl+W 是 VS Code 的「关闭编辑器」。要拦：不拦会被 Chromium 当成关窗口，
+    // 那会直接把整个 IDE 关掉 —— 这是最需要 preventDefault 的一条
+    { key: 'ctrl+w', command: 'aether.editor.closeTab', when: 'editorTabsCount > 0' },
+    // Ctrl+K 本身不绑命令：它是 VS Code 的「和弦」前缀（Ctrl+K 后再按一个键）。
+    // 派发器只认单键组合，故 Ctrl+K 保留给后续和弦实现，这里只登记文档里的 Ctrl+K W 语义
+    // Ctrl+Shift+T 与浏览器/VS Code 一致：重开最近关闭的编辑器
+    { key: 'ctrl+shift+t', command: 'aether.editor.reopenClosed' },
+    { key: 'ctrl+shift+s', command: 'aether.file.saveAll' },
+    // Ctrl+B 切换侧边栏（VS Code 主键位）
+    { key: 'ctrl+b', command: 'aether.view.toggleSidebar' },
+    // Mac 用 Ctrl+Tab 切系统标签，故 VS Code 在 mac 上只提供 Ctrl+PageUp/Down；
+    // 本项目不做平台分支，两个都给上，任选其一即可
+    { key: 'ctrl+tab', command: 'aether.editor.nextTab', when: 'editorTabsCount > 1' },
+    { key: 'ctrl+pagedown', command: 'aether.editor.nextTab', when: 'editorTabsCount > 1' },
+    { key: 'ctrl+pageup', command: 'aether.editor.previousTab', when: 'editorTabsCount > 1' },
     { key: 'ctrl+shift+e', command: 'aether.view.explorer' },
     { key: 'ctrl+shift+f', command: 'aether.view.search' },
     { key: 'ctrl+shift+c', command: 'aether.view.chat' },
     { key: 'ctrl+shift+m', command: 'aether.view.models' },
-    { key: 'ctrl+shift+s', command: 'aether.view.security' },
+    // Ctrl+Shift+S 原本绑「安全策略」，已让位给「保存全部文件」（VS Code 语义）。
+    // 安全策略改由命令面板/菜单栏进入
+    { key: 'ctrl+shift+o', command: 'aether.view.security' },
     { key: 'ctrl+shift+g', command: 'aether.view.git' },
     { key: 'ctrl+shift+j', command: 'aether.panel.output' },
     { key: 'ctrl+`', command: 'aether.panel.terminal' },

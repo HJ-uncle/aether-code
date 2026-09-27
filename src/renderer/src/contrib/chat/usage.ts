@@ -208,7 +208,10 @@ export function groupIntoTurns(messages: ChatMessage[]): ChatTurn[] {
     let latest = Number.NEGATIVE_INFINITY
     for (const message of turn.messages) {
       if (message.role !== 'assistant') continue
-      if (message.startedAt && (turn.startedAt === undefined || message.startedAt < turn.startedAt)) {
+      if (
+        message.startedAt &&
+        (turn.startedAt === undefined || message.startedAt < turn.startedAt)
+      ) {
         turn.startedAt = message.startedAt
       }
       if (message.endedAt && (turn.endedAt === undefined || message.endedAt > turn.endedAt)) {
@@ -231,7 +234,11 @@ export function groupIntoTurns(messages: ChatMessage[]): ChatTurn[] {
       turn.endedAt = latest
     }
     // 跨度不足 1s（或只剩起点）时不算耗时，避免显示成 0s 的噪声
-    if (turn.startedAt !== undefined && turn.endedAt !== undefined && turn.endedAt <= turn.startedAt) {
+    if (
+      turn.startedAt !== undefined &&
+      turn.endedAt !== undefined &&
+      turn.endedAt <= turn.startedAt
+    ) {
       turn.startedAt = undefined
       turn.endedAt = undefined
     }

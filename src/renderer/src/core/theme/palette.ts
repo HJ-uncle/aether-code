@@ -30,9 +30,13 @@ export function cssColor(name: string): string {
   const raw = cssVar(name)
   const m = raw.match(/^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)(?:[\s,]+([\d.]+))?\s*\)$/)
   if (!m) return raw
-  const byte = (v: string) => Number(v).toString(16).padStart(2, '0')
+  const byte = (v: string): string => Number(v).toString(16).padStart(2, '0')
   const alpha =
-    m[4] === undefined ? 'ff' : Math.round(Math.min(Math.max(parseFloat(m[4]), 0), 1) * 255).toString(16).padStart(2, '0')
+    m[4] === undefined
+      ? 'ff'
+      : Math.round(Math.min(Math.max(parseFloat(m[4]), 0), 1) * 255)
+          .toString(16)
+          .padStart(2, '0')
   return `#${byte(m[1])}${byte(m[2])}${byte(m[3])}${alpha}`
 }
 

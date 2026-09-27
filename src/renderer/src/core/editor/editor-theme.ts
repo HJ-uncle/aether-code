@@ -119,7 +119,7 @@ function themeData(base: 'vs' | 'vs-dark', light: boolean): monaco.editor.IStand
       'input.border': cssColor('--border-strong'),
       'inputOption.activeBorder': accent,
       'inputOption.activeBackground': cssColor('--accent-soft'),
-      'focusBorder': accent,
+      focusBorder: accent,
       'list.hoverBackground': cssColor('--bg-hover'),
       'list.activeSelectionBackground': cssColor('--accent-soft'),
       'list.activeSelectionForeground': cssColor('--fg-strong'),

@@ -63,9 +63,10 @@ export function SessionHistoryView(): JSX.Element {
     }
   }, [ready])
 
-  // 引擎就绪 / 当前会话变化（新会话发出第一条消息后会出现在列表里）时刷新
+  // 引擎就绪 / 当前会话变化（新会话发出第一条消息后会出现在列表里）时刷新。
+  // refresh 开头会同步 setState，挪进微任务避免 effect 执行期内联触发级联渲染
   useEffect(() => {
-    void refresh()
+    void Promise.resolve().then(refresh)
   }, [refresh, settings.lastSessionId])
 
   const openSession = useCallback(

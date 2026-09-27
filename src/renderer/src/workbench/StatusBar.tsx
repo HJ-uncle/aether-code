@@ -1,5 +1,6 @@
 import { useEffect, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
+import { useEditor } from '@renderer/core/editor/editor-store'
 import { useGit } from '@renderer/core/git/git-store'
 import { executeCommand } from '@renderer/core/platform/commands'
 import { toggleSidebarView } from '@renderer/core/platform/layout-state'
@@ -26,6 +27,7 @@ export function StatusBar(): JSX.Element {
   const { engine } = useApp()
   const { snapshot } = engine
   const workspace = useWorkspace()
+  const editor = useEditor()
   // 只取 refresh：它在 store 里是模块级函数，引用稳定，放进依赖数组不会导致重复请求
   const { refresh: refreshGit, ...git } = useGit()
 
@@ -87,6 +89,23 @@ export function StatusBar(): JSX.Element {
       ) : null}
 
       <div className="status-bar__spacer" />
+
+      {/*
+        光标位置：VS Code 把它放在状态栏右侧、紧邻语言模式。
+        它不是缓存值 —— Monaco 只在光标真的动了才上报，所以这里读到的
+        永远是当前值；不在编辑器里（设置页等）则整块不出现 ——
+        故要同时满足「有读数」且「读数属于当前激活文件」，否则切标签的
+        瞬间会短暂显示上一个文件的行列号。
+      */}
+      {editor.cursor && editor.cursor.filePath === editor.activePath ? (
+        <span
+          className="status-bar__item status-bar__item--muted"
+          title="光标位置（行，列）"
+          data-testid="status-cursor"
+        >
+          Ln {editor.cursor.line}, Col {editor.cursor.column}
+        </span>
+      ) : null}
 
       {busy ? <span className="status-bar__item status-bar__item--muted">处理中…</span> : null}
 

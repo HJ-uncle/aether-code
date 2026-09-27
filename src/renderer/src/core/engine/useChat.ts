@@ -130,12 +130,19 @@ export function extractText(content: unknown): string {
   if (typeof content === 'string') return content
   if (Array.isArray(content)) {
     const texts = content
-      .filter((part) => part && typeof part === 'object' && (part as Record<string, unknown>).type === 'text')
+      .filter(
+        (part) =>
+          part && typeof part === 'object' && (part as Record<string, unknown>).type === 'text'
+      )
       .map((part) => String((part as Record<string, unknown>).text ?? ''))
       .filter(Boolean)
     if (texts.length > 0) return texts.join('\n')
     const kinds = content
-      .map((part) => (part && typeof part === 'object' ? String((part as Record<string, unknown>).type ?? 'unknown') : 'unknown'))
+      .map((part) =>
+        part && typeof part === 'object'
+          ? String((part as Record<string, unknown>).type ?? 'unknown')
+          : 'unknown'
+      )
       .filter((kind) => kind !== 'text')
     return kinds.length > 0 ? `[${kinds.join('、')}内容]` : ''
   }
@@ -386,9 +393,10 @@ export function useChat(): {
         // undefined 不参与 JSON 序列化 → 引擎收到「未指定」，按其能力判断
         thinkingMode: options.thinkingMode,
         // 引擎只读 name（相对工作区路径）；type 仅作提示，content 留给内联场景
-        attachments: attachments.length > 0
-          ? attachments.map((file) => ({ name: file.path, type: file.type }))
-          : undefined
+        attachments:
+          attachments.length > 0
+            ? attachments.map((file) => ({ name: file.path, type: file.type }))
+            : undefined
       })
     },
     [runStream]
@@ -495,11 +503,13 @@ export function useChat(): {
     setMessages([])
     setTodos([])
     if (sessionId) {
-      void engine.request({
-        method: 'DELETE',
-        path: '/conversation/history',
-        query: { sessionId }
-      }).catch(() => {})
+      void engine
+        .request({
+          method: 'DELETE',
+          path: '/conversation/history',
+          query: { sessionId }
+        })
+        .catch(() => {})
     }
   }, [])
 

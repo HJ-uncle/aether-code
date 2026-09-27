@@ -32,8 +32,9 @@
 /* ==================== 尺寸与节奏（与主题无关，不随明暗变化） ==================== */
 
 :root {
-  --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'PingFang SC',
-    'Microsoft YaHei', sans-serif;
+  --font-ui:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei',
+    sans-serif;
   --font-mono: 'SF Mono', 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
 
   /* 圆角分级（HIG：控件小而圆、容器大而圆） */
@@ -80,6 +81,19 @@
      比 hover / active 都更实：选中是持久状态，不能和"鼠标扫过"混为一谈。
      深色底上用白色叠加，与 --bg-active 同向后微调即可。 */
   --bg-selected: rgba(255, 255, 255, 0.14);
+  /* 失焦时的选中态：焦点跑到编辑器/终端后，选区仍然要看得见，
+     但必须明显弱于持有焦点时 —— 否则用户分不清"键盘此刻作用在哪个面板"，
+     方向键一按才发现动的是树。取回 --bg-active 的强度即可。 */
+  --bg-selected-inactive: rgba(255, 255, 255, 0.07);
+
+  /* 键盘焦点描边（列表/树的活动行）。跟随强调色，
+     与 --focus-ring 的分工：那个是"控件自己被聚焦"的外环，
+     这个是"列表内部当前行"的指示，只能画在行内、不能外扩。 */
+  --list-focus-outline: color-mix(in srgb, var(--accent) 70%, transparent);
+
+  /* 缩进参考线：竖线要极淡，它的作用是暗示层级而非划分表格。
+     深色底加白，浅色底加黑，方向与 --bg-* 相反 —— 参考线是"线条"不是"面"。 */
+  --indent-guide: rgba(255, 255, 255, 0.1);
 
   /* 描边：HIG 用极低对比的 hairline，避免「表格感」 */
   --border: rgba(255, 255, 255, 0.09);
@@ -158,6 +172,10 @@
   --bg-hover: rgba(0, 0, 0, 0.045);
   --bg-active: rgba(0, 0, 0, 0.08);
   --bg-selected: rgba(0, 0, 0, 0.12);
+  /* 浅色下失焦选区同样要"退一档"，退到 --bg-active 的量级 */
+  --bg-selected-inactive: rgba(0, 0, 0, 0.055);
+  --list-focus-outline: color-mix(in srgb, var(--accent) 85%, transparent);
+  --indent-guide: rgba(0, 0, 0, 0.12);
 
   --border: rgba(0, 0, 0, 0.1);
   --border-strong: rgba(0, 0, 0, 0.18);

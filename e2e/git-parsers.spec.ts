@@ -7,7 +7,10 @@ import {
 } from '../src/main/git/parsers'
 
 /**
- * git 输出解析测试
+ * 纯函数测试：git 输出解析（src/main/git/parsers.ts）。
+ *
+ * 本文件覆盖：parseGitStatus（分支 / 改动条目 / 暂存标记）、parseGitLog、
+ * isNotARepoError、isNoCommitsError。
  *
  * 样本是**真实 git 输出**（本机 git 2.55 在某个仓库上跑出来的），
  * 不是手编的格式 —— 手编样本只能验证"我以为的格式"，验证不了 git 实际给什么。

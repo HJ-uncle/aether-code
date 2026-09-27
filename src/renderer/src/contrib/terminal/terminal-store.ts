@@ -52,6 +52,11 @@ interface TerminalState {
    * 否则关掉最后一个标签会立刻弹出一个新终端。下次 createSession 复位。
    */
   closedAll: boolean
+  /**
+   * 上次创建失败的原始信息（如环境不支持 ConPTY）。
+   * 非 null 时视图层停止自动重试，改为提示用户；下次显式创建前清空。
+   */
+  createFailed: string | null
 }
 
 const internals = new Map<string, SessionInternals>()
@@ -66,7 +71,8 @@ let state: TerminalState = {
   activeId: null,
   creating: false,
   counter: 0,
-  closedAll: false
+  closedAll: false,
+  createFailed: null
 }
 const listeners = new Set<() => void>()
 
@@ -149,7 +155,8 @@ function registerSession(session: TerminalSession): void {
 /** 新建终端；cwd 跟随工作区根目录（未打开文件夹时用主目录） */
 export async function createLocalSession(cwd?: string): Promise<void> {
   if (state.creating) return
-  setState({ creating: true })
+  // 显式创建是一次新的尝试：清掉上次的失败标记，成功与否都重新如实记录
+  setState({ creating: true, createFailed: null, closedAll: false })
   try {
     // 后台创建用默认尺寸，首次挂载时由 fit 修正
     const { id } = await window.aether.terminal.create({ cwd, cols: 80, rows: 24 })
@@ -188,8 +195,12 @@ export async function createLocalSession(cwd?: string): Promise<void> {
       fit,
       transport
     })
-  } catch {
-    setState({ creating: false })
+  } catch (error) {
+    // 创建失败（如环境不支持 ConPTY）不能只把 creating 复位了事：
+    // 视图层的「无会话则自动新建」effect 依赖 sessions.length/creating，
+    // 复位后依赖变化会立刻再触发一次创建 —— 失败-复位-重试的无限循环。
+    // 用 createFailed 顶住，让视图层知道"这次尝试明确失败了"，不再自动重试。
+    setState({ creating: false, createFailed: String(error) })
   }
 }
 

@@ -27,6 +27,7 @@ export type IconName =
   | 'chevron-up'
   | 'chevron-right'
   | 'collapse-all'
+  | 'sort'
   | 'check'
   | 'circle'
   | 'circle-dot'
@@ -81,9 +82,7 @@ const PATHS: Record<IconName, JSX.Element> = {
   plus: <path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5z" fill="currentColor" />,
   // 窗口控制（自绘标题栏）：最小化横线 / 最大化方框 / 还原双框
   minimize: <path d="M5 11h14v2H5z" fill="currentColor" />,
-  maximize: (
-    <path d="M5 5h14v14H5V5zm2 2v10h10V7H7z" fill="currentColor" />
-  ),
+  maximize: <path d="M5 5h14v14H5V5zm2 2v10h10V7H7z" fill="currentColor" />,
   restore: (
     <g fill="currentColor">
       <path d="M8 4h12v12h-3v-2h1V6H9v1H7V4h1z" />
@@ -121,6 +120,13 @@ const PATHS: Record<IconName, JSX.Element> = {
   'chevron-right': <path d="M10 7l5 5-5 5V7z" fill="currentColor" />,
   'collapse-all': (
     <path d="M4 4h8v8H4V4zm2 2v4h4V6H6zm6 6h8v8h-8v-8zm-6 2h4v4H6v-4z" fill="currentColor" />
+  ),
+  // 排序：上短下长的三条横杠，右下角一个方向箭头（表达"按序排列"而不指定升降）
+  sort: (
+    <path
+      d="M4 6h10v1.8H4V6zm0 5h7v1.8H4V11zm0 5h4v1.8H4V16zm13.1-9.6L19.5 9h-1.6v6.4h-1.8V9h-1.6l2.4-2.6z"
+      fill="currentColor"
+    />
   ),
   check: (
     <path

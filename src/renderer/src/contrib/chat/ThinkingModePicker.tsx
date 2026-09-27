@@ -15,7 +15,10 @@ import { Icon } from '@renderer/workbench/icons'
  * 之所以要区分「默认」与「关」：引擎把不传视为「问能力」，把 false 视为
  * 强制关闭，两者在支持推理的模型上结果不同。
  */
-export function ThinkingModePicker({ value, onChange }: {
+export function ThinkingModePicker({
+  value,
+  onChange
+}: {
   value: 'default' | 'on' | 'off'
   onChange: (next: 'default' | 'on' | 'off') => void
 }): JSX.Element {

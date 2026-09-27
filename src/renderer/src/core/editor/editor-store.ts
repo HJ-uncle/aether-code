@@ -15,6 +15,7 @@ import { diagnoseDocument, clearDocumentDiagnostics } from '../lsp/diagnostics'
 import { rememberRecent } from './recent-files'
 import { paths, readFile, writeFile } from '../workspace/fs-client'
 import { getWorkspaceState } from '../workspace/workspace-store'
+import { activateDocument } from './editor-activation'
 
 export interface OpenDocument {
   path: string
@@ -43,11 +44,97 @@ export interface EditorState {
    * column/length 来自全局搜索命中，用于选中并高亮匹配片段（缺省只定位行首）。
    */
   reveals: Record<string, { line: number; column?: number; length?: number; seq: number }>
+  /** 目前激活的文件绝对路径；无文件标签时为 null（供非组件代码读「当前文件」） */
+  activePath: string | null
+  /**
+   * 最近一次从 Monaco 读回的光标位置（1-based），状态栏/文档 footer 展示用。
+   * 连同所属文件一起存：切标签时旧文件的位置读数必须作废，
+   * 但「作废」只能靠「光标属于谁」来判断，不能靠切标签时机（见 setCursor）。
+   */
+  cursor: { filePath: string; line: number; column: number } | null
 }
 
-let state: EditorState = { docs: new Map(), order: [], saving: new Set(), reveals: {} }
+let state: EditorState = {
+  docs: new Map(),
+  order: [],
+  saving: new Set(),
+  reveals: {},
+  activePath: null,
+  cursor: null
+}
 
 let revealSeq = 0
+
+/**
+ * 光标/滚动位置的暂存区。
+ *
+ * 本来想靠「切换标签不重建编辑器实例、只换 model」自然保住视图状态，
+ * 但那是错的：Monaco 的 viewState 属于**编辑器实例**而非 model，
+ * 换 model 会把光标与滚动位置按新 model 重置。所以必须自己存取 ——
+ * 见 MonacoEditor 的 onDidChangeModel 与「换 model 前后」两处。
+ *
+ * 不放进 EditorState：它不是渲染数据（没有任何组件订阅它），
+ * 放进去会让每次光标移动都触发全量重渲染。也不随文件关闭删除：
+ * 关闭再打开应当回到原位（与 VS Code 一致），上限兜内存。
+ */
+const viewStates = new Map<string, unknown>()
+const VIEW_STATE_LIMIT = 50
+
+/**
+ * 已关闭的文件栈（VS Code 的「重新打开已关闭的编辑器」）。
+ * 只记文件不记固定视图 —— 固定视图走 closedEditorViews，两者语义不同。
+ */
+const closedFiles: string[] = []
+const CLOSED_FILES_LIMIT = 20
+
+export function rememberViewState(filePath: string, viewState: unknown): void {
+  if (viewState == null) return
+  // 重新插入让它成为「最近使用」，淘汰最旧的一条
+  viewStates.delete(filePath)
+  viewStates.set(filePath, viewState)
+  if (viewStates.size > VIEW_STATE_LIMIT) {
+    const oldest = viewStates.keys().next()
+    if (!oldest.done) viewStates.delete(oldest.value)
+  }
+}
+
+export function takeViewState(filePath: string): unknown {
+  const viewState = viewStates.get(filePath)
+  // 取出即消费：viewState 只该被「切回这个文件」的那一次恢复使用。
+  // 留着不删，换个路径重建编辑器（组件 remount）时会拿旧状态覆盖掉
+  // 用户刚建立的光标位置 —— 表现为「切走再切回，光标莫名跳到别处」
+  if (viewState !== undefined) viewStates.delete(filePath)
+  return viewState
+}
+
+/**
+ * 激活文件变化（EditorArea 是唯一的调用方，它才知道哪个标签是激活的）。
+ *
+ * 刻意**不**在这里清空 cursor：清空看似把「旧文件的读数」抹掉了，但副作用
+ * 更大 —— 本函数在父组件 EditorArea 的 effect 里跑，而 Monaco 换 model /
+ * 恢复 viewState 并上报新位置是在子组件 MonacoEditor 的 effect 里跑的，
+ * 子 effect 先于父 effect。于是「先上报新位置、再被清成 null」，
+ * 光标读数会直接消失（且此后没有光标移动事件，永远不会再被填回来）。
+ * 旧文件读数由 setCursor 按 filePath 归属自然作废，无需在这里动手。
+ */
+export function setActiveDocument(filePath: string | null): void {
+  if (state.activePath === filePath) return
+  setState({ activePath: filePath })
+}
+
+/** 编辑器上报光标位置；同位置不触发广播，避免光标移动刷爆订阅者 */
+export function setCursor(filePath: string, line: number, column: number): void {
+  const current = state.cursor
+  if (
+    current &&
+    current.filePath === filePath &&
+    current.line === line &&
+    current.column === column
+  ) {
+    return
+  }
+  setState({ cursor: { filePath, line, column } })
+}
 
 const listeners = new Set<() => void>()
 
@@ -160,6 +247,35 @@ export function closeFile(filePath: string): void {
     docs: nextDocs,
     order: state.order.filter((item) => item !== filePath)
   })
+  // 关闭过的文件进「重新打开」栈，且必须是最近的栈顶：
+  // 同一个文件可能被关了又开、再关 —— 若因为旧记录还在栈里就跳过，
+  // 栈顶会停在一个更早关闭的别的文件上，Ctrl+Shift+T 就会捞错东西。
+  const existing = closedFiles.indexOf(filePath)
+  if (existing >= 0) closedFiles.splice(existing, 1)
+  closedFiles.push(filePath)
+  if (closedFiles.length > CLOSED_FILES_LIMIT) closedFiles.shift()
+}
+
+/**
+ * 重新打开最近关闭的文件。
+ *
+ * 弹出栈顶时跳过已经打开的文件 —— 否则「关闭 A、又手动开回 A、再重开」
+ * 会变成一个看似无响应的操作（因为 A 本来就开着）。
+ * 返回是否真的打开了某个文件，供调用方决定要不要提示。
+ */
+export async function reopenLastClosedFile(): Promise<boolean> {
+  while (closedFiles.length > 0) {
+    const filePath = closedFiles.pop()
+    if (filePath && !state.docs.has(filePath)) {
+      await openFile(filePath)
+      // 重开的文件要切到前台：VS Code 的 Ctrl+Shift+T 会把它激活。
+      // 只打开不激活的话它只是后台标签，文档槽不会渲染 Monaco，
+      // 上次的光标位置也就无从恢复。
+      activateDocument(filePath)
+      return true
+    }
+  }
+  return false
 }
 
 /** 更新内容（编辑器输入时调用） */
@@ -206,11 +322,32 @@ export async function saveDocument(filePath: string): Promise<void> {
 
 /** 保存当前激活的文档 */
 export async function saveActiveDocument(): Promise<void> {
+  const active = state.activePath ? state.docs.get(state.activePath) : undefined
+  if (active && isDirty(active)) {
+    await saveDocument(active.path)
+    return
+  }
+  // 没有激活文件（例如停在设置标签）时退化为「保存第一个脏文档」，
+  // 与改动前的行为一致 —— Ctrl+S 在哪儿都该有点用
   for (const doc of state.docs.values()) {
     if (isDirty(doc)) {
       await saveDocument(doc.path)
       return
     }
+  }
+}
+
+/**
+ * 保存全部脏文档。
+ *
+ * 逐个 await 而非 Promise.all：写盘要经过主进程，并发写同一目录下的多个文件
+ * 在 Windows 上更容易撞上瞬时占用；顺序写慢一点但结果可预期。
+ * 有文档写失败时不中断后面的 —— 用户要的是「能存的都存了」，
+ * 失败的文档已在自身状态里带 error，会照常显示。
+ */
+export async function saveAllDocuments(): Promise<void> {
+  for (const doc of [...state.docs.values()]) {
+    if (isDirty(doc)) await saveDocument(doc.path)
   }
 }
 

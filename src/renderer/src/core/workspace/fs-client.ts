@@ -46,6 +46,10 @@ export function rename(src: string, dest: string): Promise<void> {
   return bridge().fs.rename(src, dest)
 }
 
+export function copy(src: string, dest: string): Promise<void> {
+  return bridge().fs.copy(src, dest)
+}
+
 export function trash(path: string): Promise<void> {
   return bridge().fs.trash(path)
 }
@@ -60,9 +64,7 @@ export function stat(path: string): Promise<FsStat> {
  * 附件走这条路而不是直接给引擎绝对路径：引擎的工作区白名单只认
  * 工作区内的相对路径，且 File 对象本就拿不到真实磁盘位置。
  */
-export function copyIntoWorkspace(
-  input: CopyIntoWorkspaceInput
-): Promise<CopyIntoWorkspaceResult> {
+export function copyIntoWorkspace(input: CopyIntoWorkspaceInput): Promise<CopyIntoWorkspaceResult> {
   return bridge().fs.copyIntoWorkspace(input)
 }
 
@@ -99,5 +101,18 @@ export const paths = {
     const from = parent.replace(/\\/g, '/').replace(/\/+$/, '')
     const to = child.replace(/\\/g, '/')
     return to === from || to.startsWith(`${from}/`)
+  },
+  /**
+   * 取 child 相对 parent 的路径，供 glob 匹配使用（分隔符统一成正斜杠）。
+   *
+   * 不在 parent 之内时原样返回 child 并单独剥掉前导分隔符 ——
+   * 匹配器拿到的至少是个可用字符串，不会因相对化失败而整条规则失效。
+   */
+  relative(parent: string, child: string): string {
+    const from = parent.replace(/\\/g, '/').replace(/\/+$/, '')
+    const to = child.replace(/\\/g, '/').replace(/\/+$/, '')
+    if (to === from) return ''
+    if (to.startsWith(`${from}/`)) return to.slice(from.length + 1)
+    return to.replace(/^\/+/, '')
   }
 }

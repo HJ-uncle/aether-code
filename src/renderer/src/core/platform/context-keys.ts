@@ -5,7 +5,7 @@
  * 而是表达成对一组键的布尔表达式（when），由注册方声明。
  *
  * 这样新增功能时只需注册新的键与 when 条件，不必回头修改既有组件。
- * 支持语法：key、!key、a && b、a || b、a == 'x'、a != 'x'
+ * 支持语法：key、!key、a && b、a || b、a == 'x'、a != 'x'、a > 0（含 >= / <= / <）
  */
 
 type ContextValue = boolean | string | number | undefined
@@ -46,6 +46,9 @@ export function onContextKeysChanged(listener: () => void): () => void {
 
 type Token = { type: 'ident' | 'string' | 'op' | 'paren'; value: string }
 
+/** 参与"键 运算符 值"比较的运算符集合 */
+const COMPARISON_OPS = new Set(['==', '!=', '>', '<', '>=', '<='])
+
 function tokenize(input: string): Token[] {
   const tokens: Token[] = []
   let i = 0
@@ -85,6 +88,19 @@ function tokenize(input: string): Token[] {
     if (ch === '=' && input[i + 1] === '=') {
       tokens.push({ type: 'op', value: '==' })
       i += 2
+      continue
+    }
+
+    // 大小比较：先看两字符的 >= / <=，再看单字符的 > / <
+    if ((ch === '>' || ch === '<') && input[i + 1] === '=') {
+      tokens.push({ type: 'op', value: `${ch}=` })
+      i += 2
+      continue
+    }
+
+    if (ch === '>' || ch === '<') {
+      tokens.push({ type: 'op', value: ch })
+      i++
       continue
     }
 
@@ -156,7 +172,7 @@ export function evaluateWhen(expression: string | undefined): boolean {
 
     // 比较运算
     const next = peek()
-    if (next && next.type === 'op' && (next.value === '==' || next.value === '!=')) {
+    if (next && next.type === 'op' && COMPARISON_OPS.has(next.value)) {
       pos++
       const rhs = peek()
       if (!rhs || (rhs.type !== 'string' && rhs.type !== 'ident')) {
@@ -164,8 +180,34 @@ export function evaluateWhen(expression: string | undefined): boolean {
       }
       pos++
       const rhsValue = rhs.type === 'string' ? rhs.value : values.get(rhs.value)
-      const equal = String(value) === String(rhsValue)
-      return next.value === '==' ? equal : !equal
+
+      // 相等类比较沿用字符串化，保留 == 的既有语义（布尔/字符串都按字面比）
+      if (next.value === '==' || next.value === '!=') {
+        const equal = String(value) === String(rhsValue)
+        return next.value === '==' ? equal : !equal
+      }
+
+      // 大小比较：上下文键多为数字，按数值比；非数字回退字符串比较
+      const left = Number(value)
+      const right = Number(rhsValue)
+      if (Number.isNaN(left) || Number.isNaN(right)) {
+        const a = String(value ?? '')
+        const b = String(rhsValue ?? '')
+        return next.value === '>'
+          ? a > b
+          : next.value === '<'
+            ? a < b
+            : next.value === '>='
+              ? a >= b
+              : a <= b
+      }
+      return next.value === '>'
+        ? left > right
+        : next.value === '<'
+          ? left < right
+          : next.value === '>='
+            ? left >= right
+            : left <= right
     }
 
     return !!value

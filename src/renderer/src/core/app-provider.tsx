@@ -24,6 +24,39 @@ function contextKeysFor(snapshot: EngineSnapshot): Record<string, boolean> {
   }
 }
 
+/**
+ * 当前设置的模块级镜像。
+ *
+ * 设置的正源仍是 AppProvider 的 state（React 渲染要用），但模块级 store
+ * （搜索等）不在组件树里，拿不到 context。镜像只在每次设置变化时被写入，
+ * 与 state 同源同刻，因此读到的永远是当前值。
+ */
+let currentSettings: AppSettings = DEFAULT_SETTINGS
+
+/** 供非组件代码读取当前设置（组件请用 useApp，才有重渲染） */
+export function getAppSettings(): AppSettings {
+  return currentSettings
+}
+
+/**
+ * 设置变更的非组件订阅点。
+ *
+ * 模块级 store（搜索等）不在组件树里，拿不到 context；设置一变它们
+ * 就得自己知道（搜索要按新的排除表重搜）。search-store 注册进来，
+ * AppProvider 在设置落定后广播 —— 依赖方向仍是 store → app-context → 本文件，不成环。
+ */
+const settingsListeners = new Set<(settings: AppSettings) => void>()
+
+export function onAppSettingsChanged(listener: (settings: AppSettings) => void): () => void {
+  settingsListeners.add(listener)
+  return () => settingsListeners.delete(listener)
+}
+
+function publishSettings(next: AppSettings): void {
+  currentSettings = next
+  for (const listener of settingsListeners) listener(next)
+}
+
 export function AppProvider({ children }: { children: ReactNode }): JSX.Element {
   const engine = useEngine()
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
@@ -34,6 +67,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
     void getSettings().then((value) => {
       if (!alive) return
       setSettings(value)
+      publishSettings(value)
       setSettingsLoaded(true)
     })
     return () => {
@@ -62,10 +96,17 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
   const updateSettings = useCallback(async (patch: Partial<AppSettings>) => {
     const next = await persistSettings(patch)
     setSettings(next)
+    publishSettings(next)
   }, [])
 
   const value = useMemo<AppContextValue>(
-    () => ({ engine, settings, updateSettings, ready: engine.snapshot.phase === 'ready', settingsLoaded }),
+    () => ({
+      engine,
+      settings,
+      updateSettings,
+      ready: engine.snapshot.phase === 'ready',
+      settingsLoaded
+    }),
     [engine, settings, updateSettings, settingsLoaded]
   )
 

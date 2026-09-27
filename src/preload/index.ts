@@ -12,6 +12,7 @@ import type {
   FsEntry,
   FsFileContent,
   FsStat,
+  FilesExclude,
   GitCommit,
   GitStatus,
   ReplaceOutcome,
@@ -90,6 +91,8 @@ const api = {
       ipcRenderer.invoke(IPC.invoke.fsCreateFolder, path),
     rename: (src: string, dest: string): Promise<void> =>
       ipcRenderer.invoke(IPC.invoke.fsRename, src, dest),
+    copy: (src: string, dest: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.invoke.fsCopy, src, dest),
     trash: (path: string): Promise<void> => ipcRenderer.invoke(IPC.invoke.fsTrash, path),
     stat: (path: string): Promise<FsStat> => ipcRenderer.invoke(IPC.invoke.fsStat, path),
     listAll: (root: string): Promise<string[]> => ipcRenderer.invoke(IPC.invoke.fsListAll, root),
@@ -109,22 +112,36 @@ const api = {
 
   /** 全局搜索：git 仓库用 git grep，其余退回文件遍历 */
   search: {
-    query: (root: string, query: string, options: SearchOptions): Promise<SearchOutcome> =>
-      ipcRenderer.invoke(IPC.invoke.searchQuery, root, query, options),
+    query: (
+      root: string,
+      query: string,
+      options: SearchOptions,
+      excludes: FilesExclude
+    ): Promise<SearchOutcome> =>
+      ipcRenderer.invoke(IPC.invoke.searchQuery, root, query, options, excludes),
     replace: (
       root: string,
       query: string,
       options: SearchOptions,
-      replaceText: string
+      replaceText: string,
+      excludes: FilesExclude
     ): Promise<ReplaceOutcome> =>
-      ipcRenderer.invoke(IPC.invoke.searchReplace, root, query, options, replaceText),
+      ipcRenderer.invoke(IPC.invoke.searchReplace, root, query, options, replaceText, excludes),
     preview: (
       root: string,
       query: string,
       options: SearchOptions,
-      replaceText: string
+      replaceText: string,
+      excludes: FilesExclude
     ): Promise<ReplacePreviewOutcome> =>
-      ipcRenderer.invoke(IPC.invoke.searchReplacePreview, root, query, options, replaceText)
+      ipcRenderer.invoke(
+        IPC.invoke.searchReplacePreview,
+        root,
+        query,
+        options,
+        replaceText,
+        excludes
+      )
   },
 
   /**

@@ -10,11 +10,15 @@
  * 选项对齐 VS Code 搜索视图：大小写（Aa）、全字（ab）、正则（.*）、
  * 包含/排除文件 glob。git grep 用 -F（字面量）/-E（扩展正则）+ pathspec；
  * 正则语法 git 不支持时（如后行断言）自动退回 JS RegExp 遍历，语义一致。
+ *
+ * 排除规则来自调用方（渲染层把设置里的 files.exclude + search.exclude 合并后传来）：
+ * 两条路径都必须过滤，否则搜索结果会随仓库是否为 git 而变。
  */
 import { execFile } from 'node:child_process'
 import { readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type {
+  FilesExclude,
   ReplaceOutcome,
   ReplacePreviewFile,
   ReplacePreviewLine,
@@ -23,18 +27,15 @@ import type {
   SearchOptions,
   SearchOutcome
 } from '@shared/ipc'
+import { compileSearchExclude, isSearchExcluded, toGitPathspec } from './exclude'
 
-/** 遍历兜底时跳过的目录名（依赖与构建产物，搜它们没有意义） */
-const SKIP_DIRS = new Set([
-  'node_modules',
-  '.git',
-  'dist',
-  'out',
-  'build',
-  'release',
-  '.vite',
-  'coverage'
-])
+/**
+ * 遍历兜底时无条件跳过的目录名。
+ *
+ * 这些是「不可能有人搜索」的目录，与用户设置无关：.git 里全是二进制对象，
+ * 搜它只会拖慢速度。用户的 files.exclude / search.exclude 另行叠加。
+ */
+const SKIP_DIRS = new Set(['.git'])
 
 const MAX_FILE_BYTES = 512 * 1024
 const MAX_HITS = 500
@@ -78,15 +79,25 @@ function splitGlobs(value: string): string[] {
     .filter(Boolean)
 }
 
+/**
+ * 工作区全文搜索。
+ *
+ * @param excludes 递归排除表（settings 的 files.exclude 与 search.exclude 已由
+ *                 调用方合并；searchExclude 的同名键覆盖 filesExclude）。
+ *                 缺省表示不额外排除 —— 主进程不读设置，保持无状态。
+ */
 export function searchWorkspace(
   root: string,
   query: string,
-  options: SearchOptions = EMPTY_OPTIONS
+  options: SearchOptions = EMPTY_OPTIONS,
+  excludes: FilesExclude = {}
 ): Promise<SearchOutcome> {
   const trimmed = query.trim()
   if (!trimmed) return Promise.resolve({ hits: [], truncated: false, strategy: 'git' })
 
-  return gitGrep(root, trimmed, options).catch(() => walkScan(root, trimmed, options))
+  return gitGrep(root, trimmed, options, excludes).catch(() =>
+    walkScan(root, trimmed, options, excludes)
+  )
 }
 
 /**
@@ -98,7 +109,8 @@ export async function replaceWorkspace(
   root: string,
   query: string,
   options: SearchOptions,
-  replaceText: string
+  replaceText: string,
+  excludes: FilesExclude = {}
 ): Promise<ReplaceOutcome> {
   const trimmed = query.trim()
   if (!trimmed) return { files: [], replacements: 0 }
@@ -106,7 +118,7 @@ export async function replaceWorkspace(
   const regex = buildRegExp(trimmed, options, true)
   if (!regex) return { files: [], replacements: 0, error: '正则表达式无效' }
 
-  const outcome = await searchWorkspace(root, trimmed, options)
+  const outcome = await searchWorkspace(root, trimmed, options, excludes)
   if (outcome.error) return { files: [], replacements: 0, error: outcome.error }
 
   const replacement = options.useRegex ? replaceText : escapeReplacement(replaceText)
@@ -151,7 +163,8 @@ export async function previewReplaceWorkspace(
   root: string,
   query: string,
   options: SearchOptions,
-  replaceText: string
+  replaceText: string,
+  excludes: FilesExclude = {}
 ): Promise<ReplacePreviewOutcome> {
   const trimmed = query.trim()
   if (!trimmed) return { files: [], total: 0, truncated: false }
@@ -159,7 +172,7 @@ export async function previewReplaceWorkspace(
   const regex = buildRegExp(trimmed, options, true)
   if (!regex) return { files: [], total: 0, truncated: false, error: '正则表达式无效' }
 
-  const outcome = await searchWorkspace(root, trimmed, options)
+  const outcome = await searchWorkspace(root, trimmed, options, excludes)
   if (outcome.error) return { files: [], total: 0, truncated: false, error: outcome.error }
 
   const replacement = options.useRegex ? replaceText : escapeReplacement(replaceText)
@@ -205,7 +218,12 @@ export async function previewReplaceWorkspace(
 }
 
 /** git grep 输出 `相对路径:行号:文本`；仓库外/非仓库时进程失败走兜底 */
-function gitGrep(root: string, query: string, options: SearchOptions): Promise<SearchOutcome> {
+function gitGrep(
+  root: string,
+  query: string,
+  options: SearchOptions,
+  excludes: FilesExclude
+): Promise<SearchOutcome> {
   return new Promise((resolve, reject) => {
     // -F 字面量 / -E 扩展正则；-i 大小写；-w 全字匹配（对整个 pattern 生效）
     const args = ['grep', '-n', '-I', '--untracked', options.useRegex ? '-E' : '-F']
@@ -215,10 +233,17 @@ function gitGrep(root: string, query: string, options: SearchOptions): Promise<S
 
     // 包含/排除走 pathspec：include 为空 = 全仓库；exclude 用 pathspec 魔法
     const includes = splitGlobs(options.include)
-    const excludes = splitGlobs(options.exclude)
+    const excludesFromBox = splitGlobs(options.exclude)
     if (includes.length > 0) args.push(...includes)
     else args.push('.')
-    for (const pattern of excludes) args.push(`:(exclude)${pattern}`)
+    for (const pattern of excludesFromBox) args.push(`:(exclude)${pattern}`)
+
+    // 设置里的排除表：同一套 glob 语义（无分隔符 = 任意层级），交给 git 时必须
+    // 转成 pathspec 魔法，否则裸写只匹配顶层，结果与遍历兜底不一致
+    for (const [pattern, on] of Object.entries(excludes)) {
+      if (!on) continue
+      args.push(...toGitPathspec(pattern))
+    }
 
     execFile(
       'git',
@@ -291,14 +316,16 @@ function pathMatches(rel: string, filters: PathFilter[]): boolean {
 async function walkScan(
   root: string,
   query: string,
-  options: SearchOptions
+  options: SearchOptions,
+  excludes: FilesExclude
 ): Promise<SearchOutcome> {
   const regex = buildRegExp(query, options, false)
   if (!regex) {
     return { hits: [], truncated: false, strategy: 'scan', error: '正则表达式无效' }
   }
   const includes = compileFilters(options.include)
-  const excludes = compileFilters(options.exclude)
+  const boxExcludes = compileFilters(options.exclude)
+  const ruleExcludes = compileSearchExclude(excludes)
   const hits: SearchHit[] = []
 
   // 箭头函数常量（非提升的函数声明）：保证 TS 对 regex 判空后的类型收窄在闭包内生效
@@ -308,13 +335,15 @@ async function walkScan(
     for (const entry of entries) {
       if (hits.length >= MAX_HITS) return
       const rel = relative ? `${relative}/${entry.name}` : entry.name
+      // 目录命中即剪枝：连 readdir 都不做，这才是排除目录真正省时间的地方
+      if (isSearchExcluded(ruleExcludes, rel, entry.name)) continue
       if (entry.isDirectory()) {
         if (!SKIP_DIRS.has(entry.name)) await scanDir(rel)
         continue
       }
       if (!entry.isFile()) continue
       if (includes.length > 0 && !pathMatches(rel, includes)) continue
-      if (excludes.length > 0 && pathMatches(rel, excludes)) continue
+      if (boxExcludes.length > 0 && pathMatches(rel, boxExcludes)) continue
 
       let content: string
       try {

@@ -8,6 +8,7 @@ import {
 import type { SearchHit } from '@shared/ipc'
 import { Icon } from '@renderer/workbench/icons'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
+import { openAppSettings } from '@renderer/contrib/settings/app-settings-navigation'
 import {
   clearSearch,
   closeReplacePreview,
@@ -34,6 +35,7 @@ interface FileGroup {
  *
  * 选项开关：大小写 Aa / 全字 ab / 正则 .*；替换条（默认收起）；
  * 包含/排除文件过滤（默认收起）；结果树按文件分组可折叠。
+ * 「使用排除设置」控制是否套用设置里的 files.exclude + search.exclude。
  * 全部状态在 search-store，切换视图后不丢；点击结果跳编辑器并高亮匹配。
  */
 export function SearchView(): JSX.Element {
@@ -211,6 +213,14 @@ export function SearchView(): JSX.Element {
           >
             ⋯
           </button>
+          <label className="search-view__check" title="取消后忽略设置里的文件排除 / 搜索排除规则">
+            <input
+              type="checkbox"
+              checked={search.useExcludeSettings}
+              onChange={(event) => patchSearch({ useExcludeSettings: event.target.checked })}
+            />
+            使用排除设置
+          </label>
           <span className="search-view__tools-spacer" />
           <button
             type="button"
@@ -269,6 +279,14 @@ export function SearchView(): JSX.Element {
                 onChange={(event) => patchSearch({ exclude: event.target.value })}
               />
             </label>
+            <button
+              type="button"
+              className="search-view__filter-link"
+              title="编辑设置里的搜索排除规则（search.exclude）"
+              onClick={() => openAppSettings('search')}
+            >
+              编辑搜索排除设置…
+            </button>
           </div>
         ) : null}
       </div>

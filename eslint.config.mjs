@@ -26,7 +26,13 @@ export default defineConfig(
     },
     rules: {
       ...eslintPluginReactHooks.configs.recommended.rules,
-      ...eslintPluginReactRefresh.configs.vite.rules
+      ...eslintPluginReactRefresh.configs.vite.rules,
+      // 关掉「只能导出组件」这条 fast refresh 提示：
+      // 本仓库部分 .tsx 有意把「组件 + 供别处调用的普通函数」放同一文件
+      // （如 EditorArea 旁挂标签操作命令、app-provider 旁挂设置读写），
+      // 这是刻意的就近组织，不是缺陷。该规则只影响开发期热更新粒度，
+      // 关掉它换来的是不必为过 HMR 提示而把函数拆散、改一堆 import。
+      'react-refresh/only-export-components': 'off'
     }
   },
   eslintConfigPrettier

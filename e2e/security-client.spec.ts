@@ -10,7 +10,10 @@ import {
 } from '../src/renderer/src/core/engine/security'
 
 /**
- * 安全客户端测试
+ * 纯函数测试：安全模式客户端（security.ts）。
+ *
+ * 本文件覆盖：模式取值校验（isSecurityMode / parseSecurityMode）、
+ * 模式描述与动作标签、buildModePayload 请求体构造、isRiskyMode 风险判定。
  *
  * 这些是纯函数：security.ts 只把 request 当普通 import，而 request 依赖的
  * client.ts 里对 @shared/ipc 是 type-only import（编译后擦除），

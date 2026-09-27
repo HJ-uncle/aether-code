@@ -119,7 +119,10 @@ function registerDiffLanguage(): void {
   })
 
   monaco.languages.setLanguageConfiguration('diff', {
-    brackets: [['[', ']'], ['{', '}']]
+    brackets: [
+      ['[', ']'],
+      ['{', '}']
+    ]
   })
 }
 

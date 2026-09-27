@@ -14,7 +14,7 @@ export default defineConfig({
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: 0,
-  reporter: [['list']],
+  reporter: [['list'], ['./e2e/reporters/agent-diagnostics.ts']],
   use: {
     trace: 'retain-on-failure'
   }

@@ -27,6 +27,8 @@ export const IPC = {
     fsCreateFile: 'fs:create-file',
     fsCreateFolder: 'fs:create-folder',
     fsRename: 'fs:rename',
+    /** 复制文件/目录到新位置（资源管理器的「粘贴」用；目录需递归） */
+    fsCopy: 'fs:copy',
     fsTrash: 'fs:trash',
     fsStat: 'fs:stat',
     /** 递归列出工作区全部文件（快速打开 Ctrl+P 用，跳过依赖/构建目录） */
@@ -204,6 +206,43 @@ export type Appearance = 'system' | 'dark' | 'light'
 /** 强调色。取值对应 tokens.css 里的 [data-accent='*'] 覆盖块。 */
 export type AccentColor = 'blue' | 'purple' | 'pink' | 'orange' | 'green' | 'graphite'
 
+/**
+ * 文件排除表：glob 模式 → 是否隐藏。
+ *
+ * 照搬 VS Code 的 `files.exclude` 语义：
+ *   - 键是 glob（形如 `.git`、`*.log` 的写法，星号表示跨层级通配），值为 true=隐藏；
+ *   - 值为 false 表示「显式不隐藏」，用来在内层覆盖外层的同名规则；
+ *   - 匹配的是「相对工作区根的路径」+ 文件名（basename），二者任一命中即隐藏；
+ *   - 目录被命中时整棵子树一并隐藏（父级隐藏向下传播）。
+ */
+export type FilesExclude = Record<string, boolean>
+
+/**
+ * `files.exclude` 的出厂默认值，与 VS Code 保持一致：
+ * 只挡版本控制元数据与操作系统垃圾文件，不含 node_modules
+ * （VS Code 把 node_modules 放在 search.exclude 而非 files.exclude ——
+ * 资源管理器里应当看得见它，全文搜索才默认跳过）。
+ */
+export const DEFAULT_FILES_EXCLUDE: FilesExclude = {
+  '**/.git': true,
+  '**/.svn': true,
+  '**/.hg': true,
+  '**/.jj': true,
+  '**/.DS_Store': true,
+  '**/Thumbs.db': true
+}
+
+/**
+ * `search.exclude` 的出厂默认值，与 VS Code 保持一致：
+ * 只挡依赖目录与索引目录 —— 它们在资源管理器里应当看得见（那是 files.exclude 的事），
+ * 但全文搜索没有理由去翻。
+ */
+export const DEFAULT_SEARCH_EXCLUDE: FilesExclude = {
+  '**/node_modules': true,
+  '**/bower_components': true,
+  '**/*.code-search': true
+}
+
 export interface AppSettings {
   /** 引擎运行方式 */
   engineMode: EngineMode
@@ -234,6 +273,21 @@ export interface AppSettings {
   appearance: Appearance
   /** 界面强调色 */
   accent: AccentColor
+  /**
+   * 资源管理器与搜索的文件排除规则（glob → 是否隐藏）。
+   *
+   * 整表存盘而非逐条：用户会整体增删改，逐条 patch 反而要在渲染层做键级合并，
+   * 容易和默认值缠在一起。空表表示「全部显示」。
+   */
+  filesExclude: FilesExclude
+  /**
+   * 全文搜索的额外排除规则（glob → 是否排除）。
+   *
+   * 照搬 VS Code 的 `search.exclude`：搜索结果 = filesExclude 与 searchExclude 的并集，
+   * 同名键以本表为准 —— 这样默认被排除的 node_modules 可以在这里写成 false 放回来，
+   * 而用户又不必为了搜索再抄一遍 filesExclude 里已有的规则。
+   */
+  searchExclude: FilesExclude
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -247,7 +301,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   thinkingMode: 'default',
   lastFolder: '',
   appearance: 'system',
-  accent: 'purple'
+  accent: 'purple',
+  filesExclude: { ...DEFAULT_FILES_EXCLUDE },
+  searchExclude: { ...DEFAULT_SEARCH_EXCLUDE }
 }
 
 // ==================== 引擎 HTTP 契约 ====================

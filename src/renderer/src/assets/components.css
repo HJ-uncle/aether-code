@@ -459,6 +459,38 @@
   border-color: var(--accent);
 }
 
+/* 「使用排除设置」：与 ⋯ 按钮同处工具行，形态更接近标签而非按钮 */
+.search-view__check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.search-view__check input {
+  margin: 0;
+}
+
+/* 过滤区里的次级入口：跳到设置页编辑 search.exclude */
+.search-view__filter-link {
+  align-self: flex-start;
+  margin-left: 26px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.search-view__filter-link:hover {
+  text-decoration: underline;
+}
+
 .search-view__hint {
   padding: 8px 14px;
   color: var(--fg-faint);
@@ -713,6 +745,51 @@
   height: 100%;
 }
 
+/* 终端创建失败时的提示区。占满内容区、居中，让"没起来"和"空白"一眼可辨。
+   错误详情用等宽字体：里面是原始报错串（如 Cannot launch conpty），
+   对齐排版更容易看清是哪一层拒绝的。 */
+.terminal-view__error {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 16px;
+  text-align: center;
+}
+
+.terminal-view__error-title {
+  margin: 0;
+  color: var(--fg-strong);
+  font-size: 13px;
+}
+
+.terminal-view__error-detail {
+  margin: 0;
+  max-width: 520px;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  word-break: break-word;
+}
+
+.terminal-view__error-retry {
+  margin-top: 4px;
+  padding: 3px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  color: var(--fg);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.terminal-view__error-retry:hover {
+  background: var(--bg-hover);
+  color: var(--fg-strong);
+}
+
 .terminal-view__side {
   display: flex;
   flex-direction: column;
@@ -812,7 +889,6 @@
   color: var(--fg-muted);
   font-size: 12px;
 }
-
 
 .workbench__body {
   display: flex;
@@ -2283,7 +2359,9 @@
   border-radius: 14px;
   background: var(--bg-elevated);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22);
-  transition: border-color 140ms ease, box-shadow 140ms ease;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
 }
 
 /* 聚焦：容器只做轻微描边提亮，不画焦点环。
@@ -2351,7 +2429,9 @@
   background: transparent;
   color: var(--fg-muted);
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
 }
 
 .chat__icon-btn:hover:not(:disabled) {
@@ -2384,7 +2464,9 @@
   background: var(--accent);
   color: var(--accent-fg);
   cursor: pointer;
-  transition: background 120ms ease, transform 120ms ease;
+  transition:
+    background 120ms ease,
+    transform 120ms ease;
 }
 
 .chat__send:hover:not(:disabled) {
@@ -2815,7 +2897,9 @@
   font-size: 13px;
   text-align: left;
   cursor: default;
-  transition: background 90ms ease, color 90ms ease;
+  transition:
+    background 90ms ease,
+    color 90ms ease;
 }
 
 .app-settings__nav-item:hover:not(.is-active) {
@@ -2935,6 +3019,41 @@ textarea.field__input {
   background: var(--danger-soft);
   color: var(--danger-fg);
   font-size: 12px;
+}
+
+/* 文件排除规则表：一行 = 一条 glob */
+.exclude-table {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.exclude-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.exclude-row__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  flex: none;
+  cursor: pointer;
+}
+
+.exclude-row__pattern {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+
+.exclude-row__remove {
+  flex: none;
+  line-height: 1;
 }
 
 .kv {
@@ -3328,10 +3447,15 @@ textarea.field__input {
 /* select 与 input 共用 field__input，补上外观差异 */
 select.field__input {
   appearance: none;
-  background-image: linear-gradient(45deg, transparent 50%, var(--fg-muted) 50%),
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--fg-muted) 50%),
     linear-gradient(135deg, var(--fg-muted) 50%, transparent 50%);
-  background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%;
-  background-size: 5px 5px, 5px 5px;
+  background-position:
+    calc(100% - 15px) 50%,
+    calc(100% - 10px) 50%;
+  background-size:
+    5px 5px,
+    5px 5px;
   background-repeat: no-repeat;
   padding-right: 28px;
 }
@@ -3478,6 +3602,8 @@ select.field__input {
   cursor: pointer;
   user-select: none;
   color: var(--fg);
+  /* 缩进参考线是绝对定位的：需要行成为它们的包含块 */
+  position: relative;
 }
 
 .tree-row:hover {
@@ -3497,10 +3623,58 @@ select.field__input {
   color: var(--fg-strong);
 }
 
+/* 焦点不在树上时，选区退到更弱的底色（对齐 VS Code 的 inactiveSelectionBackground）。
+   选区本身不消失 —— 它记录的是"选了哪些"，与谁持有键盘焦点无关；
+   变的只是"当前该由谁响应键盘"这个提示的强度。 */
+.explorer__tree:not(.is-focused) .tree-row.is-selected {
+  background: var(--bg-selected-inactive);
+  color: var(--fg);
+}
+
+/* 树持有焦点时的当前行：一圈内描边。
+   outline 不参与布局，所以不会把行挤歪；offset 取负值让它压在行边缘内侧，
+   否则会被邻居行盖住一半。层级：焦点行 > 选中行 > 活动文件 > 悬停。 */
+.explorer__tree.is-focused .tree-row.is-selected {
+  outline: 1px solid var(--list-focus-outline);
+  outline-offset: -1px;
+}
+
+/* 键盘（方向键）移动到的行，与鼠标多选分开：
+   焦点行不参与多选集合，但必须能一眼看到"光标停在哪一行"。
+   同样限定在 .is-focused 下 —— cursorPath 是"上次点/按过的位置"，
+   焦点跑走之后它还在，但那时描边已失去意义（键盘不再作用在树上），
+   不限定就会留下一个无人认领的方框。 */
+.explorer__tree.is-focused .tree-row.is-cursor {
+  outline: 1px solid var(--list-focus-outline);
+  outline-offset: -1px;
+}
+
+/* 缩进参考线。每层一条竖线，画在行的左内边距里，
+   用绝对定位而不是 border-left：行本身是 flex 容器，加 border 会参与盒模型、
+   把内容整体推右，层级越深偏移越大。 */
+.explorer__indent {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--indent-guide);
+  pointer-events: none;
+}
+
 /* 拖拽悬停的落点目录 */
 .tree-row.is-drop-target {
   background: var(--bg-hover);
   box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* 已剪切、等待粘贴的项：整行做半透明降级，与系统文件管理器的"待剪切"观感一致。
+   用 opacity 而不是换背景色 —— 选中底色/活动文件底色/悬停底色会叠加，
+   逐一去覆盖会写出一堆组合选择器，且深浅主题下都要各调一遍。
+   降透明度让它们在原有配色上统一变淡，天然与主题无关。
+   放在 is-drop-target 之后（同特异性下后写者胜）：拖拽落点提示是瞬时反馈，
+   优先级高于"这一项已被剪切"这种持续状态。 */
+.tree-row.is-cut {
+  opacity: 0.5;
 }
 
 .tree-row__chevron {
@@ -3548,9 +3722,63 @@ select.field__input {
   font-size: 12.5px;
 }
 
+/* 紧凑文件夹的链条尾注（utils/helpers）。
+   必须能先被压缩：链条往往比真实名字长得多，若它不参与收缩，
+   就会把真正要看的文件名挤出视口 —— 优先级反了。
+   因此这里 flex:0 1 auto + min-width:0，允许自己被截断。 */
+.tree-row__chain {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-faint);
+  font-size: 11.5px;
+}
+
+/* 名字是这行的主语，链条是修饰：空间紧张时先牺牲链条。
+   两者都设 flex-shrink，但名字给更高的优先级（0 1 auto 且不设 max-width）。 */
+.tree-row__name + .tree-row__chain {
+  margin-left: 4px;
+}
+
 .tree-row__loading {
   color: var(--fg-faint);
   font-size: 11px;
+}
+
+/* git 状态角标。配色与版本控制视图的 .git-change__code 同义：
+   修改黄、新增/未跟踪绿、删除红、重命名或复制用强调色。
+   放在名字右侧而不是行尾：侧边栏很窄，行尾是第一个被省略号吃掉的地方，
+   而角标恰恰是"这行要不要点开看"的判断依据。 */
+.tree-row__git {
+  flex: 0 0 auto;
+  margin-left: 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+.tree-row__git--modified {
+  color: var(--warn);
+}
+.tree-row__git--added {
+  color: var(--ok);
+}
+.tree-row__git--deleted {
+  color: var(--danger);
+}
+.tree-row__git--renamed {
+  color: var(--accent);
+}
+.tree-row__git--other {
+  color: var(--fg-muted);
+}
+/* 收起目录的聚合提示：只用一个小圆点，不用字母 —— 目录本身没有 XY 状态，
+   显示某个字母会让人以为底下的改动都是那一种。 */
+.tree-row__git--dirty {
+  color: var(--fg-faint);
+  font-size: 8px;
 }
 
 /* ==================== 编辑器与文档视图 ==================== */
@@ -3598,6 +3826,11 @@ select.field__input {
   align-items: center;
   gap: 4px;
   color: var(--accent);
+}
+
+/* 光标位置读数：数字位数变化会让它呼吸，等宽避免相邻项跟着抖 */
+.doc-view__status [data-testid='doc-cursor'] {
+  font-variant-numeric: tabular-nums;
 }
 
 .doc-placeholder {
@@ -4099,7 +4332,9 @@ select.field__input {
   font-size: 12px;
   white-space: nowrap;
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
 }
 
 .model-picker__trigger:hover,
@@ -4244,7 +4479,6 @@ select.field__input {
   min-width: 0;
 }
 
-
 /* 向上弹出：触发点在输入框下方，向下展开会被窗口裁掉。
    外观与 .sec-picker__popup 共用同一条规则（见上方），此处不重复声明。 */
 
@@ -4368,12 +4602,17 @@ select.field__input {
   padding: 12px;
   /* 棋盘格底：透明 PNG 与深色背景容易糊在一起 */
   background-color: var(--bg-app);
-  background-image: linear-gradient(45deg, var(--bg-surface) 25%, transparent 25%),
+  background-image:
+    linear-gradient(45deg, var(--bg-surface) 25%, transparent 25%),
     linear-gradient(-45deg, var(--bg-surface) 25%, transparent 25%),
     linear-gradient(45deg, transparent 75%, var(--bg-surface) 75%),
     linear-gradient(-45deg, transparent 75%, var(--bg-surface) 75%);
   background-size: 16px 16px;
-  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
 }
 
 .preview__image,
@@ -4533,6 +4772,8 @@ select.field__input {
   line-height: 1.45;
   overflow: hidden;
   display: -webkit-box;
+  /* 两个都写：line-clamp 是标准属性，-webkit- 前缀给旧版 WebKit/Electron 兜底 */
+  line-clamp: 2;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   word-break: break-all;

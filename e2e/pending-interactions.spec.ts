@@ -7,7 +7,10 @@ import {
 } from '../src/renderer/src/core/engine/pending'
 
 /**
- * 交互帧归一化测试
+ * 纯函数测试：交互帧归一化（pending.ts）。
+ *
+ * 本文件覆盖：normalizePending（安全拦截帧 / 提问帧的多种形状）、
+ * mergePending（同 id 帧的优先级合并）、buildToolResponse（回传值构造）。
  *
  * 这块逻辑是"对话卡住"这个 bug 的修复核心，且引擎侧的帧形状不统一
  * （ask_user 的 options 有对象数组与字符串数组两种），因此单独覆盖。

@@ -71,9 +71,7 @@ export function AppearanceSettingsView(): JSX.Element {
             </button>
           ))}
         </div>
-        <p className="field__hint">
-          强调色作用于按钮、选中项与键盘焦点环，不改变正文与灰阶。
-        </p>
+        <p className="field__hint">强调色作用于按钮、选中项与键盘焦点环，不改变正文与灰阶。</p>
       </div>
 
       {/* 预览区：改完立刻能在这里看到强调色落到真实控件上的效果 */}

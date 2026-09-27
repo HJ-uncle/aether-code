@@ -10,11 +10,12 @@ import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 
 /**
- * P2 冒烟：LSP 诊断可见。
+ * LSP 诊断链路（真机）：保存文件触发引擎诊断 → 问题面板 → 点击跳转。
  *
  * 诊断经 POST /lsp/diagnose（TS adapter 传 content 即可，无需落盘文件），
  * 结果进「问题」面板并叠加 Monaco 波浪线。本文件验证诊断链路端到端可用。
  *
+ * 本文件覆盖：引擎就绪、诊断产出与问题面板渲染、点击问题跳回编辑器。
  * 终端只保留本地轨（node-pty 跑在 IDE 主进程，不依赖引擎），
  * 已由 smoke.spec 覆盖，此处不再重复。
  *
@@ -27,7 +28,7 @@ const WORKSPACE_DIR = APP_ROOT
 
 /** 诊断用例夹具：内容确定，必然产生一个 TS2322（类型不匹配） */
 const FIXTURE_DIR = join(APP_ROOT, '.e2e-tmp')
-const BROKEN_FILE = join(FIXTURE_DIR, 'p2-broken.ts')
+const BROKEN_FILE = join(FIXTURE_DIR, 'diagnostic-broken.ts')
 const BROKEN_SOURCE = "const brokenValue: number = 'not-a-number'\n"
 
 function prepareFixtures(): void {
@@ -37,7 +38,7 @@ function prepareFixtures(): void {
 }
 
 function prepareUserData(): string {
-  const dir = join(tmpdir(), 'aether-ide-e2e-userdata-p2')
+  const dir = join(tmpdir(), 'aether-ide-e2e-userdata-lsp')
   rmSync(dir, { recursive: true, force: true })
   mkdirSync(dir, { recursive: true })
 
@@ -103,13 +104,20 @@ test('引擎：自动启动并进入就绪状态', async () => {
 })
 
 test('LSP 诊断：保存触发引擎诊断，问题面板可见且点击可跳转', async () => {
-  // 快速打开夹具文件（应用启动前已落盘）
+  // 快速打开夹具文件（应用启动前已落盘）。
+  // 注意 Ctrl+P 的首帧可能早于文件索引构建完成：此时面板会显示
+  // 「没有匹配的文件。」，回车自然什么都不会打开。所以必须先等索引就绪 ——
+  // 用「填入关键字后目标条目出现」作为信号，而不是盲等固定时长。
   await page.keyboard.press('Control+p')
-  await expect(page.locator('.palette[aria-label="快速打开文件"]')).toBeVisible()
-  await page.locator('.palette__input').fill('p2-broken')
+  const palette = page.locator('.palette[aria-label="快速打开文件"]')
+  await expect(palette).toBeVisible()
+  await page.locator('.palette__input').fill('diagnostic-broken')
+  await expect(palette.locator('.palette__item').first()).toContainText('diagnostic-broken.ts', {
+    timeout: 30_000
+  })
   await page.keyboard.press('Enter')
 
-  await expect(page.locator('.editor-tab', { hasText: 'p2-broken.ts' })).toBeVisible()
+  await expect(page.locator('.editor-tab', { hasText: 'diagnostic-broken.ts' })).toBeVisible()
   await expect(page.locator('.monaco-editor').first()).toBeVisible({ timeout: 30_000 })
 
   // Ctrl+S 只保存脏文档：在文末追加注释制造确定可观测的改动（不能只按 Enter——
@@ -126,14 +134,14 @@ test('LSP 诊断：保存触发引擎诊断，问题面板可见且点击可跳�
   await expect(page.locator('.panel')).toBeVisible()
   await page.locator('.panel__tab', { hasText: '问题' }).click()
   await expect(page.locator('.problems-view')).toBeVisible()
-  await expect(page.locator('.problems-view__file')).toContainText('p2-broken.ts', {
+  await expect(page.locator('.problems-view__file')).toContainText('diagnostic-broken.ts', {
     timeout: 60_000
   })
   await expect(page.locator('.problems-view__item', { hasText: 'TS2322' }).first()).toBeVisible()
 
   // 点击问题条目：文件标签激活 + 跳行高亮生效（与搜索跳转同一机制）
   await page.locator('.problems-view__item', { hasText: 'TS2322' }).first().click()
-  await expect(page.locator('.editor-tab.is-active')).toContainText('p2-broken.ts')
+  await expect(page.locator('.editor-tab.is-active')).toContainText('diagnostic-broken.ts')
   await expect(page.locator('.aether-reveal-match').first()).toBeVisible({ timeout: 15_000 })
 })
 

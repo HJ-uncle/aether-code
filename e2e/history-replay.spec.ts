@@ -11,7 +11,9 @@ import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 
 /**
- * 历史回放验收：启动时把引擎 conversations 表还原为聊天消息。
+ * 真机验收：历史回放 —— 启动时把引擎 conversations 表还原为聊天消息。
+ *
+ * 本文件覆盖：跨重启的消息回放、清空历史时引擎侧同步删除。
  *
  * 为什么必须驱动真实应用：
  *   - 回放链路横跨 IPC（GET /conversation/history）→ 引擎 SQLite → 渲染层映射，
@@ -66,7 +68,12 @@ function engineDbPath(userDataDir: string): string {
 }
 
 /** 借引擎仓库的 @libsql/client 执行 SQL（IDE 自身不依赖 libsql，spec 无法直接 import） */
-function runSql(userDataDir: string, sql: string, params: unknown[], expectRows: boolean): unknown[] {
+function runSql(
+  userDataDir: string,
+  sql: string,
+  params: unknown[],
+  expectRows: boolean
+): unknown[] {
   const dbPath = engineDbPath(userDataDir)
   // Windows 绝对路径的标准 file URL：file:///C:/...（少一个斜杠 libsql 会解析失败或写偏）
   const fileUrl = 'file:///' + dbPath.replace(/\\/g, '/')

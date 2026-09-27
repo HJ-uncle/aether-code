@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { executeCommand } from '@renderer/core/platform/commands'
 import { getKeybindingHint } from '@renderer/core/platform/keybindings'
-import { openAppSettings } from '@renderer/contrib/settings/AppSettingsView'
+import { openAppSettings } from '@renderer/contrib/settings/app-settings-navigation'
 import { Icon } from '@renderer/workbench/icons'
 import {
   getUserKeybindingRules,
@@ -50,9 +50,7 @@ const MENUS: Menu[] = [
   },
   {
     label: '帮助',
-    items: [
-      { label: '重启引擎', command: 'aether.engine.restart' }
-    ]
+    items: [{ label: '重启引擎', command: 'aether.engine.restart' }]
   }
 ]
 

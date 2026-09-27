@@ -12,14 +12,17 @@
 import { closeFile, getEditorState, renameDocument } from '../editor/editor-store'
 import { setContextKey } from '../platform/context-keys'
 import { getLayout, setLayout } from '../platform/layout-state'
-import { createFile, createFolder, paths, rename, trash } from './fs-client'
+import { copy, createFile, createFolder, paths, rename, stat, trash } from './fs-client'
 import {
+  clearClipboard,
   expandDirectory,
+  getClipboard,
   getSelection,
   getWorkspaceState,
   onWorkspaceChanged,
   refreshDirectory,
-  setSelection
+  setSelection,
+  setSelectionAnchor
 } from './workspace-store'
 
 /**
@@ -132,6 +135,49 @@ function samePath(a: string, b: string): boolean {
 }
 
 /**
+ * 把 paths 工具拼出来的路径（正斜杠）换成与工作区缓存一致的写法。
+ *
+ * 缓存键、selection、expanded 全部来自主进程的 readDir，在 Windows 上是
+ * 反斜杠 + 盘符原始大小写；而 paths.join / paths.dirname 产出的永远是
+ * 正斜杠。两者混用会让 Map.get / Set.has 静默落空（刷新被跳过、树上查不到
+ * 行），且不报任何错。这里统一转成 root 的那套写法：
+ *   - 分隔符：按 root 用 `\` 还是 `/`，整体替换
+ *   - 盘符大小写：按 root 的盘符形态改写（Windows 上 `d:` 与 `D:` 是同一个盘）
+ * root 为空（未打开工作区）时退回原值。
+ */
+export function toCacheKey(target: string): string {
+  const root = getWorkspaceState().root
+  if (!root) return target
+
+  const rootUseBackslash = root.includes('\\')
+  let result = rootUseBackslash ? target.replace(/\//g, '\\') : target.replace(/\\/g, '/')
+
+  // 盘符大小写对齐：C:\ 与 c:\ 指向同一个位置，但作为 Map 键并不相等
+  if (/^[a-zA-Z]:/.test(root) && /^[a-zA-Z]:/.test(result)) {
+    result = root.slice(0, 1) + result.slice(1)
+  }
+
+  return result
+}
+
+/**
+ * 取回 rename 之后主进程实际使用的真实路径。
+ *
+ * paths.join 产出的是正斜杠（如 `D:\ws/sub/a.txt`），主进程 resolve 后是
+ * 反斜杠。工作区缓存、编辑器文档、撤销记录统一用反斜杠那一套，这里必须
+ * 换成真实路径，否则同一次移动在后续各环节是「两个不同的文件」。
+ * stat 失败（极少见）时退回原值，不因取路径而中断整个移动。
+ */
+async function canonicalizeRename(from: string, to: string): Promise<{ from: string; to: string }> {
+  try {
+    const info = await stat(to)
+    return { from, to: info.path }
+  } catch {
+    return { from, to }
+  }
+}
+
+/**
  * 目录刷新后清掉选区里已不存在的路径。
  *
  * 删除、移动、外部改动都会让选中项消失；若不清，选区会一直留着幽灵路径，
@@ -187,20 +233,24 @@ export async function renameEntry(targetPath: string, nextName: string): Promise
   const destPath = paths.join(parent, nextName)
   if (samePath(destPath, targetPath)) return targetPath
 
+  // 落盘后换回主进程的真实路径：destPath 是正斜杠，缓存 / 文档 / 撤销
+  // 用的都是反斜杠那一套，返回正斜杠会让调用方拿着一个"查不到"的路径。
+  const parentKey = toCacheKey(parent)
   await rename(targetPath, destPath)
-  await refreshDirectory(parent)
-  syncDocumentsAfterRename(targetPath, destPath)
+  const actualDest = (await canonicalizeRename(targetPath, destPath)).to
+  await refreshDirectory(parentKey)
+  syncDocumentsAfterRename(targetPath, actualDest)
 
   pushUndo({
     label: `重命名 ${paths.basename(targetPath)}`,
     revert: async () => {
-      await rename(destPath, targetPath)
-      await refreshDirectory(parent)
-      syncDocumentsAfterRename(destPath, targetPath)
+      await rename(actualDest, targetPath)
+      await refreshDirectory(parentKey)
+      syncDocumentsAfterRename(actualDest, targetPath)
     }
   })
 
-  return destPath
+  return actualDest
 }
 
 /**
@@ -208,12 +258,18 @@ export async function renameEntry(targetPath: string, nextName: string): Promise
  * 返回实际移动的数量：0 表示不需要移动（例如本来就在该目录里）。
  */
 export async function moveEntries(sourcePaths: string[], targetDir: string): Promise<number> {
-  const moves = planMoves(sourcePaths, targetDir)
-  if (moves.length === 0) return 0
+  const planned = planMoves(sourcePaths, targetDir)
+  if (planned.length === 0) return 0
 
-  for (const move of moves) {
+  // 落盘后拿到主进程规范化过的真实路径（Windows 上是反斜杠）。
+  // planMoves 里 paths.join 产出的是正斜杠，直接用它做后续 refresh /
+  // 文档同步 / 撤销，会出现同一文件两套写法，查表全部落空。
+  const moves: { from: string; to: string }[] = []
+  for (const move of planned) {
     await rename(move.from, move.to)
-    syncDocumentsAfterRename(move.from, move.to)
+    const actual = await canonicalizeRename(move.from, move.to)
+    moves.push(actual)
+    syncDocumentsAfterRename(actual.from, actual.to)
   }
   await refreshAfterMove(moves, targetDir)
 
@@ -250,12 +306,90 @@ export async function trashEntries(targetPaths: string[]): Promise<void> {
   }
 
   for (const dir of new Set(targetPaths.map((item) => paths.dirname(item)))) {
-    await refreshDirectory(dir)
+    await refreshDirectory(toCacheKey(dir))
   }
 
   clearUndo()
 
   if (firstError !== null) throw firstError
+}
+
+/**
+ * 把若干条目复制到目标目录（粘贴）。
+ * 返回实际落盘的路径，调用方据此选中新副本。
+ *
+ * 与「移动」的关键差异：复制不改变源的文档状态，因此只刷新目标目录、
+ * 不碰 syncDocumentsAfterRename —— 复制出来的副本默认不打开。
+ * 撤销用回收站删掉副本，而不是再一次重命名。
+ */
+export async function copyEntries(sourcePaths: string[], targetDir: string): Promise<string[]> {
+  const copies = planCopies(sourcePaths, targetDir)
+  if (copies.length === 0) return []
+
+  // 落盘后取回主进程的真实路径：planCopies 的 to 是 paths.join 产出的
+  // 正斜杠，而缓存 / 选区 / 树都用反斜杠那一套，不换回来就会出现
+  // "复制成功但副本不出现、也不被选中"。
+  const created: string[] = []
+  for (const item of copies) {
+    await copy(item.from, item.to)
+    created.push((await canonicalizeRename(item.from, item.to)).to)
+  }
+
+  const targetKey = toCacheKey(targetDir)
+  await expandDirectory(targetKey)
+  await refreshDirectory(targetKey)
+
+  pushUndo({
+    label: `复制 ${created.length} 项`,
+    revert: async () => {
+      for (const target of created) {
+        await trash(target)
+        closeDocumentsInside(target)
+      }
+      await refreshDirectory(targetKey)
+    }
+  })
+
+  return created
+}
+
+/**
+ * 粘贴落点的提供者。
+ *
+ * 由资源管理器视图注册：只有它知道"光标停在哪一行"，而命令与快捷键在 core 层，
+ * 不能反过来依赖某个视图。视图卸载时注销，此时粘贴命令因取不到落点而自然失效。
+ */
+let pasteTargetProvider: (() => string | null) | null = null
+
+export function setPasteTargetProvider(provider: (() => string | null) | null): void {
+  pasteTargetProvider = provider
+}
+
+/**
+ * 执行粘贴（命令与快捷键的入口）。
+ *
+ * 剪贴板为空或无落点时静默返回：调用方（命令面板）已用 when 条件隐藏了入口，
+ * 这里再兜一次是为了避免视图未挂载时光标落点为空导致对 undefined 报错。
+ */
+export async function pasteFromClipboard(): Promise<void> {
+  const clip = getClipboard()
+  const targetDir = pasteTargetProvider?.() ?? null
+  if (!clip || !targetDir) return
+
+  if (clip.mode === 'cut') {
+    // 只有真的搬动了才清剪贴板：剪切后粘贴到"它自己所在的目录"时 planMoves 会
+    // 跳过（返回 0），此时若清空，用户就白白丢了剪贴板 —— 而"贴错地方了，
+    // 换个目录再贴"恰恰是剪切后最常见的补救动作。
+    const moved = await moveEntries(clip.paths, targetDir)
+    if (moved > 0) clearClipboard()
+    return
+  }
+
+  const created = await copyEntries(clip.paths, targetDir)
+  if (created.length > 0) {
+    setSelection(created)
+    setSelectionAnchor(created[0])
+  }
 }
 
 // ==================== 内部实现 ====================
@@ -288,15 +422,77 @@ function planMoves(sourcePaths: string[], targetDir: string): { from: string; to
   return moves
 }
 
+/**
+ * 计算实际要执行的复制。
+ *
+ * 与 planMoves 的差异在于「复制到同一目录」是合法的 —— 那正是"原地复制一份"
+ * 的常见用法。因此这里不剔除同目录项，改为在重名时生成副本名，
+ * 否则主进程会因为"目标已存在"直接报错。
+ */
+function planCopies(sourcePaths: string[], targetDir: string): { from: string; to: string }[] {
+  const unique = [...new Set(sourcePaths)]
+
+  // 选区里同时有目录和它的子项时只复制目录：否则会在同一目标下写出两份内容
+  const roots = unique.filter(
+    (candidate) => !unique.some((other) => other !== candidate && paths.contains(other, candidate))
+  )
+
+  const copies: { from: string; to: string }[] = []
+  // 记录本次已占用的目标名，避免「复制两个同名文件（来自不同目录）」时互相撞名
+  // 注意 children 的键是主进程的反斜杠路径，targetDir 是正斜杠，必须换键
+  const taken = new Set(
+    (getWorkspaceState().children.get(toCacheKey(targetDir)) ?? []).map((entry) =>
+      entry.name.toLowerCase()
+    )
+  )
+
+  for (const source of roots) {
+    // 目标在源内部：等于把目录复制进它自己，递归下去会无限膨胀
+    if (paths.contains(source, targetDir)) continue
+
+    const name = paths.basename(source)
+    const to = paths.join(targetDir, name)
+
+    // 同目录原地复制不走"目标已存在"报错，而是取一个不冲突的副本名
+    const base = paths.basename(name)
+    const dot = base.lastIndexOf('.')
+    const stem = dot > 0 ? base.slice(0, dot) : base
+    const ext = dot > 0 ? base.slice(dot) : ''
+
+    let finalName = base
+    let candidate = to
+    let index = 1
+    while (taken.has(finalName.toLowerCase())) {
+      finalName = `${stem} copy${index > 1 ? ` ${index}` : ''}${ext}`
+      candidate = paths.join(targetDir, finalName)
+      index += 1
+    }
+
+    taken.add(finalName.toLowerCase())
+    copies.push({ from: source, to: candidate })
+  }
+
+  return copies
+}
+
 /** 移动后刷新源目录（可能多个）并展开目标目录，让用户看得见结果 */
 async function refreshAfterMove(
   moves: { from: string; to: string }[],
   targetDir: string
 ): Promise<void> {
+  // 刷新只重读「缓存里已有键」的目录。planMoves 里的目标目录由 paths.join
+  // 拼成（正斜杠），而缓存键是主进程返回的反斜杠路径，直接拿去 has() 会
+  // 查不到 —— 于是刷新被静默跳过，界面停在"移动前"的旧内容上。
+  // 统一走 toCacheKey 换成缓存那套写法再查。
+  const targetKey = toCacheKey(targetDir)
   for (const dir of new Set(moves.map((move) => paths.dirname(move.from)))) {
-    await refreshDirectory(dir)
+    await refreshDirectory(toCacheKey(dir))
   }
-  await expandDirectory(targetDir)
+  // 目标目录也要重读：它很可能已经因为"点进去看过"而缓存着旧内容，
+  // 只 expand 不 refresh 的话，搬进去的文件会一直不出现（expandDirectory
+  // 见缓存已存在就不再读盘）。
+  await refreshDirectory(targetKey)
+  await expandDirectory(targetKey)
 }
 
 /** 把受影响的已打开文档改到新路径（目录重命名时其下所有文档都要改） */

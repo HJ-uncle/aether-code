@@ -28,6 +28,12 @@ export interface WorkspaceState {
   selection: Set<string>
   /** 连选的起点（上次点击的行），Shift 点击时以它为另一端 */
   selectionAnchor: string | null
+  /**
+   * 文件剪贴板。mode 决定粘贴时是「移动」还是「复制」：
+   * 剪切必须显式记录，否则粘贴时无从区分二者（系统剪贴板只给内容不给意图）。
+   * 不落地、不跨进程 —— 进程重启后谈"粘贴上次剪切的东西"没有意义。
+   */
+  clipboard: { paths: string[]; mode: 'copy' | 'cut' } | null
 }
 
 let state: WorkspaceState = {
@@ -38,7 +44,8 @@ let state: WorkspaceState = {
   error: null,
   activeFilePath: null,
   selection: new Set(),
-  selectionAnchor: null
+  selectionAnchor: null,
+  clipboard: null
 }
 
 const listeners = new Set<() => void>()
@@ -145,6 +152,17 @@ export async function refreshDirectory(dir: string): Promise<void> {
   }
 }
 
+/**
+ * 收起全部目录，但保留 root 本身已加载的子项。
+ *
+ * 只清 expanded，不清 children：缓存留着，用户再展开时是瞬时的，
+ * 不必重新读盘。换根目录才需要丢掉缓存（见 openFolderAt）。
+ */
+export function collapseAll(): void {
+  if (state.expanded.size === 0) return
+  setState({ expanded: new Set() })
+}
+
 /** 记录当前打开的文件（用于文件树高亮） */
 export function setActiveFile(filePath: string | null): void {
   setState({ activeFilePath: filePath })
@@ -226,6 +244,26 @@ export function selectAllVisible(order: string[]): void {
 export function clearSelection(): void {
   if (state.selection.size === 0 && state.selectionAnchor === null) return
   setState({ selection: new Set(), selectionAnchor: null })
+}
+
+/**
+ * 写入文件剪贴板。
+ *
+ * 空数组视为"清空剪贴板"而不是"记住了 0 个"：否则粘贴项会一直可点，
+ * 点下去却什么都不发生。
+ */
+export function setClipboard(paths: string[], mode: 'copy' | 'cut'): void {
+  setState({ clipboard: paths.length > 0 ? { paths: [...paths], mode } : null })
+}
+
+export function getClipboard(): { paths: string[]; mode: 'copy' | 'cut' } | null {
+  return state.clipboard
+}
+
+/** 粘贴完成后清掉剪贴板：剪切的语义是一次性的，系统的复制也只在粘贴后失效于该次 */
+export function clearClipboard(): void {
+  if (!state.clipboard) return
+  setState({ clipboard: null })
 }
 
 /** 订阅工作区状态（store 内部整体替换 state，引用稳定可作快照） */

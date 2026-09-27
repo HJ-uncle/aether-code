@@ -14,6 +14,7 @@ import { MonacoEditor } from './MonacoEditor'
 export function DocumentView({ filePath }: { filePath: string }): JSX.Element {
   const editor = useEditor()
   const doc = editor.docs.get(filePath)
+  const cursor = editor.cursor
 
   if (!doc) {
     return (
@@ -56,6 +57,9 @@ export function DocumentView({ filePath }: { filePath: string }): JSX.Element {
     return <FilePreview name={doc.name} path={doc.path} base64={doc.base64} size={doc.size} />
   }
 
+  // 非激活标签也要挂载：EditorArea 只渲染激活的文档，故这里恒为激活文档。
+  // 但光标读数仍要按「光标报告的是哪个文件」过滤：切标签的瞬间 cursor 可能
+  // 还停在上一个文件，直接显示会闪出错文件的行列号。
   return (
     <div className="doc-view">
       {doc.truncated ? (
@@ -71,6 +75,13 @@ export function DocumentView({ filePath }: { filePath: string }): JSX.Element {
       />
       <footer className="doc-view__status">
         <span>{doc.content.length.toLocaleString()} 字符</span>
+        {/* 光标位置：VS Code 放在这里而不是全局状态栏 —— 它属于「这个文件」，
+            标签一换就该跟着消失，用文档自身的订阅即可，不必让状态栏去猜 */}
+        {cursor && cursor.filePath === doc.path ? (
+          <span data-testid="doc-cursor">
+            行 {cursor.line}，列 {cursor.column}
+          </span>
+        ) : null}
         {isDirty(doc) ? <span className="doc-view__dirty">● 未保存</span> : <span>已保存</span>}
       </footer>
     </div>
