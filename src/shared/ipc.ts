@@ -1,0 +1,485 @@
+/**
+ * 主进程 ↔ 渲染进程 共享契约
+ *
+ * 这里是唯一的协议真相来源：IPC 通道名、载荷类型、引擎状态机。
+ * 主进程与渲染进程都必须只依赖本文件，避免两侧类型漂移。
+ */
+
+// ==================== IPC 通道 ====================
+
+export const IPC = {
+  /** 渲染进程 → 主进程（invoke） */
+  invoke: {
+    engineGetSnapshot: 'engine:get-snapshot',
+    engineStart: 'engine:start',
+    engineStop: 'engine:stop',
+    engineRestart: 'engine:restart',
+    engineRequest: 'engine:request',
+    engineStreamStart: 'engine:stream:start',
+    engineStreamAbort: 'engine:stream:abort',
+    settingsGet: 'settings:get',
+    settingsUpdate: 'settings:update',
+    /** 文件系统（IDE 本地实现） */
+    fsPickFolder: 'fs:pick-folder',
+    fsReadDir: 'fs:read-dir',
+    fsReadFile: 'fs:read-file',
+    fsWriteFile: 'fs:write-file',
+    fsCreateFile: 'fs:create-file',
+    fsCreateFolder: 'fs:create-folder',
+    fsRename: 'fs:rename',
+    fsTrash: 'fs:trash',
+    fsStat: 'fs:stat',
+    /** 递归列出工作区全部文件（快速打开 Ctrl+P 用，跳过依赖/构建目录） */
+    fsListAll: 'fs:list-all',
+    /** 复制本地文件到工作区（聊天附件用：File 对象出于安全拿不到真实路径，只能走字节流） */
+    fsCopyIntoWorkspace: 'fs:copy-into-workspace',
+    /** 版本控制（IDE 自己跑 git，只读） */
+    gitStatus: 'git:status',
+    gitLog: 'git:log',
+    /** 全局搜索（git grep 优先，非仓库退回文件遍历） */
+    searchQuery: 'search:query',
+    /** 全局替换（按搜索条件对命中文件批量替换） */
+    searchReplace: 'search:replace',
+    /** 替换预览（执行全部替换前展示 before → after） */
+    searchReplacePreview: 'search:replace-preview',
+    /** 终端（node-pty，单实例） */
+    terminalCreate: 'terminal:create',
+    terminalWrite: 'terminal:write',
+    terminalResize: 'terminal:resize',
+    terminalDispose: 'terminal:dispose',
+    /** 窗口控制（自绘标题栏：无边框窗口下由渲染层按钮驱动） */
+    windowMinimize: 'window:minimize',
+    windowToggleMaximize: 'window:toggle-maximize',
+    windowClose: 'window:close',
+    windowIsMaximized: 'window:is-maximized'
+  },
+  /** 主进程 → 渲染进程（send） */
+  event: {
+    engineSnapshot: 'engine:snapshot',
+    engineLog: 'engine:log',
+    streamEvent: 'engine:stream:event',
+    terminalData: 'terminal:data',
+    terminalExit: 'terminal:exit'
+  }
+} as const
+
+// ==================== 终端 ====================
+
+/** 创建终端的入参：cols/rows 来自前端 xterm 尺寸，cwd 为空时用用户主目录 */
+export interface TerminalCreateInput {
+  cwd?: string
+  cols: number
+  rows: number
+}
+
+export interface TerminalExitInfo {
+  id: string
+  exitCode: number
+}
+
+export interface TerminalDataEvent {
+  id: string
+  chunk: string
+}
+
+// ==================== 全局搜索 ====================
+
+export interface SearchHit {
+  /** 工作区内相对路径（统一 / 分隔） */
+  path: string
+  /** 1 起始行号 */
+  line: number
+  /** 命中行文本（原始行，未去缩进） */
+  text: string
+}
+
+/** 搜索选项（与 VS Code 搜索视图的开关一一对应） */
+export interface SearchOptions {
+  /** 区分大小写（VS Code 的 Aa） */
+  caseSensitive: boolean
+  /** 全字匹配（VS Code 的 ab） */
+  wholeWord: boolean
+  /** 正则表达式（VS Code 的 .*） */
+  useRegex: boolean
+  /** 包含文件 glob，逗号分隔；空 = 全部 */
+  include: string
+  /** 排除文件 glob，逗号分隔 */
+  exclude: string
+}
+
+export interface SearchOutcome {
+  hits: SearchHit[]
+  /** 命中数达到上限，结果不完整 */
+  truncated: boolean
+  /** 实际采用的搜索方式：git grep 或文件遍历（用于结果区提示） */
+  strategy: 'git' | 'scan'
+  /** 模式非法等用户可修复的错误（如正则语法错误）；有错误时 hits 为空 */
+  error?: string
+}
+
+export interface ReplaceOutcome {
+  /** 被修改文件的相对路径 */
+  files: string[]
+  /** 替换总次数 */
+  replacements: number
+  error?: string
+}
+
+/** 替换预览的单行变更（before → after） */
+export interface ReplacePreviewLine {
+  line: number
+  before: string
+  after: string
+}
+
+export interface ReplacePreviewFile {
+  path: string
+  lines: ReplacePreviewLine[]
+}
+
+/** 替换预览（照搬 VS Code Replace Preview：执行前确认每处变更） */
+export interface ReplacePreviewOutcome {
+  files: ReplacePreviewFile[]
+  /** 真实替换总数（预览行数有展示上限，两者可能不同） */
+  total: number
+  /** 预览展示是否被截断 */
+  truncated: boolean
+  error?: string
+}
+
+// ==================== 引擎状态 ====================
+
+/** 引擎运行方式：本地子进程 / 远端服务 */
+export type EngineMode = 'embedded' | 'remote'
+
+/** 引擎生命周期阶段 */
+export type EnginePhase =
+  | 'idle' // 未启动
+  | 'installing' // 正在安装运行时（解压/下载）
+  | 'starting' // 进程已拉起，等待 /health
+  | 'ready' // 可用
+  | 'stopping' // 正在关闭
+  | 'error' // 启动失败或异常退出
+
+export interface EngineSnapshot {
+  mode: EngineMode
+  phase: EnginePhase
+  /** 可用时的引擎地址，如 http://127.0.0.1:12323 */
+  baseUrl: string
+  port: number | null
+  /** 引擎子进程 PID（远端模式或复用已运行引擎时为 null） */
+  pid: number | null
+  /**
+   * 是否为「复用已有引擎」：
+   * 首选端口上已存在健康引擎时不再另起一个（避免两个引擎同时打开同一个
+   * SQLite 文件），此时该进程不由本应用启动，stop() 只能断开连接。
+   */
+  adopted: boolean
+  /** 运行时入口脚本路径（embedded 模式） */
+  entryPath: string | null
+  version: string | null
+  /** 数据目录（SQLite 文件路径） */
+  dataDir: string | null
+  error: string | null
+  updatedAt: number
+}
+
+export interface EngineLogEntry {
+  level: 'info' | 'warn' | 'error'
+  line: string
+  ts: number
+}
+
+// ==================== 设置 ====================
+
+/**
+ * 界面外观。
+ *
+ * 'system' 表示跟随操作系统：由渲染层用 prefers-color-scheme 判定，
+ * 并把结果落到 <html data-appearance>。之所以不在主进程判定，
+ * 是因为主进程读不到渲染层的媒体查询状态，且系统主题在运行中可能变化。
+ */
+export type Appearance = 'system' | 'dark' | 'light'
+
+/** 强调色。取值对应 tokens.css 里的 [data-accent='*'] 覆盖块。 */
+export type AccentColor = 'blue' | 'purple' | 'pink' | 'orange' | 'green' | 'graphite'
+
+export interface AppSettings {
+  /** 引擎运行方式 */
+  engineMode: EngineMode
+  /** embedded 模式首选端口，冲突时自动递增 */
+  preferredPort: number
+  /** remote 模式远端地址 */
+  remoteBaseUrl: string
+  /** 应用启动时是否自动拉起引擎 */
+  autoStartEngine: boolean
+  /** 上次使用的会话 ID */
+  lastSessionId: string
+  /** 上次使用的 Agent ID（空表示不指定） */
+  lastAgentId: string
+  /** 上次选中的模型 modelId（空表示用引擎默认） */
+  lastModelId: string
+  /**
+   * 思考模式偏好（会话无关，跨会话沿用）。
+   *
+   * 三态：'default' 不传该字段，交给引擎按模型能力判断；
+   * 'on' / 'off' 分别透传 thinkingMode=true/false 强制开关。
+   * 之所以不给布尔加「未设置」，是因为引擎把「不传」和「false」
+   * 视为两种不同语义（后者是显式关闭）。
+   */
+  thinkingMode: 'default' | 'on' | 'off'
+  /** 上次打开的工作区文件夹（空表示未打开） */
+  lastFolder: string
+  /** 界面明暗外观 */
+  appearance: Appearance
+  /** 界面强调色 */
+  accent: AccentColor
+}
+
+export const DEFAULT_SETTINGS: AppSettings = {
+  engineMode: 'embedded',
+  preferredPort: 12323,
+  remoteBaseUrl: '',
+  autoStartEngine: true,
+  lastSessionId: '',
+  lastAgentId: '',
+  lastModelId: '',
+  thinkingMode: 'default',
+  lastFolder: '',
+  appearance: 'system',
+  accent: 'purple'
+}
+
+// ==================== 引擎 HTTP 契约 ====================
+
+/**
+ * 引擎统一响应体（见引擎侧 response.ts）。
+ *
+ * 注意：引擎对业务错误同样返回 HTTP 200，错误信息在 body.code 中，
+ * 因此调用方**不能**依赖 HTTP 状态码判断成败。
+ */
+export interface StandardResponse<T = unknown> {
+  code: number
+  message: string
+  data: T | null
+  pagination?: {
+    current: number
+    pageSize: number
+    total: number
+    totalPages: number
+  }
+  metadata?: Record<string, unknown>
+  timestamp: number
+}
+
+export interface EngineRequestInput {
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+  /** 相对 /api/v1 的路径，如 '/agents'；以 /health、/models、/metrics 开头时按根路径处理 */
+  path: string
+  query?: Record<string, string | number | boolean | undefined>
+  body?: unknown
+}
+
+export interface EngineRequestResult<T = unknown> {
+  ok: boolean
+  /** 引擎返回的 code（ok=false 时用于区分业务错误） */
+  code: number
+  message: string
+  data: T | null
+  pagination?: StandardResponse['pagination']
+}
+
+// ==================== SSE 流式契约 ====================
+
+/**
+ * 引擎会话待办项（todo 工具持久化的清单，见引擎 storage/todo）。
+ * 随 `todo` SSE 帧整表下发，客户端据此渲染任务托盘。
+ */
+export interface EngineTodo {
+  id: string
+  title: string
+  description?: string
+  status: 'pending' | 'in_progress' | 'done' | 'cancelled'
+  priority: 'low' | 'medium' | 'high'
+  dueAt?: number
+}
+
+/**
+ * 引擎 SSE 的 data 帧负载（见引擎侧 sse-sink.ts）。
+ * 同一帧只会出现其中一个字段，用可选字段而非联合类型以便透传未知帧。
+ */
+export interface ChatSsePayload {
+  content?: string
+  thinking?: string
+  toolStart?: unknown
+  toolArgs?: unknown
+  toolEnd?: unknown
+  toolCall?: unknown
+  toolResult?: unknown
+  ask_user?: unknown
+  userMsgId?: string
+  permissionRequest?: unknown
+  messageBlock?: unknown
+  flow?: unknown
+  /** 会话待办清单快照（\x00__todo__ 控制帧） */
+  todo?: { todos?: EngineTodo[] }
+  /** 文件改动记录（\x00__file_change__ 控制帧，write_file/delete_file 后下发） */
+  fileChange?: EngineFileChange
+  usage?: unknown
+}
+
+/**
+ * 引擎记录的单条文件改动（见引擎侧 storage/changes）。
+ * 老内容/新内容用于渲染 git 风格 diff；内容过大或二进制时两者为 null（truncated=true）。
+ */
+export interface EngineFileChange {
+  id: string
+  /** 引擎工作区视角的绝对路径 */
+  path: string
+  kind: 'write' | 'delete'
+  /** null = 写入前文件不存在（新建）或内容未存档 */
+  oldContent: string | null
+  /** null = 文件被删除或内容未存档 */
+  newContent: string | null
+  /** 任一侧内容超限未入库，此时无法自动撤回 */
+  truncated: boolean
+  status: 'pending' | 'kept' | 'reverted'
+  createdAt: number
+  /** 工具入参里的原始路径（展示用，可能与绝对路径不同） */
+  displayPath?: string
+  /** true = 本次写入创建了新文件 */
+  isNew?: boolean
+  /** 关联的工具调用 ID（fileChange 帧附带，用于把改动挂到对应工具卡片） */
+  toolCallId?: string
+}
+
+/** 主进程转发给渲染进程的流式事件 */
+export type StreamEvent =
+  | { streamId: string; type: 'payload'; payload: ChatSsePayload }
+  | { streamId: string; type: 'done' }
+  | { streamId: string; type: 'error'; message: string }
+
+export interface StreamStartInput {
+  streamId: string
+  path: string
+  body: unknown
+}
+
+// ==================== 文件系统契约 ====================
+
+/**
+ * 文件系统由 IDE 自己实现，不走引擎的 workspace API。
+ *
+ * 原因（实测确认）：引擎的 /workspace 路由只把 { tenantId, sessionId } 传给
+ * getPaths()，返回的永远是沙箱目录 `<WORKSPACE_ROOT>/<tenantId>/<sessionId>`；
+ * 能绑定任意目录的 workspacePaths 字段只有 /chat 会读。
+ * 加上其树接口是一次性递归、过滤隐藏文件、文本 500KB 截断，不适合做 IDE。
+ * 因此本地模式下由主进程直接访问真实文件系统（与本地终端同一思路）。
+ */
+
+export interface FsEntry {
+  name: string
+  /** 绝对路径 */
+  path: string
+  isDirectory: boolean
+  size: number
+  mtimeMs: number
+}
+
+export interface FsFileContent {
+  path: string
+  /** 文本文件为原文；二进制文件为空（用 base64 字段） */
+  content: string
+  /** 二进制文件的内容（base64） */
+  base64?: string
+  isBinary: boolean
+  size: number
+  /** 文本超过阈值被截断 */
+  truncated: boolean
+  /**
+   * 二进制文件超过预览上限，未读取内容（base64 为空）。
+   *
+   * 存在的理由：base64 会把整份文件驻留内存并膨胀 4/3，一个 2 GB 的视频
+   * 足以让主进程 OOM。因此超限时明确拒绝预览，而不是硬读。
+   */
+  tooLarge?: boolean
+}
+
+export interface FsStat {
+  path: string
+  isDirectory: boolean
+  size: number
+  mtimeMs: number
+}
+
+/**
+ * 复制本地文件到工作区的入参。
+ *
+ * File 对象出于浏览器安全拿不到真实磁盘路径，因此只能把字节流传过来。
+ * `fileName` 只用于命名；落盘位置固定在 `root/.aether/attachments/`，
+ * 避免污染用户项目。
+ */
+export interface CopyIntoWorkspaceInput {
+  /** 目标工作区根目录（须为已授权根） */
+  root: string
+  /** 原始文件名（用于取扩展名 + 命名） */
+  fileName: string
+  /** 文件字节（Uint8Array，经 structured clone 传输） */
+  data: Uint8Array
+}
+
+export interface CopyIntoWorkspaceResult {
+  /** 落盘的绝对路径 */
+  path: string
+  /** 相对工作区根的路径 —— 引擎的 attachments[].name 用的就是这个 */
+  relativePath: string
+  size: number
+}
+
+// ==================== 版本控制契约 ====================
+
+/**
+ * 版本控制由 IDE 自己实现（主进程直接调用 git），不走引擎。
+ *
+ * 原因：引擎只有通用的 cmd 工具，而 git 状态是「编辑器视角」的只读信息，
+ * 让 Agent 去跑命令既没必要（每次都要过安全策略、来回一趟 SSE）
+ * 也不可靠（输出要靠模型转述）。IDE 直接跑 `git status/log` 最快也最准。
+ *
+ * 刻意只提供**只读**能力：stage/commit 属于写操作，误操作成本高，
+ * 且完全可以在终端里做，不在本批次范围内。
+ */
+
+/** 单个文件在 git 视角下的状态 */
+export interface GitFileChange {
+  /** 相对工作区根的路径（git 原样输出） */
+  path: string
+  /** 暂存区状态字符：M/A/D/R/C/U/?（? 表示未跟踪） */
+  indexStatus: string
+  /** 工作区状态字符 */
+  workTreeStatus: string
+  /** 是否有已暂存的改动（暂存列不是空格或 ?） */
+  staged: boolean
+}
+
+export interface GitStatus {
+  /** 不是 git 仓库时为 false，其余字段无意义 */
+  isRepo: boolean
+  /** 当前分支名；分离头指针时 git 会给出 HEAD */
+  branch: string
+  /** 相对上游的领先提交数；没有上游时为 null */
+  ahead: number | null
+  /** 相对上游的落后提交数；没有上游时为 null */
+  behind: number | null
+  changes: GitFileChange[]
+}
+
+export interface GitCommit {
+  hash: string
+  shortHash: string
+  subject: string
+  author: string
+  /** ISO 8601 时间（git 原样输出，展示时再格式化） */
+  date: string
+  /** 引用装饰（分支/标签），空串表示没有 */
+  refs: string
+}

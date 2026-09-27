@@ -1,0 +1,121 @@
+/**
+ * 基础层（Base）
+ *
+ * 只放「全局性」的样式：重置、元素默认值、焦点环、滚动条。
+ * 这里不定义任何具体的控件外观 —— 那属于 components.css。
+ *
+ * 焦点环策略：统一由 :focus-visible 驱动，键盘导航才出现，
+ * 鼠标点击不留下"选中框"。这是 HIG 与 Web 无障碍的共识做法。
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg-app);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+input,
+textarea {
+  font-family: inherit;
+  font-size: inherit;
+  /* 文本插入光标也吃强调色：与焦点环、选中态同一套交互语义 */
+  caret-color: var(--accent);
+}
+
+/* 文本选区：强调色低饱和底 —— 全局着色范围的最后一块拼图，
+   让"选中"这件事在整个 IDE 里有一致的颜色语言 */
+::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+pre {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ==================== 焦点环 ==================== */
+
+/* 全局兜底：只在键盘操作时出现，鼠标点击不该留下"选中框" */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* 已经自带浮层阴影的元素，焦点环要叠在阴影之上而不是覆盖掉它 */
+.popover__panel:focus-visible,
+.modal:focus-visible,
+.palette:focus-visible,
+.context-menu:focus-visible,
+.menu-bar__dropdown:focus-visible {
+  box-shadow: var(--material-shadow), var(--material-highlight), var(--focus-ring);
+}
+
+/* 输入控件：键盘聚焦时用"边框染色 + 环"双保险，
+   只染边框在浅色外观下太弱，只画环又会被 overflow 裁掉 */
+.field__input:focus-visible,
+.palette__input:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+/* ==================== 滚动条 ==================== */
+
+/*
+ * 用「透明边框 + content-box 裁剪」做出留白效果：滑块视觉宽度比轨道窄，
+ * 这样滚动条不会显得像一条实心色带贴在边缘。
+ */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}

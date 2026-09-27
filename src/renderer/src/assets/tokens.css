@@ -1,0 +1,348 @@
+/**
+ * 设计令牌（Design Tokens）
+ *
+ * 这是全局样式的「唯一事实来源」。所有颜色、圆角、间距、材质、层级都定义在这里，
+ * components.css 只允许引用变量，不允许写死颜色值。这样维护成本从
+ * 「N 个组件 × M 个主题」降到「1 份令牌 × M 个主题」。
+ *
+ * ── 主题切换机制 ──
+ * 主题通过 <html> 上的两个 data 属性驱动，由 App 在启动与设置变更时写入：
+ *   data-appearance = 'dark' | 'light'   → 决定整套灰阶与材质
+ *   data-accent     = 'blue' | 'purple' | ... → 决定强调色
+ * 两个维度正交，可以任意组合，因此这里拆成两组独立的覆盖块：
+ *   [data-appearance='light'] 只覆盖灰阶/文字/材质
+ *   [data-accent='purple']    只覆盖强调色相关的 4 个变量
+ * 之所以不让 JS 计算颜色再内联到 <html>，是因为那样无法享受 CSS 的级联，
+ * 也没法做「跟随系统」——跟随系统必须交给 prefers-color-scheme 媒体查询。
+ *
+ * ── 视觉规范 ──
+ * 对齐 Apple Human Interface Guidelines：
+ *   - 分层用「系统灰阶」表达深度（基底层 → 内容层 → 抬升层），而非靠描边堆叠
+ *   - 圆角偏大且分级（控件 6px / 容器 8px / 卡片 10px / 浮层 12px）
+ *   - 描边只做「最低限度的分离」，主线是灰阶与留白
+ *   - 浮层与标题栏用「磨砂玻璃」材质，模拟 macOS 的 NSVisualEffectView
+ *
+ * ── 材质（material）体系 ──
+ * 所有"浮在内容之上"的表面（弹窗 / 浮层 / 菜单 / 标题栏 / 命令面板）一律用
+ * --material-* 这一组令牌，而不是各自写 background + box-shadow。
+ * 原因有两个：一是磨砂表面必须同时协调「底色 / 描边 / 顶部高光 / 投影」四件事，
+ * 散落各处必然调不齐；二是明暗切换时只需要在这里改一组值，不必翻遍每个组件。
+ */
+
+/* ==================== 尺寸与节奏（与主题无关，不随明暗变化） ==================== */
+
+:root {
+  --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'PingFang SC',
+    'Microsoft YaHei', sans-serif;
+  --font-mono: 'SF Mono', 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
+
+  /* 圆角分级（HIG：控件小而圆、容器大而圆） */
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  /* 浮层/弹窗专用：比容器更圆，是 macOS 面板的标志性特征 */
+  --radius-panel: 12px;
+
+  /* 控件尺寸（macOS 标准控件高度偏紧凑，正文 13px） */
+  --control-h: 24px;
+  --control-h-lg: 28px;
+
+  /* 间距节奏：4 的倍数为基准，控件内边距 / 区块间距都从这里取，避免 5px、7px 这类碎值 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+
+  /* 层级（z-index）：越靠后的用途越"浮"在上层，新浮层一律从这里取值 */
+  --z-content: 1; /* 内容里需要抬起的自绘元素 */
+  --z-sticky: 10; /* 粘性表头/工具栏 */
+  --z-popover: 100; /* 浮层：popover / 下拉菜单 / 选择器 */
+  --z-overlay: 200; /* 遮罩：模态框、命令面板 */
+
+  --activity-bar-w: 48px;
+  --status-bar-h: 24px;
+}
+
+/* ==================== 深色外观（默认） ==================== */
+
+:root,
+[data-appearance='dark'] {
+  /* 灰阶层级：app(最底) → surface(侧栏/面板) → elevated(浮层/卡片) → input(输入控件) */
+  --bg-app: #1c1c1e;
+  --bg-surface: #232325;
+  --bg-elevated: #2c2c2e;
+  --bg-input: #3a3a3c;
+  --bg-hover: rgba(255, 255, 255, 0.055);
+  --bg-active: rgba(255, 255, 255, 0.1);
+  /* 选中态（列表/文件树里"被选中待操作"的行）。
+     比 hover / active 都更实：选中是持久状态，不能和"鼠标扫过"混为一谈。
+     深色底上用白色叠加，与 --bg-active 同向后微调即可。 */
+  --bg-selected: rgba(255, 255, 255, 0.14);
+
+  /* 描边：HIG 用极低对比的 hairline，避免「表格感」 */
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  /* 文字四级灰阶（macOS label 体系） */
+  --fg: #e5e5e7;
+  --fg-strong: #ffffff;
+  --fg-muted: #9a9a9e;
+  --fg-faint: #6e6e73;
+
+  /* 语义色（macOS Dark） */
+  --danger: #ff453a;
+  --warn: #ffd60a;
+  --ok: #32d74b;
+  /* 语义色的浅色文字版：深色底上直接用 --danger 当文字会偏暗，
+     单独给一个提亮版本，避免每个组件各自 rgba() 调 */
+  --danger-fg: #f19c9c;
+  --ok-fg: #7ee08b;
+  /* 语义色的低饱和大面积底：错误提示条、失败徽章等 */
+  --danger-soft: rgba(241, 76, 76, 0.14);
+  --ok-soft: rgba(50, 215, 75, 0.14);
+  --warn-soft: rgba(255, 214, 10, 0.14);
+  /* 压在 --danger 实底上的文字色：危险是安全色，不随强调色变 */
+  --danger-contrast: #ffffff;
+
+  /* 安全/不可用表面：用于禁用态、只读区、代码块底 */
+  --bg-inset: rgba(0, 0, 0, 0.22);
+
+  /* ── 材质：浮起的表面（磨砂玻璃） ──
+     配方 = 半透明底色 + blur + 饱和度提升 + 描边 + 顶部高光 + 投影，
+     对齐 macOS NSVisualEffectView 的四层结构。底色 alpha 取 ~0.85：
+     模糊后的背景以极低对比透出，有玻璃的层次感，又不影响正文可读。
+     *_solid 是 backdrop-filter 不可用时的回退底色（见文件末尾 @supports），
+     宁可退成实心，也不允许出现"半透明但不模糊"的穿透观感。 */
+  --material-bg: rgba(44, 44, 46, 0.85);
+  --material-bg-solid: #2c2c2e;
+  /* 更厚的材质：模态弹窗、命令面板这类压在滚动正文上的表面 */
+  --material-bg-thick: rgba(38, 38, 40, 0.92);
+  --material-bg-thick-solid: #262628;
+  /* 更薄的材质：标题栏。透出身后灰阶是加分项 */
+  --material-bg-thin: rgba(30, 30, 32, 0.78);
+  --material-blur: 28px;
+  /* 顶部 1px 高光：macOS 面板受光后边缘那圈亮线，是"玻璃感"的关键一半；
+     只靠投影会像一块不透明的塑料片 */
+  --material-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --material-border: rgba(255, 255, 255, 0.1);
+  --material-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  /* 遮罩黑度：浅色外观下要更浅，否则对比过强像"关灯" */
+  --overlay-bg: rgba(0, 0, 0, 0.36);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.16);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
+
+  /* 焦点环：颜色跟随强调色，由下方 --accent-* 派生 */
+  --focus-ring-w: 3px;
+  --focus-ring: 0 0 0 var(--focus-ring-w) var(--focus-ring-color);
+  --focus-ring-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* ==================== 浅色外观 ==================== */
+
+/*
+ * 只覆盖「会随明暗变化」的那部分令牌：灰阶方向反转、文字反转、材质变亮。
+ * 圆角/间距/层级不在此重复定义 —— 它们与明暗无关。
+ *
+ * 注意浅色下 --bg-* 的排列方向仍然是 app < surface < elevated（越浮越亮），
+ * 只是绝对亮度整体抬高、层间对比收窄：macOS 浅色模式里相邻层级只差 2~3% 亮度，
+ * 拉开太多就变成"灰块堆叠"，失去 HIG 的轻盈感。
+ */
+[data-appearance='light'] {
+  --bg-app: #f2f2f4;
+  --bg-surface: #fafafa;
+  --bg-elevated: #ffffff;
+  --bg-input: #ffffff;
+  /* 浅色下 hover 要用"加黑"而不是"加白"，方向必须反转 */
+  --bg-hover: rgba(0, 0, 0, 0.045);
+  --bg-active: rgba(0, 0, 0, 0.08);
+  --bg-selected: rgba(0, 0, 0, 0.12);
+
+  --border: rgba(0, 0, 0, 0.1);
+  --border-strong: rgba(0, 0, 0, 0.18);
+
+  --fg: #2b2b2e;
+  --fg-strong: #000000;
+  --fg-muted: #6e6e73;
+  --fg-faint: #9a9a9e;
+
+  /* 语义色（macOS Light）：比 Dark 版更深，浅底上才有足够对比 */
+  --danger: #d70015;
+  --warn: #b25000;
+  --ok: #1a7f37;
+  --danger-fg: #b3261e;
+  --ok-fg: #1a7f37;
+  /* 浅色下软底的透明度要更低：同样的 alpha 在亮底上会显得脏 */
+  --danger-soft: rgba(215, 0, 21, 0.08);
+  --ok-soft: rgba(26, 127, 55, 0.1);
+  --warn-soft: rgba(178, 80, 0, 0.1);
+  --danger-contrast: #ffffff;
+
+  --bg-inset: rgba(0, 0, 0, 0.05);
+
+  /* 浅色材质整体提亮，玻璃感靠模糊后的白雾呈现（macOS 浅色窗口的质感） */
+  --material-bg: rgba(255, 255, 255, 0.78);
+  --material-bg-solid: #ffffff;
+  --material-bg-thick: rgba(252, 252, 254, 0.88);
+  --material-bg-thick-solid: #fbfbfd;
+  --material-bg-thin: rgba(246, 246, 248, 0.72);
+  /* 高光反转：浅色面板的"受光边"在顶部应更白，而描边要变暗 */
+  --material-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --material-border: rgba(0, 0, 0, 0.08);
+  --material-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
+  --overlay-bg: rgba(0, 0, 0, 0.2);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.2);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.35);
+}
+
+/* ==================== 强调色 ==================== */
+
+/*
+ * 只定义 4 个变量，其余全部派生：
+ *   --accent      实底填充（按钮、选中行、开关）
+ *   --accent-hover 悬停时略亮/略深
+ *   --accent-fg   压在 --accent 上的文字色（浅色系强调色要用深色字）
+ *   --accent-soft 强调色的低饱和大面积底（标签、浅色徽章）
+ *
+ * 焦点环与选中态阴影都通过 color-mix 从 --accent 派生，所以新增一套强调色
+ * 只要写 4 行，不需要逐个控件去改 —— 这是把主题做成令牌体系的主要收益。
+ *
+ * 色彩取自 macOS 系统偏好设置 → 外观 → 强调色：
+ * 每个色相都给了 Dark / Light 两个版本，因为同一色相在深底和浅底上
+ * 需要不同的明度才能保证「填充不俗气、文字可读」。
+ */
+
+/* 默认强调色：紫色。:root 与 [data-accent='purple'] 绑定在一起，
+   没有显式选择强调色时（老配置/新装）由这里兜底 */
+:root,
+[data-accent='purple'] {
+  --accent: #bf5af2;
+  --accent-hover: #cd7bf6;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(191, 90, 242, 0.18);
+}
+
+[data-accent='blue'] {
+  --accent: #0a84ff;
+  --accent-hover: #3d9bff;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(10, 132, 255, 0.16);
+}
+
+[data-accent='pink'] {
+  --accent: #ff375f;
+  --accent-hover: #ff5c7c;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(255, 55, 95, 0.16);
+}
+
+[data-accent='orange'] {
+  --accent: #ff9f0a;
+  --accent-hover: #ffb340;
+  /* 橙色明度高，白字对比不足，改用深色字（macOS 自身也是这么处理橙色标签的） */
+  --accent-fg: #1c1c1e;
+  --accent-soft: rgba(255, 159, 10, 0.18);
+}
+
+[data-accent='green'] {
+  --accent: #32d74b;
+  --accent-hover: #5ce070;
+  --accent-fg: #1c1c1e;
+  --accent-soft: rgba(50, 215, 75, 0.18);
+}
+
+[data-accent='graphite'] {
+  --accent: #8e8e93;
+  --accent-hover: #a5a5a9;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(142, 142, 147, 0.2);
+}
+
+/* 浅色外观下的强调色：蓝/紫/粉/橙 统一压深，保证白字或黑字的对比都达标 */
+[data-appearance='light'][data-accent='blue'] {
+  --accent: #0071e3;
+  --accent-hover: #1a82f0;
+  --accent-soft: rgba(0, 113, 227, 0.12);
+}
+
+[data-appearance='light'][data-accent='purple'] {
+  --accent: #8944ab;
+  --accent-hover: #9c56bd;
+  --accent-soft: rgba(137, 68, 171, 0.12);
+}
+
+[data-appearance='light'][data-accent='pink'] {
+  --accent: #d70041;
+  --accent-hover: #e81a56;
+  --accent-soft: rgba(215, 0, 65, 0.12);
+}
+
+[data-appearance='light'][data-accent='orange'] {
+  --accent: #c76a00;
+  --accent-hover: #db7a0a;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(199, 106, 0, 0.12);
+}
+
+[data-appearance='light'][data-accent='green'] {
+  --accent: #1a7f37;
+  --accent-hover: #22964a;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(26, 127, 55, 0.12);
+}
+
+[data-appearance='light'][data-accent='graphite'] {
+  --accent: #6e6e73;
+  --accent-hover: #838388;
+  --accent-soft: rgba(110, 110, 115, 0.14);
+}
+
+/* ==================== 材质工具类 ==================== */
+
+/*
+ * 磨砂玻璃的统一样式。
+ *
+ * 早期版本曾在浮层上禁用 backdrop-filter：当时浮层还嵌在带 transform/filter
+ * 的容器里，Chromium 会退化成"半透明但不模糊"，背后的文字以锐利形态透出，
+ * 观感就是"穿透"。现在全部浮层都 portal 到 <body>（html/body 上没有任何
+ * filter/transform/opacity），backdrop 采样必然命中整页，玻璃材质得以恢复。
+ *
+ * 配方四件事缺一不可：
+ *   半透明底色（--material-bg）+ blur（--material-blur）+ saturate 提浓 +
+ *   顶部 1px 高光与投影（--material-highlight / --material-shadow）。
+ * 组件可以引用这些工具类，也可以自己拼同款四件套（components.css 的既有做法）。
+ */
+.material {
+  background: var(--material-bg);
+  border: 1px solid var(--material-border);
+  box-shadow: var(--material-shadow), var(--material-highlight);
+  backdrop-filter: blur(var(--material-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--material-blur)) saturate(180%);
+}
+
+.material--thick {
+  background: var(--material-bg-thick);
+}
+
+.material--thin {
+  background: var(--material-bg-thin);
+  backdrop-filter: blur(var(--material-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--material-blur)) saturate(180%);
+  box-shadow: var(--material-highlight);
+}
+
+/* 回退：无法模糊时退到实心材质，杜绝"半透明但不模糊"的穿透观感 */
+@supports not (backdrop-filter: blur(1px)) {
+  .material {
+    background: var(--material-bg-solid);
+  }
+
+  .material--thick {
+    background: var(--material-bg-thick-solid);
+  }
+
+  .material--thin {
+    background: var(--material-bg-solid);
+  }
+}

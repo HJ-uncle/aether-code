@@ -1,0 +1,150 @@
+import { useEffect, useRef, type JSX } from 'react'
+import '@xterm/xterm/css/xterm.css'
+import { useWorkspace } from '@renderer/core/workspace/workspace-store'
+import { watchTheme } from '@renderer/core/theme/palette'
+import { Icon } from '@renderer/workbench/icons'
+import {
+  clearActiveSession,
+  closeSession,
+  createLocalSession,
+  getTerminalState,
+  isSessionAttached,
+  isSessionDead,
+  markSessionAttached,
+  setActiveSession,
+  useTerminalStore,
+  type TerminalSession
+} from './terminal-store'
+import { buildTerminalTheme } from './terminal-theme'
+
+/**
+ * 终端视图（面板区）
+ *
+ * 形态对齐 VS Code：左侧终端内容区 + 右侧实例列表。
+ * 列表只是会话切换器——xterm 实例与会话绑定，切换靠 DOM 显隐，
+ * 后台会话的 shell 与滚动缓冲始终存活。
+ */
+export function TerminalView(): JSX.Element {
+  const workspace = useWorkspace()
+  const root = workspace.root
+  const state = useTerminalStore()
+
+  // 面板打开时无会话则自动建一个；creating 守卫住 StrictMode/竞态
+  useEffect(() => {
+    if (state.sessions.length === 0 && !state.creating) {
+      void createLocalSession(root ?? undefined)
+    }
+  }, [state.sessions.length, state.creating, root])
+
+  // 外观/强调色变化（含 'system' 模式的系统切换）→ 热更新全部存活会话的主题
+  useEffect(() => watchTheme(() => {
+    for (const session of getTerminalState().sessions) {
+      session.term.options.theme = buildTerminalTheme()
+    }
+  }), [])
+
+  return (
+    <div className="terminal-view" aria-label="终端">
+      <div className="terminal-view__main">
+        {state.sessions.map((session) => (
+          <SessionSlot key={session.id} session={session} active={session.id === state.activeId} />
+        ))}
+      </div>
+
+      <aside className="terminal-view__side" aria-label="终端列表">
+        <div className="terminal-view__side-actions">
+          <button
+            type="button"
+            className="terminal-view__side-btn"
+            title="清屏"
+            aria-label="清屏"
+            onClick={() => clearActiveSession()}
+          >
+            <Icon name="trash" size={13} />
+          </button>
+          <button
+            type="button"
+            className="terminal-view__side-btn"
+            title="新建终端"
+            aria-label="新建终端"
+            onClick={() => void createLocalSession(root ?? undefined)}
+          >
+            <Icon name="plus" size={13} />
+          </button>
+        </div>
+        <div className="terminal-view__list">
+          {state.sessions.map((session) => (
+            <Item key={session.id} session={session} active={session.id === state.activeId} />
+          ))}
+        </div>
+      </aside>
+    </div>
+  )
+}
+
+/** 右侧列表项：终端图标 + 标题，激活高亮，退出置灰，悬停显示关闭 */
+function Item({ session, active }: { session: TerminalSession; active: boolean }): JSX.Element {
+  const dead = isSessionDead(session.id)
+  return (
+    <div
+      role="tab"
+      aria-selected={active}
+      className={`terminal-view__item${active ? ' is-active' : ''}${dead ? ' is-dead' : ''}`}
+      onClick={() => setActiveSession(session.id)}
+    >
+      <Icon name="terminal" size={13} />
+      <span className="terminal-view__item-label">
+        {dead ? `${session.title}（已退出）` : session.title}
+      </span>
+      <button
+        type="button"
+        className="terminal-view__item-close"
+        aria-label={`关闭 ${session.title}`}
+        onClick={(event) => {
+          event.stopPropagation()
+          closeSession(session.id)
+        }}
+      >
+        <Icon name="close" size={11} />
+      </button>
+    </div>
+  )
+}
+
+/**
+ * 单个会话的挂载点。xterm 只能 open 一次，因此每个会话对应一个
+ * 常驻 DOM，用 display 显隐；激活时重新 fit 并把尺寸同步给传输层。
+ * attached 标记由 store 的登记表持有，这里只读不写会话对象。
+ */
+function SessionSlot({
+  session,
+  active
+}: {
+  session: TerminalSession
+  active: boolean
+}): JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    if (!isSessionAttached(session.id)) {
+      session.term.open(el)
+      markSessionAttached(session.id)
+    }
+    if (active) {
+      // display:none 期间 fit 会得到 0，激活后重新测量
+      session.fit.fit()
+      session.transport.resize(session.term.cols, session.term.rows)
+      session.term.focus()
+    }
+  }, [active, session])
+
+  return (
+    <div
+      ref={ref}
+      className="terminal-view__session"
+      style={{ display: active ? 'block' : 'none' }}
+    />
+  )
+}
