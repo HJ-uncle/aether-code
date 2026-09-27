@@ -125,6 +125,3 @@ npm run test:e2e -- --repeat-each=3           # 查偶发失败
 ## 相关文档
 
 - [AGENTS.md](./AGENTS.md) — 工程约定与验证要求
-- [.trae/documents/p2-terminal-lsp.md](./.trae/documents/p2-terminal-lsp.md) — 本地终端 + LSP 诊断
-- [.trae/documents/p3-codegraph.md](./.trae/documents/p3-codegraph.md) — codegraph 代码图接入
-- [.trae/documents/p4-editor-tabs.md](./.trae/documents/p4-editor-tabs.md) — 编辑器标签能力
