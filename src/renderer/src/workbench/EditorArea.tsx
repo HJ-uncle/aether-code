@@ -23,6 +23,7 @@ import { releaseModel } from '@renderer/core/editor/monaco-setup'
 import { getLayout, setLayout, closeEditorView } from '@renderer/core/platform/layout-state'
 import { setActiveFile } from '@renderer/core/workspace/workspace-store'
 import { ContextMenu, type ContextMenuItem } from '@renderer/workbench/ContextMenu'
+import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { Icon } from '@renderer/workbench/icons'
 import { WelcomeView } from '@renderer/workbench/WelcomeView'
 import { useLayout } from '@renderer/workbench/useLayout'
@@ -119,25 +120,40 @@ export function EditorArea(): JSX.Element {
       }
 
       const filePath = key.slice(4)
+
+      // 真正执行关闭：切邻居标签（仅关的是激活标签时）+ 释放 model + 关闭文档。
+      // dirty 确认通过后的回调与直接关闭共用这一段。
+      const performClose = (): void => {
+        // 关闭后优先切到右侧邻居，没有则切到左侧最后一个，最后回落到固定视图
+        const index = editor.order.indexOf(filePath)
+        const remaining = editor.order.filter((item) => item !== filePath)
+        const nextPath = remaining[index] ?? remaining[index - 1] ?? null
+
+        // 关掉的是激活标签时才改激活项：否则「关闭其它」会把激活项
+        // 从用户正看着的标签上挪走，落到一个无关的文件
+        if (key === activeKey) {
+          setLayout({ activeEditorView: nextPath ? documentKey(nextPath) : '' })
+        }
+
+        releaseModel(filePath)
+        closeFile(filePath)
+      }
+
       const doc = editor.docs.get(filePath)
       if (doc && isDirty(doc)) {
-        const confirmed = window.confirm(`「${doc.name}」有未保存的修改，确定关闭吗？`)
-        if (!confirmed) return
+        void confirmDialog({
+          title: '关闭未保存的文件',
+          body: `「${doc.name}」有未保存的修改，确定关闭吗？`,
+          confirmText: '关闭',
+          danger: true
+        }).then((confirmed) => {
+          if (!confirmed) return
+          performClose()
+        })
+        return
       }
 
-      // 关闭后优先切到右侧邻居，没有则切到左侧最后一个，最后回落到固定视图
-      const index = editor.order.indexOf(filePath)
-      const remaining = editor.order.filter((item) => item !== filePath)
-      const nextPath = remaining[index] ?? remaining[index - 1] ?? null
-
-      // 关掉的是激活标签时才改激活项：否则「关闭其它」会把激活项
-      // 从用户正看着的标签上挪走，落到一个无关的文件
-      if (key === activeKey) {
-        setLayout({ activeEditorView: nextPath ? documentKey(nextPath) : '' })
-      }
-
-      releaseModel(filePath)
-      closeFile(filePath)
+      performClose()
     },
     [activeKey, editor.docs, editor.order]
   )
@@ -330,7 +346,7 @@ export function closeAllFileTabs(): void {
 }
 
 /** 给命令用的「按标签键关闭」：接受 'doc:<path>' 或视图 ID */
-export function closeTabByKey(key: string): void {
+export async function closeTabByKey(key: string): Promise<void> {
   if (!key.startsWith('doc:')) {
     closeEditorView(key)
     return
@@ -338,7 +354,15 @@ export function closeTabByKey(key: string): void {
 
   const filePath = key.slice(4)
   const doc = getDocument(filePath)
-  if (doc && isDirty(doc) && !window.confirm(`「${doc.name}」有未保存的修改，确定关闭吗？`)) return
+  if (doc && isDirty(doc)) {
+    const confirmed = await confirmDialog({
+      title: '关闭未保存的文件',
+      body: `「${doc.name}」有未保存的修改，确定关闭吗？`,
+      confirmText: '关闭',
+      danger: true
+    })
+    if (!confirmed) return
+  }
 
   closeFileTabs([filePath])
   settleActiveFile([filePath])

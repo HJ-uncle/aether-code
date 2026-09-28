@@ -1363,7 +1363,8 @@ export function useGit(): Omit<GitStoreState, 'commits'> & {
   refresh: (root: string | null) => Promise<void>
 } {
   const snapshot = useSyncExternalStore(onGitChanged, getGitState, getGitState)
-  const { commits: _commits, ...rest } = snapshot
+  const { commits, ...rest } = snapshot
+  void commits // 显式丢弃新格式 commits，对外只暴露 legacyCommits
   return { ...rest, commits: snapshot.legacyCommits, error: snapshot.errorMessage, refresh: refreshGit }
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type JSX, type ReactNode } from 'react'
+import { useEffect, useRef, type JSX, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from './icons'
 
@@ -60,6 +60,56 @@ export function Dialog({
     else panel.focus()
   }, [])
 
+  // 焦点归还：记录打开前的焦点，卸载时还原。元素可能已不在 DOM，判 connected 兜底
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null
+    return () => {
+      if (previous && previous.isConnected) {
+        try {
+          previous.focus()
+        } catch {
+          /* 元素可能已不可聚焦，忽略 */
+        }
+      }
+    }
+  }, [])
+
+  // 焦点陷阱：Tab / Shift+Tab 在弹窗内的可聚焦元素之间循环，不逃到背后界面
+  const onPanelKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== 'Tab') return
+    const panel = panelRef.current
+    if (!panel) return
+    const focusables = Array.from(
+      panel.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      )
+    ).filter(
+      (el) =>
+        !el.hasAttribute('disabled') &&
+        el.getAttribute('aria-hidden') !== 'true' &&
+        (el.offsetWidth > 0 || el.offsetHeight > 0 || el.getClientRects().length > 0)
+    )
+    if (focusables.length === 0) {
+      event.preventDefault()
+      panel.focus()
+      return
+    }
+    const first = focusables[0]
+    const last = focusables[focusables.length - 1]
+    const active = document.activeElement as HTMLElement | null
+    if (event.shiftKey) {
+      if (active === first || !panel.contains(active)) {
+        event.preventDefault()
+        last.focus()
+      }
+    } else {
+      if (active === last || !panel.contains(active)) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+  }
+
   return createPortal(
     <div className="modal-overlay" onMouseDown={onClose}>
       <div
@@ -71,6 +121,7 @@ export function Dialog({
         tabIndex={-1}
         style={{ width }}
         onMouseDown={(event) => event.stopPropagation()}
+        onKeyDown={onPanelKeyDown}
       >
         <header className="modal__header">
           <span>{title}</span>

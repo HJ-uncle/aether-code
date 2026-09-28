@@ -26,6 +26,8 @@ export interface ToolActivity {
   hidden?: boolean
   /** 引擎下发的文件改动记录（write_file/delete_file 后），供 diff 卡片渲染 */
   change?: EngineFileChange
+  /** 工具开始执行的时间戳（ms，本机时钟），子代理卡片运行中耗时跳动用 */
+  startedAt?: number
 }
 
 /**
@@ -88,6 +90,13 @@ export interface ChatAttachment {
   /** MIME，仅作提示 */
   type: string
   size: number
+}
+
+/** 排队中的一条待发消息（流式进行中入队，回合结束后按序/合并发出） */
+export interface QueuedMessage {
+  id: string
+  text: string
+  attachments: ChatAttachment[]
 }
 
 export interface SendOptions {
@@ -175,8 +184,34 @@ interface EngineHistoryRow {
  * 渲染层只关心文本块；纯非文本内容时标注类型，避免显示成空白。
  */
 export function extractText(content: unknown): string {
-  if (typeof content === 'string') return content
+  if (typeof content === 'string') {
+    // 历史数据里存在把 multipart 结构整体 JSON.stringify 后当字符串存进来的情况
+    // （会话列表曾直接显示 [{"role":"user","content":"… 原文）。看起来像 JSON 时
+    // 先尝试解析回结构化内容再走正常提取。
+    const trimmed = content.trim()
+    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+      try {
+        const parsed: unknown = JSON.parse(trimmed)
+        if (Array.isArray(parsed) || (parsed && typeof parsed === 'object')) {
+          const text = extractText(parsed)
+          if (text) return text
+        }
+      } catch {
+        // 不是合法 JSON，按纯文本处理
+      }
+    }
+    return content
+  }
   if (Array.isArray(content)) {
+    // 消息结构数组（[{role, content}]）：取最后一条的文本
+    if (
+      content.length > 0 &&
+      content.every(
+        (part) => part && typeof part === 'object' && 'role' in (part as Record<string, unknown>)
+      )
+    ) {
+      return extractText((content[content.length - 1] as Record<string, unknown>).content)
+    }
     const texts = content
       .filter(
         (part) =>
@@ -193,6 +228,10 @@ export function extractText(content: unknown): string {
       )
       .filter((kind) => kind !== 'text')
     return kinds.length > 0 ? `[${kinds.join('、')}内容]` : ''
+  }
+  // 单条消息结构（{role, content}）：提取其 content 文本
+  if (content && typeof content === 'object' && 'content' in (content as Record<string, unknown>)) {
+    return extractText((content as Record<string, unknown>).content)
   }
   return content == null ? '' : String(content)
 }
@@ -371,8 +410,12 @@ export function useChat(): {
   revertFrom: (sessionId: string, userMessage: ChatMessage) => Promise<void>
   /** 合并发送：把排队中的消息与本条合并成一条立即发出（流中时合并全部队列） */
   mergeAndSend: (text: string, options: SendOptions) => Promise<void>
-  /** 当前排队中的消息数 */
-  queueLength: number
+  /** 当前排队中的消息（供队列托盘渲染） */
+  queue: QueuedMessage[]
+  /** 从队列移除一条 */
+  removeQueued: (id: string) => void
+  /** 清空队列（不影响正在跑的回合） */
+  clearQueue: () => void
 } {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [streaming, setStreaming] = useState(false)
@@ -387,24 +430,27 @@ export function useChat(): {
   /**
    * 连续发送队列：流式进行中用户继续发的消息先进队列，
    * 当前流结束（完成/出错/中止）后按序自动发出。
-   * sendOptions 记录第一条消息的发送参数（会话/模型/工作区在会话内不变）。
+   *
+   * 队列本体放 state 而非 ref：托盘 UI 要实时渲染排队消息
+   * （预览/删除/清空），ref 变更不触发重渲染。
+   * 发送逻辑在事件回调里读队列，用 queueRef 镜像一份保证拿到最新值。
    */
-  type QueuedSend = { text: string; attachments: ChatAttachment[] }
-  const queueRef = useRef<Array<QueuedSend & { options: SendOptions }>>([])
-  const [queueLength, setQueueLength] = useState(0)
-
-  const syncQueueLength = useCallback(() => {
-    setQueueLength(queueRef.current.length)
+  type QueuedEntry = QueuedMessage & { options: SendOptions }
+  const [queue, setQueue] = useState<QueuedEntry[]>([])
+  const queueRef = useRef<QueuedEntry[]>([])
+  const syncQueue = useCallback((next: QueuedEntry[]) => {
+    queueRef.current = next
+    setQueue(next)
   }, [])
 
   /** 队列调度：当前无活动流时依次取队首发出 */
   const drainQueue = useCallback(async (): Promise<void> => {
     if (activeStreamRef.current) return
-    const next = queueRef.current.shift()
-    syncQueueLength()
+    const [next, ...rest] = queueRef.current
     if (!next) return
+    syncQueue(rest)
     await sendInternalRef.current(next.text, next.options)
-  }, [syncQueueLength])
+  }, [syncQueue])
 
   /**
    * send 的实际执行体（不含排队判断）。由 send（带排队）与 drainQueue 共用。
@@ -474,14 +520,13 @@ export function useChat(): {
       // 流式进行中不抢占（引擎对同会话新请求是 abort 旧流，不是排队）：
       // 入队等待，当前流结束后由 drainQueue 按序发出
       if (activeStreamRef.current) {
-        queueRef.current.push({ text: trimmed, attachments, options })
-        syncQueueLength()
+        syncQueue([...queueRef.current, { id: newId(), text: trimmed, attachments, options }])
         return
       }
 
       await sendInternalRef.current(trimmed, options)
     },
-    [syncQueueLength]
+    [syncQueue]
   )
 
   /**
@@ -492,8 +537,7 @@ export function useChat(): {
     async (text: string, options: SendOptions): Promise<void> => {
       const trimmed = text.trim()
       const pending = [...queueRef.current]
-      queueRef.current = []
-      syncQueueLength()
+      syncQueue([])
       const parts = [trimmed, ...pending.map((item) => item.text)].filter(Boolean)
       const mergedAttachments = pending.flatMap((item) => item.attachments)
       if (parts.length === 0 && mergedAttachments.length === 0) return
@@ -502,8 +546,21 @@ export function useChat(): {
         attachments: [...(options.attachments ?? []), ...mergedAttachments]
       })
     },
-    [syncQueueLength]
+    [syncQueue]
   )
+
+  /** 从队列移除一条（用户在托盘里点删除） */
+  const removeQueued = useCallback(
+    (id: string): void => {
+      syncQueue(queueRef.current.filter((item) => item.id !== id))
+    },
+    [syncQueue]
+  )
+
+  /** 清空队列（不影响正在跑的回合） */
+  const clearQueue = useCallback((): void => {
+    syncQueue([])
+  }, [syncQueue])
 
   const sendInternal = useCallback(
     async (text: string, options: SendOptions) => {
@@ -560,10 +617,14 @@ export function useChat(): {
 
   // sendInternal 定义晚于 drainQueue/send：用 ref 桥接，首次渲染后立即可用。
   // 渲染期写 ref 违反 React 规则（react-hooks/refs），挪进 effect 同步。
+  /* eslint-disable react-hooks/immutability */
   useEffect(() => {
+    // drainQueue 的 useCallback 依赖链引用了这两个 ref，react-hooks/immutability 会误报
+    // 「修改了传给 hook 的值」；桥接语义本来就是渲染后同步最新回调，行为不变。
     sendInternalRef.current = sendInternal
     drainQueueRef.current = drainQueue
   })
+  /* eslint-enable react-hooks/immutability */
 
   /**
    * 回放引擎历史。
@@ -653,10 +714,9 @@ export function useChat(): {
     setStreaming(false)
     activeStreamRef.current = null
     activeSessionRef.current = null
-    // 用户主动停止：排队中的消息不再自动发出（保留在队列里，用户可再触发发送）
-    setQueueLength(0)
-    queueRef.current = []
-  }, [])
+    // 用户主动停止：排队中的消息不再自动发出（保留在队列里由用户决定去留）
+    syncQueue([])
+  }, [syncQueue])
 
   /**
    * 清空当前会话。
@@ -819,7 +879,23 @@ export function useChat(): {
     []
   )
 
-  return { messages, streaming, todos, send, respond, abort, clear, loadHistory, deleteTurn, retryFrom, revertFrom, mergeAndSend, queueLength }
+  return {
+    messages,
+    streaming,
+    todos,
+    send,
+    respond,
+    abort,
+    clear,
+    loadHistory,
+    deleteTurn,
+    retryFrom,
+    revertFrom,
+    mergeAndSend,
+    queue,
+    removeQueued,
+    clearQueue
+  }
 }
 
 // ==================== 纯函数辅助 ====================
@@ -854,11 +930,12 @@ function appendTimeline(items: TimelineItem[], kind: 'thinking' | 'content', tex
 }
 
 function reducePayload(message: ChatMessage, payload: ChatSsePayload): ChatMessage {
-  if (typeof (payload as any).error === 'string' && (payload as any).error) {
+  const payloadError = (payload as { error?: unknown }).error
+  if (typeof payloadError === 'string' && payloadError) {
     return {
       ...message,
       status: 'error',
-      error: (payload as any).error,
+      error: payloadError,
       endedAt: message.endedAt ?? Date.now()
     }
   }
@@ -929,6 +1006,7 @@ function reducePayload(message: ChatMessage, payload: ChatSsePayload): ChatMessa
           args: normalized.args || '',
           result: '',
           state: 'running',
+          startedAt: Date.now(),
           ...hidden
         })
         items.push({ kind: 'tool', id })
@@ -953,6 +1031,7 @@ function reducePayload(message: ChatMessage, payload: ChatSsePayload): ChatMessa
         args: normalized.args || '',
         result: '',
         state: 'running',
+        startedAt: Date.now(),
         ...hidden
       })
       return { ...message, tools, items: [...message.items, { kind: 'tool', id }] }

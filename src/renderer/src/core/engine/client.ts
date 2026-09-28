@@ -70,6 +70,15 @@ export async function requestOrThrow<T = unknown>(input: EngineRequestInput): Pr
   return result.data as T
 }
 
+/** 单独停止一个正在运行的子代理（不影响主会话与其余并行子代理） */
+export function stopSubagent(input: { sessionId: string; toolCallId: string }) {
+  return request<{ sessionId: string; toolCallId: string; cancelled: boolean }>({
+    method: 'POST',
+    path: '/subagent/cancel',
+    body: input
+  })
+}
+
 // ==================== 流式 ====================
 
 export function startStream(input: StreamStartInput): Promise<{ ok: boolean }> {

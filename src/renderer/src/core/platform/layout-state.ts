@@ -24,6 +24,8 @@ export interface LayoutState {
   /** 右侧对话面板（对标 VS Code 的 Copilot 侧栏） */
   chatPanelVisible: boolean
   chatPanelWidth: number
+  /** 对话面板与主区换位：false 在最右（默认），true 在侧边栏与主区之间（左侧） */
+  chatOnLeft: boolean
 }
 
 const STORAGE_KEY = 'aether.ide.layout'
@@ -38,7 +40,8 @@ const DEFAULTS: LayoutState = {
   activeEditorView: 'app-settings',
   closedEditorViews: [],
   chatPanelVisible: true,
-  chatPanelWidth: 420
+  chatPanelWidth: 420,
+  chatOnLeft: false
 }
 
 export const LAYOUT_LIMITS = {
@@ -149,6 +152,11 @@ export function closeEditorView(view: string): void {
 /** 切换右侧对话面板的可见性 */
 export function toggleChatPanel(): void {
   setLayout({ chatPanelVisible: !state.chatPanelVisible })
+}
+
+/** 对话面板与主区换位（默认在最右，换位后夹在侧边栏与主区之间） */
+export function toggleChatPosition(): void {
+  setLayout({ chatOnLeft: !state.chatOnLeft })
 }
 
 /** 确保右侧对话面板可见（幂等，用于会话历史等「点条目即回到对话」的入口） */

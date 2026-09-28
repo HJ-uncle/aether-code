@@ -32,6 +32,8 @@ interface PopoverProps {
   label?: string
   /** 去掉面板内边距（菜单/列表类内容自带内边距并需要裁切圆角） */
   flush?: boolean
+  /** 开合态变化回调（Select 等需要按 open 同步内部状态的场景用） */
+  onOpenChange?: (open: boolean) => void
 }
 
 /** 浮层与触发区之间的间距 */
@@ -68,7 +70,8 @@ export function Popover({
   width,
   className,
   label,
-  flush
+  flush,
+  onOpenChange
 }: PopoverProps): JSX.Element {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState<Position | null>(null)
@@ -129,6 +132,11 @@ export function Popover({
     observer.observe(panel)
     return () => observer.disconnect()
   }, [open, reposition])
+
+  // 开合态变化时通知外层（Select 等依赖 open 同步高亮项的组件）
+  useEffect(() => {
+    onOpenChange?.(open)
+  }, [open, onOpenChange])
 
   useEffect(() => {
     if (!open) return

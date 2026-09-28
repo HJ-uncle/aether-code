@@ -119,6 +119,8 @@
   --warn-soft: rgba(255, 214, 10, 0.14);
   /* 压在 --danger 实底上的文字色：危险是安全色，不随强调色变 */
   --danger-contrast: #ffffff;
+  /* 今日提交高亮色（对齐 wuzu-client） */
+  --today-commit-color: #7e9dbf;
 
   /* 安全/不可用表面：用于禁用态、只读区、代码块底 */
   --bg-inset: rgba(0, 0, 0, 0.22);
@@ -196,6 +198,8 @@
   --ok-soft: rgba(26, 127, 55, 0.1);
   --warn-soft: rgba(178, 80, 0, 0.1);
   --danger-contrast: #ffffff;
+  /* 今日提交高亮色（对齐 wuzu-client） */
+  --today-commit-color: #4b95f1;
 
   --bg-inset: rgba(0, 0, 0, 0.05);
 

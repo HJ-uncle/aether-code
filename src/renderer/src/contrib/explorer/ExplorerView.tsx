@@ -13,6 +13,7 @@ import {
 import type { FsEntry } from '@shared/ipc'
 import { useApp } from '@renderer/core/app-context'
 import { documentKey, openFile } from '@renderer/core/editor/editor-store'
+import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { changeCode, changeTitle, normalizeGitPath } from '@renderer/core/git/git-format'
 import { useGit } from '@renderer/core/git/git-store'
 import { ipcErrorMessage } from '@renderer/core/ipc-error'
@@ -1122,7 +1123,13 @@ export function ExplorerView(): JSX.Element {
         targets.length > 1
           ? `确定把选中的 ${targets.length} 项移入回收站吗？`
           : `确定把「${label ?? paths.basename(targets[0])}」移入回收站吗？`
-      if (!window.confirm(question)) return
+      const confirmed = await confirmDialog({
+        title: '移入回收站',
+        body: question,
+        confirmText: '移入回收站',
+        danger: true
+      })
+      if (!confirmed) return
       await runOp(() => trashEntries(targets))
     },
     [runOp]

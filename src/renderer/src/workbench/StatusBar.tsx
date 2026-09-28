@@ -5,6 +5,7 @@ import { useGit } from '@renderer/core/git/git-store'
 import { executeCommand } from '@renderer/core/platform/commands'
 import { toggleSidebarView } from '@renderer/core/platform/layout-state'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
+import { GitSyncButton } from '@renderer/contrib/git/GitSyncButton'
 import { Icon } from './icons'
 import type { EnginePhase } from '@shared/ipc'
 
@@ -70,22 +71,26 @@ export function StatusBar(): JSX.Element {
         {snapshot.pid ? ` · pid ${snapshot.pid}` : ''}
       </span>
 
-      {/* 版本控制：Agent 改了什么以 git 为准，给一个常驻的核对入口 */}
+      {/* 版本控制：分支 + 同步操作 + 改动计数，对齐 wuzu-client 状态栏布局 */}
       {workspace.root ? (
-        <button
-          type="button"
-          className="status-bar__item"
-          title={
-            git.error ??
-            `打开版本控制视图\n仓库：${workspace.root}${
-              git.status?.isRepo ? `\n分支：${git.status.branch}` : ''
-            }`
-          }
-          onClick={() => toggleSidebarView('git')}
-        >
-          <Icon name="git" size={12} />
-          {gitLabel}
-        </button>
+        <>
+          <button
+            type="button"
+            className="status-bar__item"
+            title={
+              git.error ??
+              `打开版本控制视图\n仓库：${workspace.root}${
+                git.status?.isRepo ? `\n分支：${git.status.branch}` : ''
+              }`
+            }
+            onClick={() => toggleSidebarView('git')}
+          >
+            <Icon name="git" size={12} />
+            {gitLabel}
+          </button>
+          {/* 同步/拉取/推送按钮组：只在仓库有效时出现 */}
+          {git.status?.isRepo ? <GitSyncButton /> : null}
+        </>
       ) : null}
 
       <div className="status-bar__spacer" />

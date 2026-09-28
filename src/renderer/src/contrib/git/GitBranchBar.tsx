@@ -14,7 +14,7 @@
  * - 写操作进行中（busyOperationOf 非空）禁用切换，避免并发抢 index.lock；
  * - 右侧附 fetch/pull/push/sync 菜单（ContextMenu），与源面板工具链一致。
  */
-import { useMemo, useRef, useState, type JSX } from 'react'
+import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import {
   useGitStore,
   busyOperationOf,
@@ -117,6 +117,13 @@ export function GitBranchBar({ position = 'bottom' }: GitBranchBarProps): JSX.El
     const res = await action()
     setFeedback(res.success ? ok : (res.error ?? '操作失败'))
   }
+
+  // 操作结果提示只是瞬时反馈，常驻会让人误以为还有事情没完成：几秒后自动消失
+  useEffect(() => {
+    if (!feedback) return
+    const timer = window.setTimeout(() => setFeedback(''), 3000)
+    return () => window.clearTimeout(timer)
+  }, [feedback])
 
   const switchTo = (row: BranchRow): void => {
     if (row.current) return

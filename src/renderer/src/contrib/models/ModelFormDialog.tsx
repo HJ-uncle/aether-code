@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type JSX } from 'react'
+import { useCallback, useMemo, useState, type JSX, type KeyboardEvent } from 'react'
 import {
   PROVIDERS,
   detectCapabilities,
@@ -203,6 +203,18 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
     return Object.keys(caps).length > 0 ? caps : undefined
   }, [form.vision, form.thinking])
 
+  /**
+   * 文本输入框回车即提交（对齐 PromptDialog）。
+   * 中文输入法组合期间的回车属于确认候选词，不能当作提交。
+   */
+  const submitOnEnter = (event: KeyboardEvent<HTMLInputElement>): void => {
+    if (event.nativeEvent.isComposing) return
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      void save()
+    }
+  }
+
   const save = async (): Promise<void> => {
     if (validation) {
       setError(validation)
@@ -279,6 +291,7 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
             value={form.displayName}
             placeholder="可选"
             onChange={(event) => patch({ displayName: event.target.value })}
+            onKeyDown={submitOnEnter}
           />
         </SettingsRow>
         <SettingsRow label="模型 ID">
@@ -288,6 +301,7 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
             placeholder="如 deepseek-chat"
             disabled={isEdit}
             onChange={(event) => patch({ modelId: event.target.value })}
+            onKeyDown={submitOnEnter}
           />
         </SettingsRow>
         {MODEL_PRESETS[form.provider]?.length && !isEdit ? (
@@ -315,6 +329,7 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
             value={form.baseUrl}
             placeholder="https://api.deepseek.com"
             onChange={(event) => patch({ baseUrl: event.target.value })}
+            onKeyDown={submitOnEnter}
           />
         </SettingsRow>
         <SettingsRow
@@ -329,6 +344,7 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
               isEdit ? `留空表示不修改（当前 ${model?.apiKey || '未设置'}）` : '以 sk- 开头的密钥'
             }
             onChange={(event) => patch({ apiKey: event.target.value })}
+            onKeyDown={submitOnEnter}
           />
         </SettingsRow>
       </SettingsGroup>

@@ -14,4 +14,4 @@ out
 .claude/skills/codemap-*/
 .claude/skills/code-index-*/
 .claude/settings.local.json
-.cowork-temp/attachments
+.cowork-temp

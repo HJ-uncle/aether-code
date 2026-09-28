@@ -2,6 +2,7 @@ import { useEffect, useState, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
 import { removeModel, useModels } from '@renderer/core/engine/model-store'
 import { Icon } from '@renderer/workbench/icons'
+import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { SettingsContent, SettingsGroup, SettingsRow } from '../settings/SettingsGroup'
 import { ModelFormDialog } from './ModelFormDialog'
 
@@ -93,8 +94,15 @@ export function ModelsSettingsView(): JSX.Element {
                 title="删除该模型"
                 disabled={busyId === model.id}
                 onClick={() => {
-                  if (!window.confirm(`确定删除模型「${model.modelId}」吗？此操作不可撤销。`)) return
-                  void guard(model.id, () => removeModel(model.id))
+                  void confirmDialog({
+                    title: '删除模型',
+                    body: `确定删除模型「${model.modelId}」吗？此操作不可撤销。`,
+                    confirmText: '删除',
+                    danger: true
+                  }).then((confirmed) => {
+                    if (!confirmed) return
+                    void guard(model.id, () => removeModel(model.id))
+                  })
                 }}
               >
                 ×

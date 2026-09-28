@@ -35,6 +35,7 @@ import {
   closeTabsToRightOfActive,
   switchActiveTab
 } from '@renderer/workbench/EditorArea'
+import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { diagnoseDocument } from '@renderer/core/lsp/diagnostics'
 import { undoLastFileOp, trashEntries, pasteFromClipboard } from '@renderer/core/workspace/file-ops'
 import {
@@ -178,7 +179,13 @@ export function registerContributions(): () => void {
           targets.length > 1
             ? `确定把选中的 ${targets.length} 项移入回收站吗？`
             : `确定把「${targets[0]}」移入回收站吗？`
-        if (!window.confirm(question)) return
+        const confirmed = await confirmDialog({
+          title: '移入回收站',
+          body: question,
+          confirmText: '移入回收站',
+          danger: true
+        })
+        if (!confirmed) return
         await trashEntries(targets)
       }
     },
@@ -265,7 +272,7 @@ export function registerContributions(): () => void {
       title: '关闭编辑器',
       category: '编辑器',
       when: 'editorTabsCount > 0',
-      run: () => closeTabByKey(getLayout().activeEditorView)
+      run: () => void closeTabByKey(getLayout().activeEditorView)
     },
     {
       id: 'aether.editor.closeOthers',

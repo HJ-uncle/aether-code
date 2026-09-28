@@ -2,8 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useApp } from '@renderer/core/app-context'
 import { useChat, type ChatMessage, type ToolActivity } from '@renderer/core/engine/useChat'
 import type { PendingInteraction } from '@renderer/core/engine/pending'
-import { TodoTray } from './TodoTray'
-import { ChangesPanel } from './ChangesPanel'
+import { SessionTray } from './SessionTray'
 import { FileChangeCard } from './FileChangeCard'
 import { SubagentCard } from './SubagentCard'
 import { Markdown } from './Markdown'
@@ -16,7 +15,7 @@ import { openAppSettings } from '@renderer/contrib/settings/app-settings-navigat
 import { refreshGit } from '@renderer/core/git/git-store'
 import { currentWorkspacePaths, useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { Icon } from '@renderer/workbench/icons'
-import { Dialog } from '@renderer/workbench/Dialog'
+import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { Popover } from '@renderer/workbench/Popover'
 import { ModelPicker } from '../models/ModelPicker'
 import { ComposerOptions } from './ComposerOptions'
@@ -46,44 +45,6 @@ function resolveThinkingMode(mode: 'off' | 'low' | 'high' | 'max'): 'low' | 'hig
   return mode === 'max' ? 'high' : 'low'
 }
 
-/** 主题化确认 / 提示弹窗（替代原生 window.confirm / alert） */
-interface ConfirmState {
-  title: string
-  body: string
-  confirmText?: string
-  danger?: boolean
-  onConfirm: () => void
-}
-
-function ConfirmDialog({ state, onClose }: { state: ConfirmState; onClose: () => void }): JSX.Element {
-  return (
-    <Dialog
-      title={state.title}
-      width={440}
-      onClose={onClose}
-      footer={
-        <>
-          <button type="button" className="btn" onClick={onClose}>
-            取消
-          </button>
-          <button
-            type="button"
-            className={`btn btn--primary${state.danger ? ' btn--danger' : ''}`}
-            onClick={() => {
-              onClose()
-              state.onConfirm()
-            }}
-          >
-            {state.confirmText ?? '确定'}
-          </button>
-        </>
-      }
-    >
-      <p style={{ margin: 0, lineHeight: 1.6 }}>{state.body}</p>
-    </Dialog>
-  )
-}
-
 /** 字节数 → 人类可读（附件条上展示大小） */
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -99,15 +60,13 @@ function formatBytes(bytes: number): string {
  */
 export function ChatView(): JSX.Element {
   const { ready, settings, updateSettings, settingsLoaded } = useApp()
-  const { messages, streaming, todos, send, respond, abort, loadHistory, deleteTurn, retryFrom, revertFrom, mergeAndSend, queueLength } = useChat()
+  const { messages, streaming, todos, send, respond, abort, loadHistory, deleteTurn, retryFrom, revertFrom, mergeAndSend, queue, removeQueued, clearQueue } = useChat()
   const { models, loaded: modelsLoaded } = useModels()
   const workspace = useWorkspace()
   const [input, setInput] = useState('')
   /** 多选模式：按消息粒度勾选，复制或导出为 Markdown */
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set())
-  /** 主题化确认 / 提示弹窗；null 关闭 */
-  const [confirmState, setConfirmState] = useState<ConfirmState | null>(null)
   /** 轻提示（复制 / 导出等即时反馈），短暂展示后自动消失 */
   const [toast, setToast] = useState<string | null>(null)
   /** 用户手动选择的模型；null 表示未选择，跟随设置（设置异步加载后自动生效） */
@@ -146,12 +105,91 @@ export function ChatView(): JSX.Element {
     void loadHistory(sessionId)
   }, [ready, sessionId, loadHistory])
 
-  // 新内容到达时保持贴底
+  // ── 吸底跟随（对齐 wuzu-client CliChatView）──
+  // followBottom 只由真实用户手势切换，不听 scroll 事件：程序化滚动
+  // （scrollTop = scrollHeight）也触发 scroll，用它判定会在流式期间误关跟随。
+  const [followBottom, setFollowBottom] = useState(true)
+  // 非跟随期间来了新内容 → 显示「回到底部」按钮
+  const [hasNewWhileUnfollowed, setHasNewWhileUnfollowed] = useState(false)
+  /** 使 pending 的 rAF 滚动回调作废的计数器：用户离开吸底后，旧滚动不再执行 */
+  const scrollGenerationRef = useRef(0)
+  /** 距底 < 8px 才恢复跟随（阈值故意远小于离底判定，防止误拉回） */
+  const RESUME_FOLLOW_PX = 8
+
+  const measureDistToBottom = useCallback((): number => {
+    const el = scrollRef.current
+    if (!el) return 0
+    return el.scrollHeight - el.scrollTop - el.clientHeight
+  }, [])
+
+  const resumeFollowBottom = useCallback((): void => {
+    scrollGenerationRef.current += 1
+    setFollowBottom(true)
+    setHasNewWhileUnfollowed(false)
+  }, [])
+
+  const scrollToBottom = useCallback(
+    (force = false) => {
+      const el = scrollRef.current
+      if (!el) return
+      if (!force && !followBottom) {
+        // 非跟随时不滚动，按实际距离决定「回到底部」按钮浮不浮出
+        setHasNewWhileUnfollowed(measureDistToBottom() > RESUME_FOLLOW_PX)
+        return
+      }
+      const generation = scrollGenerationRef.current
+      // 先贴一次，再在下一帧贴第二次：覆盖「DOM 已插入但布局未撑开」的那一帧
+      requestAnimationFrame(() => {
+        if (scrollGenerationRef.current !== generation) return
+        el.scrollTop = el.scrollHeight
+      })
+      el.scrollTop = el.scrollHeight
+    },
+    [followBottom, measureDistToBottom]
+  )
+
+  // 用户手势离开吸底：只认「向上滚轮」与「按在滚动容器本身（滚动条）上」。
+  // 点消息内部不算 —— 否则点气泡里的按钮会被误判为离开底部。
+  const handleListWheel = useCallback(
+    (event: React.WheelEvent<HTMLDivElement>) => {
+      if (event.deltaY >= 0) return
+      const el = scrollRef.current
+      if (!el || el.scrollHeight <= el.clientHeight) return
+      scrollGenerationRef.current += 1
+      setFollowBottom(false)
+    },
+    []
+  )
+
+  const handleListPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return
+    const el = scrollRef.current
+    if (!el || el.scrollHeight <= el.clientHeight) return
+    scrollGenerationRef.current += 1
+    setFollowBottom(false)
+  }, [])
+
+  // 滚回底部附近（含拖动滚动条）时恢复跟随
+  const handleListScroll = useCallback(() => {
+    if (measureDistToBottom() < RESUME_FOLLOW_PX) resumeFollowBottom()
+  }, [measureDistToBottom, resumeFollowBottom])
+
+  // 新内容到达时：跟随态保持贴底；非跟随态只更新「回到底部」按钮显隐
   useEffect(() => {
+    scrollToBottom()
+  }, [messages, scrollToBottom])
+
+  // 回到底部按钮：立即贴底并恢复跟随
+  const jumpToBottom = useCallback(() => {
     const el = scrollRef.current
     if (!el) return
+    scrollGenerationRef.current += 1
+    setHasNewWhileUnfollowed(false)
     el.scrollTop = el.scrollHeight
-  }, [messages])
+    resumeFollowBottom()
+  }, [resumeFollowBottom])
+
+  const showBackToBottom = !followBottom && hasNewWhileUnfollowed
 
   // 输入框高度随内容增长：resize:none 后要靠 JS 改高度，
   // 先归零再读 scrollHeight，否则缩短文本时高度降不下来
@@ -225,18 +263,11 @@ export function ChatView(): JSX.Element {
     })
   }, [attach, buildSendOptions, input, ready, send, sessionId])
 
-  /** 合并发送：把输入框内容与排队中的消息合并成一条发出 */
-  const submitMerged = useCallback(() => {
-    const text = input.trim()
-    const files = attach.attachments
-    if ((!text && files.length === 0) || attach.uploading || !ready || !sessionId) return
-    setInput('')
-    attach.clear()
-    void mergeAndSend(text, {
-      ...buildSendOptions(),
-      attachments: files.length > 0 ? files : undefined
-    })
-  }, [attach, buildSendOptions, input, mergeAndSend, ready, sessionId])
+  /** 托盘的「合并发送」：队列拼成一条立即发出（当前输入框内容不参与） */
+  const mergeQueue = useCallback(() => {
+    if (!ready || !sessionId) return
+    void mergeAndSend('', buildSendOptions())
+  }, [buildSendOptions, mergeAndSend, ready, sessionId])
 
   /**
    * 授权卡片上的「一路放行」入口。
@@ -321,11 +352,10 @@ export function ChatView(): JSX.Element {
   /** 错误提示（替代 window.alert，主题化展示） */
   const showError = useCallback((err: unknown, prefix?: string) => {
     const message = err instanceof Error ? err.message : String(err)
-    setConfirmState({
+    void confirmDialog({
       title: '操作失败',
       body: prefix ? `${prefix}${message}` : message,
-      confirmText: '知道了',
-      onConfirm: () => undefined
+      confirmText: '知道了'
     })
   }, [])
 
@@ -337,18 +367,19 @@ export function ChatView(): JSX.Element {
       const userMessage =
         message.role === 'user' ? message : messages.slice(0, index).reverse().find((m) => m.role === 'user')
       if (!userMessage) return
-      setConfirmState({
+      void confirmDialog({
         title: message.role === 'user' ? '重新发送' : '重新生成',
         body: message.role === 'user' ? '删除此后的对话并重新发送？' : '删除本轮回答并重新生成？',
-        danger: true,
-        onConfirm: () =>
-          void retryFrom(userMessage, {
-            sessionId,
-            agentId: settings.lastAgentId || undefined,
-            model: modelId || undefined,
-            workspacePaths: currentWorkspacePaths(),
-            thinkingMode: resolveThinkingMode(settings.thinkingMode)
-          }).catch(showError)
+        danger: true
+      }).then((confirmed) => {
+        if (!confirmed) return
+        void retryFrom(userMessage, {
+          sessionId,
+          agentId: settings.lastAgentId || undefined,
+          model: modelId || undefined,
+          workspacePaths: currentWorkspacePaths(),
+          thinkingMode: resolveThinkingMode(settings.thinkingMode)
+        }).catch(showError)
       })
     },
     [messages, modelId, retryFrom, sessionId, settings.lastAgentId, settings.thinkingMode, showError]
@@ -356,12 +387,14 @@ export function ChatView(): JSX.Element {
 
   const deleteTurnById = useCallback(
     (message: ChatMessage) => {
-      setConfirmState({
+      void confirmDialog({
         title: '删除本轮',
         body: '删除这一轮问答（含引擎侧历史）？',
         danger: true,
-        confirmText: '删除',
-        onConfirm: () => void deleteTurn(sessionId, message).catch((err) => showError(err))
+        confirmText: '删除'
+      }).then((confirmed) => {
+        if (!confirmed) return
+        void deleteTurn(sessionId, message).catch((err) => showError(err))
       })
     },
     [deleteTurn, sessionId, showError]
@@ -370,17 +403,17 @@ export function ChatView(): JSX.Element {
   /** 消息级回退（对齐 wuzu revert-files）：恢复该消息后全部文件改动（含已保留）并截断对话，原文回填输入框 */
   const revertToMessage = useCallback(
     (message: ChatMessage) => {
-      setConfirmState({
+      void confirmDialog({
         title: '回退到此处',
         body: '撤销此消息及后续轮次的全部修改（包含已保留的修改），成功后删除对应对话。文件无法自动恢复的大改动会跳过。',
         danger: true,
-        confirmText: '回退',
-        onConfirm: () => {
-          const content = message.content
-          void revertFrom(sessionId, message)
-            .then(() => setInput(content))
-            .catch(showError)
-        }
+        confirmText: '回退'
+      }).then((confirmed) => {
+        if (!confirmed) return
+        const content = message.content
+        void revertFrom(sessionId, message)
+          .then(() => setInput(content))
+          .catch(showError)
       })
     },
     [revertFrom, sessionId, showError]
@@ -603,7 +636,19 @@ export function ChatView(): JSX.Element {
         </div>
       ) : null}
 
-      <div className="chat__messages" ref={scrollRef}>
+      <div
+        className="chat__messages"
+        ref={scrollRef}
+        onWheel={handleListWheel}
+        onPointerDown={handleListPointerDown}
+        onScroll={handleListScroll}
+      >
+        {/* 非跟随期间来了新内容：浮动「回到底部」（对齐 wuzu-client） */}
+        {showBackToBottom ? (
+          <button type="button" className="chat__back-to-bottom" onClick={jumpToBottom}>
+            <Icon name="chevron-double-down" size={14} />
+          </button>
+        ) : null}
         {messages.length === 0 ? (
           <div className="chat__empty">
             <h2>Agent IDE</h2>
@@ -637,6 +682,7 @@ export function ChatView(): JSX.Element {
                   <MessageItem
                     key={message.id}
                     message={message}
+                    sessionId={sessionId}
                     usage={message.id === lastAssistantId ? usage : undefined}
                     disabled={streaming}
                   onAllowAll={allowAllForSession}
@@ -673,9 +719,15 @@ export function ChatView(): JSX.Element {
         </div>
       ) : null}
 
-      <TodoTray todos={todos} />
-
-      <ChangesPanel sessionId={sessionId} streaming={streaming} />
+      <SessionTray
+        sessionId={sessionId}
+        streaming={streaming}
+        todos={todos}
+        queue={queue}
+        onRemoveQueued={removeQueued}
+        onClearQueue={clearQueue}
+        onMergeQueue={mergeQueue}
+      />
 
       <div
         className={`chat__composer${attach.dragging ? ' is-dragover' : ''}`}
@@ -806,29 +858,15 @@ export function ChatView(): JSX.Element {
             />
 
             {streaming ? (
-              <>
-                {queueLength > 0 ? (
-                  <button
-                    type="button"
-                    className="chat__send chat__send--merge"
-                    title={`把输入框内容与队列中 ${queueLength} 条消息合并成一条发送`}
-                    disabled={!input.trim() && attach.attachments.length === 0}
-                    aria-label="合并发送"
-                    onClick={submitMerged}
-                  >
-                    <Icon name="copy" size={13} />
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  className="chat__send chat__send--stop"
-                  title="停止生成"
-                  aria-label="停止生成"
-                  onClick={abort}
-                >
-                  <Icon name="stop" size={14} />
-                </button>
-              </>
+              <button
+                type="button"
+                className="chat__send chat__send--stop"
+                title="停止生成"
+                aria-label="停止生成"
+                onClick={abort}
+              >
+                <Icon name="stop" size={14} />
+              </button>
             ) : (
               <button
                 type="button"
@@ -852,8 +890,6 @@ export function ChatView(): JSX.Element {
           {toast}
         </div>
       ) : null}
-
-      {confirmState ? <ConfirmDialog state={confirmState} onClose={() => setConfirmState(null)} /> : null}
     </div>
   )
 }
@@ -900,6 +936,7 @@ function serializeMessages(selected: ChatMessage[]): string {
 
 function MessageItem({
   message,
+  sessionId,
   usage,
   disabled,
   onAllowAll,
@@ -914,6 +951,8 @@ function MessageItem({
   canAct
 }: {
   message: ChatMessage
+  /** 当前会话 ID（子代理停止按钮走 /subagent/cancel 要用） */
+  sessionId: string
   /** 该轮的累计用量：只挂在最后一条 AI 消息底部的过程行上 */
   usage?: TurnUsageInfo
   disabled: boolean
@@ -1043,7 +1082,7 @@ function MessageItem({
     <article className="message message--assistant">
       {pick}
 
-      <MessageTimeline message={message} streaming={streaming} />
+      <MessageTimeline message={message} sessionId={sessionId} streaming={streaming} />
 
       {/* 该轮累计用量常显；操作图标随悬停出现，两者同行（用量在左） */}
       <div className="message__footer">
@@ -1099,8 +1138,11 @@ type TurnUsageInfo = {
   streaming: boolean
 }
 
-/** 内联段落：正文段 或 全尺寸卡片（diff / 子代理），在过程块之后按原顺序渲染 */
-type InlineSegment = { type: 'tool'; tool: ToolActivity } | { type: 'content'; text: string }
+/** 内联段落：正文段 / 全尺寸卡片（diff）/ 单个子代理 / 子代理组，在过程块之后按原顺序渲染 */
+type InlineSegment =
+  | { type: 'tool'; tool: ToolActivity }
+  | { type: 'content'; text: string }
+  | { type: 'subagent-group'; tools: ToolActivity[] }
 
 /**
  * 消息时间线：思考 / 工具调用合并成一个可折叠过程块，正文与全尺寸卡片按序排在其后。
@@ -1113,9 +1155,11 @@ type InlineSegment = { type: 'tool'; tool: ToolActivity } | { type: 'content'; t
  */
 function MessageTimeline({
   message,
+  sessionId,
   streaming
 }: {
   message: ChatMessage
+  sessionId: string
   streaming: boolean
 }): JSX.Element | null {
   const { processEntries, inline } = useMemo(() => {
@@ -1147,7 +1191,29 @@ function MessageTimeline({
       if (isFullSizeTool(tool)) inline.push({ type: 'tool', tool })
       else processEntries.push({ kind: 'tool', tool })
     }
-    return { processEntries, inline }
+
+    // 把连续的子代理段收进一个组（对齐 wuzu 的 AgentSubagentGroup）：
+    // 并行派发 N 个子代理会产生 N 张连续大卡片，占满整屏还看不清彼此关系；
+    // 收成一组后默认只露「子代理 ×N」一行汇总。单个出现时仍保持原位全显（走 tool 分支）。
+    const grouped: InlineSegment[] = []
+    let pendingSubagents: ToolActivity[] = []
+    const flushSubagents = (): void => {
+      if (pendingSubagents.length === 0) return
+      if (pendingSubagents.length === 1) grouped.push({ type: 'tool', tool: pendingSubagents[0] })
+      else grouped.push({ type: 'subagent-group', tools: [...pendingSubagents] })
+      pendingSubagents = []
+    }
+    for (const segment of inline) {
+      if (segment.type === 'tool' && segment.tool.name === 'subagent') {
+        pendingSubagents.push(segment.tool)
+        continue
+      }
+      flushSubagents()
+      grouped.push(segment)
+    }
+    flushSubagents()
+
+    return { processEntries, inline: grouped }
   }, [message.items, message.tools])
 
   if (processEntries.length === 0 && inline.length === 0) {
@@ -1167,7 +1233,11 @@ function MessageTimeline({
       {inline.map((segment, index) =>
         segment.type === 'tool' ? (
           <div key={`t-${segment.tool.id}`} className="message__tools">
-            <ToolItem tool={segment.tool} />
+            <ToolItem tool={segment.tool} sessionId={sessionId} />
+          </div>
+        ) : segment.type === 'subagent-group' ? (
+          <div key={`sg-${segment.tools[0].id}`} className="message__tools">
+            <SubagentGroup tools={segment.tools} sessionId={sessionId} />
           </div>
         ) : (
           <div key={`c-${index}`} className="message__content">
@@ -1182,6 +1252,52 @@ function MessageTimeline({
         </div>
       ) : null}
     </>
+  )
+}
+
+/**
+ * 子代理组（对齐 wuzu 的 AgentSubagentGroup）
+ *
+ * 并行派发多个子代理时收拢为一组：组头显示调用次数、整体状态与失败提示，
+ * 默认收起只露一行汇总，点开后逐张渲染子代理卡片。
+ */
+function SubagentGroup({
+  tools,
+  sessionId
+}: {
+  tools: ToolActivity[]
+  sessionId: string
+}): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const running = tools.some((tool) => tool.state === 'running')
+  const failCount = tools.filter((tool) => tool.state === 'error').length
+
+  return (
+    <div className="subagent-group">
+      <button
+        type="button"
+        className="subagent-group__head"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="subagent-group__name">子代理</span>
+        <span className="subagent-group__count">{tools.length} 次调用</span>
+        <span className="subagent-group__status">
+          {running ? '运行中' : '已完成'}
+        </span>
+        {failCount > 0 ? (
+          <span className="subagent-group__fail">{failCount} 失败</span>
+        ) : null}
+        <Icon name="chevron" size={12} className="subagent-group__chevron" />
+      </button>
+      {open ? (
+        <div className="subagent-group__body">
+          {tools.map((tool) => (
+            <SubagentCard key={tool.id} tool={tool} sessionId={sessionId} />
+          ))}
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -1416,20 +1532,20 @@ function TurnUsage({
       {model ? (
         <div className="usage-detail usage-detail--meta">
           <div className="usage-detail__row">
-            <span className="usage-detail__bar usage-detail__bar--input" />
+            <Icon name="model" size={12} className="usage-detail__icon" />
             <span className="usage-detail__label">模型</span>
             <span className="usage-detail__value">{model}</span>
           </div>
           {stamp ? (
             <div className="usage-detail__row">
-              <span className="usage-detail__bar usage-detail__bar--output" />
+              <Icon name="clock-outline" size={12} className="usage-detail__icon" />
               <span className="usage-detail__label">对话时间</span>
               <span className="usage-detail__value">{stamp}</span>
             </div>
           ) : null}
           {duration ? (
             <div className="usage-detail__row">
-              <span className="usage-detail__bar usage-detail__bar--cache" />
+              <Icon name="sync" size={12} className="usage-detail__icon" />
               <span className="usage-detail__label">任务耗时</span>
               <span className="usage-detail__value">{duration}</span>
             </div>
@@ -1551,7 +1667,8 @@ function PendingCard({
   onAllowAll: () => Promise<void>
   onRespond: (values: string[]) => void
 }): JSX.Element {
-  const [selected, setSelected] = useState<string[]>([])
+  const [groupSelected, setGroupSelected] = useState<Record<number, string[]>>({})
+  const [groupInput, setGroupInput] = useState<Record<number, string>>({})
   const [allowAllBusy, setAllowAllBusy] = useState(false)
   const [allowAllError, setAllowAllError] = useState<string | null>(null)
   const isPermission = pending.kind === 'permission'
@@ -1564,10 +1681,16 @@ function PendingCard({
         .join('、')
     : ''
 
-  const toggle = (value: string): void => {
-    setSelected((prev) =>
-      prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
-    )
+  const toggle = (groupIndex: number, value: string, multi: boolean): void => {
+    setGroupSelected((prev) => {
+      const current = prev[groupIndex] ?? []
+      const next = current.includes(value)
+        ? current.filter((item) => item !== value)
+        : multi
+          ? [...current, value]
+          : [value]
+      return { ...prev, [groupIndex]: next }
+    })
   }
 
   /**
@@ -1617,53 +1740,112 @@ function PendingCard({
   return (
     <div className={`pending-card${isPermission ? ' pending-card--permission' : ''}`}>
       <div className="pending-card__title">
-        <span>{isPermission ? '安全策略需要你确认' : 'Agent 需要你的回答'}</span>
+        <span>{isPermission ? '安全策略需要你确认' : '需要你确认'}</span>
         <span className="pending-card__state">等待你的选择</span>
       </div>
-      <div className="pending-card__question">{pending.question}</div>
 
-      {pending.multiSelect ? (
+      {isPermission ? (
         <>
+          <div className="pending-card__question">{pending.question}</div>
           <div className="pending-card__options">
             {pending.options.map((option) => (
-              <label key={option.value} className="pending-card__check">
-                <input
-                  type="checkbox"
-                  checked={selected.includes(option.value)}
-                  disabled={disabled}
-                  onChange={() => toggle(option.value)}
-                />
-                <span>
-                  {option.label}
-                  {option.description ? <small>{option.description}</small> : null}
-                </span>
-              </label>
+              <button
+                key={option.value}
+                type="button"
+                className={`btn btn--sm${option.value === 'approved' ? ' btn--primary' : ''}`}
+                disabled={disabled}
+                title={option.description}
+                onClick={() => onRespond([option.value])}
+              >
+                {option.label}
+              </button>
             ))}
           </div>
-          <button
-            type="button"
-            className="btn btn--primary btn--sm"
-            disabled={disabled || selected.length === 0}
-            onClick={() => onRespond(selected)}
-          >
-            提交
-          </button>
         </>
       ) : (
-        <div className="pending-card__options">
-          {pending.options.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className={`btn btn--sm${option.value === 'approved' ? ' btn--primary' : ''}`}
-              disabled={disabled}
-              title={option.description}
-              onClick={() => onRespond([option.value])}
-            >
-              {option.label}
-            </button>
+        // 提问：对齐 wuzu AskUserQuestion —— 每个问题一组：tab 胶囊 + 标题 +
+        // 选项卡（标题 + 描述 + 勾选框）+ 自由输入框，底部「跳过 / 提交」
+        <>
+          {pending.groups.map((group, groupIndex) => (
+            <div key={groupIndex} className="pending-card__group">
+              <div className="pending-card__group-head">
+                {group.tab ? <span className="pending-card__tab">{group.tab}</span> : null}
+                <span className="pending-card__group-question">{group.question}</span>
+              </div>
+              {group.options.length > 0 ? (
+                <div className="pending-card__choices">
+                  {group.options.map((option) => {
+                    const checked = (groupSelected[groupIndex] ?? []).includes(option.value)
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`pending-card__choice${checked ? ' pending-card__choice--on' : ''}`}
+                        disabled={disabled}
+                        onClick={() => toggle(groupIndex, option.value, group.multiSelect)}
+                      >
+                        <span className="pending-card__choice-body">
+                          <span className="pending-card__choice-label">{option.label}</span>
+                          {option.description ? (
+                            <span className="pending-card__choice-desc">{option.description}</span>
+                          ) : null}
+                        </span>
+                        <span
+                          className={`pending-card__choice-box${group.multiSelect ? '' : ' pending-card__choice-box--radio'}`}
+                        >
+                          {checked ? <Icon name="check" size={11} /> : null}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              ) : null}
+              {group.allowInput ? (
+                <input
+                  type="text"
+                  className="pending-card__input"
+                  placeholder="或直接输入回复…"
+                  disabled={disabled}
+                  value={groupInput[groupIndex] ?? ''}
+                  onChange={(event) =>
+                    setGroupInput((prev) => ({ ...prev, [groupIndex]: event.target.value }))
+                  }
+                />
+              ) : null}
+            </div>
           ))}
-        </div>
+          <div className="pending-card__actions">
+            <button
+              type="button"
+              className="btn btn--sm"
+              disabled={disabled}
+              onClick={() => onRespond(['跳过'])}
+            >
+              跳过
+            </button>
+            <button
+              type="button"
+              className="btn btn--primary btn--sm"
+              disabled={disabled}
+              onClick={() => {
+                const values: string[] = []
+                pending.groups.forEach((group, groupIndex) => {
+                  const picked = groupSelected[groupIndex] ?? []
+                  const freeText = (groupInput[groupIndex] ?? '').trim()
+                  if (group.multiSelect) {
+                    values.push(...picked)
+                  } else if (picked.length > 0) {
+                    values.push(picked[0])
+                  }
+                  if (freeText) values.push(freeText)
+                })
+                onRespond(values.length > 0 ? values : ['跳过'])
+              }}
+            >
+              提交
+            </button>
+          </div>
+        </>
       )}
 
       {isPermission ? (
@@ -1693,9 +1875,15 @@ function PendingCard({
   )
 }
 
-function ToolItem({ tool }: { tool: ToolActivity }): JSX.Element {
+function ToolItem({
+  tool,
+  sessionId
+}: {
+  tool: ToolActivity
+  sessionId: string
+}): JSX.Element {
   // 子代理： Trae 风格执行详情卡片（目标任务 / 执行详情 / 返回结果 / 底栏统计）
-  if (tool.name === 'subagent') return <SubagentCard tool={tool} />
+  if (tool.name === 'subagent') return <SubagentCard tool={tool} sessionId={sessionId} />
 
   // 文件写入/删除：git diff 风格卡片（引擎下发了内容快照时）
   if (

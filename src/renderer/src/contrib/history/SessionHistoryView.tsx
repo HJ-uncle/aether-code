@@ -1,10 +1,14 @@
 /**
  * 会话历史视图（活动栏第一个标签）
  *
- * 列出引擎里所有有对话记录的会话（GET /conversation/sessions，
- * 引擎按最近活跃倒序返回）。点击条目把 lastSessionId 切到该会话：
- * ChatView 的 sessionId 跟随 settings.lastSessionId，切换后自动
- * 回放引擎侧历史，右侧对话面板随之恢复现场。
+ * 列表形制对齐 wuzu-client 的 CodeSessionHistory（按用户要求不带左侧头像图标）：
+ *   - 标题：首条用户消息首行，截 50 字，加粗单行截断
+ *   - 副标题：最后一条 AI 回复纯文本，截 60 字，灰色单行截断
+ *   - 右侧：相对时间（刚刚 / N 分钟前 / N 小时前 / N 天前 / 日期）
+ *   - 当前会话高亮；hover 浮现；点击切到该会话并展开右侧对话面板
+ *
+ * 引擎按最近活跃倒序返回（GET /conversation/sessions，title/lastReply 字段
+ * 由引擎 SQL 直出首条用户消息与最后一条助手消息原文，纯文本化在前端做）。
  */
 import { useCallback, useEffect, useState, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
@@ -20,24 +24,50 @@ interface SessionSummary {
   lastAt?: number
   messageCount?: number
   agentId?: string | null
+  /** 首条用户消息原文（可能含附件结构 JSON，extractText 负责纯文本化） */
+  title?: string
+  /** 最后一条助手消息原文 */
+  lastReply?: string
 }
 
-function summarize(content: unknown): string {
-  const text = extractText(content).replace(/\s+/g, ' ').trim()
-  return text.length > 60 ? `${text.slice(0, 60)}…` : text || '（无文本内容）'
+/** 标题：首条用户消息首行，纯文本化后截 50 字（对齐 wuzu displayTitle） */
+function sessionTitle(item: SessionSummary): string {
+  const raw = extractText(item.title ?? item.lastMessage).split('\n')[0].replace(/\s+/g, ' ').trim()
+  if (!raw) return '未命名会话'
+  return raw.length > 50 ? `${raw.slice(0, 50)}…` : raw
 }
 
-/** lastAt 是毫秒时间戳（引擎侧已乘 1000）；今天显示时刻，更早显示日期 */
-function formatTime(lastAt: number | undefined): string {
+/** 副标题：最后一条 AI 回复，纯文本化后截 60 字（对齐 wuzu displaySubtitle） */
+function sessionSubtitle(item: SessionSummary): string {
+  const raw = extractText(item.lastReply ?? '').replace(/\s+/g, ' ').trim()
+  if (!raw) return ''
+  return raw.length > 60 ? `${raw.slice(0, 60)}…` : raw
+}
+
+/** 相对时间（对齐 wuzu formatRelative）：刚刚 / N 分钟前 / N 小时前 / N 天前 / YYYY-MM-DD */
+function formatRelative(lastAt: number | undefined): string {
   if (!lastAt) return ''
-  const date = new Date(lastAt)
-  if (Number.isNaN(date.getTime())) return ''
-  const now = new Date()
-  const sameDay = date.toDateString() === now.toDateString()
-  const hm = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
-  if (sameDay) return hm
-  const md = `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-  return date.getFullYear() === now.getFullYear() ? md : `${date.getFullYear()}-${md}`
+  const time = new Date(lastAt)
+  if (Number.isNaN(time.getTime())) return ''
+  const min = Math.floor((Date.now() - lastAt) / 60000)
+  if (min < 1) return '刚刚'
+  if (min < 60) return `${min} 分钟前`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr} 小时前`
+  const day = Math.floor(hr / 24)
+  if (day < 30) return `${day} 天前`
+  const y = time.getFullYear()
+  const md = `${String(time.getMonth() + 1).padStart(2, '0')}-${String(time.getDate()).padStart(2, '0')}`
+  return `${y}-${md}`
+}
+
+/** title 提示用绝对时间：YYYY-MM-DD HH:mm */
+function formatAbsolute(lastAt: number | undefined): string {
+  if (!lastAt) return ''
+  const time = new Date(lastAt)
+  if (Number.isNaN(time.getTime())) return ''
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${time.getFullYear()}-${pad(time.getMonth() + 1)}-${pad(time.getDate())} ${pad(time.getHours())}:${pad(time.getMinutes())}`
 }
 
 export function SessionHistoryView(): JSX.Element {
@@ -126,21 +156,23 @@ export function SessionHistoryView(): JSX.Element {
         <ul className="history-view__list">
           {sessions.map((item) => {
             const active = item.sessionId === settings.lastSessionId
+            const title = sessionTitle(item)
+            const subtitle = sessionSubtitle(item)
             return (
               <li key={item.sessionId}>
                 <button
                   type="button"
                   className={`history-view__item${active ? ' is-active' : ''}`}
-                  title={`${item.sessionId}${item.agentId ? ` · agent: ${item.agentId}` : ''}`}
+                  title={`${title}\n最后活跃：${formatAbsolute(item.lastAt)}`}
                   onClick={() => openSession(item.sessionId)}
                 >
-                  <span className="history-view__summary">{summarize(item.lastMessage)}</span>
-                  <span className="history-view__meta">
-                    <span className="history-view__time">{formatTime(item.lastAt)}</span>
-                    {typeof item.messageCount === 'number' ? (
-                      <span className="history-view__count">{item.messageCount} 条</span>
-                    ) : null}
+                  <span className="history-view__row">
+                    <span className="history-view__summary">{title}</span>
+                    <span className="history-view__time">{formatRelative(item.lastAt)}</span>
                   </span>
+                  {subtitle ? (
+                    <span className="history-view__subtitle">{subtitle}</span>
+                  ) : null}
                 </button>
               </li>
             )

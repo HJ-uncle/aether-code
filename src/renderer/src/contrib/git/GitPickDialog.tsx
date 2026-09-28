@@ -11,7 +11,7 @@
  * - 行首图标从 iconify 字符串换成 IconName（aether 内置图标集），
  *   不引入新的图标依赖。
  */
-import { useMemo, useState, type JSX } from 'react'
+import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { Dialog } from '../../workbench/Dialog'
 import { Icon, type IconName } from '../../workbench/icons'
 
@@ -49,6 +49,13 @@ export function GitPickDialog({
   onClose
 }: GitPickDialogProps): JSX.Element {
   const [keyword, setKeyword] = useState('')
+  /** 键盘导航：↑↓ 移动高亮，Enter 选中 */
+  const [activeIndex, setActiveIndex] = useState(0)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
 
   const filtered = useMemo(() => {
     const kw = keyword.trim().toLowerCase()
@@ -62,6 +69,26 @@ export function GitPickDialog({
     )
   }, [items, keyword])
 
+  // 过滤结果变化后高亮回第 0 项，避免 Enter 选中看不见的条目
+  useEffect(() => {
+    setActiveIndex(0)
+  }, [filtered.length, keyword])
+
+  const onKeyDown = (event: React.KeyboardEvent): void => {
+    if (event.nativeEvent.isComposing) return
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      setActiveIndex((i) => Math.min(i + 1, filtered.length - 1))
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      setActiveIndex((i) => Math.max(i - 1, 0))
+    } else if (event.key === 'Enter') {
+      event.preventDefault()
+      const picked = filtered[activeIndex]
+      if (picked) onPick(picked.id)
+    }
+  }
+
   return (
     <Dialog title={title} width={480} className="git-pickdlg" onClose={onClose}>
       <div className="git-pickdlg__body">
@@ -70,10 +97,12 @@ export function GitPickDialog({
         <div className="git-pickdlg__search">
           <Icon name="search" size={13} />
           <input
+            ref={inputRef}
             className="git-pickdlg__input"
             value={keyword}
             placeholder={searchPlaceholder}
             onChange={(event) => setKeyword(event.target.value)}
+            onKeyDown={onKeyDown}
           />
         </div>
 
@@ -81,10 +110,12 @@ export function GitPickDialog({
           {filtered.length === 0 ? (
             <div className="git-pickdlg__empty">{keyword ? '无匹配项' : '暂无可选项'}</div>
           ) : (
-            filtered.map((item) => (
+            filtered.map((item, index) => (
               <div
                 key={item.id}
-                className={`git-pickdlg__item${item.description ? ' git-pickdlg__item--tall' : ''}`}
+                ref={index === activeIndex ? (el) => el?.scrollIntoView({ block: 'nearest' }) : null}
+                className={`git-pickdlg__item${item.description ? ' git-pickdlg__item--tall' : ''}${index === activeIndex ? ' is-active' : ''}`}
+                onMouseEnter={() => setActiveIndex(index)}
                 onClick={() => onPick(item.id)}
               >
                 {item.icon ? (

@@ -16,7 +16,7 @@ import { useMemo, useState, type JSX, type MouseEvent } from 'react'
 import type { GitFileChange } from '@shared/git-types'
 import { STATUS_COLOR, STATUS_LETTER, visualKeyOf } from '@renderer/core/git/git-status-visuals'
 import { discardHunk, hunksOf, loadHunksFor } from '@renderer/core/git/git-store'
-import { Icon } from '@renderer/workbench/icons'
+import { Icon, type IconName } from '@renderer/workbench/icons'
 
 export interface GitChangeRowProps {
   file: GitFileChange
@@ -31,10 +31,12 @@ export interface GitChangeRowProps {
   onContextMenu?: (file: GitFileChange, event: MouseEvent) => void
 }
 
-function statusIconName(file: GitFileChange): 'file' | 'graph' {
-  // 图标集暂无 file-plus/file-remove/file-edit/file-question/source-merge，
-  // 统一用 file（文件类）与 graph（冲突，暂代 source-merge），等主 Agent 补图标。
-  return file.conflict ? 'graph' : 'file'
+function statusIconName(file: GitFileChange): IconName {
+  if (file.binary) return 'file-question-outline'
+  if (file.conflict) return 'source-merge'
+  if (file.changeType === 'added' || file.changeType === 'untracked') return 'file-plus-outline'
+  if (file.changeType === 'deleted') return 'file-remove-outline'
+  return 'file-edit-outline'
 }
 
 export function GitChangeRow({
@@ -77,7 +79,10 @@ export function GitChangeRow({
         onDoubleClick={() => onOpen?.(file)}
         onContextMenu={(e) => onContextMenu?.(file, e)}
       >
-        <Icon name={statusIconName(file)} size={13} className="git-row__icon" />
+        {/* 图标染状态色：包一层 span 用 currentColor 上色 */}
+        <span className="git-row__icon" style={{ color: statusColor }}>
+          <Icon name={statusIconName(file)} size={13} />
+        </span>
         <span
           className={`git-row__name${file.changeType === 'deleted' ? ' is-deleted' : ''}`}
           style={{ color: statusColor }}

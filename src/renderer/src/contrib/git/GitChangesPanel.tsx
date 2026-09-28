@@ -6,7 +6,7 @@
  *
  * 结构对齐 VSCode 源代码管理面板与 wuzu 源组件，自上而下：
  *   1. 顶部工具条：变更计数 + 视图/排序菜单 + pull/push/fetch/refresh + 更多操作二级菜单
- *   2. 分支条（GitBranchBar）+ 同步按钮（GitSyncButton）+ 提交条（GitCommitBar）
+ *   2. 分支条（GitBranchBar）+ 提交条（GitCommitBar）——同步/拉取/推送已归入提交条，
  *   3. 多选批量操作条（选中 ≥2 时出现）
  *   4. 内容区：合并冲突横幅 → 合并更改组 → 暂存的更改组 → 更改组 → 提交历史 → 存储
  *   5. 底部汇总（+增/-删行数）
@@ -21,7 +21,7 @@
  *   - 弹窗体系：Element Plus 的 ElMessageBox 换成 aether 的 Dialog/PromptDialog/ContextMenu。
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
-import type { GitFileChange, GitLogEntry, GitStashEntry } from '@shared/git-types'
+import type { GitCommitRef, GitFileChange, GitLogEntry, GitStashEntry } from '@shared/git-types'
 import { documentKey, openFile } from '@renderer/core/editor/editor-store'
 import { startCloneFlow, useGitCloneFlow } from '@renderer/core/git/git-clone-flow'
 import {
@@ -30,6 +30,9 @@ import {
   createBranch,
   createTag,
   deleteTag,
+  deleteRemoteTag,
+  deleteRemoteBranch,
+  deleteBranch,
   discardFile,
   discardFiles,
   fetchRemote,
@@ -40,15 +43,31 @@ import {
   loadLog,
   loadStashes,
   loadTags,
+  loadRemotes,
+  merge,
   mergeAbort,
+  publishBranch,
   pull,
+  pullRebase,
   push,
+  pushForce,
   pushTag,
   pushTags,
+  pullFrom,
+  pushTo,
+  rebase,
+  rebaseAbort,
   refreshGit,
   reloadLog,
+  renameBranch,
   revertCommit,
+  addRemote,
+  removeRemote,
   cherryPick,
+  cherryPickAbort,
+  commitAmend,
+  undoCommit,
+  commitEmpty,
   setHistoryFilter,
   stagedFilesOf,
   stageFiles,
@@ -56,6 +75,8 @@ import {
   stashDrop,
   stashPop,
   stashPush,
+  stashPushStaged,
+  stashClear,
   totalAdditionsOf,
   totalDeletionsOf,
   unstage,
@@ -65,9 +86,11 @@ import {
   useGitStore,
   busyOperationOf
 } from '@renderer/core/git/git-store'
+import { gitAppendGitignore } from '@renderer/core/git/git-client'
 import { setLayout } from '@renderer/core/platform/layout-state'
 import { paths } from '@renderer/core/workspace/fs-client'
 import { ContextMenu, type ContextMenuItem } from '@renderer/workbench/ContextMenu'
+import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { Dialog } from '@renderer/workbench/Dialog'
 import { PromptDialog } from '@renderer/workbench/PromptDialog'
 import { Select } from '@renderer/workbench/Select'
@@ -85,7 +108,6 @@ import { GitCloneOverlay } from './GitCloneOverlay'
 import { configureGitCloneFlow } from './clone-hooks'
 import { GitPickDialog } from './GitPickDialog'
 import { GitStashHoverCard } from './GitStashHoverCard'
-import { GitSyncButton } from './GitSyncButton'
 
 /** 历史每页大小，对齐源组件 LOG_PAGE_SIZE */
 const LOG_PAGE_SIZE = 50
@@ -151,6 +173,28 @@ function buildTree(files: GitFileChange[]): GitChangeTreeNodeData[] {
   }
   sortLevel(roots)
   return roots
+}
+
+/** ref 展示排序：head > remote > tag > 其他（对齐源 compareRefs） */
+function compareRefs(a: GitCommitRef, b: GitCommitRef): number {
+  const rank = (r: GitCommitRef): number =>
+    r.type === 'head' ? 0 : r.type === 'remote' ? 1 : r.type === 'tag' ? 2 : 3
+  return rank(a) - rank(b)
+}
+
+/** 行内 refs 徽章：最多 2 个，按 head/remote/tag 排序 */
+function commitRefs(commit: GitLogEntry): GitCommitRef[] {
+  return (commit.refs ?? []).slice().sort(compareRefs).slice(0, 2)
+}
+
+function refBadgeClass(ref: GitCommitRef): string {
+  return `git-panel__ref-badge git-panel__ref-badge--${ref.type}`
+}
+
+function refBadgeText(ref: GitCommitRef): string {
+  if (ref.type === 'head') return `● ${ref.name}`
+  if (ref.type === 'tag') return `⚑ ${ref.name}`
+  return ref.name
 }
 
 /** 提交时间显示：短格式 MM-dd HH:mm（对齐源 formatCommitDate） */
@@ -219,12 +263,17 @@ interface HistoryVM {
   graph: import('@renderer/core/git/git-history-graph').HistoryItemViewModel
 }
 
-interface ConfirmState {
-  title: string
-  message: string
-  confirmLabel: string
-  danger?: boolean
-  resolve: (ok: boolean) => void
+/**
+ * 面板内确认弹窗的统一入口（原内联 confirmState 的薄封装）。
+ * 参数顺序沿用旧签名 (message, title, confirmLabel, danger)，内部转给全局 confirmDialog。
+ */
+function confirmAction(
+  message: string,
+  title: string,
+  confirmLabel = '确定',
+  danger = false
+): Promise<boolean> {
+  return confirmDialog({ title, body: message, confirmText: confirmLabel, danger })
 }
 
 interface PromptState {
@@ -298,11 +347,13 @@ export function GitChangesPanel(): JSX.Element {
   } | null>(null)
 
   // ---------- 对话框 ----------
-  const [confirmState, setConfirmState] = useState<ConfirmState | null>(null)
   const [promptState, setPromptState] = useState<PromptState | null>(null)
   const [pickState, setPickState] = useState<PickState | null>(null)
   const [commitDetailHash, setCommitDetailHash] = useState('')
   const [stashDetail, setStashDetail] = useState<StashDetailState | null>(null)
+  const [stashMenu, setStashMenu] = useState<{ x: number; y: number; stash: GitStashEntry } | null>(
+    null
+  )
 
   // ---------- 多选 ----------
   const [selection, setSelection] = useState<Map<string, GitFileChange>>(new Map())
@@ -365,14 +416,6 @@ export function GitChangesPanel(): JSX.Element {
   }, [git.commits, git.incomingCommits, historyFilterActive])
 
   // ---------- 通用弹窗辅助 ----------
-  const confirmAction = useCallback(
-    (message: string, title: string, confirmLabel = '确定', danger = false): Promise<boolean> =>
-      new Promise((resolve) => {
-        setConfirmState({ title, message, confirmLabel, danger, resolve })
-      }),
-    []
-  )
-
   const promptInput = useCallback(
     (
       title: string,
@@ -474,6 +517,16 @@ export function GitChangesPanel(): JSX.Element {
   )
 
   const clearSelection = useCallback((): void => setSelection(new Map()), [])
+
+  /** 把相对路径追加到 .gitignore（经 IPC，主进程幂等写入）；成功后刷新状态 */
+  const handleAppendGitignore = useCallback(
+    async (file: GitFileChange): Promise<void> => {
+      const res = await gitAppendGitignore(git.cwd, file.path)
+      if (!res.success) setNotice(res.error ?? '写入 .gitignore 失败')
+      else void refreshGit(git.cwd)
+    },
+    [git.cwd]
+  )
 
   const pathsOfGroup = useCallback(
     (group: ChangeGroup): string[] => {
@@ -880,6 +933,26 @@ export function GitChangesPanel(): JSX.Element {
     [git.stashes]
   )
 
+  /** stash 行右键菜单：查看详情 / 恢复 / 恢复并删除 / 删除（源 hover 操作 + 右键同一套动作） */
+  const stashContextItems = useCallback(
+    (stash: GitStashEntry): ContextMenuItem[] => [
+      { id: 'stash-view', label: '查看详情', onSelect: () => handleStashView(stash.index) },
+      {
+        id: 'stash-apply',
+        label: '恢复（保留记录）',
+        onSelect: () => void handleStashApply(stash.index)
+      },
+      { id: 'stash-pop', label: '恢复并删除', onSelect: () => void handleStashPop(stash.index) },
+      {
+        id: 'stash-drop',
+        label: '删除存储',
+        danger: true,
+        onSelect: () => void handleStashDrop(stash.index)
+      }
+    ],
+    [handleStashView, handleStashApply, handleStashPop, handleStashDrop]
+  )
+
   const handleStashHover = useCallback(
     (stash: GitStashEntry, event: React.MouseEvent<HTMLElement>): void => {
       if (stashHover.stash?.index === stash.index && stashHover.visible) return
@@ -999,7 +1072,11 @@ export function GitChangesPanel(): JSX.Element {
         items: [
           { action: 'sync', label: '同步' },
           { action: 'pull', label: '拉取' },
+          { action: 'pullRebase', label: '拉取（变基）' },
+          { action: 'pullFrom', label: '拉取自…' },
           { action: 'push', label: '推送' },
+          { action: 'pushTo', label: '推送到…' },
+          { action: 'pushForce', label: '强制推送（force-with-lease）' },
           { action: 'pushTags', label: '推送所有标签' }
         ]
       },
@@ -1007,13 +1084,37 @@ export function GitChangesPanel(): JSX.Element {
         key: 'commit',
         label: '提交',
         icon: 'check',
-        items: [{ action: 'commitEmpty', label: '空提交' }]
+        items: [
+          { action: 'commitAmend', label: '修补上次提交（amend）' },
+          { action: 'undoCommit', label: '撤销上次提交' },
+          { action: 'commitEmpty', label: '空提交' }
+        ]
       },
       {
         key: 'branch',
         label: '分支',
         icon: 'git',
-        items: [{ action: 'mergeAbort', label: '中止合并', disabled: !git.merging }]
+        items: [
+          { action: 'merge', label: '合并分支…' },
+          { action: 'mergeAbort', label: '中止合并', disabled: !git.merging },
+          { action: 'rebase', label: '变基到分支…' },
+          { action: 'rebaseAbort', label: '中止变基' },
+          { action: 'cherryPick', label: '拣选提交（cherry-pick）…' },
+          { action: 'cherryPickAbort', label: '中止拣选' },
+          { action: 'renameBranch', label: '重命名当前分支…' },
+          { action: 'deleteBranch', label: '删除分支…' },
+          { action: 'deleteRemoteBranch', label: '删除远程分支…' },
+          { action: 'publishBranch', label: '发布分支到 origin', disabled: Boolean(git.upstream) }
+        ]
+      },
+      {
+        key: 'remote',
+        label: '远程',
+        icon: 'git',
+        items: [
+          { action: 'addRemote', label: '添加远程仓库…' },
+          { action: 'removeRemote', label: '删除远程仓库…' }
+        ]
       },
       {
         key: 'stash',
@@ -1021,16 +1122,35 @@ export function GitChangesPanel(): JSX.Element {
         icon: 'git',
         items: [
           { action: 'stashPush', label: '存储当前更改…' },
+          { action: 'stashPushUntracked', label: '存储当前更改（含未跟踪文件）…' },
+          {
+            action: 'stashPushStaged',
+            label: '只存储已暂存的更改…',
+            disabled: staged.length === 0
+          },
+          {
+            action: 'stashApply',
+            label: '恢复最新一次存储的改动',
+            disabled: git.stashes.length === 0
+          },
           {
             action: 'stashApplyPick',
             label: '恢复某次存储的改动…',
             disabled: git.stashes.length === 0
           },
           {
+            action: 'stashPop',
+            label: '恢复最新一次并删除该存储',
+            disabled: git.stashes.length === 0
+          },
+          { action: 'stashPopPick', label: '恢复某次并删除…', disabled: git.stashes.length === 0 },
+          {
             action: 'stashDropPick',
             label: '删除某次存储…',
             disabled: git.stashes.length === 0
-          }
+          },
+          { action: 'stashView', label: '查看存储详情…', disabled: git.stashes.length === 0 },
+          { action: 'stashClear', label: '清空全部存储', disabled: git.stashes.length === 0 }
         ]
       },
       {
@@ -1041,11 +1161,12 @@ export function GitChangesPanel(): JSX.Element {
           { action: 'createTag', label: '创建标签…' },
           { action: 'deleteTag', label: '删除标签…' },
           { action: 'pushTag', label: '推送标签…' },
-          { action: 'pushTags', label: '推送所有标签' }
+          { action: 'pushTags', label: '推送所有标签' },
+          { action: 'deleteRemoteTag', label: '删除远程标签…' }
         ]
       }
     ],
-    [git.merging, git.stashes.length]
+    [git.merging, git.upstream, git.stashes.length, staged.length]
   )
   const handleMenuAction = useCallback(
     async (action: string): Promise<void> => {
@@ -1058,6 +1179,175 @@ export function GitChangesPanel(): JSX.Element {
         case 'push':
           await handleRemote('push')
           return
+        case 'pullRebase': {
+          const res = await pullRebase()
+          if (!res.success) setNotice(res.error ?? '拉取（变基）失败')
+          return
+        }
+        case 'pullFrom': {
+          await loadRemotes()
+          const picked = await pickOption(
+            '拉取自…',
+            '选择远程分支（remote/branch）',
+            git.remoteBranches.map((b) => ({ value: b }))
+          )
+          if (!picked) return
+          const sep = picked.indexOf('/')
+          if (sep < 0) return
+          const res = await pullFrom(picked.slice(0, sep), picked.slice(sep + 1))
+          if (!res.success) setNotice(res.error ?? '拉取失败')
+          return
+        }
+        case 'pushTo': {
+          await loadRemotes()
+          const picked = await pickOption(
+            '推送到…',
+            '选择远程仓库',
+            git.remotes.map((r) => ({ value: r.name, label: r.name, hint: r.url }))
+          )
+          if (!picked) return
+          const res = await pushTo(picked)
+          if (!res.success) setNotice(res.error ?? '推送失败')
+          return
+        }
+        case 'pushForce': {
+          const ok = await confirmAction(
+            '强制推送会覆盖远程历史（force-with-lease），仅在确认远程没有被他人更新时使用。继续？',
+            '强制推送',
+            '强制推送',
+            true
+          )
+          if (!ok) return
+          const res = await pushForce()
+          if (!res.success) setNotice(res.error ?? '强制推送失败')
+          return
+        }
+        case 'commitAmend': {
+          const res = await commitAmend()
+          if (!res.success) setNotice(res.error ?? '修补提交失败')
+          return
+        }
+        case 'undoCommit': {
+          const res = await undoCommit()
+          if (!res.success) setNotice(res.error ?? '撤销提交失败')
+          return
+        }
+        case 'merge': {
+          const picked = await pickOption(
+            '合并分支…',
+            '选择要合并进当前分支的分支',
+            git.branches.filter((b) => b !== git.branch).map((b) => ({ value: b }))
+          )
+          if (!picked) return
+          const res = await merge(picked)
+          if (!res.success) setNotice(res.error ?? '合并失败')
+          return
+        }
+        case 'rebase': {
+          const picked = await pickOption(
+            '变基到分支…',
+            '选择目标分支（当前分支将变基到其上）',
+            git.branches.filter((b) => b !== git.branch).map((b) => ({ value: b }))
+          )
+          if (!picked) return
+          const res = await rebase(picked)
+          if (!res.success) setNotice(res.error ?? '变基失败')
+          return
+        }
+        case 'rebaseAbort': {
+          const res = await rebaseAbort()
+          if (!res.success) setNotice(res.error ?? '中止变基失败')
+          return
+        }
+        case 'cherryPick': {
+          const picked = await pickOption(
+            '拣选提交（cherry-pick）…',
+            '选择要拣选的提交',
+            git.commits.map((c) => ({ value: c.hash, label: c.subject, hint: c.shortHash }))
+          )
+          if (!picked) return
+          const res = await cherryPick(picked)
+          if (!res.success) setNotice(res.error ?? '拣选失败')
+          return
+        }
+        case 'cherryPickAbort': {
+          const res = await cherryPickAbort()
+          if (!res.success) setNotice(res.error ?? '中止拣选失败')
+          return
+        }
+        case 'renameBranch': {
+          const next = await promptInput(`重命名分支 ${git.branch}`, '新分支名', {
+            initialValue: git.branch
+          })
+          if (!next || next === git.branch) return
+          const res = await renameBranch(git.branch, next)
+          if (!res.success) setNotice(res.error ?? '重命名失败')
+          return
+        }
+        case 'deleteBranch': {
+          const picked = await pickOption(
+            '删除分支…',
+            '选择要删除的本地分支',
+            git.branches.filter((b) => b !== git.branch).map((b) => ({ value: b }))
+          )
+          if (!picked) return
+          const ok = await confirmAction(`确定删除分支 ${picked}？`, '删除分支', '删除', true)
+          if (!ok) return
+          const res = await deleteBranch(picked)
+          if (!res.success) setNotice(res.error ?? '删除分支失败')
+          return
+        }
+        case 'deleteRemoteBranch': {
+          await loadRemotes()
+          const picked = await pickOption(
+            '删除远程分支…',
+            '选择要删除的远程分支（remote/branch）',
+            git.remoteBranches.map((b) => ({ value: b }))
+          )
+          if (!picked) return
+          const sep = picked.indexOf('/')
+          if (sep < 0) return
+          const ok = await confirmAction(
+            `确定删除远程分支 ${picked}？`,
+            '删除远程分支',
+            '删除',
+            true
+          )
+          if (!ok) return
+          const res = await deleteRemoteBranch(picked.slice(0, sep), picked.slice(sep + 1))
+          if (!res.success) setNotice(res.error ?? '删除远程分支失败')
+          return
+        }
+        case 'publishBranch': {
+          const res = await publishBranch()
+          if (!res.success) setNotice(res.error ?? '发布分支失败')
+          return
+        }
+        case 'addRemote': {
+          const name = await promptInput('添加远程仓库', '远程名称（如 origin）')
+          if (!name) return
+          const url = await promptInput('添加远程仓库', '仓库 URL')
+          if (!url) return
+          const res = await addRemote(name, url)
+          if (!res.success) setNotice(res.error ?? '添加远程失败')
+          else await loadRemotes()
+          return
+        }
+        case 'removeRemote': {
+          await loadRemotes()
+          const picked = await pickOption(
+            '删除远程仓库…',
+            '选择要删除的远程',
+            git.remotes.map((r) => ({ value: r.name, label: r.name, hint: r.url }))
+          )
+          if (!picked) return
+          const ok = await confirmAction(`确定删除远程 ${picked}？`, '删除远程仓库', '删除', true)
+          if (!ok) return
+          const res = await removeRemote(picked)
+          if (!res.success) setNotice(res.error ?? '删除远程失败')
+          else await loadRemotes()
+          return
+        }
         case 'pushTags': {
           const res = await pushTags()
           if (!res.success) setNotice(res.error ?? '推送标签失败')
@@ -1066,8 +1356,6 @@ export function GitChangesPanel(): JSX.Element {
         case 'commitEmpty': {
           const msg = await promptInput('空提交不需要任何改动，请输入提交信息', '提交信息')
           if (!msg) return
-          // commitEmpty 在任务摘要里列出；若无此导出会在 typecheck 暴露
-          const { commitEmpty } = await import('@renderer/core/git/git-store')
           const res = await commitEmpty(msg)
           if (!res.success) setNotice(res.error ?? '空提交失败')
           return
@@ -1084,6 +1372,91 @@ export function GitChangesPanel(): JSX.Element {
           if (msg === null) return
           const res = await stashPush(msg || undefined)
           if (!res.success) setNotice(res.error ?? '存储失败')
+          return
+        }
+        case 'stashPushUntracked': {
+          const msg = await promptInput('存储说明（可选，含未跟踪文件）', '说明', {
+            allowEmpty: true
+          })
+          if (msg === null) return
+          const res = await stashPush(msg || undefined, true)
+          if (!res.success) setNotice(res.error ?? '存储失败')
+          return
+        }
+        case 'stashPushStaged': {
+          const msg = await promptInput('存储说明（只存储已暂存的更改）', '说明', {
+            allowEmpty: true
+          })
+          if (msg === null) return
+          const res = await stashPushStaged(msg || undefined)
+          if (!res.success) setNotice(res.error ?? '存储失败')
+          return
+        }
+        case 'stashApply':
+          await handleStashApply()
+          return
+        case 'stashPop':
+          await handleStashPop()
+          return
+        case 'stashPopPick': {
+          await loadStashes()
+          const picked = await pickOption(
+            '恢复某次并删除',
+            '选择要恢复并删除的存储',
+            git.stashes.map((s) => ({
+              value: String(s.index),
+              label: `存储 ${s.index}  ${stashDisplayMessage(s.message)}`,
+              hint: formatStashDate(s.date)
+            }))
+          )
+          if (picked === null) return
+          await handleStashPop(Number(picked))
+          return
+        }
+        case 'stashView': {
+          await loadStashes()
+          const picked = await pickOption(
+            '查看存储详情…',
+            '选择要查看的存储',
+            git.stashes.map((s) => ({
+              value: String(s.index),
+              label: `存储 ${s.index}  ${stashDisplayMessage(s.message)}`,
+              hint: formatStashDate(s.date)
+            }))
+          )
+          if (picked === null) return
+          handleStashView(Number(picked))
+          return
+        }
+        case 'stashClear': {
+          const ok = await confirmAction(
+            '确定清空全部存储？其中保存的改动将不可恢复。',
+            '清空存储',
+            '清空',
+            true
+          )
+          if (!ok) return
+          const res = await stashClear()
+          if (!res.success) setNotice(res.error ?? '清空失败')
+          return
+        }
+        case 'deleteRemoteTag': {
+          await loadTags()
+          const picked = await pickOption(
+            '删除远程标签…',
+            '选择要删除的远程标签',
+            git.tags.map((t) => ({ value: t }))
+          )
+          if (!picked) return
+          const ok = await confirmAction(
+            `确定删除远程标签 ${picked}？`,
+            '删除远程标签',
+            '删除',
+            true
+          )
+          if (!ok) return
+          const res = await deleteRemoteTag(picked)
+          if (!res.success) setNotice(res.error ?? '删除远程标签失败')
           return
         }
         case 'stashApplyPick': {
@@ -1131,9 +1504,18 @@ export function GitChangesPanel(): JSX.Element {
       handleRemote,
       promptInput,
       git.stashes,
+      git.branches,
+      git.branch,
+      git.commits,
+      git.remoteBranches,
+      git.remotes,
+      git.tags,
       pickOption,
+      confirmAction,
       handleStashApply,
+      handleStashPop,
       handleStashDrop,
+      handleStashView,
       handleCreateTag,
       handleDeleteTag,
       handlePushTag
@@ -1141,23 +1523,42 @@ export function GitChangesPanel(): JSX.Element {
   )
 
   // ---------- 文件右键菜单 ----------
+  // 对齐源 GitChangesPanel.vue 的 9 项完整菜单。三项刻意缺席（依赖缺失）：
+  // - 打开文件 (HEAD)：aether 无只读虚拟文档宿主，拿到 HEAD 内容后无处可渲染。
+  // - 在文件资源管理器中显示：主进程 IPC 无 shell.showItemInFolder 通道。
+  // - 在资源管理器视图中显示：ExplorerView 未暴露 reveal/选中外部文件的入口。
+  // 「定位到产生该更改的会话」依赖 wuzu 的 codeChange 会话记录，aether 无此数据，同样不加。
   const fileContextItems = useCallback(
-    (file: GitFileChange): ContextMenuItem[] => [
-      { id: 'open-diff', label: '打开更改', onSelect: () => void handleSelectFile(file) },
-      { id: 'open-file', label: '打开文件', onSelect: () => openSourceFile(file.path) },
-      {
-        id: 'discard',
-        label: '放弃更改',
-        danger: true,
-        onSelect: () => void handleDiscard(file)
-      },
-      {
-        id: 'toggle-stage',
-        label: file.staged ? '取消暂存更改' : '暂存更改',
-        onSelect: () => void handleToggleStage(file)
+    (file: GitFileChange): ContextMenuItem[] => {
+      const items: ContextMenuItem[] = [
+        { id: 'open-diff', label: '打开更改', onSelect: () => void handleSelectFile(file) },
+        { id: 'open-file', label: '打开文件', onSelect: () => openSourceFile(file.path) }
+      ]
+      if (file.conflict) {
+        // 冲突文件：源提供「采用当前/传入更改」两步解决（resolveConflictText 已有纯函数，
+        // 但缺编辑器写回链路），这里仅保留语义明确的标记入口，由 GitChangeRow 行内按钮承载。
       }
-    ],
-    [handleSelectFile, openSourceFile, handleDiscard, handleToggleStage]
+      items.push(
+        {
+          id: 'discard',
+          label: '放弃更改',
+          danger: true,
+          onSelect: () => void handleDiscard(file)
+        },
+        {
+          id: 'toggle-stage',
+          label: file.staged ? '取消暂存更改' : '暂存更改',
+          onSelect: () => void handleToggleStage(file)
+        },
+        {
+          id: 'append-gitignore',
+          label: '添加到 .gitignore',
+          onSelect: () => void handleAppendGitignore(file)
+        }
+      )
+      return items
+    },
+    [handleSelectFile, openSourceFile, handleDiscard, handleToggleStage, handleAppendGitignore]
   )
 
   // ---------- 面板点击：点空白清空多选 ----------
@@ -1193,9 +1594,13 @@ export function GitChangesPanel(): JSX.Element {
     count: number,
     expanded: boolean,
     onToggle: () => void,
-    actions?: JSX.Element
+    actions?: JSX.Element,
+    variant?: 'conflict'
   ): JSX.Element => (
-    <div className="git-panel__group-head" onClick={onToggle}>
+    <div
+      className={`git-panel__group-head${variant ? ` git-panel__group-head--${variant}` : ''}`}
+      onClick={onToggle}
+    >
       <Icon name="chevron" size={12} className={expanded ? '' : 'is-collapsed'} />
       <span>{title}</span>
       <span className="git-panel__count">{count}</span>
@@ -1282,9 +1687,9 @@ export function GitChangesPanel(): JSX.Element {
             <section className="git-panel__section">
               {renderGroupHeader('合并更改', conflicts.length, conflictExpanded, () =>
                 setConflictExpanded((v) => !v)
-              )}
+              , undefined, 'conflict')}
               {conflictExpanded ? (
-                <div className="git-panel__group">
+                <div className="git-panel__list">
                   {conflicts.map((f) => renderChangeRow('conflict', f))}
                 </div>
               ) : null}
@@ -1312,7 +1717,7 @@ export function GitChangesPanel(): JSX.Element {
                 </button>
               )}
               {stagedExpanded ? (
-                <div className="git-panel__group">
+                <div className="git-panel__list">
                   {viewMode === 'list'
                     ? staged.map((f) => renderChangeRow('staged', f))
                     : stagedTree.map((node) => (
@@ -1372,7 +1777,7 @@ export function GitChangesPanel(): JSX.Element {
                 </>
               )}
               {unstagedExpanded ? (
-                <div className="git-panel__group">
+                <div className="git-panel__list">
                   {viewMode === 'list'
                     ? unstaged.map((f) => renderChangeRow('unstaged', f))
                     : unstagedTree.map((node) => (
@@ -1454,6 +1859,7 @@ export function GitChangesPanel(): JSX.Element {
                     }}
                     title="作者"
                     width={180}
+                    className="git-panel__filter-select"
                   />
                   <Select
                     value={git.historyRef}
@@ -1468,6 +1874,7 @@ export function GitChangesPanel(): JSX.Element {
                     }}
                     title="分支"
                     width={180}
+                    className="git-panel__filter-select"
                   />
                   <button
                     type="button"
@@ -1475,7 +1882,7 @@ export function GitChangesPanel(): JSX.Element {
                     title="清除过滤"
                     onClick={clearAllHistoryFilter}
                   >
-                    <Icon name="close" size={12} />
+                    <Icon name="filter-remove" size={12} />
                   </button>
                 </div>
 
@@ -1508,8 +1915,14 @@ export function GitChangesPanel(): JSX.Element {
                             vm.isIncoming ? ' is-incoming' : isMyCommit(vm.commit) ? ' is-mine' : ''
                           }`}
                         >
+                          {!vm.isIncoming && isMyCommit(vm.commit) ? '· ' : ''}
                           {vm.commit.author}
                         </span>
+                        {commitRefs(vm.commit).map((ref, ri) => (
+                          <span key={ri} className={refBadgeClass(ref)} title={ref.name}>
+                            {refBadgeText(ref)}
+                          </span>
+                        ))}
                         <span
                           className={`git-panel__commit-date${isTodayCommit(vm.commit) ? ' is-today' : ''}`}
                         >
@@ -1595,7 +2008,11 @@ export function GitChangesPanel(): JSX.Element {
                     className="git-panel__load-more"
                     onClick={() => void loadLog(LOG_PAGE_SIZE, true)}
                   >
-                    <Icon name="chevron" size={13} />
+                    <Icon
+                      name="chevron-double-down"
+                      size={13}
+                      className={git.logLoadingMore ? 'is-spinning' : undefined}
+                    />
                     {git.logLoadingMore ? '加载中…' : '加载更早的提交'}
                   </div>
                 ) : null}
@@ -1667,7 +2084,7 @@ export function GitChangesPanel(): JSX.Element {
                 </div>
               ) : null}
               {stashExpanded ? (
-                <div className="git-panel__group">
+                <div className="git-panel__list">
                   {git.stashes.length === 0 ? (
                     <div className="git-panel__history-empty">暂无存储记录</div>
                   ) : (
@@ -1684,6 +2101,10 @@ export function GitChangesPanel(): JSX.Element {
                         }
                         onMouseEnter={(e) => handleStashHover(stash, e)}
                         onMouseLeave={handleStashHoverLeave}
+                        onContextMenu={(e) => {
+                          e.preventDefault()
+                          setStashMenu({ x: e.clientX, y: e.clientY, stash })
+                        }}
                       >
                         {stashSelectionMode ? (
                           <input
@@ -1693,7 +2114,7 @@ export function GitChangesPanel(): JSX.Element {
                             onClick={(e) => e.stopPropagation()}
                           />
                         ) : null}
-                        <Icon name="git" size={13} />
+                        <Icon name="package-variant-closed" size={13} />
                         <span className="git-panel__stash-msg">
                           {stashDisplayMessage(stash.message)}
                         </span>
@@ -1717,7 +2138,7 @@ export function GitChangesPanel(): JSX.Element {
                                 handleStashView(stash.index)
                               }}
                             >
-                              <Icon name="search" size={12} />
+                              <Icon name="eye-outline" size={12} />
                             </button>
                             <button
                               type="button"
@@ -1727,7 +2148,7 @@ export function GitChangesPanel(): JSX.Element {
                                 void handleStashApply(stash.index)
                               }}
                             >
-                              <Icon name="check" size={12} />
+                              <Icon name="package-up" size={12} />
                             </button>
                             <button
                               type="button"
@@ -1737,7 +2158,7 @@ export function GitChangesPanel(): JSX.Element {
                                 void handleStashPop(stash.index)
                               }}
                             >
-                              <Icon name="plus" size={12} />
+                              <Icon name="upload-outline" size={12} />
                             </button>
                             <button
                               type="button"
@@ -1747,7 +2168,7 @@ export function GitChangesPanel(): JSX.Element {
                                 void handleStashDrop(stash.index)
                               }}
                             >
-                              <Icon name="trash" size={12} />
+                              <Icon name="delete-outline" size={12} />
                             </button>
                           </span>
                         ) : null}
@@ -1785,7 +2206,7 @@ export function GitChangesPanel(): JSX.Element {
             setViewMenuOpen((v) => !v)
           }}
         >
-          <Icon name="sort" size={14} />
+          <Icon name="dots-horizontal" size={14} />
         </button>
 
         {git.isRepo ? (
@@ -1797,7 +2218,11 @@ export function GitChangesPanel(): JSX.Element {
               disabled={gitBusy || remoteBusy !== ''}
               onClick={() => void handleRemote('pull')}
             >
-              <Icon name="restart" size={14} />
+              <Icon
+                name="source-pull"
+                size={14}
+                className={remoteBusy === 'pull' ? 'is-spinning' : undefined}
+              />
               {git.behind ? (
                 <span className="git-panel__badge git-panel__badge--behind">{git.behind}</span>
               ) : null}
@@ -1809,7 +2234,11 @@ export function GitChangesPanel(): JSX.Element {
               disabled={gitBusy || remoteBusy !== ''}
               onClick={() => void handleRemote('push')}
             >
-              <Icon name="send" size={14} />
+              <Icon
+                name="cloud-upload-outline"
+                size={14}
+                className={remoteBusy === 'push' ? 'is-spinning' : undefined}
+              />
               {git.ahead ? (
                 <span className="git-panel__badge git-panel__badge--ahead">{git.ahead}</span>
               ) : null}
@@ -1821,7 +2250,11 @@ export function GitChangesPanel(): JSX.Element {
               disabled={gitBusy || remoteBusy !== ''}
               onClick={() => void handleRemote('fetch')}
             >
-              <Icon name="restart" size={14} />
+              <Icon
+                name="cloud-download-outline"
+                size={14}
+                className={remoteBusy === 'fetch' ? 'is-spinning' : undefined}
+              />
             </button>
           </>
         ) : null}
@@ -1847,7 +2280,7 @@ export function GitChangesPanel(): JSX.Element {
               setMoreMenuOpen((v) => !v)
             }}
           >
-            <Icon name="sort" size={14} />
+            <Icon name="dots-vertical" size={14} />
           </button>
         ) : null}
       </div>
@@ -1856,7 +2289,6 @@ export function GitChangesPanel(): JSX.Element {
       {git.isRepo ? (
         <div className="git-panel__commit-area" key={git.cwd}>
           <GitBranchBar />
-          <GitSyncButton />
           <GitCommitBar />
         </div>
       ) : null}
@@ -1949,7 +2381,7 @@ export function GitChangesPanel(): JSX.Element {
         />
       ) : null}
 
-      {/* 更多操作菜单：一级分组，hover 展开二级（简化为 ContextMenu 平铺，组名作 disabled 分隔项） */}
+      {/* 更多操作菜单：一级分组入口，hover 展开二级 */}
       {moreMenuOpen ? (
         <ContextMenu
           x={moreMenuPos.x}
@@ -1957,20 +2389,17 @@ export function GitChangesPanel(): JSX.Element {
           onClose={() => {
             setMoreMenuOpen(false)
           }}
-          items={moreMenuGroups.flatMap((group) => [
-            {
-              id: `group-${group.key}`,
-              label: `— ${group.label} —`,
-              disabled: true,
-              onSelect: () => {}
-            },
-            ...group.items.map((item) => ({
+          items={moreMenuGroups.map((group) => ({
+            id: `group-${group.key}`,
+            label: group.label,
+            onSelect: () => {},
+            children: group.items.map((item) => ({
               id: item.action,
               label: item.label,
               disabled: item.disabled || gitBusy,
               onSelect: () => void handleMenuAction(item.action)
             }))
-          ])}
+          }))}
         />
       ) : null}
 
@@ -1981,6 +2410,16 @@ export function GitChangesPanel(): JSX.Element {
           y={contextMenu.y}
           items={fileContextItems(contextMenu.file)}
           onClose={() => setContextMenu(null)}
+        />
+      ) : null}
+
+      {/* stash 右键菜单 */}
+      {stashMenu ? (
+        <ContextMenu
+          x={stashMenu.x}
+          y={stashMenu.y}
+          items={stashContextItems(stashMenu.stash)}
+          onClose={() => setStashMenu(null)}
         />
       ) : null}
 
@@ -2024,43 +2463,6 @@ export function GitChangesPanel(): JSX.Element {
             }
           ]}
         />
-      ) : null}
-
-      {/* 通用确认弹窗 */}
-      {confirmState ? (
-        <Dialog
-          title={confirmState.title}
-          onClose={() => {
-            confirmState.resolve(false)
-            setConfirmState(null)
-          }}
-          footer={
-            <>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => {
-                  confirmState.resolve(false)
-                  setConfirmState(null)
-                }}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                className={`btn${confirmState.danger ? ' btn--danger' : ' btn--primary'}`}
-                onClick={() => {
-                  confirmState.resolve(true)
-                  setConfirmState(null)
-                }}
-              >
-                {confirmState.confirmLabel}
-              </button>
-            </>
-          }
-        >
-          <div className="git-panel__dialog-body">{confirmState.message}</div>
-        </Dialog>
       ) : null}
 
       {/* 通用输入弹窗 */}

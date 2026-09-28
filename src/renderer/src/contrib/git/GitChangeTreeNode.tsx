@@ -9,7 +9,15 @@
 import { useState, type JSX, type MouseEvent } from 'react'
 import type { GitFileChange } from '@shared/git-types'
 import { STATUS_COLOR, STATUS_LETTER, visualKeyOf } from '@renderer/core/git/git-status-visuals'
-import { Icon } from '@renderer/workbench/icons'
+import { Icon, type IconName } from '@renderer/workbench/icons'
+
+function treeStatusIconName(file: GitFileChange): IconName {
+  if (file.binary) return 'file-question-outline'
+  if (file.conflict) return 'source-merge'
+  if (file.changeType === 'added' || file.changeType === 'untracked') return 'file-plus-outline'
+  if (file.changeType === 'deleted') return 'file-remove-outline'
+  return 'file-edit-outline'
+}
 
 export interface GitChangeTreeNodeData {
   key: string
@@ -112,7 +120,10 @@ export function GitChangeTreeNode({
       onDoubleClick={() => onOpen?.(file)}
       onContextMenu={(e) => onContextMenuFile?.(file, e)}
     >
-      <Icon name={file.conflict ? 'graph' : 'file'} size={13} className="git-row__icon" />
+      {/* 图标染状态色：包一层 span 用 currentColor 上色 */}
+      <span className="git-row__icon" style={{ color: statusColor }}>
+        <Icon name={treeStatusIconName(file)} size={13} />
+      </span>
       <span
         className={`git-row__name${file.changeType === 'deleted' ? ' is-deleted' : ''}`}
         style={{ color: statusColor }}

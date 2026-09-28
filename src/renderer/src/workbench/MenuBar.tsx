@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { executeCommand } from '@renderer/core/platform/commands'
 import { getKeybindingHint } from '@renderer/core/platform/keybindings'
+import { setLayout, toggleChatPanel, toggleChatPosition } from '@renderer/core/platform/layout-state'
 import { openAppSettings } from '@renderer/contrib/settings/app-settings-navigation'
 import { Icon } from '@renderer/workbench/icons'
+import { useLayout } from './useLayout'
 import {
   getUserKeybindingRules,
   onUserKeybindingsChanged
@@ -119,6 +121,7 @@ function WindowControls(): JSX.Element | null {
 export function MenuBar(): JSX.Element {
   const [open, setOpen] = useState<string | null>(null)
   const ref = useRef<HTMLElement>(null)
+  const layout = useLayout()
   // 订阅用户键位变化：自定义快捷键后菜单提示立即跟随
   useSyncExternalStore(onUserKeybindingsChanged, getUserKeybindingRules)
 
@@ -178,9 +181,38 @@ export function MenuBar(): JSX.Element {
           ) : null}
         </div>
       ))}
-      {/* 右侧动作区：设置入口固定在右上角，后续用户头像 / 账号等也在此扩展 */}
+      {/* 右侧动作区：布局按钮组 + 设置入口（后续用户头像 / 账号等也在此扩展） */}
       <div className="menu-bar__spacer" />
       <div className="menu-bar__actions">
+        <button
+          type="button"
+          className={`menu-bar__action${layout.sidebarVisible ? ' is-on' : ''}`}
+          title="切换侧边栏"
+          aria-label="切换侧边栏"
+          onClick={() => setLayout({ sidebarVisible: !layout.sidebarVisible })}
+        >
+          <Icon name="layout-sidebar" size={15} />
+        </button>
+        <button
+          type="button"
+          className={`menu-bar__action${layout.chatPanelVisible ? ' is-on' : ''}`}
+          title="切换对话面板"
+          aria-label="切换对话面板"
+          onClick={() => toggleChatPanel()}
+        >
+          {/* 图标随换位翻转：对话在右侧画右停靠、在左侧画左停靠，与实际位置对应 */}
+          <Icon name={layout.chatOnLeft ? 'layout-panel-left' : 'layout-panel'} size={15} />
+        </button>
+        <button
+          type="button"
+          className="menu-bar__action"
+          title="对话面板与主区换位"
+          aria-label="对话面板与主区换位"
+          disabled={!layout.chatPanelVisible}
+          onClick={() => toggleChatPosition()}
+        >
+          <Icon name="swap-horizontal" size={15} />
+        </button>
         <button
           type="button"
           className="menu-bar__action"

@@ -57,6 +57,24 @@ export function Workbench(): JSX.Element {
           </>
         ) : null}
 
+        {/* 对话面板换位：夹在侧边栏与主区之间（与 wuzu-client 的「交换对话区与源码区」一致） */}
+        {layout.chatPanelVisible && layout.chatOnLeft ? (
+          <>
+            <div
+              className="workbench__chat workbench__chat--left"
+              style={{ width: layout.chatPanelWidth }}
+            >
+              <ChatPanel />
+            </div>
+            <Resizer
+              orientation="vertical"
+              ariaLabel="调整对话面板宽度"
+              // 面板在左侧：向右拖（delta>0）变宽，与右侧的「向左拖变宽」相反
+              onDelta={(delta) => setLayout({ chatPanelWidth: layout.chatPanelWidth + delta })}
+            />
+          </>
+        ) : null}
+
         <div className="workbench__main">
           <EditorArea />
 
@@ -80,7 +98,7 @@ export function Workbench(): JSX.Element {
           </div>
         </div>
 
-        {layout.chatPanelVisible ? (
+        {layout.chatPanelVisible && !layout.chatOnLeft ? (
           <>
             <Resizer
               orientation="vertical"

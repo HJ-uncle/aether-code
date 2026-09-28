@@ -23,8 +23,8 @@ import {
 import { runGitRemoteAction, type GitRemoteAction } from '../../core/git/git-remote-actions'
 import { chooseMergeStrategy, type ChooseStrategy } from '../../core/git/git-merge-strategy'
 import { ContextMenu, type ContextMenuItem } from '../../workbench/ContextMenu'
-import { Dialog } from '../../workbench/Dialog'
 import { PromptDialog } from '../../workbench/PromptDialog'
+import { pickDivergedStrategy } from './DivergedStrategyDialog'
 import { Icon } from '../../workbench/icons'
 
 /** 远程操作的中文名（进度文案与失败提示共用） */
@@ -43,10 +43,6 @@ export function GitSyncButton(): JSX.Element {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [feedback, setFeedback] = useState('')
   const [sshAsk, setSshAsk] = useState<{ resolve: (v: string | null) => void } | null>(null)
-  const [strategyAsk, setStrategyAsk] = useState<{
-    detail: string
-    resolve: (v: 'merge' | 'rebase' | null) => void
-  } | null>(null)
 
   const busy = pending !== '' || busyOperationOf(s) !== ''
   const disabled = busy || !s.isRepo || !s.branch || s.loading
@@ -62,8 +58,7 @@ export function GitSyncButton(): JSX.Element {
   const requestSshPassphrase = (): Promise<string | null> =>
     new Promise((resolve) => setSshAsk({ resolve }))
 
-  const chooseStrategy: ChooseStrategy = (info) =>
-    new Promise((resolve) => setStrategyAsk({ detail: info.detail, resolve }))
+  const chooseStrategy: ChooseStrategy = (info) => pickDivergedStrategy(info.detail)
 
   const handleAction = async (action: GitRemoteAction): Promise<void> => {
     if (disabled) return
@@ -130,7 +125,7 @@ export function GitSyncButton(): JSX.Element {
         onClick={() => void handleAction(s.upstream ? 'sync' : 'publish')}
       >
         <Icon
-          name={s.upstream ? 'restart' : 'send'}
+          name={s.upstream ? 'sync' : 'cloud-upload-outline'}
           size={13}
           className={busy ? 'is-spinning' : undefined}
         />
@@ -174,52 +169,6 @@ export function GitSyncButton(): JSX.Element {
         />
       ) : null}
 
-      {strategyAsk ? (
-        <Dialog
-          title="本地与远端已分叉"
-          width={420}
-          footer={
-            <>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => {
-                  strategyAsk.resolve(null)
-                  setStrategyAsk(null)
-                }}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => {
-                  strategyAsk.resolve('rebase')
-                  setStrategyAsk(null)
-                }}
-              >
-                变基（rebase）
-              </button>
-              <button
-                type="button"
-                className="btn btn--primary"
-                onClick={() => {
-                  strategyAsk.resolve('merge')
-                  setStrategyAsk(null)
-                }}
-              >
-                合并（merge）
-              </button>
-            </>
-          }
-          onClose={() => {
-            strategyAsk.resolve(null)
-            setStrategyAsk(null)
-          }}
-        >
-          <div className="git-sync__strategy-detail">{strategyAsk.detail}</div>
-        </Dialog>
-      ) : null}
     </div>
   )
 }

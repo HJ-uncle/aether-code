@@ -14,6 +14,7 @@ import {
 } from '@renderer/core/engine/security'
 import { changeSecurityMode, useSecurityMode } from '@renderer/core/engine/security-store'
 import { Icon } from '@renderer/workbench/icons'
+import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { Select } from '@renderer/workbench/Select'
 import { SettingsContent, SettingsGroup, SettingsRow, Toggle } from '../settings/SettingsGroup'
 
@@ -202,10 +203,17 @@ export function SecurityView(): JSX.Element {
                 onClick={() => {
                   const id = rule.id
                   if (id === undefined) return
-                  if (!window.confirm(`确定删除规则「${rule.name}」吗？`)) return
-                  void guardRule(id, async () => {
-                    await deletePolicy(id)
-                    setRules((prev) => prev.filter((item) => item.id !== id))
+                  void confirmDialog({
+                    title: '删除规则',
+                    body: `确定删除规则「${rule.name}」吗？`,
+                    confirmText: '删除',
+                    danger: true
+                  }).then((confirmed) => {
+                    if (!confirmed) return
+                    void guardRule(id, async () => {
+                      await deletePolicy(id)
+                      setRules((prev) => prev.filter((item) => item.id !== id))
+                    })
                   })
                 }}
               >
@@ -231,15 +239,22 @@ export function SecurityView(): JSX.Element {
           disabled={!ready || rulesLoading}
           title="清空现有规则并重新写入引擎内置规则，你对规则的改动会丢失"
           onClick={() => {
-            if (!window.confirm('确定恢复默认策略规则吗？现有规则的改动会全部丢失。')) return
-            void (async () => {
-              try {
-                await resetPolicies()
-                await loadRules()
-              } catch (err) {
-                setRulesError(err instanceof Error ? err.message : String(err))
-              }
-            })()
+            void confirmDialog({
+              title: '恢复默认策略规则',
+              body: '确定恢复默认策略规则吗？现有规则的改动会全部丢失。',
+              confirmText: '恢复默认',
+              danger: true
+            }).then((confirmed) => {
+              if (!confirmed) return
+              void (async () => {
+                try {
+                  await resetPolicies()
+                  await loadRules()
+                } catch (err) {
+                  setRulesError(err instanceof Error ? err.message : String(err))
+                }
+              })()
+            })
           }}
         >
           <Icon name="restart" size={12} />

@@ -36,8 +36,8 @@ import { gitSuggestCommitMessage } from '../../core/git/git-client'
 import { runGitRemoteAction, type GitRemoteAction } from '../../core/git/git-remote-actions'
 import { chooseMergeStrategy, type ChooseStrategy } from '../../core/git/git-merge-strategy'
 import { ContextMenu, type ContextMenuItem } from '../../workbench/ContextMenu'
-import { Dialog } from '../../workbench/Dialog'
 import { PromptDialog } from '../../workbench/PromptDialog'
+import { pickDivergedStrategy } from './DivergedStrategyDialog'
 import { Icon } from '../../workbench/icons'
 
 /** 远程操作的中文名（进度文案与失败提示共用） */
@@ -56,12 +56,8 @@ export function GitCommitBar(): JSX.Element {
   const [remotePending, setRemotePending] = useState<GitRemoteAction | ''>('')
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [feedback, setFeedback] = useState('')
-  /** SSH 口令 / 合并策略 / 空提交信息三个对话框的开关 */
+  /** SSH 口令 / 空提交信息两个对话框的开关 */
   const [sshAsk, setSshAsk] = useState<{ resolve: (v: string | null) => void } | null>(null)
-  const [strategyAsk, setStrategyAsk] = useState<{
-    detail: string
-    resolve: (v: 'merge' | 'rebase' | null) => void
-  } | null>(null)
   const [emptyAsk, setEmptyAsk] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
 
@@ -142,9 +138,8 @@ export function GitCommitBar(): JSX.Element {
   const requestSshPassphrase = (): Promise<string | null> =>
     new Promise((resolve) => setSshAsk({ resolve }))
 
-  /** 分叉时弹「合并/变基/取消」Dialog 并 resolve 对应值 */
-  const chooseStrategy: ChooseStrategy = (info) =>
-    new Promise((resolve) => setStrategyAsk({ detail: info.detail, resolve }))
+  /** 分叉时弹「合并/变基/取消」Dialog 并 resolve 对应值（弹窗由 DivergedStrategyDialogHost 渲染） */
+  const chooseStrategy: ChooseStrategy = (info) => pickDivergedStrategy(info.detail)
 
   const runRemote = async (action: GitRemoteAction): Promise<void> => {
     if (opBusy || remotePending) return
@@ -286,7 +281,7 @@ export function GitCommitBar(): JSX.Element {
           title="AI 帮我写提交信息"
           onClick={() => void handleSuggest()}
         >
-          <Icon name="brain" size={13} />
+          <Icon name="sparkles" size={13} />
         </button>
       </div>
 
@@ -300,7 +295,11 @@ export function GitCommitBar(): JSX.Element {
         >
           <Icon
             name={
-              primaryMode === 'commit' ? 'check' : primaryMode === 'publish' ? 'send' : 'restart'
+              primaryMode === 'commit'
+                ? 'check'
+                : primaryMode === 'publish'
+                  ? 'cloud-upload-outline'
+                  : 'sync'
             }
             size={13}
           />
@@ -335,53 +334,6 @@ export function GitCommitBar(): JSX.Element {
             setSshAsk(null)
           }}
         />
-      ) : null}
-
-      {strategyAsk ? (
-        <Dialog
-          title="本地与远端已分叉"
-          width={420}
-          footer={
-            <>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => {
-                  strategyAsk.resolve(null)
-                  setStrategyAsk(null)
-                }}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => {
-                  strategyAsk.resolve('rebase')
-                  setStrategyAsk(null)
-                }}
-              >
-                变基（rebase）
-              </button>
-              <button
-                type="button"
-                className="btn btn--primary"
-                onClick={() => {
-                  strategyAsk.resolve('merge')
-                  setStrategyAsk(null)
-                }}
-              >
-                合并（merge）
-              </button>
-            </>
-          }
-          onClose={() => {
-            strategyAsk.resolve(null)
-            setStrategyAsk(null)
-          }}
-        >
-          <div className="git-commitbar__strategy-detail">{strategyAsk.detail}</div>
-        </Dialog>
       ) : null}
 
       {emptyAsk ? (

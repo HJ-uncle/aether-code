@@ -52,10 +52,16 @@ function splitPath(change: EngineFileChange): { name: string; dir: string } {
 
 export function ChangesPanel({
   sessionId,
-  streaming
+  streaming,
+  onCountChange,
+  bare
 }: {
   sessionId: string
   streaming: boolean
+  /** 改动数变化时上报（父级托盘需要计数做 tab 徽标）；传了即启用受控模式 */
+  onCountChange?: (count: number) => void
+  /** 受控模式：外层托盘已有 tab 栏，隐藏自带的底部计数条 */
+  bare?: boolean
 }): JSX.Element | null {
   const [changes, setChanges] = useState<EngineFileChange[]>([])
   const [busy, setBusy] = useState(false)
@@ -89,6 +95,11 @@ export function ChangesPanel({
     if (wasStreaming.current && !streaming) void refresh()
     wasStreaming.current = streaming
   }, [streaming, refresh])
+
+  // 受控模式下向父级托盘上报改动数
+  useEffect(() => {
+    onCountChange?.(changes.length)
+  }, [changes.length, onCountChange])
 
   const act = useCallback(
     async (action: () => Promise<unknown>): Promise<void> => {
@@ -137,12 +148,8 @@ export function ChangesPanel({
           .filter((c) => staged.includes(c.path))
           .map((c) => c.id)
         if (stagedIds.length === 0) return
-        try {
-          await requestOrThrow({ method: 'POST', path: '/changes/keep-many', body: { sessionId, ids: stagedIds } })
-        } catch (keepErr) {
-          // 保留失败：改动已进暂存区但仍在待确认列表，直接把原因抛给用户
-          throw keepErr
-        }
+        // 保留失败：改动已进暂存区但仍在待确认列表，直接把原因抛给用户
+        await requestOrThrow({ method: 'POST', path: '/changes/keep-many', body: { sessionId, ids: stagedIds } })
         await refresh()
       } finally {
         setBusy(false)
@@ -163,8 +170,7 @@ export function ChangesPanel({
 
   return (
     <div className="changes-panel">
-      <ul className="changes-panel__list">
-        {changes.map((change) => {
+      <ul className="changes-panel__list">        {changes.map((change) => {
           const { name, dir } = splitPath(change)
           const stats = statsOf(change)
           const badge = badgeOf(change)
@@ -224,7 +230,7 @@ export function ChangesPanel({
       {error ? <div className="changes-panel__error">{error}</div> : null}
 
       <div className="changes-panel__footer">
-        <span className="changes-panel__count">改动 {changes.length}</span>
+        {bare ? null : <span className="changes-panel__count">改动 {changes.length}</span>}
         <span className="changes-panel__spacer" />
         <button
           type="button"

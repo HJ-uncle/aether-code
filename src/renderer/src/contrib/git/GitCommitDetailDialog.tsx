@@ -45,7 +45,7 @@ function dirName(path: string): string {
   return parts.join('/')
 }
 
-/** 变更类型字母着色：class 后缀与 components.css 的 git-change__code--* 同口径 */
+/** 变更类型字母着色：class 后缀与 components.css 的 git-panel__commit-code is-* 同口径 */
 function codeClass(code: string): string {
   switch (code) {
     case 'A':
@@ -140,19 +140,19 @@ export function GitCommitDetailDialog({
       className="git-commitdlg"
       onClose={onClose}
       footer={
-        <div className="git-commitdlg__footer">
+        <>
           <button
             type="button"
-            className="git-commitdlg__btn"
+            className="btn"
             disabled={!info || info.fileChanges.length === 0 || !onOpenWorktree}
             onClick={() => info && onOpenWorktree?.(info, detailCwd)}
           >
             在工作区中查看文件
           </button>
-          <button type="button" className="git-commitdlg__btn" onClick={onClose}>
+          <button type="button" className="btn btn--primary" onClick={onClose}>
             关闭
           </button>
-        </div>
+        </>
       }
     >
       {loading ? (
