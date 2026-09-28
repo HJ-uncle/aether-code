@@ -4,7 +4,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { engineHost } from './engine/host'
 import * as fileService from './fs/file-service'
-import { abortAllStreams, registerIpcHandlers } from './ipc'
+import { abortAllStreams, disposeLsp, registerIpcHandlers } from './ipc'
 import { disposeAllTerminals } from './terminal/pty-service'
 import { getSettings } from './settings-store'
 import { existsSync } from 'node:fs'
@@ -97,6 +97,7 @@ if (!gotTheLock) {
   app.on('before-quit', () => {
     abortAllStreams()
     disposeAllTerminals()
+    disposeLsp()
   })
 
   app.on('will-quit', (event) => {

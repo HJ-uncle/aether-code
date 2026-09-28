@@ -13,6 +13,8 @@ import type {
   EngineRequestInput,
   EngineSnapshot,
   FilesExclude,
+  LspMessage,
+  LspStartInput,
   SearchOptions,
   StreamEvent,
   StreamStartInput,
@@ -23,6 +25,7 @@ import { engineHost } from './engine/host'
 import { onEngineLog } from './engine/logger'
 import * as fileService from './fs/file-service'
 import * as gitService from './git/git-service'
+import * as lspServer from './lsp/server'
 import {
   createTerminal,
   disposeTerminal,
@@ -32,6 +35,9 @@ import {
 import { replaceWorkspace, searchWorkspace, previewReplaceWorkspace } from './search/search-service'
 import { getSettings, updateSettings } from './settings-store'
 import type { AppSettings } from '../shared/ipc'
+import type { GitCloneOptions, GitLogQuery, GitResult } from '../shared/git-types'
+import { addSshKeyToAgent } from './git/ssh-agent'
+import { cancelClone, cloneRepository } from './git/git-clone'
 
 /** 进行中的 SSE 请求：streamId → AbortController */
 const activeStreams = new Map<string, AbortController>()
@@ -160,16 +166,202 @@ export function registerIpcHandlers(): void {
     fileService.copyIntoWorkspace(input)
   )
 
-  // ── 版本控制（只读）──
-  // 与 fs 同样直接抛错：git 不可用、路径越界都属于需要原样呈现给用户的原因。
-  // 唯一的例外是「不是 git 仓库」，它由 getStatus 返回 isRepo=false 表达。
-  ipcMain.handle(IPC.invoke.gitStatus, (_event, root: string) => gitService.getStatus(root))
-  ipcMain.handle(IPC.invoke.gitLog, (_event, root: string, limit?: number) =>
-    gitService.getLog(root, limit)
+  // ── 版本控制（Git 面板）──
+  // 全部走 { success, error?, errorCode? } 信封（见 shared/git-types.ts）：
+  // git 操作失败是常态（冲突、网络、权限），渲染层需要按 errorCode 给用户出路，
+  // 而不是靠解析抛错的文案。cwd 由服务层过工作区白名单校验。
+  /** 包一层兜底：服务层漏出的异常（如路径越界）也归一成信封，不抛给渲染层 */
+  const guard = <T extends GitResult>(run: () => Promise<T>): Promise<T> =>
+    run().catch((error: unknown) => ({
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    }) as T)
+
+  ipcMain.handle(IPC.invoke.gitInit, (_e, cwd: string) => guard(() => gitService.init(cwd)))
+  ipcMain.handle(IPC.invoke.gitStatus, (_e, cwd: string) => guard(() => gitService.status(cwd)))
+  ipcMain.handle(IPC.invoke.gitDiff, (_e, cwd: string, path: string, staged: boolean, base?: 'index' | 'head') =>
+    guard(() => gitService.diff(cwd, path, staged, base))
   )
-  ipcMain.handle(IPC.invoke.gitStage, (_event, root: string, paths: string[]) =>
-    gitService.stagePaths(root, paths)
+  ipcMain.handle(IPC.invoke.gitBranchInfo, (_e, cwd: string) => guard(() => gitService.branchInfo(cwd)))
+  ipcMain.handle(IPC.invoke.gitStage, (_e, cwd: string, path: string) => guard(() => gitService.stage(cwd, path)))
+  ipcMain.handle(IPC.invoke.gitUnstage, (_e, cwd: string, path: string) => guard(() => gitService.unstage(cwd, path)))
+  ipcMain.handle(IPC.invoke.gitDiscardFile, (_e, cwd: string, path: string) =>
+    guard(() => gitService.discardFile(cwd, path))
   )
+  ipcMain.handle(IPC.invoke.gitDiscardWorktree, (_e, cwd: string, path: string) =>
+    guard(() => gitService.discardWorktree(cwd, path))
+  )
+  ipcMain.handle(IPC.invoke.gitDiscardWorktreeFiles, (_e, cwd: string, paths: string[]) =>
+    guard(() => gitService.discardWorktreeFiles(cwd, paths))
+  )
+  ipcMain.handle(IPC.invoke.gitStageFiles, (_e, cwd: string, paths: string[]) =>
+    guard(() => gitService.stageFiles(cwd, paths))
+  )
+  ipcMain.handle(IPC.invoke.gitCheckIgnored, (_e, cwd: string, paths: string[]) =>
+    guard(() => gitService.checkIgnored(cwd, paths))
+  )
+  ipcMain.handle(IPC.invoke.gitUnstageFiles, (_e, cwd: string, paths: string[]) =>
+    guard(() => gitService.unstageFiles(cwd, paths))
+  )
+  ipcMain.handle(IPC.invoke.gitDiscardFiles, (_e, cwd: string, paths: string[]) =>
+    guard(() => gitService.discardFiles(cwd, paths))
+  )
+  ipcMain.handle(IPC.invoke.gitHeadFile, (_e, cwd: string, path: string) =>
+    guard(() => gitService.headFile(cwd, path))
+  )
+  ipcMain.handle(IPC.invoke.gitFetch, (_e, cwd: string) => guard(() => gitService.fetchRemote(cwd)))
+  ipcMain.handle(IPC.invoke.gitPull, (_e, cwd: string) => guard(() => gitService.pull(cwd)))
+  ipcMain.handle(IPC.invoke.gitPush, (_e, cwd: string) => guard(() => gitService.push(cwd)))
+  ipcMain.handle(IPC.invoke.gitDivergence, (_e, cwd: string) => guard(() => gitService.divergence(cwd)))
+  ipcMain.handle(IPC.invoke.gitPullMerge, (_e, cwd: string, remember: boolean) =>
+    guard(() => gitService.pullMerge(cwd, remember))
+  )
+  ipcMain.handle(IPC.invoke.gitPullRebaseChoice, (_e, cwd: string, remember: boolean) =>
+    guard(() => gitService.pullRebaseWithChoice(cwd, remember))
+  )
+  ipcMain.handle(IPC.invoke.gitAddSshKey, (_e, passphrase: string) => guard(() => addSshKeyToAgent(passphrase)))
+  ipcMain.handle(IPC.invoke.gitBranches, (_e, cwd: string) => guard(() => gitService.listBranches(cwd)))
+  ipcMain.handle(IPC.invoke.gitCheckout, (_e, cwd: string, branch: string) =>
+    guard(() => gitService.checkout(cwd, branch))
+  )
+  ipcMain.handle(IPC.invoke.gitCreateBranch, (_e, cwd: string, name: string, startPoint?: string) =>
+    guard(() => gitService.createBranch(cwd, name, startPoint))
+  )
+  ipcMain.handle(IPC.invoke.gitDiscardHunk, (_e, cwd: string, path: string, hunkId: string) =>
+    guard(() => gitService.discardHunk(cwd, path, hunkId))
+  )
+  ipcMain.handle(IPC.invoke.gitCommit, (_e, cwd: string, message: string) =>
+    guard(() => gitService.commit(cwd, message))
+  )
+  ipcMain.handle(IPC.invoke.gitStageAllAndCommit, (_e, cwd: string, message: string) =>
+    guard(() => gitService.stageAllAndCommit(cwd, message))
+  )
+  ipcMain.handle(IPC.invoke.gitHeadFileContent, (_e, cwd: string, path: string) =>
+    guard(() => gitService.getHeadFile(cwd, path))
+  )
+  ipcMain.handle(IPC.invoke.gitAppendGitignore, (_e, cwd: string, path: string) =>
+    guard(() => gitService.appendGitignore(cwd, path))
+  )
+  ipcMain.handle(IPC.invoke.gitSuggestMessage, (_e, cwd: string) =>
+    guard(() => gitService.suggestCommitMessage(cwd))
+  )
+  ipcMain.handle(IPC.invoke.gitCommitAmend, (_e, cwd: string) => guard(() => gitService.commitAmend(cwd)))
+  ipcMain.handle(IPC.invoke.gitCommitAmendMessage, (_e, cwd: string, message: string) =>
+    guard(() => gitService.commitAmendWithMessage(cwd, message))
+  )
+  ipcMain.handle(IPC.invoke.gitUndoCommit, (_e, cwd: string) => guard(() => gitService.undoCommit(cwd)))
+  ipcMain.handle(IPC.invoke.gitCommitEmpty, (_e, cwd: string, message: string) =>
+    guard(() => gitService.commitEmpty(cwd, message))
+  )
+  ipcMain.handle(IPC.invoke.gitSync, (_e, cwd: string) => guard(() => gitService.sync(cwd)))
+  ipcMain.handle(IPC.invoke.gitPullRebase, (_e, cwd: string) => guard(() => gitService.pullRebase(cwd)))
+  ipcMain.handle(IPC.invoke.gitPushForce, (_e, cwd: string) => guard(() => gitService.pushForce(cwd)))
+  ipcMain.handle(IPC.invoke.gitPushTags, (_e, cwd: string) => guard(() => gitService.pushTags(cwd)))
+  ipcMain.handle(IPC.invoke.gitPushTag, (_e, cwd: string, name: string) => guard(() => gitService.pushTag(cwd, name)))
+  ipcMain.handle(IPC.invoke.gitPullFrom, (_e, cwd: string, remote: string, branch: string) =>
+    guard(() => gitService.pullFrom(cwd, remote, branch))
+  )
+  ipcMain.handle(IPC.invoke.gitPushTo, (_e, cwd: string, remote: string, branch?: string) =>
+    guard(() => gitService.pushTo(cwd, remote, branch))
+  )
+  ipcMain.handle(IPC.invoke.gitRemoteBranches, (_e, cwd: string) =>
+    guard(() => gitService.listRemoteBranches(cwd))
+  )
+  ipcMain.handle(IPC.invoke.gitDeleteRemoteBranch, (_e, cwd: string, remote: string, branch: string) =>
+    guard(() => gitService.deleteRemoteBranch(cwd, remote, branch))
+  )
+  ipcMain.handle(IPC.invoke.gitDeleteRemoteTag, (_e, cwd: string, name: string, remote?: string) =>
+    guard(() => gitService.deleteRemoteTag(cwd, name, remote))
+  )
+  ipcMain.handle(IPC.invoke.gitDeleteBranch, (_e, cwd: string, name: string, force?: boolean) =>
+    guard(() => gitService.deleteBranch(cwd, name, force))
+  )
+  ipcMain.handle(IPC.invoke.gitRenameBranch, (_e, cwd: string, oldName: string, newName: string) =>
+    guard(() => gitService.renameBranch(cwd, oldName, newName))
+  )
+  ipcMain.handle(IPC.invoke.gitPublishBranch, (_e, cwd: string) => guard(() => gitService.publishBranch(cwd)))
+  ipcMain.handle(IPC.invoke.gitMerge, (_e, cwd: string, ref: string) => guard(() => gitService.merge(cwd, ref)))
+  ipcMain.handle(IPC.invoke.gitMergeAbort, (_e, cwd: string) => guard(() => gitService.mergeAbort(cwd)))
+  ipcMain.handle(IPC.invoke.gitRebase, (_e, cwd: string, ref: string) => guard(() => gitService.rebase(cwd, ref)))
+  ipcMain.handle(IPC.invoke.gitRebaseAbort, (_e, cwd: string) => guard(() => gitService.rebaseAbort(cwd)))
+  ipcMain.handle(IPC.invoke.gitCherryPick, (_e, cwd: string, hash: string) =>
+    guard(() => gitService.cherryPick(cwd, hash))
+  )
+  ipcMain.handle(IPC.invoke.gitCherryPickAbort, (_e, cwd: string) => guard(() => gitService.cherryPickAbort(cwd)))
+  ipcMain.handle(IPC.invoke.gitRevertCommit, (_e, cwd: string, hash: string) =>
+    guard(() => gitService.revertCommit(cwd, hash))
+  )
+  ipcMain.handle(IPC.invoke.gitRemotes, (_e, cwd: string) => guard(() => gitService.listRemotes(cwd)))
+  ipcMain.handle(IPC.invoke.gitAddRemote, (_e, cwd: string, name: string, url: string) =>
+    guard(() => gitService.addRemote(cwd, name, url))
+  )
+  ipcMain.handle(IPC.invoke.gitRemoveRemote, (_e, cwd: string, name: string) =>
+    guard(() => gitService.removeRemote(cwd, name))
+  )
+  // 克隆：invoke 挂起至结束，期间进度经 event.sender 定向推回发起窗口
+  ipcMain.handle(IPC.invoke.gitClone, (event, options: GitCloneOptions) =>
+    cloneRepository(options, (payload) => {
+      if (!event.sender.isDestroyed()) {
+        try {
+          event.sender.send(IPC.event.gitCloneProgress, payload)
+        } catch {
+          // 发送失败（窗口销毁中）不影响克隆本身
+        }
+      }
+    })
+  )
+  ipcMain.handle(IPC.invoke.gitCloneCancel, (_e, cloneId: string) => cancelClone(cloneId))
+  ipcMain.handle(IPC.invoke.gitStashList, (_e, cwd: string) => guard(() => gitService.listStashes(cwd)))
+  ipcMain.handle(IPC.invoke.gitStashPush, (_e, cwd: string, message?: string, includeUntracked?: boolean) =>
+    guard(() => gitService.stashPush(cwd, message, includeUntracked))
+  )
+  ipcMain.handle(IPC.invoke.gitStashPushStaged, (_e, cwd: string, message?: string) =>
+    guard(() => gitService.stashPushStaged(cwd, message))
+  )
+  ipcMain.handle(IPC.invoke.gitStashPop, (_e, cwd: string, index?: number) =>
+    guard(() => gitService.stashPop(cwd, index))
+  )
+  ipcMain.handle(IPC.invoke.gitStashApply, (_e, cwd: string, index?: number) =>
+    guard(() => gitService.stashApply(cwd, index))
+  )
+  ipcMain.handle(IPC.invoke.gitStashDrop, (_e, cwd: string, index: number) =>
+    guard(() => gitService.stashDrop(cwd, index))
+  )
+  ipcMain.handle(IPC.invoke.gitStashDropBatch, (_e, cwd: string, indexes: number[]) =>
+    guard(() => gitService.stashDropBatch(cwd, indexes))
+  )
+  ipcMain.handle(IPC.invoke.gitStashClear, (_e, cwd: string) => guard(() => gitService.stashClear(cwd)))
+  ipcMain.handle(IPC.invoke.gitStashShow, (_e, cwd: string, index: number) =>
+    guard(() => gitService.stashShow(cwd, index))
+  )
+  ipcMain.handle(IPC.invoke.gitStashShowFiles, (_e, cwd: string, index: number) =>
+    guard(() => gitService.stashShowFiles(cwd, index))
+  )
+  ipcMain.handle(IPC.invoke.gitTags, (_e, cwd: string) => guard(() => gitService.listTags(cwd)))
+  ipcMain.handle(IPC.invoke.gitCreateTag, (_e, cwd: string, name: string, message?: string) =>
+    guard(() => gitService.createTag(cwd, name, message))
+  )
+  ipcMain.handle(IPC.invoke.gitDeleteTag, (_e, cwd: string, name: string) =>
+    guard(() => gitService.deleteTag(cwd, name))
+  )
+  ipcMain.handle(IPC.invoke.gitLog, (_e, cwd: string, limit?: number, skip?: number, query?: GitLogQuery) =>
+    guard(() => gitService.log(cwd, limit, skip, query))
+  )
+  ipcMain.handle(IPC.invoke.gitIncoming, (_e, cwd: string, limit?: number) =>
+    guard(() => gitService.incomingLog(cwd, limit))
+  )
+  ipcMain.handle(IPC.invoke.gitCommitShow, (_e, cwd: string, hash: string) =>
+    guard(() => gitService.commitShow(cwd, hash))
+  )
+  ipcMain.handle(IPC.invoke.gitShowCommitFile, (_e, cwd: string, hash: string, path: string) =>
+    guard(() => gitService.showCommitFile(cwd, hash, path))
+  )
+  ipcMain.handle(IPC.invoke.gitFileHistory, (_e, cwd: string, path: string, limit?: number, cursor?: string) =>
+    guard(() => gitService.fileHistory(cwd, path, limit, cursor))
+  )
+  ipcMain.handle(IPC.invoke.gitBlame, (_e, cwd: string, path: string) => guard(() => gitService.blame(cwd, path)))
+  ipcMain.handle(IPC.invoke.gitUserName, (_e, cwd: string) => guard(() => gitService.getUserName(cwd)))
+  ipcMain.handle(IPC.invoke.gitListAuthors, (_e, cwd: string) => guard(() => gitService.listAuthors(cwd)))
 
   // ── 全局搜索 ──
   // 排除表由渲染层随选项一起传来（主进程不读设置，保持无状态）：
@@ -223,10 +415,41 @@ export function registerIpcHandlers(): void {
     resizeTerminal(id, cols, rows)
   )
   ipcMain.handle(IPC.invoke.terminalDispose, (_event, id: string) => disposeTerminal(id))
+
+  // ── TS 语言服务（typescript-language-server，单实例）──
+  // 与引擎 SSE 同款双向长连接：渲染进程发 JSON-RPC 经 lsp:send 进 stdin，
+  // stdout 解帧后经 lsp:message 广播回来。LSP 只有一个服务器进程，
+  // 无需 streamId 路由 —— 所有窗口共享同一份诊断。
+  ipcMain.handle(IPC.invoke.lspStart, (_event, input: LspStartInput) => {
+    try {
+      // 服务器入口在主进程解析：require.resolve 只在主进程可用，asar 打包时改写
+      const entry = input.serverEntry || require.resolve('typescript-language-server/lib/cli.mjs')
+      lspServer.startLsp(entry, {
+        onMessage: (message: LspMessage) => broadcast(IPC.event.lspMessage, message),
+        onExit: (info) => broadcast(IPC.event.lspExit, info)
+      })
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+  ipcMain.handle(IPC.invoke.lspStop, () => {
+    lspServer.stopLsp()
+    return { ok: true }
+  })
+  ipcMain.handle(IPC.invoke.lspSend, (_event, message: LspMessage) => {
+    lspServer.sendToLsp(message)
+    return { ok: true }
+  })
 }
 
 /** 应用退出时中止所有流，避免 reader 悬挂 */
 export function abortAllStreams(): void {
   for (const controller of activeStreams.values()) controller.abort()
   activeStreams.clear()
+}
+
+/** 应用退出时停掉语言服务进程 */
+export function disposeLsp(): void {
+  lspServer.stopLsp()
 }

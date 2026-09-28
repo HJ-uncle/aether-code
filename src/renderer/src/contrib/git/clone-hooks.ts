@@ -1,0 +1,36 @@
+/**
+ * 「克隆仓库」流程的宿主接线（CloneFlowHooks → aether 实现）
+ *
+ * 应用根部（如 GitChangesPanel 挂载处）调用一次 configureGitCloneFlow()：
+ * 把 git-clone-flow 需要的能力接到 aether 现有机制上——
+ *   pickParentDir → 主进程系统目录选择框（fs.pickFolder，选中自动授权）
+ *   confirmOpen   → window.confirm（aether 全工程统一的确认手段，见 EditorArea/ExplorerView）
+ *   openWorkspace → workspace-store.openFolderAt（切换工作区根）
+ *   toast*        → aether 暂无全局 toast；错误走 console.error + 由调用方 UI 展示，
+ *                   成功走 console.info。clone-flow 失败时错误也会经 dialog 状态可见。
+ */
+import { configureCloneFlow } from '@renderer/core/git/git-clone-flow'
+import { pickFolder } from '@renderer/core/workspace/fs-client'
+import { openFolderAt } from '@renderer/core/workspace/workspace-store'
+
+let configured = false
+
+/** 幂等：多次调用只注入一次（单例流程，重复注入无意义） */
+export function configureGitCloneFlow(): void {
+  if (configured) return
+  configured = true
+
+  configureCloneFlow({
+    pickParentDir: () => pickFolder(),
+    confirmOpen: (finalPath: string) =>
+      Promise.resolve(window.confirm(`克隆完成：\n${finalPath}\n\n是否打开该仓库？`)),
+    toastError: (message: string) => {
+      // aether 无全局 toast；至少留控制台痕迹。调用方的 error 态由 git-store/dialog 呈现。
+      console.error('[git-clone]', message)
+    },
+    toastSuccess: (message: string) => {
+      console.info('[git-clone]', message)
+    },
+    openWorkspace: (path: string) => openFolderAt(path)
+  })
+}

@@ -7,7 +7,8 @@ import { ChangesPanel } from './ChangesPanel'
 import { FileChangeCard } from './FileChangeCard'
 import { SubagentCard } from './SubagentCard'
 import { Markdown } from './Markdown'
-import { toolDisplayName, toolParamSummary } from './tool-names'
+import { toolDisplayName, toolParamSummary, toolPathArg } from './tool-names'
+import { openFileFromChat } from './open-file'
 import { useModels } from '@renderer/core/engine/model-store'
 import { changeSecurityMode } from '@renderer/core/engine/security-store'
 import { requestOrThrow } from '@renderer/core/engine/client'
@@ -1277,6 +1278,9 @@ function CompactToolRow({ tool }: { tool: ToolActivity }): JSX.Element {
   const label = toolDisplayName(tool.name)
   const summary = toolParamSummary(tool.args)
   const hasDetail = Boolean(tool.args || tool.result)
+  // 摘要恰是文件路径时（读取/写入文件等），点摘要直接在编辑器里打开该文件
+  const pathArg = toolPathArg(tool.args)
+  const openablePath = pathArg && summary === pathArg ? pathArg : null
 
   return (
     <div className="logline-wrap">
@@ -1294,9 +1298,31 @@ function CompactToolRow({ tool }: { tool: ToolActivity }): JSX.Element {
           {label}
         </span>
         {summary ? (
-          <span className="logline__summary" title={summary}>
-            {summary}
-          </span>
+          openablePath ? (
+            <span
+              role="button"
+              tabIndex={-1}
+              className="logline__summary logline__summary--link"
+              title={`在编辑器中打开 ${openablePath}`}
+              onClick={(event) => {
+                // 点摘要是打开文件，不触发展开/收起
+                event.stopPropagation()
+                void openFileFromChat(openablePath)
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.stopPropagation()
+                  void openFileFromChat(openablePath)
+                }
+              }}
+            >
+              {summary}
+            </span>
+          ) : (
+            <span className="logline__summary" title={summary}>
+              {summary}
+            </span>
+          )
         ) : null}
         {hasDetail ? <Icon name="chevron" size={12} className="logline__chevron" /> : null}
       </button>

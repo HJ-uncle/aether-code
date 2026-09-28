@@ -256,6 +256,9 @@ function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
         // 前一段正文已在 items 里，新内容另起一段，避免拼接粘连
         message.content = `${message.content}\n\n`
       }
+      // 轮内后续行时间更晚：更新为「本轮已知的最后时刻」，
+      // 供历史回放后「任务耗时」用 startedAt~endedAt 跨度计算
+      if (createdAt > (message.endedAt ?? 0)) message.endedAt = createdAt
     } else {
       message = {
         id: row.id || newId(),
@@ -266,6 +269,8 @@ function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
         items: [],
         status: 'done',
         createdAt,
+        // 回放场景没有真实的流式起止点，用首行/末行 createdAt 兜底
+        startedAt: createdAt,
         ...(row.conversationId ? { conversationId: row.conversationId } : {})
       }
       result.push(message)
@@ -553,9 +558,12 @@ export function useChat(): {
     [runStream]
   )
 
-  // sendInternal 定义晚于 drainQueue/send：用 ref 桥接，首次渲染后立即可用
-  sendInternalRef.current = sendInternal
-  drainQueueRef.current = drainQueue
+  // sendInternal 定义晚于 drainQueue/send：用 ref 桥接，首次渲染后立即可用。
+  // 渲染期写 ref 违反 React 规则（react-hooks/refs），挪进 effect 同步。
+  useEffect(() => {
+    sendInternalRef.current = sendInternal
+    drainQueueRef.current = drainQueue
+  })
 
   /**
    * 回放引擎历史。

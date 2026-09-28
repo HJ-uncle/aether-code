@@ -1,6 +1,7 @@
 import { useMemo, useState, type JSX } from 'react'
 import type { EngineFileChange } from '@shared/ipc'
 import { Icon } from '@renderer/workbench/icons'
+import { openFileFromChat } from './open-file'
 import {
   MAX_RENDER_ROWS,
   computeLineDiff,
@@ -54,9 +55,19 @@ export function FileChangeCard({
           <Icon name={failed ? 'close' : 'check'} size={13} />
         </span>
         <span className="diff-card__title">{title}</span>
-        <span className="diff-card__path" title={displayPath}>
+        <button
+          type="button"
+          className="diff-card__path diff-card__path--link"
+          title={`在编辑器中打开 ${displayPath}`}
+          onClick={(event) => {
+            // 阻止冒泡到 summary：点路径是打开文件，不是折叠卡片
+            event.preventDefault()
+            event.stopPropagation()
+            void openFileFromChat(change.path || displayPath)
+          }}
+        >
           {shortPath}
-        </span>
+        </button>
         <span className="diff-card__spacer" />
         {change.truncated ? (
           <span className="diff-card__hint">内容未存档</span>

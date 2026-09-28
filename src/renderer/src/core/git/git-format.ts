@@ -3,34 +3,64 @@
  *
  * 只负责「把 git 的原始字段变成人能看的东西」，不做任何 IO，
  * 因此可以和造数据单测，不需要真的起一个仓库。
+ *
+ * 与 wuzu 移植来的 git-status-visuals 的关系：
+ * - git-status-visuals 持有 VSCode gitDecoration 系的字母/hex/排序权重（纯数据表）；
+ * - 本文件的 changeCode 消费它的 STATUS_LETTER，并额外给出 aether 组件 CSS
+ *   需要的样式 class（`git-change__code--*`）。一处视觉真相，避免两边维护字母表。
  */
-import type { GitFileChange } from '@shared/ipc'
+import type { GitChangeType, GitFileChange } from '@shared/git-types'
+import { STATUS_LETTER, type GitVisualKey } from './git-status-visuals'
+
+const CHANGE_TYPE_LABEL: Record<GitChangeType, string> = {
+  modified: '修改',
+  added: '新增',
+  deleted: '删除',
+  renamed: '重命名',
+  copied: '复制',
+  untracked: '未跟踪'
+}
+
+/** 角标 → aether 组件 CSS class 后缀（components.css 的 .git-change__code--*） */
+const CHANGE_TYPE_CLASS: Record<GitVisualKey, string> = {
+  modified: 'modified',
+  added: 'added',
+  deleted: 'deleted',
+  renamed: 'renamed',
+  copied: 'copied',
+  untracked: 'untracked',
+  // 冲突暂归入 deleted 的红色系，视觉上与「需立即处理」的警示一致
+  conflict: 'deleted'
+}
 
 /**
  * 变更行的角标字符。
  *
- * git 的状态是 XY 两位（暂存区 / 工作区），其中 ' ' 表示该侧无变化。
- * 角标只显示一个字符，规则：
- *   - 两边都是 '?' → 未跟踪，显示 U（沿用 git 习惯用字）
- *   - 有暂存改动（X 非空格）→ 显示 X，用户最先关心「我暂存了什么」
- *   - 否则显示 Y
+ * 一个文件可能同时有暂存与工作区改动（git 的 MM 状态）：
+ * 优先显示暂存区变更（用户最先关心「我暂存了什么」），否则显示工作区变更。
+ * 冲突优先于一切（对齐 VSCode 冲突徽标永远最显眼的语义）。
  */
 export function changeCode(change: GitFileChange): string {
-  const { indexStatus, workTreeStatus } = change
-
-  if (indexStatus === '?' && workTreeStatus === '?') return 'U'
-  const code = indexStatus !== ' ' ? indexStatus : workTreeStatus
-  return code === ' ' ? '·' : code
+  if (change.conflict) return STATUS_LETTER.conflict
+  const type = change.stagedChange ?? change.unstagedChange ?? change.changeType
+  return STATUS_LETTER[type] ?? '·'
 }
 
-/** 角标悬浮提示：把 XY 两位的含义讲清楚 */
+/** 角标对应的组件样式 class 后缀 */
+export function changeCodeClass(change: GitFileChange): string {
+  if (change.conflict) return CHANGE_TYPE_CLASS.conflict
+  const type = change.stagedChange ?? change.unstagedChange ?? change.changeType
+  return CHANGE_TYPE_CLASS[type] ?? 'modified'
+}
+
+/** 角标悬浮提示：把暂存区/工作区两侧的状态讲清楚 */
 export function changeTitle(change: GitFileChange): string {
-  const { indexStatus, workTreeStatus, staged } = change
-  if (indexStatus === '?' && workTreeStatus === '?') return '未跟踪（git 尚未纳入版本管理）'
+  if (change.changeType === 'untracked') return '未跟踪（git 尚未纳入版本管理）'
   const parts: string[] = []
-  parts.push(`暂存区 ${indexStatus === ' ' ? '无变化' : indexStatus}`)
-  parts.push(`工作区 ${workTreeStatus === ' ' ? '无变化' : workTreeStatus}`)
-  if (staged) parts.push('已暂存')
+  parts.push(`暂存区 ${change.stagedChange ? CHANGE_TYPE_LABEL[change.stagedChange] : '无变化'}`)
+  parts.push(`工作区 ${change.unstagedChange ? CHANGE_TYPE_LABEL[change.unstagedChange] : '无变化'}`)
+  if (change.conflict) parts.push('合并冲突')
+  if (change.staged) parts.push('已暂存')
   return parts.join(' · ')
 }
 

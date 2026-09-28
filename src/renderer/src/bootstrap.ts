@@ -7,12 +7,15 @@
 import { registerContributions } from './contrib'
 import { installKeybindingDispatcher } from './core/platform/keybindings'
 import { restoreLastFolder } from './core/workspace/workspace-store'
+import { wireTsLsp } from './core/lsp/lifecycle'
 
 export function bootstrapRenderer(): () => void {
   const disposeContributions = registerContributions()
   const disposeKeybindings = installKeybindingDispatcher()
 
-  // 恢复上次打开的工作区。放在 React 之外调用，避免 StrictMode 下重复执行。
+  // TS 语言服务跟随工作区启动/停止。监听必须在 restoreLastFolder 之前注册：
+  // 后者是异步的，完成后才触发工作区变化回调，先注册就不会漏掉首次启动
+  wireTsLsp()
   void restoreLastFolder()
 
   return () => {

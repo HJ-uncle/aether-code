@@ -583,17 +583,17 @@ test('资源管理器：缩进参考线与排序/收起全部入口可用', asyn
   await ensureDirExpanded(FIXTURE_DIR)
   await ensureDirExpanded(join(FIXTURE_DIR, 'sub'))
 
-  // 参考线数量 == 层级深度：工作区根下的夹具目录是第一层，其子项各多一条线。
-  // `.e2e-tmp/sub/nested.txt` 是根 → .e2e-tmp → sub 共 3 层，故 2 条；
-  // `.e2e-tmp/move-a.txt` 是 2 层，故 1 条。
+  // 参考线数量 == 层级深度：树的第一行是根目录本身，根下的夹具目录是第二层。
+  // `.e2e-tmp/sub/nested.txt` 是根 → .e2e-tmp → sub → nested.txt 共 4 层，故 3 条；
+  // `.e2e-tmp/move-a.txt` 是 3 层，故 2 条。
   const child = page.locator(rowSelector(join(FIXTURE_DIR, 'sub', 'nested.txt')))
   await expect(child).toBeVisible({ timeout: 15_000 })
-  await expect(child).toHaveAttribute('aria-level', '3')
-  await expect(child.locator('.explorer__indent')).toHaveCount(2)
+  await expect(child).toHaveAttribute('aria-level', '4')
+  await expect(child.locator('.explorer__indent')).toHaveCount(3)
 
   const topLevel = page.locator(rowSelector(join(FIXTURE_DIR, 'move-a.txt')))
-  await expect(topLevel).toHaveAttribute('aria-level', '2')
-  await expect(topLevel.locator('.explorer__indent')).toHaveCount(1)
+  await expect(topLevel).toHaveAttribute('aria-level', '3')
+  await expect(topLevel.locator('.explorer__indent')).toHaveCount(2)
 
   // 排序切换：两种模式下行的集合不变，只有顺序可能变
   const sortBtn = page.locator('.explorer__btn[aria-label="切换排序方式"]')

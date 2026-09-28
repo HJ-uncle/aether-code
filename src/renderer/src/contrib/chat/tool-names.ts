@@ -79,6 +79,26 @@ export function toolDisplayName(name: string): string {
 }
 
 /**
+ * 从工具参数 JSON 里提取文件路径（path / filePath / file），供「点击打开」使用。
+ * 只认明确的文件路径键，command/url 等不会误判成文件。非法 JSON 返回 null。
+ */
+export function toolPathArg(argsJson: string): string | null {
+  if (!argsJson) return null
+  try {
+    const args: unknown = JSON.parse(argsJson)
+    if (!args || typeof args !== 'object') return null
+    const record = args as Record<string, unknown>
+    for (const key of ['path', 'filePath', 'file']) {
+      const value = record[key]
+      if (typeof value === 'string' && value) return value
+    }
+  } catch {
+    // 截断中的流式参数不是合法 JSON：没有路径可点，静默跳过
+  }
+  return null
+}
+
+/**
  * 从工具参数 JSON 里提取一行人类可读的摘要（如文件路径 / 命令）。
  * args 不是合法 JSON（截断或格式化过）时退回原文首行。
  */

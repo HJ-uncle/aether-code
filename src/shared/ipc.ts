@@ -35,11 +35,88 @@ export const IPC = {
     fsListAll: 'fs:list-all',
     /** 复制本地文件到工作区（聊天附件用：File 对象出于安全拿不到真实路径，只能走字节流） */
     fsCopyIntoWorkspace: 'fs:copy-into-workspace',
-    /** 版本控制（IDE 自己跑 git，只读） */
+    /** 版本控制（IDE 自己跑 git；全部返回 { success, error? } 信封，见 git-types.ts） */
+    gitInit: 'git:init',
     gitStatus: 'git:status',
-    gitLog: 'git:log',
-    /** 暂存指定文件（git add，改动条的「暂存」动作） */
+    gitDiff: 'git:diff',
+    gitBranchInfo: 'git:branch-info',
     gitStage: 'git:stage',
+    gitUnstage: 'git:unstage',
+    gitDiscardFile: 'git:discard-file',
+    gitDiscardWorktree: 'git:discard-worktree',
+    gitDiscardWorktreeFiles: 'git:discard-worktree-files',
+    gitStageFiles: 'git:stage-files',
+    gitCheckIgnored: 'git:check-ignored',
+    gitUnstageFiles: 'git:unstage-files',
+    gitDiscardFiles: 'git:discard-files',
+    gitHeadFile: 'git:head-file',
+    gitFetch: 'git:fetch',
+    gitPull: 'git:pull',
+    gitPush: 'git:push',
+    gitDivergence: 'git:divergence',
+    gitPullMerge: 'git:pull-merge',
+    gitPullRebaseChoice: 'git:pull-rebase-choice',
+    gitAddSshKey: 'git:add-ssh-key',
+    gitBranches: 'git:branches',
+    gitCheckout: 'git:checkout',
+    gitCreateBranch: 'git:create-branch',
+    gitDiscardHunk: 'git:discard-hunk',
+    gitCommit: 'git:commit',
+    gitStageAllAndCommit: 'git:stage-all-and-commit',
+    gitHeadFileContent: 'git:head-file-content',
+    gitAppendGitignore: 'git:append-gitignore',
+    /** 提交信息建议（本地启发式，无网络调用） */
+    gitSuggestMessage: 'git:suggest-message',
+    gitCommitAmend: 'git:commit-amend',
+    gitCommitAmendMessage: 'git:commit-amend-message',
+    gitUndoCommit: 'git:undo-commit',
+    gitCommitEmpty: 'git:commit-empty',
+    gitSync: 'git:sync',
+    gitPullRebase: 'git:pull-rebase',
+    gitPushForce: 'git:push-force',
+    gitPushTags: 'git:push-tags',
+    gitPushTag: 'git:push-tag',
+    gitPullFrom: 'git:pull-from',
+    gitPushTo: 'git:push-to',
+    gitRemoteBranches: 'git:remote-branches',
+    gitDeleteRemoteBranch: 'git:delete-remote-branch',
+    gitDeleteRemoteTag: 'git:delete-remote-tag',
+    gitDeleteBranch: 'git:delete-branch',
+    gitRenameBranch: 'git:rename-branch',
+    gitPublishBranch: 'git:publish-branch',
+    gitMerge: 'git:merge',
+    gitMergeAbort: 'git:merge-abort',
+    gitRebase: 'git:rebase',
+    gitRebaseAbort: 'git:rebase-abort',
+    gitCherryPick: 'git:cherry-pick',
+    gitCherryPickAbort: 'git:cherry-pick-abort',
+    gitRevertCommit: 'git:revert-commit',
+    gitRemotes: 'git:remotes',
+    gitAddRemote: 'git:add-remote',
+    gitRemoveRemote: 'git:remove-remote',
+    gitClone: 'git:clone',
+    gitCloneCancel: 'git:clone-cancel',
+    gitStashList: 'git:stash-list',
+    gitStashPush: 'git:stash-push',
+    gitStashPushStaged: 'git:stash-push-staged',
+    gitStashPop: 'git:stash-pop',
+    gitStashApply: 'git:stash-apply',
+    gitStashDrop: 'git:stash-drop',
+    gitStashDropBatch: 'git:stash-drop-batch',
+    gitStashClear: 'git:stash-clear',
+    gitStashShow: 'git:stash-show',
+    gitStashShowFiles: 'git:stash-show-files',
+    gitTags: 'git:tags',
+    gitCreateTag: 'git:create-tag',
+    gitDeleteTag: 'git:delete-tag',
+    gitLog: 'git:log',
+    gitIncoming: 'git:incoming',
+    gitCommitShow: 'git:commit-show',
+    gitShowCommitFile: 'git:show-commit-file',
+    gitFileHistory: 'git:file-history',
+    gitBlame: 'git:blame',
+    gitUserName: 'git:user-name',
+    gitListAuthors: 'git:list-authors',
     /** 全局搜索（git grep 优先，非仓库退回文件遍历） */
     searchQuery: 'search:query',
     /** 全局替换（按搜索条件对命中文件批量替换） */
@@ -51,6 +128,11 @@ export const IPC = {
     terminalWrite: 'terminal:write',
     terminalResize: 'terminal:resize',
     terminalDispose: 'terminal:dispose',
+    /** TS 语言服务（typescript-language-server，单实例；spawn 在主进程） */
+    lspStart: 'lsp:start',
+    lspStop: 'lsp:stop',
+    /** 渲染进程把 JSON-RPC 消息发给语言服务（didOpen/didChange/hover 等） */
+    lspSend: 'lsp:send',
     /** 窗口控制（自绘标题栏：无边框窗口下由渲染层按钮驱动） */
     windowMinimize: 'window:minimize',
     windowToggleMaximize: 'window:toggle-maximize',
@@ -63,7 +145,13 @@ export const IPC = {
     engineLog: 'engine:log',
     streamEvent: 'engine:stream:event',
     terminalData: 'terminal:data',
-    terminalExit: 'terminal:exit'
+    terminalExit: 'terminal:exit',
+    /** git clone 进度（GitCloneProgressPayload） */
+    gitCloneProgress: 'git:clone-progress',
+    /** 语言服务 → 渲染进程：stdout 解出的 JSON-RPC 消息（publishDiagnostics / hover 响应等） */
+    lspMessage: 'lsp:message',
+    /** 语言服务进程退出（code/signal）；渲染端据此决定是否重启或降级 */
+    lspExit: 'lsp:exit'
   }
 } as const
 
@@ -425,6 +513,33 @@ export interface StreamStartInput {
   body: unknown
 }
 
+// ==================== TS 语言服务（LSP） ====================
+
+/**
+ * 渲染进程与语言服务之间传的是**原始 JSON-RPC 对象**（vscode-jsonrpc 协议），
+ * 不在 IPC 层做类型收窄 —— LSP 方法几十个，收窄会把协议真相复制一份进 IPC 层，
+ * 违背「IPC 只搬字节」的原则。这里只声明「是个对象」。
+ */
+export type LspMessage = Record<string, unknown>
+
+/** lsp:start 的入参：rootUri 让服务器定位 tsconfig / node_modules */
+export interface LspStartInput {
+  /** 工作区根（file:// URI），服务器据此发现工程配置 */
+  rootUri: string
+  /** 服务器入口绝对路径（require.resolve('typescript-language-server/lib/cli.mjs')） */
+  serverEntry: string
+}
+
+export interface LspStartResult {
+  ok: boolean
+  error?: string
+}
+
+export interface LspExitInfo {
+  code: number | null
+  signal: string | null
+}
+
 // ==================== 文件系统契约 ====================
 
 /**
@@ -501,26 +616,24 @@ export interface CopyIntoWorkspaceResult {
 /**
  * 版本控制由 IDE 自己实现（主进程直接调用 git），不走引擎。
  *
- * 原因：引擎只有通用的 cmd 工具，而 git 状态是「编辑器视角」的只读信息，
- * 让 Agent 去跑命令既没必要（每次都要过安全策略、来回一趟 SSE）
- * 也不可靠（输出要靠模型转述）。IDE 直接跑 `git status/log` 最快也最准。
+ * 原因：引擎只有通用的 cmd 工具，而 git 状态是「编辑器视角」的信息，
+ * 让 Agent 去跑命令既没必要也不可靠。IDE 直接跑 git 最快也最准。
  *
- * 刻意只提供**只读**能力：stage/commit 属于写操作，误操作成本高，
- * 且完全可以在终端里做，不在本批次范围内。
+ * 完整的 git 面板类型契约（GitFileChange / GitResult / GitLogEntry 等）
+ * 统一定义在 ./git-types.ts（移植自 wuzu-client 的 codeGit.ts），这里只做
+ * re-export，保持「shared/ipc.ts 是唯一协议真相来源」的引用习惯。
  */
 
-/** 单个文件在 git 视角下的状态 */
-export interface GitFileChange {
-  /** 相对工作区根的路径（git 原样输出） */
-  path: string
-  /** 暂存区状态字符：M/A/D/R/C/U/?（? 表示未跟踪） */
-  indexStatus: string
-  /** 工作区状态字符 */
-  workTreeStatus: string
-  /** 是否有已暂存的改动（暂存列不是空格或 ?） */
-  staged: boolean
-}
+export * from './git-types'
+import type { GitFileChange } from './git-types'
 
+// ---------- 旧版兼容类型 ----------
+// 早期只读面板的类型残留：GitStatus/GitCommit 不在 wuzu 契约里，
+// 但渲染层 git-store / GitView 仍在用。为控制破坏面，这里以新契约为底
+// 保留这两个别名结构；新版 GitFileChange 已直接替代旧版（字段更名：
+// indexStatus/workTreeStatus → stagedChange/unstagedChange + changeType）。
+
+/** 状态栏/旧版 GitView 使用的分支概览（等价 branchInfo + status 的合集） */
 export interface GitStatus {
   /** 不是 git 仓库时为 false，其余字段无意义 */
   isRepo: boolean
@@ -533,6 +646,7 @@ export interface GitStatus {
   changes: GitFileChange[]
 }
 
+/** 旧版提交记录（等价 GitLogEntry，但 refs 是原始装饰字符串） */
 export interface GitCommit {
   hash: string
   shortHash: string

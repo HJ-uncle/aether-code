@@ -83,10 +83,12 @@ async function loadChildren(dir: string): Promise<void> {
 
 /** 打开指定文件夹（已授权则直接切换） */
 export async function openFolderAt(root: string): Promise<void> {
+  // 根目录默认展开：树的第一行是根节点本身（见 ExplorerView），
+  // 不在 expanded 里的话打开文件夹只会看到光秃秃的一行根。
   setState({
     root,
     children: new Map(),
-    expanded: new Set(),
+    expanded: new Set([root]),
     loading: new Set(),
     error: null,
     activeFilePath: null,

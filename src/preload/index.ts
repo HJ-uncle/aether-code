@@ -13,8 +13,10 @@ import type {
   FsFileContent,
   FsStat,
   FilesExclude,
-  GitCommit,
-  GitStatus,
+  LspExitInfo,
+  LspMessage,
+  LspStartInput,
+  LspStartResult,
   ReplaceOutcome,
   ReplacePreviewOutcome,
   SearchOptions,
@@ -25,6 +27,31 @@ import type {
   TerminalDataEvent,
   TerminalExitInfo
 } from '../shared/ipc'
+import type {
+  GitBlameResult,
+  GitBranchInfoResult,
+  GitBranchListResult,
+  GitCloneOptions,
+  GitCloneProgressPayload,
+  GitCloneResult,
+  GitCommitInfoResult,
+  GitDiffResult,
+  GitDivergenceResult,
+  GitFileHistoryResult,
+  GitHeadFileResult,
+  GitIgnoreCheckResult,
+  GitLogQuery,
+  GitLogResult,
+  GitRemoteBranchListResult,
+  GitRemoteListResult,
+  GitResult,
+  GitStashListResult,
+  GitStatusResult,
+  GitSuggestMessageResult,
+  GitTagListResult,
+  GitUserListResult,
+  GitUserResult
+} from '../shared/git-types'
 
 /**
  * 暴露给渲染进程的窄接口。
@@ -101,16 +128,159 @@ const api = {
   },
 
   /**
-   * 版本控制（只读）。主进程直接调用 git，cwd 受工作区白名单限制。
-   * 非仓库不是错误：status 会返回 { isRepo: false }。
+   * 版本控制（Git 面板）。主进程直接调用 git，cwd 受工作区白名单限制。
+   * 全部方法返回 { success, error?, errorCode? } 信封（见 shared/git-types.ts），
+   * 失败不抛异常 —— 渲染层按 errorCode 给用户出路。
    */
   git: {
-    status: (root: string): Promise<GitStatus> => ipcRenderer.invoke(IPC.invoke.gitStatus, root),
-    log: (root: string, limit?: number): Promise<GitCommit[]> =>
-      ipcRenderer.invoke(IPC.invoke.gitLog, root, limit),
-    /** 暂存指定文件（git add）。「改动条」的「暂存」动作使用 */
-    stage: (root: string, paths: string[]): Promise<void> =>
-      ipcRenderer.invoke(IPC.invoke.gitStage, root, paths)
+    init: (cwd: string): Promise<GitResult> => ipcRenderer.invoke(IPC.invoke.gitInit, cwd),
+    status: (cwd: string): Promise<GitStatusResult> => ipcRenderer.invoke(IPC.invoke.gitStatus, cwd),
+    diff: (cwd: string, path: string, staged: boolean, base?: 'index' | 'head'): Promise<GitDiffResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitDiff, cwd, path, staged, base),
+    branchInfo: (cwd: string): Promise<GitBranchInfoResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitBranchInfo, cwd),
+    stage: (cwd: string, path: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitStage, cwd, path),
+    unstage: (cwd: string, path: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitUnstage, cwd, path),
+    discardFile: (cwd: string, path: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitDiscardFile, cwd, path),
+    discardWorktree: (cwd: string, path: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitDiscardWorktree, cwd, path),
+    discardWorktreeFiles: (cwd: string, paths: string[]): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitDiscardWorktreeFiles, cwd, paths),
+    stageFiles: (cwd: string, paths: string[]): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitStageFiles, cwd, paths),
+    checkIgnored: (cwd: string, paths: string[]): Promise<GitIgnoreCheckResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitCheckIgnored, cwd, paths),
+    unstageFiles: (cwd: string, paths: string[]): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitUnstageFiles, cwd, paths),
+    discardFiles: (cwd: string, paths: string[]): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitDiscardFiles, cwd, paths),
+    headFile: (cwd: string, path: string): Promise<GitHeadFileResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitHeadFile, cwd, path),
+    fetch: (cwd: string): Promise<GitResult> => ipcRenderer.invoke(IPC.invoke.gitFetch, cwd),
+    pull: (cwd: string): Promise<GitResult> => ipcRenderer.invoke(IPC.invoke.gitPull, cwd),
+    push: (cwd: string): Promise<GitResult> => ipcRenderer.invoke(IPC.invoke.gitPush, cwd),
+    divergence: (cwd: string): Promise<GitDivergenceResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitDivergence, cwd),
+    pullMerge: (cwd: string, remember: boolean): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitPullMerge, cwd, remember),
+    pullRebaseWithChoice: (cwd: string, remember: boolean): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitPullRebaseChoice, cwd, remember),
+    addSshKey: (passphrase: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitAddSshKey, passphrase),
+    listBranches: (cwd: string): Promise<GitBranchListResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitBranches, cwd),
+    checkout: (cwd: string, branch: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitCheckout, cwd, branch),
+    createBranch: (cwd: string, name: string, startPoint?: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitCreateBranch, cwd, name, startPoint),
+    discardHunk: (cwd: string, path: string, hunkId: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitDiscardHunk, cwd, path, hunkId),
+    commit: (cwd: string, message: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitCommit, cwd, message),
+    stageAllAndCommit: (cwd: string, message: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitStageAllAndCommit, cwd, message),
+    getHeadFile: (cwd: string, path: string): Promise<GitHeadFileResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitHeadFileContent, cwd, path),
+    appendGitignore: (cwd: string, path: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitAppendGitignore, cwd, path),
+    suggestCommitMessage: (cwd: string): Promise<GitSuggestMessageResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitSuggestMessage, cwd),
+    commitAmend: (cwd: string): Promise<GitResult> => ipcRenderer.invoke(IPC.invoke.gitCommitAmend, cwd),
+    commitAmendWithMessage: (cwd: string, message: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitCommitAmendMessage, cwd, message),
+    undoCommit: (cwd: string): Promise<GitResult> => ipcRenderer.invoke(IPC.invoke.gitUndoCommit, cwd),
+    commitEmpty: (cwd: string, message: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitCommitEmpty, cwd, message),
+    sync: (cwd: string): Promise<GitResult> => ipcRenderer.invoke(IPC.invoke.gitSync, cwd),
+    pullRebase: (cwd: string): Promise<GitResult> => ipcRenderer.invoke(IPC.invoke.gitPullRebase, cwd),
+    pushForce: (cwd: string): Promise<GitResult> => ipcRenderer.invoke(IPC.invoke.gitPushForce, cwd),
+    pushTags: (cwd: string): Promise<GitResult> => ipcRenderer.invoke(IPC.invoke.gitPushTags, cwd),
+    pushTag: (cwd: string, name: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitPushTag, cwd, name),
+    pullFrom: (cwd: string, remote: string, branch: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitPullFrom, cwd, remote, branch),
+    pushTo: (cwd: string, remote: string, branch?: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitPushTo, cwd, remote, branch),
+    listRemoteBranches: (cwd: string): Promise<GitRemoteBranchListResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitRemoteBranches, cwd),
+    deleteRemoteBranch: (cwd: string, remote: string, branch: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitDeleteRemoteBranch, cwd, remote, branch),
+    deleteRemoteTag: (cwd: string, name: string, remote?: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitDeleteRemoteTag, cwd, name, remote),
+    deleteBranch: (cwd: string, name: string, force?: boolean): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitDeleteBranch, cwd, name, force),
+    renameBranch: (cwd: string, oldName: string, newName: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitRenameBranch, cwd, oldName, newName),
+    publishBranch: (cwd: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitPublishBranch, cwd),
+    merge: (cwd: string, ref: string): Promise<GitResult> => ipcRenderer.invoke(IPC.invoke.gitMerge, cwd, ref),
+    mergeAbort: (cwd: string): Promise<GitResult> => ipcRenderer.invoke(IPC.invoke.gitMergeAbort, cwd),
+    rebase: (cwd: string, ref: string): Promise<GitResult> => ipcRenderer.invoke(IPC.invoke.gitRebase, cwd, ref),
+    rebaseAbort: (cwd: string): Promise<GitResult> => ipcRenderer.invoke(IPC.invoke.gitRebaseAbort, cwd),
+    cherryPick: (cwd: string, hash: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitCherryPick, cwd, hash),
+    cherryPickAbort: (cwd: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitCherryPickAbort, cwd),
+    revertCommit: (cwd: string, hash: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitRevertCommit, cwd, hash),
+    listRemotes: (cwd: string): Promise<GitRemoteListResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitRemotes, cwd),
+    addRemote: (cwd: string, name: string, url: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitAddRemote, cwd, name, url),
+    removeRemote: (cwd: string, name: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitRemoveRemote, cwd, name),
+    clone: (options: GitCloneOptions): Promise<GitCloneResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitClone, options),
+    cancelClone: (cloneId: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitCloneCancel, cloneId),
+    /** 订阅克隆进度，返回取消订阅函数（与 terminal.onData 同构） */
+    onCloneProgress: (listener: (payload: GitCloneProgressPayload) => void): (() => void) => {
+      const handler = (_e: unknown, payload: GitCloneProgressPayload): void => listener(payload)
+      ipcRenderer.on(IPC.event.gitCloneProgress, handler)
+      return () => ipcRenderer.removeListener(IPC.event.gitCloneProgress, handler)
+    },
+    listStashes: (cwd: string): Promise<GitStashListResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitStashList, cwd),
+    stashPush: (cwd: string, message?: string, includeUntracked?: boolean): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitStashPush, cwd, message, includeUntracked),
+    stashPushStaged: (cwd: string, message?: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitStashPushStaged, cwd, message),
+    stashPop: (cwd: string, index?: number): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitStashPop, cwd, index),
+    stashApply: (cwd: string, index?: number): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitStashApply, cwd, index),
+    stashDrop: (cwd: string, index: number): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitStashDrop, cwd, index),
+    stashDropBatch: (cwd: string, indexes: number[]): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitStashDropBatch, cwd, indexes),
+    stashClear: (cwd: string): Promise<GitResult> => ipcRenderer.invoke(IPC.invoke.gitStashClear, cwd),
+    stashShow: (cwd: string, index: number): Promise<GitHeadFileResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitStashShow, cwd, index),
+    stashShowFiles: (cwd: string, index: number): Promise<GitHeadFileResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitStashShowFiles, cwd, index),
+    listTags: (cwd: string): Promise<GitTagListResult> => ipcRenderer.invoke(IPC.invoke.gitTags, cwd),
+    createTag: (cwd: string, name: string, message?: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitCreateTag, cwd, name, message),
+    deleteTag: (cwd: string, name: string): Promise<GitResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitDeleteTag, cwd, name),
+    log: (cwd: string, limit?: number, skip?: number, query?: GitLogQuery): Promise<GitLogResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitLog, cwd, limit, skip, query),
+    incoming: (cwd: string, limit?: number): Promise<GitLogResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitIncoming, cwd, limit),
+    commitShow: (cwd: string, hash: string): Promise<GitCommitInfoResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitCommitShow, cwd, hash),
+    showCommitFile: (cwd: string, hash: string, path: string): Promise<GitHeadFileResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitShowCommitFile, cwd, hash, path),
+    fileHistory: (cwd: string, path: string, limit?: number, cursor?: string): Promise<GitFileHistoryResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitFileHistory, cwd, path, limit, cursor),
+    blame: (cwd: string, path: string): Promise<GitBlameResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitBlame, cwd, path),
+    getUserName: (cwd: string): Promise<GitUserResult> => ipcRenderer.invoke(IPC.invoke.gitUserName, cwd),
+    listAuthors: (cwd: string): Promise<GitUserListResult> =>
+      ipcRenderer.invoke(IPC.invoke.gitListAuthors, cwd)
   },
 
   /** 全局搜索：git 仓库用 git grep，其余退回文件遍历 */
@@ -168,6 +338,29 @@ const api = {
       const handler = (_e: unknown, info: TerminalExitInfo): void => listener(info)
       ipcRenderer.on(IPC.event.terminalExit, handler)
       return () => ipcRenderer.removeListener(IPC.event.terminalExit, handler)
+    }
+  },
+
+  /**
+   * TS 语言服务（typescript-language-server，单实例）。
+   * 渲染进程发 JSON-RPC 经 send 进 stdin，服务器消息经 onMessage 推回；
+   * onExit 在服务器进程退出时触发（渲染端据此降级或重启）。
+   */
+  lsp: {
+    start: (input: LspStartInput): Promise<LspStartResult> =>
+      ipcRenderer.invoke(IPC.invoke.lspStart, input),
+    stop: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.invoke.lspStop),
+    send: (message: LspMessage): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke(IPC.invoke.lspSend, message),
+    onMessage: (listener: (message: LspMessage) => void): (() => void) => {
+      const handler = (_e: unknown, message: LspMessage): void => listener(message)
+      ipcRenderer.on(IPC.event.lspMessage, handler)
+      return () => ipcRenderer.removeListener(IPC.event.lspMessage, handler)
+    },
+    onExit: (listener: (info: LspExitInfo) => void): (() => void) => {
+      const handler = (_e: unknown, info: LspExitInfo): void => listener(info)
+      ipcRenderer.on(IPC.event.lspExit, handler)
+      return () => ipcRenderer.removeListener(IPC.event.lspExit, handler)
     }
   },
 

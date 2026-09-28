@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type JSX } from 'react'
 import type { EngineFileChange } from '@shared/ipc'
 import { Icon } from '@renderer/workbench/icons'
 import { requestOrThrow } from '@renderer/core/engine/client'
-import { gitStage } from '@renderer/core/git/git-client'
+import { gitStageFiles } from '@renderer/core/git/git-client'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 
 import {
@@ -128,9 +128,17 @@ export function ChangesPanel({
       setBusy(true)
       setError(null)
       try {
-        await gitStage(workspace.root, paths)
+        // 批量暂存走 Result 信封：失败时抛给用户，成功时以实际暂存的路径为准
+        const result = await gitStageFiles(workspace.root, paths)
+        if (!result.success) throw new Error(result.error ?? 'git add 执行失败')
+        const staged = result.stagedPaths ?? []
+        if (staged.length === 0) return
+        const stagedIds = targets
+          .filter((c) => staged.includes(c.path))
+          .map((c) => c.id)
+        if (stagedIds.length === 0) return
         try {
-          await requestOrThrow({ method: 'POST', path: '/changes/keep-many', body: { sessionId, ids: targets.map((c) => c.id) } })
+          await requestOrThrow({ method: 'POST', path: '/changes/keep-many', body: { sessionId, ids: stagedIds } })
         } catch (keepErr) {
           // 保留失败：改动已进暂存区但仍在待确认列表，直接把原因抛给用户
           throw keepErr
