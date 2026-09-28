@@ -20,7 +20,15 @@
  *     保留冲突组展示与「去解决冲突」打开文件，批量解决按钮保留但走打开文件引导。
  *   - 弹窗体系：Element Plus 的 ElMessageBox 换成 aether 的 Dialog/PromptDialog/ContextMenu。
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type JSX
+} from 'react'
 import type { GitCommitRef, GitFileChange, GitLogEntry, GitStashEntry } from '@shared/git-types'
 import { documentKey, openFile } from '@renderer/core/editor/editor-store'
 import { startCloneFlow, useGitCloneFlow } from '@renderer/core/git/git-clone-flow'
@@ -87,8 +95,15 @@ import {
   busyOperationOf
 } from '@renderer/core/git/git-store'
 import { gitAppendGitignore } from '@renderer/core/git/git-client'
+import { executeCommand } from '@renderer/core/platform/commands'
 import { setLayout } from '@renderer/core/platform/layout-state'
 import { paths } from '@renderer/core/workspace/fs-client'
+import {
+  forgetRecentFolder,
+  getRecentFolders,
+  onRecentFoldersChanged
+} from '@renderer/core/workspace/recent-folders'
+import { openFolderAt, useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { ContextMenu, type ContextMenuItem } from '@renderer/workbench/ContextMenu'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { Dialog } from '@renderer/workbench/Dialog'
@@ -313,6 +328,8 @@ interface StashHoverState {
 export function GitChangesPanel(): JSX.Element {
   const git = useGitStore()
   const cloneFlow = useGitCloneFlow()
+  const workspace = useWorkspace()
+  const recentFolders = useSyncExternalStore(onRecentFoldersChanged, getRecentFolders)
 
   // 克隆流程的宿主回调（目录选择/确认/打开工作区）幂等注入一次。
   useEffect(() => {
@@ -1611,6 +1628,26 @@ export function GitChangesPanel(): JSX.Element {
 
   // ---------- 空态 ----------
   const cloneStage = cloneFlow.stage
+
+  /**
+   * 「最近打开」列表。点击直接打开该项目（openFolderAt 会重新筑态，Git 随之刷新）；
+   * 打开流程若抛错就把这条记录摘掉，避免用户反复点到同一个死项。
+   * 当前已打开的项目不列入 —— 它就在上面写着。
+   */
+  const recentProjects = useMemo(
+    () =>
+      recentFolders
+        .filter((folder) => folder !== workspace.root)
+        .map((folder) => ({
+          path: folder,
+          name: folder.split(/[\\/]/).filter(Boolean).pop() ?? folder
+        })),
+    [recentFolders, workspace.root]
+  )
+  const openRecentProject = useCallback((folder: string): void => {
+    void openFolderAt(folder).catch(() => forgetRecentFolder(folder))
+  }, [])
+
   let content: JSX.Element
   if (cloneStage !== 'idle') {
     content = (
@@ -1621,6 +1658,58 @@ export function GitChangesPanel(): JSX.Element {
         </div>
         {cloneStage === 'running' ? (
           <div className="git-panel__empty-desc">{cloneFlow.message || '准备克隆…'}</div>
+        ) : null}
+      </div>
+    )
+  } else if (!workspace.root) {
+    // 没打开任何目录：空态不能再说「不是 Git 仓库」——用户还没选目录，无从谈起。
+    // 这里给的是真正的第一步（打开目录 / 克隆已有仓库）+ 最近打开列表。
+    content = (
+      <div className="git-panel__empty">
+        <Icon name="git" size={32} />
+        <div className="git-panel__empty-title">未打开工作目录</div>
+        <div className="git-panel__empty-desc">打开一个目录后即可查看 Git 变更</div>
+        <div className="git-panel__empty-actions">
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={() => void executeCommand('aether.workspace.openFolder')}
+          >
+            打开目录
+          </button>
+          <button type="button" className="btn" onClick={() => startCloneFlow()}>
+            克隆仓库
+          </button>
+        </div>
+
+        {recentProjects.length > 0 ? (
+          <div className="git-panel__recent">
+            <div className="git-panel__recent-title">最近打开</div>
+            <div className="git-panel__recent-list">
+              {recentProjects.map((project) => (
+                <div key={project.path} className="git-panel__recent-row">
+                  <button
+                    type="button"
+                    className="git-panel__recent-item"
+                    title={project.path}
+                    onClick={() => openRecentProject(project.path)}
+                  >
+                    <Icon name="explorer" size={13} />
+                    <span className="git-panel__recent-name">{project.name}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="git-panel__recent-del"
+                    title="从最近打开中移除"
+                    aria-label={`从最近打开中移除 ${project.name}`}
+                    onClick={() => forgetRecentFolder(project.path)}
+                  >
+                    <Icon name="close" size={11} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
         ) : null}
       </div>
     )
@@ -2189,7 +2278,11 @@ export function GitChangesPanel(): JSX.Element {
       {/* 顶部工具条 */}
       <div className="git-panel__toolbar">
         <span className="git-panel__summary">
-          {changeCount > 0 ? `${changeCount} 个变更` : '工作空间干净'}
+          {!workspace.root
+            ? '未打开目录'
+            : changeCount > 0
+              ? `${changeCount} 个变更`
+              : '工作空间干净'}
         </span>
         <span className="git-panel__spacer" />
 

@@ -140,6 +140,7 @@ export function registerIpcHandlers(): void {
     if (folder) updateSettings({ lastFolder: folder })
     return folder
   })
+  ipcMain.handle(IPC.invoke.fsAllowRoot, (_event, root: string) => fileService.allowRoot(root))
   ipcMain.handle(IPC.invoke.fsReadDir, (_event, dir: string) => fileService.readDirectory(dir))
   ipcMain.handle(IPC.invoke.fsReadFile, (_event, filePath: string) =>
     fileService.readFile(filePath)

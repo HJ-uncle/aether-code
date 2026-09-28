@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
 import { useChat, type ChatMessage, type ToolActivity } from '@renderer/core/engine/useChat'
 import type { PendingInteraction } from '@renderer/core/engine/pending'
@@ -17,6 +17,7 @@ import { currentWorkspacePaths, useWorkspace } from '@renderer/core/workspace/wo
 import { Icon } from '@renderer/workbench/icons'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { Popover } from '@renderer/workbench/Popover'
+import { ContextMenu } from '@renderer/workbench/ContextMenu'
 import { ModelPicker } from '../models/ModelPicker'
 import { ComposerOptions } from './ComposerOptions'
 import {
@@ -28,6 +29,9 @@ import {
   type UsageDetailRow
 } from './usage'
 import { useAttachments } from './useAttachments'
+import { MentionInput, type Mention, type MentionInputHandle } from './MentionInput'
+import { FileRefPalette } from './FileRefPalette'
+import { consumePendingMentions, subscribePendingMentions } from './pending-mentions'
 
 function newSessionId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `session-${Date.now()}`
@@ -64,6 +68,8 @@ export function ChatView(): JSX.Element {
   const { models, loaded: modelsLoaded } = useModels()
   const workspace = useWorkspace()
   const [input, setInput] = useState('')
+  /** 输入框里的引用 chip（文件/目录/源码/终端），由 MentionInput 序列化时同步 */
+  const mentionsRef = useRef<Mention[]>([])
   /** 多选模式：按消息粒度勾选，复制或导出为 Markdown */
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set())
@@ -73,11 +79,31 @@ export function ChatView(): JSX.Element {
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
   const modelId = selectedModelId ?? settings.lastModelId
   const scrollRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const inputRef = useRef<MentionInputHandle>(null)
+  /** @ 触发的内联补全关键词；null 表示未触发（光标不在 @ 段内） */
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null)
+  /** 「+」菜单里手动打开的工作空间选择面板（与 @ 补全共用 FileRefPalette） */
+  const [manualPalette, setManualPalette] = useState(false)
+  /** 「+」按钮弹出的附件/引用菜单（视口坐标） */
+  const [attachMenu, setAttachMenu] = useState<{ x: number; y: number } | null>(null)
   // 附件：落盘到当前工作区，发送时把相对路径交给引擎（图片→视觉/OCR，文本→smart_read）
   const attach = useAttachments(workspace.root)
   // 附件进度提示只在出现后短暂停留，避免常驻噪音
   const [attachHint, setAttachHint] = useState<string | null>(null)
+
+  // ── 终端/编辑器「添加到对话」：消费 pending 队列 ──────────────────────────
+  // TerminalView / MonacoEditor 通过 pushPendingMention 入队，这里订阅后
+  // 一次性取出插入为 mention chip（挂载时也消费一次，覆盖入队早于挂载的情况）。
+  useEffect(() => {
+    const drain = (): void => {
+      const queue = consumePendingMentions()
+      if (queue.length === 0) return
+      for (const mention of queue) inputRef.current?.insertMention(mention)
+      inputRef.current?.focus()
+    }
+    drain()
+    return subscribePendingMentions(drain)
+  }, [])
 
   // 会话累计用量：按消息里的 usage 帧汇总，作为工具栏「模型 / Token / 使用时间」的数据源
   const usageTotal = useMemo(() => sumUsage(messages), [messages])
@@ -191,16 +217,7 @@ export function ChatView(): JSX.Element {
 
   const showBackToBottom = !followBottom && hasNewWhileUnfollowed
 
-  // 输入框高度随内容增长：resize:none 后要靠 JS 改高度，
-  // 先归零再读 scrollHeight，否则缩短文本时高度降不下来
-  const growInput = useCallback(() => {
-    const el = inputRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${el.scrollHeight}px`
-  }, [])
-
-  useLayoutEffect(growInput, [input, growInput])
+  // 输入框高度随内容增长：contenteditable 交给 CSS（max-height + overflow），无需 JS 撑高
 
   // 一轮对话结束（完成/中止/出错）时刷新 git：Agent 改了哪些文件此刻刚落盘定局。
   // refreshGit 是模块级函数（引用恒定），不属于 hook 依赖
@@ -256,6 +273,8 @@ export function ChatView(): JSX.Element {
     if ((!text && files.length === 0) || attach.uploading || !ready || !sessionId) return
     // 流式进行中不再拦截：send 内部会入队，当前流结束后自动按序发出
     setInput('')
+    mentionsRef.current = []
+    inputRef.current?.clear()
     attach.clear()
     void send(text, {
       ...buildSendOptions(),
@@ -412,7 +431,11 @@ export function ChatView(): JSX.Element {
         if (!confirmed) return
         const content = message.content
         void revertFrom(sessionId, message)
-          .then(() => setInput(content))
+          // 回填的是纯文本（chip 占位符退化为文字），mention 列表同步清空
+          .then(() => {
+            mentionsRef.current = []
+            setInput(content)
+          })
           .catch(showError)
       })
     },
@@ -774,30 +797,39 @@ export function ChatView(): JSX.Element {
             </div>
           ) : null}
 
-          <textarea
+          <MentionInput
             ref={inputRef}
-            className="chat__input"
             value={input}
-            placeholder={
-              ready ? '输入消息，Enter 发送，Shift+Enter 换行；可拖入或粘贴文件' : '引擎未就绪…'
-            }
-            rows={2}
             disabled={!ready}
-            onChange={(event) => setInput(event.target.value)}
-            onPaste={(event) => {
-              // 粘贴截图 / 复制的文件：剪贴板里的 File 与拖拽拿到的是同一种对象
-              const files = [...event.clipboardData.files]
-              if (files.length === 0) return
-              event.preventDefault()
-              attach.accept(files)
+            placeholder={
+              ready ? '输入消息，Enter 发送，Shift+Enter 换行；@ 引用文件，可拖入或粘贴文件' : '引擎未就绪…'
+            }
+            onChange={(text, mentions) => {
+              mentionsRef.current = mentions
+              setInput(text)
             }}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                event.preventDefault()
-                submit()
-              }
-            }}
+            onSubmit={submit}
+            onPasteFiles={(files) => attach.accept(files)}
+            onMentionQuery={setMentionQuery}
           />
+          {workspace.root && (mentionQuery !== null || manualPalette) ? (
+            <FileRefPalette
+              root={workspace.root}
+              keyword={mentionQuery ?? ''}
+              showSearch={manualPalette && mentionQuery === null}
+              onSelect={(mention) => {
+                if (mentionQuery !== null) inputRef.current?.completeMention(mention)
+                else inputRef.current?.insertMention(mention)
+                setManualPalette(false)
+                setMentionQuery(null)
+              }}
+              onClose={() => {
+                setManualPalette(false)
+                setMentionQuery(null)
+                inputRef.current?.focus()
+              }}
+            />
+          ) : null}
           {attachHint ? <div className="chat__attach-hint">{attachHint}</div> : null}
           <input
             ref={attach.fileInputRef}
@@ -820,14 +852,45 @@ export function ChatView(): JSX.Element {
               disabled={!ready || attach.uploading || !workspace.root}
               title={
                 workspace.root
-                  ? '添加附件（图片 / 文本 / 文档），也可直接拖入或粘贴'
+                  ? '添加附件或引用（图片 / 文本 / 工作空间文件 / 目录）'
                   : '先打开一个项目目录再添加附件'
               }
-              aria-label="添加附件"
-              onClick={attach.pick}
+              aria-label="添加附件或引用"
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect()
+                setAttachMenu({ x: rect.left, y: rect.top })
+              }}
             >
               <Icon name="plus" size={16} />
             </button>
+            {attachMenu ? (
+              <ContextMenu
+                x={attachMenu.x}
+                y={attachMenu.y - 8}
+                onClose={() => setAttachMenu(null)}
+                items={[
+                  {
+                    id: 'upload',
+                    label: '上传附件',
+                    hint: '图片 / 文本 / 文档',
+                    onSelect: () => {
+                      setAttachMenu(null)
+                      attach.pick()
+                    }
+                  },
+                  {
+                    id: 'workspace',
+                    label: '引用工作空间文件 / 目录',
+                    hint: '@ 引用，随消息发送给 Agent',
+                    onSelect: () => {
+                      setAttachMenu(null)
+                      setManualPalette(true)
+                      inputRef.current?.focus()
+                    }
+                  }
+                ]}
+              />
+            ) : null}
 
             <ComposerOptions sessionId={sessionId} />
 

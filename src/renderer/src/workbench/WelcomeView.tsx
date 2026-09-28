@@ -1,7 +1,13 @@
-import type { JSX } from 'react'
+import { useSyncExternalStore, type JSX } from 'react'
 import { executeCommand } from '@renderer/core/platform/commands'
 import { getKeybindingHint } from '@renderer/core/platform/keybindings'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
+import { openFolderAt } from '@renderer/core/workspace/workspace-store'
+import {
+  forgetRecentFolder,
+  getRecentFolders,
+  onRecentFoldersChanged
+} from '@renderer/core/workspace/recent-folders'
 import { Icon, type IconName } from '@renderer/workbench/icons'
 
 /**
@@ -85,6 +91,16 @@ function hintOf(command: string, fallback: string): string {
 
 export function WelcomeView(): JSX.Element {
   const workspace = useWorkspace()
+  const recentFolders = useSyncExternalStore(onRecentFoldersChanged, getRecentFolders)
+  /** 当前已打开的项目不再列入「最近打开」——它就在上面写着，重复列只会占位 */
+  const recent = recentFolders.filter((folder) => folder !== workspace.root)
+
+  const openRecent = (folder: string): void => {
+    void openFolderAt(folder).catch(() => {
+      // 目录已被删除/无权限：从历史里摘掉，避免用户反复点到一个打不开的项
+      forgetRecentFolder(folder)
+    })
+  }
 
   return (
     <div className="welcome">
@@ -122,6 +138,46 @@ export function WelcomeView(): JSX.Element {
                 </li>
               ))}
             </ul>
+
+            {recent.length > 0 ? (
+              <>
+                <h2 className="welcome__section">最近打开</h2>
+                <ul className="welcome__list welcome__list--recent">
+                  {recent.map((folder) => {
+                    const name = folder.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? folder
+                    // 未打开任何项目时才把「移除」暴露出来：已有项目在跑时误删历史更碍事
+                    const removable = !workspace.root
+                    return (
+                      <li key={folder} className="welcome__recent">
+                        <button
+                          type="button"
+                          className="welcome__recent-open"
+                          title={folder}
+                          onClick={() => openRecent(folder)}
+                        >
+                          <Icon name="explorer" size={14} />
+                          <span className="welcome__recent-text">
+                            <span className="welcome__recent-name">{name}</span>
+                            <span className="welcome__recent-path">{folder}</span>
+                          </span>
+                        </button>
+                        {removable ? (
+                          <button
+                            type="button"
+                            className="welcome__recent-remove"
+                            title="从列表中移除"
+                            aria-label={`从列表中移除 ${name}`}
+                            onClick={() => forgetRecentFolder(folder)}
+                          >
+                            <Icon name="close" size={12} />
+                          </button>
+                        ) : null}
+                      </li>
+                    )
+                  })}
+                </ul>
+              </>
+            ) : null}
 
             <h2 className="welcome__section">小技巧</h2>
             <ul className="welcome__list">

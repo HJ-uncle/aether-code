@@ -21,6 +21,7 @@ export const IPC = {
     settingsUpdate: 'settings:update',
     /** 文件系统（IDE 本地实现） */
     fsPickFolder: 'fs:pick-folder',
+    fsAllowRoot: 'fs:allow-root',
     fsReadDir: 'fs:read-dir',
     fsReadFile: 'fs:read-file',
     fsWriteFile: 'fs:write-file',

@@ -12,7 +12,8 @@
 import { useSyncExternalStore } from 'react'
 import type { FsEntry } from '@shared/ipc'
 import { ipcErrorMessage } from '../ipc-error'
-import { pickFolder, readDir } from './fs-client'
+import { allowRoot, pickFolder, readDir } from './fs-client'
+import { rememberRecentFolder } from './recent-folders'
 import { getSettings, updateSettings } from '../engine/client'
 
 export interface WorkspaceState {
@@ -83,6 +84,9 @@ async function loadChildren(dir: string): Promise<void> {
 
 /** 打开指定文件夹（已授权则直接切换） */
 export async function openFolderAt(root: string): Promise<void> {
+  // 授权前置：主进程的文件白名单在内存里，不经「打开文件夹」选择框进来的目录
+  // （最近打开、启动恢复）必须显式补授权，否则 readDir 会被越界校验拦下
+  await allowRoot(root)
   // 根目录默认展开：树的第一行是根节点本身（见 ExplorerView），
   // 不在 expanded 里的话打开文件夹只会看到光秃秃的一行根。
   setState({
@@ -96,6 +100,8 @@ export async function openFolderAt(root: string): Promise<void> {
     selectionAnchor: null
   })
   await loadChildren(root)
+  // 记入「最近打开的项目」：启动时自动恢复也算一次使用，下次仍在列表最前
+  rememberRecentFolder(root)
 }
 
 /** 弹出目录选择框并打开 */

@@ -1,8 +1,11 @@
-import { useEffect, useRef, type JSX } from 'react'
+import { useEffect, useRef, useState, type JSX } from 'react'
 import '@xterm/xterm/css/xterm.css'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
+import { copyIntoWorkspace } from '@renderer/core/workspace/fs-client'
 import { watchTheme } from '@renderer/core/theme/palette'
 import { Icon } from '@renderer/workbench/icons'
+import { ContextMenu } from '@renderer/workbench/ContextMenu'
+import { pushPendingMention } from '@renderer/contrib/chat/pending-mentions'
 import {
   clearActiveSession,
   closeSession,
@@ -145,6 +148,8 @@ function SessionSlot({
   active: boolean
 }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
+  const workspace = useWorkspace()
+  const [menu, setMenu] = useState<{ x: number; y: number; selection: string } | null>(null)
 
   useEffect(() => {
     const el = ref.current
@@ -161,11 +166,62 @@ function SessionSlot({
     }
   }, [active, session])
 
+  /**
+   * 选中文本「添加到对话」：把终端选区落盘成 .aether/attachments/ 下的
+   * 临时文本文件，再作为一个 terminal 引用入队给聊天输入框。
+   * 对齐 wuzu-client：终端内容量大且可能含控制字符，不直接塞进 prompt，
+   * 落成文件后让 AI 自己读。
+   */
+  const addSelectionToChat = async (selection: string): Promise<void> => {
+    const root = workspace.root
+    if (!root) return
+    const stamp = new Date()
+    const pad = (n: number): string => String(n).padStart(2, '0')
+    const fileName = `terminal-${stamp.getFullYear()}${pad(stamp.getMonth() + 1)}${pad(stamp.getDate())}-${pad(stamp.getHours())}${pad(stamp.getMinutes())}${pad(stamp.getSeconds())}.txt`
+    const result = await copyIntoWorkspace({
+      root,
+      fileName,
+      data: new TextEncoder().encode(selection)
+    })
+    pushPendingMention({
+      displayText: `${session.title} 输出`,
+      source: 'terminal',
+      path: result.relativePath
+    })
+  }
+
   return (
-    <div
-      ref={ref}
-      className="terminal-view__session"
-      style={{ display: active ? 'block' : 'none' }}
-    />
+    <>
+      <div
+        ref={ref}
+        className="terminal-view__session"
+        style={{ display: active ? 'block' : 'none' }}
+        onContextMenu={(event) => {
+          const selection = session.term.getSelection()
+          if (!selection) return // 无选区走 xterm 默认行为（复制/系统菜单）
+          event.preventDefault()
+          setMenu({ x: event.clientX, y: event.clientY, selection })
+        }}
+      />
+      {menu ? (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            {
+              id: 'add-to-chat',
+              label: '添加到对话',
+              hint: `${menu.selection.length} 字符`,
+              disabled: !workspace.root,
+              onSelect: () => {
+                setMenu(null)
+                void addSelectionToChat(menu.selection)
+              }
+            }
+          ]}
+        />
+      ) : null}
+    </>
   )
 }

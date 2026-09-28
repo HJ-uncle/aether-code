@@ -7,6 +7,7 @@ import {
   normalizePending,
   type PendingInteraction
 } from './pending'
+import { patchSessionMeta } from '@renderer/contrib/history/session-meta'
 
 // ==================== 模型 ====================
 
@@ -516,6 +517,12 @@ export function useChat(): {
       const trimmed = text.trim()
       const attachments = options.attachments ?? []
       if ((!trimmed && attachments.length === 0)) return
+
+      // 顺手记下「这条会话在哪个项目里」——会话历史面板的「打开项目目录」靠它
+      const workspacePath = options.workspacePaths?.[0]
+      if (options.sessionId && workspacePath) {
+        patchSessionMeta(options.sessionId, { workspacePath })
+      }
 
       // 流式进行中不抢占（引擎对同会话新请求是 abort 旧流，不是排队）：
       // 入队等待，当前流结束后由 drainQueue 按序发出

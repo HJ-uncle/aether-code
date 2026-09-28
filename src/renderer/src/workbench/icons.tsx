@@ -77,6 +77,10 @@ export type IconName =
   | 'layout-panel'
   | 'layout-panel-left'
   | 'swap-horizontal'
+  | 'pin'
+  | 'pencil'
+  | 'star'
+  | 'star-outline'
 
 /** mdi:crosshairs-gps —— 资源管理器「定位当前文件」，与 wuzu-client 同图标 */
 const MDI_LOCATE =
@@ -149,7 +153,12 @@ const PATHS: Record<IconName, JSX.Element> = {
       fill="currentColor"
     />
   ),
-  explorer: <path d="M3 5h6l2 2h10v12H3V5zm2 2v2h6.2l-1-2H5zm0 4v8h14V9H5z" fill="currentColor" />,
+  explorer: (
+    <path
+      d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"
+      fill="currentColor"
+    />
+  ),
   shield: (
     <path
       d="M12 2l8 3v6.2c0 4.7-3.3 9-8 10.8-4.7-1.8-8-6.1-8-10.8V5l8-3zm0 2.1L6 6.4v4.8c0 3.6 2.5 7 6 8.6 3.5-1.6 6-5 6-8.6V6.4l-6-2.3zM12 8a2 2 0 00-1 3.7V14h2v-2.3A2 2 0 0012 8z"
@@ -372,6 +381,34 @@ const PATHS: Record<IconName, JSX.Element> = {
   'swap-horizontal': (
     <path
       d="M21 6l-4-4v3H8v2h9v4l4-4M3 18l4 4v-3h9v-2H7v-4l-4 4z"
+      fill="currentColor"
+    />
+  ),
+  /* mdi:pin —— 会话「置顶」 */
+  pin: (
+    <path
+      d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"
+      fill="currentColor"
+    />
+  ),
+  /* mdi:pencil-outline —— 会话「重命名」 */
+  pencil: (
+    <path
+      d="M14.06 9l.94.94L5.92 19H5v-.92L14.06 9m3.6-6c-.25 0-.51.1-.7.29l-1.83 1.83l3.75 3.75l1.83-1.83c.39-.39.39-1.04 0-1.41l-2.34-2.34c-.2-.2-.46-.29-.71-.29m-3.6 3.19L3 17.25V21h3.75L17.81 9.94l-3.75-3.75z"
+      fill="currentColor"
+    />
+  ),
+  /* mdi:star —— 已收藏（实心） */
+  star: (
+    <path
+      d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2L9.19 8.63L2 9.24l5.46 4.73L5.82 21L12 17.27z"
+      fill="currentColor"
+    />
+  ),
+  /* mdi:star-outline —— 未收藏 / 收藏过滤按钮 */
+  'star-outline': (
+    <path
+      d="M12 15.39l-3.76 2.27l.99-4.28l-3.32-2.88l4.38-.37L12 6.09l1.71 4.04l4.38.37l-3.32 2.88l.99 4.28L12 15.39M12 2L9.19 8.63L2 9.24l5.46 4.73L5.82 21L12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2z"
       fill="currentColor"
     />
   ),

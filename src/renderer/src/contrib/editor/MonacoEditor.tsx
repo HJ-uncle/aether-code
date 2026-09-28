@@ -9,6 +9,9 @@ import {
 import { currentEditorThemeName, refreshEditorTheme } from '@renderer/core/editor/editor-theme'
 import { rememberViewState, setCursor, takeViewState } from '@renderer/core/editor/editor-store'
 import { watchTheme } from '@renderer/core/theme/palette'
+import { getWorkspaceState } from '@renderer/core/workspace/workspace-store'
+import { paths } from '@renderer/core/workspace/fs-client'
+import { pushPendingMention } from '@renderer/contrib/chat/pending-mentions'
 
 interface MonacoEditorProps {
   filePath: string
@@ -89,10 +92,39 @@ export function MonacoEditor({
       if (path) setCursor(path, event.position.lineNumber, event.position.column)
     })
 
+    // 「添加到对话」右键动作：把当前选区作为 code 引用入队给聊天输入框。
+    // 对齐 wuzu-client pushCodeRef：只传路径与行号不传原文（AI 自己会读文件）。
+    // addAction 由 Monaco 接管右键菜单的渲染/定位/键盘，优于自建 ContextMenu。
+    const addToChatAction = editor.addAction({
+      id: 'aether.addSelectionToChat',
+      label: '添加到对话',
+      contextMenuGroupId: 'navigation',
+      contextMenuOrder: 1,
+      run: (instance) => {
+        const selection = instance.getSelection()
+        const path = currentPathRef.current
+        if (!selection || !path || selection.isEmpty()) return
+        const root = getWorkspaceState().root
+        const relative =
+          root && path.replace(/\\/g, '/').startsWith(root.replace(/\\/g, '/') + '/')
+            ? path.replace(/\\/g, '/').slice(root.replace(/\\/g, '/').length + 1)
+            : path
+        const base = paths.basename(relative)
+        pushPendingMention({
+          displayText: `${base}:${selection.startLineNumber}-${selection.endLineNumber}`,
+          source: 'code',
+          path: relative,
+          startLine: selection.startLineNumber,
+          endLine: selection.endLineNumber
+        })
+      }
+    })
+
     return () => {
       subscription.dispose()
       modelSubscription.dispose()
       cursorSubscription.dispose()
+      addToChatAction?.dispose()
       // 卸载前把当前文件的光标/滚动位置存下来。
       // 必须在这里做：DocumentSlot 以 filePath 为 key，切标签是**整体卸载重建**
       // （不是换 model），onDidChangeModel 不会触发，实例一销毁状态就没了 ——

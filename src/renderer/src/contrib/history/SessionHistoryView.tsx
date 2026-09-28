@@ -2,20 +2,34 @@
  * 会话历史视图（活动栏第一个标签）
  *
  * 列表形制对齐 wuzu-client 的 CodeSessionHistory（按用户要求不带左侧头像图标）：
- *   - 标题：首条用户消息首行，截 50 字，加粗单行截断
- *   - 副标题：最后一条 AI 回复纯文本，截 60 字，灰色单行截断
+ *   - 标题：自定义名 > 首条用户消息首行（截 50 字）
+ *   - 副标题：最后一条 AI 回复纯文本，截 60 字
  *   - 右侧：相对时间（刚刚 / N 分钟前 / N 小时前 / N 天前 / 日期）
- *   - 当前会话高亮；hover 浮现；点击切到该会话并展开右侧对话面板
+ *   - 左侧标记色点 + 置顶 pin（对齐 wuzu 的 tagColor / pinned 展示位）
+ *   - 右键菜单：置顶 / 重命名 / 收藏 / 标记（6 色色板）/ 打开项目目录 / 删除会话
+ *   - 头部：☆ 只看收藏（带数量角标）、⇅ 排序菜单（4 字段 × 升降序）、新建、刷新
+ *   - 排序：置顶永远在最前，其余按当前字段+方向；置顶区与非置顶区间一条分割线
  *
- * 引擎按最近活跃倒序返回（GET /conversation/sessions，title/lastReply 字段
- * 由引擎 SQL 直出首条用户消息与最后一条助手消息原文，纯文本化在前端做）。
+ * 本地元数据（名称/置顶/收藏/颜色/工作区）存 session-meta.ts（localStorage 单 key），
+ * 引擎不参与 —— 这些是纯界面偏好。
  */
-import { useCallback, useEffect, useState, type JSX } from 'react'
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
 import { requestOrThrow } from '@renderer/core/engine/client'
 import { extractText } from '@renderer/core/engine/useChat'
 import { showChatPanel } from '@renderer/core/platform/layout-state'
+import { openFolderAt } from '@renderer/core/workspace/workspace-store'
 import { Icon } from '@renderer/workbench/icons'
+import { ContextMenu, type ContextMenuItem } from '@renderer/workbench/ContextMenu'
+import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
+import { Dialog } from '@renderer/workbench/Dialog'
+import {
+  SESSION_TAG_COLORS,
+  getSessionMetaTable,
+  patchSessionMeta,
+  removeSessionMeta,
+  subscribeSessionMeta
+} from './session-meta'
 
 /** GET /conversation/sessions 的 data 项（lastAt 已由引擎换算为毫秒时间戳） */
 interface SessionSummary {
@@ -30,8 +44,22 @@ interface SessionSummary {
   lastReply?: string
 }
 
-/** 标题：首条用户消息首行，纯文本化后截 50 字（对齐 wuzu displayTitle） */
-function sessionTitle(item: SessionSummary): string {
+/** 排序字段（对齐 wuzu 排序菜单四项）；createdAt 引擎不下发，用 sessionId 里不可靠——退化为与 updatedAt 同义的 lastAt 低优先级替代不可行，故名称/颜色之外只有时间序 */
+type SortField = 'updatedAt' | 'title' | 'tagColor'
+interface SortState {
+  field: SortField
+  order: 'asc' | 'desc'
+}
+
+const SORT_FIELD_LABELS: Record<SortField, string> = {
+  updatedAt: '按最后会话时间',
+  title: '按名称',
+  tagColor: '按标记颜色'
+}
+
+/** 标题：自定义名 > 首条用户消息首行，纯文本化后截 50 字（对齐 wuzu displayTitle） */
+function sessionTitle(item: SessionSummary, customName?: string): string {
+  if (customName?.trim()) return customName.trim()
   const raw = extractText(item.title ?? item.lastMessage).split('\n')[0].replace(/\s+/g, ' ').trim()
   if (!raw) return '未命名会话'
   return raw.length > 50 ? `${raw.slice(0, 50)}…` : raw
@@ -70,11 +98,28 @@ function formatAbsolute(lastAt: number | undefined): string {
   return `${time.getFullYear()}-${pad(time.getMonth() + 1)}-${pad(time.getDate())} ${pad(time.getHours())}:${pad(time.getMinutes())}`
 }
 
+function tagColorDot(colorKey: string | undefined): string | null {
+  return SESSION_TAG_COLORS.find((c) => c.key === colorKey)?.dot ?? null
+}
+
 export function SessionHistoryView(): JSX.Element {
   const { ready, settings, updateSettings } = useApp()
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** 头部 ☆：只看收藏（对齐 wuzu segment 切换的本地收藏过滤） */
+  const [favoritesOnly, setFavoritesOnly] = useState(false)
+  const [sort, setSort] = useState<SortState>({ field: 'updatedAt', order: 'desc' })
+  /** 右键菜单：命中的会话 + 视口坐标 */
+  const [menu, setMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null)
+  /** 标记色板（在原菜单位置弹出的二级面板，对齐 wuzu openTagPanel） */
+  const [tagPanel, setTagPanel] = useState<{ x: number; y: number; sessionId: string } | null>(null)
+  /** 排序菜单 */
+  const [sortMenu, setSortMenu] = useState<{ x: number; y: number } | null>(null)
+  /** 重命名弹窗 */
+  const [renaming, setRenaming] = useState<{ sessionId: string; value: string } | null>(null)
+
+  const metaTable = useSyncExternalStore(subscribeSessionMeta, getSessionMetaTable)
 
   const refresh = useCallback(async () => {
     if (!ready) return
@@ -117,11 +162,255 @@ export function SessionHistoryView(): JSX.Element {
     void updateSettings({ lastSessionId: generated }).then(() => showChatPanel())
   }, [updateSettings])
 
+  // ── 右键菜单动作 ──────────────────────────────────────────────────────────
+
+  const togglePin = useCallback((sessionId: string) => {
+    patchSessionMeta(sessionId, { pinned: !metaTable[sessionId]?.pinned })
+  }, [metaTable])
+
+  const toggleFavorite = useCallback((sessionId: string) => {
+    patchSessionMeta(sessionId, { favorite: !metaTable[sessionId]?.favorite })
+  }, [metaTable])
+
+  const startRename = useCallback((sessionId: string) => {
+    const item = sessions.find((s) => s.sessionId === sessionId)
+    setRenaming({ sessionId, value: sessionTitle(item ?? { sessionId }, metaTable[sessionId]?.name) })
+  }, [sessions, metaTable])
+
+  const commitRename = useCallback(() => {
+    if (!renaming) return
+    const value = renaming.value.trim()
+    // 空名 = 清除自定义名，回到引擎标题
+    patchSessionMeta(renaming.sessionId, { name: value || undefined })
+    setRenaming(null)
+  }, [renaming])
+
+  const openProjectDir = useCallback(
+    (sessionId: string) => {
+      const workspacePath = metaTable[sessionId]?.workspacePath
+      if (!workspacePath) {
+        void confirmDialog({
+          title: '打开项目目录',
+          body: '这个会话还没有记录过项目目录（在该会话里发过消息后才会记录）。',
+          confirmText: '知道了'
+        })
+        return
+      }
+      // 切工作区 + 切会话，两步都做完这条会话就在它原本的项目里打开了
+      openFolderAt(workspacePath)
+      void updateSettings({ lastSessionId: sessionId }).then(() => showChatPanel())
+    },
+    [metaTable, updateSettings]
+  )
+
+  const deleteSession = useCallback(
+    (sessionId: string) => {
+      const item = sessions.find((s) => s.sessionId === sessionId)
+      const title = sessionTitle(item ?? { sessionId }, metaTable[sessionId]?.name)
+      void confirmDialog({
+        title: '删除会话',
+        body: `删除「${title}」？引擎侧的对话记录会一并删除，不可恢复。`,
+        danger: true,
+        confirmText: '删除'
+      }).then((confirmed) => {
+        if (!confirmed) return
+        // 删的是当前会话：先换一个新 ID，避免删除后还挂在已销毁的会话上
+        const isCurrent = sessionId === settings.lastSessionId
+        void requestOrThrow({
+          method: 'DELETE',
+          path: `/sessions/${encodeURIComponent(sessionId)}`,
+          query: { keepWorkspace: 'true' }
+        })
+          .then(() => {
+            removeSessionMeta(sessionId)
+            if (isCurrent) {
+              const generated = globalThis.crypto?.randomUUID?.() ?? `session-${Date.now()}`
+              return updateSettings({ lastSessionId: generated })
+            }
+            return undefined
+          })
+          .then(() => refresh())
+          .catch((err) => {
+            void confirmDialog({
+              title: '删除失败',
+              body: err instanceof Error ? err.message : String(err),
+              confirmText: '知道了'
+            })
+          })
+      })
+    },
+    [sessions, metaTable, settings.lastSessionId, updateSettings, refresh]
+  )
+
+  // ── 派生列表：过滤（只看收藏）→ 排序（置顶恒前）──────────────────────────
+
+  const favoriteCount = useMemo(
+    () => sessions.filter((s) => metaTable[s.sessionId]?.favorite).length,
+    [sessions, metaTable]
+  )
+
+  const visibleSessions = useMemo(() => {
+    const filtered = favoritesOnly
+      ? sessions.filter((s) => metaTable[s.sessionId]?.favorite)
+      : sessions
+    const tagOrder = new Map(SESSION_TAG_COLORS.map((c, index) => [c.key, index]))
+    const dir = sort.order === 'asc' ? 1 : -1
+    return [...filtered].sort((a, b) => {
+      // 置顶恒前（对齐 wuzu pb - pa）；置顶之间仍按当前字段排
+      const pa = metaTable[a.sessionId]?.pinned ? 1 : 0
+      const pb = metaTable[b.sessionId]?.pinned ? 1 : 0
+      if (pa !== pb) return pb - pa
+      switch (sort.field) {
+        case 'title':
+          return (
+            sessionTitle(a, metaTable[a.sessionId]?.name).localeCompare(
+              sessionTitle(b, metaTable[b.sessionId]?.name),
+              'zh'
+            ) * dir
+          )
+        case 'tagColor': {
+          // 有标记的在前；颜色间按色板固定顺序；同色内按时间（对齐 wuzu）
+          const ca = metaTable[a.sessionId]?.color
+          const cb = metaTable[b.sessionId]?.color
+          if (!ca && !cb) return ((b.lastAt ?? 0) - (a.lastAt ?? 0)) * dir
+          if (!ca) return 1
+          if (!cb) return -1
+          const oa = tagOrder.get(ca) ?? 99
+          const ob = tagOrder.get(cb) ?? 99
+          if (oa !== ob) return oa - ob
+          return ((b.lastAt ?? 0) - (a.lastAt ?? 0)) * dir
+        }
+        default:
+          return ((b.lastAt ?? 0) - (a.lastAt ?? 0)) * dir
+      }
+    })
+  }, [sessions, favoritesOnly, sort, metaTable])
+
+  /** 第一条非置顶项的 id：置顶区与非置顶区之间画分割线（对齐 wuzu） */
+  const firstUnpinnedId = useMemo(
+    () => visibleSessions.find((s) => !metaTable[s.sessionId]?.pinned)?.sessionId ?? null,
+    [visibleSessions, metaTable]
+  )
+
+  // ── 菜单定义 ──────────────────────────────────────────────────────────────
+
+  const contextMenuItems = useMemo((): ContextMenuItem[] => {
+    if (!menu) return []
+    const meta = metaTable[menu.sessionId]
+    return [
+      {
+        id: 'toggle-pin',
+        label: meta?.pinned ? '取消置顶' : '置顶',
+        onSelect: () => {
+          setMenu(null)
+          togglePin(menu.sessionId)
+        }
+      },
+      {
+        id: 'rename',
+        label: '重命名',
+        onSelect: () => {
+          const id = menu.sessionId
+          setMenu(null)
+          startRename(id)
+        }
+      },
+      {
+        id: 'favorite',
+        label: meta?.favorite ? '取消收藏' : '收藏',
+        onSelect: () => {
+          setMenu(null)
+          toggleFavorite(menu.sessionId)
+        }
+      },
+      {
+        id: 'tag-color',
+        label: '标记',
+        onSelect: () => {
+          // 在原菜单位置弹色板（对齐 wuzu openTagPanel 的位置记忆）
+          setTagPanel({ x: menu.x, y: menu.y, sessionId: menu.sessionId })
+          setMenu(null)
+        }
+      },
+      {
+        id: 'open-dir',
+        label: '打开项目目录',
+        onSelect: () => {
+          setMenu(null)
+          openProjectDir(menu.sessionId)
+        }
+      },
+      {
+        id: 'delete',
+        label: '删除会话',
+        danger: true,
+        onSelect: () => {
+          setMenu(null)
+          deleteSession(menu.sessionId)
+        }
+      }
+    ]
+  }, [menu, metaTable, togglePin, toggleFavorite, startRename, openProjectDir, deleteSession])
+
+  const sortMenuItems = useMemo((): ContextMenuItem[] => {
+    const fields: SortField[] = ['updatedAt', 'title', 'tagColor']
+    return [
+      ...fields.map((field) => ({
+        id: `field-${field}`,
+        label: `${sort.field === field ? '✓ ' : ''}${SORT_FIELD_LABELS[field]}`,
+        onSelect: () => {
+          setSort((s) => ({ ...s, field }))
+          setSortMenu(null)
+        }
+      })),
+      {
+        id: 'order-desc',
+        label: `${sort.order === 'desc' ? '✓ ' : ''}降序`,
+        onSelect: () => {
+          setSort((s) => ({ ...s, order: 'desc' }))
+          setSortMenu(null)
+        }
+      },
+      {
+        id: 'order-asc',
+        label: `${sort.order === 'asc' ? '✓ ' : ''}升序`,
+        onSelect: () => {
+          setSort((s) => ({ ...s, order: 'asc' }))
+          setSortMenu(null)
+        }
+      }
+    ]
+  }, [sort])
+
   return (
     <div className="history-view">
       <div className="history-view__toolbar">
         <span className="history-view__title">会话历史</span>
         <div className="history-view__toolbar-spacer" />
+        <button
+          type="button"
+          className={`history-view__refresh${favoritesOnly ? ' is-active' : ''}`}
+          aria-label={favoritesOnly ? '显示全部会话' : '只看收藏的会话'}
+          title={favoritesOnly ? '显示全部会话' : '只看收藏的会话'}
+          onClick={() => setFavoritesOnly((v) => !v)}
+        >
+          <Icon name={favoritesOnly ? 'star' : 'star-outline'} size={13} />
+          {favoriteCount > 0 ? (
+            <span className="history-view__badge">{favoriteCount}</span>
+          ) : null}
+        </button>
+        <button
+          type="button"
+          className="history-view__refresh"
+          aria-label="排序方式"
+          title={`排序：${SORT_FIELD_LABELS[sort.field]} · ${sort.order === 'desc' ? '降序' : '升序'}`}
+          onClick={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect()
+            setSortMenu({ x: rect.left, y: rect.bottom + 4 })
+          }}
+        >
+          <Icon name="sort" size={13} />
+        </button>
         <button
           type="button"
           className="history-view__refresh"
@@ -148,37 +437,136 @@ export function SessionHistoryView(): JSX.Element {
         <div className="history-view__empty">引擎未就绪，就绪后显示历史会话。</div>
       ) : error ? (
         <div className="history-view__empty history-view__empty--error">加载失败：{error}</div>
-      ) : sessions.length === 0 ? (
+      ) : visibleSessions.length === 0 ? (
         <div className="history-view__empty">
-          {loading ? '正在加载…' : '暂无历史会话。开始对话后，记录会出现在这里。'}
+          {loading
+            ? '正在加载…'
+            : favoritesOnly
+              ? '没有收藏的会话。右键会话可以收藏。'
+              : '暂无历史会话。开始对话后，记录会出现在这里。'}
         </div>
       ) : (
         <ul className="history-view__list">
-          {sessions.map((item) => {
+          {visibleSessions.map((item) => {
             const active = item.sessionId === settings.lastSessionId
-            const title = sessionTitle(item)
+            const meta = metaTable[item.sessionId]
+            const title = sessionTitle(item, meta?.name)
             const subtitle = sessionSubtitle(item)
+            const dot = tagColorDot(meta?.color)
             return (
               <li key={item.sessionId}>
+                {item.sessionId === firstUnpinnedId && visibleSessions[0]?.sessionId !== firstUnpinnedId ? (
+                  <div className="history-view__divider" />
+                ) : null}
                 <button
                   type="button"
                   className={`history-view__item${active ? ' is-active' : ''}`}
                   title={`${title}\n最后活跃：${formatAbsolute(item.lastAt)}`}
                   onClick={() => openSession(item.sessionId)}
+                  onContextMenu={(event) => {
+                    event.preventDefault()
+                    setMenu({ x: event.clientX, y: event.clientY, sessionId: item.sessionId })
+                  }}
                 >
-                  <span className="history-view__row">
-                    <span className="history-view__summary">{title}</span>
-                    <span className="history-view__time">{formatRelative(item.lastAt)}</span>
-                  </span>
-                  {subtitle ? (
-                    <span className="history-view__subtitle">{subtitle}</span>
+                  {dot ? (
+                    <span className="history-view__tag" style={{ background: dot }} />
                   ) : null}
+                  <span className="history-view__main">
+                    <span className="history-view__row">
+                      {meta?.pinned ? (
+                        <Icon name="pin" size={11} className="history-view__pin" />
+                      ) : null}
+                      <span className="history-view__summary">{title}</span>
+                      <span className="history-view__time">{formatRelative(item.lastAt)}</span>
+                    </span>
+                    {subtitle ? (
+                      <span className="history-view__subtitle">{subtitle}</span>
+                    ) : null}
+                  </span>
                 </button>
               </li>
             )
           })}
         </ul>
       )}
+
+      {menu ? (
+        <ContextMenu x={menu.x} y={menu.y} items={contextMenuItems} onClose={() => setMenu(null)} />
+      ) : null}
+
+      {sortMenu ? (
+        <ContextMenu x={sortMenu.x} y={sortMenu.y} items={sortMenuItems} onClose={() => setSortMenu(null)} />
+      ) : null}
+
+      {tagPanel ? (
+        <>
+          {/* 透明遮罩：点面板外任意处关闭（对齐 ContextMenu 的 dismiss 行为） */}
+          <button
+            type="button"
+            className="tag-panel__backdrop"
+            aria-label="关闭标记面板"
+            onClick={() => setTagPanel(null)}
+          />
+          <div className="tag-panel" style={{ left: tagPanel.x, top: tagPanel.y }}>
+            <div className="tag-panel__grid">
+              <button
+                type="button"
+                className="tag-panel__clear"
+                onClick={() => {
+                  patchSessionMeta(tagPanel.sessionId, { color: undefined })
+                  setTagPanel(null)
+                }}
+              >
+                清除
+              </button>
+              {SESSION_TAG_COLORS.map((color) => (
+                <button
+                  key={color.key}
+                  type="button"
+                  className="tag-panel__dot"
+                  title={color.label}
+                  style={{ background: color.dot }}
+                  onClick={() => {
+                    patchSessionMeta(tagPanel.sessionId, { color: color.key })
+                    setTagPanel(null)
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+        </>
+      ) : null}
+
+      {renaming ? (
+        <Dialog
+          title="重命名会话"
+          onClose={() => setRenaming(null)}
+          footer={
+            <>
+              <button type="button" className="btn btn--sm" onClick={() => setRenaming(null)}>
+                取消
+              </button>
+              <button type="button" className="btn btn--primary btn--sm" onClick={commitRename}>
+                确定
+              </button>
+            </>
+          }
+        >
+          <input
+            type="text"
+            className="history-view__rename-input"
+            maxLength={60}
+            autoFocus
+            value={renaming.value}
+            placeholder="留空则恢复默认标题"
+            onChange={(event) => setRenaming({ ...renaming, value: event.target.value })}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') commitRename()
+              if (event.key === 'Escape') setRenaming(null)
+            }}
+          />
+        </Dialog>
+      ) : null}
     </div>
   )
 }

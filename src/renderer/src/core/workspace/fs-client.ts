@@ -18,6 +18,11 @@ function bridge(): Window['aether'] {
   return api
 }
 
+/** 把目录加入主进程的工作区白名单（从「最近打开」直接进入时，没有经过选择框授权） */
+export function allowRoot(root: string): Promise<void> {
+  return bridge().fs.allowRoot(root)
+}
+
 export function pickFolder(): Promise<string | null> {
   return bridge().fs.pickFolder()
 }

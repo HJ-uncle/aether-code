@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
   type JSX,
   type MouseEvent as ReactMouseEvent,
@@ -21,6 +22,11 @@ import { setContextKey } from '@renderer/core/platform/context-keys'
 import { setLayout } from '@renderer/core/platform/layout-state'
 import { compileExclude, isExcluded } from '@renderer/core/workspace/exclude'
 import { paths } from '@renderer/core/workspace/fs-client'
+import {
+  forgetRecentFolder,
+  getRecentFolders,
+  onRecentFoldersChanged
+} from '@renderer/core/workspace/recent-folders'
 import {
   copyEntries,
   createFileIn,
@@ -45,6 +51,7 @@ import {
   getSelection,
   getWorkspaceState,
   onWorkspaceChanged,
+  openFolderAt,
   pickAndOpenFolder,
   refreshDirectory,
   selectAllVisible,
@@ -1003,6 +1010,26 @@ export function ExplorerView(): JSX.Element {
     setBusy(false)
   }, [])
 
+  /**
+   * 空态的「最近打开」列表：与欢迎页、Git 面板同源（localStorage）。
+   * 点击直接打开该项目；目录已删/无权限时 readDir 报错会落到 workspace.error 上，
+   * 摆到用户眼前，用户可自行用行尾的「×」把这条记录摘掉。
+   */
+  const recentFolders = useSyncExternalStore(onRecentFoldersChanged, getRecentFolders)
+  const recentProjects = useMemo(
+    () =>
+      recentFolders
+        .filter((folder) => folder !== workspace.root)
+        .map((folder) => ({
+          path: folder,
+          name: folder.split(/[\\/]/).filter(Boolean).pop() ?? folder
+        })),
+    [recentFolders, workspace.root]
+  )
+  const openRecentProject = useCallback((folder: string): void => {
+    void openFolderAt(folder).catch(() => forgetRecentFolder(folder))
+  }, [])
+
   const handleRefresh = useCallback(async () => {
     if (!workspace.root) return
     setBusy(true)
@@ -1487,6 +1514,35 @@ export function ExplorerView(): JSX.Element {
           <Icon name="plus" size={13} />
           {busy ? '打开中…' : '打开文件夹'}
         </button>
+        {recentProjects.length > 0 ? (
+          <div className="explorer__recent">
+            <div className="explorer__recent-title">最近打开</div>
+            <div className="explorer__recent-list">
+              {recentProjects.map((project) => (
+                <div key={project.path} className="explorer__recent-row">
+                  <button
+                    type="button"
+                    className="explorer__recent-item"
+                    title={project.path}
+                    onClick={() => openRecentProject(project.path)}
+                  >
+                    <Icon name="explorer" size={13} />
+                    <span className="explorer__recent-name">{project.name}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="explorer__recent-del"
+                    title="从最近打开中移除"
+                    aria-label={`从最近打开中移除 ${project.name}`}
+                    onClick={() => forgetRecentFolder(project.path)}
+                  >
+                    <Icon name="close" size={11} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
         {workspace.error ? <div className="notice notice--error">{workspace.error}</div> : null}
       </div>
     )

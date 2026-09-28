@@ -108,6 +108,7 @@ const api = {
    */
   fs: {
     pickFolder: (): Promise<string | null> => ipcRenderer.invoke(IPC.invoke.fsPickFolder),
+    allowRoot: (root: string): Promise<void> => ipcRenderer.invoke(IPC.invoke.fsAllowRoot, root),
     readDir: (dir: string): Promise<FsEntry[]> => ipcRenderer.invoke(IPC.invoke.fsReadDir, dir),
     readFile: (path: string): Promise<FsFileContent> =>
       ipcRenderer.invoke(IPC.invoke.fsReadFile, path),
