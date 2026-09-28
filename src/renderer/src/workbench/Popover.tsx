@@ -136,6 +136,10 @@ export function Popover({
       const target = event.target as Node
       if (triggerRef.current?.contains(target)) return
       if (panelRef.current?.contains(target)) return
+      // 嵌套弹层的面板也是 portal 到 body 的兄弟节点（如对话偏好里的下拉菜单），
+      // 点击落在「另一个」面板里不能算外部，否则会把外层一起关掉、连带卸载内层内容。
+      // 单层场景下页面上只有自己的面板，上一行已拦住，本行不会误伤。
+      if ((target as Element).closest?.('.popover__panel')) return
       setOpen(false)
     }
     const onKeyDown = (event: KeyboardEvent): void => {

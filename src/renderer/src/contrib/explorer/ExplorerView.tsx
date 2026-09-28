@@ -57,9 +57,10 @@ import {
 import { ContextMenu, type ContextMenuItem } from '@renderer/workbench/ContextMenu'
 import { PromptDialog } from '@renderer/workbench/PromptDialog'
 import { Icon } from '@renderer/workbench/icons'
+import { resolveFileIcon } from './file-icons'
 
-/** 行高，必须与 app.css 的 .tree-row 保持一致（虚拟滚动按它换算偏移） */
-const ROW_HEIGHT = 22
+/** 行高，必须与 .tree-row 的 margin/字号保持协调（虚拟滚动按它换算偏移） */
+const ROW_HEIGHT = 24
 /** 视口外多渲染的行数：留一屏缓冲，快速滚动时才不会看到空白 */
 const OVERSCAN = 10
 /**
@@ -119,7 +120,7 @@ interface Row {
  * 因此由容器把「当前悬停行 / 活动路径」算出来，逐行决定要不要画。
  */
 const INDENT_BASE = 6
-const INDENT_STEP = 14
+const INDENT_STEP = 12
 /** 右键菜单的位置与目标 */
 interface MenuState {
   x: number
@@ -330,6 +331,10 @@ export function ExplorerView(): JSX.Element {
   const git = useGit()
   const { settings } = useApp()
   const [busy, setBusy] = useState(false)
+  /** 树内按名筛选（工具栏漏斗按钮展开的输入条）；空串 = 不过滤 */
+  const [nameFilterRaw, setNameFilterRaw] = useState('')
+  const [filterOpen, setFilterOpen] = useState(false)
+  const nameFilter = nameFilterRaw.trim().toLowerCase()
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [nameAction, setNameAction] = useState<NameAction | null>(null)
   const [opError, setOpError] = useState<string | null>(null)
@@ -487,7 +492,13 @@ export function ExplorerView(): JSX.Element {
         const entryHidden = hidden(entry, parentHidden)
         if (entryHidden) continue
 
-        const compact = entry.isDirectory ? compactChain(entry, depth, entryHidden) : null
+        // 树内按名筛选：命中项保留，目录始终下钻（其子项可能命中）
+        if (nameFilter && !entry.name.toLowerCase().includes(nameFilter)) {
+          if (entry.isDirectory) walk(entry.path, depth + 1, entryHidden)
+          continue
+        }
+
+        const compact = nameFilter ? null : entry.isDirectory ? compactChain(entry, depth, entryHidden) : null
         const shown = compact?.entry ?? entry
         const shownDepth = compact?.depth ?? depth
         const isExpanded = shown.isDirectory && workspace.expanded.has(shown.path)
@@ -527,7 +538,8 @@ export function ExplorerView(): JSX.Element {
     workspace.selection,
     cutPaths,
     gitIndex,
-    settings.filesExclude
+    settings.filesExclude,
+    nameFilter
   ])
 
   /** 可见行的路径序列，供全选与 Shift 连选使用 */
@@ -865,6 +877,35 @@ export function ExplorerView(): JSX.Element {
     if (revealedFileRef.current === path) return
     if (scrollRowIntoView(path)) revealedFileRef.current = path
   }, [workspace.activeFilePath, rows, scrollRowIntoView])
+
+  /**
+   * 「定位当前文件」：把当前打开文件所在的目录链全部展开，再把它滚进视口。
+   *
+   * 自动 reveal 只在激活文件换人时滚一次（上面那条 effect 的记账规则），
+   * 用户手动触发时必须显式清账，否则同一文件第二次点击会没有反应。
+   * 展开是从根往下逐级 await 的：父目录没加载出来，子目录路径在树的
+   * children 缓存里根本不存在，一次性并行展开会漏掉中间层。
+   */
+  const handleRevealActive = useCallback(async (): Promise<void> => {
+    const target = workspace.activeFilePath
+    const root = getWorkspaceState().root
+    if (!target || !root) return
+
+    revealedFileRef.current = null
+
+    const normalize = (p: string): string => p.replace(/\\/g, '/')
+    const rootNorm = normalize(root).replace(/\/+$/, '')
+    const ancestors: string[] = []
+    let dir = paths.dirname(target)
+    while (normalize(dir).length >= rootNorm.length) {
+      ancestors.unshift(dir)
+      if (normalize(dir) === rootNorm) break
+      const parent = paths.dirname(dir)
+      if (parent === dir) break
+      dir = parent
+    }
+    for (const ancestor of ancestors) await expandDirectory(ancestor)
+  }, [workspace.activeFilePath])
 
   // 外部命令（快捷键 / 命令面板）执行时，视图自身没有触发点，靠上下文键告知它有选区可选
   useEffect(() => {
@@ -1377,9 +1418,27 @@ export function ExplorerView(): JSX.Element {
     <div className="explorer">
       <div className="explorer__toolbar">
         <span className="explorer__root" title={workspace.root}>
-          {paths.basename(workspace.root)}
+          <span className="explorer__root-label">资源</span>
+          <span className="explorer__root-name">{paths.basename(workspace.root).toUpperCase()}</span>
         </span>
         <div className="explorer__toolbar-spacer" />
+
+        {filterOpen ? (
+          <input
+            type="text"
+            className="explorer__filter"
+            placeholder="筛选文件名…"
+            autoFocus
+            value={nameFilterRaw}
+            onChange={(event) => setNameFilterRaw(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                setNameFilterRaw('')
+                setFilterOpen(false)
+              }
+            }}
+          />
+        ) : null}
         <button
           type="button"
           className="explorer__btn"
@@ -1400,6 +1459,23 @@ export function ExplorerView(): JSX.Element {
         </button>
         <button
           type="button"
+          className={`explorer__btn${filterOpen || nameFilter ? ' is-on' : ''}`}
+          title="按名称筛选（在已加载的树内过滤）"
+          onClick={() => setFilterOpen((open) => !open)}
+        >
+          <Icon name="search" size={13} />
+        </button>
+        <button
+          type="button"
+          className="explorer__btn"
+          title="定位当前文件"
+          disabled={!workspace.activeFilePath}
+          onClick={handleRevealActive}
+        >
+          <Icon name="locate" size={13} />
+        </button>
+        <button
+          type="button"
           className="explorer__btn"
           title="换一个文件夹"
           disabled={busy}
@@ -1409,7 +1485,7 @@ export function ExplorerView(): JSX.Element {
         </button>
         <button
           type="button"
-          className="explorer__btn"
+          className={`explorer__btn${busy ? ' is-refreshing' : ''}`}
           title="刷新"
           disabled={busy}
           onClick={() => void handleRefresh()}
@@ -1525,6 +1601,7 @@ export function ExplorerView(): JSX.Element {
                 key={row.entry.path}
                 row={row}
                 isCursor={row.entry.path === cursorPath}
+                nameFilter={nameFilter}
                 isDropTarget={
                   dropDir !== null &&
                   row.entry.isDirectory &&
@@ -1620,16 +1697,49 @@ function findEntry(rows: Row[], path: string): FsEntry | null {
   return rows.find((row) => row.entry.path === path)?.entry ?? null
 }
 
+/** 筛选时把命中的片段包上 <mark>（无筛选或未命中返回原名） */
+function highlightName(name: string, filter: string | undefined): JSX.Element | string {
+  if (!filter) return name
+  const index = name.toLowerCase().indexOf(filter)
+  if (index < 0) return name
+  return (
+    <>
+      {name.slice(0, index)}
+      <mark className="tree-match">{name.slice(index, index + filter.length)}</mark>
+      {name.slice(index + filter.length)}
+    </>
+  )
+}
+
+/** 文件类型矢量图标（mdi 图标集 + seti 色板，映射表见 file-icons.ts） */
+function FileGlyph({ name }: { name: string }): JSX.Element {
+  const icon = resolveFileIcon(name)
+  return (
+    <svg
+      className="tree-row__glyph"
+      viewBox="0 0 24 24"
+      width={15}
+      height={15}
+      style={{ color: icon.color }}
+      aria-hidden
+      dangerouslySetInnerHTML={{ __html: icon.body }}
+    />
+  )
+}
+
 function TreeRow({
   row,
   isCursor,
   isDropTarget,
+  nameFilter,
   onContextMenu,
   onMouseDown
 }: {
   row: Row
   isCursor: boolean
   isDropTarget: boolean
+  nameFilter?: string
+
   onContextMenu: (event: ReactMouseEvent) => void
   onMouseDown: (event: ReactMouseEvent) => void
 }): JSX.Element {
@@ -1676,16 +1786,22 @@ function TreeRow({
       ))}
 
       <span className={`tree-row__chevron${isExpanded ? ' is-open' : ''}`}>
-        {entry.isDirectory ? <span className="tree-row__triangle" /> : null}
+        {entry.isDirectory ? <span className="tree-row__chevron-glyph" /> : null}
       </span>
 
       {entry.isDirectory ? (
-        <span className="tree-row__icon tree-row__icon--dir" />
+        <span className={`tree-row__icon tree-row__icon--dir${isExpanded ? ' is-open' : ''}`} />
       ) : (
-        <span className="tree-row__icon" style={{ background: colorForFile(entry.name) }} />
+        <FileGlyph name={entry.name} />
       )}
 
-      <span className="tree-row__name">{entry.name}</span>
+      <span
+        className={`tree-row__name${row.gitCode ? ` tree-row__name--${gitCodeClass(row.gitCode)}` : ''}${
+          row.gitDirty ? ' tree-row__name--dirty' : ''
+        }`}
+      >
+        {highlightName(entry.name, nameFilter)}
+      </span>
       {/* 紧凑链条作尾注：真实名字在前、被合并掉的层级在后且淡化。
           反过来（链条在前）会让"这一行到底是什么"要读完才知道。 */}
       {row.compactChain ? (
@@ -1708,67 +1824,12 @@ function TreeRow({
           ●
         </span>
       ) : null}
-      {isLoading ? <span className="tree-row__loading">…</span> : null}
+      {isLoading ? <span className="tree-row__loading" aria-label="加载中" /> : null}
     </div>
   )
 }
 
 /**
- * 按扩展名给文件一个稳定的标识色。
- *
- * 不引入图标库：P1 用色块已足够区分类型。后续要换成 vscode-icons 之类
- * 完整图标体系时，只需替换这里的实现，不影响其它代码。
+ * 文件类型图标已抽到 file-icons.ts（mdi 矢量图标 + seti 色板，
+ * 照抄 wuzu-client 的 languageMap）—— TreeRow 的 FileGlyph 使用。
  */
-const EXT_COLORS: Record<string, string> = {
-  ts: '#3178c6',
-  tsx: '#3178c6',
-  mts: '#3178c6',
-  js: '#e2c069',
-  jsx: '#e2c069',
-  mjs: '#e2c069',
-  json: '#cbcb41',
-  md: '#519aba',
-  css: '#519aba',
-  scss: '#c6538c',
-  less: '#2a4d80',
-  html: '#e37933',
-  vue: '#41b883',
-  svelte: '#ff3e00',
-  py: '#3572a5',
-  rs: '#dea584',
-  go: '#00add8',
-  java: '#b07219',
-  kt: '#a97bff',
-  c: '#555555',
-  h: '#555555',
-  cpp: '#f34b7d',
-  hpp: '#f34b7d',
-  cs: '#178600',
-  php: '#4f5d95',
-  rb: '#701516',
-  sh: '#89e051',
-  ps1: '#012456',
-  yml: '#cb171e',
-  yaml: '#cb171e',
-  toml: '#9c4221',
-  ini: '#6a6a6a',
-  sql: '#e38c00',
-  png: '#a074c4',
-  jpg: '#a074c4',
-  jpeg: '#a074c4',
-  gif: '#a074c4',
-  svg: '#ffb13b',
-  webp: '#a074c4',
-  ico: '#a074c4',
-  mp4: '#e34c26',
-  webm: '#e34c26',
-  pdf: '#d93831',
-  zip: '#8a8a8a',
-  lock: '#8a8a8a'
-}
-
-function colorForFile(name: string): string {
-  const dotIndex = name.lastIndexOf('.')
-  const ext = dotIndex > 0 ? name.slice(dotIndex + 1).toLowerCase() : ''
-  return EXT_COLORS[ext] ?? '#6a6a6a'
-}

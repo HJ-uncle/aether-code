@@ -55,7 +55,6 @@ import { ProblemsView } from './problems/ProblemsView'
 import { SearchView } from './search/SearchView'
 import { AppSettingsView } from './settings/AppSettingsView'
 import { openAppSettings } from './settings/app-settings-navigation'
-import { KeybindingsSettingsView } from './settings/KeybindingsSettingsView'
 import { createLocalSession } from './terminal/terminal-store'
 import { TerminalView } from './terminal/TerminalView'
 
@@ -112,15 +111,6 @@ export function registerContributions(): () => void {
       order: 10,
       closable: true,
       component: AppSettingsView
-    },
-    {
-      id: 'keybindings',
-      title: '键盘快捷方式',
-      location: 'editor',
-      icon: 'keyboard',
-      order: 15,
-      closable: true,
-      component: KeybindingsSettingsView
     },
     {
       id: 'problems',
@@ -397,7 +387,7 @@ export function registerContributions(): () => void {
       id: 'aether.preferences.openKeybindings',
       title: '打开键盘快捷方式',
       category: '首选项',
-      run: () => showEditorView('keybindings')
+      run: () => openAppSettings('keybindings')
     },
     {
       id: 'aether.panel.problems',

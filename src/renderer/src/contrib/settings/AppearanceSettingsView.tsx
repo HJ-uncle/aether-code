@@ -1,19 +1,20 @@
 import type { JSX } from 'react'
 import type { AccentColor, Appearance } from '@shared/ipc'
 import { useApp } from '@renderer/core/app-context'
+import { Segmented, SettingsContent, SettingsGroup } from './SettingsGroup'
 
 /**
  * 外观设置
  *
- * 对齐 macOS「系统设置 → 外观」：明暗模式三选一 + 强调色色板。
+ * 对齐 macOS「系统设置 → 外观」：明暗模式分段选择 + 强调色色板。
  * 改动即时生效（不做「保存」按钮）——外观类设置立刻能看到结果，
  * 这也是 HIG 的做法；其余需要重启引擎的配置才走显式保存。
  */
 
-const APPEARANCES: { value: Appearance; label: string; hint: string }[] = [
-  { value: 'system', label: '跟随系统', hint: '随 macOS 的明暗设置自动切换' },
-  { value: 'light', label: '浅色', hint: '始终使用亮色界面' },
-  { value: 'dark', label: '深色', hint: '始终使用暗色界面' }
+const APPEARANCES: { value: Appearance; label: string }[] = [
+  { value: 'system', label: '跟随系统' },
+  { value: 'light', label: '浅色' },
+  { value: 'dark', label: '深色' }
 ]
 
 /**
@@ -35,59 +36,55 @@ export function AppearanceSettingsView(): JSX.Element {
 
   return (
     <div className="settings-view">
-      <fieldset className="field">
-        <legend>外观</legend>
-        {APPEARANCES.map((item) => (
-          <label className="field__radio" key={item.value}>
-            <input
-              type="radio"
-              name="appearance"
-              checked={settings.appearance === item.value}
-              onChange={() => void updateSettings({ appearance: item.value })}
+      <SettingsGroup title="外观">
+        <SettingsContent>
+          <div className="sg-row-inline">
+            <span className="sg__row-label">主题</span>
+            <Segmented
+              options={APPEARANCES}
+              value={settings.appearance}
+              onChange={(value) => void updateSettings({ appearance: value })}
             />
-            <span>
-              {item.label}
-              <small>{item.hint}</small>
-            </span>
-          </label>
-        ))}
-      </fieldset>
+          </div>
+        </SettingsContent>
+      </SettingsGroup>
 
-      <div className="field">
-        <span className="field__label">强调色</span>
-        <div className="accent-grid" role="radiogroup" aria-label="强调色">
-          {ACCENTS.map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              role="radio"
-              aria-checked={settings.accent === item.value}
-              aria-label={item.label}
-              title={item.label}
-              className={`accent-swatch${settings.accent === item.value ? ' is-active' : ''}`}
-              onClick={() => void updateSettings({ accent: item.value })}
-            >
-              <span className="accent-swatch__dot" style={{ background: item.swatch }} />
-            </button>
-          ))}
-        </div>
-        <p className="field__hint">强调色作用于按钮、选中项与键盘焦点环，不改变正文与灰阶。</p>
-      </div>
+      <SettingsGroup title="强调色" footer="强调色作用于按钮、选中项与键盘焦点环，不改变正文与灰阶。">
+        <SettingsContent>
+          <div className="accent-grid" role="radiogroup" aria-label="强调色">
+            {ACCENTS.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                role="radio"
+                aria-checked={settings.accent === item.value}
+                aria-label={item.label}
+                title={item.label}
+                className={`accent-swatch${settings.accent === item.value ? ' is-active' : ''}`}
+                onClick={() => void updateSettings({ accent: item.value })}
+              >
+                <span className="accent-swatch__dot" style={{ background: item.swatch }} />
+              </button>
+            ))}
+          </div>
+        </SettingsContent>
+      </SettingsGroup>
 
       {/* 预览区：改完立刻能在这里看到强调色落到真实控件上的效果 */}
-      <div className="field">
-        <span className="field__label">预览</span>
-        <div className="theme-preview">
-          <button type="button" className="btn btn--primary">
-            主要操作
-          </button>
-          <button type="button" className="btn">
-            次要操作
-          </button>
-          <span className="chip is-active">选中标签</span>
-          <span className="chip">普通标签</span>
-        </div>
-      </div>
+      <SettingsGroup title="预览">
+        <SettingsContent>
+          <div className="theme-preview">
+            <button type="button" className="btn btn--primary">
+              主要操作
+            </button>
+            <button type="button" className="btn">
+              次要操作
+            </button>
+            <span className="chip is-active">选中标签</span>
+            <span className="chip">普通标签</span>
+          </div>
+        </SettingsContent>
+      </SettingsGroup>
     </div>
   )
 }

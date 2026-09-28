@@ -11,6 +11,9 @@ import { FilesExcludeSettingsView } from './FilesExcludeSettingsView'
 import { SearchExcludeSettingsView } from './SearchExcludeSettingsView'
 import { ModelsSettingsView } from '../models/ModelsSettingsView'
 import { SecurityView } from '../security/SecurityView'
+import { KeybindingsSettingsView } from './KeybindingsSettingsView'
+import type { IconName } from '@renderer/workbench/icons'
+import { Icon } from '@renderer/workbench/icons'
 
 /**
  * 统一设置（主区固定标签，可关闭）
@@ -30,17 +33,19 @@ import { SecurityView } from '../security/SecurityView'
 interface Section {
   id: string
   label: string
+  icon: IconName
   component: () => JSX.Element
 }
 
 const SECTIONS: Section[] = [
-  { id: 'general', label: '通用', component: EngineSettingsView },
-  { id: 'appearance', label: '外观', component: AppearanceSettingsView },
-  { id: 'files', label: '文件', component: FilesExcludeSettingsView },
-  { id: 'search', label: '搜索', component: SearchExcludeSettingsView },
-  { id: 'models', label: '模型', component: ModelsSettingsView },
-  { id: 'security', label: '安全', component: SecurityView },
-  { id: 'codegraph', label: '代码图', component: CodeGraphSettingsView }
+  { id: 'general', label: '通用', icon: 'settings', component: EngineSettingsView },
+  { id: 'appearance', label: '外观', icon: 'palette', component: AppearanceSettingsView },
+  { id: 'files', label: '文件', icon: 'file', component: FilesExcludeSettingsView },
+  { id: 'search', label: '搜索', icon: 'search', component: SearchExcludeSettingsView },
+  { id: 'models', label: '模型', icon: 'model', component: ModelsSettingsView },
+  { id: 'security', label: '安全', icon: 'shield', component: SecurityView },
+  { id: 'codegraph', label: '代码图', icon: 'graph', component: CodeGraphSettingsView },
+  { id: 'keybindings', label: '键盘', icon: 'keyboard', component: KeybindingsSettingsView }
 ]
 
 export function AppSettingsView(): JSX.Element {
@@ -67,7 +72,8 @@ export function AppSettingsView(): JSX.Element {
             className={`app-settings__nav-item${item.id === active ? ' is-active' : ''}`}
             onClick={() => setActive(item.id)}
           >
-            {item.label}
+            <Icon name={item.icon} size={15} />
+            <span>{item.label}</span>
           </button>
         ))}
       </aside>

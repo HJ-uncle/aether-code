@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState, type JSX } from 'react'
 import type { EngineFileChange } from '@shared/ipc'
 import { Icon } from '@renderer/workbench/icons'
 import { requestOrThrow } from '@renderer/core/engine/client'
+import { gitStage } from '@renderer/core/git/git-client'
+import { useWorkspace } from '@renderer/core/workspace/workspace-store'
+
 import {
   MAX_RENDER_ROWS,
   computeLineDiff,
@@ -57,6 +60,7 @@ export function ChangesPanel({
   const [changes, setChanges] = useState<EngineFileChange[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const workspace = useWorkspace()
 
   const refresh = useCallback(async () => {
     if (!sessionId) return
@@ -113,6 +117,32 @@ export function ChangesPanel({
   const keepAll = (): Promise<void> =>
     act(() => requestOrThrow({ method: 'POST', path: '/changes/keep-all', body: { sessionId } }))
 
+  /**
+   * 暂存 = git add + 保留（对齐 wuzu-client 的 keepAndStage 语义）。
+   * 先暂存后保留：保留失败时回滚暂存区，避免出现「待确认没了但没暂存上」的中间态。
+   */
+  const stageChanges = useCallback(
+    async (targets: EngineFileChange[]): Promise<void> => {
+      if (!workspace.root) throw new Error('未打开工作区，无法暂存（当前目录不是 git 仓库时也不可用）')
+      const paths = targets.map((change) => change.path)
+      setBusy(true)
+      setError(null)
+      try {
+        await gitStage(workspace.root, paths)
+        try {
+          await requestOrThrow({ method: 'POST', path: '/changes/keep-many', body: { sessionId, ids: targets.map((c) => c.id) } })
+        } catch (keepErr) {
+          // 保留失败：改动已进暂存区但仍在待确认列表，直接把原因抛给用户
+          throw keepErr
+        }
+        await refresh()
+      } finally {
+        setBusy(false)
+      }
+    },
+    [refresh, sessionId, workspace.root]
+  )
+
   const revertAll = (): Promise<void> =>
     act(async () => {
       // 逐条撤回（引擎单条接口）；失败的条目留在面板里下次再试
@@ -155,9 +185,19 @@ export function ChangesPanel({
                 type="button"
                 className="changes-panel__confirm"
                 disabled={busy}
+                title="确认保留这条改动"
                 onClick={() => void keepOne(change.id)}
               >
-                待确认
+                保留
+              </button>
+              <button
+                type="button"
+                className="changes-panel__confirm"
+                disabled={busy || !workspace.root}
+                title="git add 这条改动并标记保留（暂存区 + 待确认列表同时处理）"
+                onClick={() => void stageChanges([change])}
+              >
+                暂存
               </button>
               <button
                 type="button"
@@ -187,6 +227,16 @@ export function ChangesPanel({
         >
           <Icon name="restart" size={12} />
           撤回
+        </button>
+        <button
+          type="button"
+          className="changes-panel__footer-btn"
+          disabled={busy || !workspace.root}
+          title="git add 全部改动并标记保留"
+          onClick={() => void stageChanges(changes)}
+        >
+          <Icon name="copy" size={12} />
+          暂存
         </button>
         <button
           type="button"

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type JSX } from 'react'
 import { requestOrThrow } from '@renderer/core/engine/client'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { Icon } from '@renderer/workbench/icons'
+import { SettingsContent, SettingsGroup } from './SettingsGroup'
 
 /**
  * 代码图索引设置
@@ -155,58 +156,62 @@ export function CodeGraphSettingsView(): JSX.Element {
 
   return (
     <div className="settings-view">
-      <fieldset className="field">
-        <legend>代码图索引</legend>
-        {!workspace.root ? (
-          <small className="field__hint">先打开一个项目目录，再在这里管理它的代码图索引。</small>
-        ) : status == null && !loadError ? (
-          <small className="field__hint">正在加载索引状态…</small>
-        ) : (
-          <dl className="kv">
-            <dt>项目</dt>
-            <dd className="kv__mono" title={status?.root ?? workspace.root}>
-              {workspace.root.replace(/\\/g, '/').split('/').pop()}
-            </dd>
-            <dt>状态</dt>
-            <dd>
-              {status?.initialized ? '已建立索引' : loadError ? '状态查询失败' : '未建立索引'}
-            </dd>
-            {status?.stats ? (
-              <>
-                <dt>文件</dt>
-                <dd>{status.stats.fileCount ?? 0}</dd>
-                <dt>符号节点</dt>
-                <dd>{status.stats.nodeCount ?? 0}</dd>
-                <dt>关系边</dt>
-                <dd>{status.stats.edgeCount ?? 0}</dd>
-                <dt>索引大小</dt>
-                <dd>{fmtBytes(status.stats.dbSizeBytes)}</dd>
-              </>
-            ) : null}
-            {runActive && run ? (
-              <>
-                <dt>进度</dt>
-                <dd>
-                  {run.mode === 'rebuild' ? '重建中' : '建索引中'}
-                  {run.progress
-                    ? ` · ${run.progress.phase} ${run.progress.current}/${run.progress.total}`
-                    : '…'}
-                </dd>
-              </>
-            ) : runLabel ? (
-              <>
-                <dt>最近任务</dt>
-                <dd>{runLabel}</dd>
-              </>
-            ) : null}
-          </dl>
-        )}
-        {loadError ? <div className="settings-view__error">{loadError}</div> : null}
-        {run?.phase === 'failed' && run.error ? (
-          <div className="settings-view__error">{run.error.slice(0, 120)}</div>
-        ) : null}
-        {actionError ? <div className="settings-view__error">{actionError}</div> : null}
-      </fieldset>
+      <SettingsGroup
+        title="代码图索引"
+        footer="建索引时自动排除依赖与构建产物（node_modules、dist、build、out 等），并遵循项目内的 .gitignore 规则；对话页脚的「建索引」按钮可完成首次创建，已有索引时无需重复操作。"
+      >
+        <SettingsContent>
+          {!workspace.root ? (
+            <p className="sg__note">先打开一个项目目录，再在这里管理它的代码图索引。</p>
+          ) : status == null && !loadError ? (
+            <p className="sg__note">正在加载索引状态…</p>
+          ) : (
+            <dl className="kv">
+              <dt>项目</dt>
+              <dd className="kv__mono" title={status?.root ?? workspace.root}>
+                {workspace.root.replace(/\\/g, '/').split('/').pop()}
+              </dd>
+              <dt>状态</dt>
+              <dd>
+                {status?.initialized ? '已建立索引' : loadError ? '状态查询失败' : '未建立索引'}
+              </dd>
+              {status?.stats ? (
+                <>
+                  <dt>文件</dt>
+                  <dd>{status.stats.fileCount ?? 0}</dd>
+                  <dt>符号节点</dt>
+                  <dd>{status.stats.nodeCount ?? 0}</dd>
+                  <dt>关系边</dt>
+                  <dd>{status.stats.edgeCount ?? 0}</dd>
+                  <dt>索引大小</dt>
+                  <dd>{fmtBytes(status.stats.dbSizeBytes)}</dd>
+                </>
+              ) : null}
+              {runActive && run ? (
+                <>
+                  <dt>进度</dt>
+                  <dd>
+                    {run.mode === 'rebuild' ? '重建中' : '建索引中'}
+                    {run.progress
+                      ? ` · ${run.progress.phase} ${run.progress.current}/${run.progress.total}`
+                      : '…'}
+                  </dd>
+                </>
+              ) : runLabel ? (
+                <>
+                  <dt>最近任务</dt>
+                  <dd>{runLabel}</dd>
+                </>
+              ) : null}
+            </dl>
+          )}
+          {loadError ? <div className="settings-view__error">{loadError}</div> : null}
+          {run?.phase === 'failed' && run.error ? (
+            <div className="settings-view__error">{run.error.slice(0, 120)}</div>
+          ) : null}
+          {actionError ? <div className="settings-view__error">{actionError}</div> : null}
+        </SettingsContent>
+      </SettingsGroup>
 
       <div className="settings-view__actions">
         <button
@@ -232,11 +237,6 @@ export function CodeGraphSettingsView(): JSX.Element {
           刷新状态
         </button>
       </div>
-
-      <small className="field__hint">
-        建索引时自动排除依赖与构建产物（node_modules、dist、build、out 等），并遵循项目内的
-        .gitignore 规则；对话页脚的「建索引」按钮可完成首次创建，已有索引时无需重复操作。
-      </small>
     </div>
   )
 }

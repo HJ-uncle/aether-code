@@ -2,6 +2,7 @@ import { useState, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
 import type { EngineMode } from '@shared/ipc'
 import { Icon } from '@renderer/workbench/icons'
+import { SettingsContent, SettingsGroup, SettingsRow, Toggle } from './SettingsGroup'
 
 /**
  * 引擎设置
@@ -56,69 +57,61 @@ export function EngineSettingsView(): JSX.Element {
 
   return (
     <div className="settings-view">
-      <fieldset className="field">
-        <legend>运行方式</legend>
-        <label className="field__radio">
-          <input
-            type="radio"
-            name="engine-mode"
-            checked={mode === 'embedded'}
-            onChange={() => setMode('embedded')}
+      <SettingsGroup title="运行方式">
+        <SettingsRow
+          label="本地内置"
+          description="随应用启动引擎进程，数据存放在本机"
+          onClick={() => setMode('embedded')}
+        >
+          <span
+            className={`sg-radio${mode === 'embedded' ? ' is-on' : ''}`}
+            role="radio"
+            aria-checked={mode === 'embedded'}
           />
-          <span>
-            本地内置
-            <small>随应用启动引擎进程，数据存放在本机</small>
-          </span>
-        </label>
-        <label className="field__radio">
-          <input
-            type="radio"
-            name="engine-mode"
-            checked={mode === 'remote'}
-            onChange={() => setMode('remote')}
+        </SettingsRow>
+        <SettingsRow
+          label="远端服务"
+          description="连接已部署的引擎，不启动本地进程"
+          onClick={() => setMode('remote')}
+        >
+          <span
+            className={`sg-radio${mode === 'remote' ? ' is-on' : ''}`}
+            role="radio"
+            aria-checked={mode === 'remote'}
           />
-          <span>
-            远端服务
-            <small>连接已部署的引擎，不启动本地进程</small>
-          </span>
-        </label>
-      </fieldset>
+        </SettingsRow>
+      </SettingsGroup>
 
-      {mode === 'embedded' ? (
-        <label className="field">
-          <span className="field__label">首选端口</span>
-          <input
-            className="field__input"
-            type="number"
-            min={1024}
-            max={65535}
-            value={port}
-            onChange={(event) => setPort(event.target.value)}
-          />
-          <small className="field__hint">端口被占用时自动向后探测可用端口</small>
-        </label>
-      ) : (
-        <label className="field">
-          <span className="field__label">远端地址</span>
-          <input
-            className="field__input"
-            type="text"
-            placeholder="http://192.168.1.10:12323"
-            value={remoteUrl}
-            onChange={(event) => setRemoteUrl(event.target.value)}
-          />
-          <small className="field__hint">需可从本机访问，且该地址已放行本机来源</small>
-        </label>
-      )}
+      <SettingsGroup title={mode === 'embedded' ? '端口' : '远端地址'}>
+        {mode === 'embedded' ? (
+          <SettingsRow label="首选端口" description="端口被占用时自动向后探测可用端口">
+            <input
+              className="field__input sg__input"
+              type="number"
+              min={1024}
+              max={65535}
+              value={port}
+              onChange={(event) => setPort(event.target.value)}
+            />
+          </SettingsRow>
+        ) : (
+          <SettingsRow label="远端地址" description="需可从本机访问，且该地址已放行本机来源">
+            <input
+              className="field__input sg__input sg__input--wide"
+              type="text"
+              placeholder="http://192.168.1.10:12323"
+              value={remoteUrl}
+              onChange={(event) => setRemoteUrl(event.target.value)}
+            />
+          </SettingsRow>
+        )}
+      </SettingsGroup>
 
-      <label className="field field--checkbox">
-        <input
-          type="checkbox"
-          checked={autoStart}
-          onChange={(event) => setAutoStart(event.target.checked)}
-        />
-        <span>启动应用时自动连接引擎</span>
-      </label>
+      <SettingsGroup title="启动">
+        <SettingsRow label="启动应用时自动连接引擎">
+          <Toggle checked={autoStart} onChange={setAutoStart} label="启动应用时自动连接引擎" />
+        </SettingsRow>
+      </SettingsGroup>
 
       <div className="settings-view__actions">
         <button
@@ -141,36 +134,53 @@ export function EngineSettingsView(): JSX.Element {
         {saved ? <span className="settings-view__saved">已保存</span> : null}
       </div>
 
-      <fieldset className="field">
-        <legend>当前状态</legend>
-        <dl className="kv">
-          <dt>阶段</dt>
-          <dd>{snapshot.phase}</dd>
-          <dt>来源</dt>
-          <dd>
-            {snapshot.adopted
-              ? '复用已有引擎（不由本应用启动）'
-              : snapshot.mode === 'remote'
-                ? '远端服务'
-                : '本应用启动'}
-          </dd>
-          <dt>进程</dt>
-          <dd>{snapshot.pid ? `pid ${snapshot.pid}` : '—'}</dd>
-          <dt>地址</dt>
-          <dd>{snapshot.baseUrl || '—'}</dd>
-          <dt>版本</dt>
-          <dd>{snapshot.version ?? '—'}</dd>
-          <dt>入口</dt>
-          <dd className="kv__mono" title={snapshot.entryPath ?? ''}>
-            {snapshot.entryPath ?? '—'}
-          </dd>
-          <dt>数据</dt>
-          <dd className="kv__mono" title={snapshot.dataDir ?? ''}>
-            {snapshot.dataDir ?? '—'}
-          </dd>
-        </dl>
-        {snapshot.error ? <div className="settings-view__error">{snapshot.error}</div> : null}
-      </fieldset>
+      <SettingsGroup title="当前状态">
+        <SettingsContent>
+          <dl className="kv">
+            <dt>阶段</dt>
+            <dd>{snapshot.phase}</dd>
+            <dt>来源</dt>
+            <dd>
+              {snapshot.adopted
+                ? '复用已有引擎（不由本应用启动）'
+                : snapshot.mode === 'remote'
+                  ? '远端服务'
+                  : '本应用启动'}
+            </dd>
+            {snapshot.pid ? (
+              <>
+                <dt>进程</dt>
+                <dd>pid {snapshot.pid}</dd>
+              </>
+            ) : null}
+            <dt>地址</dt>
+            <dd>{snapshot.baseUrl || '—'}</dd>
+            {snapshot.version ? (
+              <>
+                <dt>版本</dt>
+                <dd>{snapshot.version}</dd>
+              </>
+            ) : null}
+            {snapshot.entryPath ? (
+              <>
+                <dt>入口</dt>
+                <dd className="kv__mono" title={snapshot.entryPath}>
+                  {snapshot.entryPath}
+                </dd>
+              </>
+            ) : null}
+            {snapshot.dataDir ? (
+              <>
+                <dt>数据</dt>
+                <dd className="kv__mono" title={snapshot.dataDir}>
+                  {snapshot.dataDir}
+                </dd>
+              </>
+            ) : null}
+          </dl>
+          {snapshot.error ? <div className="settings-view__error">{snapshot.error}</div> : null}
+        </SettingsContent>
+      </SettingsGroup>
 
       <div className="settings-view__actions">
         <button type="button" className="btn" disabled={busy} onClick={() => void engine.start()}>

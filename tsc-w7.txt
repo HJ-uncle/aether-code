@@ -1,0 +1,6 @@
+src/renderer/src/contrib/chat/ChatView.tsx(62,81): error TS2339: Property 'deleteTurn' does not exist on type '{ messages: ChatMessage[]; streaming: boolean; todos: EngineTodo[]; send: (text: string, options: SendOptions) => Promise<void>; loadHistory: (sessionId: string) => Promise<...>; ... 4 more ...; queueLength: number; }'.
+src/renderer/src/contrib/chat/ChatView.tsx(62,93): error TS2339: Property 'retryFrom' does not exist on type '{ messages: ChatMessage[]; streaming: boolean; todos: EngineTodo[]; send: (text: string, options: SendOptions) => Promise<void>; loadHistory: (sessionId: string) => Promise<...>; ... 4 more ...; queueLength: number; }'.
+src/renderer/src/core/engine/useChat.ts(289,3): error TS2300: Duplicate identifier 'send'.
+src/renderer/src/core/engine/useChat.ts(307,3): error TS2300: Duplicate identifier 'send'.
+src/renderer/src/core/engine/useChat.ts(445,9): error TS6133: 'getQueueLength' is declared but its value is never read.
+src/renderer/src/core/engine/useChat.ts(694,82): error TS2353: Object literal may only specify known properties, and 'deleteTurn' does not exist in type '{ messages: ChatMessage[]; streaming: boolean; todos: EngineTodo[]; send: (text: string, options: SendOptions) => Promise<void>; loadHistory: (sessionId: string) => Promise<...>; ... 4 more ...; queueLength: number; }'.

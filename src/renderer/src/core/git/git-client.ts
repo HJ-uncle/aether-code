@@ -19,3 +19,8 @@ export function gitStatus(root: string): Promise<GitStatus> {
 export function gitLog(root: string, limit?: number): Promise<GitCommit[]> {
   return bridge().git.log(root, limit)
 }
+
+/** 暂存指定文件（git add）。改动条的「暂存」动作使用 */
+export function gitStage(root: string, paths: string[]): Promise<void> {
+  return bridge().git.stage(root, paths)
+}

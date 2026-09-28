@@ -71,7 +71,7 @@ export const PROVIDERS: Array<{ value: string; label: string; hint: string; base
   {
     value: 'deepseek',
     label: 'DeepSeek',
-    hint: '推理与工具调用均衡，国内直连',
+    hint: '推理与工具调用均衡，国内直连；接口地址以 /anthropic 结尾时自动按 Anthropic 协议请求',
     baseUrl: 'https://api.deepseek.com'
   },
   {

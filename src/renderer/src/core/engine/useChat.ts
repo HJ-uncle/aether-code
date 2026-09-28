@@ -28,12 +28,27 @@ export interface ToolActivity {
   change?: EngineFileChange
 }
 
+/**
+ * 时间线条目：记录本轮各类输出（思考 / 正文 / 工具调用 / 交互）的**真实发生顺序**。
+ *
+ * content/thinking/tools 三个扁平字段为了渲染与导出分别聚合了全文，
+ * 但把「先想一段 → 调个工具 → 再想一段」的穿插顺序丢掉了。
+ * SSE 帧本身是严格按发生顺序到达的，这里顺手记下顺序，渲染层据此穿插排布。
+ */
+export type TimelineItem =
+  | { kind: 'thinking'; text: string }
+  | { kind: 'content'; text: string }
+  | { kind: 'tool'; id: string }
+  | { kind: 'interaction' }
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
   thinking: string
   tools: ToolActivity[]
+  /** 输出时间线（流式期间精确保序；历史回放为近似顺序） */
+  items: TimelineItem[]
   status: 'streaming' | 'done' | 'error' | 'aborted'
   error?: string
   usage?: unknown
@@ -55,6 +70,8 @@ export interface ChatMessage {
   attachments?: ChatAttachment[]
   /** 产生该条消息的模型 id（仅 assistant）；回放历史时由引擎给出 */
   modelId?: string
+  /** 所属轮次 id（引擎 conversations 表的 conversation_id）；历史回放合并同轮 assistant 行用 */
+  conversationId?: string
 }
 
 /**
@@ -89,16 +106,45 @@ export interface SendOptions {
   /** 本轮要随消息发给引擎的附件（图片走视觉/OCR，文本走 smart_read） */
   attachments?: ChatAttachment[]
   /**
-   * 思考模式：true/false 显式开关，undefined 交给引擎按模型能力判断。
+   * 思考档位：'low' / 'high' 显式下发引擎档位字符串；'max' 映射 'high' 强制档；
+   * false 强制关闭思考；undefined 交给引擎按模型能力判断。
    *
    * 引擎侧语义（见 chat 路由）：不传时看 capabilities.thinking 是否为真；
-   * 传 false 是「强制关闭」，与不传并不等价，所以这里必须保留 undefined。
+   * 字符串档位表示「强制开启并指定推理 effort」，false 是显式关闭。
    */
-  thinkingMode?: boolean
+  thinkingMode?: 'low' | 'medium' | 'high' | false
 }
 
 function newId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+/**
+ * 回放时合并用量帧。
+ *
+ * 引擎的流式 `__usage__` 帧下发的是**整个提问的累计值**（一轮 ReAct 里每次
+ * 迭代都会重新下发全量累计），而落库时每条 assistant 行只存**该次迭代的增量**。
+ * 回放如果按「后一行覆盖前一行」取用量，整轮的消耗就被压成最后一次迭代的量
+ * —— 与生成期间看到的累计值差一个数量级（重启后 282k 变 10.4k 就是这么来的）。
+ *
+ * 这里改为按字段累加：同一轮内多条 assistant 行的增量相加，还原出与实时帧
+ * 同口径的累计值。字段可能缺失（老数据 / 非 DeepSeek 模型），缺的跳过。
+ */
+function mergeUsageFrame(previous: unknown, next: unknown): Record<string, number> {
+  const base = asNumberRecord(previous)
+  for (const [key, value] of Object.entries(asNumberRecord(next))) {
+    base[key] = (base[key] ?? 0) + value
+  }
+  return base
+}
+
+function asNumberRecord(raw: unknown): Record<string, number> {
+  const result: Record<string, number> = {}
+  if (!raw || typeof raw !== 'object') return result
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'number' && Number.isFinite(value)) result[key] = value
+  }
+  return result
 }
 
 /**
@@ -116,6 +162,8 @@ interface EngineHistoryRow {
   usage?: unknown
   createdAt?: number
   modelId?: string
+  /** 所属轮次 id（引擎 conversations 表的 conversation_id），删除整轮时定位用 */
+  conversationId?: string
   toolCallId?: unknown
   toolCall?: { id?: string; name?: string; args?: unknown } | null
 }
@@ -171,6 +219,7 @@ function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
         content: extractText(row.content),
         thinking: '',
         tools: [],
+        items: [],
         status: 'done',
         createdAt
       })
@@ -192,30 +241,61 @@ function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
     }
 
     if (row.role !== 'assistant') continue
-    const message: ChatMessage = {
-      id: row.id || newId(),
-      role: 'assistant',
-      content: extractText(row.content),
-      thinking: typeof row.reasoningContent === 'string' ? row.reasoningContent : '',
-      tools: [],
-      status: 'done',
-      createdAt,
-      ...(row.modelId ? { modelId: row.modelId } : {}),
-      ...(row.usage ? { usage: row.usage } : {})
+    // 一轮 ReAct 会存成多条 assistant 行（每次工具调用截断一次）。
+    // 对齐 wuzu-client：同一轮（conversationId 相同或紧邻）的 assistant 行
+    // 合并回一条消息，过程块收成同一个折叠块，正文只在轮末出现一次。
+    const prev = result[result.length - 1]
+    const sameTurn =
+      prev &&
+      prev.role === 'assistant' &&
+      (!row.conversationId || !prev.conversationId || row.conversationId === prev.conversationId)
+    let message: ChatMessage
+    if (sameTurn) {
+      message = prev
+      if (message.content) {
+        // 前一段正文已在 items 里，新内容另起一段，避免拼接粘连
+        message.content = `${message.content}\n\n`
+      }
+    } else {
+      message = {
+        id: row.id || newId(),
+        role: 'assistant',
+        content: '',
+        thinking: '',
+        tools: [],
+        items: [],
+        status: 'done',
+        createdAt,
+        ...(row.conversationId ? { conversationId: row.conversationId } : {})
+      }
+      result.push(message)
     }
+    if (row.modelId && !message.modelId) message.modelId = row.modelId
+    if (row.usage) message.usage = mergeUsageFrame(message.usage, row.usage)
+    message.thinking += typeof row.reasoningContent === 'string' ? row.reasoningContent : ''
+
+    // 本行的时间线条目：按「思考 → 工具 → 正文」的近似顺序穿插进同一条消息
+    const rowItems: TimelineItem[] = []
+    const rowThinking = typeof row.reasoningContent === 'string' ? row.reasoningContent : ''
+    if (rowThinking) rowItems.push({ kind: 'thinking', text: rowThinking })
     if (row.toolCall && typeof row.toolCall === 'object' && row.toolCall.name) {
-      message.tools.push({
+      const tool: ToolActivity = {
         id: row.toolCall.id || newId(),
         name: row.toolCall.name,
         args: JSON.stringify(row.toolCall.args ?? {}, null, 2),
         result: '',
         state: 'done'
-      })
-      if (row.toolCall.id) {
-        openTools.set(row.toolCall.id, { message, index: message.tools.length - 1 })
       }
+      message.tools.push(tool)
+      rowItems.push({ kind: 'tool', id: tool.id })
+      if (tool.id) openTools.set(tool.id, { message, index: message.tools.length - 1 })
     }
-    result.push(message)
+    const rowContent = extractText(row.content)
+    if (rowContent) {
+      message.content += rowContent
+      rowItems.push({ kind: 'content', text: rowContent })
+    }
+    message.items.push(...rowItems)
   }
 
   return result
@@ -276,8 +356,18 @@ export function useChat(): {
       Partial<Pick<SendOptions, 'thinkingMode'>>
   ) => Promise<void>
   abort: () => void
-  /** 清空当前会话；传入 sessionId 时同步删除引擎侧历史 */
-  clear: (sessionId?: string) => void
+  /** 清空当前会话；传入 sessionId 时同步删除引擎侧历史；失败时抛错且不清理界面 */
+  clear: (sessionId?: string) => Promise<void>
+  /** 删除一整轮对话（引擎侧 + 界面） */
+  deleteTurn: (sessionId: string, message: ChatMessage) => Promise<void>
+  /** 从某条用户消息处截断重发（重新发送 / 重新生成共用） */
+  retryFrom: (userMessage: ChatMessage, options: SendOptions) => Promise<void>
+  /** 消息级回退：恢复该消息之后的所有文件改动（含 kept）并截断对话，不自动重发 */
+  revertFrom: (sessionId: string, userMessage: ChatMessage) => Promise<void>
+  /** 合并发送：把排队中的消息与本条合并成一条立即发出（流中时合并全部队列） */
+  mergeAndSend: (text: string, options: SendOptions) => Promise<void>
+  /** 当前排队中的消息数 */
+  queueLength: number
 } {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [streaming, setStreaming] = useState(false)
@@ -289,6 +379,35 @@ export function useChat(): {
   /** 当前流对应的引擎会话 ID，停止时用它显式取消引擎侧运行 */
   const activeSessionRef = useRef<string | null>(null)
 
+  /**
+   * 连续发送队列：流式进行中用户继续发的消息先进队列，
+   * 当前流结束（完成/出错/中止）后按序自动发出。
+   * sendOptions 记录第一条消息的发送参数（会话/模型/工作区在会话内不变）。
+   */
+  type QueuedSend = { text: string; attachments: ChatAttachment[] }
+  const queueRef = useRef<Array<QueuedSend & { options: SendOptions }>>([])
+  const [queueLength, setQueueLength] = useState(0)
+
+  const syncQueueLength = useCallback(() => {
+    setQueueLength(queueRef.current.length)
+  }, [])
+
+  /** 队列调度：当前无活动流时依次取队首发出 */
+  const drainQueue = useCallback(async (): Promise<void> => {
+    if (activeStreamRef.current) return
+    const next = queueRef.current.shift()
+    syncQueueLength()
+    if (!next) return
+    await sendInternalRef.current(next.text, next.options)
+  }, [syncQueueLength])
+
+  /**
+   * send 的实际执行体（不含排队判断）。由 send（带排队）与 drainQueue 共用。
+   * useCallback 初始化顺序：drainQueue 引用它，因此声明在其之前。
+   */
+  const sendInternalRef = useRef<(text: string, options: SendOptions) => Promise<void>>(async () => {})
+  const drainQueueRef = useRef<() => Promise<void>>(async () => {})
+
   useEffect(() => {
     const off = engine.onStreamEvent((event: StreamEvent) => {
       // 只处理当前这条流，忽略历史流的迟到事件
@@ -298,30 +417,20 @@ export function useChat(): {
     return off
 
     function applyEvent(event: StreamEvent): void {
-      if (event.type === 'done') {
+      if (event.type === 'done' || event.type === 'error') {
         setMessages((prev) =>
           patchLastAssistant(prev, (msg) => ({
             ...msg,
-            status: 'done',
+            ...(event.type === 'done'
+              ? { status: 'done' as const }
+              : { status: 'error' as const, error: event.message }),
             endedAt: msg.endedAt ?? Date.now()
           }))
         )
         setStreaming(false)
         activeStreamRef.current = null
-        return
-      }
-
-      if (event.type === 'error') {
-        setMessages((prev) =>
-          patchLastAssistant(prev, (msg) => ({
-            ...msg,
-            status: 'error',
-            error: event.message,
-            endedAt: msg.endedAt ?? Date.now()
-          }))
-        )
-        setStreaming(false)
-        activeStreamRef.current = null
+        // 连续发送：当前流结束后自动发出队列中的下一条
+        void drainQueueRef.current()
         return
       }
 
@@ -355,6 +464,46 @@ export function useChat(): {
     async (text: string, options: SendOptions) => {
       const trimmed = text.trim()
       const attachments = options.attachments ?? []
+      if ((!trimmed && attachments.length === 0)) return
+
+      // 流式进行中不抢占（引擎对同会话新请求是 abort 旧流，不是排队）：
+      // 入队等待，当前流结束后由 drainQueue 按序发出
+      if (activeStreamRef.current) {
+        queueRef.current.push({ text: trimmed, attachments, options })
+        syncQueueLength()
+        return
+      }
+
+      await sendInternalRef.current(trimmed, options)
+    },
+    [syncQueueLength]
+  )
+
+  /**
+   * 合并发送：把队列中尚未发出的消息与本条合并成一条（正文用空行拼接）。
+   * 本条已在流中时合并队列全部；本条未发送时只合并队列。
+   */
+  const mergeAndSend = useCallback(
+    async (text: string, options: SendOptions): Promise<void> => {
+      const trimmed = text.trim()
+      const pending = [...queueRef.current]
+      queueRef.current = []
+      syncQueueLength()
+      const parts = [trimmed, ...pending.map((item) => item.text)].filter(Boolean)
+      const mergedAttachments = pending.flatMap((item) => item.attachments)
+      if (parts.length === 0 && mergedAttachments.length === 0) return
+      await sendInternalRef.current(parts.join('\n\n'), {
+        ...options,
+        attachments: [...(options.attachments ?? []), ...mergedAttachments]
+      })
+    },
+    [syncQueueLength]
+  )
+
+  const sendInternal = useCallback(
+    async (text: string, options: SendOptions) => {
+      const trimmed = text.trim()
+      const attachments = options.attachments ?? []
       // 允许「只发附件不发文字」：多模态模型的常见用法就是丢张图让它看
       if ((!trimmed && attachments.length === 0) || activeStreamRef.current) return
 
@@ -365,6 +514,7 @@ export function useChat(): {
         content: trimmed,
         thinking: '',
         tools: [],
+        items: [],
         status: 'done',
         createdAt: now,
         ...(attachments.length > 0 ? { attachments } : {})
@@ -375,6 +525,7 @@ export function useChat(): {
         content: '',
         thinking: '',
         tools: [],
+        items: [],
         status: 'streaming',
         createdAt: now + 1,
         // 记下本轮实际请求的模型，供每轮问答末尾展示
@@ -401,6 +552,10 @@ export function useChat(): {
     },
     [runStream]
   )
+
+  // sendInternal 定义晚于 drainQueue/send：用 ref 桥接，首次渲染后立即可用
+  sendInternalRef.current = sendInternal
+  drainQueueRef.current = drainQueue
 
   /**
    * 回放引擎历史。
@@ -490,6 +645,9 @@ export function useChat(): {
     setStreaming(false)
     activeStreamRef.current = null
     activeSessionRef.current = null
+    // 用户主动停止：排队中的消息不再自动发出（保留在队列里，用户可再触发发送）
+    setQueueLength(0)
+    queueRef.current = []
   }, [])
 
   /**
@@ -497,23 +655,163 @@ export function useChat(): {
    *
    * 必须同时删引擎侧历史：conversations 表会随启动回放还原到界面，
    * 只清内存的话「清空」过的记录下次启动又会全部回来。
+   *
+   * 顺序上先删引擎再清界面：引擎侧删除失败时保留消息并抛错，
+   * 让调用方给出明确提示 —— 否则用户看着「清空成功」，重启后记录复活。
    */
-  const clear = useCallback((sessionId?: string) => {
-    if (activeStreamRef.current) return
-    setMessages([])
-    setTodos([])
-    if (sessionId) {
-      void engine
-        .request({
+  const clear = useCallback(
+    async (sessionId?: string): Promise<void> => {
+      if (activeStreamRef.current) return
+      if (sessionId) {
+        const result = await engine.request({
           method: 'DELETE',
           path: '/conversation/history',
           query: { sessionId }
         })
-        .catch(() => {})
-    }
-  }, [])
+        if (!result.ok) throw new Error(result.message || '引擎侧历史删除失败')
+      }
+      setMessages([])
+      setTodos([])
+    },
+    []
+  )
 
-  return { messages, streaming, todos, send, respond, abort, clear, loadHistory }
+  /**
+   * 把界面消息定位到引擎历史行。
+   *
+   * 界面里只有「历史回放」的消息带引擎 message_id；刚发出去的实时消息
+   * id 是前端随机 UUID。因此先按 id 匹配，匹配不到再按「角色 + 正文」
+   * 兜底 —— 实时消息刚落库，内容必然一致。
+   */
+  const resolveEngineRow = useCallback(
+    async (sessionId: string, message: ChatMessage): Promise<EngineHistoryRow | null> => {
+      const result = await engine.request<EngineHistoryRow[]>({
+        method: 'GET',
+        path: '/conversation/history',
+        query: { sessionId }
+      })
+      if (!result.ok || !Array.isArray(result.data)) return null
+      const rows = result.data
+      return (
+        rows.find((row) => row.id === message.id) ??
+        rows.find((row) => row.role === message.role && row.content === message.content) ??
+        null
+      )
+    },
+    []
+  )
+
+  /** 删除一整轮对话（该消息所在轮：从轮首用户消息到下一个用户消息之前），同步删引擎侧历史 */
+  const deleteTurn = useCallback(
+    async (sessionId: string, message: ChatMessage): Promise<void> => {
+      if (activeStreamRef.current) return
+      const row = await resolveEngineRow(sessionId, message)
+      if (!row?.conversationId) throw new Error('未能定位该轮对话的引擎记录')
+      const result = await engine.request({
+        method: 'DELETE',
+        path: `/conversation/turns/${row.conversationId}`,
+        query: { sessionId }
+      })
+      if (!result.ok) throw new Error(result.message || '引擎侧删除失败')
+      await loadHistory(sessionId)
+    },
+    [loadHistory, resolveEngineRow]
+  )
+
+  /**
+   * 从某条用户消息处重试：删除该消息及其后的所有历史（引擎侧 + 界面），
+   * 再以原内容重新发送。重新发送（用户消息）与重新生成（取其前一条
+   * 用户消息）都走这里。
+   */
+  const retryFrom = useCallback(
+    async (userMessage: ChatMessage, options: SendOptions): Promise<void> => {
+      if (activeStreamRef.current) return
+      const row = await resolveEngineRow(options.sessionId, userMessage)
+      if (row?.id) {
+        const result = await engine.request({
+          method: 'POST',
+          path: '/conversation/truncate',
+          body: { sessionId: options.sessionId, messageId: row.id }
+        })
+        if (!result.ok) throw new Error(result.message || '引擎侧截断失败')
+      }
+      setMessages((prev) => {
+        const index = prev.findIndex((m) => m.id === userMessage.id)
+        return index >= 0 ? prev.slice(0, index) : prev
+      })
+      await send(userMessage.content, {
+        ...options,
+        attachments: userMessage.attachments
+      })
+    },
+    [resolveEngineRow, send]
+  )
+
+  /**
+   * 消息级回退（对齐 wuzu-client 的 revert-files 语义）：
+   * 把该用户消息起之后所有轮次产生的文件改动按快照恢复（含已保留的），
+   * 再截断该消息及之后的对话历史。不自动重发，由调用方决定回填输入框。
+   */
+  const revertFrom = useCallback(
+    async (sessionId: string, userMessage: ChatMessage): Promise<void> => {
+      if (activeStreamRef.current) throw new Error('会话运行中，请先停止再回退')
+      const rows = await (async (): Promise<EngineHistoryRow[]> => {
+        const result = await engine.request<EngineHistoryRow[]>({
+          method: 'GET',
+          path: '/conversation/history',
+          query: { sessionId }
+        })
+        if (!result.ok || !Array.isArray(result.data)) throw new Error('读取会话历史失败')
+        return result.data
+      })()
+      // 分界时间：该用户消息（含）之前最近一条记录的时间戳；
+      // 引擎记录时间晚于消息展示时间，这里取分界前 1 秒容钟表误差
+      const index = rows.findIndex((row) => row.id === userMessage.id)
+      const boundary = (() => {
+        if (index > 0) return Number(rows[index - 1].createdAt) || 0
+        const fallback = rows
+          .filter((row) => Number(row.createdAt) < Number(userMessage.createdAt))
+          .map((row) => Number(row.createdAt))
+        return fallback.length ? Math.max(...fallback) : 0
+      })() - 1000
+
+      // 恢复该分界之后的所有改动（含 kept）；已 reverted 的跳过
+      const changes = await engine.request<Array<{ id: string; status: string; truncated: boolean }>>({
+        method: 'GET',
+        path: '/changes',
+        query: { sessionId, createdAfter: String(boundary) }
+      })
+      if (changes.ok && Array.isArray(changes.data)) {
+        for (const change of changes.data) {
+          if (change.status === 'reverted' || change.truncated) continue
+          const r = await engine.request({
+            method: 'POST',
+            path: `/changes/${change.id}/revert`,
+            body: {}
+          })
+          if (!r.ok) throw new Error(`文件回退失败（${change.id}）：${r.message || 'unknown'}`)
+        }
+      }
+
+      // 截断对话：定位该用户消息在引擎侧的行，删除它及其后所有历史
+      const row = rows.find((r) => r.id === userMessage.id) ?? null
+      if (row) {
+        const result = await engine.request({
+          method: 'POST',
+          path: '/conversation/truncate',
+          body: { sessionId, messageId: row.id }
+        })
+        if (!result.ok) throw new Error(result.message || '引擎侧截断失败')
+      }
+      setMessages((prev) => {
+        const i = prev.findIndex((m) => m.id === userMessage.id)
+        return i >= 0 ? prev.slice(0, i) : prev
+      })
+    },
+    []
+  )
+
+  return { messages, streaming, todos, send, respond, abort, clear, loadHistory, deleteTurn, retryFrom, revertFrom, mergeAndSend, queueLength }
 }
 
 // ==================== 纯函数辅助 ====================
@@ -532,13 +830,41 @@ function patchLastAssistant(
   return messages
 }
 
+/**
+ * 往时间线追加一段文本输出：与上一个条目同类则合并（流式增量帧），否则新开。
+ * 合并只发生在「连续」时 —— 思考 → 工具 → 再思考 会产生两个思考条目，
+ * 这正是渲染层恢复穿插顺序所依据的信息。
+ */
+function appendTimeline(items: TimelineItem[], kind: 'thinking' | 'content', text: string): void {
+  const last = items[items.length - 1]
+  if (last && last.kind === kind) {
+    // 浅拷贝的数组与上一帧共享条目对象：合并时必须换出新对象，不能原地改
+    items[items.length - 1] = { kind, text: last.text + text }
+  } else {
+    items.push({ kind, text })
+  }
+}
+
 function reducePayload(message: ChatMessage, payload: ChatSsePayload): ChatMessage {
+  if (typeof (payload as any).error === 'string' && (payload as any).error) {
+    return {
+      ...message,
+      status: 'error',
+      error: (payload as any).error,
+      endedAt: message.endedAt ?? Date.now()
+    }
+  }
+
   if (typeof payload.content === 'string') {
-    return { ...message, content: message.content + payload.content }
+    const items = [...message.items]
+    appendTimeline(items, 'content', payload.content)
+    return { ...message, content: message.content + payload.content, items }
   }
 
   if (typeof payload.thinking === 'string') {
-    return { ...message, thinking: message.thinking + payload.thinking }
+    const items = [...message.items]
+    appendTimeline(items, 'thinking', payload.thinking)
+    return { ...message, thinking: message.thinking + payload.thinking, items }
   }
 
   if (payload.usage) {
@@ -551,9 +877,12 @@ function reducePayload(message: ChatMessage, payload: ChatSsePayload): ChatMessa
   if (pending) {
     const merged = mergePending(message.pending, pending)
     const sameInteraction = message.pending?.toolCallId === merged.toolCallId
+    const items = [...message.items]
+    if (!sameInteraction) items.push({ kind: 'interaction' })
     return {
       ...message,
       pending: merged,
+      items,
       // 换了新的交互时清掉上一次的应答回显
       answered: sameInteraction ? message.answered : undefined
     }
@@ -581,19 +910,22 @@ function reducePayload(message: ChatMessage, payload: ChatSsePayload): ChatMessa
     const hidden = normalized.name === 'ask_user' ? { hidden: true } : {}
 
     if (kind === 'start') {
+      const items = [...message.items]
       if (index >= 0) {
         tools[index] = { ...tools[index], ...normalized, state: 'running', ...hidden }
       } else {
+        const id = normalized.id || newId()
         tools.push({
-          id: normalized.id || newId(),
+          id,
           name: normalized.name || '未命名工具',
           args: normalized.args || '',
           result: '',
           state: 'running',
           ...hidden
         })
+        items.push({ kind: 'tool', id })
       }
-      return { ...message, tools }
+      return { ...message, tools, items }
     }
 
     // args 帧可能先于 start 帧到达（引擎侧顺序不保证），此时先占位。
@@ -603,17 +935,19 @@ function reducePayload(message: ChatMessage, payload: ChatSsePayload): ChatMessa
     if (kind === 'args') {
       if (index >= 0) {
         tools[index] = { ...tools[index], args: `${tools[index].args}${normalized.args ?? ''}` }
-      } else {
-        tools.push({
-          id: normalized.id || newId(),
-          name: normalized.name || '未命名工具',
-          args: normalized.args || '',
-          result: '',
-          state: 'running',
-          ...hidden
-        })
+        return { ...message, tools }
       }
-      return { ...message, tools }
+      // args 先于 start：此刻就是该工具真实开始的时间点，占位工具同步进时间线
+      const id = normalized.id || newId()
+      tools.push({
+        id,
+        name: normalized.name || '未命名工具',
+        args: normalized.args || '',
+        result: '',
+        state: 'running',
+        ...hidden
+      })
+      return { ...message, tools, items: [...message.items, { kind: 'tool', id }] }
     }
 
     // end / result
@@ -624,16 +958,18 @@ function reducePayload(message: ChatMessage, payload: ChatSsePayload): ChatMessa
         result: normalized.result || tools[index].result,
         state: 'done'
       }
-    } else {
-      tools.push({
-        id: normalized.id || newId(),
-        name: normalized.name || '未命名工具',
-        args: normalized.args || '',
-        result: normalized.result || '',
-        state: 'done'
-      })
+      return { ...message, tools }
     }
-    return { ...message, tools }
+    // 只有孤立的 end/result 帧：此刻才知道这个工具存在，补进时间线末尾
+    const id = normalized.id || newId()
+    tools.push({
+      id,
+      name: normalized.name || '未命名工具',
+      args: normalized.args || '',
+      result: normalized.result || '',
+      state: 'done'
+    })
+    return { ...message, tools, items: [...message.items, { kind: 'tool', id }] }
   }
 
   return message

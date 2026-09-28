@@ -8,6 +8,8 @@ import type { JSX } from 'react'
 
 export type IconName =
   | 'chat'
+  | 'palette'
+  | 'graph'
   | 'settings'
   | 'output'
   | 'play'
@@ -24,6 +26,7 @@ export type IconName =
   | 'terminal'
   | 'search'
   | 'chevron'
+  | 'copy'
   | 'chevron-up'
   | 'chevron-right'
   | 'collapse-all'
@@ -39,9 +42,26 @@ export type IconName =
   | 'minimize'
   | 'maximize'
   | 'restore'
+  | 'locate'
+
+/** mdi:crosshairs-gps —— 资源管理器「定位当前文件」，与 wuzu-client 同图标 */
+const MDI_LOCATE =
+  'M12 8a4 4 0 0 1 4 4a4 4 0 0 1-4 4a4 4 0 0 1-4-4a4 4 0 0 1 4-4m-8.95 5H1v-2h2.05C3.5 6.83 6.83 3.5 11 3.05V1h2v2.05c4.17.45 7.5 3.78 7.95 7.95H23v2h-2.05c-.45 4.17-3.78 7.5-7.95 7.95V23h-2v-2.05C6.83 20.5 3.5 17.17 3.05 13M12 5a7 7 0 0 0-7 7a7 7 0 0 0 7 7a7 7 0 0 0 7-7a7 7 0 0 0-7-7'
 
 const PATHS: Record<IconName, JSX.Element> = {
   chat: <path d="M3 3h18v14H7l-4 4V3zm3 2v2h12V5H6zm0 4v2h9V9H6z" fill="currentColor" />,
+  palette: (
+    <path
+      d="M12 3a9 9 0 1 0 0 18h1.5a2.5 2.5 0 0 0 2.5-2.5c0-.6-.24-1.2-.66-1.63-.4-.41-.63-.95-.63-1.52a2.5 2.5 0 0 1 2.5-2.5H19a4 4 0 0 0 4-4c0-3.3-5-5.85-11-5.85zm-5.5 9a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm4-5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm3 5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z"
+      fill="currentColor"
+    />
+  ),
+  graph: (
+    <path
+      d="M7 4a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm10 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4zM7 16a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm10 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4zM9 5.4 15 4.6v1.8L9 7.2V5.4zm0 9.2v-1.6l6 .6v1.8l-6-.8zM7.9 8.7l1.7.6-2.6 7-1.7-.6 2.6-7zm8.2 0 2.6 7-1.7.6-2.6-7 1.7-.6z"
+      fill="currentColor"
+    />
+  ),
   search: (
     <path
       d="M10 3a7 7 0 1 0 4.24 12.56l4.1 4.1 1.42-1.42-4.1-4.1A7 7 0 0 0 10 3zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10z"
@@ -116,6 +136,8 @@ const PATHS: Record<IconName, JSX.Element> = {
     </g>
   ),
   chevron: <path d="M7 10l5 5 5-5H7z" fill="currentColor" />,
+  // mdi:crosshairs-gps —— 资源管理器的「定位当前文件」
+  locate: <path d={MDI_LOCATE} fill="currentColor" />,
   'chevron-up': <path d="M7 14l5-5 5 5H7z" fill="currentColor" />,
   'chevron-right': <path d="M10 7l5 5-5 5V7z" fill="currentColor" />,
   'collapse-all': (
@@ -161,6 +183,12 @@ const PATHS: Record<IconName, JSX.Element> = {
       fill="currentColor"
     />
   ),
+  copy: (
+    <path
+      d="M8 2a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h7a2 2 0 0 0 2-2V6.4a2 2 0 0 0-.6-1.4l-2.4-2.4A2 2 0 0 0 12.6 2H8zm0 2h4v3a1 1 0 0 0 1 1h3v5H8V4zM5 6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-1h-2v1H5V8h1V6H5z"
+      fill="currentColor"
+    />
+  ),
   keyboard: (
     <path
       d="M3 6h18a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1zm1 2v8h16V8H4zm2 2h2v2H6v-2zm3 0h2v2h-2v-2zm3 0h2v2h-2v-2zm3 0h2v2h-2v-2zM6 14h2v2H6v-2zm3 0h8v2H9v-2z"
@@ -169,9 +197,17 @@ const PATHS: Record<IconName, JSX.Element> = {
   )
 }
 
-export function Icon({ name, size = 16 }: { name: IconName; size?: number }): JSX.Element {
+export function Icon({
+  name,
+  size = 16,
+  className
+}: {
+  name: IconName
+  size?: number
+  className?: string
+}): JSX.Element {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" className={className}>
       {PATHS[name]}
     </svg>
   )

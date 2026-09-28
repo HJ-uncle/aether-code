@@ -14,6 +14,8 @@ import {
 } from '@renderer/core/engine/security'
 import { changeSecurityMode, useSecurityMode } from '@renderer/core/engine/security-store'
 import { Icon } from '@renderer/workbench/icons'
+import { Select } from '@renderer/workbench/Select'
+import { SettingsContent, SettingsGroup, SettingsRow, Toggle } from '../settings/SettingsGroup'
 
 /**
  * 安全视图
@@ -33,7 +35,7 @@ import { Icon } from '@renderer/workbench/icons'
 export function SecurityView(): JSX.Element {
   const { ready, settings } = useApp()
   const sessionId = settings.lastSessionId
-  const { mode, loading: modeLoading, error: modeError, refresh: refreshMode } = useSecurityMode()
+  const { mode, error: modeError, refresh: refreshMode } = useSecurityMode()
 
   const [rules, setRules] = useState<PolicyRule[]>([])
   const [rulesLoading, setRulesLoading] = useState(false)
@@ -106,165 +108,153 @@ export function SecurityView(): JSX.Element {
       {!ready ? <div className="notice">引擎未就绪，无法读写安全策略。</div> : null}
 
       {/* ── 会话安全模式 ── */}
-      <fieldset className="field">
-        <legend>本会话安全模式</legend>
-        <div className="mode-list">
-          {MODE_DESCRIPTORS.map((descriptor) => (
-            <label
-              key={descriptor.value}
-              className={`mode-item${mode === descriptor.value ? ' is-active' : ''}${
-                isRiskyMode(descriptor.value) ? ' mode-item--risky' : ''
-              }`}
-            >
-              <input
-                type="radio"
-                name="security-mode"
-                checked={mode === descriptor.value}
-                disabled={!ready || !sessionId || modeLoading}
-                onChange={() => void changeMode(descriptor.value)}
-              />
-              <span>
-                {descriptor.label}
-                <small>{descriptor.summary}</small>
-              </span>
-            </label>
-          ))}
-        </div>
-
-        <small className="field__hint">
-          {sessionId
+      <SettingsGroup
+        title="本会话安全模式"
+        footer={
+          sessionId
             ? `当前会话 ${sessionId.slice(0, 8)}。模式是会话级的，且引擎重启后失效。`
-            : '尚未建立会话：先在对话视图发一条消息，这里才能设置模式。'}
-        </small>
-        {activeDescriptor?.warning ? (
-          <div className="notice notice--warn">{activeDescriptor.warning}</div>
+            : '尚未建立会话：先在对话视图发一条消息，这里才能设置模式。'
+        }
+      >
+        {MODE_DESCRIPTORS.map((descriptor) => (
+          <SettingsRow
+            key={descriptor.value}
+            label={descriptor.label}
+            description={descriptor.summary}
+            onClick={() => void changeMode(descriptor.value)}
+          >
+            <span
+              className={`sg-radio${mode === descriptor.value ? ' is-on' : ''}${
+                isRiskyMode(descriptor.value) && mode === descriptor.value ? ' sg-radio--risky' : ''
+              }`}
+              role="radio"
+              aria-checked={mode === descriptor.value}
+            />
+          </SettingsRow>
+        ))}
+        {activeDescriptor?.warning || modeError ? (
+          <SettingsContent>
+            {activeDescriptor?.warning ? (
+              <div className="notice notice--warn">{activeDescriptor.warning}</div>
+            ) : null}
+            {modeError ? <div className="notice notice--error">{modeError}</div> : null}
+          </SettingsContent>
         ) : null}
-        {modeError ? <div className="notice notice--error">{modeError}</div> : null}
-      </fieldset>
+      </SettingsGroup>
 
       {/* ── 策略规则 ── */}
-      <fieldset className="field">
-        <legend>策略规则</legend>
-        <div className="settings-view__actions">
-          <button
-            type="button"
-            className="btn"
-            disabled={!ready || rulesLoading}
-            onClick={() => void loadRules()}
-          >
-            刷新
-          </button>
-          <button
-            type="button"
-            className="btn btn--danger-ghost"
-            disabled={!ready || rulesLoading}
-            title="清空现有规则并重新写入引擎内置规则，你对规则的改动会丢失"
-            onClick={() => {
-              if (!window.confirm('确定恢复默认策略规则吗？现有规则的改动会全部丢失。')) return
-              void (async () => {
-                try {
-                  await resetPolicies()
-                  await loadRules()
-                } catch (err) {
-                  setRulesError(err instanceof Error ? err.message : String(err))
-                }
-              })()
-            }}
-          >
-            <Icon name="restart" size={12} />
-            恢复默认
-          </button>
-        </div>
-
-        {rulesError ? <div className="notice notice--error">{rulesError}</div> : null}
-
-        <small className="field__hint">
-          按 priority 从小到大匹配，命中第一条生效；<code>*</code> 匹配所有命令。
-          各模式下「询问」会被改写：safe 保持询问，standard 自动放行，full-access 全部放行。
-        </small>
+      <SettingsGroup
+        title="策略规则"
+        footer="按 priority 从小到大匹配，命中第一条生效；* 匹配所有命令。各模式下「询问」会被改写：safe 保持询问，standard 自动放行，full-access 全部放行。"
+      >
+        {rulesError ? (
+          <SettingsContent>
+            <div className="notice notice--error">{rulesError}</div>
+          </SettingsContent>
+        ) : null}
 
         {rulesLoading && rules.length === 0 ? (
-          <div className="settings-view__saved">加载中…</div>
+          <div className="sg__empty">加载中…</div>
         ) : rules.length === 0 && ready ? (
-          <div className="notice">没有读取到策略规则。</div>
+          <div className="sg__empty">没有读取到策略规则。</div>
         ) : (
-          <ul className="policy-list">
-            {rules.map((rule) => (
-              <li
-                key={rule.id ?? `${rule.name}-${rule.command}`}
-                className={`policy-item${rule.enabled ? '' : ' is-disabled'}`}
+          rules.map((rule) => (
+            <SettingsRow
+              key={rule.id ?? `${rule.name}-${rule.command}`}
+              label={
+                <>
+                  {rule.name}
+                  <span className="policy-row__command" title="匹配的命令">
+                    {rule.command}
+                    {rule.argPattern ? ` /${rule.argPattern}/` : ''}
+                  </span>
+                  <span className="chip chip--static" title="优先级，越小越先匹配">
+                    p{rule.priority}
+                  </span>
+                </>
+              }
+              description={rule.description || undefined}
+            >
+              <Select
+                className="sg__select-field"
+                value={rule.action}
+                disabled={rule.id === undefined || busyId === rule.id}
+                title="命中该规则时的动作"
+                width={180}
+                options={(Object.keys(ACTION_LABELS) as PolicyAction[]).map((action) => ({
+                  value: action,
+                  label: ACTION_LABELS[action]
+                }))}
+                onChange={(next) => void patchRule(rule, { action: next as PolicyAction })}
+              />
+              <Toggle
+                checked={rule.enabled}
+                disabled={rule.id === undefined || busyId === rule.id}
+                label={rule.enabled ? '已启用' : '已停用'}
+                onChange={(checked) => void patchRule(rule, { enabled: checked })}
+              />
+              <button
+                type="button"
+                className="exclude-row__remove"
+                disabled={rule.id === undefined || busyId === rule.id}
+                title="删除该规则"
+                aria-label={`删除规则 ${rule.name}`}
+                onClick={() => {
+                  const id = rule.id
+                  if (id === undefined) return
+                  if (!window.confirm(`确定删除规则「${rule.name}」吗？`)) return
+                  void guardRule(id, async () => {
+                    await deletePolicy(id)
+                    setRules((prev) => prev.filter((item) => item.id !== id))
+                  })
+                }}
               >
-                <label className="policy-item__toggle" title={rule.enabled ? '已启用' : '已停用'}>
-                  <input
-                    type="checkbox"
-                    checked={rule.enabled}
-                    disabled={rule.id === undefined || busyId === rule.id}
-                    onChange={(event) => void patchRule(rule, { enabled: event.target.checked })}
-                  />
-                </label>
-
-                <div className="policy-item__info">
-                  <div className="policy-item__title">
-                    {rule.name}
-                    <span className="policy-item__command" title="匹配的命令">
-                      {rule.command}
-                      {rule.argPattern ? ` /${rule.argPattern}/` : ''}
-                    </span>
-                    <span className="chip chip--static" title="优先级，越小越先匹配">
-                      p{rule.priority}
-                    </span>
-                  </div>
-                  {rule.description ? (
-                    <div className="policy-item__desc">{rule.description}</div>
-                  ) : null}
-                </div>
-
-                <select
-                  className="field__input policy-item__action"
-                  value={rule.action}
-                  disabled={rule.id === undefined || busyId === rule.id}
-                  title="命中该规则时的动作"
-                  onChange={(event) =>
-                    void patchRule(rule, { action: event.target.value as PolicyAction })
-                  }
-                >
-                  {(Object.keys(ACTION_LABELS) as PolicyAction[]).map((action) => (
-                    <option key={action} value={action}>
-                      {ACTION_LABELS[action]}
-                    </option>
-                  ))}
-                </select>
-
-                <button
-                  type="button"
-                  className="btn btn--sm btn--danger-ghost"
-                  disabled={rule.id === undefined || busyId === rule.id}
-                  title="删除该规则"
-                  onClick={() => {
-                    const id = rule.id
-                    if (id === undefined) return
-                    if (!window.confirm(`确定删除规则「${rule.name}」吗？`)) return
-                    void guardRule(id, async () => {
-                      await deletePolicy(id)
-                      setRules((prev) => prev.filter((item) => item.id !== id))
-                    })
-                  }}
-                >
-                  <Icon name="trash" size={12} />
-                </button>
-              </li>
-            ))}
-          </ul>
+                ×
+              </button>
+            </SettingsRow>
+          ))
         )}
-      </fieldset>
+      </SettingsGroup>
 
-      <div className="field">
-        <span className="field__label">还想少被打断？</span>
-        <small className="field__hint">
-          在对话里被拦截时，授权卡片上可以直接把本会话切走并放行当前这一步，不必回到这个页面。
-          审批过的命令同时会进入会话白名单，同参数不再重复询问。
-        </small>
+      <div className="settings-view__actions">
+        <button
+          type="button"
+          className="btn"
+          disabled={!ready || rulesLoading}
+          onClick={() => void loadRules()}
+        >
+          刷新
+        </button>
+        <button
+          type="button"
+          className="btn btn--danger-ghost"
+          disabled={!ready || rulesLoading}
+          title="清空现有规则并重新写入引擎内置规则，你对规则的改动会丢失"
+          onClick={() => {
+            if (!window.confirm('确定恢复默认策略规则吗？现有规则的改动会全部丢失。')) return
+            void (async () => {
+              try {
+                await resetPolicies()
+                await loadRules()
+              } catch (err) {
+                setRulesError(err instanceof Error ? err.message : String(err))
+              }
+            })()
+          }}
+        >
+          <Icon name="restart" size={12} />
+          恢复默认
+        </button>
       </div>
+
+      <SettingsGroup title="还想少被打断？">
+        <SettingsContent>
+          <p className="sg__note">
+            在对话里被拦截时，授权卡片上可以直接把本会话切走并放行当前这一步，不必回到这个页面。
+            审批过的命令同时会进入会话白名单，同参数不再重复询问。
+          </p>
+        </SettingsContent>
+      </SettingsGroup>
     </div>
   )
 }

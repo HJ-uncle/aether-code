@@ -124,6 +124,7 @@ export class EngineHost extends EventEmitter {
 
     logger.info(`已连接远端引擎 ${url}`)
     this.startHealthWatch()
+    const version = await fetchEngineVersion(url)
     return this.patch({
       mode: 'remote',
       phase: 'ready',
@@ -132,7 +133,7 @@ export class EngineHost extends EventEmitter {
       pid: null,
       adopted: false,
       entryPath: null,
-      version: null,
+      version,
       dataDir: null,
       error: null
     })
@@ -222,12 +223,14 @@ export class EngineHost extends EventEmitter {
 
     logger.info(`引擎已就绪 ${baseUrl}（pid ${this.handle?.pid ?? '未知'}）`)
     this.startHealthWatch()
+    const version = await fetchEngineVersion(baseUrl)
     return this.patch({
       phase: 'ready',
       baseUrl,
       port,
       pid: this.handle?.pid ?? null,
       adopted: false,
+      version,
       dataDir,
       error: null
     })
@@ -276,7 +279,7 @@ export class EngineHost extends EventEmitter {
       pid: null,
       adopted: true,
       entryPath: null,
-      version: null,
+      version: await fetchEngineVersion(baseUrl),
       dataDir: null,
       error: null
     })
@@ -455,10 +458,14 @@ export class EngineHost extends EventEmitter {
         return
       }
       logger.error(`SSE 请求失败：${err instanceof Error ? err.message : String(err)}`)
+      const raw = err instanceof Error ? err.message : String(err)
+      const message = /terminated/i.test(raw)
+        ? '生成中断：与引擎的连接被意外断开，请点击「继续」恢复'
+        : raw
       this.emit('stream', {
         streamId,
         type: 'error',
-        message: err instanceof Error ? err.message : String(err)
+        message
       } satisfies StreamEvent)
     }
   }
@@ -470,6 +477,18 @@ function portOf(baseUrl: string): number | null {
   try {
     const parsed = new URL(baseUrl)
     return parsed.port ? Number(parsed.port) : null
+  } catch {
+    return null
+  }
+}
+
+/** 拉取引擎版本（/meta，白名单免鉴权）。失败不阻塞连接，仅版本显示为 null */
+async function fetchEngineVersion(baseUrl: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${baseUrl}/meta`, { signal: AbortSignal.timeout(3000) })
+    if (!res.ok) return null
+    const body = (await res.json()) as { code?: number; data?: { version?: string } }
+    return body?.code === 200 ? (body.data?.version ?? null) : null
   } catch {
     return null
   }

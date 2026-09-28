@@ -38,6 +38,8 @@ export const IPC = {
     /** 版本控制（IDE 自己跑 git，只读） */
     gitStatus: 'git:status',
     gitLog: 'git:log',
+    /** 暂存指定文件（git add，改动条的「暂存」动作） */
+    gitStage: 'git:stage',
     /** 全局搜索（git grep 优先，非仓库退回文件遍历） */
     searchQuery: 'search:query',
     /** 全局替换（按搜索条件对命中文件批量替换） */
@@ -259,14 +261,16 @@ export interface AppSettings {
   /** 上次选中的模型 modelId（空表示用引擎默认） */
   lastModelId: string
   /**
-   * 思考模式偏好（会话无关，跨会话沿用）。
+   * 思考档位偏好（会话无关，跨会话沿用）。
    *
-   * 三态：'default' 不传该字段，交给引擎按模型能力判断；
-   * 'on' / 'off' 分别透传 thinkingMode=true/false 强制开关。
-   * 之所以不给布尔加「未设置」，是因为引擎把「不传」和「false」
-   * 视为两种不同语义（后者是显式关闭）。
+   * 档位映射到引擎 thinkingMode：
+   *  - 'off'  → false：强制关闭思考
+   *  - 'low'  → 'low'：几乎不思考（最低 effort）
+   *  - 'high' → 不传：交给引擎按模型能力判断（默认档）
+   *  - 'max'  → 'high'：强制开启并指定高 effort
+   * 引擎侧已支持 thinkingMode 接收 'low' | 'medium' | 'high' 档位字符串。
    */
-  thinkingMode: 'default' | 'on' | 'off'
+  thinkingMode: 'off' | 'low' | 'high' | 'max'
   /** 上次打开的工作区文件夹（空表示未打开） */
   lastFolder: string
   /** 界面明暗外观 */
@@ -298,7 +302,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lastSessionId: '',
   lastAgentId: '',
   lastModelId: '',
-  thinkingMode: 'default',
+  thinkingMode: 'high',
   lastFolder: '',
   appearance: 'system',
   accent: 'purple',

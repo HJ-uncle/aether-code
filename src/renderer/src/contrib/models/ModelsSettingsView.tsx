@@ -2,6 +2,7 @@ import { useEffect, useState, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
 import { removeModel, useModels } from '@renderer/core/engine/model-store'
 import { Icon } from '@renderer/workbench/icons'
+import { SettingsContent, SettingsGroup, SettingsRow } from '../settings/SettingsGroup'
 import { ModelFormDialog } from './ModelFormDialog'
 
 /**
@@ -52,12 +53,7 @@ export function ModelsSettingsView(): JSX.Element {
           <Icon name="plus" size={13} />
           添加模型
         </button>
-        <button
-          type="button"
-          className="btn"
-          disabled={!ready || loading}
-          onClick={() => void refresh()}
-        >
+        <button type="button" className="btn" disabled={!ready || loading} onClick={() => void refresh()}>
           刷新
         </button>
       </div>
@@ -68,65 +64,54 @@ export function ModelsSettingsView(): JSX.Element {
       {loading && !loaded ? (
         <div className="settings-view__saved">加载中…</div>
       ) : models.length === 0 && ready ? (
-        <div className="notice">
-          还没有配置模型。点击「添加模型」填写服务商与 API Key 后即可开始对话。
-        </div>
-      ) : (
-        <ul className="model-list">
+        <div className="notice">还没有配置模型。点击「添加模型」填写服务商与 API Key 后即可开始对话。</div>
+      ) : models.length > 0 ? (
+        <SettingsGroup title="已配置的模型">
           {models.map((model) => (
-            <li key={model.id} className="model-list__item">
-              <div className="model-list__info">
-                <div className="model-list__title">
+            <SettingsRow
+              key={model.id}
+              label={
+                <>
                   {model.displayName?.trim() || model.modelId}
-                  <span className="model-list__provider">{model.provider}</span>
-                </div>
-                <div className="model-list__meta">
-                  <span className="kv__mono" title={model.modelId}>
-                    {model.modelId}
-                  </span>
-                  <span className="kv__mono" title={model.baseUrl}>
-                    {model.baseUrl}
-                  </span>
-                  <span title="API Key 由引擎加密存储，此处仅显示尾号">
-                    key {model.apiKey || '未设置'}
-                  </span>
-                </div>
-              </div>
-
-              <div className="model-list__actions">
-                <button
-                  type="button"
-                  className="btn btn--sm"
-                  disabled={busyId === model.id}
-                  onClick={() => setEditing(model.id)}
-                >
-                  编辑
-                </button>
-                <button
-                  type="button"
-                  className="btn btn--sm btn--danger-ghost"
-                  disabled={busyId === model.id}
-                  onClick={() => {
-                    if (!window.confirm(`确定删除模型「${model.modelId}」吗？此操作不可撤销。`))
-                      return
-                    void guard(model.id, () => removeModel(model.id))
-                  }}
-                >
-                  <Icon name="trash" size={12} />
-                </button>
-              </div>
-            </li>
+                  <span className="model-row__provider">{model.provider}</span>
+                </>
+              }
+              description={`${model.baseUrl} · key ${model.apiKey || '未设置'}`}
+            >
+              <button
+                type="button"
+                className="btn btn--sm"
+                disabled={busyId === model.id}
+                onClick={() => setEditing(model.id)}
+              >
+                编辑
+              </button>
+              <button
+                type="button"
+                className="exclude-row__remove"
+                aria-label={`删除模型 ${model.modelId}`}
+                title="删除该模型"
+                disabled={busyId === model.id}
+                onClick={() => {
+                  if (!window.confirm(`确定删除模型「${model.modelId}」吗？此操作不可撤销。`)) return
+                  void guard(model.id, () => removeModel(model.id))
+                }}
+              >
+                ×
+              </button>
+            </SettingsRow>
           ))}
-        </ul>
-      )}
+        </SettingsGroup>
+      ) : null}
 
-      <div className="field">
-        <span className="field__label">说明</span>
-        <small className="field__hint">
-          密钥由引擎使用本机 ENCRYPTION_KEY 加密后存入库中，界面只显示尾号。 若更换过 ENCRYPTION_KEY
-          导致解密失败，请用「编辑」重新填写密钥。
-        </small>
-      </div>
+      <SettingsGroup title="说明">
+        <SettingsContent>
+          <p className="sg__note">
+            密钥由引擎使用本机 ENCRYPTION_KEY 加密后存入库中，界面只显示尾号。 若更换过
+            ENCRYPTION_KEY 导致解密失败，请用「编辑」重新填写密钥。
+          </p>
+        </SettingsContent>
+      </SettingsGroup>
 
       {adding ? (
         <ModelFormDialog onClose={() => setAdding(false)} />

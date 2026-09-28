@@ -81,8 +81,7 @@ export async function getStatus(root: string): Promise<GitStatus> {
 }
 
 /** 读取最近提交历史；非仓库或无提交时返回空数组 */
-export async function getLog(root: string, limit = DEFAULT_LOG_LIMIT): Promise<GitCommit[]> {
-  const cwd = assertAllowed(root)
+export async function getLog(root: string, limit = DEFAULT_LOG_LIMIT): Promise<GitCommit[]> {  const cwd = assertAllowed(root)
   const count =
     Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 500) : DEFAULT_LOG_LIMIT
 
@@ -100,4 +99,19 @@ export async function getLog(root: string, limit = DEFAULT_LOG_LIMIT): Promise<G
   }
 
   return parseGitLog(result.stdout)
+}
+
+/**
+ * 暂存指定文件（git add）。「改动条」的「暂存」动作使用。
+ * 只接受工作区内相对/绝对路径，逐条校验后一次 add，避免参数注入。
+ * 非仓库视为失败（调用方应先判断 isRepo）。
+ */
+export async function stagePaths(root: string, paths: string[]): Promise<void> {
+  const cwd = assertAllowed(root)
+  if (!Array.isArray(paths) || paths.length === 0) return
+
+  const result = await runGit(cwd, ['add', '--', ...paths])
+  if (!result.ok) {
+    throw new Error(result.message || 'git add 执行失败')
+  }
 }

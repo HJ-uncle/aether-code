@@ -107,7 +107,10 @@ const api = {
   git: {
     status: (root: string): Promise<GitStatus> => ipcRenderer.invoke(IPC.invoke.gitStatus, root),
     log: (root: string, limit?: number): Promise<GitCommit[]> =>
-      ipcRenderer.invoke(IPC.invoke.gitLog, root, limit)
+      ipcRenderer.invoke(IPC.invoke.gitLog, root, limit),
+    /** 暂存指定文件（git add）。「改动条」的「暂存」动作使用 */
+    stage: (root: string, paths: string[]): Promise<void> =>
+      ipcRenderer.invoke(IPC.invoke.gitStage, root, paths)
   },
 
   /** 全局搜索：git 仓库用 git grep，其余退回文件遍历 */

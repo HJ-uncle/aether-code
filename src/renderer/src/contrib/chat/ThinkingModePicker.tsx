@@ -70,7 +70,7 @@ export function ThinkingModePicker({
         onClick={() => setOpen((prev) => !prev)}
       >
         <Icon name="brain" size={12} />
-        {descriptor.label}
+        <span className="picker__label">{descriptor.label}</span>
         <span className="think-picker__caret">⌃</span>
       </button>
 

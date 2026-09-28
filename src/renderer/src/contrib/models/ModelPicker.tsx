@@ -48,7 +48,7 @@ export function ModelPicker({ value, onChange, onManage }: ModelPickerProps): JS
             title={value ? `当前模型：${value}` : '未指定模型，将使用引擎默认配置'}
             onClick={() => setOpen((prev) => !prev)}
           >
-            {label}
+            <span className="picker__label">{label}</span>
             <span className="model-picker__caret">⌃</span>
           </button>
         )}
@@ -82,6 +82,11 @@ export function ModelPicker({ value, onChange, onManage }: ModelPickerProps): JS
                     <span className="model-picker__item-main">
                       <span className="model-picker__avatar">{initialOf(model)}</span>
                       <span className="model-picker__name">{displayNameOf(model)}</span>
+                      {capabilityTags(model).map((tag) => (
+                        <span key={tag.key} className="model-picker__tag" title={tag.hint}>
+                          {tag.label}
+                        </span>
+                      ))}
                     </span>
                     <span className="model-picker__provider">{model.provider}</span>
                   </button>
@@ -132,4 +137,21 @@ function displayNameOf(model: EngineModel): string {
 
 function initialOf(model: EngineModel): string {
   return displayNameOf(model).slice(0, 1).toUpperCase()
+}
+
+/** 列表上的能力标签：多模态（图片/音频/视频）与思考，让模型差异一眼可辨 */
+function capabilityTags(model: EngineModel): Array<{ key: string; label: string; hint: string }> {
+  const caps = model.capabilities
+  if (!caps) return []
+  const tags: Array<{ key: string; label: string; hint: string }> = []
+  if (caps.vision || caps.audio || caps.video) {
+    const kinds = [
+      caps.vision ? '图片' : null,
+      caps.audio ? '音频' : null,
+      caps.video ? '视频' : null
+    ].filter(Boolean)
+    tags.push({ key: 'multimodal', label: '多模态', hint: `支持${kinds.join('、')}输入` })
+  }
+  if (caps.thinking) tags.push({ key: 'thinking', label: '思考', hint: '支持思考模式' })
+  return tags
 }

@@ -167,6 +167,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.invoke.gitLog, (_event, root: string, limit?: number) =>
     gitService.getLog(root, limit)
   )
+  ipcMain.handle(IPC.invoke.gitStage, (_event, root: string, paths: string[]) =>
+    gitService.stagePaths(root, paths)
+  )
 
   // ── 全局搜索 ──
   // 排除表由渲染层随选项一起传来（主进程不读设置，保持无状态）：

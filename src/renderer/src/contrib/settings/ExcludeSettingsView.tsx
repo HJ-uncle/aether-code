@@ -1,6 +1,7 @@
 import { useState, type JSX } from 'react'
 import type { FilesExclude } from '@shared/ipc'
 import { useApp } from '@renderer/core/app-context'
+import { SettingsGroup, Toggle } from './SettingsGroup'
 
 /**
  * 排除规则表（files.exclude 与 search.exclude 共用）
@@ -113,42 +114,45 @@ export function ExcludeSettingsView({
   const dirty = !sameExclude(fromDraft(rows), value)
 
   return (
-    <fieldset className="field">
-      <legend>{legend}</legend>
-      <p className="field__hint">{hint}</p>
+    <div className="settings-view">
+      <SettingsGroup title={legend} footer={typeof hint === 'string' ? hint : undefined}>
+        {typeof hint === 'string' ? null : <div className="sg__hint-block">{hint}</div>}
 
-      <div className="exclude-table" role="group" aria-label={ariaLabel}>
-        {rows.length === 0 && <p className="field__hint">{emptyHint}</p>}
+        {rows.length === 0 && <div className="sg__empty">{emptyHint}</div>}
 
-        {rows.map((row) => (
-          <div className="exclude-row" key={row.id}>
-            <label className="exclude-row__toggle" title={row.exclude ? '已排除' : '不排除'}>
-              <input
-                type="checkbox"
-                checked={row.exclude}
-                onChange={(event) => updateRow(row.id, { exclude: event.target.checked })}
-              />
-            </label>
-            <input
-              className="field__input exclude-row__pattern"
-              type="text"
-              spellCheck={false}
-              placeholder={placeholder}
-              value={row.pattern}
-              onChange={(event) => updateRow(row.id, { pattern: event.target.value })}
-            />
-            <button
-              type="button"
-              className="btn btn--sm exclude-row__remove"
-              aria-label="删除该规则"
-              title="删除该规则"
-              onClick={() => removeRow(row.id)}
-            >
-              ×
-            </button>
-          </div>
-        ))}
-      </div>
+        <div role="group" aria-label={ariaLabel}>
+          {rows.map((row) => (
+            <div className="sg__row" key={row.id}>
+              <div className="sg__row-text">
+                <input
+                  className="field__input exclude-row__pattern"
+                  type="text"
+                  spellCheck={false}
+                  placeholder={placeholder}
+                  value={row.pattern}
+                  onChange={(event) => updateRow(row.id, { pattern: event.target.value })}
+                />
+              </div>
+              <div className="sg__row-control">
+                <Toggle
+                  checked={row.exclude}
+                  onChange={(checked) => updateRow(row.id, { exclude: checked })}
+                  label={row.exclude ? '已排除' : '不排除'}
+                />
+                <button
+                  type="button"
+                  className="exclude-row__remove"
+                  aria-label="删除该规则"
+                  title="删除该规则"
+                  onClick={() => removeRow(row.id)}
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </SettingsGroup>
 
       <div className="settings-view__actions">
         <button type="button" className="btn" onClick={addRow}>
@@ -159,7 +163,7 @@ export function ExcludeSettingsView({
         </button>
         {dirty && <span className="settings-view__saved">规则已更新</span>}
       </div>
-    </fieldset>
+    </div>
   )
 }
 

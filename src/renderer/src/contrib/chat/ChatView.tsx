@@ -6,6 +6,7 @@ import { TodoTray } from './TodoTray'
 import { ChangesPanel } from './ChangesPanel'
 import { FileChangeCard } from './FileChangeCard'
 import { SubagentCard } from './SubagentCard'
+import { Markdown } from './Markdown'
 import { toolDisplayName, toolParamSummary } from './tool-names'
 import { useModels } from '@renderer/core/engine/model-store'
 import { changeSecurityMode } from '@renderer/core/engine/security-store'
@@ -14,10 +15,10 @@ import { openAppSettings } from '@renderer/contrib/settings/app-settings-navigat
 import { refreshGit } from '@renderer/core/git/git-store'
 import { currentWorkspacePaths, useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { Icon } from '@renderer/workbench/icons'
+import { Dialog } from '@renderer/workbench/Dialog'
 import { Popover } from '@renderer/workbench/Popover'
 import { ModelPicker } from '../models/ModelPicker'
-import { SecurityModePicker } from '../security/SecurityModePicker'
-import { ThinkingModePicker } from './ThinkingModePicker'
+import { ComposerOptions } from './ComposerOptions'
 import {
   formatDuration,
   formatTimestamp,
@@ -33,14 +34,53 @@ function newSessionId(): string {
 }
 
 /**
- * 设置项 → 引擎参数。
+ * 设置档位 → 引擎 thinkingMode 参数。
  *
- * 'default' 必须落成 undefined 而不是 false：引擎把「不传」当作
- * 「问模型能力」，把 false 当作强制关闭，两者在支持推理的模型上结果不同。
+ * 'off' 强制下发 false（显式关思考）；'high' 落成 undefined（引擎按模型
+ * 能力判断）；'low' / 'max' 下发档位字符串（引擎强制开启并指定 effort）。
  */
-function resolveThinkingMode(mode: 'default' | 'on' | 'off'): boolean | undefined {
-  if (mode === 'default') return undefined
-  return mode === 'on'
+function resolveThinkingMode(mode: 'off' | 'low' | 'high' | 'max'): 'low' | 'high' | false | undefined {
+  if (mode === 'off') return false
+  if (mode === 'high') return undefined
+  return mode === 'max' ? 'high' : 'low'
+}
+
+/** 主题化确认 / 提示弹窗（替代原生 window.confirm / alert） */
+interface ConfirmState {
+  title: string
+  body: string
+  confirmText?: string
+  danger?: boolean
+  onConfirm: () => void
+}
+
+function ConfirmDialog({ state, onClose }: { state: ConfirmState; onClose: () => void }): JSX.Element {
+  return (
+    <Dialog
+      title={state.title}
+      width={440}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose}>
+            取消
+          </button>
+          <button
+            type="button"
+            className={`btn btn--primary${state.danger ? ' btn--danger' : ''}`}
+            onClick={() => {
+              onClose()
+              state.onConfirm()
+            }}
+          >
+            {state.confirmText ?? '确定'}
+          </button>
+        </>
+      }
+    >
+      <p style={{ margin: 0, lineHeight: 1.6 }}>{state.body}</p>
+    </Dialog>
+  )
 }
 
 /** 字节数 → 人类可读（附件条上展示大小） */
@@ -58,13 +98,17 @@ function formatBytes(bytes: number): string {
  */
 export function ChatView(): JSX.Element {
   const { ready, settings, updateSettings, settingsLoaded } = useApp()
-  const { messages, streaming, todos, send, respond, abort, clear, loadHistory } = useChat()
+  const { messages, streaming, todos, send, respond, abort, loadHistory, deleteTurn, retryFrom, revertFrom, mergeAndSend, queueLength } = useChat()
   const { models, loaded: modelsLoaded } = useModels()
   const workspace = useWorkspace()
   const [input, setInput] = useState('')
   /** 多选模式：按消息粒度勾选，复制或导出为 Markdown */
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set())
+  /** 主题化确认 / 提示弹窗；null 关闭 */
+  const [confirmState, setConfirmState] = useState<ConfirmState | null>(null)
+  /** 轻提示（复制 / 导出等即时反馈），短暂展示后自动消失 */
+  const [toast, setToast] = useState<string | null>(null)
   /** 用户手动选择的模型；null 表示未选择，跟随设置（设置异步加载后自动生效） */
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
   const modelId = selectedModelId ?? settings.lastModelId
@@ -135,6 +179,13 @@ export function ChatView(): JSX.Element {
     [updateSettings]
   )
 
+  // 默认选中：列表就绪后，若当前模型未选中或已失效（被删/改名），自动落到第一个
+  const modelExists = models.some((model) => model.modelId === modelId)
+  useEffect(() => {
+    if (!modelsLoaded || models.length === 0 || modelExists) return
+    selectModel(models[0].modelId)
+  }, [modelsLoaded, models, modelExists, selectModel])
+
   /** 附件失败提示：短暂展示后自动消失，不打扰后续输入 */
   useEffect(() => {
     if (!attach.error) {
@@ -147,34 +198,44 @@ export function ChatView(): JSX.Element {
     return () => window.clearTimeout(timer)
   }, [attach])
 
-  const submit = useCallback(() => {
-    const text = input.trim()
-    // 允许「只发附件」：丢张截图直接问，是视觉模型的常见用法
-    const files = attach.attachments
-    if ((!text && files.length === 0) || attach.uploading || streaming || !ready || !sessionId)
-      return
-    setInput('')
-    attach.clear()
-    void send(text, {
+  const buildSendOptions = useCallback(
+    () => ({
       sessionId,
       agentId: settings.lastAgentId || undefined,
       model: modelId || undefined,
       // 从 store 直接读取而非依赖闭包：发送瞬间的根目录才是准确的
       workspacePaths: currentWorkspacePaths(),
-      attachments: files.length > 0 ? files : undefined,
       thinkingMode: resolveThinkingMode(settings.thinkingMode)
+    }),
+    [modelId, ready, sessionId, settings.lastAgentId, settings.thinkingMode]
+  )
+
+  const submit = useCallback(() => {
+    const text = input.trim()
+    // 允许「只发附件」：丢张截图直接问，是视觉模型的常见用法
+    const files = attach.attachments
+    if ((!text && files.length === 0) || attach.uploading || !ready || !sessionId) return
+    // 流式进行中不再拦截：send 内部会入队，当前流结束后自动按序发出
+    setInput('')
+    attach.clear()
+    void send(text, {
+      ...buildSendOptions(),
+      attachments: files.length > 0 ? files : undefined
     })
-  }, [
-    attach,
-    input,
-    modelId,
-    ready,
-    send,
-    sessionId,
-    settings.lastAgentId,
-    settings.thinkingMode,
-    streaming
-  ])
+  }, [attach, buildSendOptions, input, ready, send, sessionId])
+
+  /** 合并发送：把输入框内容与排队中的消息合并成一条发出 */
+  const submitMerged = useCallback(() => {
+    const text = input.trim()
+    const files = attach.attachments
+    if ((!text && files.length === 0) || attach.uploading || !ready || !sessionId) return
+    setInput('')
+    attach.clear()
+    void mergeAndSend(text, {
+      ...buildSendOptions(),
+      attachments: files.length > 0 ? files : undefined
+    })
+  }, [attach, buildSendOptions, input, mergeAndSend, ready, sessionId])
 
   /**
    * 授权卡片上的「一路放行」入口。
@@ -229,8 +290,100 @@ export function ChatView(): JSX.Element {
 
   const copySelected = useCallback(() => {
     const text = buildExportText()
-    if (text) void navigator.clipboard.writeText(text)
-  }, [buildExportText])
+    if (!text) return
+    void navigator.clipboard.writeText(text).then(
+      () => {
+        setToast(`已复制 ${selectedIds.size} 项`)
+        // 复制是这一步的终点：退出多选，回到正常阅读状态
+        setSelectMode(false)
+        setSelectedIds(new Set())
+      },
+      () => setToast('复制失败')
+    )
+  }, [buildExportText, selectedIds])
+
+  // ── 消息级操作（hover 工具条）─────────────────────────────────────────────
+  const copyMessage = useCallback((message: ChatMessage) => {
+    void navigator.clipboard.writeText(serializeMessages([message])).then(
+      () => setToast('已复制'),
+      () => setToast('复制失败')
+    )
+  }, [])
+
+  /** 轻提示：出现后短暂停留自动消失，不打断后续操作 */
+  useEffect(() => {
+    if (!toast) return
+    const timer = window.setTimeout(() => setToast(null), 1800)
+    return () => window.clearTimeout(timer)
+  }, [toast])
+
+  /** 错误提示（替代 window.alert，主题化展示） */
+  const showError = useCallback((err: unknown, prefix?: string) => {
+    const message = err instanceof Error ? err.message : String(err)
+    setConfirmState({
+      title: '操作失败',
+      body: prefix ? `${prefix}${message}` : message,
+      confirmText: '知道了',
+      onConfirm: () => undefined
+    })
+  }, [])
+
+  /** 删除引擎侧该消息之后的历史并重新发送（重新发送 / 重新生成共用） */
+  const retryTurn = useCallback(
+    (message: ChatMessage) => {
+      // 重新生成（助手消息）等价于从它前面的用户提问处重发
+      const index = messages.findIndex((m) => m.id === message.id)
+      const userMessage =
+        message.role === 'user' ? message : messages.slice(0, index).reverse().find((m) => m.role === 'user')
+      if (!userMessage) return
+      setConfirmState({
+        title: message.role === 'user' ? '重新发送' : '重新生成',
+        body: message.role === 'user' ? '删除此后的对话并重新发送？' : '删除本轮回答并重新生成？',
+        danger: true,
+        onConfirm: () =>
+          void retryFrom(userMessage, {
+            sessionId,
+            agentId: settings.lastAgentId || undefined,
+            model: modelId || undefined,
+            workspacePaths: currentWorkspacePaths(),
+            thinkingMode: resolveThinkingMode(settings.thinkingMode)
+          }).catch(showError)
+      })
+    },
+    [messages, modelId, retryFrom, sessionId, settings.lastAgentId, settings.thinkingMode, showError]
+  )
+
+  const deleteTurnById = useCallback(
+    (message: ChatMessage) => {
+      setConfirmState({
+        title: '删除本轮',
+        body: '删除这一轮问答（含引擎侧历史）？',
+        danger: true,
+        confirmText: '删除',
+        onConfirm: () => void deleteTurn(sessionId, message).catch((err) => showError(err))
+      })
+    },
+    [deleteTurn, sessionId, showError]
+  )
+
+  /** 消息级回退（对齐 wuzu revert-files）：恢复该消息后全部文件改动（含已保留）并截断对话，原文回填输入框 */
+  const revertToMessage = useCallback(
+    (message: ChatMessage) => {
+      setConfirmState({
+        title: '回退到此处',
+        body: '撤销此消息及后续轮次的全部修改（包含已保留的修改），成功后删除对应对话。文件无法自动恢复的大改动会跳过。',
+        danger: true,
+        confirmText: '回退',
+        onConfirm: () => {
+          const content = message.content
+          void revertFrom(sessionId, message)
+            .then(() => setInput(content))
+            .catch(showError)
+        }
+      })
+    },
+    [revertFrom, sessionId, showError]
+  )
 
   const exportSelected = useCallback(() => {
     const text = buildExportText()
@@ -242,7 +395,8 @@ export function ChatView(): JSX.Element {
     anchor.download = `aether-对话导出-${new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-')}.md`
     anchor.click()
     URL.revokeObjectURL(url)
-  }, [buildExportText])
+    setToast(`已导出 ${selectedIds.size} 项`)
+  }, [buildExportText, selectedIds])
 
   // 未配置任何模型时对话必然失败，提前给出明确出口而不是等报错
   const needsModel = ready && modelsLoaded && models.length === 0
@@ -382,12 +536,9 @@ export function ChatView(): JSX.Element {
   return (
     <div className="chat">
       <div className="chat__topbar">
-        <span className="chat__session" title={sessionId}>
-          会话 {sessionId.slice(0, 8)}
-        </span>
         {workspace.root ? (
           <span className="chat__workspace" title={`Agent 的工作区：${workspace.root}`}>
-            · {workspace.root.replace(/\\/g, '/').split('/').pop()}
+            {workspace.root.replace(/\\/g, '/').split('/').pop()}
           </span>
         ) : null}
         <div className="chat__toolbar-spacer" />
@@ -419,16 +570,6 @@ export function ChatView(): JSX.Element {
         >
           <Icon name="check" size={14} />
           多选
-        </button>
-        <button
-          type="button"
-          className="chat__toolbar-btn"
-          disabled={streaming || messages.length === 0 || !sessionId}
-          title="清空对话记录（含引擎侧历史，不可恢复）"
-          onClick={() => clear(sessionId)}
-        >
-          <Icon name="trash" size={14} />
-          清空
         </button>
       </div>
 
@@ -474,11 +615,29 @@ export function ChatView(): JSX.Element {
         ) : (
           turns.map((turn) => (
             <div key={turn.id} className="chat__turn">
-              {turn.messages.map((message) => (
-                <MessageItem
-                  key={message.id}
-                  message={message}
-                  disabled={streaming}
+              {(() => {
+                // 本轮的累计用量并入最后一条 AI 消息底部的过程行，不再单独占一行
+                const lastAssistantId = [...turn.messages]
+                  .reverse()
+                  .find((m) => m.role === 'assistant')?.id
+                const usage =
+                  turn.tokens > 0 && lastAssistantId
+                    ? {
+                        tokens: turn.tokens,
+                        summary: turn.summary,
+                        askedAt: turn.askedAt,
+                        startedAt: turn.startedAt,
+                        endedAt: turn.endedAt,
+                        model: turn.modelId ?? modelId,
+                        streaming: turn.messages.some((m) => m.status === 'streaming')
+                      }
+                    : undefined
+                return turn.messages.map((message) => (
+                  <MessageItem
+                    key={message.id}
+                    message={message}
+                    usage={message.id === lastAssistantId ? usage : undefined}
+                    disabled={streaming}
                   onAllowAll={allowAllForSession}
                   selectionMode={selectMode}
                   selected={selectedIds.has(message.id)}
@@ -491,20 +650,14 @@ export function ChatView(): JSX.Element {
                       thinkingMode: resolveThinkingMode(settings.thinkingMode)
                     })
                   }
+                  onCopy={copyMessage}
+                  onRetryFrom={retryTurn}
+                  onRevertFiles={revertToMessage}
+                  onDeleteTurn={deleteTurnById}
+                  canAct={!streaming && !selectMode}
                 />
-              ))}
-              {/* 该轮全部 AI 输出结束后，给出这一问一答的累计 token / 时间 / 耗时 / 模型 */}
-              {turn.tokens > 0 ? (
-                <TurnUsage
-                  tokens={turn.tokens}
-                  summary={turn.summary}
-                  askedAt={turn.askedAt}
-                  startedAt={turn.startedAt}
-                  endedAt={turn.endedAt}
-                  model={turn.modelId ?? modelId}
-                  streaming={turn.messages.some((m) => m.status === 'streaming')}
-                />
-              ) : null}
+                ))
+              })()}
             </div>
           ))
         )}
@@ -575,7 +728,7 @@ export function ChatView(): JSX.Element {
             placeholder={
               ready ? '输入消息，Enter 发送，Shift+Enter 换行；可拖入或粘贴文件' : '引擎未就绪…'
             }
-            rows={1}
+            rows={2}
             disabled={!ready}
             onChange={(event) => setInput(event.target.value)}
             onPaste={(event) => {
@@ -623,14 +776,7 @@ export function ChatView(): JSX.Element {
               <Icon name="plus" size={16} />
             </button>
 
-            <SecurityModePicker
-              sessionId={sessionId}
-              onManage={() => openAppSettings('security')}
-            />
-            <ThinkingModePicker
-              value={settings.thinkingMode}
-              onChange={(next) => void updateSettings({ thinkingMode: next })}
-            />
+            <ComposerOptions sessionId={sessionId} />
 
             {/* 仅当项目「尚未建索引」时才露出建索引入口；已建索引则不占位（重建走设置页 / 菜单） */}
             {cgIndex.known && !cgIndex.initialized ? (
@@ -646,7 +792,7 @@ export function ChatView(): JSX.Element {
                 onClick={() => void startCgIndex()}
               >
                 <Icon name="search" size={13} />
-                {cgIndex.label ?? '建索引'}
+                <span className="picker__label">{cgIndex.label ?? '建索引'}</span>
               </button>
             ) : null}
 
@@ -659,15 +805,29 @@ export function ChatView(): JSX.Element {
             />
 
             {streaming ? (
-              <button
-                type="button"
-                className="chat__send chat__send--stop"
-                title="停止生成"
-                aria-label="停止生成"
-                onClick={abort}
-              >
-                <Icon name="stop" size={14} />
-              </button>
+              <>
+                {queueLength > 0 ? (
+                  <button
+                    type="button"
+                    className="chat__send chat__send--merge"
+                    title={`把输入框内容与队列中 ${queueLength} 条消息合并成一条发送`}
+                    disabled={!input.trim() && attach.attachments.length === 0}
+                    aria-label="合并发送"
+                    onClick={submitMerged}
+                  >
+                    <Icon name="copy" size={13} />
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="chat__send chat__send--stop"
+                  title="停止生成"
+                  aria-label="停止生成"
+                  onClick={abort}
+                >
+                  <Icon name="stop" size={14} />
+                </button>
+              </>
             ) : (
               <button
                 type="button"
@@ -685,6 +845,14 @@ export function ChatView(): JSX.Element {
           </div>
         </div>
       </div>
+
+      {toast ? (
+        <div className="chat__toast" role="status">
+          {toast}
+        </div>
+      ) : null}
+
+      {confirmState ? <ConfirmDialog state={confirmState} onClose={() => setConfirmState(null)} /> : null}
     </div>
   )
 }
@@ -731,14 +899,22 @@ function serializeMessages(selected: ChatMessage[]): string {
 
 function MessageItem({
   message,
+  usage,
   disabled,
   onAllowAll,
   selectionMode = false,
   selected = false,
   onToggleSelect,
-  onRespond
+  onRespond,
+  onCopy,
+  onRetryFrom,
+  onRevertFiles,
+  onDeleteTurn,
+  canAct
 }: {
   message: ChatMessage
+  /** 该轮的累计用量：只挂在最后一条 AI 消息底部的过程行上 */
+  usage?: TurnUsageInfo
   disabled: boolean
   /** 把本会话切成 full-access（用于授权卡片的一键放行） */
   onAllowAll: () => Promise<void>
@@ -747,56 +923,141 @@ function MessageItem({
   selected?: boolean
   onToggleSelect?: () => void
   onRespond: (values: string[]) => void
+  /** 复制该消息文本 */
+  onCopy: (message: ChatMessage) => void
+  /** 从该用户消息处删除此后内容并重新发送（重新发送 / 重新生成共用） */
+  onRetryFrom: (message: ChatMessage) => void
+  /** 消息级回退：恢复该消息后所有文件改动（含已保留）并截断对话 */
+  onRevertFiles: (message: ChatMessage) => void
+  /** 删除该消息所在的一整轮对话 */
+  onDeleteTurn: (message: ChatMessage) => void
+  /** 是否允许执行重试/删除（流式进行中或多选模式下禁止） */
+  canAct: boolean
 }): JSX.Element {
   const isUser = message.role === 'user'
-  // ask_user 由交互卡片代表（见 ToolActivity.hidden），不重复渲染成工具条目
-  const visibleTools = message.tools.filter((tool) => !tool.hidden)
+  const streaming = message.status === 'streaming'
+  const [copied, setCopied] = useState(false)
+
+  const pick = selectionMode ? (
+    <label className="message__pick">
+      <input
+        type="checkbox"
+        checked={selected}
+        onChange={onToggleSelect}
+        aria-label={isUser ? '选择这条用户消息' : '选择这条 Agent 消息'}
+      />
+    </label>
+  ) : null
+
+  const copy = (): void => {
+    onCopy(message)
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1600)
+  }
+
+  const actions = selectionMode || streaming ? null : (
+    <div className="message__actions">
+      <button
+        type="button"
+        className="message__action"
+        title={copied ? '已复制' : '复制'}
+        aria-label="复制"
+        onClick={copy}
+      >
+        <Icon name={copied ? 'check' : 'copy'} size={13} />
+      </button>
+      {isUser ? (
+        <>
+          <button
+            type="button"
+            className="message__action"
+            title="回退到此处：撤销此消息及后续轮次的全部文件修改（含已保留），并删除对应对话"
+            aria-label="回退到此处"
+            disabled={!canAct}
+            onClick={() => onRevertFiles(message)}
+          >
+            <Icon name="restart" size={13} />
+          </button>
+          <button
+            type="button"
+            className="message__action"
+            title="删除此后的对话并重新发送"
+            aria-label="重新发送"
+            disabled={!canAct}
+            onClick={() => onRetryFrom(message)}
+          >
+            <Icon name="send" size={13} />
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          className="message__action"
+          title="从上一条提问处重新生成"
+          aria-label="重新生成"
+          disabled={!canAct}
+          onClick={() => onRetryFrom(message)}
+        >
+          <Icon name="restart" size={13} />
+        </button>
+      )}
+      <button
+        type="button"
+        className="message__action message__action--danger"
+        title="删除这一轮问答"
+        aria-label="删除本轮"
+        disabled={!canAct}
+        onClick={() => onDeleteTurn(message)}
+      >
+        <Icon name="trash" size={13} />
+      </button>
+    </div>
+  )
+
+  if (isUser) {
+    // 用户消息：右对齐气泡，无角色标签 —— 对齐靠位置与底色区分
+    return (
+      <article className="message message--user">
+        {pick}
+        <div className="message__bubble-wrap">
+          {actions}
+          <div className="message__bubble">{message.content}</div>
+          {message.attachments && message.attachments.length > 0 ? (
+            <div className="message__attachments">
+              {message.attachments.map((file) => (
+                <span key={file.path} className="attach-chip" title={file.path}>
+                  <Icon name={file.type.startsWith('image/') ? 'image' : 'file'} size={12} />
+                  <span className="attach-chip__name">{file.name}</span>
+                  <span className="attach-chip__size">{formatBytes(file.size)}</span>
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </article>
+    )
+  }
 
   return (
-    <article className={`message message--${message.role}`}>
-      <header className="message__role">
-        {selectionMode ? (
-          <label className="message__pick">
-            <input
-              type="checkbox"
-              checked={selected}
-              onChange={onToggleSelect}
-              aria-label={isUser ? '选择这条用户消息' : '选择这条 Agent 消息'}
-            />
-          </label>
+    <article className="message message--assistant">
+      {pick}
+
+      <MessageTimeline message={message} streaming={streaming} />
+
+      {/* 该轮累计用量常显；操作图标随悬停出现，两者同行（用量在左） */}
+      <div className="message__footer">
+        {usage ? (
+          <TurnUsage
+            tokens={usage.tokens}
+            summary={usage.summary}
+            askedAt={usage.askedAt}
+            startedAt={usage.startedAt}
+            endedAt={usage.endedAt}
+            model={usage.model}
+            streaming={usage.streaming}
+          />
         ) : null}
-        {isUser ? '你' : 'Agent'}
-      </header>
-
-      {message.thinking ? (
-        <details className="message__thinking">
-          <summary>思考过程</summary>
-          <pre>{message.thinking}</pre>
-        </details>
-      ) : null}
-
-      {visibleTools.length > 0 ? (
-        <div className="message__tools">
-          {visibleTools.map((tool) => (
-            <ToolItem key={tool.id} tool={tool} />
-          ))}
-        </div>
-      ) : null}
-
-      {message.attachments && message.attachments.length > 0 ? (
-        <div className="message__attachments">
-          {message.attachments.map((file) => (
-            <span key={file.path} className="attach-chip" title={file.path}>
-              <Icon name={file.type.startsWith('image/') ? 'image' : 'file'} size={12} />
-              <span className="attach-chip__name">{file.name}</span>
-              <span className="attach-chip__size">{formatBytes(file.size)}</span>
-            </span>
-          ))}
-        </div>
-      ) : null}
-
-      <div className="message__content">
-        {message.content || (message.status === 'streaming' ? <span className="cursor" /> : null)}
+        {actions}
       </div>
 
       {message.pending ? (
@@ -811,6 +1072,241 @@ function MessageItem({
 
       {message.error ? <div className="message__error">{message.error}</div> : null}
     </article>
+  )
+}
+
+/** 全尺寸卡片工具（diff / 子代理）：不进折叠过程块，永远在原位全显 */
+function isFullSizeTool(tool: ToolActivity): boolean {
+  return (
+    tool.name === 'subagent' ||
+    ((tool.name === 'write_file' || tool.name === 'edit_file' || tool.name === 'delete_file') &&
+      Boolean(tool.change))
+  )
+}
+
+/** 过程块内的紧凑条目：一段思考 或 一次过程性工具调用 */
+type CompactEntry = { kind: 'thinking'; text: string } | { kind: 'tool'; tool: ToolActivity }
+
+/** 一轮问答的累计用量（并入最后一条 AI 消息底部的过程行） */
+type TurnUsageInfo = {
+  tokens: number
+  summary: UsageDetailRow[]
+  askedAt: number
+  startedAt?: number
+  endedAt?: number
+  model?: string
+  streaming: boolean
+}
+
+/** 内联段落：正文段 或 全尺寸卡片（diff / 子代理），在过程块之后按原顺序渲染 */
+type InlineSegment = { type: 'tool'; tool: ToolActivity } | { type: 'content'; text: string }
+
+/**
+ * 消息时间线：思考 / 工具调用合并成一个可折叠过程块，正文与全尺寸卡片按序排在其后。
+ *
+ * useChat 在收 SSE 帧时同步维护 message.items（帧严格按发生顺序到达）。
+ * 对齐 wuzu-client 的 CliThinkingTimeline：一轮里所有过程性条目（思考段、
+ * 普通工具调用）收进**同一个**「过程 · 思考 N 段 · 工具调用 M」折叠块，
+ * 块内按真实时间顺序穿插；正文段与 diff/子代理卡片信息量大，不进折叠，
+ * 在块下按原顺序全显。
+ */
+function MessageTimeline({
+  message,
+  streaming
+}: {
+  message: ChatMessage
+  streaming: boolean
+}): JSX.Element | null {
+  const { processEntries, inline } = useMemo(() => {
+    const toolById = new Map(
+      message.tools.filter((tool) => !tool.hidden).map((tool) => [tool.id, tool])
+    )
+    const processEntries: CompactEntry[] = []
+    const inline: InlineSegment[] = []
+    const seen = new Set<string>()
+
+    for (const item of message.items) {
+      if (item.kind === 'thinking') {
+        processEntries.push({ kind: 'thinking', text: item.text })
+      } else if (item.kind === 'tool') {
+        const tool = toolById.get(item.id)
+        if (!tool || seen.has(tool.id)) continue
+        seen.add(tool.id)
+        if (isFullSizeTool(tool)) inline.push({ type: 'tool', tool })
+        else processEntries.push({ kind: 'tool', tool })
+      } else if (item.kind === 'content') {
+        inline.push({ type: 'content', text: item.text })
+      }
+      // interaction：应答卡片由 MessageItem 单独渲染，时间线不占位
+    }
+
+    // 兜底：tools 里存在但时间线没记录的条目（异常帧序），挂到过程块末尾
+    for (const tool of toolById.values()) {
+      if (seen.has(tool.id)) continue
+      if (isFullSizeTool(tool)) inline.push({ type: 'tool', tool })
+      else processEntries.push({ kind: 'tool', tool })
+    }
+    return { processEntries, inline }
+  }, [message.items, message.tools])
+
+  if (processEntries.length === 0 && inline.length === 0) {
+    return streaming && !message.pending ? (
+      <div className="message__streaming-hint">
+        <span className="message__spinner" />
+        处理中…
+      </div>
+    ) : null
+  }
+
+  return (
+    <>
+      {processEntries.length > 0 ? (
+        <ProcessGroup entries={processEntries} streaming={streaming} />
+      ) : null}
+      {inline.map((segment, index) =>
+        segment.type === 'tool' ? (
+          <div key={`t-${segment.tool.id}`} className="message__tools">
+            <ToolItem tool={segment.tool} />
+          </div>
+        ) : (
+          <div key={`c-${index}`} className="message__content">
+            <Markdown text={segment.text} />
+          </div>
+        )
+      )}
+      {streaming && !message.pending ? (
+        <div className="message__streaming-hint">
+          <span className="message__spinner" />
+          处理中…
+        </div>
+      ) : null}
+    </>
+  )
+}
+
+/**
+ * 过程区（思考 + 过程性工具调用）
+ *
+ * 对齐 wuzu-client 的双层折叠形制：
+ * - 单条思考 / 工具调用是一行 24px 紧凑日志行（圆点 + 名称 + 摘要 + hover 才出现的箭头）；
+ * - 一轮结束后，整段过程收成一行摘要「过程 · 思考 N 段 · 工具调用 M」，点开原样还原；
+ *   流式进行中保持展开，方便实时围观；用户手动点过后以用户为准。
+ */
+function ProcessGroup({
+  entries,
+  streaming
+}: {
+  entries: CompactEntry[]
+  streaming: boolean
+}): JSX.Element {
+  // 折叠状态：默认流式展开 / 结束收起；一旦用户手动点过，以用户选择为准
+  const [manual, setManual] = useState<boolean | null>(null)
+  const expanded = manual ?? streaming
+
+  const thinkingCount = entries.filter((entry) => entry.kind === 'thinking').length
+  const toolCount = entries.length - thinkingCount
+  const summaryParts: string[] = []
+  if (thinkingCount > 0) summaryParts.push(`思考 ${thinkingCount} 段`)
+  if (toolCount > 0) summaryParts.push(`工具调用 ${toolCount}`)
+  const failCount = entries.filter(
+    (entry) => entry.kind === 'tool' && entry.tool.state === 'error'
+  ).length
+  if (failCount > 0) summaryParts.push(`${failCount} 失败`)
+
+  return (
+    <div className="process">
+      <button
+        type="button"
+        className="process__summary"
+        aria-expanded={expanded}
+        onClick={() => setManual(!expanded)}
+      >
+        <span className="process__summary-dot" />
+        <span className="process__summary-text">
+          {streaming ? '过程中' : '过程'} · {summaryParts.join(' · ')}
+        </span>
+        <Icon name="chevron" size={12} className="process__chevron" />
+      </button>
+      {expanded ? (
+        <div className="process__body">
+          {entries.map((entry, index) =>
+            entry.kind === 'thinking' ? (
+              <ThinkingRow key={`think-${index}`} text={entry.text} />
+            ) : (
+              <CompactToolRow key={entry.tool.id} tool={entry.tool} />
+            )
+          )}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/** 思考行：紫色圆点 + 单行预览，展开看全文（左侧竖线表示从属于该行） */
+function ThinkingRow({ text }: { text: string }): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const preview = text.replace(/\s+/g, ' ')
+  const truncated = preview.length > 90 ? `${preview.slice(0, 87)}…` : preview
+
+  return (
+    <div className="logline-wrap">
+      <button
+        type="button"
+        className="logline"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="logline__dot logline__dot--think" />
+        <span className="logline__text" title={preview}>
+          {truncated}
+        </span>
+        <Icon name="chevron" size={12} className="logline__chevron" />
+      </button>
+      {open ? (
+        <div className="logline__detail">
+          <pre>{text}</pre>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/** 紧凑工具行：7px 状态圆点 + 中文工具名 + 参数摘要，展开看原始参数与结果 */
+function CompactToolRow({ tool }: { tool: ToolActivity }): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const label = toolDisplayName(tool.name)
+  const summary = toolParamSummary(tool.args)
+  const hasDetail = Boolean(tool.args || tool.result)
+
+  return (
+    <div className="logline-wrap">
+      <button
+        type="button"
+        className={`logline${hasDetail ? '' : ' logline--static'}`}
+        aria-expanded={open}
+        disabled={!hasDetail}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span
+          className={`logline__dot logline__dot--${tool.state === 'running' ? 'running' : tool.state === 'error' ? 'error' : 'done'}`}
+        />
+        <span className={`logline__name${tool.state === 'error' ? ' logline__name--error' : ''}`}>
+          {label}
+        </span>
+        {summary ? (
+          <span className="logline__summary" title={summary}>
+            {summary}
+          </span>
+        ) : null}
+        {hasDetail ? <Icon name="chevron" size={12} className="logline__chevron" /> : null}
+      </button>
+      {open && hasDetail ? (
+        <div className="logline__detail">
+          {tool.args ? <pre>{tool.args}</pre> : null}
+          {tool.result ? <pre>{tool.result}</pre> : null}
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -1183,23 +1679,6 @@ function ToolItem({ tool }: { tool: ToolActivity }): JSX.Element {
     return <FileChangeCard change={tool.change} state={tool.state} />
   }
 
-  // 默认：中文工具名 + 参数摘要一行；details 展开看原始参数与结果
-  const label = toolDisplayName(tool.name)
-  const summary = toolParamSummary(tool.args)
-
-  return (
-    <details className={`tool tool--${tool.state}`} open={tool.state === 'running'}>
-      <summary>
-        <span className="tool__name">{label}</span>
-        {summary ? (
-          <span className="tool__summary" title={summary}>
-            {summary}
-          </span>
-        ) : null}
-        {tool.state === 'running' ? <span className="tool__badge">执行中</span> : null}
-      </summary>
-      {tool.args ? <pre className="tool__args">{tool.args}</pre> : null}
-      {tool.result ? <pre className="tool__result">{tool.result}</pre> : null}
-    </details>
-  )
+  // 其余过程性工具由 ProcessSection 里的紧凑日志行承接，走到这里说明是兜底
+  return <CompactToolRow tool={tool} />
 }
