@@ -1,3 +1,5 @@
+import { getWorkspaceState } from '@renderer/core/workspace/workspace-store'
+
 /**
  * 工具展示辅助：英文名 → 中文名 + 参数摘要
  *
@@ -110,7 +112,7 @@ export function toolParamSummary(argsJson: string): string {
       const record = args as Record<string, unknown>
       for (const key of SUMMARY_KEYS) {
         const value = record[key]
-        if (typeof value === 'string' && value) return condense(value)
+        if (typeof value === 'string' && value) return condense(relativize(value))
         if (typeof value === 'number' || typeof value === 'boolean') return String(value)
       }
       return ''
@@ -126,4 +128,20 @@ export function toolParamSummary(argsJson: string): string {
 function condense(text: string): string {
   const oneLine = text.replace(/\s+/g, ' ').trim()
   return oneLine.length > 96 ? `${oneLine.slice(0, 96)}…` : oneLine
+}
+
+/**
+ * 绝对路径裁成相对工作区根的路径：参数里的 `D:\dev\aether-code\package.json`
+ * 在摘要行显示为 `package.json`；不在工作区内的路径原样保留。
+ * 分隔符与盘符大小写都归一后比较（Windows 不区分大小写、两向斜杠混用）。
+ */
+function relativize(value: string): string {
+  const root = getWorkspaceState().root
+  if (!root) return value
+  const norm = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  const v = norm(value)
+  const r = norm(root)
+  if (v === r) return '.'
+  if (v.startsWith(`${r}/`)) return value.replace(/\\/g, '/').replace(/\/+$/, '').slice(r.length + 1)
+  return value
 }

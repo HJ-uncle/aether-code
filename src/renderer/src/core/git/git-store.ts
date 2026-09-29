@@ -253,9 +253,66 @@ export function getGitState(): GitStoreState {
   return state
 }
 
+// ==================== 提交信息草稿持久化（按仓库 cwd） ====================
+
+const COMMIT_DRAFTS_KEY = 'aether:gitCommitDrafts'
+const MAX_DRAFT_SLOTS = 50
+
+function readCommitDrafts(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(COMMIT_DRAFTS_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const table: Record<string, string> = {}
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === 'string' && value) table[key] = value
+    }
+    return table
+  } catch {
+    return {}
+  }
+}
+
+function loadCommitDraft(cwd: string): string {
+  return readCommitDrafts()[cwd] ?? ''
+}
+
+let commitDraftTimer = 0
+
+/** 防抖落盘：提交信息是高频输入，每次按键都写 localStorage 不值 */
+function scheduleCommitDraftSave(cwd: string, text: string): void {
+  if (!cwd) return
+  clearTimeout(commitDraftTimer)
+  commitDraftTimer = window.setTimeout(() => {
+    const table = readCommitDrafts()
+    if (!text.trim()) {
+      delete table[cwd]
+    } else {
+      delete table[cwd]
+      table[cwd] = text
+      const keys = Object.keys(table)
+      while (keys.length > MAX_DRAFT_SLOTS) delete table[keys.shift() as string]
+    }
+    try {
+      localStorage.setItem(COMMIT_DRAFTS_KEY, JSON.stringify(table))
+    } catch {
+      // 存储写失败不打断输入
+    }
+  }, 400)
+}
+
+/** 提交成功后清空输入框与对应草稿 */
+function clearCommitMessage(): void {
+  clearTimeout(commitDraftTimer)
+  setState({ commitMessage: '' })
+  scheduleCommitDraftSave(state.cwd, '')
+}
+
 /** 提交信息输入框的受控 setter（GitCommitBar 输入 / AI 生成回填用） */
 export function setCommitMessage(v: string): void {
   setState({ commitMessage: v })
+  scheduleCommitDraftSave(state.cwd, v)
 }
 
 export function onGitChanged(listener: () => void): () => void {
@@ -390,7 +447,8 @@ export function refreshGit(root: string | null): Promise<void> {
       isRepo: false,
       currentDiff: null,
       hunksMap: {},
-      commitMessage: '',
+      // 换仓库时恢复该仓库的提交草稿（没有则为空），而不是一律清空
+      commitMessage: loadCommitDraft(nextCwd),
       selectedPath: '',
       merging: false,
       mergeMessage: '',
@@ -725,7 +783,8 @@ export async function commit(): Promise<GitResult> {
         ? await mutate(() => gitCommit(state.cwd, state.commitMessage), 'commit')
         : await mutate(() => gitStageAllAndCommit(state.cwd, state.commitMessage), 'commit')
     if (res.success) {
-      setState({ commitMessage: '', selectedPath: '', currentDiff: null })
+      clearCommitMessage()
+      setState({ selectedPath: '', currentDiff: null })
     }
     return res
   } finally {
@@ -742,7 +801,8 @@ export async function commitStaged(): Promise<GitResult> {
   try {
     const res = await mutate(() => gitCommit(state.cwd, state.commitMessage), 'commit')
     if (res.success) {
-      setState({ commitMessage: '', selectedPath: '', currentDiff: null })
+      clearCommitMessage()
+      setState({ selectedPath: '', currentDiff: null })
     }
     return res
   } finally {
@@ -756,7 +816,8 @@ export async function commitAll(): Promise<GitResult> {
   try {
     const res = await mutate(() => gitStageAllAndCommit(state.cwd, state.commitMessage), 'commit')
     if (res.success) {
-      setState({ commitMessage: '', selectedPath: '', currentDiff: null })
+      clearCommitMessage()
+      setState({ selectedPath: '', currentDiff: null })
     }
     return res
   } finally {
@@ -767,7 +828,8 @@ export async function commitAll(): Promise<GitResult> {
 /** 提交（含 amend）成功后清空提交框与选中态 */
 function afterCommit(res: GitResult): GitResult {
   if (res.success) {
-    setState({ commitMessage: '', selectedPath: '', currentDiff: null })
+    clearCommitMessage()
+    setState({ selectedPath: '', currentDiff: null })
   }
   return res
 }

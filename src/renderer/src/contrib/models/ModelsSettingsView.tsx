@@ -3,6 +3,7 @@ import { useApp } from '@renderer/core/app-context'
 import { removeModel, useModels } from '@renderer/core/engine/model-store'
 import { Icon } from '@renderer/workbench/icons'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
+import { Select } from '@renderer/workbench/Select'
 import { SettingsContent, SettingsGroup, SettingsRow } from '../settings/SettingsGroup'
 import { ModelFormDialog } from './ModelFormDialog'
 
@@ -15,7 +16,7 @@ import { ModelFormDialog } from './ModelFormDialog'
  * 就是实际可用的模型集合。
  */
 export function ModelsSettingsView(): JSX.Element {
-  const { ready } = useApp()
+  const { ready, settings, updateSettings } = useApp()
   const { models, loading, error, loaded, refresh } = useModels()
   const [editing, setEditing] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
@@ -111,6 +112,56 @@ export function ModelsSettingsView(): JSX.Element {
           ))}
         </SettingsGroup>
       ) : null}
+
+      <SettingsGroup title="按用途指派">
+        <SettingsContent>
+          <p className="sg__note">
+            默认所有场景都用输入框旁选的主对话模型。这里可以把子代理、轻任务单独指派给
+            更便宜的模型省 token——子代理跑的是范围明确的子任务；轻任务是图片理解、
+            提交信息生成、输入润色这类「拿结果即走」的旁路调用，都不需要最强推理。
+          </p>
+        </SettingsContent>
+        <SettingsRow
+          label="子代理"
+          description="派发的子 Agent（调研/并行任务）使用的模型"
+        >
+          <Select
+            className="sg__select-field"
+            title="子代理使用的模型"
+            width={240}
+            disabled={!ready || models.length === 0}
+            value={settings.subagentModelId}
+            onChange={(value) => void updateSettings({ subagentModelId: value })}
+            options={[
+              { value: '', label: '跟随主对话模型' },
+              ...models.map((model) => ({
+                value: model.modelId,
+                label: model.displayName?.trim() || model.modelId
+              }))
+            ]}
+          />
+        </SettingsRow>
+        <SettingsRow
+          label="轻任务"
+          description="图片理解、提交信息生成、输入润色等旁路调用使用的模型"
+        >
+          <Select
+            className="sg__select-field"
+            title="轻任务使用的模型"
+            width={240}
+            disabled={!ready || models.length === 0}
+            value={settings.utilityModelId}
+            onChange={(value) => void updateSettings({ utilityModelId: value })}
+            options={[
+              { value: '', label: '跟随主对话模型' },
+              ...models.map((model) => ({
+                value: model.modelId,
+                label: model.displayName?.trim() || model.modelId
+              }))
+            ]}
+          />
+        </SettingsRow>
+      </SettingsGroup>
 
       <SettingsGroup title="说明">
         <SettingsContent>

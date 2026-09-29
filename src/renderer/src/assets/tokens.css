@@ -122,6 +122,12 @@
   /* 今日提交高亮色（对齐 wuzu-client） */
   --today-commit-color: #7e9dbf;
 
+  /* git 装饰色（文件名着色 / ahead-behind 徽章 / ref 徽章）。
+     深色底沿用 GitHub Dark 的哑光色板；浅色外观下有专门压深的版本（见 light 块）。 */
+  --git-modified: #e2c08d;
+  --git-added: #73c991;
+  --git-deleted: #f14c4c;
+
   /* 安全/不可用表面：用于禁用态、只读区、代码块底 */
   --bg-inset: rgba(0, 0, 0, 0.22);
 
@@ -200,6 +206,12 @@
   --danger-contrast: #ffffff;
   /* 今日提交高亮色（对齐 wuzu-client） */
   --today-commit-color: #4b95f1;
+
+  /* git 装饰色的浅色版本：深色底那套在 #fafafa 上对比度只有 ~1.6:1，
+     基本不可见；这里压深到 GitHub Light 色板（对比度 ≥ 3.5:1）。 */
+  --git-modified: #9a6700;
+  --git-added: #116329;
+  --git-deleted: #cf222e;
 
   --bg-inset: rgba(0, 0, 0, 0.05);
 

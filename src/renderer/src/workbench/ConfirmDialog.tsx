@@ -22,6 +22,11 @@ export interface ConfirmOptions {
   confirmText?: string
   /** 危险操作（删除/覆盖）确认按钮用警示色 */
   danger?: boolean
+  /** 中间附加按钮（如「保存并关闭」）：run 返回 true 视同确认 */
+  tertiary?: {
+    text: string
+    run: () => Promise<boolean> | boolean
+  }
 }
 
 interface ConfirmRequest extends ConfirmOptions {
@@ -80,6 +85,17 @@ export function ConfirmDialogHost(): JSX.Element | null {
           <button type="button" className="btn" onClick={() => settle(false)}>
             取消
           </button>
+          {req.tertiary ? (
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                void Promise.resolve(req.tertiary?.run() ?? false).then((ok) => settle(ok))
+              }}
+            >
+              {req.tertiary.text}
+            </button>
+          ) : null}
           <button
             type="button"
             className={`btn btn--primary${req.danger ? ' btn--danger' : ''}`}

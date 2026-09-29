@@ -9,9 +9,10 @@
  * - 右侧下拉（ContextMenu）：提交（暂存区）/ 提交（全部改动）/ 提交并推送 / 提交并同步 /
  *   amend / undo / 空提交 / 同步 / 拉取 / 推送|发布。
  *
- * 与源的差异：toast/错误弹窗用行内 feedback 文本代替（aether 暂无 toast 服务）。
+ * 与源的差异：错误反馈走全局 toast（core/toast.ts）。
  */
 import { useEffect, useRef, useState, type JSX } from 'react'
+import { toast } from '../../core/toast'
 import {
   useGitStore,
   busyOperationOf,
@@ -33,6 +34,8 @@ import {
   mergeStrategyStore
 } from '../../core/git/git-store'
 import { gitSuggestCommitMessage } from '../../core/git/git-client'
+import { utilityChat } from '../../core/engine/utility-chat'
+import { useApp } from '../../core/app-context'
 import { runGitRemoteAction, type GitRemoteAction } from '../../core/git/git-remote-actions'
 import { chooseMergeStrategy, type ChooseStrategy } from '../../core/git/git-merge-strategy'
 import { ContextMenu, type ContextMenuItem } from '../../workbench/ContextMenu'
@@ -52,10 +55,10 @@ const labels: Record<GitRemoteAction, string> = {
 
 export function GitCommitBar(): JSX.Element {
   const s = useGitStore()
+  const { settings } = useApp()
   const [suggesting, setSuggesting] = useState(false)
   const [remotePending, setRemotePending] = useState<GitRemoteAction | ''>('')
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
-  const [feedback, setFeedback] = useState('')
   /** SSH 口令 / 空提交信息两个对话框的开关 */
   const [sshAsk, setSshAsk] = useState<{ resolve: (v: string | null) => void } | null>(null)
   const [emptyAsk, setEmptyAsk] = useState(false)
@@ -118,10 +121,42 @@ export function GitCommitBar(): JSX.Element {
     setSuggesting(true)
     try {
       const res = await gitSuggestCommitMessage(s.cwd)
-      if (res.success && res.message) setCommitMessage(res.message)
-      else setFeedback(res.error ?? '生成失败，请稍后重试')
+      if (!res.success) {
+        toast.error(res.error ?? '生成失败，请稍后重试')
+        return
+      }
+      // AI 增强：有改动上下文时让轻任务模型读 diff 生成更贴合的信息；
+      // 失败（未配置模型 / 引擎不可用）时静默回退到本地启发式文案。
+      if (res.aiContext) {
+        try {
+          const ai = await utilityChat({
+            model: settings.utilityModelId || undefined,
+            systemPrompt:
+              '你是资深工程师，负责根据 git 改动摘要撰写提交信息。规则：使用中文；' +
+              '单行、不超过 72 个字符；遵循 Conventional Commits（feat/fix/refactor/docs/style/test/chore/build/perf 前缀）；' +
+              '概括「改了什么、为什么」，不要罗列每个文件；不要输出解释、引号或代码围栏。',
+            userPrompt: `以下是本次 git 改动的统计与 diff 片段，请生成一行提交信息：\n\n${res.aiContext}`,
+            temperature: 0.4,
+            maxTokens: 200
+          })
+          const cleaned = ai.text
+            .replace(/^[​\s]+/, '')
+            .replace(/```[a-z]*\n?/gi, '')
+            .replace(/^["'`]+|["'`]+$/g, '')
+            .split('\n')[0]
+            .trim()
+          if (cleaned) {
+            setCommitMessage(cleaned)
+            return
+          }
+        } catch {
+          // 回退本地文案
+        }
+      }
+      if (res.message) setCommitMessage(res.message)
+      else toast.error('生成失败，请稍后重试')
     } catch (err) {
-      setFeedback(err instanceof Error ? err.message : '生成失败，请稍后重试')
+      toast.error(err instanceof Error ? err.message : '生成失败，请稍后重试')
     } finally {
       setSuggesting(false)
     }
@@ -131,7 +166,8 @@ export function GitCommitBar(): JSX.Element {
     if (!canCommit) return
     const smart = stagedFilesOf(s).length === 0
     const res = await commit()
-    setFeedback(res.success ? (smart ? '已提交全部改动' : '提交成功') : (res.error ?? '提交失败'))
+    if (res.success) toast.success(smart ? '已提交全部改动' : '提交成功')
+    else toast.error(res.error ?? '提交失败')
   }
 
   /** SSH 私钥口令：PromptDialog 承载，密码语义靠 note 提示（aether PromptDialog 无 inputType） */
@@ -154,9 +190,8 @@ export function GitCommitBar(): JSX.Element {
         await forceRefreshGit()
       }
       if (!result) return
-      setFeedback(
-        result.success ? `${labels[action]}完成` : (result.error ?? `${labels[action]}失败`)
-      )
+      if (result.success) toast.success(`${labels[action]}完成`)
+      else toast.error(result.error ?? `${labels[action]}失败`)
     } finally {
       setRemotePending('')
     }
@@ -178,7 +213,8 @@ export function GitCommitBar(): JSX.Element {
     ok: string
   ): Promise<void> => {
     const res = await action()
-    setFeedback(res.success ? ok : (res.error ?? '操作失败'))
+    if (res.success) toast.success(ok)
+    else toast.error(res.error ?? '操作失败')
   }
 
   const menuItems: ContextMenuItem[] =
@@ -203,9 +239,10 @@ export function GitCommitBar(): JSX.Element {
             onSelect: () => {
               void (async () => {
                 const c = await commit()
-                if (!c.success) return setFeedback(c.error ?? '提交失败')
+                if (!c.success) return toast.error(c.error ?? '提交失败')
                 const p = await push()
-                setFeedback(p.success ? '已提交并推送' : (p.error ?? '推送失败'))
+                if (p.success) toast.success('已提交并推送')
+                else toast.error(p.error ?? '推送失败')
               })()
             }
           },
@@ -216,7 +253,7 @@ export function GitCommitBar(): JSX.Element {
             onSelect: () => {
               void (async () => {
                 const c = await commit()
-                if (!c.success) return setFeedback(c.error ?? '提交失败')
+                if (!c.success) return toast.error(c.error ?? '提交失败')
                 await runRemote('sync')
               })()
             }
@@ -316,7 +353,6 @@ export function GitCommitBar(): JSX.Element {
         </button>
       </div>
 
-      {feedback ? <div className="git-commitbar__feedback">{feedback}</div> : null}
 
       {menu ? (
         <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />
@@ -344,7 +380,7 @@ export function GitCommitBar(): JSX.Element {
           onConfirm={async (msg) => {
             const res = await commitEmpty(msg)
             if (!res.success) throw new Error(res.error ?? '空提交失败')
-            setFeedback('已创建空提交')
+            toast.success('已创建空提交')
           }}
           onClose={() => setEmptyAsk(false)}
         />

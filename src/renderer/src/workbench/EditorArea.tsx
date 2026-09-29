@@ -5,6 +5,7 @@ import {
   useState,
   type JSX,
   type MouseEvent as ReactMouseEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   useSyncExternalStore
 } from 'react'
 import { useApp } from '@renderer/core/app-context'
@@ -14,9 +15,11 @@ import {
   getDocument,
   getEditorState,
   isDirty,
+  saveDocument,
   setActiveDocument,
   useEditor
 } from '@renderer/core/editor/editor-store'
+import { toast } from '@renderer/core/toast'
 import { setContextKey } from '@renderer/core/platform/context-keys'
 import { getKeybindingHint } from '@renderer/core/platform/keybindings'
 import { releaseModel } from '@renderer/core/editor/monaco-setup'
@@ -143,9 +146,22 @@ export function EditorArea(): JSX.Element {
       if (doc && isDirty(doc)) {
         void confirmDialog({
           title: '关闭未保存的文件',
-          body: `「${doc.name}」有未保存的修改，确定关闭吗？`,
-          confirmText: '关闭',
-          danger: true
+          body: `「${doc.name}」有未保存的修改。`,
+          confirmText: '不保存并关闭',
+          danger: true,
+          tertiary: {
+            text: '保存并关闭',
+            run: async () => {
+              try {
+                await saveDocument(filePath)
+                return true
+              } catch (err) {
+                console.error('[editor] 保存失败，放弃关闭', err)
+                toast.error('保存失败，文件未关闭')
+                return false
+              }
+            }
+          }
         }).then((confirmed) => {
           if (!confirmed) return
           performClose()
@@ -198,15 +214,54 @@ export function EditorArea(): JSX.Element {
       }
     ]
   }, [menu, tabs, handleClose])
+  /** 标签栏键盘导航：方向键/Home/End 移动激活项（对齐 VS Code 的标签行为） */
+  const handleTabsKeyDown = useCallback(
+    (event: ReactKeyboardEvent) => {
+      if (tabs.length === 0) return
+      const index = tabs.findIndex((tab) => tab.key === activeKey)
+      const current = index < 0 ? 0 : index
+      let next = -1
+      switch (event.key) {
+        case 'ArrowRight':
+          next = (current + 1) % tabs.length
+          break
+        case 'ArrowLeft':
+          next = (current - 1 + tabs.length) % tabs.length
+          break
+        case 'Home':
+          next = 0
+          break
+        case 'End':
+          next = tabs.length - 1
+          break
+        default:
+          return
+      }
+      event.preventDefault()
+      const target = tabs[next]
+      if (!target || target.key === activeKey) return
+      setLayout({ activeEditorView: target.key })
+      // 焦点跟随激活标签（roving tabindex 模式）
+      requestAnimationFrame(() => {
+        document
+          .querySelector<HTMLElement>(`.editor-tab[data-tab-key="${CSS.escape(target.key)}"]`)
+          ?.focus()
+      })
+    },
+    [tabs, activeKey]
+  )
+
   return (
     <section className="editor-area" aria-label="编辑区">
-      <header className="editor-tabs">
+      <header className="editor-tabs" role="tablist" onKeyDown={handleTabsKeyDown}>
         {tabs.map((tab) => (
           <div
             key={tab.key}
             className={`editor-tab${tab.key === activeKey ? ' is-active' : ''}`}
             role="tab"
             aria-selected={tab.key === activeKey}
+            data-tab-key={tab.key}
+            tabIndex={tab.key === activeKey ? 0 : -1}
             title={tab.filePath ?? tab.title}
             onClick={() => setLayout({ activeEditorView: tab.key })}
             // 中键关闭：与 VS Code 一致（浏览器标签的习惯），只对可关闭标签生效
@@ -357,9 +412,22 @@ export async function closeTabByKey(key: string): Promise<void> {
   if (doc && isDirty(doc)) {
     const confirmed = await confirmDialog({
       title: '关闭未保存的文件',
-      body: `「${doc.name}」有未保存的修改，确定关闭吗？`,
-      confirmText: '关闭',
-      danger: true
+      body: `「${doc.name}」有未保存的修改。`,
+      confirmText: '不保存并关闭',
+      danger: true,
+      tertiary: {
+        text: '保存并关闭',
+        run: async () => {
+          try {
+            await saveDocument(filePath)
+            return true
+          } catch (err) {
+            console.error('[editor] 保存失败，放弃关闭', err)
+            toast.error('保存失败，文件未关闭')
+            return false
+          }
+        }
+      }
     })
     if (!confirmed) return
   }

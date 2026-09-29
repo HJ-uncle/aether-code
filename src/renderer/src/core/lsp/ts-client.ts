@@ -33,20 +33,8 @@ const LSP_LANGUAGES = new Set(['typescript', 'javascript', 'typescriptreact', 'j
  * LSP 接管后必须把它关掉，否则两套诊断叠在一起、错误码互相矛盾。
  */
 export function setBuiltinTsFeatures(disabled: boolean): void {
-  // monaco-editor 0.56 把 languages.typescript 标成仅 { deprecated } 的占位类型，
-  // 运行时字段仍在；这里补一个结构断言绕过声明缺口
-  interface TsDefaults {
-    setDiagnosticsOptions(options: {
-      noSemanticValidation?: boolean
-      noSyntaxValidation?: boolean
-      noSuggestionDiagnostics?: boolean
-    }): void
-    setModeConfiguration(config: Record<string, boolean>): void
-  }
-  const ts = monaco.languages.typescript as unknown as {
-    typescriptDefaults: TsDefaults
-    javascriptDefaults: TsDefaults
-  }
+  // Monaco 0.56 将语言服务移到顶层导出，旧 languages.typescript 在运行时已不存在。
+  const ts = monaco.typescript
   const defaultsList = [ts.typescriptDefaults, ts.javascriptDefaults]
   for (const defaults of defaultsList) {
     defaults.setDiagnosticsOptions({

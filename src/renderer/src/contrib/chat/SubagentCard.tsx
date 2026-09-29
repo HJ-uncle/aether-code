@@ -1,77 +1,74 @@
-import { useEffect, useMemo, useRef, useState, type JSX, type MouseEvent } from 'react'
+import { useEffect, useMemo, useState, type JSX, type MouseEvent } from 'react'
 import type { ToolActivity } from '@renderer/core/engine/useChat'
+import type { SubagentToolCall } from '@shared/subagent'
 import { stopSubagent } from '@renderer/core/engine/client'
+import {
+  isSubagentActive,
+  mergeSubagentRun,
+  subagentStopReasonLabel,
+  toolStatusLabel
+} from '@renderer/core/engine/subagent-state'
+import {
+  refreshSubagentRun,
+  requestSubagentCancellation,
+  useSubagentRun
+} from '@renderer/core/engine/subagent-store'
 import { Icon } from '@renderer/workbench/icons'
 import { toolDisplayName } from './tool-names'
+import { formatTokens } from './usage'
 
-/**
- * 子代理卡片（对齐 wuzu CliSubagentCard）
- *
- * 头部一行：状态点/spinner + 子代理名 + 任务标题 + 收起态统计
- * （N 次调用 · tokens · 耗时，运行中每秒跳动）+ 停止按钮（仅运行中）+ chevron。
- * 正文：目标任务 / 执行详情（中文工具名 + 参数摘要 + 成败点）/ 返回结果。
- *
- * 执行摘要由引擎 subagent 工具收集内层帧后附在输出末尾
- * （__SUBAGENT_META__{json}），这里解析后渲染；解析失败回退普通展示。
- * 停止走引擎 POST /subagent/cancel，只中断该子代理，不影响主会话。
- */
-
-interface SubagentMeta {
-  toolCalls: Array<{ name: string; success: boolean; summary: string }>
-  tokens: number
-  durationMs: number
-}
-
-const META_MARKER = '__SUBAGENT_META__'
-
-function parseArgs(argsJson: string): { task?: string; role?: string } | null {
+function parseObject(value: string): Record<string, unknown> {
   try {
-    const parsed = JSON.parse(argsJson)
-    return parsed && typeof parsed === 'object' ? parsed : null
+    const parsed: unknown = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {}
   } catch {
-    return null
+    return {}
   }
 }
 
-function parseMeta(result: string): { text: string; meta: SubagentMeta | null } {
-  const idx = result.lastIndexOf(META_MARKER)
-  if (idx === -1) return { text: result, meta: null }
-  try {
-    const meta = JSON.parse(result.slice(idx + META_MARKER.length)) as SubagentMeta
-    if (meta && Array.isArray(meta.toolCalls)) {
-      return { text: result.slice(0, idx).trim(), meta }
-    }
-  } catch {
-    // fallthrough
+/** Legacy markers only supply details; they cannot prove that an old task succeeded. */
+function parseLegacy(result: string): {
+  text: string
+  calls: SubagentToolCall[]
+  tokens?: number
+  durationMs?: number
+} {
+  const index = result.lastIndexOf('__SUBAGENT_META__')
+  if (index < 0) return { text: result, calls: [] }
+  const meta = parseObject(result.slice(index + '__SUBAGENT_META__'.length))
+  if (!Array.isArray(meta.toolCalls)) return { text: result, calls: [] }
+  const calls: SubagentToolCall[] = []
+  for (const [i, raw] of meta.toolCalls.entries()) {
+    if (!raw || typeof raw !== 'object') continue
+    const call = raw as Record<string, unknown>
+    if (typeof call.name !== 'string') continue
+    calls.push({
+      id: `legacy-${i}`,
+      name: call.name,
+      args: call.summary ?? '',
+      status: call.success === false ? 'failed' : 'succeeded'
+    })
   }
-  return { text: result, meta: null }
+  return {
+    text: result.slice(0, index).trim(),
+    calls,
+    tokens: typeof meta.tokens === 'number' ? meta.tokens : undefined,
+    durationMs: typeof meta.durationMs === 'number' ? meta.durationMs : undefined
+  }
 }
 
-function formatTokens(tokens: number): string {
-  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}k`
-  return String(tokens)
+function readable(value: unknown): string {
+  if (typeof value === 'string') return value
+  return value == null ? '' : JSON.stringify(value, null, 2)
+}
+function duration(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000))
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60}s`
 }
 
-/** 耗时格式化：<60s 显示秒，否则 Xm Ys（对齐 wuzu formatDuration） */
-function formatDuration(ms: number): string {
-  const total = Math.max(1, Math.round(ms / 1000))
-  if (total < 60) return `${total}s`
-  const m = Math.floor(total / 60)
-  return `${m}m${total % 60}s`
-}
-
-/** 运行中每秒跳动的耗时；结束后返回 null（由 meta.durationMs 接手） */
-function useRunningElapsed(running: boolean, startedAt?: number): number | null {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    if (!running) return
-    const timer = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(timer)
-  }, [running])
-  if (!running) return null
-  return now - (startedAt ?? now)
-}
-
+/** The run is the authority; a closed parent stream is not a child completion signal. */
 export function SubagentCard({
   tool,
   sessionId
@@ -79,133 +76,219 @@ export function SubagentCard({
   tool: ToolActivity
   sessionId: string
 }): JSX.Element {
-  // 默认收起：只露头部一行（运行中除外，实时围观执行过程）。
-  const [expanded, setExpanded] = useState(false)
-  const [stopping, setStopping] = useState(false)
-  const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const args = useMemo(() => parseArgs(tool.args), [tool.args])
-  const parsed = useMemo(
-    () => (tool.state === 'running' ? { text: tool.result, meta: null } : parseMeta(tool.result)),
-    [tool]
-  )
-  const meta = parsed.meta
-  const running = tool.state === 'running'
-  const elapsedMs = useRunningElapsed(running, tool.startedAt)
+  const cached = useSubagentRun(tool.subagent?.runId)
+  const run = cached ? mergeSubagentRun(tool.subagent, cached) : tool.subagent
+  const args = useMemo(() => parseObject(tool.args), [tool.args])
+  const legacy = useMemo(() => parseLegacy(tool.result), [tool.result])
+  const [manualOpen, setManualOpen] = useState<boolean | null>(null)
+  const [goalExpanded, setGoalExpanded] = useState(false)
+  const [requesting, setRequesting] = useState(false)
+  const [requestError, setRequestError] = useState('')
+  const [detailError, setDetailError] = useState('')
+  const [now, setNow] = useState(Date.now)
+  const active = run ? isSubagentActive(run.status) : tool.state === 'running'
+  const cancelling = run?.status === 'cancelling'
+  const failed = run
+    ? ['failed', 'blocked', 'interrupted'].includes(run.status)
+    : tool.state === 'error'
+  const open = manualOpen ?? (active || failed)
+  const status = toolStatusLabel(run ? { ...tool, subagent: run } : tool)
+  const reason = run?.error?.message || tool.error || (failed && !run ? legacy.text : '')
+  const goal = run?.task || (typeof args.task === 'string' ? args.task : '')
+  const title =
+    run?.description ||
+    (typeof args.description === 'string' ? args.description : '') ||
+    goal.replace(/\s+/g, ' ').slice(0, 60) ||
+    '子代理任务'
+  const calls = run?.toolCalls ?? legacy.calls
+  const result = run?.resultSummary || run?.partialOutput || legacy.text
+  const elapsed =
+    active && (run?.startedAt ?? tool.startedAt)
+      ? now - (run?.startedAt ?? tool.startedAt ?? now)
+      : (run?.durationMs ??
+        (run?.finishedAt && run.startedAt ? run.finishedAt - run.startedAt : legacy.durationMs))
+  const tokens = run ? run.usage.totalTokens : legacy.tokens
+  const tokenLabel = run?.usage.unknown
+    ? '未知'
+    : tokens === undefined
+      ? '未记录'
+      : `${run?.usage.estimated ? '约 ' : ''}${formatTokens(tokens)}`
+  const failures = calls.filter((call) => call.status === 'failed').length
+  const currentCall = [...calls].reverse().find((call) => call.status === 'running')
 
-  useEffect(
-    () => () => {
-      if (stopTimerRef.current) clearTimeout(stopTimerRef.current)
-    },
-    []
-  )
+  useEffect(() => {
+    if (!active) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [active])
 
-  const taskTitle = (args?.task ?? '').replace(/\s+/g, ' ').slice(0, 60) || '子代理任务'
-  const failed = tool.state === 'error'
-  const stopped = !running && /已被手动停止/.test(tool.result)
-  const failCount = meta?.toolCalls.filter((call) => !call.success).length ?? 0
-  const resultText = parsed.text || (failed ? tool.result : '') || '（无返回）'
-  // 目标任务默认收起展示前几行，可展开全文
-  const goalText = args?.task ?? ''
-  const goalPreview = expanded ? goalText : goalText.slice(0, 200)
+  useEffect(() => {
+    if (!open || !run?.runId) return
+    let alive = true
+    void refreshSubagentRun(run.runId)
+      .then(() => {
+        if (alive) setDetailError('')
+      })
+      .catch((error: unknown) => {
+        if (alive)
+          setDetailError(`详情更新失败：${error instanceof Error ? error.message : String(error)}`)
+      })
+    return () => {
+      alive = false
+    }
+  }, [open, run?.runId])
 
-  // 收起态统计：「N 次调用 · 35k tokens · 22s」
-  const statParts: string[] = []
-  if (meta) statParts.push(`${meta.toolCalls.length} 次调用`)
-  if (meta && meta.tokens > 0) statParts.push(formatTokens(meta.tokens))
-  if (running && elapsedMs !== null) statParts.push(formatDuration(elapsedMs))
-  else if (meta) statParts.push(formatDuration(meta.durationMs))
-
-  const handleStop = (event: MouseEvent) => {
+  const cancel = async (event: MouseEvent): Promise<void> => {
     event.preventDefault()
     event.stopPropagation()
-    if (stopping || !running) return
-    setStopping(true)
-    void stopSubagent({ sessionId, toolCallId: tool.id })
-    // 8s 后恢复按钮，防止引擎无响应时按钮永久禁用（对齐 wuzu 的超时重置）
-    stopTimerRef.current = setTimeout(() => setStopping(false), 8000)
+    if (requesting || cancelling || !active) return
+    setRequestError('')
+    setRequesting(true)
+    try {
+      if (run) await requestSubagentCancellation(run.runId)
+      else {
+        const result = await stopSubagent({ sessionId, toolCallId: tool.id })
+        if (!result.ok || !result.data?.cancelled)
+          throw new Error(result.message || '引擎未确认停止请求')
+      }
+    } catch (error) {
+      setRequestError(`停止失败：${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setRequesting(false)
+    }
   }
 
   return (
-    // 默认收起（运行中除外，实时围观执行过程）；展开后由内层 details 管「执行详情」
-    <details className="subagent-card" open={running || undefined}>
-      <summary>
+    <details
+      className="subagent-card"
+      open={open}
+      data-run-id={run?.runId}
+      data-status={run?.status ?? tool.state}
+    >
+      <summary
+        onClick={(event) => {
+          event.preventDefault()
+          setManualOpen(!open)
+        }}
+      >
         <span className={`subagent-card__dot${failed ? ' subagent-card__dot--fail' : ''}`}>
-          {running ? <span className="subagent-card__spinner" /> : <Icon name="circle" size={13} />}
+          {active ? <span className="subagent-card__spinner" /> : <Icon name="circle" size={13} />}
         </span>
         <span className="subagent-card__name">子代理</span>
-        <span className="subagent-card__task" title={args?.task}>
-          {taskTitle}
+        <span className="subagent-card__task" title={goal}>
+          {title}
         </span>
-        {stopped ? <span className="subagent-card__stopped">已停止</span> : null}
-        {statParts.length > 0 ? (
-          <span className="subagent-card__stats">{statParts.join(' · ')}</span>
-        ) : null}
-        {running ? (
+        <span className={failed ? 'subagent-card__fail' : 'subagent-card__stopped'}>{status}</span>
+        <span className="subagent-card__stats">
+          {calls.length} 次调用 · {tokenLabel} tokens
+          {elapsed !== undefined ? ` · ${duration(elapsed)}` : ''}
+        </span>
+        {active ? (
           <button
             type="button"
             className="subagent-card__stop"
             title="停止子代理"
-            disabled={stopping}
-            onClick={handleStop}
+            aria-label="停止子代理"
+            disabled={requesting || cancelling}
+            onClick={(event) => {
+              void cancel(event)
+            }}
           >
             <Icon name="close" size={11} />
-            {stopping ? '停止中…' : '停止'}
+            {requesting || cancelling ? '取消中…' : '停止'}
           </button>
         ) : null}
         <Icon name="chevron" size={13} />
       </summary>
 
-      <div className="subagent-card__section-label">目标任务</div>
-      <div className="subagent-card__goal">
-        {goalPreview || '（未提供任务描述）'}
-        {goalText.length > goalPreview.length ? (
-          <button type="button" className="subagent-card__expand" onClick={() => setExpanded(true)}>
-            展开全文
-          </button>
-        ) : null}
-      </div>
-
-      {meta ? (
-        <>
-          <details className="subagent-card__detail" open>
-            <summary>
-              执行详情
-              <span className="subagent-card__detail-stats">
-                工具调用 {meta.toolCalls.length}
-                {failCount > 0 ? (
-                  <span className="subagent-card__fail"> · {failCount}失败</span>
-                ) : null}
-              </span>
-            </summary>
-            <ul className="subagent-card__calls">
-              {meta.toolCalls.map((call, index) => (
-                <li key={index} className="subagent-card__call">
-                  <span
-                    className={`subagent-card__call-dot${call.success ? '' : ' subagent-card__call-dot--fail'}`}
-                  />
-                  <span className="subagent-card__call-name">{toolDisplayName(call.name)}</span>
-                  {call.summary ? (
-                    <code className="subagent-card__call-summary">{call.summary}</code>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          </details>
-
-          <div className="subagent-card__section-label">返回结果</div>
-          <div className="subagent-card__result">{resultText}</div>
-
-          <div className="subagent-card__footer">
-            <span>工具调用 {meta.toolCalls.length}</span>
-            <span>Tokens {formatTokens(meta.tokens)}</span>
-            <span>耗时 {formatDuration(meta.durationMs)}</span>
-          </div>
-        </>
-      ) : (
-        <div className="subagent-card__running">
-          {running ? '子代理执行中…' : stopped ? '已被手动停止' : '（未采集到执行详情）'}
+      {reason ? (
+        <div className="message__error" role="alert">
+          {reason}
         </div>
-      )}
+      ) : null}
+      {requestError ? (
+        <div className="message__error" role="alert">
+          {requestError}
+        </div>
+      ) : null}
+      {detailError ? <div className="message__error">{detailError}</div> : null}
+      {run?.stopReason ? (
+        <div className="subagent-card__running">
+          结束原因：{subagentStopReasonLabel(run.stopReason)}
+        </div>
+      ) : null}
+      {run?.externalEffectStatus === 'unknown' ? (
+        <div className="subagent-card__running">已停止本地执行；外部操作结果可能未知</div>
+      ) : null}
+
+      {/* 目标任务默认收起：标题行已露任务摘要，展开是为了看完整说明 */}
+      <details className="subagent-card__detail">
+        <summary>
+          目标任务 <span className="subagent-card__detail-stats">{goal ? `${goal.length} 字` : ''}</span>
+        </summary>
+        <div className="subagent-card__goal">
+          {(goalExpanded ? goal : goal.slice(0, 200)) || '（未提供任务描述）'}
+          {!goalExpanded && goal.length > 200 ? (
+            <button
+              type="button"
+              className="subagent-card__expand"
+              onClick={() => setGoalExpanded(true)}
+            >
+              展开全文
+            </button>
+          ) : null}
+        </div>
+      </details>
+      {currentCall ? (
+        <div className="subagent-card__running">当前：{toolDisplayName(currentCall.name)}</div>
+      ) : null}
+      <details className="subagent-card__detail">
+        <summary>
+          执行详情 <span className="subagent-card__detail-stats">工具调用 {calls.length}</span>
+          {failures > 0 ? <span className="subagent-card__fail"> · {failures} 失败</span> : null}
+        </summary>
+        {calls.length ? (
+          <ul className="subagent-card__calls">
+            {calls.map((call) => (
+              <li key={call.id} className="subagent-card__call">
+                <span
+                  className={`subagent-card__call-dot${call.status === 'failed' ? ' subagent-card__call-dot--fail' : ''}`}
+                />
+                <details>
+                  <summary>
+                    <span className="subagent-card__call-name">{toolDisplayName(call.name)}</span> ·{' '}
+                    {call.status === 'failed'
+                      ? '失败'
+                      : call.status === 'succeeded'
+                        ? '成功'
+                        : call.status === 'cancelled'
+                          ? '已取消'
+                          : '执行中'}
+                  </summary>
+                  <pre className="subagent-card__result">{readable(call.args)}</pre>
+                  {call.error ? <div className="message__error">{call.error.message}</div> : null}
+                  {call.output ? <pre className="subagent-card__result">{call.output}</pre> : null}
+                </details>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="subagent-card__running">
+            {run ? (active ? '等待工具调用…' : '没有内部工具调用') : '旧记录未保存详情'}
+          </div>
+        )}
+      </details>
+
+      <div className="subagent-card__section-label">
+        {run?.partialOutput && !run.resultSummary ? '部分结果' : '返回结果'}
+      </div>
+      <div className="subagent-card__result">{result || (active ? '等待返回…' : '（无返回）')}</div>
+      <div className="subagent-card__footer">
+        {run?.modelId ? <span>模型 {run.modelId}</span> : null}
+        <span>工具调用 {calls.length}</span>
+        <span>Tokens {tokenLabel}</span>
+        {elapsed !== undefined ? <span>耗时 {duration(elapsed)}</span> : null}
+      </div>
     </details>
   )
 }

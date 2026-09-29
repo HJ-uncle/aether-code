@@ -350,6 +350,16 @@ export interface AppSettings {
   /** 上次选中的模型 modelId（空表示用引擎默认） */
   lastModelId: string
   /**
+   * 子代理专用模型 modelId（空 = 跟随主对话模型）。
+   * 子代理跑的常是范围明确的子任务，可以指派更便宜的模型省 token。
+   */
+  subagentModelId: string
+  /**
+   * 轻任务专用模型 modelId（空 = 跟随主对话模型 / 引擎环境变量）。
+   * 承载图片理解等旁路调用——不需要强推理，适合快而便宜的模型。
+   */
+  utilityModelId: string
+  /**
    * 思考档位偏好（会话无关，跨会话沿用）。
    *
    * 档位映射到引擎 thinkingMode：
@@ -391,6 +401,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lastSessionId: '',
   lastAgentId: '',
   lastModelId: '',
+  subagentModelId: '',
+  utilityModelId: '',
   thinkingMode: 'high',
   lastFolder: '',
   appearance: 'system',
@@ -458,6 +470,7 @@ export interface EngineTodo {
  * 同一帧只会出现其中一个字段，用可选字段而非联合类型以便透传未知帧。
  */
 export interface ChatSsePayload {
+  subagentEvent?: import('./subagent').SubagentEvent
   content?: string
   thinking?: string
   toolStart?: unknown
@@ -512,6 +525,10 @@ export interface StreamStartInput {
   streamId: string
   path: string
   body: unknown
+  /** HTTP 方法，默认 POST；续传 /chat/stream 用 GET */
+  method?: 'GET' | 'POST'
+  /** GET 请求的查询参数（续传时传 sessionId / lastEventId） */
+  query?: Record<string, string>
 }
 
 // ==================== TS 语言服务（LSP） ====================

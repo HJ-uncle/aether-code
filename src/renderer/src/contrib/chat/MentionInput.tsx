@@ -42,6 +42,8 @@ export interface MentionInputHandle {
   insertMention: (mention: Mention) => void
   /** @ 补全选中：把光标前的「@关键词」文本替换为 chip */
   completeMention: (mention: Mention) => void
+  /** 整体替换输入框文本（原 mention chip 全部丢弃，用于 AI 润色回填） */
+  setText: (text: string) => void
   clear: () => void
   focus: () => void
 }
@@ -269,6 +271,10 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       () => ({
         insertMention,
         completeMention,
+        setText: (text: string) => {
+          rebuildFromText(text)
+          emitChange()
+        },
         clear: () => {
           rebuildFromText('')
           emitChange()

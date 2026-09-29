@@ -24,6 +24,8 @@ export interface ModelCapabilities {
   caching?: boolean
   streamUsage?: boolean
   prefix?: boolean
+  /** 上下文窗口上限（token 数），用量环分母；与输出上限 maxTokens 区分 */
+  contextWindow?: number
 }
 
 export interface EngineModel {

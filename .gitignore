@@ -15,3 +15,4 @@ out
 .claude/skills/code-index-*/
 .claude/settings.local.json
 .cowork-temp
+.e2e-tmp/

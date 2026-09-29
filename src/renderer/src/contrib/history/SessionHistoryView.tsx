@@ -272,16 +272,16 @@ export function SessionHistoryView(): JSX.Element {
           // 有标记的在前；颜色间按色板固定顺序；同色内按时间（对齐 wuzu）
           const ca = metaTable[a.sessionId]?.color
           const cb = metaTable[b.sessionId]?.color
-          if (!ca && !cb) return ((b.lastAt ?? 0) - (a.lastAt ?? 0)) * dir
+          if (!ca && !cb) return ((a.lastAt ?? 0) - (b.lastAt ?? 0)) * dir
           if (!ca) return 1
           if (!cb) return -1
           const oa = tagOrder.get(ca) ?? 99
           const ob = tagOrder.get(cb) ?? 99
           if (oa !== ob) return oa - ob
-          return ((b.lastAt ?? 0) - (a.lastAt ?? 0)) * dir
+          return ((a.lastAt ?? 0) - (b.lastAt ?? 0)) * dir
         }
         default:
-          return ((b.lastAt ?? 0) - (a.lastAt ?? 0)) * dir
+          return ((a.lastAt ?? 0) - (b.lastAt ?? 0)) * dir
       }
     })
   }, [sessions, favoritesOnly, sort, metaTable])

@@ -6,6 +6,8 @@ export interface ContextMenuItem {
   label: string
   /** 右侧的次要说明（快捷键、类型等） */
   hint?: string
+  /** 左侧色板圆点（颜色选择等场景），值为 CSS 颜色 */
+  swatch?: string
   /** 危险操作（删除等）用警示色 */
   danger?: boolean
   disabled?: boolean
@@ -144,6 +146,9 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps): JSX.Ele
               item.onSelect()
             }}
           >
+            {item.swatch ? (
+              <span className="context-menu__swatch" style={{ background: item.swatch }} />
+            ) : null}
             <span>{item.label}</span>
             {item.hint ? <span className="context-menu__hint">{item.hint}</span> : null}
           </button>
@@ -206,6 +211,9 @@ function SubmenuPanel({
             item.onSelect()
           }}
         >
+          {item.swatch ? (
+            <span className="context-menu__swatch" style={{ background: item.swatch }} />
+          ) : null}
           <span>{item.label}</span>
           {item.hint ? <span className="context-menu__hint">{item.hint}</span> : null}
         </button>

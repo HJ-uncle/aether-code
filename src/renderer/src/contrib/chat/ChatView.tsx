@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { createPortal } from 'react-dom'
 import { useApp } from '@renderer/core/app-context'
 import { useChat, type ChatMessage, type ToolActivity } from '@renderer/core/engine/useChat'
 import type { PendingInteraction } from '@renderer/core/engine/pending'
 import { SessionTray } from './SessionTray'
 import { FileChangeCard } from './FileChangeCard'
 import { SubagentCard } from './SubagentCard'
+import { exportSubagentDetails, toolStatusLabel } from '@renderer/core/engine/subagent-state'
 import { Markdown } from './Markdown'
 import { toolDisplayName, toolParamSummary, toolPathArg } from './tool-names'
 import { openFileFromChat } from './open-file'
 import { useModels } from '@renderer/core/engine/model-store'
 import { changeSecurityMode } from '@renderer/core/engine/security-store'
 import { requestOrThrow } from '@renderer/core/engine/client'
+import { utilityChat } from '@renderer/core/engine/utility-chat'
 import { openAppSettings } from '@renderer/contrib/settings/app-settings-navigation'
 import { refreshGit } from '@renderer/core/git/git-store'
 import { currentWorkspacePaths, useWorkspace } from '@renderer/core/workspace/workspace-store'
@@ -20,7 +23,9 @@ import { Popover } from '@renderer/workbench/Popover'
 import { ContextMenu } from '@renderer/workbench/ContextMenu'
 import { ModelPicker } from '../models/ModelPicker'
 import { ComposerOptions } from './ComposerOptions'
+import { MessageNavRail, type NavTurn } from './MessageNavRail'
 import {
+  asUsageFrame,
   formatDuration,
   formatTimestamp,
   formatTokens,
@@ -29,7 +34,39 @@ import {
   type UsageDetailRow
 } from './usage'
 import { useAttachments } from './useAttachments'
+import { readFile } from '@renderer/core/workspace/fs-client'
+import type { ChatAttachment } from '@renderer/core/engine/useChat'
+
+/** 上下文窗口估算基数：引擎未下发各模型窗口上限，按常见的 200k 估算占比 */
+const CONTEXT_WINDOW_FALLBACK = 200_000
+
+/** 附件 chip 的图片缩略图：按工作区相对路径读 base64，读不到则回退为图标 */
+function AttachThumb({
+  root,
+  file
+}: {
+  root: string | null
+  file: ChatAttachment
+}): JSX.Element {
+  const [src, setSrc] = useState<string | null>(null)
+  useEffect(() => {
+    let alive = true
+    if (root && file.type.startsWith('image/')) {
+      void readFile(`${root}/${file.path}`)
+        .then((result) => {
+          if (alive && result.base64) setSrc(`data:${file.type};base64,${result.base64}`)
+        })
+        .catch(() => {})
+    }
+    return () => {
+      alive = false
+    }
+  }, [root, file.path, file.type])
+  if (src) return <img className="attach-chip__thumb" src={src} alt={file.name} />
+  return <Icon name={file.type.startsWith('image/') ? 'image' : 'file'} size={12} />
+}
 import { MentionInput, type Mention, type MentionInputHandle } from './MentionInput'
+import { loadChatDraft, saveChatDraft } from './draft-store'
 import { FileRefPalette } from './FileRefPalette'
 import { consumePendingMentions, subscribePendingMentions } from './pending-mentions'
 
@@ -64,10 +101,12 @@ function formatBytes(bytes: number): string {
  */
 export function ChatView(): JSX.Element {
   const { ready, settings, updateSettings, settingsLoaded } = useApp()
-  const { messages, streaming, todos, send, respond, abort, loadHistory, deleteTurn, retryFrom, revertFrom, mergeAndSend, queue, removeQueued, clearQueue } = useChat()
+  const { messages, streaming, todos, send, respond, abort, loadHistory, resumeStream, deleteTurn, retryFrom, revertFrom, queue, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, queueSendMode, setQueueSendMode, retargetQueuedModel } = useChat()
   const { models, loaded: modelsLoaded } = useModels()
   const workspace = useWorkspace()
   const [input, setInput] = useState('')
+  /** AI 润色进行中（禁用润色按钮，防止重复点击） */
+  const [polishing, setPolishing] = useState(false)
   /** 输入框里的引用 chip（文件/目录/源码/终端），由 MentionInput 序列化时同步 */
   const mentionsRef = useRef<Mention[]>([])
   /** 多选模式：按消息粒度勾选，复制或导出为 Markdown */
@@ -91,6 +130,36 @@ export function ChatView(): JSX.Element {
   // 附件进度提示只在出现后短暂停留，避免常驻噪音
   const [attachHint, setAttachHint] = useState<string | null>(null)
 
+  /** AI 润色输入框内容：用轻任务模型改写得更清晰；chip 引用会随文本一起被序列化给模型 */
+  const handlePolish = async (): Promise<void> => {
+    const text = input.trim()
+    if (polishing || !text) return
+    setPolishing(true)
+    try {
+      const res = await utilityChat({
+        model: settings.utilityModelId || undefined,
+        systemPrompt:
+          '你是「发给 AI 编程助手的指令」的润色器。把用户的草稿改写得更清晰、具体、可执行：' +
+          '补全主语和对象、拆开含糊的复合要求、修正错别字；保留原文中的 @路径 引用 token 原样不动；' +
+          '保持用户原语言；不要添加用户没说的需求；只输出润色后的文本本身，不要解释、不要引号。',
+        userPrompt: text,
+        temperature: 0.3,
+        maxTokens: 1500
+      })
+      const polished = res.text.trim()
+      if (polished && polished !== text) {
+        inputRef.current?.setText(polished)
+        inputRef.current?.focus()
+      } else {
+        setToast('润色结果与原文一致')
+      }
+    } catch (err) {
+      setToast(err instanceof Error ? `润色失败：${err.message}` : '润色失败，请稍后重试')
+    } finally {
+      setPolishing(false)
+    }
+  }
+
   // ── 终端/编辑器「添加到对话」：消费 pending 队列 ──────────────────────────
   // TerminalView / MonacoEditor 通过 pushPendingMention 入队，这里订阅后
   // 一次性取出插入为 mention chip（挂载时也消费一次，覆盖入队早于挂载的情况）。
@@ -107,8 +176,45 @@ export function ChatView(): JSX.Element {
 
   // 会话累计用量：按消息里的 usage 帧汇总，作为工具栏「模型 / Token / 使用时间」的数据源
   const usageTotal = useMemo(() => sumUsage(messages), [messages])
+  // 上下文占用：最近一轮 usage 的 currentPromptTokens（最后一次模型调用的真实输入，
+  // 压缩后下一轮自然回落）。老引擎没有该字段时回退 promptTokens（跨迭代累加值，仅兜底）。
+  const contextUsed = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const frame = asUsageFrame(messages[i].usage)
+      if (frame?.currentPromptTokens) return frame.currentPromptTokens
+      if (frame?.promptTokens) return frame.promptTokens
+    }
+    return 0
+  }, [messages])
+  // 用量环分母：usage 帧里引擎解析出的窗口 > 模型列表能力表 > 200k 兜底
+  const contextLimit = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const frame = asUsageFrame(messages[i].usage)
+      if (frame?.contextWindow) return frame.contextWindow
+    }
+    return (
+      models.find((model) => model.modelId === modelId)?.capabilities?.contextWindow ??
+      CONTEXT_WINDOW_FALLBACK
+    )
+  }, [messages, models, modelId])
   // 按用户提问切分轮次：每轮末尾展示「一问一答」的累计 token
   const turns = useMemo(() => groupIntoTurns(messages), [messages])
+  // 左侧导航栏的条目：每条用户消息一个圆点（turn.id 即首条用户消息 ID）
+  const navTurns = useMemo<NavTurn[]>(
+    () =>
+      turns
+        .map((turn) => {
+          const message = turn.messages.find((m) => m.role === 'user')
+          if (!message) return null
+          return {
+            id: turn.id,
+            message,
+            preview: message.content.replace(/\s+/g, ' ').slice(0, 60)
+          }
+        })
+        .filter((item): item is NavTurn => item !== null),
+    [turns]
+  )
 
   // 会话 ID 首次使用时生成并持久化，保证多轮对话共享上下文。
   // 必须等设置加载完成再决定：设置未就绪时 lastSessionId 是空默认值，
@@ -128,8 +234,38 @@ export function ChatView(): JSX.Element {
     if (!ready || !sessionId) return
     if (historyLoadedRef.current === sessionId) return
     historyLoadedRef.current = sessionId
-    void loadHistory(sessionId)
-  }, [ready, sessionId, loadHistory])
+    // 优先尝试恢复正在进行的流（刷新/切回会话后端仍在跑的场景）；
+    // resumeStream 内部会先做历史回放，无需恢复时返回 false，再退回纯历史回放
+    void resumeStream(sessionId).then((resumed) => {
+      if (!resumed) void loadHistory(sessionId)
+    })
+  }, [ready, sessionId, loadHistory, resumeStream])
+
+  // ── 每会话输入草稿（对齐 wuzu lobster-chat:draft）──
+  // 切会话/重启时恢复该会话未发送的草稿；保存走防抖，不用 effect 持久化
+  // （避免会话切换瞬间把旧会话文本写进新会话槽位）。
+  const draftSessionRef = useRef('')
+  const draftTimerRef = useRef(0)
+  useEffect(() => {
+    if (!sessionId || draftSessionRef.current === sessionId) return
+    draftSessionRef.current = sessionId
+    const draft = loadChatDraft(sessionId)
+    // 恢复的是序列化文本（@路径 token），MentionInput 按 value 驱动重建 chip；
+    // mentions 列表无法复原，发送时由序列化兜底
+    mentionsRef.current = []
+    setInput(draft)
+  }, [sessionId])
+  useEffect(() => () => window.clearTimeout(draftTimerRef.current), [])
+
+  /** 用户编辑后防抖保存草稿（仅 onChange 路径，程序化 setInput 由调用方自行保存） */
+  const scheduleDraftSave = useCallback(
+    (text: string) => {
+      window.clearTimeout(draftTimerRef.current)
+      if (!sessionId) return
+      draftTimerRef.current = window.setTimeout(() => saveChatDraft(sessionId, text), 400)
+    },
+    [sessionId]
+  )
 
   // ── 吸底跟随（对齐 wuzu-client CliChatView）──
   // followBottom 只由真实用户手势切换，不听 scroll 事件：程序化滚动
@@ -139,8 +275,8 @@ export function ChatView(): JSX.Element {
   const [hasNewWhileUnfollowed, setHasNewWhileUnfollowed] = useState(false)
   /** 使 pending 的 rAF 滚动回调作废的计数器：用户离开吸底后，旧滚动不再执行 */
   const scrollGenerationRef = useRef(0)
-  /** 距底 < 8px 才恢复跟随（阈值故意远小于离底判定，防止误拉回） */
-  const RESUME_FOLLOW_PX = 8
+  /** 距底 < 80px 才恢复跟随（阈值故意远小于离底判定，防止误拉回） */
+  const RESUME_FOLLOW_PX = 80
 
   const measureDistToBottom = useCallback((): number => {
     const el = scrollRef.current
@@ -231,8 +367,11 @@ export function ChatView(): JSX.Element {
     (next: string) => {
       setSelectedModelId(next)
       void updateSettings({ lastModelId: next })
+      // 运行中切换模型：把队列里待发消息的模型改写为新模型，
+      // 避免出现「正在运行的回合显示成输入框后选的模型」这类错标
+      retargetQueuedModel(next)
     },
-    [updateSettings]
+    [updateSettings, retargetQueuedModel]
   )
 
   // 默认选中：列表就绪后，若当前模型未选中或已失效（被删/改名），自动落到第一个
@@ -259,11 +398,14 @@ export function ChatView(): JSX.Element {
       sessionId,
       agentId: settings.lastAgentId || undefined,
       model: modelId || undefined,
+      // 按用途指派：子代理 / 轻任务模型（空 = 跟随主模型，引擎侧回退）
+      subagentModel: settings.subagentModelId || undefined,
+      utilityModel: settings.utilityModelId || undefined,
       // 从 store 直接读取而非依赖闭包：发送瞬间的根目录才是准确的
       workspacePaths: currentWorkspacePaths(),
       thinkingMode: resolveThinkingMode(settings.thinkingMode)
     }),
-    [modelId, ready, sessionId, settings.lastAgentId, settings.thinkingMode]
+    [modelId, ready, sessionId, settings.lastAgentId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode]
   )
 
   const submit = useCallback(() => {
@@ -276,17 +418,20 @@ export function ChatView(): JSX.Element {
     mentionsRef.current = []
     inputRef.current?.clear()
     attach.clear()
+    // 发送成功后该会话草稿即作废
+    window.clearTimeout(draftTimerRef.current)
+    saveChatDraft(sessionId, '')
     void send(text, {
       ...buildSendOptions(),
       attachments: files.length > 0 ? files : undefined
     })
   }, [attach, buildSendOptions, input, ready, send, sessionId])
 
-  /** 托盘的「合并发送」：队列拼成一条立即发出（当前输入框内容不参与） */
-  const mergeQueue = useCallback(() => {
+  /** 托盘的「发送」：空闲时按当前模式（逐条/合并）立即发出队列 */
+  const flushQueueFromTray = useCallback(() => {
     if (!ready || !sessionId) return
-    void mergeAndSend('', buildSendOptions())
-  }, [buildSendOptions, mergeAndSend, ready, sessionId])
+    void flushQueue()
+  }, [flushQueue, ready, sessionId])
 
   /**
    * 授权卡片上的「一路放行」入口。
@@ -396,12 +541,14 @@ export function ChatView(): JSX.Element {
           sessionId,
           agentId: settings.lastAgentId || undefined,
           model: modelId || undefined,
+          subagentModel: settings.subagentModelId || undefined,
+          utilityModel: settings.utilityModelId || undefined,
           workspacePaths: currentWorkspacePaths(),
           thinkingMode: resolveThinkingMode(settings.thinkingMode)
         }).catch(showError)
       })
     },
-    [messages, modelId, retryFrom, sessionId, settings.lastAgentId, settings.thinkingMode, showError]
+    [messages, modelId, retryFrom, sessionId, settings.lastAgentId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode, showError]
   )
 
   const deleteTurnById = useCallback(
@@ -435,6 +582,7 @@ export function ChatView(): JSX.Element {
           .then(() => {
             mentionsRef.current = []
             setInput(content)
+            saveChatDraft(sessionId, content)
           })
           .catch(showError)
       })
@@ -599,7 +747,7 @@ export function ChatView(): JSX.Element {
           </span>
         ) : null}
         <div className="chat__toolbar-spacer" />
-        {usageTotal.total > 0 ? (
+        {usageTotal.total > 0 || usageTotal.unknownSubagents > 0 ? (
           <UsageMeter
             total={usageTotal.total}
             rounds={usageTotal.rounds}
@@ -659,13 +807,24 @@ export function ChatView(): JSX.Element {
         </div>
       ) : null}
 
-      <div
-        className="chat__messages"
-        ref={scrollRef}
-        onWheel={handleListWheel}
-        onPointerDown={handleListPointerDown}
-        onScroll={handleListScroll}
-      >
+      <div className="chat__body">
+        <MessageNavRail
+          sessionId={sessionId}
+          turns={navTurns}
+          containerRef={scrollRef}
+          disabled={streaming || selectMode}
+          onCopy={copyMessage}
+          onRetry={retryTurn}
+          onRevert={revertToMessage}
+          onDelete={deleteTurnById}
+        />
+        <div
+          className="chat__messages"
+          ref={scrollRef}
+          onWheel={handleListWheel}
+          onPointerDown={handleListPointerDown}
+          onScroll={handleListScroll}
+        >
         {/* 非跟随期间来了新内容：浮动「回到底部」（对齐 wuzu-client） */}
         {showBackToBottom ? (
           <button type="button" className="chat__back-to-bottom" onClick={jumpToBottom}>
@@ -683,7 +842,7 @@ export function ChatView(): JSX.Element {
           </div>
         ) : (
           turns.map((turn) => (
-            <div key={turn.id} className="chat__turn">
+            <div key={turn.id} className="chat__turn" data-turn-id={turn.id}>
               {(() => {
                 // 本轮的累计用量并入最后一条 AI 消息底部的过程行，不再单独占一行
                 const lastAssistantId = [...turn.messages]
@@ -716,6 +875,8 @@ export function ChatView(): JSX.Element {
                     void respond(values, {
                       sessionId,
                       model: modelId || undefined,
+                      subagentModel: settings.subagentModelId || undefined,
+                      utilityModel: settings.utilityModelId || undefined,
                       workspacePaths: currentWorkspacePaths(),
                       thinkingMode: resolveThinkingMode(settings.thinkingMode)
                     })
@@ -731,6 +892,7 @@ export function ChatView(): JSX.Element {
             </div>
           ))
         )}
+        </div>
       </div>
 
       {needsModel ? (
@@ -747,9 +909,14 @@ export function ChatView(): JSX.Element {
         streaming={streaming}
         todos={todos}
         queue={queue}
+        workspaceRoot={workspace.root}
+        queueSendMode={queueSendMode}
+        onSetQueueSendMode={setQueueSendMode}
+        onUpdateQueued={updateQueued}
+        onMoveQueued={moveQueued}
         onRemoveQueued={removeQueued}
         onClearQueue={clearQueue}
-        onMergeQueue={mergeQueue}
+        onMergeQueue={flushQueueFromTray}
       />
 
       <div
@@ -777,7 +944,7 @@ export function ChatView(): JSX.Element {
             <div className="chat__attach-strip">
               {attach.attachments.map((file) => (
                 <span key={file.path} className="attach-chip" title={file.path}>
-                  <Icon name={file.type.startsWith('image/') ? 'image' : 'file'} size={12} />
+                  <AttachThumb root={workspace.root} file={file} />
                   <span className="attach-chip__name">{file.name}</span>
                   <span className="attach-chip__size">{formatBytes(file.size)}</span>
                   <button
@@ -807,6 +974,7 @@ export function ChatView(): JSX.Element {
             onChange={(text, mentions) => {
               mentionsRef.current = mentions
               setInput(text)
+              scheduleDraftSave(text)
             }}
             onSubmit={submit}
             onPasteFiles={(files) => attach.accept(files)}
@@ -914,6 +1082,27 @@ export function ChatView(): JSX.Element {
 
             <div className="chat__toolbar-spacer" />
 
+            <button
+              type="button"
+              className="chat__icon-btn"
+              disabled={!ready || polishing || !input.trim()}
+              title="AI 润色：让指令更清晰具体（使用轻任务模型）"
+              aria-label="AI 润色输入"
+              onClick={() => void handlePolish()}
+            >
+              <Icon name={polishing ? 'sync' : 'sparkles'} size={14} />
+            </button>
+
+            {contextUsed > 0 ? (
+              <ContextRing
+                used={contextUsed}
+                limit={contextLimit}
+                sessionId={sessionId}
+                streaming={streaming}
+                onCompacted={() => void loadHistory(sessionId)}
+              />
+            ) : null}
+
             <ModelPicker
               value={modelId}
               onChange={selectModel}
@@ -960,6 +1149,228 @@ export function ChatView(): JSX.Element {
 // ==================== 消息渲染 ====================
 
 /**
+ * 上下文用量环：显示当前上下文占用占估算窗口的百分比。
+ * 数据来自最近一轮 usage 的 promptTokens；分母为估算值（引擎未下发各模型窗口上限）。
+ *
+ * 点击触发压缩：调引擎 POST /conversation/compress（LLM 摘要 + 历史重建），
+ * 过程中环内显示转圈；完成后短暂显示压缩前后 token 对比，再回落为百分比。
+ */
+function ContextRing({
+  used,
+  limit,
+  sessionId,
+  streaming,
+  onCompacted
+}: {
+  used: number
+  limit: number
+  sessionId: string
+  streaming: boolean
+  onCompacted: () => void
+}): JSX.Element {
+  const [phase, setPhase] = useState<'idle' | 'compacting' | 'done' | 'failed'>('idle')
+  const [compactInfo, setCompactInfo] = useState<{ before: number; after: number } | null>(null)
+  const [errorMsg, setErrorMsg] = useState('')
+  const [hoverAnchor, setHoverAnchor] = useState<DOMRect | null>(null)
+  const closeTimerRef = useRef(0)
+
+  const openHover = (rect: DOMRect): void => {
+    window.clearTimeout(closeTimerRef.current)
+    setHoverAnchor(rect)
+  }
+  const scheduleCloseHover = (): void => {
+    window.clearTimeout(closeTimerRef.current)
+    closeTimerRef.current = window.setTimeout(() => setHoverAnchor(null), 200)
+  }
+  useEffect(() => () => window.clearTimeout(closeTimerRef.current), [])
+
+  const ratio = Math.min(1, used / limit)
+  const percent = Math.round(ratio * 100)
+  const radius = 10
+  const circumference = 2 * Math.PI * radius
+  const offset = circumference * (1 - ratio)
+  const warn = ratio >= 0.85
+
+  const compact = async (): Promise<void> => {
+    if (phase === 'compacting' || streaming || !sessionId) return
+    setPhase('compacting')
+    setErrorMsg('')
+    const startedAt = Date.now()
+    try {
+      const stats = await requestOrThrow<{
+        originalTokens?: number
+        compressedTokens?: number
+      }>({ method: 'POST', path: '/conversation/compress', query: { sessionId } })
+      setCompactInfo({
+        before: stats.originalTokens ?? used,
+        after: stats.compressedTokens ?? 0
+      })
+      setPhase('done')
+      onCompacted()
+      // 6 秒后回落到百分比（对齐竞品行为）
+      window.setTimeout(() => setPhase('idle'), 6000)
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : '压缩失败')
+      setPhase('failed')
+      window.setTimeout(() => setPhase('idle'), 6000)
+    }
+    void startedAt
+  }
+
+  // 悬停详情由 ContextRingCard 弹窗卡片承载，这里只保留无障碍标签（原生 title 会与卡片重复弹出）
+  const title =
+    phase === 'compacting'
+      ? '正在压缩上下文…'
+      : phase === 'done' && compactInfo
+        ? `已压缩 ${formatTokens(compactInfo.before)} → ${formatTokens(compactInfo.after)}`
+        : phase === 'failed'
+          ? `压缩失败：${errorMsg}`
+          : `上下文用量约 ${percent}%（${formatTokens(used)} / 估算 ${formatTokens(limit)}），点击压缩上下文`
+
+  return (
+    <>
+      <button
+        type="button"
+        className={`context-ring${warn ? ' context-ring--warn' : ''}${phase === 'compacting' ? ' context-ring--busy' : ''}`}
+        aria-label={title}
+        aria-disabled={phase === 'compacting' || streaming || !sessionId}
+        onClick={() => void compact()}
+        onMouseEnter={(event) => openHover(event.currentTarget.getBoundingClientRect())}
+        onMouseLeave={scheduleCloseHover}
+      >
+        <svg width="26" height="26" viewBox="0 0 26 26">
+          <circle className="context-ring__track" cx="13" cy="13" r={radius} fill="none" strokeWidth="2.5" />
+          <circle
+            className="context-ring__bar"
+            cx="13"
+            cy="13"
+            r={radius}
+            fill="none"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={phase === 'compacting' ? circumference * 0.25 : offset}
+          />
+        </svg>
+        <span className="context-ring__label">
+          {phase === 'compacting' ? '…' : phase === 'done' ? '✓' : phase === 'failed' ? '✕' : percent}
+        </span>
+      </button>
+      {hoverAnchor ? (
+        <ContextRingCard
+          anchor={hoverAnchor}
+          used={used}
+          limit={limit}
+          percent={percent}
+          phase={phase}
+          compactInfo={compactInfo}
+          errorMsg={errorMsg}
+          streaming={streaming}
+          onKeep={() => window.clearTimeout(closeTimerRef.current)}
+          onLeave={scheduleCloseHover}
+        />
+      ) : null}
+    </>
+  )
+}
+
+/**
+ * 上下文用量环的 hover 卡片（布局对齐 wuzu ContextUsageRing 的 tooltip）。
+ * 结构：标题行（上下文窗口）→ 大号百分比 + 右侧「已用 / 上限」→ 底部状态提示；
+ * 压缩中 / 失败时正文整块替换为对应状态。
+ * 定位与 GitStashHoverCard 同模式：卡片上方居中、贴边钳制，鼠标在「环 → 卡片」间移动不消失。
+ */
+function ContextRingCard({
+  anchor,
+  used,
+  limit,
+  percent,
+  phase,
+  compactInfo,
+  errorMsg,
+  streaming,
+  onKeep,
+  onLeave
+}: {
+  anchor: DOMRect
+  used: number
+  limit: number
+  percent: number
+  phase: 'idle' | 'compacting' | 'done' | 'failed'
+  compactInfo: { before: number; after: number } | null
+  errorMsg: string
+  streaming: boolean
+  onKeep: () => void
+  onLeave: () => void
+}): JSX.Element {
+  const cardRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const el = cardRef.current
+    if (!el) return
+    const margin = 8
+    const rect = el.getBoundingClientRect()
+    // 优先放在环的正上方居中；上方放不下翻到底部，水平贴边钳制
+    let x = anchor.left + (anchor.width - rect.width) / 2
+    x = Math.min(Math.max(margin, x), window.innerWidth - rect.width - margin)
+    let y = anchor.top - rect.height - 8
+    if (y < margin) y = anchor.bottom + 8
+    el.style.left = `${x}px`
+    el.style.top = `${y}px`
+  }, [anchor, phase])
+
+  const hint =
+    phase === 'done' && compactInfo
+      ? `已压缩 ${formatTokens(compactInfo.before)} → ${formatTokens(compactInfo.after)}`
+      : streaming
+        ? '生成中，结束后可点击压缩'
+        : '使用接近上限时，可点击立即压缩上下文'
+
+  return createPortal(
+    <div ref={cardRef} className="git-stashcard ctx-card" onMouseEnter={onKeep} onMouseLeave={onLeave}>
+      <div className="ctx-card__header">
+        <span>上下文窗口</span>
+        {phase === 'failed' ? (
+          <Icon name="close" size={12} className="ctx-card__warn-icon" />
+        ) : phase === 'idle' || phase === 'done' ? (
+          <span className="ctx-card__percent">
+            {percent}
+            <span className="ctx-card__percent-sign">%</span>
+          </span>
+        ) : null}
+      </div>
+      {phase === 'compacting' ? (
+        <div className="ctx-card__status">正在压缩上下文…</div>
+      ) : phase === 'failed' ? (
+        <div className="ctx-card__status">
+          上下文压缩失败
+          {errorMsg ? <div className="ctx-card__error">{errorMsg}</div> : null}
+        </div>
+      ) : (
+        <>
+          <div className="ctx-card__tokens">
+            <span className="ctx-card__tokens-value">
+              {formatTokens(used)} / {formatTokens(limit)}
+            </span>
+            <span className="ctx-card__tokens-label">使用 / 上限</span>
+          </div>
+          <div className="ctx-card__bar">
+            <div
+              className={`ctx-card__bar-fill${percent >= 90 ? ' ctx-card__bar-fill--warn' : ''}`}
+              style={{ width: `${Math.min(percent, 100)}%` }}
+            />
+          </div>
+        </>
+      )}
+      {phase !== 'failed' && phase !== 'compacting' ? (
+        <div className="ctx-card__hint">{hint}</div>
+      ) : null}
+    </div>,
+    document.body
+  )
+}
+
+/**
  * 把选中的消息序列化成 Markdown（复制与导出共用）。
  * 选择单位 = 一条消息：用户消息取正文；AI 消息含思考过程、工具活动与输出。
  */
@@ -976,16 +1387,10 @@ function serializeMessages(selected: ChatMessage[]): string {
         const exportedTools = message.tools.filter((tool) => !tool.hidden)
         if (exportedTools.length > 0) {
           const toolLines = exportedTools.map((tool) => {
-            const state =
-              tool.state === 'done'
-                ? '成功'
-                : tool.state === 'error'
-                  ? '失败'
-                  : tool.state === 'running'
-                    ? '执行中'
-                    : '已停止'
+            const state = toolStatusLabel(tool)
             const summary = tool.args ? toolParamSummary(tool.args) : ''
-            return `- ${toolDisplayName(tool.name)}${summary ? `：${summary}` : ''}（${state}）`
+            const details = tool.name === 'subagent' ? exportSubagentDetails(tool) : tool.error ?? ''
+            return `- ${toolDisplayName(tool.name)}${summary ? `：${summary}` : ''}（${state}）${details ? `\n\n${details}\n` : ''}`
           })
           parts.push(`\n**工具调用**\n\n${toolLines.join('\n')}`)
         }
@@ -1187,6 +1592,19 @@ function isFullSizeTool(tool: ToolActivity): boolean {
   )
 }
 
+/**
+ * 待办类工具对用户是噪音：状态已在顶部待办列表呈现，时间线再插一条只是刷屏。
+ * 界面过滤，但复制/导出仍包含（不能用 hidden 字段，那条链会让导出也漏掉）。
+ */
+function isTimelineHiddenTool(tool: ToolActivity): boolean {
+  return (
+    tool.name === 'todo_create' ||
+    tool.name === 'todo_list' ||
+    tool.name === 'todo_update' ||
+    tool.name === 'todo_delete'
+  )
+}
+
 /** 过程块内的紧凑条目：一段思考 或 一次过程性工具调用 */
 type CompactEntry = { kind: 'thinking'; text: string } | { kind: 'tool'; tool: ToolActivity }
 
@@ -1227,7 +1645,9 @@ function MessageTimeline({
 }): JSX.Element | null {
   const { processEntries, inline } = useMemo(() => {
     const toolById = new Map(
-      message.tools.filter((tool) => !tool.hidden).map((tool) => [tool.id, tool])
+      message.tools
+        .filter((tool) => !tool.hidden && !isTimelineHiddenTool(tool))
+        .map((tool) => [tool.id, tool])
     )
     const processEntries: CompactEntry[] = []
     const inline: InlineSegment[] = []
@@ -1334,6 +1754,8 @@ function SubagentGroup({
   const [open, setOpen] = useState(false)
   const running = tools.some((tool) => tool.state === 'running')
   const failCount = tools.filter((tool) => tool.state === 'error').length
+  const unknownCount = tools.filter((tool) => tool.state === 'unknown').length
+  const cancelledCount = tools.filter((tool) => tool.state === 'cancelled').length
 
   return (
     <div className="subagent-group">
@@ -1346,7 +1768,7 @@ function SubagentGroup({
         <span className="subagent-group__name">子代理</span>
         <span className="subagent-group__count">{tools.length} 次调用</span>
         <span className="subagent-group__status">
-          {running ? '运行中' : '已完成'}
+          {running ? '运行中' : failCount ? '有任务失败' : unknownCount ? '含未知状态' : cancelledCount ? '含已取消任务' : '已完成'}
         </span>
         {failCount > 0 ? (
           <span className="subagent-group__fail">{failCount} 失败</span>
@@ -1456,7 +1878,7 @@ function CompactToolRow({ tool }: { tool: ToolActivity }): JSX.Element {
   const [open, setOpen] = useState(false)
   const label = toolDisplayName(tool.name)
   const summary = toolParamSummary(tool.args)
-  const hasDetail = Boolean(tool.args || tool.result)
+  const hasDetail = Boolean(tool.args || tool.result || tool.error)
   // 摘要恰是文件路径时（读取/写入文件等），点摘要直接在编辑器里打开该文件
   const pathArg = toolPathArg(tool.args)
   const openablePath = pathArg && summary === pathArg ? pathArg : null
@@ -1508,6 +1930,7 @@ function CompactToolRow({ tool }: { tool: ToolActivity }): JSX.Element {
       {open && hasDetail ? (
         <div className="logline__detail">
           {tool.args ? <pre>{tool.args}</pre> : null}
+          {tool.error ? <div className="message__error">{tool.error}</div> : null}
           {tool.result ? <pre>{tool.result}</pre> : null}
         </div>
       ) : null}
@@ -1577,7 +2000,7 @@ function TurnUsage({
         >
           <Icon name="model" size={12} />
           <span className="turn-usage__value">{formatTokens(tokens)}</span>
-          <span className="turn-usage__unit">tokens</span>
+          <span className="turn-usage__unit">tokens{summary.some((row) => row.unknown) ? '（已知）' : ''}</span>
           {duration ? <span className="turn-usage__time">{duration}</span> : null}
           {model ? <span className="turn-usage__model">{model}</span> : null}
         </button>
@@ -1589,7 +2012,7 @@ function TurnUsage({
       </div>
       <div className="usage-popover__total">
         <span className="usage-popover__total-value">{formatTokens(tokens)}</span>
-        <span className="usage-popover__total-unit">tokens</span>
+        <span className="usage-popover__total-unit">tokens{summary.some((row) => row.unknown) ? '（已知部分）' : ''}</span>
         {duration ? <span className="usage-popover__meta">耗时 {duration}</span> : null}
       </div>
       {model ? (
@@ -1623,7 +2046,7 @@ function TurnUsage({
           >
             <span className={`usage-detail__bar usage-detail__bar--${row.group}`} />
             <span className="usage-detail__label">{row.label}</span>
-            <span className="usage-detail__value">{formatTokens(row.tokens)}</span>
+            <span className="usage-detail__value">{row.unknown ? '未知' : formatTokens(row.tokens)}</span>
           </div>
         ))}
       </div>
@@ -1679,7 +2102,7 @@ function UsageMeter({
         >
           <Icon name="model" size={13} />
           <span className="usage-meter__tokens">{formatTokens(total)}</span>
-          <span className="usage-meter__unit">tokens</span>
+          <span className="usage-meter__unit">tokens{summary.some((row) => row.unknown) ? '（已知）' : ''}</span>
           {duration ? <span className="usage-meter__time">{duration}</span> : null}
         </button>
       )}
@@ -1692,7 +2115,7 @@ function UsageMeter({
       </div>
       <div className="usage-popover__total">
         <span className="usage-popover__total-value">{formatTokens(total)}</span>
-        <span className="usage-popover__total-unit">tokens</span>
+        <span className="usage-popover__total-unit">tokens{summary.some((row) => row.unknown) ? '（已知部分）' : ''}</span>
       </div>
       <div className="usage-detail">
         {summary.map((row) => (
@@ -1702,7 +2125,7 @@ function UsageMeter({
           >
             <span className={`usage-detail__bar usage-detail__bar--${row.group}`} />
             <span className="usage-detail__label">{row.label}</span>
-            <span className="usage-detail__value">{formatTokens(row.tokens)}</span>
+            <span className="usage-detail__value">{row.unknown ? '未知' : formatTokens(row.tokens)}</span>
           </div>
         ))}
       </div>

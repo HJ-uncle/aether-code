@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState, type JSX } from 'react'
 import type { EngineFileChange } from '@shared/ipc'
 import { Icon } from '@renderer/workbench/icons'
 import { requestOrThrow } from '@renderer/core/engine/client'
-import { gitStageFiles } from '@renderer/core/git/git-client'
+import { gitStageFiles, gitUnstageFiles } from '@renderer/core/git/git-client'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
+import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
+import { toast } from '@renderer/core/toast'
 
 import {
   MAX_RENDER_ROWS,
@@ -125,6 +127,24 @@ export function ChangesPanel({
   const revertOne = (id: string): Promise<void> =>
     act(() => requestOrThrow({ method: 'POST', path: `/changes/${id}/revert`, body: {} }))
 
+  /** 撤回不可逆（按快照盖回，覆盖之后的全部改动）：执行前必须确认 */
+  const confirmRevert = async (message: string, run: () => Promise<void>): Promise<void> => {
+    const ok = await confirmDialog({
+      title: '撤回改动',
+      body: `${message}\n\n该操作不可撤销。`,
+      confirmText: '撤回',
+      danger: true
+    })
+    if (!ok) return
+    await run()
+  }
+
+  const revertOneWithConfirm = (change: EngineFileChange): Promise<void> =>
+    confirmRevert(
+      `撤回对 ${change.displayPath || change.path} 的改动？文件将按快照恢复到改动前。`,
+      () => revertOne(change.id)
+    )
+
   const keepAll = (): Promise<void> =>
     act(() => requestOrThrow({ method: 'POST', path: '/changes/keep-all', body: { sessionId } }))
 
@@ -143,13 +163,26 @@ export function ChangesPanel({
         const result = await gitStageFiles(workspace.root, paths)
         if (!result.success) throw new Error(result.error ?? 'git add 执行失败')
         const staged = result.stagedPaths ?? []
-        if (staged.length === 0) return
+        if (staged.length === 0) {
+          // 可暂存为空不等于出错：常见原因是目标全部被 .gitignore 命中。
+          // 静默返回会显得「按钮没反应」，这里明确告诉用户原因。
+          toast.warning('没有可暂存的改动（全部被 .gitignore 忽略或文件已不存在）')
+          return
+        }
         const stagedIds = targets
           .filter((c) => staged.includes(c.path))
           .map((c) => c.id)
         if (stagedIds.length === 0) return
-        // 保留失败：改动已进暂存区但仍在待确认列表，直接把原因抛给用户
-        await requestOrThrow({ method: 'POST', path: '/changes/keep-many', body: { sessionId, ids: stagedIds } })
+        // 保留失败：改动已进暂存区但仍在待确认列表 —— 回滚暂存区，
+        // 避免留下「文件进了 index 但待确认列表还挂着」的半完成状态
+        try {
+          await requestOrThrow({ method: 'POST', path: '/changes/keep-many', body: { sessionId, ids: stagedIds } })
+        } catch (err) {
+          await gitUnstageFiles(workspace.root, staged).catch((rollbackErr: unknown) => {
+            console.error('[changes] 暂存回滚失败', rollbackErr)
+          })
+          throw err
+        }
         await refresh()
       } finally {
         setBusy(false)
@@ -158,13 +191,32 @@ export function ChangesPanel({
     [refresh, sessionId, workspace.root]
   )
 
-  const revertAll = (): Promise<void> =>
-    act(async () => {
-      // 逐条撤回（引擎单条接口）；失败的条目留在面板里下次再试
-      for (const change of [...changes].reverse()) {
-        await requestOrThrow({ method: 'POST', path: `/changes/${change.id}/revert`, body: {} })
-      }
-    })
+  const revertAll = async (): Promise<void> =>
+    confirmRevert(
+      `撤回全部 ${changes.length} 处改动？所有文件将按快照恢复到改动前。`,
+      () =>
+        act(async () => {
+      // 并发撤回：接口按 id 各自独立，串行 N 个文件要等 N 次往返。
+      // 失败的条目留在面板里（refresh 后仍未撤回的那条仍在），并把失败原因汇总抛出，
+      // 让用户知道「撤了哪些、剩哪些」，而不是只看一个笼统的错误。
+          const results = await Promise.allSettled(
+            changes.map((change) =>
+              requestOrThrow({ method: 'POST', path: `/changes/${change.id}/revert`, body: {} })
+            )
+          )
+          const failed = results
+            .map((result, index) => ({ result, change: changes[index] }))
+            .filter((item) => item.result.status === 'rejected')
+          if (failed.length > 0) {
+            const names = failed
+              .map((item) => (item.change.displayPath || item.change.path).replace(/\\/g, '/').split('/').pop())
+              .join('、')
+            throw new Error(
+              `${changes.length - failed.length} 个已撤回，${failed.length} 个失败（仍在列表中）：${names}`
+            )
+          }
+        })
+    )
 
   if (changes.length === 0) return null
 
@@ -218,7 +270,7 @@ export function ChangesPanel({
                 className="changes-panel__row-revert"
                 title="撤回这条改动（按快照恢复文件）"
                 disabled={busy || change.truncated}
-                onClick={() => void revertOne(change.id)}
+                onClick={() => void revertOneWithConfirm(change)}
               >
                 <Icon name="restart" size={12} />
               </button>

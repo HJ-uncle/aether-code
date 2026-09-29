@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow } from 'electron'
+import { app, shell, BrowserWindow, screen } from 'electron'
 import { join } from 'node:path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -7,12 +7,83 @@ import * as fileService from './fs/file-service'
 import { abortAllStreams, disposeLsp, registerIpcHandlers } from './ipc'
 import { disposeAllTerminals } from './terminal/pty-service'
 import { getSettings } from './settings-store'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+
+// ==================== 窗口尺寸/位置记忆 ====================
+
+interface WindowState {
+  width: number
+  height: number
+  x?: number
+  y?: number
+  maximized?: boolean
+}
+
+function windowStatePath(): string {
+  return join(app.getPath('userData'), 'window-state.json')
+}
+
+function loadWindowState(): WindowState {
+  const fallback: WindowState = { width: 1440, height: 900 }
+  try {
+    const raw = readFileSync(windowStatePath(), 'utf8')
+    const parsed = JSON.parse(raw) as Partial<WindowState>
+    if (typeof parsed.width !== 'number' || typeof parsed.height !== 'number') return fallback
+    const state: WindowState = { width: parsed.width, height: parsed.height }
+    if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
+      // 位置必须在某块屏幕的可见范围内（拔掉外接显示器后不能恢复到屏幕外）
+      const visible = screen.getAllDisplays().some((d) => {
+        const { x, y, width, height } = d.workArea
+        return (
+          parsed.x! >= x - 100 &&
+          parsed.y! >= y - 50 &&
+          parsed.x! < x + width - 50 &&
+          parsed.y! < y + height - 50
+        )
+      })
+      if (visible) {
+        state.x = parsed.x
+        state.y = parsed.y
+      }
+    }
+    if (parsed.maximized) state.maximized = true
+    return state
+  } catch {
+    return fallback
+  }
+}
+
+function trackWindowState(win: BrowserWindow): void {
+  let timer: NodeJS.Timeout | null = null
+  const save = (): void => {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => {
+      if (win.isDestroyed()) return
+      try {
+        const maximized = win.isMaximized()
+        // 最大化时不记 bounds（那是最大化前的还原尺寸，单独留着）
+        const state: WindowState = maximized
+          ? { ...loadWindowState(), maximized: true }
+          : { ...win.getNormalBounds(), maximized: false }
+        mkdirSync(app.getPath('userData'), { recursive: true })
+        writeFileSync(windowStatePath(), JSON.stringify(state), 'utf8')
+      } catch {
+        // 写失败不打断
+      }
+    }, 400)
+  }
+  win.on('resize', save)
+  win.on('move', save)
+  win.on('maximize', save)
+  win.on('unmaximize', save)
+}
 
 function createWindow(): void {
+  const winState = loadWindowState()
   const mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    width: winState.width,
+    height: winState.height,
+    ...(winState.x !== undefined && winState.y !== undefined ? { x: winState.x, y: winState.y } : {}),
     minWidth: 940,
     minHeight: 600,
     show: false,
@@ -27,6 +98,8 @@ function createWindow(): void {
       sandbox: false
     }
   })
+  if (winState.maximized) mainWindow.maximize()
+  trackWindowState(mainWindow)
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()

@@ -383,7 +383,14 @@ export class EngineHost extends EventEmitter {
    * 放在主进程的原因：引擎未启用 CORS，渲染进程直接 fetch 会被浏览器拦截；
    * 同时这样能统一注入鉴权头、统一处理错误契约。
    */
-  async stream(streamId: string, path: string, body: unknown, signal: AbortSignal): Promise<void> {
+  async stream(
+    streamId: string,
+    path: string,
+    body: unknown,
+    signal: AbortSignal,
+    method: 'GET' | 'POST' = 'POST',
+    query?: Record<string, string>
+  ): Promise<void> {
     const baseUrl = this.snapshot.baseUrl
     if (!baseUrl) {
       this.emit('stream', { streamId, type: 'error', message: '引擎未就绪' } satisfies StreamEvent)
@@ -391,13 +398,17 @@ export class EngineHost extends EventEmitter {
     }
 
     try {
-      const res = await fetch(`${baseUrl}${normalizePath(path)}`, {
-        method: 'POST',
+      let url = `${baseUrl}${normalizePath(path)}`
+      if (query && Object.keys(query).length > 0) {
+        url += `?${new URLSearchParams(query).toString()}`
+      }
+      const res = await fetch(url, {
+        method,
         headers: {
           'Content-Type': 'application/json',
           Accept: 'text/event-stream'
         },
-        body: JSON.stringify(body ?? {}),
+        body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
         signal
       })
 

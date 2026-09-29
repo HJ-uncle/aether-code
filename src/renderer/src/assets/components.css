@@ -1,3 +1,69 @@
+/* ==================== 动效降级（prefers-reduced-motion） ====================
+   前庭敏感用户（WCAG 2.3.3）：关闭全部装饰性动画与过渡。
+   spinner 保留（静态图标仍表达「进行中」），但不再无限旋转。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ==================== 全局 toast ==================== */
+
+.toast-host {
+  position: fixed;
+  right: 16px;
+  bottom: 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  z-index: calc(var(--z-overlay) + 10);
+  pointer-events: none;
+}
+
+.toast-host__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 380px;
+  padding: 7px 12px;
+  border: 1px solid var(--material-border);
+  border-radius: var(--radius-lg);
+  background: var(--material-bg);
+  backdrop-filter: blur(var(--material-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--material-blur)) saturate(180%);
+  box-shadow: var(--material-shadow), var(--material-highlight);
+  color: var(--fg-strong);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  pointer-events: auto;
+  animation: chat-toast-in 0.16s ease;
+}
+
+.toast-host__text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.toast-host__item--success svg {
+  color: var(--ok);
+}
+.toast-host__item--error svg {
+  color: var(--danger);
+}
+.toast-host__item--warning svg {
+  color: var(--warn);
+}
+.toast-host__item--info svg {
+  color: var(--accent);
+}
+
 /* ==================== 工作台布局 ==================== */
 
 .workbench {
@@ -126,9 +192,8 @@
 }
 
 .menu-bar__dropdown {
-  position: absolute;
-  top: 30px;
-  left: 0;
+  /* 定位（position:fixed + top/left）由组件内联样式给出 —— 下拉 portal 在 body，
+     锚点是触发按钮的视口矩形 */
   z-index: var(--z-popover);
   min-width: 220px;
   padding: var(--space-1);
@@ -667,9 +732,58 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
   padding: 3px 4px;
   color: var(--fg-strong);
   font-weight: 600;
+  text-align: left;
+  border-radius: var(--radius-sm);
+}
+
+.problems-view__file:hover {
+  background: var(--bg-hover);
+}
+
+.problems-view__chevron {
+  display: flex;
+  align-items: center;
+  color: var(--fg-faint);
+  transition: transform 0.12s ease;
+}
+
+.problems-view__chevron.is-open {
+  transform: rotate(90deg);
+}
+
+.problems-view__filters {
+  display: flex;
+  gap: 4px;
+  padding: 4px 8px;
+}
+
+.problems-view__filter {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  border-radius: var(--radius-sm);
+}
+
+.problems-view__filter:hover {
+  background: var(--bg-hover);
+  color: var(--fg-strong);
+}
+
+.problems-view__filter.is-active {
+  background: var(--bg-active);
+  color: var(--fg-strong);
+}
+
+.problems-view__filter-count {
+  font-size: 10px;
+  color: var(--fg-faint);
 }
 
 .problems-view__file-name {
@@ -1489,6 +1603,149 @@
   position: relative;
 }
 
+/* 消息区主体：左侧导航栏 + 消息流（导航栏仅在 ≥2 条用户消息时渲染） */
+.chat__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* 左侧消息导航：每条用户消息一个圆点（对齐 wuzu-client 导航条，改为左侧纯圆点） */
+.chat__nav {
+  flex: 0 0 auto;
+  width: 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 0 8px;
+}
+
+.chat__nav::-webkit-scrollbar {
+  display: none;
+}
+
+.chat__nav-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--fg-faint);
+  opacity: 0.45;
+  cursor: pointer;
+  transition:
+    transform 0.12s ease,
+    opacity 0.12s ease;
+}
+
+.chat__nav-dot:hover {
+  opacity: 0.9;
+  transform: scale(1.3);
+}
+
+/* 当前轮次：未标记的用主题色；已标记的保留标记色（内联样式优先），只靠放大与透明度区分 */
+.chat__nav-dot.is-active {
+  opacity: 1;
+  transform: scale(1.3);
+  background: var(--accent);
+}
+
+/* 圆点列自身可滚动（几百条对话时圆点太密，先保证常态可用） */
+.chat__nav-dots {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.chat__nav-dots::-webkit-scrollbar {
+  display: none;
+}
+
+/* 悬停展开：铺出带预览的消息列表（fixed 浮层，锚定在鼠标进入处）
+   用全局磨砂玻璃材质，与右键菜单/弹出层一致 */
+.chat__nav-list {
+  position: fixed;
+  width: 240px;
+  max-height: 320px;
+  padding: var(--space-1);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--material-bg);
+  border: 1px solid var(--material-border);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--material-shadow), var(--material-highlight);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  z-index: var(--z-popover);
+}
+.chat__nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--fg);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.chat__nav-item:hover {
+  background: var(--bg-active);
+}
+.chat__nav-item.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.chat__nav-item-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+}
+.chat__nav-item-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 底部快捷按钮：到顶 / 上一条 / 下一条 / 到底 */
+.chat__nav-controls {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.chat__nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+.chat__nav-btn:hover {
+  background: var(--bg-active);
+  color: var(--fg);
+}
+
 /* 「回到底部」浮动按钮：非跟随吸底且有新内容时浮出（对齐 wuzu-client） */
 .chat__back-to-bottom {
   position: absolute;
@@ -1613,15 +1870,15 @@
   height: 24px;
   padding: 0;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius);
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--fg-muted);
   cursor: pointer;
 }
 
 .message__action:hover {
   background: var(--bg-hover);
-  color: var(--text-primary);
+  color: var(--fg-strong);
 }
 
 .message__action:disabled {
@@ -2320,14 +2577,38 @@
   border-left-color: var(--danger);
 }
 
-.diff-card > summary {
+.diff-card__head {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
   padding: 5px 9px;
+  border: none;
+  background: none;
+  color: inherit;
   cursor: pointer;
   font-size: 12px;
+  text-align: left;
   user-select: none;
+}
+
+.diff-card__head:hover {
+  background: var(--bg-active);
+}
+
+/* 头部是 div[role=button]（内部含可点路径），键盘聚焦时补可见焦点环 */
+.diff-card__head:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* 收起态：箭头指回右侧（默认展开时朝下） */
+.diff-card.is-collapsed .diff-card__chevron {
+  transform: rotate(-90deg);
+}
+
+.diff-card__chevron {
+  transition: transform 0.15s ease;
 }
 
 .diff-card__icon {
@@ -2866,6 +3147,15 @@
   font-size: 11px;
   color: var(--fg-faint);
   text-align: center;
+  /* 摘要是 button（点击展开托盘）：重置按钮默认外观，保持原来的纯文本观感 */
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.session-tray__summary:hover {
+  color: var(--fg);
 }
 
 .session-tray__action {
@@ -2965,6 +3255,224 @@
 .session-tray__queue-remove:hover {
   background: var(--bg-active);
   color: var(--danger-fg);
+}
+
+/* 队列项拖拽排序 */
+.session-tray__queue-item[draggable='true'] {
+  cursor: grab;
+}
+.session-tray__queue-item.is-dragging {
+  opacity: 0.4;
+}
+
+/* 队列项编辑态 */
+.session-tray__queue-edit {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.session-tray__queue-textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 40px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-app);
+  color: var(--fg-strong);
+  font-size: 12px;
+  font-family: inherit;
+}
+.session-tray__queue-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.session-tray__queue-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* 队列项附件缩略图 */
+.session-tray__queue-thumbs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.session-tray__queue-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.session-tray__queue-thumb--icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-hover);
+  color: var(--fg-faint);
+}
+.session-tray__queue-thumbwrap {
+  position: relative;
+  display: inline-flex;
+}
+.session-tray__queue-thumb-remove {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-active);
+  color: var(--fg-faint);
+  border: 1px solid var(--border);
+  padding: 0;
+}
+.session-tray__queue-thumb-remove:hover {
+  color: var(--danger-fg);
+}
+
+/* 附件 chip 图片缩略图 */
+.attach-chip__thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+/* 上下文用量环（输入框旁） */
+.ctx-card {
+  /* git-stashcard 提供 fixed 定位/背景/边框/投影，这里补布局差异（对齐 wuzu ContextUsageRing） */
+  cursor: default;
+  min-width: 200px;
+  max-width: 280px;
+  padding: 12px 14px;
+}
+.ctx-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg);
+}
+.ctx-card__warn-icon {
+  color: var(--danger-fg, #ff453a);
+}
+.ctx-card__percent {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--fg-strong);
+  font-variant-numeric: tabular-nums;
+}
+.ctx-card__percent-sign {
+  font-size: 11px;
+  font-weight: 400;
+}
+.ctx-card__tokens {
+  margin-top: 12px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  line-height: 1.3;
+}
+.ctx-card__tokens-value {
+  font-size: 12px;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.ctx-card__tokens-label {
+  font-size: 11px;
+  color: var(--fg-faint);
+}
+.ctx-card__bar {
+  margin-top: 10px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+.ctx-card__bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+.ctx-card__bar-fill--warn {
+  background: var(--danger-fg, #e5484d);
+}
+.ctx-card__status {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.ctx-card__error {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--danger-fg, #ff453a);
+  word-break: break-all;
+}
+.ctx-card__hint {
+  margin-top: 10px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--fg-faint);
+}
+
+.context-ring {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.context-ring:disabled,
+.context-ring[aria-disabled='true'] {
+  cursor: default;
+}
+.context-ring svg {
+  transform: rotate(-90deg);
+}
+.context-ring__track {
+  stroke: var(--bg-hover);
+}
+.context-ring__bar {
+  stroke: var(--accent);
+  transition: stroke-dashoffset 0.3s ease;
+}
+.context-ring--warn .context-ring__bar {
+  stroke: var(--danger-fg, #e5484d);
+}
+.context-ring--busy .context-ring__bar {
+  animation: context-ring-spin 1s linear infinite;
+  transform-origin: center;
+}
+@keyframes context-ring-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.context-ring__label {
+  position: absolute;
+  font-size: 8px;
+  color: var(--fg-faint);
+  line-height: 1;
 }
 
 .changes-panel__list {
@@ -3341,7 +3849,7 @@
   resize: none;
   /* 初始约两行：输入区太扁会显得局促，也挤占工具条空间 */
   min-height: 48px;
-  max-height: 260px;
+  max-height: 400px;
   outline: none;
   font-family: inherit;
   font-size: 13px;
@@ -3431,10 +3939,10 @@
   max-height: 320px;
   display: flex;
   flex-direction: column;
-  background: var(--bg-1);
-  border: 1px solid var(--border);
+  background: var(--material-bg);
+  border: 1px solid var(--material-border);
   border-radius: 10px;
-  box-shadow: var(--shadow-2);
+  box-shadow: var(--material-shadow);
   overflow: hidden;
   z-index: 50;
 }
@@ -3444,14 +3952,14 @@
   border: none;
   border-bottom: 1px solid var(--border);
   background: transparent;
-  color: var(--fg-0);
+  color: var(--fg-strong);
   padding: 8px 12px;
   font-size: 12px;
   outline: none;
 }
 
 .file-palette__search::placeholder {
-  color: var(--fg-3);
+  color: var(--fg-faint);
 }
 
 .file-palette__list {
@@ -3470,24 +3978,24 @@
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: var(--fg-1);
+  color: var(--fg);
   font-size: 12px;
   text-align: left;
   cursor: pointer;
 }
 
 .file-palette__item.is-active {
-  background: var(--bg-3);
-  color: var(--fg-0);
+  background: var(--bg-active);
+  color: var(--fg-strong);
 }
 
 .file-palette__item .icon {
   flex-shrink: 0;
-  color: var(--fg-3);
+  color: var(--fg-faint);
 }
 
 .file-palette__item.is-active .icon {
-  color: var(--fg-1);
+  color: var(--fg);
 }
 
 .file-palette__name {
@@ -3500,14 +4008,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--fg-3);
+  color: var(--fg-faint);
   font-size: 11px;
 }
 
 .file-palette__empty {
   padding: 16px 12px;
   text-align: center;
-  color: var(--fg-3);
+  color: var(--fg-faint);
   font-size: 12px;
 }
 
@@ -3515,7 +4023,7 @@
   flex-shrink: 0;
   border-top: 1px solid var(--border);
   padding: 4px 12px;
-  color: var(--fg-3);
+  color: var(--fg-faint);
   font-size: 11px;
 }
 
@@ -4366,6 +4874,7 @@ textarea.field__input {
   align-items: center;
   gap: var(--space-2);
   flex-wrap: wrap;
+  margin-bottom: 18px;
 }
 
 .settings-view__saved {
@@ -4652,15 +5161,6 @@ textarea.field__input {
   color: var(--fg-muted);
 }
 
-/* 分组行内的小号下拉（动作/服务商等） */
-.sg__select {
-  width: auto;
-  min-width: 96px;
-  height: 26px;
-  padding: 0 24px 0 9px;
-  font-size: 12px;
-}
-
 /* ── 通用下拉选择（替代原生 select，与整体形制一致） ── */
 
 .select {
@@ -4849,6 +5349,7 @@ textarea.field__input {
 
 .notice {
   padding: 8px 11px;
+  margin-bottom: 12px;
   border-left: 2px solid var(--fg-faint);
   border-radius: var(--radius);
   background: var(--bg-surface);
@@ -5268,9 +5769,9 @@ select.field__input {
   min-width: 0;
   padding: 2px 8px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md, 4px);
-  background: var(--bg-elevated, rgba(255, 255, 255, 0.04));
-  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--fg-strong);
   font-size: 12px;
   outline: none;
 }
@@ -5314,24 +5815,24 @@ select.field__input {
 
 /* git 状态着色：文件名直接变色（对齐 wuzu-client / VSCode gitDecoration） */
 .tree-row__name--modified {
-  color: #e2c08d;
+  color: var(--git-modified);
 }
 .tree-row__name--added {
-  color: #73c991;
+  color: var(--git-added);
 }
 .tree-row__name--deleted {
-  color: #f14c4c;
+  color: var(--git-deleted);
   text-decoration: line-through;
 }
 .tree-row__name--renamed {
-  color: #e2c08d;
+  color: var(--git-modified);
 }
 .tree-row__name--other {
-  color: #e2c08d;
+  color: var(--git-modified);
 }
 /* 目录聚合 dirty：轻微提亮即可，不抢眼 */
 .tree-row__name--dirty {
-  color: var(--text-primary);
+  color: var(--fg-strong);
 }
 
 /* 紧凑文件夹的链条尾注（utils/helpers）。
@@ -5677,6 +6178,107 @@ select.field__input {
 .welcome__recent-remove:hover {
   background: var(--bg-active);
   color: var(--fg-strong);
+}
+
+/* ── 最近打开 · 完整列表弹窗 ── */
+
+.recent-dialog__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 50vh;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recent-dialog__item {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  border-radius: var(--radius);
+}
+
+.recent-dialog__item:hover {
+  background: var(--bg-hover);
+}
+
+.recent-dialog__open {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  margin-left: -10px;
+  border-radius: var(--radius);
+  text-align: left;
+  color: var(--fg-muted);
+}
+
+.recent-dialog__text {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.recent-dialog__name {
+  font-size: 13px;
+  color: var(--fg-strong);
+  white-space: nowrap;
+}
+
+.recent-dialog__item:hover .recent-dialog__name {
+  text-decoration: underline;
+}
+
+.recent-dialog__path {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--fg-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.recent-dialog__more {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--fg-faint);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+}
+
+.recent-dialog__remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  flex-shrink: 0;
+  border-radius: var(--radius);
+  color: var(--fg-faint);
+  opacity: 0;
+}
+
+.recent-dialog__item:hover .recent-dialog__remove,
+.recent-dialog__remove:focus-visible {
+  opacity: 1;
+}
+
+.recent-dialog__remove:hover {
+  background: var(--bg-active);
+  color: var(--fg-strong);
+}
+
+.recent-dialog__empty {
+  margin: 8px 0;
+  font-size: 13px;
+  color: var(--fg-faint);
 }
 
 /* 快捷键速查 */
@@ -6509,6 +7111,14 @@ select.field__input {
   font-size: 11px;
 }
 
+/* 菜单项左侧的色板圆点（颜色选择等场景） */
+.context-menu__swatch {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
 /* 二级菜单：分组入口右侧的展开箭头 */
 .context-menu__submenu-arrow {
   color: var(--fg-faint);
@@ -6808,24 +7418,24 @@ select.field__input {
 
 .history-view__pin {
   flex: none;
-  color: var(--warning-fg, #d97706);
+  color: var(--warn);
 }
 
 /* 标记色板（右键「标记」弹出的二级面板） */
 .tag-panel {
   position: fixed;
-  z-index: 60;
-  background: var(--bg-1, var(--bg-elevated));
-  border: 1px solid var(--border);
+  z-index: var(--z-popover);
+  background: var(--material-bg);
+  border: 1px solid var(--material-border);
   border-radius: 10px;
-  box-shadow: var(--shadow-2, 0 8px 24px rgba(0, 0, 0, 0.3));
+  box-shadow: var(--material-shadow);
   padding: 8px;
 }
 
 .tag-panel__backdrop {
   position: fixed;
   inset: 0;
-  z-index: 59;
+  z-index: calc(var(--z-popover) - 1);
   border: none;
   background: transparent;
   cursor: default;
@@ -6872,7 +7482,7 @@ select.field__input {
   box-sizing: border-box;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--bg-1, transparent);
+  background: var(--bg-elevated);
   color: var(--fg-strong);
   font-size: 13px;
   padding: 7px 10px;
@@ -6961,10 +7571,10 @@ select.field__input {
   pointer-events: none;
 }
 .git-panel__badge--ahead {
-  color: #73c991;
+  color: var(--git-added);
 }
 .git-panel__badge--behind {
-  color: #f14c4c;
+  color: var(--git-deleted);
 }
 .git-panel__commit-area {
   padding: 6px 8px;
@@ -7007,7 +7617,7 @@ select.field__input {
 }
 /* 合并更改组标题：金色强调（对齐源面板 conflict 组配色） */
 .git-panel__group-head--conflict {
-  color: #e2c08d;
+  color: var(--git-modified);
 }
 .git-panel__group {
   display: flex;
@@ -7370,7 +7980,7 @@ select.field__input {
 }
 .git-panel__ref-badge--tag {
   background: rgb(226 192 141 / 0.2);
-  color: #e2c08d;
+  color: var(--git-modified);
   border-color: rgb(226 192 141 / 0.4);
 }
 .git-panel__commit-files {
@@ -7504,6 +8114,56 @@ select.field__input {
 }
 .git-panel__stash-hash {
   font-family: var(--font-mono);
+}
+
+/* 存储详情 · 涉及文件清单 */
+.git-panel__stash-detail-files {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.git-panel__stash-detail-files-label {
+  font-size: 11px;
+  color: var(--fg-faint);
+}
+
+.git-panel__stash-detail-files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.git-panel__stash-detail-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.git-panel__stash-detail-file:hover {
+  background: var(--bg-hover);
+  color: var(--fg-strong);
+}
+
+.git-panel__stash-detail-files-empty {
+  font-size: 12px;
+  color: var(--fg-faint);
 }
 
 .git-panel__footer {

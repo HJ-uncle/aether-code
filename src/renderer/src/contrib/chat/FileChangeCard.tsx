@@ -22,9 +22,12 @@ export function FileChangeCard({
   state
 }: {
   change: EngineFileChange
-  state: 'running' | 'done' | 'error'
+  state: 'running' | 'done' | 'error' | 'unknown' | 'cancelled'
 }): JSX.Element {
-  const [expanded, setExpanded] = useState(false)
+  /** 「还有 N 行」展开更多：只影响 body 内的行数，不影响卡片折叠 */
+  const [showAllRows, setShowAllRows] = useState(false)
+  /** 卡片折叠：默认展开（内容量大、是主要阅读对象），用户可点标题收起 */
+  const [collapsed, setCollapsed] = useState(false)
   const failed = state === 'error'
 
   const rows = useMemo(() => {
@@ -45,12 +48,24 @@ export function FileChangeCard({
     return segments.length > 2 ? `…/${segments.slice(-2).join('/')}` : displayPath
   }, [displayPath])
 
-  const visibleRows = expanded ? rows : rows.slice(0, MAX_RENDER_ROWS)
+  const visibleRows = showAllRows ? rows : rows.slice(0, MAX_RENDER_ROWS)
   const hiddenCount = rows.length - visibleRows.length
 
   return (
-    <details className={`diff-card${failed ? ' diff-card--error' : ''}`} open>
-      <summary>
+    <div className={`diff-card${failed ? ' diff-card--error' : ''}${collapsed ? ' is-collapsed' : ''}`}>
+      {/* 头部用 div[role=button] 而非 <button>：内部还有「路径」按钮，按钮不能嵌套按钮 */}
+      <div
+        className="diff-card__head"
+        role="button"
+        tabIndex={0}
+        aria-expanded={!collapsed}
+        onClick={() => setCollapsed((value) => !value)}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return
+          event.preventDefault()
+          setCollapsed((value) => !value)
+        }}
+      >
         <span className={`diff-card__icon${failed ? ' diff-card__icon--fail' : ''}`}>
           <Icon name={failed ? 'close' : 'check'} size={13} />
         </span>
@@ -60,7 +75,7 @@ export function FileChangeCard({
           className="diff-card__path diff-card__path--link"
           title={`在编辑器中打开 ${displayPath}`}
           onClick={(event) => {
-            // 阻止冒泡到 summary：点路径是打开文件，不是折叠卡片
+            // 阻止冒泡到头部：点路径是打开文件，不是折叠卡片
             event.preventDefault()
             event.stopPropagation()
             void openFileFromChat(change.path || displayPath)
@@ -77,10 +92,10 @@ export function FileChangeCard({
             <span className="diff-card__del">-{stats.removed}</span>
           </span>
         )}
-        <Icon name="chevron" size={13} />
-      </summary>
+        <Icon name="chevron" size={13} className="diff-card__chevron" />
+      </div>
 
-      {change.truncated ? (
+      {collapsed ? null : change.truncated ? (
         <div className="diff-card__body diff-card__body--empty">
           文件过大或为二进制格式，未保存内容快照（无法展示差异，也不支持自动撤回）。
         </div>
@@ -98,12 +113,12 @@ export function FileChangeCard({
             </div>
           ))}
           {hiddenCount > 0 ? (
-            <button type="button" className="diff-card__more" onClick={() => setExpanded(true)}>
+            <button type="button" className="diff-card__more" onClick={() => setShowAllRows(true)}>
               还有 {hiddenCount} 行，点击展开全部
             </button>
           ) : null}
         </div>
       )}
-    </details>
+    </div>
   )
 }

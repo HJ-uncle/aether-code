@@ -6,13 +6,13 @@
  *   pickParentDir → 主进程系统目录选择框（fs.pickFolder，选中自动授权）
  *   confirmOpen   → confirmDialog（aether 全工程统一的确认手段，见 workbench/ConfirmDialog）
  *   openWorkspace → workspace-store.openFolderAt（切换工作区根）
- *   toast*        → aether 暂无全局 toast；错误走 console.error + 由调用方 UI 展示，
- *                   成功走 console.info。clone-flow 失败时错误也会经 dialog 状态可见。
+ *   toast*        → 全局 toast（core/toast.ts）
  */
 import { configureCloneFlow } from '@renderer/core/git/git-clone-flow'
 import { pickFolder } from '@renderer/core/workspace/fs-client'
 import { openFolderAt } from '@renderer/core/workspace/workspace-store'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
+import { toast } from '@renderer/core/toast'
 
 let configured = false
 
@@ -30,11 +30,10 @@ export function configureGitCloneFlow(): void {
         confirmText: '打开'
       }),
     toastError: (message: string) => {
-      // aether 无全局 toast；至少留控制台痕迹。调用方的 error 态由 git-store/dialog 呈现。
-      console.error('[git-clone]', message)
+      toast.error(message)
     },
     toastSuccess: (message: string) => {
-      console.info('[git-clone]', message)
+      toast.success(message)
     },
     openWorkspace: (path: string) => openFolderAt(path)
   })

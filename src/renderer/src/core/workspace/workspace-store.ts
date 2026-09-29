@@ -60,6 +60,54 @@ export function getWorkspaceState(): WorkspaceState {
   return state
 }
 
+// ==================== 树展开状态持久化（按项目，对齐 wuzu expandedDirs） ====================
+
+const EXPANDED_DIRS_KEY = 'aether.expandedDirs'
+
+type ExpandedDirsTable = Record<string, string[]>
+
+function readExpandedDirsTable(): ExpandedDirsTable {
+  try {
+    const raw = localStorage.getItem(EXPANDED_DIRS_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const table: ExpandedDirsTable = {}
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (Array.isArray(value)) table[key] = value.filter((v): v is string => typeof v === 'string')
+    }
+    return table
+  } catch {
+    return {}
+  }
+}
+
+function loadExpandedDirs(root: string): string[] {
+  return readExpandedDirsTable()[root] ?? []
+}
+
+/** 表按项目裁剪到最近 20 个，避免 localStorage 无限增长 */
+function persistExpandedDirs(): void {
+  const root = state.root
+  if (!root) return
+  const table = readExpandedDirsTable()
+  table[root] = [...state.expanded]
+  const keys = Object.keys(table)
+  if (keys.length > 20) {
+    // 当前项目必保留；其余按插入序丢最旧的（Object 键序即插入序）
+    for (const key of keys) {
+      if (key === root) continue
+      delete table[key]
+      if (Object.keys(table).length <= 20) break
+    }
+  }
+  try {
+    localStorage.setItem(EXPANDED_DIRS_KEY, JSON.stringify(table))
+  } catch {
+    // 存储写失败不打断交互
+  }
+}
+
 export function onWorkspaceChanged(listener: () => void): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
@@ -92,7 +140,8 @@ export async function openFolderAt(root: string): Promise<void> {
   setState({
     root,
     children: new Map(),
-    expanded: new Set([root]),
+    // 恢复上次该项目的展开状态；首次打开只展开根
+    expanded: new Set([root, ...loadExpandedDirs(root)]),
     loading: new Set(),
     error: null,
     activeFilePath: null,
@@ -102,6 +151,8 @@ export async function openFolderAt(root: string): Promise<void> {
   await loadChildren(root)
   // 记入「最近打开的项目」：启动时自动恢复也算一次使用，下次仍在列表最前
   rememberRecentFolder(root)
+  // 记住当前项目，下次启动自动恢复（restoreLastFolder 读 settings.lastFolder）
+  void updateSettings({ lastFolder: root })
 }
 
 /** 弹出目录选择框并打开 */
@@ -132,6 +183,7 @@ export async function toggleExpand(dir: string): Promise<void> {
   if (nextExpanded.has(dir)) {
     nextExpanded.delete(dir)
     setState({ expanded: nextExpanded })
+    persistExpandedDirs()
     return
   }
 
@@ -147,6 +199,7 @@ export async function toggleExpand(dir: string): Promise<void> {
 export async function expandDirectory(dir: string): Promise<void> {
   if (!state.expanded.has(dir)) {
     setState({ expanded: new Set(state.expanded).add(dir) })
+    persistExpandedDirs()
   }
   if (!state.children.has(dir)) {
     await loadChildren(dir)
@@ -169,6 +222,7 @@ export async function refreshDirectory(dir: string): Promise<void> {
 export function collapseAll(): void {
   if (state.expanded.size === 0) return
   setState({ expanded: new Set() })
+  persistExpandedDirs()
 }
 
 /** 记录当前打开的文件（用于文件树高亮） */

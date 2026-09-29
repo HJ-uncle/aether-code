@@ -27,7 +27,7 @@ const APP_ROOT = resolve(__dirname, '..')
 const WORKSPACE_DIR = APP_ROOT
 
 /** 诊断用例夹具：内容确定，必然产生一个 TS2322（类型不匹配） */
-const FIXTURE_DIR = join(APP_ROOT, '.e2e-tmp')
+const FIXTURE_DIR = join(APP_ROOT, '.e2e-tmp', 'lsp-diagnostics')
 const BROKEN_FILE = join(FIXTURE_DIR, 'diagnostic-broken.ts')
 const BROKEN_SOURCE = "const brokenValue: number = 'not-a-number'\n"
 

@@ -1,4 +1,4 @@
-import { useSyncExternalStore, type JSX } from 'react'
+import { useState, useSyncExternalStore, type JSX } from 'react'
 import { executeCommand } from '@renderer/core/platform/commands'
 import { getKeybindingHint } from '@renderer/core/platform/keybindings'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
@@ -6,9 +6,11 @@ import { openFolderAt } from '@renderer/core/workspace/workspace-store'
 import {
   forgetRecentFolder,
   getRecentFolders,
-  onRecentFoldersChanged
+  onRecentFoldersChanged,
+  RECENT_PREVIEW_COUNT
 } from '@renderer/core/workspace/recent-folders'
 import { Icon, type IconName } from '@renderer/workbench/icons'
+import { RecentProjectsDialog } from './RecentProjectsDialog'
 
 /**
  * 欢迎页（对标 VS Code 的 Welcome / Get Started）
@@ -94,6 +96,8 @@ export function WelcomeView(): JSX.Element {
   const recentFolders = useSyncExternalStore(onRecentFoldersChanged, getRecentFolders)
   /** 当前已打开的项目不再列入「最近打开」——它就在上面写着，重复列只会占位 */
   const recent = recentFolders.filter((folder) => folder !== workspace.root)
+  const preview = recent.slice(0, RECENT_PREVIEW_COUNT)
+  const [showAllRecent, setShowAllRecent] = useState(false)
 
   const openRecent = (folder: string): void => {
     void openFolderAt(folder).catch(() => {
@@ -143,7 +147,7 @@ export function WelcomeView(): JSX.Element {
               <>
                 <h2 className="welcome__section">最近打开</h2>
                 <ul className="welcome__list welcome__list--recent">
-                  {recent.map((folder) => {
+                  {preview.map((folder) => {
                     const name = folder.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? folder
                     // 未打开任何项目时才把「移除」暴露出来：已有项目在跑时误删历史更碍事
                     const removable = !workspace.root
@@ -176,7 +180,19 @@ export function WelcomeView(): JSX.Element {
                     )
                   })}
                 </ul>
+                {recent.length > RECENT_PREVIEW_COUNT ? (
+                  <button
+                    type="button"
+                    className="welcome__link"
+                    onClick={() => setShowAllRecent(true)}
+                  >
+                    更多 ({recent.length - RECENT_PREVIEW_COUNT})
+                  </button>
+                ) : null}
               </>
+            ) : null}
+            {showAllRecent ? (
+              <RecentProjectsDialog onClose={() => setShowAllRecent(false)} />
             ) : null}
 
             <h2 className="welcome__section">小技巧</h2>

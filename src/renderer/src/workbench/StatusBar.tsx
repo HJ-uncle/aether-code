@@ -3,8 +3,9 @@ import { useApp } from '@renderer/core/app-context'
 import { useEditor } from '@renderer/core/editor/editor-store'
 import { useGit } from '@renderer/core/git/git-store'
 import { executeCommand } from '@renderer/core/platform/commands'
-import { toggleSidebarView } from '@renderer/core/platform/layout-state'
+import { togglePanel, toggleSidebarView } from '@renderer/core/platform/layout-state'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
+import { useProblems } from '@renderer/core/lsp/problems-store'
 import { GitSyncButton } from '@renderer/contrib/git/GitSyncButton'
 import { Icon } from './icons'
 import type { EnginePhase } from '@shared/ipc'
@@ -31,11 +32,22 @@ export function StatusBar(): JSX.Element {
   const editor = useEditor()
   // 只取 refresh：它在 store 里是模块级函数，引用稳定，放进依赖数组不会导致重复请求
   const { refresh: refreshGit, ...git } = useGit()
+  // 问题计数：点击打开问题面板（对齐 VS Code 状态栏的错误/警告计数）
+  const { byFile: problemFiles } = useProblems()
 
   const busy =
     snapshot.phase === 'starting' ||
     snapshot.phase === 'installing' ||
     snapshot.phase === 'stopping'
+
+  let problemErrors = 0
+  let problemWarnings = 0
+  for (const items of problemFiles.values()) {
+    for (const item of items) {
+      if (item.severity === 'error') problemErrors++
+      else if (item.severity === 'warning') problemWarnings++
+    }
+  }
 
   // 工作区分支跟随根目录变化重新拉取；与 Git 视图共用 store，不会重复请求
   useEffect(() => {
@@ -94,6 +106,20 @@ export function StatusBar(): JSX.Element {
       ) : null}
 
       <div className="status-bar__spacer" />
+
+      {problemErrors + problemWarnings > 0 ? (
+        <button
+          type="button"
+          className="status-bar__item"
+          title={`打开问题面板\n错误 ${problemErrors} · 警告 ${problemWarnings}`}
+          onClick={() => togglePanel('problems')}
+        >
+          <span className="problems-view__dot is-error" aria-hidden="true" />
+          {problemErrors}
+          <span className="problems-view__dot is-warning" aria-hidden="true" />
+          {problemWarnings}
+        </button>
+      ) : null}
 
       {/*
         光标位置：VS Code 把它放在状态栏右侧、紧邻语言模式。

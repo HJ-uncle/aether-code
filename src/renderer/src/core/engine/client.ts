@@ -14,6 +14,7 @@ import type {
   StreamEvent,
   StreamStartInput
 } from '@shared/ipc'
+import type { SubagentRun } from '@shared/subagent'
 
 function bridge(): Window['aether'] {
   const api = window.aether
@@ -77,6 +78,19 @@ export function stopSubagent(input: { sessionId: string; toolCallId: string }) {
     path: '/subagent/cancel',
     body: input
   })
+}
+
+export function listSubagentRuns(parentSessionId: string): Promise<SubagentRun[]> {
+  return requestOrThrow<SubagentRun[]>({ method: 'GET', path: '/subagent/runs', query: { parentSessionId } })
+}
+
+export function getSubagentRun(runId: string): Promise<SubagentRun> {
+  return requestOrThrow<SubagentRun>({ method: 'GET', path: `/subagent/runs/${encodeURIComponent(runId)}` })
+}
+
+/** Acknowledgement contains the real current state; accepting cancel does not mean it has finished. */
+export function cancelSubagentRun(runId: string): Promise<SubagentRun> {
+  return requestOrThrow<SubagentRun>({ method: 'POST', path: `/subagent/runs/${encodeURIComponent(runId)}/cancel`, body: {} })
 }
 
 // ==================== 流式 ====================

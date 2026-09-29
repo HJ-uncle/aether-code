@@ -6,7 +6,8 @@
  *   1. 环境变量 AETHER_IDE_ENGINE_ENTRY —— 显式覆盖，开发调试用
  *   2. <userData>/engine/<version>/dist/main.js —— 已安装（CDN 下载或本地包解压）
  *   3. <resources>/engine/<platform>/dist/main.js —— 安装包内置的保底版本
- *   4. <仓库同级>/ai-agent-engine/sdk-package/bin/dist/main.js —— 开发期直接复用已构建产物
+ *   4. <仓库同级>/ai-agent-engine/dist/main.js —— 开发期使用当前源码构建
+ *      缺失时再回退 sdk-package/bin/dist/main.js
  *
  * 之所以把「已安装」排在「内置」之前：内置版本永不覆盖，只作兜底；
  * 用户升级后应优先使用新版，出问题时可回滚到内置。
@@ -81,17 +82,14 @@ export function resolveRuntime(): ResolvedRuntime | null {
     if (bundled) return makeRuntime(bundled, 'bundled')
   }
 
-  // 4. 开发期复用同级仓库已构建产物（免去每次解压 100MB）
-  const devSibling = resolve(
-    app.getAppPath(),
-    '..',
-    'ai-agent-engine',
-    'sdk-package',
-    'bin',
-    'dist',
-    'main.js'
-  )
-  if (existsSync(devSibling)) return makeRuntime(devSibling, 'dev-sibling')
+  // 同级引擎源码修复后，优先用 npm run build 的产物，避免继续启动旧 SDK 副本。
+  const engineRoot = resolve(app.getAppPath(), '..', 'ai-agent-engine')
+  for (const entry of [
+    join(engineRoot, 'dist', 'main.js'),
+    join(engineRoot, 'sdk-package', 'bin', 'dist', 'main.js')
+  ]) {
+    if (existsSync(entry)) return makeRuntime(entry, 'dev-sibling')
+  }
 
   return null
 }

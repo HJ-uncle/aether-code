@@ -1,3 +1,8 @@
+import type { SubagentRun } from '@shared/subagent'
+import { applyToolResult, finishTool, normalizeTool, replayMessages, type EngineHistoryRow } from './chat-history'
+export { extractText } from './chat-history'
+import { attachSubagentRuns } from './subagent-state'
+import { ingestSubagentEvent, ingestSubagentRun, getSubagentRuns, refreshSubagentRuns, subscribeSubagents, forgetSubagentSession, hasActiveSubagents } from './subagent-store'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChatSsePayload, EngineFileChange, EngineTodo, StreamEvent } from '@shared/ipc'
 import * as engine from './client'
@@ -16,7 +21,9 @@ export interface ToolActivity {
   name: string
   args: string
   result: string
-  state: 'running' | 'done' | 'error'
+  state: 'running' | 'done' | 'error' | 'unknown' | 'cancelled'
+  error?: string
+  subagent?: SubagentRun
   /**
    * 该调用由交互卡片（提问 / 安全授权）代表，不再单独渲染工具条目。
    *
@@ -100,6 +107,18 @@ export interface QueuedMessage {
   attachments: ChatAttachment[]
 }
 
+/** 队列发送模式：serial 按序逐条 / batch 合并成一条；localStorage 持久化 */
+export type QueueSendMode = 'serial' | 'batch'
+const QUEUE_SEND_MODE_KEY = 'aether:queueSendMode'
+
+function loadQueueSendMode(): QueueSendMode {
+  try {
+    return localStorage.getItem(QUEUE_SEND_MODE_KEY) === 'batch' ? 'batch' : 'serial'
+  } catch {
+    return 'serial'
+  }
+}
+
 export interface SendOptions {
   sessionId: string
   agentId?: string
@@ -123,260 +142,14 @@ export interface SendOptions {
    * 字符串档位表示「强制开启并指定推理 effort」，false 是显式关闭。
    */
   thinkingMode?: 'low' | 'medium' | 'high' | false
+  /** 子代理专用模型（空/undefined = 跟随主模型）；来自设置「按用途指派」 */
+  subagentModel?: string
+  /** 轻任务专用模型（图片理解等旁路调用）；来自设置「按用途指派」 */
+  utilityModel?: string
 }
 
 function newId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
-}
-
-/**
- * 回放时合并用量帧。
- *
- * 引擎的流式 `__usage__` 帧下发的是**整个提问的累计值**（一轮 ReAct 里每次
- * 迭代都会重新下发全量累计），而落库时每条 assistant 行只存**该次迭代的增量**。
- * 回放如果按「后一行覆盖前一行」取用量，整轮的消耗就被压成最后一次迭代的量
- * —— 与生成期间看到的累计值差一个数量级（重启后 282k 变 10.4k 就是这么来的）。
- *
- * 这里改为按字段累加：同一轮内多条 assistant 行的增量相加，还原出与实时帧
- * 同口径的累计值。字段可能缺失（老数据 / 非 DeepSeek 模型），缺的跳过。
- */
-function mergeUsageFrame(previous: unknown, next: unknown): Record<string, number> {
-  const base = asNumberRecord(previous)
-  for (const [key, value] of Object.entries(asNumberRecord(next))) {
-    base[key] = (base[key] ?? 0) + value
-  }
-  return base
-}
-
-function asNumberRecord(raw: unknown): Record<string, number> {
-  const result: Record<string, number> = {}
-  if (!raw || typeof raw !== 'object') return result
-  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof value === 'number' && Number.isFinite(value)) result[key] = value
-  }
-  return result
-}
-
-/**
- * 引擎 conversations 表回放行（GET /conversation/history 的 data 项）。
- *
- * 字段按引擎 rowToMessage 的输出宽松声明：user/assistant 的 content 可能是
- * multipart 数组（JSON.parse 过），assistant 行可携带发起的 toolCall，
- * 工具结果以 role=tool 的独立行跟随其后。
- */
-interface EngineHistoryRow {
-  id?: string
-  role?: string
-  content?: unknown
-  reasoningContent?: unknown
-  usage?: unknown
-  createdAt?: number
-  modelId?: string
-  /** 所属轮次 id（引擎 conversations 表的 conversation_id），删除整轮时定位用 */
-  conversationId?: string
-  toolCallId?: unknown
-  toolCall?: { id?: string; name?: string; args?: unknown } | null
-}
-
-/**
- * 把引擎存的 content 还原为可读文本。
- *
- * user/assistant 的 content 可能是 multipart 数组（文本+图片等混合），
- * 渲染层只关心文本块；纯非文本内容时标注类型，避免显示成空白。
- */
-export function extractText(content: unknown): string {
-  if (typeof content === 'string') {
-    // 历史数据里存在把 multipart 结构整体 JSON.stringify 后当字符串存进来的情况
-    // （会话列表曾直接显示 [{"role":"user","content":"… 原文）。看起来像 JSON 时
-    // 先尝试解析回结构化内容再走正常提取。
-    const trimmed = content.trim()
-    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
-      try {
-        const parsed: unknown = JSON.parse(trimmed)
-        if (Array.isArray(parsed) || (parsed && typeof parsed === 'object')) {
-          const text = extractText(parsed)
-          if (text) return text
-        }
-      } catch {
-        // 不是合法 JSON，按纯文本处理
-      }
-    }
-    return content
-  }
-  if (Array.isArray(content)) {
-    // 消息结构数组（[{role, content}]）：取最后一条的文本
-    if (
-      content.length > 0 &&
-      content.every(
-        (part) => part && typeof part === 'object' && 'role' in (part as Record<string, unknown>)
-      )
-    ) {
-      return extractText((content[content.length - 1] as Record<string, unknown>).content)
-    }
-    const texts = content
-      .filter(
-        (part) =>
-          part && typeof part === 'object' && (part as Record<string, unknown>).type === 'text'
-      )
-      .map((part) => String((part as Record<string, unknown>).text ?? ''))
-      .filter(Boolean)
-    if (texts.length > 0) return texts.join('\n')
-    const kinds = content
-      .map((part) =>
-        part && typeof part === 'object'
-          ? String((part as Record<string, unknown>).type ?? 'unknown')
-          : 'unknown'
-      )
-      .filter((kind) => kind !== 'text')
-    return kinds.length > 0 ? `[${kinds.join('、')}内容]` : ''
-  }
-  // 单条消息结构（{role, content}）：提取其 content 文本
-  if (content && typeof content === 'object' && 'content' in (content as Record<string, unknown>)) {
-    return extractText((content as Record<string, unknown>).content)
-  }
-  return content == null ? '' : String(content)
-}
-
-/**
- * 把引擎历史行回放成 ChatMessage[]。
- *
- * 对齐 SSE 渲染的语义：assistant 行生成消息并登记其工具调用，随后的
- * role=tool 行按 toolCallId 回填结果；system 行（压缩摘要）不对外展示。
- */
-function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
-  const result: ChatMessage[] = []
-  /** 尚未收到结果的工具调用，按 toolCallId 索引，用于回填 tool 结果行 */
-  const openTools = new Map<string, { message: ChatMessage; index: number }>()
-
-  for (const row of rows) {
-    if (row.role === 'system') continue
-    const createdAt = Number(row.createdAt) || 0
-
-    if (row.role === 'user') {
-      result.push({
-        id: row.id || newId(),
-        role: 'user',
-        content: extractText(row.content),
-        thinking: '',
-        tools: [],
-        items: [],
-        status: 'done',
-        createdAt
-      })
-      continue
-    }
-
-    if (row.role === 'tool') {
-      const toolCallId = typeof row.toolCallId === 'string' ? row.toolCallId : ''
-      const open = toolCallId ? openTools.get(toolCallId) : undefined
-      if (open) {
-        open.message.tools[open.index] = {
-          ...open.message.tools[open.index],
-          result: typeof row.content === 'string' ? row.content : JSON.stringify(row.content),
-          state: 'done'
-        }
-        openTools.delete(toolCallId)
-      }
-      continue
-    }
-
-    if (row.role !== 'assistant') continue
-    // 一轮 ReAct 会存成多条 assistant 行（每次工具调用截断一次）。
-    // 对齐 wuzu-client：同一轮（conversationId 相同或紧邻）的 assistant 行
-    // 合并回一条消息，过程块收成同一个折叠块，正文只在轮末出现一次。
-    const prev = result[result.length - 1]
-    const sameTurn =
-      prev &&
-      prev.role === 'assistant' &&
-      (!row.conversationId || !prev.conversationId || row.conversationId === prev.conversationId)
-    let message: ChatMessage
-    if (sameTurn) {
-      message = prev
-      if (message.content) {
-        // 前一段正文已在 items 里，新内容另起一段，避免拼接粘连
-        message.content = `${message.content}\n\n`
-      }
-      // 轮内后续行时间更晚：更新为「本轮已知的最后时刻」，
-      // 供历史回放后「任务耗时」用 startedAt~endedAt 跨度计算
-      if (createdAt > (message.endedAt ?? 0)) message.endedAt = createdAt
-    } else {
-      message = {
-        id: row.id || newId(),
-        role: 'assistant',
-        content: '',
-        thinking: '',
-        tools: [],
-        items: [],
-        status: 'done',
-        createdAt,
-        // 回放场景没有真实的流式起止点，用首行/末行 createdAt 兜底
-        startedAt: createdAt,
-        ...(row.conversationId ? { conversationId: row.conversationId } : {})
-      }
-      result.push(message)
-    }
-    if (row.modelId && !message.modelId) message.modelId = row.modelId
-    if (row.usage) message.usage = mergeUsageFrame(message.usage, row.usage)
-    message.thinking += typeof row.reasoningContent === 'string' ? row.reasoningContent : ''
-
-    // 本行的时间线条目：按「思考 → 工具 → 正文」的近似顺序穿插进同一条消息
-    const rowItems: TimelineItem[] = []
-    const rowThinking = typeof row.reasoningContent === 'string' ? row.reasoningContent : ''
-    if (rowThinking) rowItems.push({ kind: 'thinking', text: rowThinking })
-    if (row.toolCall && typeof row.toolCall === 'object' && row.toolCall.name) {
-      const tool: ToolActivity = {
-        id: row.toolCall.id || newId(),
-        name: row.toolCall.name,
-        args: JSON.stringify(row.toolCall.args ?? {}, null, 2),
-        result: '',
-        state: 'done'
-      }
-      message.tools.push(tool)
-      rowItems.push({ kind: 'tool', id: tool.id })
-      if (tool.id) openTools.set(tool.id, { message, index: message.tools.length - 1 })
-    }
-    const rowContent = extractText(row.content)
-    if (rowContent) {
-      message.content += rowContent
-      rowItems.push({ kind: 'content', text: rowContent })
-    }
-    message.items.push(...rowItems)
-  }
-
-  return result
-}
-
-/**
- * 工具帧负载归一化。
- *
- * 引擎的 toolStart/toolCall/toolResult 等帧由工具层自行构造，字段名不完全统一，
- * 这里做一层容错提取，避免某个字段改名直接让 UI 空白。
- */
-function normalizeTool(raw: unknown): Partial<ToolActivity> {
-  if (!raw || typeof raw !== 'object') return {}
-  const record = raw as Record<string, unknown>
-
-  const readString = (...keys: string[]): string => {
-    for (const key of keys) {
-      const value = record[key]
-      if (typeof value === 'string' && value) return value
-      if (value !== undefined && value !== null && typeof value === 'object') {
-        try {
-          return JSON.stringify(value, null, 2)
-        } catch {
-          return String(value)
-        }
-      }
-    }
-    return ''
-  }
-
-  return {
-    id: readString('id', 'toolCallId', 'tool_call_id', 'callId', 'call_id'),
-    name: readString('name', 'toolName', 'tool'),
-    args: readString('args', 'arguments', 'input', 'params'),
-    result: readString('output', 'result', 'content', 'text')
-  }
 }
 
 // ==================== Hook ====================
@@ -398,7 +171,7 @@ export function useChat(): {
   respond: (
     values: string[],
     options: Pick<SendOptions, 'sessionId' | 'model' | 'workspacePaths'> &
-      Partial<Pick<SendOptions, 'thinkingMode'>>
+      Partial<Pick<SendOptions, 'thinkingMode' | 'subagentModel' | 'utilityModel'>>
   ) => Promise<void>
   abort: () => void
   /** 清空当前会话；传入 sessionId 时同步删除引擎侧历史；失败时抛错且不清理界面 */
@@ -417,6 +190,25 @@ export function useChat(): {
   removeQueued: (id: string) => void
   /** 清空队列（不影响正在跑的回合） */
   clearQueue: () => void
+  /** 编辑队列中一条消息的正文与附件 */
+  updateQueued: (id: string, text: string, attachments: ChatAttachment[]) => void
+  /** 拖拽排序：把 fromIndex 的消息挪到 toIndex */
+  moveQueued: (fromIndex: number, toIndex: number) => void
+  /** 手动发出队列：空闲时按当前模式（serial 发队首 / batch 合并全部）立即发送 */
+  flushQueue: () => Promise<void>
+  /** 队列发送模式（serial 按序逐条 / batch 合并成一条），持久化到 localStorage */
+  queueSendMode: QueueSendMode
+  setQueueSendMode: (mode: QueueSendMode) => void
+  /**
+   * 运行中切换模型时，把队列里所有待发消息的模型改写为新模型
+   * （已发出的回合不受影响，避免出现「正在运行的模型显示成后选的模型」）
+   */
+  retargetQueuedModel: (model: string) => void
+  /**
+   * 恢复断开的流（刷新页面 / 切回会话后调用）。
+   * 返回 true 表示该会话确有进行中的流且已成功挂接；false 表示无需恢复。
+   */
+  resumeStream: (sessionId: string) => Promise<boolean>
 } {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [streaming, setStreaming] = useState(false)
@@ -427,6 +219,8 @@ export function useChat(): {
 
   /** 当前流对应的引擎会话 ID，停止时用它显式取消引擎侧运行 */
   const activeSessionRef = useRef<string | null>(null)
+  /** Viewing a session outlives its parent stream; child results must still reach its dispatch card. */
+  const viewSessionRef = useRef<string | null>(null)
 
   /**
    * 连续发送队列：流式进行中用户继续发的消息先进队列，
@@ -444,9 +238,50 @@ export function useChat(): {
     setQueue(next)
   }, [])
 
-  /** 队列调度：当前无活动流时依次取队首发出 */
+  /** 队列调度：当前无活动流时按模式发出 —— serial 只发队首，batch 全队列合并成一条 */
   const drainQueue = useCallback(async (): Promise<void> => {
     if (activeStreamRef.current) return
+    if (queueSendModeRef.current === 'batch' && queueRef.current.length > 1) {
+      const pending = [...queueRef.current]
+      syncQueue([])
+      const text = pending.map((item, index) => `${index + 1}. ${item.text}`).join('\n\n')
+      const attachments = pending.flatMap((item) => item.attachments)
+      // 模型取最后一条（更贴近当前意图），其余沿用队首的会话/工作区参数
+      const last = pending[pending.length - 1]
+      await sendInternalRef.current(text, {
+        ...pending[0].options,
+        model: last.options.model,
+        attachments
+      })
+      return
+    }
+    const [next, ...rest] = queueRef.current
+    if (!next) return
+    syncQueue(rest)
+    await sendInternalRef.current(next.text, next.options)
+  }, [syncQueue])
+
+  /** 手动发出队列（托盘「发送」按钮）：与 drainQueue 同逻辑，仅供空闲时调用 */
+  const flushQueue = useCallback(async (): Promise<void> => {
+    if (activeStreamRef.current) return
+    if (queueSendModeRef.current === 'batch') {
+      const pending = [...queueRef.current]
+      if (pending.length === 0) return
+      syncQueue([])
+      if (pending.length === 1) {
+        await sendInternalRef.current(pending[0].text, pending[0].options)
+        return
+      }
+      const text = pending.map((item, index) => `${index + 1}. ${item.text}`).join('\n\n')
+      const attachments = pending.flatMap((item) => item.attachments)
+      const last = pending[pending.length - 1]
+      await sendInternalRef.current(text, {
+        ...pending[0].options,
+        model: last.options.model,
+        attachments
+      })
+      return
+    }
     const [next, ...rest] = queueRef.current
     if (!next) return
     syncQueue(rest)
@@ -461,12 +296,35 @@ export function useChat(): {
   const drainQueueRef = useRef<() => Promise<void>>(async () => {})
 
   useEffect(() => {
+    const offSubagents = subscribeSubagents(() => {
+      setMessages((prev) => attachSubagentRuns(prev, getSubagentRuns(viewSessionRef.current)))
+    })
+    const reconcile = () => {
+      const sessionId = viewSessionRef.current
+      if (sessionId && hasActiveSubagents(sessionId)) void refreshSubagentRuns(sessionId).catch(() => {})
+    }
+    const timer = setInterval(reconcile, 2500)
     const off = engine.onStreamEvent((event: StreamEvent) => {
+      if (event.type === 'payload') {
+        if (event.payload.subagentEvent) {
+          ingestSubagentEvent(event.payload.subagentEvent)
+          return
+        }
+        const result = event.payload.toolEnd ?? event.payload.toolResult
+        if (result) {
+          const normalized = normalizeTool(result)
+          if (normalized.subagent) ingestSubagentRun(normalized.subagent)
+          if (normalized.id && event.streamId !== activeStreamRef.current) {
+            setMessages((prev) => applyToolResult(prev, result))
+            return
+          }
+        }
+      }
       // 只处理当前这条流，忽略历史流的迟到事件
       if (event.streamId !== activeStreamRef.current) return
       applyEvent(event)
     })
-    return off
+    return () => { off(); offSubagents(); clearInterval(timer) }
 
     function applyEvent(event: StreamEvent): void {
       if (event.type === 'done' || event.type === 'error') {
@@ -474,13 +332,14 @@ export function useChat(): {
           patchLastAssistant(prev, (msg) => ({
             ...msg,
             ...(event.type === 'done'
-              ? { status: 'done' as const }
+              ? { status: msg.status === 'error' ? 'error' as const : 'done' as const }
               : { status: 'error' as const, error: event.message }),
             endedAt: msg.endedAt ?? Date.now()
           }))
         )
         setStreaming(false)
         activeStreamRef.current = null
+        reconcile()
         // 连续发送：当前流结束后自动发出队列中的下一条
         void drainQueueRef.current()
         return
@@ -494,13 +353,17 @@ export function useChat(): {
       }
 
       const payload = event.payload
-      setMessages((prev) =>
-        patchLastAssistant(prev, (msg) => ({
+      setMessages((prev) => {
+        const result = payload.toolEnd ?? payload.toolResult
+        // Approval frames can also carry tool results; preserve their pending interaction first.
+        const updated = result && !normalizePending(payload) ? applyToolResult(prev, result) : prev
+        if (updated !== prev) return attachSubagentRuns(updated, getSubagentRuns(viewSessionRef.current))
+        return attachSubagentRuns(patchLastAssistant(prev, (msg) => ({
           // 首个数据帧即本轮真实起点：起流到首帧之间的建连耗时不计入使用时间
           ...(msg.startedAt ? {} : { startedAt: Date.now() }),
           ...reducePayload(msg, payload)
-        }))
-      )
+        })), getSubagentRuns(viewSessionRef.current))
+      })
     }
   }, [])
 
@@ -509,6 +372,7 @@ export function useChat(): {
     const streamId = newId()
     activeStreamRef.current = streamId
     activeSessionRef.current = typeof body.sessionId === 'string' ? body.sessionId : null
+    viewSessionRef.current = activeSessionRef.current
     await engine.startStream({ streamId, path: '/chat', body })
   }, [])
 
@@ -569,6 +433,64 @@ export function useChat(): {
     syncQueue([])
   }, [syncQueue])
 
+  /** 编辑队列中一条消息（正文 / 附件），其余字段（options、id）保持不动 */
+  const updateQueued = useCallback(
+    (id: string, text: string, attachments: ChatAttachment[]): void => {
+      syncQueue(
+        queueRef.current.map((item) =>
+          item.id === id ? { ...item, text: text.trim(), attachments } : item
+        )
+      )
+    },
+    [syncQueue]
+  )
+
+  /** 拖拽排序：把 fromIndex 的消息挪到 toIndex */
+  const moveQueued = useCallback(
+    (fromIndex: number, toIndex: number): void => {
+      const list = [...queueRef.current]
+      if (
+        fromIndex < 0 ||
+        fromIndex >= list.length ||
+        toIndex < 0 ||
+        toIndex >= list.length ||
+        fromIndex === toIndex
+      )
+        return
+      const [moved] = list.splice(fromIndex, 1)
+      list.splice(toIndex, 0, moved)
+      syncQueue(list)
+    },
+    [syncQueue]
+  )
+
+  /** 队列发送模式（serial 按序逐条 / batch 合并成一条），localStorage 持久化 */
+  const [queueSendMode, setQueueSendModeState] = useState<QueueSendMode>(loadQueueSendMode)
+  const queueSendModeRef = useRef<QueueSendMode>(queueSendMode)
+  const setQueueSendMode = useCallback((mode: QueueSendMode): void => {
+    queueSendModeRef.current = mode
+    setQueueSendModeState(mode)
+    try {
+      localStorage.setItem(QUEUE_SEND_MODE_KEY, mode)
+    } catch {
+      /* 私密模式等场景写不进就保持内存值 */
+    }
+  }, [])
+
+  /**
+   * 运行中切换模型时，把队列里所有待发消息的 options.model 改写为新模型。
+   * 已发出的回合不受影响（它显示的是自己启动时的 modelId），
+   * 避免出现「正在运行的回合显示成输入框后选的模型」这类错标。
+   */
+  const retargetQueuedModel = useCallback(
+    (model: string): void => {
+      const list = queueRef.current
+      if (list.length === 0) return
+      syncQueue(list.map((item) => ({ ...item, options: { ...item.options, model } })))
+    },
+    [syncQueue]
+  )
+
   const sendInternal = useCallback(
     async (text: string, options: SendOptions) => {
       const trimmed = text.trim()
@@ -612,6 +534,8 @@ export function useChat(): {
         workspacePaths: options.workspacePaths?.length ? options.workspacePaths : undefined,
         // undefined 不参与 JSON 序列化 → 引擎收到「未指定」，按其能力判断
         thinkingMode: options.thinkingMode,
+        subagentModel: options.subagentModel || undefined,
+        utilityModel: options.utilityModel || undefined,
         // 引擎只读 name（相对工作区路径）；type 仅作提示，content 留给内联场景
         attachments:
           attachments.length > 0
@@ -641,20 +565,70 @@ export function useChat(): {
    */
   const loadHistory = useCallback(async (targetSessionId: string) => {
     if (!targetSessionId || activeStreamRef.current) return
+    // 切到另一个会话：清空上一个会话残留的 todo 清单
+    // （正在恢复的流会随后续 todo 帧重新填充）
+    if (viewSessionRef.current !== targetSessionId) {
+      viewSessionRef.current = targetSessionId
+      setTodos([])
+    }
     try {
-      const result = await engine.request<EngineHistoryRow[]>({
-        method: 'GET',
-        path: '/conversation/history',
-        query: { sessionId: targetSessionId }
-      })
+      const [result] = await Promise.all([
+        engine.request<EngineHistoryRow[]>({
+          method: 'GET', path: '/conversation/history', query: { sessionId: targetSessionId }
+        }),
+        // Older engines do not expose runs. Their transcripts remain readable with unknown child status.
+        refreshSubagentRuns(targetSessionId).catch(() => {})
+      ])
       if (!result.ok || !Array.isArray(result.data)) return
       // 等待期间用户可能已经发起了新流：历史只该落到静止的界面上
-      if (activeStreamRef.current) return
-      setMessages(replayMessages(result.data))
+      if (activeStreamRef.current || viewSessionRef.current !== targetSessionId) return
+      const replayed = replayMessages(result.data)
+      for (const message of replayed) for (const tool of message.tools) {
+        if (tool.subagent) ingestSubagentRun(tool.subagent)
+      }
+      setMessages(attachSubagentRuns(replayed, getSubagentRuns(targetSessionId), true))
     } catch {
       /* 静默：引擎未就绪 / 网络失败时保持当前界面 */
     }
   }, [])
+
+  /**
+   * 恢复断开的流（刷新页面 / 切回会话后调用）。
+   *
+   * 引擎侧对断连有 15 秒宽限期，宽限期内流仍在跑；这里先回放历史补齐
+   * 断开期间的内容，再用 lastEventId 挂到 /chat/stream 续传后续增量。
+   * streamId 用固定规则 `resume-<sessionId>`：onStreamEvent 的过滤条件
+   * 天然放行，且同一会话重复恢复时主进程会先 abort 旧的同名流。
+   */
+  const resumeStream = useCallback(async (sessionId: string): Promise<boolean> => {
+    if (!sessionId || activeStreamRef.current) return false
+    const status = await engine.request<{ running?: boolean; lastEventId?: string }>({
+      method: 'GET',
+      path: '/chat/status',
+      query: { sessionId }
+    })
+    if (!status.ok || !status.data?.running) return false
+
+    // 先回放历史（含断开期间已落库的内容），再挂流
+    await loadHistory(sessionId)
+    if (activeStreamRef.current) return false // 回放期间用户发起了新流，不抢占
+
+    const streamId = `resume-${sessionId}`
+    activeStreamRef.current = streamId
+    activeSessionRef.current = sessionId
+    setMessages((prev) =>
+      patchLastAssistant(prev, (msg) => ({ ...msg, status: 'streaming' as const, endedAt: undefined }))
+    )
+    setStreaming(true)
+    await engine.startStream({
+      streamId,
+      path: '/chat/stream',
+      method: 'GET',
+      query: status.data.lastEventId ? { sessionId, lastEventId: status.data.lastEventId } : { sessionId },
+      body: undefined
+    })
+    return true
+  }, [loadHistory])
 
   /**
    * 应答提问/授权。
@@ -667,7 +641,7 @@ export function useChat(): {
     async (
       values: string[],
       options: Pick<SendOptions, 'sessionId' | 'model' | 'workspacePaths'> &
-        Partial<Pick<SendOptions, 'thinkingMode'>>
+        Partial<Pick<SendOptions, 'thinkingMode' | 'subagentModel' | 'utilityModel'>>
     ) => {
       // 取最后一条「有 pending 且未应答」的助手消息
       const target = [...messages]
@@ -693,6 +667,8 @@ export function useChat(): {
         model: options.model || undefined,
         workspacePaths: options.workspacePaths?.length ? options.workspacePaths : undefined,
         thinkingMode: options.thinkingMode,
+        subagentModel: options.subagentModel || undefined,
+        utilityModel: options.utilityModel || undefined,
         toolResponse: buildToolResponse(pending, values)
       })
     },
@@ -744,6 +720,7 @@ export function useChat(): {
           query: { sessionId }
         })
         if (!result.ok) throw new Error(result.message || '引擎侧历史删除失败')
+        forgetSubagentSession(sessionId)
       }
       setMessages([])
       setTodos([])
@@ -901,7 +878,14 @@ export function useChat(): {
     mergeAndSend,
     queue,
     removeQueued,
-    clearQueue
+    clearQueue,
+    flushQueue,
+    updateQueued,
+    moveQueued,
+    queueSendMode,
+    setQueueSendMode,
+    retargetQueuedModel,
+    resumeStream
   }
 }
 
@@ -1046,23 +1030,18 @@ function reducePayload(message: ChatMessage, payload: ChatSsePayload): ChatMessa
 
     // end / result
     if (index >= 0) {
-      tools[index] = {
-        ...tools[index],
-        name: normalized.name || tools[index].name,
-        result: normalized.result || tools[index].result,
-        state: 'done'
-      }
+      tools[index] = finishTool(tools[index], raw)
       return { ...message, tools }
     }
     // 只有孤立的 end/result 帧：此刻才知道这个工具存在，补进时间线末尾
     const id = normalized.id || newId()
-    tools.push({
+    tools.push(finishTool({
       id,
       name: normalized.name || '未命名工具',
       args: normalized.args || '',
       result: normalized.result || '',
-      state: 'done'
-    })
+      state: 'unknown'
+    }, raw))
     return { ...message, tools, items: [...message.items, { kind: 'tool', id }] }
   }
 

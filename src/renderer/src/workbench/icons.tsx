@@ -32,6 +32,8 @@ export type IconName =
   | 'collapse-all'
   | 'sort'
   | 'check'
+  | 'warning'
+  | 'info'
   | 'circle'
   | 'circle-dot'
   | 'file'
@@ -73,6 +75,7 @@ export type IconName =
   | 'tag-outline'
   | 'minus'
   | 'chevron-double-down'
+  | 'chevron-double-up'
   | 'layout-sidebar'
   | 'layout-panel'
   | 'layout-panel-left'
@@ -352,6 +355,13 @@ const PATHS: Record<IconName, JSX.Element> = {
   minus: <path d="M5 11h14v2H5z" fill="currentColor" />,
   'chevron-double-down': (
     <path
+      d="M16.59 5.59L18 7l-6 6-6-6 1.41-1.41L12 10.17l4.59-4.58m0 6L18 13l-6 6-6-6 1.41-1.41L12 16.17l4.59-4.58z"
+      fill="currentColor"
+    />
+  ),
+  /* 消息导航「回到顶部」 */
+  'chevron-double-up': (
+    <path
       d="M7.41 18.41L6 17l6-6 6 6-1.41 1.41L12 13.83l-4.59 4.58m0-6L6 11l6-6 6 6-1.41 1.41L12 7.83l-4.59 4.58z"
       fill="currentColor"
     />
@@ -427,6 +437,18 @@ const PATHS: Record<IconName, JSX.Element> = {
   check: (
     <path
       d="M9.55 17.05 4.5 12l1.41-1.41 3.64 3.63 8.54-8.53L19.5 7.1 9.55 17.05z"
+      fill="currentColor"
+    />
+  ),
+  warning: (
+    <path
+      d="M12 2 1 21h22L12 2zm1 14h-2v2h2v-2zm0-7h-2v5h2V9z"
+      fill="currentColor"
+    />
+  ),
+  info: (
+    <path
+      d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"
       fill="currentColor"
     />
   ),

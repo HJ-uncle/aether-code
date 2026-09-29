@@ -13,6 +13,14 @@ export interface UsageFrame {
   promptTokens?: number
   completionTokens?: number
   totalTokens?: number
+  /**
+   * 单次调用口径：本轮最后一次 LLM 调用的真实输入 token（当前上下文占用快照）。
+   * 区别于 promptTokens——后者是本次请求内跨 ReAct 迭代累加值，多轮工具调用后
+   * 会成倍膨胀，不能当「当前上下文大小」用；用量环分子应取这个字段。
+   */
+  currentPromptTokens?: number
+  /** 当前模型的上下文窗口上限（引擎能力表解析结果），用量环分母；缺失时前端回退估算值 */
+  contextWindow?: number
   /** 输入构成（引擎侧细分，属于「输入」组） */
   systemPromptTokens?: number
   systemToolsTokens?: number
@@ -35,6 +43,7 @@ export interface UsageDetailRow {
   tokens: number
   /** 缩进的子项（输入的二级构成） */
   child?: boolean
+  unknown?: boolean
 }
 
 export interface UsageTotal {
@@ -42,6 +51,9 @@ export interface UsageTotal {
   total: number
   input: number
   output: number
+  parentTotal: number
+  subagentTotal: number
+  unknownSubagents: number
   /** 已完成的轮次数（用于均摊与展示） */
   rounds: number
   /** 按累计值排序、只保留非零项的分组明细 */
@@ -127,15 +139,49 @@ export function sumUsage(messages: ChatMessage[]): UsageTotal {
     tokens: acc[row.key] ?? 0
   })).filter((row) => row.tokens > 0)
 
+  const children = subagentUsage(messages)
+  const detail: UsageDetailRow[] = [...summary]
+  if (children.count > 0) {
+    detail.unshift({ label: '主代理自身', group: 'input', tokens: total })
+    detail.push({ label: '子代理（已知用量）', group: 'output', tokens: children.total })
+    if (children.unknown > 0) detail.push({ label: `子代理用量缺失（${children.unknown} 个）`, group: 'output', tokens: 0, unknown: true })
+    if (children.finishedAt && (endedAt === undefined || children.finishedAt > endedAt)) endedAt = children.finishedAt
+  }
+
   return {
-    total,
+    total: total + children.total,
+    parentTotal: total,
+    subagentTotal: children.total,
+    unknownSubagents: children.unknown,
     input: acc.promptTokens ?? 0,
     output: acc.completionTokens ?? 0,
     rounds,
-    summary,
+    summary: detail,
     ...(startedAt !== undefined ? { startedAt } : {}),
     ...(endedAt !== undefined ? { endedAt } : {})
   }
+}
+
+/** Snapshots can appear in both replay and live data; count each run only once, never as context occupancy. */
+function subagentUsage(messages: ChatMessage[]): { total: number; unknown: number; count: number; finishedAt?: number } {
+  const runs = new Map<string, NonNullable<ChatMessage['tools'][number]['subagent']>>()
+  for (const message of messages) for (const tool of message.tools) {
+    const run = tool.subagent
+    if (run && (!runs.has(run.runId) || runs.get(run.runId)!.lastSeq < run.lastSeq)) runs.set(run.runId, run)
+  }
+  let total = 0
+  let unknown = 0
+  let finishedAt: number | undefined
+  for (const run of runs.values()) {
+    const usage = run.usage
+    const tokens = usage.totalTokens ?? (usage.inputTokens !== undefined && usage.outputTokens !== undefined
+      ? usage.inputTokens + usage.outputTokens : undefined)
+    if (usage.unknown || tokens === undefined) unknown++
+    // Unknown totals may still contain an observed lower bound; display that part without inventing zero usage.
+    if (tokens !== undefined) total += tokens
+    if (run.finishedAt && (finishedAt === undefined || run.finishedAt > finishedAt)) finishedAt = run.finishedAt
+  }
+  return { total, unknown, count: runs.size, finishedAt }
 }
 
 /**
@@ -202,6 +248,9 @@ export function groupIntoTurns(messages: ChatMessage[]): ChatTurn[] {
       child: row.child,
       tokens: acc[row.key] ?? 0
     })).filter((row) => row.tokens > 0)
+    const total = sumUsage(turn.messages)
+    turn.tokens = total.total
+    turn.summary = total.summary
 
     // 任务耗时取该轮 assistant 的最早开始 ~ 最晚结束
     let earliest = Number.POSITIVE_INFINITY

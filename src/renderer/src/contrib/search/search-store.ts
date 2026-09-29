@@ -377,6 +377,12 @@ export async function confirmReplacePreview(root: string): Promise<void> {
 export async function replaceAll(root: string): Promise<void> {
   const query = state.query.trim()
   if (!query || state.replaceBusy) return
+  // 结果被 MAX_HITS 截断时禁止全部替换：替换走主进程重新全量扫，
+  // 会改掉用户在结果里没看到的文件 —— 所见与所改范围不一致
+  if (state.truncated) {
+    setState({ replaceMessage: '结果已达上限、不完整，无法安全地全部替换。请缩小搜索范围后重试' })
+    return
+  }
   setState({ replaceBusy: true, replaceMessage: null })
 
   try {

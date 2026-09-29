@@ -951,12 +951,27 @@ export async function appendGitignore(cwd: string, filePath: string): Promise<Gi
 }
 
 /**
- * 提交信息建议（本地启发式）。
+ * 提交信息建议（本地启发式 + AI 上下文）。
  *
- * wuzu 原版走主进程 AI 网关（aigwChat），aether 没有等价物，
- * 按任务约束改为纯本地归纳：读暂存区（为空回退工作区）的 numstat 与未跟踪清单，
- * 按改动类型计数 + 主要目录 + 主要扩展名生成一行中文提交信息。无网络调用。
+ * wuzu 原版走主进程 AI 网关（aigwChat），aether 改为两段式：
+ * 这里始终产出本地启发式兜底文案，同时收集 numstat + 截断 diff 作为 aiContext
+ * 返回给渲染层；渲染层在「轻任务模型」可用时调引擎 /utility/chat 生成更贴合的
+ * 提交信息，失败/未配置时直接展示本地文案。
  */
+
+/** 收集供 AI 参考的改动上下文：文件清单 + 截断的 unified diff 片段 */
+async function collectAiContext(root: string, staged: boolean): Promise<string> {
+  const args = staged ? ['diff', '--cached'] : ['diff']
+  const [numstat, diff] = await Promise.all([
+    runGit(root, [...args, '--stat']).catch(() => ''),
+    runGit(root, args).catch(() => '')
+  ])
+  // diff 截断：单文件超长 diff 会让轻模型跑题，只保留头部约 6k 字符
+  const truncated = diff.length > 6000 ? `${diff.slice(0, 6000)}\n...（diff 过长已截断）` : diff
+  const sections = [numstat.trim(), truncated.trim()].filter(Boolean)
+  return sections.join('\n\n')
+}
+
 export async function suggestCommitMessage(cwd: string): Promise<GitSuggestMessageResult> {
   const root = resolveCwd(cwd)
   try {
@@ -1012,7 +1027,8 @@ export async function suggestCommitMessage(cwd: string): Promise<GitSuggestMessa
     const scopePrefix = scope === 'staged' ? '' : ''
     const where = mainDir ? `${mainDir} 相关` : ''
     const message = `${scopePrefix}chore: ${parts.join('，')}（${where || '工作区'}）`
-    return { success: true, message }
+    const aiContext = await collectAiContext(root, scope === 'staged')
+    return { success: true, message, aiContext }
   } catch (error) {
     return fail(error)
   }

@@ -94,7 +94,7 @@ import {
   useGitStore,
   busyOperationOf
 } from '@renderer/core/git/git-store'
-import { gitAppendGitignore } from '@renderer/core/git/git-client'
+import { gitAppendGitignore, gitStashShowFiles } from '@renderer/core/git/git-client'
 import { executeCommand } from '@renderer/core/platform/commands'
 import { setLayout } from '@renderer/core/platform/layout-state'
 import { paths } from '@renderer/core/workspace/fs-client'
@@ -312,6 +312,8 @@ interface StashDetailState {
   message: string
   date: string
   hash: string
+  /** 本次存储涉及的文件（stash show --name-only）；null = 加载中 */
+  files: string[] | null
 }
 
 interface HoverCardState {
@@ -944,10 +946,28 @@ export function GitChangesPanel(): JSX.Element {
         branch: stash ? stashBranchLabel(stash.message) : '',
         message: stash ? stashDisplayMessage(stash.message) : '',
         date: stash?.date ?? '',
-        hash: stash?.hash ?? ''
+        hash: stash?.hash ?? '',
+        files: null
       })
+      // 弹窗打开后异步补逐文件清单（stash show --name-only）；
+      // 失败不清弹窗：清单区显示「加载失败」，元信息仍然可用
+      const root = workspace.root
+      if (!root) return
+      void gitStashShowFiles(root, index)
+        .then((result) => {
+          if (!result.success) throw new Error(result.error ?? 'git stash show 执行失败')
+          const files = (result.content ?? '')
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean)
+          setStashDetail((prev) => (prev && prev.index === index ? { ...prev, files } : prev))
+        })
+        .catch((err: unknown) => {
+          console.error('[git] 读取存储文件清单失败', err)
+          setStashDetail((prev) => (prev && prev.index === index ? { ...prev, files: [] } : prev))
+        })
     },
-    [git.stashes]
+    [git.stashes, workspace.root]
   )
 
   /** stash 行右键菜单：查看详情 / 恢复 / 恢复并删除 / 删除（源 hover 操作 + 右键同一套动作） */
@@ -2677,6 +2697,25 @@ export function GitChangesPanel(): JSX.Element {
             <div className="git-panel__stash-detail-row">
               <span>版本哈希</span>
               <span className="git-panel__stash-hash">{stashDetail.hash || '—'}</span>
+            </div>
+            <div className="git-panel__stash-detail-files">
+              <span className="git-panel__stash-detail-files-label">
+                涉及文件{stashDetail.files ? `（${stashDetail.files.length}）` : ''}
+              </span>
+              {stashDetail.files === null ? (
+                <span className="git-panel__stash-detail-files-empty">加载中…</span>
+              ) : stashDetail.files.length === 0 ? (
+                <span className="git-panel__stash-detail-files-empty">无文件信息</span>
+              ) : (
+                <ul className="git-panel__stash-detail-files-list">
+                  {stashDetail.files.map((file) => (
+                    <li key={file} className="git-panel__stash-detail-file" title={file}>
+                      <Icon name="file" size={12} />
+                      {file}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         </Dialog>

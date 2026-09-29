@@ -2,13 +2,17 @@
  * 最近打开的项目目录（欢迎页「最近打开」区块的数据源）
  *
  * 与 recent-files.ts 同构：模块级数组 + localStorage 持久化，跨会话保留。
- * 上限 8 条 —— 欢迎页是「挑一个上次的项目继续」的入口，列太长反而难找。
+ * 存储不截断（对齐 wuzu-client：历史是用户的资产，第 9 条不该静默丢失），
+ * 界面默认展示前 8 条，其余通过「更多」弹窗查看。
  *
  * 记录时机是「成功打开」而非「用户点击打开」：启动时自动恢复的 lastFolder
  * 也算一次使用，下次仍应出现在列表最前。
  */
 const STORAGE_KEY = 'aether.recentFolders'
-const MAX_RECENT = 8
+/** 界面默认展示条数（完整列表走「更多」弹窗） */
+export const RECENT_PREVIEW_COUNT = 8
+/** 存储上限：防 localStorage 无限膨胀，50 个项目历史已远超日常需要 */
+const MAX_STORED = 50
 
 function load(): string[] {
   try {
@@ -39,7 +43,7 @@ export function onRecentFoldersChanged(listener: () => void): () => void {
 
 /** 记录一次成功打开的目录（提到最前，去重） */
 export function rememberRecentFolder(folder: string): void {
-  const next = [folder, ...recent.filter((item) => item !== folder)].slice(0, MAX_RECENT)
+  const next = [folder, ...recent.filter((item) => item !== folder)].slice(0, MAX_STORED)
   if (next.length === recent.length && next.every((item, i) => item === recent[i])) return
   recent = next
   persist()

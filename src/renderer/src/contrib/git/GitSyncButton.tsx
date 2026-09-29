@@ -10,9 +10,10 @@
  * - 下拉菜单与源一一对应：同步 / 拉取 / 拉取（变基）/ 推送|发布 / 获取所有远程更新。
  *   源的「更多 Git 操作…」依赖 workspaceStore.openSideView，aether 无此宿主，未移植。
  *
- * 与源的差异：toast/错误弹窗用行内 feedback 文本代替（aether 暂无 toast 服务）。
+ * 与源的差异：错误反馈走全局 toast（core/toast.ts）。
  */
 import { useState, type JSX } from 'react'
+import { toast } from '../../core/toast'
 import {
   useGitStore,
   busyOperationOf,
@@ -41,7 +42,6 @@ export function GitSyncButton(): JSX.Element {
   const s = useGitStore()
   const [pending, setPending] = useState<GitRemoteAction | ''>('')
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
-  const [feedback, setFeedback] = useState('')
   const [sshAsk, setSshAsk] = useState<{ resolve: (v: string | null) => void } | null>(null)
 
   const busy = pending !== '' || busyOperationOf(s) !== ''
@@ -77,9 +77,8 @@ export function GitSyncButton(): JSX.Element {
         await forceRefreshGit()
       }
       if (!result) return
-      setFeedback(
-        result.success ? `${labels[action]}完成` : (result.error ?? `${labels[action]}失败`)
-      )
+      if (result.success) toast.success(`${labels[action]}完成`)
+      else toast.error(result.error ?? `${labels[action]}失败`)
     } finally {
       setPending('')
     }
@@ -149,7 +148,6 @@ export function GitSyncButton(): JSX.Element {
         <Icon name="chevron-up" size={11} />
       </button>
 
-      {feedback ? <span className="git-sync__feedback">{feedback}</span> : null}
 
       {menu ? (
         <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type JSX } from 'react'
+import { createPortal } from 'react-dom'
 import { executeCommand } from '@renderer/core/platform/commands'
 import { getKeybindingHint } from '@renderer/core/platform/keybindings'
 import { setLayout, toggleChatPanel, toggleChatPosition } from '@renderer/core/platform/layout-state'
@@ -119,8 +120,10 @@ function WindowControls(): JSX.Element | null {
 }
 
 export function MenuBar(): JSX.Element {
-  const [open, setOpen] = useState<string | null>(null)
+  // open 持有触发按钮的矩形：下拉 portal 到 body 后靠它定位（见下方说明）
+  const [open, setOpen] = useState<{ label: string; anchor: DOMRect } | null>(null)
   const ref = useRef<HTMLElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
   const layout = useLayout()
   // 订阅用户键位变化：自定义快捷键后菜单提示立即跟随
   useSyncExternalStore(onUserKeybindingsChanged, getUserKeybindingRules)
@@ -128,7 +131,10 @@ export function MenuBar(): JSX.Element {
   useEffect(() => {
     if (!open) return
     const onPointerDown = (event: MouseEvent): void => {
-      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(null)
+      const target = event.target as Node
+      // 下拉已 portal 到 body，不在菜单栏 DOM 里 —— 两处都要算「内部」，否则点菜单项会先触发关闭
+      if (ref.current?.contains(target) || dropdownRef.current?.contains(target)) return
+      setOpen(null)
     }
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') setOpen(null)
@@ -148,19 +154,42 @@ export function MenuBar(): JSX.Element {
         <div key={menu.label} className="menu-bar__menu">
           <button
             type="button"
-            className={`menu-bar__trigger${open === menu.label ? ' is-open' : ''}`}
-            aria-expanded={open === menu.label}
-            onClick={() => setOpen(open === menu.label ? null : menu.label)}
+            className={`menu-bar__trigger${open?.label === menu.label ? ' is-open' : ''}`}
+            aria-expanded={open?.label === menu.label}
+            onClick={(event) => {
+              if (open?.label === menu.label) {
+                setOpen(null)
+              } else {
+                setOpen({ label: menu.label, anchor: event.currentTarget.getBoundingClientRect() })
+              }
+            }}
             // 悬停切换：VS Code 同款交互 —— 点开一个后划过去即换菜单
-            onMouseEnter={() => {
-              if (open) setOpen(menu.label)
+            onMouseEnter={(event) => {
+              if (open) {
+                setOpen({ label: menu.label, anchor: event.currentTarget.getBoundingClientRect() })
+              }
             }}
           >
             {menu.label}
           </button>
-          {open === menu.label ? (
-            <div className="menu-bar__dropdown" role="menu">
-              {menu.items.map((item) => (
+        </div>
+      ))}
+      {/* 下拉 portal 到 body：菜单栏自身带 backdrop-filter，是 backdrop root，
+          嵌在里面的模糊浮层采不到栏下方的真实内容（只能采到栏自己的半透明底色），
+          磨砂直接失效。挂到 body 后采样恢复正常 —— 与 ContextMenu 子菜单同理。 */}
+      {open
+        ? createPortal(
+            <div
+              ref={dropdownRef}
+              className="menu-bar__dropdown"
+              role="menu"
+              style={{
+                position: 'fixed',
+                top: open.anchor.bottom + 2,
+                left: open.anchor.left
+              }}
+            >
+              {(MENUS.find((menu) => menu.label === open.label)?.items ?? []).map((item) => (
                 <button
                   key={item.command}
                   type="button"
@@ -177,10 +206,10 @@ export function MenuBar(): JSX.Element {
                   ) : null}
                 </button>
               ))}
-            </div>
-          ) : null}
-        </div>
-      ))}
+            </div>,
+            document.body
+          )
+        : null}
       {/* 右侧动作区：布局按钮组 + 设置入口（后续用户头像 / 账号等也在此扩展） */}
       <div className="menu-bar__spacer" />
       <div className="menu-bar__actions">
