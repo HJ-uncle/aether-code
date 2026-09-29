@@ -1,3 +1,6 @@
+import type { CommandJobSnapshot } from '@shared/command-job'
+import { attachCommandJobs } from './command-job-state'
+import { subscribeCommandJobs, getCommandJobs, ingestCommandJob, forgetCommandSession, refreshCommandJobs, activateCommandSession } from './command-job-store'
 import type { SubagentRun } from '@shared/subagent'
 import type { RootRun } from '@shared/root-run'
 import { applyRootRun, finishTransport, mergeRootRun, normalizeRootRun } from './root-run-state'
@@ -31,6 +34,7 @@ export interface ToolActivity {
   metadata?: Record<string, unknown>
   error?: string
   subagent?: SubagentRun
+  commandJob?: CommandJobSnapshot
   /**
    * 该调用由交互卡片（提问 / 安全授权）代表，不再单独渲染工具条目。
    *
@@ -166,6 +170,7 @@ function newId(): string {
 
 export function useChat(): {
   messages: ChatMessage[]
+  commandJobs: CommandJobSnapshot[]
   streaming: boolean
   /** 会话待办清单（引擎 todo 工具维护，随 \x00__todo__ 帧整表下发） */
   todos: EngineTodo[]
@@ -222,6 +227,7 @@ export function useChat(): {
   resumeStream: (sessionId: string) => Promise<boolean>
 } {
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [commandJobs, setCommandJobs] = useState<CommandJobSnapshot[]>([])
   const [streaming, setStreaming] = useState(false)
   const [todos, setTodos] = useState<EngineTodo[]>([])
 
@@ -292,6 +298,7 @@ export function useChat(): {
   const recoveryAttemptsRef = useRef(0)
   const recoverRef = useRef<(sessionId: string) => Promise<boolean>>(async () => false)
   const selectView = useCallback((sessionId: string): void => {
+    activateCommandSession(sessionId)
     if (viewSessionRef.current === sessionId) return
     const oldStream = activeStreamRef.current
     viewSessionRef.current = sessionId
@@ -309,6 +316,7 @@ export function useChat(): {
     throttleTimerRef.current = null
     setStreaming(false)
     setMessages([])
+    setCommandJobs([])
     setTodos([])
     // Detach only this client. The server owns the old run's eventual outcome.
     if (oldStream) void engine.abortStream(oldStream)
@@ -388,12 +396,23 @@ export function useChat(): {
   const drainQueueRef = useRef<() => Promise<void>>(async () => {})
 
   useEffect(() => {
+    const offCommands = subscribeCommandJobs(() => {
+      const sessionId = viewSessionRef.current
+      if (sessionId) {
+        const jobs = getCommandJobs(sessionId)
+        setCommandJobs(previous => previous.length === jobs.length && previous.every((job, index) => job === jobs[index]) ? previous : jobs)
+        setMessages(previous => attachCommandJobs(previous, jobs, sessionId))
+      }
+    })
     const offSubagents = subscribeSubagents(() => {
       setMessages((prev) => attachSubagentRuns(prev, getSubagentRuns(viewSessionRef.current)))
     })
     const reconcile = () => {
       const sessionId = viewSessionRef.current
-      if (sessionId && hasActiveSubagents(sessionId)) void refreshSubagentRuns(sessionId).catch(() => {})
+      if (sessionId && hasActiveSubagents(sessionId)) {
+        void refreshSubagentRuns(sessionId).catch(() => {})
+        void refreshCommandJobs(sessionId).catch(() => {})
+      }
     }
     const timer = setInterval(reconcile, 2500)
     const off = engine.onStreamEvent((event: StreamEvent) => {
@@ -403,13 +422,15 @@ export function useChat(): {
       }
       if (event.type === 'payload') {
         if (event.payload.subagentEvent) {
-          ingestSubagentEvent(event.payload.subagentEvent)
+          const child = ingestSubagentEvent(event.payload.subagentEvent)
+          if (child) void refreshCommandJobs(child.parentSessionId).catch(() => {})
           return
         }
         const result = event.payload.toolEnd ?? event.payload.toolResult
         if (result) {
           const normalized = normalizeTool(result)
           if (normalized.subagent) ingestSubagentRun(normalized.subagent)
+          if (normalized.commandJob) ingestCommandJob(normalized.commandJob)
           // Child snapshots carry their own session ownership; ordinary results require the active stream below.
         }
       }
@@ -417,7 +438,7 @@ export function useChat(): {
       if (event.streamId !== activeStreamRef.current) return
       applyEvent(event)
     })
-    return () => { off(); offSubagents(); clearInterval(timer) }
+    return () => { off(); offSubagents(); offCommands(); clearInterval(timer) }
 
     function recover(sessionId: string): void {
       if (++recoveryAttemptsRef.current <= 3) { void recoverRef.current(sessionId); return }
@@ -717,6 +738,7 @@ export function useChat(): {
       if (activeStreamRef.current || viewSessionRef.current !== sessionId || generation !== historyRequestRef.current) return null
       const snapshot = result.data
       const restored = restoreChatSnapshot(snapshot)
+      for (const job of snapshot.commandJobs ?? []) ingestCommandJob(job)
       rootRunsRef.current.clear()
       for (const run of snapshot.runs) rootRunsRef.current.set(run.runId, run)
       if (snapshot.run) rootRunsRef.current.set(snapshot.run.runId, snapshot.run)
@@ -725,8 +747,10 @@ export function useChat(): {
       optimisticIdsRef.current = {}
       for (const message of restored.messages) for (const tool of message.tools) {
         if (tool.subagent) ingestSubagentRun(tool.subagent)
+        if (tool.commandJob) ingestCommandJob(tool.commandJob)
       }
-      setMessages(attachSubagentRuns(restored.messages, getSubagentRuns(sessionId), true))
+      setMessages(attachCommandJobs(attachSubagentRuns(restored.messages, getSubagentRuns(sessionId), true), getCommandJobs(sessionId), sessionId))
+      setCommandJobs(getCommandJobs(sessionId))
       setTodos(restored.todos)
       return snapshot
     } catch { return null }
@@ -823,8 +847,10 @@ export function useChat(): {
         })
         if (!result.ok) throw new Error(result.message || '引擎侧历史删除失败')
         forgetSubagentSession(sessionId)
+        forgetCommandSession(sessionId)
       }
       setMessages([])
+      setCommandJobs([])
       setTodos([])
     },
     []
@@ -920,6 +946,7 @@ export function useChat(): {
 
   return {
     messages,
+    commandJobs,
     streaming,
     todos,
     send,

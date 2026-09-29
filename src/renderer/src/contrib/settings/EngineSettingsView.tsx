@@ -95,7 +95,7 @@ export function EngineSettingsView(): JSX.Element {
             />
           </SettingsRow>
         ) : (
-          <SettingsRow label="远端地址" description="需可从本机访问，且该地址已放行本机来源">
+          <SettingsRow label="远端地址" description="本机独立开发服务可填 http://127.0.0.1:12323；远端服务需在启动应用前配置连接凭据。完整本机工作区功能请选择本地内置。">
             <input
               className="field__input sg__input sg__input--wide"
               type="text"

@@ -15,6 +15,8 @@ let imposter: Server
 let occupiedPort: number
 let fixture: string
 let compatibleRemote = false
+let requireRemoteToken = false
+const remoteTokens: Array<string | undefined> = []
 const remoteRequests: string[] = []
 
 test.describe.serial('D0 配对运行时与身份', () => {
@@ -23,6 +25,12 @@ test.describe.serial('D0 配对运行时与身份', () => {
     fixture = mkdtempSync(join(root, '.e2e-tmp', 'd0-host-'))
     imposter = createServer((req, res) => {
       remoteRequests.push(req.url ?? '')
+      remoteTokens.push(req.headers['x-aether-instance-token'] as string | undefined)
+      if (requireRemoteToken && req.url?.startsWith('/api/') && req.headers['x-aether-instance-token'] !== 'fixture-required-token') {
+        res.writeHead(401, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ code: 40100, message: 'Invalid or missing instance token' }))
+        return
+      }
       if (compatibleRemote) {
         const manifest = JSON.parse(readFileSync(join(engineRoot, 'dist/runtime/build-manifest.json'), 'utf8'))
         res.setHeader('content-type', 'application/json')
@@ -112,6 +120,31 @@ test.describe.serial('D0 配对运行时与身份', () => {
     const response = await fetch(`http://127.0.0.1:${occupiedPort}/health`)
     expect(response.status).toBe(200)
   })
+  test('本机手动连接不强制预设token，但仍验证业务认证与协议', async () => {
+    compatibleRemote = true
+    await app!.evaluate(() => { delete process.env.AETHER_IDE_REMOTE_INSTANCE_TOKEN })
+    await page.evaluate(() => window.aether.engine.stop())
+    const before = remoteRequests.length
+    const started = await page.evaluate(() => window.aether.engine.start())
+    expect(started.phase, started.error ?? '').toBe('ready')
+    expect(remoteRequests.slice(before)).toContain('/api/v1/tools')
+    expect(remoteTokens.slice(before).every(token => token === undefined)).toBe(true)
+  })
+
+  test('本机引擎启用token时不绕过认证，配置匹配凭据后才就绪', async () => {
+    requireRemoteToken = true
+    await page.evaluate(() => window.aether.engine.stop())
+    const failed = await page.evaluate(() => window.aether.engine.start())
+    expect(failed.phase).toBe('error')
+    expect(failed.error).toContain('AETHER_IDE_REMOTE_INSTANCE_TOKEN')
+    await app!.evaluate(() => { process.env.AETHER_IDE_REMOTE_INSTANCE_TOKEN = 'fixture-required-token' })
+    const started = await page.evaluate(() => window.aether.engine.start())
+    expect(started.phase, started.error ?? '').toBe('ready')
+    expect(remoteTokens.at(-1)).toBe('fixture-required-token')
+    expect(JSON.stringify(started)).not.toContain('fixture-required-token')
+    requireRemoteToken = false
+  })
+
   test('remote 正确握手后也明确拒绝无工作区映射的本地文件和聊天请求', async () => {
     compatibleRemote = true
     await page.evaluate(() => window.aether.engine.stop())

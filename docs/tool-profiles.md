@@ -8,8 +8,8 @@ Aether IDE 的普通 HTTP 请求和 SSE 请求由主进程统一携带 `X-Aether
 
 | 类别 | Code 模式 |
 | --- | --- |
-| 文件 | 保留 `read_file`、`write_file`、`list_files`、`delete_file`、`create_dir` |
-| 搜索、命令与诊断 | 保留 `glob_search`、`grep_search`、`execute_cmd`、`code_diagnose`、`codegraph` |
+| 文件 | 保留 `read_file`、`write_file`、`edit_file`、`list_files`、`delete_file`、`create_dir` |
+| 搜索、命令与诊断 | 保留 `glob_search`、`grep_search`、`execute_cmd`、`command_output`、`cancel_command`、`code_diagnose`、`codegraph` |
 | 编程协作 | 保留 `subagent`、`todo_*`、`ask_user`、`get_current_context` |
 | 技能与扩展 | 保留 `list_skills`、`get_skill`、`run_skill_script`，以及已配置的技能/MCP 工具 |
 | 联网 | 保留 `web_fetch`、`http_request` |
@@ -17,7 +17,7 @@ Aether IDE 的普通 HTTP 请求和 SSE 请求由主进程统一携带 `X-Aether
 | 全局记忆 | 隔离记忆工具、上下文中的近期记忆、自动召回/提取，以及客户端内联长期记忆注入 |
 | 通用辅助工具 | 隔离 `install_package`、`list_packages`、`calculate`、`get_time` |
 
-不含扩展时，共 22 个编程相关内置工具。`task_*` 管理的是引擎通用租户任务队列，与 IDE 终端、`todo_*` 清单及子代理运行状态不同；隔离它不会移除后几项功能。
+不含扩展时，共 25 个编程相关内置工具。`task_*` 管理的是引擎通用租户任务队列，与 IDE 终端、`todo_*` 清单及子代理运行状态不同；隔离它不会移除后几项功能。
 
 `allowedTools` 可进一步缩小 Code 集合，不能重新开启被隔离的工具；空数组表示不开放工具。旧配置名 `run_command`、`glob`、`grep`、`smart_read` 映射为实际工具名。OSM 的 off/balanced/methodology/max 只保持各自的方法论行为，不改变 Code 工具边界。
 

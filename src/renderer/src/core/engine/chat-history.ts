@@ -1,3 +1,4 @@
+import { normalizeCommandJob, mergeCommandJob, commandToolState } from './command-job-state'
 import type { ChatMessage, TimelineItem, ToolActivity } from './useChat'
 import {
   errorText,
@@ -65,7 +66,7 @@ export interface EngineHistoryRow {
   toolCall?: { id?: string; name?: string; args?: unknown } | null
   success?: boolean
   error?: unknown
-  metadata?: { subagent?: unknown; success?: boolean; error?: unknown; status?: string; outputPreview?: string; durationMs?: number; startedAt?: number; finishedAt?: number; runId?: string; turnId?: string; attachments?: Array<{ name: string; type?: string; size?: number }>; change?: import('@shared/ipc').EngineFileChange }
+  metadata?: { commandJob?: unknown; commandJobs?: unknown[]; subagent?: unknown; success?: boolean; error?: unknown; status?: string; outputPreview?: string; durationMs?: number; startedAt?: number; finishedAt?: number; runId?: string; turnId?: string; attachments?: Array<{ name: string; type?: string; size?: number }>; change?: import('@shared/ipc').EngineFileChange }
   isSidechain?: boolean
 }
 
@@ -301,6 +302,7 @@ export function normalizeTool(raw: unknown): Partial<ToolActivity> {
           ? (record.metadata as Record<string, unknown>).error
           : undefined)
     ),
+    commandJob: normalizeCommandJob(record.commandJob ?? (record.metadata as Record<string, unknown> | undefined)?.commandJob),
     subagent: normalizeSubagentRun(
       record.subagent ??
         (record.metadata && typeof record.metadata === 'object'
@@ -312,24 +314,27 @@ export function normalizeTool(raw: unknown): Partial<ToolActivity> {
 
 export function finishTool(previous: ToolActivity, raw: unknown): ToolActivity {
   const normalized = normalizeTool(raw)
+  const name = normalized.name || previous.name
+  const commandJob = name === 'execute_cmd' ? normalized.commandJob?.background ? mergeCommandJob(previous.commandJob, normalized.commandJob) : previous.commandJob : undefined
   const subagent = normalized.subagent
     ? mergeSubagentRun(previous.subagent, normalized.subagent)
     : previous.subagent
   return {
     ...previous,
-    name: normalized.name || previous.name,
+    name,
     result:
       subagent?.resultSummary ?? subagent?.partialOutput ?? (normalized.result || previous.result),
-    state: subagent
+    state: commandJob ? commandToolState(commandJob) : subagent
       ? runToolState(subagent)
       : toolResultState(raw, normalized.name || previous.name),
-    error: subagent?.error?.message ?? normalized.error,
+    error: commandJob ? commandJob.error?.message : subagent?.error?.message ?? normalized.error,
     durationMs: normalized.durationMs ?? previous.durationMs,
     startedAt: normalized.startedAt ?? previous.startedAt,
     finishedAt: normalized.finishedAt ?? previous.finishedAt,
     metadata: normalized.metadata ?? previous.metadata,
     change: (normalized.metadata?.change as ToolActivity['change']) ?? previous.change,
-    subagent
+    subagent,
+    commandJob
   }
 }
 

@@ -19,6 +19,8 @@ const TOOL_NAMES: Record<string, string> = {
   grep_search: '搜索内容',
   glob_search: '查找文件',
   execute_cmd: '执行命令',
+  command_output: '查看命令输出',
+  cancel_command: '停止命令',
   http_request: 'HTTP 请求',
   web_fetch: '获取网页内容',
   // 待办

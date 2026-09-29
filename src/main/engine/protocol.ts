@@ -59,6 +59,20 @@ export function assertEngineHealth(value: unknown): void {
   }
 }
 
+/** A manually started loopback development engine may use its standalone auth contract. */
+export function remoteInstanceToken(url: string, configuredToken?: string): string {
+  const parsed = new URL(url)
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+    throw new Error('远端引擎地址必须为不含凭证的 HTTP(S) 地址')
+  }
+  const token = configuredToken?.trim() ?? ''
+  const loopback = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '[::1]'
+  if (!token && !loopback) {
+    throw new Error('远端引擎需要连接凭据：启动 Aether Code 前设置 AETHER_IDE_REMOTE_INSTANCE_TOKEN，使其与引擎的 AETHER_INSTANCE_TOKEN 一致；本机开发也可选择「本地内置」。')
+  }
+  return token
+}
+
 /** Remote execution needs an explicit shared filesystem contract before local IDE paths are sent. */
 export function remoteRequestError(mode: 'embedded' | 'remote', method: string, path: string): string | null {
   if (mode !== 'remote') return null

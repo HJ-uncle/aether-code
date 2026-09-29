@@ -16,6 +16,7 @@ import {
   normalizeEnginePath,
   parseEngineMeta,
   remoteRequestError,
+  remoteInstanceToken,
   type EngineMeta
 } from './protocol'
 
@@ -149,13 +150,7 @@ export class EngineHost extends EventEmitter {
 
   private async startRemote(url: string, generation: number, signal: AbortSignal): Promise<void> {
     if (!url) throw new Error('未配置远端引擎地址')
-    const parsed = new URL(url)
-    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
-      throw new Error('远端引擎地址必须为不含凭证的 HTTP(S) 地址')
-    }
-    const token = process.env.AETHER_IDE_REMOTE_INSTANCE_TOKEN?.trim()
-    if (!token) throw new Error('实验性远端模式需要在主进程配置 AETHER_IDE_REMOTE_INSTANCE_TOKEN')
-    this.instanceToken = token
+    this.instanceToken = remoteInstanceToken(url, process.env.AETHER_IDE_REMOTE_INSTANCE_TOKEN)
     const meta = await this.handshake(url, signal)
     if (!this.current(generation, signal)) return
     this.patch({
@@ -246,6 +241,9 @@ export class EngineHost extends EventEmitter {
       ...options,
       headers: this.requestHeaders()
     })
+    if (probe.status === 401 || probe.status === 403) {
+      throw new Error('引擎拒绝连接凭据：请在启动 Aether Code 的进程中设置 AETHER_IDE_REMOTE_INSTANCE_TOKEN，与目标引擎的 AETHER_INSTANCE_TOKEN 保持一致；设置后重新启动应用。')
+    }
     if (!probe.ok) throw new Error(`引擎实例认证失败（HTTP ${probe.status}）`)
     const body = (await probe.json()) as { code?: number }
     if (body?.code !== 200 && body?.code !== 0) throw new Error('引擎实例认证探针返回失败')

@@ -1,3 +1,5 @@
+import type { CommandJobSnapshot } from '@shared/command-job'
+import { attachCommandJobs } from './command-job-state'
 import type { ChatSsePayload, EngineFileChange, EngineTodo } from '@shared/ipc'
 import type { RootRun } from '@shared/root-run'
 import type { ChatMessage } from './useChat'
@@ -18,6 +20,7 @@ export interface ChatRecoverySnapshot {
   history: EngineHistoryRow[]
   todos: EngineTodo[]
   changes: EngineFileChange[]
+  commandJobs?: CommandJobSnapshot[]
 }
 
 /** Same-stream repeated or older delivery must never append text or tool arguments twice. */
@@ -65,5 +68,5 @@ export function restoreChatSnapshot(snapshot: ChatRecoverySnapshot): { messages:
     const current = tool.change && changes.get(tool.change.id)
     return current ? { ...tool, change: { ...tool.change, ...current } } : tool
   }) }))
-  return { messages, todos }
+  return { messages: attachCommandJobs(messages, snapshot.commandJobs ?? [], snapshot.sessionId), todos }
 }

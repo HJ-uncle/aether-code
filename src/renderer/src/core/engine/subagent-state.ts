@@ -1,3 +1,4 @@
+import { commandStatusLabels } from './command-job-state'
 import type {
   SubagentError,
   SubagentEvent,
@@ -256,6 +257,7 @@ export function runToolState(run: SubagentRun): ToolActivity['state'] {
 }
 
 export function toolStatusLabel(tool: ToolActivity): string {
+  if (tool.commandJob) return commandStatusLabels[tool.commandJob.status]
   if (tool.subagent) return STATUS_LABELS[tool.subagent.status]
   if (tool.state === 'unknown') return '状态未知'
   if (tool.state === 'waiting') return '等待应答'

@@ -55,7 +55,7 @@ export function applyRootRun(
       pending,
       answered: undefined,
       tools: message.tools.map(tool => {
-        if (tool.subagent) return tool
+        if (tool.subagent || tool.commandJob) return tool
         const interaction = interactions.find(item => item.toolCallId === tool.id)
         if (interaction?.status === 'pending') return { ...tool, state: run.status === 'waiting' ? 'waiting' : run.status === 'cancelled' ? 'cancelled' : 'interrupted' }
         if (interaction?.status === 'answered' && tool.state === 'waiting') return {

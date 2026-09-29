@@ -1,3 +1,5 @@
+import { CommandJobCard } from './CommandJobCard'
+import { exportCommandJob, visibleChildCommandJobs } from '@renderer/core/engine/command-job-state'
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { createPortal } from 'react-dom'
 import { useApp } from '@renderer/core/app-context'
@@ -231,7 +233,7 @@ function formatBytes(bytes: number): string {
  */
 export function ChatView(): JSX.Element {
   const { ready, settings, updateSettings, settingsLoaded } = useApp()
-  const { messages, streaming, todos, send, respond, abort, loadHistory, resumeStream, deleteTurn, retryFrom, revertFrom, queue, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, queueSendMode, setQueueSendMode, retargetQueuedModel } = useChat()
+  const { messages, commandJobs, streaming, todos, send, respond, abort, loadHistory, resumeStream, deleteTurn, retryFrom, revertFrom, queue, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, queueSendMode, setQueueSendMode, retargetQueuedModel } = useChat()
   const { models, loaded: modelsLoaded } = useModels()
   const workspace = useWorkspace()
   const [input, setInput] = useState('')
@@ -1120,6 +1122,12 @@ export function ChatView(): JSX.Element {
         </div>
       ) : null}
 
+      {visibleChildCommandJobs(messages, commandJobs, sessionId).length > 0 ? (
+        <section className="command-job-children" aria-label="子代理后台命令">
+          <div className="command-job-card__meta">子代理后台命令</div>
+          {visibleChildCommandJobs(messages, commandJobs, sessionId).map(job => <CommandJobCard key={job.jobId} job={job} sessionId={sessionId} />)}
+        </section>
+      ) : null}
       <SessionTray
         sessionId={sessionId}
         streaming={streaming}
@@ -1611,7 +1619,7 @@ function serializeMessages(selected: ChatMessage[]): string {
           const toolLines = exportedTools.map((tool) => {
             const state = toolStatusLabel(tool)
             const summary = tool.args ? toolParamSummary(tool.args) : ''
-            const details = tool.name === 'subagent' ? exportSubagentDetails(tool) : tool.error ?? ''
+            const details = tool.commandJob ? exportCommandJob(tool.commandJob) : tool.name === 'subagent' ? exportSubagentDetails(tool) : tool.error ?? ''
             return `- ${toolDisplayName(tool.name)}${summary ? `：${summary}` : ''}（${state}）${details ? `\n\n${details}\n` : ''}`
           })
           parts.push(`\n**工具调用**\n\n${toolLines.join('\n')}`)
@@ -1818,6 +1826,7 @@ const MessageItem = memo(function MessageItem({
 function isFullSizeTool(tool: ToolActivity): boolean {
   return (
     tool.name === 'subagent' ||
+    (tool.name === 'execute_cmd' && Boolean(tool.commandJob)) ||
     ((tool.name === 'write_file' || tool.name === 'edit_file' || tool.name === 'delete_file') &&
       Boolean(tool.change))
   )
@@ -2625,6 +2634,7 @@ function ToolItem({
 }): JSX.Element {
   // 子代理： Trae 风格执行详情卡片（目标任务 / 执行详情 / 返回结果 / 底栏统计）
   if (tool.name === 'subagent') return <SubagentCard tool={tool} sessionId={sessionId} />
+  if (tool.name === 'execute_cmd' && tool.commandJob) return <CommandJobCard job={tool.commandJob} sessionId={sessionId} />
 
   // 文件写入/删除：git diff 风格卡片（引擎下发了内容快照时）
   if (
