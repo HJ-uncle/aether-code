@@ -82,7 +82,7 @@ export function ProblemsView(): JSX.Element {
                   aria-pressed={filter === f.id}
                   onClick={() => setFilter(f.id)}
                 >
-                  <Icon name={f.icon} size={12} />
+                  <Icon name={f.icon} size={16} />
                   {f.label}
                   <span className="problems-view__filter-count">{count >= 10 ? '9+' : count}</span>
                 </button>
@@ -136,9 +136,9 @@ function FileGroup({
         onClick={onToggle}
       >
         <span className={`problems-view__chevron${collapsed ? '' : ' is-open'}`} aria-hidden="true">
-          <Icon name="chevron-right" size={12} />
+          <Icon name="chevron-right" size={16} />
         </span>
-        <Icon name="file" size={12} />
+        <Icon name="file" size={16} />
         <span className="problems-view__file-name">{fileName(filePath)}</span>
         <span className="problems-view__file-count">
           {errors > 0 ? `${badgeCount(errors)} 错误` : ''}

@@ -9,7 +9,7 @@
  * 文件路径的父目录推导。键盘 ↑↓ 选择、Enter/Tab 确认、Esc 关闭。
  */
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
-import { Icon } from '@renderer/workbench/icons'
+import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
 import { formatPathDisplay, type Mention } from './MentionInput'
 
 interface FileRefPaletteProps {
@@ -166,7 +166,11 @@ export function FileRefPalette({
               }}
               onMouseEnter={() => setActiveIndex(index)}
             >
-              <Icon name={entry.isDir ? 'folder-outline' : 'file'} size={13} />
+              {entry.isDir ? (
+                <span className="file-palette__dir" />
+              ) : (
+                <FileGlyph name={entry.path.split('/').pop() ?? entry.path} />
+              )}
               <span className="file-palette__name">{entry.path.split('/').pop()}</span>
               <span className="file-palette__path">{entry.path}</span>
             </button>

@@ -296,7 +296,7 @@ export function MessageNavRail({
           aria-label="回到顶部"
           onClick={scrollToTop}
         >
-          <Icon name="chevron-double-up" size={13} />
+          <Icon name="chevron-double-up" size={16} />
         </button>
         <button
           type="button"
@@ -305,7 +305,7 @@ export function MessageNavRail({
           aria-label="上一条"
           onClick={() => stepTurn(-1)}
         >
-          <Icon name="chevron-up" size={13} />
+          <Icon name="chevron-up" size={16} />
         </button>
         <button
           type="button"
@@ -314,7 +314,7 @@ export function MessageNavRail({
           aria-label="下一条"
           onClick={() => stepTurn(1)}
         >
-          <Icon name="chevron" size={13} />
+          <Icon name="chevron" size={16} />
         </button>
         <button
           type="button"
@@ -323,7 +323,7 @@ export function MessageNavRail({
           aria-label="回到底部"
           onClick={scrollToBottom}
         >
-          <Icon name="chevron-double-down" size={13} />
+          <Icon name="chevron-double-down" size={16} />
         </button>
       </div>
 

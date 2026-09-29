@@ -106,7 +106,7 @@ export function SearchView(): JSX.Element {
             title={search.replaceVisible ? '隐藏替换' : '显示替换'}
             onClick={() => patchSearch({ replaceVisible: !search.replaceVisible })}
           >
-            <Icon name="chevron-right" size={12} />
+            <Icon name="chevron-right" size={16} />
           </button>
           <div className="search-view__field">
             <input
@@ -138,7 +138,7 @@ export function SearchView(): JSX.Element {
                 title="清空"
                 onClick={() => clearSearch()}
               >
-                <Icon name="close" size={12} />
+                <Icon name="close" size={16} />
               </button>
             ) : null}
             <button
@@ -230,7 +230,7 @@ export function SearchView(): JSX.Element {
             disabled={!root || !search.query.trim()}
             onClick={() => root && void runSearch(root)}
           >
-            <Icon name="restart" size={12} />
+            <Icon name="restart" size={16} />
           </button>
           <button
             type="button"
@@ -240,7 +240,7 @@ export function SearchView(): JSX.Element {
             disabled={allPaths.length === 0}
             onClick={() => setAllCollapsed(allPaths, !allCollapsed)}
           >
-            <Icon name="collapse-all" size={12} />
+            <Icon name="collapse-all" size={16} />
           </button>
           <button
             type="button"
@@ -250,7 +250,7 @@ export function SearchView(): JSX.Element {
             disabled={!search.query.trim()}
             onClick={() => clearSearch()}
           >
-            <Icon name="close" size={12} />
+            <Icon name="close" size={16} />
           </button>
         </div>
 
@@ -331,7 +331,7 @@ export function SearchView(): JSX.Element {
                   title={group.path}
                   onClick={() => toggleCollapse(group.path)}
                 >
-                  <Icon name={collapsed ? 'chevron-right' : 'chevron'} size={11} />
+                  <Icon name={collapsed ? 'chevron-right' : 'chevron'} size={16} />
                   <span className="search-view__file-name">{group.path.split('/').pop()}</span>
                   <span className="search-view__file-dir">
                     {group.path.split('/').slice(0, -1).join('/')}

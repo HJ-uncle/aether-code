@@ -65,7 +65,7 @@ import {
 import { ContextMenu, type ContextMenuItem } from '@renderer/workbench/ContextMenu'
 import { PromptDialog } from '@renderer/workbench/PromptDialog'
 import { Icon } from '@renderer/workbench/icons'
-import { resolveFileIcon } from './file-icons'
+import { FileGlyph } from './FileGlyph'
 
 /** 行高，必须与 .tree-row 的 margin/字号保持协调（虚拟滚动按它换算偏移） */
 const ROW_HEIGHT = 24
@@ -1511,7 +1511,7 @@ export function ExplorerView(): JSX.Element {
           disabled={busy}
           onClick={() => void handleOpenFolder()}
         >
-          <Icon name="plus" size={13} />
+          <Icon name="plus" size={16} />
           {busy ? '打开中…' : '打开文件夹'}
         </button>
         {recentProjects.length > 0 ? (
@@ -1526,7 +1526,7 @@ export function ExplorerView(): JSX.Element {
                     title={project.path}
                     onClick={() => openRecentProject(project.path)}
                   >
-                    <Icon name="explorer" size={13} />
+                    <Icon name="explorer" size={16} />
                     <span className="explorer__recent-name">{project.name}</span>
                   </button>
                   <button
@@ -1536,7 +1536,7 @@ export function ExplorerView(): JSX.Element {
                     aria-label={`从最近打开中移除 ${project.name}`}
                     onClick={() => forgetRecentFolder(project.path)}
                   >
-                    <Icon name="close" size={11} />
+                    <Icon name="close" size={16} />
                   </button>
                 </div>
               ))}
@@ -1580,7 +1580,7 @@ export function ExplorerView(): JSX.Element {
           aria-label="切换排序方式"
           onClick={() => setSortMode((prev) => (prev === 'default' ? 'name' : 'default'))}
         >
-          <Icon name="sort" size={13} />
+          <Icon name="sort" size={16} />
         </button>
         <button
           type="button"
@@ -1589,7 +1589,7 @@ export function ExplorerView(): JSX.Element {
           aria-label="全部收起"
           onClick={handleCollapseAll}
         >
-          <Icon name="collapse-all" size={13} />
+          <Icon name="collapse-all" size={16} />
         </button>
         <button
           type="button"
@@ -1597,7 +1597,7 @@ export function ExplorerView(): JSX.Element {
           title="按名称筛选（在已加载的树内过滤）"
           onClick={() => setFilterOpen((open) => !open)}
         >
-          <Icon name="search" size={13} />
+          <Icon name="search" size={16} />
         </button>
         <button
           type="button"
@@ -1606,7 +1606,7 @@ export function ExplorerView(): JSX.Element {
           disabled={!workspace.activeFilePath}
           onClick={handleRevealActive}
         >
-          <Icon name="locate" size={13} />
+          <Icon name="locate" size={16} />
         </button>
         <button
           type="button"
@@ -1615,7 +1615,7 @@ export function ExplorerView(): JSX.Element {
           disabled={busy}
           onClick={() => void handleOpenFolder()}
         >
-          <Icon name="plus" size={13} />
+          <Icon name="plus" size={16} />
         </button>
         <button
           type="button"
@@ -1624,10 +1624,10 @@ export function ExplorerView(): JSX.Element {
           disabled={busy}
           onClick={() => void handleRefresh()}
         >
-          <Icon name="restart" size={13} />
+          <Icon name="restart" size={16} />
         </button>
         <button type="button" className="explorer__btn" title="关闭文件夹" onClick={closeFolder}>
-          <Icon name="close" size={13} />
+          <Icon name="close" size={16} />
         </button>
       </div>
 
@@ -1876,20 +1876,6 @@ function highlightName(name: string, filter: string | undefined): JSX.Element | 
 }
 
 /** 文件类型矢量图标（mdi 图标集 + seti 色板，映射表见 file-icons.ts） */
-function FileGlyph({ name }: { name: string }): JSX.Element {
-  const icon = resolveFileIcon(name)
-  return (
-    <svg
-      className="tree-row__glyph"
-      viewBox="0 0 24 24"
-      width={15}
-      height={15}
-      style={{ color: icon.color }}
-      aria-hidden
-      dangerouslySetInnerHTML={{ __html: icon.body }}
-    />
-  )
-}
 
 function TreeRow({
   row,

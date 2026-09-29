@@ -14,7 +14,9 @@ import {
   useSubagentRun
 } from '@renderer/core/engine/subagent-store'
 import { Icon } from '@renderer/workbench/icons'
-import { toolDisplayName } from './tool-names'
+import { Markdown } from './Markdown'
+import { toolDisplayName, toolParamSummary } from './tool-names'
+import { useCollapseMemory } from './useCollapseMemory'
 import { formatTokens } from './usage'
 
 function parseObject(value: string): Record<string, unknown> {
@@ -63,9 +65,67 @@ function readable(value: unknown): string {
   if (typeof value === 'string') return value
   return value == null ? '' : JSON.stringify(value, null, 2)
 }
+
+/** 行内参数摘要：args 是对象时先序列化再交给 toolParamSummary 提关键参数（避免 String(obj) → [object Object]） */
+function argsSummary(args: unknown): string {
+  if (args == null) return ''
+  const json = typeof args === 'string' ? args : JSON.stringify(args)
+  return toolParamSummary(json)
+}
 function duration(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000))
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60}s`
+}
+
+/**
+ * 紧凑工具调用行（对齐 wuzu-client 的 CliCompactToolRow）：
+ * 圆点 + 名称 · 状态 + 摘要，一行 24px；点击展开看入参与输出。
+ */
+function CompactToolRow({ call }: { call: SubagentToolCall }): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const statusText =
+    call.status === 'failed'
+      ? '失败'
+      : call.status === 'succeeded'
+        ? '成功'
+        : call.status === 'cancelled'
+          ? '已取消'
+          : '执行中'
+  return (
+    <div className="subagent-card__call">
+      <span
+        className={`subagent-card__call-dot${call.status === 'failed' ? ' subagent-card__call-dot--fail' : ''}`}
+      />
+      <button
+        type="button"
+        className="subagent-card__call-toggle"
+        onClick={() => setOpen(!open)}
+      >
+        <span className="subagent-card__call-name">{toolDisplayName(call.name)}</span>
+        <span className="subagent-card__call-summary">· {statusText}</span>
+        {argsSummary(call.args) ? (
+          <span className="subagent-card__call-args">{argsSummary(call.args)}</span>
+        ) : null}
+      </button>
+      {open ? (
+        <div className="subagent-card__call-detail">
+          {call.args != null && call.args !== '' ? (
+            <>
+              <div className="subagent-card__call-section">参数</div>
+              <pre className="subagent-card__call-pre">{readable(call.args)}</pre>
+            </>
+          ) : null}
+          {call.error ? <div className="message__error">{call.error.message}</div> : null}
+          {call.output ? (
+            <>
+              <div className="subagent-card__call-section">输出</div>
+              <pre className="subagent-card__call-pre">{call.output}</pre>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 /** The run is the authority; a closed parent stream is not a child completion signal. */
@@ -80,8 +140,10 @@ export function SubagentCard({
   const run = cached ? mergeSubagentRun(tool.subagent, cached) : tool.subagent
   const args = useMemo(() => parseObject(tool.args), [tool.args])
   const legacy = useMemo(() => parseLegacy(tool.result), [tool.result])
-  const [manualOpen, setManualOpen] = useState<boolean | null>(null)
+  const [manualOpen, setManualOpen] = useCollapseMemory(`subagent:${tool.id}`)
   const [goalExpanded, setGoalExpanded] = useState(false)
+  // 「执行详情」折叠：运行中自动展开看进展、结束自动收起；用户点过后以用户为准（跨重建记忆）
+  const [toolsManual, setToolsManual] = useCollapseMemory(`subagent-tools:${tool.id}`)
   const [requesting, setRequesting] = useState(false)
   const [requestError, setRequestError] = useState('')
   const [detailError, setDetailError] = useState('')
@@ -115,6 +177,21 @@ export function SubagentCard({
       : `${run?.usage.estimated ? '约 ' : ''}${formatTokens(tokens)}`
   const failures = calls.filter((call) => call.status === 'failed').length
   const currentCall = [...calls].reverse().find((call) => call.status === 'running')
+
+  // 「执行详情」折叠态：运行中自动展开看进展，结束自动收起；用户点过后以用户为准
+  const toolsCollapsed = toolsManual ?? !active
+
+  /** 收起态按类型统计：「读取文件 × 5 · 搜索内容 × 78…」，最多露 3 类 */
+  const toolsTypeSummary = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const call of calls) {
+      const name = toolDisplayName(call.name)
+      counts.set(name, (counts.get(name) ?? 0) + 1)
+    }
+    const parts = [...counts.entries()].map(([name, n]) => `${name} × ${n}`)
+    if (parts.length <= 3) return parts.join(' · ')
+    return `${parts.slice(0, 3).join(' · ')} 等`
+  }, [calls])
 
   useEffect(() => {
     if (!active) return
@@ -172,7 +249,7 @@ export function SubagentCard({
         }}
       >
         <span className={`subagent-card__dot${failed ? ' subagent-card__dot--fail' : ''}`}>
-          {active ? <span className="subagent-card__spinner" /> : <Icon name="circle" size={13} />}
+          {active ? <span className="subagent-card__spinner" /> : <Icon name="circle" size={16} />}
         </span>
         <span className="subagent-card__name">子代理</span>
         <span className="subagent-card__task" title={goal}>
@@ -194,11 +271,11 @@ export function SubagentCard({
               void cancel(event)
             }}
           >
-            <Icon name="close" size={11} />
+            <Icon name="close" size={16} />
             {requesting || cancelling ? '取消中…' : '停止'}
           </button>
         ) : null}
-        <Icon name="chevron" size={13} />
+        <Icon name="chevron" size={16} />
       </summary>
 
       {reason ? (
@@ -221,68 +298,83 @@ export function SubagentCard({
         <div className="subagent-card__running">已停止本地执行；外部操作结果可能未知</div>
       ) : null}
 
-      {/* 目标任务默认收起：标题行已露任务摘要，展开是为了看完整说明 */}
-      <details className="subagent-card__detail">
-        <summary>
-          目标任务 <span className="subagent-card__detail-stats">{goal ? `${goal.length} 字` : ''}</span>
-        </summary>
-        <div className="subagent-card__goal">
-          {(goalExpanded ? goal : goal.slice(0, 200)) || '（未提供任务描述）'}
-          {!goalExpanded && goal.length > 200 ? (
+      {/* 目标任务：淡背景块，默认两行截断，点开看全文（对齐 wuzu：亮出原文才能核对父有没有写清目标） */}
+      <div className="subagent-card__goal-block">
+        <div className="subagent-card__goal-label">目标任务</div>
+        <div className="subagent-card__goal-inner">
+          {goalExpanded ? (
+            <pre className="subagent-card__goal-text">{goal || '（未提供任务描述）'}</pre>
+          ) : (
+            <div className="subagent-card__goal-text subagent-card__goal-text--clamp">
+              {goal || '（未提供任务描述）'}
+            </div>
+          )}
+          {goal.length > 200 ? (
             <button
               type="button"
-              className="subagent-card__expand"
-              onClick={() => setGoalExpanded(true)}
+              className="subagent-card__goal-toggle"
+              onClick={() => setGoalExpanded(!goalExpanded)}
             >
-              展开全文
+              {goalExpanded ? '收起' : '展开全文'}
             </button>
           ) : null}
         </div>
-      </details>
+      </div>
+
       {currentCall ? (
         <div className="subagent-card__running">当前：{toolDisplayName(currentCall.name)}</div>
       ) : null}
-      <details className="subagent-card__detail">
-        <summary>
-          执行详情 <span className="subagent-card__detail-stats">工具调用 {calls.length}</span>
-          {failures > 0 ? <span className="subagent-card__fail"> · {failures} 失败</span> : null}
-        </summary>
-        {calls.length ? (
-          <ul className="subagent-card__calls">
-            {calls.map((call) => (
-              <li key={call.id} className="subagent-card__call">
-                <span
-                  className={`subagent-card__call-dot${call.status === 'failed' ? ' subagent-card__call-dot--fail' : ''}`}
-                />
-                <details>
-                  <summary>
-                    <span className="subagent-card__call-name">{toolDisplayName(call.name)}</span> ·{' '}
-                    {call.status === 'failed'
-                      ? '失败'
-                      : call.status === 'succeeded'
-                        ? '成功'
-                        : call.status === 'cancelled'
-                          ? '已取消'
-                          : '执行中'}
-                  </summary>
-                  <pre className="subagent-card__result">{readable(call.args)}</pre>
-                  {call.error ? <div className="message__error">{call.error.message}</div> : null}
-                  {call.output ? <pre className="subagent-card__result">{call.output}</pre> : null}
-                </details>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <div className="subagent-card__running">
-            {run ? (active ? '等待工具调用…' : '没有内部工具调用') : '旧记录未保存详情'}
-          </div>
-        )}
-      </details>
 
-      <div className="subagent-card__section-label">
-        {run?.partialOutput && !run.resultSummary ? '部分结果' : '返回结果'}
-      </div>
-      <div className="subagent-card__result">{result || (active ? '等待返回…' : '（无返回）')}</div>
+      {/* 执行详情：默认收起一行（按类型统计），展开是紧凑日志行（对齐 wuzu） */}
+      {calls.length === 0 ? (
+        <div className="subagent-card__running">
+          {active ? '子代理正在启动…' : '没有内部工具调用记录'}
+        </div>
+      ) : (
+        <div className="subagent-card__tools-block">
+          <button
+            type="button"
+            className="subagent-card__tools-header"
+            onClick={() => setToolsManual(toolsCollapsed ? false : true)}
+          >
+            <Icon name={toolsCollapsed ? 'chevron-right' : 'chevron-down'} size={16} />
+            <span>执行详情 · 工具调用 {calls.length}</span>
+            {toolsCollapsed && toolsTypeSummary ? (
+              <span className="subagent-card__tools-summary">{toolsTypeSummary}</span>
+            ) : null}
+            {failures > 0 ? (
+              <span className="subagent-card__fail"> · {failures} 失败</span>
+            ) : null}
+          </button>
+          {!toolsCollapsed ? (
+            <div className="subagent-card__tools-list">
+              {calls.map((call) => (
+                <CompactToolRow key={call.id} call={call} />
+              ))}
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {/* 返回结果：实背景块，产出主体（对齐 wuzu：与过程记录拉开层次） */}
+      {result ? (
+        <div className="subagent-card__result-block">
+          <div className="subagent-card__result-label">
+            {run?.partialOutput && !run.resultSummary ? '部分结果' : '返回结果'}
+          </div>
+          <div className="subagent-card__result-inner">
+            {failed ? (
+              <pre className="subagent-card__result-text subagent-card__result-text--error">
+                {result}
+              </pre>
+            ) : (
+              <div className="subagent-card__result-markdown">
+                <Markdown text={result} />
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
       <div className="subagent-card__footer">
         {run?.modelId ? <span>模型 {run.modelId}</span> : null}
         <span>工具调用 {calls.length}</span>

@@ -26,6 +26,7 @@ interface ProviderMessage extends JsonRecord {
 interface ProviderRequest extends JsonRecord {
   messages: ProviderMessage[]
   stream?: boolean
+  tools?: Array<{ type: 'function'; function: { name: string; parameters?: unknown } }>
 }
 interface FunctionCall {
   id: string

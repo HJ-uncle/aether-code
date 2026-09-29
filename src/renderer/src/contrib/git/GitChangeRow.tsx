@@ -81,7 +81,7 @@ export function GitChangeRow({
       >
         {/* 图标染状态色：包一层 span 用 currentColor 上色 */}
         <span className="git-row__icon" style={{ color: statusColor }}>
-          <Icon name={statusIconName(file)} size={13} />
+          <Icon name={statusIconName(file)} size={16} />
         </span>
         <span
           className={`git-row__name${file.changeType === 'deleted' ? ' is-deleted' : ''}`}
@@ -108,7 +108,7 @@ export function GitChangeRow({
                 onToggleStage?.(file)
               }}
             >
-              <Icon name="check" size={13} className="git-row__add" />
+              <Icon name="check" size={16} className="git-row__add" />
             </button>
           ) : (
             <>
@@ -121,7 +121,7 @@ export function GitChangeRow({
                   onToggleStage?.(file)
                 }}
               >
-                <Icon name={file.staged ? 'close' : 'plus'} size={13} />
+                <Icon name={file.staged ? 'close' : 'plus'} size={16} />
               </button>
               <button
                 type="button"
@@ -132,7 +132,7 @@ export function GitChangeRow({
                   onDiscard?.(file)
                 }}
               >
-                <Icon name="restart" size={13} />
+                <Icon name="restart" size={16} />
               </button>
               <button
                 type="button"
@@ -145,7 +145,7 @@ export function GitChangeRow({
                   if (next) void loadHunksFor(file.path)
                 }}
               >
-                <Icon name={hunksOpen ? 'chevron' : 'chevron-right'} size={13} />
+                <Icon name={hunksOpen ? 'chevron' : 'chevron-right'} size={16} />
               </button>
             </>
           )}
@@ -174,7 +174,7 @@ export function GitChangeRow({
                     void discardHunk(file.path, h.id)
                   }}
                 >
-                  <Icon name="restart" size={12} />
+                  <Icon name="restart" size={16} />
                 </button>
               </div>
             ))

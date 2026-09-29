@@ -10,6 +10,7 @@
  * 由调用方（渲染层）按业务语义处理；只有网络层故障才 reject。
  */
 import { engineHost } from './host'
+import { CODE_TOOL_PROFILE_HEADERS } from './tool-profile'
 import type { EngineRequestInput, EngineRequestResult } from '../../shared/ipc'
 
 /** 成功码：引擎混用 200 与 0 */
@@ -49,7 +50,10 @@ export async function engineRequest<T = unknown>(
   const isRootPath = isRootLevelPath(trimmed)
   const url = `${baseUrl}${isRootPath ? '' : '/api/v1'}${trimmed}${buildQuery(input.query)}`
 
-  const headers: Record<string, string> = { Accept: 'application/json' }
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    ...CODE_TOOL_PROFILE_HEADERS
+  }
   // 有请求体时才带 Content-Type，否则 Fastify 会拒绝空 body 的 DELETE
   if (input.body !== undefined) headers['Content-Type'] = 'application/json'
 

@@ -1,4 +1,4 @@
-import { useMemo, type JSX } from 'react'
+import { memo, useMemo, type JSX } from 'react'
 import { Marked, type Token, type Tokens } from 'marked'
 import hljs from 'highlight.js'
 import { Icon } from '@renderer/workbench/icons'
@@ -223,7 +223,7 @@ function CodeBlock({ token }: { token: Tokens.Code }): JSX.Element {
           aria-label="复制代码"
           onClick={copyCode}
         >
-          <Icon name="copy" size={12} />
+          <Icon name="copy" size={16} />
         </button>
       </div>
       {/* 高亮 HTML 来自 highlight.js（纯文本着色，不含脚本），可以安全注入 */}
@@ -284,10 +284,88 @@ function TableBlock({ token, prefix }: { token: Tokens.Table; prefix: string }):
   )
 }
 
-export function Markdown({ text }: { text: string }): JSX.Element {
-  const tokens = useMemo(() => {
-    const marked = new Marked({ gfm: true, breaks: false })
-    return marked.lexer(text)
-  }, [text])
-  return <div className="md">{renderBlock(tokens, 'md')}</div>
+/**
+ * 流式增量解析：把文本切成「稳定前缀」与「增量尾部」。
+ *
+ * 流式期间 text 每帧都在末尾追加，全量 re-lex 会让 O(n²) 解析压垮长回复。
+ * 观察：只有「双换行结尾、且不在未闭合代码围栏内」的前缀是稳定的（段落已封口），
+ * 其 token 不会随后续文本改变。把这部分缓存复用，每帧只解析变化的尾部。
+ */
+
+/** 数 fence（``` 或 ~~~）开闭：返回文本末尾是否处于未闭合围栏内 */
+function inOpenFence(text: string): boolean {
+  // 行首（可带 ≤3 空格）的 ``` 或 ~~~ 序列；marked 的 GFM 规则
+  const fenceRe = /^ {0,3}(`{3,}|~{3,})/gm
+  let count = 0
+  while (fenceRe.exec(text) !== null) count += 1
+  return count % 2 === 1
 }
+
+/**
+ * 找稳定切点：最后一个「后面紧跟非空内容、且此前围栏全闭合」的双换行位置。
+ * 返回稳定前缀的长度（不含尾部）；无稳定点时返回 0。
+ */
+function stablePrefixLength(text: string): number {
+  // 候选切点：\n\n（空行簇）。连续空行整体并入前缀，使切点落在空行簇末尾，
+  // 避免 space token 的 raw 被从中间切开（`\n\n\n` → 前缀 `\n\n` + 尾部 `\n`）。
+  let cut = 0
+  let idx = text.indexOf('\n\n')
+  while (idx !== -1) {
+    let end = idx + 2
+    // 吸收紧随其后的所有换行（\n\n\n、\n\n\n\n …），切点推到空行簇末尾
+    while (end < text.length && text[end] === '\n') end += 1
+    // 前缀到切点为止必须围栏闭合，否则切开的代码块会解析错
+    if (end < text.length && !inOpenFence(text.slice(0, end))) cut = end
+    idx = text.indexOf('\n\n', end)
+  }
+  return cut
+}
+
+/** 单例 lexer：Marked 实例无可变状态依赖文本，可安全复用 */
+const sharedMarked = new Marked({ gfm: true, breaks: false })
+
+function lex(text: string): Token[] {
+  return sharedMarked.lexer(text)
+}
+
+/** 解析缓存：前缀文本 → 前缀 tokens（用 Map 做简易 LRU，上限 8 条防内存膨胀） */
+const prefixCache = new Map<string, Token[]>()
+const PREFIX_CACHE_LIMIT = 8
+
+function cachedLexPrefix(prefix: string): Token[] {
+  const hit = prefixCache.get(prefix)
+  if (hit) {
+    // LRU：命中后移到末尾
+    prefixCache.delete(prefix)
+    prefixCache.set(prefix, hit)
+    return hit
+  }
+  const tokens = lex(prefix)
+  prefixCache.set(prefix, tokens)
+  if (prefixCache.size > PREFIX_CACHE_LIMIT) {
+    // 删最旧（Map 迭代按插入序）
+    const oldest = prefixCache.keys().next().value
+    if (oldest !== undefined) prefixCache.delete(oldest)
+  }
+  return tokens
+}
+
+/**
+ * 增量 tokenize：稳定前缀走缓存，尾部实时解析，拼成完整 token 流。
+ * 非流式（一次性文本）时前缀就是全文减去最后一段，同样受益。
+ */
+function tokenizeIncremental(text: string): Token[] {
+  if (!text) return []
+  const cut = stablePrefixLength(text)
+  if (cut === 0) return lex(text)
+  const prefix = text.slice(0, cut)
+  const tail = text.slice(cut)
+  const head = cachedLexPrefix(prefix)
+  const tailTokens = tail ? lex(tail) : []
+  return [...head, ...tailTokens]
+}
+
+export const Markdown = memo(function Markdown({ text }: { text: string }): JSX.Element {
+  const tokens = useMemo(() => tokenizeIncremental(text), [text])
+  return <div className="md">{renderBlock(tokens, 'md')}</div>
+})

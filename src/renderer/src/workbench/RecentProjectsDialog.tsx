@@ -61,7 +61,7 @@ export function RecentProjectsDialog({
                   title={folder}
                   onClick={() => open(folder)}
                 >
-                  <Icon name="explorer" size={14} />
+                  <Icon name="explorer" size={16} />
                   <span className="recent-dialog__text">
                     <span className="recent-dialog__name">{name}</span>
                     <span className="recent-dialog__path">{folder}</span>
@@ -75,7 +75,7 @@ export function RecentProjectsDialog({
                   aria-label={`从列表中移除 ${name}`}
                   onClick={() => forgetRecentFolder(folder)}
                 >
-                  <Icon name="close" size={12} />
+                  <Icon name="close" size={16} />
                 </button>
               </li>
             )

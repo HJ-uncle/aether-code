@@ -214,6 +214,57 @@ export function useChat(): {
   const [streaming, setStreaming] = useState(false)
   const [todos, setTodos] = useState<EngineTodo[]>([])
 
+  /**
+   * 流式帧节流（对齐 wuzu-client 的 80ms 快照方案）：
+   * SSE 的 content/thinking delta 帧频率远高于人眼可分辨的刷新率，
+   * 每帧 setMessages 会让整棵消息树跟着每帧重渲染。
+   * 这里把流式 patch 攒进队列，距上次 flush 满 80ms 才合并成一次 setMessages；
+   * done/error 等关键帧到达时立即 flush，保证终态不延迟。
+   *
+   * patch 以 (prev) => next 函数形式攒着，flush 时依次折叠 ——
+   * 与直接 setMessages 的 updater 语义一致，不会丢帧。
+   */
+  const STREAM_THROTTLE_MS = 80
+  const pendingPatchesRef = useRef<Array<(prev: ChatMessage[]) => ChatMessage[]>>([])
+  const throttleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastFlushAtRef = useRef(0)
+
+  const flushStreamPatches = useCallback((): void => {
+    if (throttleTimerRef.current) {
+      clearTimeout(throttleTimerRef.current)
+      throttleTimerRef.current = null
+    }
+    lastFlushAtRef.current = Date.now()
+    const patches = pendingPatchesRef.current
+    pendingPatchesRef.current = []
+    if (patches.length === 0) return
+    setMessages((prev) => {
+      let next = prev
+      for (const patch of patches) next = patch(next)
+      return next
+    })
+  }, [])
+
+  const scheduleStreamPatch = useCallback(
+    (patch: (prev: ChatMessage[]) => ChatMessage[]): void => {
+      pendingPatchesRef.current.push(patch)
+      const elapsed = Date.now() - lastFlushAtRef.current
+      if (elapsed >= STREAM_THROTTLE_MS) {
+        flushStreamPatches()
+        return
+      }
+      throttleTimerRef.current ??= setTimeout(flushStreamPatches, STREAM_THROTTLE_MS - elapsed)
+    },
+    [flushStreamPatches]
+  )
+
+  // 卸载时清掉 pending 定时器，避免组件销毁后 setState
+  useEffect(() => {
+    return () => {
+      if (throttleTimerRef.current) clearTimeout(throttleTimerRef.current)
+    }
+  }, [])
+
   /** 当前流式请求 ID；用 ref 是因为事件回调拿不到最新 state */
   const activeStreamRef = useRef<string | null>(null)
 
@@ -328,6 +379,9 @@ export function useChat(): {
 
     function applyEvent(event: StreamEvent): void {
       if (event.type === 'done' || event.type === 'error') {
+        // 终态是关键帧：先立即 flush 掉攒着的流式 patch，再落终态 ——
+        // 否则最后一波正文会晚 80ms 出现在「已完成」的消息上
+        flushStreamPatches()
         setMessages((prev) =>
           patchLastAssistant(prev, (msg) => ({
             ...msg,
@@ -353,7 +407,8 @@ export function useChat(): {
       }
 
       const payload = event.payload
-      setMessages((prev) => {
+      // 流式数据帧走节流队列：高频 content/thinking delta 攒 80ms 合并一次渲染
+      scheduleStreamPatch((prev) => {
         const result = payload.toolEnd ?? payload.toolResult
         // Approval frames can also carry tool results; preserve their pending interaction first.
         const updated = result && !normalizePending(payload) ? applyToolResult(prev, result) : prev
@@ -365,7 +420,7 @@ export function useChat(): {
         })), getSubagentRuns(viewSessionRef.current))
       })
     }
-  }, [])
+  }, [flushStreamPatches, scheduleStreamPatch])
 
   /** 统一起流：设置激活流 ID 并发出请求 */
   const runStream = useCallback(async (body: Record<string, unknown>) => {
@@ -686,6 +741,8 @@ export function useChat(): {
     if (sessionId) {
       void engine.request({ method: 'POST', path: '/chat/cancel', body: { sessionId } })
     }
+    // 与 done/error 同理：先 flush 攒着的流式 patch 再落终态，最后一段输出不延迟
+    flushStreamPatches()
     setMessages((prev) =>
       patchLastAssistant(prev, (msg) => ({
         ...msg,
@@ -699,7 +756,7 @@ export function useChat(): {
     activeSessionRef.current = null
     // 用户主动停止：排队中的消息不再自动发出（保留在队列里由用户决定去留）
     syncQueue([])
-  }, [syncQueue])
+  }, [syncQueue, flushStreamPatches])
 
   /**
    * 清空当前会话。

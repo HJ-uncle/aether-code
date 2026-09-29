@@ -184,7 +184,7 @@ export function EngineSettingsView(): JSX.Element {
 
       <div className="settings-view__actions">
         <button type="button" className="btn" disabled={busy} onClick={() => void engine.start()}>
-          <Icon name="play" size={13} />
+          <Icon name="play" size={16} />
           启动
         </button>
         <button
@@ -193,11 +193,11 @@ export function EngineSettingsView(): JSX.Element {
           disabled={busy || snapshot.phase === 'idle'}
           onClick={() => void engine.stop()}
         >
-          <Icon name="stop" size={13} />
+          <Icon name="stop" size={16} />
           停止
         </button>
         <button type="button" className="btn" disabled={busy} onClick={() => void engine.restart()}>
-          <Icon name="restart" size={13} />
+          <Icon name="restart" size={16} />
           重启
         </button>
       </div>

@@ -318,7 +318,7 @@ export function GitCommitBar(): JSX.Element {
           title="AI 帮我写提交信息"
           onClick={() => void handleSuggest()}
         >
-          <Icon name="sparkles" size={13} />
+          <Icon name="sparkles" size={16} />
         </button>
       </div>
 
@@ -338,7 +338,7 @@ export function GitCommitBar(): JSX.Element {
                   ? 'cloud-upload-outline'
                   : 'sync'
             }
-            size={13}
+            size={16}
           />
           {primaryLabel}
         </button>
@@ -349,7 +349,7 @@ export function GitCommitBar(): JSX.Element {
           title="更多提交方式"
           onClick={(event) => setMenu({ x: event.clientX, y: event.clientY })}
         >
-          <Icon name="chevron" size={13} />
+          <Icon name="chevron" size={16} />
         </button>
       </div>
 

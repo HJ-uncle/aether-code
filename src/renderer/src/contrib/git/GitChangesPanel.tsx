@@ -1638,7 +1638,7 @@ export function GitChangesPanel(): JSX.Element {
       className={`git-panel__group-head${variant ? ` git-panel__group-head--${variant}` : ''}`}
       onClick={onToggle}
     >
-      <Icon name="chevron" size={12} className={expanded ? '' : 'is-collapsed'} />
+      <Icon name="chevron" size={16} className={expanded ? '' : 'is-collapsed'} />
       <span>{title}</span>
       <span className="git-panel__count">{count}</span>
       <span className="git-panel__spacer" />
@@ -1714,7 +1714,7 @@ export function GitChangesPanel(): JSX.Element {
                     title={project.path}
                     onClick={() => openRecentProject(project.path)}
                   >
-                    <Icon name="explorer" size={13} />
+                    <Icon name="explorer" size={16} />
                     <span className="git-panel__recent-name">{project.name}</span>
                   </button>
                   <button
@@ -1724,7 +1724,7 @@ export function GitChangesPanel(): JSX.Element {
                     aria-label={`从最近打开中移除 ${project.name}`}
                     onClick={() => forgetRecentFolder(project.path)}
                   >
-                    <Icon name="close" size={11} />
+                    <Icon name="close" size={16} />
                   </button>
                 </div>
               ))}
@@ -1762,7 +1762,7 @@ export function GitChangesPanel(): JSX.Element {
           {conflicts.length > 0 ? (
             <div className="git-panel__merge-banner">
               <div className="git-panel__merge-banner-title">
-                <Icon name="git" size={14} />
+                <Icon name="git" size={16} />
                 <span>合并存在 {conflicts.length} 个冲突文件，请逐个解决后提交</span>
               </div>
               {git.mergeMessage ? (
@@ -1822,7 +1822,7 @@ export function GitChangesPanel(): JSX.Element {
                     void handleUnstageAll()
                   }}
                 >
-                  <Icon name="minimize" size={13} />
+                  <Icon name="minimize" size={16} />
                 </button>
               )}
               {stagedExpanded ? (
@@ -1870,7 +1870,7 @@ export function GitChangesPanel(): JSX.Element {
                       void handleStageAll()
                     }}
                   >
-                    <Icon name="plus" size={13} />
+                    <Icon name="plus" size={16} />
                   </button>
                   <button
                     type="button"
@@ -1881,7 +1881,7 @@ export function GitChangesPanel(): JSX.Element {
                       void handleDiscardAll()
                     }}
                   >
-                    <Icon name="restart" size={13} />
+                    <Icon name="restart" size={16} />
                   </button>
                 </>
               )}
@@ -1928,7 +1928,7 @@ export function GitChangesPanel(): JSX.Element {
                   void reloadLog(LOG_PAGE_SIZE)
                 }}
               >
-                <Icon name="restart" size={13} />
+                <Icon name="restart" size={16} />
               </button>
             )}
             {historyExpanded ? (
@@ -1936,7 +1936,7 @@ export function GitChangesPanel(): JSX.Element {
                 {/* 过滤工具栏 */}
                 <div className="git-panel__history-filter">
                   <div className="git-panel__history-search">
-                    <Icon name="search" size={12} />
+                    <Icon name="search" size={16} />
                     <input
                       type="text"
                       placeholder="搜索提交信息…"
@@ -1952,7 +1952,7 @@ export function GitChangesPanel(): JSX.Element {
                           handleHistoryFilterChange()
                         }}
                       >
-                        <Icon name="close" size={10} />
+                        <Icon name="close" size={16} />
                       </button>
                     ) : null}
                   </div>
@@ -1991,7 +1991,7 @@ export function GitChangesPanel(): JSX.Element {
                     title="清除过滤"
                     onClick={clearAllHistoryFilter}
                   >
-                    <Icon name="filter-remove" size={12} />
+                    <Icon name="filter-remove" size={16} />
                   </button>
                 </div>
 
@@ -2055,7 +2055,7 @@ export function GitChangesPanel(): JSX.Element {
                             ).map(([dir, files]) => (
                               <div key={dir}>
                                 <div className="git-panel__commit-dir">
-                                  <Icon name="explorer" size={12} />
+                                  <Icon name="explorer" size={16} />
                                   <span>{dir}</span>
                                 </div>
                                 {(files ?? []).map((f) => (
@@ -2119,7 +2119,7 @@ export function GitChangesPanel(): JSX.Element {
                   >
                     <Icon
                       name="chevron-double-down"
-                      size={13}
+                      size={16}
                       className={git.logLoadingMore ? 'is-spinning' : undefined}
                     />
                     {git.logLoadingMore ? '加载中…' : '加载更早的提交'}
@@ -2149,7 +2149,7 @@ export function GitChangesPanel(): JSX.Element {
                         setStashSelected(new Set())
                       }}
                     >
-                      <Icon name="close" size={13} />
+                      <Icon name="close" size={16} />
                     </button>
                   ) : git.stashes.length > 1 ? (
                     <button
@@ -2162,7 +2162,7 @@ export function GitChangesPanel(): JSX.Element {
                         setStashSelected(new Set())
                       }}
                     >
-                      <Icon name="check" size={13} />
+                      <Icon name="check" size={16} />
                     </button>
                   ) : null}
                   <button
@@ -2174,7 +2174,7 @@ export function GitChangesPanel(): JSX.Element {
                       void loadStashes()
                     }}
                   >
-                    <Icon name="restart" size={13} />
+                    <Icon name="restart" size={16} />
                   </button>
                 </>
               )}
@@ -2223,7 +2223,7 @@ export function GitChangesPanel(): JSX.Element {
                             onClick={(e) => e.stopPropagation()}
                           />
                         ) : null}
-                        <Icon name="package-variant-closed" size={13} />
+                        <Icon name="package-variant-closed" size={16} />
                         <span className="git-panel__stash-msg">
                           {stashDisplayMessage(stash.message)}
                         </span>
@@ -2247,7 +2247,7 @@ export function GitChangesPanel(): JSX.Element {
                                 handleStashView(stash.index)
                               }}
                             >
-                              <Icon name="eye-outline" size={12} />
+                              <Icon name="eye-outline" size={16} />
                             </button>
                             <button
                               type="button"
@@ -2257,7 +2257,7 @@ export function GitChangesPanel(): JSX.Element {
                                 void handleStashApply(stash.index)
                               }}
                             >
-                              <Icon name="package-up" size={12} />
+                              <Icon name="package-up" size={16} />
                             </button>
                             <button
                               type="button"
@@ -2267,7 +2267,7 @@ export function GitChangesPanel(): JSX.Element {
                                 void handleStashPop(stash.index)
                               }}
                             >
-                              <Icon name="upload-outline" size={12} />
+                              <Icon name="upload-outline" size={16} />
                             </button>
                             <button
                               type="button"
@@ -2277,7 +2277,7 @@ export function GitChangesPanel(): JSX.Element {
                                 void handleStashDrop(stash.index)
                               }}
                             >
-                              <Icon name="delete-outline" size={12} />
+                              <Icon name="delete-outline" size={16} />
                             </button>
                           </span>
                         ) : null}
@@ -2319,7 +2319,7 @@ export function GitChangesPanel(): JSX.Element {
             setViewMenuOpen((v) => !v)
           }}
         >
-          <Icon name="dots-horizontal" size={14} />
+          <Icon name="dots-horizontal" size={16} />
         </button>
 
         {git.isRepo ? (
@@ -2333,7 +2333,7 @@ export function GitChangesPanel(): JSX.Element {
             >
               <Icon
                 name="source-pull"
-                size={14}
+                size={16}
                 className={remoteBusy === 'pull' ? 'is-spinning' : undefined}
               />
               {git.behind ? (
@@ -2349,7 +2349,7 @@ export function GitChangesPanel(): JSX.Element {
             >
               <Icon
                 name="cloud-upload-outline"
-                size={14}
+                size={16}
                 className={remoteBusy === 'push' ? 'is-spinning' : undefined}
               />
               {git.ahead ? (
@@ -2365,7 +2365,7 @@ export function GitChangesPanel(): JSX.Element {
             >
               <Icon
                 name="cloud-download-outline"
-                size={14}
+                size={16}
                 className={remoteBusy === 'fetch' ? 'is-spinning' : undefined}
               />
             </button>
@@ -2378,7 +2378,7 @@ export function GitChangesPanel(): JSX.Element {
           disabled={git.loading}
           onClick={() => void refreshGit(git.cwd)}
         >
-          <Icon name="restart" size={14} className={git.loading ? 'is-spinning' : ''} />
+          <Icon name="restart" size={16} className={git.loading ? 'is-spinning' : ''} />
         </button>
         {git.isRepo ? (
           <button
@@ -2393,7 +2393,7 @@ export function GitChangesPanel(): JSX.Element {
               setMoreMenuOpen((v) => !v)
             }}
           >
-            <Icon name="dots-vertical" size={14} />
+            <Icon name="dots-vertical" size={16} />
           </button>
         ) : null}
       </div>
@@ -2440,7 +2440,7 @@ export function GitChangesPanel(): JSX.Element {
             title="取消选择（Esc）"
             onClick={clearSelection}
           >
-            <Icon name="close" size={13} />
+            <Icon name="close" size={16} />
           </button>
         </div>
       ) : null}
@@ -2710,7 +2710,7 @@ export function GitChangesPanel(): JSX.Element {
                 <ul className="git-panel__stash-detail-files-list">
                   {stashDetail.files.map((file) => (
                     <li key={file} className="git-panel__stash-detail-file" title={file}>
-                      <Icon name="file" size={12} />
+                      <Icon name="file" size={16} />
                       {file}
                     </li>
                   ))}

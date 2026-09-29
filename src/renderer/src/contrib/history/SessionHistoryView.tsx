@@ -394,7 +394,7 @@ export function SessionHistoryView(): JSX.Element {
           title={favoritesOnly ? '显示全部会话' : '只看收藏的会话'}
           onClick={() => setFavoritesOnly((v) => !v)}
         >
-          <Icon name={favoritesOnly ? 'star' : 'star-outline'} size={13} />
+          <Icon name={favoritesOnly ? 'star' : 'star-outline'} size={16} />
           {favoriteCount > 0 ? (
             <span className="history-view__badge">{favoriteCount}</span>
           ) : null}
@@ -409,7 +409,7 @@ export function SessionHistoryView(): JSX.Element {
             setSortMenu({ x: rect.left, y: rect.bottom + 4 })
           }}
         >
-          <Icon name="sort" size={13} />
+          <Icon name="sort" size={16} />
         </button>
         <button
           type="button"
@@ -419,7 +419,7 @@ export function SessionHistoryView(): JSX.Element {
           disabled={!ready}
           onClick={createSession}
         >
-          <Icon name="plus" size={13} />
+          <Icon name="plus" size={16} />
         </button>
         <button
           type="button"
@@ -429,7 +429,7 @@ export function SessionHistoryView(): JSX.Element {
           disabled={loading || !ready}
           onClick={() => void refresh()}
         >
-          <Icon name="restart" size={13} />
+          <Icon name="restart" size={16} />
         </button>
       </div>
 
@@ -474,7 +474,7 @@ export function SessionHistoryView(): JSX.Element {
                   <span className="history-view__main">
                     <span className="history-view__row">
                       {meta?.pinned ? (
-                        <Icon name="pin" size={11} className="history-view__pin" />
+                        <Icon name="pin" size={16} className="history-view__pin" />
                       ) : null}
                       <span className="history-view__summary">{title}</span>
                       <span className="history-view__time">{formatRelative(item.lastAt)}</span>

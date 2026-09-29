@@ -168,7 +168,7 @@ export function GitBranchBar({ position = 'bottom' }: GitBranchBarProps): JSX.El
       onClick={() => switchTo(row)}
     >
       <span className="git-branchbar__option-row">
-        <Icon name={row.current ? 'check' : 'git'} size={11} />
+        <Icon name={row.current ? 'check' : 'git'} size={16} />
         <span className="git-branchbar__option-name">{row.name}</span>
         {row.when ? <span className="git-branchbar__option-time">{row.when}</span> : null}
       </span>
@@ -182,7 +182,7 @@ export function GitBranchBar({ position = 'bottom' }: GitBranchBarProps): JSX.El
       title={s.upstream ? `上游：${s.upstream}` : '切换 / 新建分支'}
     >
       <span className="git-branchbar__icon">
-        <Icon name="git" size={13} />
+        <Icon name="git" size={16} />
       </span>
 
       <Popover
@@ -210,7 +210,7 @@ export function GitBranchBar({ position = 'bottom' }: GitBranchBarProps): JSX.El
                   {s.ahead ? `${s.ahead}↑` : ''}
                 </span>
               ) : null}
-              <Icon name="chevron" size={11} />
+              <Icon name="chevron" size={16} />
             </button>
           )
         }}
@@ -236,7 +236,7 @@ export function GitBranchBar({ position = 'bottom' }: GitBranchBarProps): JSX.El
                 onClick={() => setCreating(true)}
               >
                 <span className="git-branchbar__option-row">
-                  <Icon name="plus" size={11} />
+                  <Icon name="plus" size={16} />
                   <span className="git-branchbar__option-name">创建新分支「{keyword.trim()}」</span>
                 </span>
               </button>
@@ -252,7 +252,7 @@ export function GitBranchBar({ position = 'bottom' }: GitBranchBarProps): JSX.El
         title="获取 / 拉取 / 推送 / 同步"
         onClick={(event) => setMenu({ x: event.clientX, y: event.clientY })}
       >
-        <Icon name="chevron-up" size={11} />
+        <Icon name="chevron-up" size={16} />
       </button>
 
       {feedback ? <span className="git-branchbar__feedback">{feedback}</span> : null}

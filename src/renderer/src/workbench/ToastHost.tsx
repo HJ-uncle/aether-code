@@ -25,7 +25,7 @@ export function ToastHost(): JSX.Element | null {
           className={`toast-host__item toast-host__item--${item.kind}`}
           onClick={() => dismissToast(item.id)}
         >
-          <Icon name={ICON_OF[item.kind]} size={13} />
+          <Icon name={ICON_OF[item.kind]} size={16} />
           <span className="toast-host__text">{item.message}</span>
         </button>
       ))}

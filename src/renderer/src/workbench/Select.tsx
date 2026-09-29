@@ -97,7 +97,7 @@ export function Select({
           onKeyDown={onKeyDown}
         >
           <span className="select__value">{current?.label ?? value}</span>
-          <Icon name="chevron" size={12} className="select__caret" />
+          <Icon name="chevron" size={16} className="select__caret" />
         </button>
       )}
     >
@@ -119,7 +119,7 @@ export function Select({
           >
             <span className="select__item-head">
               {option.label}
-              {option.value === value ? <Icon name="check" size={12} className="select__check" /> : null}
+              {option.value === value ? <Icon name="check" size={16} className="select__check" /> : null}
             </span>
             {option.description ? (
               <small className="select__item-desc">{option.description}</small>

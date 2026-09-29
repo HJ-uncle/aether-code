@@ -19,13 +19,18 @@ function newId(): string {
  * 回放如果按「后一行覆盖前一行」取用量，整轮的消耗就被压成最后一次迭代的量
  * —— 与生成期间看到的累计值差一个数量级（重启后 282k 变 10.4k 就是这么来的）。
  *
- * 这里改为按字段累加：同一轮内多条 assistant 行的增量相加，还原出与实时帧
- * 同口径的累计值。字段可能缺失（老数据 / 非 DeepSeek 模型），缺的跳过。
+ * 累计字段（输入/输出/总 token）按增量相加，还原与实时帧同口径的累计值；
+ * 但「快照字段」（当次调用的输入、上下文窗口上限）语义是「最后一次调用的状态」，
+ * 累加会膨胀失真，应取**最后一行的值**（覆盖而非相加）。
  */
+/** 快照字段：取最后一行的值，不累加（语义是「当前/最后一次调用」的状态） */
+const USAGE_SNAPSHOT_KEYS = new Set(['currentPromptTokens', 'contextWindow'])
+
 function mergeUsageFrame(previous: unknown, next: unknown): Record<string, number> {
   const base = asNumberRecord(previous)
   for (const [key, value] of Object.entries(asNumberRecord(next))) {
-    base[key] = (base[key] ?? 0) + value
+    if (USAGE_SNAPSHOT_KEYS.has(key)) base[key] = value
+    else base[key] = (base[key] ?? 0) + value
   }
   return base
 }
@@ -206,13 +211,23 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
       result.push(message)
     }
     if (row.modelId && !message.modelId) message.modelId = row.modelId
-    if (row.usage) message.usage = mergeUsageFrame(message.usage, row.usage)
+    if (row.usage) {
+      message.usage = mergeUsageFrame(message.usage, row.usage)
+      // promptTokens 在同轮多行间被按增量累加（供底部「会话总输入」统计），
+      // 但「上下文占用」要的是本轮最后一次调用的输入快照——单独记到 currentPromptTokens，
+      // 取最后一行的值，避免被累加膨胀（这正是「上下文数值停在首次请求」的根源）。
+      const rowPrompt = asNumberRecord(row.usage).promptTokens
+      if (rowPrompt !== undefined) {
+        ;(message.usage as Record<string, number>).currentPromptTokens = rowPrompt
+      }
+    }
     message.thinking += typeof row.reasoningContent === 'string' ? row.reasoningContent : ''
 
     // 本行的时间线条目：按「思考 → 工具 → 正文」的近似顺序穿插进同一条消息
     const rowItems: TimelineItem[] = []
     const rowThinking = typeof row.reasoningContent === 'string' ? row.reasoningContent : ''
-    if (rowThinking) rowItems.push({ kind: 'thinking', text: rowThinking })
+    // 纯空白思考没有意义（一轮工具列表自检会产生 20+ 条碎 thinking 空段，回放时渲染成一列孤立箭头）
+    if (rowThinking.trim()) rowItems.push({ kind: 'thinking', text: rowThinking })
     if (row.toolCall && typeof row.toolCall === 'object' && row.toolCall.name) {
       const tool: ToolActivity = {
         id: row.toolCall.id || newId(),
@@ -230,7 +245,20 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
       message.content += rowContent
       rowItems.push({ kind: 'content', text: rowContent })
     }
-    message.items.push(...rowItems)
+    // 对齐流式路径 appendTimeline：相邻同 kind 条目合并，避免一轮 ReAct 拆出 N 段碎 thinking
+    for (const item of rowItems) {
+      const last = message.items[message.items.length - 1]
+      if (
+        last &&
+        (last.kind === 'thinking' || last.kind === 'content') &&
+        last.kind === item.kind &&
+        (item.kind === 'thinking' || item.kind === 'content')
+      ) {
+        last.text += item.kind === 'thinking' ? item.text : `\n\n${item.text}`
+      } else {
+        message.items.push(item)
+      }
+    }
   }
 
   return result

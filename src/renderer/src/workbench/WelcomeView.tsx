@@ -159,7 +159,7 @@ export function WelcomeView(): JSX.Element {
                           title={folder}
                           onClick={() => openRecent(folder)}
                         >
-                          <Icon name="explorer" size={14} />
+                          <Icon name="explorer" size={16} />
                           <span className="welcome__recent-text">
                             <span className="welcome__recent-name">{name}</span>
                             <span className="welcome__recent-path">{folder}</span>
@@ -173,7 +173,7 @@ export function WelcomeView(): JSX.Element {
                             aria-label={`从列表中移除 ${name}`}
                             onClick={() => forgetRecentFolder(folder)}
                           >
-                            <Icon name="close" size={12} />
+                            <Icon name="close" size={16} />
                           </button>
                         ) : null}
                       </li>

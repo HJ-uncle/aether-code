@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { createPortal } from 'react-dom'
 import { useApp } from '@renderer/core/app-context'
 import { useChat, type ChatMessage, type ToolActivity } from '@renderer/core/engine/useChat'
@@ -9,6 +9,7 @@ import { SubagentCard } from './SubagentCard'
 import { exportSubagentDetails, toolStatusLabel } from '@renderer/core/engine/subagent-state'
 import { Markdown } from './Markdown'
 import { toolDisplayName, toolParamSummary, toolPathArg } from './tool-names'
+import { useCollapseMemory } from './useCollapseMemory'
 import { openFileFromChat } from './open-file'
 import { useModels } from '@renderer/core/engine/model-store'
 import { changeSecurityMode } from '@renderer/core/engine/security-store'
@@ -33,21 +34,21 @@ import {
   sumUsage,
   type UsageDetailRow
 } from './usage'
-import { useAttachments } from './useAttachments'
+import { useAttachments, shouldAttachPastedText, createPastedTextFile } from './useAttachments'
 import { readFile } from '@renderer/core/workspace/fs-client'
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
+import { Dialog } from '@renderer/workbench/Dialog'
 
 /** 上下文窗口估算基数：引擎未下发各模型窗口上限，按常见的 200k 估算占比 */
 const CONTEXT_WINDOW_FALLBACK = 200_000
 
-/** 附件 chip 的图片缩略图：按工作区相对路径读 base64，读不到则回退为图标 */
-function AttachThumb({
-  root,
-  file
-}: {
-  root: string | null
-  file: ChatAttachment
-}): JSX.Element {
+/** 消息窗口分页：只渲染尾部约 300 条消息（按轮次对齐切割），滚顶自动加载更早的 */
+const MESSAGE_PAGE_SIZE = 300
+/** 距顶多少 px 内触发加载更早消息 */
+const LOAD_EARLIER_PX = 120
+
+/** 按工作区相对路径读 base64 data URL（图片缩略图 / 放大查看共用） */
+function useAttachmentImageSrc(root: string | null, file: ChatAttachment): string | null {
   const [src, setSrc] = useState<string | null>(null)
   useEffect(() => {
     let alive = true
@@ -62,8 +63,135 @@ function AttachThumb({
       alive = false
     }
   }, [root, file.path, file.type])
-  if (src) return <img className="attach-chip__thumb" src={src} alt={file.name} />
-  return <Icon name={file.type.startsWith('image/') ? 'image' : 'file'} size={12} />
+  return src
+}
+
+/** 附件预览状态：图片带 data URL，文本附件由弹窗按路径回读内容 */
+interface AttachmentPreview {
+  file: ChatAttachment
+  src: string | null
+}
+
+/** 统一附件查看组件：图片放大显示，文本附件显示内容；chip 与消息气泡共用 */
+function AttachmentPreviewDialog({
+  root,
+  preview,
+  onClose
+}: {
+  root: string | null
+  preview: AttachmentPreview
+  onClose: () => void
+}): JSX.Element {
+  const { file, src } = preview
+  const isImage = file.type.startsWith('image/')
+  const [text, setText] = useState<string | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    if (!isImage && root) {
+      void readFile(`${root}/${file.path}`)
+        .then((result) => {
+          if (alive) setText(result.truncated ? `${result.content}\n\n…（内容过长已截断）` : result.content)
+        })
+        .catch(() => {
+          if (alive) setText('（读取失败）')
+        })
+    }
+    return () => {
+      alive = false
+    }
+  }, [isImage, root, file.path])
+
+  return (
+    <Dialog title={file.name} className="modal--image-preview" width={860} onClose={onClose}>
+      {isImage ? (
+        <div className="image-preview">
+          {src ? <img src={src} alt={file.name} /> : <span className="image-preview__loading">加载中…</span>}
+        </div>
+      ) : (
+        <pre className="attachment-text-preview">{text ?? '加载中…'}</pre>
+      )}
+    </Dialog>
+  )
+}
+
+/** 附件 chip：图片只显示缩略图（点击放大），文本类可点击查看内容，其它显示图标 + 名称 */
+function AttachmentChip({
+  root,
+  file,
+  onRemove,
+  onPreview
+}: {
+  root: string | null
+  file: ChatAttachment
+  onRemove?: () => void
+  onPreview: (file: ChatAttachment, src: string | null) => void
+}): JSX.Element {
+  const isImage = file.type.startsWith('image/')
+  const isText = !isImage && (file.type.startsWith('text/') || /\.(txt|md|markdown|json|jsonc|log|csv|tsv|xml|ya?ml|toml|ini)$/i.test(file.name))
+  const src = useAttachmentImageSrc(root, file)
+
+  if (isImage && src) {
+    return (
+      <span className="attach-chip attach-chip--image" title={file.path}>
+        <button
+          type="button"
+          className="attach-chip__image-btn"
+          title={`点击查看 ${file.name}`}
+          onClick={() => onPreview(file, src)}
+        >
+          <img className="attach-chip__thumb" src={src} alt={file.name} />
+        </button>
+        {onRemove ? (
+          <button
+            type="button"
+            className="attach-chip__remove"
+            title="移除附件"
+            aria-label={`移除附件 ${file.name}`}
+            onClick={onRemove}
+          >
+            <Icon name="close" size={12} />
+          </button>
+        ) : null}
+      </span>
+    )
+  }
+
+  const body = (
+    <>
+      <Icon name={isImage ? 'image' : 'file'} size={16} />
+      <span className="attach-chip__name">{file.name}</span>
+      <span className="attach-chip__size">{formatBytes(file.size)}</span>
+    </>
+  )
+
+  return (
+    <span className={`attach-chip${isText ? ' attach-chip--clickable' : ''}`} title={file.path}>
+      {isText ? (
+        <button
+          type="button"
+          className="attach-chip__open"
+          title={`查看 ${file.name}`}
+          onClick={() => onPreview(file, null)}
+        >
+          {body}
+        </button>
+      ) : (
+        body
+      )}
+      {onRemove ? (
+        <button
+          type="button"
+          className="attach-chip__remove"
+          title="移除附件"
+          aria-label={`移除附件 ${file.name}`}
+          onClick={onRemove}
+        >
+          <Icon name="close" size={12} />
+        </button>
+      ) : null}
+    </span>
+  )
 }
 import { MentionInput, type Mention, type MentionInputHandle } from './MentionInput'
 import { loadChatDraft, saveChatDraft } from './draft-store'
@@ -129,6 +257,8 @@ export function ChatView(): JSX.Element {
   const attach = useAttachments(workspace.root)
   // 附件进度提示只在出现后短暂停留，避免常驻噪音
   const [attachHint, setAttachHint] = useState<string | null>(null)
+  /** 附件点击预览（图片放大 / 文本查看，统一 AttachmentPreviewDialog） */
+  const [previewImage, setPreviewImage] = useState<AttachmentPreview | null>(null)
 
   /** AI 润色输入框内容：用轻任务模型改写得更清晰；chip 引用会随文本一起被序列化给模型 */
   const handlePolish = async (): Promise<void> => {
@@ -199,6 +329,41 @@ export function ChatView(): JSX.Element {
   }, [messages, models, modelId])
   // 按用户提问切分轮次：每轮末尾展示「一问一答」的累计 token
   const turns = useMemo(() => groupIntoTurns(messages), [messages])
+
+  // ── 消息窗口分页 ────────────────────────────────────────────────────────────
+  // 长会话（几百上千条消息）一次全量渲染会让 DOM 规模爆炸、切换会话卡顿。
+  // 只渲染尾部约 MESSAGE_PAGE_SIZE 条消息（按轮次边界切，不切断一问一答），
+  // 滚到顶部附近时自动向前加载一页。窗口在会话内只增不减（流式追加不收缩，
+  // 避免阅读中途内容被挤走）；切换会话时重置。
+  const [visibleCount, setVisibleCount] = useState(MESSAGE_PAGE_SIZE)
+  const { visibleTurns, hiddenTurnCount } = useMemo(() => {
+    if (turns.length === 0) return { visibleTurns: turns, hiddenTurnCount: 0 }
+    let count = 0
+    let start = turns.length
+    while (start > 0 && count < visibleCount) {
+      start -= 1
+      count += turns[start].messages.length
+    }
+    return { visibleTurns: turns.slice(start), hiddenTurnCount: start }
+  }, [turns, visibleCount])
+  /** 向前加载一页前的滚动快照：加载后用来补偿 scrollTop，防止视口跳动 */
+  const prependSnapshotRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
+  const hiddenTurnCountRef = useRef(hiddenTurnCount)
+  hiddenTurnCountRef.current = hiddenTurnCount
+  const loadEarlier = useCallback(() => {
+    if (hiddenTurnCountRef.current === 0) return
+    const el = scrollRef.current
+    if (el) prependSnapshotRef.current = { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop }
+    setVisibleCount((count) => count + MESSAGE_PAGE_SIZE)
+  }, [])
+  // 前插加载完成后做 scrollTop 补偿：新内容插在顶部，视口要往下推同样的高度差
+  useLayoutEffect(() => {
+    const snapshot = prependSnapshotRef.current
+    const el = scrollRef.current
+    if (!snapshot || !el) return
+    prependSnapshotRef.current = null
+    el.scrollTop = snapshot.scrollTop + (el.scrollHeight - snapshot.scrollHeight)
+  }, [visibleTurns])
   // 左侧导航栏的条目：每条用户消息一个圆点（turn.id 即首条用户消息 ID）
   const navTurns = useMemo<NavTurn[]>(
     () =>
@@ -226,6 +391,11 @@ export function ChatView(): JSX.Element {
     void updateSettings({ lastSessionId: generated })
     return generated
   }, [settings.lastSessionId, settingsLoaded, updateSettings])
+
+  // 切换会话时重置分页窗口（sessionId 声明之后，依赖其值）
+  useEffect(() => {
+    setVisibleCount(MESSAGE_PAGE_SIZE)
+  }, [sessionId])
 
   // 启动 / 会话切换时回放引擎侧历史：conversations 表本来是 AI 的上下文来源，
   // 把同一份数据还原到界面，解决「重启后界面空白但 AI 记得一切」的割裂感
@@ -331,15 +501,19 @@ export function ChatView(): JSX.Element {
     setFollowBottom(false)
   }, [])
 
-  // 滚回底部附近（含拖动滚动条）时恢复跟随
+  // 滚回底部附近（含拖动滚动条）时恢复跟随；滚到顶部附近时加载更早的消息
   const handleListScroll = useCallback(() => {
     if (measureDistToBottom() < RESUME_FOLLOW_PX) resumeFollowBottom()
-  }, [measureDistToBottom, resumeFollowBottom])
+    const el = scrollRef.current
+    if (el && el.scrollTop < LOAD_EARLIER_PX) loadEarlier()
+  }, [measureDistToBottom, resumeFollowBottom, loadEarlier])
 
-  // 新内容到达时：跟随态保持贴底；非跟随态只更新「回到底部」按钮显隐
+  // 新内容到达时：跟随态保持贴底；非跟随态只更新「回到底部」按钮显隐。
+  // followBottom 为 true 时传 force：80ms 节流攒批可能让首帧延迟，期间 scrollHeight 尚未撑开，
+  // 非 force 的 scrollToBottom 会量到旧高度提前 return；force 分支用 rAF 在下一帧再贴一次兜底。
   useEffect(() => {
-    scrollToBottom()
-  }, [messages, scrollToBottom])
+    scrollToBottom(followBottom)
+  }, [messages, scrollToBottom, followBottom])
 
   // 回到底部按钮：立即贴底并恢复跟随
   const jumpToBottom = useCallback(() => {
@@ -421,11 +595,15 @@ export function ChatView(): JSX.Element {
     // 发送成功后该会话草稿即作废
     window.clearTimeout(draftTimerRef.current)
     saveChatDraft(sessionId, '')
+    // 发送是用户主动发起的「看最新输出」动作：无条件吸底（覆盖任何此前上滚导致的非跟随态），
+    // 否则 80ms 流式节流窗口内 followBottom 已是 false 时整轮都不再跟随
+    resumeFollowBottom()
     void send(text, {
       ...buildSendOptions(),
       attachments: files.length > 0 ? files : undefined
     })
-  }, [attach, buildSendOptions, input, ready, send, sessionId])
+    scrollToBottom(true)
+  }, [attach, buildSendOptions, input, ready, send, sessionId, resumeFollowBottom, scrollToBottom])
 
   /** 托盘的「发送」：空闲时按当前模式（逐条/合并）立即发出队列 */
   const flushQueueFromTray = useCallback(() => {
@@ -588,6 +766,20 @@ export function ChatView(): JSX.Element {
       })
     },
     [revertFrom, sessionId, showError]
+  )
+
+  /** 挂起卡片的应答提交：引用稳定，保证 MessageItem memo 生效（流式时不让所有历史消息跟着重渲染） */
+  const respondToEngine = useCallback(
+    (values: string[]) =>
+      void respond(values, {
+        sessionId,
+        model: modelId || undefined,
+        subagentModel: settings.subagentModelId || undefined,
+        utilityModel: settings.utilityModelId || undefined,
+        workspacePaths: currentWorkspacePaths(),
+        thinkingMode: resolveThinkingMode(settings.thinkingMode)
+      }),
+    [respond, sessionId, modelId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode]
   )
 
   const exportSelected = useCallback(() => {
@@ -763,7 +955,7 @@ export function ChatView(): JSX.Element {
           title="新建会话（开一条全新对话）"
           onClick={createSession}
         >
-          <Icon name="plus" size={14} />
+          <Icon name="plus" size={16} />
           新建
         </button>
         <button
@@ -773,7 +965,7 @@ export function ChatView(): JSX.Element {
           title="多选消息，可复制或导出为 Markdown"
           onClick={toggleSelectMode}
         >
-          <Icon name="check" size={14} />
+          <Icon name="check" size={16} />
           多选
         </button>
       </div>
@@ -828,7 +1020,7 @@ export function ChatView(): JSX.Element {
         {/* 非跟随期间来了新内容：浮动「回到底部」（对齐 wuzu-client） */}
         {showBackToBottom ? (
           <button type="button" className="chat__back-to-bottom" onClick={jumpToBottom}>
-            <Icon name="chevron-double-down" size={14} />
+            <Icon name="chevron-double-down" size={16} />
           </button>
         ) : null}
         {messages.length === 0 ? (
@@ -841,7 +1033,17 @@ export function ChatView(): JSX.Element {
             </p>
           </div>
         ) : (
-          turns.map((turn) => (
+          <>
+            {hiddenTurnCount > 0 ? (
+              <button
+                type="button"
+                className="chat__load-earlier"
+                onClick={loadEarlier}
+              >
+                还有 {hiddenTurnCount} 轮更早的对话，点击或滚到顶部加载
+              </button>
+            ) : null}
+            {visibleTurns.map((turn) => (
             <div key={turn.id} className="chat__turn" data-turn-id={turn.id}>
               {(() => {
                 // 本轮的累计用量并入最后一条 AI 消息底部的过程行，不再单独占一行
@@ -871,26 +1073,20 @@ export function ChatView(): JSX.Element {
                   selectionMode={selectMode}
                   selected={selectedIds.has(message.id)}
                   onToggleSelect={() => toggleMessage(message.id)}
-                  onRespond={(values) =>
-                    void respond(values, {
-                      sessionId,
-                      model: modelId || undefined,
-                      subagentModel: settings.subagentModelId || undefined,
-                      utilityModel: settings.utilityModelId || undefined,
-                      workspacePaths: currentWorkspacePaths(),
-                      thinkingMode: resolveThinkingMode(settings.thinkingMode)
-                    })
-                  }
+                  onRespond={respondToEngine}
                   onCopy={copyMessage}
                   onRetryFrom={retryTurn}
                   onRevertFiles={revertToMessage}
                   onDeleteTurn={deleteTurnById}
                   canAct={!streaming && !selectMode}
+                  workspaceRoot={workspace.root}
+                  onPreviewImage={(f, src) => setPreviewImage({ file: f, src })}
                 />
                 ))
               })()}
             </div>
-          ))
+            ))}
+          </>
         )}
         </div>
       </div>
@@ -943,20 +1139,13 @@ export function ChatView(): JSX.Element {
           {attach.attachments.length > 0 || attach.uploading ? (
             <div className="chat__attach-strip">
               {attach.attachments.map((file) => (
-                <span key={file.path} className="attach-chip" title={file.path}>
-                  <AttachThumb root={workspace.root} file={file} />
-                  <span className="attach-chip__name">{file.name}</span>
-                  <span className="attach-chip__size">{formatBytes(file.size)}</span>
-                  <button
-                    type="button"
-                    className="attach-chip__remove"
-                    title="移除附件"
-                    aria-label={`移除附件 ${file.name}`}
-                    onClick={() => attach.remove(file.path)}
-                  >
-                    <Icon name="close" size={11} />
-                  </button>
-                </span>
+                <AttachmentChip
+                  key={file.path}
+                  root={workspace.root}
+                  file={file}
+                  onPreview={(f, src) => setPreviewImage({ file: f, src })}
+                  onRemove={() => attach.remove(file.path)}
+                />
               ))}
               {attach.uploading ? (
                 <span className="attach-chip attach-chip--busy">上传中…</span>
@@ -978,6 +1167,12 @@ export function ChatView(): JSX.Element {
             }}
             onSubmit={submit}
             onPasteFiles={(files) => attach.accept(files)}
+            onPasteText={(text) => {
+              // 长文本落成「粘贴的文本-xxx.txt」附件；短文本返回 false 由输入框自行插入
+              if (!shouldAttachPastedText(text) || !workspace.root) return false
+              attach.accept([createPastedTextFile(text)])
+              return true
+            }}
             onMentionQuery={setMentionQuery}
           />
           {workspace.root && (mentionQuery !== null || manualPalette) ? (
@@ -999,6 +1194,13 @@ export function ChatView(): JSX.Element {
             />
           ) : null}
           {attachHint ? <div className="chat__attach-hint">{attachHint}</div> : null}
+          {previewImage ? (
+            <AttachmentPreviewDialog
+              root={workspace.root}
+              preview={previewImage}
+              onClose={() => setPreviewImage(null)}
+            />
+          ) : null}
           <input
             ref={attach.fileInputRef}
             type="file"
@@ -1075,7 +1277,7 @@ export function ChatView(): JSX.Element {
                 }
                 onClick={() => void startCgIndex()}
               >
-                <Icon name="search" size={13} />
+                <Icon name="search" size={16} />
                 <span className="picker__label">{cgIndex.label ?? '建索引'}</span>
               </button>
             ) : null}
@@ -1090,7 +1292,7 @@ export function ChatView(): JSX.Element {
               aria-label="AI 润色输入"
               onClick={() => void handlePolish()}
             >
-              <Icon name={polishing ? 'sync' : 'sparkles'} size={14} />
+              <Icon name={polishing ? 'sync' : 'sparkles'} size={16} />
             </button>
 
             {contextUsed > 0 ? (
@@ -1117,7 +1319,7 @@ export function ChatView(): JSX.Element {
                 aria-label="停止生成"
                 onClick={abort}
               >
-                <Icon name="stop" size={14} />
+                <Icon name="stop" size={16} />
               </button>
             ) : (
               <button
@@ -1130,7 +1332,7 @@ export function ChatView(): JSX.Element {
                 aria-label="发送"
                 onClick={submit}
               >
-                <Icon name="send" size={14} />
+                <Icon name="send" size={16} />
               </button>
             )}
           </div>
@@ -1331,7 +1533,7 @@ function ContextRingCard({
       <div className="ctx-card__header">
         <span>上下文窗口</span>
         {phase === 'failed' ? (
-          <Icon name="close" size={12} className="ctx-card__warn-icon" />
+          <Icon name="close" size={16} className="ctx-card__warn-icon" />
         ) : phase === 'idle' || phase === 'done' ? (
           <span className="ctx-card__percent">
             {percent}
@@ -1402,7 +1604,7 @@ function serializeMessages(selected: ChatMessage[]): string {
     .join('\n\n---\n\n')
 }
 
-function MessageItem({
+const MessageItem = memo(function MessageItem({
   message,
   sessionId,
   usage,
@@ -1416,7 +1618,9 @@ function MessageItem({
   onRetryFrom,
   onRevertFiles,
   onDeleteTurn,
-  canAct
+  canAct,
+  workspaceRoot,
+  onPreviewImage
 }: {
   message: ChatMessage
   /** 当前会话 ID（子代理停止按钮走 /subagent/cancel 要用） */
@@ -1441,6 +1645,10 @@ function MessageItem({
   onDeleteTurn: (message: ChatMessage) => void
   /** 是否允许执行重试/删除（流式进行中或多选模式下禁止） */
   canAct: boolean
+  /** 工作区根目录：附件图片缩略图按相对路径回读 */
+  workspaceRoot: string | null
+  /** 图片附件点击放大 */
+  onPreviewImage: (file: ChatAttachment, src: string | null) => void
 }): JSX.Element {
   const isUser = message.role === 'user'
   const streaming = message.status === 'streaming'
@@ -1472,7 +1680,7 @@ function MessageItem({
         aria-label="复制"
         onClick={copy}
       >
-        <Icon name={copied ? 'check' : 'copy'} size={13} />
+        <Icon name={copied ? 'check' : 'copy'} size={16} />
       </button>
       {isUser ? (
         <>
@@ -1484,7 +1692,7 @@ function MessageItem({
             disabled={!canAct}
             onClick={() => onRevertFiles(message)}
           >
-            <Icon name="restart" size={13} />
+            <Icon name="restart" size={16} />
           </button>
           <button
             type="button"
@@ -1494,7 +1702,7 @@ function MessageItem({
             disabled={!canAct}
             onClick={() => onRetryFrom(message)}
           >
-            <Icon name="send" size={13} />
+            <Icon name="send" size={16} />
           </button>
         </>
       ) : (
@@ -1506,7 +1714,7 @@ function MessageItem({
           disabled={!canAct}
           onClick={() => onRetryFrom(message)}
         >
-          <Icon name="restart" size={13} />
+          <Icon name="restart" size={16} />
         </button>
       )}
       <button
@@ -1517,7 +1725,7 @@ function MessageItem({
         disabled={!canAct}
         onClick={() => onDeleteTurn(message)}
       >
-        <Icon name="trash" size={13} />
+        <Icon name="trash" size={16} />
       </button>
     </div>
   )
@@ -1533,11 +1741,12 @@ function MessageItem({
           {message.attachments && message.attachments.length > 0 ? (
             <div className="message__attachments">
               {message.attachments.map((file) => (
-                <span key={file.path} className="attach-chip" title={file.path}>
-                  <Icon name={file.type.startsWith('image/') ? 'image' : 'file'} size={12} />
-                  <span className="attach-chip__name">{file.name}</span>
-                  <span className="attach-chip__size">{formatBytes(file.size)}</span>
-                </span>
+                <AttachmentChip
+                  key={file.path}
+                  root={workspaceRoot}
+                  file={file}
+                  onPreview={onPreviewImage}
+                />
               ))}
             </div>
           ) : null}
@@ -1581,7 +1790,7 @@ function MessageItem({
       {message.error ? <div className="message__error">{message.error}</div> : null}
     </article>
   )
-}
+})
 
 /** 全尺寸卡片工具（diff / 子代理）：不进折叠过程块，永远在原位全显 */
 function isFullSizeTool(tool: ToolActivity): boolean {
@@ -1625,6 +1834,16 @@ type InlineSegment =
   | { type: 'content'; text: string }
   | { type: 'subagent-group'; tools: ToolActivity[] }
 
+/** 流式状态文案分层：正在执行的工具名 > 「正在生成回复」> 兜底「处理中…」（对齐 wuzu streamStatusDisplay） */
+function streamStatusText(message: ChatMessage): string {
+  // 正在执行的工具优先：用户最关心的是「此刻在干什么」
+  const running = [...message.tools].reverse().find((tool) => tool.state === 'running')
+  if (running) return `${toolDisplayName(running.name)}…`
+  // 已有正文流出说明在生成回复
+  if (message.content) return '正在生成回复…'
+  return '处理中…'
+}
+
 /**
  * 消息时间线：思考 / 工具调用合并成一个可折叠过程块，正文与全尺寸卡片按序排在其后。
  *
@@ -1642,8 +1861,7 @@ function MessageTimeline({
   message: ChatMessage
   sessionId: string
   streaming: boolean
-}): JSX.Element | null {
-  const { processEntries, inline } = useMemo(() => {
+}): JSX.Element | null {  const { processEntries, inline } = useMemo(() => {
     const toolById = new Map(
       message.tools
         .filter((tool) => !tool.hidden && !isTimelineHiddenTool(tool))
@@ -1703,7 +1921,7 @@ function MessageTimeline({
     return streaming && !message.pending ? (
       <div className="message__streaming-hint">
         <span className="message__spinner" />
-        处理中…
+        {streamStatusText(message)}
       </div>
     ) : null
   }
@@ -1711,7 +1929,7 @@ function MessageTimeline({
   return (
     <>
       {processEntries.length > 0 ? (
-        <ProcessGroup entries={processEntries} streaming={streaming} />
+        <ProcessGroup entries={processEntries} streaming={streaming} collapseKey={message.id} />
       ) : null}
       {inline.map((segment, index) =>
         segment.type === 'tool' ? (
@@ -1731,7 +1949,7 @@ function MessageTimeline({
       {streaming && !message.pending ? (
         <div className="message__streaming-hint">
           <span className="message__spinner" />
-          处理中…
+          {streamStatusText(message)}
         </div>
       ) : null}
     </>
@@ -1773,7 +1991,7 @@ function SubagentGroup({
         {failCount > 0 ? (
           <span className="subagent-group__fail">{failCount} 失败</span>
         ) : null}
-        <Icon name="chevron" size={12} className="subagent-group__chevron" />
+        <Icon name="chevron" size={16} className="subagent-group__chevron" />
       </button>
       {open ? (
         <div className="subagent-group__body">
@@ -1796,13 +2014,16 @@ function SubagentGroup({
  */
 function ProcessGroup({
   entries,
-  streaming
+  streaming,
+  collapseKey
 }: {
   entries: CompactEntry[]
   streaming: boolean
+  /** 折叠记忆的稳定 key（消息 id）；分页回收/切换会话后能恢复用户手动的折叠选择 */
+  collapseKey?: string
 }): JSX.Element {
-  // 折叠状态：默认流式展开 / 结束收起；一旦用户手动点过，以用户选择为准
-  const [manual, setManual] = useState<boolean | null>(null)
+  // 折叠状态：默认流式展开 / 结束收起；一旦用户手动点过，以用户选择为准（并跨重建记忆）
+  const [manual, setManual] = useCollapseMemory(collapseKey ? `process:${collapseKey}` : undefined)
   const expanded = manual ?? streaming
 
   const thinkingCount = entries.filter((entry) => entry.kind === 'thinking').length
@@ -1827,7 +2048,7 @@ function ProcessGroup({
         <span className="process__summary-text">
           {streaming ? '过程中' : '过程'} · {summaryParts.join(' · ')}
         </span>
-        <Icon name="chevron" size={12} className="process__chevron" />
+        <Icon name="chevron" size={16} className="process__chevron" />
       </button>
       {expanded ? (
         <div className="process__body">
@@ -1845,9 +2066,13 @@ function ProcessGroup({
 }
 
 /** 思考行：紫色圆点 + 单行预览，展开看全文（左侧竖线表示从属于该行） */
-function ThinkingRow({ text }: { text: string }): JSX.Element {
-  const [open, setOpen] = useState(false)
-  const preview = text.replace(/\s+/g, ' ')
+function ThinkingRow({ text }: { text: string }): JSX.Element | null {
+  // key 用文本前 32 字兜底（思考段无 id）；分页回收后恢复用户手动的展开选择
+  const [memory, setMemory] = useCollapseMemory(`think:${text.slice(0, 32)}`)
+  const open = memory ?? false
+  const preview = text.replace(/\s+/g, ' ').trim()
+  // 空/纯空白思考不渲染（回放路径历史里可能残留，避免一列孤立箭头）
+  if (!preview) return null
   const truncated = preview.length > 90 ? `${preview.slice(0, 87)}…` : preview
 
   return (
@@ -1856,13 +2081,13 @@ function ThinkingRow({ text }: { text: string }): JSX.Element {
         type="button"
         className="logline"
         aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setMemory(!open)}
       >
         <span className="logline__dot logline__dot--think" />
         <span className="logline__text" title={preview}>
           {truncated}
         </span>
-        <Icon name="chevron" size={12} className="logline__chevron" />
+        <Icon name="chevron" size={16} className="logline__chevron" />
       </button>
       {open ? (
         <div className="logline__detail">
@@ -1875,7 +2100,9 @@ function ThinkingRow({ text }: { text: string }): JSX.Element {
 
 /** 紧凑工具行：7px 状态圆点 + 中文工具名 + 参数摘要，展开看原始参数与结果 */
 function CompactToolRow({ tool }: { tool: ToolActivity }): JSX.Element {
-  const [open, setOpen] = useState(false)
+  // key 用 toolUseId：分页回收/切换会话后恢复用户手动的展开选择
+  const [memory, setMemory] = useCollapseMemory(`tool:${tool.id}`)
+  const open = memory ?? false
   const label = toolDisplayName(tool.name)
   const summary = toolParamSummary(tool.args)
   const hasDetail = Boolean(tool.args || tool.result || tool.error)
@@ -1890,7 +2117,7 @@ function CompactToolRow({ tool }: { tool: ToolActivity }): JSX.Element {
         className={`logline${hasDetail ? '' : ' logline--static'}`}
         aria-expanded={open}
         disabled={!hasDetail}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setMemory(!open)}
       >
         <span
           className={`logline__dot logline__dot--${tool.state === 'running' ? 'running' : tool.state === 'error' ? 'error' : 'done'}`}
@@ -1925,7 +2152,7 @@ function CompactToolRow({ tool }: { tool: ToolActivity }): JSX.Element {
             </span>
           )
         ) : null}
-        {hasDetail ? <Icon name="chevron" size={12} className="logline__chevron" /> : null}
+        {hasDetail ? <Icon name="chevron" size={16} className="logline__chevron" /> : null}
       </button>
       {open && hasDetail ? (
         <div className="logline__detail">
@@ -1998,7 +2225,7 @@ function TurnUsage({
           className={`turn-usage__trigger${open ? ' is-open' : ''}`}
           title="查看本次问答的时间、耗时与 Token 明细"
         >
-          <Icon name="model" size={12} />
+          <Icon name="model" size={16} />
           <span className="turn-usage__value">{formatTokens(tokens)}</span>
           <span className="turn-usage__unit">tokens{summary.some((row) => row.unknown) ? '（已知）' : ''}</span>
           {duration ? <span className="turn-usage__time">{duration}</span> : null}
@@ -2018,20 +2245,20 @@ function TurnUsage({
       {model ? (
         <div className="usage-detail usage-detail--meta">
           <div className="usage-detail__row">
-            <Icon name="model" size={12} className="usage-detail__icon" />
+            <Icon name="model" size={16} className="usage-detail__icon" />
             <span className="usage-detail__label">模型</span>
             <span className="usage-detail__value">{model}</span>
           </div>
           {stamp ? (
             <div className="usage-detail__row">
-              <Icon name="clock-outline" size={12} className="usage-detail__icon" />
+              <Icon name="clock-outline" size={16} className="usage-detail__icon" />
               <span className="usage-detail__label">对话时间</span>
               <span className="usage-detail__value">{stamp}</span>
             </div>
           ) : null}
           {duration ? (
             <div className="usage-detail__row">
-              <Icon name="sync" size={12} className="usage-detail__icon" />
+              <Icon name="sync" size={16} className="usage-detail__icon" />
               <span className="usage-detail__label">任务耗时</span>
               <span className="usage-detail__value">{duration}</span>
             </div>
@@ -2100,7 +2327,7 @@ function UsageMeter({
           className={`usage-meter__trigger${open ? ' is-open' : ''}`}
           title="查看本会话的 Token 明细"
         >
-          <Icon name="model" size={13} />
+          <Icon name="model" size={16} />
           <span className="usage-meter__tokens">{formatTokens(total)}</span>
           <span className="usage-meter__unit">tokens{summary.some((row) => row.unknown) ? '（已知）' : ''}</span>
           {duration ? <span className="usage-meter__time">{duration}</span> : null}
@@ -2209,7 +2436,7 @@ function PendingCard({
     return (
       <details className="pending-card pending-card--done">
         <summary className="pending-card__summary">
-          <Icon name={isPermission ? 'shield' : 'chat'} size={12} />
+          <Icon name={isPermission ? 'shield' : 'chat'} size={16} />
           <span className="pending-card__summary-text">
             {isPermission ? '已放行一次安全拦截' : '已应答 Agent 提问'}
           </span>
@@ -2279,7 +2506,7 @@ function PendingCard({
                         <span
                           className={`pending-card__choice-box${group.multiSelect ? '' : ' pending-card__choice-box--radio'}`}
                         >
-                          {checked ? <Icon name="check" size={11} /> : null}
+                          {checked ? <Icon name="check" size={16} /> : null}
                         </span>
                       </button>
                     )
@@ -2343,7 +2570,7 @@ function PendingCard({
             title="本会话内所有命令不再询问，并放行当前这一步（注意：同时会解除 Agent 的工作区路径限制）"
             onClick={() => void allowAll()}
           >
-            <Icon name="shield" size={12} />
+            <Icon name="shield" size={16} />
             {allowAllBusy ? '切换中…' : '本会话改为完全访问并放行'}
           </button>
           {allowAllError ? (

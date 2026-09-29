@@ -210,19 +210,19 @@ export function GitInlineDiffWidget(props: GitInlineDiffWidgetProps): JSX.Elemen
           Git 本地更改 — 第 {index + 1} 个更改（共 {total} 个）
         </span>
         <button type="button" title="打开文件差异" onClick={onOpenDiff}>
-          <Icon name="file" size={14} />
+          <Icon name="file" size={16} />
         </button>
         <button type="button" title="撤销这处更改（Ctrl+Z 可恢复）" onClick={onRevert}>
-          <Icon name="restart" size={14} />
+          <Icon name="restart" size={16} />
         </button>
         <button type="button" title="下一处更改（F7）" onClick={onNext}>
-          <Icon name="chevron" size={14} />
+          <Icon name="chevron" size={16} />
         </button>
         <button type="button" title="上一处更改（Shift+F7）" onClick={onPrev}>
-          <Icon name="chevron-up" size={14} />
+          <Icon name="chevron-up" size={16} />
         </button>
         <button type="button" title="关闭（Esc）" onClick={onClose}>
-          <Icon name="close" size={14} />
+          <Icon name="close" size={16} />
         </button>
       </div>
       <div ref={diffRef} className="git-inlinediff__editor" />

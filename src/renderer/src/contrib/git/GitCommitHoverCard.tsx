@@ -142,16 +142,16 @@ export function GitCommitHoverCard({
               copyMessage()
             }}
           >
-            <Icon name="copy" size={13} />
+            <Icon name="copy" size={16} />
           </button>
         </div>
         <div className="git-hovercard__meta">
           <span className="git-hovercard__meta-item">
-            <Icon name="settings" size={13} />
+            <Icon name="settings" size={16} />
             {commit.author}
           </span>
           <span className="git-hovercard__meta-item" title={fullDate(commit.date)}>
-            <Icon name="restart" size={13} />
+            <Icon name="restart" size={16} />
             {relativeTime(commit.date)}
           </span>
           <button
@@ -164,7 +164,7 @@ export function GitCommitHoverCard({
             }}
           >
             {commit.shortHash}
-            <Icon name="copy" size={12} />
+            <Icon name="copy" size={16} />
           </button>
           {stats ? (
             <span className="git-hovercard__meta-item git-hovercard__stats">

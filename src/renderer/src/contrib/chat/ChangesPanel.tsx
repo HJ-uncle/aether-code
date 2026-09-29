@@ -228,7 +228,7 @@ export function ChangesPanel({
           const badge = badgeOf(change)
           return (
             <li key={change.id} className="changes-panel__item">
-              <Icon name="file" size={14} />
+              <Icon name="file" size={16} />
               <span className="changes-panel__name" title={change.displayPath || change.path}>
                 {name}
               </span>
@@ -272,7 +272,7 @@ export function ChangesPanel({
                 disabled={busy || change.truncated}
                 onClick={() => void revertOneWithConfirm(change)}
               >
-                <Icon name="restart" size={12} />
+                <Icon name="restart" size={16} />
               </button>
             </li>
           )
@@ -291,7 +291,7 @@ export function ChangesPanel({
           title="按快照把所有改动恢复到改动前（无法恢复未存档内容的大文件）"
           onClick={() => void revertAll()}
         >
-          <Icon name="restart" size={12} />
+          <Icon name="restart" size={16} />
           撤回
         </button>
         <button
@@ -301,7 +301,7 @@ export function ChangesPanel({
           title="git add 全部改动并标记保留"
           onClick={() => void stageChanges(changes)}
         >
-          <Icon name="copy" size={12} />
+          <Icon name="copy" size={16} />
           暂存
         </button>
         <button
@@ -311,7 +311,7 @@ export function ChangesPanel({
           title="确认保留全部改动（从待确认列表移除）"
           onClick={() => void keepAll()}
         >
-          <Icon name="check" size={12} />
+          <Icon name="check" size={16} />
           保留
         </button>
       </div>

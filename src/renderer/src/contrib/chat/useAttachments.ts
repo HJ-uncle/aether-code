@@ -15,6 +15,32 @@ import { copyIntoWorkspace } from '@renderer/core/workspace/fs-client'
 /** 单文件上限：超大文件上传会长时间卡住，且几乎没有模型能消费 */
 const MAX_FILE_BYTES = 20 * 1024 * 1024
 
+/** 粘贴长文本的附件化阈值（与 wuzu-client 对齐） */
+const PASTED_TEXT_MAX_CHARS = 2_000
+const PASTED_TEXT_MAX_LINES = 200
+
+/** 判断一段粘贴文本是否「长」到需要落成附件（照抄 wuzu-client 规则） */
+export function shouldAttachPastedText(text: string): boolean {
+  if (text.length > PASTED_TEXT_MAX_CHARS) return true
+  const lines = text.split(/\r\n|\r|\n/)
+  return lines.length > PASTED_TEXT_MAX_LINES
+}
+
+/** 把一段长文本包成「粘贴的文本-<首行>.txt」File（照抄 wuzu-client 命名规则） */
+export function createPastedTextFile(text: string): File {
+  const title = text
+    .split(/\r\n|\r|\n/)
+    .find((line) => line.trim())
+    ?.trim()
+    .replace(/^#+\s*/, '')
+    .replace(/[\\/:*?"<>|-]/g, '')
+    .slice(0, 48)
+    .trim()
+  return new File([text], `粘贴的文本${title ? `-${title}` : ''}.txt`, {
+    type: 'text/plain;charset=utf-8'
+  })
+}
+
 /** 图片类型：多模态模型直接看，非视觉模型走 OCR */
 const IMAGE_RE = /^image\//
 

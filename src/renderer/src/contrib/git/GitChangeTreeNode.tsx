@@ -66,10 +66,10 @@ export function GitChangeTreeNode({
         >
           <Icon
             name="chevron"
-            size={12}
+            size={16}
             className={`git-tree__chevron${collapsed ? ' is-collapsed' : ''}`}
           />
-          <Icon name="explorer" size={13} className="git-tree__folder" />
+          <Icon name="explorer" size={16} className="git-tree__folder" />
           <span className="git-tree__name">{node.name}</span>
         </div>
         {!collapsed && node.children
@@ -122,7 +122,7 @@ export function GitChangeTreeNode({
     >
       {/* 图标染状态色：包一层 span 用 currentColor 上色 */}
       <span className="git-row__icon" style={{ color: statusColor }}>
-        <Icon name={treeStatusIconName(file)} size={13} />
+        <Icon name={treeStatusIconName(file)} size={16} />
       </span>
       <span
         className={`git-row__name${file.changeType === 'deleted' ? ' is-deleted' : ''}`}
@@ -146,7 +146,7 @@ export function GitChangeTreeNode({
             onToggleStage?.(file)
           }}
         >
-          <Icon name={file.staged ? 'close' : 'plus'} size={13} />
+          <Icon name={file.staged ? 'close' : 'plus'} size={16} />
         </button>
         <button
           type="button"
@@ -157,7 +157,7 @@ export function GitChangeTreeNode({
             onDiscard?.(file)
           }}
         >
-          <Icon name="restart" size={13} />
+          <Icon name="restart" size={16} />
         </button>
       </div>
       <span className="git-row__code" style={{ color: statusColor }}>

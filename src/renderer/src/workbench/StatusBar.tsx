@@ -97,7 +97,7 @@ export function StatusBar(): JSX.Element {
             }
             onClick={() => toggleSidebarView('git')}
           >
-            <Icon name="git" size={12} />
+            <Icon name="git" size={16} />
             {gitLabel}
           </button>
           {/* 同步/拉取/推送按钮组：只在仓库有效时出现 */}
@@ -148,7 +148,7 @@ export function StatusBar(): JSX.Element {
         aria-label="启动引擎"
         onClick={() => void executeCommand('aether.engine.start')}
       >
-        <Icon name="play" size={12} />
+        <Icon name="play" size={16} />
       </button>
       <button
         type="button"
@@ -158,7 +158,7 @@ export function StatusBar(): JSX.Element {
         aria-label="停止引擎"
         onClick={() => void executeCommand('aether.engine.stop')}
       >
-        <Icon name="stop" size={12} />
+        <Icon name="stop" size={16} />
       </button>
       <button
         type="button"
@@ -168,7 +168,7 @@ export function StatusBar(): JSX.Element {
         aria-label="重启引擎"
         onClick={() => void executeCommand('aether.engine.restart')}
       >
-        <Icon name="restart" size={12} />
+        <Icon name="restart" size={16} />
       </button>
     </footer>
   )

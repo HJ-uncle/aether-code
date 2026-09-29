@@ -27,7 +27,7 @@ export function OutputView(): JSX.Element {
         <span className="output__count">{logs.length} 行</span>
         <div className="output__toolbar-spacer" />
         <button type="button" className="output__btn" onClick={clearLogs}>
-          <Icon name="trash" size={13} />
+          <Icon name="trash" size={16} />
           清空
         </button>
       </div>

@@ -25,6 +25,7 @@ import { findAvailablePort } from './sdk/port-finder'
 import { startProcess, type ProcessHandle } from './sdk/process-manager'
 import { waitUntilReady } from './sdk/readiness-probe'
 import { DEFAULT_ENGINE_VERSION, engineDataFile, resolveRuntime } from './runtime'
+import { CODE_TOOL_PROFILE_HEADERS } from './tool-profile'
 
 const PREFERRED_PORT = 12323
 const STARTUP_TIMEOUT_MS = 60_000
@@ -406,7 +407,8 @@ export class EngineHost extends EventEmitter {
         method,
         headers: {
           'Content-Type': 'application/json',
-          Accept: 'text/event-stream'
+          Accept: 'text/event-stream',
+          ...CODE_TOOL_PROFILE_HEADERS
         },
         body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
         signal

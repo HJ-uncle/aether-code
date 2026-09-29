@@ -42,7 +42,7 @@ export function PanelArea(): JSX.Element | null {
           aria-label="收起面板"
           onClick={() => setLayout({ panelVisible: false })}
         >
-          <Icon name="chevron-up" size={14} />
+          <Icon name="chevron-up" size={16} />
         </button>
         <button
           type="button"
@@ -51,7 +51,7 @@ export function PanelArea(): JSX.Element | null {
           aria-label="关闭面板"
           onClick={() => setLayout({ panelVisible: false })}
         >
-          <Icon name="close" size={14} />
+          <Icon name="close" size={16} />
         </button>
       </header>
       <div className="panel__body">

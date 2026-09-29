@@ -126,7 +126,7 @@ export function Dialog({
         <header className="modal__header">
           <span>{title}</span>
           <button type="button" className="modal__close" aria-label="关闭" onClick={onClose}>
-            <Icon name="close" size={14} />
+            <Icon name="close" size={16} />
           </button>
         </header>
 

@@ -124,20 +124,20 @@ export function GitStashHoverCard({
                 copyMessage()
               }}
             >
-              <Icon name="copy" size={13} />
+              <Icon name="copy" size={16} />
             </button>
           ) : null}
         </div>
         <div className="git-stashcard__meta">
           {branch ? (
             <span className="git-stashcard__meta-item">
-              <Icon name="git" size={13} />
+              <Icon name="git" size={16} />
               {branch}
             </span>
           ) : null}
           {stash.date ? (
             <span className="git-stashcard__meta-item" title={fullDate(stash.date)}>
-              <Icon name="restart" size={13} />
+              <Icon name="restart" size={16} />
               {relativeTime(stash.date)}
             </span>
           ) : null}
@@ -151,7 +151,7 @@ export function GitStashHoverCard({
             }}
           >
             {shortHash}
-            <Icon name="copy" size={12} />
+            <Icon name="copy" size={16} />
           </button>
         </div>
       </div>

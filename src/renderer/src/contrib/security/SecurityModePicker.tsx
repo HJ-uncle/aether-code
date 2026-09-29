@@ -83,7 +83,7 @@ export function SecurityModePicker({ sessionId, onManage }: SecurityModePickerPr
         }
         onClick={() => setOpen((prev) => !prev)}
       >
-        <Icon name="shield" size={12} />
+        <Icon name="shield" size={16} />
         <span className="picker__label">{busy ? '切换中…' : (descriptor?.label ?? mode)}</span>
         <span className="sec-picker__caret">⌃</span>
       </button>

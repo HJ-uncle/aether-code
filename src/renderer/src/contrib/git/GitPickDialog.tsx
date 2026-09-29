@@ -95,7 +95,7 @@ export function GitPickDialog({
         {description ? <div className="git-pickdlg__description">{description}</div> : null}
 
         <div className="git-pickdlg__search">
-          <Icon name="search" size={13} />
+          <Icon name="search" size={16} />
           <input
             ref={inputRef}
             className="git-pickdlg__input"
@@ -120,7 +120,7 @@ export function GitPickDialog({
               >
                 {item.icon ? (
                   <span className="git-pickdlg__item-icon">
-                    <Icon name={item.icon} size={14} />
+                    <Icon name={item.icon} size={16} />
                   </span>
                 ) : null}
                 <div className="git-pickdlg__item-main">

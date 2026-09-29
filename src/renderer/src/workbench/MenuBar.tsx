@@ -95,7 +95,7 @@ function WindowControls(): JSX.Element | null {
         aria-label="最小化"
         onClick={() => void window.aether.window.minimize()}
       >
-        <Icon name="minimize" size={14} />
+        <Icon name="minimize" size={16} />
       </button>
       <button
         type="button"
@@ -104,7 +104,7 @@ function WindowControls(): JSX.Element | null {
         aria-label={maximized ? '还原' : '最大化'}
         onClick={() => void window.aether.window.toggleMaximize()}
       >
-        <Icon name={maximized ? 'restore' : 'maximize'} size={14} />
+        <Icon name={maximized ? 'restore' : 'maximize'} size={16} />
       </button>
       <button
         type="button"
@@ -113,7 +113,7 @@ function WindowControls(): JSX.Element | null {
         aria-label="关闭"
         onClick={() => void window.aether.window.close()}
       >
-        <Icon name="close" size={14} />
+        <Icon name="close" size={16} />
       </button>
     </div>
   )
@@ -220,7 +220,7 @@ export function MenuBar(): JSX.Element {
           aria-label="切换侧边栏"
           onClick={() => setLayout({ sidebarVisible: !layout.sidebarVisible })}
         >
-          <Icon name="layout-sidebar" size={15} />
+          <Icon name="layout-sidebar" size={16} />
         </button>
         <button
           type="button"
@@ -230,7 +230,7 @@ export function MenuBar(): JSX.Element {
           onClick={() => toggleChatPanel()}
         >
           {/* 图标随换位翻转：对话在右侧画右停靠、在左侧画左停靠，与实际位置对应 */}
-          <Icon name={layout.chatOnLeft ? 'layout-panel-left' : 'layout-panel'} size={15} />
+          <Icon name={layout.chatOnLeft ? 'layout-panel-left' : 'layout-panel'} size={16} />
         </button>
         <button
           type="button"
@@ -240,7 +240,7 @@ export function MenuBar(): JSX.Element {
           disabled={!layout.chatPanelVisible}
           onClick={() => toggleChatPosition()}
         >
-          <Icon name="swap-horizontal" size={15} />
+          <Icon name="swap-horizontal" size={16} />
         </button>
         <button
           type="button"
@@ -249,7 +249,7 @@ export function MenuBar(): JSX.Element {
           aria-label="设置"
           onClick={() => openAppSettings()}
         >
-          <Icon name="settings" size={15} />
+          <Icon name="settings" size={16} />
         </button>
       </div>
       <WindowControls />

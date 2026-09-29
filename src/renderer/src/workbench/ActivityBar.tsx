@@ -28,7 +28,7 @@ export function ActivityBar(): JSX.Element {
             aria-pressed={active}
             onClick={() => toggleSidebarView(view.id)}
           >
-            <Icon name={view.icon as IconName} size={22} />
+            <Icon name={view.icon as IconName} size={24} />
           </button>
         )
       })}

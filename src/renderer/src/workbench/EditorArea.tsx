@@ -292,7 +292,7 @@ export function EditorArea(): JSX.Element {
                   handleClose(tab.key)
                 }}
               >
-                <Icon name="close" size={12} />
+                <Icon name="close" size={16} />
               </button>
             ) : null}
           </div>

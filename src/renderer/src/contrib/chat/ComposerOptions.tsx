@@ -47,7 +47,7 @@ function MenuOption({
         <span className="composer-options__dd-label">{label}</span>
         <span className="composer-options__dd-hint">{summary}</span>
       </span>
-      {value === current ? <Icon name="check" size={14} /> : null}
+      {value === current ? <Icon name="check" size={16} /> : null}
     </button>
   )
 }
@@ -115,13 +115,13 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
           title="对话偏好：思考档位 / 安全模式"
           aria-label="对话偏好"
         >
-          <Icon name="settings" size={15} />
+          <Icon name="settings" size={16} />
         </button>
       )}
     >
       <div className="composer-options__popup">
         <div className="composer-options__row">
-          <Icon name="brain" size={14} />
+          <Icon name="brain" size={16} />
           <div className="composer-options__text">
             <div className="composer-options__title">思考档位</div>
             <div className="composer-options__summary">{thinkSummary}</div>
@@ -161,7 +161,7 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
         </div>
 
         <div className="composer-options__row">
-          <Icon name="shield" size={14} />
+          <Icon name="shield" size={16} />
           <div className="composer-options__text">
             <div className="composer-options__title">安全模式</div>
             <div className="composer-options__summary">

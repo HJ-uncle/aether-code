@@ -32,7 +32,7 @@ export function ChatPanel(): JSX.Element | null {
           aria-label="关闭对话面板"
           onClick={() => setLayout({ chatPanelVisible: false })}
         >
-          <Icon name="close" size={14} />
+          <Icon name="close" size={16} />
         </button>
       </header>
       <div className="chat-panel__body">

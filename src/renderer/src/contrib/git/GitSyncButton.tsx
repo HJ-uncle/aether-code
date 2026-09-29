@@ -125,7 +125,7 @@ export function GitSyncButton(): JSX.Element {
       >
         <Icon
           name={s.upstream ? 'sync' : 'cloud-upload-outline'}
-          size={13}
+          size={16}
           className={busy ? 'is-spinning' : undefined}
         />
         {!s.upstream && !busy ? (
@@ -145,7 +145,7 @@ export function GitSyncButton(): JSX.Element {
         aria-label="更多同步操作"
         onClick={(event) => setMenu({ x: event.clientX, y: event.clientY })}
       >
-        <Icon name="chevron-up" size={11} />
+        <Icon name="chevron-up" size={16} />
       </button>
 
 

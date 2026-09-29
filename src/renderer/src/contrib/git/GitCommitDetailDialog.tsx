@@ -165,11 +165,11 @@ export function GitCommitDetailDialog({
             <div className="git-commitdlg__subject">{info.subject}</div>
             <div className="git-commitdlg__meta">
               <span className="git-commitdlg__meta-item">
-                <Icon name="settings" size={13} />
+                <Icon name="settings" size={16} />
                 {info.author}
               </span>
               <span className="git-commitdlg__meta-item">
-                <Icon name="restart" size={13} />
+                <Icon name="restart" size={16} />
                 {formatFullDate(info.date)}
               </span>
               <button
@@ -179,11 +179,11 @@ export function GitCommitDetailDialog({
                 onClick={copyHash}
               >
                 <span className="git-commitdlg__mono">{info.shortHash}</span>
-                <Icon name="copy" size={12} />
+                <Icon name="copy" size={16} />
               </button>
               {info.parents.length > 1 ? (
                 <span className="git-commitdlg__meta-item">
-                  <Icon name="graph" size={13} />
+                  <Icon name="graph" size={16} />
                   合并提交
                 </span>
               ) : null}
@@ -207,7 +207,7 @@ export function GitCommitDetailDialog({
                   title="复制提交信息"
                   onClick={copyMessage}
                 >
-                  <Icon name="copy" size={13} />
+                  <Icon name="copy" size={16} />
                 </button>
               </div>
             ) : null}
@@ -228,7 +228,7 @@ export function GitCommitDetailDialog({
                     {fileName(f.path)}
                   </span>
                   <span className="git-commitdlg__file-dir">{dirName(f.path)}</span>
-                  <Icon name="chevron-right" size={13} className="git-commitdlg__file-arrow" />
+                  <Icon name="chevron-right" size={16} className="git-commitdlg__file-arrow" />
                 </div>
               ))}
             </div>

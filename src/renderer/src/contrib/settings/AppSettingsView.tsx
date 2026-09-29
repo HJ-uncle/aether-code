@@ -72,7 +72,7 @@ export function AppSettingsView(): JSX.Element {
             className={`app-settings__nav-item${item.id === active ? ' is-active' : ''}`}
             onClick={() => setActive(item.id)}
           >
-            <Icon name={item.icon} size={15} />
+            <Icon name={item.icon} size={16} />
             <span>{item.label}</span>
           </button>
         ))}

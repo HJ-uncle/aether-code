@@ -225,7 +225,7 @@ export function CodeGraphSettingsView(): JSX.Element {
           }
           onClick={() => void rebuild()}
         >
-          <Icon name="restart" size={13} />
+          <Icon name="restart" size={16} />
           {status?.initialized ? '重建索引' : '创建索引'}
         </button>
         <button

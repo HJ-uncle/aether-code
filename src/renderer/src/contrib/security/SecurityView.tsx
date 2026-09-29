@@ -257,7 +257,7 @@ export function SecurityView(): JSX.Element {
             })
           }}
         >
-          <Icon name="restart" size={12} />
+          <Icon name="restart" size={16} />
           恢复默认
         </button>
       </div>

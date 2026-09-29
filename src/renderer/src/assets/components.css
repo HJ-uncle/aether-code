@@ -446,8 +446,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 20px;
-  height: 20px;
+  min-width: 22px;
+  height: 22px;
   margin-right: 2px;
   padding: 0 3px;
   border-radius: var(--radius);
@@ -950,8 +950,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border-radius: var(--radius);
   color: var(--fg-muted);
 }
@@ -1288,8 +1288,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   border-radius: var(--radius);
   color: var(--fg-faint);
   opacity: 0;
@@ -1732,8 +1732,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: none;
   border-radius: var(--radius);
@@ -1774,6 +1774,23 @@
   margin: 8vh auto 0;
   text-align: center;
   color: var(--fg-muted);
+}
+
+.chat__load-earlier {
+  display: block;
+  margin: 4px auto 12px;
+  padding: 4px 12px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.chat__load-earlier:hover {
+  color: var(--fg);
+  border-color: var(--fg-faint);
 }
 
 .chat__empty h2 {
@@ -1866,8 +1883,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   border: none;
   border-radius: var(--radius);
@@ -2939,65 +2956,208 @@
   color: var(--fg-faint);
 }
 
-.subagent-card__goal,
-.subagent-card__result {
-  margin: 0 10px 8px;
-  padding: 8px 10px;
+/* 目标任务：淡背景块（弱化底），与「返回结果」拉开层次（对齐 wuzu） */
+.subagent-card__goal-block {
+  padding: 8px 10px 4px;
+}
+
+.subagent-card__goal-label {
+  font-size: 10px;
+  color: var(--fg-faint);
+  margin-bottom: 4px;
+}
+
+.subagent-card__goal-inner {
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--bg-surface);
-  font-size: 12px;
-  color: var(--fg);
+  background: color-mix(in srgb, var(--bg-surface) 50%, transparent);
+  padding: 6px 10px;
+}
+
+.subagent-card__goal-text {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--fg-muted);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 220px;
+  max-height: 200px;
   overflow: auto;
 }
 
-.subagent-card__expand {
+/* 默认两行截断，免得一条长 prompt 刷屏 */
+.subagent-card__goal-text--clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-height: none;
+}
+
+.subagent-card__goal-toggle {
   display: inline-block;
   margin-top: 4px;
   border: none;
   background: transparent;
-  color: var(--accent);
-  font-size: 11px;
+  color: var(--fg-muted);
+  font-size: 10px;
   cursor: pointer;
   padding: 0;
 }
 
-.subagent-card__detail > summary {
+.subagent-card__goal-toggle:hover {
+  color: var(--fg-strong);
+}
+
+/* 执行详情：默认收起一行（按类型统计），展开是紧凑日志行（对齐 wuzu） */
+.subagent-card__tools-block {
+  padding: 4px 10px 6px;
+}
+
+.subagent-card__tools-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 10px 6px;
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--fg-strong);
-  user-select: none;
-  list-style: none;
-}
-
-.subagent-card__detail-stats {
+  gap: 6px;
+  width: 100%;
+  padding: 2px 0;
+  border: none;
+  background: transparent;
+  font-size: 10px;
   color: var(--fg-muted);
-  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
 }
 
-.subagent-card__fail {
+.subagent-card__tools-header:hover {
+  color: var(--fg-strong);
+}
+
+.subagent-card__tools-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.7;
+}
+
+/* 行数多时限高滚动，避免几十条调用把卡片撑爆 */
+.subagent-card__tools-list {
+  max-height: 400px;
+  overflow-y: auto;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+  margin-left: 4px;
+}
+
+/* 返回结果：实背景块，产出主体（对齐 wuzu：inner-bg 比卡片底色浅一档） */
+.subagent-card__result-block {
+  padding: 4px 10px 8px;
+}
+
+.subagent-card__result-label {
+  font-size: 10px;
+  color: var(--fg-faint);
+  margin-bottom: 4px;
+}
+
+.subagent-card__result-inner {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  padding: 6px 10px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.subagent-card__result-text {
+  margin: 0;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--fg-muted);
+}
+
+.subagent-card__result-text--error {
   color: var(--danger);
 }
 
-.subagent-card__calls {
-  list-style: none;
-  margin: 0 10px 8px;
-  padding: 0;
+/* 返回结果 markdown 紧凑排版（对齐 wuzu：标题降级、段距减半） */
+.subagent-card__result-markdown h1,
+.subagent-card__result-markdown h2,
+.subagent-card__result-markdown h3,
+.subagent-card__result-markdown h4 {
+  margin: 8px 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
 }
 
+.subagent-card__result-markdown h1:first-child,
+.subagent-card__result-markdown h2:first-child,
+.subagent-card__result-markdown h3:first-child,
+.subagent-card__result-markdown h4:first-child {
+  margin-top: 0;
+}
+
+.subagent-card__result-markdown h2,
+.subagent-card__result-markdown h3,
+.subagent-card__result-markdown h4 {
+  font-size: 12px;
+}
+
+.subagent-card__result-markdown p {
+  margin: 4px 0;
+  line-height: 18px;
+  font-size: 11px;
+}
+
+.subagent-card__result-markdown ul,
+.subagent-card__result-markdown ol {
+  margin: 4px 0;
+  padding-left: 16px;
+  line-height: 18px;
+  font-size: 11px;
+}
+
+.subagent-card__result-markdown li {
+  margin: 2px 0;
+}
+
+.subagent-card__result-markdown pre {
+  margin: 6px 0;
+  padding: 6px 8px;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.subagent-card__result-markdown code {
+  font-size: 10px;
+}
+
+.subagent-card__result-markdown hr {
+  margin: 8px 0;
+}
+
+.subagent-card__result-markdown table {
+  margin: 6px 0;
+  font-size: 11px;
+}
+
+.subagent-card__result-markdown blockquote {
+  margin: 4px 0;
+  padding-left: 8px;
+}
+
+/* 紧凑工具调用行（对齐 wuzu 的 CliCompactToolRow）：圆点 + 名称 · 状态，一行 */
 .subagent-card__call {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 0;
-  font-size: 12px;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: 11px;
 }
 
 .subagent-card__call-dot {
@@ -3006,10 +3166,25 @@
   height: 7px;
   border-radius: 50%;
   background: var(--ok);
+  margin-top: 4px;
 }
 
 .subagent-card__call-dot--fail {
   background: var(--danger);
+}
+
+.subagent-card__call-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  font-size: 11px;
 }
 
 .subagent-card__call-name {
@@ -3018,12 +3193,43 @@
 }
 
 .subagent-card__call-summary {
+  flex: none;
+  color: var(--fg-muted);
+}
+
+.subagent-card__call-args {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10px;
   color: var(--fg-faint);
+}
+
+.subagent-card__call-detail {
+  flex-basis: 100%;
+  padding: 4px 0 4px 16px;
+}
+
+.subagent-card__call-section {
+  font-size: 10px;
+  color: var(--fg-faint);
+  margin: 2px 0 2px;
+  letter-spacing: 0.02em;
+}
+
+.subagent-card__call-pre {
+  margin: 0 0 4px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--fg-muted);
+  max-height: 200px;
+  overflow: auto;
 }
 
 .subagent-card__running {
@@ -3241,8 +3447,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: var(--radius-sm);
   color: var(--fg-faint);
   opacity: 0;
@@ -3325,8 +3531,8 @@
   position: absolute;
   top: -5px;
   right: -5px;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
@@ -3874,8 +4080,12 @@
   cursor: text;
 }
 
-/* 空内容时显示占位文字（contenteditable 没有 placeholder 属性） */
-.mention-input:empty::before {
+/* 空内容时显示占位文字（contenteditable 没有 placeholder 属性）。
+   判空不能只靠 :empty：contenteditable 删掉最后一个字符后会留一个孤立的
+   <br> 当光标落脚点，DOM 非空，:empty 便永久失效、提示再也回不来。
+   第二个选择器把「只剩一个 <br>」也算作空（MentionInput 另有一层归一化兜底）。 */
+.mention-input:empty::before,
+.mention-input:has(> br):not(:has(> :not(br)))::before {
   content: attr(data-placeholder);
   color: var(--fg-faint);
   pointer-events: none;
@@ -3942,7 +4152,7 @@
   background: var(--material-bg);
   border: 1px solid var(--material-border);
   border-radius: 10px;
-  box-shadow: var(--material-shadow);
+  box-shadow: var(--material-shadow), var(--material-highlight);
   overflow: hidden;
   z-index: 50;
 }
@@ -3987,6 +4197,16 @@
 .file-palette__item.is-active {
   background: var(--bg-active);
   color: var(--fg-strong);
+}
+
+/* 目录图标：与资源管理器文件树同款色块（见 .tree-row__icon--dir） */
+.file-palette__dir {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--fg-muted);
+  clip-path: polygon(0 25%, 35% 25%, 45% 10%, 100% 10%, 100% 100%, 0 100%);
 }
 
 .file-palette__item .icon {
@@ -4142,21 +4362,30 @@
 .chat__attach-strip {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
+  gap: 8px;
+  margin-bottom: 10px;
 }
 
+/* 附件 chip：macOS 风格的实色卡片 —— 比磨砂玻璃面板更亮一档，悬浮删除按钮 */
 .attach-chip {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   max-width: 220px;
-  padding: 3px 4px 3px 8px;
+  padding: 4px 8px 4px 6px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 8px;
   background: var(--bg-elevated);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.18);
   color: var(--fg-muted);
   font-size: 11px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.attach-chip:hover {
+  background: var(--bg-active);
+  border-color: var(--fg-faint);
 }
 
 .attach-chip svg {
@@ -4177,29 +4406,128 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 删除按钮：悬浮在 chip 右上角，hover chip 才显现（macOS 通知/标签同款） */
 .attach-chip__remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
-  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
   border: none;
   border-radius: 50%;
-  background: transparent;
-  color: var(--fg-faint);
+  background: var(--bg-active);
+  color: var(--fg-muted);
   cursor: pointer;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+  z-index: 1;
+}
+
+.attach-chip:hover .attach-chip__remove,
+.attach-chip__remove:focus-visible {
+  opacity: 1;
+  transform: scale(1);
 }
 
 .attach-chip__remove:hover {
-  background: var(--bg-active);
-  color: var(--fg-strong);
+  background: var(--danger);
+  color: #fff;
 }
 
 .attach-chip--busy {
-  padding-right: 8px;
+  padding: 4px 10px;
   border-style: dashed;
+  border-color: var(--border);
+  background: transparent;
   color: var(--fg-faint);
+}
+
+/* 图片附件 chip：只显示缩略图，整图点击放大 */
+.attach-chip--image {
+  padding: 3px;
+  gap: 0;
+}
+
+.attach-chip__image-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: zoom-in;
+  overflow: hidden;
+}
+
+.attach-chip--image .attach-chip__thumb {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+}
+
+/* 可点击查看的附件 chip（文本类）：整块可点 */
+.attach-chip__open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  cursor: pointer;
+}
+
+.attach-chip--clickable {
+  cursor: pointer;
+}
+
+/* 文本附件预览内容 */
+.attachment-text-preview {
+  margin: 0;
+  padding: 16px 20px;
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg-strong);
+}
+
+/* 图片放大查看（统一 ImagePreviewDialog） */
+.modal--image-preview .modal__body {
+  padding: 0;
+}
+
+.image-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  max-height: 70vh;
+  overflow: auto;
+}
+
+.image-preview img {
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  display: block;
+}
+
+.image-preview__loading {
+  color: var(--fg-faint);
+  font-size: 12px;
+  padding: 24px;
 }
 
 /* 失败提示：附在输入框下方一行，短暂展示 */
@@ -4288,7 +4616,7 @@
   z-index: var(--z-popover);
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-panel);
-  /* 磨砂材质：底色 / 描边 / 顶部高光统一取自 --material-* */
+  /* 磨砂材质：底色 / 描边 / 顶部高光统一取自 --material-*；blur 在文件末尾统一挂载 */
   background: var(--material-bg);
   border: 1px solid var(--material-border);
   box-shadow: var(--material-shadow), var(--material-highlight);
@@ -4902,8 +5230,8 @@ textarea.field__input {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -5467,9 +5795,10 @@ select.field__input {
 .explorer__toolbar {
   display: flex;
   align-items: center;
-  gap: 2px;
+  /* 间距 4px：对齐 VS Code 标题栏按钮间距，也为 24px 按钮留出呼吸感 */
+  gap: 4px;
   flex: 0 0 auto;
-  height: 28px;
+  height: 32px;
   padding: 0 4px 0 10px;
   border-bottom: 1px solid var(--border);
 }
@@ -5510,8 +5839,8 @@ select.field__input {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border-radius: var(--radius);
   color: var(--fg-muted);
 }
@@ -5729,8 +6058,8 @@ select.field__input {
 /* 细线 chevron（对齐 wuzu-client 的 mdi chevron 观感）：
    用两条边拼出 > 形，展开时旋转 90°。比实心三角更轻。 */
 .tree-row__chevron-glyph {
-  width: 5px;
-  height: 5px;
+  width: 7px;
+  height: 7px;
   border-right: 1.5px solid var(--fg-muted);
   border-bottom: 1.5px solid var(--fg-muted);
   transform: rotate(-45deg);
@@ -5743,8 +6072,8 @@ select.field__input {
 
 .tree-row__icon {
   flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   border-radius: 2px;
   background: var(--fg-faint);
 }
@@ -5752,8 +6081,8 @@ select.field__input {
 /* 目录图标：次级文字色的圆角方块（对齐 wuzu 的 folder-outline 观感），
    展开时轮廓变亮/镂空感，与收起态区分 */
 .tree-row__icon--dir {
-  width: 12px;
-  height: 10px;
+  width: 14px;
+  height: 12px;
   border-radius: 2px;
   background: var(--fg-muted);
   clip-path: polygon(0 25%, 35% 25%, 45% 10%, 100% 10%, 100% 100%, 0 100%);
@@ -5859,8 +6188,8 @@ select.field__input {
 .tree-row__loading {
   flex: 0 0 auto;
   margin-left: auto;
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   border: 1.5px solid var(--fg-faint);
   border-top-color: transparent;
   border-radius: 50%;
@@ -7253,8 +7582,8 @@ select.field__input {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: none;
   border-radius: var(--radius);
@@ -7536,8 +7865,8 @@ select.field__input {
   justify-content: center;
   position: relative;
   gap: 5px;
-  height: 20px;
-  min-width: 20px;
+  height: 22px;
+  min-width: 22px;
   padding: 0 4px;
   flex: 0 0 auto;
   border: 0;
@@ -7639,8 +7968,8 @@ select.field__input {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   flex: 0 0 auto;
   border: 0;
   border-radius: var(--radius-sm);
@@ -7772,8 +8101,8 @@ select.field__input {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   margin-right: 4px;
   flex-shrink: 0;
   border-radius: 4px;
@@ -7863,8 +8192,8 @@ select.field__input {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -8253,7 +8582,7 @@ select.field__input {
   flex-shrink: 0;
 }
 .git-row:hover .git-row__actions {
-  width: 66px;
+  width: 70px;
 }
 .git-row__actions--conflict {
   width: 22px;
@@ -8265,8 +8594,8 @@ select.field__input {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -8343,17 +8672,18 @@ select.field__input {
   flex-shrink: 0;
 }
 
-/* hover 卡片（提交 / stash 共用一套结构） */
+/* hover 卡片（提交 / stash / 上下文用量环 共用一套结构）：磨砂材质浮层。
+   blur 在文件末尾的统一清单挂载，这里只管底色/描边/投影 */
 .git-hovercard,
 .git-stashcard {
   position: fixed;
   z-index: var(--z-popover);
   max-width: 380px;
   min-width: 240px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-strong);
+  background: var(--material-bg);
+  border: 1px solid var(--material-border);
   border-radius: var(--radius);
-  box-shadow: var(--material-shadow);
+  box-shadow: var(--material-shadow), var(--material-highlight);
   padding: 8px 10px;
   font-size: 12px;
   color: var(--fg);
@@ -8611,8 +8941,8 @@ select.field__input {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   flex: 0 0 auto;
   border: 0;
   border-radius: var(--radius-sm);
@@ -8736,8 +9066,8 @@ select.field__input {
   position: absolute;
   right: 4px;
   bottom: 4px;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -8839,7 +9169,7 @@ select.field__input {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
+  width: 22px;
   height: 22px;
   border: 0;
   background: transparent;
@@ -8990,10 +9320,10 @@ select.field__input {
   bottom: 40px;
   z-index: var(--z-overlay);
   width: 300px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-strong);
+  background: var(--material-bg);
+  border: 1px solid var(--material-border);
   border-radius: var(--radius);
-  box-shadow: var(--material-shadow);
+  box-shadow: var(--material-shadow), var(--material-highlight);
   padding: 10px 12px;
 }
 .git-clone__float-head {
@@ -9015,8 +9345,8 @@ select.field__input {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -9379,7 +9709,8 @@ select.field__input {
 /*
  * 全部浮层的磨砂玻璃在这条规则上统一挂载，清单即契约：
  *   菜单下拉 / 命令面板 / 通用 popover / 模态框 / 右键菜单 /
- *   安全·思考选择器弹层 / 全局替换预览
+ *   安全·思考选择器弹层 / 全局替换预览 / Git hover 卡片 / 上下文用量环卡片 /
+ *   Git 克隆浮动卡片 / @ 文件引用面板（file-palette）
  * 各自的 background 仍由上面的组件规则用 --material-* 提供，
  * 这里只补「blur + 饱和度提升」两件事（配方说明见 tokens.css 材质工具类）。
  * 新增浮层时：材质四件套照抄既有组件 + 把选择器加进这里。
@@ -9391,7 +9722,11 @@ select.field__input {
 .context-menu,
 .sec-picker__popup,
 .think-picker__popup,
-.replace-preview {
+.replace-preview,
+.git-hovercard,
+.git-stashcard,
+.git-clone__float,
+.file-palette {
   backdrop-filter: blur(var(--material-blur)) saturate(180%);
   -webkit-backdrop-filter: blur(var(--material-blur)) saturate(180%);
 }
@@ -9404,7 +9739,11 @@ select.field__input {
   .popover__panel,
   .context-menu,
   .sec-picker__popup,
-  .think-picker__popup {
+  .think-picker__popup,
+  .git-hovercard,
+  .git-stashcard,
+  .git-clone__float,
+  .file-palette {
     background: var(--material-bg-solid);
   }
 

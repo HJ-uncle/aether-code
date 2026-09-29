@@ -30,7 +30,7 @@ export function GitCloneOverlay(): JSX.Element {
         ? createPortal(
             <div className="git-clone__float">
               <div className="git-clone__float-head">
-                <Icon name="git" size={14} className="git-clone__float-icon" />
+                <Icon name="git" size={16} className="git-clone__float-icon" />
                 <span className="git-clone__float-title">正在克隆仓库</span>
                 <button
                   type="button"
@@ -38,7 +38,7 @@ export function GitCloneOverlay(): JSX.Element {
                   title="取消克隆"
                   onClick={() => void cancelCloneFlow()}
                 >
-                  <Icon name="close" size={12} />
+                  <Icon name="close" size={16} />
                 </button>
               </div>
               <div className="git-clone__progress">

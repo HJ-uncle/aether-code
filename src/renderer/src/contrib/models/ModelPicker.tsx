@@ -104,7 +104,7 @@ export function ModelPicker({ value, onChange, onManage }: ModelPickerProps): JS
                 setOpen(false)
               }}
             >
-              <Icon name="plus" size={13} />
+              <Icon name="plus" size={16} />
               添加模型
             </button>
             <button

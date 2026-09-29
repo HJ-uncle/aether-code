@@ -34,7 +34,7 @@ function QueueThumb({ root, file }: { root: string | null; file: ChatAttachment 
   if (!src) {
     return (
       <span className="session-tray__queue-thumb session-tray__queue-thumb--icon">
-        <Icon name="image" size={12} />
+        <Icon name="image" size={16} />
       </span>
     )
   }
@@ -166,7 +166,7 @@ export function SessionTray({
           aria-label={collapsed ? '展开托盘' : '收起托盘'}
           onClick={() => setCollapsed((v) => !v)}
         >
-          <Icon name="chevron" size={11} />
+          <Icon name="chevron" size={16} />
         </button>
 
         {changeCount > 0 ? (
@@ -228,7 +228,7 @@ export function SessionTray({
               }
               onClick={() => onSetQueueSendMode(queueSendMode === 'batch' ? 'serial' : 'batch')}
             >
-              <Icon name={queueSendMode === 'batch' ? 'copy' : 'send'} size={12} />
+              <Icon name={queueSendMode === 'batch' ? 'copy' : 'send'} size={16} />
               {queueSendMode === 'batch' ? '合并' : '逐条'}
             </button>
             <button
@@ -244,7 +244,7 @@ export function SessionTray({
               }
               onClick={onMergeQueue}
             >
-              <Icon name="copy" size={12} />
+              <Icon name="copy" size={16} />
               发送
             </button>
             <button
@@ -254,7 +254,7 @@ export function SessionTray({
               title="清空队列（不影响正在进行的回合）"
               onClick={onClearQueue}
             >
-              <Icon name="trash" size={12} />
+              <Icon name="trash" size={16} />
               清空
             </button>
           </>
@@ -313,7 +313,7 @@ export function SessionTray({
                               setEditAttachments((prev) => prev.filter((f) => f.path !== file.path))
                             }
                           >
-                            <Icon name="close" size={9} />
+                            <Icon name="close" size={16} />
                           </button>
                         </span>
                       ))}
@@ -349,7 +349,7 @@ export function SessionTray({
                           <QueueThumb key={file.path} root={workspaceRoot} file={file} />
                         ) : (
                           <span key={file.path} className="session-tray__queue-attach" title={file.name}>
-                            <Icon name="file" size={11} />
+                            <Icon name="file" size={16} />
                           </span>
                         )
                       )}
@@ -363,7 +363,7 @@ export function SessionTray({
                     disabled={editingId !== null}
                     onClick={() => startEdit(item)}
                   >
-                    <Icon name="pencil" size={11} />
+                    <Icon name="pencil" size={16} />
                   </button>
                   <button
                     type="button"
@@ -372,7 +372,7 @@ export function SessionTray({
                     aria-label={`移除第 ${index + 1} 条排队消息`}
                     onClick={() => onRemoveQueued(item.id)}
                   >
-                    <Icon name="close" size={11} />
+                    <Icon name="close" size={16} />
                   </button>
                 </>
               )}

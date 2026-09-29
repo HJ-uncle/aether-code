@@ -86,6 +86,8 @@ interface MentionInputProps {
   onSubmit: () => void
   /** 粘贴到剪贴板里的文件（截图/复制的文件），交给附件体系处理 */
   onPasteFiles: (files: File[]) => void
+  /** 粘贴的文本超过阈值时交给附件体系落成「粘贴的文本-xxx.txt」；返回 true 表示已接管 */
+  onPasteText?: (text: string) => boolean
   /**
    * @ 补全触发：光标前出现「@关键词」时回调关键词（可为空串），
    * 光标移开或关键词失效时回调 null。父组件据此弹出/关闭文件选择面板。
@@ -95,7 +97,7 @@ interface MentionInputProps {
 
 export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
   function MentionInput(
-    { value, disabled, placeholder, onChange, onSubmit, onPasteFiles, onMentionQuery },
+    { value, disabled, placeholder, onChange, onSubmit, onPasteFiles, onPasteText, onMentionQuery },
     ref
   ): JSX.Element {
     const boxRef = useRef<HTMLDivElement>(null)
@@ -143,13 +145,45 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       return { text: text.replace(/\n+$/, ''), mentions }
     }, [])
 
+    /**
+     * 清掉「语义为空」时浏览器留下的残留节点。
+     *
+     * contenteditable 里删掉最后一个字符（退格 / 全选删除 / 剪切）后，浏览器会
+     * 塞一个孤立的 <br> 当光标落脚点，DOM 从此不再是空的；而 placeholder 是
+     * CSS 伪元素、只能靠 `:empty` 判定空内容（见 components.css 的
+     * `.mention-input:empty::before`），一旦残留就永久不再匹配 —— 现象就是
+     * 「输入框清空后提示文字再也不出现」。
+     *
+     * 这里维持「语义为空 ⇒ DOM 为空」这一约定：判空复用 serialize()，
+     * 与发送语义完全一致（末尾换行本就是视觉残留，空白文本也不算内容）。
+     * 只清节点、不碰 chip：有 chip 时 serialize 会产出 @路径，不会走到这里。
+     */
+    const dropEmptyResidue = useCallback(() => {
+      const box = boxRef.current
+      if (!box || box.childNodes.length === 0) return
+      const { text, mentions } = serialize()
+      // ​（零宽空格）不算内容；纯空白消息本就不允许发送，同样视为空
+      if (mentions.length > 0 || text.replace(/​/g, '').trim() !== '') return
+      box.textContent = ''
+      // 若输入框仍持有焦点，把光标收回框内，用户可以直接接着打字
+      if (document.activeElement !== box) return
+      const selection = window.getSelection()
+      if (!selection) return
+      const range = document.createRange()
+      range.selectNodeContents(box)
+      range.collapse(true)
+      selection.removeAllRanges()
+      selection.addRange(range)
+    }, [serialize])
+
     /** 把当前 DOM 序列化并抛给父组件（IME 组合中不抛，避免打断输入法） */
     const emitChange = useCallback(() => {
       if (composingRef.current) return
+      dropEmptyResidue()
       const { text, mentions } = serialize()
       lastSerializedRef.current = text
       onChange(text, mentions)
-    }, [onChange, serialize])
+    }, [onChange, serialize, dropEmptyResidue])
 
     const insertMention = useCallback(
       (mention: Mention) => {
@@ -333,7 +367,10 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
           // 纯文本粘贴：禁用浏览器默认的富文本粘贴，防止带入样式/标签
           event.preventDefault()
           const text = event.clipboardData.getData('text/plain')
-          if (text) document.execCommand('insertText', false, text)
+          if (!text) return
+          // 长文本优先落成附件（wuzu-client 同款「粘贴的文本-xxx.txt」），未接管才插入光标处
+          if (onPasteText?.(text)) return
+          document.execCommand('insertText', false, text)
         }}
         onKeyDown={(event) => {
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {

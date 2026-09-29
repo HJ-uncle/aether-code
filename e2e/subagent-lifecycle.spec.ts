@@ -18,6 +18,7 @@ import { SubagentProvider, SUBAGENT_PROBES as probes } from './helpers/subagent-
  * 真机子代理闭环：本地 OpenAI HTTP 服务 → 真实 ReAct/subagent/read_file → 持久化
  * → HTTP SSE → Electron IPC → 卡片。覆盖并发首请求 400、工具详情、单独取消真实
  * provider 连接、兄弟隔离、root-only 历史、切换/重启回放及 Markdown 导出。
+ * 同时检查 IDE 的 code profile 经普通 IPC 与 SSE 请求进入实际工具列表和模型请求。
  * 不注入子任务结果、不用真实凭证。运行前构建 IDE 与同级引擎的 dist/main.js；workers=1。
  */
 const APP_ROOT = resolve(__dirname, '..')
@@ -31,6 +32,10 @@ const SESSION_ID = 'e2e-subagent-lifecycle-12403'
 const ENGINE_URL = 'http://127.0.0.1:12403'
 const TEST_KEY = 'e2e-local-provider-no-real-credential'
 const ENCRYPTION_KEY = 'a'.repeat(64)
+const NON_CODE_TOOLS = new Set([
+  'remember', 'recall', 'search_memory', 'list_memories', 'forget', 'link_memories',
+  'install_package', 'list_packages', 'calculate', 'get_time'
+])
 
 declare global {
   interface Window {
@@ -254,6 +259,22 @@ async function assertRootSessions(): Promise<void> {
   expect(sessions.some((session) => childIds.includes(session.sessionId))).toBe(false)
 }
 
+function assertCodeProfile(names: string[]): void {
+  expect(names.filter(name => NON_CODE_TOOLS.has(name) || /^(cron_|agent_|task_)/.test(name)),
+    'IDE code profile 不应把系统管理、长期记忆或通用计算工具暴露给模型').toEqual([])
+}
+
+function dispatchedToolNames(marker: string): string[] {
+  const request = provider.requests.find(item => {
+    const user = [...item.messages].reverse().find(message => message.role === 'user')
+    return typeof user?.content === 'string' && user.content.includes(marker)
+  })
+  if (!request) throw new Error(`Missing actual provider request for ${marker}`)
+  const names = (request.tools ?? []).map(tool => tool.function.name)
+  expect(names.length, `${marker} 必须携带真实工具 schema`).toBeGreaterThan(0)
+  return names
+}
+
 test.describe.serial('子代理：真实引擎 / HTTP / IPC 生命周期', () => {
   test.beforeAll(async () => {
     if (!existsSync(join(APP_ROOT, 'out', 'main', 'index.js')) || !existsSync(ENGINE_ENTRY)) {
@@ -293,11 +314,38 @@ test.describe.serial('子代理：真实引擎 / HTTP / IPC 生命周期', () =>
   })
 
   test('同轮成功与首请求400：即时独立终态、真实工具详情、失败不显示成功', async () => {
+    // Use the real preload/main request path so a missing IDE profile header cannot be masked by test HTTP headers.
+    const tools = await page.evaluate(() => window.aether.engine.request<Array<{ name: string }>>({
+      method: 'GET', path: '/tools', query: { current: 1, pageSize: 1000 }
+    }))
+    expect(tools.ok, tools.message).toBe(true)
+    expect(Array.isArray(tools.data)).toBe(true)
+    const listedNames = (tools.data ?? []).map(tool => tool.name)
+    assertCodeProfile(listedNames)
+    expect(listedNames).toEqual(expect.arrayContaining([
+      'read_file', 'write_file', 'execute_cmd', 'grep_search', 'subagent',
+      'web_fetch', 'ask_user', 'list_skills'
+    ]))
+
     await send(`${probes.round} 并行启动一个读取成功任务与一个首请求失败任务。`)
     await expect.poll(() => provider.waiting('success'), { timeout: 45_000 }).toBe(true)
     const failed = await waitRun(probes.failure, 'failed')
     const pendingSuccess = await waitRun(probes.success, 'running')
     completed.set(probes.failure, failed)
+
+    const parentTools = dispatchedToolNames(probes.round)
+    assertCodeProfile(parentTools)
+    expect(parentTools).toEqual(expect.arrayContaining([
+      'subagent', 'read_file', 'grep_search', 'execute_cmd'
+    ]))
+    for (const marker of [probes.success, probes.failure]) {
+      const childTools = dispatchedToolNames(marker)
+      assertCodeProfile(childTools)
+      expect(childTools).toContain('read_file')
+      expect(childTools.filter(name => [
+        'subagent', 'ask_user', 'write_file', 'delete_file', 'create_dir', 'execute_cmd'
+      ].includes(name)), '默认只读子任务不能因 code profile 扩大权限').toEqual([])
+    }
 
     expect(failed.error?.message).toContain(probes.failureReason)
     expect(failed.toolCalls).toHaveLength(0)
@@ -340,13 +388,14 @@ test.describe.serial('子代理：真实引擎 / HTTP / IPC 生命周期', () =>
     expect(succeeded.usage.totalTokens, '默认累计用量超过50万仍应完成子任务和父总结').toBeGreaterThan(500_000)
     const successCard = await card(succeeded)
     await expect(successCard).toHaveAttribute('data-status', 'succeeded')
-    const details = successCard.locator('.subagent-card__detail')
-    if ((await details.getAttribute('open')) === null)
-      await details.locator(':scope > summary').click()
+    const details = successCard.locator('.subagent-card__tools-list')
+    if (!(await details.isVisible()))
+      await successCard.getByRole('button', { name: /^执行详情/ }).click()
     await expect(details).toContainText('读取文件')
-    const callDetails = details.locator('.subagent-card__call details')
-    if ((await callDetails.getAttribute('open')) === null)
-      await callDetails.locator('summary').click()
+    const call = details.locator('.subagent-card__call')
+    const callDetails = call.locator('.subagent-card__call-detail')
+    if (!(await callDetails.isVisible()))
+      await call.getByRole('button', { name: /读取文件/ }).click()
     await expect(callDetails).toContainText(probes.fileContent)
     await expect(page.locator('.chat__messages')).toContainText(probes.parentOutput)
     await expect(page.getByRole('button', { name: '停止生成', exact: true })).toBeHidden()

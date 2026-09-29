@@ -52,7 +52,7 @@ export function ModelsSettingsView(): JSX.Element {
           disabled={!ready}
           onClick={() => setAdding(true)}
         >
-          <Icon name="plus" size={13} />
+          <Icon name="plus" size={16} />
           添加模型
         </button>
         <button type="button" className="btn" disabled={!ready || loading} onClick={() => void refresh()}>

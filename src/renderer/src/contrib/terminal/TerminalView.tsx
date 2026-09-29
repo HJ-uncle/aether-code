@@ -84,7 +84,7 @@ export function TerminalView(): JSX.Element {
             aria-label="清屏"
             onClick={() => clearActiveSession()}
           >
-            <Icon name="trash" size={13} />
+            <Icon name="trash" size={16} />
           </button>
           <button
             type="button"
@@ -93,7 +93,7 @@ export function TerminalView(): JSX.Element {
             aria-label="新建终端"
             onClick={() => void createLocalSession(root ?? undefined)}
           >
-            <Icon name="plus" size={13} />
+            <Icon name="plus" size={16} />
           </button>
         </div>
         <div className="terminal-view__list">
@@ -116,7 +116,7 @@ function Item({ session, active }: { session: TerminalSession; active: boolean }
       className={`terminal-view__item${active ? ' is-active' : ''}${dead ? ' is-dead' : ''}`}
       onClick={() => setActiveSession(session.id)}
     >
-      <Icon name="terminal" size={13} />
+      <Icon name="terminal" size={16} />
       <span className="terminal-view__item-label">
         {dead ? `${session.title}（已退出）` : session.title}
       </span>
@@ -129,7 +129,7 @@ function Item({ session, active }: { session: TerminalSession; active: boolean }
           closeSession(session.id)
         }}
       >
-        <Icon name="close" size={11} />
+        <Icon name="close" size={16} />
       </button>
     </div>
   )

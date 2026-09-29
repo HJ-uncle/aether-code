@@ -67,7 +67,7 @@ export function FileChangeCard({
         }}
       >
         <span className={`diff-card__icon${failed ? ' diff-card__icon--fail' : ''}`}>
-          <Icon name={failed ? 'close' : 'check'} size={13} />
+          <Icon name={failed ? 'close' : 'check'} size={16} />
         </span>
         <span className="diff-card__title">{title}</span>
         <button
@@ -92,7 +92,7 @@ export function FileChangeCard({
             <span className="diff-card__del">-{stats.removed}</span>
           </span>
         )}
-        <Icon name="chevron" size={13} className="diff-card__chevron" />
+        <Icon name="chevron" size={16} className="diff-card__chevron" />
       </div>
 
       {collapsed ? null : change.truncated ? (

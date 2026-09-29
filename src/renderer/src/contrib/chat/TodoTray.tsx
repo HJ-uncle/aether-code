@@ -39,7 +39,7 @@ export function TodoTray({ todos }: { todos: EngineTodo[] }): JSX.Element | null
         <ul className="todo-tray__list">
           {active.map((todo) => (
             <li key={todo.id} className={`todo-tray__item todo-tray__item--${todo.status}`}>
-              <Icon name={todo.status === 'in_progress' ? 'circle-dot' : 'circle'} size={14} />
+              <Icon name={todo.status === 'in_progress' ? 'circle-dot' : 'circle'} size={16} />
               <span className="todo-tray__title" title={todo.description || todo.title}>
                 {todo.title}
               </span>
@@ -54,13 +54,13 @@ export function TodoTray({ todos }: { todos: EngineTodo[] }): JSX.Element | null
       {completed.length > 0 ? (
         <details className="todo-tray__done">
           <summary>
-            <Icon name="check" size={13} />
+            <Icon name="check" size={16} />
             已完成 {completed.length} 项
           </summary>
           <ul className="todo-tray__list todo-tray__list--done">
             {completed.map((todo) => (
               <li key={todo.id} className="todo-tray__item todo-tray__item--done">
-                <Icon name="check" size={14} />
+                <Icon name="check" size={16} />
                 <span className="todo-tray__title" title={todo.description || todo.title}>
                   {todo.title}
                 </span>
@@ -86,7 +86,7 @@ export function TodoTray({ todos }: { todos: EngineTodo[] }): JSX.Element | null
           title="收起任务托盘"
           onClick={() => setDismissed(todos)}
         >
-          <Icon name="close" size={13} />
+          <Icon name="close" size={16} />
         </button>
       </div>
     </div>
