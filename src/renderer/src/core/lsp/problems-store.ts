@@ -22,12 +22,16 @@ export interface ProblemItem {
   source: string
 }
 
+export type DiagnosisStatus = 'running' | 'completed' | 'unsupported' | 'error' | 'cancelled'
+export interface FileDiagnosis { status: DiagnosisStatus; message?: string }
+
 interface ProblemsState {
+  diagnoses: Map<string, FileDiagnosis>
   /** 文件绝对路径 → 诊断列表 */
   byFile: Map<string, ProblemItem[]>
 }
 
-let state: ProblemsState = { byFile: new Map() }
+let state: ProblemsState = { byFile: new Map(), diagnoses: new Map() }
 const listeners = new Set<() => void>()
 
 function setState(next: ProblemsState): void {
@@ -52,15 +56,28 @@ export function useProblems(): ProblemsState {
 export function setFileProblems(filePath: string, items: ProblemItem[]): void {
   const byFile = new Map(state.byFile)
   byFile.set(filePath, items)
-  setState({ byFile })
+  const diagnoses = new Map(state.diagnoses)
+  diagnoses.set(filePath, { status: 'completed' })
+  setState({ byFile, diagnoses })
+}
+
+export function setFileDiagnosis(filePath: string, status: DiagnosisStatus, message?: string): void {
+  if (status === 'cancelled') { clearFileProblems(filePath); return }
+  const diagnoses = new Map(state.diagnoses)
+  const byFile = new Map(state.byFile)
+  diagnoses.set(filePath, { status, message })
+  if (status !== 'completed') byFile.delete(filePath)
+  setState({ byFile, diagnoses })
 }
 
 /** 关闭/重命名文件时清条目，避免面板残留死链接 */
 export function clearFileProblems(filePath: string): void {
-  if (!state.byFile.has(filePath)) return
+  if (!state.byFile.has(filePath) && !state.diagnoses.has(filePath)) return
   const byFile = new Map(state.byFile)
   byFile.delete(filePath)
-  setState({ byFile })
+  const diagnoses = new Map(state.diagnoses)
+  diagnoses.delete(filePath)
+  setState({ byFile, diagnoses })
 }
 
 /** 问题总数（状态栏徽标用） */

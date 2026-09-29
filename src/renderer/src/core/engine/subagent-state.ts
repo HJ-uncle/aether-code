@@ -258,6 +258,8 @@ export function runToolState(run: SubagentRun): ToolActivity['state'] {
 export function toolStatusLabel(tool: ToolActivity): string {
   if (tool.subagent) return STATUS_LABELS[tool.subagent.status]
   if (tool.state === 'unknown') return '状态未知'
+  if (tool.state === 'waiting') return '等待应答'
+  if (tool.state === 'interrupted') return '已中断'
   if (tool.state === 'cancelled') return '已取消'
   if (tool.state === 'error') return '失败'
   return tool.state === 'running' ? '运行中' : '成功'
@@ -273,6 +275,12 @@ export function toolResultState(raw: unknown, name: string): ToolActivity['state
   const nested = record(r.metadata) ?? {}
   const run = normalizeSubagentRun(r.subagent ?? nested.subagent)
   if (run) return runToolState(run)
+  const status = r.status ?? nested.status
+  if (status === 'waiting') return 'waiting'
+  if (status === 'interrupted') return 'interrupted'
+  if (status === 'running') return 'running'
+  if (status === 'succeeded') return 'done'
+  if (status === 'failed') return 'error'
   const success = r.success ?? nested.success
   if (r.status === 'cancelled' || nested.status === 'cancelled') return 'cancelled'
   if (

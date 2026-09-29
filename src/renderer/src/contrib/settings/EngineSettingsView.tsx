@@ -71,7 +71,7 @@ export function EngineSettingsView(): JSX.Element {
         </SettingsRow>
         <SettingsRow
           label="远端服务"
-          description="连接已部署的引擎，不启动本地进程"
+          description="实验性连接：仅查看引擎信息，暂不支持本地工作区对话和文件操作"
           onClick={() => setMode('remote')}
         >
           <span

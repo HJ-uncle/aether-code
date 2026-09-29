@@ -27,7 +27,7 @@ const ENGINE_ENTRY = join(ENGINE_ROOT, 'dist', 'main.js')
 const FIXTURE_ROOT = join(APP_ROOT, '.e2e-tmp', 'subagent-lifecycle')
 const WORKSPACE = join(FIXTURE_ROOT, 'workspace')
 const USER_DATA = join(FIXTURE_ROOT, 'user-data')
-const DB_PATH = join(USER_DATA, 'engine', '1.0.0', 'data', 'agent.db')
+const DB_PATH = join(USER_DATA, 'engine', 'state', 'agent.db')
 const SESSION_ID = 'e2e-subagent-lifecycle-12403'
 const ENGINE_URL = 'http://127.0.0.1:12403'
 const TEST_KEY = 'e2e-local-provider-no-real-credential'
@@ -205,11 +205,12 @@ async function launch(): Promise<void> {
 }
 
 async function engineGet<T>(path: string): Promise<T> {
-  const response = await fetch(`${ENGINE_URL}${path}`, { signal: AbortSignal.timeout(10_000) })
-  const body = (await response.json()) as { code: number; message: string; data: T }
-  expect(response.ok, body.message).toBe(true)
-  expect(body.code, body.message).toBe(200)
-  return body.data
+  const result = await page.evaluate(async (requestPath) => {
+    const url = new URL(requestPath, 'http://fixture.invalid')
+    return window.aether.engine.request({ method: 'GET', path: url.pathname.replace(/^\/api\/v1/, ''), query: Object.fromEntries(url.searchParams) })
+  }, path)
+  expect(result.ok, result.message).toBe(true)
+  return result.data as T
 }
 
 async function runs(): Promise<SubagentRun[]> {
@@ -467,8 +468,11 @@ test.describe.serial('子代理：真实引擎 / HTTP / IPC 生命周期', () =>
     const historyButton = page.getByRole('button', { name: '会话历史', exact: true })
     if ((await historyButton.getAttribute('aria-pressed')) !== 'true') await historyButton.click()
     await page.getByRole('button', { name: '刷新会话列表', exact: true }).click()
-    await expect(page.locator('.history-view__item')).toHaveCount(1)
-    await page.locator('.history-view__item').click()
+    // New empty sessions remain visible as local placeholders; assert the real root separately.
+    await assertRootSessions()
+    const rootHistory = page.locator('.history-view__item').filter({ hasText: probes.round })
+    await expect(rootHistory).toHaveCount(1)
+    await rootHistory.click()
     await expect(page.locator('.chat__messages')).toContainText(probes.parentOutput)
     for (const run of completed.values())
       await expect(await card(run)).toHaveAttribute('data-status', run.status)
@@ -501,11 +505,19 @@ test.describe.serial('子代理：真实引擎 / HTTP / IPC 生命周期', () =>
       session.defaultSession.once('will-download', (_event, item) => item.setSavePath(path))
     }, exportPath)
     await page.getByRole('button', { name: '导出', exact: true }).click()
-    await expect.poll(() => existsSync(exportPath) ? readFileSync(exportPath, 'utf8') : '', {
+    let markdown = ''
+    await expect.poll(() => {
+      try { markdown = readFileSync(exportPath, 'utf8') }
+      catch (error) {
+        // Windows may expose the new file while Electron still holds its write handle.
+        if (!['ENOENT', 'EBUSY', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+        return ''
+      }
+      return markdown
+    }, {
       timeout: 15_000,
       message: 'Electron 应将实际导出内容写入文件'
     }).toContain(probes.siblingOutput)
-    const markdown = readFileSync(exportPath, 'utf8')
     expect(markdown).toContain(probes.failureReason)
     expect(markdown).toContain(probes.successOutput)
     expect(markdown).toContain(probes.siblingOutput)

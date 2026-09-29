@@ -52,7 +52,7 @@ test.describe('parseSecurityMode', () => {
     expect(parseSecurityMode('standard')).toBe('standard')
   })
 
-  test('无法识别时返回 null，由调用方兜底为 safe', () => {
+  test('无法识别时返回 null，调用方必须保留未知状态', () => {
     expect(parseSecurityMode({ mode: 'unknown' })).toBeNull()
     expect(parseSecurityMode({ sessionId: 's1' })).toBeNull()
     expect(parseSecurityMode(null)).toBeNull()
@@ -75,17 +75,20 @@ test.describe('buildModePayload', () => {
 })
 
 test.describe('模式元数据', () => {
-  test('三种模式都有描述，且 full-access 必须带风险提示', () => {
+  test('三种模式都有描述，standard 与 full-access 都提示工作区外权限', () => {
     expect(MODE_DESCRIPTORS.map((d) => d.value)).toEqual([...SECURITY_MODES])
     for (const descriptor of MODE_DESCRIPTORS) {
       expect(descriptor.summary.length).toBeGreaterThan(0)
     }
-    expect(MODE_DESCRIPTORS.find((d) => d.value === 'full-access')?.warning).toBeTruthy()
+    expect(MODE_DESCRIPTORS.find((d) => d.value === 'standard')?.warning).toContain('工作区以外')
+    expect(MODE_DESCRIPTORS.find((d) => d.value === 'standard')?.summary).toContain('仍需确认')
+    expect(MODE_DESCRIPTORS.find((d) => d.value === 'full-access')?.warning).toContain('工作区以外')
   })
 
-  test('只有 full-access 属于高风险模式', () => {
+  test('standard 与 full-access 都需要风险提示，未知状态不能被当成 safe', () => {
     expect(isRiskyMode('full-access')).toBe(true)
-    expect(isRiskyMode('standard')).toBe(false)
+    expect(isRiskyMode('standard')).toBe(true)
+    expect(isRiskyMode(null)).toBe(false)
     expect(isRiskyMode('safe')).toBe(false)
   })
 

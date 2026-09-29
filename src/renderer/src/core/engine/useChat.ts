@@ -1,14 +1,18 @@
 import type { SubagentRun } from '@shared/subagent'
-import { applyToolResult, finishTool, normalizeTool, replayMessages, type EngineHistoryRow } from './chat-history'
+import type { RootRun } from '@shared/root-run'
+import { applyRootRun, finishTransport, mergeRootRun, normalizeRootRun } from './root-run-state'
+import { applyToolResult, normalizeTool, type EngineHistoryRow } from './chat-history'
 export { extractText } from './chat-history'
 import { attachSubagentRuns } from './subagent-state'
 import { ingestSubagentEvent, ingestSubagentRun, getSubagentRuns, refreshSubagentRuns, subscribeSubagents, forgetSubagentSession, hasActiveSubagents } from './subagent-store'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ChatSsePayload, EngineFileChange, EngineTodo, StreamEvent } from '@shared/ipc'
+import { reducePayload } from './chat-payload'
+import { acceptEventId, restoreChatSnapshot, type ChatRecoverySnapshot } from './chat-recovery'
+import type { EngineFileChange, EngineTodo, StreamEvent } from '@shared/ipc'
 import * as engine from './client'
+import { revertConversationFrom } from './change-revert'
 import {
   buildToolResponse,
-  mergePending,
   normalizePending,
   type PendingInteraction
 } from './pending'
@@ -21,7 +25,10 @@ export interface ToolActivity {
   name: string
   args: string
   result: string
-  state: 'running' | 'done' | 'error' | 'unknown' | 'cancelled'
+  state: 'running' | 'done' | 'error' | 'unknown' | 'cancelled' | 'waiting' | 'interrupted'
+  durationMs?: number
+  finishedAt?: number
+  metadata?: Record<string, unknown>
   error?: string
   subagent?: SubagentRun
   /**
@@ -52,6 +59,9 @@ export type TimelineItem =
   | { kind: 'interaction' }
 
 export interface ChatMessage {
+  runId?: string
+  run?: RootRun
+  interactions?: PendingInteraction[]
   id: string
   role: 'user' | 'assistant'
   content: string
@@ -59,7 +69,7 @@ export interface ChatMessage {
   tools: ToolActivity[]
   /** 输出时间线（流式期间精确保序；历史回放为近似顺序） */
   items: TimelineItem[]
-  status: 'streaming' | 'done' | 'error' | 'aborted'
+  status: 'streaming' | 'done' | 'error' | 'aborted' | 'waiting' | 'interrupted'
   error?: string
   usage?: unknown
   createdAt: number
@@ -169,11 +179,12 @@ export function useChat(): {
   loadHistory: (sessionId: string) => Promise<void>
   /** 应答提问/授权；会以 toolResponse 续跑同一条会话 */
   respond: (
+    requestId: string,
     values: string[],
     options: Pick<SendOptions, 'sessionId' | 'model' | 'workspacePaths'> &
       Partial<Pick<SendOptions, 'thinkingMode' | 'subagentModel' | 'utilityModel'>>
   ) => Promise<void>
-  abort: () => void
+  abort: () => Promise<void>
   /** 清空当前会话；传入 sessionId 时同步删除引擎侧历史；失败时抛错且不清理界面 */
   clear: (sessionId?: string) => Promise<void>
   /** 删除一整轮对话（引擎侧 + 界面） */
@@ -272,6 +283,36 @@ export function useChat(): {
   const activeSessionRef = useRef<string | null>(null)
   /** Viewing a session outlives its parent stream; child results must still reach its dispatch card. */
   const viewSessionRef = useRef<string | null>(null)
+  const rootRunsRef = useRef(new Map<string, RootRun>())
+  const activeRunIdRef = useRef<string | null>(null)
+  const optimisticIdsRef = useRef<{ userId?: string; assistantId?: string }>({})
+  const answeringRef = useRef(new Set<string>())
+  const historyRequestRef = useRef(0)
+  const consumedEventIdRef = useRef<string | null>(null)
+  const recoveryAttemptsRef = useRef(0)
+  const recoverRef = useRef<(sessionId: string) => Promise<boolean>>(async () => false)
+  const selectView = useCallback((sessionId: string): void => {
+    if (viewSessionRef.current === sessionId) return
+    const oldStream = activeStreamRef.current
+    viewSessionRef.current = sessionId
+    historyRequestRef.current++
+    consumedEventIdRef.current = null
+    recoveryAttemptsRef.current = 0
+    activeStreamRef.current = null
+    activeSessionRef.current = null
+    activeRunIdRef.current = null
+    optimisticIdsRef.current = {}
+    rootRunsRef.current.clear()
+    answeringRef.current.clear()
+    pendingPatchesRef.current = []
+    if (throttleTimerRef.current) clearTimeout(throttleTimerRef.current)
+    throttleTimerRef.current = null
+    setStreaming(false)
+    setMessages([])
+    setTodos([])
+    // Detach only this client. The server owns the old run's eventual outcome.
+    if (oldStream) void engine.abortStream(oldStream)
+  }, [])
 
   /**
    * 连续发送队列：流式进行中用户继续发的消息先进队列，
@@ -356,6 +397,10 @@ export function useChat(): {
     }
     const timer = setInterval(reconcile, 2500)
     const off = engine.onStreamEvent((event: StreamEvent) => {
+      if (event.streamId === activeStreamRef.current) {
+        if (!acceptEventId(consumedEventIdRef.current, event.eventId)) return
+        if (event.eventId) { consumedEventIdRef.current = event.eventId; recoveryAttemptsRef.current = 0 }
+      }
       if (event.type === 'payload') {
         if (event.payload.subagentEvent) {
           ingestSubagentEvent(event.payload.subagentEvent)
@@ -365,10 +410,7 @@ export function useChat(): {
         if (result) {
           const normalized = normalizeTool(result)
           if (normalized.subagent) ingestSubagentRun(normalized.subagent)
-          if (normalized.id && event.streamId !== activeStreamRef.current) {
-            setMessages((prev) => applyToolResult(prev, result))
-            return
-          }
+          // Child snapshots carry their own session ownership; ordinary results require the active stream below.
         }
       }
       // 只处理当前这条流，忽略历史流的迟到事件
@@ -377,25 +419,63 @@ export function useChat(): {
     })
     return () => { off(); offSubagents(); clearInterval(timer) }
 
+    function recover(sessionId: string): void {
+      if (++recoveryAttemptsRef.current <= 3) { void recoverRef.current(sessionId); return }
+      setMessages(previous => patchLastAssistant(previous, message => finishTransport(message, '连接多次中断，请重新打开此会话恢复')))
+    }
+
     function applyEvent(event: StreamEvent): void {
+      if (event.type === 'snapshot-required' || (event.type === 'payload' && (event.payload as { code?: string }).code === 'snapshot_required')) {
+        const sessionId = activeSessionRef.current
+        const previousStream = activeStreamRef.current
+        activeStreamRef.current = null
+        if (previousStream) void engine.abortStream(previousStream)
+        setStreaming(false)
+        if (sessionId && viewSessionRef.current === sessionId) recover(sessionId)
+        return
+      }
       if (event.type === 'done' || event.type === 'error') {
         // 终态是关键帧：先立即 flush 掉攒着的流式 patch，再落终态 ——
         // 否则最后一波正文会晚 80ms 出现在「已完成」的消息上
         flushStreamPatches()
-        setMessages((prev) =>
-          patchLastAssistant(prev, (msg) => ({
-            ...msg,
-            ...(event.type === 'done'
-              ? { status: msg.status === 'error' ? 'error' as const : 'done' as const }
-              : { status: 'error' as const, error: event.message }),
-            endedAt: msg.endedAt ?? Date.now()
-          }))
-        )
+        setMessages((prev) => patchLastAssistant(prev, (msg) => finishTransport(msg, event.type === 'error' ? event.message : undefined)))
+        const run = activeRunIdRef.current ? rootRunsRef.current.get(activeRunIdRef.current) : undefined
         setStreaming(false)
         activeStreamRef.current = null
+        answeringRef.current.clear()
         reconcile()
-        // 连续发送：当前流结束后自动发出队列中的下一条
-        void drainQueueRef.current()
+        if (run?.status === 'succeeded') void drainQueueRef.current()
+        else if (event.type === 'error' && run?.status === 'running' && activeSessionRef.current === viewSessionRef.current) {
+          const sessionId = activeSessionRef.current
+          if (sessionId) recover(sessionId)
+        }
+        return
+      }
+
+      const run = normalizeRootRun(event.payload.run)
+      if (run && run.sessionId === activeSessionRef.current) {
+        flushStreamPatches()
+        const merged = mergeRootRun(rootRunsRef.current.get(run.runId), run)
+        rootRunsRef.current.set(run.runId, merged)
+        activeRunIdRef.current = run.runId
+        const optimistic = { ...optimisticIdsRef.current }
+        setMessages((prev) => applyRootRun(prev, merged, optimistic))
+        return
+      }
+      if (event.payload.userMsgId || event.payload.assistantMsgId) {
+        const ids = { ...optimisticIdsRef.current }
+        const activeRunId = activeRunIdRef.current
+        setMessages((prev) => prev.map(message => {
+          if (event.payload.userMsgId && message.id === ids.userId) return { ...message, id: event.payload.userMsgId }
+          if (event.payload.assistantMsgId && message.role === 'assistant' && (message.id === ids.assistantId || message.runId === activeRunId)) return { ...message, id: event.payload.assistantMsgId }
+          return message
+        }))
+        // React may apply these queued updaters after subsequent SSE frames. Never mutate a captured ID map.
+        optimisticIdsRef.current = {
+          ...ids,
+          ...(event.payload.userMsgId ? { userId: event.payload.userMsgId } : {}),
+          ...(event.payload.assistantMsgId ? { assistantId: event.payload.assistantMsgId } : {})
+        }
         return
       }
 
@@ -407,11 +487,12 @@ export function useChat(): {
       }
 
       const payload = event.payload
+      const ownerRunId = activeRunIdRef.current ?? undefined
       // 流式数据帧走节流队列：高频 content/thinking delta 攒 80ms 合并一次渲染
       scheduleStreamPatch((prev) => {
         const result = payload.toolEnd ?? payload.toolResult
         // Approval frames can also carry tool results; preserve their pending interaction first.
-        const updated = result && !normalizePending(payload) ? applyToolResult(prev, result) : prev
+        const updated = result && !normalizePending(payload) ? applyToolResult(prev, result, ownerRunId) : prev
         if (updated !== prev) return attachSubagentRuns(updated, getSubagentRuns(viewSessionRef.current))
         return attachSubagentRuns(patchLastAssistant(prev, (msg) => ({
           // 首个数据帧即本轮真实起点：起流到首帧之间的建连耗时不计入使用时间
@@ -426,6 +507,8 @@ export function useChat(): {
   const runStream = useCallback(async (body: Record<string, unknown>) => {
     const streamId = newId()
     activeStreamRef.current = streamId
+    consumedEventIdRef.current = null
+    recoveryAttemptsRef.current = 0
     activeSessionRef.current = typeof body.sessionId === 'string' ? body.sessionId : null
     viewSessionRef.current = activeSessionRef.current
     await engine.startStream({ streamId, path: '/chat', body })
@@ -578,6 +661,8 @@ export function useChat(): {
         ...(options.model ? { modelId: options.model } : {})
       }
 
+      activeRunIdRef.current = null
+      optimisticIdsRef.current = { userId: userMessage.id, assistantId: assistantMessage.id }
       setMessages((prev) => [...prev, userMessage, assistantMessage])
       setStreaming(true)
 
@@ -618,145 +703,105 @@ export function useChat(): {
    * 流式进行中不回放（会覆盖正在生成的消息）；拉取失败静默处理 ——
    * 启动时引擎可能尚未就绪，等下一次会话变化仍有机会。
    */
-  const loadHistory = useCallback(async (targetSessionId: string) => {
-    if (!targetSessionId || activeStreamRef.current) return
-    // 切到另一个会话：清空上一个会话残留的 todo 清单
-    // （正在恢复的流会随后续 todo 帧重新填充）
-    if (viewSessionRef.current !== targetSessionId) {
-      viewSessionRef.current = targetSessionId
-      setTodos([])
-    }
+  const restoreSession = useCallback(async (sessionId: string): Promise<ChatRecoverySnapshot | null> => {
+    if (!sessionId) return null
+    selectView(sessionId)
+    if (activeStreamRef.current) return null
+    const generation = ++historyRequestRef.current
     try {
       const [result] = await Promise.all([
-        engine.request<EngineHistoryRow[]>({
-          method: 'GET', path: '/conversation/history', query: { sessionId: targetSessionId }
-        }),
-        // Older engines do not expose runs. Their transcripts remain readable with unknown child status.
-        refreshSubagentRuns(targetSessionId).catch(() => {})
+        engine.request<ChatRecoverySnapshot>({ method: 'GET', path: '/chat/snapshot', query: { sessionId } }),
+        refreshSubagentRuns(sessionId).catch(() => {})
       ])
-      if (!result.ok || !Array.isArray(result.data)) return
-      // 等待期间用户可能已经发起了新流：历史只该落到静止的界面上
-      if (activeStreamRef.current || viewSessionRef.current !== targetSessionId) return
-      const replayed = replayMessages(result.data)
-      for (const message of replayed) for (const tool of message.tools) {
+      if (!result.ok || !result.data || result.data.schemaVersion !== 1 || result.data.sessionId !== sessionId) return null
+      if (activeStreamRef.current || viewSessionRef.current !== sessionId || generation !== historyRequestRef.current) return null
+      const snapshot = result.data
+      const restored = restoreChatSnapshot(snapshot)
+      rootRunsRef.current.clear()
+      for (const run of snapshot.runs) rootRunsRef.current.set(run.runId, run)
+      if (snapshot.run) rootRunsRef.current.set(snapshot.run.runId, snapshot.run)
+      activeRunIdRef.current = snapshot.run?.runId ?? null
+      consumedEventIdRef.current = snapshot.eventId
+      optimisticIdsRef.current = {}
+      for (const message of restored.messages) for (const tool of message.tools) {
         if (tool.subagent) ingestSubagentRun(tool.subagent)
       }
-      setMessages(attachSubagentRuns(replayed, getSubagentRuns(targetSessionId), true))
-    } catch {
-      /* 静默：引擎未就绪 / 网络失败时保持当前界面 */
-    }
-  }, [])
+      setMessages(attachSubagentRuns(restored.messages, getSubagentRuns(sessionId), true))
+      setTodos(restored.todos)
+      return snapshot
+    } catch { return null }
+  }, [selectView])
 
-  /**
-   * 恢复断开的流（刷新页面 / 切回会话后调用）。
-   *
-   * 引擎侧对断连有 15 秒宽限期，宽限期内流仍在跑；这里先回放历史补齐
-   * 断开期间的内容，再用 lastEventId 挂到 /chat/stream 续传后续增量。
-   * streamId 用固定规则 `resume-<sessionId>`：onStreamEvent 的过滤条件
-   * 天然放行，且同一会话重复恢复时主进程会先 abort 旧的同名流。
-   */
+  const loadHistory = useCallback(async (sessionId: string): Promise<void> => {
+    await restoreSession(sessionId)
+  }, [restoreSession])
+
+  /** Snapshot and watermark describe the same state; subscribe only after replacing the current turn. */
   const resumeStream = useCallback(async (sessionId: string): Promise<boolean> => {
-    if (!sessionId || activeStreamRef.current) return false
-    const status = await engine.request<{ running?: boolean; lastEventId?: string }>({
-      method: 'GET',
-      path: '/chat/status',
-      query: { sessionId }
-    })
-    if (!status.ok || !status.data?.running) return false
-
-    // 先回放历史（含断开期间已落库的内容），再挂流
-    await loadHistory(sessionId)
-    if (activeStreamRef.current) return false // 回放期间用户发起了新流，不抢占
-
-    const streamId = `resume-${sessionId}`
+    const snapshot = await restoreSession(sessionId)
+    if (!snapshot || activeStreamRef.current || viewSessionRef.current !== sessionId ||
+      snapshot.source !== 'live' || snapshot.finished || !snapshot.eventId) return false
+    const streamId = 'resume-' + newId()
     activeStreamRef.current = streamId
     activeSessionRef.current = sessionId
-    setMessages((prev) =>
-      patchLastAssistant(prev, (msg) => ({ ...msg, status: 'streaming' as const, endedAt: undefined }))
-    )
     setStreaming(true)
-    await engine.startStream({
-      streamId,
-      path: '/chat/stream',
-      method: 'GET',
-      query: status.data.lastEventId ? { sessionId, lastEventId: status.data.lastEventId } : { sessionId },
-      body: undefined
-    })
+    await engine.startStream({ streamId, path: '/chat/stream', method: 'GET',
+      query: { sessionId, lastEventId: snapshot.eventId }, body: undefined })
     return true
-  }, [loadHistory])
+  }, [restoreSession])
+  useEffect(() => { recoverRef.current = resumeStream }, [resumeStream])
 
   /**
    * 应答提问/授权。
    *
    * 引擎没有专用端点，唯一方式是再发一次 /chat 带 toolResponse；
-   * 引擎会据此继续同一条会话（授权通过时它把该命令写入会话白名单，
-   * 并让模型用相同参数重新调用工具）。
+   * 引擎按持久化 requestId 恢复原运行；批准后执行保存的参数，重复应答不重复执行。
    */
   const respond = useCallback(
     async (
+      requestId: string,
       values: string[],
       options: Pick<SendOptions, 'sessionId' | 'model' | 'workspacePaths'> &
         Partial<Pick<SendOptions, 'thinkingMode' | 'subagentModel' | 'utilityModel'>>
     ) => {
-      // 取最后一条「有 pending 且未应答」的助手消息
-      const target = [...messages]
-        .reverse()
-        .find((message) => message.role === 'assistant' && message.pending && !message.answered)
-      const pending = target?.pending
-      if (!target || !pending) return
-
-      const answeredLabel = values.join('，')
-      setMessages((prev) =>
-        prev.map((message) =>
-          message.id === target.id
-            ? { ...message, answered: answeredLabel, status: 'streaming', error: undefined }
-            : message
-        )
-      )
+      if (activeStreamRef.current || answeringRef.current.has(requestId)) return
+      const target = messages.find(message => message.interactions?.some(item => item.requestId === requestId && item.status === 'pending'))
+      const pending = target?.interactions?.find(item => item.requestId === requestId && item.status === 'pending')
+      if (!target?.run || !pending?.runId || target.run.sessionId !== options.sessionId) throw new Error('待应答请求已变化，请重新加载会话')
+      answeringRef.current.add(requestId)
+      activeRunIdRef.current = target.runId ?? null
+      optimisticIdsRef.current = { assistantId: target.id }
       setStreaming(true)
-
-      // 必须沿用同一轮的 model 与 workspacePaths：不带的话引擎会回退到默认模型，
-      // 造成同一会话中途换模型；workspacePaths 丢失则 Agent 会切回沙箱目录
-      await runStream({
-        sessionId: options.sessionId || undefined,
-        model: options.model || undefined,
-        workspacePaths: options.workspacePaths?.length ? options.workspacePaths : undefined,
-        thinkingMode: options.thinkingMode,
-        subagentModel: options.subagentModel || undefined,
-        utilityModel: options.utilityModel || undefined,
-        toolResponse: buildToolResponse(pending, values)
-      })
-    },
-    [messages, runStream]
+      try {
+        // The engine restores the original model/workspace and acknowledges the request before UI marks it answered.
+        await runStream({ sessionId: options.sessionId, runId: target.runId, toolResponse: buildToolResponse(pending, values) })
+      } catch (error) {
+        answeringRef.current.delete(requestId)
+        setStreaming(false)
+        throw error
+      }
+    }, [messages, runStream]
   )
 
-  const abort = useCallback(() => {
+  const abort = useCallback(async (): Promise<void> => {
     const streamId = activeStreamRef.current
-    if (!streamId) return
-    void engine.abortStream(streamId)
-    // 只断开 SSE 是不够的：引擎把客户端断连当作「可能重连」，会进入 15 秒宽限期
-    // 才真正 abort，工具在这期间照跑 —— 表现为「点了停止后端还在运行」。
-    // 这里再显式调一次 /chat/cancel，让引擎立刻停。
     const sessionId = activeSessionRef.current
-    if (sessionId) {
-      void engine.request({ method: 'POST', path: '/chat/cancel', body: { sessionId } })
-    }
-    // 与 done/error 同理：先 flush 攒着的流式 patch 再落终态，最后一段输出不延迟
-    flushStreamPatches()
-    setMessages((prev) =>
-      patchLastAssistant(prev, (msg) => ({
-        ...msg,
-        status: 'aborted',
-        error: '已停止',
-        endedAt: msg.endedAt ?? Date.now()
-      }))
-    )
-    setStreaming(false)
-    activeStreamRef.current = null
-    activeSessionRef.current = null
-    // 用户主动停止：排队中的消息不再自动发出（保留在队列里由用户决定去留）
+    if (!streamId || !sessionId) return
     syncQueue([])
-  }, [syncQueue, flushStreamPatches])
+    try {
+      // Cancellation is an engine operation. Detaching first would leave tools executing during recovery.
+      await engine.requestOrThrow({ method: 'POST', path: '/chat/cancel', body: { sessionId } })
+      await engine.abortStream(streamId)
+      if (activeStreamRef.current === streamId) activeStreamRef.current = null
+      if (viewSessionRef.current !== sessionId) return
+      flushStreamPatches()
+      setStreaming(false)
+      await loadHistory(sessionId)
+    } catch (error) {
+      if (viewSessionRef.current === sessionId) setMessages(previous => patchLastAssistant(previous,
+        message => ({ ...message, error: error instanceof Error ? error.message : String(error) })))
+    }
+  }, [syncQueue, flushStreamPatches, loadHistory])
 
   /**
    * 清空当前会话。
@@ -789,8 +834,7 @@ export function useChat(): {
    * 把界面消息定位到引擎历史行。
    *
    * 界面里只有「历史回放」的消息带引擎 message_id；刚发出去的实时消息
-   * id 是前端随机 UUID。因此先按 id 匹配，匹配不到再按「角色 + 正文」
-   * 兜底 —— 实时消息刚落库，内容必然一致。
+   * id 在 run 首帧回填为引擎 ID。只允许精确 ID，不能按正文猜测轮次。
    */
   const resolveEngineRow = useCallback(
     async (sessionId: string, message: ChatMessage): Promise<EngineHistoryRow | null> => {
@@ -801,11 +845,7 @@ export function useChat(): {
       })
       if (!result.ok || !Array.isArray(result.data)) return null
       const rows = result.data
-      return (
-        rows.find((row) => row.id === message.id) ??
-        rows.find((row) => row.role === message.role && row.content === message.content) ??
-        null
-      )
+      return rows.find((row) => row.id === message.id) ?? null
     },
     []
   )
@@ -815,10 +855,11 @@ export function useChat(): {
     async (sessionId: string, message: ChatMessage): Promise<void> => {
       if (activeStreamRef.current) return
       const row = await resolveEngineRow(sessionId, message)
-      if (!row?.conversationId) throw new Error('未能定位该轮对话的引擎记录')
+      const turnId = message.conversationId ?? row?.conversationId
+      if (!row || !turnId) throw new Error('未能定位该轮对话的引擎记录，请重新加载会话')
       const result = await engine.request({
         method: 'DELETE',
-        path: `/conversation/turns/${row.conversationId}`,
+        path: `/conversation/turns/${encodeURIComponent(turnId)}`,
         query: { sessionId }
       })
       if (!result.ok) throw new Error(result.message || '引擎侧删除失败')
@@ -836,7 +877,8 @@ export function useChat(): {
     async (userMessage: ChatMessage, options: SendOptions): Promise<void> => {
       if (activeStreamRef.current) return
       const row = await resolveEngineRow(options.sessionId, userMessage)
-      if (row?.id) {
+      if (!row?.id) throw new Error('未能定位该消息的稳定记录，请重新加载会话')
+      if (row.id) {
         const result = await engine.request({
           method: 'POST',
           path: '/conversation/truncate',
@@ -844,6 +886,7 @@ export function useChat(): {
         })
         if (!result.ok) throw new Error(result.message || '引擎侧截断失败')
       }
+      if (viewSessionRef.current !== options.sessionId) return
       setMessages((prev) => {
         const index = prev.findIndex((m) => m.id === userMessage.id)
         return index >= 0 ? prev.slice(0, index) : prev
@@ -864,54 +907,9 @@ export function useChat(): {
   const revertFrom = useCallback(
     async (sessionId: string, userMessage: ChatMessage): Promise<void> => {
       if (activeStreamRef.current) throw new Error('会话运行中，请先停止再回退')
-      const rows = await (async (): Promise<EngineHistoryRow[]> => {
-        const result = await engine.request<EngineHistoryRow[]>({
-          method: 'GET',
-          path: '/conversation/history',
-          query: { sessionId }
-        })
-        if (!result.ok || !Array.isArray(result.data)) throw new Error('读取会话历史失败')
-        return result.data
-      })()
-      // 分界时间：该用户消息（含）之前最近一条记录的时间戳；
-      // 引擎记录时间晚于消息展示时间，这里取分界前 1 秒容钟表误差
-      const index = rows.findIndex((row) => row.id === userMessage.id)
-      const boundary = (() => {
-        if (index > 0) return Number(rows[index - 1].createdAt) || 0
-        const fallback = rows
-          .filter((row) => Number(row.createdAt) < Number(userMessage.createdAt))
-          .map((row) => Number(row.createdAt))
-        return fallback.length ? Math.max(...fallback) : 0
-      })() - 1000
-
-      // 恢复该分界之后的所有改动（含 kept）；已 reverted 的跳过
-      const changes = await engine.request<Array<{ id: string; status: string; truncated: boolean }>>({
-        method: 'GET',
-        path: '/changes',
-        query: { sessionId, createdAfter: String(boundary) }
-      })
-      if (changes.ok && Array.isArray(changes.data)) {
-        for (const change of changes.data) {
-          if (change.status === 'reverted' || change.truncated) continue
-          const r = await engine.request({
-            method: 'POST',
-            path: `/changes/${change.id}/revert`,
-            body: {}
-          })
-          if (!r.ok) throw new Error(`文件回退失败（${change.id}）：${r.message || 'unknown'}`)
-        }
-      }
-
-      // 截断对话：定位该用户消息在引擎侧的行，删除它及其后所有历史
-      const row = rows.find((r) => r.id === userMessage.id) ?? null
-      if (row) {
-        const result = await engine.request({
-          method: 'POST',
-          path: '/conversation/truncate',
-          body: { sessionId, messageId: row.id }
-        })
-        if (!result.ok) throw new Error(result.message || '引擎侧截断失败')
-      }
+      await revertConversationFrom(engine.requestOrThrow, sessionId, userMessage)
+      // A slow rollback may finish after navigation. Do not remove another session's messages.
+      if (viewSessionRef.current !== sessionId) return
       setMessages((prev) => {
         const i = prev.findIndex((m) => m.id === userMessage.id)
         return i >= 0 ? prev.slice(0, i) : prev
@@ -960,156 +958,4 @@ function patchLastAssistant(
     }
   }
   return messages
-}
-
-/**
- * 往时间线追加一段文本输出：与上一个条目同类则合并（流式增量帧），否则新开。
- * 合并只发生在「连续」时 —— 思考 → 工具 → 再思考 会产生两个思考条目，
- * 这正是渲染层恢复穿插顺序所依据的信息。
- */
-function appendTimeline(items: TimelineItem[], kind: 'thinking' | 'content', text: string): void {
-  const last = items[items.length - 1]
-  if (last && last.kind === kind) {
-    // 浅拷贝的数组与上一帧共享条目对象：合并时必须换出新对象，不能原地改
-    items[items.length - 1] = { kind, text: last.text + text }
-  } else {
-    items.push({ kind, text })
-  }
-}
-
-function reducePayload(message: ChatMessage, payload: ChatSsePayload): ChatMessage {
-  const payloadError = (payload as { error?: unknown }).error
-  if (typeof payloadError === 'string' && payloadError) {
-    return {
-      ...message,
-      status: 'error',
-      error: payloadError,
-      endedAt: message.endedAt ?? Date.now()
-    }
-  }
-
-  if (typeof payload.content === 'string') {
-    const items = [...message.items]
-    appendTimeline(items, 'content', payload.content)
-    return { ...message, content: message.content + payload.content, items }
-  }
-
-  if (typeof payload.thinking === 'string') {
-    const items = [...message.items]
-    appendTimeline(items, 'thinking', payload.thinking)
-    return { ...message, thinking: message.thinking + payload.thinking, items }
-  }
-
-  if (payload.usage) {
-    return { ...message, usage: payload.usage }
-  }
-
-  // 交互帧优先于工具帧判断：授权场景会同时携带 toolStart/toolEnd，
-  // 若先走工具分支就不会生成待应答项，UI 又会卡住
-  const pending = normalizePending(payload)
-  if (pending) {
-    const merged = mergePending(message.pending, pending)
-    const sameInteraction = message.pending?.toolCallId === merged.toolCallId
-    const items = [...message.items]
-    if (!sameInteraction) items.push({ kind: 'interaction' })
-    return {
-      ...message,
-      pending: merged,
-      items,
-      // 换了新的交互时清掉上一次的应答回显
-      answered: sameInteraction ? message.answered : undefined
-    }
-  }
-
-  const toolFrame = pickToolFrame(payload)
-
-  // 文件改动帧：把改动记录挂到对应的工具条目上（write_file/delete_file 的 diff 卡片）
-  const fileChange = payload.fileChange
-  if (fileChange?.toolCallId) {
-    const tools = [...message.tools]
-    const index = tools.findIndex((tool) => tool.id === fileChange.toolCallId)
-    if (index >= 0) {
-      tools[index] = { ...tools[index], change: fileChange }
-      return { ...message, tools }
-    }
-  }
-
-  if (toolFrame) {
-    const [kind, raw] = toolFrame
-    const normalized = normalizeTool(raw)
-    const tools = [...message.tools]
-    const index = normalized.id ? tools.findIndex((tool) => tool.id === normalized.id) : -1
-    // ask_user 的呈现交给交互卡片，工具条目只做占位（保持 id 可被后续帧命中）
-    const hidden = normalized.name === 'ask_user' ? { hidden: true } : {}
-
-    if (kind === 'start') {
-      const items = [...message.items]
-      if (index >= 0) {
-        tools[index] = { ...tools[index], ...normalized, state: 'running', ...hidden }
-      } else {
-        const id = normalized.id || newId()
-        tools.push({
-          id,
-          name: normalized.name || '未命名工具',
-          args: normalized.args || '',
-          result: '',
-          state: 'running',
-          startedAt: Date.now(),
-          ...hidden
-        })
-        items.push({ kind: 'tool', id })
-      }
-      return { ...message, tools, items }
-    }
-
-    // args 帧可能先于 start 帧到达（引擎侧顺序不保证），此时先占位。
-    // 引擎的 __tool_args__ 携带的是流式**增量片段**，必须追加：覆盖会让参数
-    // 只剩最后一个片段（曾出现参数只显示一个 "}" 的卡片）。
-    // 完整参数随后会由 __tool_start__/__tool_call__ 整串覆盖，不会重复累积。
-    if (kind === 'args') {
-      if (index >= 0) {
-        tools[index] = { ...tools[index], args: `${tools[index].args}${normalized.args ?? ''}` }
-        return { ...message, tools }
-      }
-      // args 先于 start：此刻就是该工具真实开始的时间点，占位工具同步进时间线
-      const id = normalized.id || newId()
-      tools.push({
-        id,
-        name: normalized.name || '未命名工具',
-        args: normalized.args || '',
-        result: '',
-        state: 'running',
-        startedAt: Date.now(),
-        ...hidden
-      })
-      return { ...message, tools, items: [...message.items, { kind: 'tool', id }] }
-    }
-
-    // end / result
-    if (index >= 0) {
-      tools[index] = finishTool(tools[index], raw)
-      return { ...message, tools }
-    }
-    // 只有孤立的 end/result 帧：此刻才知道这个工具存在，补进时间线末尾
-    const id = normalized.id || newId()
-    tools.push(finishTool({
-      id,
-      name: normalized.name || '未命名工具',
-      args: normalized.args || '',
-      result: normalized.result || '',
-      state: 'unknown'
-    }, raw))
-    return { ...message, tools, items: [...message.items, { kind: 'tool', id }] }
-  }
-
-  return message
-}
-
-function pickToolFrame(payload: ChatSsePayload): ['start' | 'args' | 'end', unknown] | null {
-  if (payload.toolStart) return ['start', payload.toolStart]
-  if (payload.toolCall) return ['start', payload.toolCall]
-  if (payload.toolArgs) return ['args', payload.toolArgs]
-  if (payload.toolEnd) return ['end', payload.toolEnd]
-  if (payload.toolResult) return ['end', payload.toolResult]
-  return null
 }

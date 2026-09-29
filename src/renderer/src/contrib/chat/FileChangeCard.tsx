@@ -1,5 +1,6 @@
-import { useMemo, useState, type JSX } from 'react'
+import { useMemo, useState, useSyncExternalStore, type JSX } from 'react'
 import type { EngineFileChange } from '@shared/ipc'
+import { getRevertOutcome, revertStatusLabel, subscribeReverts } from '@renderer/core/engine/change-revert'
 import { Icon } from '@renderer/workbench/icons'
 import { openFileFromChat } from './open-file'
 import {
@@ -22,25 +23,27 @@ export function FileChangeCard({
   state
 }: {
   change: EngineFileChange
-  state: 'running' | 'done' | 'error' | 'unknown' | 'cancelled'
+  state: 'running' | 'done' | 'error' | 'unknown' | 'cancelled' | 'waiting' | 'interrupted'
 }): JSX.Element {
   /** 「还有 N 行」展开更多：只影响 body 内的行数，不影响卡片折叠 */
   const [showAllRows, setShowAllRows] = useState(false)
   /** 卡片折叠：默认展开（内容量大、是主要阅读对象），用户可点标题收起 */
   const [collapsed, setCollapsed] = useState(false)
   const failed = state === 'error'
+  const outcome = useSyncExternalStore(subscribeReverts, () => getRevertOutcome(change.id))
+  const rollbackLabel = outcome ? revertStatusLabel[outcome.status] : change.status === 'reverted' ? '已撤回' : null
 
   const rows = useMemo(() => {
     if (change.truncated) return []
     if (change.kind === 'delete') return diffForDeletedFile(change.oldContent ?? '')
-    if (change.isNew) return diffForNewFile(change.newContent ?? '')
+    if ((change.isNew ?? (!change.truncated && change.oldContent === null))) return diffForNewFile(change.newContent ?? '')
     if (change.oldContent === null || change.newContent === null) return []
     return computeLineDiff(change.oldContent, change.newContent)
   }, [change])
 
   const stats = useMemo(() => diffStats(rows), [rows])
   const displayPath = change.displayPath || change.path
-  const title = change.kind === 'delete' ? '删除文件' : change.isNew ? '新建文件' : '编辑文件'
+  const title = change.kind === 'delete' ? '删除文件' : (change.isNew ?? (!change.truncated && change.oldContent === null)) ? '新建文件' : '编辑文件'
 
   // 路径太长时只展示尾部两段（与参考样式一致），悬停看全路径
   const shortPath = useMemo(() => {
@@ -70,6 +73,7 @@ export function FileChangeCard({
           <Icon name={failed ? 'close' : 'check'} size={16} />
         </span>
         <span className="diff-card__title">{title}</span>
+        {rollbackLabel ? <span className="diff-card__hint" title={outcome?.message}>{rollbackLabel}</span> : null}
         <button
           type="button"
           className="diff-card__path diff-card__path--link"

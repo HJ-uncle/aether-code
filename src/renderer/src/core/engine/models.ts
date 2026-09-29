@@ -28,6 +28,16 @@ export interface ModelCapabilities {
   contextWindow?: number
 }
 
+export type CapabilityOverridePatch = {
+  [Key in keyof ModelCapabilities]?: ModelCapabilities[Key] | null
+}
+export type UpdateModelInput = Partial<
+  Pick<EngineModel, 'isEnabled' | 'displayName' | 'baseUrl'>
+> & {
+  apiKey?: string
+  capabilityOverrides?: CapabilityOverridePatch | null
+}
+
 export interface EngineModel {
   id: string
   tenantId: string
@@ -39,7 +49,10 @@ export interface EngineModel {
   displayName?: string
   isEnabled: boolean
   version?: string
+  /** Effective read alias used by chat consumers. */
   capabilities?: ModelCapabilities | null
+  resolvedCapabilities?: ModelCapabilities
+  capabilityOverrides?: ModelCapabilities | null
   createdAt: number
   updatedAt: number
 }
@@ -58,7 +71,7 @@ export interface CreateModelInput {
   apiKey: string
   baseUrl: string
   displayName?: string
-  capabilities?: ModelCapabilities
+  capabilityOverrides?: ModelCapabilities
 }
 
 export interface TestResult {
@@ -125,15 +138,10 @@ export async function createModel(input: CreateModelInput): Promise<EngineModel>
   return created
 }
 
-export async function updateModel(
-  id: string,
-  patch: Partial<Pick<EngineModel, 'isEnabled' | 'displayName' | 'baseUrl'>> & {
-    apiKey?: string
-    capabilities?: ModelCapabilities | null
-  }
-): Promise<void> {
-  const result = await request({ method: 'PUT', path: `/models/${id}`, body: patch })
-  if (!result.ok) throw new Error(result.message || '更新模型失败')
+export async function updateModel(id: string, patch: UpdateModelInput): Promise<EngineModel> {
+  const result = await request<EngineModel>({ method: 'PUT', path: `/models/${id}`, body: patch })
+  if (!result.ok || !result.data) throw new Error(result.message || '更新模型失败')
+  return result.data
 }
 
 export async function deleteModel(id: string): Promise<void> {

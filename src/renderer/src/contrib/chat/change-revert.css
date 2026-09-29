@@ -1,0 +1,24 @@
+.changes-panel__report {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.changes-panel__report ul {
+  max-height: 180px;
+  overflow: auto;
+  padding-left: 18px;
+  margin: 6px 0;
+}
+
+.changes-panel__report li + li {
+  margin-top: 6px;
+}
+
+.changes-panel__footer[hidden],
+.session-tray[hidden],
+.session-tray__body[hidden] {
+  display: none;
+}

@@ -83,6 +83,7 @@ export function SessionTray({
 }): JSX.Element | null {
   const [collapsed, setCollapsed] = useState(true)
   const [changeCount, setChangeCount] = useState(0)
+  const [hasChangeReport, setHasChangeReport] = useState(false)
   const [tab, setTab] = useState<TrayTab>('changes')
   /** 正在编辑的队列项；编辑中禁用拖拽/清空/其它编辑，保证状态互斥 */
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -106,34 +107,33 @@ export function SessionTray({
   }, [queue.length])
 
   const todoActive = todos.filter((t) => t.status === 'pending' || t.status === 'in_progress')
-  const visible = changeCount > 0 || todos.length > 0 || queue.length > 0
+  const hasChanges = changeCount > 0 || hasChangeReport
+  const visible = hasChanges || todos.length > 0 || queue.length > 0
 
   /** 当前 tab 没有内容时回落到第一个有内容的 tab */
   const effectiveTab: TrayTab =
-    tab === 'changes' && changeCount === 0
+    tab === 'changes' && !hasChanges
       ? queue.length > 0
         ? 'queue'
         : 'todos'
       : tab === 'queue' && queue.length === 0
-        ? changeCount > 0
+        ? hasChanges
           ? 'changes'
           : 'todos'
         : tab === 'todos' && todos.length === 0
-          ? changeCount > 0
+          ? hasChanges
             ? 'changes'
             : 'queue'
           : tab
 
   const summary = ((): string => {
-    if (effectiveTab === 'changes') return changeCount > 0 ? `${changeCount} 个文件待确认` : ''
+    if (effectiveTab === 'changes') return changeCount > 0 ? `${changeCount} 处改动待确认` : '查看回退结果'
     if (effectiveTab === 'todos')
       return todoActive.length > 0 ? `进行中：${todoActive[0].title}` : '全部任务已完成'
     if (queue.length === 0) return ''
     if (queue.length > 1) return `${queue.length} 条消息排队中，下一条：${queuePreview(queue[0].text)}`
     return `下一条：${queuePreview(queue[0].text)}`
   })()
-
-  if (!visible) return null
 
   const pick = (next: TrayTab): void => {
     manualTabRef.current = true
@@ -157,7 +157,7 @@ export function SessionTray({
   const cancelEdit = (): void => setEditingId(null)
 
   return (
-    <div className="session-tray">
+    <div className="session-tray" hidden={!visible}>
       <div className="session-tray__bar">
         <button
           type="button"
@@ -169,7 +169,7 @@ export function SessionTray({
           <Icon name="chevron" size={16} />
         </button>
 
-        {changeCount > 0 ? (
+        {hasChanges ? (
           <button
             type="button"
             className={`session-tray__tab${effectiveTab === 'changes' ? ' is-active' : ''}`}
@@ -263,7 +263,7 @@ export function SessionTray({
 
       {/* 改动面板常挂（收起时仅隐藏）：计数上报与回合结束刷新依赖它的 effect */}
       <div className="session-tray__body" hidden={collapsed || effectiveTab !== 'changes'}>
-        <ChangesPanel sessionId={sessionId} streaming={streaming} onCountChange={setChangeCount} bare />
+        <ChangesPanel key={sessionId} sessionId={sessionId} streaming={streaming} onCountChange={setChangeCount} onReportChange={setHasChangeReport} bare />
       </div>
       {!collapsed && effectiveTab === 'todos' ? <TodoTray todos={todos} /> : null}
       {!collapsed && effectiveTab === 'queue' ? (

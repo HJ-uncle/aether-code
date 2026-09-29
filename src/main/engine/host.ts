@@ -1,31 +1,23 @@
-/**
- * 引擎宿主
- *
- * 管理引擎的完整生命周期，对外只暴露状态机 + 事件流 + 一条流式通道。
- * 上层（IPC / 主窗口）不需要知道进程是怎么拉起来的。
- *
- * 设计要点：
- *   - 所有状态变更产出不可变快照并广播，渲染层无需轮询
- *   - 引擎以 Node 身份运行：Electron 的 process.execPath 是 electron.exe，
- *     必须注入 ELECTRON_RUN_AS_NODE=1，否则会再拉起一个 Electron 实例
- *   - 记录子进程 PID，应用退出时主动回收，避免孤儿进程占着端口
- *   - ready 后持续健康检查，进程静默死亡时能及时反映到 UI
- *   - 启动前若首选端口已有健康引擎，则复用它而不是另起一个：
- *     异常退出遗留的孤儿引擎仍持有同一个 SQLite 文件，双进程同一 DB 是数据风险
- *
- * 已知限制（P0）：复用外部引擎时无法将其关闭（只断开连接）；
- * 计划在 P5 引入 PID 文件，实现遗留进程的识别与回收。
- */
+/** Main-process owner of one engine instance and its authenticated transport. */
 import { EventEmitter } from 'node:events'
-import type { ChatSsePayload, EngineSnapshot, StreamEvent } from '../../shared/ipc'
+import { randomBytes } from 'node:crypto'
+import { parseSseBlock } from './sse'
+import type { EngineSnapshot, StreamEvent } from '../../shared/ipc'
 import { getSettings } from '../settings-store'
 import { logger } from './logger'
 import { ensureEncryptionKey } from './secrets'
 import { findAvailablePort } from './sdk/port-finder'
 import { startProcess, type ProcessHandle } from './sdk/process-manager'
 import { waitUntilReady } from './sdk/readiness-probe'
-import { DEFAULT_ENGINE_VERSION, engineDataFile, resolveRuntime } from './runtime'
-import { CODE_TOOL_PROFILE_HEADERS } from './tool-profile'
+import { engineDataFile, migrateLegacyModels, resolveRuntime } from './runtime'
+import {
+  assertEngineHealth,
+  engineHeaders,
+  normalizeEnginePath,
+  parseEngineMeta,
+  remoteRequestError,
+  type EngineMeta
+} from './protocol'
 
 const PREFERRED_PORT = 12323
 const STARTUP_TIMEOUT_MS = 60_000
@@ -52,14 +44,15 @@ export class EngineHost extends EventEmitter {
     error: null,
     updatedAt: Date.now()
   }
-
   private healthTimer: ReturnType<typeof setInterval> | null = null
   private healthFailures = 0
   private starting: Promise<EngineSnapshot> | null = null
-  /** 用户主动停止时置位，用于区分「正常关闭」与「异常退出」 */
-  private stopping = false
-  /** 当前引擎是否复用自外部（不由本应用启动） */
-  private adopted = false
+  private generation = 0
+  private startupController: AbortController | null = null
+  private transportController = new AbortController()
+  private teardown: Promise<void> = Promise.resolve()
+  // Credentials never enter snapshots, logs, IPC payloads, or persisted settings.
+  private instanceToken = ''
 
   getSnapshot(): EngineSnapshot {
     return this.snapshot
@@ -75,260 +68,231 @@ export class EngineHost extends EventEmitter {
     return this.snapshot
   }
 
-  /** 引擎基地址；未就绪时为空串 */
   get baseUrl(): string {
-    return this.snapshot.baseUrl
+    return this.snapshot.phase === 'ready' ? this.snapshot.baseUrl : ''
+  }
+  get requestSignal(): AbortSignal {
+    return this.transportController.signal
+  }
+  requestHeaders(): Record<string, string> {
+    return engineHeaders(this.instanceToken)
   }
 
-  // ==================== 启动 ====================
-
   async start(mode: 'embedded' | 'remote', remoteBaseUrl = ''): Promise<EngineSnapshot> {
-    // 并发调用合并到同一次启动流程
     if (this.starting) return this.starting
-    if (this.snapshot.phase === 'ready' && this.snapshot.mode === mode) return this.snapshot
+    const normalizedRemote = remoteBaseUrl.trim().replace(/\/+$/, '')
+    if (
+      this.snapshot.phase === 'ready' &&
+      this.snapshot.mode === mode &&
+      (mode === 'embedded' || this.snapshot.baseUrl === normalizedRemote)
+    )
+      return this.snapshot
 
-    this.starting = this.doStart(mode, remoteBaseUrl).finally(() => {
-      this.starting = null
+    const generation = ++this.generation
+    this.startupController?.abort()
+    const controller = new AbortController()
+    this.startupController = controller
+    const task = this.doStart(mode, normalizedRemote, generation, controller.signal).finally(() => {
+      if (this.starting === task) this.starting = null
+      if (this.startupController === controller) this.startupController = null
     })
-    return this.starting
+    this.starting = task
+    return task
+  }
+
+  private current(generation: number, signal?: AbortSignal): boolean {
+    return generation === this.generation && !signal?.aborted
   }
 
   private async doStart(
     mode: 'embedded' | 'remote',
-    remoteBaseUrl: string
+    remoteBaseUrl: string,
+    generation: number,
+    signal: AbortSignal
   ): Promise<EngineSnapshot> {
-    await this.stop()
-
-    if (mode === 'remote') return this.startRemote(remoteBaseUrl)
-    return this.startEmbedded()
+    this.patch({
+      mode,
+      phase: 'starting',
+      baseUrl: '',
+      port: null,
+      pid: null,
+      adopted: false,
+      entryPath: null,
+      version: null,
+      dataDir: null,
+      error: null,
+      buildId: undefined,
+      protocolVersion: undefined,
+      instanceId: undefined
+    })
+    await this.releaseResources()
+    if (!this.current(generation, signal)) return this.snapshot
+    this.transportController = new AbortController()
+    try {
+      if (mode === 'remote') await this.startRemote(remoteBaseUrl, generation, signal)
+      else await this.startEmbedded(generation, signal)
+    } catch (err) {
+      if (!this.current(generation, signal)) return this.snapshot
+      await this.releaseResources()
+      if (this.current(generation, signal)) {
+        this.patch({
+          phase: 'error',
+          baseUrl: '',
+          port: null,
+          pid: null,
+          error: err instanceof Error ? err.message : String(err)
+        })
+      }
+    }
+    return this.snapshot
   }
 
-  private async startRemote(remoteBaseUrl: string): Promise<EngineSnapshot> {
-    const url = remoteBaseUrl.trim().replace(/\/+$/, '')
-    if (!url) {
-      return this.patch({ mode: 'remote', phase: 'error', error: '未配置远端引擎地址' })
+  private async startRemote(url: string, generation: number, signal: AbortSignal): Promise<void> {
+    if (!url) throw new Error('未配置远端引擎地址')
+    const parsed = new URL(url)
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+      throw new Error('远端引擎地址必须为不含凭证的 HTTP(S) 地址')
     }
-
-    try {
-      const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) })
-      if (!res.ok) throw new Error(`/health 返回 HTTP ${res.status}`)
-    } catch (err) {
-      return this.patch({
-        mode: 'remote',
-        phase: 'error',
-        baseUrl: '',
-        port: null,
-        pid: null,
-        error: `无法连接远端引擎：${err instanceof Error ? err.message : String(err)}`
-      })
-    }
-
-    logger.info(`已连接远端引擎 ${url}`)
-    this.startHealthWatch()
-    const version = await fetchEngineVersion(url)
-    return this.patch({
-      mode: 'remote',
+    const token = process.env.AETHER_IDE_REMOTE_INSTANCE_TOKEN?.trim()
+    if (!token) throw new Error('实验性远端模式需要在主进程配置 AETHER_IDE_REMOTE_INSTANCE_TOKEN')
+    this.instanceToken = token
+    const meta = await this.handshake(url, signal)
+    if (!this.current(generation, signal)) return
+    this.patch({
       phase: 'ready',
       baseUrl: url,
       port: portOf(url),
       pid: null,
       adopted: false,
       entryPath: null,
-      version,
       dataDir: null,
-      error: null
+      error: null,
+      version: meta.version,
+      buildId: meta.buildId,
+      protocolVersion: meta.protocolVersion,
+      instanceId: meta.instanceId
     })
+    this.startHealthWatch()
   }
 
-  private async startEmbedded(): Promise<EngineSnapshot> {
-    // 首选端口上若已有健康引擎，复用它而不是再起一个。
-    // 上一轮异常退出（如被强杀）会留下孤儿引擎，它仍持有同一个 SQLite 文件；
-    // 此时再起一个引擎会造成两个进程同时读写同一份 DB。
-    // 端口来自用户设置：独立 userData（如 E2E）可配不同端口实现隔离。
-    const preferredPort = getSettings().preferredPort || PREFERRED_PORT
-    const adopted = await this.tryAdoptExisting(preferredPort)
-    if (adopted) return adopted
-
+  private async startEmbedded(generation: number, signal: AbortSignal): Promise<void> {
     const runtime = resolveRuntime()
-    if (!runtime) {
-      return this.patch({
-        mode: 'embedded',
-        phase: 'error',
-        error:
-          '未找到引擎运行时。请设置 AETHER_IDE_ENGINE_ENTRY 指向引擎入口，或先安装引擎（安装包内置 / 从 CDN 下载）。'
-      })
-    }
-
+    if (!runtime)
+      throw new Error(
+        '未找到配套引擎运行时。开发时请构建同级引擎或设置 AETHER_IDE_ENGINE_ENTRY；安装包必须内置引擎。'
+      )
     this.patch({
-      mode: 'embedded',
-      phase: 'starting',
       entryPath: runtime.entryPath,
       version: runtime.version,
-      error: null
+      buildId: runtime.manifest.buildId
     })
     logger.info(`使用引擎运行时（来源：${runtime.source}）：${runtime.entryPath}`)
-
-    let encryptionKey: string
-    try {
-      const secret = ensureEncryptionKey()
-      encryptionKey = secret.key
-      if (!secret.encryptedAtRest) {
-        logger.warn('系统密钥存储不可用，引擎加密密钥以明文保存')
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      return this.patch({ phase: 'error', error: message })
-    }
-
-    const dataDir = engineDataFile(DEFAULT_ENGINE_VERSION)
-
-    let port: number
-    try {
-      port = await findAvailablePort(preferredPort)
-    } catch (err) {
-      return this.patch({
-        phase: 'error',
-        error: `未找到可用端口：${err instanceof Error ? err.message : String(err)}`
-      })
-    }
-
-    this.stopping = false
+    const secret = ensureEncryptionKey()
+    if (!secret.encryptedAtRest) logger.warn('系统密钥存储不可用，引擎加密密钥以明文保存')
+    await migrateLegacyModels(runtime, secret.key, signal)
+    if (!this.current(generation, signal)) return
+    const port = await findAvailablePort(getSettings().preferredPort || PREFERRED_PORT)
+    if (!this.current(generation, signal)) return
+    const dataDir = engineDataFile()
+    this.instanceToken = randomBytes(32).toString('hex')
     this.handle = startProcess({
       binPath: runtime.entryPath,
       port,
       dataDir,
       env: {
-        // 关键：让 electron.exe 以 Node 模式运行引擎脚本
         ELECTRON_RUN_AS_NODE: '1',
         HOST: '127.0.0.1',
-        ENCRYPTION_KEY: encryptionKey
+        ENCRYPTION_KEY: secret.key,
+        AETHER_INSTANCE_TOKEN: this.instanceToken
       },
-      onExit: (code, signal) => this.onProcessExit(code, signal)
+      onExit: (code, exitSignal) => this.onProcessExit(generation, code, exitSignal)
     })
-
     const baseUrl = `http://127.0.0.1:${port}`
-
-    try {
-      await waitUntilReady({ baseUrl, timeoutMs: STARTUP_TIMEOUT_MS })
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      await this.stop()
-      return this.patch({
-        phase: 'error',
-        baseUrl: '',
-        port: null,
-        pid: null,
-        error: `引擎启动超时或失败：${message}`
-      })
-    }
-
-    logger.info(`引擎已就绪 ${baseUrl}（pid ${this.handle?.pid ?? '未知'}）`)
-    this.startHealthWatch()
-    const version = await fetchEngineVersion(baseUrl)
-    return this.patch({
+    await waitUntilReady({ baseUrl, timeoutMs: STARTUP_TIMEOUT_MS, signal })
+    if (!this.current(generation, signal)) return
+    const meta = await this.handshake(baseUrl, signal, runtime.manifest.buildId)
+    if (!this.current(generation, signal)) return
+    this.patch({
       phase: 'ready',
       baseUrl,
       port,
       pid: this.handle?.pid ?? null,
       adopted: false,
-      version,
+      version: meta.version,
+      buildId: meta.buildId,
+      protocolVersion: meta.protocolVersion,
+      instanceId: meta.instanceId,
       dataDir,
       error: null
     })
-  }
-
-  /**
-   * 探测首选端口上是否已有可用的引擎，有则复用。
-   *
-   * 判定依据有两条，缺一不可：
-   *   1. 首选端口被占用（端口探测器会返回其它端口）
-   *   2. 该端口 /health 返回引擎标准信封且 status=ok
-   * 不满足第 2 条时说明占用者是无关程序，退回正常启动流程。
-   */
-  private async tryAdoptExisting(preferredPort: number): Promise<EngineSnapshot | null> {
-    let freePort: number
-    try {
-      freePort = await findAvailablePort(preferredPort)
-    } catch {
-      return null
-    }
-    if (freePort === preferredPort) return null
-
-    const baseUrl = `http://127.0.0.1:${preferredPort}`
-    try {
-      const res = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(3000) })
-      if (!res.ok) return null
-
-      const body = (await res.json()) as { code?: number; data?: { status?: string } }
-      if (body?.code !== 200 || body?.data?.status !== 'ok') return null
-    } catch {
-      // 端口被占用但不是引擎
-      return null
-    }
-
-    this.adopted = true
-    logger.warn(
-      `检测到 ${baseUrl} 上已有引擎在运行，将复用它。` +
-        '（常见于上次异常退出遗留的进程）该进程不由本应用启动，停止只会断开连接。'
-    )
+    logger.info(`引擎已就绪 ${baseUrl}（pid ${this.handle?.pid ?? '未知'}）`)
     this.startHealthWatch()
-    return this.patch({
-      mode: 'embedded',
-      phase: 'ready',
-      baseUrl,
-      port: preferredPort,
-      pid: null,
-      adopted: true,
-      entryPath: null,
-      version: await fetchEngineVersion(baseUrl),
-      dataDir: null,
-      error: null
-    })
   }
 
-  /** 子进程退出回调：区分我们主动停止还是意外崩溃 */
-  private onProcessExit(code: number | null, signal: string | null): void {
-    if (this.stopping) return
+  private async handshake(
+    baseUrl: string,
+    signal: AbortSignal,
+    buildId?: string
+  ): Promise<EngineMeta> {
+    const options = { signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]) }
+    const health = await fetch(`${baseUrl}/health`, options)
+    if (!health.ok) throw new Error(`/health 返回 HTTP ${health.status}`)
+    assertEngineHealth(await health.json())
+    const response = await fetch(`${baseUrl}/meta`, options)
+    if (!response.ok) throw new Error(`/meta 返回 HTTP ${response.status}`)
+    const meta = parseEngineMeta(await response.json(), buildId)
+    // Public metadata is insufficient to establish that the authenticated transport works.
+    const probe = await fetch(`${baseUrl}/api/v1/tools`, {
+      ...options,
+      headers: this.requestHeaders()
+    })
+    if (!probe.ok) throw new Error(`引擎实例认证失败（HTTP ${probe.status}）`)
+    const body = (await probe.json()) as { code?: number }
+    if (body?.code !== 200 && body?.code !== 0) throw new Error('引擎实例认证探针返回失败')
+    return meta
+  }
 
-    logger.error(`引擎进程意外退出（code=${code} signal=${signal}）`)
-    this.stopHealthWatch()
+  private onProcessExit(generation: number, code: number | null, signal: string | null): void {
+    if (!this.current(generation) || !this.handle) return
+    ++this.generation
+    this.startupController?.abort()
+    this.starting = null
     this.handle = null
-    this.patch({
-      phase: 'error',
-      baseUrl: '',
-      port: null,
-      pid: null,
-      adopted: false,
-      error: `引擎进程意外退出（code=${code ?? '-'} signal=${signal ?? '-'}）`
-    })
+    this.stopHealthWatch()
+    this.transportController.abort()
+    this.instanceToken = ''
+    const error = `引擎进程意外退出（code=${code ?? '-'} signal=${signal ?? '-'}）`
+    logger.error(error)
+    this.patch({ phase: 'error', baseUrl: '', port: null, pid: null, error })
   }
 
-  // ==================== 停止 ====================
-
-  async stop(): Promise<EngineSnapshot> {
+  /** Detach immediately, serialize owned-process cleanup, and never stop an external process. */
+  private releaseResources(): Promise<void> {
     this.stopHealthWatch()
-
-    const wasAdopted = this.adopted
-    this.adopted = false
-
+    this.transportController.abort()
+    this.instanceToken = ''
     const handle = this.handle
     this.handle = null
-
     if (handle) {
-      this.stopping = true
-      this.patch({ phase: 'stopping' })
-      try {
-        await handle.stop()
-      } catch (err) {
-        logger.warn(`停止引擎进程时出错：${err instanceof Error ? err.message : String(err)}`)
-      }
-      this.stopping = false
-    } else if (wasAdopted) {
-      // 复用自外部的引擎不归我们管，只断开连接
-      logger.info('已断开与外部引擎的连接（该进程未由本应用启动，保持运行）')
-      this.patch({ phase: 'stopping' })
+      this.teardown = this.teardown.then(async () => {
+        try {
+          await handle.stop()
+        } catch (err) {
+          logger.warn(`停止引擎进程时出错：${err instanceof Error ? err.message : String(err)}`)
+        }
+      })
     }
+    return this.teardown
+  }
 
+  async stop(): Promise<EngineSnapshot> {
+    const generation = ++this.generation
+    this.startupController?.abort()
+    this.startupController = null
+    this.starting = null
+    this.patch({ phase: 'stopping', baseUrl: '' })
+    await this.releaseResources()
+    if (!this.current(generation)) return this.snapshot
     return this.patch({
       phase: 'idle',
       baseUrl: '',
@@ -339,8 +303,6 @@ export class EngineHost extends EventEmitter {
     })
   }
 
-  // ==================== 健康监测 ====================
-
   private startHealthWatch(): void {
     this.stopHealthWatch()
     this.healthFailures = 0
@@ -350,27 +312,33 @@ export class EngineHost extends EventEmitter {
   }
 
   private stopHealthWatch(): void {
-    if (this.healthTimer) {
-      clearInterval(this.healthTimer)
-      this.healthTimer = null
-    }
+    if (this.healthTimer) clearInterval(this.healthTimer)
+    this.healthTimer = null
   }
 
   private async checkHealth(): Promise<void> {
-    const baseUrl = this.snapshot.baseUrl
+    const { baseUrl, instanceId } = this.snapshot
+    const generation = this.generation
     if (!baseUrl || this.snapshot.phase !== 'ready') return
-
     try {
-      const res = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(3000) })
-      if (!res.ok) throw new Error(String(res.status))
-      this.healthFailures = 0
+      const signal = AbortSignal.any([this.requestSignal, AbortSignal.timeout(3000)])
+      const health = await fetch(`${baseUrl}/health`, { signal })
+      if (!health.ok) throw new Error(String(health.status))
+      assertEngineHealth(await health.json())
+      const response = await fetch(`${baseUrl}/meta`, { signal })
+      if (!response.ok) throw new Error(String(response.status))
+      const meta = parseEngineMeta(await response.json(), this.snapshot.buildId ?? undefined)
+      if (meta.instanceId !== instanceId) throw new Error('引擎实例已变化')
+      if (this.current(generation)) this.healthFailures = 0
     } catch {
-      this.healthFailures++
-      if (this.healthFailures >= HEALTH_FAILURE_THRESHOLD) {
+      if (!this.current(generation) || this.snapshot.phase !== 'ready') return
+      if (++this.healthFailures >= HEALTH_FAILURE_THRESHOLD) {
         this.stopHealthWatch()
+        this.transportController.abort()
         this.patch({
           phase: 'error',
-          error: `引擎失去响应（连续 ${this.healthFailures} 次健康检查失败）`
+          baseUrl: '',
+          error: `引擎失去响应或实例已变化（连续 ${this.healthFailures} 次检查失败）`
         })
       }
     }
@@ -392,14 +360,20 @@ export class EngineHost extends EventEmitter {
     method: 'GET' | 'POST' = 'POST',
     query?: Record<string, string>
   ): Promise<void> {
-    const baseUrl = this.snapshot.baseUrl
+    const unsupported = remoteRequestError(this.snapshot.mode, method, path)
+    if (unsupported) {
+      this.emit('stream', { streamId, type: 'error', message: unsupported } satisfies StreamEvent)
+      return
+    }
+    const baseUrl = this.baseUrl
+    const requestSignal = AbortSignal.any([signal, this.requestSignal])
     if (!baseUrl) {
       this.emit('stream', { streamId, type: 'error', message: '引擎未就绪' } satisfies StreamEvent)
       return
     }
 
     try {
-      let url = `${baseUrl}${normalizePath(path)}`
+      let url = `${baseUrl}${normalizeEnginePath(path)}`
       if (query && Object.keys(query).length > 0) {
         url += `?${new URLSearchParams(query).toString()}`
       }
@@ -408,14 +382,21 @@ export class EngineHost extends EventEmitter {
         headers: {
           'Content-Type': 'application/json',
           Accept: 'text/event-stream',
-          ...CODE_TOOL_PROFILE_HEADERS
+          ...this.requestHeaders()
         },
         body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
-        signal
+        signal: requestSignal
       })
 
       if (!res.ok || !res.body) {
-        throw new Error(`SSE 请求失败：HTTP ${res.status}`)
+        const envelope = await res.json().catch(() => ({})) as { code?: number; message?: string }
+        if (res.status === 409 && envelope.code === 40902) {
+          this.emit('stream', { streamId, type: 'snapshot-required' } satisfies StreamEvent)
+          return
+        }
+        this.emit('stream', { streamId, type: 'error', status: res.status, code: envelope.code,
+          message: envelope.message || `SSE 请求失败：HTTP ${res.status}` } satisfies StreamEvent)
+        return
       }
 
       // 引擎在部分错误路径（如鉴权失败）会返回标准 JSON 信封而不是 SSE。
@@ -440,33 +421,27 @@ export class EngineHost extends EventEmitter {
 
       while (true) {
         const { done, value } = await reader.read()
+        requestSignal.throwIfAborted()
         if (done) break
         buffer += decoder.decode(value, { stream: true })
 
         // SSE 以空行分隔事件；最后一段可能不完整，留在缓冲区
-        const blocks = buffer.split('\n\n')
+        const blocks = buffer.split(/\r?\n\r?\n/)
         buffer = blocks.pop() ?? ''
 
         for (const block of blocks) {
           const parsed = parseSseBlock(block)
-          if (parsed === 'done') {
-            this.emit('stream', { streamId, type: 'done' } satisfies StreamEvent)
-            return
-          }
           if (parsed) {
-            this.emit('stream', {
-              streamId,
-              type: 'payload',
-              payload: parsed
-            } satisfies StreamEvent)
+            this.emit('stream', { streamId, ...parsed } satisfies StreamEvent)
+            if (parsed.type === 'done') return
           }
         }
       }
 
-      this.emit('stream', { streamId, type: 'done' } satisfies StreamEvent)
+      this.emit('stream', { streamId, type: 'error', message: '连接在终止帧之前结束，正在恢复会话' } satisfies StreamEvent)
     } catch (err) {
       // 用户主动中断不算错误
-      if (signal.aborted) {
+      if (requestSignal.aborted) {
         this.emit('stream', { streamId, type: 'done' } satisfies StreamEvent)
         return
       }
@@ -484,63 +459,9 @@ export class EngineHost extends EventEmitter {
   }
 }
 
-// ==================== 工具函数 ====================
-
 function portOf(baseUrl: string): number | null {
-  try {
-    const parsed = new URL(baseUrl)
-    return parsed.port ? Number(parsed.port) : null
-  } catch {
-    return null
-  }
-}
-
-/** 拉取引擎版本（/meta，白名单免鉴权）。失败不阻塞连接，仅版本显示为 null */
-async function fetchEngineVersion(baseUrl: string): Promise<string | null> {
-  try {
-    const res = await fetch(`${baseUrl}/meta`, { signal: AbortSignal.timeout(3000) })
-    if (!res.ok) return null
-    const body = (await res.json()) as { code?: number; data?: { version?: string } }
-    return body?.code === 200 ? (body.data?.version ?? null) : null
-  } catch {
-    return null
-  }
-}
-
-/**
- * 引擎的 health / metrics 挂在根路径，业务路由全部在 /api/v1 下。
- * 实测确认：/models 位于 /api/v1/models，不在根路径。
- */
-function normalizePath(path: string): string {
-  const trimmed = path.startsWith('/') ? path : `/${path}`
-  if (/^\/(health|metrics|openapi\.json)(\/|$)/.test(trimmed)) return trimmed
-  return `/api/v1${trimmed}`
-}
-
-/** 解析单个 SSE 事件块；返回 'done' 表示终止帧，null 表示忽略（心跳/非 data 帧） */
-function parseSseBlock(block: string): ChatSsePayload | 'done' | null {
-  for (const rawLine of block.split('\n')) {
-    const line = rawLine.trimEnd()
-
-    // 心跳注释帧（`: ping <ts>`）
-    if (line.startsWith(':')) continue
-
-    if (line.startsWith('event:')) {
-      if (line.slice(6).trim() === 'done') return 'done'
-      continue
-    }
-
-    if (line.startsWith('data:')) {
-      const data = line.slice(5).trim()
-      if (data === '[DONE]') return 'done'
-      try {
-        return JSON.parse(data) as ChatSsePayload
-      } catch {
-        return null
-      }
-    }
-  }
-  return null
+  const parsed = new URL(baseUrl)
+  return parsed.port ? Number(parsed.port) : null
 }
 
 /** 全局单例 */

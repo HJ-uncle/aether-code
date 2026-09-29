@@ -6,7 +6,7 @@ import {
   type Page
 } from '@playwright/test'
 import { mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 
 /**
@@ -29,16 +29,20 @@ const WORKSPACE_DIR = APP_ROOT
 /** 诊断用例夹具：内容确定，必然产生一个 TS2322（类型不匹配） */
 const FIXTURE_DIR = join(APP_ROOT, '.e2e-tmp', 'lsp-diagnostics')
 const BROKEN_FILE = join(FIXTURE_DIR, 'diagnostic-broken.ts')
+const UNSUPPORTED_FILE = join(FIXTURE_DIR, 'diagnostic-unsupported.aetherunknown')
 const BROKEN_SOURCE = "const brokenValue: number = 'not-a-number'\n"
 
 function prepareFixtures(): void {
+  if (!resolve(FIXTURE_DIR).startsWith(resolve(APP_ROOT, '.e2e-tmp') + sep)) throw new Error('Unsafe fixture directory')
   rmSync(FIXTURE_DIR, { recursive: true, force: true })
   mkdirSync(FIXTURE_DIR, { recursive: true })
   writeFileSync(BROKEN_FILE, BROKEN_SOURCE, 'utf-8')
+  writeFileSync(UNSUPPORTED_FILE, 'plain fixture', 'utf-8')
 }
 
 function prepareUserData(): string {
   const dir = join(tmpdir(), 'aether-ide-e2e-userdata-lsp')
+  if (resolve(dir) !== resolve(tmpdir(), 'aether-ide-e2e-userdata-lsp')) throw new Error('Unsafe userData fixture')
   rmSync(dir, { recursive: true, force: true })
   mkdirSync(dir, { recursive: true })
 
@@ -79,7 +83,10 @@ test.beforeAll(async () => {
 
   app = await electron.launch({
     args: ['.', `--user-data-dir=${userDataDir}`],
-    cwd: APP_ROOT
+    cwd: APP_ROOT,
+    env: { ...process.env, AETHER_IDE_ENGINE_ENTRY: join(APP_ROOT, '../ai-agent-engine/dist/main.js'),
+      AETHER_GLOBAL_DIR: join(userDataDir, 'global'), WORKSPACE_ROOT: join(userDataDir, 'sandboxes'),
+      MCP_CONFIG_PATH: join(userDataDir, 'mcp.json'), SKILLS_ROOT: join(userDataDir, 'skills'), ENABLE_LONG_TERM_MEMORY: 'false' }
   })
 
   page = await app.firstWindow()
@@ -143,6 +150,23 @@ test('LSP 诊断：保存触发引擎诊断，问题面板可见且点击可跳�
   await page.locator('.problems-view__item', { hasText: 'TS2322' }).first().click()
   await expect(page.locator('.editor-tab.is-active')).toContainText('diagnostic-broken.ts')
   await expect(page.locator('.aether-reveal-match').first()).toBeVisible({ timeout: 15_000 })
+})
+
+test('不支持的文件不会被显示为诊断通过，关闭后清除状态', async () => {
+  await page.keyboard.press('Control+p')
+  const palette = page.locator('.palette[aria-label="快速打开文件"]')
+  await expect(palette).toBeVisible()
+  await page.locator('.palette__input').fill('diagnostic-unsupported')
+  await expect(palette.locator('.palette__item').first()).toContainText('diagnostic-unsupported.aetherunknown')
+  await page.keyboard.press('Enter')
+  await expect(page.locator('.editor-tab.is-active')).toContainText('diagnostic-unsupported.aetherunknown')
+  await expect(palette).toBeHidden()
+  await page.keyboard.press('Control+Shift+p')
+  await page.getByRole('textbox', { name: '过滤命令', exact: true }).fill('诊断当前文件')
+  await page.locator('.palette__item', { hasText: '诊断当前文件' }).click()
+  await expect(page.locator('.problems-view [role="status"]')).toContainText('不支持诊断')
+  await page.keyboard.press('Control+w')
+  await expect(page.locator('.problems-view [role="status"]')).toHaveCount(0)
 })
 
 test('渲染进程无未捕获错误', async () => {

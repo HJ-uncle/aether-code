@@ -16,6 +16,7 @@
  * UI 层不需要知道这些差异。
  */
 import type { ChatSsePayload } from '@shared/ipc'
+import type { RootPending } from '@shared/root-run'
 
 export interface PendingOption {
   /** 选项标题（选项卡第一行） */
@@ -43,6 +44,10 @@ export interface PendingQuestionGroup {
 }
 
 export interface PendingInteraction {
+  requestId?: string
+  runId?: string
+  status?: 'pending' | 'answered'
+  output?: string
   kind: 'ask' | 'permission'
   /** 兼容字段：第一组的问题文本（授权场景与旧形态只有一组） */
   question: string
@@ -219,9 +224,17 @@ export function mergePending(
 export function buildToolResponse(
   pending: PendingInteraction,
   selectedValues: string[]
-): { toolCallId: string; name: string; output: string } {
+): { toolCallId: string; name: string; output: string; requestId?: string; runId?: string } {
   // 回传用 value 而非 label：授权场景 value 才是引擎严格匹配的 approved/rejected，
   // 而 label 是给人看的中文
   const output = selectedValues.join(',')
-  return { toolCallId: pending.toolCallId, name: pending.toolName, output }
+  return { toolCallId: pending.toolCallId, name: pending.toolName, output, ...(pending.requestId ? { requestId: pending.requestId, runId: pending.runId } : {}) }
+}
+
+/** Durable run entries are authoritative; request identity is independent of tool-call identity. */
+export function normalizeRunPending(item: RootPending, runId: string): PendingInteraction | null {
+  const parsed = item.kind === 'ask'
+    ? askInteraction(item.toolCallId, { ...item.args, ...(item.question ? { question: item.question } : {}), ...(item.options ? { options: item.options } : {}) })
+    : normalizePending({ permissionRequest: { ...item, requestId: item.toolCallId } })
+  return parsed ? { ...parsed, requestId: item.requestId, runId, status: item.status, output: item.output } : null
 }

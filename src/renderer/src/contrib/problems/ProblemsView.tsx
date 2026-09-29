@@ -35,7 +35,7 @@ function inFilter(item: ProblemItem, filter: SeverityFilter): boolean {
 }
 
 export function ProblemsView(): JSX.Element {
-  const { byFile } = useProblems()
+  const { byFile, diagnoses } = useProblems()
   const [filter, setFilter] = useState<SeverityFilter>('all')
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
 
@@ -65,9 +65,15 @@ export function ProblemsView(): JSX.Element {
 
   return (
     <div className="problems-view" aria-label="问题">
+      {[...diagnoses.entries()].filter(([, diagnosis]) => diagnosis.status !== 'completed').map(([filePath, diagnosis]) => (
+        <div className="problems-view__summary" role="status" key={filePath}>
+          {fileName(filePath)}：{diagnosis.status === 'running' ? '诊断中' : diagnosis.status === 'unsupported' ? '不支持诊断' : '诊断失败'}
+          {diagnosis.message ? '（' + diagnosis.message + '）' : ''}
+        </div>
+      ))}
       {total === 0 ? (
         <div className="problems-view__empty">
-          没有问题。保存文件或运行「诊断当前文件」后显示引擎诊断。
+          尚无可显示的诊断条目。保存文件或运行「诊断当前文件」后查看结果。
         </div>
       ) : (
         <>

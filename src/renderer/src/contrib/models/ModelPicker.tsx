@@ -141,7 +141,7 @@ function initialOf(model: EngineModel): string {
 
 /** 列表上的能力标签：多模态（图片/音频/视频）与思考，让模型差异一眼可辨 */
 function capabilityTags(model: EngineModel): Array<{ key: string; label: string; hint: string }> {
-  const caps = model.capabilities
+  const caps = model.resolvedCapabilities ?? model.capabilities
   if (!caps) return []
   const tags: Array<{ key: string; label: string; hint: string }> = []
   if (caps.vision || caps.audio || caps.video) {

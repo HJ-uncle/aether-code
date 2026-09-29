@@ -1,4 +1,4 @@
-import { useEffect, useState, type JSX } from 'react'
+import { useEffect, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
 import { useModels } from '@renderer/core/engine/model-store'
 import { changeSecurityMode, useSecurityMode } from '@renderer/core/engine/security-store'
@@ -62,15 +62,14 @@ function MenuOption({
 export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Element {
   const { ready, settings, updateSettings } = useApp()
   const { models } = useModels()
-  const { mode, loaded, loading, refresh } = useSecurityMode()
-  const [busy, setBusy] = useState(false)
-  const [actionError, setActionError] = useState<string | null>(null)
+  const { mode: storedMode, loaded, loading, error, refresh } = useSecurityMode(sessionId)
+  const mode = ready ? storedMode : null
 
   // 引擎重启会把安全模式 store 清空：会话就绪后补拉一次（Popover 内部管理开关状态，
   // 这里拿不到 open，改为就绪即拉，代价很小）
   useEffect(() => {
-    if (ready && sessionId && !loaded && !loading) void refresh(sessionId)
-  }, [ready, sessionId, loaded, loading, refresh])
+    if (ready && sessionId && !loaded && !loading && !error) void refresh(sessionId)
+  }, [ready, sessionId, loaded, loading, error, refresh])
 
   const currentModel = models.find((m) => m.modelId === settings.lastModelId)
   const thinkDescriptor =
@@ -82,21 +81,17 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
       : currentModel?.capabilities?.thinking
         ? thinkDescriptor.summary
         : '当前模型未声明支持推理；选 Max 会由引擎记录告警'
-  const secSummary = busy
-    ? '切换中…'
-    : (secDescriptor?.summary ?? '控制 Agent 执行命令的放行范围')
+  const secSummary = loading
+    ? '正在读取安全模式…'
+    : error ?? (secDescriptor ? [secDescriptor.summary, secDescriptor.warning].filter(Boolean).join(' ') : '尚未确认引擎当前权限')
 
   const pickThinking = (next: string): void => {
     void updateSettings({ thinkingMode: next as 'off' | 'low' | 'high' | 'max' })
   }
 
   const pickSecurity = (next: string): void => {
-    if (next === mode) return
-    setBusy(true)
-    setActionError(null)
-    changeSecurityMode(sessionId, next as SecurityMode)
-      .catch((err) => setActionError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setBusy(false))
+    if (next === mode || loading || !ready || !sessionId) return
+    void changeSecurityMode(sessionId, next as SecurityMode).catch(() => undefined)
   }
 
   return (
@@ -165,7 +160,8 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
           <div className="composer-options__text">
             <div className="composer-options__title">安全模式</div>
             <div className="composer-options__summary">
-              {actionError ? `切换失败：${actionError}` : secSummary}
+              {secSummary}
+              {error ? <button type="button" onClick={() => void refresh(sessionId)}>重新读取安全模式</button> : null}
             </div>
           </div>
           <Popover
@@ -179,14 +175,14 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
               <button
                 type="button"
                 className={`composer-options__dd-btn${isOpen ? ' is-open' : ''}`}
-                disabled={!ready || !sessionId || busy}
+                disabled={!ready || !sessionId || loading}
                 title={
                   !sessionId
                     ? '先发一条消息建立会话，之后才能设置安全模式'
                     : '选择安全模式'
                 }
               >
-                <span>{secDescriptor?.label ?? mode}</span>
+                <span>{loading ? '读取中…' : (secDescriptor?.label ?? '状态未知')}</span>
                 <span className="composer-options__dd-caret">⌄</span>
               </button>
             )}
@@ -196,9 +192,9 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
                 <MenuOption
                   key={item.value}
                   value={item.value}
-                  current={mode}
+                  current={mode ?? ''}
                   label={item.label}
-                  summary={item.warning ?? item.summary}
+                  summary={[item.summary, item.warning].filter(Boolean).join(' ')}
                   onSelect={pickSecurity}
                 />
               ))}

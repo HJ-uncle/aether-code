@@ -1,151 +1,89 @@
-/**
- * 引擎运行时定位与安装
- *
- * 双轨交付（内置 + 可下载）在这里落地。入口解析优先级：
- *
- *   1. 环境变量 AETHER_IDE_ENGINE_ENTRY —— 显式覆盖，开发调试用
- *   2. <userData>/engine/<version>/dist/main.js —— 已安装（CDN 下载或本地包解压）
- *   3. <resources>/engine/<platform>/dist/main.js —— 安装包内置的保底版本
- *   4. <仓库同级>/ai-agent-engine/dist/main.js —— 开发期使用当前源码构建
- *      缺失时再回退 sdk-package/bin/dist/main.js
- *
- * 之所以把「已安装」排在「内置」之前：内置版本永不覆盖，只作兜底；
- * 用户升级后应优先使用新版，出问题时可回滚到内置。
- *
- * 入口固定为 dist/main.js 而非根目录 main.js —— 后者是打包脚本的副产物，
- * 其相对导入（./api/...）在根目录下无法解析，直接运行会失败。
- */
 import { app } from 'electron'
-import { existsSync } from 'node:fs'
-import { mkdir, rm } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
-import { extractTgz } from './tgz-extract'
-
-/** 与发布包/PORT 默认值保持一致 */
-export const DEFAULT_ENGINE_VERSION = '1.0.0'
+import { existsSync, readFileSync } from 'node:fs'
+import { execFile } from 'node:child_process'
+import { dirname, join } from 'node:path'
+import { promisify } from 'node:util'
+import { parseEngineManifest, type EngineManifest } from './protocol'
+import { selectRuntimeEntry } from './runtime-location'
 
 export interface ResolvedRuntime {
-  /** 引擎入口脚本绝对路径 */
   entryPath: string
-  /** 运行时根目录 */
   root: string
-  /** 来源，用于状态展示与排障 */
-  source: 'env' | 'installed' | 'bundled' | 'dev-sibling'
+  source: 'env' | 'bundled' | 'dev-sibling'
   version: string
+  manifest: EngineManifest
 }
 
 export function enginePlatform(): string {
   return `${process.platform}-${process.arch}`
 }
 
-/** 已安装运行时的目录：<userData>/engine/<version> */
-export function installedDir(version: string = DEFAULT_ENGINE_VERSION): string {
-  return join(app.getPath('userData'), 'engine', version)
+/** State belongs to this installation, never to a replaceable runtime version. */
+export function engineDataFile(): string {
+  return join(app.getPath('userData'), 'engine', 'state', 'agent.db')
 }
 
-/** 引擎数据目录（SQLite 文件路径）。与运行时分离，升级引擎不丢数据。 */
-export function engineDataFile(version: string = DEFAULT_ENGINE_VERSION): string {
-  return join(installedDir(version), 'data', 'agent.db')
+export function legacyEngineDataFile(): string {
+  return join(app.getPath('userData'), 'engine', '1.0.0', 'data', 'agent.db')
 }
 
-/** 校验一个运行时根目录是否真的可运行 */
-function entryOf(root: string): string | null {
-  const entry = join(root, 'dist', 'main.js')
-  return existsSync(entry) ? entry : null
-}
-
-function makeRuntime(
-  entryPath: string,
-  source: ResolvedRuntime['source'],
-  version = DEFAULT_ENGINE_VERSION
-): ResolvedRuntime {
-  return { entryPath, root: dirname(dirname(entryPath)), source, version }
-}
-
-/**
- * 按优先级解析可用运行时。全部落空时返回 null，调用方应触发安装流程。
- */
+/** Packaged applications must be self-contained; developer overrides only apply in development. */
 export function resolveRuntime(): ResolvedRuntime | null {
-  // 1. 显式覆盖
-  const override = process.env.AETHER_IDE_ENGINE_ENTRY
-  if (override && existsSync(override)) {
-    return makeRuntime(override, 'env')
+  const { entryPath, source } = selectRuntimeEntry({
+    packaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(),
+    platform: enginePlatform(),
+    override: process.env.AETHER_IDE_ENGINE_ENTRY
+  })
+
+  if (!existsSync(entryPath)) {
+    if (source === 'env') throw new Error(`显式指定的引擎入口不存在：${entryPath}`)
+    return null
   }
 
-  // 2. 已安装
-  const installed = entryOf(installedDir())
-  if (installed) return makeRuntime(installed, 'installed')
-
-  // 3. 安装包内置
-  if (app.isPackaged) {
-    const bundled = entryOf(join(process.resourcesPath, 'engine', enginePlatform()))
-    if (bundled) return makeRuntime(bundled, 'bundled')
-  }
-
-  // 同级引擎源码修复后，优先用 npm run build 的产物，避免继续启动旧 SDK 副本。
-  const engineRoot = resolve(app.getAppPath(), '..', 'ai-agent-engine')
-  for (const entry of [
-    join(engineRoot, 'dist', 'main.js'),
-    join(engineRoot, 'sdk-package', 'bin', 'dist', 'main.js')
-  ]) {
-    if (existsSync(entry)) return makeRuntime(entry, 'dev-sibling')
-  }
-
-  return null
-}
-
-export interface InstallProgress {
-  stage: 'extracting' | 'done'
-  files: number
-  bytes: number
-}
-
-/**
- * 从本地 .tgz 安装运行时到 <userData>/engine/<version>。
- *
- * 这是 CDN 下载路径的共用后半段：下载完成后同样调用本函数，
- * 因此本地包安装与联网安装的落盘结果完全一致。
- *
- * 幂等：目标目录已存在且入口可运行时直接返回，不重复解压。
- * 原子性：解压到临时目录后改名，避免中途失败留下半成品。
- */
-export async function installFromTgz(
-  tgzPath: string,
-  version: string = DEFAULT_ENGINE_VERSION,
-  onProgress?: (progress: InstallProgress) => void
-): Promise<ResolvedRuntime> {
-  const finalDir = installedDir(version)
-
-  const existing = entryOf(finalDir)
-  if (existing) return makeRuntime(existing, 'installed', version)
-
-  const stagingDir = `${finalDir}.staging`
-  await rm(stagingDir, { recursive: true, force: true })
-  await mkdir(stagingDir, { recursive: true })
-
+  const manifestPath = join(dirname(entryPath), 'runtime', 'build-manifest.json')
+  let manifest: EngineManifest
   try {
-    // 发布包内部以 package/ 为前缀，解压后取出该层
-    await extractTgz(tgzPath, stagingDir, {
-      onProgress: (p) => onProgress?.({ stage: 'extracting', files: p.files, bytes: p.bytes })
-    })
-
-    const packagedDir = join(stagingDir, 'package')
-    const root = entryOf(packagedDir) ? packagedDir : stagingDir
-
-    if (!entryOf(root)) {
-      throw new Error(`解压后未找到 dist/main.js，包结构可能已变更（tgz: ${tgzPath}）`)
-    }
-
-    await rm(finalDir, { recursive: true, force: true })
-    await mkdir(dirname(finalDir), { recursive: true })
-    const { rename } = await import('node:fs/promises')
-    await rename(root, finalDir)
-  } finally {
-    await rm(stagingDir, { recursive: true, force: true }).catch(() => undefined)
+    manifest = parseEngineManifest(JSON.parse(readFileSync(manifestPath, 'utf-8')))
+  } catch {
+    throw new Error(`引擎构建信息缺失或不兼容，请重新构建配套引擎：${manifestPath}`)
   }
+  return {
+    entryPath,
+    root: dirname(dirname(entryPath)),
+    source,
+    version: manifest.version,
+    manifest
+  }
+}
 
-  const entry = entryOf(finalDir)
-  if (!entry) throw new Error('安装完成但入口不可用')
-  onProgress?.({ stage: 'done', files: 0, bytes: 0 })
-  return makeRuntime(entry, 'installed', version)
+/** The engine owns the schema and success marker; retrying never imports conversation history. */
+export async function migrateLegacyModels(
+  runtime: ResolvedRuntime,
+  encryptionKey: string,
+  signal: AbortSignal
+): Promise<void> {
+  const source = legacyEngineDataFile()
+  if (!existsSync(source)) return
+  const entry = join(dirname(runtime.entryPath), 'storage', 'dev-migration.js')
+  if (!existsSync(entry)) throw new Error('引擎缺少开发模型配置迁移入口，请重新构建引擎')
+  try {
+    await promisify(execFile)(
+      process.execPath,
+      [entry, '--source-db', source, '--dest-db', engineDataFile()],
+      {
+        cwd: dirname(runtime.entryPath),
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ENCRYPTION_KEY: encryptionKey },
+        signal,
+        timeout: 30_000,
+        windowsHide: true,
+        maxBuffer: 64 * 1024
+      }
+    )
+  } catch {
+    signal.throwIfAborted()
+    // execFile errors include stdout/stderr; never forward credential-related process output to IPC.
+    throw new Error('旧模型配置迁移失败，原数据库和密钥已保留；请检查引擎迁移入口后重试')
+  }
 }

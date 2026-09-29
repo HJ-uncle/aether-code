@@ -271,6 +271,9 @@ export interface EngineSnapshot {
   /** 运行时入口脚本路径（embedded 模式） */
   entryPath: string | null
   version: string | null
+  buildId?: string | null
+  protocolVersion?: number | null
+  instanceId?: string | null
   /** 数据目录（SQLite 文件路径） */
   dataDir: string | null
   error: string | null
@@ -448,6 +451,7 @@ export interface EngineRequestResult<T = unknown> {
   message: string
   data: T | null
   pagination?: StandardResponse['pagination']
+  metadata?: Record<string, unknown>
 }
 
 // ==================== SSE 流式契约 ====================
@@ -470,6 +474,9 @@ export interface EngineTodo {
  * 同一帧只会出现其中一个字段，用可选字段而非联合类型以便透传未知帧。
  */
 export interface ChatSsePayload {
+  userMessage?: unknown
+  run?: import('./root-run').RootRun
+  assistantMsgId?: string
   subagentEvent?: import('./subagent').SubagentEvent
   content?: string
   thinking?: string
@@ -495,7 +502,13 @@ export interface ChatSsePayload {
  * 老内容/新内容用于渲染 git 风格 diff；内容过大或二进制时两者为 null（truncated=true）。
  */
 export interface EngineFileChange {
+  turnId?: string
+  runId?: string
   id: string
+  /** Stable server operation order and byte versions; absent on legacy records. */
+  seq?: number
+  oldHash?: string | null
+  newHash?: string | null
   /** 引擎工作区视角的绝对路径 */
   path: string
   kind: 'write' | 'delete'
@@ -516,10 +529,12 @@ export interface EngineFileChange {
 }
 
 /** 主进程转发给渲染进程的流式事件 */
-export type StreamEvent =
-  | { streamId: string; type: 'payload'; payload: ChatSsePayload }
-  | { streamId: string; type: 'done' }
-  | { streamId: string; type: 'error'; message: string }
+export type StreamEvent = { streamId: string; eventId?: string } & (
+  | { type: 'payload'; payload: ChatSsePayload }
+  | { type: 'done' }
+  | { type: 'snapshot-required' }
+  | { type: 'error'; message: string; status?: number; code?: number }
+)
 
 export interface StreamStartInput {
   streamId: string

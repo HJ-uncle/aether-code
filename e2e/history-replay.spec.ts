@@ -64,7 +64,7 @@ function prepareUserData(): string {
 
 /** embedded 引擎的数据文件：<userData>/engine/<version>/data/agent.db */
 function engineDbPath(userDataDir: string): string {
-  return join(userDataDir, 'engine', '1.0.0', 'data', 'agent.db')
+  return join(userDataDir, 'engine', 'state', 'agent.db')
 }
 
 /** 借引擎仓库的 @libsql/client 执行 SQL（IDE 自身不依赖 libsql，spec 无法直接 import） */

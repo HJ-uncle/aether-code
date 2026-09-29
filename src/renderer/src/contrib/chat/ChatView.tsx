@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useApp } from '@renderer/core/app-context'
 import { useChat, type ChatMessage, type ToolActivity } from '@renderer/core/engine/useChat'
 import type { PendingInteraction } from '@renderer/core/engine/pending'
+import { rootStatusLabel } from '@renderer/core/engine/root-run-state'
 import { SessionTray } from './SessionTray'
 import { FileChangeCard } from './FileChangeCard'
 import { SubagentCard } from './SubagentCard'
@@ -162,7 +163,7 @@ function AttachmentChip({
     <>
       <Icon name={isImage ? 'image' : 'file'} size={16} />
       <span className="attach-chip__name">{file.name}</span>
-      <span className="attach-chip__size">{formatBytes(file.size)}</span>
+      {file.size > 0 ? <span className="attach-chip__size">{formatBytes(file.size)}</span> : null}
     </>
   )
 
@@ -324,7 +325,7 @@ export function ChatView(): JSX.Element {
       if (frame?.contextWindow) return frame.contextWindow
     }
     return (
-      models.find((model) => model.modelId === modelId)?.capabilities?.contextWindow ??
+      models.find((model) => model.modelId === ([...messages].reverse().find(message => message.modelId)?.modelId ?? modelId))?.capabilities?.contextWindow ??
       CONTEXT_WINDOW_FALLBACK
     )
   }, [messages, models, modelId])
@@ -393,6 +394,9 @@ export function ChatView(): JSX.Element {
     return generated
   }, [settings.lastSessionId, settingsLoaded, updateSettings])
 
+  const displayedSessionRef = useRef(sessionId)
+  useLayoutEffect(() => { displayedSessionRef.current = sessionId }, [sessionId])
+
   // 切换会话时重置分页窗口（sessionId 声明之后，依赖其值）
   useEffect(() => {
     setVisibleCount(MESSAGE_PAGE_SIZE)
@@ -402,14 +406,13 @@ export function ChatView(): JSX.Element {
   // 把同一份数据还原到界面，解决「重启后界面空白但 AI 记得一切」的割裂感
   const historyLoadedRef = useRef('')
   useEffect(() => {
-    if (!ready || !sessionId) return
+    if (!ready) { historyLoadedRef.current = ''; return }
+    if (!sessionId) return
     if (historyLoadedRef.current === sessionId) return
     historyLoadedRef.current = sessionId
     // 优先尝试恢复正在进行的流（刷新/切回会话后端仍在跑的场景）；
     // resumeStream 内部会先做历史回放，无需恢复时返回 false，再退回纯历史回放
-    void resumeStream(sessionId).then((resumed) => {
-      if (!resumed) void loadHistory(sessionId)
-    })
+    void resumeStream(sessionId)
   }, [ready, sessionId, loadHistory, resumeStream])
 
   // ── 每会话输入草稿（对齐 wuzu lobster-chat:draft）──
@@ -765,7 +768,7 @@ export function ChatView(): JSX.Element {
     (message: ChatMessage) => {
       void confirmDialog({
         title: '回退到此处',
-        body: '撤销此消息及后续轮次的全部修改（包含已保留的修改），成功后删除对应对话。文件无法自动恢复的大改动会跳过。',
+        body: '按轮次回退此消息及后续改动（包含已保留）。文件版本有冲突或缺少快照时将保留并报告；仅全部文件回退完成后删除对应对话。',
         danger: true,
         confirmText: '回退'
       }).then((confirmed) => {
@@ -774,9 +777,10 @@ export function ChatView(): JSX.Element {
         void revertFrom(sessionId, message)
           // 回填的是纯文本（chip 占位符退化为文字），mention 列表同步清空
           .then(() => {
+            saveChatDraft(sessionId, content)
+            if (displayedSessionRef.current !== sessionId) return
             mentionsRef.current = []
             setInput(content)
-            saveChatDraft(sessionId, content)
           })
           .catch(showError)
       })
@@ -786,16 +790,16 @@ export function ChatView(): JSX.Element {
 
   /** 挂起卡片的应答提交：引用稳定，保证 MessageItem memo 生效（流式时不让所有历史消息跟着重渲染） */
   const respondToEngine = useCallback(
-    (values: string[]) =>
-      void respond(values, {
+    (requestId: string, values: string[]) =>
+      void respond(requestId, values, {
         sessionId,
         model: modelId || undefined,
         subagentModel: settings.subagentModelId || undefined,
         utilityModel: settings.utilityModelId || undefined,
         workspacePaths: currentWorkspacePaths(),
         thinkingMode: resolveThinkingMode(settings.thinkingMode)
-      }),
-    [respond, sessionId, modelId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode]
+      }).catch(showError),
+    [respond, sessionId, modelId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode, showError]
   )
 
   const exportSelected = useCallback(() => {
@@ -1650,7 +1654,7 @@ const MessageItem = memo(function MessageItem({
   selectionMode?: boolean
   selected?: boolean
   onToggleSelect?: () => void
-  onRespond: (values: string[]) => void
+  onRespond: (requestId: string, values: string[]) => void
   /** 复制该消息文本 */
   onCopy: (message: ChatMessage) => void
   /** 从该用户消息处删除此后内容并重新发送（重新发送 / 重新生成共用） */
@@ -1749,7 +1753,7 @@ const MessageItem = memo(function MessageItem({
   if (isUser) {
     // 用户消息：右对齐气泡，无角色标签 —— 对齐靠位置与底色区分
     return (
-      <article className="message message--user">
+      <article className="message message--user" data-message-id={message.id} data-turn-id={message.conversationId}>
         {pick}
         <div className="message__bubble-wrap">
           {actions}
@@ -1772,7 +1776,7 @@ const MessageItem = memo(function MessageItem({
   }
 
   return (
-    <article className="message message--assistant">
+    <article className="message message--assistant" data-message-id={message.id} data-turn-id={message.conversationId}>
       {pick}
 
       <MessageTimeline message={message} sessionId={sessionId} streaming={streaming} />
@@ -1789,19 +1793,21 @@ const MessageItem = memo(function MessageItem({
             model={usage.model}
             streaming={usage.streaming}
           />
-        ) : null}
+        ) : message.modelId ? <span className="turn-usage__model">{message.modelId}</span> : null}
         {actions}
       </div>
 
-      {message.pending ? (
+      {message.run ? <div className="pending-card__hint" role="status" aria-label="运行状态">{message.status === 'interrupted' ? '已中断' : message.status === 'aborted' ? '已取消' : message.status === 'error' ? '失败' : rootStatusLabel(message.run.status)}</div> : null}
+      {(message.interactions ?? (message.pending ? [message.pending] : [])).map((pending) => (
         <PendingCard
-          pending={message.pending}
-          answered={message.answered}
-          disabled={disabled}
+          key={pending.requestId ?? pending.toolCallId}
+          pending={pending}
+          answered={pending.status === 'answered' ? pending.output || '已提交' : undefined}
+          disabled={disabled || !pending.requestId || message.run?.status !== 'waiting'}
           onAllowAll={onAllowAll}
-          onRespond={onRespond}
+          onRespond={(values) => { if (pending.requestId) onRespond(pending.requestId, values) }}
         />
-      ) : null}
+      ))}
 
       {message.error ? <div className="message__error">{message.error}</div> : null}
     </article>
@@ -1846,6 +1852,7 @@ type TurnUsageInfo = {
 
 /** 内联段落：正文段 / 全尺寸卡片（diff）/ 单个子代理 / 子代理组，在过程块之后按原顺序渲染 */
 type InlineSegment =
+  | { type: 'process'; entries: CompactEntry[] }
   | { type: 'tool'; tool: ToolActivity }
   | { type: 'content'; text: string }
   | { type: 'subagent-group'; tools: ToolActivity[] }
@@ -1861,13 +1868,10 @@ function streamStatusText(message: ChatMessage): string {
 }
 
 /**
- * 消息时间线：思考 / 工具调用合并成一个可折叠过程块，正文与全尺寸卡片按序排在其后。
+ * 消息时间线：只合并连续的思考 / 工具调用，正文与全尺寸卡片保留真实发生位置。
  *
  * useChat 在收 SSE 帧时同步维护 message.items（帧严格按发生顺序到达）。
- * 对齐 wuzu-client 的 CliThinkingTimeline：一轮里所有过程性条目（思考段、
- * 普通工具调用）收进**同一个**「过程 · 思考 N 段 · 工具调用 M」折叠块，
- * 块内按真实时间顺序穿插；正文段与 diff/子代理卡片信息量大，不进折叠，
- * 在块下按原顺序全显。
+ * 每段连续的过程性条目可折叠；正文不会因为收拢工具而移到工具之后。
  */
 function MessageTimeline({
   message,
@@ -1877,14 +1881,18 @@ function MessageTimeline({
   message: ChatMessage
   sessionId: string
   streaming: boolean
-}): JSX.Element | null {  const { processEntries, inline } = useMemo(() => {
+}): JSX.Element | null {  const { inline } = useMemo(() => {
     const toolById = new Map(
       message.tools
         .filter((tool) => !tool.hidden && !isTimelineHiddenTool(tool))
         .map((tool) => [tool.id, tool])
     )
-    const processEntries: CompactEntry[] = []
+    let processEntries: CompactEntry[] = []
     const inline: InlineSegment[] = []
+    const flushProcess = (): void => {
+      if (processEntries.length) inline.push({ type: 'process', entries: processEntries })
+      processEntries = []
+    }
     const seen = new Set<string>()
 
     for (const item of message.items) {
@@ -1894,9 +1902,10 @@ function MessageTimeline({
         const tool = toolById.get(item.id)
         if (!tool || seen.has(tool.id)) continue
         seen.add(tool.id)
-        if (isFullSizeTool(tool)) inline.push({ type: 'tool', tool })
+        if (isFullSizeTool(tool)) { flushProcess(); inline.push({ type: 'tool', tool }) }
         else processEntries.push({ kind: 'tool', tool })
       } else if (item.kind === 'content') {
+        flushProcess()
         inline.push({ type: 'content', text: item.text })
       }
       // interaction：应答卡片由 MessageItem 单独渲染，时间线不占位
@@ -1905,9 +1914,11 @@ function MessageTimeline({
     // 兜底：tools 里存在但时间线没记录的条目（异常帧序），挂到过程块末尾
     for (const tool of toolById.values()) {
       if (seen.has(tool.id)) continue
-      if (isFullSizeTool(tool)) inline.push({ type: 'tool', tool })
+      if (isFullSizeTool(tool)) { flushProcess(); inline.push({ type: 'tool', tool }) }
       else processEntries.push({ kind: 'tool', tool })
     }
+
+    flushProcess()
 
     // 把连续的子代理段收进一个组（对齐 wuzu 的 AgentSubagentGroup）：
     // 并行派发 N 个子代理会产生 N 张连续大卡片，占满整屏还看不清彼此关系；
@@ -1930,10 +1941,10 @@ function MessageTimeline({
     }
     flushSubagents()
 
-    return { processEntries, inline: grouped }
+    return { inline: grouped }
   }, [message.items, message.tools])
 
-  if (processEntries.length === 0 && inline.length === 0) {
+  if (inline.length === 0) {
     return streaming && !message.pending ? (
       <div className="message__streaming-hint">
         <span className="message__spinner" />
@@ -1944,11 +1955,10 @@ function MessageTimeline({
 
   return (
     <>
-      {processEntries.length > 0 ? (
-        <ProcessGroup entries={processEntries} streaming={streaming} collapseKey={message.id} />
-      ) : null}
       {inline.map((segment, index) =>
-        segment.type === 'tool' ? (
+        segment.type === 'process' ? (
+          <ProcessGroup key={`p-${index}`} entries={segment.entries} streaming={streaming} collapseKey={`${message.id}:${index}`} />
+        ) : segment.type === 'tool' ? (
           <div key={`t-${segment.tool.id}`} className="message__tools">
             <ToolItem tool={segment.tool} sessionId={sessionId} />
           </div>
@@ -2136,11 +2146,13 @@ function CompactToolRow({ tool }: { tool: ToolActivity }): JSX.Element {
         onClick={() => setMemory(!open)}
       >
         <span
-          className={`logline__dot logline__dot--${tool.state === 'running' ? 'running' : tool.state === 'error' ? 'error' : 'done'}`}
+          className={`logline__dot logline__dot--${tool.state === 'running' ? 'running' : tool.state === 'done' ? 'done' : 'error'}`}
+          title={toolStatusLabel(tool)}
         />
         <span className={`logline__name${tool.state === 'error' ? ' logline__name--error' : ''}`}>
           {label}
         </span>
+        <span className="pending-card__hint">{toolStatusLabel(tool)}{tool.durationMs !== undefined ? ` · ${tool.durationMs} ms` : ''}</span>
         {summary ? (
           openablePath ? (
             <span
@@ -2454,7 +2466,7 @@ function PendingCard({
         <summary className="pending-card__summary">
           <Icon name={isPermission ? 'shield' : 'chat'} size={16} />
           <span className="pending-card__summary-text">
-            {isPermission ? '已放行一次安全拦截' : '已应答 Agent 提问'}
+            {isPermission ? pending.output === 'rejected' ? '已拒绝这次操作' : '已批准这次操作' : '已应答 Agent 提问'}
           </span>
           <span className="pending-card__summary-choice">{answeredText}</span>
         </summary>

@@ -21,16 +21,14 @@ interface SecurityModePickerProps {
  */
 export function SecurityModePicker({ sessionId, onManage }: SecurityModePickerProps): JSX.Element {
   const { ready } = useApp()
-  const { mode, loaded, loading, error, refresh } = useSecurityMode()
+  const { mode, loaded, loading, error, refresh } = useSecurityMode(sessionId)
   const [open, setOpen] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [actionError, setActionError] = useState<string | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
 
   // 会话就绪后拉取一次；引擎重启会把 store 清空，loaded 变 false 会再拉
   useEffect(() => {
-    if (ready && sessionId && !loaded && !loading) void refresh(sessionId)
-  }, [ready, sessionId, loaded, loading, refresh])
+    if (ready && sessionId && !loaded && !loading && !error) void refresh(sessionId)
+  }, [ready, sessionId, loaded, loading, error, refresh])
 
   // 点击外部 / Esc 关闭
   useEffect(() => {
@@ -49,21 +47,15 @@ export function SecurityModePicker({ sessionId, onManage }: SecurityModePickerPr
     }
   }, [open])
 
-  const descriptor = MODE_DESCRIPTORS.find((item) => item.value === mode)
-  const risky = isRiskyMode(mode)
+  const visibleMode = ready ? mode : null
+  const descriptor = MODE_DESCRIPTORS.find((item) => item.value === visibleMode)
+  const label = loading ? '读取中…' : (descriptor?.label ?? '状态未知')
+  const risky = isRiskyMode(visibleMode)
 
   const pick = async (next: SecurityMode): Promise<void> => {
     setOpen(false)
-    if (next === mode) return
-    setBusy(true)
-    setActionError(null)
-    try {
-      await changeSecurityMode(sessionId, next)
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
-    }
+    if (next === visibleMode || loading || !ready || !sessionId) return
+    await changeSecurityMode(sessionId, next).catch(() => undefined)
   }
 
   const disabled = !ready || !sessionId
@@ -75,16 +67,16 @@ export function SecurityModePicker({ sessionId, onManage }: SecurityModePickerPr
         className={`sec-picker__trigger${open ? ' is-open' : ''}${
           risky ? ' sec-picker__trigger--risky' : ''
         }`}
-        disabled={disabled || busy}
+        disabled={disabled || loading}
         title={
           !sessionId
             ? '先发一条消息建立会话，之后才能设置安全模式'
-            : `本会话安全模式：${descriptor?.label ?? mode}；点击切换`
+            : `本会话安全模式：${label}；点击切换`
         }
         onClick={() => setOpen((prev) => !prev)}
       >
         <Icon name="shield" size={16} />
-        <span className="picker__label">{busy ? '切换中…' : (descriptor?.label ?? mode)}</span>
+        <span className="picker__label">{label}</span>
         <span className="sec-picker__caret">⌃</span>
       </button>
 
@@ -96,20 +88,23 @@ export function SecurityModePicker({ sessionId, onManage }: SecurityModePickerPr
               key={item.value}
               type="button"
               role="menuitem"
-              className={`sec-picker__item${item.value === mode ? ' is-active' : ''}`}
+              className={`sec-picker__item${item.value === visibleMode ? ' is-active' : ''}`}
               onClick={() => void pick(item.value)}
             >
               <span className="sec-picker__item-head">
                 {item.label}
-                {item.value === mode ? <span className="sec-picker__mark">当前</span> : null}
+                {item.value === visibleMode ? <span className="sec-picker__mark">当前</span> : null}
               </span>
               <small>{item.summary}</small>
               {item.warning ? <small className="sec-picker__warn">{item.warning}</small> : null}
             </button>
           ))}
 
-          {error || actionError ? (
-            <div className="sec-picker__hint sec-picker__hint--error">{actionError ?? error}</div>
+          {error ? (
+            <div className="sec-picker__hint sec-picker__hint--error">
+              {error}
+              <button type="button" onClick={() => void refresh(sessionId)}>重新读取安全模式</button>
+            </div>
           ) : null}
 
           <div className="sec-picker__footer">

@@ -18,8 +18,8 @@
  *     写入当前会话白名单，同会话同参数不再询问。这条链路不走本文件
  *     （它由 /chat 的 toolResponse 驱动），但它是"反复打断"的直接来源之一。
  *
- * ⚠️ full-access 的副作用：引擎在 full-access 下会跳过工具路径边界检查，
- *     等于同时解除了「Agent 只能读写工作区」的限制。UI 必须提示这一点。
+ * standard / full-access 都会跳过工具路径边界检查，允许读写工作区外文件。
+ * UI 必须分别说明命令审批与文件路径范围，不能把后者仅归于 full-access。
  */
 import { request } from './client'
 
@@ -62,7 +62,8 @@ export const MODE_DESCRIPTORS: readonly ModeDescriptor[] = [
   {
     value: 'standard',
     label: '标准模式',
-    summary: '能放行的直接放行，拿不准的弹一次确认，不会出现硬报错。'
+    summary: '普通命令直接执行；被拒绝规则或注入检测命中的命令仍需确认。',
+    warning: '允许 Agent 读写工作区以外的文件。'
   },
   {
     value: 'full-access',
@@ -109,8 +110,8 @@ export function buildModePayload(
 }
 
 /** 该模式是否需要显著提示风险（用于 UI 决定是否加警示样式） */
-export function isRiskyMode(mode: SecurityMode): boolean {
-  return mode === 'full-access'
+export function isRiskyMode(mode: SecurityMode | null): boolean {
+  return mode === 'standard' || mode === 'full-access'
 }
 
 // ==================== 安全模式 ====================
@@ -119,8 +120,12 @@ export async function getSecurityMode(sessionId: string): Promise<SecurityMode> 
   if (!sessionId) throw new Error('缺少会话 ID，无法读取安全模式')
   const result = await request({ method: 'GET', path: '/security/mode', query: { sessionId } })
   if (!result.ok) throw new Error(result.message || '读取安全模式失败')
-  // 引擎默认值是 safe，解析不出来时按 safe 显示更保守
-  return parseSecurityMode(result.data) ?? 'safe'
+  const mode = parseSecurityMode(result.data)
+  if (!mode) throw new Error('引擎返回了未知的安全模式，请重新读取')
+  if (result.data && typeof result.data === 'object' && 'sessionId' in result.data && result.data.sessionId !== sessionId) {
+    throw new Error('安全模式响应的会话不匹配，请重新读取')
+  }
+  return mode
 }
 
 export async function setSecurityMode(sessionId: string, mode: SecurityMode): Promise<void> {

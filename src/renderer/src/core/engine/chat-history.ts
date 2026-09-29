@@ -65,7 +65,7 @@ export interface EngineHistoryRow {
   toolCall?: { id?: string; name?: string; args?: unknown } | null
   success?: boolean
   error?: unknown
-  metadata?: { subagent?: unknown; success?: boolean; error?: unknown }
+  metadata?: { subagent?: unknown; success?: boolean; error?: unknown; status?: string; outputPreview?: string; durationMs?: number; startedAt?: number; finishedAt?: number; runId?: string; turnId?: string; attachments?: Array<{ name: string; type?: string; size?: number }>; change?: import('@shared/ipc').EngineFileChange }
   isSidechain?: boolean
 }
 
@@ -147,7 +147,12 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
       result.push({
         id: row.id || newId(),
         role: 'user',
+        conversationId: row.conversationId ?? row.metadata?.turnId,
+        runId: row.metadata?.runId,
         content: extractText(row.content),
+        attachments: row.metadata?.attachments?.map(file => ({ path: file.name,
+          name: file.name.replace(/\\/g, '/').split('/').at(-1) || file.name,
+          type: file.type || '', size: file.size ?? 0 })),
         thinking: '',
         tools: [],
         items: [],
@@ -163,13 +168,7 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
       if (open) {
         const previous = open.message.tools[open.index]
         const subagent = normalizeSubagentRun(row.metadata?.subagent)
-        open.message.tools[open.index] = {
-          ...previous,
-          result: typeof row.content === 'string' ? row.content : JSON.stringify(row.content),
-          state: subagent ? runToolState(subagent) : toolResultState(row, previous.name),
-          error: subagent?.error?.message ?? errorText(row.error ?? row.metadata?.error),
-          subagent
-        }
+        open.message.tools[open.index] = finishTool(previous, { ...row, output: row.content, subagent })
         openTools.delete(toolCallId)
       }
       continue
@@ -187,10 +186,6 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
     let message: ChatMessage
     if (sameTurn) {
       message = prev
-      if (message.content) {
-        // 前一段正文已在 items 里，新内容另起一段，避免拼接粘连
-        message.content = `${message.content}\n\n`
-      }
       // 轮内后续行时间更晚：更新为「本轮已知的最后时刻」，
       // 供历史回放后「任务耗时」用 startedAt~endedAt 跨度计算
       if (createdAt > (message.endedAt ?? 0)) message.endedAt = createdAt
@@ -198,6 +193,7 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
       message = {
         id: row.id || newId(),
         role: 'assistant',
+        runId: row.metadata?.runId,
         content: '',
         thinking: '',
         tools: [],
@@ -210,7 +206,7 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
       }
       result.push(message)
     }
-    if (row.modelId && !message.modelId) message.modelId = row.modelId
+    if (row.modelId) message.modelId = row.modelId
     if (row.usage) {
       message.usage = mergeUsageFrame(message.usage, row.usage)
       // promptTokens 在同轮多行间被按增量累加（供底部「会话总输入」统计），
@@ -223,27 +219,28 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
     }
     message.thinking += typeof row.reasoningContent === 'string' ? row.reasoningContent : ''
 
-    // 本行的时间线条目：按「思考 → 工具 → 正文」的近似顺序穿插进同一条消息
+    // 本行的正文是调用工具前的说明，按「思考 → 正文 → 工具」回放，避免移到结果之后
     const rowItems: TimelineItem[] = []
     const rowThinking = typeof row.reasoningContent === 'string' ? row.reasoningContent : ''
     // 纯空白思考没有意义（一轮工具列表自检会产生 20+ 条碎 thinking 空段，回放时渲染成一列孤立箭头）
     if (rowThinking.trim()) rowItems.push({ kind: 'thinking', text: rowThinking })
+    const rowContent = extractText(row.content)
+    if (rowContent) {
+      message.content += (message.content ? '\n\n' : '') + rowContent
+      rowItems.push({ kind: 'content', text: rowContent })
+    }
     if (row.toolCall && typeof row.toolCall === 'object' && row.toolCall.name) {
       const tool: ToolActivity = {
         id: row.toolCall.id || newId(),
         name: row.toolCall.name,
         args: JSON.stringify(row.toolCall.args ?? {}, null, 2),
         result: '',
-        state: row.toolCall.name === 'subagent' ? 'unknown' : 'done'
+        state: 'unknown',
+        ...(row.toolCall.name === 'ask_user' ? { hidden: true } : {})
       }
       message.tools.push(tool)
       rowItems.push({ kind: 'tool', id: tool.id })
       if (tool.id) openTools.set(tool.id, { message, index: message.tools.length - 1 })
-    }
-    const rowContent = extractText(row.content)
-    if (rowContent) {
-      message.content += rowContent
-      rowItems.push({ kind: 'content', text: rowContent })
     }
     // 对齐流式路径 appendTimeline：相邻同 kind 条目合并，避免一轮 ReAct 拆出 N 段碎 thinking
     for (const item of rowItems) {
@@ -293,7 +290,11 @@ export function normalizeTool(raw: unknown): Partial<ToolActivity> {
     id: readString('id', 'toolCallId', 'tool_call_id', 'callId', 'call_id'),
     name: readString('name', 'toolName', 'tool'),
     args: readString('args', 'arguments', 'input', 'params'),
-    result: readString('output', 'result', 'content', 'text'),
+    result: readString('output', 'result', 'content', 'text', 'outputPreview') || String((record.metadata as Record<string, unknown> | undefined)?.outputPreview ?? ''),
+    durationMs: numericField(record, 'durationMs'),
+    startedAt: numericField(record, 'startedAt'),
+    finishedAt: numericField(record, 'finishedAt'),
+    metadata: record.metadata && typeof record.metadata === 'object' ? record.metadata as Record<string, unknown> : undefined,
     error: errorText(
       record.error ??
         (record.metadata && typeof record.metadata === 'object'
@@ -323,15 +324,20 @@ export function finishTool(previous: ToolActivity, raw: unknown): ToolActivity {
       ? runToolState(subagent)
       : toolResultState(raw, normalized.name || previous.name),
     error: subagent?.error?.message ?? normalized.error,
+    durationMs: normalized.durationMs ?? previous.durationMs,
+    startedAt: normalized.startedAt ?? previous.startedAt,
+    finishedAt: normalized.finishedAt ?? previous.finishedAt,
+    metadata: normalized.metadata ?? previous.metadata,
+    change: (normalized.metadata?.change as ToolActivity['change']) ?? previous.change,
     subagent
   }
 }
 
 /** Late tool results belong to the original dispatch, not the last assistant of a newer turn. */
-export function applyToolResult(messages: ChatMessage[], raw: unknown): ChatMessage[] {
+export function applyToolResult(messages: ChatMessage[], raw: unknown, runId?: string): ChatMessage[] {
   const id = normalizeTool(raw).id
   if (!id) return messages
-  const owner = messages.findIndex((message) => message.tools.some((tool) => tool.id === id))
+  const owner = messages.findIndex((message) => (!runId || message.runId === runId) && message.tools.some((tool) => tool.id === id))
   if (owner < 0) return messages
   const message = messages[owner]
   return messages.map((item, index) =>
@@ -342,4 +348,10 @@ export function applyToolResult(messages: ChatMessage[], raw: unknown): ChatMess
           tools: message.tools.map((tool) => (tool.id === id ? finishTool(tool, raw) : tool))
         }
   )
+}
+
+function numericField(record: Record<string, unknown>, key: string): number | undefined {
+  const metadata = record.metadata && typeof record.metadata === 'object' ? record.metadata as Record<string, unknown> : {}
+  const value = record[key] ?? metadata[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }

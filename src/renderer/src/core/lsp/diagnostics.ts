@@ -3,17 +3,19 @@
  *
  * 诊断与补全的分工：补全由 Monaco tsWorker 本地承担（快、离线）；
  * 引擎 /lsp/diagnose 补足项目级诊断（tsc 语义检查 + eslint 规则），
- * 且支持传未保存内容——因此 remote 模式（文件在远端）同样可用。
+ * 支持传未保存内容；远端模式需先具有共享工作区映射。
  *
  * 结果双落点：problems-store（Problems 面板）+ Monaco markers
- * （编辑器波浪线）。失败静默，不打断保存流程。
+ * （编辑器波浪线）。失败在面板中如实展示，不打断保存流程。
  */
 import { requestOrThrow } from '../engine/client'
 import { acquireModel, languageForPath, monaco, peekModel } from '../editor/monaco-setup'
-import { clearFileProblems, setFileProblems, type ProblemItem } from './problems-store'
+import { clearFileProblems, setFileProblems, setFileDiagnosis, type DiagnosisStatus, type ProblemItem } from './problems-store'
 
 /** 引擎 POST /lsp/diagnose 的 data 字段（见引擎 src/lsp/types.ts） */
 interface DiagnoseResult {
+  status: Exclude<DiagnosisStatus, 'running'>
+  error?: string
   filePath: string
   language: string
   adapter: string
@@ -33,6 +35,7 @@ const SEVERITY: Record<ProblemItem['severity'], monaco.MarkerSeverity> = {
 
 /** 每文件一个序号：连续保存时只认最新一次请求，慢响应直接丢弃 */
 const seqByFile = new Map<string, number>()
+let nextSequence = 0
 
 /** 补丁/差异文件不跑 LSP：VS Code 也不会对 .diff/.patch/.rej 跑 linter，
  *  否则 tsc/eslint 会把整份补丁判成语法错误，编辑器满屏红波浪线。 */
@@ -50,8 +53,11 @@ export async function diagnoseDocument(filePath: string, content: string): Promi
     clearDocumentDiagnostics(filePath)
     return true
   }
-  const seq = (seqByFile.get(filePath) ?? 0) + 1
+  const seq = ++nextSequence
   seqByFile.set(filePath, seq)
+  setFileDiagnosis(filePath, 'running')
+  const model = peekModel(filePath)
+  if (model) monaco.editor.setModelMarkers(model, MARKER_OWNER, [])
 
   let result: DiagnoseResult
   try {
@@ -60,11 +66,18 @@ export async function diagnoseDocument(filePath: string, content: string): Promi
       path: '/lsp/diagnose',
       body: { filePath, content }
     })
-  } catch {
+  } catch (error) {
+    if (seqByFile.get(filePath) === seq) {
+      setFileDiagnosis(filePath, 'error', error instanceof Error ? error.message : String(error))
+    }
     return false
   }
   if (seqByFile.get(filePath) !== seq) return true
 
+  if (result.status !== 'completed') {
+    setFileDiagnosis(filePath, result.status ?? 'error', result.error ?? '引擎没有返回有效诊断结果')
+    return false
+  }
   const items = result.diagnostics ?? []
   setFileProblems(filePath, items)
   applyMarkers(filePath, items)

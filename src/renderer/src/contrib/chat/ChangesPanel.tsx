@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type JSX } from 'react'
+import './change-revert.css'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import type { EngineFileChange } from '@shared/ipc'
 import { Icon } from '@renderer/workbench/icons'
-import { requestOrThrow } from '@renderer/core/engine/client'
+import { onSnapshot, requestOrThrow } from '@renderer/core/engine/client'
+import { dismissRevertReport, getRevertReport, groupRevertResults, revertChanges, revertComplete, revertStatusLabel, revertSummary, subscribeReverts } from '@renderer/core/engine/change-revert'
 import { gitStageFiles, gitUnstageFiles } from '@renderer/core/git/git-client'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
@@ -29,7 +31,7 @@ type ChangeBadge = 'A' | 'M' | 'D'
 
 function badgeOf(change: EngineFileChange): ChangeBadge {
   if (change.kind === 'delete') return 'D'
-  return change.isNew ? 'A' : 'M'
+  return (change.isNew ?? (!change.truncated && change.oldContent === null)) ? 'A' : 'M'
 }
 
 /** 估算增删行数；内容未存档时返回 null（不显示数字） */
@@ -37,7 +39,7 @@ function statsOf(change: EngineFileChange): { added: number; removed: number } |
   if (change.truncated) return null
   let rows
   if (change.kind === 'delete') rows = diffForDeletedFile(change.oldContent ?? '')
-  else if (change.isNew) rows = diffForNewFile(change.newContent ?? '')
+  else if ((change.isNew ?? (!change.truncated && change.oldContent === null))) rows = diffForNewFile(change.newContent ?? '')
   else {
     if (change.oldContent === null || change.newContent === null) return null
     rows = computeLineDiff(change.oldContent, change.newContent).slice(0, MAX_RENDER_ROWS)
@@ -56,12 +58,14 @@ export function ChangesPanel({
   sessionId,
   streaming,
   onCountChange,
+  onReportChange,
   bare
 }: {
   sessionId: string
   streaming: boolean
   /** 改动数变化时上报（父级托盘需要计数做 tab 徽标）；传了即启用受控模式 */
   onCountChange?: (count: number) => void
+  onReportChange?: (visible: boolean) => void
   /** 受控模式：外层托盘已有 tab 栏，隐藏自带的底部计数条 */
   bare?: boolean
 }): JSX.Element | null {
@@ -69,19 +73,30 @@ export function ChangesPanel({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const workspace = useWorkspace()
+  const report = useSyncExternalStore(subscribeReverts, () => getRevertReport(sessionId))
+  const mounted = useRef(false)
+  const refreshGeneration = useRef(0)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false; refreshGeneration.current++ }
+  }, [])
 
   const refresh = useCallback(async () => {
     if (!sessionId) return
+    const generation = ++refreshGeneration.current
     try {
       const data = await requestOrThrow<EngineFileChange[]>({
         method: 'GET',
         path: '/changes',
         query: { sessionId, status: 'pending' }
       })
+      if (!mounted.current || generation !== refreshGeneration.current) return
       setChanges(Array.isArray(data) ? data : [])
       setError(null)
-    } catch {
-      // 引擎未就绪时静默（面板直接不渲染）
+    } catch (err) {
+      if (mounted.current && generation === refreshGeneration.current) {
+        setError(err instanceof Error ? err.message : String(err))
+      }
     }
   }, [sessionId])
 
@@ -89,7 +104,11 @@ export function ChangesPanel({
   useEffect(() => {
     const timer = setTimeout(() => void refresh(), 0)
     return () => clearTimeout(timer)
-  }, [refresh])
+  }, [refresh, report])
+
+  useEffect(() => onSnapshot((snapshot) => {
+    if (snapshot.phase === 'ready') { setError(null); void refresh() }
+  }), [refresh])
 
   // 一轮对话结束（true→false）时快照刚落库，此时刷新
   const wasStreaming = useRef(false)
@@ -102,6 +121,10 @@ export function ChangesPanel({
   useEffect(() => {
     onCountChange?.(changes.length)
   }, [changes.length, onCountChange])
+
+  useEffect(() => {
+    onReportChange?.(Boolean(report || error))
+  }, [report, error, onReportChange])
 
   const act = useCallback(
     async (action: () => Promise<unknown>): Promise<void> => {
@@ -125,13 +148,13 @@ export function ChangesPanel({
     act(() => requestOrThrow({ method: 'POST', path: `/changes/${id}/keep`, body: {} }))
 
   const revertOne = (id: string): Promise<void> =>
-    act(() => requestOrThrow({ method: 'POST', path: `/changes/${id}/revert`, body: {} }))
+    act(() => revertChanges(requestOrThrow, { sessionId, ids: [id], scope: 'all' }))
 
-  /** 撤回不可逆（按快照盖回，覆盖之后的全部改动）：执行前必须确认 */
+  /** 版本匹配才恢复；冲突和缺失快照均保留原文件并逐项报告。 */
   const confirmRevert = async (message: string, run: () => Promise<void>): Promise<void> => {
     const ok = await confirmDialog({
       title: '撤回改动',
-      body: `${message}\n\n该操作不可撤销。`,
+      body: `${message}\n\n仅恢复版本匹配的改动；冲突或缺少快照的文件将保留并报告。`,
       confirmText: '撤回',
       danger: true
     })
@@ -193,35 +216,37 @@ export function ChangesPanel({
 
   const revertAll = async (): Promise<void> =>
     confirmRevert(
-      `撤回全部 ${changes.length} 处改动？所有文件将按快照恢复到改动前。`,
-      () =>
-        act(async () => {
-      // 并发撤回：接口按 id 各自独立，串行 N 个文件要等 N 次往返。
-      // 失败的条目留在面板里（refresh 后仍未撤回的那条仍在），并把失败原因汇总抛出，
-      // 让用户知道「撤了哪些、剩哪些」，而不是只看一个笼统的错误。
-          const results = await Promise.allSettled(
-            changes.map((change) =>
-              requestOrThrow({ method: 'POST', path: `/changes/${change.id}/revert`, body: {} })
-            )
-          )
-          const failed = results
-            .map((result, index) => ({ result, change: changes[index] }))
-            .filter((item) => item.result.status === 'rejected')
-          if (failed.length > 0) {
-            const names = failed
-              .map((item) => (item.change.displayPath || item.change.path).replace(/\\/g, '/').split('/').pop())
-              .join('、')
-            throw new Error(
-              `${changes.length - failed.length} 个已撤回，${failed.length} 个失败（仍在列表中）：${names}`
-            )
-          }
-        })
+      '撤回本会话全部待确认改动？同一文件会按操作顺序恢复。',
+      () => act(() => revertChanges(requestOrThrow, { sessionId, scope: 'pending' }))
     )
 
-  if (changes.length === 0) return null
+  if (changes.length === 0 && !report && !error) return null
 
   return (
     <div className="changes-panel">
+      {report ? (
+        <section className="changes-panel__report" aria-label="文件回退结果" aria-live="polite">
+          <div>{revertSummary(report)}</div>
+          {!revertComplete(report) ? <div>部分改动未恢复，请查看下列文件。</div> : null}
+          <details open={!revertComplete(report)}>
+            <summary>逐文件结果</summary>
+            <ul>
+              {groupRevertResults(report).map(({ path, items }) => (
+                <li key={path}>
+                  <span title={path}>{path.replace(/\\/g, '/')}</span>
+                  {' — '}{Array.from(new Set(items.map((item) => item.status))).map((status) => (
+                    <span key={status}>{revertStatusLabel[status]} {items.filter((item) => item.status === status).length} 处；</span>
+                  ))}
+                  {Array.from(new Set(items.map((item) => item.message).filter(Boolean))).map((message) => (
+                    <div key={message}>{message}</div>
+                  ))}
+                </li>
+              ))}
+            </ul>
+          </details>
+          <button type="button" className="changes-panel__footer-btn" onClick={() => dismissRevertReport(sessionId)}>关闭结果</button>
+        </section>
+      ) : null}
       <ul className="changes-panel__list">        {changes.map((change) => {
           const { name, dir } = splitPath(change)
           const stats = statsOf(change)
@@ -268,8 +293,9 @@ export function ChangesPanel({
               <button
                 type="button"
                 className="changes-panel__row-revert"
-                title="撤回这条改动（按快照恢复文件）"
-                disabled={busy || change.truncated}
+                title="检查文件版本并撤回这条改动"
+                aria-label={`撤回 ${name}`}
+                disabled={busy || streaming}
                 onClick={() => void revertOneWithConfirm(change)}
               >
                 <Icon name="restart" size={16} />
@@ -281,14 +307,14 @@ export function ChangesPanel({
 
       {error ? <div className="changes-panel__error">{error}</div> : null}
 
-      <div className="changes-panel__footer">
+      <div className="changes-panel__footer" hidden={changes.length === 0}>
         {bare ? null : <span className="changes-panel__count">改动 {changes.length}</span>}
         <span className="changes-panel__spacer" />
         <button
           type="button"
           className="changes-panel__footer-btn"
-          disabled={busy}
-          title="按快照把所有改动恢复到改动前（无法恢复未存档内容的大文件）"
+          disabled={busy || streaming}
+          title="检查版本后撤回本会话全部待确认改动"
           onClick={() => void revertAll()}
         >
           <Icon name="restart" size={16} />

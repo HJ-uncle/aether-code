@@ -25,7 +25,7 @@ import { SettingsContent, SettingsGroup, SettingsRow, Toggle } from '../settings
  * 而在此之前用户没有任何地方能看到「为什么被拦」、也没地方主动放宽。
  * 这个页面提供两个层级的控制：
  *
- *   - 会话安全模式：马上止血。切到 standard / full-access 后本会话不再弹确认。
+ *   - 会话安全模式：standard 放行普通命令，高危规则仍询问；full-access 跳过策略。
  *   - 策略规则表：精确调整。比如只想让某类命令别问，就改它对应的规则。
  *
  * 注意模式是**会话级**的（引擎按 tenant+sessionId 存在内存里），
@@ -36,7 +36,8 @@ import { SettingsContent, SettingsGroup, SettingsRow, Toggle } from '../settings
 export function SecurityView(): JSX.Element {
   const { ready, settings } = useApp()
   const sessionId = settings.lastSessionId
-  const { mode, error: modeError, refresh: refreshMode } = useSecurityMode()
+  const { mode: storedMode, loading: modeLoading, error: modeError, refresh: refreshMode } = useSecurityMode(sessionId)
+  const mode = ready ? storedMode : null
 
   const [rules, setRules] = useState<PolicyRule[]>([])
   const [rulesLoading, setRulesLoading] = useState(false)
@@ -65,7 +66,7 @@ export function SecurityView(): JSX.Element {
   }, [ready, sessionId, refreshMode, loadRules])
 
   const changeMode = async (next: SecurityMode): Promise<void> => {
-    if (!sessionId || next === mode) return
+    if (!ready || !sessionId || modeLoading || next === mode) return
     try {
       await changeSecurityMode(sessionId, next)
     } catch {
@@ -117,18 +118,28 @@ export function SecurityView(): JSX.Element {
             : '尚未建立会话：先在对话视图发一条消息，这里才能设置模式。'
         }
       >
+        {mode === null ? (
+          <SettingsContent>
+            <div className="notice" role="status">{modeLoading ? '正在读取安全模式…' : '安全模式状态未知，尚未确认引擎当前权限。'}</div>
+            {ready && sessionId && !modeLoading ? (
+              <button type="button" className="btn" onClick={() => void refreshMode(sessionId)}>重新读取安全模式</button>
+            ) : null}
+          </SettingsContent>
+        ) : null}
         {MODE_DESCRIPTORS.map((descriptor) => (
           <SettingsRow
             key={descriptor.value}
             label={descriptor.label}
-            description={descriptor.summary}
-            onClick={() => void changeMode(descriptor.value)}
+            description={[descriptor.summary, descriptor.warning].filter(Boolean).join(' ')}
+            onClick={ready && sessionId && !modeLoading ? () => void changeMode(descriptor.value) : undefined}
           >
             <span
               className={`sg-radio${mode === descriptor.value ? ' is-on' : ''}${
                 isRiskyMode(descriptor.value) && mode === descriptor.value ? ' sg-radio--risky' : ''
               }`}
               role="radio"
+              aria-label={descriptor.label}
+              aria-disabled={!ready || !sessionId || modeLoading}
               aria-checked={mode === descriptor.value}
             />
           </SettingsRow>
@@ -229,7 +240,7 @@ export function SecurityView(): JSX.Element {
           type="button"
           className="btn"
           disabled={!ready || rulesLoading}
-          onClick={() => void loadRules()}
+          onClick={() => { void loadRules(); void refreshMode(sessionId) }}
         >
           刷新
         </button>

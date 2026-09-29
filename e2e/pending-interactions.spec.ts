@@ -73,11 +73,20 @@ test.describe('normalizePending', () => {
     ])
   })
 
-  test('提问帧：无选项时给出兜底，避免渲染空按钮组', () => {
+  test('提问帧：无选项时保留自由输入，不合成批准或拒绝按钮', () => {
     const pending = normalizePending({
       ask_user: { toolCallId: 'call_04', question: '需要确认' }
     })
-    expect(pending!.options.length).toBeGreaterThan(0)
+    expect(pending!.options).toEqual([])
+    expect(pending!.groups).toEqual([{
+      tab: '', question: '需要确认', options: [], multiSelect: false, allowInput: true
+    }])
+    expect(buildToolResponse(pending!, ['请先检查配置'])).toEqual({
+      toolCallId: 'call_04', name: 'ask_user', output: '请先检查配置'
+    })
+    expect(buildToolResponse(pending!, ['跳过'])).toEqual({
+      toolCallId: 'call_04', name: 'ask_user', output: '跳过'
+    })
   })
 
   test('非交互帧返回 null', () => {
@@ -134,7 +143,8 @@ test.describe('mergePending', () => {
       options: [{ label: 'a', value: 'a' }],
       toolCallId: 'id-1',
       toolName: 'ask_user',
-      multiSelect: false
+      multiSelect: false,
+      groups: [{ tab: '', question: '第一个', options: [{ label: 'a', value: 'a' }], multiSelect: false, allowInput: true }]
     }
     const second: PendingInteraction = { ...first, question: '第二个', toolCallId: 'id-2' }
     expect(mergePending(first, second).question).toBe('第二个')
@@ -163,7 +173,8 @@ test.describe('buildToolResponse', () => {
       options: [],
       toolCallId: 'id-3',
       toolName: 'ask_user',
-      multiSelect: true
+      multiSelect: true,
+      groups: [{ tab: '', question: '选哪些？', options: [], multiSelect: true, allowInput: true }]
     }
     expect(buildToolResponse(pending, ['a', 'b']).output).toBe('a,b')
   })

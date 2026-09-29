@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type JSX, type KeyboardEvent } from 'react'
+import { useMemo, useState, type JSX, type KeyboardEvent } from 'react'
 import {
   PROVIDERS,
   detectCapabilities,
@@ -7,44 +7,22 @@ import {
   type EngineModel,
   type ModelCapabilities
 } from '@renderer/core/engine/models'
+import {
+  initialModelForm,
+  buildModelUpdate,
+  newModelOverrides,
+  type ModelFormState
+} from '@renderer/core/engine/model-form'
 import { addModel, refreshModels } from '@renderer/core/engine/model-store'
 import { Dialog } from '@renderer/workbench/Dialog'
 import { Select } from '@renderer/workbench/Select'
-import { Segmented, SettingsContent, SettingsGroup, SettingsRow, Toggle } from '../settings/SettingsGroup'
+import { Segmented, SettingsContent, SettingsGroup, SettingsRow } from '../settings/SettingsGroup'
 
 interface ModelFormDialogProps {
   /** 传入则为编辑模式，不传为新增 */
   model?: EngineModel
   onClose: () => void
   onSaved?: (model: EngineModel) => void
-}
-
-interface FormState {
-  provider: string
-  displayName: string
-  modelId: string
-  baseUrl: string
-  apiKey: string
-  /** 图片输入能力（→ capabilities.vision，引擎据此决定是否接受多模态附件） */
-  vision: boolean
-  /**
-   * 思考模式（→ capabilities.thinking）。
-   *
-   * 三态而非布尔：引擎的 thinkingMode 是「不传 = 跟随模型默认」，
-   * 传 false 才会强制关闭。用 null 表达「不传」，避免把用户的
-   * 「没表态」误写成「关闭」。
-   */
-  thinking: boolean | null
-}
-
-const EMPTY_FORM: FormState = {
-  provider: 'deepseek',
-  displayName: '',
-  modelId: '',
-  baseUrl: 'https://api.deepseek.com',
-  apiKey: '',
-  vision: false,
-  thinking: null
 }
 
 /** 常见的 modelId 预设，减少手输错误 */
@@ -58,25 +36,7 @@ const MODEL_PRESETS: Record<string, string[]> = {
 export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProps): JSX.Element {
   const isEdit = Boolean(model)
 
-  const [form, setForm] = useState<FormState>(() =>
-    model
-      ? {
-          provider: model.provider,
-          displayName: model.displayName ?? '',
-          modelId: model.modelId,
-          baseUrl: model.baseUrl,
-          // 编辑时不回填脱敏串，留空即表示不修改
-          apiKey: '',
-          vision: model.capabilities?.vision === true,
-          thinking:
-            model.capabilities?.thinking === true
-              ? true
-              : model.capabilities?.thinking === false
-                ? false
-                : null
-        }
-      : EMPTY_FORM
-  )
+  const [form, setForm] = useState<ModelFormState>(() => initialModelForm(model))
 
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -90,7 +50,7 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
     [form.provider]
   )
 
-  const patch = (next: Partial<FormState>): void => {
+  const patch = (next: Partial<ModelFormState>): void => {
     setForm((prev) => ({ ...prev, ...next }))
     setTestResult(null)
     setError(null)
@@ -191,19 +151,6 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
   }
 
   /**
-   * 表单里的能力开关 → 引擎 capabilities。
-   *
-   * 只写用户明确表态过的键：全 null/未勾选时返回 undefined，
-   * 让引擎继续走内置规则推断，而不是被一份空 capabilities 覆盖成「全不支持」。
-   */
-  const buildCapabilities = useCallback((): ModelCapabilities | undefined => {
-    const caps: ModelCapabilities = {}
-    if (form.vision) caps.vision = true
-    if (form.thinking !== null) caps.thinking = form.thinking
-    return Object.keys(caps).length > 0 ? caps : undefined
-  }, [form.vision, form.thinking])
-
-  /**
    * 文本输入框回车即提交（对齐 PromptDialog）。
    * 中文输入法组合期间的回车属于确认候选词，不能当作提交。
    */
@@ -224,17 +171,9 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
     setError(null)
     try {
       if (isEdit) {
-        await updateModel(model!.id, {
-          // 始终传字符串：传 undefined 会被 JSON 序列化丢掉，
-          // 引擎侧 `!== undefined` 判断为假，导致「清空显示名称」无法生效
-          displayName: form.displayName.trim(),
-          baseUrl: form.baseUrl.trim(),
-          capabilities: buildCapabilities() ?? null,
-          // 留空表示不改 key，不能传空串否则会被引擎校验拒绝
-          ...(form.apiKey.trim() ? { apiKey: form.apiKey.trim() } : {})
-        })
+        const updated = await updateModel(model!.id, buildModelUpdate(model!, form))
         await refreshModels()
-        onSaved?.(model!)
+        onSaved?.(updated)
       } else {
         const created = await addModel({
           provider: form.provider,
@@ -242,7 +181,7 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
           apiKey: form.apiKey.trim(),
           baseUrl: form.baseUrl.trim(),
           displayName: form.displayName.trim() || undefined,
-          capabilities: buildCapabilities()
+          capabilityOverrides: newModelOverrides(form)
         })
         onSaved?.(created)
       }
@@ -323,7 +262,10 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
       </SettingsGroup>
 
       <SettingsGroup title="连接">
-        <SettingsRow label="接口地址" description="必须是公网可访问地址（引擎会拒绝内网与本机地址）">
+        <SettingsRow
+          label="接口地址"
+          description="必须是公网可访问地址（引擎会拒绝内网与本机地址）"
+        >
           <input
             className="field__input sg__input sg__input--wide"
             value={form.baseUrl}
@@ -350,28 +292,39 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
       </SettingsGroup>
 
       <SettingsGroup title="能力">
-        <SettingsRow label="支持图片输入" description="声明该模型可接收图片附件，引擎据此决定是否把图片按多模态下发">
-          <Toggle
-            checked={form.vision}
-            onChange={(checked) => patch({ vision: checked })}
-            label="支持图片输入"
-          />
+        <SettingsRow
+          label="支持图片输入"
+          description="默认跟随模型能力；开启或关闭会保存为人工设置"
+        >
+          <div role="group" aria-label="图片输入能力">
+            <Segmented
+              options={[
+                { value: 'default', label: '默认' },
+                { value: 'on', label: '开启' },
+                { value: 'off', label: '关闭' }
+              ]}
+              value={form.vision === null ? 'default' : form.vision ? 'on' : 'off'}
+              onChange={(value) => patch({ vision: value === 'default' ? null : value === 'on' })}
+            />
+          </div>
         </SettingsRow>
         <SettingsRow
           label="思考模式"
           description="开启后引擎会注入推理参数（DeepSeek 走 reasoning_effort，Qwen 走 enable_thinking）；模型不支持时按默认行为处理"
         >
-          <Segmented
-            options={[
-              { value: 'default', label: '默认' },
-              { value: 'on', label: '开启' },
-              { value: 'off', label: '关闭' }
-            ]}
-            value={form.thinking === null ? 'default' : form.thinking ? 'on' : 'off'}
-            onChange={(value) =>
-              patch({ thinking: value === 'default' ? null : value === 'on' ? true : false })
-            }
-          />
+          <div role="group" aria-label="思考能力">
+            <Segmented
+              options={[
+                { value: 'default', label: '默认' },
+                { value: 'on', label: '开启' },
+                { value: 'off', label: '关闭' }
+              ]}
+              value={form.thinking === null ? 'default' : form.thinking ? 'on' : 'off'}
+              onChange={(value) =>
+                patch({ thinking: value === 'default' ? null : value === 'on' ? true : false })
+              }
+            />
+          </div>
         </SettingsRow>
       </SettingsGroup>
 
