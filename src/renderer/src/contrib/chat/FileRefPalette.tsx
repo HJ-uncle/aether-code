@@ -169,7 +169,7 @@ export function FileRefPalette({
               {entry.isDir ? (
                 <span className="file-palette__dir" />
               ) : (
-                <FileGlyph name={entry.path.split('/').pop() ?? entry.path} />
+                <FileGlyph name={entry.path.split('/').pop() ?? entry.path} size={14} />
               )}
               <span className="file-palette__name">{entry.path.split('/').pop()}</span>
               <span className="file-palette__path">{entry.path}</span>

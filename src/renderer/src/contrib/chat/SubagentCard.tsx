@@ -142,7 +142,7 @@ export function SubagentCard({
   const legacy = useMemo(() => parseLegacy(tool.result), [tool.result])
   const [manualOpen, setManualOpen] = useCollapseMemory(`subagent:${tool.id}`)
   const [goalExpanded, setGoalExpanded] = useState(false)
-  // 「执行详情」折叠：运行中自动展开看进展、结束自动收起；用户点过后以用户为准（跨重建记忆）
+  // 「执行详情」折叠：默认收起，点开后跨重建记住用户选择
   const [toolsManual, setToolsManual] = useCollapseMemory(`subagent-tools:${tool.id}`)
   const [requesting, setRequesting] = useState(false)
   const [requestError, setRequestError] = useState('')
@@ -178,8 +178,8 @@ export function SubagentCard({
   const failures = calls.filter((call) => call.status === 'failed').length
   const currentCall = [...calls].reverse().find((call) => call.status === 'running')
 
-  // 「执行详情」折叠态：运行中自动展开看进展，结束自动收起；用户点过后以用户为准
-  const toolsCollapsed = toolsManual ?? !active
+  // 「执行详情」折叠态：默认收起（运行进展由「当前：xxx」行露出）；用户点过后以用户为准
+  const toolsCollapsed = toolsManual ?? true
 
   /** 收起态按类型统计：「读取文件 × 5 · 搜索内容 × 78…」，最多露 3 类 */
   const toolsTypeSummary = useMemo(() => {

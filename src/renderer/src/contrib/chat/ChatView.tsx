@@ -10,6 +10,7 @@ import { exportSubagentDetails, toolStatusLabel } from '@renderer/core/engine/su
 import { Markdown } from './Markdown'
 import { toolDisplayName, toolParamSummary, toolPathArg } from './tool-names'
 import { useCollapseMemory } from './useCollapseMemory'
+import { registerPendingSession, requestSessionListRefresh, touchPendingSession } from '../history/pending-sessions'
 import { openFileFromChat } from './open-file'
 import { useModels } from '@renderer/core/engine/model-store'
 import { changeSecurityMode } from '@renderer/core/engine/security-store'
@@ -595,6 +596,9 @@ export function ChatView(): JSX.Element {
     // 发送成功后该会话草稿即作废
     window.clearTimeout(draftTimerRef.current)
     saveChatDraft(sessionId, '')
+    // 占位条目（若该会话是本次新建的）刷新时间戳，继续待在列表顶部；
+    // 引擎落库后由列表侧的 prune 让它退场
+    touchPendingSession(sessionId)
     // 发送是用户主动发起的「看最新输出」动作：无条件吸底（覆盖任何此前上滚导致的非跟随态），
     // 否则 80ms 流式节流窗口内 followBottom 已是 false 时整轮都不再跟随
     resumeFollowBottom()
@@ -633,8 +637,20 @@ export function ChatView(): JSX.Element {
   const createSession = useCallback(() => {
     if (streaming) abort()
     const generated = newSessionId()
+    // 引擎只列举「有对话记录」的会话，空会话不出现在列表里；
+    // 先登记本地占位条目，让新建的会话在侧栏立刻可见
+    registerPendingSession(generated)
     void updateSettings({ lastSessionId: generated })
   }, [abort, streaming, updateSettings])
+
+  // 回合结束（流式停止）时通知会话列表重新拉取：首条消息落库后引擎才开始
+  // 返回该会话，此时 lastSessionId 没变、列表页的刷新 effect 不会触发，
+  // 占位条目需要这次信号才能退场换成真条目（时间/摘要有真实数据）
+  const wasStreamingRef = useRef(false)
+  useEffect(() => {
+    if (wasStreamingRef.current && !streaming) requestSessionListRefresh()
+    wasStreamingRef.current = streaming
+  }, [streaming])
 
   // ── 多选导出 ────────────────────────────────────────────────────────────────
   const toggleSelectMode = useCallback(() => {

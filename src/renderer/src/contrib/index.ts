@@ -51,6 +51,7 @@ import { DocumentView } from './editor/DocumentView'
 import { ExplorerView } from './explorer/ExplorerView'
 import { GitView } from './git/GitView'
 import { SessionHistoryView } from './history/SessionHistoryView'
+import { registerPendingSession } from './history/pending-sessions'
 import { OutputView } from './output/OutputView'
 import { ProblemsView } from './problems/ProblemsView'
 import { SearchView } from './search/SearchView'
@@ -344,6 +345,9 @@ export function registerContributions(): () => void {
       category: '对话',
       run: () => {
         const generated = globalThis.crypto?.randomUUID?.() ?? `session-${Date.now()}`
+        // 引擎只列举「有对话记录」的会话，空会话不会出现在列表里；
+        // 先登记本地占位条目，让新建的会话立刻可见
+        registerPendingSession(generated)
         void updateSettings({ lastSessionId: generated }).then(() => showChatPanel())
       }
     },

@@ -30,6 +30,14 @@ import {
   removeSessionMeta,
   subscribeSessionMeta
 } from './session-meta'
+import {
+  listPendingSessions,
+  prunePendingSessions,
+  registerPendingSession,
+  removePendingSession,
+  subscribePendingSessions,
+  subscribeSessionListRefresh
+} from './pending-sessions'
 
 /** GET /conversation/sessions 的 data 项（lastAt 已由引擎换算为毫秒时间戳） */
 interface SessionSummary {
@@ -120,6 +128,7 @@ export function SessionHistoryView(): JSX.Element {
   const [renaming, setRenaming] = useState<{ sessionId: string; value: string } | null>(null)
 
   const metaTable = useSyncExternalStore(subscribeSessionMeta, getSessionMetaTable)
+  const pendingSessions = useSyncExternalStore(subscribePendingSessions, listPendingSessions)
 
   const refresh = useCallback(async () => {
     if (!ready) return
@@ -130,7 +139,10 @@ export function SessionHistoryView(): JSX.Element {
         method: 'GET',
         path: '/conversation/sessions'
       })
-      setSessions(Array.isArray(rows) ? rows : [])
+      const list = Array.isArray(rows) ? rows : []
+      setSessions(list)
+      // 引擎开始返回该会话后，对应的本地占位条目退场，避免同一条会话出现两行
+      prunePendingSessions(new Set(list.map((item) => item.sessionId)))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -143,6 +155,14 @@ export function SessionHistoryView(): JSX.Element {
   useEffect(() => {
     void Promise.resolve().then(refresh)
   }, [refresh, settings.lastSessionId])
+
+  // 回合结束信号：首条消息落库后引擎才开始返回该会话，此时 lastSessionId
+  // 没变，上面的 effect 不会触发；收到信号重新拉取，让本地占位条目退场。
+  // 同样挪进微任务，避免订阅回调在 effect 执行期内联触发级联渲染
+  useEffect(
+    () => subscribeSessionListRefresh(() => void Promise.resolve().then(refresh)),
+    [refresh]
+  )
 
   const openSession = useCallback(
     (sessionId: string) => {
@@ -159,6 +179,9 @@ export function SessionHistoryView(): JSX.Element {
   // 切换后回放到的历史为空，等于开了一条全新对话，不引入额外的会话对象
   const createSession = useCallback(() => {
     const generated = globalThis.crypto?.randomUUID?.() ?? `session-${Date.now()}`
+    // 引擎只列举「有对话记录」的会话，空会话不会出现；先登记本地占位条目，
+    // 新会话立刻出现在列表顶部（发出首条消息、引擎落库后该占位自动退场）
+    registerPendingSession(generated)
     void updateSettings({ lastSessionId: generated }).then(() => showChatPanel())
   }, [updateSettings])
 
@@ -216,13 +239,21 @@ export function SessionHistoryView(): JSX.Element {
         if (!confirmed) return
         // 删的是当前会话：先换一个新 ID，避免删除后还挂在已销毁的会话上
         const isCurrent = sessionId === settings.lastSessionId
+        // 刚新建、还没发过消息的会话在引擎侧没有记录，DELETE 会失败；
+        // 这类会话只需清掉本地占位条目，不算删除失败
+        const isPending = pendingSessions.some((item) => item.sessionId === sessionId)
         void requestOrThrow({
           method: 'DELETE',
           path: `/sessions/${encodeURIComponent(sessionId)}`,
           query: { keepWorkspace: 'true' }
         })
+          .catch((err: unknown) => {
+            if (!isPending) throw err
+            return undefined
+          })
           .then(() => {
             removeSessionMeta(sessionId)
+            removePendingSession(sessionId)
             if (isCurrent) {
               const generated = globalThis.crypto?.randomUUID?.() ?? `session-${Date.now()}`
               return updateSettings({ lastSessionId: generated })
@@ -239,7 +270,7 @@ export function SessionHistoryView(): JSX.Element {
           })
       })
     },
-    [sessions, metaTable, settings.lastSessionId, updateSettings, refresh]
+    [sessions, pendingSessions, metaTable, settings.lastSessionId, updateSettings, refresh]
   )
 
   // ── 派生列表：过滤（只看收藏）→ 排序（置顶恒前）──────────────────────────
@@ -250,9 +281,21 @@ export function SessionHistoryView(): JSX.Element {
   )
 
   const visibleSessions = useMemo(() => {
+    // 引擎只列举有对话记录的会话；本地占位条目（刚新建、还没发过消息）按 sessionId
+    // 去重后并入，新会话才会立刻出现在列表里
+    const known = new Set(sessions.map((s) => s.sessionId))
+    const pending: SessionSummary[] = pendingSessions
+      .filter((item) => !known.has(item.sessionId))
+      .map((item) => ({
+        sessionId: item.sessionId,
+        lastAt: item.lastAt,
+        messageCount: 0,
+        title: '未命名会话'
+      }))
+    const merged = [...pending, ...sessions]
     const filtered = favoritesOnly
-      ? sessions.filter((s) => metaTable[s.sessionId]?.favorite)
-      : sessions
+      ? merged.filter((s) => metaTable[s.sessionId]?.favorite)
+      : merged
     const tagOrder = new Map(SESSION_TAG_COLORS.map((c, index) => [c.key, index]))
     const dir = sort.order === 'asc' ? 1 : -1
     return [...filtered].sort((a, b) => {
@@ -284,7 +327,7 @@ export function SessionHistoryView(): JSX.Element {
           return ((a.lastAt ?? 0) - (b.lastAt ?? 0)) * dir
       }
     })
-  }, [sessions, favoritesOnly, sort, metaTable])
+  }, [sessions, pendingSessions, favoritesOnly, sort, metaTable])
 
   /** 第一条非置顶项的 id：置顶区与非置顶区之间画分割线（对齐 wuzu） */
   const firstUnpinnedId = useMemo(

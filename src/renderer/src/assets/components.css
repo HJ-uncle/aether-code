@@ -3154,6 +3154,7 @@
 /* 紧凑工具调用行（对齐 wuzu 的 CliCompactToolRow）：圆点 + 名称 · 状态，一行 */
 .subagent-card__call {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   gap: 6px;
   padding: 2px 0;
@@ -4202,8 +4203,8 @@
 /* 目录图标：与资源管理器文件树同款色块（见 .tree-row__icon--dir） */
 .file-palette__dir {
   flex: 0 0 auto;
-  width: 16px;
-  height: 14px;
+  width: 12px;
+  height: 10px;
   border-radius: 2px;
   background: var(--fg-muted);
   clip-path: polygon(0 25%, 35% 25%, 45% 10%, 100% 10%, 100% 100%, 0 100%);
