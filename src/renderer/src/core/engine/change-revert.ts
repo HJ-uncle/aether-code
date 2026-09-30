@@ -1,4 +1,5 @@
 import type { EngineRequestInput } from '@shared/ipc'
+import { getEngineSource, getExpectedEngine, subscribeEngineSource } from './source'
 
 export type RevertStatus = 'reverted' | 'already_reverted' | 'conflict' | 'unavailable' | 'failed'
 export interface RevertItem {
@@ -36,6 +37,35 @@ interface HistoryRow {
 const reports = new Map<string, RevertReport>()
 const outcomes = new Map<string, RevertItem>()
 const listeners = new Set<() => void>()
+
+// Session and change IDs can be reused by a different engine or restored database.
+subscribeEngineSource(() => {
+  reports.clear()
+  outcomes.clear()
+  for (const listener of listeners) listener()
+})
+
+function bindRevertSource(request: Request): { request: Request; assertCurrent: () => void } {
+  const source = getEngineSource()
+  const expectedEngine = getExpectedEngine()
+  const assertCurrent = (): void => {
+    if (source !== getEngineSource()) throw new Error('引擎连接已变化，已停止后续回退操作；请在当前会话重试')
+  }
+  return {
+    assertCurrent,
+    request: async <T>(input: EngineRequestInput): Promise<T> => {
+      assertCurrent()
+      try {
+        const result = await request<T>({ ...input, expectedEngine: input.expectedEngine ?? expectedEngine })
+        assertCurrent()
+        return result
+      } catch (error) {
+        assertCurrent()
+        throw error
+      }
+    }
+  }
+}
 
 export function subscribeReverts(listener: () => void): () => void {
   listeners.add(listener)
@@ -87,15 +117,18 @@ export function groupRevertResults(report: RevertReport): Array<{ path: string; 
 
 /** Selection belongs to the server: an omitted ids field must never become the visible UI list. */
 export async function revertChanges(request: Request, intent: RevertIntent): Promise<RevertReport> {
-  const report = await request<RevertReport>({
+  const operation = bindRevertSource(request)
+  const report = await operation.request<RevertReport>({
     method: 'POST', path: '/changes/revert-batch', body: intent
   })
+  operation.assertCurrent()
   if (!report || !Array.isArray(report.results) || !Number.isInteger(report.total) || report.total < 0) {
     throw new Error('回退响应无效，已保留对话历史；请重新读取改动状态')
   }
   reports.set(intent.sessionId, report)
   for (const item of report.results) outcomes.set(item.id, item)
   for (const listener of listeners) listener()
+  operation.assertCurrent()
   return report
 }
 
@@ -112,15 +145,19 @@ export async function revertConversationFrom(
   sessionId: string,
   target: { id: string; role: string; content: string }
 ): Promise<RevertReport> {
-  const rows = await request<HistoryRow[]>({ method: 'GET', path: '/conversation/history', query: { sessionId } })
+  const operation = bindRevertSource(request)
+  const rows = await operation.request<HistoryRow[]>({ method: 'GET', path: '/conversation/history', query: { sessionId } })
+  operation.assertCurrent()
   if (!Array.isArray(rows)) throw new Error('读取会话历史失败，未执行文件回退')
   const row = locateRevertRow(rows, target)
-  const report = await revertChanges(request, { sessionId, scope: 'all', fromTurnId: row.conversationId })
+  const report = await revertChanges(operation.request, { sessionId, scope: 'all', fromTurnId: row.conversationId })
+  operation.assertCurrent()
   if (!revertComplete(report)) {
     throw new Error(`${revertSummary(report)}。对话历史已保留，请在改动面板查看逐文件结果。`)
   }
   try {
-    await request({ method: 'POST', path: '/conversation/truncate', body: { sessionId, messageId: row.id } })
+    await operation.request({ method: 'POST', path: '/conversation/truncate', body: { sessionId, messageId: row.id } })
+    operation.assertCurrent()
   } catch (error) {
     throw new Error(`文件回退已完成，但对话删除失败：${error instanceof Error ? error.message : String(error)}`)
   }

@@ -204,7 +204,7 @@ async function expectPhase(phase: 'ready' | 'error'): Promise<void> {
   // Keep a visible phase assertion: a long authentication error must not collapse the
   // state values to zero width when settings, history, and chat are visible together.
   await expect(statusSection.locator('.kv dd').filter({
-    hasText: new RegExp(`^${phase}$`)
+    hasText: phase === 'ready' ? /^已就绪$/ : /^错误$/
   })).toBeVisible()
   if (phase === 'error') {
     const error = statusSection.locator('.settings-view__error')

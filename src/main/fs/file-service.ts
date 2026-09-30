@@ -12,6 +12,7 @@ import { shell, dialog } from 'electron'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { existsSync, realpathSync } from 'node:fs'
+import { markGitignored } from './gitignore-matcher'
 import type {
   CopyIntoWorkspaceInput,
   CopyIntoWorkspaceResult,
@@ -75,8 +76,17 @@ const BINARY_SAMPLE_BYTES = 8192
  */
 const MAX_BINARY_BYTES = 32 * 1024 * 1024
 
-/** 已授权的工作区根目录（绝对路径，小写用于比较） */
+/** 已授权的工作区根目录（规范化后，小写用于比较） */
 const allowedRoots = new Set<string>()
+
+/**
+ * 同一批根目录的**真实大小写**路径。
+ *
+ * allowedRoots 为比较而小写化了，不能拿去拼路径（Linux 大小写敏感，Windows 上
+ * 也会让显示与实际不符）。这里留一份原文，供「判断某个目录属于哪个工作区根」
+ * 这类需要真实路径的场景使用。
+ */
+const allowedRootPaths = new Set<string>()
 
 function canonicalExistingTarget(target: string): string {
   const resolved = path.resolve(target); let probe = resolved; const suffix: string[] = []
@@ -92,11 +102,31 @@ function normalizeForCompare(p: string): string {
 /** 授权一个目录作为工作区根 */
 export function allowRoot(root: string): void {
   const resolved = path.resolve(root)
-  allowedRoots.add(normalizeForCompare(realpathSync(resolved)))
+  const real = realpathSync(resolved)
+  allowedRoots.add(normalizeForCompare(real))
+  allowedRootPaths.add(real)
 }
 
 export function getAllowedRoots(): string[] {
   return [...allowedRoots]
+}
+
+/**
+ * 目录所属的工作区根（真实路径）；不在任何根下时返回 null。
+ *
+ * 取**最长**的一段前缀：嵌套工作区（把子目录也打开成一个根）时，.gitignore 的
+ * 查找必须止于离目录最近的那个根，否则会读到外层项目、与本工作区无关的规则。
+ */
+function workspaceRootOf(dir: string): string | null {
+  const resolved = path.resolve(dir)
+  let best: string | null = null
+  for (const root of allowedRootPaths) {
+    if (resolved === root) return root
+    const rel = path.relative(root, resolved)
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) continue
+    if (!best || root.length > best.length) best = root
+  }
+  return best
 }
 
 /** 校验路径位于任一已授权根目录内，否则抛错 */
@@ -154,6 +184,10 @@ export async function readDirectory(dir: string): Promise<FsEntry[]> {
     if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
     return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
   })
+
+  // 标记被 .gitignore 忽略的项（资源管理器据此置灰）；不在工作区内时自动跳过
+  const root = workspaceRootOf(safeDir)
+  if (root) await markGitignored(entries, safeDir, root)
 
   return entries
 }

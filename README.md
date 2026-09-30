@@ -80,6 +80,10 @@ npm run dev
 
 ### 手动地址连接与实例凭据
 
+已打包的 Windows x64 引擎也可以在客户端中导入：打开「设置 → 通用 → 本地内置」，在「本地引擎」点击「导入引擎…」，选择 `agent-engine-2.0.0-win32-x64.tgz`。客户端会解包、补齐 Node 和语言服务并校验原生依赖；成功后点击「使用此引擎并重启」。导入期间不停止当前引擎，切换时会中断正在运行的任务。
+
+导入版本保存在当前用户数据目录的 `engine/runtimes/`，选择会跨应用重启保存。会话数据库、模型配置和凭据继续使用原目录。可点「恢复默认引擎」切回安装包内置版本（开发环境回到开发引擎）。这用于更新当前机器；向其他用户分发时仍使用下面的安装包打包流程。
+
 “远端服务”支持普通聊天、工具审批应答、停止、会话与历史恢复、压缩、润色、后台任务与子代理停止，以及模型新增、更新、连接测试和能力检测。远端记录与任务执行均使用引擎侧数据，不会把远端路径解释成同名本地文件。
 
 在「设置 → 引擎」填写远端地址、令牌和可选的「远端工作目录」，然后「保存并重启」。目录必须是引擎所在机器上的绝对路径，例如 `/srv/project` 或 `D:\\project`；留空使用服务端会话沙箱。目录设置重连后对新会话生效，已有会话继承服务端记录目录。远端已有模型自动加载；缺少模型时可从聊天提示进入模型管理填写服务商、模型 ID、地址及自己的 API Key。产品提供服务商地址和模型预设，不提供第三方模型密钥或额度。
@@ -103,6 +107,23 @@ npm run build:win      # Windows
 npm run build:mac      # macOS
 npm run build:linux    # Linux
 ```
+
+Windows 客户端也可以直接使用引擎发布包（`.tgz`）。先设置 `AETHER_ENGINE_TGZ`，再执行同一个打包命令；staging 会解包引擎、补齐独立 Node 与 IDE 的 TypeScript Language Server，并把完整运行时放入安装包的 `resources/engine/win32-x64`：
+
+```powershell
+$env:AETHER_ENGINE_TGZ = 'D:\dev\ai-agent-engine\release\agent-engine-2.0.0-win32-x64.tgz'
+$env:AETHER_NODE_BINARY = 'C:\Program Files\nodejs\node.exe'
+npm run build:win
+```
+
+只准备并验证内置运行时时：
+
+```powershell
+npm run prepare:engine
+npm run verify:engine
+```
+
+`.tgz` 本身不包含客户端需要的独立 `runtime/node.exe` 和 `typescript-language-server`，不能只复制 `dist/main.js`；上述 staging 步骤会一并补齐这些文件。
 
 ## 开发
 

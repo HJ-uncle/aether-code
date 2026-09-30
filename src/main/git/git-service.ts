@@ -678,15 +678,20 @@ export async function unstage(cwd: string, filePath: string): Promise<GitResult>
 
 /** 把候选路径收窄到 git 认得的子集（已跟踪或未跟踪但未忽略），避免整批 add 因个别失效路径 fatal */
 async function filterGitKnownPaths(cwd: string, paths: string[]): Promise<string[]> {
-  try {
-    const out = await runGit(cwd, ['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', ...paths])
-    const known = new Set(
-      out.split('\0').filter(Boolean).map((p) => p.replace(/\\/g, '/').toLowerCase())
-    )
-    return paths.filter((p) => known.has(p.replace(/\\/g, '/').toLowerCase()))
-  } catch {
-    return []
+  const normalize = (value: string): string => {
+    const relative = path.relative(cwd, path.resolve(cwd, value)).replace(/\\/g, '/')
+    if (!relative || relative === '..' || relative.startsWith('../') || path.isAbsolute(relative)) {
+      throw new Error('只能暂存当前工作区内的文件')
+    }
+    return process.platform === 'win32' ? relative.toLowerCase() : relative
   }
+  const candidates = [...new Set(paths)]
+  const relativePaths = candidates.map(normalize)
+  // ls-files always returns cwd-relative names, even for absolute input paths.
+  // Literal pathspecs keep filenames containing [, *, or ? from selecting neighbours.
+  const out = await runGit(cwd, ['--literal-pathspecs', 'ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', ...candidates])
+  const known = new Set(out.split('\0').filter(Boolean).map(normalize))
+  return candidates.filter((_value, index) => known.has(relativePaths[index]))
 }
 
 /** 批量暂存：先收窄到 git 认得的子集，返回实际暂存的路径供调用方记账 */
@@ -696,7 +701,7 @@ export async function stageFiles(cwd: string, paths: string[]): Promise<GitResul
   try {
     const known = await filterGitKnownPaths(root, paths)
     if (known.length === 0) return { success: true, stagedPaths: [] }
-    await runGit(root, ['add', '-f', '--', ...known])
+    await runGit(root, ['--literal-pathspecs', 'add', '-f', '--', ...known])
     return { success: true, stagedPaths: known }
   } catch (error) {
     return fail(error)

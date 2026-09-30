@@ -6,12 +6,13 @@ import { promisify } from 'node:util'
 import { parseEngineManifest, type EngineManifest } from './protocol'
 import { selectRuntimeEntry } from './runtime-location'
 import { preparePackagedRuntime } from './packaged-runtime'
+import { getActiveRuntimeId, getLocalRuntimeRoot } from './local-runtime-store'
 
 export interface ResolvedRuntime {
   nodePath: string
   entryPath: string
   root: string
-  source: 'env' | 'bundled' | 'dev-sibling'
+  source: 'env' | 'bundled' | 'dev-sibling' | 'imported'
   version: string
   manifest: EngineManifest
 }
@@ -31,16 +32,18 @@ export function legacyEngineDataFile(): string {
 
 /** Packaged applications must be self-contained; developer overrides only apply in development. */
 export function resolveRuntime(): ResolvedRuntime | null {
+  const activeId = getActiveRuntimeId(app.getPath('userData'))
   const { entryPath, source } = selectRuntimeEntry({
     packaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
     appPath: app.getAppPath(),
     platform: enginePlatform(),
-    override: process.env.AETHER_IDE_ENGINE_ENTRY
+    override: process.env.AETHER_IDE_ENGINE_ENTRY,
+    importedRoot: activeId ? getLocalRuntimeRoot(app.getPath('userData'), activeId) : undefined
   })
 
   if (!existsSync(entryPath)) {
-    if (source === 'env') throw new Error(`显式指定的引擎入口不存在：${entryPath}`)
+    if (source === 'env' || source === 'imported') throw new Error(`指定的引擎入口不存在：${entryPath}`)
     return null
   }
 
@@ -52,7 +55,7 @@ export function resolveRuntime(): ResolvedRuntime | null {
     throw new Error(`引擎构建信息缺失或不兼容，请重新构建配套引擎：${manifestPath}`)
   }
   const root = dirname(dirname(entryPath))
-  const nodePath = source === 'bundled' ? join(root, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node') : process.execPath
+  const nodePath = source === 'bundled' || source === 'imported' ? join(root, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node') : process.execPath
   if (!existsSync(nodePath)) throw new Error('安装包缺少引擎 Node 运行时，请重新安装配套版本')
   return {
     nodePath,
@@ -65,7 +68,7 @@ export function resolveRuntime(): ResolvedRuntime | null {
 }
 
 export function runtimeEnvironment(runtime: ResolvedRuntime): { cwd: string; env: Record<string, string> } {
-  return runtime.source === 'bundled'
+  return runtime.source === 'bundled' || runtime.source === 'imported'
     ? preparePackagedRuntime(runtime.root, app.getPath('userData'), process.env.PATH)
     : { cwd: dirname(runtime.entryPath), env: {} }
 }

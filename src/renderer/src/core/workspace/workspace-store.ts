@@ -275,16 +275,33 @@ export async function pickAndOpenFolder(): Promise<void> {
   }
 }
 
+/** 启动恢复只跑一次；重复调用复用同一 promise（见 workspaceRestoreSettled） */
+let restorePromise: Promise<void> | null = null
+
 /** 应用启动时恢复上次打开的文件夹 */
-export async function restoreLastFolder(): Promise<void> {
-  try {
-    const settings = await getSettings()
-    if (!settings.lastFolder) return
-    await openFolderAt(settings.lastFolder)
-  } catch (err) {
-    // 目录已被删除或无权限：不打断启动，也不清空设置，让用户自己重新选择
-    setState({ error: ipcErrorMessage(err), root: null })
-  }
+export function restoreLastFolder(): Promise<void> {
+  restorePromise ??= (async (): Promise<void> => {
+    try {
+      const settings = await getSettings()
+      if (!settings.lastFolder) return
+      await openFolderAt(settings.lastFolder)
+    } catch (err) {
+      // 目录已被删除或无权限：不打断启动，也不清空设置，让用户自己重新选择
+      setState({ error: ipcErrorMessage(err), root: null })
+    }
+  })()
+  return restorePromise
+}
+
+/**
+ * 「启动时的工作区恢复已结束」——无论成功、失败还是压根没恢复过。
+ *
+ * 需要工作区才能确定自身初值的东西（如终端的启动目录）必须等它：
+ * restoreLastFolder 是异步的，而渲染首帧就跑完了，此时 root 还是 null，
+ * 照拍脑袋创建出来的东西会落在主目录而不是当前项目里。
+ */
+export function workspaceRestoreSettled(): Promise<void> {
+  return restorePromise ?? Promise.resolve()
 }
 
 export async function toggleExpand(dir: string): Promise<void> {

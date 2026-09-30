@@ -206,7 +206,16 @@ function AttachmentChip({
 }
 import { MentionInput, type Mention, type MentionInputHandle } from './MentionInput'
 import { loadChatDraftState, saveChatDraft } from './draft-store'
-import { buildMentionMessage, preserveMentions } from './mention-context'
+import {
+  MENTION_META,
+  buildMentionMessage,
+  mentionTitle,
+  parseMentionContent,
+  preserveMentions,
+  userMessageDraft,
+  userMessageText,
+  type PromptRef
+} from './mention-context'
 import { FileRefPalette } from './FileRefPalette'
 import { consumePendingMentions, subscribePendingMentions } from './pending-mentions'
 
@@ -246,7 +255,7 @@ export function ChatView(): JSX.Element {
   const connectionKey = engineConnectionKey(engine.snapshot)
   const storageSource = engineStorageKey(engine.snapshot)
   const sourceEpoch = getEngineSource()
-  const { messages, commandJobs, streaming, todos, send, respond, abort, loadHistory, resumeStream, deleteTurn, retryFrom, revertFrom, queue, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, queueSendMode, setQueueSendMode, retargetQueuedModel } = useChat()
+  const { messages, commandJobs, streaming, historyCompacted, loadArchive, todos, send, respond, abort, loadHistory, resumeStream, deleteTurn, retryFrom, revertFrom, queue, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, queueSendMode, setQueueSendMode, retargetQueuedModel } = useChat()
   const { models, loaded: modelsLoaded } = useModels()
   const workspace = useWorkspace()
   const [input, setInput] = useState('')
@@ -396,7 +405,8 @@ export function ChatView(): JSX.Element {
           return {
             id: turn.id,
             message,
-            preview: message.content.replace(/\s+/g, ' ').slice(0, 60)
+          // 预览用可读正文：协议注释里的下标会让纯文本预览出现一串花括号
+          preview: userMessageText(message.content).replace(/\s+/g, ' ').slice(0, 60)
           }
         })
         .filter((item): item is NavTurn => item !== null),
@@ -817,6 +827,21 @@ export function ChatView(): JSX.Element {
     [canExecute, remoteReadOnly, sourceEpoch, deleteTurn, sessionId, showError]
   )
 
+  /**
+   * 「添加到对话」：把一条用户消息恢复成输入框里的「正文 + 引用 chip」。
+   *
+   * 正文里的引用原数据（代码块 / 终端输出）会换回 `@路径` token，chip 按 token 下标重建，
+   * 所以能原样改完再发。messagesRef 同步一份，避免把整轮消息列表塞进这个回调的依赖里。
+   */
+  const refillFromMessage = useCallback((message: ChatMessage) => {
+    const draft = userMessageDraft(message.content)
+    mentionsRef.current = draft.mentions
+    inputRef.current?.setDraft(draft.text, draft.mentions)
+    setInput(draft.text)
+    saveChatDraft(sessionId, draft.text, storageSource, draft.mentions)
+    inputRef.current?.focus()
+  }, [sessionId, storageSource])
+
   /** 消息级回退（对齐 wuzu revert-files）：恢复该消息后全部文件改动（含已保留）并截断对话，原文回填输入框 */
   const revertToMessage = useCallback(
     (message: ChatMessage) => {
@@ -828,15 +853,16 @@ export function ChatView(): JSX.Element {
         confirmText: '回退'
       }).then((confirmed) => {
         if (!confirmed || sourceEpoch !== getEngineSource()) return
-        const content = message.content
+        // 引用 chip 一并还原：当初能改「这段代码」再发，回退后也应该能
+        const draft = userMessageDraft(message.content)
         void revertFrom(sessionId, message)
-          // 回填的是纯文本（chip 占位符退化为文字），mention 列表同步清空
           .then(() => {
             if (sourceEpoch !== getEngineSource()) return
-            saveChatDraft(sessionId, content, storageSource)
+            saveChatDraft(sessionId, draft.text, storageSource, draft.mentions)
             if (displayedSessionRef.current !== sourceSessionKey) return
-            mentionsRef.current = []
-            setInput(content)
+            mentionsRef.current = draft.mentions
+            inputRef.current?.setDraft(draft.text, draft.mentions)
+            setInput(draft.text)
           })
           .catch(showError)
       })
@@ -1123,6 +1149,15 @@ export function ChatView(): JSX.Element {
           </div>
         ) : (
           <>
+            {historyCompacted ? (
+              <button
+                type="button"
+                className="chat__load-earlier"
+                onClick={() => void loadArchive(sessionId)}
+              >
+                当前上下文已压缩，点击加载仍保留在归档中的更早对话
+              </button>
+            ) : null}
             {hiddenTurnCount > 0 ? (
               <button
                 type="button"
@@ -1165,6 +1200,7 @@ export function ChatView(): JSX.Element {
                   onRespond={respondToEngine}
                   onCopy={copyMessage}
                   onRetryFrom={retryTurn}
+                  onRefill={refillFromMessage}
                   onRevertFiles={revertToMessage}
                   onDeleteTurn={deleteTurnById}
                   canAct={!remoteReadOnly && canExecute && !streaming && !selectMode}
@@ -1706,11 +1742,64 @@ function serializeMessages(selected: ChatMessage[]): string {
         }
       }
 
-      if (message.content) parts.push(`\n${message.content}`)
+      if (message.content) {
+        // 用户消息导出的是可读正文：引用原数据块与协议注释不进剪贴板
+        parts.push(`\n${message.role === 'user' ? userMessageText(message.content) : message.content}`)
+      }
       return parts.join('\n')
     })
     .join('\n\n---\n\n')
 }
+
+/**
+ * 用户消息气泡正文。
+ *
+ * 落库的是「发给 AI 的原文」：引用标签已被替换成 `<reference>` 原数据块，末尾还挂着
+ * 一行机器数据注释（下标）——这些都是给机器看的，不该糊到用户脸上。这里按注释里的
+ * 下标把整段替换内容收成一枚行内标签，显示成与输入框同款样式的 chip；没有注释的
+ * 历史消息（旧协议在文末追加说明块）退化成清洗后的纯文本。
+ *
+ * 按下标切、不做文本匹配：`@public` 后面紧跟用户打的内容时，文本匹配必然串位。
+ */
+const UserBubbleContent = memo(function UserBubbleContent({ content }: { content: string }): JSX.Element {
+  const segments = useMemo(() => {
+    const { body, refs } = parseMentionContent(content)
+    if (!refs.length) return [{ text: userMessageText(content), ref: null }]
+    const out: { text: string; ref: PromptRef | null }[] = []
+    let cursor = 0
+    for (const ref of refs) {
+      if (ref.s > cursor) out.push({ text: body.slice(cursor, ref.s), ref: null })
+      out.push({ text: ref.d, ref })
+      cursor = ref.e
+    }
+    if (cursor < body.length) out.push({ text: body.slice(cursor), ref: null })
+    return out
+  }, [content])
+
+  return (
+    <>
+      {segments.map((segment, index) =>
+        segment.ref ? (
+          <span
+            key={index}
+            className={`mention-chip mention-chip--${segment.ref.t}`}
+            style={{ color: MENTION_META[segment.ref.t].color }}
+            title={mentionTitle({
+              source: segment.ref.t,
+              path: segment.ref.p,
+              startLine: segment.ref.r?.[0],
+              endLine: segment.ref.r?.[1]
+            })}
+          >
+            {segment.ref.d}
+          </span>
+        ) : (
+          <span key={index}>{segment.text}</span>
+        )
+      )}
+    </>
+  )
+})
 
 const MessageItem = memo(function MessageItem({
   message,
@@ -1724,6 +1813,7 @@ const MessageItem = memo(function MessageItem({
   onRespond,
   onCopy,
   onRetryFrom,
+  onRefill,
   onRevertFiles,
   onDeleteTurn,
   canAct,
@@ -1747,6 +1837,8 @@ const MessageItem = memo(function MessageItem({
   onCopy: (message: ChatMessage) => void
   /** 从该用户消息处删除此后内容并重新发送（重新发送 / 重新生成共用） */
   onRetryFrom: (message: ChatMessage) => void
+  /** 把这条用户消息（含引用 chip）放回输入框，改完再发 */
+  onRefill: (message: ChatMessage) => void
   /** 消息级回退：恢复该消息后所有文件改动（含已保留）并截断对话 */
   onRevertFiles: (message: ChatMessage) => void
   /** 删除该消息所在的一整轮对话 */
@@ -1792,6 +1884,16 @@ const MessageItem = memo(function MessageItem({
       </button>
       {isUser ? (
         <>
+          <button
+            type="button"
+            className="message__action"
+            title="添加到对话：把这条消息（含引用）放回输入框，改完再发"
+            aria-label="添加到对话"
+            disabled={!canAct}
+            onClick={() => onRefill(message)}
+          >
+            <Icon name="pencil" size={16} />
+          </button>
           <button
             type="button"
             className="message__action"
@@ -1845,7 +1947,9 @@ const MessageItem = memo(function MessageItem({
         {pick}
         <div className="message__bubble-wrap">
           {actions}
-          <div className="message__bubble">{message.content}</div>
+          <div className="message__bubble">
+            <UserBubbleContent content={message.content} />
+          </div>
           {message.attachments && message.attachments.length > 0 ? (
             <div className="message__attachments">
               {message.attachments.map((file) => (

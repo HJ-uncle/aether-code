@@ -21,8 +21,15 @@ import {
   useRef,
   type JSX
 } from 'react'
-import { mentionToken, sameMention, type Mention, type MentionSource } from './mention-context'
-export { mentionToken, formatPathDisplay, type Mention, type MentionSource } from './mention-context'
+import {
+  MENTION_META,
+  mentionToken,
+  mentionTitle,
+  sameMention,
+  type Mention,
+  type MentionSource
+} from './mention-context'
+export { formatPathDisplay, type Mention, type MentionSource } from './mention-context'
 
 /** 父组件通过 ref 调用的命令式接口（插 chip / 清空 / 聚焦） */
 export interface MentionInputHandle {
@@ -36,13 +43,68 @@ export interface MentionInputHandle {
   focus: () => void
 }
 
-/** 每种 chip 的图标与颜色（对齐 wuzu MENTION_META） */
-const MENTION_META: Record<MentionSource, { color: string; hint: string }> = {
-  file: { color: '#3b82f6', hint: '文件' },
-  dir: { color: '#d97706', hint: '目录' },
-  code: { color: '#8b5cf6', hint: '源码位置' },
-  terminal: { color: '#0ea5e9', hint: '终端输出' },
-  agent: { color: '#10b981', hint: '协作 Agent' }
+/**
+ * 在 chip 后补一个空格文本节点。
+ *
+ * 作用有二：给光标一个落脚点（否则光标会钻进 chip 内部的边界态），以及让 chip 与
+ * 后续文字不粘连。发送时 buildMentionMessage 会再做一次空白归一化兜底——用户删掉
+ * 这个空格后 DOM 会紧贴，正文里 `@a/b.ts在帮我改` 这种边界谁也认不出来。
+ */
+function spacerAfter(chip: HTMLElement): Text {
+  const spacer = document.createTextNode(' ')
+  chip.after(spacer)
+  return spacer
+}
+
+/**
+ * 造一枚引用 chip。
+ *
+ * `contenteditable=false` 让它成为原子节点：光标进不去、退格整枚删除，复制粘贴时
+ * 随 data-* 属性一起序列化/还原（原子行为免费获得）。key 由调用方登记进 mentionsRef，
+ * chip 只是它在 DOM 里的投影。
+ */
+function makeChip(mention: Mention, key: string): HTMLElement {
+  const chip = document.createElement('span')
+  chip.className = `mention-chip mention-chip--${mention.source}`
+  chip.contentEditable = 'false'
+  chip.dataset.mentionKey = key
+  chip.title = mentionTitle(mention)
+  chip.textContent = mention.displayText
+  return chip
+}
+
+/**
+ * 光标处的「左侧文本」与「右侧是否还有内容」。
+ *
+ * 用它们决定插入 chip 前要不要补空格：紧贴文字才补（对齐 wuzu「后一个字符不是空白
+ * 就补一个空格」）。元素边界（<br>、块级节点）视作换行，与正文里的 \n 同义。
+ */
+function caretBoundaries(range: Range, box: HTMLElement): { left: string; hasRight: boolean } {
+  const start = range.startContainer
+  let left = ''
+  let hasRight = false
+  if (start.nodeType === Node.TEXT_NODE) {
+    const content = start.textContent ?? ''
+    left = content.slice(0, range.startOffset)
+    hasRight = range.startOffset < content.length
+  } else {
+    for (let index = 0; index < range.startOffset && index < start.childNodes.length; index++) {
+      const child = start.childNodes[index]
+      left += child.nodeType === Node.TEXT_NODE ? child.textContent ?? '' : '\n'
+    }
+    hasRight = range.startOffset < start.childNodes.length
+  }
+  if (!hasRight) {
+    // 光标所在容器之后还有兄弟节点（chip / 文字）也算「后面有内容」
+    outer: for (let node: Node | null = start; node && node !== box; node = node.parentNode) {
+      for (let sibling = node.nextSibling; sibling; sibling = sibling.nextSibling) {
+        if (sibling.nodeType === Node.TEXT_NODE && (sibling.textContent ?? '').length === 0) continue
+        hasRight = true
+        break outer
+      }
+    }
+  }
+  return { left, hasRight }
 }
 
 interface MentionInputProps {
@@ -164,13 +226,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         }
         const key = `m${++keySeqRef.current}`
         mentionsRef.current.set(key, mention)
-        const chip = document.createElement('span')
-        chip.className = `mention-chip mention-chip--${mention.source}`
-        chip.contentEditable = 'false'
-        chip.dataset.mentionKey = key
-        chip.title = (mention.path ? `${MENTION_META[mention.source].hint}：${mention.path}` : MENTION_META[mention.source].hint) +
-          (mention.content !== undefined ? '\n包含添加时的编辑器内容快照' : '')
-        chip.textContent = mention.displayText
+        const chip = makeChip(mention, key)
 
         const selection = window.getSelection()
         let range: Range | null = null
@@ -183,19 +239,104 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
           range.selectNodeContents(box)
           range.collapse(false)
         }
+        const boundaries = caretBoundaries(range, box)
+        const hasRight = boundaries.hasRight
+        let left = boundaries.left
+        // 末尾换行是视觉残留，算进正文会把 chip 顶到下一行；插入前先吃掉它
+        if (/\n$/.test(left) && range.startContainer.nodeType === Node.TEXT_NODE && range.startOffset > 0) {
+          range.setStart(range.startContainer, range.startOffset - 1)
+          left = left.slice(0, -1)
+        }
         range.deleteContents()
+        // 前后都是文字时必须留空格，否则正文里成了 `@a/b.ts在帮我改`（见 buildMentionMessage）
+        if (hasRight || (left !== '' && !/\s$/.test(left))) {
+          range.insertNode(document.createTextNode(' '))
+        }
         range.insertNode(chip)
-        // chip 后补一个空格文本节点，给光标一个落脚点，也让 chip 不与后续文字粘连
-        const spacer = document.createTextNode(' ')
-        chip.after(spacer)
+        const spacer = spacerAfter(chip)
+        // 先 focus 再设选区：从右键菜单/面板插入时焦点还在即将卸载的按钮上，
+        // focus() 会把光标落到框首（chip 之前），此时退格删不掉刚加进来的引用。
+        // 顺序反过来，光标才稳定停在 chip 之后。
+        box.focus()
         range.setStartAfter(spacer)
         range.collapse(true)
         selection?.removeAllRanges()
         selection?.addRange(range)
-        box.focus()
         emitChange()
       },
       [emitChange]
+    )
+
+    /**
+     * 光标紧邻处是否贴着一枚 chip（contenteditable=false 的原子节点）。
+     *
+     * 为什么不交给浏览器默认行为：chip 只是一个普通 span + contenteditable=false，
+     * 与 user-select 组合后各浏览器的删除表现并不一致 —— Chromium 下首次退格
+     * 常常只把 chip 整体选中而不删除（鼠标点过之后才删得掉），现象就是
+     * 「刚加进来的引用第一时间删不掉」。这里显式判断，命中就整枚移除，
+     * 与「引用是原子单元」的语义一致。
+     *
+     * direction 为 before（退格，往前找）/ after（Delete，往后找）。
+     */
+    const chipAdjacentToCaret = useCallback((direction: 'before' | 'after'): HTMLElement | null => {
+      const box = boxRef.current
+      const selection = window.getSelection()
+      if (!box || !selection || selection.rangeCount === 0) return null
+      const range = selection.getRangeAt(0)
+      if (!range.collapsed || !box.contains(range.startContainer)) return null
+      const node = range.startContainer
+      const isChip = (target: Node | null | undefined): target is HTMLElement =>
+        target instanceof HTMLElement && Boolean(target.dataset.mentionKey)
+      if (node.nodeType === Node.TEXT_NODE) {
+        const text = node.textContent ?? ''
+        // 光标所在的文本节点内还有字符可删，交给浏览器
+        if (direction === 'before' ? range.startOffset > 0 : range.startOffset < text.length) return null
+      }
+      if (node === box) {
+        const sibling =
+          direction === 'before' ? box.childNodes[range.startOffset - 1] : box.childNodes[range.startOffset]
+        return isChip(sibling) ? sibling : null
+      }
+      // 从光标所在节点向外走：先看兄弟，再上溯父级
+      for (let cursor: Node | null = node; cursor && cursor !== box; cursor = cursor.parentNode) {
+        let sibling = direction === 'before' ? cursor.previousSibling : cursor.nextSibling
+        while (sibling) {
+          if (isChip(sibling)) return sibling
+          // 空文本节点是浏览器的光标落脚点，跳过继续找；
+          // 非空文本 / <br> / 其它元素都算「还有内容」，交给默认行为
+          const isEmptyText = sibling.nodeType === Node.TEXT_NODE && (sibling.textContent ?? '').length === 0
+          if (!isEmptyText) return null
+          sibling = direction === 'before' ? sibling.previousSibling : sibling.nextSibling
+        }
+      }
+      return null
+    }, [])
+
+    /** 移除一枚 chip（连同 mentionsRef 登记），光标落在它原来的位置 */
+    const removeChip = useCallback(
+      (chip: HTMLElement): void => {
+        const box = boxRef.current
+        const key = chip.dataset.mentionKey
+        if (!key) return
+        mentionsRef.current.delete(key)
+        // chip 后跟着一个空格文本节点，删掉后光标落到它上面即 chip 原位
+        const anchor = chip.nextSibling ?? chip.previousSibling
+        chip.remove()
+        // 先聚焦再设选区：反过来 focus() 会把光标拽回框首
+        box?.focus()
+        if (anchor) {
+          const range = document.createRange()
+          range.setStart(anchor, 0)
+          range.collapse(true)
+          const selection = window.getSelection()
+          selection?.removeAllRanges()
+          selection?.addRange(range)
+        }
+        // 删掉的若是最后一枚引用，清掉空节点，否则 placeholder 不再出现
+        dropEmptyResidue()
+        emitChange()
+      },
+      [dropEmptyResidue, emitChange]
     )
 
     const rebuildFromText = useCallback((text: string) => {
@@ -226,13 +367,10 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         box.appendChild(document.createTextNode(text.slice(cursor, offset)))
         const key = `m${++keySeqRef.current}`
         mentionsRef.current.set(key, mention)
-        const chip = document.createElement('span')
-        chip.className = `mention-chip mention-chip--${mention.source}`
-        chip.contentEditable = 'false'
-        chip.dataset.mentionKey = key
-        chip.textContent = mention.displayText
-        chip.title = mention.path ?? mention.displayText
-        box.appendChild(chip)
+        box.appendChild(makeChip(mention, key))
+        // 用户可能把 chip 与后面文字之间的空格删掉了，重建时补回，保证 DOM 与文本镜像一致
+        const next = text[offset + token.length]
+        if (next !== undefined && next !== ' ') box.appendChild(document.createTextNode(' '))
         cursor = offset + token.length
       }
       box.appendChild(document.createTextNode(text.slice(cursor)))
@@ -376,6 +514,17 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
             event.preventDefault()
             onSubmit()
+            return
+          }
+          // 引用 chip 的整枚删除（见 chipAdjacentToCaret 的说明）。
+          // 组合输入中不接管，避免打断输入法候选。
+          if (event.nativeEvent.isComposing) return
+          if (event.key === 'Backspace' || event.key === 'Delete') {
+            const chip = chipAdjacentToCaret(event.key === 'Backspace' ? 'before' : 'after')
+            if (chip) {
+              event.preventDefault()
+              removeChip(chip)
+            }
           }
         }}
         suppressContentEditableWarning

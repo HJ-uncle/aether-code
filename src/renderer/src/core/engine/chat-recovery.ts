@@ -18,6 +18,8 @@ export interface ChatRecoverySnapshot {
   run?: RootRun
   runs: RootRun[]
   history: EngineHistoryRow[]
+  /** The compact snapshot omits older JSONL rows; the archive route can expand them. */
+  historyCompacted?: boolean
   todos: EngineTodo[]
   changes: EngineFileChange[]
   commandJobs?: CommandJobSnapshot[]

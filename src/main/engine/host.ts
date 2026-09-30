@@ -44,6 +44,7 @@ export class EngineHost extends EventEmitter {
     pid: null,
     adopted: false,
     entryPath: null,
+    runtimeSource: null,
     version: null,
     dataDir: null,
     error: null,
@@ -131,6 +132,7 @@ export class EngineHost extends EventEmitter {
       pid: null,
       adopted: false,
       entryPath: null,
+      runtimeSource: null,
       version: null,
       dataDir: null,
       error: null,
@@ -178,6 +180,7 @@ export class EngineHost extends EventEmitter {
       pid: null,
       adopted: false,
       entryPath: null,
+      runtimeSource: null,
       dataDir: null,
       error: null,
       version: meta.version,
@@ -196,6 +199,7 @@ export class EngineHost extends EventEmitter {
       )
     this.patch({
       entryPath: runtime.entryPath,
+      runtimeSource: runtime.source,
       version: runtime.version,
       buildId: runtime.manifest.buildId
     })

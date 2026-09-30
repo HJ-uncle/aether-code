@@ -14,6 +14,10 @@ export const IPC = {
     engineStart: 'engine:start',
     engineStop: 'engine:stop',
     engineRestart: 'engine:restart',
+    engineGetLocalRuntimes: 'engine:get-local-runtimes',
+    engineImportLocalRuntime: 'engine:import-local-runtime',
+    engineActivateLocalRuntime: 'engine:activate-local-runtime',
+    engineDeleteLocalRuntime: 'engine:delete-local-runtime',
     engineRequest: 'engine:request',
     engineUploadAttachment: 'engine:upload-attachment',
     engineStreamStart: 'engine:stream:start',
@@ -152,6 +156,7 @@ export const IPC = {
     fsDocumentsChanged: 'fs:documents-changed',
     engineSnapshot: 'engine:snapshot',
     engineLog: 'engine:log',
+    engineImportProgress: 'engine:import-progress',
     streamEvent: 'engine:stream:event',
     terminalData: 'terminal:data',
     terminalExit: 'terminal:exit',
@@ -278,6 +283,8 @@ export interface EngineSnapshot {
   adopted: boolean
   /** 运行时入口脚本路径（embedded 模式） */
   entryPath: string | null
+  /** embedded 引擎的实际运行时来源。 */
+  runtimeSource: 'env' | 'bundled' | 'imported' | 'dev-sibling' | null
   version: string | null
   buildId?: string | null
   protocolVersion?: number | null
@@ -537,6 +544,9 @@ export interface ChatSsePayload {
  * 老内容/新内容用于渲染 git 风格 diff；内容过大或二进制时两者为 null（truncated=true）。
  */
 export interface EngineFileChange {
+  /** Net pending rows retain every source operation for keep/revert actions. */
+  changeIds?: string[]
+  projectionIssue?: 'discontinuous-history' | 'later-change' | 'disk-diverged' | 'path-changed' | 'snapshot-unavailable' | 'unreadable'
   turnId?: string
   runId?: string
   id: string
@@ -630,6 +640,11 @@ export interface FsEntry {
   isDirectory: boolean
   size: number
   mtimeMs: number
+  /**
+   * 被工作区根目录下的 .gitignore 忽略（资源管理器据此置灰）。
+   * 判定失败 / 不在 git 仓库内时为 undefined，按未忽略处理 —— 只影响视觉，不影响可操作性。
+   */
+  gitignored?: boolean
 }
 
 export interface FsFileContent {

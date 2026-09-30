@@ -6,7 +6,7 @@
  *
  * 流式对话例外：SSE 需要主进程持续推送，用 start/abort + 事件通道实现。
  */
-import { app, ipcMain, webContents, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { app, dialog, ipcMain, webContents, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { IPC } from '../shared/ipc'
 import type {
   CopyIntoWorkspaceInput,
@@ -44,9 +44,18 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { resolveRuntime } from './engine/runtime'
 import { clearRemoteInstanceToken, remoteInstanceTokenConfigured, setRemoteInstanceToken, withRemoteInstanceTokenChange } from './engine/remote-token'
+import { importLocalRuntime } from './engine/import-local-runtime'
+import { getActiveRuntimeId, listLocalRuntimes, removeLocalRuntime, setActiveRuntimeId } from './engine/local-runtime-store'
+import type { EngineImportProgress, EngineRuntimeCatalog } from '../shared/engine-import'
 
 /** 进行中的 SSE 请求：streamId → AbortController */
 const activeStreams = new Map<string, AbortController>()
+let runtimeImportBusy = false
+let runtimeActivationBusy = false
+
+function ensureNotActivatingRuntime(): void {
+  if (runtimeActivationBusy) throw new Error('正在切换本地引擎，请稍后再试')
+}
 
 function broadcast(channel: string, payload: unknown): void {
   for (const wc of webContents.getAllWebContents()) {
@@ -70,16 +79,118 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.invoke.engineGetSnapshot, () => engineHost.getSnapshot())
 
   ipcMain.handle(IPC.invoke.engineStart, async () => {
+    ensureNotActivatingRuntime()
     const settings = getSettings()
     return engineHost.start(settings.engineMode, settings.remoteBaseUrl, settings.remoteWorkspaceRoot)
   })
 
-  ipcMain.handle(IPC.invoke.engineStop, () => engineHost.stop())
+  ipcMain.handle(IPC.invoke.engineStop, () => {
+    ensureNotActivatingRuntime()
+    return engineHost.stop()
+  })
 
   ipcMain.handle(IPC.invoke.engineRestart, async () => {
+    ensureNotActivatingRuntime()
     const settings = getSettings()
     await engineHost.stop()
     return engineHost.start(settings.engineMode, settings.remoteBaseUrl, settings.remoteWorkspaceRoot)
+  })
+
+  ipcMain.handle(IPC.invoke.engineGetLocalRuntimes, (): EngineRuntimeCatalog => ({
+    activeId: getActiveRuntimeId(app.getPath('userData')),
+    runtimes: listLocalRuntimes(app.getPath('userData'))
+  }))
+
+  // Only the native picker can supply import paths; the renderer cannot invoke
+  // archive extraction against arbitrary filesystem locations through this IPC.
+  ipcMain.handle(IPC.invoke.engineImportLocalRuntime, async (event) => {
+    if (runtimeImportBusy || runtimeActivationBusy) throw new Error('正在处理本地引擎，请稍后再试')
+    if (getSettings().engineMode !== 'embedded') throw new Error('请先保存“本地内置”运行方式')
+    runtimeImportBusy = true
+    try {
+      const options: Electron.OpenDialogOptions = {
+        title: '导入本地引擎包',
+        buttonLabel: '导入引擎',
+        filters: [{ name: '引擎包', extensions: ['tgz'] }],
+        properties: ['openFile']
+      }
+      const parent = BrowserWindow.fromWebContents(event.sender)
+      const picked = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options)
+      if (picked.canceled || !picked.filePaths[0]) return null
+      const sendProgress = (progress: EngineImportProgress): void => {
+        if (!event.sender.isDestroyed()) event.sender.send(IPC.event.engineImportProgress, progress)
+      }
+      return await importLocalRuntime(picked.filePaths[0], sendProgress)
+    } finally {
+      runtimeImportBusy = false
+    }
+  })
+
+  ipcMain.handle(IPC.invoke.engineActivateLocalRuntime, async (_event, id: unknown) => {
+    if (runtimeImportBusy || runtimeActivationBusy) throw new Error('正在处理本地引擎，请稍后再试')
+    if (id !== null && typeof id !== 'string') throw new Error('无效的本地引擎标识')
+    const settings = getSettings()
+    if (settings.engineMode !== 'embedded') throw new Error('请先保存“本地内置”运行方式')
+    const userData = app.getPath('userData')
+    const previousId = getActiveRuntimeId(userData)
+    const previous = engineHost.getSnapshot()
+    if (previous.phase === 'starting' || previous.phase === 'stopping' || previous.phase === 'installing') {
+      throw new Error('引擎正在启动或停止，请等待完成后再切换')
+    }
+    const restoreRunning = previous.phase === 'ready'
+    let pointerChanged = false
+    let stopped = false
+    runtimeActivationBusy = true
+    try {
+      if (id !== previousId) {
+        setActiveRuntimeId(userData, id)
+        pointerChanged = true
+      }
+      // Resolve before stopping the existing engine so missing assets cannot
+      // interrupt a working session. Failed activation restores the pointer.
+      if (!resolveRuntime()) throw new Error('未找到默认引擎；请先导入完整引擎包')
+      abortAllStreams()
+      stopped = true
+      await engineHost.stop()
+      const next = await engineHost.start('embedded')
+      if (next.phase !== 'ready') throw new Error(next.error || '新引擎未能启动')
+      return next
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const recoveryErrors: string[] = []
+      let pointerRestored = !pointerChanged
+      if (pointerChanged) {
+        try {
+          setActiveRuntimeId(userData, previousId)
+          pointerRestored = true
+        } catch (rollbackError) {
+          recoveryErrors.push(`恢复原引擎选择失败：${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`)
+        }
+      }
+      if (stopped) {
+        try {
+          await engineHost.stop()
+          if (restoreRunning && pointerRestored) {
+            const restored = await engineHost.start(settings.engineMode, settings.remoteBaseUrl, settings.remoteWorkspaceRoot)
+            if (restored.phase !== 'ready') recoveryErrors.push(`原引擎重新启动失败：${restored.error || '引擎未就绪'}`)
+          }
+        } catch (rollbackError) {
+          recoveryErrors.push(`恢复原引擎运行状态失败：${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`)
+        }
+      }
+      if (recoveryErrors.length) throw new Error(`切换引擎失败：${message}；${recoveryErrors.join('；')}`)
+      throw new Error(`切换引擎失败，${stopped ? '已恢复原引擎选择' : '当前引擎未被停止'}：${message}`)
+    } finally {
+      runtimeActivationBusy = false
+    }
+  })
+
+  ipcMain.handle(IPC.invoke.engineDeleteLocalRuntime, (_event, id: unknown): void => {
+    if (runtimeImportBusy || runtimeActivationBusy) throw new Error('正在处理本地引擎，请稍后再试')
+    if (typeof id !== 'string') throw new Error('无效的本地引擎标识')
+    const userData = app.getPath('userData')
+    if (getActiveRuntimeId(userData) === id) throw new Error('当前使用的本地引擎不能删除，请先切换到默认引擎')
+    removeLocalRuntime(userData, id)
   })
 
   // ── 业务请求 ──
@@ -134,9 +245,11 @@ export function registerIpcHandlers(): void {
 
   // ── 设置 ──
   ipcMain.handle(IPC.invoke.settingsGet, () => getSettings())
-  ipcMain.handle(IPC.invoke.settingsUpdate, (_event, patch: Partial<AppSettings>) =>
-    updateSettings(patch)
-  )
+  ipcMain.handle(IPC.invoke.settingsUpdate, (_event, patch: Partial<AppSettings>) => {
+    const connectionKeys: (keyof AppSettings)[] = ['engineMode', 'preferredPort', 'remoteBaseUrl', 'remoteWorkspaceRoot', 'autoStartEngine']
+    if (connectionKeys.some((key) => Object.prototype.hasOwnProperty.call(patch, key))) ensureNotActivatingRuntime()
+    return updateSettings(patch)
+  })
   const remoteTokenStatus = (): RemoteTokenStatus => {
     const stored = remoteInstanceTokenConfigured()
     const environment = Boolean(process.env.AETHER_IDE_REMOTE_INSTANCE_TOKEN?.trim())
@@ -147,15 +260,18 @@ export function registerIpcHandlers(): void {
   }
   ipcMain.handle(IPC.invoke.settingsRemoteTokenStatus, remoteTokenStatus)
   ipcMain.handle(IPC.invoke.settingsSetRemoteToken, (_event, token: string) => {
+    ensureNotActivatingRuntime()
     if (typeof token !== 'string') throw new Error('远端令牌必须是字符串')
     setRemoteInstanceToken(token)
     return remoteTokenStatus()
   })
   ipcMain.handle(IPC.invoke.settingsClearRemoteToken, () => {
+    ensureNotActivatingRuntime()
     clearRemoteInstanceToken()
     return remoteTokenStatus()
   })
   ipcMain.handle(IPC.invoke.settingsSaveEngine, (_event, patch: Partial<AppSettings>, token: string) => {
+    ensureNotActivatingRuntime()
     if (typeof token !== 'string') throw new Error('远端令牌必须是字符串')
     // Never spread a credential-bearing object into ordinary persisted settings.
     const connection = {

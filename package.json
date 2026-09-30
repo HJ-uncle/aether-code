@@ -1,7 +1,7 @@
 {
   "name": "aether-code",
   "version": "1.0.0",
-  "description": "An Electron application with React and TypeScript",
+  "description": "AI 原生的桌面 IDE：本地编辑器、终端、版本控制与全局搜索，内置 AI Agent 对话面板",
   "main": "./out/main/index.js",
   "author": "example.com",
   "homepage": "https://electron-vite.org",
@@ -35,6 +35,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "highlight.js": "^11.12.0",
+    "ignore": "^5.3.2",
     "marked": "^18.0.14",
     "monaco-editor": "^0.56.0",
     "node-pty": "^1.1.0"

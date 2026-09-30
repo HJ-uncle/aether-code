@@ -109,6 +109,13 @@ interface Row {
    */
   isCut: boolean
   /**
+   * 被 .gitignore 忽略：整行做半透明降级（对齐 VS Code / wuzu-client）。
+   *
+   * 只影响观感——被忽略的项仍可点击、展开、拖拽、重命名。gitignore 是版本控制的
+   * 过滤规则，不是文件系统权限：node_modules 里的东西该看还得能看。
+   */
+  isIgnored: boolean
+  /**
    * git 状态角标（M/A/D/U/R/C…），无改动时不设。
    *
    * 目录不显示：文件行给出确切状态，目录行在链尾用一个小圆点表示「这底下有改动」——
@@ -472,6 +479,8 @@ export function ExplorerView(): JSX.Element {
         isActive: false,
         isSelected: workspace.selection.has(root),
         isCut: false,
+        // 根目录自己永远不是"被忽略项"：它是工作区边界，置灰它等于整棵树都灰了
+        isIgnored: false,
         gitDirty: !isRootExpanded && gitIndex.dirtyDirs.has(rootGitKey)
       })
       // 根收起时整棵树只剩这一行（VS Code 同样如此）
@@ -496,18 +505,18 @@ export function ExplorerView(): JSX.Element {
      * 合并展示为 `strings.ts  src/utils/helpers`（真实名字在前，链条作尾注），
      * 一次点击展开到链条末端。
      *
-     * 只在"有且仅有一个子项、且该子项是目录、且链条中间层都处于展开态"时合并：
-     * - 折叠的中间层不应该被穿透 —— 用户点收了 utils，就不该还显示到更深一层
+     * 合并的**前提是链条每一层都没展开**（对齐 VS Code / wuzu 的 compactFolders）：
+     * 已展开的目录正是用户当前要看的层级，它必须保留成独立一行，否则点开 `.aether`
+     * 反而少掉一层、看它自己还得再点一次。所以：
+     * - 起点已展开 ⇒ 整条链不合并
+     * - 链条里某一层已展开 ⇒ 到此为止，只合并它之前的路过层
      * - 子项一旦是文件也停，因为文件是要操作的对象，不是"路过"的层级
      * - 子目录未被加载（children 里没有）时也停，否则会把"未知"当成"只有一个"
      */
-    const compactChain = (
-      start: FsEntry,
-      startDepth: number,
-      startHidden: boolean
-    ): { entry: FsEntry; depth: number; chain: string } | null => {
+    const compactChain = (start: FsEntry, startHidden: boolean): { entry: FsEntry; chain: string } | null => {
+      // 起点已展开：用户正在看它的内容，这一行不能被并进链条
+      if (workspace.expanded.has(start.path)) return null
       let current = start
-      let depth = startDepth
       let chain = ''
       let parentHidden = startHidden
       for (;;) {
@@ -517,17 +526,16 @@ export function ExplorerView(): JSX.Element {
         if (visibleKids.length !== 1) break
         const only = visibleKids[0]
         if (!only.isDirectory) break
-        // 中间层没展开就说明用户主动收起了，链条到此为止
-        if (!workspace.expanded.has(current.path)) break
+        // 子目录已展开就停：它是用户展开着要看的层级，不能再往下并
+        if (workspace.expanded.has(only.path)) break
 
         // 链条记的是「被合并掉的中间层」的名字（current 自己），而不是后代的名字 ——
         // 记 only.name 会把末端目录自己的名字也拼进去，显示成 `sdk sdk` 这种重复
         chain = chain ? `${chain}/${current.name}` : current.name
         current = only
-        depth += 1
         parentHidden = parentHidden || hidden(only, parentHidden)
       }
-      return chain ? { entry: current, depth, chain } : null
+      return chain ? { entry: current, chain } : null
     }
 
     const walk = (dir: string, depth: number, parentHidden: boolean): void => {
@@ -544,9 +552,8 @@ export function ExplorerView(): JSX.Element {
           continue
         }
 
-        const compact = nameFilter ? null : entry.isDirectory ? compactChain(entry, depth, entryHidden) : null
+        const compact = nameFilter ? null : entry.isDirectory ? compactChain(entry, entryHidden) : null
         const shown = compact?.entry ?? entry
-        const shownDepth = compact?.depth ?? depth
         const isExpanded = shown.isDirectory && workspace.expanded.has(shown.path)
         // gitIndex 的键是正斜杠（paths.join 的产出），条目路径在 Windows 上是
         // 反斜杠，查表前必须归一化，否则角标永远查不到
@@ -555,7 +562,10 @@ export function ExplorerView(): JSX.Element {
 
         out.push({
           entry: shown,
-          depth: shownDepth,
+          // 紧凑行用**起点层**的深度，不用末端目录的真实深度：合并掉的中间层在缩进
+          // 网格里必须一并消失，否则 `.aether/attachments` 这一行会比同级目录多缩进
+          // 一格，看起来像是"掉进了"那一层（对齐 VS Code / wuzu 的 compactFolders）。
+          depth,
           isExpanded,
           isLoading: workspace.loading.has(shown.path),
           isActive: !shown.isDirectory && shown.path === workspace.activeFilePath,
@@ -564,13 +574,14 @@ export function ExplorerView(): JSX.Element {
           // 剪切态用「祖先在剪贴板里」而非精确匹配：剪切一个目录后，
           // 其子项若展开着，视觉上也应当一并变淡 —— 否则会像是"只剪了这一层"。
           isCut: cutPaths.some((cutPath) => paths.contains(cutPath, shown.path)),
+          isIgnored: shown.gitignored === true,
           gitCode: change?.code,
           gitTitle: change?.title,
           // 目录只在「收起」时提示有改动：展开后每个子项自己会写明状态，
           // 父目录再挂个聚合标记纯属重复，还会跟子项的角标抢视线。
           gitDirty: !shown.isDirectory ? undefined : !isExpanded && gitIndex.dirtyDirs.has(gitKey)
         })
-        if (isExpanded) walk(shown.path, shownDepth + 1, false)
+        if (isExpanded) walk(shown.path, depth + 1, false)
       }
     }
     // 根目录的子项从第二层（depth 1）开始：第一层是根节点行本身
@@ -1925,7 +1936,7 @@ function TreeRow({
   onContextMenu: (event: ReactMouseEvent) => void
   onMouseDown: (event: ReactMouseEvent) => void
 }): JSX.Element {
-  const { entry, depth, isExpanded, isLoading, isActive, isSelected, isCut } = row
+  const { entry, depth, isExpanded, isLoading, isActive, isSelected, isCut, isIgnored } = row
 
   const className = [
     'tree-row',
@@ -1933,6 +1944,7 @@ function TreeRow({
     isSelected ? 'is-selected' : '',
     isCursor ? 'is-cursor' : '',
     isCut ? 'is-cut' : '',
+    isIgnored ? 'is-ignored' : '',
     isDropTarget ? 'is-drop-target' : ''
   ]
     .filter(Boolean)

@@ -6,7 +6,10 @@ export function selectRuntimeEntry(options: {
   appPath: string
   platform: string
   override?: string
-}): { entryPath: string; source: 'env' | 'bundled' | 'dev-sibling' } {
+  importedRoot?: string
+}): { entryPath: string; source: 'env' | 'bundled' | 'dev-sibling' | 'imported' } {
+  // An explicitly selected imported version must also take effect in development.
+  if (options.importedRoot) return { entryPath: join(options.importedRoot, 'dist', 'main.js'), source: 'imported' }
   if (options.packaged) {
     return {
       entryPath: join(options.resourcesPath, 'engine', options.platform, 'dist', 'main.js'),

@@ -16,6 +16,8 @@ interface SelectProps {
   disabled?: boolean
   /** 触发区悬浮提示 */
   title?: string
+  /** 无障碍名称；默认复用 title。 */
+  ariaLabel?: string
   /** 浮层展开方向，默认向下 */
   placement?: PopoverPlacement
   align?: PopoverAlign
@@ -38,6 +40,7 @@ export function Select({
   onChange,
   disabled = false,
   title,
+  ariaLabel,
   placement = 'down',
   align = 'start',
   width,
@@ -94,6 +97,7 @@ export function Select({
           className="select__trigger"
           disabled={disabled}
           title={title}
+          aria-label={ariaLabel ?? title}
           onKeyDown={onKeyDown}
         >
           <span className="select__value">{current?.label ?? value}</span>

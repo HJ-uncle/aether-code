@@ -4,7 +4,13 @@ out
 .DS_Store
 .eslintcache
 *.log*
-.aether/attachments
+.wuzu/
+.codemaker/
+.codegraph/
+.claude/
+.aether/
+.cowork-temp/
+.e2e-tmp/
 .codemap/
 .codemaker/codemap/
 .codemaker/codeindex/

@@ -68,8 +68,8 @@ export function SettingsRow({
 }
 
 /** 分组内的静态内容行（kv 信息、自定义内容），无控件槽位 */
-export function SettingsContent({ children }: { children: ReactNode }): JSX.Element {
-  return <div className="sg__row sg__row--content">{children}</div>
+export function SettingsContent({ children, className }: { children: ReactNode; className?: string }): JSX.Element {
+  return <div className={`sg__row sg__row--content${className ? ` ${className}` : ''}`}>{children}</div>
 }
 
 /** macOS 风格开关 */

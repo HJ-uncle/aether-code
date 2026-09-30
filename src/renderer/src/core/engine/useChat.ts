@@ -173,6 +173,10 @@ export function useChat(): {
   messages: ChatMessage[]
   commandJobs: CommandJobSnapshot[]
   streaming: boolean
+  /** The compact snapshot omitted older JSONL rows that can be loaded on demand. */
+  historyCompacted: boolean
+  /** Expand the explicit transcript archive into the visible chat timeline. */
+  loadArchive: (sessionId: string) => Promise<void>
   /** 会话待办清单（引擎 todo 工具维护，随 \x00__todo__ 帧整表下发） */
   todos: EngineTodo[]
   send: (text: string, options: SendOptions) => Promise<void>
@@ -233,6 +237,8 @@ export function useChat(): {
   const [commandJobs, setCommandJobs] = useState<CommandJobSnapshot[]>([])
   const [streaming, setStreaming] = useState(false)
   const [todos, setTodos] = useState<EngineTodo[]>([])
+  const [historyCompacted, setHistoryCompacted] = useState(false)
+  const [archiveExpanded, setArchiveExpanded] = useState(false)
 
   /**
    * 流式帧节流（对齐 wuzu-client 的 80ms 快照方案）：
@@ -321,6 +327,8 @@ export function useChat(): {
     setMessages([])
     setCommandJobs([])
     setTodos([])
+    setHistoryCompacted(false)
+    setArchiveExpanded(false)
     // Detach only this client. The server owns the old run's eventual outcome.
     if (oldStream) void engine.abortStream(oldStream)
   }, [])
@@ -773,6 +781,9 @@ export function useChat(): {
       if (activeStreamRef.current || viewSessionRef.current !== sessionId || generation !== historyRequestRef.current) return null
       const snapshot = result.data
       const restored = restoreChatSnapshot(snapshot)
+      setHistoryCompacted(Boolean(snapshot.historyCompacted) || snapshot.history.some(row =>
+        row.role === 'system' && row.metadata?.isCompactSummary === true))
+      setArchiveExpanded(false)
       for (const job of snapshot.commandJobs ?? []) ingestCommandJob(job)
       rootRunsRef.current.clear()
       for (const run of snapshot.runs) rootRunsRef.current.set(run.runId, run)
@@ -794,6 +805,30 @@ export function useChat(): {
   const loadHistory = useCallback(async (sessionId: string): Promise<void> => {
     await restoreSession(sessionId)
   }, [restoreSession])
+
+  const loadArchive = useCallback(async (sessionId: string): Promise<void> => {
+    if (!sessionId || !isEngineReady() || renderSource !== getEngineSource() || activeStreamRef.current) return
+    const source = getEngineSource()
+    const generation = ++historyRequestRef.current
+    try {
+      const result = await engine.request<EngineHistoryRow[]>({
+        method: 'GET',
+        path: '/conversation/archive',
+        query: { sessionId }
+      })
+      if (source !== getEngineSource() || generation !== historyRequestRef.current || viewSessionRef.current !== sessionId ||
+        !result.ok || !Array.isArray(result.data)) return
+      const snapshot = await restoreSession(sessionId)
+      if (!snapshot || source !== getEngineSource() || viewSessionRef.current !== sessionId) return
+      const restored = restoreChatSnapshot({ ...snapshot, history: result.data, historyCompacted: false })
+      setMessages(attachCommandJobs(attachSubagentRuns(restored.messages, getSubagentRuns(sessionId), true), getCommandJobs(sessionId), sessionId))
+      setTodos(restored.todos)
+      setHistoryCompacted(false)
+      setArchiveExpanded(true)
+    } catch {
+      // Keep the compact projection visible when an archive read is unavailable.
+    }
+  }, [renderSource, restoreSession])
 
   /** Snapshot and watermark describe the same state; subscribe only after replacing the current turn. */
   const resumeStream = useCallback(async (sessionId: string): Promise<boolean> => {
@@ -1014,6 +1049,8 @@ export function useChat(): {
     messages,
     commandJobs,
     streaming,
+    historyCompacted: historyCompacted && !archiveExpanded,
+    loadArchive,
     todos,
     send,
     respond,

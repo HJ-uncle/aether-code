@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState, type JSX } from 'react'
 import '@xterm/xterm/css/xterm.css'
-import { useWorkspace } from '@renderer/core/workspace/workspace-store'
+import {
+  getWorkspaceState,
+  useWorkspace,
+  workspaceRestoreSettled
+} from '@renderer/core/workspace/workspace-store'
 import { copyIntoWorkspace } from '@renderer/core/workspace/fs-client'
 import { watchTheme } from '@renderer/core/theme/palette'
 import { Icon } from '@renderer/workbench/icons'
@@ -9,6 +13,7 @@ import { pushPendingMention } from '@renderer/contrib/chat/pending-mentions'
 import {
   clearActiveSession,
   closeSession,
+  copyTerminalSelection,
   createLocalSession,
   getTerminalState,
   isSessionAttached,
@@ -35,11 +40,21 @@ export function TerminalView(): JSX.Element {
   // 面板打开时无会话则自动建一个；creating 守卫住 StrictMode/竞态。
   // createFailed 必须一并检查：创建失败（如环境不支持 ConPTY）后若还自动重试，
   // 会陷入"失败→复位→再触发"的无限循环，这里改为停下来等显式操作。
+  //
+  // 必须先等启动恢复跑完：它是异步的，首帧执行到这里时 root 还是 null，
+  // 直接建出来的 shell 会落在主目录、而不是当前项目。
   useEffect(() => {
-    if (state.sessions.length === 0 && !state.creating && !state.createFailed) {
-      void createLocalSession(root ?? undefined)
+    let cancelled = false
+    void workspaceRestoreSettled().then(() => {
+      if (cancelled) return
+      const current = getTerminalState()
+      if (current.sessions.length > 0 || current.creating || current.createFailed) return
+      void createLocalSession(getWorkspaceState().root ?? undefined)
+    })
+    return () => {
+      cancelled = true
     }
-  }, [state.sessions.length, state.creating, state.createFailed, root])
+  }, [])
 
   // 外观/强调色变化（含 'system' 模式的系统切换）→ 热更新全部存活会话的主题
   useEffect(
@@ -209,6 +224,15 @@ function SessionSlot({
           y={menu.y}
           onClose={() => setMenu(null)}
           items={[
+            {
+              id: 'copy',
+              label: '复制',
+              hint: 'Ctrl+C',
+              onSelect: () => {
+                setMenu(null)
+                void copyTerminalSelection(menu.selection)
+              }
+            },
             {
               id: 'add-to-chat',
               label: '添加到对话',

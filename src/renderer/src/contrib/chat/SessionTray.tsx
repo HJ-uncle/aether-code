@@ -202,14 +202,20 @@ export function SessionTray({
           </button>
         ) : null}
 
-        {/* 摘要区可点：展开托盘并切到对应 tab（对齐 wuzu 点击摘要跳转的行为） */}
+        {/* 摘要区可点：展开 / 收起托盘（对齐 wuzu 工具条摘要的 toggle 行为）。
+            展开时顺带切到摘要对应的 tab，收起时保留用户当前所在的 tab */}
         <button
           type="button"
           className="session-tray__summary"
-          title={collapsed ? `展开查看：${summary}` : summary}
+          aria-expanded={!collapsed}
+          title={collapsed ? `展开查看：${summary}` : `收起托盘：${summary}`}
           onClick={() => {
-            setCollapsed(false)
-            setTab(effectiveTab)
+            if (collapsed) {
+              setTab(effectiveTab)
+              setCollapsed(false)
+            } else {
+              setCollapsed(true)
+            }
           }}
         >
           {summary}

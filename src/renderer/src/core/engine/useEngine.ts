@@ -11,6 +11,7 @@ const INITIAL: EngineSnapshot = {
   pid: null,
   adopted: false,
   entryPath: null,
+    runtimeSource: null,
   version: null,
   dataDir: null,
   error: null,

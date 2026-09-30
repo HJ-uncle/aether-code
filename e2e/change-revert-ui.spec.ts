@@ -109,10 +109,15 @@ test.describe.serial('D2 文件回退真机闭环', () => {
     rmSync(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   })
 
-  test('初始无任务/队列也能发现全部205条；一次撤回有序恢复并保护人工修改', async () => {
-    await expect(page.getByRole('button', { name: '改动 205', exact: true })).toBeVisible()
-    await page.getByRole('button', { name: '改动 205', exact: true }).click()
-    await expect(page.locator('.changes-panel__item')).toHaveCount(205)
+  test('205条操作汇总为4个文件；一次撤回仍覆盖全部操作并保护人工修改', async () => {
+    const ledger = await page.evaluate(sessionId => window.aether.engine.request<unknown[]>({
+      method: 'GET', path: '/changes', query: { sessionId, status: 'pending' }
+    }), partialSession)
+    expect(ledger.ok, ledger.message).toBe(true)
+    expect(ledger.data).toHaveLength(205)
+    await expect(page.getByRole('button', { name: '改动 4', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: '改动 4', exact: true }).click()
+    await expect(page.locator('.changes-panel__item')).toHaveCount(4)
     await page.locator('.changes-panel__footer').getByRole('button', { name: '撤回', exact: true }).click()
     await page.getByRole('dialog', { name: '撤回改动' }).getByRole('button', { name: '撤回', exact: true }).click()
     const report = page.getByRole('region', { name: '文件回退结果' })

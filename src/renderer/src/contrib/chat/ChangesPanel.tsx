@@ -4,18 +4,21 @@ import type { EngineFileChange } from '@shared/ipc'
 import { Icon } from '@renderer/workbench/icons'
 import { onSnapshot, requestOrThrow } from '@renderer/core/engine/client'
 import { dismissRevertReport, getRevertReport, groupRevertResults, revertChanges, revertComplete, revertStatusLabel, revertSummary, subscribeReverts } from '@renderer/core/engine/change-revert'
-import { gitStageFiles, gitUnstageFiles } from '@renderer/core/git/git-client'
+import { gitStageFiles } from '@renderer/core/git/git-client'
+import { changeIdsOf, keepChanges, stageAndKeepChanges } from '@renderer/core/engine/change-actions'
+import { assertEngineSource, getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { toast } from '@renderer/core/toast'
 import { useApp } from '@renderer/core/app-context'
 
 import {
-  MAX_RENDER_ROWS,
+  DIFF_APPROXIMATION_HINT,
   computeLineDiff,
   diffForDeletedFile,
   diffForNewFile,
-  diffStats
+  diffStats,
+  type DiffStats
 } from './diff'
 
 /**
@@ -36,14 +39,19 @@ function badgeOf(change: EngineFileChange): ChangeBadge {
 }
 
 /** 估算增删行数；内容未存档时返回 null（不显示数字） */
-function statsOf(change: EngineFileChange): { added: number; removed: number } | null {
+function statsOf(change: EngineFileChange): DiffStats | null {
   if (change.truncated) return null
   let rows
-  if (change.kind === 'delete') rows = diffForDeletedFile(change.oldContent ?? '')
-  else if ((change.isNew ?? (!change.truncated && change.oldContent === null))) rows = diffForNewFile(change.newContent ?? '')
+  if (change.kind === 'delete') {
+    if (change.oldContent === null) return null
+    rows = diffForDeletedFile(change.oldContent)
+  } else if ((change.isNew ?? (!change.truncated && change.oldContent === null))) {
+    if (change.newContent === null) return null
+    rows = diffForNewFile(change.newContent)
+  }
   else {
     if (change.oldContent === null || change.newContent === null) return null
-    rows = computeLineDiff(change.oldContent, change.newContent).slice(0, MAX_RENDER_ROWS)
+    rows = computeLineDiff(change.oldContent, change.newContent)
   }
   return diffStats(rows)
 }
@@ -55,21 +63,37 @@ function splitPath(change: EngineFileChange): { name: string; dir: string } {
   return { name: display.slice(index + 1), dir: display.slice(0, index) }
 }
 
-export function ChangesPanel({
+type ChangesPanelProps = {
+  sessionId: string
+  streaming: boolean
+  onCountChange?: (count: number) => void
+  onReportChange?: (visible: boolean) => void
+  bare?: boolean
+}
+
+/** Discard rows and in-flight results when either the conversation or engine changes. */
+export function ChangesPanel(props: ChangesPanelProps): JSX.Element {
+  const source = useSyncExternalStore(subscribeEngineSource, getEngineSource)
+  return <ChangesPanelContent key={`${source}:${props.sessionId}`} {...props} source={source} />
+}
+
+const issueLabels: Record<NonNullable<EngineFileChange['projectionIssue']>, string> = {
+  'discontinuous-history': '存在中途修改或已确认操作，按独立阶段展示',
+  'later-change': '存在后续改动，撤回前将检查版本',
+  'disk-diverged': '文件已被另行修改，当前展示记录中的差异',
+  'path-changed': '文件路径的实际目标已变化',
+  'snapshot-unavailable': '缺少完整快照，无法自动撤回',
+  unreadable: '当前文件无法读取，未自动抵消记录'
+}
+
+function ChangesPanelContent({
   sessionId,
   streaming,
   onCountChange,
   onReportChange,
-  bare
-}: {
-  sessionId: string
-  streaming: boolean
-  /** 改动数变化时上报（父级托盘需要计数做 tab 徽标）；传了即启用受控模式 */
-  onCountChange?: (count: number) => void
-  onReportChange?: (visible: boolean) => void
-  /** 受控模式：外层托盘已有 tab 栏，隐藏自带的底部计数条 */
-  bare?: boolean
-}): JSX.Element | null {
+  bare,
+  source
+}: ChangesPanelProps & { source: number }): JSX.Element | null {
   const [changes, setChanges] = useState<EngineFileChange[]>([])
   const { engine } = useApp()
   const remoteReadOnly = engine.snapshot.mode === 'remote'
@@ -91,7 +115,7 @@ export function ChangesPanel({
       const data = await requestOrThrow<EngineFileChange[]>({
         method: 'GET',
         path: '/changes',
-        query: { sessionId, status: 'pending' }
+        query: { sessionId, status: 'pending', view: 'net' }
       })
       if (!mounted.current || generation !== refreshGeneration.current) return
       setChanges(Array.isArray(data) ? data : [])
@@ -132,27 +156,27 @@ export function ChangesPanel({
   const act = useCallback(
     async (action: () => Promise<unknown>): Promise<void> => {
       if (remoteReadOnly) return
+      if (!mounted.current) return
       setBusy(true)
       setError(null)
       try {
+        assertEngineSource(source)
         await action()
         await refresh()
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err))
+        if (mounted.current) setError(err instanceof Error ? err.message : String(err))
       } finally {
-        setBusy(false)
+        if (mounted.current) setBusy(false)
       }
     },
-    [refresh, remoteReadOnly]
+    [refresh, remoteReadOnly, source]
   )
 
-  const keepOne = (id: string): Promise<void> =>
-    // POST 必须带 body（哪怕是空对象）：IDE 的 engine.request 只在有 body 时
-    // 才发 Content-Type，而 Fastify 对无 Content-Type 的 POST 一律 415
-    act(() => requestOrThrow({ method: 'POST', path: `/changes/${id}/keep`, body: {} }))
+  const keepOne = (change: EngineFileChange): Promise<void> =>
+    act(() => keepChanges(requestOrThrow, sessionId, [change]))
 
-  const revertOne = (id: string): Promise<void> =>
-    act(() => revertChanges(requestOrThrow, { sessionId, ids: [id], scope: 'all' }))
+  const revertOne = (change: EngineFileChange): Promise<void> =>
+    act(() => revertChanges(requestOrThrow, { sessionId, ids: changeIdsOf([change]), scope: 'all' }))
 
   /** 版本匹配才恢复；冲突和缺失快照均保留原文件并逐项报告。 */
   const confirmRevert = async (message: string, run: () => Promise<void>): Promise<void> => {
@@ -169,7 +193,7 @@ export function ChangesPanel({
   const revertOneWithConfirm = (change: EngineFileChange): Promise<void> =>
     confirmRevert(
       `撤回对 ${change.displayPath || change.path} 的改动？文件将按快照恢复到改动前。`,
-      () => revertOne(change.id)
+      () => revertOne(change)
     )
 
   const keepAll = (): Promise<void> =>
@@ -177,46 +201,36 @@ export function ChangesPanel({
 
   /**
    * 暂存 = git add + 保留（对齐 wuzu-client 的 keepAndStage 语义）。
-   * 先暂存后保留：保留失败时回滚暂存区，避免出现「待确认没了但没暂存上」的中间态。
+   * 保留失败时保留暂存结果并报告，不能用 unstage 抹掉用户已有的暂存。
    */
   const stageChanges = useCallback(
     async (targets: EngineFileChange[]): Promise<void> => {
       if (remoteReadOnly) return
-      if (!workspace.root) throw new Error('未打开工作区，无法暂存（当前目录不是 git 仓库时也不可用）')
-      const paths = targets.map((change) => change.path)
+      if (!mounted.current) return
       setBusy(true)
       setError(null)
       try {
-        // 批量暂存走 Result 信封：失败时抛给用户，成功时以实际暂存的路径为准
-        const result = await gitStageFiles(workspace.root, paths)
-        if (!result.success) throw new Error(result.error ?? 'git add 执行失败')
-        const staged = result.stagedPaths ?? []
-        if (staged.length === 0) {
-          // 可暂存为空不等于出错：常见原因是目标全部被 .gitignore 命中。
-          // 静默返回会显得「按钮没反应」，这里明确告诉用户原因。
+        assertEngineSource(source)
+        const root = workspace.root
+        if (!root) throw new Error('未打开工作区，无法暂存')
+        const staged = await stageAndKeepChanges(
+          paths => gitStageFiles(root, paths),
+          input => { assertEngineSource(source); return requestOrThrow(input) },
+          sessionId,
+          targets
+        )
+        if (!staged) {
           toast.warning('没有可暂存的改动（全部被 .gitignore 忽略或文件已不存在）')
           return
         }
-        const stagedIds = targets
-          .filter((c) => staged.includes(c.path))
-          .map((c) => c.id)
-        if (stagedIds.length === 0) return
-        // 保留失败：改动已进暂存区但仍在待确认列表 —— 回滚暂存区，
-        // 避免留下「文件进了 index 但待确认列表还挂着」的半完成状态
-        try {
-          await requestOrThrow({ method: 'POST', path: '/changes/keep-many', body: { sessionId, ids: stagedIds } })
-        } catch (err) {
-          await gitUnstageFiles(workspace.root, staged).catch((rollbackErr: unknown) => {
-            console.error('[changes] 暂存回滚失败', rollbackErr)
-          })
-          throw err
-        }
         await refresh()
+      } catch (err) {
+        if (mounted.current) setError(err instanceof Error ? err.message : String(err))
       } finally {
-        setBusy(false)
+        if (mounted.current) setBusy(false)
       }
     },
-    [refresh, remoteReadOnly, sessionId, workspace.root]
+    [refresh, remoteReadOnly, sessionId, source, workspace.root]
   )
 
   const revertAll = async (): Promise<void> =>
@@ -263,14 +277,15 @@ export function ChangesPanel({
                 {name}
               </span>
               {dir ? <span className="changes-panel__dir">{dir}</span> : null}
+              {change.projectionIssue ? <span title={issueLabels[change.projectionIssue]} aria-label={issueLabels[change.projectionIssue]}>⚠</span> : null}
               <span className="changes-panel__spacer" />
               {stats ? (
-                <span className="changes-panel__stats">
+                <span className="changes-panel__stats" title={stats.approximate ? DIFF_APPROXIMATION_HINT : undefined}>
                   {stats.added > 0 ? (
-                    <span className="changes-panel__add">+{stats.added}</span>
+                    <span className="changes-panel__add">{stats.approximate ? '≈' : ''}+{stats.added}</span>
                   ) : null}
                   {stats.removed > 0 ? (
-                    <span className="changes-panel__del">-{stats.removed}</span>
+                    <span className="changes-panel__del">{stats.approximate ? '≈' : ''}-{stats.removed}</span>
                   ) : null}
                 </span>
               ) : null}
@@ -280,17 +295,17 @@ export function ChangesPanel({
               <button
                 type="button"
                 className="changes-panel__confirm"
-                disabled={remoteReadOnly || busy}
-                title="确认保留这条改动"
-                onClick={() => void keepOne(change.id)}
+                disabled={remoteReadOnly || busy || streaming}
+                title="确认保留本组文件改动"
+                onClick={() => void keepOne(change)}
               >
                 保留
               </button>
               <button
                 type="button"
                 className="changes-panel__confirm"
-                disabled={remoteReadOnly || busy || !workspace.root}
-                title="git add 这条改动并标记保留（暂存区 + 待确认列表同时处理）"
+                disabled={remoteReadOnly || busy || streaming || !workspace.root}
+                title="暂存当前文件的全部内容，并保留本组改动记录"
                 onClick={() => void stageChanges([change])}
               >
                 暂存
@@ -329,8 +344,8 @@ export function ChangesPanel({
         <button
           type="button"
           className="changes-panel__footer-btn"
-          disabled={remoteReadOnly || busy || !workspace.root}
-          title="git add 全部改动并标记保留"
+          disabled={remoteReadOnly || busy || streaming || !workspace.root}
+          title="暂存所列文件的当前全部内容，并保留改动记录"
           onClick={() => void stageChanges(changes)}
         >
           <Icon name="copy" size={16} />
@@ -339,7 +354,7 @@ export function ChangesPanel({
         <button
           type="button"
           className="changes-panel__footer-btn changes-panel__footer-btn--keep"
-          disabled={remoteReadOnly || busy}
+          disabled={remoteReadOnly || busy || streaming}
           title="确认保留全部改动（从待确认列表移除）"
           onClick={() => void keepAll()}
         >

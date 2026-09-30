@@ -13,6 +13,7 @@
 import { useSyncExternalStore } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { toast } from '@renderer/core/toast'
 import { buildTerminalTheme } from './terminal-theme'
 
 /** 本地轨共用的会话操作面：上层不感知数据是走 IPC 还是 WS */
@@ -117,6 +118,19 @@ export function clearActiveSession(): void {
   state.sessions.find((item) => item.id === state.activeId)?.term.clear()
 }
 
+/**
+ * 复制选区到系统剪贴板，失败时报错而非静默——静默会让用户以为按了没反应。
+ * 右键菜单与 Ctrl+C 快捷键共用这一条路径，两处反馈保持一致。
+ */
+export async function copyTerminalSelection(selection: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(selection)
+    toast.success('已复制终端选区')
+  } catch (error) {
+    toast.error(`复制失败：${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
 function newTerminal(): { term: Terminal; fit: FitAddon } {
   const term = new Terminal({
     fontFamily: 'Consolas, "Cascadia Mono", monospace',
@@ -128,6 +142,22 @@ function newTerminal(): { term: Terminal; fit: FitAddon } {
   })
   const fit = new FitAddon()
   term.loadAddon(fit)
+
+  // Ctrl+C 语义按 Windows Terminal / VS Code 的约定分层：
+  // 有选区时复制并清掉选区，没选区时才把 ^C 交给 shell 当中断。
+  // 不接管的话 xterm 一律转发给 PTY，右键菜单里标着 Ctrl+C 却只发出一个 ^C。
+  term.attachCustomKeyEventHandler((event) => {
+    if (event.type !== 'keydown') return true
+    if (!event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) return true
+    if (event.key.toLowerCase() !== 'c') return true
+    const selection = term.getSelection()
+    if (!selection) return true
+    void copyTerminalSelection(selection)
+    term.clearSelection()
+    // 返回 false 阻止 xterm 继续把该按键写进 PTY
+    return false
+  })
+
   return { term, fit }
 }
 

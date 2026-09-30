@@ -2,9 +2,21 @@
 import { expect, test } from '@playwright/test'
 import type { EngineRequestInput } from '../src/shared/ipc'
 import {
-  getRevertReport, groupRevertResults, locateRevertRow, revertChanges,
-  revertComplete, revertConversationFrom, revertSummary, type RevertReport, type RevertStatus
+  getRevertOutcome, getRevertReport, groupRevertResults, locateRevertRow, revertChanges,
+  revertComplete, revertConversationFrom, revertSummary, subscribeReverts, type RevertReport, type RevertStatus
 } from '../src/renderer/src/core/engine/change-revert'
+import { getExpectedEngine, publishEngineSource } from '../src/renderer/src/core/engine/source'
+
+let sourceSerial = 0
+function changeSource(): void {
+  publishEngineSource({ mode: 'embedded', baseUrl: 'http://engine.test', instanceId: `engine-${++sourceSerial}`, phase: 'idle' })
+}
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(done => { resolve = done })
+  return { promise, resolve }
+}
+test.beforeEach(changeSource)
 
 function report(statuses: RevertStatus[]): RevertReport {
   return {
@@ -35,7 +47,7 @@ function mock(batch: RevertReport, history = rows) {
 test('全部撤回由服务端选择完整session范围，不从可见列表生成ids', async () => {
   const fixture = mock(report(['reverted']))
   await revertChanges(fixture.request, { sessionId: 'all', scope: 'pending' })
-  expect(fixture.calls).toEqual([{ method: 'POST', path: '/changes/revert-batch', body: { sessionId: 'all', scope: 'pending' } }])
+  expect(fixture.calls).toEqual([{ method: 'POST', path: '/changes/revert-batch', body: { sessionId: 'all', scope: 'pending' }, expectedEngine: getExpectedEngine() }])
 })
 
 test('单条撤回仍走同一batch且明确限定id', async () => {
@@ -61,6 +73,7 @@ test('完全成功及重复已撤回后，才按精确引擎messageId截断', as
   await revertConversationFrom(fixture.request, 'done', target)
   expect(fixture.calls.map(call => call.path)).toEqual(['/conversation/history', '/changes/revert-batch', '/conversation/truncate'])
   expect(fixture.calls[2].body).toEqual({ sessionId: 'done', messageId: 'user-2' })
+  expect(fixture.calls.every(call => JSON.stringify(call.expectedEngine) === JSON.stringify(getExpectedEngine()))).toBe(true)
 })
 
 test('前端临时ID遇到重复正文时拒绝写入，不选第一条继续', async () => {
@@ -96,4 +109,121 @@ test('相同路径的多个操作按文件分组，汇总不把操作数说成�
   expect(groupRevertResults(batch).map(group => [group.path, group.items.length])).toEqual([
     ['chain.txt', 2], ['2.txt', 1], ['3.txt', 1]
   ])
+})
+
+test('引擎代次变化清空报告和卡片结果，并通知订阅者', async () => {
+  const batch = report(['reverted'])
+  await revertChanges(mock(batch).request, { sessionId: 'shared-session' })
+  expect(getRevertReport('shared-session')).toEqual(batch)
+  expect(getRevertOutcome('0')).toEqual(batch.results[0])
+  let notifications = 0
+  const unsubscribe = subscribeReverts(() => { notifications++ })
+  try {
+    changeSource()
+    expect(getRevertReport('shared-session')).toBeNull()
+    expect(getRevertOutcome('0')).toBeNull()
+    expect(notifications).toBe(1)
+  } finally {
+    unsubscribe()
+  }
+})
+
+test('旧引擎晚到的batch结果不能覆盖新引擎同名会话或卡片', async () => {
+  const delayed = deferred<RevertReport>()
+  const oldRequest = async <T>(_input: EngineRequestInput): Promise<T> => await delayed.promise as T
+  const pending = revertChanges(oldRequest, { sessionId: 'shared-session' })
+  const rejected = expect(pending).rejects.toThrow('引擎连接已变化')
+  changeSource()
+  const current = report(['conflict'])
+  await revertChanges(mock(current).request, { sessionId: 'shared-session' })
+  delayed.resolve(report(['reverted']))
+  await rejected
+  expect(getRevertReport('shared-session')).toEqual(current)
+  expect(getRevertOutcome('0')).toEqual(current.results[0])
+})
+
+test('请求已返回但发布报告前的微任务切源不能留下旧缓存', async () => {
+  const delayed = deferred<RevertReport>()
+  const request = <T>(_input: EngineRequestInput): Promise<T> => delayed.promise as Promise<T>
+  const pending = revertChanges(request, { sessionId: 'continuation-switch' })
+  const rejected = expect(pending).rejects.toThrow('引擎连接已变化')
+  delayed.resolve(report(['reverted']))
+  queueMicrotask(changeSource)
+  await rejected
+  expect(getRevertReport('continuation-switch')).toBeNull()
+  expect(getRevertOutcome('0')).toBeNull()
+})
+
+test('读取历史期间切换引擎，旧历史不得向新引擎发起文件回退', async () => {
+  const history = deferred<typeof rows>()
+  const calls: EngineRequestInput[] = []
+  const expected = getExpectedEngine()
+  const request = async <T>(input: EngineRequestInput): Promise<T> => {
+    calls.push(input)
+    return await history.promise as T
+  }
+  const pending = revertConversationFrom(request, 'history-switch', target)
+  const rejected = expect(pending).rejects.toThrow('引擎连接已变化')
+  changeSource()
+  history.resolve(rows)
+  await rejected
+  expect(calls.map(call => call.path)).toEqual(['/conversation/history'])
+  expect(calls[0].expectedEngine).toEqual(expected)
+  expect(getRevertReport('history-switch')).toBeNull()
+})
+
+test('文件回退期间切换引擎，不得发布旧报告或截断新引擎历史', async () => {
+  const batch = deferred<RevertReport>()
+  const started = deferred<void>()
+  const calls: EngineRequestInput[] = []
+  const request = async <T>(input: EngineRequestInput): Promise<T> => {
+    calls.push(input)
+    if (input.path === '/conversation/history') return rows as T
+    started.resolve()
+    return await batch.promise as T
+  }
+  const pending = revertConversationFrom(request, 'batch-switch', target)
+  const rejected = expect(pending).rejects.toThrow('引擎连接已变化')
+  await started.promise
+  changeSource()
+  batch.resolve(report(['reverted']))
+  await rejected
+  expect(calls.map(call => call.path)).toEqual(['/conversation/history', '/changes/revert-batch'])
+  expect(getRevertReport('batch-switch')).toBeNull()
+  expect(getRevertOutcome('0')).toBeNull()
+})
+
+test('报告通知期间切换引擎也会阻止后续历史截断', async () => {
+  const fixture = mock(report(['reverted']))
+  const unsubscribe = subscribeReverts(() => {
+    if (getRevertReport('listener-switch')) changeSource()
+  })
+  try {
+    await expect(revertConversationFrom(fixture.request, 'listener-switch', target)).rejects.toThrow('引擎连接已变化')
+    expect(fixture.calls.map(call => call.path)).toEqual(['/conversation/history', '/changes/revert-batch'])
+    expect(getRevertReport('listener-switch')).toBeNull()
+  } finally {
+    unsubscribe()
+  }
+})
+
+test('旧引擎截断响应晚到不能向当前引擎报告整条操作成功', async () => {
+  const truncated = deferred<object>()
+  const started = deferred<void>()
+  const calls: EngineRequestInput[] = []
+  const request = async <T>(input: EngineRequestInput): Promise<T> => {
+    calls.push(input)
+    if (input.path === '/conversation/history') return rows as T
+    if (input.path === '/changes/revert-batch') return report(['reverted']) as T
+    started.resolve()
+    return await truncated.promise as T
+  }
+  const pending = revertConversationFrom(request, 'truncate-switch', target)
+  const rejected = expect(pending).rejects.toThrow('引擎连接已变化')
+  await started.promise
+  changeSource()
+  truncated.resolve({})
+  await rejected
+  expect(calls.map(call => call.path)).toEqual(['/conversation/history', '/changes/revert-batch', '/conversation/truncate'])
+  expect(getRevertReport('truncate-switch')).toBeNull()
 })

@@ -29,7 +29,7 @@ test('远端令牌在保存和环境变量入口使用同一请求头边界', ()
 test('远端只开放明确的读取与会话执行接口，未授权修改仍拒绝', () => {
   const reads = [
     '/health', '/meta', '/metrics', '/models', '/tools', '/system-tools', '/external-skills',
-    '/conversation/sessions', '/conversation/history?sessionId=fixture',
+    '/conversation/sessions', '/conversation/history?sessionId=fixture', '/conversation/archive?sessionId=fixture',
     '/api/v1/chat/snapshot', '/chat/status', '/chat/runs', '/chat/stream',
     '/changes', '/todos', '/subagent/runs', '/subagent/runs/run-1', '/subagent/runs/run-1/events',
     '/command-jobs', '/command-jobs/job-1', '/command-jobs/job-1/output',

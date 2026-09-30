@@ -1,8 +1,52 @@
 import { useEffect, useState, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
 import type { EngineMode } from '@shared/ipc'
+import type { EngineImportProgress, EngineRuntimeCatalog } from '@shared/engine-import'
 import { Icon } from '@renderer/workbench/icons'
+import { Select } from '@renderer/workbench/Select'
+import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { SettingsContent, SettingsGroup, SettingsRow, Toggle } from './SettingsGroup'
+import './engine-settings.css'
+
+const ENGINE_PHASE_LABELS: Record<string, string> = {
+  idle: '未启动',
+  installing: '安装运行时',
+  starting: '启动中',
+  ready: '已就绪',
+  stopping: '停止中',
+  error: '错误'
+}
+
+const ENGINE_SOURCE_LABELS: Record<string, string> = {
+  env: '环境变量指定',
+  bundled: '应用内置',
+  'dev-sibling': '开发目录引擎',
+  imported: '已导入本地包'
+}
+
+const INITIAL_IMPORT_PROGRESS: EngineImportProgress = {
+  phase: 'idle',
+  files: 0,
+  bytes: 0,
+  message: ''
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  if (bytes < 1024) return `${Math.round(bytes)} B`
+  const units = ['KB', 'MB', 'GB']
+  let value = bytes / 1024
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit += 1
+  }
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unit]}`
+}
+
+function shortBuildId(buildId: string): string {
+  return buildId.length > 12 ? `${buildId.slice(0, 12)}…` : buildId
+}
 
 /**
  * 引擎设置
@@ -27,6 +71,39 @@ export function EngineSettingsView(): JSX.Element {
   const [saveError, setSaveError] = useState('')
   const [tokenStatusError, setTokenStatusError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [runtimeCatalog, setRuntimeCatalog] = useState<EngineRuntimeCatalog | null>(null)
+  const [selectedRuntimeId, setSelectedRuntimeId] = useState('')
+  const [runtimeProgress, setRuntimeProgress] = useState<EngineImportProgress>(INITIAL_IMPORT_PROGRESS)
+  const [runtimeError, setRuntimeError] = useState('')
+  const [runtimeBusy, setRuntimeBusy] = useState<'import' | 'activate' | 'delete' | null>(null)
+
+  const refreshRuntimeCatalog = async (selectId?: string): Promise<void> => {
+    try {
+      const catalog = await window.aether.engine.getLocalRuntimes()
+      setRuntimeCatalog(catalog)
+      setSelectedRuntimeId(selectId ?? catalog.activeId ?? '')
+    } catch (error: unknown) {
+      setRuntimeError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  useEffect(() => {
+    let alive = true
+    void window.aether.engine.getLocalRuntimes().then((catalog) => {
+      if (!alive) return
+      setRuntimeCatalog(catalog)
+      setSelectedRuntimeId(catalog.activeId ?? '')
+    }).catch((error: unknown) => {
+      if (alive) setRuntimeError(error instanceof Error ? error.message : String(error))
+    })
+    const offProgress = window.aether.engine.onImportProgress((progress) => {
+      if (alive) setRuntimeProgress(progress)
+    })
+    return () => {
+      alive = false
+      offProgress()
+    }
+  }, [])
 
   useEffect(() => {
     let alive = true
@@ -62,13 +139,81 @@ export function EngineSettingsView(): JSX.Element {
     clearRemoteToken ||
     autoStart !== settings.autoStartEngine
 
-  const busy =
+  const lifecycleBusy =
     snapshot.phase === 'starting' ||
     snapshot.phase === 'installing' ||
     snapshot.phase === 'stopping'
+  const busy = lifecycleBusy || runtimeBusy !== null || saving
+  const embeddedSaved = settings.engineMode === 'embedded' && mode === 'embedded'
+  const canImportRuntime = embeddedSaved && runtimeBusy === null && !saving && !lifecycleBusy
+  const canActivateRuntime = canImportRuntime && !dirty && !lifecycleBusy
+
+  const importRuntime = async (): Promise<void> => {
+    if (!canImportRuntime) return
+    setRuntimeError('')
+    setRuntimeBusy('import')
+    setRuntimeProgress({ ...INITIAL_IMPORT_PROGRESS, phase: 'extracting', message: '正在等待选择引擎包…' })
+    try {
+      const imported = await window.aether.engine.importLocalRuntime()
+      if (!imported) {
+        setRuntimeProgress(INITIAL_IMPORT_PROGRESS)
+        return
+      }
+      await refreshRuntimeCatalog(imported.id)
+      setRuntimeProgress((current) => ({ ...current, phase: 'ready', message: `已导入 ${imported.name}` }))
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      setRuntimeError(message)
+      setRuntimeProgress((current) => ({ ...current, phase: 'error', message }))
+    } finally {
+      setRuntimeBusy(null)
+    }
+  }
+
+  const activateRuntime = async (id: string | null): Promise<void> => {
+    if (!canActivateRuntime || id === (runtimeCatalog?.activeId ?? null)) return
+    const confirmed = await confirmDialog({
+      title: '切换本地引擎并重启？',
+      body: '切换会中断当前任务，但会保留会话记录和模型配置。引擎重启完成后即可继续使用。',
+      confirmText: id ? '使用此引擎并重启' : '恢复默认引擎并重启'
+    })
+    if (!confirmed || runtimeBusy !== null) return
+    setRuntimeError('')
+    setRuntimeBusy('activate')
+    try {
+      await window.aether.engine.activateLocalRuntime(id)
+      await refreshRuntimeCatalog()
+    } catch (error: unknown) {
+      setRuntimeError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setRuntimeBusy(null)
+    }
+  }
+
+  const deleteRuntime = async (): Promise<void> => {
+    const runtime = selectedRuntime
+    if (!runtime || !canDeleteRuntime) return
+    const confirmed = await confirmDialog({
+      title: '删除本地引擎？',
+      body: `将删除“${runtime.name}”${runtime.version ? `（${runtime.version}）` : ''}的本地文件，之后需要重新导入才能使用。`,
+      confirmText: '删除引擎',
+      danger: true
+    })
+    if (!confirmed || runtimeBusy !== null) return
+    setRuntimeError('')
+    setRuntimeBusy('delete')
+    try {
+      await window.aether.engine.deleteLocalRuntime(runtime.id)
+      await refreshRuntimeCatalog()
+    } catch (error: unknown) {
+      setRuntimeError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setRuntimeBusy(null)
+    }
+  }
 
   const save = async (restart: boolean): Promise<void> => {
-    if (saving) return
+    if (saving || runtimeBusy !== null) return
     const parsedPort = Number(port)
     setSaveError('')
     setSaved(false)
@@ -101,6 +246,12 @@ export function EngineSettingsView(): JSX.Element {
     }
   }
 
+  const activeRuntime = runtimeCatalog?.runtimes.find((runtime) => runtime.id === runtimeCatalog.activeId) ?? null
+  const selectedRuntime = runtimeCatalog?.runtimes.find((runtime) => runtime.id === selectedRuntimeId) ?? null
+  const canDeleteRuntime = embeddedSaved && runtimeBusy === null && !saving && !lifecycleBusy &&
+    selectedRuntime !== null && selectedRuntime.id !== (runtimeCatalog?.activeId ?? null)
+  const runtimeSource = snapshot.runtimeSource
+
   return (
     <div className="settings-view settings-view--engine">
       <SettingsGroup title="运行方式">
@@ -127,6 +278,116 @@ export function EngineSettingsView(): JSX.Element {
           />
         </SettingsRow>
       </SettingsGroup>
+
+      {mode === 'embedded' ? (
+        <SettingsGroup title="本地引擎" footer="支持导入 .tgz 引擎包。导入过程不会停止当前任务；切换引擎需要重启。">
+          <SettingsContent className="engine-runtime__content">
+            <div className="engine-runtime__import">
+              <div className="engine-runtime__icon" aria-hidden="true">
+                <Icon name="package-up" size={18} />
+              </div>
+              <div className="engine-runtime__import-copy">
+                <strong>导入本地引擎包</strong>
+                <span>选择已打包的 .tgz 文件，导入后可在下方选择使用。</span>
+              </div>
+              <button
+                type="button"
+                className={`btn${runtimeBusy === 'import' ? ' is-loading' : ''}`}
+                disabled={!canImportRuntime}
+                title={!embeddedSaved ? '请先保存“本地内置”运行方式' : undefined}
+                onClick={() => void importRuntime()}
+              >
+                {runtimeBusy === 'import' ? '导入中…' : '导入引擎…'}
+              </button>
+            </div>
+            {!embeddedSaved ? <div className="engine-runtime__hint" role="status">请先选择“本地内置”并保存设置，再导入或切换本地引擎。</div> : null}
+            {embeddedSaved && dirty ? <div className="engine-runtime__hint" role="status">有未保存的设置，请先保存后再切换引擎。</div> : null}
+            {runtimeProgress.phase !== 'idle' && runtimeProgress.phase !== 'error' ? (
+              <div className={`engine-runtime__progress is-${runtimeProgress.phase}`} role="status">
+                <span>{runtimeProgress.message || (runtimeProgress.phase === 'ready' ? '引擎包已准备好' : '正在处理引擎包…')}</span>
+                {runtimeProgress.phase !== 'ready' ? (
+                  <small>{runtimeProgress.files} 个文件 · {formatBytes(runtimeProgress.bytes)}</small>
+                ) : null}
+              </div>
+            ) : null}
+            {runtimeError ? <div className="settings-view__error engine-runtime__error" role="alert">{runtimeError}</div> : null}
+          </SettingsContent>
+
+          {runtimeCatalog && runtimeCatalog.runtimes.length > 0 ? (
+            <SettingsContent className="engine-runtime__catalog">
+              <div className="engine-runtime__catalog-head">
+                <div>
+                  <strong>已安装版本</strong>
+                  <span>管理本机可用的引擎运行时</span>
+                </div>
+                {activeRuntime ? <span className="engine-runtime__badge">当前使用</span> : null}
+              </div>
+              <div className="engine-runtime__selector">
+                <div className="engine-runtime__selector-copy">
+                  <span>当前使用：{activeRuntime ? `${activeRuntime.version} · ${activeRuntime.name}` : '默认引擎'}</span>
+                </div>
+                <Select
+                  value={selectedRuntimeId}
+                  options={[
+                    { value: '', label: '默认引擎', description: '使用应用随附的默认运行时' },
+                    ...runtimeCatalog.runtimes.map((runtime) => ({
+                      value: runtime.id,
+                      label: `${runtime.version} · ${runtime.name}`,
+                      description: `文件 ${runtime.fileName} · 构建 ${shortBuildId(runtime.buildId)}`
+                    }))
+                  ]}
+                  onChange={setSelectedRuntimeId}
+                  disabled={runtimeBusy !== null || saving}
+                  ariaLabel="选择已导入的本地引擎"
+                  title="选择已导入的本地引擎"
+                  className="engine-runtime__select"
+                  width={360}
+                />
+              </div>
+              {selectedRuntime ? (
+                <div className="engine-runtime__meta">
+                  <span>名称 {selectedRuntime.name}</span>
+                  <span>版本 {selectedRuntime.version}</span>
+                  <span title={selectedRuntime.buildId}>构建 {shortBuildId(selectedRuntime.buildId)}</span>
+                  <span title={selectedRuntime.fileName}>文件 {selectedRuntime.fileName}</span>
+                  <span>导入于 {new Date(selectedRuntime.importedAt).toLocaleString()}</span>
+                </div>
+              ) : null}
+              <div className="engine-runtime__actions">
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  disabled={!canActivateRuntime || selectedRuntimeId === (runtimeCatalog.activeId ?? '')}
+                  title={dirty ? '请先保存设置' : undefined}
+                  onClick={() => void activateRuntime(selectedRuntimeId || null)}
+                >
+                  {runtimeBusy === 'activate' ? '重启中…' : '使用此引擎并重启'}
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={!canActivateRuntime || runtimeCatalog.activeId === null}
+                  title={dirty ? '请先保存设置' : undefined}
+                  onClick={() => void activateRuntime(null)}
+                >
+                  恢复默认引擎
+                </button>
+                {selectedRuntime ? (
+                  <button
+                    type="button"
+                    className="btn btn--danger-ghost"
+                    disabled={!canDeleteRuntime}
+                    title={selectedRuntime.id === (runtimeCatalog.activeId ?? null) ? '当前使用的引擎不能删除' : undefined}
+                    onClick={() => void deleteRuntime()}
+                  >
+                    {runtimeBusy === 'delete' ? '删除中…' : '删除此版本'}
+                  </button>
+                ) : null}
+              </div>
+            </SettingsContent>
+          ) : null}
+        </SettingsGroup>
+      ) : null}
 
       <SettingsGroup title={mode === 'embedded' ? '端口' : '远端地址'}>
         {mode === 'embedded' ? (
@@ -214,7 +475,7 @@ export function EngineSettingsView(): JSX.Element {
         <button
           type="button"
           className="btn btn--primary"
-          disabled={!dirty || saving}
+          disabled={!dirty || saving || runtimeBusy !== null}
           onClick={() => void save(false)}
         >
           保存
@@ -236,14 +497,16 @@ export function EngineSettingsView(): JSX.Element {
         <SettingsContent>
           <dl className="kv">
             <dt>阶段</dt>
-            <dd>{snapshot.phase}</dd>
+            <dd>{ENGINE_PHASE_LABELS[snapshot.phase] ?? snapshot.phase}</dd>
             <dt>来源</dt>
             <dd>
-              {snapshot.adopted
-                ? '复用已有引擎（不由本应用启动）'
-                : snapshot.mode === 'remote'
-                  ? '远端服务'
-                  : '本应用启动'}
+              {snapshot.mode === 'remote'
+                ? '远端服务'
+                : snapshot.adopted
+                  ? '复用已有引擎（不由本应用启动）'
+                  : runtimeSource
+                    ? ENGINE_SOURCE_LABELS[runtimeSource] ?? runtimeSource
+                    : '本应用启动'}
             </dd>
             {snapshot.pid ? (
               <>

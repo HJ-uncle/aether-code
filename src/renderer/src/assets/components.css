@@ -3305,6 +3305,8 @@
 /* ── 改动确认面板（输入框上方）── */
 
 .changes-panel {
+  display: flex;
+  flex-direction: column;
   margin: 0 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -3322,6 +3324,8 @@
 /* ── 会话托盘（改动/任务/队列 三合一浮条，对齐 wuzu CodeChangesPanel）── */
 
 .session-tray {
+  display: flex;
+  flex-direction: column;
   margin: 0 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -3338,12 +3342,29 @@
   background: transparent;
 }
 
+/* 内容展开在工具条上方，靠这条线把它和下方的 tab 栏分开（收起态无内容块，不画）。
+   列表首行自带 padding 的不必再补，改动列表/任务列表贴着托盘上沿，各补 6px。 */
+.session-tray__body,
+.session-tray .todo-tray,
+.session-tray__queue {
+  border-bottom: 1px solid var(--border);
+}
+.session-tray__body,
+.session-tray .todo-tray {
+  padding-top: 6px;
+}
+
 .session-tray__bar {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
   min-height: 30px;
+  /* 工具条固定在底部：托盘底边贴着输入框，内容变高只能向上生长，
+     标签栏若留在顶部会随各 tab 的内容条数上下跳（对齐 wuzu CodeChangesPanel）。
+     分隔线画在内容块的 border-bottom 上而非这里 —— 收起态没有内容块，
+     画在工具条上会与托盘自身的上边框叠成双层线。 */
+  order: 1;
 }
 
 .session-tray__fold {
@@ -3869,6 +3890,10 @@
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
+  /* 操作行固定在列表下方：内容变高时向上生长，按钮不跟着条目数跳动
+     （与 .session-tray__bar 同一策略，对齐 wuzu CodeChangesPanel） */
+  order: 1;
+  border-top: 1px solid var(--border);
 }
 
 .changes-panel__count {
@@ -3922,6 +3947,11 @@
   border-radius: var(--radius);
   background: var(--bg-surface);
   font-size: 12px;
+}
+
+/* 托盘内浮在工具条上方：任务清单贴托盘上沿，末行与下方 tab 栏保持间距 */
+.session-tray .todo-tray {
+  padding-bottom: 6px;
 }
 
 .todo-tray__list {
@@ -6114,6 +6144,14 @@ select.field__input {
 .tree-row.is-drop-target {
   background: var(--bg-hover);
   box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* 被 .gitignore 忽略的项：整行做半透明降级，对齐 VS Code / wuzu-client。
+   同样用 opacity 而非换色 —— 与 is-cut 同理，能与选中/活动/悬停底色自然叠加，
+   深浅主题通用。只是提示"版本控制不管它"，不影响可操作性：仍可点击/展开/拖拽。
+   写在 is-cut 之前，让"正在剪切"这种更短促的状态在下（同特异性后写者胜）。 */
+.tree-row.is-ignored {
+  opacity: 0.5;
 }
 
 /* 已剪切、等待粘贴的项：整行做半透明降级，与系统文件管理器的"待剪切"观感一致。

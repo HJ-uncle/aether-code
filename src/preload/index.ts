@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import { IPC } from '../shared/ipc'
+import type { EngineImportProgress, EngineRuntimeCatalog, EngineRuntimeInfo } from '../shared/engine-import'
 import type {
   AppSettings,
   CopyIntoWorkspaceInput,
@@ -68,6 +69,15 @@ const api = {
     start: (): Promise<EngineSnapshot> => ipcRenderer.invoke(IPC.invoke.engineStart),
     stop: (): Promise<EngineSnapshot> => ipcRenderer.invoke(IPC.invoke.engineStop),
     restart: (): Promise<EngineSnapshot> => ipcRenderer.invoke(IPC.invoke.engineRestart),
+    getLocalRuntimes: (): Promise<EngineRuntimeCatalog> => ipcRenderer.invoke(IPC.invoke.engineGetLocalRuntimes),
+    importLocalRuntime: (): Promise<EngineRuntimeInfo | null> => ipcRenderer.invoke(IPC.invoke.engineImportLocalRuntime),
+    activateLocalRuntime: (id: string | null): Promise<EngineSnapshot> => ipcRenderer.invoke(IPC.invoke.engineActivateLocalRuntime, id),
+    deleteLocalRuntime: (id: string): Promise<void> => ipcRenderer.invoke(IPC.invoke.engineDeleteLocalRuntime, id),
+    onImportProgress: (listener: (progress: EngineImportProgress) => void): (() => void) => {
+      const handler = (_event: unknown, progress: EngineImportProgress): void => listener(progress)
+      ipcRenderer.on(IPC.event.engineImportProgress, handler)
+      return () => ipcRenderer.removeListener(IPC.event.engineImportProgress, handler)
+    },
 
     request: <T = unknown>(input: EngineRequestInput): Promise<EngineRequestResult<T>> =>
       ipcRenderer.invoke(IPC.invoke.engineRequest, input),

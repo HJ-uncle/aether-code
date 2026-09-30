@@ -96,7 +96,7 @@ export function validateRemoteInstanceToken(value: string): string {
 const REMOTE_READ_ROUTES = [
   /^\/(health|meta|metrics)$/,
   /^\/api\/v1\/(models|models\/capability-defs|tools|system-tools|external-skills|changes|todos)$/,
-  /^\/api\/v1\/conversation\/(sessions|history)$/,
+  /^\/api\/v1\/conversation\/(sessions|history|archive)$/,
   /^\/api\/v1\/chat\/(snapshot|status|runs|stream)$/,
   /^\/api\/v1\/security\/(mode|policies)$/,
   /^\/api\/v1\/subagent\/runs(?:\/[a-zA-Z0-9_-]+(?:\/events)?)?$/,
