@@ -78,7 +78,10 @@ export function Select({
     } else if (event.key === 'Enter') {
       event.preventDefault()
       const picked = options[activeIndex]
-      if (picked) onChange(picked.value)
+      if (picked) {
+        onChange(picked.value)
+        setOpen(false)
+      }
     }
   }
 
@@ -90,6 +93,7 @@ export function Select({
       align={align}
       width={width ?? 220}
       flush
+      open={open}
       onOpenChange={setOpen}
       trigger={() => (
         <button
@@ -119,7 +123,10 @@ export function Select({
             role="menuitem"
             className={`select__item${option.value === value ? ' is-active' : ''}${index === activeIndex ? ' is-highlight' : ''}`}
             onMouseEnter={() => setActiveIndex(index)}
-            onClick={() => onChange(option.value)}
+            onClick={() => {
+              onChange(option.value)
+              setOpen(false)
+            }}
           >
             <span className="select__item-head">
               {option.label}

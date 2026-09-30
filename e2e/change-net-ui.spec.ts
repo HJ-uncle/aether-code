@@ -14,6 +14,10 @@ const sessionId = 'net-file-changes'
 let fixture = '', workspace = '', app: ElectronApplication | undefined, page: Page
 const rows = () => page.locator('.changes-panel__item')
 const row = (name: string) => rows().filter({ has: page.locator('.changes-panel__name', { hasText: name }) })
+async function rowMenuAction(name: string, action: string): Promise<void> {
+  await row(name).getByRole('button', { name: `${name} 的更多操作`, exact: true }).click()
+  await page.getByRole('menuitem', { name: action, exact: false }).click()
+}
 function git(...args: string[]): string {
   return execFileSync('git', ['-c', 'core.autocrlf=false', '-c', 'commit.gpgsign=false', ...args], {
     cwd: workspace, encoding: 'utf8', windowsHide: true, timeout: 30_000,
@@ -103,6 +107,22 @@ test.describe.serial('净文件改动真机闭环', () => {
     expect(await ledger()).toHaveLength(17)
     await openTray(6)
     for (const name of ['survey.mjs', 'restored.txt', 'undo.txt']) await expect(row(name)).toHaveCount(0)
+    // Net projection is one row per file. Repeated agent operations must not
+    // duplicate the file entry or expose duplicate action controls.
+    const displayedNames = await page.locator('.changes-panel__name').allTextContents()
+    expect(new Set(displayedNames).size).toBe(displayedNames.length)
+    for (const name of ['different.txt', 'revert.txt', 'keep.txt', 'stage[1].txt', 'delete.txt', 'manual.txt']) {
+      await expect(row(name)).toHaveCount(1)
+      await expect(row(name).getByRole('button', { name: '保留', exact: true })).toHaveCount(1)
+      await expect(row(name).getByRole('button', { name: `${name} 的更多操作`, exact: true })).toHaveCount(1)
+    }
+    const keyboardMenu = row('manual.txt').getByRole('button', { name: 'manual.txt 的更多操作', exact: true })
+    await keyboardMenu.press('ArrowDown')
+    await expect(page.getByRole('menu')).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: '暂存并保留', exact: false })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('menu')).toHaveCount(0)
+    await expect(keyboardMenu).toHaveAttribute('aria-expanded', 'false')
     expect(existsSync(join(workspace, 'survey.mjs'))).toBe(false)
     await expect(row('different.txt').locator('.changes-panel__badge')).toHaveText('M')
     await expect(row('revert.txt').locator('.changes-panel__stats')).toHaveText('+1-1')
@@ -113,7 +133,7 @@ test.describe.serial('净文件改动真机闭环', () => {
   })
 
   test('单行撤回整组恢复初始内容，单行保留确认整组', async () => {
-    await row('revert.txt').getByRole('button', { name: '撤回 revert.txt', exact: true }).click()
+    await rowMenuAction('revert.txt', '撤回改动')
     await page.getByRole('dialog', { name: '撤回改动' }).getByRole('button', { name: '撤回', exact: true }).click()
     await expect(row('revert.txt')).toHaveCount(0)
     expect(readFileSync(join(workspace, 'revert.txt'), 'utf8')).toBe('original\n')
@@ -125,11 +145,11 @@ test.describe.serial('净文件改动真机闭环', () => {
   })
 
   test('绝对路径含方括号及已删除文件都可真实暂存，整组标记保留', async () => {
-    await row('stage[1].txt').getByRole('button', { name: '暂存', exact: true }).click()
+    await rowMenuAction('stage[1].txt', '暂存并保留')
     await expect(row('stage[1].txt')).toHaveCount(0)
     expect(git('show', ':stage[1].txt')).toBe('final')
     expect((await ledger()).filter(change => change.path.endsWith('stage[1].txt')).map(change => change.status)).toEqual(['kept', 'kept'])
-    await row('delete.txt').getByRole('button', { name: '暂存', exact: true }).click()
+    await rowMenuAction('delete.txt', '暂存并保留')
     await expect(row('delete.txt')).toHaveCount(0)
     expect(git('diff', '--cached', '--name-status')).toContain('D\tdelete.txt')
     expect(git('diff', '--cached', '--name-status')).toContain('M\tstage[1].txt')
@@ -149,7 +169,7 @@ test.describe.serial('净文件改动真机闭环', () => {
 
   test('全部保留包括已抵消记录，计数归零，刷新后不复现旧行', async () => {
     await expect(rows()).toHaveCount(2)
-    await page.locator('.changes-panel__footer').getByRole('button', { name: '保留', exact: true }).click()
+    await page.locator('.changes-panel__footer').getByRole('button', { name: '全部保留', exact: true }).click()
     await expect(rows()).toHaveCount(0)
     expect((await ledger()).filter(change => change.status === 'pending')).toEqual([])
     expect(readFileSync(join(workspace, 'manual.txt'), 'utf8')).toBe('HUMAN\n')

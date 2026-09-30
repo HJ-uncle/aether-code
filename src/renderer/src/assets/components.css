@@ -1253,27 +1253,31 @@
   display: flex;
   align-items: center;
   flex: 0 0 auto;
-  height: 36px;
-  padding: 0 4px;
-  gap: 2px;
+  height: 42px;
+  padding: 0 8px;
+  gap: 4px;
   background: var(--editor-chrome-deep);
   border-bottom: 1px solid var(--editor-border);
   overflow-x: auto;
+  scrollbar-width: none;
 }
+
+.editor-tabs::-webkit-scrollbar { height: 0; }
 
 /* 标签现在是「标签体 + 关闭按钮」的组合，不再是单个 button */
 .editor-tab {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   height: 100%;
-  min-width: 96px;
-  max-width: 220px;
-  padding: 0 6px 0 10px;
+  min-width: 128px;
+  max-width: 280px;
+  padding: 0 8px 0 12px;
   color: var(--fg-muted);
   border: 1px solid transparent;
-  border-radius: var(--radius) var(--radius) 0 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  font-size: 13px;
   white-space: nowrap;
   cursor: pointer;
   user-select: none;

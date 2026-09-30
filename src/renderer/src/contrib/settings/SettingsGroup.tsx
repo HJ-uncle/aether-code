@@ -1,4 +1,4 @@
-import type { JSX, ReactNode } from 'react'
+import { useEffect, useRef, type JSX, type ReactNode } from 'react'
 
 /**
  * 设置页 UI 原语（macOS HIG 分组列表）
@@ -52,7 +52,11 @@ export function SettingsRow({
   )
   if (onClick) {
     return (
-      <div className="sg__row sg__row--clickable" role="button" tabIndex={0} onClick={onClick}
+      <div
+        className="sg__row sg__row--clickable"
+        role="button"
+        tabIndex={0}
+        onClick={onClick}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault()
@@ -68,8 +72,76 @@ export function SettingsRow({
 }
 
 /** 分组内的静态内容行（kv 信息、自定义内容），无控件槽位 */
-export function SettingsContent({ children, className }: { children: ReactNode; className?: string }): JSX.Element {
-  return <div className={`sg__row sg__row--content${className ? ` ${className}` : ''}`}>{children}</div>
+export function SettingsContent({
+  children,
+  className
+}: {
+  children: ReactNode
+  className?: string
+}): JSX.Element {
+  return (
+    <div className={`sg__row sg__row--content${className ? ` ${className}` : ''}`}>{children}</div>
+  )
+}
+
+/**
+ * Progressive disclosure for secondary settings details.
+ *
+ * Native details/summary gives keyboard and screen-reader users the same
+ * interaction as a button while keeping low-priority diagnostics out of the
+ * primary scan path.
+ */
+export function SettingsDisclosure({
+  title,
+  description,
+  children,
+  defaultOpen = false,
+  className
+}: {
+  title: string
+  description?: string
+  children: ReactNode
+  defaultOpen?: boolean
+  className?: string
+}): JSX.Element {
+  const detailsRef = useRef<HTMLDetailsElement>(null)
+  useEffect(() => {
+    if (detailsRef.current) detailsRef.current.open = defaultOpen
+  }, [defaultOpen])
+
+  return (
+    <details ref={detailsRef} className={`sg__disclosure${className ? ` ${className}` : ''}`}>
+      <summary className="sg__disclosure-summary">
+        <span className="sg__disclosure-copy">
+          <span className="sg__disclosure-title">{title}</span>
+          {description ? <span className="sg__disclosure-description">{description}</span> : null}
+        </span>
+        <span className="sg__disclosure-chevron" aria-hidden="true" />
+      </summary>
+      <div className="sg__disclosure-body">{children}</div>
+    </details>
+  )
+}
+
+/** A compact semantic status row used for summaries such as connection state. */
+export function SettingsStatusRow({
+  label,
+  value,
+  detail,
+  tone = 'neutral'
+}: {
+  label: string
+  value: ReactNode
+  detail?: ReactNode
+  tone?: 'neutral' | 'success' | 'warning' | 'danger'
+}): JSX.Element {
+  return (
+    <div className={`sg__status-row is-${tone}`}>
+      <span className="sg__status-label">{label}</span>
+      <span className="sg__status-value">{value}</span>
+      {detail ? <span className="sg__status-detail">{detail}</span> : null}
+    </div>
+  )
 }
 
 /** macOS 风格开关 */

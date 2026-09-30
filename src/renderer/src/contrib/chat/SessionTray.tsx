@@ -3,8 +3,11 @@ import type { EngineTodo } from '@shared/ipc'
 import type { ChatAttachment, QueuedMessage, QueueSendMode } from '@renderer/core/engine/useChat'
 import { readFile } from '@renderer/core/workspace/fs-client'
 import { Icon } from '@renderer/workbench/icons'
+import { ActionMenu } from '@renderer/workbench/ActionMenu'
+import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { ChangesPanel } from './ChangesPanel'
 import { TodoTray } from './TodoTray'
+import './apple-chat-panels.css'
 
 type TrayTab = 'changes' | 'todos' | 'queue'
 
@@ -156,6 +159,17 @@ export function SessionTray({
 
   const cancelEdit = (): void => setEditingId(null)
 
+  const clearQueueWithConfirm = async (): Promise<void> => {
+    if (queue.length === 0) return
+    const ok = await confirmDialog({
+      title: '清空消息队列',
+      body: `将移除队列中的 ${queue.length} 条消息，正在进行的回合不受影响。`,
+      confirmText: '清空队列',
+      danger: true
+    })
+    if (ok) onClearQueue()
+  }
+
   return (
     <div className="session-tray" hidden={!visible}>
       <div className="session-tray__bar">
@@ -223,20 +237,6 @@ export function SessionTray({
 
         {effectiveTab === 'queue' && queue.length > 0 ? (
           <>
-            {/* 发送模式切换：serial 按序逐条 / batch 合并成一条 */}
-            <button
-              type="button"
-              className="session-tray__action"
-              title={
-                queueSendMode === 'batch'
-                  ? '当前：回合结束后把队列合并成一条发出；点击切换为按序逐条'
-                  : '当前：回合结束后按序逐条发出；点击切换为合并成一条'
-              }
-              onClick={() => onSetQueueSendMode(queueSendMode === 'batch' ? 'serial' : 'batch')}
-            >
-              <Icon name={queueSendMode === 'batch' ? 'copy' : 'send'} size={16} />
-              {queueSendMode === 'batch' ? '合并' : '逐条'}
-            </button>
             <button
               type="button"
               className="session-tray__action session-tray__action--primary"
@@ -253,16 +253,29 @@ export function SessionTray({
               <Icon name="copy" size={16} />
               发送
             </button>
-            <button
-              type="button"
-              className="session-tray__action session-tray__action--danger"
+            <ActionMenu
+              label="队列更多操作"
               disabled={editingId !== null}
-              title="清空队列（不影响正在进行的回合）"
-              onClick={onClearQueue}
-            >
-              <Icon name="trash" size={16} />
-              清空
-            </button>
+              items={[
+                {
+                  id: 'toggle-mode',
+                  label: queueSendMode === 'batch' ? '改为逐条发送' : '改为合并发送',
+                  description: queueSendMode === 'batch' ? '回合结束后按顺序发送' : '把队列合并成一条发送',
+                  icon: queueSendMode === 'batch' ? 'send' : 'copy',
+                  disabled: editingId !== null,
+                  onSelect: () => onSetQueueSendMode(queueSendMode === 'batch' ? 'serial' : 'batch')
+                },
+                {
+                  id: 'clear',
+                  label: '清空队列',
+                  description: '移除所有排队消息，不影响当前回合',
+                  icon: 'trash',
+                  danger: true,
+                  disabled: editingId !== null,
+                  onSelect: clearQueueWithConfirm
+                }
+              ]}
+            />
           </>
         ) : null}
       </div>

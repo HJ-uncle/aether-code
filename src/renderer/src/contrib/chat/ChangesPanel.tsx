@@ -1,4 +1,5 @@
 import './change-revert.css'
+import './apple-chat-panels.css'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import type { EngineFileChange } from '@shared/ipc'
 import { Icon } from '@renderer/workbench/icons'
@@ -11,6 +12,7 @@ import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { toast } from '@renderer/core/toast'
 import { useApp } from '@renderer/core/app-context'
+import { ActionMenu } from '@renderer/workbench/ActionMenu'
 
 import {
   DIFF_APPROXIMATION_HINT,
@@ -273,10 +275,12 @@ function ChangesPanelContent({
           return (
             <li key={change.id} className="changes-panel__item">
               <Icon name="file" size={16} />
-              <span className="changes-panel__name" title={change.displayPath || change.path}>
-                {name}
+              <span className="changes-panel__identity">
+                <span className="changes-panel__name" title={change.displayPath || change.path}>
+                  {name}
+                </span>
+                {dir ? <span className="changes-panel__dir" title={dir}>{dir}</span> : null}
               </span>
-              {dir ? <span className="changes-panel__dir">{dir}</span> : null}
               {change.projectionIssue ? <span title={issueLabels[change.projectionIssue]} aria-label={issueLabels[change.projectionIssue]}>⚠</span> : null}
               <span className="changes-panel__spacer" />
               {stats ? (
@@ -301,25 +305,29 @@ function ChangesPanelContent({
               >
                 保留
               </button>
-              <button
-                type="button"
-                className="changes-panel__confirm"
-                disabled={remoteReadOnly || busy || streaming || !workspace.root}
-                title="暂存当前文件的全部内容，并保留本组改动记录"
-                onClick={() => void stageChanges([change])}
-              >
-                暂存
-              </button>
-              <button
-                type="button"
-                className="changes-panel__row-revert"
-                title="检查文件版本并撤回这条改动"
-                aria-label={`撤回 ${name}`}
+              <ActionMenu
+                label={`${name} 的更多操作`}
                 disabled={remoteReadOnly || busy || streaming}
-                onClick={() => void revertOneWithConfirm(change)}
-              >
-                <Icon name="restart" size={16} />
-              </button>
+                items={[
+                  {
+                    id: 'stage',
+                    label: '暂存并保留',
+                    description: '写入 Git 暂存区后移除待确认记录',
+                    icon: 'copy',
+                    disabled: !workspace.root || remoteReadOnly || busy || streaming,
+                    onSelect: () => stageChanges([change])
+                  },
+                  {
+                    id: 'revert',
+                    label: '撤回改动',
+                    description: '检查版本后恢复到改动前',
+                    icon: 'restart',
+                    danger: true,
+                    disabled: remoteReadOnly || busy || streaming,
+                    onSelect: () => revertOneWithConfirm(change)
+                  }
+                ]}
+              />
             </li>
           )
         })}
@@ -328,40 +336,42 @@ function ChangesPanelContent({
       {error ? <div className="changes-panel__error">{error}</div> : null}
       {remoteReadOnly && changes.length > 0 ? <div>远端改动快照只读；尚未配置工作区映射，不能撤回或暂存到本地仓库。</div> : null}
 
-      <div className="changes-panel__footer" hidden={changes.length === 0}>
-        {bare ? null : <span className="changes-panel__count">改动 {changes.length}</span>}
-        <span className="changes-panel__spacer" />
-        <button
-          type="button"
-          className="changes-panel__footer-btn"
-          disabled={remoteReadOnly || busy || streaming}
-          title="检查版本后撤回本会话全部待确认改动"
-          onClick={() => void revertAll()}
-        >
-          <Icon name="restart" size={16} />
-          撤回
-        </button>
-        <button
-          type="button"
-          className="changes-panel__footer-btn"
-          disabled={remoteReadOnly || busy || streaming || !workspace.root}
-          title="暂存所列文件的当前全部内容，并保留改动记录"
-          onClick={() => void stageChanges(changes)}
-        >
-          <Icon name="copy" size={16} />
-          暂存
-        </button>
-        <button
-          type="button"
-          className="changes-panel__footer-btn changes-panel__footer-btn--keep"
-          disabled={remoteReadOnly || busy || streaming}
-          title="确认保留全部改动（从待确认列表移除）"
-          onClick={() => void keepAll()}
-        >
-          <Icon name="check" size={16} />
-          保留
-        </button>
-      </div>
+      {changes.length > 1 ? (
+        <div className="changes-panel__footer">
+          {bare ? null : <span className="changes-panel__count">改动 {changes.length}</span>}
+          <span className="changes-panel__spacer" />
+          <button
+            type="button"
+            className="changes-panel__footer-btn"
+            disabled={remoteReadOnly || busy || streaming}
+            title="检查版本后撤回本会话全部待确认改动"
+            onClick={() => void revertAll()}
+          >
+            <Icon name="restart" size={16} />
+            全部撤回
+          </button>
+          <button
+            type="button"
+            className="changes-panel__footer-btn"
+            disabled={remoteReadOnly || busy || streaming || !workspace.root}
+            title="暂存所列文件的当前全部内容，并保留改动记录"
+            onClick={() => void stageChanges(changes)}
+          >
+            <Icon name="copy" size={16} />
+            全部暂存
+          </button>
+          <button
+            type="button"
+            className="changes-panel__footer-btn changes-panel__footer-btn--keep"
+            disabled={remoteReadOnly || busy || streaming}
+            title="确认保留全部改动（从待确认列表移除）"
+            onClick={() => void keepAll()}
+          >
+            <Icon name="check" size={16} />
+            全部保留
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }

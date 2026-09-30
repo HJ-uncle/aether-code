@@ -175,6 +175,7 @@
 
 .engine-runtime__catalog {
   border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
 }
 
 .engine-runtime__catalog-head {
@@ -182,7 +183,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: 14px 18px 10px;
+  padding: 16px 18px 8px;
 }
 
 .engine-runtime__catalog-head > div {
@@ -206,11 +207,11 @@
 
 .engine-runtime__selector {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 390px);
+  grid-template-columns: 88px minmax(220px, 390px);
   align-items: center;
   gap: var(--space-4);
   min-width: 0;
-  padding: 8px 18px 14px;
+  padding: 8px 18px 12px;
 }
 
 .engine-runtime__select {
@@ -298,12 +299,19 @@
 }
 
 @keyframes engine-runtime-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes engine-runtime-progress {
-  0% { transform: translateX(-100%); }
-  55%, 100% { transform: translateX(100%); }
+  0% {
+    transform: translateX(-100%);
+  }
+  55%,
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -314,3 +322,241 @@
   }
 }
 
+/* ── Shared settings disclosure ─────────────────────────────────────────── */
+.sg__disclosure {
+  border-top: 1px solid var(--border);
+  min-width: 0;
+}
+
+.sg__disclosure-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 38px;
+  padding: 7px 18px;
+  color: var(--fg);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.sg__disclosure-summary::-webkit-details-marker {
+  display: none;
+}
+.sg__disclosure-summary:hover {
+  background: var(--bg-hover);
+}
+.sg__disclosure-summary:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.sg__disclosure-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sg__disclosure-title {
+  font-size: 12px;
+}
+.sg__disclosure-description {
+  overflow: hidden;
+  color: var(--fg-faint);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sg__disclosure-chevron {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--fg-muted);
+  border-bottom: 1.5px solid var(--fg-muted);
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 160ms ease;
+}
+
+.sg__disclosure[open] .sg__disclosure-chevron {
+  transform: rotate(225deg) translate(-1px, -1px);
+}
+
+.sg__disclosure-body {
+  min-width: 0;
+  padding: 0 18px 14px;
+}
+
+.sg__status-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-3);
+  min-height: 28px;
+  font-size: 12px;
+}
+.sg__status-label {
+  color: var(--fg-faint);
+}
+.sg__status-value {
+  color: var(--fg);
+}
+.sg__status-detail {
+  max-width: 52%;
+  overflow: hidden;
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sg__status-row.is-success .sg__status-value {
+  color: var(--ok-fg);
+}
+.sg__status-row.is-warning .sg__status-value {
+  color: var(--warn);
+}
+.sg__status-row.is-danger .sg__status-value {
+  color: var(--danger-fg);
+}
+
+/* ── Engine status: one calm primary row, diagnostics on demand ─────────── */
+.settings-view--engine {
+  container-type: inline-size;
+}
+
+.engine-status__content {
+  display: block;
+  padding: 0;
+}
+.engine-status__hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 14px 18px 12px;
+}
+
+.engine-status__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+  box-shadow: 0 0 0 4px var(--bg-active);
+}
+.engine-status__dot.is-ready {
+  background: var(--ok);
+  box-shadow: 0 0 0 4px var(--ok-soft);
+}
+.engine-status__dot.is-error {
+  background: var(--danger);
+  box-shadow: 0 0 0 4px var(--danger-soft);
+}
+.engine-status__dot.is-starting,
+.engine-status__dot.is-installing,
+.engine-status__dot.is-stopping {
+  background: var(--warn);
+  box-shadow: 0 0 0 4px var(--warn-soft);
+}
+
+.engine-status__hero-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.engine-status__hero-copy strong {
+  color: var(--fg-strong);
+  font-size: 14px;
+  font-weight: 600;
+}
+.engine-status__hero-copy span {
+  overflow: hidden;
+  color: var(--fg-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.engine-status__badge {
+  padding: 3px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.engine-status__dot.is-ready + .engine-status__hero-copy + .engine-status__badge {
+  border-color: color-mix(in srgb, var(--ok) 36%, var(--border));
+  background: var(--ok-soft);
+  color: var(--ok-fg);
+}
+
+.engine-status__kv-summary {
+  margin: 0 18px 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.engine-status__error {
+  margin: 0 18px 14px;
+}
+.engine-status__actions {
+  margin-top: -10px;
+}
+
+/* Details use a quiet list rather than metadata chips. */
+.engine-runtime__details {
+  margin: 0 18px;
+  border-top-color: var(--border);
+}
+
+.engine-runtime__details .sg__disclosure-summary {
+  padding-right: 0;
+  padding-left: 0;
+}
+
+.engine-runtime__details .sg__disclosure-body {
+  padding-right: 0;
+  padding-left: 0;
+}
+.engine-runtime__meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 18px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: var(--fg-muted);
+  font-family: var(--font-ui);
+  font-size: 11px;
+}
+.engine-runtime__meta span {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.engine-runtime__selection-note {
+  align-self: center;
+  margin-left: auto;
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+
+@container (max-width: 520px) {
+  .engine-status__hero {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .engine-status__badge {
+    grid-column: 2;
+    justify-self: start;
+  }
+  .engine-runtime__meta {
+    grid-template-columns: 1fr;
+  }
+}

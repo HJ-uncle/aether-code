@@ -9,6 +9,15 @@ import { disposeAllTerminals } from './terminal/pty-service'
 import { getSettings } from './settings-store'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 
+// Windows Electron builds on machines with Exploit Protection or older GPU
+// drivers can repeatedly crash their Chromium GPU child process with
+// STATUS_BREAKPOINT (0x80000003). Keep the IDE usable by running without GPU
+// acceleration by default on Windows; advanced users can opt back in for a
+// comparison run with AETHER_ENABLE_GPU=1.
+if (process.platform === 'win32' && process.env.AETHER_ENABLE_GPU !== '1') {
+  app.disableHardwareAcceleration()
+}
+
 // ==================== 窗口尺寸/位置记忆 ====================
 
 interface WindowState {
@@ -95,7 +104,11 @@ function createWindow(): void {
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      sandbox: false,
+      // The Windows Chromium spell-checker can raise STATUS_BREAKPOINT when
+      // its per-user dictionary is missing or blocked by enterprise policy.
+      // Monaco and the IDE's own inputs provide their own editing feedback.
+      spellcheck: false
     }
   })
   if (winState.maximized) mainWindow.maximize()
@@ -108,6 +121,12 @@ function createWindow(): void {
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
+  })
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error(
+      `[aether-ide] renderer process exited: reason=${details.reason} exitCode=${details.exitCode}`
+    )
   })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -135,6 +154,14 @@ if (!gotTheLock) {
 
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
+    })
+
+    // Keep native child-process failures diagnosable. In particular this lets
+    // us distinguish a GPU crash from a renderer or utility-process failure.
+    app.on('child-process-gone', (_event, details) => {
+      console.error(
+        `[aether-ide] child process exited: type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`
+      )
     })
 
     registerIpcHandlers()

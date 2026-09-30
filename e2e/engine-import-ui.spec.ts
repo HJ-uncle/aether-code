@@ -80,13 +80,49 @@ test.describe.serial('本地引擎导入设置', () => {
     const importer = page.getByRole('button', { name: '导入引擎…', exact: true })
     await expect(importer).toBeVisible()
     await expect(importer).toBeEnabled()
-    await expect(page.getByLabel('选择已导入的本地引擎')).toContainText('2.0.0 · Fixture Engine')
+    const selector = page.getByLabel('选择已导入的本地引擎')
+    // The catalog starts on the bundled default when no active pointer exists;
+    // choose the fixture explicitly before checking the package-configured name.
+    await selector.click()
+    await page.getByRole('menuitem', { name: '2.0.0 · Fixture Engine', exact: false }).click()
+    await expect(selector).toContainText('2.0.0 · Fixture Engine')
     await expect(page.locator('.settings-view--engine .kv')).toContainText('未启动')
     const remote = page.locator('.sg__row').filter({ has: page.locator('.sg__row-label', { hasText: /^远端服务$/ }) })
     await remote.click()
     await expect(importer).toHaveCount(0)
     await page.locator('.sg__row').filter({ has: page.locator('.sg__row-label', { hasText: /^本地内置$/ }) }).click()
     await expect(importer).toBeEnabled()
+  })
+
+  test('版本选择展示包内名称与详情，统一下拉支持键盘切换', async () => {
+    const selector = page.getByRole('button', { name: '选择已导入的本地引擎', exact: true })
+    await expect(selector).toContainText('2.0.0 · Fixture Engine')
+    const details = page.locator('details.engine-runtime__details')
+    await expect(details).toBeVisible()
+    await expect(details).not.toHaveAttribute('open', '')
+    await details.locator('summary').click()
+    await expect(details).toHaveAttribute('open', '')
+    await expect(page.locator('.engine-runtime__meta')).toContainText('名称 Fixture Engine')
+    await expect(page.locator('.engine-runtime__meta')).toContainText('文件 fixture-engine-2.0.0.tgz')
+
+    // The shared Popover Select must be usable without a pointer.  Move from
+    // the imported runtime to the bundled default, then restore the fixture
+    // so later serial cases continue with the same catalog state.
+    await selector.click()
+    await expect(page.getByRole('menu')).toBeVisible()
+    await page.keyboard.press('ArrowUp')
+    await page.keyboard.press('Enter')
+    await expect(selector).toContainText('默认引擎')
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('menu')).toHaveCount(0)
+
+    await selector.click()
+    await expect(page.getByRole('menu')).toBeVisible()
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
+    await expect(selector).toContainText('2.0.0 · Fixture Engine')
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('menu')).toHaveCount(0)
   })
 
   test('取消原生文件选择保持引擎与已导入列表不变，不显示错误', async () => {
@@ -151,10 +187,19 @@ test.describe.serial('本地引擎导入设置', () => {
   })
 
   test('可删除未启用的本地引擎版本', async () => {
+    const beforeCancel = await page.evaluate(() => window.aether.engine.getLocalRuntimes())
     await page.getByRole('button', { name: '删除此版本', exact: true }).click()
     const confirmation = page.getByRole('dialog', { name: '删除本地引擎？', exact: true })
     await expect(confirmation).toContainText('Fixture Engine')
-    await confirmation.getByRole('button', { name: '删除引擎', exact: true }).click()
+    await confirmation.getByRole('button', { name: '取消', exact: true }).click()
+    await expect(confirmation).toHaveCount(0)
+    expect(await page.evaluate(() => window.aether.engine.getLocalRuntimes())).toEqual(beforeCancel)
+    await expect(page.getByRole('button', { name: '删除此版本', exact: true })).toBeVisible()
+
+    await page.getByRole('button', { name: '删除此版本', exact: true }).click()
+    const confirmed = page.getByRole('dialog', { name: '删除本地引擎？', exact: true })
+    await expect(confirmed).toContainText('Fixture Engine')
+    await confirmed.getByRole('button', { name: '删除引擎', exact: true }).click()
     await expect(page.getByLabel('选择已导入的本地引擎')).toHaveCount(0)
     await expect.poll(async () => (await page.evaluate(() => window.aether.engine.getLocalRuntimes())).runtimes).toEqual([])
     expect(existsSync(join(profile, 'engine', 'runtimes', runtimeId))).toBe(false)

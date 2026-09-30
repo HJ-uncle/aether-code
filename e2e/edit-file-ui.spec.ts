@@ -153,7 +153,7 @@ test.describe.serial('D6 精确编辑真机闭环', () => {
     await expect(page.locator('.diff-card')).toHaveCount(2)
     expect((await snapshot('success')).source).toBe('persisted'); expect(requestCount('success')).toBe(3)
     await page.getByRole('button', { name: '改动 2', exact: true }).click()
-    await page.locator('.changes-panel__footer').getByRole('button', { name: '撤回', exact: true }).click()
+    await page.locator('.changes-panel__footer').getByRole('button', { name: '全部撤回', exact: true }).click()
     await page.getByRole('dialog', { name: '撤回改动' }).getByRole('button', { name: '撤回', exact: true }).click()
     await expect(page.getByRole('region', { name: '文件回退结果' })).toContainText('已撤回 2 个文件（2 处改动）')
     for (const name of ['first.ts', 'second.txt']) expect(bytes(name)).toEqual(Buffer.from(originals[name]))

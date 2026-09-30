@@ -34,6 +34,10 @@ interface PopoverProps {
   flush?: boolean
   /** 开合态变化回调（Select 等需要按 open 同步内部状态的场景用） */
   onOpenChange?: (open: boolean) => void
+  /** Optional controlled state for menus that need to close after an action. */
+  open?: boolean
+  /** Prevent opening the trigger while an action is unavailable. */
+  disabled?: boolean
 }
 
 /** 浮层与触发区之间的间距 */
@@ -71,9 +75,16 @@ export function Popover({
   className,
   label,
   flush,
-  onOpenChange
+  onOpenChange,
+  open: controlledOpen,
+  disabled = false
 }: PopoverProps): JSX.Element {
-  const [open, setOpen] = useState(false)
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
+  const open = controlledOpen ?? uncontrolledOpen
+  const setOpen = (next: boolean): void => {
+    if (controlledOpen === undefined) setUncontrolledOpen(next)
+    else onOpenChange?.(next)
+  }
   const [pos, setPos] = useState<Position | null>(null)
   const triggerRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -135,8 +146,8 @@ export function Popover({
 
   // 开合态变化时通知外层（Select 等依赖 open 同步高亮项的组件）
   useEffect(() => {
-    onOpenChange?.(open)
-  }, [open, onOpenChange])
+    if (controlledOpen === undefined) onOpenChange?.(open)
+  }, [controlledOpen, open, onOpenChange])
 
   useEffect(() => {
     if (!open) return
@@ -171,7 +182,7 @@ export function Popover({
 
   return (
     <div className={`popover${className ? ` ${className}` : ''}`} ref={triggerRef}>
-      <div className="popover__trigger" onClick={() => setOpen((value) => !value)}>
+      <div className={`popover__trigger${disabled ? ' is-disabled' : ''}`} onClick={() => { if (!disabled) setOpen(!open) }}>
         {trigger({ open })}
       </div>
 

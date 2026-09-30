@@ -5,7 +5,13 @@ import type { EngineImportProgress, EngineRuntimeCatalog } from '@shared/engine-
 import { Icon } from '@renderer/workbench/icons'
 import { Select } from '@renderer/workbench/Select'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
-import { SettingsContent, SettingsGroup, SettingsRow, Toggle } from './SettingsGroup'
+import {
+  SettingsContent,
+  SettingsDisclosure,
+  SettingsGroup,
+  SettingsRow,
+  Toggle
+} from './SettingsGroup'
 import './engine-settings.css'
 
 const ENGINE_PHASE_LABELS: Record<string, string> = {
@@ -64,7 +70,9 @@ export function EngineSettingsView(): JSX.Element {
   const [remoteWorkspaceRoot, setRemoteWorkspaceRoot] = useState(settings.remoteWorkspaceRoot)
   const [remoteToken, setRemoteToken] = useState('')
   const [remoteTokenConfigured, setRemoteTokenConfigured] = useState(false)
-  const [remoteTokenSource, setRemoteTokenSource] = useState<'stored' | 'environment' | 'none'>('none')
+  const [remoteTokenSource, setRemoteTokenSource] = useState<'stored' | 'environment' | 'none'>(
+    'none'
+  )
   const [clearRemoteToken, setClearRemoteToken] = useState(false)
   const [autoStart, setAutoStart] = useState(settings.autoStartEngine)
   const [saved, setSaved] = useState(false)
@@ -73,7 +81,8 @@ export function EngineSettingsView(): JSX.Element {
   const [saving, setSaving] = useState(false)
   const [runtimeCatalog, setRuntimeCatalog] = useState<EngineRuntimeCatalog | null>(null)
   const [selectedRuntimeId, setSelectedRuntimeId] = useState('')
-  const [runtimeProgress, setRuntimeProgress] = useState<EngineImportProgress>(INITIAL_IMPORT_PROGRESS)
+  const [runtimeProgress, setRuntimeProgress] =
+    useState<EngineImportProgress>(INITIAL_IMPORT_PROGRESS)
   const [runtimeError, setRuntimeError] = useState('')
   const [runtimeBusy, setRuntimeBusy] = useState<'import' | 'activate' | 'delete' | null>(null)
 
@@ -89,13 +98,16 @@ export function EngineSettingsView(): JSX.Element {
 
   useEffect(() => {
     let alive = true
-    void window.aether.engine.getLocalRuntimes().then((catalog) => {
-      if (!alive) return
-      setRuntimeCatalog(catalog)
-      setSelectedRuntimeId(catalog.activeId ?? '')
-    }).catch((error: unknown) => {
-      if (alive) setRuntimeError(error instanceof Error ? error.message : String(error))
-    })
+    void window.aether.engine
+      .getLocalRuntimes()
+      .then((catalog) => {
+        if (!alive) return
+        setRuntimeCatalog(catalog)
+        setSelectedRuntimeId(catalog.activeId ?? '')
+      })
+      .catch((error: unknown) => {
+        if (alive) setRuntimeError(error instanceof Error ? error.message : String(error))
+      })
     const offProgress = window.aether.engine.onImportProgress((progress) => {
       if (alive) setRuntimeProgress(progress)
     })
@@ -107,15 +119,20 @@ export function EngineSettingsView(): JSX.Element {
 
   useEffect(() => {
     let alive = true
-    void window.aether.settings.remoteTokenStatus().then((status) => {
-      if (alive) {
-        setRemoteTokenConfigured(status.configured)
-        setRemoteTokenSource(status.source)
-      }
-    }).catch((error: unknown) => {
-      if (alive) setTokenStatusError(error instanceof Error ? error.message : String(error))
-    })
-    return () => { alive = false }
+    void window.aether.settings
+      .remoteTokenStatus()
+      .then((status) => {
+        if (alive) {
+          setRemoteTokenConfigured(status.configured)
+          setRemoteTokenSource(status.source)
+        }
+      })
+      .catch((error: unknown) => {
+        if (alive) setTokenStatusError(error instanceof Error ? error.message : String(error))
+      })
+    return () => {
+      alive = false
+    }
   }, [])
 
   // 设置从主进程异步加载完成后同步到表单：渲染期间调和（React 官方模式，
@@ -152,7 +169,11 @@ export function EngineSettingsView(): JSX.Element {
     if (!canImportRuntime) return
     setRuntimeError('')
     setRuntimeBusy('import')
-    setRuntimeProgress({ ...INITIAL_IMPORT_PROGRESS, phase: 'extracting', message: '正在等待选择引擎包…' })
+    setRuntimeProgress({
+      ...INITIAL_IMPORT_PROGRESS,
+      phase: 'extracting',
+      message: '正在等待选择引擎包…'
+    })
     try {
       const imported = await window.aether.engine.importLocalRuntime()
       if (!imported) {
@@ -160,7 +181,11 @@ export function EngineSettingsView(): JSX.Element {
         return
       }
       await refreshRuntimeCatalog(imported.id)
-      setRuntimeProgress((current) => ({ ...current, phase: 'ready', message: `已导入 ${imported.name}` }))
+      setRuntimeProgress((current) => ({
+        ...current,
+        phase: 'ready',
+        message: `已导入 ${imported.name}`
+      }))
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
       setRuntimeError(message)
@@ -219,15 +244,19 @@ export function EngineSettingsView(): JSX.Element {
     setSaved(false)
     setSaving(true)
     try {
-      if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535) throw new Error('端口必须是 1–65535 的整数')
+      if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535)
+        throw new Error('端口必须是 1–65535 的整数')
       const tokenMutation = clearRemoteToken ? '' : remoteToken.trim() || undefined
-      await updateSettings({
-        engineMode: mode,
-        preferredPort: parsedPort,
-        remoteBaseUrl: remoteUrl.trim(),
-        remoteWorkspaceRoot: remoteWorkspaceRoot.trim(),
-        autoStartEngine: autoStart
-      }, tokenMutation)
+      await updateSettings(
+        {
+          engineMode: mode,
+          preferredPort: parsedPort,
+          remoteBaseUrl: remoteUrl.trim(),
+          remoteWorkspaceRoot: remoteWorkspaceRoot.trim(),
+          autoStartEngine: autoStart
+        },
+        tokenMutation
+      )
       if (tokenMutation !== undefined) {
         const status = await window.aether.settings.remoteTokenStatus()
         setRemoteTokenConfigured(status.configured)
@@ -246,10 +275,17 @@ export function EngineSettingsView(): JSX.Element {
     }
   }
 
-  const activeRuntime = runtimeCatalog?.runtimes.find((runtime) => runtime.id === runtimeCatalog.activeId) ?? null
-  const selectedRuntime = runtimeCatalog?.runtimes.find((runtime) => runtime.id === selectedRuntimeId) ?? null
-  const canDeleteRuntime = embeddedSaved && runtimeBusy === null && !saving && !lifecycleBusy &&
-    selectedRuntime !== null && selectedRuntime.id !== (runtimeCatalog?.activeId ?? null)
+  const activeRuntime =
+    runtimeCatalog?.runtimes.find((runtime) => runtime.id === runtimeCatalog.activeId) ?? null
+  const selectedRuntime =
+    runtimeCatalog?.runtimes.find((runtime) => runtime.id === selectedRuntimeId) ?? null
+  const canDeleteRuntime =
+    embeddedSaved &&
+    runtimeBusy === null &&
+    !saving &&
+    !lifecycleBusy &&
+    selectedRuntime !== null &&
+    selectedRuntime.id !== (runtimeCatalog?.activeId ?? null)
   const runtimeSource = snapshot.runtimeSource
 
   return (
@@ -280,7 +316,10 @@ export function EngineSettingsView(): JSX.Element {
       </SettingsGroup>
 
       {mode === 'embedded' ? (
-        <SettingsGroup title="本地引擎" footer="支持导入 .tgz 引擎包。导入过程不会停止当前任务；切换引擎需要重启。">
+        <SettingsGroup
+          title="本地引擎"
+          footer="支持导入 .tgz 引擎包。导入过程不会停止当前任务；切换引擎需要重启。"
+        >
           <SettingsContent className="engine-runtime__content">
             <div className="engine-runtime__import">
               <div className="engine-runtime__icon" aria-hidden="true">
@@ -300,17 +339,34 @@ export function EngineSettingsView(): JSX.Element {
                 {runtimeBusy === 'import' ? '导入中…' : '导入引擎…'}
               </button>
             </div>
-            {!embeddedSaved ? <div className="engine-runtime__hint" role="status">请先选择“本地内置”并保存设置，再导入或切换本地引擎。</div> : null}
-            {embeddedSaved && dirty ? <div className="engine-runtime__hint" role="status">有未保存的设置，请先保存后再切换引擎。</div> : null}
+            {!embeddedSaved ? (
+              <div className="engine-runtime__hint" role="status">
+                请先选择“本地内置”并保存设置，再导入或切换本地引擎。
+              </div>
+            ) : null}
+            {embeddedSaved && dirty ? (
+              <div className="engine-runtime__hint" role="status">
+                有未保存的设置，请先保存后再切换引擎。
+              </div>
+            ) : null}
             {runtimeProgress.phase !== 'idle' && runtimeProgress.phase !== 'error' ? (
               <div className={`engine-runtime__progress is-${runtimeProgress.phase}`} role="status">
-                <span>{runtimeProgress.message || (runtimeProgress.phase === 'ready' ? '引擎包已准备好' : '正在处理引擎包…')}</span>
+                <span>
+                  {runtimeProgress.message ||
+                    (runtimeProgress.phase === 'ready' ? '引擎包已准备好' : '正在处理引擎包…')}
+                </span>
                 {runtimeProgress.phase !== 'ready' ? (
-                  <small>{runtimeProgress.files} 个文件 · {formatBytes(runtimeProgress.bytes)}</small>
+                  <small>
+                    {runtimeProgress.files} 个文件 · {formatBytes(runtimeProgress.bytes)}
+                  </small>
                 ) : null}
               </div>
             ) : null}
-            {runtimeError ? <div className="settings-view__error engine-runtime__error" role="alert">{runtimeError}</div> : null}
+            {runtimeError ? (
+              <div className="settings-view__error engine-runtime__error" role="alert">
+                {runtimeError}
+              </div>
+            ) : null}
           </SettingsContent>
 
           {runtimeCatalog && runtimeCatalog.runtimes.length > 0 ? (
@@ -318,13 +374,13 @@ export function EngineSettingsView(): JSX.Element {
               <div className="engine-runtime__catalog-head">
                 <div>
                   <strong>已安装版本</strong>
-                  <span>管理本机可用的引擎运行时</span>
+                  <span>本机可用的引擎版本</span>
                 </div>
-                {activeRuntime ? <span className="engine-runtime__badge">当前使用</span> : null}
+                {activeRuntime ? <span className="engine-runtime__badge">正在运行</span> : null}
               </div>
               <div className="engine-runtime__selector">
                 <div className="engine-runtime__selector-copy">
-                  <span>当前使用：{activeRuntime ? `${activeRuntime.version} · ${activeRuntime.name}` : '默认引擎'}</span>
+                  <span>运行版本</span>
                 </div>
                 <Select
                   value={selectedRuntimeId}
@@ -345,43 +401,58 @@ export function EngineSettingsView(): JSX.Element {
                 />
               </div>
               {selectedRuntime ? (
-                <div className="engine-runtime__meta">
-                  <span>名称 {selectedRuntime.name}</span>
-                  <span>版本 {selectedRuntime.version}</span>
-                  <span title={selectedRuntime.buildId}>构建 {shortBuildId(selectedRuntime.buildId)}</span>
-                  <span title={selectedRuntime.fileName}>文件 {selectedRuntime.fileName}</span>
-                  <span>导入于 {new Date(selectedRuntime.importedAt).toLocaleString()}</span>
-                </div>
+                <SettingsDisclosure
+                  title="版本信息"
+                  description={`${selectedRuntime.name} · ${selectedRuntime.version}`}
+                  className="engine-runtime__details"
+                >
+                  <div className="engine-runtime__meta">
+                    <span>名称 {selectedRuntime.name}</span>
+                    <span>版本 {selectedRuntime.version}</span>
+                    <span title={selectedRuntime.buildId}>
+                      构建 {shortBuildId(selectedRuntime.buildId)}
+                    </span>
+                    <span title={selectedRuntime.fileName}>文件 {selectedRuntime.fileName}</span>
+                    <span>导入于 {new Date(selectedRuntime.importedAt).toLocaleString()}</span>
+                  </div>
+                </SettingsDisclosure>
               ) : null}
-              <div className="engine-runtime__actions">
-                <button
-                  type="button"
-                  className="btn btn--primary"
-                  disabled={!canActivateRuntime || selectedRuntimeId === (runtimeCatalog.activeId ?? '')}
-                  title={dirty ? '请先保存设置' : undefined}
-                  onClick={() => void activateRuntime(selectedRuntimeId || null)}
-                >
-                  {runtimeBusy === 'activate' ? '重启中…' : '使用此引擎并重启'}
-                </button>
-                <button
-                  type="button"
-                  className="btn"
-                  disabled={!canActivateRuntime || runtimeCatalog.activeId === null}
-                  title={dirty ? '请先保存设置' : undefined}
-                  onClick={() => void activateRuntime(null)}
-                >
-                  恢复默认引擎
-                </button>
-                {selectedRuntime ? (
+              <div className="engine-runtime__actions" aria-label="引擎版本操作">
+                {selectedRuntimeId !== (runtimeCatalog.activeId ?? '') ? (
+                  <button
+                    type="button"
+                    className="btn btn--primary"
+                    disabled={!canActivateRuntime}
+                    title={dirty ? '请先保存设置' : undefined}
+                    onClick={() => void activateRuntime(selectedRuntimeId || null)}
+                  >
+                    {runtimeBusy === 'activate' ? '重启中…' : '使用此引擎并重启'}
+                  </button>
+                ) : null}
+                {runtimeCatalog.activeId !== null ? (
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={!canActivateRuntime}
+                    title={dirty ? '请先保存设置' : undefined}
+                    onClick={() => void activateRuntime(null)}
+                  >
+                    恢复默认引擎
+                  </button>
+                ) : null}
+                {selectedRuntime && selectedRuntime.id !== (runtimeCatalog.activeId ?? null) ? (
                   <button
                     type="button"
                     className="btn btn--danger-ghost"
                     disabled={!canDeleteRuntime}
-                    title={selectedRuntime.id === (runtimeCatalog.activeId ?? null) ? '当前使用的引擎不能删除' : undefined}
                     onClick={() => void deleteRuntime()}
                   >
                     {runtimeBusy === 'delete' ? '删除中…' : '删除此版本'}
                   </button>
+                ) : null}
+                {selectedRuntimeId === (runtimeCatalog.activeId ?? '') &&
+                runtimeCatalog.activeId !== null ? (
+                  <span className="engine-runtime__selection-note">此版本正在运行</span>
                 ) : null}
               </div>
             </SettingsContent>
@@ -403,7 +474,10 @@ export function EngineSettingsView(): JSX.Element {
           </SettingsRow>
         ) : (
           <>
-            <SettingsRow label="远端地址" description="本机独立开发服务可填 http://127.0.0.1:12323；其他地址请在下方填写连接令牌。更换服务地址时，请同时替换或清除已保存的令牌。">
+            <SettingsRow
+              label="远端地址"
+              description="本机独立开发服务可填 http://127.0.0.1:12323；其他地址请在下方填写连接令牌。更换服务地址时，请同时替换或清除已保存的令牌。"
+            >
               <input
                 className="field__input sg__input sg__input--wide"
                 type="text"
@@ -438,14 +512,24 @@ export function EngineSettingsView(): JSX.Element {
                   aria-label="远端令牌"
                   maxLength={4096}
                   disabled={saving}
-                  placeholder={clearRemoteToken ? '保存后清除已存令牌' : tokenStatusError ? '读取失败，可重新输入或清除' : remoteTokenConfigured ? (remoteTokenSource === 'environment' ? '由启动环境变量提供，重新输入可迁移保存' : '已配置（重新输入可替换）') : '输入远端引擎令牌'}
+                  placeholder={
+                    clearRemoteToken
+                      ? '保存后清除已存令牌'
+                      : tokenStatusError
+                        ? '读取失败，可重新输入或清除'
+                        : remoteTokenConfigured
+                          ? remoteTokenSource === 'environment'
+                            ? '由启动环境变量提供，重新输入可迁移保存'
+                            : '已配置（重新输入可替换）'
+                          : '输入远端引擎令牌'
+                  }
                   value={remoteToken}
                   onChange={(event) => {
                     setRemoteToken(event.target.value)
                     setClearRemoteToken(false)
                   }}
                 />
-              {remoteTokenSource === 'stored' || tokenStatusError ? (
+                {remoteTokenSource === 'stored' || tokenStatusError ? (
                   <button
                     type="button"
                     className="btn"
@@ -460,7 +544,13 @@ export function EngineSettingsView(): JSX.Element {
                 ) : null}
               </div>
             </SettingsRow>
-            {tokenStatusError ? <SettingsContent><div className="settings-view__error" role="alert">{tokenStatusError}</div></SettingsContent> : null}
+            {tokenStatusError ? (
+              <SettingsContent>
+                <div className="settings-view__error" role="alert">
+                  {tokenStatusError}
+                </div>
+              </SettingsContent>
+            ) : null}
           </>
         )}
       </SettingsGroup>
@@ -493,9 +583,22 @@ export function EngineSettingsView(): JSX.Element {
         {saveError ? <span className="settings-view__error">{saveError}</span> : null}
       </div>
 
-      <SettingsGroup title="当前状态">
-        <SettingsContent>
-          <dl className="kv">
+      <SettingsGroup title="当前状态" footer="状态会随引擎连接实时更新。">
+        <SettingsContent className="engine-status__content">
+          <div className="engine-status__hero">
+            <span className={`engine-status__dot is-${snapshot.phase}`} aria-hidden="true" />
+            <div className="engine-status__hero-copy">
+              <strong>{ENGINE_PHASE_LABELS[snapshot.phase] ?? snapshot.phase}</strong>
+              <span>
+                {snapshot.mode === 'remote' ? '远端服务' : '本地内置'} ·{' '}
+                {snapshot.baseUrl || '尚未连接'}
+              </span>
+            </div>
+            <span className="engine-status__badge">
+              {snapshot.phase === 'ready' ? '已连接' : '未连接'}
+            </span>
+          </div>
+          <dl className="kv engine-status__kv-summary">
             <dt>阶段</dt>
             <dd>{ENGINE_PHASE_LABELS[snapshot.phase] ?? snapshot.phase}</dd>
             <dt>来源</dt>
@@ -503,64 +606,83 @@ export function EngineSettingsView(): JSX.Element {
               {snapshot.mode === 'remote'
                 ? '远端服务'
                 : snapshot.adopted
-                  ? '复用已有引擎（不由本应用启动）'
+                  ? '复用已有引擎'
                   : runtimeSource
-                    ? ENGINE_SOURCE_LABELS[runtimeSource] ?? runtimeSource
+                    ? (ENGINE_SOURCE_LABELS[runtimeSource] ?? runtimeSource)
                     : '本应用启动'}
             </dd>
-            {snapshot.pid ? (
-              <>
-                <dt>进程</dt>
-                <dd>pid {snapshot.pid}</dd>
-              </>
-            ) : null}
-            <dt>地址</dt>
-            <dd>{snapshot.baseUrl || '—'}</dd>
-            {snapshot.version ? (
-              <>
-                <dt>版本</dt>
-                <dd>{snapshot.version}</dd>
-              </>
-            ) : null}
-            {snapshot.entryPath ? (
-              <>
-                <dt>入口</dt>
-                <dd className="kv__mono" title={snapshot.entryPath}>
-                  {snapshot.entryPath}
-                </dd>
-              </>
-            ) : null}
-            {snapshot.dataDir ? (
-              <>
-                <dt>数据</dt>
-                <dd className="kv__mono" title={snapshot.dataDir}>
-                  {snapshot.dataDir}
-                </dd>
-              </>
-            ) : null}
           </dl>
+          <SettingsDisclosure title="查看连接详情" description="进程、版本与数据目录">
+            <dl className="kv">
+              {snapshot.pid ? (
+                <>
+                  <dt>进程</dt>
+                  <dd>pid {snapshot.pid}</dd>
+                </>
+              ) : null}
+              <dt>地址</dt>
+              <dd>{snapshot.baseUrl || '—'}</dd>
+              {snapshot.version ? (
+                <>
+                  <dt>版本</dt>
+                  <dd>{snapshot.version}</dd>
+                </>
+              ) : null}
+              {snapshot.entryPath ? (
+                <>
+                  <dt>入口</dt>
+                  <dd className="kv__mono" title={snapshot.entryPath}>
+                    {snapshot.entryPath}
+                  </dd>
+                </>
+              ) : null}
+              {snapshot.dataDir ? (
+                <>
+                  <dt>数据</dt>
+                  <dd className="kv__mono" title={snapshot.dataDir}>
+                    {snapshot.dataDir}
+                  </dd>
+                </>
+              ) : null}
+            </dl>
+          </SettingsDisclosure>
+          {snapshot.error ? (
+            <div className="settings-view__error engine-status__error" role="alert">
+              {snapshot.error}
+            </div>
+          ) : null}
         </SettingsContent>
-        {snapshot.error ? <SettingsContent><div className="settings-view__error" role="alert">{snapshot.error}</div></SettingsContent> : null}
       </SettingsGroup>
 
-      <div className="settings-view__actions">
-        <button type="button" className="btn" disabled={busy} onClick={() => void engine.start()}>
-          <Icon name="play" size={16} />
-          启动
-        </button>
-        <button
-          type="button"
-          className="btn"
-          disabled={busy || snapshot.phase === 'idle'}
-          onClick={() => void engine.stop()}
-        >
-          <Icon name="stop" size={16} />
-          停止
-        </button>
-        <button type="button" className="btn" disabled={busy} onClick={() => void engine.restart()}>
-          <Icon name="restart" size={16} />
-          重启
-        </button>
+      <div className="settings-view__actions engine-status__actions">
+        {snapshot.phase === 'idle' || snapshot.phase === 'error' ? (
+          <button
+            type="button"
+            className="btn btn--primary"
+            disabled={busy}
+            onClick={() => void engine.start()}
+          >
+            <Icon name="play" size={16} />
+            启动
+          </button>
+        ) : null}
+        {snapshot.phase !== 'idle' && snapshot.phase !== 'error' ? (
+          <button type="button" className="btn" disabled={busy} onClick={() => void engine.stop()}>
+            <Icon name="stop" size={16} />
+            停止
+          </button>
+        ) : null}
+        {snapshot.phase === 'ready' ? (
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            onClick={() => void engine.restart()}
+          >
+            <Icon name="restart" size={16} />
+            重启
+          </button>
+        ) : null}
       </div>
     </div>
   )
