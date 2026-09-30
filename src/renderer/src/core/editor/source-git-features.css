@@ -1,0 +1,20 @@
+.source-git-computation { position: fixed; left: -10000px; top: 0; width: 600px; height: 150px; visibility: hidden; pointer-events: none; }
+.monaco-editor .source-git-gutter { width: 4px !important; margin-left: 3px; cursor: pointer; }
+.monaco-editor .source-git-gutter-added { background: var(--git-added); }
+.monaco-editor .source-git-gutter-modified { background: var(--git-modified); }
+.monaco-editor .source-git-gutter-deleted { border-bottom: 3px solid var(--git-deleted); }
+.source-git-preview { height: 100%; box-sizing: border-box; border-block: 1px solid var(--border-strong); background: var(--bg-surface); color: var(--fg); font: 12px var(--font-ui); }
+.source-git-preview-header, .source-conflict-actions { display: flex; align-items: center; gap: 6px; padding: 4px 8px; box-sizing: border-box; background: var(--bg-elevated); color: var(--fg); overflow: auto; }
+.source-git-preview-header strong { flex: 1; white-space: nowrap; }
+.source-git-preview button, .source-conflict-actions button { border: 1px solid var(--border); border-radius: 3px; padding: 3px 6px; white-space: nowrap; background: var(--bg-surface); color: var(--fg); cursor: pointer; font: inherit; }
+.source-git-preview button:hover, .source-conflict-actions button:hover { background: var(--bg-hover); }
+.source-git-preview button:focus-visible, .source-conflict-actions button:focus-visible { outline: 1px solid var(--accent); }
+.source-git-preview-body { display: grid; grid-template-columns: 1fr 1fr; height: calc(100% - 37px); overflow: auto; }
+.source-git-preview-side { min-width: 0; padding: 8px; overflow: auto; }
+.source-git-preview-side pre { margin: 6px 0 0; font: 12px var(--font-mono); white-space: pre; }
+.source-git-preview-side.removed { background: var(--danger-soft); }
+.source-git-preview-side.added { background: var(--ok-soft); }
+.source-conflict-actions { height: 30px; font: 12px var(--font-ui); }
+.monaco-editor .source-conflict-current { background: var(--ok-soft); }
+.monaco-editor .source-conflict-incoming { background: var(--warn-soft); }
+.editor-blame-status { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; color: var(--fg-muted); }

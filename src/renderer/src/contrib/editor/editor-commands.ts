@@ -7,6 +7,7 @@ import {
 import { registerCommands } from '@renderer/core/platform/commands'
 import { ipcErrorMessage } from '@renderer/core/ipc-error'
 import { toast } from '@renderer/core/toast'
+import { addFilesToChat, addSelectionToChat } from '@renderer/contrib/chat/editor-context'
 
 interface NativeEditorCommand {
   id: string
@@ -36,6 +37,27 @@ const NATIVE_COMMANDS: NativeEditorCommand[] = [
     title: '重命名符号',
     nativeId: 'editor.action.rename',
     unsupported: '当前文件没有可用的符号重命名服务。'
+  },
+  {
+    id: 'quickFix',
+    title: '快速修复',
+    nativeId: 'editor.action.quickFix',
+    unsupported: '当前文件没有可用的代码操作服务。',
+    bridgePrecondition: 'editorHasCodeActionsProvider'
+  },
+  {
+    id: 'refactor',
+    title: '重构代码',
+    nativeId: 'editor.action.refactor',
+    unsupported: '当前文件没有可用的重构服务。',
+    bridgePrecondition: 'editorHasCodeActionsProvider'
+  },
+  {
+    id: 'organizeImports',
+    title: '整理导入',
+    nativeId: 'editor.action.organizeImports',
+    unsupported: '当前文件没有可用的导入整理服务。',
+    bridgePrecondition: 'editorHasCodeActionsProvider'
   },
   {
     id: 'goToDefinition',
@@ -128,6 +150,18 @@ async function withEditor(
 
 export function registerEditorCommands(): () => void {
   return registerCommands([
+    {
+      id: 'aether.editor.addSelectionToChat', title: '添加选区到对话', category: '编辑器',
+      run: () => { addSelectionToChat() }
+    },
+    {
+      id: 'aether.editor.addFileToChat', title: '添加当前文件到对话', category: '编辑器',
+      run: () => withEditor('添加当前文件到对话', (instance) => {
+        const model = instance.getModel()
+        if (model?.uri.scheme === 'file') addFilesToChat([{ path: model.uri.fsPath, kind: 'file' }])
+        else toast.info('请在源码文件中添加完整文件；差异快照可以选中内容后添加到对话。')
+      })
+    },
     ...NATIVE_COMMANDS.map((command) => ({
       id: `aether.editor.${command.id}`,
       title: command.title,

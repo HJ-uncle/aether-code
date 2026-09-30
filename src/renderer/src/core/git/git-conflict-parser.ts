@@ -69,6 +69,7 @@ function markerLabel(line: string, marker: string): string {
 
 /** 状态机扫描中间态 */
 interface ScanState {
+  invalid: boolean
   /** <<<<<<< 行号（1 起） */
   startLine: number
   label: string
@@ -107,6 +108,7 @@ export function scanConflicts(content: string): DocumentMergeConflict[] {
     if (st === null) {
       if (isMarker(line, START_MARKER)) {
         st = {
+          invalid: false,
           startLine: lineNo,
           label: markerLabel(line, START_MARKER),
           segStart: 0,
@@ -118,7 +120,16 @@ export function scanConflicts(content: string): DocumentMergeConflict[] {
       }
       continue
     }
+    if (isMarker(line, START_MARKER)) {
+      st.invalid = true
+      continue
+    }
     if (isMarker(line, END_MARKER)) {
+      if (st.invalid || splitterLine === 0) {
+        st = null
+        splitterLine = 0
+        continue
+      }
       // incoming 内容段在尾标记前闭环
       const incomingStart = splitterLine + 1
       const incomingEnd = splitterLine === 0 ? 0 : lineNo - 1
@@ -153,12 +164,14 @@ export function scanConflicts(content: string): DocumentMergeConflict[] {
       continue
     }
     if (isMarker(line, ANCESTOR_MARKER)) {
+      if (splitterLine > 0) { st.invalid = true; continue }
       // current 侧内容到此闭环，进入祖先段累积
-      if (st.currentEnd === 0) {
+      const wasCurrent = st.currentEnd === 0
+      if (wasCurrent) {
         st.currentEnd =
           st.segStart > 0 && st.segEnd >= st.segStart ? st.segEnd : st.startLine
       }
-      if (st.segStart > 0 && st.segEnd >= st.segStart) {
+      if (!wasCurrent && st.segStart > 0 && st.segEnd >= st.segStart) {
         st.closedSegs.push({ start: st.segStart, end: st.segEnd })
       }
       st.segStart = 0
@@ -168,11 +181,12 @@ export function scanConflicts(content: string): DocumentMergeConflict[] {
     if (splitterLine === 0 && line === SPLIT_MARKER) {
       // current 侧内容闭环（可能是祖先段也可能就是 current 内容，取决于是否见过 |||||||）
       // 首个 splitter（diff3 下 ||||||| 已锁定过则跳过）即 current 段终点
-      if (st.currentEnd === 0) {
+      const wasCurrent = st.currentEnd === 0
+      if (wasCurrent) {
         st.currentEnd =
           st.segStart > 0 && st.segEnd >= st.segStart ? st.segEnd : st.startLine
       }
-      if (st.segStart > 0 && st.segEnd >= st.segStart) {
+      if (!wasCurrent && st.segStart > 0 && st.segEnd >= st.segStart) {
         st.closedSegs.push({ start: st.segStart, end: st.segEnd })
       }
       st.segStart = 0
@@ -218,11 +232,13 @@ export function conflictSideLines(
 /**
  * @description 闭区间行号集合 → 文本
  */
-function sliceLines(lines: string[], ranges: { start: number; end: number }[]): string {
-  return ranges
-    .map((r) => (r.end >= r.start ? lines.slice(r.start - 1, r.end).join('\n') : ''))
-    .filter((t) => t !== '')
-    .join('\n')
+function sliceLines(lines: string[], ranges: { start: number; end: number }[]): string[] {
+  // A single blank content line is distinct from an empty side of a conflict.
+  return ranges.flatMap((range) => range.end >= range.start ? lines.slice(range.start - 1, range.end) : [])
+}
+
+function contentEol(content: string): string {
+  return content.includes('\r\n') ? '\r\n' : '\n'
 }
 
 /**
@@ -238,7 +254,7 @@ export function conflictSideText(
   side: ConflictSide,
   includeAncestors = false
 ): string {
-  return sliceLines(content.split('\n'), conflictSideLines(conflict, side, includeAncestors))
+  return sliceLines(content.split(/\r\n|\n|\r/), conflictSideLines(conflict, side, includeAncestors)).join(contentEol(content))
 }
 
 /**
@@ -252,7 +268,7 @@ export function resolveConflictText(
   conflict: DocumentMergeConflict,
   side: ConflictSide | 'both'
 ): string {
-  const lines = content.split('\n')
+  const lines = content.split(/\r\n|\n|\r/)
   const ranges =
     side === 'both'
       ? [
@@ -263,8 +279,7 @@ export function resolveConflictText(
   const replacement = sliceLines(lines, ranges)
   const head = lines.slice(0, conflict.rangeStart - 1)
   const tail = lines.slice(conflict.rangeEnd)
-  const replaced = replacement === '' ? [] : replacement.split('\n')
-  return [...head, ...replaced, ...tail].join('\n')
+  return [...head, ...replacement, ...tail].join(contentEol(content))
 }
 
 /**
@@ -313,20 +328,18 @@ export function planConflictEdit(
   conflict: DocumentMergeConflict,
   side: ConflictSide | 'both'
 ): ConflictEditPlan {
-  const lines = content.split('\n')
+  const lines = content.split(/\r\n|\n|\r/)
   const ranges =
     side === 'both'
       ? [...conflictSideLines(conflict, 'current'), ...conflictSideLines(conflict, 'incoming')]
       : conflictSideLines(conflict, side)
-  const text = ranges
-    .map((r) => (r.end >= r.start ? lines.slice(r.start - 1, r.end).join('\n') : ''))
-    .filter((t) => t !== '')
-    .join('\n')
+  const selected = sliceLines(lines, ranges)
+  const text = selected.join(contentEol(content))
   return {
     startLine: conflict.rangeStart,
     endLine: conflict.rangeEnd,
     text,
-    includeTrailingNewline: text === '' && conflict.rangeEnd < lines.length
+    includeTrailingNewline: selected.length === 0 && conflict.rangeEnd < lines.length
   }
 }
 

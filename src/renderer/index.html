@@ -8,9 +8,11 @@
          monaco 内部还会用 blob: 创建部分 worker，故一并放行 -->
     <!-- connect-src：引擎轨终端由渲染层直连引擎（HTTP 创建 + WebSocket 转发），
          端口动态分配，放行本机任意端口；其余引擎请求走主进程代理不受此限 -->
+    <!-- script-src 的 hash 仅授权固定 preview-bridge.js。opaque sandbox 无法读取
+         file:// 资产，桥以内联原文运行；测试核对 hash，禁止用 unsafe-inline 替代。 -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:* http://localhost:* ws://localhost:*"
+      content="default-src 'self'; script-src 'self' 'sha256-2Fvi4pHFfNZaTXdHvGNGWtJSbLWKcGH8tXbnWUNmoUU='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:* http://localhost:* ws://localhost:*"
     />
   </head>
 

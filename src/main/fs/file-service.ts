@@ -216,6 +216,14 @@ export async function readFile(filePath: string): Promise<FsFileContent> {
   }
 }
 
+/** 系统文件管理器只接受授权工作区路径，不能由渲染进程绕过文件访问边界。 */
+export async function revealPath(target: string): Promise<void> {
+  const safePath = assertAllowed(target)
+  // shell 的 void 返回值无法报告缺失文件；先检查，避免给用户一个无响应的菜单动作。
+  await fsp.access(safePath)
+  shell.showItemInFolder(safePath)
+}
+
 /** 写入文本内容，自动创建父目录 */
 export async function writeFile(filePath: string, content: string): Promise<FsStat> {
   const safePath = assertAllowed(filePath)

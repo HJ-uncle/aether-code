@@ -21,21 +21,8 @@ import {
   useRef,
   type JSX
 } from 'react'
-
-export type MentionSource = 'file' | 'dir' | 'code' | 'terminal' | 'agent'
-
-/** 每种 chip 的颜色与 hover 提示（对齐 wuzu MENTION_META；图标由 CSS ::before 渲染） */
-
-export interface Mention {
-  /** chip 上显示的文字 */
-  displayText: string
-  source: MentionSource
-  /** 相对工作区路径（终端引用指向落地的临时文件） */
-  path?: string
-  /** 源码引用的起始/结束行号 */
-  startLine?: number
-  endLine?: number
-}
+import { mentionToken, sameMention, type Mention, type MentionSource } from './mention-context'
+export { mentionToken, formatPathDisplay, type Mention, type MentionSource } from './mention-context'
 
 /** 父组件通过 ref 调用的命令式接口（插 chip / 清空 / 聚焦） */
 export interface MentionInputHandle {
@@ -44,6 +31,7 @@ export interface MentionInputHandle {
   completeMention: (mention: Mention) => void
   /** 整体替换输入框文本（原 mention chip 全部丢弃，用于 AI 润色回填） */
   setText: (text: string) => void
+  setDraft: (text: string, mentions: Mention[]) => void
   clear: () => void
   focus: () => void
 }
@@ -55,27 +43,6 @@ const MENTION_META: Record<MentionSource, { color: string; hint: string }> = {
   code: { color: '#8b5cf6', hint: '源码位置' },
   terminal: { color: '#0ea5e9', hint: '终端输出' },
   agent: { color: '#10b981', hint: '协作 Agent' }
-}
-
-/** mention 在发送文本里的占位形式：@路径（源码位置带行号区间） */
-export function mentionToken(mention: Mention): string {
-  if (!mention.path) return mention.displayText
-  if (mention.source === 'code' && mention.startLine) {
-    const range =
-      mention.endLine && mention.endLine !== mention.startLine
-        ? `${mention.startLine}-${mention.endLine}`
-        : `${mention.startLine}`
-    return `@${mention.path}:${range}`
-  }
-  return `@${mention.path}`
-}
-
-/** 去掉路径前面的 @ 与工作区根前缀后展示的名字（取末两段，够辨识又不至于太长） */
-export function formatPathDisplay(path: string): string {
-  const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '')
-  const parts = normalized.split('/').filter(Boolean)
-  if (parts.length <= 2) return normalized
-  return parts.slice(-2).join('/')
 }
 
 interface MentionInputProps {
@@ -133,8 +100,8 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         if (key) {
           const mention = mentionsRef.current.get(key)
           if (mention) {
+            mentions.push({ ...mention, textOffset: text.length })
             text += mentionToken(mention)
-            mentions.push(mention)
             return
           }
         }
@@ -189,13 +156,20 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       (mention: Mention) => {
         const box = boxRef.current
         if (!box) return
+        for (const [existingKey, existing] of mentionsRef.current) {
+          if (sameMention(existing, mention) && box.querySelector(`[data-mention-key="${existingKey}"]`)) {
+            box.focus()
+            return
+          }
+        }
         const key = `m${++keySeqRef.current}`
         mentionsRef.current.set(key, mention)
         const chip = document.createElement('span')
         chip.className = `mention-chip mention-chip--${mention.source}`
         chip.contentEditable = 'false'
         chip.dataset.mentionKey = key
-        chip.title = mention.path ? `${MENTION_META[mention.source].hint}：${mention.path}` : MENTION_META[mention.source].hint
+        chip.title = (mention.path ? `${MENTION_META[mention.source].hint}：${mention.path}` : MENTION_META[mention.source].hint) +
+          (mention.content !== undefined ? '\n包含添加时的编辑器内容快照' : '')
         chip.textContent = mention.displayText
 
         const selection = window.getSelection()
@@ -239,6 +213,31 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       }
       lastSerializedRef.current = text
     }, [])
+
+    const restoreDraft = useCallback((text: string, mentions: Mention[]) => {
+      rebuildFromText('')
+      const box = boxRef.current
+      if (!box) return
+      let cursor = 0
+      for (const mention of mentions) {
+        const token = mentionToken(mention)
+        const offset = mention.textOffset ?? text.indexOf(token, cursor)
+        if (offset < cursor || text.slice(offset, offset + token.length) !== token) continue
+        box.appendChild(document.createTextNode(text.slice(cursor, offset)))
+        const key = `m${++keySeqRef.current}`
+        mentionsRef.current.set(key, mention)
+        const chip = document.createElement('span')
+        chip.className = `mention-chip mention-chip--${mention.source}`
+        chip.contentEditable = 'false'
+        chip.dataset.mentionKey = key
+        chip.textContent = mention.displayText
+        chip.title = mention.path ?? mention.displayText
+        box.appendChild(chip)
+        cursor = offset + token.length
+      }
+      box.appendChild(document.createTextNode(text.slice(cursor)))
+      lastSerializedRef.current = text
+    }, [rebuildFromText])
 
     /**
      * 检测光标前的「@关键词」触发段。
@@ -309,13 +308,14 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
           rebuildFromText(text)
           emitChange()
         },
+        setDraft: restoreDraft,
         clear: () => {
           rebuildFromText('')
           emitChange()
         },
         focus: () => boxRef.current?.focus()
       }),
-      [insertMention, completeMention, rebuildFromText, emitChange]
+      [insertMention, completeMention, rebuildFromText, restoreDraft, emitChange]
     )
 
     // 光标移动（点击/方向键）不产生 input 事件，用 selectionchange 补齐 @ 触发检测

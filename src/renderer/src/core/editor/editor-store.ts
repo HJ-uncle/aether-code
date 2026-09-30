@@ -17,6 +17,7 @@ import { paths, readFile, writeFile } from '../workspace/fs-client'
 import { getWorkspaceState } from '../workspace/workspace-store'
 import { activateDocument } from './editor-activation'
 import { fileIdentity } from './file-identity'
+import { getActiveEditor } from './active-editor'
 
 export interface OpenDocument {
   path: string
@@ -33,6 +34,8 @@ export interface OpenDocument {
   size: number
   loading: boolean
   error: string | null
+  externalChange?: 'modified' | 'deleted'
+  diskContent?: string
 }
 
 export interface EditorState {
@@ -65,6 +68,28 @@ let state: EditorState = {
 }
 
 let revealSeq = 0
+
+export interface DocumentIdentity {
+  readonly instance: number
+  readonly revision: number
+}
+let nextDocumentInstance = 1
+const documentIdentities = new Map<string, DocumentIdentity>()
+
+/** 内容相同也可能是关闭后重新打开的新文档，异步回包不能只靠路径和字符串认领。 */
+export function getDocumentIdentity(filePath: string): DocumentIdentity | undefined {
+  return documentIdentities.get(resolveDocumentPath(filePath))
+}
+
+function sameDocument(filePath: string, expected: DocumentIdentity | undefined, includeRevision = true): boolean {
+  const current = documentIdentities.get(filePath)
+  return Boolean(expected && current?.instance === expected.instance && (!includeRevision || current.revision === expected.revision))
+}
+
+function markDocumentEdited(filePath: string): void {
+  const identity = documentIdentities.get(filePath)
+  if (identity) documentIdentities.set(filePath, { ...identity, revision: identity.revision + 1 })
+}
 
 /**
  * 光标/滚动位置的暂存区。
@@ -142,6 +167,12 @@ export function setCursor(filePath: string, line: number, column: number): void 
 }
 
 const listeners = new Set<() => void>()
+const renameListeners = new Set<(oldPath: string, newPath: string) => void>()
+
+export function onDocumentRenamed(listener: (oldPath: string, newPath: string) => void): () => void {
+  renameListeners.add(listener)
+  return () => renameListeners.delete(listener)
+}
 
 function setState(patch: Partial<EditorState>): void {
   state = { ...state, ...patch }
@@ -218,10 +249,12 @@ export async function openFile(
 
   const nextDocs = new Map(state.docs)
   nextDocs.set(filePath, placeholder)
+  documentIdentities.set(filePath, { instance: nextDocumentInstance++, revision: 0 })
   setState({ docs: nextDocs, order: [...state.order, filePath] })
 
   try {
     const file = await readFile(filePath)
+    if (state.docs.get(filePath) !== placeholder) return
     const loaded: OpenDocument = {
       // 保持调用方传入的路径：docs/order 的 key 都是它。
       // 主进程返回的 path 经 resolve 规范化，分隔符可能与调用方不一致，
@@ -244,6 +277,7 @@ export async function openFile(
     rememberRecent(filePath) // 成功打开即记入「最近打开」（快速打开 MRU 数据源）
     requestReveal(filePath, line, column, length)
   } catch (err) {
+    if (state.docs.get(filePath) !== placeholder) return
     const failed: OpenDocument = { ...placeholder, loading: false, error: ipcErrorMessage(err) }
     const withError = new Map(state.docs)
     withError.set(filePath, failed)
@@ -254,6 +288,7 @@ export async function openFile(
 /** 关闭文件；有未保存改动时由调用方先确认 */
 export function closeFile(filePath: string): void {
   filePath = resolveDocumentPath(filePath)
+  documentIdentities.delete(filePath)
   clearDocumentDiagnostics(filePath)
   const nextDocs = new Map(state.docs)
   nextDocs.delete(filePath)
@@ -301,14 +336,31 @@ export function setDocumentContent(filePath: string, content: string): void {
 
   const nextDocs = new Map(state.docs)
   nextDocs.set(filePath, { ...doc, content })
+  markDocumentEdited(filePath)
   setState({ docs: nextDocs })
 }
 
 /** 保存到磁盘 */
-export async function saveDocument(filePath: string): Promise<void> {
+const saveQueues = new Map<string, Promise<void>>()
+
+export function saveDocument(filePath: string): Promise<void> {
   filePath = resolveDocumentPath(filePath)
+  const identity = getDocumentIdentity(filePath)
+  if (!identity) return Promise.resolve()
+  const previous = saveQueues.get(filePath) ?? Promise.resolve()
+  const operation = previous.catch(() => undefined).then(() => saveDocumentNow(filePath, identity))
+  saveQueues.set(filePath, operation)
+  void operation.finally(() => {
+    if (saveQueues.get(filePath) === operation) saveQueues.delete(filePath)
+  }).catch(() => undefined)
+  return operation
+}
+
+async function saveDocumentNow(filePath: string, identity: DocumentIdentity | undefined): Promise<void> {
+  if (identity && !sameDocument(filePath, identity, false)) throw new Error('文件已关闭或路径已更改，本次保存已取消。')
   const doc = state.docs.get(filePath)
   if (!doc || doc.isBinary || doc.loading) return
+  if (doc.truncated) throw new Error('当前只载入文件的部分内容，已阻止覆盖保存。请使用完整文件编辑器处理。')
 
   setState({ saving: new Set(state.saving).add(filePath) })
 
@@ -316,24 +368,25 @@ export async function saveDocument(filePath: string): Promise<void> {
     // Another workbench or the AI may have edited this file since it was opened.
     // Preserve the user's buffer instead of silently overwriting newer disk contents.
     const disk = await readFile(filePath)
-    if (disk.content !== doc.savedContent && disk.content !== doc.content) {
+    if (!sameDocument(filePath, identity, false)) throw new Error('文件已关闭或路径已更改，本次保存已取消。')
+    if (disk.truncated || disk.isBinary || (disk.content !== doc.savedContent && disk.content !== doc.content)) {
       throw new Error('文件已在其他编辑器或工具中修改，未覆盖磁盘内容。请先保留当前修改并重新加载文件。')
     }
     await writeFile(filePath, doc.content)
     // 以「已写入的内容」而非当前编辑器内容为准：
     // 保存期间用户可能继续输入，那部分应保持为未保存状态
-    const latest = state.docs.get(filePath)
+    const latest = sameDocument(filePath, identity, false) ? state.docs.get(filePath) : undefined
     const nextDocs = new Map(state.docs)
-    if (latest) nextDocs.set(filePath, { ...latest, savedContent: doc.content, error: null })
+    if (latest) nextDocs.set(filePath, { ...latest, savedContent: doc.content, error: null, externalChange: undefined, diskContent: undefined })
     const nextSaving = new Set(state.saving)
     nextSaving.delete(filePath)
     setState({ docs: nextDocs, saving: nextSaving })
     // 落盘成功意味着 git 工作区可能变了，自动刷新状态栏/版本控制视图
     void refreshGit(getWorkspaceState().root)
     // 保存后跑引擎诊断（失败静默，不影响保存流程），结果进 Problems 面板与编辑器波浪线
-    void diagnoseDocument(filePath, doc.content)
+    if (latest) void diagnoseDocument(filePath, doc.content)
   } catch (err) {
-    const latest = state.docs.get(filePath)
+    const latest = sameDocument(filePath, identity, false) ? state.docs.get(filePath) : undefined
     const nextDocs = new Map(state.docs)
     if (latest) nextDocs.set(filePath, { ...latest, error: ipcErrorMessage(err) })
     const nextSaving = new Set(state.saving)
@@ -345,19 +398,15 @@ export async function saveDocument(filePath: string): Promise<void> {
 
 /** 保存当前激活的文档 */
 export async function saveActiveDocument(): Promise<void> {
-  const active = state.activePath ? state.docs.get(state.activePath) : undefined
+  const model = getActiveEditor()?.getModel()
+  const active = model
+    ? model.uri.scheme === 'file' ? getDocument(model.uri.fsPath) : undefined
+    : state.activePath ? state.docs.get(state.activePath) : undefined
   if (active && isDirty(active)) {
     await saveDocument(active.path)
     return
   }
-  // 没有激活文件（例如停在设置标签）时退化为「保存第一个脏文档」，
-  // 与改动前的行为一致 —— Ctrl+S 在哪儿都该有点用
-  for (const doc of state.docs.values()) {
-    if (isDirty(doc)) {
-      await saveDocument(doc.path)
-      return
-    }
-  }
+  // 没有活动文档或当前文档已保存时，不应写入另一组无关的未保存文件。
 }
 
 /**
@@ -384,24 +433,79 @@ export async function reloadDocuments(filePaths: string[]): Promise<void> {
   for (const requestedPath of filePaths) {
     const filePath = resolveDocumentPath(requestedPath)
     const doc = state.docs.get(filePath)
-    if (!doc || doc.isBinary || doc.loading || isDirty(doc)) continue
+    if (!doc || doc.isBinary || doc.loading || state.saving.has(filePath)) continue
+    const identity = getDocumentIdentity(filePath)
     try {
       const file = await readFile(filePath)
       const latest = state.docs.get(filePath)
-      if (!latest || isDirty(latest) || latest.content !== doc.content) continue
+      if (!latest || !sameDocument(filePath, identity) || latest.content !== doc.content || latest.savedContent !== doc.savedContent || state.saving.has(filePath)) continue
       const nextDocs = new Map(state.docs)
+      if (isDirty(latest) && file.content !== latest.content) {
+        if (file.content === latest.savedContent && !file.isBinary && !file.truncated) {
+          if (!latest.externalChange) continue
+          nextDocs.set(filePath, { ...latest, externalChange: undefined, diskContent: undefined })
+        } else {
+          nextDocs.set(filePath, { ...latest, externalChange: 'modified', diskContent: file.isBinary || file.truncated ? undefined : file.content })
+        }
+        setState({ docs: nextDocs })
+        continue
+      }
+      if (file.content === latest.content && file.content === latest.savedContent && !latest.externalChange && file.truncated === latest.truncated) continue
       nextDocs.set(filePath, {
         ...latest,
         content: file.content,
         savedContent: file.content,
+        isBinary: file.isBinary,
+        base64: file.base64 ?? null,
+        tooLarge: Boolean(file.tooLarge),
         truncated: file.truncated,
-        size: file.size
+        size: file.size,
+        externalChange: undefined,
+        diskContent: undefined,
+        error: null
       })
       setState({ docs: nextDocs })
-    } catch {
-      // 文件可能已被删除：保持内存内容不动，等用户保存时自行暴露冲突
+    } catch (error) {
+      const latest = state.docs.get(filePath)
+      if (!latest || !sameDocument(filePath, identity)) continue
+      const missing = /ENOENT|不存在|no such file/i.test(ipcErrorMessage(error))
+      const nextDocs = new Map(state.docs)
+      nextDocs.set(filePath, { ...latest, ...(missing ? { externalChange: 'deleted' as const } : { error: ipcErrorMessage(error) }) })
+      setState({ docs: nextDocs })
     }
   }
+}
+
+/** 用户明确选择磁盘版本后调用；读取期间出现新输入则拒绝覆盖。 */
+export async function reloadDocumentFromDisk(filePath: string): Promise<void> {
+  const doc = getDocument(filePath)
+  if (!doc) return
+  const identity = getDocumentIdentity(doc.path)
+  if (state.saving.has(doc.path)) throw new Error('文件正在保存，请保存完成后重试。')
+  const file = await readFile(doc.path)
+  const latest = getDocument(doc.path)
+  if (!latest || !sameDocument(doc.path, identity) || latest.content !== doc.content || latest.savedContent !== doc.savedContent || state.saving.has(doc.path)) throw new Error('读取期间文档已修改或重新打开，请重新选择要保留的版本。')
+  const docs = new Map(state.docs)
+  docs.set(doc.path, { ...latest, content: file.content, savedContent: file.content,
+    isBinary: file.isBinary, base64: file.base64 ?? null, truncated: file.truncated,
+    tooLarge: Boolean(file.tooLarge), size: file.size, externalChange: undefined, diskContent: undefined, error: null })
+  markDocumentEdited(doc.path)
+  setState({ docs })
+}
+
+/** 恢复草稿仍保留原磁盘基线；重启期间改盘时展示冲突而不是悄悄认领新版本。 */
+export function restoreDocumentDraft(filePath: string, content: string, savedContent: string, expected: DocumentIdentity): void {
+  const doc = getDocument(filePath)
+  if (!doc || !sameDocument(doc.path, expected) || doc.isBinary || doc.truncated || doc.loading) return
+  const diskContent = doc.content
+  const missing = Boolean(doc.error && /ENOENT|不存在|no such file/i.test(doc.error))
+  if (doc.error && !missing) return
+  const docs = new Map(state.docs)
+  docs.set(doc.path, { ...doc, content, savedContent, error: null,
+    externalChange: missing ? 'deleted' : diskContent !== savedContent && diskContent !== content ? 'modified' : undefined,
+    diskContent: !missing && diskContent !== savedContent ? diskContent : undefined })
+  markDocumentEdited(doc.path)
+  setState({ docs })
 }
 
 /** 文件名变化后（重命名）同步内存中的路径 */
@@ -416,11 +520,19 @@ export function renameDocument(oldPath: string, newPath: string): void {
   const nextDocs = new Map(state.docs)
   nextDocs.delete(oldPath)
   nextDocs.set(newPath, { ...doc, path: newPath, name: paths.basename(newPath) })
+  const identity = documentIdentities.get(oldPath)
+  documentIdentities.delete(oldPath)
+  if (identity) documentIdentities.set(newPath, identity)
 
-  setState({
+  // 先迁移各视图的路径归属，再广播普通变更，避免左右组把重命名误当作删除后另开文件。
+  state = { ...state,
     docs: nextDocs,
-    order: state.order.map((item) => (item === oldPath ? newPath : item))
-  })
+    order: state.order.map((item) => (item === oldPath ? newPath : item)),
+    activePath: state.activePath === oldPath ? newPath : state.activePath,
+    cursor: state.cursor?.filePath === oldPath ? { ...state.cursor, filePath: newPath } : state.cursor
+  }
+  for (const listener of renameListeners) listener(oldPath, newPath)
+  for (const listener of listeners) listener()
 }
 
 /** 订阅编辑器状态（store 内部整体替换 state，引用稳定可作快照） */

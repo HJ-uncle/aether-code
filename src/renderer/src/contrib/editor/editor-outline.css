@@ -1,0 +1,145 @@
+.editor-outline {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  color: var(--fg);
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.editor-outline__header {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  flex-shrink: 0;
+  padding: 0 var(--space-2);
+}
+.editor-outline__heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  font-weight: 600;
+}
+.editor-outline button {
+  color: var(--fg-muted);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  border-radius: var(--radius-sm);
+}
+.editor-outline button:hover {
+  background: var(--bg-hover);
+  color: var(--fg-strong);
+}
+.editor-outline button:focus-visible,
+.editor-outline__filter:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: -1px;
+}
+.editor-outline button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.editor-outline__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.editor-outline__actions button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+}
+.editor-outline__actions button[aria-pressed='true'] {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.editor-outline__filter {
+  margin: 0 var(--space-2) var(--space-2);
+  min-width: 0;
+  height: 26px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--fg);
+  font: inherit;
+}
+.editor-outline__filter::placeholder {
+  color: var(--fg-muted);
+}
+.editor-outline__content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 var(--space-1) var(--space-2);
+}
+.editor-outline__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.editor-outline__row {
+  display: flex;
+  align-items: center;
+  min-height: 26px;
+}
+.editor-outline__branch,
+.editor-outline__branch-spacer {
+  display: flex;
+  flex: 0 0 18px;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0;
+}
+.editor-outline__symbol {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 var(--space-1);
+  text-align: left;
+}
+.editor-outline__symbol[aria-current='location'] {
+  background: var(--bg-selected);
+  color: var(--fg-strong);
+}
+.editor-outline__kind {
+  flex-shrink: 0;
+  color: var(--fg-muted);
+  font-size: 10px;
+}
+.editor-outline__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editor-outline__line {
+  margin-left: auto;
+  padding-left: var(--space-1);
+  color: var(--fg-faint);
+  font-size: 10px;
+}
+.editor-outline__message {
+  margin: var(--space-2);
+  color: var(--fg-muted);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.editor-outline__error {
+  margin: var(--space-2);
+  color: var(--danger-fg);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}

@@ -14,6 +14,8 @@ import {
 import type { FsEntry } from '@shared/ipc'
 import { useApp } from '@renderer/core/app-context'
 import { documentKey, openFile } from '@renderer/core/editor/editor-store'
+import { addFilesToChat } from '@renderer/contrib/chat/editor-context'
+import { copyFilePaths, revealFile } from '@renderer/core/editor/file-context-actions'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { changeCode, changeTitle, normalizeGitPath } from '@renderer/core/git/git-format'
 import { useGit } from '@renderer/core/git/git-store'
@@ -1286,6 +1288,28 @@ export function ExplorerView(): JSX.Element {
     if (targets.length > 0) {
       items.push(
         {
+          id: 'addToChat',
+          label: targets.length > 1 ? `添加 ${targets.length} 项到对话` : '添加到对话',
+          onSelect: () => void runOp(async () => {
+            // 选区可以跨目录，不能用右键那一项的类型代表整个选区。
+            const entries = await Promise.all(targets.map(async (path) => ({
+              path,
+              kind: (await window.aether.fs.stat(path)).isDirectory ? 'directory' as const : 'file' as const
+            })))
+            addFilesToChat(entries)
+          })
+        },
+        {
+          id: 'copyPath',
+          label: '复制绝对路径',
+          onSelect: () => void copyFilePaths(targets)
+        },
+        {
+          id: 'copyRelativePath',
+          label: '复制相对路径',
+          onSelect: () => void copyFilePaths(targets, workspace.root)
+        },
+        {
           id: 'cut',
           label: targets.length > 1 ? `剪切 ${targets.length} 项` : '剪切',
           hint: 'Ctrl+X',
@@ -1298,6 +1322,14 @@ export function ExplorerView(): JSX.Element {
           onSelect: () => setClipboard(targets, 'copy')
         }
       )
+    }
+
+    if (entry) {
+      items.push({
+        id: 'revealFile',
+        label: '在文件资源管理器中显示',
+        onSelect: () => void revealFile(entry.path)
+      })
     }
 
     // 粘贴只在有剪贴板内容且能算出落点目录时出现；dir 为空说明右键在树外，无处可贴

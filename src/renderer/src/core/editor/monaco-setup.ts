@@ -136,10 +136,30 @@ function registerDiffLanguage(): void {
  * 光标位置。用 URI 区分还能让 TS/JSON 等 worker 正确按文件路径工作。
  */
 const models = new Map<string, monaco.editor.ITextModel>()
+const retainedModels = new Map<string, number>()
+const pendingReleases = new Set<string>()
+
+/** 差异视图等宿主共享文档模型；源标签关闭时先解绑宿主，再释放模型。 */
+export function retainModel(filePath: string): () => void {
+  const key = fileIdentity(filePath)
+  retainedModels.set(key, (retainedModels.get(key) ?? 0) + 1)
+  let disposed = false
+  return () => {
+    if (disposed) return
+    disposed = true
+    const count = (retainedModels.get(key) ?? 1) - 1
+    if (count > 0) retainedModels.set(key, count)
+    else {
+      retainedModels.delete(key)
+      if (pendingReleases.delete(key)) releaseModel(filePath)
+    }
+  }
+}
 
 /** 取（或创建）某个文件对应的 model */
 export function acquireModel(filePath: string, language: string): monaco.editor.ITextModel {
   const key = fileIdentity(filePath)
+  pendingReleases.delete(key)
   const existing = peekModel(filePath)
   if (existing) {
     models.set(key, existing)
@@ -156,6 +176,8 @@ export function acquireModel(filePath: string, language: string): monaco.editor.
 
 /** 关闭标签时释放 model，避免长会话下内存持续增长 */
 export function releaseModel(filePath: string): void {
+  const key = fileIdentity(filePath)
+  if (retainedModels.has(key)) { pendingReleases.add(key); return }
   const model = peekModel(filePath)
   if (model && !model.isDisposed()) model.dispose()
   models.delete(fileIdentity(filePath))

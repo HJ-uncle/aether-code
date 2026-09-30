@@ -22,6 +22,8 @@ interface ContextMenuProps {
   y: number
   items: ContextMenuItem[]
   onClose: () => void
+  /** 菜单锚点；仅锚点所在的可滚动祖先滚动时关闭，避免激活标签时编辑器恢复视图误关菜单。 */
+  anchor?: Element | null
 }
 
 /** 把矩形钳制进视口（四周留 margin），返回修正后的 left/top */
@@ -51,7 +53,7 @@ function clampToViewport(
  * 二级菜单：item 带 children 时，hover/点击该入口在右侧展开子面板
  * （右侧空间不足则翻到左侧）；子面板里的项都是叶子，不再嵌套。
  */
-export function ContextMenu({ x, y, items, onClose }: ContextMenuProps): JSX.Element {
+export function ContextMenu({ x, y, items, onClose, anchor = null }: ContextMenuProps): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState({ left: x, top: y })
   /** 当前展开的子菜单：父项 id + 锚点矩形（决定子面板摆放边） */
@@ -75,7 +77,12 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps): JSX.Ele
       if (event.key === 'Escape') onClose()
     }
     // 滚动后菜单位置就不再对应目标行，直接关闭比留在原地更不容易误点
-    const onScroll = (): void => onClose()
+    const onScroll = (event: Event): void => {
+      // 切换标签会让 Monaco 内容区恢复滚动位置；它与标签锚点无关，
+      // 不应把刚打开的标签菜单吞掉。真正滚动锚点所在容器（或页面）时仍关闭。
+      if (anchor && event.target instanceof Node && event.target !== document && !event.target.contains(anchor)) return
+      onClose()
+    }
 
     document.addEventListener('mousedown', onPointerDown)
     document.addEventListener('keydown', onKey)
@@ -91,7 +98,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps): JSX.Ele
       window.removeEventListener('blur', onScroll)
       document.removeEventListener('scroll', onScroll, true)
     }
-  }, [onClose])
+  }, [onClose, anchor])
 
   const openSubmenu = (item: ContextMenuItem, anchor: DOMRect): void => {
     if (!item.children || item.disabled) return

@@ -29,11 +29,13 @@ import {
 } from '@renderer/core/editor/editor-store'
 import {
   closeAllFileTabs,
+  closeEditorGroup,
   closeOtherFileTabs,
   closeTabByKey,
   closeTabsToRightOfActive,
   switchActiveTab
 } from '@renderer/workbench/EditorArea'
+import { focusEditorGroup, getEditorGroups, splitDocumentToRight } from '@renderer/core/editor/editor-groups'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { diagnoseDocument } from '@renderer/core/lsp/diagnostics'
 import { undoLastFileOp, trashEntries, pasteFromClipboard } from '@renderer/core/workspace/file-ops'
@@ -302,6 +304,33 @@ export function registerContributions(): () => void {
       run: () => closeAllFileTabs()
     },
     {
+      id: 'aether.editor.splitRight',
+      title: '向右拆分编辑器',
+      category: '编辑器',
+      when: 'activeEditorIsFile',
+      run: () => {
+        const active = getLayout().activeEditorView
+        if (active.startsWith('doc:')) splitDocumentToRight(active.slice(4))
+      }
+    },
+    {
+      id: 'aether.editor.focusOtherGroup',
+      title: '切换到另一编辑组',
+      category: '编辑器',
+      when: 'editorGroupCount > 1',
+      run: () => {
+        const { groups, focusedGroupId } = getEditorGroups()
+        const other = groups.find((group) => group.id !== focusedGroupId)
+        if (other) focusEditorGroup(other.id, true)
+      }
+    },
+    {
+      id: 'aether.editor.closeGroup',
+      title: '关闭编辑组',
+      category: '编辑器',
+      run: () => closeEditorGroup()
+    },
+    {
       id: 'aether.editor.reopenClosed',
       title: '重新打开已关闭的编辑器',
       category: '编辑器',
@@ -449,6 +478,7 @@ export function registerContributions(): () => void {
     // Ctrl+Shift+T 与浏览器/VS Code 一致：重开最近关闭的编辑器
     { key: 'ctrl+shift+t', command: 'aether.editor.reopenClosed' },
     { key: 'ctrl+shift+s', command: 'aether.file.saveAll' },
+    { key: 'ctrl+\\', command: 'aether.editor.splitRight', when: 'activeEditorIsFile' },
     // Ctrl+B 切换侧边栏（VS Code 主键位）
     { key: 'ctrl+b', command: 'aether.view.toggleSidebar' },
     // Mac 用 Ctrl+Tab 切系统标签，故 VS Code 在 mac 上只提供 Ctrl+PageUp/Down；

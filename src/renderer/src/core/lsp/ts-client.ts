@@ -1,9 +1,25 @@
 /** Monaco <-> typescript-language-server bridge. */
 import * as monaco from 'monaco-editor'
+import { parseWorkspaceTextEdits } from './workspace-edit'
+import { registerWorkspaceActions, type WorkspaceActionBridge } from './code-actions'
 import { clearFileProblems, setFileProblems, type ProblemItem } from './problems-store'
 
+let referenceModels: typeof import('../editor/reference-models') | null = null
+let workspaceActions: WorkspaceActionBridge | null = null
+let serverCommands: Set<string> | null = null
+let codeActionResolveSupported = false
 const MARKER_OWNER = 'tsserver'
 const LSP_LANGUAGES = new Set(['typescript', 'javascript', 'typescriptreact', 'javascriptreact'])
+const serviceListeners = new Set<() => void>()
+export function onTsLanguageServiceChanged(listener: () => void): () => void {
+  serviceListeners.add(listener)
+  return () => serviceListeners.delete(listener)
+}
+function notifyServiceChanged(): void { for (const listener of serviceListeners) listener() }
+export function getTsLanguageServiceGeneration(): number { return sessionGeneration }
+export function supportsProjectSymbols(model: monaco.editor.ITextModel): boolean {
+  return model.uri.scheme === 'file' && LSP_LANGUAGES.has(model.getLanguageId())
+}
 const REQUEST_TIMEOUT_MS = 15_000
 const INITIALIZE_TIMEOUT_MS = 30_000
 type BuiltinDefaults = typeof monaco.typescript.typescriptDefaults
@@ -75,6 +91,15 @@ function applyDiagnostics(params: PublishDiagnosticsParams): void {
 function handleMessage(message: Record<string, unknown>, generation = sessionGeneration): void {
   const id = message.id
   if (typeof id === 'number' && (message.result !== undefined || message.error !== undefined)) { const pending = pendingRequests.get(id); if (!pending) return; pendingRequests.delete(id); clearTimeout(pending.timer); pending.cancellationDisposable?.dispose(); if (message.error) pending.reject(new Error(String((message.error as { message?: unknown }).message ?? 'LSP request failed'))); else pending.resolve(message.result); return }
+  if (message.method === 'workspace/applyEdit' && id !== undefined) {
+    const params = message.params as { edit?: unknown } | undefined
+    const applying = workspaceActions?.applyServerEdit(params?.edit) ?? Promise.resolve({ applied: false, failureReason: '项目语言服务尚未就绪' })
+    void applying.then((result) => {
+      if (generation === sessionGeneration) return window.aether.lsp.send({ jsonrpc: '2.0', id, result })
+      return undefined
+    }).catch(() => undefined)
+    return
+  }
   if (typeof message.method === 'string' && id !== undefined) { void window.aether.lsp.send({ jsonrpc: '2.0', id, result: null }).catch(() => undefined); return }
   if (message.method === 'textDocument/publishDiagnostics' && generation === sessionGeneration) applyDiagnostics(message.params as PublishDiagnosticsParams)
 }
@@ -111,43 +136,38 @@ function mapSymbolKind(kind: unknown): monaco.languages.SymbolKind {
   }
   return values[Number(kind)] ?? monaco.languages.SymbolKind.String
 }
-async function mapWorkspaceEdit(value: unknown, requestedVersions: Map<string, number>, token: monaco.CancellationToken): Promise<monaco.languages.WorkspaceEdit & monaco.languages.Rejection> {
-  type TextEdit = { range: LspRange; newText: string }
-  const input = value as { changes?: Record<string, TextEdit[]>; documentChanges?: Array<{ textDocument?: { uri: string; version?: number | null }; edits?: TextEdit[] }> } | null
-  const documents: Array<{ uri: string; version?: number | null; edits: TextEdit[] }> = Object.entries(input?.changes ?? {}).map(([uri, edits]) => ({ uri, edits }))
-  for (const change of input?.documentChanges ?? []) {
-    if (!change.textDocument || !change.edits) return { edits: [], rejectReason: '暂不支持语言服务返回的创建、删除或移动文件操作' }
-    documents.push({ ...change.textDocument, edits: change.edits })
-  }
+async function mapWorkspaceEdit(value: unknown, requestedVersions: Map<string, number>, token?: monaco.CancellationToken, generation = sessionGeneration): Promise<monaco.languages.WorkspaceEdit & monaco.languages.Rejection> {
   try {
-    // Load before handing the edit to Monaco: its standalone bulk edit service only
-    // edits existing models and does not know how to read unopened workspace files.
+    const documents = parseWorkspaceTextEdits(value)
+    const resources = documents.map((document) => {
+      const resource = monaco.Uri.parse(document.uri)
+      if (resource.scheme !== 'file') throw new Error('语言服务只能编辑本地文件')
+      return { document, resource }
+    })
+    if (token?.isCancellationRequested || generation !== sessionGeneration) return { edits: [], rejectReason: '已取消工作区编辑' }
     const { ensureWorkspaceModel } = await import('../editor/monaco-workspace')
-    const targets = await Promise.all(documents.map(async (document) => ({ document, model: await ensureWorkspaceModel(monaco.Uri.parse(document.uri)) })))
-    if (token.isCancellationRequested) return { edits: [], rejectReason: '已取消重命名' }
+    const targets = await Promise.all(resources.map(async ({ document, resource }) => ({ document, model: await ensureWorkspaceModel(resource) })))
+    if (token?.isCancellationRequested || generation !== sessionGeneration) return { edits: [], rejectReason: '已取消工作区编辑' }
     const edits: monaco.languages.IWorkspaceTextEdit[] = []
     for (const { document, model } of targets) {
       const version = model.getVersionId()
       const requestedVersion = requestedVersions.get(model.uri.toString())
-      if ((requestedVersion !== undefined && requestedVersion !== version) || (document.version != null && document.version !== version)) {
-        return { edits: [], rejectReason: '文件在重命名期间发生变化，请重新执行重命名' }
-      }
+      if ((requestedVersion !== undefined && requestedVersion !== version) || (document.version != null && document.version !== version)) return { edits: [], rejectReason: '文件在操作期间发生变化，请重新执行' }
       for (const edit of document.edits) edits.push({ resource: model.uri, textEdit: mapEdit(edit), versionId: version })
     }
     return { edits }
-  } catch (error) {
-    return { edits: [], rejectReason: `无法准备重命名：${error instanceof Error ? error.message : String(error)}` }
-  }
+  } catch (error) { return { edits: [], rejectReason: '无法准备工作区编辑：' + (error instanceof Error ? error.message : String(error)) } }
 }
 
 let providersDisposed: monaco.IDisposable[] = []
-function disposeProviders(): void { for (const disposable of providersDisposed) disposable.dispose(); providersDisposed = [] }
+function disposeProviders(): void { referenceModels?.clearReferenceModels(); workspaceActions?.dispose(); workspaceActions = null; for (const disposable of providersDisposed) disposable.dispose(); providersDisposed = [] }
 function registerProviders(): void {
   disposeProviders()
   // Monaco 0.56 reads modeConfiguration when its TS mode first initializes. An
   // exclusive public selector also excludes providers that initialized earlier,
   // so a rejected project rename cannot fall back to stale worker-only edits.
   const selector: monaco.languages.LanguageSelector = [...LSP_LANGUAGES].map((language) => ({ language, scheme: 'file', exclusive: true }))
+  workspaceActions = registerWorkspaceActions({ selector, generation: () => sessionGeneration, request: lspRequest, prepareEdit: mapWorkspaceEdit, supportedCommands: serverCommands, resolveSupported: codeActionResolveSupported })
   providersDisposed.push(monaco.editor.registerEditorOpener({ async openCodeEditor(_source, resource, selection) {
     if (resource.scheme !== 'file') return false
     const { openWorkspaceResource } = await import('../editor/monaco-workspace')
@@ -155,14 +175,42 @@ function registerProviders(): void {
     return true
   } }))
   providersDisposed.push(monaco.languages.registerHoverProvider(selector, { async provideHover(model, position, token) { const result = await lspRequest<{ contents?: unknown; range?: LspRange } | null>('textDocument/hover', positionParams(model, position), token).catch(() => null); const contents = result?.contents; let value: string | undefined; if (Array.isArray(contents)) value = contents.map((entry) => text(entry) ?? '').filter(Boolean).join('\n\n'); else value = text(contents); return value ? { range: result?.range ? toMonacoRange(result.range) : undefined, contents: [{ value }] } : null } }))
-  providersDisposed.push(monaco.languages.registerDefinitionProvider(selector, { async provideDefinition(model, position, token) { const result = await lspRequest<unknown>('textDocument/definition', positionParams(model, position), token).catch(() => null); if (!result) return null; return (Array.isArray(result) ? result : [result]).map((location) => { const item = location as { uri?: string; range?: LspRange; targetUri?: string; targetRange?: LspRange; targetSelectionRange?: LspRange }; return { uri: monaco.Uri.parse(item.targetUri ?? item.uri ?? model.uri.toString()), range: toMonacoRange(item.targetSelectionRange ?? item.targetRange ?? item.range!) } }) } }))
-  providersDisposed.push(monaco.languages.registerReferenceProvider(selector, { async provideReferences(model, position, context, token) { const result = await lspRequest<Array<{ uri: string; range: LspRange }> | null>('textDocument/references', { ...positionParams(model, position), context: { includeDeclaration: context.includeDeclaration } }, token).catch(() => null); return result?.map((location) => ({ uri: monaco.Uri.parse(location.uri), range: toMonacoRange(location.range) })) ?? null } }))
-  providersDisposed.push(monaco.languages.registerRenameProvider(selector, { async provideRenameEdits(model, position, newName, token) {
+  providersDisposed.push(monaco.languages.registerDefinitionProvider(selector, {
+    async provideDefinition(model, position, token) {
+      const result = await lspRequest<unknown>('textDocument/definition', positionParams(model, position), token).catch(() => null)
+      return result ? prepareLocations(result, model, token) : null
+    }
+  }))
+  providersDisposed.push(monaco.languages.registerReferenceProvider(selector, {
+    async provideReferences(model, position, context, token) {
+      const result = await lspRequest<unknown>('textDocument/references', { ...positionParams(model, position), context: { includeDeclaration: context.includeDeclaration } }, token).catch(() => null)
+      return result ? prepareLocations(result, model, token) : null
+    }
+  }))
+  providersDisposed.push(monaco.languages.registerRenameProvider(selector, {
+    async resolveRenameLocation(model, position, token) {
+      const fallback = { range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column), text: '' }
+      const version = model.getVersionId()
+      try {
+        const result = await lspRequest<LspRange | { range: LspRange; placeholder?: string } | { defaultBehavior: boolean } | null>('textDocument/prepareRename', positionParams(model, position), token)
+        if (model.isDisposed() || model.getVersionId() !== version) return { ...fallback, rejectReason: '文件已变化，请重新选择要重命名的符号' }
+        if (!result) return { ...fallback, rejectReason: '此位置的符号不能重命名' }
+        if ('defaultBehavior' in result) {
+          const word = result.defaultBehavior ? model.getWordAtPosition(position) : null
+          return word ? { range: new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn), text: word.word } : { ...fallback, rejectReason: '此位置的符号不能重命名' }
+        }
+        const range = toMonacoRange('range' in result ? result.range : result)
+        return { range, text: 'placeholder' in result && result.placeholder !== undefined ? result.placeholder : model.getValueInRange(range) }
+      } catch (error) {
+        return { ...fallback, rejectReason: '无法重命名：' + (error instanceof Error ? error.message : String(error)) }
+      }
+    }, async provideRenameEdits(model, position, newName, token) {
     const versions = new Map(monaco.editor.getModels().map((openModel) => [openModel.uri.toString(), openModel.getVersionId()]))
+    const generation = sessionGeneration
     try {
       const result = await lspRequest<unknown>('textDocument/rename', { ...positionParams(model, position), newName }, token)
       if (model.isDisposed() || model.getVersionId() !== versions.get(model.uri.toString())) return { edits: [], rejectReason: '文件在重命名期间发生变化，请重新执行重命名' }
-      return result ? mapWorkspaceEdit(result, versions, token) : null
+      return result ? mapWorkspaceEdit(result, versions, token, generation) : null
     } catch (error) { return { edits: [], rejectReason: `重命名失败：${error instanceof Error ? error.message : String(error)}` } }
   } }))
   providersDisposed.push(monaco.languages.registerDocumentFormattingEditProvider(selector, { displayName: 'TypeScript 项目语言服务', async provideDocumentFormattingEdits(model, options, token) {
@@ -174,16 +222,46 @@ function registerProviders(): void {
     return result?.map(mapEdit) ?? []
   } }))
   providersDisposed.push(monaco.languages.registerSignatureHelpProvider(selector, { signatureHelpTriggerCharacters: ['(', ',', '<'], signatureHelpRetriggerCharacters: [','], async provideSignatureHelp(model, position, token, context) { const result = await lspRequest<{ signatures?: Array<{ label: string; documentation?: unknown; parameters?: Array<{ label: string | [number, number]; documentation?: unknown }> }>; activeSignature?: number; activeParameter?: number } | null>('textDocument/signatureHelp', { ...positionParams(model, position), context: { triggerKind: context.triggerKind, triggerCharacter: context.triggerCharacter, isRetrigger: context.isRetrigger } }, token).catch(() => null); if (!result?.signatures?.length) return null; return { value: { signatures: result.signatures.map((signature) => ({ label: signature.label, documentation: markdown(signature.documentation), parameters: (signature.parameters ?? []).map((parameter) => ({ label: parameter.label, documentation: markdown(parameter.documentation) })) })), activeSignature: result.activeSignature ?? 0, activeParameter: result.activeParameter ?? 0 }, dispose() {} } } }))
-  providersDisposed.push(monaco.languages.registerDocumentSymbolProvider(selector, { async provideDocumentSymbols(model, token) { const result = await lspRequest<unknown[]>('textDocument/documentSymbol', { textDocument: { uri: model.uri.toString() } }, token).catch(() => null); const mapSymbol = (value: unknown): monaco.languages.DocumentSymbol => { const item = value as { name: string; detail?: string; kind?: number; tags?: number[]; range: LspRange; selectionRange?: LspRange; children?: unknown[]; location?: { range: LspRange } }; const range = item.range ?? item.location?.range!; return { name: item.name, detail: item.detail ?? '', kind: mapSymbolKind(item.kind), tags: item.tags?.includes(1) ? [monaco.languages.SymbolTag.Deprecated] : [], range: toMonacoRange(range), selectionRange: toMonacoRange(item.selectionRange ?? range), children: item.children?.map(mapSymbol) } }; return result?.map(mapSymbol) ?? null } }))
+  providersDisposed.push(monaco.languages.registerDocumentSymbolProvider(selector, {
+    provideDocumentSymbols: (model, token) => requestProjectDocumentSymbols(model, token).catch(() => null)
+  }))
   providersDisposed.push(monaco.languages.registerDocumentHighlightProvider(selector, { async provideDocumentHighlights(model, position, token) { const result = await lspRequest<Array<{ range: LspRange; kind?: number }> | null>('textDocument/documentHighlight', positionParams(model, position), token).catch(() => null); return result?.map((item) => ({ range: toMonacoRange(item.range), kind: item.kind === 2 ? monaco.languages.DocumentHighlightKind.Read : item.kind === 3 ? monaco.languages.DocumentHighlightKind.Write : monaco.languages.DocumentHighlightKind.Text })) ?? null } }))
-  providersDisposed.push(monaco.languages.registerCompletionItemProvider(selector, { triggerCharacters: ['.', '"', "'", '/', '@', '<'], async provideCompletionItems(model, position, context, token) { const result = await lspRequest<{ items?: Array<Record<string, unknown>>; isIncomplete?: boolean } | Array<Record<string, unknown>> | null>('textDocument/completion', { ...positionParams(model, position), context: { triggerKind: context.triggerKind, triggerCharacter: context.triggerCharacter } }, token).catch(() => null); const items = Array.isArray(result) ? result : result?.items ?? []; const word = model.getWordUntilPosition(position); const defaultRange: monaco.IRange = { startLineNumber: position.lineNumber, endLineNumber: position.lineNumber, startColumn: word.startColumn, endColumn: word.endColumn }; return { suggestions: items.map((item) => mapCompletionItem(item, defaultRange)), incomplete: !Array.isArray(result) && Boolean(result?.isIncomplete) } }, async resolveCompletionItem(item, token) { const raw = (item as monaco.languages.CompletionItem & { __lspItem?: Record<string, unknown> }).__lspItem; if (!raw) return item; const resolved = await lspRequest<Record<string, unknown>>('completionItem/resolve', raw, token).catch(() => null); if (!resolved) return item; return { ...item, detail: typeof resolved.detail === 'string' ? resolved.detail : item.detail, documentation: markdown(resolved.documentation) ?? item.documentation, command: resolved.command as monaco.languages.Command | undefined ?? item.command } } }))
+  providersDisposed.push(monaco.languages.registerCompletionItemProvider(selector, { triggerCharacters: ['.', '"', "'", '/', '@', '<'], async provideCompletionItems(model, position, context, token) { const result = await lspRequest<{ items?: Array<Record<string, unknown>>; isIncomplete?: boolean } | Array<Record<string, unknown>> | null>('textDocument/completion', { ...positionParams(model, position), context: { triggerKind: context.triggerKind + 1, triggerCharacter: context.triggerCharacter } }, token).catch(() => null); const items = Array.isArray(result) ? result : result?.items ?? []; const word = model.getWordUntilPosition(position); const defaultRange: monaco.IRange = { startLineNumber: position.lineNumber, endLineNumber: position.lineNumber, startColumn: word.startColumn, endColumn: word.endColumn }; return { suggestions: items.map((item) => mapCompletionItem(item, defaultRange)), incomplete: !Array.isArray(result) && Boolean(result?.isIncomplete) } }, async resolveCompletionItem(item, token) { const raw = (item as monaco.languages.CompletionItem & { __lspItem?: Record<string, unknown> }).__lspItem; if (!raw) return item; const resolved = await lspRequest<Record<string, unknown>>('completionItem/resolve', raw, token).catch(() => null); if (!resolved) return item; return mapCompletionItem({ ...raw, ...resolved }, item.range) } }))
 }
-function mapCompletionItem(item: Record<string, unknown>, defaultRange: monaco.IRange): monaco.languages.CompletionItem { const textEdit = item.textEdit as { range?: LspRange; newText?: string; insert?: LspRange; replace?: LspRange } | undefined; const range = textEdit?.range ? toMonacoRange(textEdit.range) : textEdit?.insert && textEdit.replace ? { insert: toMonacoRange(textEdit.insert), replace: toMonacoRange(textEdit.replace) } : defaultRange; const mapped: monaco.languages.CompletionItem & { __lspItem?: Record<string, unknown> } = { label: typeof item.label === 'object' ? item.label as monaco.languages.CompletionItemLabel : String(item.label ?? ''), kind: mapKind(item.kind), detail: typeof item.detail === 'string' ? item.detail : undefined, documentation: markdown(item.documentation), insertText: textEdit?.newText ?? String(item.insertText ?? item.label ?? ''), range, sortText: typeof item.sortText === 'string' ? item.sortText : undefined, filterText: typeof item.filterText === 'string' ? item.filterText : undefined, insertTextRules: Number(item.insertTextFormat) === 2 ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined, tags: item.deprecated === true ? [monaco.languages.CompletionItemTag.Deprecated] : undefined, commitCharacters: Array.isArray(item.commitCharacters) ? item.commitCharacters.filter((v): v is string => typeof v === 'string') : undefined, command: item.command as monaco.languages.Command | undefined }; const additional = Array.isArray(item.additionalTextEdits) ? item.additionalTextEdits as Array<{ range: LspRange; newText: string }> : []; mapped.additionalTextEdits = additional.map((edit) => ({ range: toMonacoRange(edit.range), text: edit.newText })); Object.defineProperty(mapped, '__lspItem', { value: item, enumerable: false }); return mapped }
+function mapCompletionItem(item: Record<string, unknown>, defaultRange: monaco.languages.CompletionItem['range']): monaco.languages.CompletionItem { const textEdit = item.textEdit as { range?: LspRange; newText?: string; insert?: LspRange; replace?: LspRange } | undefined; const range = textEdit?.range ? toMonacoRange(textEdit.range) : textEdit?.insert && textEdit.replace ? { insert: toMonacoRange(textEdit.insert), replace: toMonacoRange(textEdit.replace) } : defaultRange; const mapped: monaco.languages.CompletionItem & { __lspItem?: Record<string, unknown> } = { label: typeof item.label === 'object' ? item.label as monaco.languages.CompletionItemLabel : String(item.label ?? ''), kind: mapKind(item.kind), detail: typeof item.detail === 'string' ? item.detail : undefined, documentation: markdown(item.documentation), insertText: textEdit?.newText ?? String(item.insertText ?? item.label ?? ''), range, sortText: typeof item.sortText === 'string' ? item.sortText : undefined, filterText: typeof item.filterText === 'string' ? item.filterText : undefined, insertTextRules: Number(item.insertTextFormat) === 2 ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined, tags: item.deprecated === true ? [monaco.languages.CompletionItemTag.Deprecated] : undefined, commitCharacters: Array.isArray(item.commitCharacters) ? item.commitCharacters.filter((v): v is string => typeof v === 'string') : undefined, command: workspaceActions?.completionCommand(item.command) }; const additional = Array.isArray(item.additionalTextEdits) ? item.additionalTextEdits as Array<{ range: LspRange; newText: string }> : []; mapped.additionalTextEdits = additional.map((edit) => ({ range: toMonacoRange(edit.range), text: edit.newText })); Object.defineProperty(mapped, '__lspItem', { value: item, enumerable: false }); return mapped }
 
 let running = false; let activeRoot: string | null = null; let lifecycleChain: Promise<unknown> = Promise.resolve()
 function enqueue<T>(operation: () => Promise<T>): Promise<T> { const next = lifecycleChain.then(operation, operation); lifecycleChain = next.catch(() => undefined); return next }
-async function startInternal(rootPath: string, serverEntry: string): Promise<boolean> { if (running && activeRoot === rootPath) return true; if (running) await stopInternal(); const generation = ++sessionGeneration; const rootUri = monaco.Uri.file(rootPath).toString(); let started: { ok: boolean }; try { started = await window.aether.lsp.start({ rootUri, serverEntry }) } catch { setBuiltinTsFeatures(false); return false }; if (!started.ok || generation !== sessionGeneration) { setBuiltinTsFeatures(false); return false }; disposeMessageListener = window.aether.lsp.onMessage((message) => handleMessage(message, generation)); disposeExitListener = window.aether.lsp.onExit(() => { if (generation !== sessionGeneration) return; running = false; activeRoot = null; rejectPending(new Error('LSP server exited')); disposeProviders(); disposeModelListeners(); setBuiltinTsFeatures(false); for (const model of monaco.editor.getModels()) monaco.editor.setModelMarkers(model, MARKER_OWNER, []); for (const filePath of tsProblemFiles) clearFileProblems(filePath, 'tsserver'); tsProblemFiles.clear(); disposeMessageListener?.(); disposeExitListener?.(); disposeMessageListener = null; disposeExitListener = null }); try { await lspRequest('initialize', { processId: null, rootUri, initializationOptions: { locale: 'zh-CN' }, capabilities: { workspace: { workspaceEdit: { documentChanges: true } }, textDocument: { publishDiagnostics: { relatedInformation: true, versionSupport: true, tagSupport: { valueSet: [1, 2] }, codeDescriptionSupport: true }, hover: { contentFormat: ['markdown', 'plaintext'] }, completion: { completionItem: { snippetSupport: true, documentationFormat: ['markdown', 'plaintext'] } }, definition: { linkSupport: true }, rename: { prepareSupport: true }, signatureHelp: { signatureInformation: { documentationFormat: ['markdown', 'plaintext'], parameterInformation: { labelOffsetSupport: true } } }, documentSymbol: { hierarchicalDocumentSymbolSupport: true } } }, workspaceFolders: [{ uri: rootUri, name: rootPath.split(/[\\/]/).pop() ?? rootPath }] }, undefined, INITIALIZE_TIMEOUT_MS); lspNotify('initialized', {}) } catch { await stopInternal(); setBuiltinTsFeatures(false); return false }; if (generation !== sessionGeneration) { await stopInternal(); return false }; running = true; activeRoot = rootPath; setBuiltinTsFeatures(true); registerProviders(); syncAllModels(); createModelSubscription = monaco.editor.onDidCreateModel((model) => { if (running) attachModel(model) }); disposeModelSubscription = monaco.editor.onWillDisposeModel((model) => { if (running) detachModel(model) }); return true }
+async function startInternal(rootPath: string, serverEntry: string): Promise<boolean> { if (running && activeRoot === rootPath) return true; if (running) await stopInternal(); const generation = ++sessionGeneration; const rootUri = monaco.Uri.file(rootPath).toString(); let started: { ok: boolean }; try { started = await window.aether.lsp.start({ rootUri, serverEntry }) } catch { setBuiltinTsFeatures(false); return false }; if (!started.ok || generation !== sessionGeneration) { setBuiltinTsFeatures(false); return false }; disposeMessageListener = window.aether.lsp.onMessage((message) => handleMessage(message, generation)); disposeExitListener = window.aether.lsp.onExit(() => { if (generation !== sessionGeneration) return; running = false; activeRoot = null; notifyServiceChanged(); rejectPending(new Error('LSP server exited')); disposeProviders(); disposeModelListeners(); setBuiltinTsFeatures(false); for (const model of monaco.editor.getModels()) monaco.editor.setModelMarkers(model, MARKER_OWNER, []); for (const filePath of tsProblemFiles) clearFileProblems(filePath, 'tsserver'); tsProblemFiles.clear(); disposeMessageListener?.(); disposeExitListener?.(); disposeMessageListener = null; disposeExitListener = null }); try { const initialized = await lspRequest<{ capabilities?: { executeCommandProvider?: { commands?: string[] }; codeActionProvider?: boolean | { resolveProvider?: boolean } } }>('initialize', { processId: null, rootUri, initializationOptions: { locale: 'zh-CN' }, capabilities: { workspace: { applyEdit: true, workspaceEdit: { documentChanges: true, failureHandling: 'abort' } }, textDocument: { publishDiagnostics: { relatedInformation: true, versionSupport: true, tagSupport: { valueSet: [1, 2] }, codeDescriptionSupport: true }, hover: { contentFormat: ['markdown', 'plaintext'] }, completion: { completionItem: { snippetSupport: true, documentationFormat: ['markdown', 'plaintext'], resolveSupport: { properties: ['documentation', 'detail', 'additionalTextEdits', 'textEdit', 'command'] } } }, codeAction: { dataSupport: true, disabledSupport: true, isPreferredSupport: true, resolveSupport: { properties: ['edit', 'command'] }, codeActionLiteralSupport: { codeActionKind: { valueSet: ['quickfix', 'refactor', 'refactor.extract', 'refactor.inline', 'refactor.rewrite', 'source', 'source.organizeImports', 'source.fixAll'] } } }, definition: { linkSupport: true }, rename: { prepareSupport: true }, signatureHelp: { signatureInformation: { documentationFormat: ['markdown', 'plaintext'], parameterInformation: { labelOffsetSupport: true } } }, documentSymbol: { hierarchicalDocumentSymbolSupport: true } } }, workspaceFolders: [{ uri: rootUri, name: rootPath.split(/[\\/]/).pop() ?? rootPath }] }, undefined, INITIALIZE_TIMEOUT_MS); serverCommands = initialized.capabilities?.executeCommandProvider?.commands ? new Set(initialized.capabilities.executeCommandProvider.commands) : null; const codeAction = initialized.capabilities?.codeActionProvider; codeActionResolveSupported = typeof codeAction === 'object' && codeAction.resolveProvider === true; lspNotify('initialized', {}) } catch { await stopInternal(); setBuiltinTsFeatures(false); return false }; if (generation !== sessionGeneration) { await stopInternal(); return false }; running = true; activeRoot = rootPath; setBuiltinTsFeatures(true); registerProviders(); syncAllModels(); notifyServiceChanged(); createModelSubscription = monaco.editor.onDidCreateModel((model) => { if (running) attachModel(model) }); disposeModelSubscription = monaco.editor.onWillDisposeModel((model) => { if (running) detachModel(model) }); return true }
 export function startTsLsp(rootPath: string, serverEntry: string): Promise<boolean> { return enqueue(() => startInternal(rootPath, serverEntry)) }
-async function stopInternal(): Promise<void> { const wasRunning = running; ++sessionGeneration; running = false; activeRoot = null; disposeProviders(); if (wasRunning) { await lspRequest('shutdown', undefined, undefined, 2_000).catch(() => undefined); lspNotify('exit') }; rejectPending(new Error('LSP stopped')); disposeModelListeners(); for (const model of monaco.editor.getModels()) monaco.editor.setModelMarkers(model, MARKER_OWNER, []); for (const filePath of tsProblemFiles) clearFileProblems(filePath, 'tsserver'); tsProblemFiles.clear(); disposeMessageListener?.(); disposeExitListener?.(); disposeMessageListener = null; disposeExitListener = null; try { await window.aether.lsp.stop() } finally { setBuiltinTsFeatures(false) } }
+async function stopInternal(): Promise<void> { const wasRunning = running; ++sessionGeneration; running = false; activeRoot = null; notifyServiceChanged(); disposeProviders(); if (wasRunning) { await lspRequest('shutdown', undefined, undefined, 2_000).catch(() => undefined); lspNotify('exit') }; rejectPending(new Error('LSP stopped')); disposeModelListeners(); for (const model of monaco.editor.getModels()) monaco.editor.setModelMarkers(model, MARKER_OWNER, []); for (const filePath of tsProblemFiles) clearFileProblems(filePath, 'tsserver'); tsProblemFiles.clear(); disposeMessageListener?.(); disposeExitListener?.(); disposeMessageListener = null; disposeExitListener = null; try { await window.aether.lsp.stop() } finally { setBuiltinTsFeatures(false) } }
 export function stopTsLsp(): Promise<void> { return enqueue(stopInternal) }
 export function isTsLspRunning(): boolean { return running }
+
+/** Share the same real project query with Monaco navigation, outline and breadcrumbs. */
+export async function requestProjectDocumentSymbols(model: monaco.editor.ITextModel, token?: monaco.CancellationToken): Promise<monaco.languages.DocumentSymbol[]> {
+  if (!running) throw new Error('项目语言服务尚未就绪')
+  if (!supportsProjectSymbols(model)) throw new Error('当前语言尚未接入项目符号服务')
+  const result = await lspRequest<unknown[] | null>('textDocument/documentSymbol', { textDocument: { uri: model.uri.toString() } }, token)
+  const mapSymbol = (value: unknown): monaco.languages.DocumentSymbol => {
+    const item = value as { name: string; detail?: string; kind?: number; tags?: number[]; range?: LspRange; selectionRange?: LspRange; children?: unknown[]; location?: { range: LspRange } }
+    const range = item.range ?? item.location?.range
+    if (!range) throw new Error('语言服务返回了无效的符号位置')
+    return { name: item.name, detail: item.detail ?? '', kind: mapSymbolKind(item.kind), tags: item.tags?.includes(1) ? [monaco.languages.SymbolTag.Deprecated] : [], range: toMonacoRange(range), selectionRange: toMonacoRange(item.selectionRange ?? range), children: item.children?.map(mapSymbol) }
+  }
+  return (result ?? []).map(mapSymbol)
+}
+
+async function prepareLocations(value: unknown, source: monaco.editor.ITextModel, token: monaco.CancellationToken): Promise<monaco.languages.Location[]> {
+  const generation = sessionGeneration
+  const locations = (Array.isArray(value) ? value : [value]).flatMap((location) => {
+    if (!location || typeof location !== 'object') return []
+    const item = location as { uri?: string; range?: LspRange; targetUri?: string; targetRange?: LspRange; targetSelectionRange?: LspRange }
+    const uri = item.targetUri ?? item.uri
+    const range = item.targetSelectionRange ?? item.targetRange ?? item.range
+    return uri && range ? [{ uri: monaco.Uri.parse(uri), range: toMonacoRange(range) }] : []
+  })
+  referenceModels = await import('../editor/reference-models')
+  if (token.isCancellationRequested || generation !== sessionGeneration) return []
+  return referenceModels.prepareReferenceLocations(source, locations, token)
+}

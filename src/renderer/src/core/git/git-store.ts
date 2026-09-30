@@ -1294,6 +1294,11 @@ export function revertCommit(hash: string): Promise<GitResult> {
 
 // ---------- diff 预览 / hunks ----------
 
+/** 编辑区自行管理异步比较数据，侧栏只跟随用户选中的文件。 */
+export function selectGitFile(path: string): void {
+  setState({ selectedPath: path })
+}
+
 /** 加载指定文件的差异 */
 export async function loadDiff(
   path: string,

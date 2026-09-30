@@ -12,12 +12,10 @@
  *   5. 底部汇总（+增/-删行数）
  *   6. 非仓库态 / 克隆流程中的空态
  *
- * 与源组件的关键偏差（aether 侧没有对应宿主能力）：
- *   - 行点击打开 diff：源组件在右侧编辑区内嵌 diff 编辑器；aether 没有 diff 编辑器宿主，
- *     退化为 loadDiff(path, staged) 填充 store + openFile 打开文件（偏差已上报）。
+ * 文件行打开现有编辑区中的 Monaco 差异视图；双击仍可直接打开源码。
+ * 与源组件的关键偏差：
  *   - 「定位到产生该更改的会话」依赖 wuzu 的 codeChange 记录与会话库，aether 没有，菜单项省略。
- *   - 冲突文件的「按文本侧解决」依赖编辑器读写链路与 gitConflictParser，aether 未移植，
- *     保留冲突组展示与「去解决冲突」打开文件，批量解决按钮保留但走打开文件引导。
+ *   - 冲突文件在源码中按块解决；面板的批量入口仍打开文件供用户逐块核对。
  *   - 弹窗体系：Element Plus 的 ElMessageBox 换成 aether 的 Dialog/PromptDialog/ContextMenu。
  */
 import {
@@ -31,6 +29,7 @@ import {
 } from 'react'
 import type { GitCommitRef, GitFileChange, GitLogEntry, GitStashEntry } from '@shared/git-types'
 import { documentKey, openFile } from '@renderer/core/editor/editor-store'
+import { openGitDiff } from './GitDiffView'
 import { startCloneFlow, useGitCloneFlow } from '@renderer/core/git/git-clone-flow'
 import {
   changeCountOf,
@@ -46,7 +45,6 @@ import {
   fetchRemote,
   gitInitRepo,
   loadCurrentUser,
-  loadDiff,
   loadHistoryAuthors,
   loadLog,
   loadStashes,
@@ -66,6 +64,7 @@ import {
   rebase,
   rebaseAbort,
   refreshGit,
+  selectGitFile,
   reloadLog,
   renameBranch,
   revertCommit,
@@ -479,16 +478,13 @@ export function GitChangesPanel(): JSX.Element {
     [toAbsolute]
   )
 
-  /**
-   * 行点击加载 diff。源组件在内嵌 diff 编辑器里展示；aether 没有 diff 编辑器宿主，
-   * 退化为：loadDiff 填 store（供 gutter/hunk 高亮消费）+ 打开文件本身。
-   */
+  /** 比较独立的 Git 基线与工作区实时文档，暂存区比较保持只读。 */
   const handleSelectFile = useCallback(
     async (file: GitFileChange): Promise<void> => {
-      await loadDiff(file.path, file.staged)
-      openSourceFile(file.path)
+      selectGitFile(file.path)
+      await openGitDiff(git.cwd, file.path, file.staged)
     },
-    [openSourceFile]
+    [git.cwd]
   )
 
   // ---------- 多选逻辑 ----------

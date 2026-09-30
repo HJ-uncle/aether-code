@@ -4,23 +4,27 @@ import {
   acquireModel,
   languageForPath,
   monaco,
+  peekModel,
   setupMonacoEnvironment
 } from '@renderer/core/editor/monaco-setup'
 import { currentEditorThemeName, refreshEditorTheme } from '@renderer/core/editor/editor-theme'
-import { rememberViewState, setCursor, takeViewState } from '@renderer/core/editor/editor-store'
+import { getDocument, setCursor } from '@renderer/core/editor/editor-store'
+import { focusEditorGroup, getEditorGroups, rememberGroupViewState, takeGroupViewState } from '@renderer/core/editor/editor-groups'
 import { registerActiveEditor } from '@renderer/core/editor/active-editor'
 import {
   getEditorDisplayOptions,
-  onEditorDisplayOptionsChanged
+  onEditorDisplayOptionsChanged,
+  toMonacoEditorOptions
 } from '@renderer/core/editor/editor-display-options'
 import { watchTheme } from '@renderer/core/theme/palette'
-import { getWorkspaceState } from '@renderer/core/workspace/workspace-store'
-import { paths } from '@renderer/core/workspace/fs-client'
-import { pushPendingMention } from '@renderer/contrib/chat/pending-mentions'
+import { registerSourceGitFeatures } from '@renderer/core/editor/source-git-features'
+import { addFilesToChat, addSelectionToChat } from '@renderer/contrib/chat/editor-context'
 import { registerEditorActionBridges } from './editor-commands'
 
 interface MonacoEditorProps {
   filePath: string
+  groupId?: string
+  readOnly?: boolean
   value: string
   onChange: (value: string) => void
   /**
@@ -30,14 +34,18 @@ interface MonacoEditorProps {
   reveal?: { line: number; column?: number; length?: number; seq: number }
 }
 
+// 同一模型的两个宿主会先后收到内容事件；第一栏上报触发的React更新也必须让第二栏识别为回声。
+const lastReportedModelValues = new WeakMap<Monaco.editor.ITextModel, string>()
+
 /**
  * Monaco 宿主
  *
- * 编辑器实例只创建一次，切换文件时替换 model —— 不重建实例，
- * 因此标签切换没有闪烁与状态丢失。
+ * 宿主可随视图卸载；文档模型和视图记忆独立保存，不从磁盘基线覆盖 draft。
  */
 export function MonacoEditor({
   filePath,
+  groupId = 'main',
+  readOnly = false,
   value,
   onChange,
   reveal
@@ -45,6 +53,7 @@ export function MonacoEditor({
   const containerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null)
   const decorationsRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null)
+  const gitCleanupRef = useRef<(() => void) | null>(null)
   /** 当前 model 对应的文件路径；换 model 时用它把 viewState 存回正确的文件 */
   const currentPathRef = useRef<string | null>(null)
   /** 用 ref 持有回调，避免因 onChange 变化而重建编辑器 */
@@ -65,32 +74,39 @@ export function MonacoEditor({
     const editor = monaco.editor.create(container, {
       theme: currentEditorThemeName(),
       automaticLayout: true,
-      fontSize: 13,
-      fontFamily: "'Cascadia Mono', 'JetBrains Mono', Consolas, monospace",
-      minimap: { enabled: displayOptions.minimapEnabled, maxColumn: 80 },
-      wordWrap: displayOptions.wordWrap,
+      readOnly,
+      ...toMonacoEditorOptions(displayOptions),
       scrollBeyondLastLine: false,
       renderWhitespace: 'selection',
-      tabSize: 2,
       smoothScrolling: true,
       cursorBlinking: 'smooth',
       fixedOverflowWidgets: true
     })
     editorRef.current = editor
-    const unregisterActiveEditor = registerActiveEditor(editor)
+    const unregisterActiveEditor = registerActiveEditor(editor, groupId)
+    const groupFocusSubscription = editor.onDidFocusEditorText(() => {
+      focusEditorGroup(groupId)
+      const path = currentPathRef.current
+      const position = editor.getPosition()
+      if (path && position) setCursor(path, position.lineNumber, position.column)
+    })
     const unregisterActionBridges = registerEditorActionBridges(editor)
     const unsubscribeDisplayOptions = onEditorDisplayOptionsChanged((options) => {
-      editor.updateOptions({
-        wordWrap: options.wordWrap,
-        minimap: { enabled: options.minimapEnabled }
-      })
+      editor.updateOptions(toMonacoEditorOptions(options))
+      editor.getModel()?.updateOptions({ tabSize: options.tabSize })
     })
     /** 当前 model 对应的文件路径：换 model 时靠它把 viewState 存回上一个文件 */
     currentPathRef.current = null
 
-    // 用户输入 → 上报；外部值变化不走这里，避免形成回环
+    // Monaco 撤销/自动闭合会先通知光标再通知内容；React 此时仍可能提交上次输入的 props。
+    // 上报前先标记本地版本，不能把自己报告过的旧值当成外部编辑再推入撤销栈。
     const subscription = editor.onDidChangeModelContent(() => {
-      onChangeRef.current(editor.getValue())
+      const path = currentPathRef.current
+      const model = editor.getModel()
+      if (!path || !model) return
+      const content = editor.getValue()
+      lastReportedModelValues.set(model, content)
+      onChangeRef.current(content)
     })
 
     // 换 model 前把上一个文件的光标/滚动位置存下来。
@@ -98,91 +114,88 @@ export function MonacoEditor({
     // 拿不到旧 model，所以路径与 viewState 都靠 ref 兜住。
     const modelSubscription = editor.onDidChangeModel(() => {
       const previous = currentPathRef.current
-      if (previous) rememberViewState(previous, editor.saveViewState())
+      if (previous) rememberGroupViewState(groupId, previous, editor.saveViewState())
       currentPathRef.current = null
     })
 
     // 光标位置 → 状态栏；Monaco 不报列号，需要单独订阅并自行取位置
     const cursorSubscription = editor.onDidChangeCursorPosition((event) => {
       const path = currentPathRef.current
-      if (path) setCursor(path, event.position.lineNumber, event.position.column)
+      if (path && getEditorGroups().focusedGroupId === groupId) setCursor(path, event.position.lineNumber, event.position.column)
     })
 
-    // 「添加到对话」右键动作：把当前选区作为 code 引用入队给聊天输入框。
-    // 对齐 wuzu-client pushCodeRef：只传路径与行号不传原文（AI 自己会读文件）。
-    // addAction 由 Monaco 接管右键菜单的渲染/定位/键盘，优于自建 ContextMenu。
+    // 添加时捕获缓冲区，避免未保存选区到了对话里变成旧磁盘内容。
     const addToChatAction = editor.addAction({
       id: 'aether.addSelectionToChat',
       label: '添加到对话',
+      precondition: 'editorHasSelection',
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyL],
       contextMenuGroupId: 'navigation',
       contextMenuOrder: 1,
-      run: (instance) => {
-        const selection = instance.getSelection()
+      run: (instance) => { addSelectionToChat(instance) }
+    })
+    const addFileToChatAction = editor.addAction({
+      id: 'aether.addFileToChat', label: '将当前文件添加到对话',
+      contextMenuGroupId: 'navigation', contextMenuOrder: 1.1,
+      run: () => {
         const path = currentPathRef.current
-        if (!selection || !path || selection.isEmpty()) return
-        const root = getWorkspaceState().root
-        const relative =
-          root && path.replace(/\\/g, '/').startsWith(root.replace(/\\/g, '/') + '/')
-            ? path.replace(/\\/g, '/').slice(root.replace(/\\/g, '/').length + 1)
-            : path
-        const base = paths.basename(relative)
-        pushPendingMention({
-          displayText: `${base}:${selection.startLineNumber}-${selection.endLineNumber}`,
-          source: 'code',
-          path: relative,
-          startLine: selection.startLineNumber,
-          endLine: selection.endLineNumber
-        })
+        if (path) addFilesToChat([{ path, kind: 'file' }])
       }
     })
 
     return () => {
+      gitCleanupRef.current?.()
+      gitCleanupRef.current = null
       unregisterActiveEditor()
+      groupFocusSubscription.dispose()
       unregisterActionBridges()
       unsubscribeDisplayOptions()
       subscription.dispose()
       modelSubscription.dispose()
       cursorSubscription.dispose()
       addToChatAction?.dispose()
+      addFileToChatAction.dispose()
       // 卸载前把当前文件的光标/滚动位置存下来。
       // 必须在这里做：DocumentSlot 以 filePath 为 key，切标签是**整体卸载重建**
       // （不是换 model），onDidChangeModel 不会触发，实例一销毁状态就没了 ——
       // 于是切回来时光标被重置到第 1 行。saveViewState 必须在 dispose 之前调用。
       const path = currentPathRef.current
-      if (path) rememberViewState(path, editor.saveViewState())
+      if (path) rememberGroupViewState(groupId, path, editor.saveViewState())
       editor.dispose()
       editorRef.current = null
     }
-  }, [])
+  }, [groupId])
 
   // 外观/强调色变化（含 'system' 模式的系统切换）→ 重新注册主题并应用到全部编辑器
   useEffect(() => watchTheme(refreshEditorTheme), [])
 
-  // 切换文件：换 model，并把磁盘内容灌进去（仅在 model 为空或与磁盘不一致时）
+  // 切换文件只读取当前文档快照；另一栏可能已编辑，渲染时捕获的 value 不一定仍然有效。
   useEffect(() => {
     const editor = editorRef.current
-    if (!editor) return
+    const document = getDocument(filePath)
+    if (!editor || !document || document.loading) return
 
+    const firstLoad = !peekModel(filePath)
     const model = acquireModel(filePath, languageForPath(filePath))
+    model.updateOptions({ tabSize: getEditorDisplayOptions().tabSize })
     if (editor.getModel() !== model) {
       // 先存旧文件的视图状态（onDidChangeModel 的监听也做了一次，幂等），
       // 再换 model —— 顺序反了会存成新 model 的状态
       const previous = currentPathRef.current
       if (previous && previous !== filePath) {
-        rememberViewState(previous, editor.saveViewState())
+        rememberGroupViewState(groupId, previous, editor.saveViewState())
       }
       editor.setModel(model)
       currentPathRef.current = filePath
     }
 
-    if (model.getValue() !== value) {
-      // 用 pushEditOperations 之外的最简做法；此处仅发生在「打开文件」或
-      // 「外部刷新」时，保留撤销栈不是关键，用 setValue 保证内容正确
-      model.setValue(value)
+    if (model.getValue() !== document.content) {
+      if (firstLoad) model.setValue(document.content)
+      else syncModelValue(model, document.content)
     }
 
     // 恢复该文件上次的光标与滚动位置；没有记录（首次打开）时保持 Monaco 默认
-    const saved = takeViewState(filePath)
+    const saved = takeGroupViewState(groupId, filePath)
     if (saved) {
       editor.restoreViewState(saved as Monaco.editor.ICodeEditorViewState)
       // 立刻启动延迟布局：Monaco 恢复 viewState 需在容器有尺寸后才生效，
@@ -190,25 +203,39 @@ export function MonacoEditor({
       editor.layout()
     }
 
-    editor.focus()
-    const position = editor.getPosition()
-    setCursor(filePath, position?.lineNumber ?? 1, position?.column ?? 1)
-    // value 只在 filePath 变化时需要对齐；后续变化由用户输入驱动
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filePath])
+    if (getEditorGroups().focusedGroupId === groupId) {
+      editor.focus()
+      const position = editor.getPosition()
+      setCursor(filePath, position?.lineNumber ?? 1, position?.column ?? 1)
+    }
+  }, [filePath, groupId])
 
-  // 外部内容变化（例如脏数据回滚）时同步
+  useEffect(() => { editorRef.current?.updateOptions({ readOnly }) }, [readOnly])
+
+  useEffect(() => {
+    const editor = editorRef.current
+    if (!editor || readOnly) return
+    const dispose = registerSourceGitFeatures(editor, filePath)
+    gitCleanupRef.current = dispose
+    return () => {
+      dispose()
+      if (gitCleanupRef.current === dispose) gitCleanupRef.current = null
+    }
+  }, [filePath, groupId, readOnly])
+
+  // 只有仍与store一致且非自身回声的外部值可以同步；两栏共享模型时也不能让落后的一栏回灌旧稿。
   useEffect(() => {
     const editor = editorRef.current
     const model = editor?.getModel()
-    if (!model) return
-    if (model.getValue() !== value) model.setValue(value)
-  }, [value])
+    if (!model || currentPathRef.current !== filePath || getDocument(filePath)?.content !== value) return
+    if (lastReportedModelValues.get(model) === value) return
+    if (model.getValue() !== value) syncModelValue(model, value)
+  }, [value, filePath])
 
   // 跳行：revealLineInCenter 会自行收敛到合法范围，越界安全
   useEffect(() => {
     const editor = editorRef.current
-    if (!editor || !reveal || reveal.line < 1) return
+    if (!editor || !reveal || reveal.line < 1 || getEditorGroups().focusedGroupId !== groupId) return
     // Monaco 刚创建时还没有完成首次布局（automaticLayout 异步驱动），
     // 立即 reveal 会拿到错误的滚动位置停在某一行 —— 延后一拍并强制布局后再定位。
     // 不用 requestAnimationFrame：窗口被遮挡/未合成时 rAF 会停摆，setTimeout 始终可靠
@@ -234,7 +261,15 @@ export function MonacoEditor({
       editor.focus()
     }, 0)
     return () => clearTimeout(timer)
-  }, [reveal])
+  }, [reveal, groupId])
 
   return <div className="monaco-host" ref={containerRef} />
+}
+
+/** 同步外部版本也是可撤销的编辑；两组共享模型，第二个宿主值相同时自然跳过。 */
+function syncModelValue(model: Monaco.editor.ITextModel, value: string): void {
+  if (model.getValue() === value) return
+  model.pushStackElement()
+  model.pushEditOperations([], [{ range: model.getFullModelRange(), text: value }], () => null)
+  model.pushStackElement()
 }

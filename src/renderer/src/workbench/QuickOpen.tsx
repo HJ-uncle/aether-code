@@ -79,6 +79,8 @@ function isOtherPaletteOpen(): boolean {
 
 export function QuickOpen(): JSX.Element | null {
   const [open, setOpen] = useState(false)
+  const [generation, setGeneration] = useState(0)
+  const generationRef = useRef(0)
   // 主动让位（切去了命令面板）：这次关闭不当作"用户关掉了面板"
   const closedRef = useRef(false)
 
@@ -89,6 +91,9 @@ export function QuickOpen(): JSX.Element | null {
       category: '文件',
       run: () => {
         closedRef.current = false
+        // A second Ctrl+P can arrive before the previous overlay finishes fading out.
+        // Remount it so its query, leaving state and close timer belong to one opening.
+        setGeneration(++generationRef.current)
         setOpen(true)
       }
     })
@@ -102,8 +107,10 @@ export function QuickOpen(): JSX.Element | null {
   if (!open) return null
   return (
     <QuickOverlay
+      key={generation}
       closedRef={closedRef}
       onClose={(lazy) => {
+        if (generationRef.current !== generation) return
         closedRef.current = lazy ?? false
         setOpen(false)
       }}
@@ -127,6 +134,9 @@ function QuickOverlay({
   const [leaving, setLeaving] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const closeTimer = useRef<number | undefined>(undefined)
+
+  useEffect(() => () => window.clearTimeout(closeTimer.current), [])
 
   const parsed = parseQuery(query)
 
@@ -213,9 +223,11 @@ function QuickOverlay({
     closedRef.current = true
     if (lazy) {
       setLeaving(true)
-      window.setTimeout(() => onClose(true), LAZY_START_MS)
+      window.clearTimeout(closeTimer.current)
+      closeTimer.current = window.setTimeout(() => onClose(true), LAZY_START_MS)
       return
     }
+    window.clearTimeout(closeTimer.current)
     onClose(false)
   }
 

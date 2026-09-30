@@ -25,6 +25,7 @@ import { uploadRemoteAttachment } from './engine/upload-remote-attachment'
 import { engineHost } from './engine/host'
 import { onEngineLog } from './engine/logger'
 import * as fileService from './fs/file-service'
+import { watchDocuments } from './fs/document-watch'
 import * as gitService from './git/git-service'
 import * as lspServer from './lsp/server'
 import {
@@ -203,6 +204,26 @@ export function registerIpcHandlers(): void {
   )
   ipcMain.handle(IPC.invoke.fsTrash, (_event, target: string) => fileService.trashPath(target))
   ipcMain.handle(IPC.invoke.fsStat, (_event, target: string) => fileService.statPath(target))
+  ipcMain.handle(IPC.invoke.fsReveal, (_event, target: string) => fileService.revealPath(target))
+  const documentWatchers = new Map<number, () => void>()
+  const watcherOwners = new Set<number>()
+  ipcMain.handle(IPC.invoke.fsWatchDocuments, (event, paths: string[]) => {
+    if (!Array.isArray(paths) || paths.some((path) => typeof path !== 'string')) throw new Error('文件监听路径无效')
+    const sender = event.sender
+    const dispose = watchDocuments(paths, (changed) => {
+      if (!sender.isDestroyed()) sender.send(IPC.event.fsDocumentsChanged, changed)
+    })
+    documentWatchers.get(sender.id)?.()
+    documentWatchers.set(sender.id, dispose)
+    if (!watcherOwners.has(sender.id)) {
+      watcherOwners.add(sender.id)
+      sender.once('destroyed', () => {
+        documentWatchers.get(sender.id)?.()
+        documentWatchers.delete(sender.id)
+        watcherOwners.delete(sender.id)
+      })
+    }
+  })
   ipcMain.handle(IPC.invoke.fsListAll, (_event, root: string) => fileService.listAllFiles(root))
   ipcMain.handle(IPC.invoke.fsCopyIntoWorkspace, (_event, input: CopyIntoWorkspaceInput) =>
     fileService.copyIntoWorkspace(input)

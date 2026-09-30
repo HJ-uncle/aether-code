@@ -13,6 +13,7 @@
  */
 import { useSyncExternalStore, type JSX } from 'react'
 import { Dialog } from './Dialog'
+import { toast } from '@renderer/core/toast'
 
 export interface ConfirmOptions {
   title: string
@@ -31,11 +32,14 @@ export interface ConfirmOptions {
 
 interface ConfirmRequest extends ConfirmOptions {
   resolve: (ok: boolean) => void
+  id: number
+  busy: boolean
 }
 
 // ---------- 极简单例 store：同时只会有一个确认弹窗 ----------
 
 let current: ConfirmRequest | null = null
+let nextRequestId = 0
 const listeners = new Set<() => void>()
 
 function notify(): void {
@@ -59,12 +63,13 @@ function getSnapshot(): ConfirmRequest | null {
 export function confirmDialog(options: ConfirmOptions): Promise<boolean> {
   if (current) return Promise.resolve(false)
   return new Promise<boolean>((resolve) => {
-    current = { ...options, resolve }
+    current = { ...options, resolve, id: ++nextRequestId, busy: false }
     notify()
   })
 }
 
-function settle(ok: boolean): void {
+function settle(ok: boolean, id: number): void {
+  if (current?.id !== id) return
   const req = current
   current = null
   notify()
@@ -79,27 +84,37 @@ export function ConfirmDialogHost(): JSX.Element | null {
     <Dialog
       title={req.title}
       width={440}
-      onClose={() => settle(false)}
+      onClose={() => { if (!req.busy) settle(false, req.id) }}
       footer={
         <>
-          <button type="button" className="btn" onClick={() => settle(false)}>
+          <button type="button" className="btn" disabled={req.busy} onClick={() => settle(false, req.id)}>
             取消
           </button>
           {req.tertiary ? (
             <button
               type="button"
               className="btn"
+              disabled={req.busy}
               onClick={() => {
-                void Promise.resolve(req.tertiary?.run() ?? false).then((ok) => settle(ok))
+                if (current?.id !== req.id || current.busy) return
+                current = { ...current, busy: true }
+                notify()
+                void Promise.resolve().then(() => req.tertiary?.run() ?? false)
+                  .then((ok) => settle(ok, req.id))
+                  .catch((error: unknown) => {
+                    toast.error(error instanceof Error ? error.message : '操作失败，已保留当前内容')
+                    settle(false, req.id)
+                  })
               }}
             >
-              {req.tertiary.text}
+              {req.busy ? '处理中…' : req.tertiary.text}
             </button>
           ) : null}
           <button
             type="button"
             className={`btn btn--primary${req.danger ? ' btn--danger' : ''}`}
-            onClick={() => settle(true)}
+            disabled={req.busy}
+            onClick={() => settle(true, req.id)}
           >
             {req.confirmText ?? '确定'}
           </button>

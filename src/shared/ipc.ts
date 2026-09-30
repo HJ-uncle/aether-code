@@ -37,6 +37,8 @@ export const IPC = {
     fsCopy: 'fs:copy',
     fsTrash: 'fs:trash',
     fsStat: 'fs:stat',
+    fsReveal: 'fs:reveal',
+    fsWatchDocuments: 'fs:watch-documents',
     /** 递归列出工作区全部文件（快速打开 Ctrl+P 用，跳过依赖/构建目录） */
     fsListAll: 'fs:list-all',
     /** 复制本地文件到工作区（聊天附件用：File 对象出于安全拿不到真实路径，只能走字节流） */
@@ -147,6 +149,7 @@ export const IPC = {
   },
   /** 主进程 → 渲染进程（send） */
   event: {
+    fsDocumentsChanged: 'fs:documents-changed',
     engineSnapshot: 'engine:snapshot',
     engineLog: 'engine:log',
     streamEvent: 'engine:stream:event',
@@ -423,7 +426,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   thinkingMode: 'high',
   lastFolder: '',
   appearance: 'system',
-  accent: 'purple',
+  accent: 'blue',
   filesExclude: { ...DEFAULT_FILES_EXCLUDE },
   searchExclude: { ...DEFAULT_SEARCH_EXCLUDE }
 }

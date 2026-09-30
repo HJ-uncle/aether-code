@@ -1,4 +1,5 @@
 import type { Mention } from './MentionInput'
+import { showChatPanel } from '@renderer/core/platform/layout-state'
 
 // ── 终端/编辑器「添加到对话」桥 ───────────────────────────────────────────────
 // 终端选中、编辑器选中产生的引用，需要先暂存再交给 ChatView 输入框消费——
@@ -13,7 +14,12 @@ const listeners = new Set<() => void>()
 
 /** 入队一条待插入输入框的引用（终端选中文本 / 编辑器选区） */
 export function pushPendingMention(mention: Mention): void {
-  pending = [...pending, mention]
+  pushPendingMentions([mention])
+}
+
+export function pushPendingMentions(mentions: Mention[]): void {
+  showChatPanel()
+  pending = [...pending, ...mentions]
   for (const listener of listeners) listener()
 }
 

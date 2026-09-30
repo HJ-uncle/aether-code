@@ -1253,21 +1253,27 @@
   display: flex;
   align-items: center;
   flex: 0 0 auto;
-  height: 34px;
-  background: var(--bg-surface);
-  border-bottom: 1px solid var(--border);
+  height: 36px;
+  padding: 0 4px;
+  gap: 2px;
+  background: var(--editor-chrome-deep);
+  border-bottom: 1px solid var(--editor-border);
   overflow-x: auto;
 }
 
 /* 标签现在是「标签体 + 关闭按钮」的组合，不再是单个 button */
 .editor-tab {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   height: 100%;
-  padding: 0 8px 0 12px;
+  min-width: 96px;
+  max-width: 220px;
+  padding: 0 6px 0 10px;
   color: var(--fg-muted);
-  border-right: 1px solid var(--border);
+  border: 1px solid transparent;
+  border-radius: var(--radius) var(--radius) 0 0;
   white-space: nowrap;
   cursor: pointer;
   user-select: none;
@@ -1275,19 +1281,35 @@
 
 .editor-tab:hover {
   color: var(--fg-strong);
-  background: var(--bg-hover);
+  background: var(--editor-tab-hover);
 }
 
 .editor-tab.is-active {
-  color: var(--fg-strong);
-  background: var(--bg-app);
-  box-shadow: inset 0 2px 0 var(--accent);
+  color: var(--editor-active-fg);
+  background: var(--editor-tab-active);
+  border-color: var(--editor-border);
+  box-shadow: inset 0 2px 0 var(--editor-active-border), 0 -1px 0 var(--editor-tab-active);
 }
 
 .editor-tab__label {
   display: flex;
   align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
   gap: 3px;
+}
+
+.editor-tab > .tree-row__glyph,
+.editor-tab__view-icon {
+  flex: 0 0 auto;
+  opacity: 0.92;
+}
+
+.editor-tab.is-active > .tree-row__glyph,
+.editor-tab.is-active .editor-tab__view-icon {
+  opacity: 1;
 }
 
 .editor-tab__dirty {
@@ -1295,6 +1317,25 @@
   font-size: 10px;
   line-height: 1;
 }
+
+.editor-tab:hover .editor-tab__dirty { opacity: 0; }
+
+.editor-tab__status {
+  flex: 0 0 auto;
+  padding: 1px 3px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.editor-tab__status--modified,
+.editor-tab__status--renamed,
+.editor-tab__status--copied { color: var(--git-modified); }
+.editor-tab__status--added,
+.editor-tab__status--untracked { color: var(--git-added); }
+.editor-tab__status--deleted,
+.editor-tab__status--conflict { color: var(--git-deleted); }
 
 .editor-tab__close {
   display: flex;
@@ -1308,7 +1349,8 @@
 }
 
 .editor-tab:hover .editor-tab__close,
-.editor-tab.is-active .editor-tab__close {
+.editor-tab.is-active .editor-tab__close,
+.editor-tab:focus-within .editor-tab__close {
   opacity: 1;
 }
 
@@ -6288,10 +6330,18 @@ select.field__input {
 .monaco-host {
   flex: 1;
   min-height: 0;
-  /* 与 Monaco 主题的画布色（--bg-app）一致，避免主题加载前的底色闪变 */
-  background: var(--bg-app);
+  /* 与 Monaco 主题的画布色一致，避免主题加载前的底色闪变 */
+  background: var(--editor-canvas);
   /* Monaco 自己管理内部滚动，容器不能有额外 padding */
   overflow: hidden;
+}
+
+/* 小地图左缘分隔阴影。Monaco 0.55→0.56 把这里的 box-shadow 从
+   var(--vscode-scrollbar-shadow) 改成了 var(--vscode-shadow-md)，而 0.56 的
+   standalone 主题根本没有注册 shadow-md 这个色 id，整条声明失效 —— 深色下
+   小地图与代码区糊成一片。这里按 0.55 的写法补回来（沿内沿投影，不额外占宽）。 */
+.monaco-editor .minimap-shadow-visible {
+  box-shadow: inset -6px 0 6px -6px rgba(0, 0, 0, 0.5);
 }
 
 .doc-view__banner {
@@ -6308,10 +6358,10 @@ select.field__input {
   align-items: center;
   gap: 14px;
   flex: 0 0 auto;
-  height: 22px;
+  height: 24px;
   padding: 0 12px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-surface);
+  border-top: 1px solid var(--editor-border);
+  background: var(--editor-chrome-deep);
   color: var(--fg-faint);
   font-size: 11px;
 }

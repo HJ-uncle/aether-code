@@ -1,6 +1,6 @@
 import { acquireModel, languageForPath, monaco } from './monaco-setup'
 import { activateDocument } from './editor-activation'
-import { getDocument, onEditorChanged, openFile, resolveDocumentPath, setDocumentContent } from './editor-store'
+import { getDocument, isDirty, onEditorChanged, openFile, resolveDocumentPath, setDocumentContent } from './editor-store'
 import { fileIdentity } from './file-identity'
 
 const pendingModels = new Map<string, Promise<monaco.editor.ITextModel>>()
@@ -13,16 +13,38 @@ function documentPath(resource: monaco.Uri): string {
 
 /** Keep background models synchronized when no mounted React editor can relay their changes. */
 function synchronizeDocument(model: monaco.editor.ITextModel, filePath: string): void {
+  if (synchronizedModels.has(model)) return
+  let initialized = model.getVersionId() > 1 || model.getValueLength() > 0
+  let synchronizing = false
+  let lastStoreContent: string | undefined
   // Aether can reload an inactive document after a search replacement. The store
   // is authoritative for that change and also retains the user's unsaved buffer.
   const updateModel = (): void => {
+    if (synchronizing || model.isDisposed()) return
     const doc = getDocument(filePath)
-    if (doc && !doc.loading && model.getValue() !== doc.content) model.setValue(doc.content)
+    if (!doc || doc.loading) return
+    // Cursor events can notify the store during Monaco's undo before its content
+    // event reaches us. Only an actual document-content change may write back.
+    if (doc.content === lastStoreContent) return
+    lastStoreContent = doc.content
+    if (model.getValue() !== doc.content) {
+      synchronizing = true
+      try {
+        if (!initialized) model.setValue(doc.content)
+        else {
+          model.pushStackElement()
+          model.pushEditOperations([], [{ range: model.getFullModelRange(), text: doc.content }], () => null)
+          model.pushStackElement()
+        }
+      } finally { synchronizing = false }
+    }
+    initialized = true
   }
   updateModel()
-  if (synchronizedModels.has(model)) return
   synchronizedModels.add(model)
-  const changes = model.onDidChangeContent(() => setDocumentContent(filePath, model.getValue()))
+  const changes = model.onDidChangeContent(() => {
+    if (!synchronizing) setDocumentContent(filePath, model.getValue())
+  })
   const stopStore = onEditorChanged(updateModel)
   const disposal = model.onWillDispose(() => { changes.dispose(); stopStore(); disposal.dispose() })
 }
@@ -37,7 +59,8 @@ export function ensureWorkspaceModel(resource: monaco.Uri): Promise<monaco.edito
     await openFile(filePath)
     const doc = getDocument(filePath)
     if (!doc || doc.loading) throw new Error(`文件尚未加载完成：${filePath}`)
-    if (doc.error) throw new Error(doc.error)
+    // 保存失败不妨碍比较用户保留下来的完整缓冲区。
+    if (doc.error && !isDirty(doc)) throw new Error(doc.error)
     if (doc.isBinary || doc.truncated || doc.tooLarge) throw new Error(`不能重命名二进制或未完整加载的文件：${filePath}`)
 
     // URI aliases must reuse the existing buffer instead of creating a second

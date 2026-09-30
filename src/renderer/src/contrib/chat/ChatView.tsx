@@ -205,7 +205,8 @@ function AttachmentChip({
   )
 }
 import { MentionInput, type Mention, type MentionInputHandle } from './MentionInput'
-import { loadChatDraft, saveChatDraft } from './draft-store'
+import { loadChatDraftState, saveChatDraft } from './draft-store'
+import { buildMentionMessage, preserveMentions } from './mention-context'
 import { FileRefPalette } from './FileRefPalette'
 import { consumePendingMentions, subscribePendingMentions } from './pending-mentions'
 
@@ -295,7 +296,11 @@ export function ChatView(): JSX.Element {
       if (sourceEpoch !== getEngineSource()) return
       const polished = res.text.trim()
       if (polished && polished !== text) {
-        inputRef.current?.setText(polished)
+        const draft = preserveMentions(polished, mentionsRef.current)
+        mentionsRef.current = draft.mentions
+        inputRef.current?.setDraft(draft.text, draft.mentions)
+        setInput(draft.text)
+        scheduleDraftSave(draft.text)
         inputRef.current?.focus()
       } else {
         setToast('润色结果与原文一致')
@@ -307,20 +312,6 @@ export function ChatView(): JSX.Element {
       if (sourceEpoch === getEngineSource()) setPolishing(false)
     }
   }
-
-  // ── 终端/编辑器「添加到对话」：消费 pending 队列 ──────────────────────────
-  // TerminalView / MonacoEditor 通过 pushPendingMention 入队，这里订阅后
-  // 一次性取出插入为 mention chip（挂载时也消费一次，覆盖入队早于挂载的情况）。
-  useEffect(() => {
-    const drain = (): void => {
-      const queue = consumePendingMentions()
-      if (remoteReadOnly || sourceEpoch !== getEngineSource() || queue.length === 0) return
-      for (const mention of queue) inputRef.current?.insertMention(mention)
-      inputRef.current?.focus()
-    }
-    drain()
-    return subscribePendingMentions(drain)
-  }, [remoteReadOnly, sourceEpoch])
 
   const clearAttachments = attach.clear
   const setAttachmentDragging = attach.setDragging
@@ -450,26 +441,49 @@ export function ChatView(): JSX.Element {
   // （避免会话切换瞬间把旧会话文本写进新会话槽位）。
   const draftSessionRef = useRef('')
   const draftTimerRef = useRef(0)
+  const pendingDraftSaveRef = useRef<(() => void) | null>(null)
   useEffect(() => {
     window.clearTimeout(draftTimerRef.current)
-    if (!ready || !sessionId || draftSessionRef.current === sourceSessionKey) return
+    pendingDraftSaveRef.current?.()
+    pendingDraftSaveRef.current = null
+    if (!sessionId || draftSessionRef.current === sourceSessionKey) return
     draftSessionRef.current = sourceSessionKey
-    const draft = loadChatDraft(sessionId, storageSource)
-    // 恢复的是序列化文本（@路径 token），MentionInput 按 value 驱动重建 chip；
-    // mentions 列表无法复原，发送时由序列化兜底
-    mentionsRef.current = []
-    setInput(draft)
-  }, [ready, sessionId, sourceSessionKey, storageSource])
-  useEffect(() => () => window.clearTimeout(draftTimerRef.current), [])
+    const draft = loadChatDraftState(sessionId, storageSource)
+    mentionsRef.current = draft.mentions
+    inputRef.current?.setDraft(draft.text, draft.mentions)
+    setInput(draft.text)
+  }, [sessionId, sourceSessionKey, storageSource])
+  useEffect(() => () => {
+    window.clearTimeout(draftTimerRef.current)
+    pendingDraftSaveRef.current?.()
+  }, [])
+
+  // 先恢复草稿再插入新引用，避免打开隐藏的对话面板时被恢复 effect 覆盖。
+  useEffect(() => {
+    const drain = (): void => {
+      if (!sessionId || remoteReadOnly || sourceEpoch !== getEngineSource() || !inputRef.current) return
+      const queue = consumePendingMentions()
+      for (const mention of queue) inputRef.current.insertMention(mention)
+      if (queue.length) inputRef.current.focus()
+    }
+    drain()
+    return subscribePendingMentions(drain)
+  }, [sessionId, remoteReadOnly, sourceEpoch])
 
   /** 用户编辑后防抖保存草稿（仅 onChange 路径，程序化 setInput 由调用方自行保存） */
   const scheduleDraftSave = useCallback(
     (text: string) => {
       window.clearTimeout(draftTimerRef.current)
-      if (!ready || !sessionId || sourceEpoch !== getEngineSource()) return
-      draftTimerRef.current = window.setTimeout(() => saveChatDraft(sessionId, text, storageSource), 400)
+      if (!sessionId || sourceEpoch !== getEngineSource()) return
+      const mentions = [...mentionsRef.current]
+      const persist = (): void => saveChatDraft(sessionId, text, storageSource, mentions)
+      pendingDraftSaveRef.current = persist
+      draftTimerRef.current = window.setTimeout(() => {
+        pendingDraftSaveRef.current = null
+        persist()
+      }, 400)
     },
-    [ready, sessionId, sourceEpoch, storageSource]
+    [sessionId, sourceEpoch, storageSource]
   )
 
   // ── 吸底跟随（对齐 wuzu-client CliChatView）──
@@ -623,12 +637,14 @@ export function ChatView(): JSX.Element {
     const files = remoteReadOnly ? [] : attach.attachments
     if ((!text && files.length === 0) || (!remoteReadOnly && attach.uploading) || !canExecute || !sessionId || sourceEpoch !== getEngineSource()) return
     // 流式进行中不再拦截：send 内部会入队，当前流结束后自动按序发出
+    const message = buildMentionMessage(text, remoteReadOnly ? [] : mentionsRef.current)
     setInput('')
     mentionsRef.current = []
     inputRef.current?.clear()
     attach.clear()
     // 发送成功后该会话草稿即作废
     window.clearTimeout(draftTimerRef.current)
+    pendingDraftSaveRef.current = null
     saveChatDraft(sessionId, '', storageSource)
     // 占位条目（若该会话是本次新建的）刷新时间戳，继续待在列表顶部；
     // 引擎落库后由列表侧的 prune 让它退场
@@ -636,7 +652,7 @@ export function ChatView(): JSX.Element {
     // 发送是用户主动发起的「看最新输出」动作：无条件吸底（覆盖任何此前上滚导致的非跟随态），
     // 否则 80ms 流式节流窗口内 followBottom 已是 false 时整轮都不再跟随
     resumeFollowBottom()
-    void send(text, {
+    void send(message, {
       ...buildSendOptions(),
       attachments: files.length > 0 ? files : undefined
     })
@@ -1237,9 +1253,9 @@ export function ChatView(): JSX.Element {
           <MentionInput
             ref={inputRef}
             value={input}
-            disabled={!canExecute}
+            disabled={!settingsLoaded}
             placeholder={
-              ready && remoteReadOnly ? '输入远端任务，Enter 发送，Shift+Enter 换行' : ready ? '输入消息，Enter 发送，Shift+Enter 换行；@ 引用文件，可拖入或粘贴文件' : '引擎未就绪…'
+              ready && remoteReadOnly ? '输入远端任务，Enter 发送，Shift+Enter 换行' : ready ? '输入消息，Enter 发送，Shift+Enter 换行；@ 引用文件，可拖入或粘贴文件' : '可先准备问题和代码引用，引擎就绪后发送'
             }
             onChange={(text, mentions) => {
               mentionsRef.current = mentions

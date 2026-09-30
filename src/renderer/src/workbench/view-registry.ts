@@ -55,6 +55,14 @@ export function registerViews(registrations: ViewRegistration[]): () => void {
   return () => disposers.forEach((dispose) => dispose())
 }
 
+/** 更新动态视图元数据（例如 Git 差异标签需要跟随当前文件名变化）。 */
+export function updateView(id: string, patch: Partial<Omit<ViewRegistration, 'id' | 'component'>>): void {
+  const current = views.get(id)
+  if (!current) return
+  views.set(id, { ...current, ...patch })
+  notify()
+}
+
 export function getViews(location: ViewLocation): ViewRegistration[] {
   let list = cache.get(location)
   if (!list) {
@@ -84,7 +92,7 @@ export function onViewsChanged(listener: () => void): () => void {
  * workbench 层只应认识「ID + 组件」这种元数据，不该依赖 contrib 里的具体功能，
  * 否则布局代码会被功能拖住，新增/替换编辑器实现都要改 workbench。
  */
-export type DocumentRenderer = ComponentType<{ filePath: string }>
+export type DocumentRenderer = ComponentType<{ filePath: string; groupId?: string }>
 
 let documentRenderer: DocumentRenderer | null = null
 

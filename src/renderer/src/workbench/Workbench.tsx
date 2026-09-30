@@ -1,4 +1,6 @@
-import type { JSX } from 'react'
+import { useEffect, type JSX } from 'react'
+import { watchOpenDocuments } from '@renderer/core/editor/document-sync'
+import { startEditorRecovery } from '@renderer/core/editor/editor-recovery'
 import { useApp } from '@renderer/core/app-context'
 import { setLayout, LAYOUT_LIMITS } from '@renderer/core/platform/layout-state'
 import { useTheme } from '@renderer/core/useTheme'
@@ -31,6 +33,8 @@ import { useLayout } from './useLayout'
  * 只负责摆放区域与分隔条，区域内部实现全部由各自组件/注册表决定。
  */
 export function Workbench(): JSX.Element {
+  useEffect(watchOpenDocuments, [])
+  useEffect(startEditorRecovery, [])
   const layout = useLayout()
   const { settings } = useApp()
 

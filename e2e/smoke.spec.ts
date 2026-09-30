@@ -5,7 +5,7 @@ import {
   type ElectronApplication,
   type Page
 } from '@playwright/test'
-import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -637,34 +637,57 @@ test('资源管理器：缩进参考线与排序/收起全部入口可用', asyn
   await expect(topLevel).toHaveAttribute('aria-level', '4')
   await expect(topLevel.locator('.explorer__indent')).toHaveCount(3)
 
-  // 排序切换：只收集夹具目录下的同层小集合。大目录由后面的虚拟滚动用例
-  // 覆盖；这里不能把当前 viewport 中的虚拟行 DOM 当成完整树来比较。
-  await page.locator('.explorer__tree').evaluate((el) => {
-    el.scrollTop = 0
-  })
-  const directChildPaths = async (): Promise<string[]> =>
-    page.locator('.tree-row').evaluateAll(
-      (rows, root) =>
-        rows
-          .filter(
-            (row) => {
-              const normalizedRoot = root.replace(/\\/g, '/')
-              const path = row.getAttribute('data-path')?.replace(/\\/g, '/')
-              if (!path || path === normalizedRoot) return false
-              const parent = path.slice(0, path.lastIndexOf('/'))
-              return parent === normalizedRoot
+  // .e2e-tmp 的其他文件数量会变化，排序后夹具末行可能被虚拟化移出 DOM。
+  // 分段滚过完整子树再比较顺序，既不依赖窗口高度，也不把粘性父级克隆算进去。
+  const directChildPaths = async (): Promise<string[]> => page.locator('.explorer__tree').evaluate(
+    async (tree, root) => {
+      const originalScrollTop = tree.scrollTop
+      const normalizedRoot = root.replace(/\\/g, '/')
+      const children = new Map<string, number>()
+      let enteredSubtree = false
+      const nextRender = async (): Promise<void> => {
+        // scroll 触发 React 更新虚拟切片；等下一次绘制，而不是猜一个固定延迟。
+        await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())))
+      }
+      try {
+        tree.scrollTop = 0
+        await nextRender()
+        while (true) {
+          let passedSubtree = false
+          for (const row of tree.querySelectorAll('.explorer__rows .tree-row')) {
+            const rawPath = row.getAttribute('data-path')
+            const path = rawPath?.replace(/\\/g, '/')
+            if (!rawPath || !path) continue
+            if (path === normalizedRoot || path.startsWith(normalizedRoot + '/')) {
+              enteredSubtree = true
+              if (path.slice(0, path.lastIndexOf('/')) === normalizedRoot) {
+                children.set(rawPath, row.getBoundingClientRect().top - tree.getBoundingClientRect().top + tree.scrollTop)
+              }
+            } else if (enteredSubtree) {
+              // 滚动重叠区也可能包含子树前面的行，只有已收过的直属子项之后才是边界。
+              const lastChildTop = Math.max(-Infinity, ...children.values())
+              const rowTop = row.getBoundingClientRect().top - tree.getBoundingClientRect().top + tree.scrollTop
+              if (children.size && rowTop > lastChildTop) { passedSubtree = true; break }
             }
-          )
-          .map((row) => row.getAttribute('data-path'))
-          .filter((path): path is string => Boolean(path)),
-      FIXTURE_DIR
-    )
+          }
+          const bottom = Math.max(0, tree.scrollHeight - tree.clientHeight)
+          if (passedSubtree || tree.scrollTop >= bottom) break
+          const previous = tree.scrollTop
+          tree.scrollTop = Math.min(bottom, previous + Math.max(1, tree.clientHeight / 2))
+          await nextRender()
+          if (tree.scrollTop <= previous) break
+        }
+        return [...children.entries()].sort((a, b) => a[1] - b[1]).map(([path]) => path)
+      } finally {
+        tree.scrollTop = originalScrollTop
+        await nextRender()
+      }
+    }, FIXTURE_DIR
+  )
   const sortBtn = page.locator('.explorer__btn[aria-label="切换排序方式"]')
   const before = await directChildPaths()
-  // fixture.bin / replace.txt / move-a.txt / move-b.txt / sub / hover /
-  // tab-a.txt / tab-b.txt / big，以及通常由前面的新建文件用例留下的
-  // created.txt。虚拟滚动可能暂时不挂载最后一行，因此至少应有 9 个稳定条目。
-  expect(before.length).toBeGreaterThanOrEqual(9)
+  const diskChildren = readdirSync(FIXTURE_DIR).map((name) => join(FIXTURE_DIR, name))
+  expect(new Set(before)).toEqual(new Set(diskChildren))
   await sortBtn.click()
   const expectedNameOrder = [...before].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
   await expect.poll(() => directChildPaths(), { timeout: 10_000 }).toEqual(expectedNameOrder)
@@ -1353,28 +1376,60 @@ test('资源管理器：git 徽章只在仓库内出现且与仓库信息一致'
     return
   }
 
-  // 是仓库：徽章字符必须落在 git 的状态字母表内，
-  // 且每个徽章都要带悬浮说明（这就是"点开前先知道改了什么"的实际载体）
-  const badges = page.locator('.tree-row__git')
-  await expect.poll(async () => badges.count(), { timeout: 30_000 }).toBeGreaterThan(0)
+  // 是仓库时，徽章只挂在当前虚拟窗口的行上；先把树分段滚完再收集，
+  // 否则前一个测试留下的滚动位置会把带改动的行留在 DOM 之外。
+  const snapshot = await page.locator('.explorer__tree').evaluate(async (tree) => {
+    const originalScrollTop = tree.scrollTop
+    const found = new Map<string, { text: string; title: string }>()
+    const nextRender = async (): Promise<void> => {
+      await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())))
+    }
+    try {
+      tree.scrollTop = 0
+      await nextRender()
+      while (true) {
+        for (const row of tree.querySelectorAll('.explorer__rows .tree-row')) {
+          const path = row.getAttribute('data-path')
+          const badge = row.querySelector('.tree-row__git')
+          if (path && badge) found.set(path, {
+            text: badge.textContent ?? '',
+            title: badge.getAttribute('title') ?? ''
+          })
+        }
+        const bottom = Math.max(0, tree.scrollHeight - tree.clientHeight)
+        if (tree.scrollTop >= bottom) break
+        const previous = tree.scrollTop
+        tree.scrollTop = Math.min(bottom, previous + Math.max(1, tree.clientHeight / 2))
+        await nextRender()
+        if (tree.scrollTop <= previous) break
+      }
+      return [...found.entries()].map(([path, badge]) => ({ path, ...badge }))
+    } finally {
+      tree.scrollTop = originalScrollTop
+      await nextRender()
+    }
+  })
+  const status = await page.evaluate((cwd) => window.aether.git.status(cwd), WORKSPACE_DIR)
+  expect(status.success).toBe(true)
+  expect(status.isRepo).toBe(true)
+  const changedPaths = (status.files ?? []).map((file) => join(WORKSPACE_DIR, file.path).replace(/\\/g, '/'))
+  if (changedPaths.length === 0) {
+    expect(snapshot).toEqual([])
+    return
+  }
+  expect(snapshot.length).toBeGreaterThan(0)
 
-  const snapshot = await badges.evaluateAll((nodes) =>
-    nodes.map((node) => ({
-      text: node.textContent ?? '',
-      title: node.getAttribute('title') ?? ''
-    }))
-  )
+  // 每个徽章字符必须落在 git 的状态字母表内，且带悬浮说明。
   for (const badge of snapshot) {
     expect(['M', 'A', 'D', 'R', 'C', 'U', '·', '●']).toContain(badge.text.trim())
     expect(badge.title.length).toBeGreaterThan(0)
+    const path = badge.path.replace(/\\/g, '/')
+    expect(changedPaths.some((changed) => changed === path || changed.startsWith(path + '/'))).toBe(true)
   }
 
   // 反过来：带徽章的行必须是真实存在的文件行，不是凭空多插的节点
-  const withBadge = await page
-    .locator('.tree-row:has(.tree-row__git)')
-    .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-path')))
-  for (const path of withBadge) {
-    expect(existsSync(path!)).toBe(true)
+  for (const { path } of snapshot) {
+    expect(existsSync(path)).toBe(true)
   }
 })
 

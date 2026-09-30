@@ -136,6 +136,13 @@ const api = {
       ipcRenderer.invoke(IPC.invoke.fsCopy, src, dest),
     trash: (path: string): Promise<void> => ipcRenderer.invoke(IPC.invoke.fsTrash, path),
     stat: (path: string): Promise<FsStat> => ipcRenderer.invoke(IPC.invoke.fsStat, path),
+    reveal: (path: string): Promise<void> => ipcRenderer.invoke(IPC.invoke.fsReveal, path),
+    watchDocuments: (paths: string[]): Promise<void> => ipcRenderer.invoke(IPC.invoke.fsWatchDocuments, paths),
+    onDocumentsChanged: (listener: (paths: string[]) => void): (() => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, paths: string[]): void => listener(paths)
+      ipcRenderer.on(IPC.event.fsDocumentsChanged, handler)
+      return () => ipcRenderer.removeListener(IPC.event.fsDocumentsChanged, handler)
+    },
     listAll: (root: string): Promise<string[]> => ipcRenderer.invoke(IPC.invoke.fsListAll, root),
     copyIntoWorkspace: (input: CopyIntoWorkspaceInput): Promise<CopyIntoWorkspaceResult> =>
       ipcRenderer.invoke(IPC.invoke.fsCopyIntoWorkspace, input)

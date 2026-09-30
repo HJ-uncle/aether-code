@@ -131,6 +131,17 @@
   /* 安全/不可用表面：用于禁用态、只读区、代码块底 */
   --bg-inset: rgba(0, 0, 0, 0.22);
 
+  /* 编辑器 Chrome：把标签/路径/操作条与 Monaco 画布分层，
+     让编辑器像一个有明确层次的工作区，而不是一整块灰色面板。 */
+  --editor-chrome: #1f2023;
+  --editor-chrome-deep: #151619;
+  --editor-canvas: #1e1e20;
+  --editor-tab-active: #263342;
+  --editor-tab-hover: rgba(255, 255, 255, 0.075);
+  --editor-border: rgba(255, 255, 255, 0.14);
+  --editor-active-border: #4b95f1;
+  --editor-active-fg: #d8eaff;
+
   /* ── 材质：浮起的表面（磨砂玻璃） ──
      配方 = 半透明底色 + blur + 饱和度提升 + 描边 + 顶部高光 + 投影，
      对齐 macOS NSVisualEffectView 的四层结构。底色 alpha 取 ~0.85：
@@ -215,6 +226,15 @@
 
   --bg-inset: rgba(0, 0, 0, 0.05);
 
+  --editor-chrome: #f2f3f5;
+  --editor-chrome-deep: #e8eaee;
+  --editor-canvas: #ffffff;
+  --editor-tab-active: #e2ebf6;
+  --editor-tab-hover: rgba(0, 0, 0, 0.055);
+  --editor-border: rgba(0, 0, 0, 0.14);
+  --editor-active-border: #1d70c9;
+  --editor-active-fg: #0b4f97;
+
   /* 浅色材质整体提亮，玻璃感靠模糊后的白雾呈现（macOS 浅色窗口的质感） */
   --material-bg: rgba(255, 255, 255, 0.78);
   --material-bg-solid: #ffffff;
@@ -247,21 +267,21 @@
  * 需要不同的明度才能保证「填充不俗气、文字可读」。
  */
 
-/* 默认强调色：紫色。:root 与 [data-accent='purple'] 绑定在一起，
-   没有显式选择强调色时（老配置/新装）由这里兜底 */
+/* 默认强调色：蓝色。紫色仍保留为可选主题；蓝色与编辑器状态、链接和焦点环
+   的语义最接近源码编辑器，且在深浅两种外观下都更容易扫读。 */
 :root,
+[data-accent='blue'] {
+  --accent: #4b95f1;
+  --accent-hover: #6ba8f5;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(75, 149, 241, 0.18);
+}
+
 [data-accent='purple'] {
   --accent: #bf5af2;
   --accent-hover: #cd7bf6;
   --accent-fg: #ffffff;
   --accent-soft: rgba(191, 90, 242, 0.18);
-}
-
-[data-accent='blue'] {
-  --accent: #0a84ff;
-  --accent-hover: #3d9bff;
-  --accent-fg: #ffffff;
-  --accent-soft: rgba(10, 132, 255, 0.16);
 }
 
 [data-accent='pink'] {
