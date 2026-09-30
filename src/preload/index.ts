@@ -7,6 +7,8 @@ import type {
   CopyIntoWorkspaceResult,
   EngineLogEntry,
   EngineRequestInput,
+  RemoteAttachmentInput,
+  RemoteAttachmentResult,
   EngineRequestResult,
   EngineSnapshot,
   FsEntry,
@@ -25,7 +27,8 @@ import type {
   StreamStartInput,
   TerminalCreateInput,
   TerminalDataEvent,
-  TerminalExitInfo
+  TerminalExitInfo,
+  RemoteTokenStatus
 } from '../shared/ipc'
 import type {
   GitBlameResult,
@@ -68,6 +71,8 @@ const api = {
 
     request: <T = unknown>(input: EngineRequestInput): Promise<EngineRequestResult<T>> =>
       ipcRenderer.invoke(IPC.invoke.engineRequest, input),
+    uploadAttachment: (input: RemoteAttachmentInput): Promise<RemoteAttachmentResult> =>
+      ipcRenderer.invoke(IPC.invoke.engineUploadAttachment, input),
 
     stream: {
       start: (input: StreamStartInput): Promise<{ ok: boolean }> =>
@@ -99,7 +104,15 @@ const api = {
   settings: {
     get: (): Promise<AppSettings> => ipcRenderer.invoke(IPC.invoke.settingsGet),
     update: (patch: Partial<AppSettings>): Promise<AppSettings> =>
-      ipcRenderer.invoke(IPC.invoke.settingsUpdate, patch)
+      ipcRenderer.invoke(IPC.invoke.settingsUpdate, patch),
+    saveEngine: (patch: Partial<AppSettings>, token: string): Promise<AppSettings> =>
+      ipcRenderer.invoke(IPC.invoke.settingsSaveEngine, patch, token),
+    remoteTokenStatus: (): Promise<RemoteTokenStatus> =>
+      ipcRenderer.invoke(IPC.invoke.settingsRemoteTokenStatus),
+    setRemoteToken: (token: string): Promise<RemoteTokenStatus> =>
+      ipcRenderer.invoke(IPC.invoke.settingsSetRemoteToken, token),
+    clearRemoteToken: (): Promise<RemoteTokenStatus> =>
+      ipcRenderer.invoke(IPC.invoke.settingsClearRemoteToken)
   },
 
   /**

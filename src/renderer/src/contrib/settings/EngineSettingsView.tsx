@@ -1,4 +1,4 @@
-import { useState, type JSX } from 'react'
+import { useEffect, useState, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
 import type { EngineMode } from '@shared/ipc'
 import { Icon } from '@renderer/workbench/icons'
@@ -17,8 +17,29 @@ export function EngineSettingsView(): JSX.Element {
   const [mode, setMode] = useState<EngineMode>(settings.engineMode)
   const [port, setPort] = useState(String(settings.preferredPort))
   const [remoteUrl, setRemoteUrl] = useState(settings.remoteBaseUrl)
+  const [remoteWorkspaceRoot, setRemoteWorkspaceRoot] = useState(settings.remoteWorkspaceRoot)
+  const [remoteToken, setRemoteToken] = useState('')
+  const [remoteTokenConfigured, setRemoteTokenConfigured] = useState(false)
+  const [remoteTokenSource, setRemoteTokenSource] = useState<'stored' | 'environment' | 'none'>('none')
+  const [clearRemoteToken, setClearRemoteToken] = useState(false)
   const [autoStart, setAutoStart] = useState(settings.autoStartEngine)
   const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState('')
+  const [tokenStatusError, setTokenStatusError] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    void window.aether.settings.remoteTokenStatus().then((status) => {
+      if (alive) {
+        setRemoteTokenConfigured(status.configured)
+        setRemoteTokenSource(status.source)
+      }
+    }).catch((error: unknown) => {
+      if (alive) setTokenStatusError(error instanceof Error ? error.message : String(error))
+    })
+    return () => { alive = false }
+  }, [])
 
   // 设置从主进程异步加载完成后同步到表单：渲染期间调和（React 官方模式，
   // 「存上一份引用、发现变化就地更新」），避免 effect 级联渲染
@@ -28,6 +49,7 @@ export function EngineSettingsView(): JSX.Element {
     setMode(settings.engineMode)
     setPort(String(settings.preferredPort))
     setRemoteUrl(settings.remoteBaseUrl)
+    setRemoteWorkspaceRoot(settings.remoteWorkspaceRoot)
     setAutoStart(settings.autoStartEngine)
   }
 
@@ -35,6 +57,9 @@ export function EngineSettingsView(): JSX.Element {
     mode !== settings.engineMode ||
     port !== String(settings.preferredPort) ||
     remoteUrl !== settings.remoteBaseUrl ||
+    remoteWorkspaceRoot !== settings.remoteWorkspaceRoot ||
+    remoteToken.trim().length > 0 ||
+    clearRemoteToken ||
     autoStart !== settings.autoStartEngine
 
   const busy =
@@ -43,20 +68,41 @@ export function EngineSettingsView(): JSX.Element {
     snapshot.phase === 'stopping'
 
   const save = async (restart: boolean): Promise<void> => {
+    if (saving) return
     const parsedPort = Number(port)
-    await updateSettings({
-      engineMode: mode,
-      preferredPort: Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 12323,
-      remoteBaseUrl: remoteUrl.trim(),
-      autoStartEngine: autoStart
-    })
-    setSaved(true)
-    window.setTimeout(() => setSaved(false), 1600)
-    if (restart) await engine.restart()
+    setSaveError('')
+    setSaved(false)
+    setSaving(true)
+    try {
+      if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535) throw new Error('端口必须是 1–65535 的整数')
+      const tokenMutation = clearRemoteToken ? '' : remoteToken.trim() || undefined
+      await updateSettings({
+        engineMode: mode,
+        preferredPort: parsedPort,
+        remoteBaseUrl: remoteUrl.trim(),
+        remoteWorkspaceRoot: remoteWorkspaceRoot.trim(),
+        autoStartEngine: autoStart
+      }, tokenMutation)
+      if (tokenMutation !== undefined) {
+        const status = await window.aether.settings.remoteTokenStatus()
+        setRemoteTokenConfigured(status.configured)
+        setRemoteTokenSource(status.source)
+        setTokenStatusError('')
+      }
+      setRemoteToken('')
+      setClearRemoteToken(false)
+      setSaved(true)
+      window.setTimeout(() => setSaved(false), 1600)
+      if (restart) await engine.restart()
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
-    <div className="settings-view">
+    <div className="settings-view settings-view--engine">
       <SettingsGroup title="运行方式">
         <SettingsRow
           label="本地内置"
@@ -71,7 +117,7 @@ export function EngineSettingsView(): JSX.Element {
         </SettingsRow>
         <SettingsRow
           label="远端服务"
-          description="实验性连接：仅查看引擎信息，暂不支持本地工作区对话和文件操作"
+          description="连接远端引擎，发送任务并查看会话、改动和运行状态"
           onClick={() => setMode('remote')}
         >
           <span
@@ -95,15 +141,66 @@ export function EngineSettingsView(): JSX.Element {
             />
           </SettingsRow>
         ) : (
-          <SettingsRow label="远端地址" description="本机独立开发服务可填 http://127.0.0.1:12323；远端服务需在启动应用前配置连接凭据。完整本机工作区功能请选择本地内置。">
-            <input
-              className="field__input sg__input sg__input--wide"
-              type="text"
-              placeholder="http://192.168.1.10:12323"
-              value={remoteUrl}
-              onChange={(event) => setRemoteUrl(event.target.value)}
-            />
-          </SettingsRow>
+          <>
+            <SettingsRow label="远端地址" description="本机独立开发服务可填 http://127.0.0.1:12323；其他地址请在下方填写连接令牌。更换服务地址时，请同时替换或清除已保存的令牌。">
+              <input
+                className="field__input sg__input sg__input--wide"
+                type="text"
+                placeholder="http://192.168.1.10:12323"
+                value={remoteUrl}
+                onChange={(event) => setRemoteUrl(event.target.value)}
+              />
+            </SettingsRow>
+            <SettingsRow
+              label="远端工作目录"
+              description="可选，填写远端机器上的绝对目录；保存并重启后对新会话生效，已有会话保留服务端目录。留空使用服务端沙箱。此设置不会打开或映射本机文件。"
+            >
+              <input
+                className="field__input sg__input sg__input--wide"
+                type="text"
+                aria-label="远端工作目录"
+                placeholder="留空使用服务端沙箱"
+                value={remoteWorkspaceRoot}
+                disabled={saving}
+                onChange={(event) => setRemoteWorkspaceRoot(event.target.value)}
+              />
+            </SettingsRow>
+            <SettingsRow
+              label="远端令牌"
+              description="与目标引擎的 AETHER_INSTANCE_TOKEN 一致；通过系统密钥存储加密保存，留空保留原值。修改后点击“保存并重启”。清除已保存的令牌后，若启动环境变量仍存在，将继续使用该变量。"
+            >
+              <div className="settings-view__token-field">
+                <input
+                  className="field__input sg__input sg__input--wide"
+                  type="password"
+                  autoComplete="new-password"
+                  aria-label="远端令牌"
+                  maxLength={4096}
+                  disabled={saving}
+                  placeholder={clearRemoteToken ? '保存后清除已存令牌' : tokenStatusError ? '读取失败，可重新输入或清除' : remoteTokenConfigured ? (remoteTokenSource === 'environment' ? '由启动环境变量提供，重新输入可迁移保存' : '已配置（重新输入可替换）') : '输入远端引擎令牌'}
+                  value={remoteToken}
+                  onChange={(event) => {
+                    setRemoteToken(event.target.value)
+                    setClearRemoteToken(false)
+                  }}
+                />
+              {remoteTokenSource === 'stored' || tokenStatusError ? (
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={saving || clearRemoteToken}
+                    onClick={() => {
+                      setRemoteToken('')
+                      setClearRemoteToken(true)
+                    }}
+                  >
+                    清除令牌
+                  </button>
+                ) : null}
+              </div>
+            </SettingsRow>
+            {tokenStatusError ? <SettingsContent><div className="settings-view__error" role="alert">{tokenStatusError}</div></SettingsContent> : null}
+          </>
         )}
       </SettingsGroup>
 
@@ -117,7 +214,7 @@ export function EngineSettingsView(): JSX.Element {
         <button
           type="button"
           className="btn btn--primary"
-          disabled={!dirty}
+          disabled={!dirty || saving}
           onClick={() => void save(false)}
         >
           保存
@@ -125,13 +222,14 @@ export function EngineSettingsView(): JSX.Element {
         <button
           type="button"
           className="btn"
-          disabled={!dirty || busy}
+          disabled={!dirty || busy || saving}
           title="保存设置并重启引擎使其生效"
           onClick={() => void save(true)}
         >
           保存并重启
         </button>
         {saved ? <span className="settings-view__saved">已保存</span> : null}
+        {saveError ? <span className="settings-view__error">{saveError}</span> : null}
       </div>
 
       <SettingsGroup title="当前状态">
@@ -178,8 +276,8 @@ export function EngineSettingsView(): JSX.Element {
               </>
             ) : null}
           </dl>
-          {snapshot.error ? <div className="settings-view__error">{snapshot.error}</div> : null}
         </SettingsContent>
+        {snapshot.error ? <SettingsContent><div className="settings-view__error" role="alert">{snapshot.error}</div></SettingsContent> : null}
       </SettingsGroup>
 
       <div className="settings-view__actions">

@@ -37,6 +37,11 @@ linux:
   category: Utility
 appImage:
   artifactName: ${name}-${version}.${ext}
+extraResources:
+  - from: resources/engine/win32-x64
+    to: engine/win32-x64
+    filter:
+      - '**/*'
 npmRebuild: false
 publish:
   provider: generic

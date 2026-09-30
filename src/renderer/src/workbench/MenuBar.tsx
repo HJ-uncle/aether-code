@@ -5,6 +5,7 @@ import { getKeybindingHint } from '@renderer/core/platform/keybindings'
 import { setLayout, toggleChatPanel, toggleChatPosition } from '@renderer/core/platform/layout-state'
 import { openAppSettings } from '@renderer/contrib/settings/app-settings-navigation'
 import { Icon } from '@renderer/workbench/icons'
+import brandIcon from '@renderer/assets/icon.png'
 import { useLayout } from './useLayout'
 import {
   getUserKeybindingRules,
@@ -33,6 +34,30 @@ const MENUS: Menu[] = [
       { label: '打开文件夹…', command: 'aether.workspace.openFolder' },
       { label: '快速打开文件…', command: 'aether.quickOpen.toggle' },
       { label: '保存', command: 'aether.file.save' }
+    ]
+  },
+  {
+    label: '编辑',
+    items: [
+      { label: '查找', command: 'aether.editor.find' },
+      { label: '替换', command: 'aether.editor.replace' },
+      { label: '格式化文档', command: 'aether.editor.formatDocument' },
+      { label: '格式化选区', command: 'aether.editor.formatSelection' },
+      { label: '重命名符号', command: 'aether.editor.renameSymbol' },
+      { label: '切换行注释', command: 'aether.editor.toggleLineComment' },
+      { label: '选择下一个匹配项', command: 'aether.editor.selectNextOccurrence' },
+      { label: '选择所有匹配项', command: 'aether.editor.selectAllOccurrences' },
+      { label: '切换自动换行', command: 'aether.editor.toggleWordWrap' },
+      { label: '切换小地图', command: 'aether.editor.toggleMinimap' }
+    ]
+  },
+  {
+    label: '转到',
+    items: [
+      { label: '转到行', command: 'aether.editor.goToLine' },
+      { label: '转到文件符号', command: 'aether.editor.goToSymbol' },
+      { label: '转到定义', command: 'aether.editor.goToDefinition' },
+      { label: '转到引用', command: 'aether.editor.goToReferences' }
     ]
   },
   {
@@ -149,7 +174,10 @@ export function MenuBar(): JSX.Element {
 
   return (
     <header className="menu-bar" ref={ref}>
-      <span className="menu-bar__brand">Aether IDE</span>
+      <span className="menu-bar__brand">
+        <img className="menu-bar__logo" src={brandIcon} alt="" draggable={false} />
+        Aether
+      </span>
       {MENUS.map((menu) => (
         <div key={menu.label} className="menu-bar__menu">
           <button

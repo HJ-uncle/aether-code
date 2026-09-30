@@ -156,7 +156,7 @@ if (!gotTheLock) {
 
     // 按设置自动拉起引擎；失败不影响窗口打开（UI 会显示错误状态）
     if (bootSettings.autoStartEngine) {
-      void engineHost.start(bootSettings.engineMode, bootSettings.remoteBaseUrl).catch((err) => {
+      void engineHost.start(bootSettings.engineMode, bootSettings.remoteBaseUrl, bootSettings.remoteWorkspaceRoot).catch((err) => {
         console.error('[engine] 自动启动失败:', err)
       })
     }

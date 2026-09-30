@@ -22,6 +22,21 @@ const CHANGE_TYPE_LABEL: Record<GitChangeType, string> = {
 }
 
 /** 角标 → aether 组件 CSS class 后缀（components.css 的 .git-change__code--*） */
+type LegacyGitStatus = { indexStatus?: string; workTreeStatus?: string }
+
+function legacyStatus(change: GitFileChange): LegacyGitStatus {
+  return change as GitFileChange & LegacyGitStatus
+}
+
+function legacyCode(change: GitFileChange): string | undefined {
+  const { indexStatus, workTreeStatus } = legacyStatus(change)
+  if (typeof indexStatus !== 'string' && typeof workTreeStatus !== 'string') return undefined
+  if (indexStatus === '?' && workTreeStatus === '?') return 'U'
+  const primary = indexStatus && indexStatus !== ' ' ? indexStatus : workTreeStatus
+  if (!primary || primary === ' ') return undefined
+  return primary === '?' ? 'U' : primary
+}
+
 const CHANGE_TYPE_CLASS: Record<GitVisualKey, string> = {
   modified: 'modified',
   added: 'added',
@@ -42,6 +57,8 @@ const CHANGE_TYPE_CLASS: Record<GitVisualKey, string> = {
  */
 export function changeCode(change: GitFileChange): string {
   if (change.conflict) return STATUS_LETTER.conflict
+  const legacy = legacyCode(change)
+  if (legacy) return legacy
   const type = change.stagedChange ?? change.unstagedChange ?? change.changeType
   return STATUS_LETTER[type] ?? '·'
 }
@@ -55,6 +72,17 @@ export function changeCodeClass(change: GitFileChange): string {
 
 /** 角标悬浮提示：把暂存区/工作区两侧的状态讲清楚 */
 export function changeTitle(change: GitFileChange): string {
+  const legacy = legacyStatus(change)
+  if (legacy.indexStatus === '?' && legacy.workTreeStatus === '?') {
+    return '未跟踪（git 尚未纳入版本管理）'
+  }
+  if (typeof legacy.indexStatus === 'string' || typeof legacy.workTreeStatus === 'string') {
+    const index = legacy.indexStatus && legacy.indexStatus !== ' ' ? legacy.indexStatus : '无变化'
+    const workTree = legacy.workTreeStatus && legacy.workTreeStatus !== ' ' ? legacy.workTreeStatus : '无变化'
+    const parts = [`暂存区 ${index}`, `工作区 ${workTree}`]
+    if (change.staged) parts.push('已暂存')
+    return parts.join(' · ')
+  }
   if (change.changeType === 'untracked') return '未跟踪（git 尚未纳入版本管理）'
   const parts: string[] = []
   parts.push(`暂存区 ${change.stagedChange ? CHANGE_TYPE_LABEL[change.stagedChange] : '无变化'}`)

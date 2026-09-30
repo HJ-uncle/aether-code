@@ -1,6 +1,7 @@
 /** Main-process HTTP bridge: shared transport identity and strict response envelopes. */
 import { engineHost } from './host'
-import { normalizeEnginePath, remoteRequestError } from './protocol'
+import { engineTargetError, normalizeEnginePath, remoteRequestError } from './protocol'
+import { prepareRemoteChatBody } from './remote-workspace'
 import type { EngineRequestInput, EngineRequestResult } from '../../shared/ipc'
 
 function buildQuery(query: EngineRequestInput['query']): string {
@@ -17,22 +18,30 @@ function buildQuery(query: EngineRequestInput['query']): string {
 export async function engineRequest<T = unknown>(
   input: EngineRequestInput
 ): Promise<EngineRequestResult<T>> {
-  const unsupported = remoteRequestError(engineHost.getSnapshot().mode, input.method, input.path)
+  const snapshot = engineHost.getSnapshot()
+  const unsupported = engineTargetError(snapshot, input.expectedEngine) ?? remoteRequestError(snapshot.mode, input.method, input.path)
   if (unsupported) return { ok: false, code: 409, message: unsupported, data: null }
   const baseUrl = engineHost.baseUrl
   if (!baseUrl) return { ok: false, code: -1, message: '引擎未就绪', data: null }
-  const url = `${baseUrl}${normalizeEnginePath(input.path)}${buildQuery(input.query)}`
+  const path = normalizeEnginePath(input.path)
+  const url = `${baseUrl}${path}${buildQuery(input.query)}`
+  const signal = AbortSignal.any([engineHost.requestSignal, AbortSignal.timeout(120000)])
   const headers: Record<string, string> = {
     Accept: 'application/json',
     ...engineHost.requestHeaders()
   }
+  const requestBody = snapshot.mode === 'remote' && input.method === 'POST' && path.split('?')[0] === '/api/v1/chat'
+    ? await prepareRemoteChatBody(input.body, { baseUrl, headers, signal, configuredRoot: engineHost.remoteWorkspaceRoot, target: snapshot })
+    : input.body
+  signal.throwIfAborted()
   // An empty DELETE with application/json is rejected by Fastify before it reaches the route.
-  if (input.body !== undefined) headers['Content-Type'] = 'application/json'
+  if (requestBody !== undefined) headers['Content-Type'] = 'application/json'
   const res = await fetch(url, {
+    redirect: 'error',
     method: input.method,
     headers,
-    body: input.body === undefined ? undefined : JSON.stringify(input.body),
-    signal: AbortSignal.any([engineHost.requestSignal, AbortSignal.timeout(120000)])
+    body: requestBody === undefined ? undefined : JSON.stringify(requestBody),
+    signal
   })
   let payload: unknown
   try {

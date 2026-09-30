@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { EngineLogEntry, EngineSnapshot } from '@shared/ipc'
 import * as engine from './client'
+import { publishEngineSource } from './source'
 
 const INITIAL: EngineSnapshot = {
   mode: 'embedded',
@@ -37,12 +38,13 @@ export function useEngine(): {
 
   useEffect(() => {
     let alive = true
+    let observedSnapshot = false
 
     void engine.getSnapshot().then((value) => {
-      if (alive) setSnapshot(value)
+      if (alive && !observedSnapshot) { publishEngineSource(value); setSnapshot(value) }
     })
 
-    const offSnapshot = engine.onSnapshot((value) => setSnapshot(value))
+    const offSnapshot = engine.onSnapshot((value) => { observedSnapshot = true; publishEngineSource(value); setSnapshot(value) })
     const offLog = engine.onEngineLog((entry) => {
       setLogs((prev) => {
         const next = prev.length >= MAX_LOG_LINES ? prev.slice(-(MAX_LOG_LINES - 1)) : prev
@@ -58,15 +60,15 @@ export function useEngine(): {
   }, [])
 
   const start = useCallback(async () => {
-    setSnapshot(await engine.startEngine())
+    await engine.startEngine()
   }, [])
 
   const stop = useCallback(async () => {
-    setSnapshot(await engine.stopEngine())
+    await engine.stopEngine()
   }, [])
 
   const restart = useCallback(async () => {
-    setSnapshot(await engine.restartEngine())
+    await engine.restartEngine()
   }, [])
 
   const clearLogs = useCallback(() => setLogs([]), [])

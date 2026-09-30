@@ -13,9 +13,10 @@
  * 本地元数据（名称/置顶/收藏/颜色/工作区）存 session-meta.ts（localStorage 单 key），
  * 引擎不参与 —— 这些是纯界面偏好。
  */
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type JSX } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
 import { requestOrThrow } from '@renderer/core/engine/client'
+import { getEngineSource, isRemoteEngine, subscribeEngineSource } from '@renderer/core/engine/source'
 import { extractText } from '@renderer/core/engine/useChat'
 import { showChatPanel } from '@renderer/core/platform/layout-state'
 import { openFolderAt } from '@renderer/core/workspace/workspace-store'
@@ -102,7 +103,7 @@ function formatAbsolute(lastAt: number | undefined): string {
   if (!lastAt) return ''
   const time = new Date(lastAt)
   if (Number.isNaN(time.getTime())) return ''
-  const pad = (value: number) => String(value).padStart(2, '0')
+  const pad = (value: number): string => String(value).padStart(2, '0')
   return `${time.getFullYear()}-${pad(time.getMonth() + 1)}-${pad(time.getDate())} ${pad(time.getHours())}:${pad(time.getMinutes())}`
 }
 
@@ -112,6 +113,8 @@ function tagColorDot(colorKey: string | undefined): string | null {
 
 export function SessionHistoryView(): JSX.Element {
   const { ready, settings, updateSettings } = useApp()
+  const source = useSyncExternalStore(subscribeEngineSource, getEngineSource)
+  const refreshGeneration = useRef(0)
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -131,7 +134,8 @@ export function SessionHistoryView(): JSX.Element {
   const pendingSessions = useSyncExternalStore(subscribePendingSessions, listPendingSessions)
 
   const refresh = useCallback(async () => {
-    if (!ready) return
+    if (!ready || source !== getEngineSource()) return
+    const generation = ++refreshGeneration.current
     setLoading(true)
     setError(null)
     try {
@@ -139,16 +143,28 @@ export function SessionHistoryView(): JSX.Element {
         method: 'GET',
         path: '/conversation/sessions'
       })
+      if (source !== getEngineSource() || generation !== refreshGeneration.current) return
       const list = Array.isArray(rows) ? rows : []
       setSessions(list)
       // 引擎开始返回该会话后，对应的本地占位条目退场，避免同一条会话出现两行
       prunePendingSessions(new Set(list.map((item) => item.sessionId)))
     } catch (err) {
+      if (source !== getEngineSource() || generation !== refreshGeneration.current) return
       setError(err instanceof Error ? err.message : String(err))
     } finally {
-      setLoading(false)
+      if (source === getEngineSource() && generation === refreshGeneration.current) setLoading(false)
     }
-  }, [ready])
+  }, [ready, source])
+
+  useEffect(() => subscribeEngineSource(() => {
+    refreshGeneration.current++
+    setSessions([])
+    setLoading(false)
+    setError(null)
+    setMenu(null)
+    setTagPanel(null)
+    setRenaming(null)
+  }), [])
 
   // 引擎就绪 / 当前会话变化（新会话发出第一条消息后会出现在列表里）时刷新。
   // refresh 开头会同步 setState，挪进微任务避免 effect 执行期内联触发级联渲染
@@ -210,6 +226,7 @@ export function SessionHistoryView(): JSX.Element {
 
   const openProjectDir = useCallback(
     (sessionId: string) => {
+      if (isRemoteEngine() || source !== getEngineSource()) return
       const workspacePath = metaTable[sessionId]?.workspacePath
       if (!workspacePath) {
         void confirmDialog({
@@ -223,11 +240,12 @@ export function SessionHistoryView(): JSX.Element {
       openFolderAt(workspacePath)
       void updateSettings({ lastSessionId: sessionId }).then(() => showChatPanel())
     },
-    [metaTable, updateSettings]
+    [metaTable, updateSettings, source]
   )
 
   const deleteSession = useCallback(
     (sessionId: string) => {
+      if (isRemoteEngine() || source !== getEngineSource()) return
       const item = sessions.find((s) => s.sessionId === sessionId)
       const title = sessionTitle(item ?? { sessionId }, metaTable[sessionId]?.name)
       void confirmDialog({
@@ -236,7 +254,7 @@ export function SessionHistoryView(): JSX.Element {
         danger: true,
         confirmText: '删除'
       }).then((confirmed) => {
-        if (!confirmed) return
+        if (!confirmed || isRemoteEngine() || source !== getEngineSource()) return
         // 删的是当前会话：先换一个新 ID，避免删除后还挂在已销毁的会话上
         const isCurrent = sessionId === settings.lastSessionId
         // 刚新建、还没发过消息的会话在引擎侧没有记录，DELETE 会失败；
@@ -252,6 +270,7 @@ export function SessionHistoryView(): JSX.Element {
             return undefined
           })
           .then(() => {
+            if (source !== getEngineSource()) return
             removeSessionMeta(sessionId)
             removePendingSession(sessionId)
             if (isCurrent) {
@@ -260,8 +279,12 @@ export function SessionHistoryView(): JSX.Element {
             }
             return undefined
           })
-          .then(() => refresh())
+          .then(() => {
+            if (source === getEngineSource()) return refresh()
+            return undefined
+          })
           .catch((err) => {
+            if (source !== getEngineSource()) return
             void confirmDialog({
               title: '删除失败',
               body: err instanceof Error ? err.message : String(err),
@@ -270,7 +293,7 @@ export function SessionHistoryView(): JSX.Element {
           })
       })
     },
-    [sessions, pendingSessions, metaTable, settings.lastSessionId, updateSettings, refresh]
+    [sessions, pendingSessions, metaTable, settings.lastSessionId, updateSettings, refresh, source]
   )
 
   // ── 派生列表：过滤（只看收藏）→ 排序（置顶恒前）──────────────────────────
@@ -378,6 +401,7 @@ export function SessionHistoryView(): JSX.Element {
       {
         id: 'open-dir',
         label: '打开项目目录',
+        disabled: isRemoteEngine(),
         onSelect: () => {
           setMenu(null)
           openProjectDir(menu.sessionId)
@@ -386,6 +410,7 @@ export function SessionHistoryView(): JSX.Element {
       {
         id: 'delete',
         label: '删除会话',
+        disabled: isRemoteEngine(),
         danger: true,
         onSelect: () => {
           setMenu(null)

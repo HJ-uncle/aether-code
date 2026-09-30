@@ -16,6 +16,7 @@ import { rememberRecent } from './recent-files'
 import { paths, readFile, writeFile } from '../workspace/fs-client'
 import { getWorkspaceState } from '../workspace/workspace-store'
 import { activateDocument } from './editor-activation'
+import { fileIdentity } from './file-identity'
 
 export interface OpenDocument {
   path: string
@@ -88,6 +89,7 @@ const closedFiles: string[] = []
 const CLOSED_FILES_LIMIT = 20
 
 export function rememberViewState(filePath: string, viewState: unknown): void {
+  filePath = resolveDocumentPath(filePath)
   if (viewState == null) return
   // 重新插入让它成为「最近使用」，淘汰最旧的一条
   viewStates.delete(filePath)
@@ -99,6 +101,7 @@ export function rememberViewState(filePath: string, viewState: unknown): void {
 }
 
 export function takeViewState(filePath: string): unknown {
+  filePath = resolveDocumentPath(filePath)
   const viewState = viewStates.get(filePath)
   // 取出即消费：viewState 只该被「切回这个文件」的那一次恢复使用。
   // 留着不删，换个路径重建编辑器（组件 remount）时会拿旧状态覆盖掉
@@ -118,12 +121,14 @@ export function takeViewState(filePath: string): unknown {
  * 旧文件读数由 setCursor 按 filePath 归属自然作废，无需在这里动手。
  */
 export function setActiveDocument(filePath: string | null): void {
+  if (filePath !== null) filePath = resolveDocumentPath(filePath)
   if (state.activePath === filePath) return
   setState({ activePath: filePath })
 }
 
 /** 编辑器上报光标位置；同位置不触发广播，避免光标移动刷爆订阅者 */
 export function setCursor(filePath: string, line: number, column: number): void {
+  filePath = resolveDocumentPath(filePath)
   const current = state.cursor
   if (
     current &&
@@ -154,7 +159,14 @@ export function onEditorChanged(listener: () => void): () => void {
 
 /** 标签键：与静态视图 ID（chat / models）区分开 */
 export function documentKey(filePath: string): string {
-  return `doc:${filePath}`
+  return `doc:${resolveDocumentPath(filePath)}`
+}
+
+/** Reuse the first document's path, buffer and saved baseline for filesystem aliases. */
+export function resolveDocumentPath(filePath: string): string {
+  if (state.docs.has(filePath)) return filePath
+  const identity = fileIdentity(filePath)
+  return [...state.docs.keys()].find((path) => fileIdentity(path) === identity) ?? filePath
 }
 
 export function isDirty(doc: OpenDocument): boolean {
@@ -162,7 +174,7 @@ export function isDirty(doc: OpenDocument): boolean {
 }
 
 export function getDocument(filePath: string): OpenDocument | undefined {
-  return state.docs.get(filePath)
+  return state.docs.get(resolveDocumentPath(filePath))
 }
 
 /** 登记跳行请求（全局搜索点击结果时用）；行号非法则忽略 */
@@ -184,6 +196,7 @@ export async function openFile(
   column?: number,
   length?: number
 ): Promise<void> {
+  filePath = resolveDocumentPath(filePath)
   if (state.docs.has(filePath)) {
     requestReveal(filePath, line, column, length)
     return
@@ -240,6 +253,7 @@ export async function openFile(
 
 /** 关闭文件；有未保存改动时由调用方先确认 */
 export function closeFile(filePath: string): void {
+  filePath = resolveDocumentPath(filePath)
   clearDocumentDiagnostics(filePath)
   const nextDocs = new Map(state.docs)
   nextDocs.delete(filePath)
@@ -266,7 +280,7 @@ export function closeFile(filePath: string): void {
 export async function reopenLastClosedFile(): Promise<boolean> {
   while (closedFiles.length > 0) {
     const filePath = closedFiles.pop()
-    if (filePath && !state.docs.has(filePath)) {
+    if (filePath && !getDocument(filePath)) {
       await openFile(filePath)
       // 重开的文件要切到前台：VS Code 的 Ctrl+Shift+T 会把它激活。
       // 只打开不激活的话它只是后台标签，文档槽不会渲染 Monaco，
@@ -280,6 +294,7 @@ export async function reopenLastClosedFile(): Promise<boolean> {
 
 /** 更新内容（编辑器输入时调用） */
 export function setDocumentContent(filePath: string, content: string): void {
+  filePath = resolveDocumentPath(filePath)
   const doc = state.docs.get(filePath)
   if (!doc || doc.isBinary) return
   if (doc.content === content) return
@@ -291,12 +306,19 @@ export function setDocumentContent(filePath: string, content: string): void {
 
 /** 保存到磁盘 */
 export async function saveDocument(filePath: string): Promise<void> {
+  filePath = resolveDocumentPath(filePath)
   const doc = state.docs.get(filePath)
   if (!doc || doc.isBinary || doc.loading) return
 
   setState({ saving: new Set(state.saving).add(filePath) })
 
   try {
+    // Another workbench or the AI may have edited this file since it was opened.
+    // Preserve the user's buffer instead of silently overwriting newer disk contents.
+    const disk = await readFile(filePath)
+    if (disk.content !== doc.savedContent && disk.content !== doc.content) {
+      throw new Error('文件已在其他编辑器或工具中修改，未覆盖磁盘内容。请先保留当前修改并重新加载文件。')
+    }
     await writeFile(filePath, doc.content)
     // 以「已写入的内容」而非当前编辑器内容为准：
     // 保存期间用户可能继续输入，那部分应保持为未保存状态
@@ -317,6 +339,7 @@ export async function saveDocument(filePath: string): Promise<void> {
     const nextSaving = new Set(state.saving)
     nextSaving.delete(filePath)
     setState({ docs: nextDocs, saving: nextSaving })
+    throw err
   }
 }
 
@@ -347,7 +370,9 @@ export async function saveActiveDocument(): Promise<void> {
  */
 export async function saveAllDocuments(): Promise<void> {
   for (const doc of [...state.docs.values()]) {
-    if (isDirty(doc)) await saveDocument(doc.path)
+    if (isDirty(doc)) {
+      try { await saveDocument(doc.path) } catch { /* The document retains its buffer and visible error. */ }
+    }
   }
 }
 
@@ -356,13 +381,14 @@ export async function saveAllDocuments(): Promise<void> {
  * 有未保存修改的文档跳过 —— 不能拿磁盘内容盖掉用户正在编辑的内容。
  */
 export async function reloadDocuments(filePaths: string[]): Promise<void> {
-  for (const filePath of filePaths) {
+  for (const requestedPath of filePaths) {
+    const filePath = resolveDocumentPath(requestedPath)
     const doc = state.docs.get(filePath)
     if (!doc || doc.isBinary || doc.loading || isDirty(doc)) continue
     try {
       const file = await readFile(filePath)
       const latest = state.docs.get(filePath)
-      if (!latest) continue
+      if (!latest || isDirty(latest) || latest.content !== doc.content) continue
       const nextDocs = new Map(state.docs)
       nextDocs.set(filePath, {
         ...latest,
@@ -380,6 +406,7 @@ export async function reloadDocuments(filePaths: string[]): Promise<void> {
 
 /** 文件名变化后（重命名）同步内存中的路径 */
 export function renameDocument(oldPath: string, newPath: string): void {
+  oldPath = resolveDocumentPath(oldPath)
   const doc = state.docs.get(oldPath)
   if (!doc) return
 

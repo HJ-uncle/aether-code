@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { subscribeEngineSource } from './source'
 import type { CommandJobSnapshot } from '@shared/command-job'
 import { request as engineRequest } from './client'
 import type { EngineRequestInput } from '@shared/ipc'
@@ -98,3 +99,12 @@ export async function cancelCommandJob(sessionId: string, jobId: string): Promis
   if (previous && !sameCommandOwner(previous.job, job)) throw new Error('停止响应的任务归属已变化')
   return ingestCommandJob(job)!
 }
+
+subscribeEngineSource(() => {
+  generation++
+  activeSessionId = null
+  jobs.clear()
+  requests.clear()
+  listings.clear()
+  notify()
+})

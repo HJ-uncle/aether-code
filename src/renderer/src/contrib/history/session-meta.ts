@@ -1,3 +1,5 @@
+import { getEngineStorageKey, isRemoteEngine, sessionStorageKey, subscribeEngineSource } from '../../core/engine/source'
+
 /**
  * 会话本地元数据（对齐 wuzu-client codeSessionMeta.ts）
  *
@@ -34,12 +36,13 @@ export const SESSION_TAG_COLORS: ReadonlyArray<{ key: string; dot: string; label
 
 const STORAGE_KEY = 'aether:sessionMeta'
 
+let storageSource = getEngineStorageKey()
 let table: Record<string, SessionMeta> = load()
 const listeners = new Set<() => void>()
 
 function load(): Record<string, SessionMeta> {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(sessionStorageKey(STORAGE_KEY, storageSource))
     if (!raw) return {}
     const parsed: unknown = JSON.parse(raw)
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
@@ -52,7 +55,7 @@ function load(): Record<string, SessionMeta> {
 
 function persist(): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(table))
+    localStorage.setItem(sessionStorageKey(STORAGE_KEY, storageSource), JSON.stringify(table))
   } catch {
     // 存储满等极端情况：丢了偏好不影响主流程，静默
   }
@@ -78,6 +81,7 @@ export function getSessionMeta(sessionId: string): SessionMeta {
 export function patchSessionMeta(sessionId: string, patch: Partial<SessionMeta>): void {
   const merged: SessionMeta = { ...table[sessionId] }
   for (const [key, value] of Object.entries(patch)) {
+    if (key === 'workspacePath' && isRemoteEngine()) continue
     if (value === undefined) delete (merged as Record<string, unknown>)[key]
     else (merged as Record<string, unknown>)[key] = value
   }
@@ -103,3 +107,11 @@ export function removeSessionMeta(sessionId: string): void {
   persist()
   notify()
 }
+
+subscribeEngineSource(() => {
+  const next = getEngineStorageKey()
+  if (next === storageSource) return
+  storageSource = next
+  table = load()
+  notify()
+})

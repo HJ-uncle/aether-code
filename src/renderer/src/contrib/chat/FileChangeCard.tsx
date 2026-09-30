@@ -1,4 +1,5 @@
 import { useMemo, useState, useSyncExternalStore, type JSX } from 'react'
+import { useApp } from '@renderer/core/app-context'
 import type { EngineFileChange } from '@shared/ipc'
 import { getRevertOutcome, revertStatusLabel, subscribeReverts } from '@renderer/core/engine/change-revert'
 import { Icon } from '@renderer/workbench/icons'
@@ -25,6 +26,8 @@ export function FileChangeCard({
   change: EngineFileChange
   state: 'running' | 'done' | 'error' | 'unknown' | 'cancelled' | 'waiting' | 'interrupted'
 }): JSX.Element {
+  const { engine } = useApp()
+  const remoteReadOnly = engine.snapshot.mode === 'remote'
   /** 「还有 N 行」展开更多：只影响 body 内的行数，不影响卡片折叠 */
   const [showAllRows, setShowAllRows] = useState(false)
   /** 卡片折叠：默认展开（内容量大、是主要阅读对象），用户可点标题收起 */
@@ -73,15 +76,18 @@ export function FileChangeCard({
           <Icon name={failed ? 'close' : 'check'} size={16} />
         </span>
         <span className="diff-card__title">{title}</span>
+        {remoteReadOnly ? <span className="diff-card__hint">远端快照</span> : null}
         {rollbackLabel ? <span className="diff-card__hint" title={outcome?.message}>{rollbackLabel}</span> : null}
         <button
           type="button"
           className="diff-card__path diff-card__path--link"
-          title={`在编辑器中打开 ${displayPath}`}
+          title={remoteReadOnly ? `远端路径（尚未映射）：${displayPath}` : `在编辑器中打开 ${displayPath}`}
+          disabled={remoteReadOnly}
           onClick={(event) => {
             // 阻止冒泡到头部：点路径是打开文件，不是折叠卡片
             event.preventDefault()
             event.stopPropagation()
+            if (remoteReadOnly) return
             void openFileFromChat(change.path || displayPath)
           }}
         >

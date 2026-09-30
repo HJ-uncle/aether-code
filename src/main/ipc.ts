@@ -6,7 +6,7 @@
  *
  * 流式对话例外：SSE 需要主进程持续推送，用 start/abort + 事件通道实现。
  */
-import { ipcMain, webContents, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { app, ipcMain, webContents, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { IPC } from '../shared/ipc'
 import type {
   CopyIntoWorkspaceInput,
@@ -21,6 +21,7 @@ import type {
   TerminalCreateInput
 } from '../shared/ipc'
 import { engineRequest } from './engine/client'
+import { uploadRemoteAttachment } from './engine/upload-remote-attachment'
 import { engineHost } from './engine/host'
 import { onEngineLog } from './engine/logger'
 import * as fileService from './fs/file-service'
@@ -34,10 +35,14 @@ import {
 } from './terminal/pty-service'
 import { replaceWorkspace, searchWorkspace, previewReplaceWorkspace } from './search/search-service'
 import { getSettings, updateSettings } from './settings-store'
-import type { AppSettings } from '../shared/ipc'
+import type { AppSettings, RemoteTokenStatus } from '../shared/ipc'
 import type { GitCloneOptions, GitLogQuery, GitResult } from '../shared/git-types'
 import { addSshKeyToAgent } from './git/ssh-agent'
 import { cancelClone, cloneRepository } from './git/git-clone'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { resolveRuntime } from './engine/runtime'
+import { clearRemoteInstanceToken, remoteInstanceTokenConfigured, setRemoteInstanceToken, withRemoteInstanceTokenChange } from './engine/remote-token'
 
 /** 进行中的 SSE 请求：streamId → AbortController */
 const activeStreams = new Map<string, AbortController>()
@@ -65,7 +70,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC.invoke.engineStart, async () => {
     const settings = getSettings()
-    return engineHost.start(settings.engineMode, settings.remoteBaseUrl)
+    return engineHost.start(settings.engineMode, settings.remoteBaseUrl, settings.remoteWorkspaceRoot)
   })
 
   ipcMain.handle(IPC.invoke.engineStop, () => engineHost.stop())
@@ -73,13 +78,14 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.invoke.engineRestart, async () => {
     const settings = getSettings()
     await engineHost.stop()
-    return engineHost.start(settings.engineMode, settings.remoteBaseUrl)
+    return engineHost.start(settings.engineMode, settings.remoteBaseUrl, settings.remoteWorkspaceRoot)
   })
 
   // ── 业务请求 ──
   ipcMain.handle(IPC.invoke.engineRequest, (_event, input: EngineRequestInput) =>
     engineRequest(input)
   )
+  ipcMain.handle(IPC.invoke.engineUploadAttachment, (_event, input) => uploadRemoteAttachment(input))
 
   // ── 流式请求 ──
   ipcMain.handle(IPC.invoke.engineStreamStart, async (_event, input: StreamStartInput) => {
@@ -90,7 +96,7 @@ export function registerIpcHandlers(): void {
     activeStreams.set(input.streamId, controller)
 
     try {
-      await engineHost.stream(input.streamId, input.path, input.body, controller.signal, input.method, input.query)
+      await engineHost.stream(input.streamId, input.path, input.body, controller.signal, input.method, input.query, input.expectedEngine)
     } finally {
       activeStreams.delete(input.streamId)
     }
@@ -130,6 +136,41 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.invoke.settingsUpdate, (_event, patch: Partial<AppSettings>) =>
     updateSettings(patch)
   )
+  const remoteTokenStatus = (): RemoteTokenStatus => {
+    const stored = remoteInstanceTokenConfigured()
+    const environment = Boolean(process.env.AETHER_IDE_REMOTE_INSTANCE_TOKEN?.trim())
+    return {
+      configured: stored || environment,
+      source: stored ? 'stored' as const : environment ? 'environment' as const : 'none' as const
+    }
+  }
+  ipcMain.handle(IPC.invoke.settingsRemoteTokenStatus, remoteTokenStatus)
+  ipcMain.handle(IPC.invoke.settingsSetRemoteToken, (_event, token: string) => {
+    if (typeof token !== 'string') throw new Error('远端令牌必须是字符串')
+    setRemoteInstanceToken(token)
+    return remoteTokenStatus()
+  })
+  ipcMain.handle(IPC.invoke.settingsClearRemoteToken, () => {
+    clearRemoteInstanceToken()
+    return remoteTokenStatus()
+  })
+  ipcMain.handle(IPC.invoke.settingsSaveEngine, (_event, patch: Partial<AppSettings>, token: string) => {
+    if (typeof token !== 'string') throw new Error('远端令牌必须是字符串')
+    // Never spread a credential-bearing object into ordinary persisted settings.
+    const connection = {
+      engineMode: patch.engineMode,
+      preferredPort: patch.preferredPort,
+      remoteBaseUrl: patch.remoteBaseUrl,
+      remoteWorkspaceRoot: patch.remoteWorkspaceRoot ?? getSettings().remoteWorkspaceRoot,
+      autoStartEngine: patch.autoStartEngine
+    }
+    if (!['embedded', 'remote'].includes(connection.engineMode ?? '') ||
+      typeof connection.remoteBaseUrl !== 'string' || typeof connection.autoStartEngine !== 'boolean' ||
+      !Number.isInteger(connection.preferredPort) || connection.preferredPort! < 1 || connection.preferredPort! > 65535) {
+      throw new Error('引擎连接设置无效')
+    }
+    return withRemoteInstanceTokenChange(token, () => updateSettings(connection))
+  })
 
   // ── 文件系统 ──
   // 这些 handler 直接抛错：文件操作失败原因（不存在/无权限/越界）需要原样
@@ -423,12 +464,24 @@ export function registerIpcHandlers(): void {
   // 无需 streamId 路由 —— 所有窗口共享同一份诊断。
   ipcMain.handle(IPC.invoke.lspStart, (_event, input: LspStartInput) => {
     try {
-      // 服务器入口在主进程解析：require.resolve 只在主进程可用，asar 打包时改写
-      const entry = input.serverEntry || require.resolve('typescript-language-server/lib/cli.mjs')
+      // Dev uses the installed dependency. Packaged builds carry the server beside
+      // the engine runtime, so they never depend on an asar dependency resolution.
+      let entry: string
+      let nodePath: string | undefined
+      if (app.isPackaged) {
+        const runtime = resolveRuntime()
+        if (!runtime) throw new Error('配套引擎运行时不存在，无法启动 TypeScript 语言服务')
+        entry = join(runtime.root, 'node_modules', 'typescript-language-server', 'lib', 'cli.mjs')
+        nodePath = runtime.nodePath
+      } else {
+        entry = input.serverEntry || require.resolve('typescript-language-server/lib/cli.mjs')
+        nodePath = input.nodePath
+      }
+      if (!existsSync(entry)) throw new Error(`TypeScript 语言服务入口不存在：${entry}`)
       lspServer.startLsp(entry, {
         onMessage: (message: LspMessage) => broadcast(IPC.event.lspMessage, message),
         onExit: (info) => broadcast(IPC.event.lspExit, info)
-      })
+      }, nodePath)
       return { ok: true }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -439,8 +492,7 @@ export function registerIpcHandlers(): void {
     return { ok: true }
   })
   ipcMain.handle(IPC.invoke.lspSend, (_event, message: LspMessage) => {
-    lspServer.sendToLsp(message)
-    return { ok: true }
+    return { ok: lspServer.sendToLsp(message) }
   })
 }
 

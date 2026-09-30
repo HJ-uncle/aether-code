@@ -10,7 +10,6 @@ import { registerKeybindings } from '@renderer/core/platform/keybindings'
 import {
   getLayout,
   showChatPanel,
-  showEditorView,
   showPanel,
   toggleChatPanel,
   togglePanel,
@@ -48,6 +47,7 @@ import { requestSearchFocus } from './search/search-store'
 import { registerDocumentRenderer, registerViews } from '@renderer/workbench/view-registry'
 import { ChatView } from './chat/ChatView'
 import { DocumentView } from './editor/DocumentView'
+import { registerEditorCommands } from './editor/editor-commands'
 import { ExplorerView } from './explorer/ExplorerView'
 import { GitView } from './git/GitView'
 import { SessionHistoryView } from './history/SessionHistoryView'
@@ -63,6 +63,7 @@ import { TerminalView } from './terminal/TerminalView'
 export function registerContributions(): () => void {
   // 文件标签的渲染实现（workbench 只认识注册表，不认识具体组件）
   registerDocumentRenderer(DocumentView)
+  const disposeEditorCommands = registerEditorCommands()
 
   const disposeViews = registerViews([
     {
@@ -386,7 +387,7 @@ export function registerContributions(): () => void {
       id: 'aether.view.appSettings',
       title: '打开设置',
       category: '视图',
-      run: () => showEditorView('app-settings')
+      run: () => openAppSettings()
     },
     {
       id: 'aether.view.codegraph',
@@ -461,7 +462,8 @@ export function registerContributions(): () => void {
     { key: 'ctrl+shift+m', command: 'aether.view.models' },
     // Ctrl+Shift+S 原本绑「安全策略」，已让位给「保存全部文件」（VS Code 语义）。
     // 安全策略改由命令面板/菜单栏进入
-    { key: 'ctrl+shift+o', command: 'aether.view.security' },
+    // 文本编辑器内保留 Monaco 原生“转到符号”；其它区域仍可快捷打开安全设置。
+    { key: 'ctrl+shift+o', command: 'aether.view.security', when: '!editorTextFocus' },
     { key: 'ctrl+shift+g', command: 'aether.view.git' },
     { key: 'ctrl+shift+j', command: 'aether.panel.output' },
     { key: 'ctrl+`', command: 'aether.panel.terminal' },
@@ -471,6 +473,7 @@ export function registerContributions(): () => void {
 
   return () => {
     disposeViews()
+    disposeEditorCommands()
     disposeCommands()
     disposeKeybindings()
   }

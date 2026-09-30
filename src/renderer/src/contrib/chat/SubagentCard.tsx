@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState, type JSX, type MouseEvent } from 'react'
+import { useApp } from '@renderer/core/app-context'
+import { getEngineSource } from '@renderer/core/engine/source'
 import type { ToolActivity } from '@renderer/core/engine/useChat'
 import type { SubagentToolCall } from '@shared/subagent'
 import { stopSubagent } from '@renderer/core/engine/client'
@@ -136,6 +138,9 @@ export function SubagentCard({
   tool: ToolActivity
   sessionId: string
 }): JSX.Element {
+  const { engine, ready } = useApp()
+  const remoteReadOnly = engine.snapshot.mode === 'remote'
+  const sourceEpoch = getEngineSource()
   const cached = useSubagentRun(tool.subagent?.runId)
   const run = cached ? mergeSubagentRun(tool.subagent, cached) : tool.subagent
   const args = useMemo(() => parseObject(tool.args), [tool.args])
@@ -218,7 +223,7 @@ export function SubagentCard({
   const cancel = async (event: MouseEvent): Promise<void> => {
     event.preventDefault()
     event.stopPropagation()
-    if (requesting || cancelling || !active) return
+    if (!ready || sourceEpoch !== getEngineSource() || requesting || cancelling || !active) return
     setRequestError('')
     setRequesting(true)
     try {
@@ -229,9 +234,9 @@ export function SubagentCard({
           throw new Error(result.message || '引擎未确认停止请求')
       }
     } catch (error) {
-      setRequestError(`停止失败：${error instanceof Error ? error.message : String(error)}`)
+      if (sourceEpoch === getEngineSource()) setRequestError(`停止失败：${error instanceof Error ? error.message : String(error)}`)
     } finally {
-      setRequesting(false)
+      if (sourceEpoch === getEngineSource()) setRequesting(false)
     }
   }
 
@@ -251,7 +256,7 @@ export function SubagentCard({
         <span className={`subagent-card__dot${failed ? ' subagent-card__dot--fail' : ''}`}>
           {active ? <span className="subagent-card__spinner" /> : <Icon name="circle" size={16} />}
         </span>
-        <span className="subagent-card__name">子代理</span>
+        <span className="subagent-card__name">{remoteReadOnly ? '远端子代理' : '子代理'}</span>
         <span className="subagent-card__task" title={goal}>
           {title}
         </span>
@@ -266,7 +271,7 @@ export function SubagentCard({
             className="subagent-card__stop"
             title="停止子代理"
             aria-label="停止子代理"
-            disabled={requesting || cancelling}
+            disabled={!ready || requesting || cancelling}
             onClick={(event) => {
               void cancel(event)
             }}

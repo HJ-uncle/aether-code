@@ -8,10 +8,16 @@ import {
 } from '@renderer/core/editor/monaco-setup'
 import { currentEditorThemeName, refreshEditorTheme } from '@renderer/core/editor/editor-theme'
 import { rememberViewState, setCursor, takeViewState } from '@renderer/core/editor/editor-store'
+import { registerActiveEditor } from '@renderer/core/editor/active-editor'
+import {
+  getEditorDisplayOptions,
+  onEditorDisplayOptionsChanged
+} from '@renderer/core/editor/editor-display-options'
 import { watchTheme } from '@renderer/core/theme/palette'
 import { getWorkspaceState } from '@renderer/core/workspace/workspace-store'
 import { paths } from '@renderer/core/workspace/fs-client'
 import { pushPendingMention } from '@renderer/contrib/chat/pending-mentions'
+import { registerEditorActionBridges } from './editor-commands'
 
 interface MonacoEditorProps {
   filePath: string
@@ -55,12 +61,14 @@ export function MonacoEditor({
     const container = containerRef.current
     if (!container) return
 
+    const displayOptions = getEditorDisplayOptions()
     const editor = monaco.editor.create(container, {
       theme: currentEditorThemeName(),
       automaticLayout: true,
       fontSize: 13,
       fontFamily: "'Cascadia Mono', 'JetBrains Mono', Consolas, monospace",
-      minimap: { enabled: true, maxColumn: 80 },
+      minimap: { enabled: displayOptions.minimapEnabled, maxColumn: 80 },
+      wordWrap: displayOptions.wordWrap,
       scrollBeyondLastLine: false,
       renderWhitespace: 'selection',
       tabSize: 2,
@@ -69,6 +77,14 @@ export function MonacoEditor({
       fixedOverflowWidgets: true
     })
     editorRef.current = editor
+    const unregisterActiveEditor = registerActiveEditor(editor)
+    const unregisterActionBridges = registerEditorActionBridges(editor)
+    const unsubscribeDisplayOptions = onEditorDisplayOptionsChanged((options) => {
+      editor.updateOptions({
+        wordWrap: options.wordWrap,
+        minimap: { enabled: options.minimapEnabled }
+      })
+    })
     /** 当前 model 对应的文件路径：换 model 时靠它把 viewState 存回上一个文件 */
     currentPathRef.current = null
 
@@ -121,6 +137,9 @@ export function MonacoEditor({
     })
 
     return () => {
+      unregisterActiveEditor()
+      unregisterActionBridges()
+      unsubscribeDisplayOptions()
       subscription.dispose()
       modelSubscription.dispose()
       cursorSubscription.dispose()

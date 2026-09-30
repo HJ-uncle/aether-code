@@ -1,9 +1,14 @@
 import { useEffect, useState, type JSX } from 'react'
+import { useApp } from '@renderer/core/app-context'
+import { getEngineSource } from '@renderer/core/engine/source'
 import type { CommandJobSnapshot } from '@shared/command-job'
 import { commandJobActive, commandStatusLabels, mergeCommandJob } from '@renderer/core/engine/command-job-state'
 import { cancelCommandJob, commandJobMissing, ingestCommandJob, refreshCommandOutput, useCommandJob } from '@renderer/core/engine/command-job-store'
 
 export function CommandJobCard({ job: initial, sessionId }: { job: CommandJobSnapshot; sessionId: string }): JSX.Element {
+  const { engine, ready } = useApp()
+  const remoteReadOnly = engine.snapshot.mode === 'remote'
+  const sourceEpoch = getEngineSource()
   const cached = useCommandJob(sessionId, initial.jobId)
   const job = cached ? mergeCommandJob(initial, cached.job) : initial
   const [outputError, setOutputError] = useState('')
@@ -33,11 +38,14 @@ export function CommandJobCard({ job: initial, sessionId }: { job: CommandJobSna
     return () => { alive = false; if (timer) clearTimeout(timer) }
   }, [belongs, initial.jobId, sessionId])
   const stop = async (): Promise<void> => {
-    if (!belongs || stopping || !active) return
+    if (!ready || sourceEpoch !== getEngineSource() || !belongs || stopping || !active) return
     setStopping(true); setCancelError('')
-    try { await cancelCommandJob(sessionId, job.jobId); await refreshCommandOutput(sessionId, job.jobId) }
-    catch (error) { setCancelError(`停止失败：${error instanceof Error ? error.message : String(error)}`) }
-    finally { setStopping(false) }
+    try {
+      await cancelCommandJob(sessionId, job.jobId)
+      if (sourceEpoch === getEngineSource()) await refreshCommandOutput(sessionId, job.jobId)
+    }
+    catch (error) { if (sourceEpoch === getEngineSource()) setCancelError(`停止失败：${error instanceof Error ? error.message : String(error)}`) }
+    finally { if (sourceEpoch === getEngineSource()) setStopping(false) }
   }
   return <section className="command-job-card" data-job-id={job.jobId} data-status={job.status} aria-label="命令任务">
     <div className="command-job-card__head">
@@ -45,9 +53,10 @@ export function CommandJobCard({ job: initial, sessionId }: { job: CommandJobSna
         <strong>{job.background ? '后台命令' : '执行命令'}</strong>
         <span role="status" aria-label="命令状态">{commandStatusLabels[job.status]}</span>
       </button>
-      {active && belongs ? <button className="subagent-card__stop" disabled={stopping || job.status === 'cancelling'} onClick={() => { void stop() }}>{stopping || job.status === 'cancelling' ? '正在停止…' : '停止命令'}</button> : null}
+      {active && belongs ? <button className="subagent-card__stop" disabled={!ready || stopping || job.status === 'cancelling'} title="停止命令" onClick={() => { void stop() }}>{stopping || job.status === 'cancelling' ? '正在停止…' : '停止命令'}</button> : null}
     </div>
     <div className="command-job-card__command">{[job.command, ...job.args].join(' ')}</div>
+    {remoteReadOnly ? <div className="command-job-card__meta">远端命令任务</div> : null}
     <div className="command-job-card__meta" title={job.cwd}>工作目录：{job.cwd}{job.exitCode === null ? '' : ` · 退出码 ${job.exitCode}`}{job.signal ? ` · ${job.signal}` : ''}</div>
     {job.ownerSessionId !== sessionId ? <div className="command-job-card__meta">子代理任务：{job.ownerRunId ?? job.ownerSessionId}</div> : null}
     {job.error ? <div className="message__error" role="alert">{job.error.message} <span>({job.error.code})</span></div> : null}

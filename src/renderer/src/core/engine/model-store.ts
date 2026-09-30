@@ -42,28 +42,34 @@ export function onModelStateChanged(listener: () => void): () => void {
 
 /** 拉取模型列表。并发调用会被合并，避免重复请求。 */
 let inflight: Promise<void> | null = null
+let generation = 0
 
 export function refreshModels(): Promise<void> {
   if (inflight) return inflight
 
+  const epoch = generation
   setState({ loading: true, error: null })
-  inflight = listModels()
-    .then((models) => setState({ models, loading: false, loaded: true, error: null }))
+  const request = listModels()
+    .then((models) => { if (epoch === generation) setState({ models, loading: false, loaded: true, error: null }) })
     .catch((err: unknown) => {
+      if (epoch !== generation) return
       setState({
         loading: false,
         error: err instanceof Error ? err.message : String(err)
       })
     })
     .finally(() => {
-      inflight = null
+      if (inflight === request) inflight = null
     })
 
-  return inflight
+  inflight = request
+  return request
 }
 
 /** 引擎重启或首次就绪后，之前的列表可能已失效 */
 export function resetModelStore(): void {
+  generation++
+  inflight = null
   setState({ models: [], loading: false, error: null, loaded: false })
 }
 

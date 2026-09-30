@@ -1,8 +1,8 @@
 /**
  * 引擎 LSP 诊断（core 层）
  *
- * 诊断与补全的分工：补全由 Monaco tsWorker 本地承担（快、离线）；
- * 引擎 /lsp/diagnose 补足项目级诊断（tsc 语义检查 + eslint 规则），
+ * TS/JS 的项目语义由独立 tsserver 承担；
+ * 引擎 /lsp/diagnose 补足 eslint 与其它语言诊断，
  * 支持传未保存内容；远端模式需先具有共享工作区映射。
  *
  * 结果双落点：problems-store（Problems 面板）+ Monaco markers
@@ -10,7 +10,9 @@
  */
 import { requestOrThrow } from '../engine/client'
 import { acquireModel, languageForPath, monaco, peekModel } from '../editor/monaco-setup'
-import { clearFileProblems, setFileProblems, setFileDiagnosis, type DiagnosisStatus, type ProblemItem } from './problems-store'
+import { clearFileProblems, diagnosticFileKey, setFileProblems, setFileDiagnosis, type DiagnosisStatus, type ProblemItem } from './problems-store'
+import { isTsLspRunning } from './ts-client'
+import { selectEngineDiagnostics } from './diagnostic-policy'
 
 /** 引擎 POST /lsp/diagnose 的 data 字段（见引擎 src/lsp/types.ts） */
 interface DiagnoseResult {
@@ -54,7 +56,8 @@ export async function diagnoseDocument(filePath: string, content: string): Promi
     return true
   }
   const seq = ++nextSequence
-  seqByFile.set(filePath, seq)
+  const fileKey = diagnosticFileKey(filePath)
+  seqByFile.set(fileKey, seq)
   setFileDiagnosis(filePath, 'running')
   const model = peekModel(filePath)
   if (model) monaco.editor.setModelMarkers(model, MARKER_OWNER, [])
@@ -67,18 +70,18 @@ export async function diagnoseDocument(filePath: string, content: string): Promi
       body: { filePath, content }
     })
   } catch (error) {
-    if (seqByFile.get(filePath) === seq) {
+    if (seqByFile.get(fileKey) === seq) {
       setFileDiagnosis(filePath, 'error', error instanceof Error ? error.message : String(error))
     }
     return false
   }
-  if (seqByFile.get(filePath) !== seq) return true
+  if (seqByFile.get(fileKey) !== seq) return true
 
   if (result.status !== 'completed') {
     setFileDiagnosis(filePath, result.status ?? 'error', result.error ?? '引擎没有返回有效诊断结果')
     return false
   }
-  const items = result.diagnostics ?? []
+  const items = selectEngineDiagnostics(result.diagnostics ?? [], isTsLspRunning())
   setFileProblems(filePath, items)
   applyMarkers(filePath, items)
   return true
@@ -86,7 +89,7 @@ export async function diagnoseDocument(filePath: string, content: string): Promi
 
 /** 清除某文件的诊断（Problems 条目 + Monaco markers） */
 export function clearDocumentDiagnostics(filePath: string): void {
-  seqByFile.delete(filePath)
+  seqByFile.delete(diagnosticFileKey(filePath))
   clearFileProblems(filePath)
   const model = peekModel(filePath)
   if (model) monaco.editor.setModelMarkers(model, MARKER_OWNER, [])
@@ -96,7 +99,9 @@ function applyMarkers(filePath: string, items: ProblemItem[]): void {
   // 已打开用现成 model；未打开（理论上只在点击面板条目前的间隙出现）
   // 才新建，语言按路径推断，避免把 typescript 改成 plaintext
   const model = peekModel(filePath) ?? acquireModel(filePath, languageForPath(filePath))
-  const markers: monaco.editor.IMarkerData[] = items.map((item) => ({
+  const tsMarkers = isTsLspRunning() ? monaco.editor.getModelMarkers({ resource: model.uri, owner: 'tsserver' }) : []
+  const visibleItems = items.filter((item) => !tsMarkers.some((marker) => marker.startLineNumber === item.line && marker.startColumn === item.column && marker.message === item.message))
+  const markers: monaco.editor.IMarkerData[] = visibleItems.map((item) => ({
     severity: SEVERITY[item.severity] ?? monaco.MarkerSeverity.Info,
     // 引擎与 Monaco 均为 1-based；缺省范围时标记起始处一个字符
     startLineNumber: item.line,

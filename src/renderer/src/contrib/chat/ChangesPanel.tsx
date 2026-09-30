@@ -8,6 +8,7 @@ import { gitStageFiles, gitUnstageFiles } from '@renderer/core/git/git-client'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { toast } from '@renderer/core/toast'
+import { useApp } from '@renderer/core/app-context'
 
 import {
   MAX_RENDER_ROWS,
@@ -70,6 +71,8 @@ export function ChangesPanel({
   bare?: boolean
 }): JSX.Element | null {
   const [changes, setChanges] = useState<EngineFileChange[]>([])
+  const { engine } = useApp()
+  const remoteReadOnly = engine.snapshot.mode === 'remote'
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const workspace = useWorkspace()
@@ -128,6 +131,7 @@ export function ChangesPanel({
 
   const act = useCallback(
     async (action: () => Promise<unknown>): Promise<void> => {
+      if (remoteReadOnly) return
       setBusy(true)
       setError(null)
       try {
@@ -139,7 +143,7 @@ export function ChangesPanel({
         setBusy(false)
       }
     },
-    [refresh]
+    [refresh, remoteReadOnly]
   )
 
   const keepOne = (id: string): Promise<void> =>
@@ -177,6 +181,7 @@ export function ChangesPanel({
    */
   const stageChanges = useCallback(
     async (targets: EngineFileChange[]): Promise<void> => {
+      if (remoteReadOnly) return
       if (!workspace.root) throw new Error('未打开工作区，无法暂存（当前目录不是 git 仓库时也不可用）')
       const paths = targets.map((change) => change.path)
       setBusy(true)
@@ -211,7 +216,7 @@ export function ChangesPanel({
         setBusy(false)
       }
     },
-    [refresh, sessionId, workspace.root]
+    [refresh, remoteReadOnly, sessionId, workspace.root]
   )
 
   const revertAll = async (): Promise<void> =>
@@ -275,7 +280,7 @@ export function ChangesPanel({
               <button
                 type="button"
                 className="changes-panel__confirm"
-                disabled={busy}
+                disabled={remoteReadOnly || busy}
                 title="确认保留这条改动"
                 onClick={() => void keepOne(change.id)}
               >
@@ -284,7 +289,7 @@ export function ChangesPanel({
               <button
                 type="button"
                 className="changes-panel__confirm"
-                disabled={busy || !workspace.root}
+                disabled={remoteReadOnly || busy || !workspace.root}
                 title="git add 这条改动并标记保留（暂存区 + 待确认列表同时处理）"
                 onClick={() => void stageChanges([change])}
               >
@@ -295,7 +300,7 @@ export function ChangesPanel({
                 className="changes-panel__row-revert"
                 title="检查文件版本并撤回这条改动"
                 aria-label={`撤回 ${name}`}
-                disabled={busy || streaming}
+                disabled={remoteReadOnly || busy || streaming}
                 onClick={() => void revertOneWithConfirm(change)}
               >
                 <Icon name="restart" size={16} />
@@ -306,6 +311,7 @@ export function ChangesPanel({
       </ul>
 
       {error ? <div className="changes-panel__error">{error}</div> : null}
+      {remoteReadOnly && changes.length > 0 ? <div>远端改动快照只读；尚未配置工作区映射，不能撤回或暂存到本地仓库。</div> : null}
 
       <div className="changes-panel__footer" hidden={changes.length === 0}>
         {bare ? null : <span className="changes-panel__count">改动 {changes.length}</span>}
@@ -313,7 +319,7 @@ export function ChangesPanel({
         <button
           type="button"
           className="changes-panel__footer-btn"
-          disabled={busy || streaming}
+          disabled={remoteReadOnly || busy || streaming}
           title="检查版本后撤回本会话全部待确认改动"
           onClick={() => void revertAll()}
         >
@@ -323,7 +329,7 @@ export function ChangesPanel({
         <button
           type="button"
           className="changes-panel__footer-btn"
-          disabled={busy || !workspace.root}
+          disabled={remoteReadOnly || busy || !workspace.root}
           title="git add 全部改动并标记保留"
           onClick={() => void stageChanges(changes)}
         >
@@ -333,7 +339,7 @@ export function ChangesPanel({
         <button
           type="button"
           className="changes-panel__footer-btn changes-panel__footer-btn--keep"
-          disabled={busy}
+          disabled={remoteReadOnly || busy}
           title="确认保留全部改动（从待确认列表移除）"
           onClick={() => void keepAll()}
         >

@@ -6,8 +6,9 @@
  */
 import { app } from 'electron'
 import { join } from 'node:path'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { DEFAULT_SETTINGS, type AppSettings } from '../shared/ipc'
+import { validateRemoteWorkspaceRoot } from './engine/remote-workspace'
 
 let cache: AppSettings | null = null
 
@@ -36,11 +37,20 @@ export function getSettings(): AppSettings {
 }
 
 export function updateSettings(patch: Partial<AppSettings>): AppSettings {
+  if (patch.remoteWorkspaceRoot !== undefined) {
+    patch = { ...patch, remoteWorkspaceRoot: validateRemoteWorkspaceRoot(patch.remoteWorkspaceRoot) }
+  }
   const next: AppSettings = { ...getSettings(), ...patch }
-  cache = next
-
   const file = settingsPath()
   mkdirSync(join(app.getPath('userData')), { recursive: true })
-  writeFileSync(file, JSON.stringify(next, null, 2), 'utf-8')
+  const temporary = `${file}.${process.pid}.tmp`
+  try {
+    writeFileSync(temporary, JSON.stringify(next, null, 2), 'utf-8')
+    renameSync(temporary, file)
+  } catch (error) {
+    try { rmSync(temporary, { force: true }) } catch { /* preserve write failure */ }
+    throw error
+  }
+  cache = next
   return next
 }

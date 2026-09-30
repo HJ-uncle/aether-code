@@ -14,9 +14,9 @@
  * 排除规则来自调用方（渲染层把设置里的 files.exclude + search.exclude 合并后传来）：
  * 两条路径都必须过滤，否则搜索结果会随仓库是否为 git 而变。
  */
-import { execFile } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { readdir, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import path, { join } from 'node:path'
 import type {
   FilesExclude,
   ReplaceOutcome,
@@ -28,6 +28,7 @@ import type {
   SearchOutcome
 } from '@shared/ipc'
 import { compileSearchExclude, isSearchExcluded, toGitPathspec } from './exclude'
+import { assertAllowed } from '../fs/file-service'
 
 /**
  * 遍历兜底时无条件跳过的目录名。
@@ -80,6 +81,24 @@ function splitGlobs(value: string): string[] {
 }
 
 /**
+ * Convert an include glob to a git pathspec while preserving the scan
+ * implementation's glob semantics.  A recursive txt glob is
+ * parsed by git's default wildcard rules, where its recursive prefix does not
+ * consistently match files at the repository root.  Explicit `glob` magic
+ * makes the same pattern match both root and nested files, just like the
+ * fallback walker.
+ */
+function toGitIncludePathspec(pattern: string): string | null {
+  const trimmed = pattern.trim()
+  if (!trimmed) return null
+  // Treat user supplied Git magic as literal text; never pass raw pathspec magic through.
+  if (trimmed.startsWith(':(')) return `:(glob)${trimmed}`
+  if (trimmed.startsWith('/')) return null
+  // Slashless includes match any directory depth in walkScan.
+  return `:(glob)${trimmed.includes('/') ? trimmed : `**/${trimmed}`}`
+}
+
+/**
  * 工作区全文搜索。
  *
  * @param excludes 递归排除表（settings 的 files.exclude 与 search.exclude 已由
@@ -92,11 +111,12 @@ export function searchWorkspace(
   options: SearchOptions = EMPTY_OPTIONS,
   excludes: FilesExclude = {}
 ): Promise<SearchOutcome> {
+  const safeRoot = assertAllowed(root)
   const trimmed = query.trim()
   if (!trimmed) return Promise.resolve({ hits: [], truncated: false, strategy: 'git' })
 
-  return gitGrep(root, trimmed, options, excludes).catch(() =>
-    walkScan(root, trimmed, options, excludes)
+  return gitGrep(safeRoot, trimmed, options, excludes).catch(() =>
+    walkScan(safeRoot, trimmed, options, excludes)
   )
 }
 
@@ -112,13 +132,14 @@ export async function replaceWorkspace(
   replaceText: string,
   excludes: FilesExclude = {}
 ): Promise<ReplaceOutcome> {
+  const safeRoot = assertAllowed(root)
   const trimmed = query.trim()
   if (!trimmed) return { files: [], replacements: 0 }
 
   const regex = buildRegExp(trimmed, options, true)
   if (!regex) return { files: [], replacements: 0, error: '正则表达式无效' }
 
-  const outcome = await searchWorkspace(root, trimmed, options, excludes)
+  const outcome = await searchWorkspace(safeRoot, trimmed, options, excludes)
   if (outcome.error) return { files: [], replacements: 0, error: outcome.error }
 
   const replacement = options.useRegex ? replaceText : escapeReplacement(replaceText)
@@ -126,7 +147,7 @@ export async function replaceWorkspace(
   let replacements = 0
 
   for (const rel of new Set(outcome.hits.map((hit) => hit.path))) {
-    const abs = join(root, rel)
+    const abs = assertAllowed(join(safeRoot, rel))
     let content: string
     try {
       const buffer = await readFile(abs)
@@ -166,13 +187,14 @@ export async function previewReplaceWorkspace(
   replaceText: string,
   excludes: FilesExclude = {}
 ): Promise<ReplacePreviewOutcome> {
+  const safeRoot = assertAllowed(root)
   const trimmed = query.trim()
   if (!trimmed) return { files: [], total: 0, truncated: false }
 
   const regex = buildRegExp(trimmed, options, true)
   if (!regex) return { files: [], total: 0, truncated: false, error: '正则表达式无效' }
 
-  const outcome = await searchWorkspace(root, trimmed, options, excludes)
+  const outcome = await searchWorkspace(safeRoot, trimmed, options, excludes)
   if (outcome.error) return { files: [], total: 0, truncated: false, error: outcome.error }
 
   const replacement = options.useRegex ? replaceText : escapeReplacement(replaceText)
@@ -184,7 +206,7 @@ export async function previewReplaceWorkspace(
   for (const rel of new Set(outcome.hits.map((hit) => hit.path))) {
     let content: string
     try {
-      const buffer = await readFile(join(root, rel))
+      const buffer = await readFile(assertAllowed(join(safeRoot, rel)))
       if (buffer.length > MAX_FILE_BYTES || buffer.includes(0)) continue
       content = buffer.toString('utf8')
     } catch {
@@ -225,18 +247,65 @@ function gitGrep(
   excludes: FilesExclude
 ): Promise<SearchOutcome> {
   return new Promise((resolve, reject) => {
+    // `git grep` walks up to a parent repository when `root` is merely a
+    // directory inside that repository. That would report strategy=git and
+    // search outside the user-selected workspace. Only use the git path when
+    // the selected root itself is the repository root; nested repositories
+    // still qualify because rev-parse returns that exact directory.
+    try {
+      const top = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+        cwd: root,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+        .toString()
+        .trim()
+      const normalize = (value: string): string => {
+        const resolved = path.resolve(value)
+        return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+      }
+      if (normalize(top) !== normalize(root)) {
+        reject(new Error('selected search root is not a repository root'))
+        return
+      }
+    } catch {
+      reject(new Error('selected search root is not a repository root'))
+      return
+    }
+    // Git uses POSIX ERE for -E, whose escape vocabulary differs from
+    // JavaScript (for example `\\d`, `\\w`, and `\\s` are treated as literal
+    // letters instead of digit/word/space classes).  A silent semantic change
+    // is worse than the slower walker, so delegate those patterns to the JS
+    // implementation where the UI's regex contract is defined.
+    if (options.useRegex && /\\(?:d|D|w|W|s|S|b|B|p\{)/.test(query)) {
+      reject(new Error('regex requires JavaScript semantics'))
+      return
+    }
     // -F 字面量 / -E 扩展正则；-i 大小写；-w 全字匹配（对整个 pattern 生效）
     const args = ['grep', '-n', '-I', '--untracked', options.useRegex ? '-E' : '-F']
     if (!options.caseSensitive) args.push('-i')
     if (options.wholeWord) args.push('-w')
+    // An explicit include is an opt-in request for that path.  Git's
+    // `--untracked` still omits ignored files (for example a workspace's
+    // .e2e-tmp fixture), which makes an include filter appear to return no
+    // results.  Disable standard excludes only for this explicit path mode;
+    // the default workspace search keeps Git's normal ignore behaviour.
+    const includes = splitGlobs(options.include)
+    if (includes.length > 0) args.push('--no-exclude-standard')
     args.push('-e', query, '--')
 
     // 包含/排除走 pathspec：include 为空 = 全仓库；exclude 用 pathspec 魔法
-    const includes = splitGlobs(options.include)
     const excludesFromBox = splitGlobs(options.exclude)
-    if (includes.length > 0) args.push(...includes)
+    const includePathspecs = includes
+      .map(toGitIncludePathspec)
+      .filter((pattern): pattern is string => pattern !== null)
+    if (includePathspecs.length > 0) args.push(...includePathspecs)
     else args.push('.')
-    for (const pattern of excludesFromBox) args.push(`:(exclude)${pattern}`)
+    for (const pattern of excludesFromBox) {
+      // Use glob magic here as well: without it `**/name` follows git's
+      // default wildcard rules and can diverge from the scan strategy.
+      args.push(`:(exclude,glob)${pattern}`)
+    }
 
     // 设置里的排除表：同一套 glob 语义（无分隔符 = 任意层级），交给 git 时必须
     // 转成 pathspec 魔法，否则裸写只匹配顶层，结果与遍历兜底不一致
@@ -347,7 +416,7 @@ async function walkScan(
 
       let content: string
       try {
-        const buffer = await readFile(join(root, rel))
+        const buffer = await readFile(assertAllowed(join(root, rel)))
         if (buffer.length > MAX_FILE_BYTES || buffer.includes(0)) continue
         content = buffer.toString('utf8')
       } catch {

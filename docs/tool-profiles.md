@@ -1,6 +1,6 @@
 # Code 模式的工具隔离
 
-Aether IDE 的普通 HTTP 请求和 SSE 请求由主进程统一携带 `X-Aether-Tool-Profile: code`。嵌入引擎与远程引擎使用相同协议；不带此标识的通用客户端继续使用 `general` 配置。
+Aether 的普通 HTTP 请求和 SSE 请求由主进程统一携带 `X-Aether-Tool-Profile: code`。嵌入引擎与远程引擎使用相同协议；不带此标识的通用客户端继续使用 `general` 配置。
 
 引擎在工具注册时选择可执行集合。被排除的工具既不会出现在模型 schema、工具查询接口和 `get_current_context` 中，也无法通过手写工具名称调用。子代理从父注册表取得权限交集，编辑消息、重新生成和 Flow 节点同样传递当前请求的 profile。
 

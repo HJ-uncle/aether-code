@@ -208,6 +208,9 @@ function QuickOverlay({
    * 只靠"少渲染一次"无法保证下一个面板的 Esc 不被吞掉。
    */
   const close = (lazy = false): void => {
+    // The editor already receives focus while the overlay fades out. Stop the
+    // capture listener now so it cannot swallow the editor's first arrow key.
+    closedRef.current = true
     if (lazy) {
       setLeaving(true)
       window.setTimeout(() => onClose(true), LAZY_START_MS)

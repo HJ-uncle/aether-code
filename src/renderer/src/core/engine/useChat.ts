@@ -13,6 +13,7 @@ import { reducePayload } from './chat-payload'
 import { acceptEventId, restoreChatSnapshot, type ChatRecoverySnapshot } from './chat-recovery'
 import type { EngineFileChange, EngineTodo, StreamEvent } from '@shared/ipc'
 import * as engine from './client'
+import { assertEngineSource, getEngineSource, isEngineReady, isRemoteEngine, subscribeEngineSource } from './source'
 import { revertConversationFrom } from './change-revert'
 import {
   buildToolResponse,
@@ -226,6 +227,8 @@ export function useChat(): {
    */
   resumeStream: (sessionId: string) => Promise<boolean>
 } {
+  const renderSource = getEngineSource()
+  const sourceRef = useRef(renderSource)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [commandJobs, setCommandJobs] = useState<CommandJobSnapshot[]>([])
   const [streaming, setStreaming] = useState(false)
@@ -340,7 +343,7 @@ export function useChat(): {
 
   /** 队列调度：当前无活动流时按模式发出 —— serial 只发队首，batch 全队列合并成一条 */
   const drainQueue = useCallback(async (): Promise<void> => {
-    if (activeStreamRef.current) return
+    if (!isEngineReady() || sourceRef.current !== getEngineSource() || activeStreamRef.current) return
     if (queueSendModeRef.current === 'batch' && queueRef.current.length > 1) {
       const pending = [...queueRef.current]
       syncQueue([])
@@ -363,7 +366,7 @@ export function useChat(): {
 
   /** 手动发出队列（托盘「发送」按钮）：与 drainQueue 同逻辑，仅供空闲时调用 */
   const flushQueue = useCallback(async (): Promise<void> => {
-    if (activeStreamRef.current) return
+    if (!isEngineReady() || sourceRef.current !== getEngineSource() || activeStreamRef.current) return
     if (queueSendModeRef.current === 'batch') {
       const pending = [...queueRef.current]
       if (pending.length === 0) return
@@ -395,6 +398,31 @@ export function useChat(): {
   const sendInternalRef = useRef<(text: string, options: SendOptions) => Promise<void>>(async () => {})
   const drainQueueRef = useRef<() => Promise<void>>(async () => {})
 
+  useEffect(() => subscribeEngineSource(() => {
+    const oldStream = activeStreamRef.current
+    sourceRef.current = getEngineSource()
+    historyRequestRef.current++
+    activeStreamRef.current = null
+    activeSessionRef.current = null
+    viewSessionRef.current = null
+    activeRunIdRef.current = null
+    consumedEventIdRef.current = null
+    recoveryAttemptsRef.current = 0
+    optimisticIdsRef.current = {}
+    rootRunsRef.current.clear()
+    answeringRef.current.clear()
+    pendingPatchesRef.current = []
+    if (throttleTimerRef.current) clearTimeout(throttleTimerRef.current)
+    throttleTimerRef.current = null
+    syncQueue([])
+    setStreaming(false)
+    setMessages([])
+    setCommandJobs([])
+    setTodos([])
+    // Detach only: POST cancel would target the new server.
+    if (oldStream) void engine.abortStream(oldStream)
+  }), [syncQueue])
+
   useEffect(() => {
     const offCommands = subscribeCommandJobs(() => {
       const sessionId = viewSessionRef.current
@@ -407,7 +435,7 @@ export function useChat(): {
     const offSubagents = subscribeSubagents(() => {
       setMessages((prev) => attachSubagentRuns(prev, getSubagentRuns(viewSessionRef.current)))
     })
-    const reconcile = () => {
+    const reconcile = (): void => {
       const sessionId = viewSessionRef.current
       if (sessionId && hasActiveSubagents(sessionId)) {
         void refreshSubagentRuns(sessionId).catch(() => {})
@@ -416,6 +444,8 @@ export function useChat(): {
     }
     const timer = setInterval(reconcile, 2500)
     const off = engine.onStreamEvent((event: StreamEvent) => {
+      // Reject before ingesting child/job snapshots; IDs can collide across engines.
+      if (sourceRef.current !== getEngineSource() || event.streamId !== activeStreamRef.current) return
       if (event.streamId === activeStreamRef.current) {
         if (!acceptEventId(consumedEventIdRef.current, event.eventId)) return
         if (event.eventId) { consumedEventIdRef.current = event.eventId; recoveryAttemptsRef.current = 0 }
@@ -526,6 +556,7 @@ export function useChat(): {
 
   /** 统一起流：设置激活流 ID 并发出请求 */
   const runStream = useCallback(async (body: Record<string, unknown>) => {
+    assertEngineSource(renderSource)
     const streamId = newId()
     activeStreamRef.current = streamId
     consumedEventIdRef.current = null
@@ -533,17 +564,18 @@ export function useChat(): {
     activeSessionRef.current = typeof body.sessionId === 'string' ? body.sessionId : null
     viewSessionRef.current = activeSessionRef.current
     await engine.startStream({ streamId, path: '/chat', body })
-  }, [])
+  }, [renderSource])
 
   const send = useCallback(
     async (text: string, options: SendOptions) => {
+      assertEngineSource(renderSource)
       const trimmed = text.trim()
-      const attachments = options.attachments ?? []
+      const attachments = isRemoteEngine() ? [] : options.attachments ?? []
       if ((!trimmed && attachments.length === 0)) return
 
       // 顺手记下「这条会话在哪个项目里」——会话历史面板的「打开项目目录」靠它
       const workspacePath = options.workspacePaths?.[0]
-      if (options.sessionId && workspacePath) {
+      if (!isRemoteEngine() && options.sessionId && workspacePath) {
         patchSessionMeta(options.sessionId, { workspacePath })
       }
 
@@ -556,7 +588,7 @@ export function useChat(): {
 
       await sendInternalRef.current(trimmed, options)
     },
-    [syncQueue]
+    [syncQueue, renderSource]
   )
 
   /**
@@ -565,6 +597,7 @@ export function useChat(): {
    */
   const mergeAndSend = useCallback(
     async (text: string, options: SendOptions): Promise<void> => {
+      assertEngineSource(renderSource)
       const trimmed = text.trim()
       const pending = [...queueRef.current]
       syncQueue([])
@@ -576,7 +609,7 @@ export function useChat(): {
         attachments: [...(options.attachments ?? []), ...mergedAttachments]
       })
     },
-    [syncQueue]
+    [syncQueue, renderSource]
   )
 
   /** 从队列移除一条（用户在托盘里点删除） */
@@ -652,8 +685,9 @@ export function useChat(): {
 
   const sendInternal = useCallback(
     async (text: string, options: SendOptions) => {
+      assertEngineSource(renderSource)
       const trimmed = text.trim()
-      const attachments = options.attachments ?? []
+      const attachments = isRemoteEngine() ? [] : options.attachments ?? []
       // 允许「只发附件不发文字」：多模态模型的常见用法就是丢张图让它看
       if ((!trimmed && attachments.length === 0) || activeStreamRef.current) return
 
@@ -692,7 +726,7 @@ export function useChat(): {
         sessionId: options.sessionId || undefined,
         agentId: options.agentId || undefined,
         model: options.model || undefined,
-        workspacePaths: options.workspacePaths?.length ? options.workspacePaths : undefined,
+        workspacePaths: !isRemoteEngine() && options.workspacePaths?.length ? options.workspacePaths : undefined,
         // undefined 不参与 JSON 序列化 → 引擎收到「未指定」，按其能力判断
         thinkingMode: options.thinkingMode,
         subagentModel: options.subagentModel || undefined,
@@ -704,7 +738,7 @@ export function useChat(): {
             : undefined
       })
     },
-    [runStream]
+    [runStream, renderSource]
   )
 
   // sendInternal 定义晚于 drainQueue/send：用 ref 桥接，首次渲染后立即可用。
@@ -725,7 +759,8 @@ export function useChat(): {
    * 启动时引擎可能尚未就绪，等下一次会话变化仍有机会。
    */
   const restoreSession = useCallback(async (sessionId: string): Promise<ChatRecoverySnapshot | null> => {
-    if (!sessionId) return null
+    if (!sessionId || !isEngineReady() || renderSource !== getEngineSource()) return null
+    const source = getEngineSource()
     selectView(sessionId)
     if (activeStreamRef.current) return null
     const generation = ++historyRequestRef.current
@@ -734,7 +769,7 @@ export function useChat(): {
         engine.request<ChatRecoverySnapshot>({ method: 'GET', path: '/chat/snapshot', query: { sessionId } }),
         refreshSubagentRuns(sessionId).catch(() => {})
       ])
-      if (!result.ok || !result.data || result.data.schemaVersion !== 1 || result.data.sessionId !== sessionId) return null
+      if (source !== getEngineSource() || !result.ok || !result.data || result.data.schemaVersion !== 1 || result.data.sessionId !== sessionId) return null
       if (activeStreamRef.current || viewSessionRef.current !== sessionId || generation !== historyRequestRef.current) return null
       const snapshot = result.data
       const restored = restoreChatSnapshot(snapshot)
@@ -754,7 +789,7 @@ export function useChat(): {
       setTodos(restored.todos)
       return snapshot
     } catch { return null }
-  }, [selectView])
+  }, [selectView, renderSource])
 
   const loadHistory = useCallback(async (sessionId: string): Promise<void> => {
     await restoreSession(sessionId)
@@ -762,8 +797,9 @@ export function useChat(): {
 
   /** Snapshot and watermark describe the same state; subscribe only after replacing the current turn. */
   const resumeStream = useCallback(async (sessionId: string): Promise<boolean> => {
+    const source = getEngineSource()
     const snapshot = await restoreSession(sessionId)
-    if (!snapshot || activeStreamRef.current || viewSessionRef.current !== sessionId ||
+    if (source !== getEngineSource() || !isEngineReady() || !snapshot || activeStreamRef.current || viewSessionRef.current !== sessionId ||
       snapshot.source !== 'live' || snapshot.finished || !snapshot.eventId) return false
     const streamId = 'resume-' + newId()
     activeStreamRef.current = streamId
@@ -788,6 +824,8 @@ export function useChat(): {
       options: Pick<SendOptions, 'sessionId' | 'model' | 'workspacePaths'> &
         Partial<Pick<SendOptions, 'thinkingMode' | 'subagentModel' | 'utilityModel'>>
     ) => {
+      const source = getEngineSource()
+      assertEngineSource(renderSource)
       if (activeStreamRef.current || answeringRef.current.has(requestId)) return
       const target = messages.find(message => message.interactions?.some(item => item.requestId === requestId && item.status === 'pending'))
       const pending = target?.interactions?.find(item => item.requestId === requestId && item.status === 'pending')
@@ -800,14 +838,17 @@ export function useChat(): {
         // The engine restores the original model/workspace and acknowledges the request before UI marks it answered.
         await runStream({ sessionId: options.sessionId, runId: target.runId, toolResponse: buildToolResponse(pending, values) })
       } catch (error) {
+        if (source !== getEngineSource()) return
         answeringRef.current.delete(requestId)
         setStreaming(false)
         throw error
       }
-    }, [messages, runStream]
+    }, [messages, runStream, renderSource]
   )
 
   const abort = useCallback(async (): Promise<void> => {
+    const source = getEngineSource()
+    assertEngineSource(renderSource)
     const streamId = activeStreamRef.current
     const sessionId = activeSessionRef.current
     if (!streamId || !sessionId) return
@@ -815,17 +856,19 @@ export function useChat(): {
     try {
       // Cancellation is an engine operation. Detaching first would leave tools executing during recovery.
       await engine.requestOrThrow({ method: 'POST', path: '/chat/cancel', body: { sessionId } })
+      if (source !== getEngineSource()) return
       await engine.abortStream(streamId)
+      if (source !== getEngineSource()) return
       if (activeStreamRef.current === streamId) activeStreamRef.current = null
       if (viewSessionRef.current !== sessionId) return
       flushStreamPatches()
       setStreaming(false)
       await loadHistory(sessionId)
     } catch (error) {
-      if (viewSessionRef.current === sessionId) setMessages(previous => patchLastAssistant(previous,
+      if (source === getEngineSource() && viewSessionRef.current === sessionId) setMessages(previous => patchLastAssistant(previous,
         message => ({ ...message, error: error instanceof Error ? error.message : String(error) })))
     }
-  }, [syncQueue, flushStreamPatches, loadHistory])
+  }, [syncQueue, flushStreamPatches, loadHistory, renderSource])
 
   /**
    * 清空当前会话。
@@ -838,6 +881,9 @@ export function useChat(): {
    */
   const clear = useCallback(
     async (sessionId?: string): Promise<void> => {
+      if (isRemoteEngine()) throw new Error('远端会话暂不支持删除历史')
+      const source = getEngineSource()
+      assertEngineSource(renderSource)
       if (activeStreamRef.current) return
       if (sessionId) {
         const result = await engine.request({
@@ -845,6 +891,7 @@ export function useChat(): {
           path: '/conversation/history',
           query: { sessionId }
         })
+        assertEngineSource(source)
         if (!result.ok) throw new Error(result.message || '引擎侧历史删除失败')
         forgetSubagentSession(sessionId)
         forgetCommandSession(sessionId)
@@ -853,7 +900,7 @@ export function useChat(): {
       setCommandJobs([])
       setTodos([])
     },
-    []
+    [renderSource]
   )
 
   /**
@@ -879,8 +926,12 @@ export function useChat(): {
   /** 删除一整轮对话（该消息所在轮：从轮首用户消息到下一个用户消息之前），同步删引擎侧历史 */
   const deleteTurn = useCallback(
     async (sessionId: string, message: ChatMessage): Promise<void> => {
+      if (isRemoteEngine()) throw new Error('远端会话暂不支持删除轮次')
+      const source = getEngineSource()
+      assertEngineSource(renderSource)
       if (activeStreamRef.current) return
       const row = await resolveEngineRow(sessionId, message)
+      assertEngineSource(source)
       const turnId = message.conversationId ?? row?.conversationId
       if (!row || !turnId) throw new Error('未能定位该轮对话的引擎记录，请重新加载会话')
       const result = await engine.request({
@@ -888,10 +939,11 @@ export function useChat(): {
         path: `/conversation/turns/${encodeURIComponent(turnId)}`,
         query: { sessionId }
       })
+      assertEngineSource(source)
       if (!result.ok) throw new Error(result.message || '引擎侧删除失败')
       await loadHistory(sessionId)
     },
-    [loadHistory, resolveEngineRow]
+    [loadHistory, resolveEngineRow, renderSource]
   )
 
   /**
@@ -901,8 +953,12 @@ export function useChat(): {
    */
   const retryFrom = useCallback(
     async (userMessage: ChatMessage, options: SendOptions): Promise<void> => {
+      if (isRemoteEngine()) throw new Error('远端会话暂不支持截断重试，请发送新消息继续')
+      const source = getEngineSource()
+      assertEngineSource(renderSource)
       if (activeStreamRef.current) return
       const row = await resolveEngineRow(options.sessionId, userMessage)
+      assertEngineSource(source)
       if (!row?.id) throw new Error('未能定位该消息的稳定记录，请重新加载会话')
       if (row.id) {
         const result = await engine.request({
@@ -910,6 +966,7 @@ export function useChat(): {
           path: '/conversation/truncate',
           body: { sessionId: options.sessionId, messageId: row.id }
         })
+        assertEngineSource(source)
         if (!result.ok) throw new Error(result.message || '引擎侧截断失败')
       }
       if (viewSessionRef.current !== options.sessionId) return
@@ -922,7 +979,7 @@ export function useChat(): {
         attachments: userMessage.attachments
       })
     },
-    [resolveEngineRow, send]
+    [resolveEngineRow, send, renderSource]
   )
 
   /**
@@ -932,8 +989,17 @@ export function useChat(): {
    */
   const revertFrom = useCallback(
     async (sessionId: string, userMessage: ChatMessage): Promise<void> => {
+      if (isRemoteEngine()) throw new Error('远端会话暂不支持回退文件')
+      const source = getEngineSource()
+      assertEngineSource(renderSource)
       if (activeStreamRef.current) throw new Error('会话运行中，请先停止再回退')
-      await revertConversationFrom(engine.requestOrThrow, sessionId, userMessage)
+      await revertConversationFrom(async <T,>(input: Parameters<typeof engine.requestOrThrow>[0]) => {
+        assertEngineSource(source)
+        const result = await engine.requestOrThrow<T>(input)
+        assertEngineSource(source)
+        return result
+      }, sessionId, userMessage)
+      assertEngineSource(source)
       // A slow rollback may finish after navigation. Do not remove another session's messages.
       if (viewSessionRef.current !== sessionId) return
       setMessages((prev) => {
@@ -941,7 +1007,7 @@ export function useChat(): {
         return i >= 0 ? prev.slice(0, i) : prev
       })
     },
-    []
+    [renderSource]
   )
 
   return {

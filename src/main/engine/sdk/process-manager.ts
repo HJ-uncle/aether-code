@@ -16,6 +16,8 @@ import { logger } from '../logger'
 export interface StartProcessOptions {
   /** node 可执行文件路径（默认 process.execPath） */
   nodePath?: string
+  /** Packaged runtimes execute from writable state rather than installation resources. */
+  cwd?: string
   /** 引擎入口脚本绝对路径 */
   binPath: string
   /** 监听端口，注入为 PORT */
@@ -92,8 +94,9 @@ export function startProcess(opts: StartProcessOptions): ProcessHandle {
     ...callerEnv
   }
 
-  const child = spawn(nodePath, ['main.js'], {
-    cwd: binDir,
+  const child = spawn(nodePath, [opts.binPath], {
+    cwd: opts.cwd ?? binDir,
+    windowsHide: true,
     env,
     // 不 detached：父进程退出时子进程随之终止，避免留下孤儿
     detached: false,

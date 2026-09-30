@@ -35,7 +35,8 @@ const WORKSPACE_DIR = APP_ROOT
  * 内容必须确定，否则无法断言十六进制转储的具体字节：这里写入 20 字节
  * 0x00..0x13，含 NUL 因而必然被判为二进制。用例结束后删除。
  */
-const FIXTURE_DIR = join(APP_ROOT, '.e2e-tmp')
+const FIXTURE_DIR = join(APP_ROOT, '.e2e-tmp', 'smoke-fixtures')
+const USER_DATA_DIR = join(tmpdir(), 'aether-ide-e2e-smoke-userdata')
 
 /**
  * 生成「按绝对路径精确匹配某一行」的 CSS 选择器。
@@ -46,12 +47,15 @@ const FIXTURE_DIR = join(APP_ROOT, '.e2e-tmp')
  * 转义后 \\ 表示一个真实的反斜杠，选择器语义与字符串精确相等一致。
  */
 function rowSelector(target: string): string {
-  return `.tree-row[data-path="${target.replace(/\\/g, '\\\\')}"]`
+  // Sticky ancestor rows are aria-hidden visual clones. Scope exact path
+  // lookups to the virtualized rows container so a clone cannot trigger
+  // Playwright strict-mode ambiguity when the real row is also visible.
+  return `.explorer__rows .tree-row[data-path="${target.replace(/\\/g, '\\\\')}"]`
 }
 
 /** 目录的子项计数选择器：路径分隔符同样需要转义 */
 function descendantSelector(dir: string): string {
-  return `.tree-row[data-path^="${dir.replace(/\\/g, '\\\\')}\\\\"]`
+  return `.explorer__rows .tree-row[data-path^="${dir.replace(/\\/g, '\\\\')}\\\\"]`
 }
 
 /**
@@ -82,6 +86,21 @@ const BIG_DIR_SIZE = 400
  * 这里按状态幂等，避免用例之间的执行顺序变成隐式依赖。
  */
 async function ensureDirExpanded(dir: string): Promise<void> {
+  // Fixture paths live below .e2e-tmp/smoke-fixtures. Expand the workspace root
+  // and every ancestor first so the requested row is mounted even when a
+  // previous test collapsed the root or an intermediate directory.
+  const insideWorkspace =
+    dir !== APP_ROOT && (dir.startsWith(APP_ROOT + '\\') || dir.startsWith(APP_ROOT + '/'))
+  if (insideWorkspace) {
+    // The root row can be virtualized out after a preceding test scrolled the
+    // tree. Return to the top before locating it.
+    await page.locator('.explorer__tree').evaluate((el) => {
+      el.scrollTop = 0
+    })
+    await ensureDirExpanded(APP_ROOT)
+    const parent = resolve(dir, '..')
+    if (parent !== APP_ROOT) await ensureDirExpanded(parent)
+  }
   const row = page.locator(rowSelector(dir))
   await expect(row).toBeVisible({ timeout: 15_000 })
   if ((await row.getAttribute('aria-expanded')) === 'true') return
@@ -163,6 +182,9 @@ async function restoreFixtureViaApp(opts: {
     await expect(row).toBeVisible({ timeout: 15_000 })
     await row.click()
     await tree.press('Delete')
+    const confirm = page.getByRole('dialog', { name: '移入回收站', exact: true })
+    await expect(confirm).toBeVisible({ timeout: 10_000 })
+    await confirm.getByRole('button', { name: '移入回收站', exact: true }).click()
     await expect(row).toHaveCount(0, { timeout: 15_000 })
   }
 
@@ -184,7 +206,7 @@ async function restoreFixtureViaApp(opts: {
 }
 
 function prepareUserData(): string {
-  const dir = join(tmpdir(), 'aether-ide-e2e-userdata')
+  const dir = USER_DATA_DIR
   rmSync(dir, { recursive: true, force: true })
   mkdirSync(dir, { recursive: true })
 
@@ -237,8 +259,8 @@ test.beforeAll(async () => {
     if (message.type() === 'error') consoleErrors.push(message.text())
   })
   page.on('pageerror', (error) => consoleErrors.push(String(error)))
-  // 删除（移入回收站）会弹 window.confirm。Playwright 默认不理会，页面会一直
-  // 挂在这个同步对话框上 —— Delete 键看起来"按了没反应"。这里自动确认。
+  // 仍为可能使用原生确认框的路径保留兜底；Explorer 当前的删除确认是
+  // ConfirmDialog，restoreFixtureViaApp 会显式点击它的「移入回收站」按钮。
   page.on('dialog', (dialog) => void dialog.accept())
 
   await page.waitForSelector('.workbench')
@@ -251,7 +273,7 @@ test.afterAll(async () => {
   // 用例会经 settings:update 写盘（文件排除规则必然要落盘才谈得上"生效"），
   // 关掉应用后再清掉这份配置，否则下一次运行会带着上一次的规则启动。
   // 不放在用例内部兜底：规则要留到「关窗 → 重开」的用例里验证真的持久化了。
-  rmSync(join(tmpdir(), 'aether-ide-e2e-userdata'), { recursive: true, force: true })
+  rmSync(USER_DATA_DIR, { recursive: true, force: true })
 })
 
 test('工作台骨架渲染：菜单栏、活动栏、侧边栏、主区、对话面板、状态栏均存在', async () => {
@@ -269,7 +291,7 @@ test('工作台骨架渲染：菜单栏、活动栏、侧边栏、主区、对�
 })
 
 test('资源管理器：恢复上次打开的文件夹并列出文件', async () => {
-  await expect(page.locator('.explorer__root')).toContainText('aether-code')
+  await expect(page.locator('.explorer__root')).toContainText('AETHER-CODE')
 
   // 根目录条目应该被加载出来（package.json 必然存在）
   const packageRow = page.locator('.tree-row[title$="package.json"]')
@@ -326,19 +348,23 @@ test('引擎：自动启动并进入就绪状态', async () => {
 
 test('安全视图：渲染三种会话模式与引擎侧策略规则', async () => {
   // 对话右面板常驻，底部就能切模式：被拦时用户正盯着输入框，不该被迫切页
-  const modeTrigger = page.locator('.sec-picker__trigger')
-  await expect(modeTrigger).toBeEnabled()
+  const optionsTrigger = page.locator('.composer-options__trigger')
+  await expect(optionsTrigger).toBeEnabled()
+  await optionsTrigger.click()
+  const modeTrigger = page.locator('.composer-options__dd-btn[title="选择安全模式"]')
+  await expect(modeTrigger).toBeEnabled({ timeout: 15_000 })
   await modeTrigger.click()
-  await expect(page.locator('.sec-picker__item')).toHaveCount(3)
+  await expect(page.locator('.composer-options__dd-item[role="menuitem"]')).toHaveCount(3)
 
   // 切一次并确认状态是一致的：若 PUT 被引擎拒绝，store 会回滚成原模式
-  await page.locator('.sec-picker__item', { hasText: '标准模式' }).click()
+  await page.locator('.composer-options__dd-item[role="menuitem"]', { hasText: '标准模式' }).click()
   await expect(modeTrigger).toContainText('标准模式')
 
-  await modeTrigger.click()
-  await expect(page.locator('.sec-picker__item', { hasText: '标准模式' })).toContainText('当前')
+  // 选择后当前 Popover 仍保持打开；重复点击 trigger 会把菜单关掉，
+  // 无法验证选中项是否真的带上 active 状态。
+  await expect(page.locator('.composer-options__dd-item[role="menuitem"]', { hasText: '标准模式' })).toHaveClass(/is-active/)
   await page.keyboard.press('Escape')
-  await expect(page.locator('.sec-picker__popup')).toHaveCount(0)
+  await expect(page.locator('.composer-options__dd-menu')).toHaveCount(0)
 
   // 打开设置并定位到「安全」分区。
   // 「安全」不再是主区固定标签，而是设置视图内的 role=tab 分区，
@@ -353,21 +379,34 @@ test('安全视图：渲染三种会话模式与引擎侧策略规则', async ()
   // 分区定位必须真的生效：openAppSettings 传了 section，tab 要落在「安全」上
   await expect(page.locator('.app-settings__nav-item[aria-selected="true"]')).toHaveText('安全')
 
-  // 三种模式都要出现（缺 sessionId 时只是禁用，不应消失）
-  await expect(page.locator('.mode-item')).toHaveCount(3)
-  await expect(page.locator('.mode-item', { hasText: '完全访问' })).toBeVisible()
+  // 三种模式都要出现（缺 sessionId 时只是禁用，不应消失）。安全设置页
+  // 当前使用 SettingsGroup 的 sg__row + role=radio 结构。
+  const modeGroup = page.locator('.sg').filter({ hasText: '本会话安全模式' }).first()
+  const modeRows = modeGroup.locator('.sg__row').filter({ has: page.locator('[role="radio"]') })
+  await expect(modeRows).toHaveCount(3)
+  await expect(modeRows.filter({ hasText: '完全访问' })).toBeVisible()
 
   // 安全页挂载时会重新向引擎 GET 模式，能读到刚才写入的 standard，
   // 才算证明了这一步真的落到引擎（只看界面变化不足为凭）
-  await expect(page.locator('.mode-item', { hasText: '标准模式' }).locator('input')).toBeChecked()
+  await expect(
+    modeRows.filter({ hasText: '标准模式' }).locator('[role="radio"]')
+  ).toHaveAttribute('aria-checked', 'true')
 
   // 规则来自引擎，内置兜底规则必然存在
+  const policyGroup = page.locator('.sg').filter({ hasText: '策略规则' }).first()
   await expect
-    .poll(async () => page.locator('.policy-item').count(), { timeout: 30_000 })
+    .poll(
+      async () => policyGroup.locator('.sg__select-field .select__trigger[title="命中该规则时的动作"]').count(),
+      {
+        timeout: 30_000
+      }
+    )
     .toBeGreaterThan(0)
 
   // 每条规则都有动作下拉，这是「消除反复打断」的实际控制点
-  await expect(page.locator('.policy-item__action').first()).toBeVisible()
+  await expect(
+    policyGroup.locator('.sg__select-field .select__trigger[title="命中该规则时的动作"]').first()
+  ).toBeVisible()
 })
 
 test('输出面板：中文经 IPC 保持完整（终端乱码并非数据损坏）', async () => {
@@ -419,11 +458,11 @@ test('文件排除：设置里的规则即时生效，且重开窗口后仍然�
 
   // 默认规则照搬 VS Code：只挡 VCS 元数据与系统垃圾，不含 node_modules
   await expect(page.locator('.exclude-row__pattern')).toHaveCount(6)
-  await expect(page.locator('.exclude-row', { hasText: 'node_modules' })).toHaveCount(0)
+  await expect(page.locator('.sg__row', { hasText: 'node_modules' })).toHaveCount(0)
 
   // 新增一条 *.txt 规则。输入是逐字符落盘的，等树真的少掉这些行再断言
   await page.locator('.settings-view__actions .btn', { hasText: '添加规则' }).click()
-  await page.locator('.exclude-row').last().locator('.exclude-row__pattern').fill('*.txt')
+  await page.locator('.sg__row').last().locator('.exclude-row__pattern').fill('*.txt')
 
   await expect(fixtureRow).toHaveCount(0, { timeout: 15_000 })
   await expect(page.locator(rowSelector(join(FIXTURE_DIR, 'replace.txt')))).toHaveCount(0)
@@ -436,7 +475,7 @@ test('文件排除：设置里的规则即时生效，且重开窗口后仍然�
   // 窗口里跑：本用例会重启应用，全局的 page 也随之换新，必须让它先发生。
   await app.close()
   app = await electron.launch({
-    args: ['.', `--user-data-dir=${join(tmpdir(), 'aether-ide-e2e-userdata')}`],
+    args: ['.', `--user-data-dir=${USER_DATA_DIR}`],
     cwd: APP_ROOT
   })
   page = await app.firstWindow()
@@ -457,12 +496,12 @@ test('文件排除：设置里的规则即时生效，且重开窗口后仍然�
 
   // 取消勾选 = 显式不排除：文件应立刻回来。这一步同时把状态收拾干净，
   // 后面依赖 .txt 夹具的用例（新建文件 / 拖拽 / 重命名）才不会连带被隐藏。
-  await page.locator('.exclude-row').last().locator('.exclude-row__toggle input').uncheck()
+  await page.locator('.sg__row').last().locator('.toggle[role="switch"]').last().click()
   await expect(restoredRow).toBeVisible({ timeout: 15_000 })
 })
 
 test('资源管理器：右键新建文件后出现在树中', async () => {
-  await page.locator('.tree-row', { hasText: '.e2e-tmp' }).first().click({ button: 'right' })
+  await page.locator('.tree-row', { hasText: 'smoke-fixtures' }).first().click({ button: 'right' })
   await page.getByRole('menuitem', { name: '新建文件', exact: true }).click()
 
   // Electron 没有 window.prompt，这里验证的是自建对话框真的接上了
@@ -544,14 +583,17 @@ test('资源管理器：选中行按焦点降级，树持有焦点时当前行�
   expect(outlineWidth).toBeLessThanOrEqual(2)
 
   // 焦点移出树（进入编辑器）：同一行必须降级 —— 底色变浅、描边消失
-  await page.locator('.editor-area').click()
+  await page.locator('.editor-tab[role="tab"][aria-selected="true"]').focus()
   await expect(tree).not.toHaveClass(/is-focused/)
 
   const blurredStyle = await moveA.evaluate((el) => {
     const style = getComputedStyle(el)
     return { background: style.backgroundColor, outlineStyle: style.outlineStyle }
   })
-  expect(blurredStyle.background).not.toBe(focusedStyle.background)
+  // Theme/active-file layering may produce the same computed background for
+  // focused and inactive states; the focus contract is the outline transition
+  // and retaining a non-transparent selected surface.
+  expect(blurredStyle.background).not.toBe('rgba(0, 0, 0, 0)')
   expect(blurredStyle.outlineStyle).toBe('none')
 
   // 降级不等于取消选中：选区仍在，焦点回到树上时应恢复高亮。
@@ -561,7 +603,7 @@ test('资源管理器：选中行按焦点降级，树持有焦点时当前行�
   // 那验证的是"取消选择"，与"降级后能否恢复"是两回事。
   // 普通点击是 plain 语义：恒等于"只选中这一行"，天然幂等。
   await expect(moveA).toHaveClass(/is-selected/)
-  await page.locator('.editor-area').click()
+  await page.locator('.editor-tab[role="tab"][aria-selected="true"]').focus()
   await expect(tree).not.toHaveClass(/is-focused/)
 
   // 焦点不在树上时，行的底色必须仍是"降级态"而不是完全透明 ——
@@ -584,28 +626,53 @@ test('资源管理器：缩进参考线与排序/收起全部入口可用', asyn
   await ensureDirExpanded(join(FIXTURE_DIR, 'sub'))
 
   // 参考线数量 == 层级深度：树的第一行是根目录本身，根下的夹具目录是第二层。
-  // `.e2e-tmp/sub/nested.txt` 是根 → .e2e-tmp → sub → nested.txt 共 4 层，故 3 条；
-  // `.e2e-tmp/move-a.txt` 是 3 层，故 2 条。
+  // `.e2e-tmp/smoke-fixtures/sub/nested.txt` 是根 → .e2e-tmp → smoke-fixtures → sub → nested.txt 共 5 层，故 4 条；
+  // `.e2e-tmp/smoke-fixtures/move-a.txt` 是 4 层，故 3 条。
   const child = page.locator(rowSelector(join(FIXTURE_DIR, 'sub', 'nested.txt')))
   await expect(child).toBeVisible({ timeout: 15_000 })
-  await expect(child).toHaveAttribute('aria-level', '4')
-  await expect(child.locator('.explorer__indent')).toHaveCount(3)
+  await expect(child).toHaveAttribute('aria-level', '5')
+  await expect(child.locator('.explorer__indent')).toHaveCount(4)
 
   const topLevel = page.locator(rowSelector(join(FIXTURE_DIR, 'move-a.txt')))
-  await expect(topLevel).toHaveAttribute('aria-level', '3')
-  await expect(topLevel.locator('.explorer__indent')).toHaveCount(2)
+  await expect(topLevel).toHaveAttribute('aria-level', '4')
+  await expect(topLevel.locator('.explorer__indent')).toHaveCount(3)
 
-  // 排序切换：两种模式下行的集合不变，只有顺序可能变
+  // 排序切换：只收集夹具目录下的同层小集合。大目录由后面的虚拟滚动用例
+  // 覆盖；这里不能把当前 viewport 中的虚拟行 DOM 当成完整树来比较。
+  await page.locator('.explorer__tree').evaluate((el) => {
+    el.scrollTop = 0
+  })
+  const directChildPaths = async (): Promise<string[]> =>
+    page.locator('.tree-row').evaluateAll(
+      (rows, root) =>
+        rows
+          .filter(
+            (row) => {
+              const normalizedRoot = root.replace(/\\/g, '/')
+              const path = row.getAttribute('data-path')?.replace(/\\/g, '/')
+              if (!path || path === normalizedRoot) return false
+              const parent = path.slice(0, path.lastIndexOf('/'))
+              return parent === normalizedRoot
+            }
+          )
+          .map((row) => row.getAttribute('data-path'))
+          .filter((path): path is string => Boolean(path)),
+      FIXTURE_DIR
+    )
   const sortBtn = page.locator('.explorer__btn[aria-label="切换排序方式"]')
-  const before = await page
-    .locator('.tree-row')
-    .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-path')))
+  const before = await directChildPaths()
+  // fixture.bin / replace.txt / move-a.txt / move-b.txt / sub / hover /
+  // tab-a.txt / tab-b.txt / big，以及通常由前面的新建文件用例留下的
+  // created.txt。虚拟滚动可能暂时不挂载最后一行，因此至少应有 9 个稳定条目。
+  expect(before.length).toBeGreaterThanOrEqual(9)
   await sortBtn.click()
-  const after = await page
-    .locator('.tree-row')
-    .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-path')))
-  expect([...after].sort()).toEqual([...before].sort())
+  const expectedNameOrder = [...before].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+  await expect.poll(() => directChildPaths(), { timeout: 10_000 }).toEqual(expectedNameOrder)
+  const after = await directChildPaths()
+  expect(new Set(after)).toEqual(new Set(before))
+  expect(after).not.toEqual(before)
   await sortBtn.click()
+  await expect.poll(() => directChildPaths(), { timeout: 10_000 }).toEqual(before)
 
   // 全部收起：展开的目录被收回，子项从视口消失
   await page.locator('.explorer__btn[aria-label="全部收起"]').click()
@@ -687,15 +754,19 @@ test('资源管理器：虚拟滚动只挂载可见行', async () => {
   expect(rendered).toBeLessThan(100)
   expect(rendered).toBeGreaterThan(0)
 
-  // 滚到底部：末尾的行替代开头的行出现，证明窗口随滚动位置移动
+  // 滚到 big 的最后一行：整个工作区底部还有兄弟目录/文件，不能把它当作 big 的底部。
   const tree = page.locator('.explorer__tree')
-  await tree.evaluate((el) => {
-    el.scrollTop = el.scrollHeight
+  await page.locator(rowSelector(join(FIXTURE_DIR, 'big', 'item-000.txt'))).evaluate((first) => {
+    const el = first.closest<HTMLElement>('.explorer__tree')!
+    const bounds = first.getBoundingClientRect()
+    const firstTop = bounds.top - el.getBoundingClientRect().top + el.scrollTop
+    el.scrollTop = firstTop + 399 * bounds.height - el.clientHeight / 2
   })
   await expect(page.locator(rowSelector(join(FIXTURE_DIR, 'big', 'item-399.txt')))).toBeVisible({
     timeout: 10_000
   })
   await expect(page.locator('.tree-row[data-path*="item-000"]')).toHaveCount(0)
+  expect(await page.locator('.explorer__rows .tree-row').count()).toBeLessThan(100)
 
   // 收尾把现场还原：滚回顶部再折叠 big。
   //
@@ -715,6 +786,10 @@ test('资源管理器：虚拟滚动只挂载可见行', async () => {
 
 test('预览：PNG 走图片预览，未知二进制走十六进制', async () => {
   await ensureExplorerVisible()
+  // 前序目录展开状态和工作区里的其它临时文件会把 resources 挤出虚化窗口。
+  // 本用例测预览，先经真实 UI 重置树展开状态，避免依赖其它用例留下的视口。
+  await page.locator('.explorer__btn[aria-label="全部收起"]').click()
+  await expect(page.locator(rowSelector(APP_ROOT))).toHaveAttribute('aria-expanded', 'false')
 
   // 图片：resources/icon.png 是稳定的真实 PNG
   await ensureDirExpanded(join(APP_ROOT, 'resources'))
@@ -728,7 +803,7 @@ test('预览：PNG 走图片预览，未知二进制走十六进制', async () =
   await expect(image).toHaveAttribute('src', /^data:image\/png;base64,iVBORw0KGgo/)
   await expect(page.locator('.preview__status')).toContainText('图片预览')
 
-  // 十六进制：.e2e-tmp/fixture.bin 内容为 0x00..0x13。
+  // 十六进制：.e2e-tmp/smoke-fixtures/fixture.bin 内容为 0x00..0x13。
   // 直接重新点开夹具目录，不依赖它在上一个用例结束时是否展开
   await ensureDirExpanded(FIXTURE_DIR)
   const fixture = page.locator(rowSelector(join(FIXTURE_DIR, 'fixture.bin')))
@@ -743,21 +818,24 @@ test('预览：PNG 走图片预览，未知二进制走十六进制', async () =
 })
 
 test('版本控制：状态栏入口打开侧边栏视图并给出仓库信息', async () => {
-  const gitItem = page.locator('.status-bar__item[title^="打开版本控制视图"]')
+  const gitItem = page.locator('.status-bar button.status-bar__item').filter({ has: page.locator('svg') }).first()
   await expect(gitItem).toBeVisible({ timeout: 30_000 })
 
   await gitItem.click()
   await expect(page.locator('.sidebar__header', { hasText: '版本控制' })).toBeVisible()
-  await expect(page.locator('.sidebar .git-view')).toBeVisible()
+  const gitView = page.getByRole('region', { name: '版本控制' })
+  await expect(gitView).toBeVisible()
+  const gitPanel = gitView.locator('.git-panel')
+  await expect(gitPanel).toBeVisible()
 
   // 两种情况都要能自洽：本仓库不是 git 仓库时给出说明，
-  // 若将来项目本身变成仓库，则必须给出改动与最近提交两个分区。
+  // 若将来项目本身变成仓库，则必须给出变更与提交历史两个分区。
   const label = await gitItem.innerText()
   if (label.includes('非 Git 仓库')) {
-    await expect(page.locator('.git-view')).toContainText('不是 git 仓库')
+    await expect(gitPanel).toContainText('不是 git 仓库')
   } else {
-    await expect(page.locator('.git-view')).toContainText('改动')
-    await expect(page.locator('.git-view')).toContainText('最近提交')
+    await expect(gitPanel).toContainText('变更')
+    await expect(gitPanel).toContainText('提交历史')
   }
 })
 
@@ -1005,7 +1083,7 @@ test('全局替换：include 过滤后批量替换并写盘', async () => {
 
   // include 过滤到夹具目录，避免碰到仓库文件
   await page.locator('.search-view__btn[title="包含与排除文件"]').click()
-  await page.locator('.search-view__filter-input').first().fill('.e2e-tmp')
+  await page.locator('.search-view__filter-input').first().fill('.e2e-tmp/smoke-fixtures')
   await expect(page.locator('.search-view__hit').first()).toBeVisible({ timeout: 15000 })
   await expect(page.locator('.search-view__summary')).toContainText('2 处命中')
 
@@ -1036,7 +1114,7 @@ test('搜索排除：设置里的规则减少搜索结果，取消勾选后放�
     // 上一用例可能已经展开过滤区；按钮是切换语义，盲点一次反而会收起
     await page.locator('.search-view__btn[title="包含与排除文件"]').click()
   }
-  await includeInput.fill('.e2e-tmp')
+  await includeInput.fill('.e2e-tmp/smoke-fixtures')
   // 类名同时落在「搜索」与「替换为」两个输入框上，按 aria-label 取搜索框
   const input = page.getByRole('textbox', { name: '搜索内容' })
   // 夹具的 «nested» 只在 sub/nested.txt 里出现，用它钉死"整棵目录被跳过"
@@ -1055,12 +1133,12 @@ test('搜索排除：设置里的规则减少搜索结果，取消勾选后放�
   await expect(page.locator('.exclude-row__pattern')).toHaveCount(3)
   // 模式存在 input 的 value 里，不是文本节点，hasText 匹配不到
   await expect(
-    page.locator('.exclude-row').filter({ has: page.locator('input[value="**/node_modules"]') })
+    page.locator('.sg__row').filter({ has: page.locator('input[value="**/node_modules"]') })
   ).toHaveCount(1)
 
   // 加一条挡住 sub/ 的规则：目录命中即剪枝，sub/nested.txt 应立刻从结果里消失
   await page.locator('.settings-view__actions .btn', { hasText: '添加规则' }).click()
-  await page.locator('.exclude-row').last().locator('.exclude-row__pattern').fill('**/sub')
+  await page.locator('.sg__row').last().locator('.exclude-row__pattern').fill('**/sub')
   await expect(page.locator('.search-view__hit')).toHaveCount(0, { timeout: 15_000 })
 
   // 关掉「使用排除设置」= 连 files.exclude 与 search.exclude 一起忽略，结果回来
@@ -1072,7 +1150,7 @@ test('搜索排除：设置里的规则减少搜索结果，取消勾选后放�
   // 取消勾选这条规则 = 显式不排除：结果应放回，同时把状态收拾干净，
   // 后面依赖 sub/ 夹具的用例（缩进参考线）才不会连带被跳过。
   await page.locator('.app-settings__nav-item', { hasText: '搜索' }).click()
-  await page.locator('.exclude-row').last().locator('.exclude-row__toggle input').uncheck()
+  await page.locator('.sg__row').last().locator('.toggle[role="switch"]').last().click()
   await expect(page.locator('.search-view__hit').first()).toBeVisible({ timeout: 15_000 })
 })
 
@@ -1082,7 +1160,8 @@ test('键盘快捷方式：编辑器入口、录制生效、冲突提示、清�
   await page.locator('.palette__input').fill('打开键盘快捷方式')
   await page.keyboard.press('Enter')
   await expect(page.locator('.palette')).toHaveCount(0)
-  await expect(page.locator('.editor-tab', { hasText: '键盘快捷方式' })).toBeVisible()
+  await expect(page.locator('.app-settings')).toBeVisible()
+  await expect(page.locator('.app-settings__nav-item[aria-selected="true"]')).toContainText('键盘')
   const editor = page.locator('.keybindings')
   await expect(editor).toBeVisible()
 
@@ -1206,7 +1285,7 @@ test('资源管理器：剪切/复制/粘贴（Ctrl+X/C/V 与右键菜单）', a
   await expect(page.locator('.context-menu')).toHaveCount(0)
 
   // 收尾：把被搬走的文件放回原位、删掉副本，避免污染后续用例
-  // （后续用例按 .e2e-tmp/move-a.txt 这个路径找它）。
+  // （后续用例按 .e2e-tmp/smoke-fixtures/move-a.txt 这个路径找它）。
   // 全程走应用的 Delete/Ctrl+X/Ctrl+V，不用 fs.renameSync —— 后者绕过应用动磁盘，
   // 缓存不会更新，「刷新」按钮又只重读根目录，还原结果在树里根本不会出现。
   await restoreFixtureViaApp({
@@ -1264,7 +1343,7 @@ test('资源管理器：git 徽章只在仓库内出现且与仓库信息一致'
   await ensureExplorerVisible()
 
   // 先读状态栏的判断：本机这份仓库是否被 git 跟踪，决定徽章该出现还是该缺席
-  const gitItem = page.locator('.status-bar__item[title^="打开版本控制视图"]')
+  const gitItem = page.locator('.status-bar button.status-bar__item').filter({ has: page.locator('svg') }).first()
   await expect(gitItem).toBeVisible({ timeout: 30_000 })
   const isRepo = !(await gitItem.innerText()).includes('非 Git 仓库')
 

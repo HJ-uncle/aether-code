@@ -110,7 +110,7 @@ export function WelcomeView(): JSX.Element {
     <div className="welcome">
       <div className="welcome__inner">
         <header className="welcome__header">
-          <h1 className="welcome__title">Aether IDE</h1>
+          <h1 className="welcome__title">Aether</h1>
           {workspace.root ? (
             <p className="welcome__subtitle" title={workspace.root}>
               当前项目：{workspace.root.replace(/\\/g, '/').split('/').pop()}

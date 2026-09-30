@@ -57,7 +57,7 @@
 - `getPath/init` (:22-29) 取首项；standard/full-access 相对路径 (:40-46) 取首项；safe 对新文件 (:71-73) 也落首项。safe 对已存在相对路径才逐个查找。
 - `cmd-tool.ts:80-82` 默认 cwd 是这个子沙箱；只有 full-access 且显式给 cwd 才切换。
 - 子 defaultPrompt :268 等却宣称相对路径以主工作区为基准，:296-299 的注释也把实际顺序写反。失败前的空工作区探测与此一致。
-- 项目上下文另有确定选址问题：`chat.ts:648` 不带项目参数调用 `getProjectContextBlock`；`project-context.ts:35-40`、`aether-config.ts:51-52` 读取引擎 `process.cwd()` 下 AE.md/.aether，而非 IDE 项目根。这与截图把 Aether IDE 叫成 Aether Engine 强关联，但不能单凭源码证明模型该次误认的全部因果。
+- 项目上下文另有确定选址问题：`chat.ts:648` 不带项目参数调用 `getProjectContextBlock`；`project-context.ts:35-40`、`aether-config.ts:51-52` 读取引擎 `process.cwd()` 下 AE.md/.aether，而非 IDE 项目根。这与截图把 Aether 叫成 Aether Engine 强关联，但不能单凭源码证明模型该次误认的全部因果。
 
 ### 7. 权限不继承，工具集合也不继承
 

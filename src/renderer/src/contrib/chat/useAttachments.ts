@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
+import { getEngineSource, isRemoteEngine, subscribeEngineSource } from '@renderer/core/engine/source'
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
 import { copyIntoWorkspace } from '@renderer/core/workspace/fs-client'
 
@@ -154,19 +155,42 @@ export function useAttachments(root: string | null): UseAttachmentsResult {
   const [dragging, setDragging] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const renderSource = getEngineSource()
+  const generationRef = useRef(0)
+  const pendingBatchesRef = useRef(0)
+
+  const clear = useCallback(() => {
+    generationRef.current++
+    pendingBatchesRef.current = 0
+    setAttachments([])
+    setUploading(false)
+    setDragging(false)
+  }, [])
+
+  useEffect(() => {
+    const generation = generationRef.current
+    void Promise.resolve().then(() => { if (generation === generationRef.current) clear() })
+    const off = subscribeEngineSource(clear)
+    return () => { generationRef.current++; pendingBatchesRef.current = 0; off() }
+  }, [root, clear])
 
   const accept = useCallback(
     (files: File[]) => {
-      if (files.length === 0) return
+      if (files.length === 0 || renderSource !== getEngineSource()) return
+      if (isRemoteEngine()) { setError('远端附件上传尚未授权'); return }
       if (!root) {
         setError('请先打开一个项目目录，附件需要落盘到工作区')
         return
       }
 
+      const generation = generationRef.current
+      const isCurrent = (): boolean => generation === generationRef.current && renderSource === getEngineSource()
+      pendingBatchesRef.current++
       void (async () => {
         setUploading(true)
         setError(null)
         for (const file of files) {
+          if (!isCurrent()) return
           if (file.size > MAX_FILE_BYTES) {
             setError(`「${file.name}」超过 20MB，已跳过`)
             continue
@@ -177,7 +201,9 @@ export function useAttachments(root: string | null): UseAttachmentsResult {
           }
           try {
             const data = await readBytes(file)
+            if (!isCurrent()) return
             const result = await copyIntoWorkspace({ root, fileName: file.name, data })
+            if (!isCurrent()) return
             setAttachments((prev) => [
               ...prev,
               {
@@ -188,28 +214,30 @@ export function useAttachments(root: string | null): UseAttachmentsResult {
               }
             ])
           } catch (e) {
+            if (!isCurrent()) return
             setError(e instanceof Error ? e.message : `上传「${file.name}」失败`)
           }
         }
-        setUploading(false)
+        if (isCurrent()) { pendingBatchesRef.current--; setUploading(pendingBatchesRef.current > 0) }
       })()
     },
-    [root]
+    [root, renderSource]
   )
 
   const pick = useCallback(() => {
+    if (renderSource !== getEngineSource()) return
+    if (isRemoteEngine()) { setError('远端附件上传尚未授权'); return }
     if (!root) {
       setError('请先打开一个项目目录，附件需要落盘到工作区')
       return
     }
     inputRef.current?.click()
-  }, [root])
+  }, [root, renderSource])
 
   const remove = useCallback((path: string) => {
     setAttachments((prev) => prev.filter((item) => item.path !== path))
   }, [])
 
-  const clear = useCallback(() => setAttachments([]), [])
 
   return {
     attachments,

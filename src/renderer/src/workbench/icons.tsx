@@ -85,6 +85,7 @@ export type IconName =
   | 'pencil'
   | 'star'
   | 'star-outline'
+  | 'fit-screen'
 
 /** mdi:crosshairs-gps —— 资源管理器「定位当前文件」，与 wuzu-client 同图标 */
 const MDI_LOCATE =
@@ -253,7 +254,7 @@ const PATHS: Record<IconName, JSX.Element> = {
   ),
   'dots-vertical': (
     <path
-      d="M12 16a2 2 0 0 1 2 2 2 2 0 0 1-2 2 2 2 0 0 1-2-2 2 2 0 0 1-2-2 2 2 0 0 1 2-2m0-6a2 2 0 0 1 2 2 2 2 0 0 1-2 2 2 2 0 0 1-2-2 2 2 0 0 1 2-2m0-6a2 2 0 0 1 2 2 2 2 0 0 1-2 2 2 2 0 0 1-2-2 2 2 0 0 1 2-2z"
+      d="M12 16a2 2 0 0 1 2 2 2 2 0 0 1-2 2 2 2 0 0 1-2-2 2 2 0 0 1-2-2 2 2 0 0 1 2-2m0-6a2 2 0 0 1 2 2 2 2 0 0 1-2 2 2 2 0 0 1-2-2 2 2 0 0 1-2-2 2 2 0 0 1 2-2m0-6a2 2 0 0 1 2 2 2 2 0 0 1-2 2 2 2 0 0 1-2-2 2 2 0 0 1-2-2 2 2 0 0 1 2-2z"
       fill="currentColor"
     />
   ),
@@ -318,10 +319,7 @@ const PATHS: Record<IconName, JSX.Element> = {
     />
   ),
   'upload-outline': (
-    <path
-      d="M9 10v6h6v-6h4l-7-7-7 7h4m-6 4h2v2h10v-2h2v4H5v-4z"
-      fill="currentColor"
-    />
+    <path d="M9 10v6h6v-6h4l-7-7-7 7h4m-6 4h2v2h10v-2h2v4H5v-4z" fill="currentColor" />
   ),
   'eye-outline': (
     <path
@@ -397,10 +395,7 @@ const PATHS: Record<IconName, JSX.Element> = {
   ),
   /* mdi:pin —— 会话「置顶」 */
   pin: (
-    <path
-      d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"
-      fill="currentColor"
-    />
+    <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" fill="currentColor" />
   ),
   /* mdi:pencil-outline —— 会话「重命名」 */
   pencil: (
@@ -420,6 +415,13 @@ const PATHS: Record<IconName, JSX.Element> = {
   'star-outline': (
     <path
       d="M12 15.39l-3.76 2.27l.99-4.28l-3.32-2.88l4.38-.37L12 6.09l1.71 4.04l4.38.37l-3.32 2.88l.99 4.28L12 15.39M12 2L9.19 8.63L2 9.24l5.46 4.73L5.82 21L12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2z"
+      fill="currentColor"
+    />
+  ),
+  /* 适应窗口：四个角括号向中心收拢 */
+  'fit-screen': (
+    <path
+      d="M4 4h6v2H6v4H4V4zm10 0h6v6h-2V6h-4V4zM4 14h2v4h4v2H4v-6zm14 0h2v6h-6v-2h4v-4z"
       fill="currentColor"
     />
   ),
@@ -443,16 +445,10 @@ const PATHS: Record<IconName, JSX.Element> = {
     />
   ),
   warning: (
-    <path
-      d="M12 2 1 21h22L12 2zm1 14h-2v2h2v-2zm0-7h-2v5h2V9z"
-      fill="currentColor"
-    />
+    <path d="M12 2 1 21h22L12 2zm1 14h-2v2h2v-2zm0-7h-2v5h2V9z" fill="currentColor" />
   ),
   info: (
-    <path
-      d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"
-      fill="currentColor"
-    />
+    <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" fill="currentColor" />
   ),
   circle: (
     <path

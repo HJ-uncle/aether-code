@@ -4,9 +4,11 @@
  * 集中把 IPC 订阅收敛到一份，避免每个组件各自订阅造成重复监听与状态不一致。
  * context 实例与 useApp 在 ./app-context，这里是唯一的组件文件（react-refresh）。
  */
-import { useCallback, useEffect, useMemo, useState, type JSX, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type ReactNode } from 'react'
 import { DEFAULT_SETTINGS, type AppSettings, type EngineSnapshot } from '@shared/ipc'
 import { useEngine } from './engine/useEngine'
+import { selectSessionId, settingsPatchForSource } from './engine/session-selection'
+import { engineConnectionKey, getEngineStorageKey, getEngineSource, isEngineReady, sessionStorageKey, subscribeEngineSource } from './engine/source'
 import { getSettings, updateSettings as persistSettings } from './engine/client'
 import { refreshModels, resetModelStore } from './engine/model-store'
 import { resetSecurityModeStore } from './engine/security-store'
@@ -61,6 +63,9 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
   const engine = useEngine()
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [settingsLoaded, setSettingsLoaded] = useState(false)
+  const selectedSourceRef = useRef<string | null>(null)
+  const [selectedSource, setSelectedSource] = useState<string | null>(null)
+  const connectionKey = engineConnectionKey(engine.snapshot)
 
   useEffect(() => {
     let alive = true
@@ -91,12 +96,57 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
       resetModelStore()
       resetSecurityModeStore()
     }
-  }, [phase])
+  }, [phase, connectionKey])
 
-  const updateSettings = useCallback(async (patch: Partial<AppSettings>) => {
-    const next = await persistSettings(patch)
-    setSettings(next)
-    publishSettings(next)
+  useEffect(() => subscribeEngineSource(() => {
+    resetModelStore()
+    resetSecurityModeStore()
+  }), [])
+
+  // Embedded selection follows explicit main settings writes. Remote selection is endpoint-local.
+  useEffect(() => {
+    if (!settingsLoaded || !isEngineReady()) return
+    const storageSource = getEngineStorageKey()
+    if (selectedSourceRef.current === storageSource) return
+    const source = getEngineSource()
+    let alive = true
+    void (async () => {
+      const persisted = storageSource ? null : await getSettings()
+      if (!alive || source !== getEngineSource() || !isEngineReady()) return
+      let saved = ''
+      if (storageSource) {
+        try { saved = localStorage.getItem(sessionStorageKey('aether:lastSessionId', storageSource)) ?? '' } catch { /* optional persistence */ }
+      }
+      const sessionId = selectSessionId(storageSource, persisted?.lastSessionId ?? '', saved, () => globalThis.crypto.randomUUID())
+      selectedSourceRef.current = storageSource
+      if (storageSource) {
+        try { localStorage.setItem(sessionStorageKey('aether:lastSessionId', storageSource), sessionId) } catch { /* optional persistence */ }
+      } else if (!persisted?.lastSessionId) {
+        void persistSettings({ lastSessionId: sessionId }).catch(() => {})
+      }
+      const next = { ...currentSettings, lastSessionId: sessionId }
+      setSettings(next)
+      publishSettings(next)
+      setSelectedSource(storageSource)
+    })()
+    return () => { alive = false }
+  }, [settingsLoaded, connectionKey, phase, settings])
+
+  const updateSettings = useCallback(async (patch: Partial<AppSettings>, remoteToken?: string) => {
+    const source = getEngineSource()
+    const storageSource = getEngineStorageKey()
+    const persistedPatch = settingsPatchForSource(storageSource, patch)
+    const next = Object.keys(persistedPatch).length > 0 || remoteToken !== undefined
+      ? await persistSettings(persistedPatch, remoteToken)
+      : currentSettings
+    if (storageSource && patch.lastSessionId) {
+      try { localStorage.setItem(sessionStorageKey('aether:lastSessionId', storageSource), patch.lastSessionId) } catch { /* optional persistence */ }
+    }
+    // A response for the old server cannot replace the new server's selected session.
+    const ownsSelection = source === getEngineSource() && Boolean(patch.lastSessionId)
+    const visible = { ...next, lastSessionId: ownsSelection ? patch.lastSessionId! : currentSettings.lastSessionId }
+    setSettings(visible)
+    publishSettings(visible)
   }, [])
 
   const value = useMemo<AppContextValue>(
@@ -104,10 +154,10 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
       engine,
       settings,
       updateSettings,
-      ready: engine.snapshot.phase === 'ready',
+      ready: engine.snapshot.phase === 'ready' && isEngineReady() && settingsLoaded && selectedSource === getEngineStorageKey(),
       settingsLoaded
     }),
-    [engine, settings, updateSettings, settingsLoaded]
+    [engine, settings, updateSettings, settingsLoaded, selectedSource]
   )
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>

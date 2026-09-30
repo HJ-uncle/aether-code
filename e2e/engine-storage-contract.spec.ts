@@ -152,10 +152,13 @@ test('普通HTTP与恢复SSE共用实例头和根路径规则', () => {
   expect(normalizeEnginePath('/api/v1/tools')).toBe('/api/v1/tools')
 })
 
-test('remote 未有共享工作区约定时仅允许元数据读取，不发送本地路径', () => {
+test('remote 放行服务端会话聊天，仍阻止客户端路径接口和未开放的改动操作', () => {
   expect(remoteRequestError('remote', 'GET', '/models')).toBeNull()
-  expect(remoteRequestError('remote', 'POST', '/chat')).toContain('工作区映射')
-  expect(remoteRequestError('remote', 'GET', '/api/v1/workspace/file/content')).toContain('工作区映射')
-  expect(remoteRequestError('remote', 'POST', '/changes/revert')).toContain('工作区映射')
+  expect(remoteRequestError('remote', 'POST', '/chat')).toBeNull()
+  expect(remoteRequestError('remote', 'POST', '/chat/cancel')).toBeNull()
+  for (const [method, path] of [
+    ['GET', '/api/v1/workspace/file/content'], ['POST', '/workspace/file'],
+    ['POST', '/changes/revert'], ['POST', '/changes/revert-batch']
+  ]) expect(remoteRequestError('remote', method, path), method + ' ' + path).toContain('尚未接入远端')
   expect(remoteRequestError('embedded', 'POST', '/chat')).toBeNull()
 })

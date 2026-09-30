@@ -13,7 +13,7 @@ import type { useEngine } from './engine/useEngine'
 export interface AppContextValue {
   engine: ReturnType<typeof useEngine>
   settings: AppSettings
-  updateSettings: (patch: Partial<AppSettings>) => Promise<void>
+  updateSettings: (patch: Partial<AppSettings>, remoteToken?: string) => Promise<void>
   /** 引擎是否可用（用于命令 when 条件） */
   ready: boolean
   /**

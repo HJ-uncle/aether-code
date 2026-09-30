@@ -6,7 +6,7 @@
 
 ## 项目速览
 
-Aether IDE：Electron + React + TypeScript 的桌面 IDE。
+Aether：Electron + React + TypeScript 的桌面 IDE。
 
 | 目录 | 职责 | 运行在 |
 |---|---|---|

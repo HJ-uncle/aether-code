@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { getEngineSource, subscribeEngineSource } from './source'
 import type { SubagentRun } from '@shared/subagent'
 import { cancelSubagentRun, getSubagentRun, listSubagentRuns } from './client'
 import {
@@ -52,12 +53,13 @@ export function forgetSubagentSession(parentSessionId: string): void {
 }
 
 export async function refreshSubagentRuns(parentSessionId: string): Promise<void> {
+  const source = getEngineSource()
   const pending = requests.get(parentSessionId)
   if (pending) return pending
   const before = new Map(getSubagentRuns(parentSessionId).map((run) => [run.runId, run]))
   const request = (async () => {
     const result = await listSubagentRuns(parentSessionId)
-    if (!Array.isArray(result)) return
+    if (source !== getEngineSource() || !Array.isArray(result)) return
     const currentIds = new Set(result.map((run) => run.runId))
     let removed = false
     for (const [id, snapshot] of before) {
@@ -74,19 +76,29 @@ export async function refreshSubagentRuns(parentSessionId: string): Promise<void
   try {
     await request
   } finally {
-    requests.delete(parentSessionId)
+    if (requests.get(parentSessionId) === request) requests.delete(parentSessionId)
   }
 }
 
 export async function refreshSubagentRun(runId: string): Promise<void> {
-  ingestSubagentRun(await getSubagentRun(runId))
+  const source = getEngineSource()
+  const run = await getSubagentRun(runId)
+  if (source === getEngineSource()) ingestSubagentRun(run)
 }
 
 export async function requestSubagentCancellation(runId: string): Promise<void> {
-  ingestSubagentRun(await cancelSubagentRun(runId))
+  const source = getEngineSource()
+  const run = await cancelSubagentRun(runId)
+  if (source === getEngineSource()) ingestSubagentRun(run)
 }
 
 /** A detached parent SSE must not freeze a child card; reconcile only sessions with active runs. */
 export function hasActiveSubagents(parentSessionId: string | null): boolean {
   return getSubagentRuns(parentSessionId).some((run) => isSubagentActive(run.status))
 }
+
+subscribeEngineSource(() => {
+  runs.clear()
+  requests.clear()
+  for (const listener of listeners) listener()
+})

@@ -3,6 +3,7 @@ import { Marked, type Token, type Tokens } from 'marked'
 import hljs from 'highlight.js'
 import { Icon } from '@renderer/workbench/icons'
 import { openFileFromChat } from './open-file'
+import { useApp } from '@renderer/core/app-context'
 
 /** 链接 href 是否指向本地文件（而非 http 外链/锚点）：模型常用 [名字](path/to/file.ts) 引用代码 */
 function looksLikeFileHref(href: string): boolean {
@@ -84,6 +85,31 @@ function copyCode(event: React.MouseEvent<HTMLButtonElement>): void {
   })
 }
 
+function ChatLink({ token, prefix }: { token: Tokens.Link; prefix: string }): JSX.Element {
+  const { engine } = useApp()
+  const href = token.href ?? ''
+  const local = looksLikeFileHref(href)
+  const remoteFile = !href.startsWith('#') && !/^(?:https?:|mailto:|tel:)/i.test(href)
+  if (engine.snapshot.mode === 'remote' && remoteFile) {
+    return <span title={`远端路径（尚未映射）：${href}`}>{renderInline(token.tokens, prefix)}</span>
+  }
+  if (local) {
+    return <a href={href} title={`在编辑器中打开 ${href}`} onClick={(event) => {
+      event.preventDefault()
+      void openFileFromChat(href)
+    }}>{renderInline(token.tokens, prefix)}</a>
+  }
+  return <a href={href} title={token.title ?? undefined} target="_blank" rel="noreferrer noopener">{renderInline(token.tokens, prefix)}</a>
+}
+
+function ChatImage({ token }: { token: Tokens.Image }): JSX.Element {
+  const { engine } = useApp()
+  if (engine.snapshot.mode === 'remote' && !/^(?:https?:|data:image\/)/i.test(token.href)) {
+    return <span title={`远端图片路径（尚未映射）：${token.href}`}>{token.text || '远端图片'}（未加载）</span>
+  }
+  return <img src={token.href} alt={token.text} title={token.title ?? undefined} />
+}
+
 function renderInline(tokens: Token[] | undefined, keyPrefix: string): React.ReactNode {
   if (!tokens) return null
   return tokens.map((token, index) => {
@@ -103,38 +129,10 @@ function renderInline(tokens: Token[] | undefined, keyPrefix: string): React.Rea
             {token.text}
           </code>
         )
-      case 'link': {
-        const href = token.href ?? ''
-        // 指向本地文件的链接在编辑器里打开；http 等外链保持新窗口打开
-        if (looksLikeFileHref(href)) {
-          return (
-            <a
-              key={key}
-              href={href}
-              title={`在编辑器中打开 ${href}`}
-              onClick={(event) => {
-                event.preventDefault()
-                void openFileFromChat(href)
-              }}
-            >
-              {renderInline(token.tokens, key)}
-            </a>
-          )
-        }
-        return (
-          <a
-            key={key}
-            href={href}
-            title={token.title ?? undefined}
-            target="_blank"
-            rel="noreferrer noopener"
-          >
-            {renderInline(token.tokens, key)}
-          </a>
-        )
-      }
+      case 'link':
+        return <ChatLink key={key} token={token as Tokens.Link} prefix={key} />
       case 'image':
-        return <img key={key} src={token.href} alt={token.text} title={token.title ?? undefined} />
+        return <ChatImage key={key} token={token as Tokens.Image} />
       case 'br':
         return <br key={key} />
       case 'escape':

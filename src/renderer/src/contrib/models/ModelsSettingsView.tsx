@@ -1,5 +1,6 @@
 import { useEffect, useState, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
+import { isRemoteEngine } from '@renderer/core/engine/source'
 import { removeModel, useModels } from '@renderer/core/engine/model-store'
 import { Icon } from '@renderer/workbench/icons'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
@@ -16,7 +17,8 @@ import { ModelFormDialog } from './ModelFormDialog'
  * 就是实际可用的模型集合。
  */
 export function ModelsSettingsView(): JSX.Element {
-  const { ready, settings, updateSettings } = useApp()
+  const { engine, ready, settings, updateSettings } = useApp()
+  const isRemote = engine.snapshot.mode === 'remote'
   const { models, loading, error, loaded, refresh } = useModels()
   const [editing, setEditing] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
@@ -66,7 +68,7 @@ export function ModelsSettingsView(): JSX.Element {
       {loading && !loaded ? (
         <div className="settings-view__saved">加载中…</div>
       ) : models.length === 0 && ready ? (
-        <div className="notice">还没有配置模型。点击「添加模型」填写服务商与 API Key 后即可开始对话。</div>
+        <div className="notice">尚未配置模型，可添加模型或确认引擎已设置默认模型。</div>
       ) : models.length > 0 ? (
         <SettingsGroup title="已配置的模型">
           {models.map((model) => (
@@ -92,16 +94,17 @@ export function ModelsSettingsView(): JSX.Element {
                 type="button"
                 className="exclude-row__remove"
                 aria-label={`删除模型 ${model.modelId}`}
-                title="删除该模型"
-                disabled={busyId === model.id}
+                title={isRemote ? '当前远端连接尚不支持删除模型；可以添加或编辑模型' : '删除该模型'}
+                disabled={isRemote || busyId === model.id}
                 onClick={() => {
+                  if (isRemoteEngine()) return
                   void confirmDialog({
                     title: '删除模型',
                     body: `确定删除模型「${model.modelId}」吗？此操作不可撤销。`,
                     confirmText: '删除',
                     danger: true
                   }).then((confirmed) => {
-                    if (!confirmed) return
+                    if (!confirmed || isRemoteEngine()) return
                     void guard(model.id, () => removeModel(model.id))
                   })
                 }}

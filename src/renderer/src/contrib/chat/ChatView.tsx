@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { createPortal } from 'react-dom'
 import { useApp } from '@renderer/core/app-context'
 import { useChat, type ChatMessage, type ToolActivity } from '@renderer/core/engine/useChat'
+import { engineConnectionKey, engineStorageKey, getEngineSource } from '@renderer/core/engine/source'
 import type { PendingInteraction } from '@renderer/core/engine/pending'
 import { rootStatusLabel } from '@renderer/core/engine/root-run-state'
 import { SessionTray } from './SessionTray'
@@ -53,10 +54,12 @@ const LOAD_EARLIER_PX = 120
 
 /** 按工作区相对路径读 base64 data URL（图片缩略图 / 放大查看共用） */
 function useAttachmentImageSrc(root: string | null, file: ChatAttachment): string | null {
+  const { engine } = useApp()
+  const remoteReadOnly = engine.snapshot.mode === 'remote'
   const [src, setSrc] = useState<string | null>(null)
   useEffect(() => {
     let alive = true
-    if (root && file.type.startsWith('image/')) {
+    if (!remoteReadOnly && root && file.type.startsWith('image/')) {
       void readFile(`${root}/${file.path}`)
         .then((result) => {
           if (alive && result.base64) setSrc(`data:${file.type};base64,${result.base64}`)
@@ -66,8 +69,8 @@ function useAttachmentImageSrc(root: string | null, file: ChatAttachment): strin
     return () => {
       alive = false
     }
-  }, [root, file.path, file.type])
-  return src
+  }, [root, file.path, file.type, remoteReadOnly])
+  return remoteReadOnly ? null : src
 }
 
 /** 附件预览状态：图片带 data URL，文本附件由弹窗按路径回读内容 */
@@ -86,13 +89,15 @@ function AttachmentPreviewDialog({
   preview: AttachmentPreview
   onClose: () => void
 }): JSX.Element {
+  const { engine } = useApp()
+  const remoteReadOnly = engine.snapshot.mode === 'remote'
   const { file, src } = preview
   const isImage = file.type.startsWith('image/')
   const [text, setText] = useState<string | null>(null)
 
   useEffect(() => {
     let alive = true
-    if (!isImage && root) {
+    if (!remoteReadOnly && !isImage && root) {
       void readFile(`${root}/${file.path}`)
         .then((result) => {
           if (alive) setText(result.truncated ? `${result.content}\n\n…（内容过长已截断）` : result.content)
@@ -104,11 +109,11 @@ function AttachmentPreviewDialog({
     return () => {
       alive = false
     }
-  }, [isImage, root, file.path])
+  }, [isImage, root, file.path, remoteReadOnly])
 
   return (
     <Dialog title={file.name} className="modal--image-preview" width={860} onClose={onClose}>
-      {isImage ? (
+      {remoteReadOnly ? <p>远端附件仅展示历史记录；尚未配置工作区映射，无法读取文件内容。</p> : isImage ? (
         <div className="image-preview">
           {src ? <img src={src} alt={file.name} /> : <span className="image-preview__loading">加载中…</span>}
         </div>
@@ -131,6 +136,8 @@ function AttachmentChip({
   onRemove?: () => void
   onPreview: (file: ChatAttachment, src: string | null) => void
 }): JSX.Element {
+  const { engine } = useApp()
+  const remoteReadOnly = engine.snapshot.mode === 'remote'
   const isImage = file.type.startsWith('image/')
   const isText = !isImage && (file.type.startsWith('text/') || /\.(txt|md|markdown|json|jsonc|log|csv|tsv|xml|ya?ml|toml|ini)$/i.test(file.name))
   const src = useAttachmentImageSrc(root, file)
@@ -171,7 +178,7 @@ function AttachmentChip({
 
   return (
     <span className={`attach-chip${isText ? ' attach-chip--clickable' : ''}`} title={file.path}>
-      {isText ? (
+      {isText && !remoteReadOnly ? (
         <button
           type="button"
           className="attach-chip__open"
@@ -181,7 +188,7 @@ function AttachmentChip({
           {body}
         </button>
       ) : (
-        body
+        <>{body}{remoteReadOnly ? <span className="attach-chip__size">远端附件</span> : null}</>
       )}
       {onRemove ? (
         <button
@@ -232,7 +239,12 @@ function formatBytes(bytes: number): string {
  * 多会话、多 Agent、附件等能力时，改动集中在 hook 层。
  */
 export function ChatView(): JSX.Element {
-  const { ready, settings, updateSettings, settingsLoaded } = useApp()
+  const { engine, ready, settings, updateSettings, settingsLoaded } = useApp()
+  const remoteReadOnly = engine.snapshot.mode === 'remote'
+  const canExecute = ready
+  const connectionKey = engineConnectionKey(engine.snapshot)
+  const storageSource = engineStorageKey(engine.snapshot)
+  const sourceEpoch = getEngineSource()
   const { messages, commandJobs, streaming, todos, send, respond, abort, loadHistory, resumeStream, deleteTurn, retryFrom, revertFrom, queue, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, queueSendMode, setQueueSendMode, retargetQueuedModel } = useChat()
   const { models, loaded: modelsLoaded } = useModels()
   const workspace = useWorkspace()
@@ -258,7 +270,7 @@ export function ChatView(): JSX.Element {
   /** 「+」按钮弹出的附件/引用菜单（视口坐标） */
   const [attachMenu, setAttachMenu] = useState<{ x: number; y: number } | null>(null)
   // 附件：落盘到当前工作区，发送时把相对路径交给引擎（图片→视觉/OCR，文本→smart_read）
-  const attach = useAttachments(workspace.root)
+  const attach = useAttachments(remoteReadOnly ? null : workspace.root)
   // 附件进度提示只在出现后短暂停留，避免常驻噪音
   const [attachHint, setAttachHint] = useState<string | null>(null)
   /** 附件点击预览（图片放大 / 文本查看，统一 AttachmentPreviewDialog） */
@@ -267,7 +279,7 @@ export function ChatView(): JSX.Element {
   /** AI 润色输入框内容：用轻任务模型改写得更清晰；chip 引用会随文本一起被序列化给模型 */
   const handlePolish = async (): Promise<void> => {
     const text = input.trim()
-    if (polishing || !text) return
+    if (!canExecute || sourceEpoch !== getEngineSource() || polishing || !text) return
     setPolishing(true)
     try {
       const res = await utilityChat({
@@ -280,6 +292,7 @@ export function ChatView(): JSX.Element {
         temperature: 0.3,
         maxTokens: 1500
       })
+      if (sourceEpoch !== getEngineSource()) return
       const polished = res.text.trim()
       if (polished && polished !== text) {
         inputRef.current?.setText(polished)
@@ -288,9 +301,10 @@ export function ChatView(): JSX.Element {
         setToast('润色结果与原文一致')
       }
     } catch (err) {
+      if (sourceEpoch !== getEngineSource()) return
       setToast(err instanceof Error ? `润色失败：${err.message}` : '润色失败，请稍后重试')
     } finally {
-      setPolishing(false)
+      if (sourceEpoch === getEngineSource()) setPolishing(false)
     }
   }
 
@@ -300,13 +314,26 @@ export function ChatView(): JSX.Element {
   useEffect(() => {
     const drain = (): void => {
       const queue = consumePendingMentions()
-      if (queue.length === 0) return
+      if (remoteReadOnly || sourceEpoch !== getEngineSource() || queue.length === 0) return
       for (const mention of queue) inputRef.current?.insertMention(mention)
       inputRef.current?.focus()
     }
     drain()
     return subscribePendingMentions(drain)
-  }, [])
+  }, [remoteReadOnly, sourceEpoch])
+
+  const clearAttachments = attach.clear
+  const setAttachmentDragging = attach.setDragging
+  useEffect(() => {
+    clearAttachments()
+    setAttachmentDragging(false)
+    mentionsRef.current = []
+    setMentionQuery(null)
+    setManualPalette(false)
+    setAttachMenu(null)
+    setPreviewImage(null)
+    setPolishing(false)
+  }, [connectionKey, sourceEpoch, clearAttachments, setAttachmentDragging])
 
   // 会话累计用量：按消息里的 usage 帧汇总，作为工具栏「模型 / Token / 使用时间」的数据源
   const usageTotal = useMemo(() => sumUsage(messages), [messages])
@@ -396,8 +423,9 @@ export function ChatView(): JSX.Element {
     return generated
   }, [settings.lastSessionId, settingsLoaded, updateSettings])
 
-  const displayedSessionRef = useRef(sessionId)
-  useLayoutEffect(() => { displayedSessionRef.current = sessionId }, [sessionId])
+  const sourceSessionKey = JSON.stringify([connectionKey, sourceEpoch, sessionId])
+  const displayedSessionRef = useRef(sourceSessionKey)
+  useLayoutEffect(() => { displayedSessionRef.current = sourceSessionKey }, [sourceSessionKey])
 
   // 切换会话时重置分页窗口（sessionId 声明之后，依赖其值）
   useEffect(() => {
@@ -410,12 +438,12 @@ export function ChatView(): JSX.Element {
   useEffect(() => {
     if (!ready) { historyLoadedRef.current = ''; return }
     if (!sessionId) return
-    if (historyLoadedRef.current === sessionId) return
-    historyLoadedRef.current = sessionId
+    if (historyLoadedRef.current === sourceSessionKey) return
+    historyLoadedRef.current = sourceSessionKey
     // 优先尝试恢复正在进行的流（刷新/切回会话后端仍在跑的场景）；
     // resumeStream 内部会先做历史回放，无需恢复时返回 false，再退回纯历史回放
     void resumeStream(sessionId)
-  }, [ready, sessionId, loadHistory, resumeStream])
+  }, [ready, sessionId, sourceSessionKey, loadHistory, resumeStream])
 
   // ── 每会话输入草稿（对齐 wuzu lobster-chat:draft）──
   // 切会话/重启时恢复该会话未发送的草稿；保存走防抖，不用 effect 持久化
@@ -423,24 +451,25 @@ export function ChatView(): JSX.Element {
   const draftSessionRef = useRef('')
   const draftTimerRef = useRef(0)
   useEffect(() => {
-    if (!sessionId || draftSessionRef.current === sessionId) return
-    draftSessionRef.current = sessionId
-    const draft = loadChatDraft(sessionId)
+    window.clearTimeout(draftTimerRef.current)
+    if (!ready || !sessionId || draftSessionRef.current === sourceSessionKey) return
+    draftSessionRef.current = sourceSessionKey
+    const draft = loadChatDraft(sessionId, storageSource)
     // 恢复的是序列化文本（@路径 token），MentionInput 按 value 驱动重建 chip；
     // mentions 列表无法复原，发送时由序列化兜底
     mentionsRef.current = []
     setInput(draft)
-  }, [sessionId])
+  }, [ready, sessionId, sourceSessionKey, storageSource])
   useEffect(() => () => window.clearTimeout(draftTimerRef.current), [])
 
   /** 用户编辑后防抖保存草稿（仅 onChange 路径，程序化 setInput 由调用方自行保存） */
   const scheduleDraftSave = useCallback(
     (text: string) => {
       window.clearTimeout(draftTimerRef.current)
-      if (!sessionId) return
-      draftTimerRef.current = window.setTimeout(() => saveChatDraft(sessionId, text), 400)
+      if (!ready || !sessionId || sourceEpoch !== getEngineSource()) return
+      draftTimerRef.current = window.setTimeout(() => saveChatDraft(sessionId, text, storageSource), 400)
     },
-    [sessionId]
+    [ready, sessionId, sourceEpoch, storageSource]
   )
 
   // ── 吸底跟随（对齐 wuzu-client CliChatView）──
@@ -539,9 +568,9 @@ export function ChatView(): JSX.Element {
   // refreshGit 是模块级函数（引用恒定），不属于 hook 依赖
   const wasStreaming = useRef(false)
   useEffect(() => {
-    if (wasStreaming.current && !streaming) void refreshGit(workspace.root)
+    if (!remoteReadOnly && wasStreaming.current && !streaming) void refreshGit(workspace.root)
     wasStreaming.current = streaming
-  }, [streaming, workspace.root])
+  }, [streaming, workspace.root, remoteReadOnly])
 
   const selectModel = useCallback(
     (next: string) => {
@@ -582,17 +611,17 @@ export function ChatView(): JSX.Element {
       subagentModel: settings.subagentModelId || undefined,
       utilityModel: settings.utilityModelId || undefined,
       // 从 store 直接读取而非依赖闭包：发送瞬间的根目录才是准确的
-      workspacePaths: currentWorkspacePaths(),
+      workspacePaths: remoteReadOnly ? [] : currentWorkspacePaths(),
       thinkingMode: resolveThinkingMode(settings.thinkingMode)
     }),
-    [modelId, ready, sessionId, settings.lastAgentId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode]
+    [modelId, remoteReadOnly, sessionId, settings.lastAgentId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode]
   )
 
   const submit = useCallback(() => {
     const text = input.trim()
     // 允许「只发附件」：丢张截图直接问，是视觉模型的常见用法
-    const files = attach.attachments
-    if ((!text && files.length === 0) || attach.uploading || !ready || !sessionId) return
+    const files = remoteReadOnly ? [] : attach.attachments
+    if ((!text && files.length === 0) || (!remoteReadOnly && attach.uploading) || !canExecute || !sessionId || sourceEpoch !== getEngineSource()) return
     // 流式进行中不再拦截：send 内部会入队，当前流结束后自动按序发出
     setInput('')
     mentionsRef.current = []
@@ -600,7 +629,7 @@ export function ChatView(): JSX.Element {
     attach.clear()
     // 发送成功后该会话草稿即作废
     window.clearTimeout(draftTimerRef.current)
-    saveChatDraft(sessionId, '')
+    saveChatDraft(sessionId, '', storageSource)
     // 占位条目（若该会话是本次新建的）刷新时间戳，继续待在列表顶部；
     // 引擎落库后由列表侧的 prune 让它退场
     touchPendingSession(sessionId)
@@ -612,13 +641,13 @@ export function ChatView(): JSX.Element {
       attachments: files.length > 0 ? files : undefined
     })
     scrollToBottom(true)
-  }, [attach, buildSendOptions, input, ready, send, sessionId, resumeFollowBottom, scrollToBottom])
+  }, [attach, buildSendOptions, input, canExecute, remoteReadOnly, sourceEpoch, storageSource, send, sessionId, resumeFollowBottom, scrollToBottom])
 
   /** 托盘的「发送」：空闲时按当前模式（逐条/合并）立即发出队列 */
   const flushQueueFromTray = useCallback(() => {
-    if (!ready || !sessionId) return
+    if (!canExecute || !sessionId || sourceEpoch !== getEngineSource()) return
     void flushQueue()
-  }, [flushQueue, ready, sessionId])
+  }, [flushQueue, canExecute, sessionId, sourceEpoch])
 
   /**
    * 授权卡片上的「一路放行」入口。
@@ -628,8 +657,12 @@ export function ChatView(): JSX.Element {
    * 切模式保证恢复后的后续命令不再被拦，放行用于解开眼前这一次。
    */
   const allowAllForSession = useCallback(
-    () => changeSecurityMode(sessionId, 'full-access'),
-    [sessionId]
+    async () => {
+      if (remoteReadOnly || !canExecute || sourceEpoch !== getEngineSource()) throw new Error('当前连接不能修改安全模式')
+      await changeSecurityMode(sessionId, 'full-access')
+      if (sourceEpoch !== getEngineSource()) throw new Error('引擎连接已变化，请在当前会话重试')
+    },
+    [canExecute, remoteReadOnly, sessionId, sourceEpoch]
   )
 
   /**
@@ -640,13 +673,14 @@ export function ChatView(): JSX.Element {
    * 若正有流在跑先中止，避免把上一会话的输出写进新会话里。
    */
   const createSession = useCallback(() => {
+    if (!canExecute || sourceEpoch !== getEngineSource()) return
     if (streaming) abort()
     const generated = newSessionId()
     // 引擎只列举「有对话记录」的会话，空会话不出现在列表里；
     // 先登记本地占位条目，让新建的会话在侧栏立刻可见
     registerPendingSession(generated)
     void updateSettings({ lastSessionId: generated })
-  }, [abort, streaming, updateSettings])
+  }, [abort, streaming, updateSettings, canExecute, sourceEpoch])
 
   // 回合结束（流式停止）时通知会话列表重新拉取：首条消息落库后引擎才开始
   // 返回该会话，此时 lastSessionId 没变、列表页的刷新 effect 不会触发，
@@ -725,6 +759,7 @@ export function ChatView(): JSX.Element {
   /** 删除引擎侧该消息之后的历史并重新发送（重新发送 / 重新生成共用） */
   const retryTurn = useCallback(
     (message: ChatMessage) => {
+      if (remoteReadOnly || !canExecute || sourceEpoch !== getEngineSource()) return
       // 重新生成（助手消息）等价于从它前面的用户提问处重发
       const index = messages.findIndex((m) => m.id === message.id)
       const userMessage =
@@ -735,7 +770,7 @@ export function ChatView(): JSX.Element {
         body: message.role === 'user' ? '删除此后的对话并重新发送？' : '删除本轮回答并重新生成？',
         danger: true
       }).then((confirmed) => {
-        if (!confirmed) return
+        if (!confirmed || sourceEpoch !== getEngineSource()) return
         void retryFrom(userMessage, {
           sessionId,
           agentId: settings.lastAgentId || undefined,
@@ -747,61 +782,66 @@ export function ChatView(): JSX.Element {
         }).catch(showError)
       })
     },
-    [messages, modelId, retryFrom, sessionId, settings.lastAgentId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode, showError]
+    [canExecute, remoteReadOnly, sourceEpoch, messages, modelId, retryFrom, sessionId, settings.lastAgentId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode, showError]
   )
 
   const deleteTurnById = useCallback(
     (message: ChatMessage) => {
+      if (remoteReadOnly || !canExecute || sourceEpoch !== getEngineSource()) return
       void confirmDialog({
         title: '删除本轮',
         body: '删除这一轮问答（含引擎侧历史）？',
         danger: true,
         confirmText: '删除'
       }).then((confirmed) => {
-        if (!confirmed) return
+        if (!confirmed || sourceEpoch !== getEngineSource()) return
         void deleteTurn(sessionId, message).catch((err) => showError(err))
       })
     },
-    [deleteTurn, sessionId, showError]
+    [canExecute, remoteReadOnly, sourceEpoch, deleteTurn, sessionId, showError]
   )
 
   /** 消息级回退（对齐 wuzu revert-files）：恢复该消息后全部文件改动（含已保留）并截断对话，原文回填输入框 */
   const revertToMessage = useCallback(
     (message: ChatMessage) => {
+      if (remoteReadOnly || !canExecute || sourceEpoch !== getEngineSource()) return
       void confirmDialog({
         title: '回退到此处',
         body: '按轮次回退此消息及后续改动（包含已保留）。文件版本有冲突或缺少快照时将保留并报告；仅全部文件回退完成后删除对应对话。',
         danger: true,
         confirmText: '回退'
       }).then((confirmed) => {
-        if (!confirmed) return
+        if (!confirmed || sourceEpoch !== getEngineSource()) return
         const content = message.content
         void revertFrom(sessionId, message)
           // 回填的是纯文本（chip 占位符退化为文字），mention 列表同步清空
           .then(() => {
-            saveChatDraft(sessionId, content)
-            if (displayedSessionRef.current !== sessionId) return
+            if (sourceEpoch !== getEngineSource()) return
+            saveChatDraft(sessionId, content, storageSource)
+            if (displayedSessionRef.current !== sourceSessionKey) return
             mentionsRef.current = []
             setInput(content)
           })
           .catch(showError)
       })
     },
-    [revertFrom, sessionId, showError]
+    [canExecute, remoteReadOnly, sourceEpoch, sourceSessionKey, storageSource, revertFrom, sessionId, showError]
   )
 
   /** 挂起卡片的应答提交：引用稳定，保证 MessageItem memo 生效（流式时不让所有历史消息跟着重渲染） */
   const respondToEngine = useCallback(
-    (requestId: string, values: string[]) =>
+    (requestId: string, values: string[]) => {
+      if (!canExecute || sourceEpoch !== getEngineSource()) return
       void respond(requestId, values, {
         sessionId,
         model: modelId || undefined,
         subagentModel: settings.subagentModelId || undefined,
         utilityModel: settings.utilityModelId || undefined,
-        workspacePaths: currentWorkspacePaths(),
+        workspacePaths: remoteReadOnly ? [] : currentWorkspacePaths(),
         thinkingMode: resolveThinkingMode(settings.thinkingMode)
-      }).catch(showError),
-    [respond, sessionId, modelId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode, showError]
+      }).catch(showError)
+    },
+    [canExecute, remoteReadOnly, sourceEpoch, respond, sessionId, modelId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode, showError]
   )
 
   const exportSelected = useCallback(() => {
@@ -817,8 +857,8 @@ export function ChatView(): JSX.Element {
     setToast(`已导出 ${selectedIds.size} 项`)
   }, [buildExportText, selectedIds])
 
-  // 未配置任何模型时对话必然失败，提前给出明确出口而不是等报错
-  const needsModel = ready && modelsLoaded && models.length === 0
+  // 列表不含引擎环境中的默认模型；提供配置入口，不能据空列表断言对话不可用。
+  const needsModel = canExecute && modelsLoaded && models.length === 0
 
   // ── 代码图索引（产品自带 codegraph：一键建索引，Agent 随之获得代码图查询能力）──
   // initialized：项目是否已有索引。已建索引时页脚不再常驻按钮（入口收进右上角菜单），
@@ -841,7 +881,7 @@ export function ChatView(): JSX.Element {
 
   /** 查一次索引状态：是否已建索引（进入会话 / 切换项目时调用） */
   const refreshCgState = useCallback(async () => {
-    if (!workspace.root) {
+    if (remoteReadOnly || !ready || !workspace.root || sourceEpoch !== getEngineSource()) {
       setCgIndex((s) => ({ ...s, initialized: false, known: true }))
       return
     }
@@ -851,19 +891,23 @@ export function ChatView(): JSX.Element {
         path: '/codegraph/status',
         query: { sessionId, path: workspace.root }
       })
+      if (sourceEpoch !== getEngineSource()) return
       setCgIndex((prev) => ({ ...prev, initialized: s.initialized, known: true, busy: s.indexing }))
       if (s.indexing) pollCgStatus()
     } catch {
+      if (sourceEpoch !== getEngineSource()) return
       setCgIndex((prev) => ({ ...prev, initialized: false, known: true }))
     }
     // pollCgStatus 定义在下方（useCallback 引用稳定），此处不列入依赖以免循环
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, workspace.root])
+  }, [sessionId, workspace.root, remoteReadOnly, ready, sourceEpoch])
 
   /** 轮询引擎 /codegraph/status 直到索引完成/失败；label 短暂展示结果后复位 */
   const pollCgStatus = useCallback(() => {
     stopCgPoll()
+    if (remoteReadOnly || sourceEpoch !== getEngineSource()) return
     cgPollRef.current = setInterval(() => {
+      if (sourceEpoch !== getEngineSource()) { stopCgPoll(); return }
       void (async () => {
         try {
           const s = await requestOrThrow<{
@@ -879,6 +923,7 @@ export function ChatView(): JSX.Element {
             path: '/codegraph/status',
             query: { sessionId, path: workspace.root || undefined }
           })
+          if (sourceEpoch !== getEngineSource()) return
           if (s.indexing && s.run) {
             const p = s.run.progress
             setCgIndex((prev) => ({
@@ -901,16 +946,17 @@ export function ChatView(): JSX.Element {
               : '索引完成'
           }))
         } catch {
+          if (sourceEpoch !== getEngineSource()) return
           stopCgPoll()
           setCgIndex((prev) => ({ ...prev, busy: false, label: '状态查询失败' }))
         }
-        setTimeout(() => setCgIndex((prev) => ({ ...prev, busy: false, label: null })), 4000)
+        setTimeout(() => { if (sourceEpoch === getEngineSource()) setCgIndex((prev) => ({ ...prev, busy: false, label: null })) }, 4000)
       })()
     }, 1500)
-  }, [sessionId, workspace.root, stopCgPoll])
+  }, [sessionId, workspace.root, stopCgPoll, remoteReadOnly, sourceEpoch])
 
   const startCgIndex = useCallback(async () => {
-    if (!sessionId || !workspace.root || cgIndex.busy) return
+    if (remoteReadOnly || !canExecute || sourceEpoch !== getEngineSource() || !sessionId || !workspace.root || cgIndex.busy) return
     setCgIndex((prev) => ({ ...prev, busy: true, label: '启动中…' }))
     try {
       const r = await requestOrThrow<{
@@ -922,6 +968,7 @@ export function ChatView(): JSX.Element {
         path: '/codegraph/index',
         body: { sessionId, path: workspace.root }
       })
+      if (sourceEpoch !== getEngineSource()) return
       if (r.alreadyInitialized && !r.started) {
         // 已有索引：只需把状态标记为已建，页脚按钮随之收起
         setCgIndex((prev) => ({
@@ -935,14 +982,15 @@ export function ChatView(): JSX.Element {
       }
       pollCgStatus()
     } catch (e) {
+      if (sourceEpoch !== getEngineSource()) return
       setCgIndex((prev) => ({
         ...prev,
         busy: false,
         label: e instanceof Error ? e.message.slice(0, 40) : '请求失败'
       }))
-      setTimeout(() => setCgIndex((prev) => ({ ...prev, busy: false, label: null })), 4000)
+      setTimeout(() => { if (sourceEpoch === getEngineSource()) setCgIndex((prev) => ({ ...prev, busy: false, label: null })) }, 4000)
     }
-  }, [sessionId, workspace.root, cgIndex.busy, pollCgStatus])
+  }, [remoteReadOnly, canExecute, sourceEpoch, sessionId, workspace.root, cgIndex.busy, pollCgStatus])
 
   // 进入会话 / 切换项目时同步一次索引状态（决定页脚是否显示「建索引」）
   useEffect(() => {
@@ -950,12 +998,12 @@ export function ChatView(): JSX.Element {
   }, [refreshCgState])
 
   // 卸载时停止轮询
-  useEffect(() => stopCgPoll, [stopCgPoll])
+  useEffect(() => stopCgPoll, [stopCgPoll, sourceEpoch])
 
   return (
     <div className="chat">
       <div className="chat__topbar">
-        {workspace.root ? (
+        {remoteReadOnly ? <span className="chat__workspace" title="任务在远端引擎的会话工作目录中执行">远端会话</span> : workspace.root ? (
           <span className="chat__workspace" title={`Agent 的工作区：${workspace.root}`}>
             {workspace.root.replace(/\\/g, '/').split('/').pop()}
           </span>
@@ -975,6 +1023,7 @@ export function ChatView(): JSX.Element {
           type="button"
           className="chat__toolbar-btn"
           title="新建会话（开一条全新对话）"
+          disabled={!canExecute}
           onClick={createSession}
         >
           <Icon name="plus" size={16} />
@@ -1026,7 +1075,7 @@ export function ChatView(): JSX.Element {
           sessionId={sessionId}
           turns={navTurns}
           containerRef={scrollRef}
-          disabled={streaming || selectMode}
+          disabled={remoteReadOnly || streaming || selectMode}
           onCopy={copyMessage}
           onRetry={retryTurn}
           onRevert={revertToMessage}
@@ -1049,7 +1098,9 @@ export function ChatView(): JSX.Element {
           <div className="chat__empty">
             <h2>Agent IDE</h2>
             <p>
-              {ready
+              {ready && remoteReadOnly
+                ? '远端已连接。输入任务即可开始；新会话使用设置中的远端工作目录，未填写时使用服务端沙箱。'
+                : ready
                 ? '引擎已就绪。输入你的问题或任务，Agent 会调用工具直接在你的工作区里完成。'
                 : '正在准备引擎，就绪后即可开始对话。'}
             </p>
@@ -1090,7 +1141,7 @@ export function ChatView(): JSX.Element {
                     message={message}
                     sessionId={sessionId}
                     usage={message.id === lastAssistantId ? usage : undefined}
-                    disabled={streaming}
+                    disabled={!canExecute || streaming}
                   onAllowAll={allowAllForSession}
                   selectionMode={selectMode}
                   selected={selectedIds.has(message.id)}
@@ -1100,8 +1151,8 @@ export function ChatView(): JSX.Element {
                   onRetryFrom={retryTurn}
                   onRevertFiles={revertToMessage}
                   onDeleteTurn={deleteTurnById}
-                  canAct={!streaming && !selectMode}
-                  workspaceRoot={workspace.root}
+                  canAct={!remoteReadOnly && canExecute && !streaming && !selectMode}
+                  workspaceRoot={remoteReadOnly ? null : workspace.root}
                   onPreviewImage={(f, src) => setPreviewImage({ file: f, src })}
                 />
                 ))
@@ -1115,7 +1166,7 @@ export function ChatView(): JSX.Element {
 
       {needsModel ? (
         <div className="chat__notice">
-          <span>尚未配置模型，对话会失败。</span>
+          <span>尚未配置模型，可添加模型或确认引擎已设置默认模型。</span>
           <button type="button" className="link" onClick={() => openAppSettings('models')}>
             去添加模型
           </button>
@@ -1133,7 +1184,7 @@ export function ChatView(): JSX.Element {
         streaming={streaming}
         todos={todos}
         queue={queue}
-        workspaceRoot={workspace.root}
+        workspaceRoot={remoteReadOnly ? null : workspace.root}
         queueSendMode={queueSendMode}
         onSetQueueSendMode={setQueueSendMode}
         onUpdateQueued={updateQueued}
@@ -1149,6 +1200,7 @@ export function ChatView(): JSX.Element {
           // 不 preventDefault 的话浏览器会直接打开被拖入的文件
           if (!event.dataTransfer.types.includes('Files')) return
           event.preventDefault()
+          if (remoteReadOnly || !canExecute) return
           attach.setDragging(true)
         }}
         onDragLeave={(event) => {
@@ -1160,11 +1212,12 @@ export function ChatView(): JSX.Element {
           if (!event.dataTransfer.files.length) return
           event.preventDefault()
           attach.setDragging(false)
+          if (remoteReadOnly || !canExecute) return
           attach.accept([...event.dataTransfer.files])
         }}
       >
         <div className="chat__surface">
-          {attach.attachments.length > 0 || attach.uploading ? (
+          {!remoteReadOnly && (attach.attachments.length > 0 || attach.uploading) ? (
             <div className="chat__attach-strip">
               {attach.attachments.map((file) => (
                 <AttachmentChip
@@ -1184,9 +1237,9 @@ export function ChatView(): JSX.Element {
           <MentionInput
             ref={inputRef}
             value={input}
-            disabled={!ready}
+            disabled={!canExecute}
             placeholder={
-              ready ? '输入消息，Enter 发送，Shift+Enter 换行；@ 引用文件，可拖入或粘贴文件' : '引擎未就绪…'
+              ready && remoteReadOnly ? '输入远端任务，Enter 发送，Shift+Enter 换行' : ready ? '输入消息，Enter 发送，Shift+Enter 换行；@ 引用文件，可拖入或粘贴文件' : '引擎未就绪…'
             }
             onChange={(text, mentions) => {
               mentionsRef.current = mentions
@@ -1194,16 +1247,16 @@ export function ChatView(): JSX.Element {
               scheduleDraftSave(text)
             }}
             onSubmit={submit}
-            onPasteFiles={(files) => attach.accept(files)}
+            onPasteFiles={(files) => { if (!remoteReadOnly && canExecute) attach.accept(files) }}
             onPasteText={(text) => {
               // 长文本落成「粘贴的文本-xxx.txt」附件；短文本返回 false 由输入框自行插入
-              if (!shouldAttachPastedText(text) || !workspace.root) return false
+              if (remoteReadOnly || !canExecute || !shouldAttachPastedText(text) || !workspace.root) return false
               attach.accept([createPastedTextFile(text)])
               return true
             }}
             onMentionQuery={setMentionQuery}
           />
-          {workspace.root && (mentionQuery !== null || manualPalette) ? (
+          {!remoteReadOnly && canExecute && workspace.root && (mentionQuery !== null || manualPalette) ? (
             <FileRefPalette
               root={workspace.root}
               keyword={mentionQuery ?? ''}
@@ -1224,7 +1277,7 @@ export function ChatView(): JSX.Element {
           {attachHint ? <div className="chat__attach-hint">{attachHint}</div> : null}
           {previewImage ? (
             <AttachmentPreviewDialog
-              root={workspace.root}
+              root={remoteReadOnly ? null : workspace.root}
               preview={previewImage}
               onClose={() => setPreviewImage(null)}
             />
@@ -1238,6 +1291,7 @@ export function ChatView(): JSX.Element {
               const files = [...(event.target.files ?? [])]
               // 清空 value：否则再次选择同一个文件不会触发 change
               event.target.value = ''
+              if (remoteReadOnly || !canExecute) return
               attach.accept(files)
             }}
           />
@@ -1247,9 +1301,9 @@ export function ChatView(): JSX.Element {
             <button
               type="button"
               className={`chat__icon-btn${attach.dragging ? ' is-active' : ''}`}
-              disabled={!ready || attach.uploading || !workspace.root}
+              disabled={remoteReadOnly || !canExecute || attach.uploading || !workspace.root}
               title={
-                workspace.root
+                remoteReadOnly ? '远端附件上传尚未启用；可以直接输入或粘贴文本' : workspace.root
                   ? '添加附件或引用（图片 / 文本 / 工作空间文件 / 目录）'
                   : '先打开一个项目目录再添加附件'
               }
@@ -1261,7 +1315,7 @@ export function ChatView(): JSX.Element {
             >
               <Icon name="plus" size={16} />
             </button>
-            {attachMenu ? (
+            {!remoteReadOnly && attachMenu ? (
               <ContextMenu
                 x={attachMenu.x}
                 y={attachMenu.y - 8}
@@ -1293,11 +1347,11 @@ export function ChatView(): JSX.Element {
             <ComposerOptions sessionId={sessionId} />
 
             {/* 仅当项目「尚未建索引」时才露出建索引入口；已建索引则不占位（重建走设置页 / 菜单） */}
-            {cgIndex.known && !cgIndex.initialized ? (
+            {!remoteReadOnly && cgIndex.known && !cgIndex.initialized ? (
               <button
                 type="button"
                 className={`chat__index-cta${cgIndex.busy ? ' is-active' : ''}`}
-                disabled={!ready || !sessionId || !workspace.root || cgIndex.busy}
+                disabled={!canExecute || !sessionId || !workspace.root || cgIndex.busy}
                 title={
                   workspace.root
                     ? `为「${workspace.root.replace(/\\/g, '/').split('/').pop()}」创建代码图索引（Agent 随之可查询符号 / 调用关系 / 影响面）`
@@ -1315,7 +1369,7 @@ export function ChatView(): JSX.Element {
             <button
               type="button"
               className="chat__icon-btn"
-              disabled={!ready || polishing || !input.trim()}
+              disabled={!canExecute || polishing || !input.trim()}
               title="AI 润色：让指令更清晰具体（使用轻任务模型）"
               aria-label="AI 润色输入"
               onClick={() => void handlePolish()}
@@ -1343,8 +1397,9 @@ export function ChatView(): JSX.Element {
               <button
                 type="button"
                 className="chat__send chat__send--stop"
-                title="停止生成"
                 aria-label="停止生成"
+                disabled={!canExecute}
+                title="停止生成"
                 onClick={abort}
               >
                 <Icon name="stop" size={16} />
@@ -1354,7 +1409,7 @@ export function ChatView(): JSX.Element {
                 type="button"
                 className="chat__send"
                 disabled={
-                  !ready || attach.uploading || (!input.trim() && attach.attachments.length === 0)
+                  !canExecute || (!remoteReadOnly && attach.uploading) || (!input.trim() && (remoteReadOnly || attach.attachments.length === 0))
                 }
                 title="发送（Enter）"
                 aria-label="发送"
@@ -1398,6 +1453,8 @@ function ContextRing({
   streaming: boolean
   onCompacted: () => void
 }): JSX.Element {
+  const { ready } = useApp()
+  const sourceEpoch = getEngineSource()
   const [phase, setPhase] = useState<'idle' | 'compacting' | 'done' | 'failed'>('idle')
   const [compactInfo, setCompactInfo] = useState<{ before: number; after: number } | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
@@ -1422,7 +1479,7 @@ function ContextRing({
   const warn = ratio >= 0.85
 
   const compact = async (): Promise<void> => {
-    if (phase === 'compacting' || streaming || !sessionId) return
+    if (!ready || sourceEpoch !== getEngineSource() || phase === 'compacting' || streaming || !sessionId) return
     setPhase('compacting')
     setErrorMsg('')
     const startedAt = Date.now()
@@ -1431,6 +1488,7 @@ function ContextRing({
         originalTokens?: number
         compressedTokens?: number
       }>({ method: 'POST', path: '/conversation/compress', query: { sessionId } })
+      if (sourceEpoch !== getEngineSource()) return
       setCompactInfo({
         before: stats.originalTokens ?? used,
         after: stats.compressedTokens ?? 0
@@ -1438,11 +1496,12 @@ function ContextRing({
       setPhase('done')
       onCompacted()
       // 6 秒后回落到百分比（对齐竞品行为）
-      window.setTimeout(() => setPhase('idle'), 6000)
+      window.setTimeout(() => { if (sourceEpoch === getEngineSource()) setPhase('idle') }, 6000)
     } catch (e) {
+      if (sourceEpoch !== getEngineSource()) return
       setErrorMsg(e instanceof Error ? e.message : '压缩失败')
       setPhase('failed')
-      window.setTimeout(() => setPhase('idle'), 6000)
+      window.setTimeout(() => { if (sourceEpoch === getEngineSource()) setPhase('idle') }, 6000)
     }
     void startedAt
   }
@@ -1463,7 +1522,7 @@ function ContextRing({
         type="button"
         className={`context-ring${warn ? ' context-ring--warn' : ''}${phase === 'compacting' ? ' context-ring--busy' : ''}`}
         aria-label={title}
-        aria-disabled={phase === 'compacting' || streaming || !sessionId}
+        aria-disabled={!ready || phase === 'compacting' || streaming || !sessionId}
         onClick={() => void compact()}
         onMouseEnter={(event) => openHover(event.currentTarget.getBoundingClientRect())}
         onMouseLeave={scheduleCloseHover}
@@ -1496,6 +1555,7 @@ function ContextRing({
           compactInfo={compactInfo}
           errorMsg={errorMsg}
           streaming={streaming}
+          readOnly={!ready}
           onKeep={() => window.clearTimeout(closeTimerRef.current)}
           onLeave={scheduleCloseHover}
         />
@@ -1519,6 +1579,7 @@ function ContextRingCard({
   compactInfo,
   errorMsg,
   streaming,
+  readOnly,
   onKeep,
   onLeave
 }: {
@@ -1530,6 +1591,7 @@ function ContextRingCard({
   compactInfo: { before: number; after: number } | null
   errorMsg: string
   streaming: boolean
+  readOnly: boolean
   onKeep: () => void
   onLeave: () => void
 }): JSX.Element {
@@ -1550,7 +1612,9 @@ function ContextRingCard({
   }, [anchor, phase])
 
   const hint =
-    phase === 'done' && compactInfo
+    readOnly
+      ? '引擎未就绪，连接恢复后可压缩上下文'
+      : phase === 'done' && compactInfo
       ? `已压缩 ${formatTokens(compactInfo.before)} → ${formatTokens(compactInfo.after)}`
       : streaming
         ? '生成中，结束后可点击压缩'
@@ -2135,6 +2199,8 @@ function ThinkingRow({ text }: { text: string }): JSX.Element | null {
 
 /** 紧凑工具行：7px 状态圆点 + 中文工具名 + 参数摘要，展开看原始参数与结果 */
 function CompactToolRow({ tool }: { tool: ToolActivity }): JSX.Element {
+  const { engine } = useApp()
+  const remoteReadOnly = engine.snapshot.mode === 'remote'
   // key 用 toolUseId：分页回收/切换会话后恢复用户手动的展开选择
   const [memory, setMemory] = useCollapseMemory(`tool:${tool.id}`)
   const open = memory ?? false
@@ -2143,7 +2209,7 @@ function CompactToolRow({ tool }: { tool: ToolActivity }): JSX.Element {
   const hasDetail = Boolean(tool.args || tool.result || tool.error)
   // 摘要恰是文件路径时（读取/写入文件等），点摘要直接在编辑器里打开该文件
   const pathArg = toolPathArg(tool.args)
-  const openablePath = pathArg && summary === pathArg ? pathArg : null
+  const openablePath = !remoteReadOnly && pathArg && summary === pathArg ? pathArg : null
 
   return (
     <div className="logline-wrap">
@@ -2417,6 +2483,9 @@ function PendingCard({
   onAllowAll: () => Promise<void>
   onRespond: (values: string[]) => void
 }): JSX.Element {
+  const { engine } = useApp()
+  const remoteReadOnly = engine.snapshot.mode === 'remote'
+  const sourceEpoch = getEngineSource()
   const [groupSelected, setGroupSelected] = useState<Record<number, string[]>>({})
   const [groupInput, setGroupInput] = useState<Record<number, string>>({})
   const [allowAllBusy, setAllowAllBusy] = useState(false)
@@ -2451,6 +2520,7 @@ function PendingCard({
    * 失败只提示，不阻断。
    */
   const allowAll = async (): Promise<void> => {
+    if (remoteReadOnly || disabled || allowAllBusy || sourceEpoch !== getEngineSource()) return
     setAllowAllBusy(true)
     setAllowAllError(null)
     try {
@@ -2460,7 +2530,7 @@ function PendingCard({
     } finally {
       setAllowAllBusy(false)
     }
-    onRespond(['approved'])
+    if (sourceEpoch === getEngineSource()) onRespond(['approved'])
   }
 
   /**
@@ -2598,7 +2668,7 @@ function PendingCard({
         </>
       )}
 
-      {isPermission ? (
+      {isPermission && !remoteReadOnly ? (
         <div className="pending-card__footer">
           <button
             type="button"

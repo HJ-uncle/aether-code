@@ -28,12 +28,14 @@ function MenuOption({
   current,
   label,
   summary,
+  disabled = false,
   onSelect
 }: {
   value: string
   current: string
   label: string
   summary: string
+  disabled?: boolean
   onSelect: (value: string) => void
 }): JSX.Element {
   return (
@@ -41,6 +43,7 @@ function MenuOption({
       type="button"
       role="menuitem"
       className={`composer-options__dd-item${value === current ? ' is-active' : ''}`}
+      disabled={disabled}
       onClick={() => onSelect(value)}
     >
       <span className="composer-options__dd-text">
@@ -60,7 +63,8 @@ function MenuOption({
  * 弹层与菜单统一走 Popover（portal 挂 body、防裁切、防出界）。
  */
 export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Element {
-  const { ready, settings, updateSettings } = useApp()
+  const { engine, ready, settings, updateSettings } = useApp()
+  const remoteReadOnly = engine.snapshot.mode === 'remote'
   const { models } = useModels()
   const { mode: storedMode, loaded, loading, error, refresh } = useSecurityMode(sessionId)
   const mode = ready ? storedMode : null
@@ -86,11 +90,12 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
     : error ?? (secDescriptor ? [secDescriptor.summary, secDescriptor.warning].filter(Boolean).join(' ') : '尚未确认引擎当前权限')
 
   const pickThinking = (next: string): void => {
+    if (!ready) return
     void updateSettings({ thinkingMode: next as 'off' | 'low' | 'high' | 'max' })
   }
 
   const pickSecurity = (next: string): void => {
-    if (next === mode || loading || !ready || !sessionId) return
+    if (remoteReadOnly || next === mode || loading || !ready || !sessionId) return
     void changeSecurityMode(sessionId, next as SecurityMode).catch(() => undefined)
   }
 
@@ -148,6 +153,7 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
                   current={settings.thinkingMode}
                   label={item.label}
                   summary={item.summary}
+                  disabled={!ready}
                   onSelect={pickThinking}
                 />
               ))}
@@ -175,7 +181,7 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
               <button
                 type="button"
                 className={`composer-options__dd-btn${isOpen ? ' is-open' : ''}`}
-                disabled={!ready || !sessionId || loading}
+                disabled={remoteReadOnly || !ready || !sessionId || loading}
                 title={
                   !sessionId
                     ? '先发一条消息建立会话，之后才能设置安全模式'
@@ -195,6 +201,7 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
                   current={mode ?? ''}
                   label={item.label}
                   summary={[item.summary, item.warning].filter(Boolean).join(' ')}
+                  disabled={remoteReadOnly}
                   onSelect={pickSecurity}
                 />
               ))}

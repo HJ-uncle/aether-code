@@ -11,7 +11,7 @@
 import { shell, dialog } from 'electron'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import type {
   CopyIntoWorkspaceInput,
   CopyIntoWorkspaceResult,
@@ -78,6 +78,12 @@ const MAX_BINARY_BYTES = 32 * 1024 * 1024
 /** 已授权的工作区根目录（绝对路径，小写用于比较） */
 const allowedRoots = new Set<string>()
 
+function canonicalExistingTarget(target: string): string {
+  const resolved = path.resolve(target); let probe = resolved; const suffix: string[] = []
+  while (!existsSync(probe)) { const parent = path.dirname(probe); if (parent === probe) return resolved; suffix.unshift(path.basename(probe)); probe = parent }
+  return path.resolve(realpathSync(probe), ...suffix)
+}
+
 function normalizeForCompare(p: string): string {
   const resolved = path.resolve(p)
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved
@@ -85,7 +91,8 @@ function normalizeForCompare(p: string): string {
 
 /** 授权一个目录作为工作区根 */
 export function allowRoot(root: string): void {
-  allowedRoots.add(normalizeForCompare(root))
+  const resolved = path.resolve(root)
+  allowedRoots.add(normalizeForCompare(realpathSync(resolved)))
 }
 
 export function getAllowedRoots(): string[] {
@@ -95,15 +102,12 @@ export function getAllowedRoots(): string[] {
 /** 校验路径位于任一已授权根目录内，否则抛错 */
 export function assertAllowed(target: string): string {
   const resolved = path.resolve(target)
-  const normalized = normalizeForCompare(resolved)
-
+  const normalized = normalizeForCompare(canonicalExistingTarget(resolved))
   for (const root of allowedRoots) {
     if (normalized === root) return resolved
-    // 用 relative 判断而不是 startsWith，避免 /foo 命中 /foobar
     const rel = path.relative(root, normalized)
     if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) return resolved
   }
-
   throw new Error('拒绝访问工作区之外的路径。请先通过「打开文件夹」授权该目录。')
 }
 

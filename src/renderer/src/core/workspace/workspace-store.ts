@@ -12,7 +12,7 @@
 import { useSyncExternalStore } from 'react'
 import type { FsEntry } from '@shared/ipc'
 import { ipcErrorMessage } from '../ipc-error'
-import { allowRoot, pickFolder, readDir } from './fs-client'
+import { allowRoot, paths, pickFolder, readDir } from './fs-client'
 import { rememberRecentFolder } from './recent-folders'
 import { getSettings, updateSettings } from '../engine/client'
 
@@ -86,6 +86,39 @@ function loadExpandedDirs(root: string): string[] {
   return readExpandedDirsTable()[root] ?? []
 }
 
+/**
+ * Paths returned by the main process use the platform separator, while older
+ * persisted entries may have been written by a renderer using the other one.
+ * Keep the original path for IPC, but compare normalized keys when rebuilding
+ * the expansion tree. Windows drive/UNC paths are case-insensitive; POSIX
+ * paths retain their case.
+ */
+function expandedPathKey(path: string): string {
+  const slashPath = path.replace(/\\/g, '/')
+  // Keep the two leading slashes of a UNC path, but collapse duplicate
+  // separators elsewhere so hand-edited/older localStorage entries still
+  // match the canonical path returned by readDir.
+  const prefix = slashPath.startsWith('//') ? '//' : ''
+  const normalized =
+    `${prefix}${slashPath.slice(prefix.length).replace(/\/{2,}/g, '/')}`.replace(/\/+$/, '') || '/'
+  return /^(?:[A-Za-z]:\/|\/\/)/.test(normalized) ? normalized.toLowerCase() : normalized
+}
+
+function expandedPathDepth(path: string): number {
+  return path.replace(/\\/g, '/').split('/').filter(Boolean).length
+}
+
+function isExpandedPathWithin(root: string, candidate: string): boolean {
+  const rootKey = expandedPathKey(root)
+  const candidateKey = expandedPathKey(candidate)
+  if (candidateKey === rootKey) return true
+  return rootKey === '/' ? candidateKey.startsWith('/') : candidateKey.startsWith(`${rootKey}/`)
+}
+
+function sameExpandedPath(left: string, right: string): boolean {
+  return expandedPathKey(left) === expandedPathKey(right)
+}
+
 /** 表按项目裁剪到最近 20 个，避免 localStorage 无限增长 */
 function persistExpandedDirs(): void {
   const root = state.root
@@ -113,8 +146,12 @@ export function onWorkspaceChanged(listener: () => void): () => void {
   return () => listeners.delete(listener)
 }
 
-/** 加载某目录的子项并写入缓存 */
-async function loadChildren(dir: string): Promise<void> {
+/** 加载某目录的子项并写入缓存。恢复旧展开状态时，过期目录的失败应被静默忽略。 */
+async function loadChildren(
+  dir: string,
+  options: { reportError?: boolean } = {}
+): Promise<FsEntry[] | null> {
+  const reportError = options.reportError ?? true
   setState({ loading: new Set(state.loading).add(dir) })
   try {
     const entries = await readDir(dir)
@@ -123,11 +160,69 @@ async function loadChildren(dir: string): Promise<void> {
     const nextLoading = new Set(state.loading)
     nextLoading.delete(dir)
     setState({ children: nextChildren, loading: nextLoading, error: null })
+    return entries
   } catch (err) {
     const nextLoading = new Set(state.loading)
     nextLoading.delete(dir)
-    setState({ loading: nextLoading, error: ipcErrorMessage(err) })
+    setState(
+      reportError ? { loading: nextLoading, error: ipcErrorMessage(err) } : { loading: nextLoading }
+    )
+    return null
   }
+}
+
+/**
+ * 恢复某个项目上次展开的目录。
+ *
+ * 旧实现只读取 root，却把所有路径直接放进 expanded。这样重启后如果
+ * root/one/two 曾经展开，two 会是「展开但没有 children 缓存」的幽灵节点，
+ * 视图既看不到它，也不会主动再读盘。这里按层级读取，并且只接受父目录
+ * 当前 readDir 返回的真实目录项；被删除、改名、变成文件或不在 root 内的
+ * 持久化路径会被丢弃，不会触发越界 IPC 或把错误显示给用户。
+ */
+async function restoreExpandedDirs(
+  root: string,
+  persisted: string[],
+  rootEntries: FsEntry[] | null
+): Promise<Set<string>> {
+  const restored = new Set<string>([root])
+  if (!rootEntries) return restored
+
+  const loaded = new Map<string, FsEntry[]>([[expandedPathKey(root), rootEntries]])
+  const candidates = [...new Set(persisted)]
+    .filter(
+      (candidate) => !sameExpandedPath(candidate, root) && isExpandedPathWithin(root, candidate)
+    )
+    .sort((left, right) => expandedPathDepth(left) - expandedPathDepth(right))
+
+  for (const candidate of candidates) {
+    // A child is restorable only when its parent was itself persisted and
+    // validated. This preserves the meaning of collapsing a parent even when
+    // an older state left one of its descendants in localStorage.
+    const parent = paths.dirname(candidate)
+    const parentKey = expandedPathKey(parent)
+    if (!restoredHasKey(restored, parentKey)) continue
+
+    const entries = loaded.get(parentKey)
+    const entry = entries?.find(
+      (item) => item.isDirectory && sameExpandedPath(item.path, candidate)
+    )
+    if (!entry) continue
+
+    const childEntries = await loadChildren(entry.path, { reportError: false })
+    if (!childEntries) continue
+    restored.add(entry.path)
+    loaded.set(expandedPathKey(entry.path), childEntries)
+  }
+
+  return restored
+}
+
+function restoredHasKey(restored: Set<string>, key: string): boolean {
+  for (const path of restored) {
+    if (expandedPathKey(path) === key) return true
+  }
+  return false
 }
 
 /** 打开指定文件夹（已授权则直接切换） */
@@ -137,18 +232,32 @@ export async function openFolderAt(root: string): Promise<void> {
   await allowRoot(root)
   // 根目录默认展开：树的第一行是根节点本身（见 ExplorerView），
   // 不在 expanded 里的话打开文件夹只会看到光秃秃的一行根。
+  const persisted = loadExpandedDirs(root)
   setState({
     root,
     children: new Map(),
     // 恢复上次该项目的展开状态；首次打开只展开根
-    expanded: new Set([root, ...loadExpandedDirs(root)]),
+    // 其余目录在 root 成功加载后按层级恢复，避免显示「展开但未加载」的幽灵节点。
+    expanded: new Set([root]),
     loading: new Set(),
     error: null,
     activeFilePath: null,
     selection: new Set(),
     selectionAnchor: null
   })
-  await loadChildren(root)
+  const rootEntries = await loadChildren(root)
+  const restored = await restoreExpandedDirs(root, persisted, rootEntries)
+  setState({ expanded: restored })
+  // 删除已经不存在或不再位于工作区内的旧路径，避免每次重启都重复尝试。
+  const persistedKeys = new Set([root, ...persisted].map(expandedPathKey))
+  const restoredKeys = new Set([...restored].map(expandedPathKey))
+  if (
+    rootEntries &&
+    (persistedKeys.size !== restoredKeys.size ||
+      [...persistedKeys].some((key) => !restoredKeys.has(key)))
+  ) {
+    persistExpandedDirs()
+  }
   // 记入「最近打开的项目」：启动时自动恢复也算一次使用，下次仍在列表最前
   rememberRecentFolder(root)
   // 记住当前项目，下次启动自动恢复（restoreLastFolder 读 settings.lastFolder）

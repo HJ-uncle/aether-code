@@ -658,7 +658,18 @@ export async function stage(cwd: string, filePath: string): Promise<GitResult> {
 export async function unstage(cwd: string, filePath: string): Promise<GitResult> {
   const root = resolveCwd(cwd)
   try {
-    await runGit(root, ['restore', '--staged', '--', filePath])
+    try {
+      await runGit(root, ['restore', '--staged', '--', filePath])
+    } catch (error) {
+      // `git restore --staged` resolves its default source from HEAD. An
+      // unborn repository has no HEAD yet, so unstage the first file with
+      // rm --cached while preserving the worktree bytes.
+      if (/pathspec|did not match|unknown revision|does not have any commits|could not resolve ['"]?HEAD|invalid reference|ambiguous argument ['"]?HEAD/i.test(toMessage(error))) {
+        await runGit(root, ['rm', '--cached', '--force', '--', filePath])
+      } else {
+        throw error
+      }
+    }
     return { success: true }
   } catch (error) {
     return fail(error)
@@ -724,7 +735,18 @@ export async function unstageFiles(cwd: string, paths: string[]): Promise<GitRes
   const root = resolveCwd(cwd)
   if (!Array.isArray(paths) || paths.length === 0) return { success: true }
   try {
-    await runGit(root, ['reset', '-q', '--', ...paths])
+    try {
+      await runGit(root, ['reset', '-q', '--', ...paths])
+    } catch (error) {
+      // `git reset <paths>` also needs HEAD. For an unborn repository, remove
+      // each candidate from the index; ignored/non-index paths are harmless.
+      if (!/pathspec|did not match|unknown revision|does not have any commits|could not resolve ['"]?HEAD|invalid reference|ambiguous argument ['"]?HEAD/i.test(toMessage(error))) {
+        throw error
+      }
+      for (const filePath of paths) {
+        await runGit(root, ['rm', '--cached', '--force', '--', filePath]).catch(() => undefined)
+      }
+    }
     return { success: true }
   } catch (error) {
     return fail(error)
@@ -751,7 +773,7 @@ export async function discardFile(cwd: string, filePath: string): Promise<GitRes
       await runGit(root, ['restore', '--staged', '--', filePath])
     } catch (error) {
       // 无 HEAD（空仓库）或路径不在 index：退回 rm --cached
-      if (/pathspec|did not match|unknown revision|does not have any commits/i.test(toMessage(error))) {
+      if (/pathspec|did not match|unknown revision|does not have any commits|could not resolve ['"]?HEAD|invalid reference|ambiguous argument ['"]?HEAD/i.test(toMessage(error))) {
         await runGit(root, ['rm', '--cached', '--force', '--', filePath]).catch(() => undefined)
       } else {
         throw error

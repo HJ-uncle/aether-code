@@ -32,7 +32,7 @@ export function DocumentView({ filePath }: { filePath: string }): JSX.Element {
     )
   }
 
-  if (doc.error) {
+  if (doc.error && !isDirty(doc)) {
     return (
       <div className="doc-placeholder">
         <div className="notice notice--error">{doc.error}</div>
@@ -62,6 +62,7 @@ export function DocumentView({ filePath }: { filePath: string }): JSX.Element {
   // 还停在上一个文件，直接显示会闪出错文件的行列号。
   return (
     <div className="doc-view">
+      {doc.error ? <div className="notice notice--error" role="alert">{doc.error}</div> : null}
       {doc.truncated ? (
         <div className="doc-view__banner">
           文件较大，仅载入了前 4 MB。直接保存会截断文件，请用外部工具处理。

@@ -1,3 +1,5 @@
+import { getEngineStorageKey, sessionStorageKey } from '../../core/engine/source'
+
 /**
  * 每会话输入草稿持久化（对齐 wuzu lobster-chat:draft）
  *
@@ -9,9 +11,9 @@ const DRAFTS_KEY = 'aether:chatDrafts'
 /** 草稿槽位上限：超出时丢最旧的，防止无限增长 */
 const MAX_SLOTS = 100
 
-function readTable(): Record<string, string> {
+function readTable(source: string): Record<string, string> {
   try {
-    const raw = localStorage.getItem(DRAFTS_KEY)
+    const raw = localStorage.getItem(sessionStorageKey(DRAFTS_KEY, source))
     if (!raw) return {}
     const parsed = JSON.parse(raw) as unknown
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
@@ -25,13 +27,13 @@ function readTable(): Record<string, string> {
   }
 }
 
-export function loadChatDraft(sessionId: string): string {
-  return readTable()[sessionId] ?? ''
+export function loadChatDraft(sessionId: string, source = getEngineStorageKey()): string {
+  return readTable(source)[sessionId] ?? ''
 }
 
-export function saveChatDraft(sessionId: string, text: string): void {
+export function saveChatDraft(sessionId: string, text: string, source = getEngineStorageKey()): void {
   if (!sessionId) return
-  const table = readTable()
+  const table = readTable(source)
   if (!text.trim()) {
     delete table[sessionId]
   } else {
@@ -44,7 +46,7 @@ export function saveChatDraft(sessionId: string, text: string): void {
     }
   }
   try {
-    localStorage.setItem(DRAFTS_KEY, JSON.stringify(table))
+    localStorage.setItem(sessionStorageKey(DRAFTS_KEY, source), JSON.stringify(table))
   } catch {
     // 存储写失败不打断输入
   }

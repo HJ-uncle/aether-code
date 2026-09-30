@@ -6,13 +6,17 @@ import type { EngineSnapshot, StreamEvent } from '../../shared/ipc'
 import { getSettings } from '../settings-store'
 import { logger } from './logger'
 import { ensureEncryptionKey } from './secrets'
+import { getRemoteInstanceToken } from './remote-token'
+import { prepareRemoteChatBody, validateRemoteWorkspaceRoot } from './remote-workspace'
+import { clearRemoteAttachments } from './remote-attachments'
 import { findAvailablePort } from './sdk/port-finder'
 import { startProcess, type ProcessHandle } from './sdk/process-manager'
 import { waitUntilReady } from './sdk/readiness-probe'
-import { engineDataFile, migrateLegacyModels, resolveRuntime } from './runtime'
+import { engineDataFile, migrateLegacyModels, resolveRuntime, runtimeEnvironment } from './runtime'
 import {
   assertEngineHealth,
   engineHeaders,
+  engineTargetError,
   normalizeEnginePath,
   parseEngineMeta,
   remoteRequestError,
@@ -52,8 +56,10 @@ export class EngineHost extends EventEmitter {
   private startupController: AbortController | null = null
   private transportController = new AbortController()
   private teardown: Promise<void> = Promise.resolve()
-  // Credentials never enter snapshots, logs, IPC payloads, or persisted settings.
+  // Credentials never enter snapshots, logs, or persisted settings. Token IPC is
+  // handled only by dedicated main-process handlers and never returned to the renderer.
   private instanceToken = ''
+  private activeRemoteWorkspaceRoot = ''
 
   getSnapshot(): EngineSnapshot {
     return this.snapshot
@@ -72,6 +78,10 @@ export class EngineHost extends EventEmitter {
   get baseUrl(): string {
     return this.snapshot.phase === 'ready' ? this.snapshot.baseUrl : ''
   }
+  /** Saved connection preferences apply only when a new connection is started. */
+  get remoteWorkspaceRoot(): string {
+    return this.snapshot.phase === 'ready' && this.snapshot.mode === 'remote' ? this.activeRemoteWorkspaceRoot : ''
+  }
   get requestSignal(): AbortSignal {
     return this.transportController.signal
   }
@@ -79,7 +89,7 @@ export class EngineHost extends EventEmitter {
     return engineHeaders(this.instanceToken)
   }
 
-  async start(mode: 'embedded' | 'remote', remoteBaseUrl = ''): Promise<EngineSnapshot> {
+  async start(mode: 'embedded' | 'remote', remoteBaseUrl = '', remoteWorkspaceRoot = ''): Promise<EngineSnapshot> {
     if (this.starting) return this.starting
     const normalizedRemote = remoteBaseUrl.trim().replace(/\/+$/, '')
     if (
@@ -89,11 +99,12 @@ export class EngineHost extends EventEmitter {
     )
       return this.snapshot
 
+    const configuredRoot = mode === 'remote' ? validateRemoteWorkspaceRoot(remoteWorkspaceRoot) : ''
     const generation = ++this.generation
     this.startupController?.abort()
     const controller = new AbortController()
     this.startupController = controller
-    const task = this.doStart(mode, normalizedRemote, generation, controller.signal).finally(() => {
+    const task = this.doStart(mode, normalizedRemote, configuredRoot, generation, controller.signal).finally(() => {
       if (this.starting === task) this.starting = null
       if (this.startupController === controller) this.startupController = null
     })
@@ -108,6 +119,7 @@ export class EngineHost extends EventEmitter {
   private async doStart(
     mode: 'embedded' | 'remote',
     remoteBaseUrl: string,
+    remoteWorkspaceRoot: string,
     generation: number,
     signal: AbortSignal
   ): Promise<EngineSnapshot> {
@@ -129,6 +141,7 @@ export class EngineHost extends EventEmitter {
     await this.releaseResources()
     if (!this.current(generation, signal)) return this.snapshot
     this.transportController = new AbortController()
+    this.activeRemoteWorkspaceRoot = remoteWorkspaceRoot
     try {
       if (mode === 'remote') await this.startRemote(remoteBaseUrl, generation, signal)
       else await this.startEmbedded(generation, signal)
@@ -150,7 +163,12 @@ export class EngineHost extends EventEmitter {
 
   private async startRemote(url: string, generation: number, signal: AbortSignal): Promise<void> {
     if (!url) throw new Error('未配置远端引擎地址')
-    this.instanceToken = remoteInstanceToken(url, process.env.AETHER_IDE_REMOTE_INSTANCE_TOKEN)
+    // Prefer the encrypted setting; keep the environment variable as a migration and
+    // headless-launch fallback. Never return the secret through settings or snapshots.
+    this.instanceToken = remoteInstanceToken(
+      url,
+      getRemoteInstanceToken() || process.env.AETHER_IDE_REMOTE_INSTANCE_TOKEN
+    )
     const meta = await this.handshake(url, signal)
     if (!this.current(generation, signal)) return
     this.patch({
@@ -182,6 +200,7 @@ export class EngineHost extends EventEmitter {
       buildId: runtime.manifest.buildId
     })
     logger.info(`使用引擎运行时（来源：${runtime.source}）：${runtime.entryPath}`)
+    const runtimeConfig = runtimeEnvironment(runtime)
     const secret = ensureEncryptionKey()
     if (!secret.encryptedAtRest) logger.warn('系统密钥存储不可用，引擎加密密钥以明文保存')
     await migrateLegacyModels(runtime, secret.key, signal)
@@ -192,9 +211,12 @@ export class EngineHost extends EventEmitter {
     this.instanceToken = randomBytes(32).toString('hex')
     this.handle = startProcess({
       binPath: runtime.entryPath,
+      nodePath: runtime.nodePath,
+      cwd: runtimeConfig.cwd,
       port,
       dataDir,
       env: {
+        ...runtimeConfig.env,
         ELECTRON_RUN_AS_NODE: '1',
         HOST: '127.0.0.1',
         ENCRYPTION_KEY: secret.key,
@@ -229,7 +251,7 @@ export class EngineHost extends EventEmitter {
     signal: AbortSignal,
     buildId?: string
   ): Promise<EngineMeta> {
-    const options = { signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]) }
+    const options = { signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]), redirect: 'error' as const }
     const health = await fetch(`${baseUrl}/health`, options)
     if (!health.ok) throw new Error(`/health 返回 HTTP ${health.status}`)
     assertEngineHealth(await health.json())
@@ -242,7 +264,7 @@ export class EngineHost extends EventEmitter {
       headers: this.requestHeaders()
     })
     if (probe.status === 401 || probe.status === 403) {
-      throw new Error('引擎拒绝连接凭据：请在启动 Aether Code 的进程中设置 AETHER_IDE_REMOTE_INSTANCE_TOKEN，与目标引擎的 AETHER_INSTANCE_TOKEN 保持一致；设置后重新启动应用。')
+      throw new Error('引擎拒绝连接凭据：请在设置→引擎→远端令牌中填写与目标引擎 AETHER_INSTANCE_TOKEN 一致的值，或在启动 Aether Code 的进程中设置 AETHER_IDE_REMOTE_INSTANCE_TOKEN；保存后重新连接。')
     }
     if (!probe.ok) throw new Error(`引擎实例认证失败（HTTP ${probe.status}）`)
     const body = (await probe.json()) as { code?: number }
@@ -259,6 +281,7 @@ export class EngineHost extends EventEmitter {
     this.stopHealthWatch()
     this.transportController.abort()
     this.instanceToken = ''
+    clearRemoteAttachments()
     const error = `引擎进程意外退出（code=${code ?? '-'} signal=${signal ?? '-'}）`
     logger.error(error)
     this.patch({ phase: 'error', baseUrl: '', port: null, pid: null, error })
@@ -269,6 +292,8 @@ export class EngineHost extends EventEmitter {
     this.stopHealthWatch()
     this.transportController.abort()
     this.instanceToken = ''
+    this.activeRemoteWorkspaceRoot = ''
+    clearRemoteAttachments()
     const handle = this.handle
     this.handle = null
     if (handle) {
@@ -320,10 +345,10 @@ export class EngineHost extends EventEmitter {
     if (!baseUrl || this.snapshot.phase !== 'ready') return
     try {
       const signal = AbortSignal.any([this.requestSignal, AbortSignal.timeout(3000)])
-      const health = await fetch(`${baseUrl}/health`, { signal })
+      const health = await fetch(`${baseUrl}/health`, { signal, redirect: 'error' })
       if (!health.ok) throw new Error(String(health.status))
       assertEngineHealth(await health.json())
-      const response = await fetch(`${baseUrl}/meta`, { signal })
+      const response = await fetch(`${baseUrl}/meta`, { signal, redirect: 'error' })
       if (!response.ok) throw new Error(String(response.status))
       const meta = parseEngineMeta(await response.json(), this.snapshot.buildId ?? undefined)
       if (meta.instanceId !== instanceId) throw new Error('引擎实例已变化')
@@ -356,9 +381,11 @@ export class EngineHost extends EventEmitter {
     body: unknown,
     signal: AbortSignal,
     method: 'GET' | 'POST' = 'POST',
-    query?: Record<string, string>
+    query?: Record<string, string>,
+    expectedEngine?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId'>
   ): Promise<void> {
-    const unsupported = remoteRequestError(this.snapshot.mode, method, path)
+    const snapshot = this.snapshot
+    const unsupported = engineTargetError(snapshot, expectedEngine) ?? remoteRequestError(snapshot.mode, method, path)
     if (unsupported) {
       this.emit('stream', { streamId, type: 'error', message: unsupported } satisfies StreamEvent)
       return
@@ -371,18 +398,21 @@ export class EngineHost extends EventEmitter {
     }
 
     try {
-      let url = `${baseUrl}${normalizeEnginePath(path)}`
+      const normalizedPath = normalizeEnginePath(path)
+      const headers = { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...this.requestHeaders() }
+      const requestBody = snapshot.mode === 'remote' && method === 'POST' && normalizedPath.split('?')[0] === '/api/v1/chat'
+        ? await prepareRemoteChatBody(body, { baseUrl, headers, signal: requestSignal, configuredRoot: this.remoteWorkspaceRoot, target: snapshot })
+        : body
+      requestSignal.throwIfAborted()
+      let url = `${baseUrl}${normalizedPath}`
       if (query && Object.keys(query).length > 0) {
         url += `?${new URLSearchParams(query).toString()}`
       }
       const res = await fetch(url, {
+        redirect: 'error',
         method,
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'text/event-stream',
-          ...this.requestHeaders()
-        },
-        body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
+        headers,
+        body: method === 'POST' ? JSON.stringify(requestBody ?? {}) : undefined,
         signal: requestSignal
       })
 

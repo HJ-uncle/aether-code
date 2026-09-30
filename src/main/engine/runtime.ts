@@ -5,8 +5,10 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { parseEngineManifest, type EngineManifest } from './protocol'
 import { selectRuntimeEntry } from './runtime-location'
+import { preparePackagedRuntime } from './packaged-runtime'
 
 export interface ResolvedRuntime {
+  nodePath: string
   entryPath: string
   root: string
   source: 'env' | 'bundled' | 'dev-sibling'
@@ -49,13 +51,23 @@ export function resolveRuntime(): ResolvedRuntime | null {
   } catch {
     throw new Error(`引擎构建信息缺失或不兼容，请重新构建配套引擎：${manifestPath}`)
   }
+  const root = dirname(dirname(entryPath))
+  const nodePath = source === 'bundled' ? join(root, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node') : process.execPath
+  if (!existsSync(nodePath)) throw new Error('安装包缺少引擎 Node 运行时，请重新安装配套版本')
   return {
+    nodePath,
     entryPath,
-    root: dirname(dirname(entryPath)),
+    root,
     source,
     version: manifest.version,
     manifest
   }
+}
+
+export function runtimeEnvironment(runtime: ResolvedRuntime): { cwd: string; env: Record<string, string> } {
+  return runtime.source === 'bundled'
+    ? preparePackagedRuntime(runtime.root, app.getPath('userData'), process.env.PATH)
+    : { cwd: dirname(runtime.entryPath), env: {} }
 }
 
 /** The engine owns the schema and success marker; retrying never imports conversation history. */
@@ -70,11 +82,11 @@ export async function migrateLegacyModels(
   if (!existsSync(entry)) throw new Error('引擎缺少开发模型配置迁移入口，请重新构建引擎')
   try {
     await promisify(execFile)(
-      process.execPath,
+      runtime.nodePath,
       [entry, '--source-db', source, '--dest-db', engineDataFile()],
       {
-        cwd: dirname(runtime.entryPath),
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ENCRYPTION_KEY: encryptionKey },
+        cwd: runtimeEnvironment(runtime).cwd,
+        env: { ...process.env, ...runtimeEnvironment(runtime).env, ELECTRON_RUN_AS_NODE: '1', ENCRYPTION_KEY: encryptionKey },
         signal,
         timeout: 30_000,
         windowsHide: true,

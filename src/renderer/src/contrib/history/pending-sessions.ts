@@ -1,3 +1,5 @@
+import { getEngineStorageKey, sessionStorageKey, subscribeEngineSource } from '../../core/engine/source'
+
 /**
  * 本地合成会话（占位条目）
  *
@@ -24,6 +26,7 @@ export interface PendingSession {
 }
 
 let entries: PendingSession[] | null = null
+let storageSource = getEngineStorageKey()
 const listeners = new Set<() => void>()
 
 function isPendingSession(value: unknown): value is PendingSession {
@@ -36,7 +39,7 @@ function isPendingSession(value: unknown): value is PendingSession {
 function load(): PendingSession[] {
   if (entries) return entries
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY)
+    const raw = sessionStorage.getItem(sessionStorageKey(STORAGE_KEY, storageSource))
     const parsed: unknown = raw ? JSON.parse(raw) : null
     entries = Array.isArray(parsed) ? parsed.filter(isPendingSession) : []
   } catch {
@@ -48,7 +51,7 @@ function load(): PendingSession[] {
 function commit(next: PendingSession[]): void {
   entries = next.length > PENDING_LIMIT ? next.slice(next.length - PENDING_LIMIT) : next
   try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(entries))
+    sessionStorage.setItem(sessionStorageKey(STORAGE_KEY, storageSource), JSON.stringify(entries))
   } catch {
     // 存储满/被禁用时降级为会话内记忆，不影响列表显示
   }
@@ -118,3 +121,11 @@ export function subscribeSessionListRefresh(listener: () => void): () => void {
     refreshListeners.delete(listener)
   }
 }
+
+subscribeEngineSource(() => {
+  const next = getEngineStorageKey()
+  if (next === storageSource) return
+  storageSource = next
+  entries = null
+  for (const listener of listeners) listener()
+})

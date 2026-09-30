@@ -1,4 +1,11 @@
 import { CODE_TOOL_PROFILE_HEADERS } from './tool-profile'
+import type { EngineSnapshot } from '../../shared/ipc'
+
+export function engineTargetError(snapshot: EngineSnapshot, expected?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId'>): string | null {
+  return expected && (snapshot.mode !== expected.mode || snapshot.baseUrl !== expected.baseUrl || snapshot.instanceId !== expected.instanceId)
+    ? '引擎连接已经切换，请在当前会话重新操作。'
+    : null
+}
 
 export interface EngineManifest {
   version: string
@@ -65,20 +72,56 @@ export function remoteInstanceToken(url: string, configuredToken?: string): stri
   if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
     throw new Error('远端引擎地址必须为不含凭证的 HTTP(S) 地址')
   }
-  const token = configuredToken?.trim() ?? ''
+  const token = validateRemoteInstanceToken(configuredToken ?? '')
   const loopback = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '[::1]'
   if (!token && !loopback) {
-    throw new Error('远端引擎需要连接凭据：启动 Aether Code 前设置 AETHER_IDE_REMOTE_INSTANCE_TOKEN，使其与引擎的 AETHER_INSTANCE_TOKEN 一致；本机开发也可选择「本地内置」。')
+    throw new Error('远端引擎需要连接凭据：请在设置→引擎→远端令牌中填写与引擎 AETHER_INSTANCE_TOKEN 一致的值，或启动 Aether Code 前设置 AETHER_IDE_REMOTE_INSTANCE_TOKEN；本机开发也可选择「本地内置」。')
   }
   return token
 }
 
-/** Remote execution needs an explicit shared filesystem contract before local IDE paths are sent. */
+/** Both saved and environment credentials use the same HTTP-header validation. */
+export function validateRemoteInstanceToken(value: string): string {
+  const token = value.trim()
+  if (token.length > 4096) throw new Error('远端令牌长度不能超过 4096 个字符')
+  for (const character of token) {
+    const code = character.charCodeAt(0)
+    if (code < 32 || code === 127) throw new Error('远端令牌不能包含控制字符')
+    if (code > 255) throw new Error('远端令牌包含 HTTP 请求头不支持的字符')
+  }
+  return token
+}
+
+// These routes observe engine-owned records; none resolves a local IDE workspace path.
+const REMOTE_READ_ROUTES = [
+  /^\/(health|meta|metrics)$/,
+  /^\/api\/v1\/(models|models\/capability-defs|tools|system-tools|external-skills|changes|todos)$/,
+  /^\/api\/v1\/conversation\/(sessions|history)$/,
+  /^\/api\/v1\/chat\/(snapshot|status|runs|stream)$/,
+  /^\/api\/v1\/security\/(mode|policies)$/,
+  /^\/api\/v1\/subagent\/runs(?:\/[a-zA-Z0-9_-]+(?:\/events)?)?$/,
+  /^\/api\/v1\/command-jobs(?:\/[a-zA-Z0-9_-]+(?:\/output)?)?$/,
+  /^\/api\/v1\/sessions\/[a-zA-Z0-9_-]+\/binding$/
+]
+
+const REMOTE_CHAT_ROUTES = [
+  /^\/api\/v1\/chat(?:\/cancel)?$/,
+  /^\/api\/v1\/utility\/chat$/,
+  /^\/api\/v1\/models(?:\/detect-capabilities|\/[a-zA-Z0-9_-]+\/test)?$/,
+  /^\/api\/v1\/conversation\/compress$/,
+  /^\/api\/v1\/subagent\/cancel$/,
+  /^\/api\/v1\/subagent\/runs\/[a-zA-Z0-9_-]+\/cancel$/,
+  /^\/api\/v1\/command-jobs\/[a-zA-Z0-9_-]+\/cancel$/
+]
+
+/** Conversation execution uses server-side workspace paths, never the local IDE root. */
 export function remoteRequestError(mode: 'embedded' | 'remote', method: string, path: string): string | null {
   if (mode !== 'remote') return null
   const pathname = normalizeEnginePath(path).split('?')[0]
-  if (method === 'GET' && /^\/(health|meta|metrics|api\/v1\/(models|tools|system-tools|external-skills))$/.test(pathname)) return null
-  return '远端模式尚未配置工作区映射，目前仅支持查看引擎、模型和工具信息；请切换本地内置模式后执行对话、诊断或文件操作。'
+  if (method === 'GET' && REMOTE_READ_ROUTES.some(route => route.test(pathname))) return null
+  if (method === 'POST' && REMOTE_CHAT_ROUTES.some(route => route.test(pathname))) return null
+  if (method === 'PUT' && /^\/api\/v1\/models\/(?!capability-defs$|detect-capabilities$)[a-zA-Z0-9_-]+$/.test(pathname)) return null
+  return '此入口尚未接入远端服务；远端聊天可用，文件与 Git 操作仍使用本机工作区，远端删除及安全设置暂未开放。'
 }
 
 /** Used by both ordinary requests and every SSE method, including resume. */

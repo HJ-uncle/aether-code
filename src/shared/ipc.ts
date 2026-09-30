@@ -15,10 +15,15 @@ export const IPC = {
     engineStop: 'engine:stop',
     engineRestart: 'engine:restart',
     engineRequest: 'engine:request',
+    engineUploadAttachment: 'engine:upload-attachment',
     engineStreamStart: 'engine:stream:start',
     engineStreamAbort: 'engine:stream:abort',
     settingsGet: 'settings:get',
     settingsUpdate: 'settings:update',
+    settingsRemoteTokenStatus: 'settings:remote-token-status',
+    settingsSetRemoteToken: 'settings:set-remote-token',
+    settingsClearRemoteToken: 'settings:clear-remote-token',
+    settingsSaveEngine: 'settings:save-engine',
     /** 文件系统（IDE 本地实现） */
     fsPickFolder: 'fs:pick-folder',
     fsAllowRoot: 'fs:allow-root',
@@ -344,6 +349,8 @@ export interface AppSettings {
   preferredPort: number
   /** remote 模式远端地址 */
   remoteBaseUrl: string
+  /** 新远端会话的服务端目录；空值使用服务端会话沙箱，已有会话沿用运行记录。 */
+  remoteWorkspaceRoot: string
   /** 应用启动时是否自动拉起引擎 */
   autoStartEngine: boolean
   /** 上次使用的会话 ID */
@@ -396,10 +403,17 @@ export interface AppSettings {
   searchExclude: FilesExclude
 }
 
+export type RemoteTokenSource = 'stored' | 'environment' | 'none'
+export interface RemoteTokenStatus {
+  configured: boolean
+  source: RemoteTokenSource
+}
+
 export const DEFAULT_SETTINGS: AppSettings = {
   engineMode: 'embedded',
   preferredPort: 12323,
   remoteBaseUrl: '',
+  remoteWorkspaceRoot: '',
   autoStartEngine: true,
   lastSessionId: '',
   lastAgentId: '',
@@ -437,11 +451,29 @@ export interface StandardResponse<T = unknown> {
 }
 
 export interface EngineRequestInput {
+  /** Reject delayed requests after the user changes the active engine. */
+  expectedEngine?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId'>
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   /** 相对 /api/v1 的路径，如 '/agents'；以 /health、/models、/metrics 开头时按根路径处理 */
   path: string
   query?: Record<string, string | number | boolean | undefined>
   body?: unknown
+}
+
+export interface RemoteAttachmentInput {
+  expectedEngine: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId'>
+  sessionId: string
+  fileName: string
+  type: string
+  data: Uint8Array
+}
+
+export interface RemoteAttachmentResult {
+  remoteUploadId: string
+  path: string
+  name: string
+  type: string
+  size: number
 }
 
 export interface EngineRequestResult<T = unknown> {
@@ -537,6 +569,7 @@ export type StreamEvent = { streamId: string; eventId?: string } & (
 )
 
 export interface StreamStartInput {
+  expectedEngine?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId'>
   streamId: string
   path: string
   body: unknown
@@ -561,6 +594,8 @@ export interface LspStartInput {
   rootUri: string
   /** 服务器入口绝对路径（require.resolve('typescript-language-server/lib/cli.mjs')） */
   serverEntry: string
+  /** Packaged installations may provide their bundled Node executable. */
+  nodePath?: string
 }
 
 export interface LspStartResult {

@@ -8,6 +8,7 @@
  * CSP 注意：worker 由 Vite 以同源文件形式加载，index.html 里已放行 worker-src。
  */
 import * as monaco from 'monaco-editor'
+import { fileIdentity } from './file-identity'
 // monaco 0.56 起 exports 为 `"./*": "./esm/vs/*.js"`，因此子路径要相对 esm/vs/ 写，
 // 不能再写成 monaco-editor/esm/vs/... （那会被 exports 映射成 .../esm/vs/esm/vs/...）
 import editorWorker from 'monaco-editor/editor/editor.worker?worker'
@@ -138,8 +139,10 @@ const models = new Map<string, monaco.editor.ITextModel>()
 
 /** 取（或创建）某个文件对应的 model */
 export function acquireModel(filePath: string, language: string): monaco.editor.ITextModel {
-  const existing = models.get(filePath)
-  if (existing && !existing.isDisposed()) {
+  const key = fileIdentity(filePath)
+  const existing = peekModel(filePath)
+  if (existing) {
+    models.set(key, existing)
     if (existing.getLanguageId() !== language) {
       monaco.editor.setModelLanguage(existing, language)
     }
@@ -147,15 +150,15 @@ export function acquireModel(filePath: string, language: string): monaco.editor.
   }
 
   const model = monaco.editor.createModel('', language, monaco.Uri.file(filePath))
-  models.set(filePath, model)
+  models.set(key, model)
   return model
 }
 
 /** 关闭标签时释放 model，避免长会话下内存持续增长 */
 export function releaseModel(filePath: string): void {
-  const model = models.get(filePath)
+  const model = peekModel(filePath)
   if (model && !model.isDisposed()) model.dispose()
-  models.delete(filePath)
+  models.delete(fileIdentity(filePath))
 }
 
 /**
@@ -163,8 +166,12 @@ export function releaseModel(filePath: string): void {
  * 清 markers 等收尾操作用它，避免 acquireModel 把已关闭的文件重新建出来。
  */
 export function peekModel(filePath: string): monaco.editor.ITextModel | null {
-  const model = models.get(filePath)
-  return model && !model.isDisposed() ? model : null
+  const key = fileIdentity(filePath)
+  const model = models.get(key)
+  if (model && !model.isDisposed()) return model
+  // A language feature may already have loaded a URI before a document mounts.
+  return monaco.editor.getModels().find((candidate) =>
+    candidate.uri.scheme === 'file' && fileIdentity(candidate.uri.fsPath) === key) ?? null
 }
 
 export { monaco }

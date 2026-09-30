@@ -141,13 +141,18 @@ test('LSP 诊断：保存触发引擎诊断，问题面板可见且点击可跳�
   await expect(page.locator('.panel')).toBeVisible()
   await page.locator('.panel__tab', { hasText: '问题' }).click()
   await expect(page.locator('.problems-view')).toBeVisible()
+  await expect(page.locator('.problems-view__file')).toHaveCount(1, { timeout: 60_000 })
   await expect(page.locator('.problems-view__file')).toContainText('diagnostic-broken.ts', {
     timeout: 60_000
   })
-  await expect(page.locator('.problems-view__item', { hasText: 'TS2322' }).first()).toBeVisible()
+  // Project tsserver codes are numeric; the former single-file tsc prefixed them with TS.
+  await expect(page.locator('.problems-view__item', { hasText: /(?:TS)?2322/ }).first()).toBeVisible()
+  await expect(page.locator('.problems-view__item', {
+    hasText: /不能将类型“string”分配给类型“number”|Type 'string' is not assignable to type 'number'/
+  })).toHaveCount(1)
 
   // 点击问题条目：文件标签激活 + 跳行高亮生效（与搜索跳转同一机制）
-  await page.locator('.problems-view__item', { hasText: 'TS2322' }).first().click()
+  await page.locator('.problems-view__item', { hasText: /(?:TS)?2322/ }).first().click()
   await expect(page.locator('.editor-tab.is-active')).toContainText('diagnostic-broken.ts')
   await expect(page.locator('.aether-reveal-match').first()).toBeVisible({ timeout: 15_000 })
 })
@@ -164,9 +169,14 @@ test('不支持的文件不会被显示为诊断通过，关闭后清除状态',
   await page.keyboard.press('Control+Shift+p')
   await page.getByRole('textbox', { name: '过滤命令', exact: true }).fill('诊断当前文件')
   await page.locator('.palette__item', { hasText: '诊断当前文件' }).click()
-  await expect(page.locator('.problems-view [role="status"]')).toContainText('不支持诊断')
+  // Project tsserver may finish before the previous file's engine diagnostics.
+  // Each file owns its status; another in-flight diagnosis must not match this assertion.
+  const unsupportedStatus = page.locator('.problems-view [role="status"]', {
+    hasText: 'diagnostic-unsupported.aetherunknown'
+  })
+  await expect(unsupportedStatus).toContainText('不支持诊断')
   await page.keyboard.press('Control+w')
-  await expect(page.locator('.problems-view [role="status"]')).toHaveCount(0)
+  await expect(unsupportedStatus).toHaveCount(0)
 })
 
 test('渲染进程无未捕获错误', async () => {

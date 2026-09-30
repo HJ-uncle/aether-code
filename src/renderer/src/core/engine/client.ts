@@ -15,6 +15,7 @@ import type {
   StreamStartInput
 } from '@shared/ipc'
 import type { SubagentRun } from '@shared/subagent'
+import { getExpectedEngine } from './source'
 
 function bridge(): Window['aether'] {
   const api = window.aether
@@ -61,7 +62,7 @@ export function onEngineLog(
  * 调用方需要显式判断 ok，避免把「模型未配置」这类可预期错误当成崩溃。
  */
 export function request<T = unknown>(input: EngineRequestInput): Promise<EngineRequestResult<T>> {
-  return bridge().engine.request<T>(input)
+  return bridge().engine.request<T>({ ...input, expectedEngine: input.expectedEngine ?? getExpectedEngine() })
 }
 
 /** 发起请求并在业务失败时抛错，适合「失败即中断」的调用场景 */
@@ -72,7 +73,7 @@ export async function requestOrThrow<T = unknown>(input: EngineRequestInput): Pr
 }
 
 /** 单独停止一个正在运行的子代理（不影响主会话与其余并行子代理） */
-export function stopSubagent(input: { sessionId: string; toolCallId: string }) {
+export function stopSubagent(input: { sessionId: string; toolCallId: string }): Promise<EngineRequestResult<{ sessionId: string; toolCallId: string; cancelled: boolean }>> {
   return request<{ sessionId: string; toolCallId: string; cancelled: boolean }>({
     method: 'POST',
     path: '/subagent/cancel',
@@ -96,7 +97,7 @@ export function cancelSubagentRun(runId: string): Promise<SubagentRun> {
 // ==================== 流式 ====================
 
 export function startStream(input: StreamStartInput): Promise<{ ok: boolean }> {
-  return bridge().engine.stream.start(input)
+  return bridge().engine.stream.start({ ...input, expectedEngine: input.expectedEngine ?? getExpectedEngine() })
 }
 
 export function abortStream(streamId: string): Promise<{ ok: boolean }> {
@@ -113,6 +114,6 @@ export function getSettings(): Promise<AppSettings> {
   return bridge().settings.get()
 }
 
-export function updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
-  return bridge().settings.update(patch)
+export function updateSettings(patch: Partial<AppSettings>, remoteToken?: string): Promise<AppSettings> {
+  return remoteToken === undefined ? bridge().settings.update(patch) : bridge().settings.saveEngine(patch, remoteToken)
 }

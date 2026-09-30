@@ -78,7 +78,7 @@ interface TopbarProbe {
   /** 顶栏内横向溢出量（>0 说明内容被挤出可视区） */
   overflowX: number
   itemCount: number
-  items: Array<{ label: string } & Rect>
+  items: Array<{ label: string; visible: boolean } & Rect>
   messages: Rect
   composer: Rect
   /** 面板体内纵向溢出量（>0 说明有一部分内容被 overflow:hidden 裁掉） */
@@ -114,6 +114,10 @@ async function probeTopbar(page: Page): Promise<TopbarProbe> {
       itemCount: nodes.length,
       items: nodes.map((el) => ({
         label: (el.textContent ?? '').replace(/\s+/g, ' ').trim(),
+        visible:
+          el.getClientRects().length > 0 &&
+          getComputedStyle(el).display !== 'none' &&
+          getComputedStyle(el).visibility !== 'hidden',
         ...box(el)
       })),
       messages: box(document.querySelector('.chat__messages')),
@@ -125,11 +129,14 @@ async function probeTopbar(page: Page): Promise<TopbarProbe> {
 
 /** 顶栏的每个按钮都必须完整落在顶栏矩形内，且顶栏自身不横向溢出 */
 function expectTopbarIntact(probe: TopbarProbe, context: string): void {
-  expect(probe.itemCount, `${context}：顶栏按钮应至少有新建/多选/清空三个`).toBeGreaterThanOrEqual(
-    3
-  )
+  expect(probe.itemCount, `${context}：顶栏应有新建和多选两个按钮`).toBe(2)
+  expect(
+    probe.items.map((item) => item.label).sort(),
+    `${context}：顶栏按钮应分别是新建和多选`
+  ).toEqual(['多选', '新建'])
 
   for (const item of probe.items) {
+    expect(item.visible, `${context}：按钮「${item.label}」不可见`).toBe(true)
     // 矩形的上下边界是最关键的断言：旧实现里第二行按钮的 bottom 会越过
     // 30px 固定高度，正是被裁掉的那一行
     expect(item.height, `${context}：按钮「${item.label}」高度异常`).toBeGreaterThan(1)
@@ -206,8 +213,8 @@ test('面板压到最小宽度（280）后顶栏按钮不被裁掉', async () =>
 
   const probe = await probeTopbar(page)
   expectTopbarIntact(probe, '最小宽度面板')
-  // 面板只有 280px，按钮必然换行 —— 顶栏应当因此变高，而不是把按钮裁掉
-  expect(probe.bar.height, '顶栏高度应随换行增长').toBeGreaterThan(30)
+  // 当前顶栏只有两个紧凑按钮，280px 下无需换行；保持固定高度且不裁切即可。
+  expect(probe.bar.height, '最小宽度下顶栏高度应有效').toBeGreaterThanOrEqual(30)
 })
 
 test('窗口缩到最小尺寸时顶栏按钮依然完整', async () => {
@@ -234,5 +241,5 @@ test('窗口缩到最小尺寸时顶栏按钮依然完整', async () => {
 
   const narrowProbe = await probeTopbar(page)
   expectTopbarIntact(narrowProbe, '最小窗口 + 最小宽度面板')
-  expect(narrowProbe.bar.height, '最小窗口下顶栏高度应随换行增长').toBeGreaterThan(30)
+  expect(narrowProbe.bar.height, '最小窗口下顶栏高度应有效').toBeGreaterThanOrEqual(30)
 })

@@ -105,11 +105,23 @@
 }
 
 .menu-bar__brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 0 12px 0 6px;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.2px;
   color: var(--fg-muted);
+}
+
+/* 产品图标：与菜单栏文字同高，只作标识不参与交互 */
+.menu-bar__logo {
+  width: 16px;
+  height: 16px;
+  display: block;
+  flex: 0 0 auto;
+  pointer-events: none;
 }
 
 /* 右上角动作区：设置入口，后续用户头像等也在此扩展 */
@@ -5020,6 +5032,31 @@
   text-align: left;
 }
 
+.settings-view__token-field {
+  flex-wrap: wrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-view--engine .sg__row:not(.sg__row--content) {
+  flex-wrap: wrap;
+}
+
+.settings-view--engine .sg__row-text {
+  flex: 1 1 180px;
+}
+
+.settings-view--engine .sg__row-control {
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+
+.settings-view--engine .sg__input--wide {
+  max-width: 100%;
+  min-width: 0;
+}
+
 /* 行内单选圆点（配合可点击行，非原生 radio） */
 .sg-radio {
   flex: none;
@@ -7504,12 +7541,35 @@ select.field__input {
     -8px 0;
 }
 
+/* 可交互（图片）时不再滚动容错：缩放靠 transform，拖拽可以把图移出视野再拖回来，
+   留 overflow: auto 只会在拖动图片贴边时冒出一条无意义的滚动条 */
+.preview__body--interactive {
+  overflow: hidden;
+}
+
 .preview__image,
 .preview__video {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
-  /* 棋盘格是给透明区域看的，元素本身仍需底色衬托 */
+}
+
+/* 原生图片拖拽（拖出幽灵图）必须关掉，否则与平移手势打架 */
+.preview__image {
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+.preview__image--dragging {
+  /* 拖动过程中禁掉命中测试，避免指针掠过子区域时抖动 */
+  will-change: transform;
+}
+
+/* 图片可能是带自绘圆角的图标：<img> 元素本身是矩形，
+   给它铺底色就会在圆角之外的透明区露出一圈方形色块。
+   图片不铺底色，透明处直接透出外层棋盘格即可。
+   视频是规整矩形、没有圆角透明区，保留底色衬托。 */
+.preview__video {
   background: var(--bg-inset);
 }
 
@@ -7532,14 +7592,58 @@ select.field__input {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 4px 10px;
+  /* 定高 + 无上下 padding：内容始终落在同一条垂直中线上。
+     若只给上下 padding，行高由最高的子项（图标按钮）撑开，
+     而文字按自己的 line-box 居中，两者中心并不重合，图标会往下坐。 */
+  min-height: 26px;
+  padding: 0 10px;
   border-top: 1px solid var(--border);
   color: var(--fg-muted);
   font-size: 11px;
+  /* 行高压到 1：文字盒高度 = 字号，与图标盒同高，光学中心才对得上 */
+  line-height: 1;
+}
+
+/* 缩放控件：贴在路径左侧，路径仍靠右 */
+.preview__zoom {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.preview__zoom-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.preview__zoom-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.preview__zoom-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.preview__zoom-value {
+  min-width: 38px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
 }
 
 .preview__path {
-  margin-left: auto;
   max-width: 50%;
   overflow: hidden;
   text-overflow: ellipsis;
