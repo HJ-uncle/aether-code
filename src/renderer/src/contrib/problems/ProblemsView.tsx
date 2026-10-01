@@ -2,6 +2,11 @@ import { useState, type JSX } from 'react'
 import { openFile } from '@renderer/core/editor/editor-store'
 import { useProblems, type ProblemItem } from '@renderer/core/lsp/problems-store'
 import { Icon, type IconName } from '@renderer/workbench/icons'
+import { pushPendingMention, pushPendingMentions } from '@renderer/contrib/chat/pending-mentions'
+import type { Mention } from '@renderer/contrib/chat/MentionInput'
+import { getWorkspaceState } from '@renderer/core/workspace/workspace-store'
+import { fileIdentity } from '@renderer/core/editor/file-identity'
+import { toast } from '@renderer/core/toast'
 
 /**
  * 问题面板（对标 VS Code Problems）
@@ -54,6 +59,18 @@ export function ProblemsView(): JSX.Element {
   }
   const total = counts.error + counts.warning + counts.info
 
+  const addProblem = (filePath: string, item: ProblemItem): void => {
+    pushPendingMention(toMention(filePath, item))
+    toast.success('问题已添加到当前会话')
+  }
+
+  const addVisibleProblems = (): void => {
+    const mentions = files.flatMap(({ filePath, items }) => items.map((item) => toMention(filePath, item)))
+    if (mentions.length === 0) return
+    pushPendingMentions(mentions)
+    toast.success(`已添加 ${mentions.length} 个问题到当前会话`)
+  }
+
   const toggleCollapse = (filePath: string): void => {
     setCollapsed((prev) => {
       const next = new Set(prev)
@@ -77,23 +94,35 @@ export function ProblemsView(): JSX.Element {
         </div>
       ) : (
         <>
-          <div className="problems-view__filters" role="toolbar" aria-label="严重级筛选">
-            {FILTERS.map((f) => {
-              const count = f.id === 'all' ? total : counts[f.id]
-              return (
-                <button
-                  key={f.id}
-                  type="button"
-                  className={`problems-view__filter${filter === f.id ? ' is-active' : ''}`}
-                  aria-pressed={filter === f.id}
-                  onClick={() => setFilter(f.id)}
-                >
-                  <Icon name={f.icon} size={16} />
-                  {f.label}
-                  <span className="problems-view__filter-count">{count >= 10 ? '9+' : count}</span>
-                </button>
-              )
-            })}
+          <div className="problems-view__toolbar" role="toolbar" aria-label="问题工具">
+            <div className="problems-view__filters" aria-label="严重级筛选">
+              {FILTERS.map((f) => {
+                const count = f.id === 'all' ? total : counts[f.id]
+                return (
+                  <button
+                    key={f.id}
+                    type="button"
+                    className={`problems-view__filter${filter === f.id ? ' is-active' : ''}`}
+                    aria-pressed={filter === f.id}
+                    onClick={() => setFilter(f.id)}
+                  >
+                    <Icon name={f.icon} size={16} />
+                    {f.label}
+                    <span className="problems-view__filter-count">{count >= 10 ? '9+' : count}</span>
+                  </button>
+                )
+              })}
+            </div>
+            <button
+              type="button"
+              className="problems-view__chat-action"
+              title="将当前筛选结果全部添加到会话输入框"
+              aria-label="将当前问题清单添加到会话"
+              onClick={addVisibleProblems}
+            >
+              <Icon name="chat" size={14} />
+              <span>添加到会话</span>
+            </button>
           </div>
           <div className="problems-view__summary">
             {files.reduce((sum, g) => sum + g.items.length, 0)} 个问题，{files.length} 个文件
@@ -106,6 +135,7 @@ export function ProblemsView(): JSX.Element {
                 items={group.items}
                 collapsed={collapsed.has(group.filePath)}
                 onToggle={() => toggleCollapse(group.filePath)}
+                onAdd={addProblem}
               />
             ))}
           </div>
@@ -123,12 +153,14 @@ function FileGroup({
   filePath,
   items,
   collapsed,
-  onToggle
+  onToggle,
+  onAdd
 }: {
   filePath: string
   items: ProblemItem[]
   collapsed: boolean
   onToggle: () => void
+  onAdd: (filePath: string, item: ProblemItem) => void
 }): JSX.Element {
   const errors = items.filter((item) => item.severity === 'error').length
   const warnings = items.filter((item) => item.severity === 'warning').length
@@ -156,7 +188,7 @@ function FileGroup({
       {collapsed ? null : (
         <div className="problems-view__items">
           {items.map((item, index) => (
-            <Item key={index} filePath={filePath} item={item} />
+            <Item key={index} filePath={filePath} item={item} onAdd={onAdd} />
           ))}
         </div>
       )}
@@ -164,24 +196,57 @@ function FileGroup({
   )
 }
 
-function Item({ filePath, item }: { filePath: string; item: ProblemItem }): JSX.Element {
+function Item({ filePath, item, onAdd }: { filePath: string; item: ProblemItem; onAdd: (filePath: string, item: ProblemItem) => void }): JSX.Element {
   const length = item.endColumn && item.endColumn > item.column ? item.endColumn - item.column : 1
   return (
-    <button
-      type="button"
-      className="problems-view__item"
-      onClick={() => void openFile(filePath, item.line, item.column, length)}
-    >
-      <span className={`problems-view__dot is-${item.severity}`} aria-hidden="true" />
-      <span className="problems-view__message">{item.message}</span>
-      <span className="problems-view__meta">
-        {item.source}
-        {item.code ? ` ${item.code}` : ''} [行 {item.line}，列 {item.column}]
-      </span>
-    </button>
+    <div className="problems-view__item-row">
+      <button
+        type="button"
+        className="problems-view__item"
+        title={`${item.message}（行 ${item.line}，列 ${item.column}）`}
+        onClick={() => void openFile(filePath, item.line, item.column, length)}
+      >
+        <span className={`problems-view__dot is-${item.severity}`} aria-hidden="true" />
+        <span className="problems-view__message">{item.message}</span>
+        <span className="problems-view__meta">
+          {item.source}
+          {item.code ? ` ${item.code}` : ''} [行 {item.line}，列 {item.column}]
+        </span>
+      </button>
+      <button
+        type="button"
+        className="problems-view__item-chat"
+        title="将此问题添加到会话输入框"
+        aria-label={`将问题添加到会话：${item.message}`}
+        onClick={(event) => {
+          event.stopPropagation()
+          onAdd(filePath, item)
+        }}
+      >
+        <Icon name="chat" size={14} />
+      </button>
+    </div>
   )
 }
 
 function fileName(filePath: string): string {
   return filePath.replace(/\\/g, '/').split('/').pop() ?? filePath
+}
+
+/** Keep the diagnostic location as a code mention so the chat can jump to the exact range. */
+function toMention(filePath: string, item: ProblemItem): Mention {
+  const normalized = filePath.replace(/\\/g, '/')
+  const root = getWorkspaceState().root?.replace(/\\/g, '/').replace(/\/+$/, '')
+  const path = root && fileIdentity(normalized).startsWith(`${fileIdentity(root)}/`)
+    ? normalized.slice(root.length + 1)
+    : normalized
+  return {
+    source: 'code',
+    path,
+    startLine: item.line,
+    endLine: item.endLine && item.endLine >= item.line ? item.endLine : item.line,
+    startColumn: item.column,
+    endColumn: item.endColumn,
+    displayText: `${fileName(path)}:${item.line}`
+  }
 }

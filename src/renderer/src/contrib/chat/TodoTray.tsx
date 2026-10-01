@@ -1,4 +1,4 @@
-import { useState, type JSX } from 'react'
+import type { JSX } from 'react'
 import type { EngineTodo } from '@shared/ipc'
 import { Icon } from '@renderer/workbench/icons'
 
@@ -13,18 +13,14 @@ const STATUS_LABEL: Record<EngineTodo['status'], string> = {
 /**
  * 任务托盘（Trae 风格）：
  * - 进行中/待处理项以 checklist 展示
- * - 已完成/取消项自动收纳到底部，可展开回看（删除线置灰）
- * - 底部常驻进度条 + 关闭按钮
+ * - 已完成/取消项排在底部，和进行中项目保持同一条信息轴
+ * - 底部常驻进度条
  *
  * 数据来自引擎 todo 帧（useChat.todos），组件只读不回写 ——
  * 状态变更由 Agent 调 todo_update 后经新帧整表下发。
  */
 export function TodoTray({ todos }: { todos: EngineTodo[] }): JSX.Element | null {
-  // 记录「被关闭时的那份清单」：新清单帧引用不同 → 自动重新显示（派生值，无 effect）
-  const [dismissed, setDismissed] = useState<EngineTodo[] | null>(null)
-  const isHidden = dismissed !== null && dismissed === todos
-
-  if (isHidden || todos.length === 0) return null
+  if (todos.length === 0) return null
 
   // 引擎按 created_at 倒序返回，展示时反转为创建顺序（先建的任务在上）
   const ordered = [...todos].reverse()
@@ -52,11 +48,11 @@ export function TodoTray({ todos }: { todos: EngineTodo[] }): JSX.Element | null
       ) : null}
 
       {completed.length > 0 ? (
-        <details className="todo-tray__done">
-          <summary>
-            <Icon name="check" size={16} />
+        <div className="todo-tray__done">
+          <div className="todo-tray__done-label">
+            <Icon name="check" size={15} />
             已完成 {completed.length} 项
-          </summary>
+          </div>
           <ul className="todo-tray__list todo-tray__list--done">
             {completed.map((todo) => (
               <li key={todo.id} className="todo-tray__item todo-tray__item--done">
@@ -70,7 +66,7 @@ export function TodoTray({ todos }: { todos: EngineTodo[] }): JSX.Element | null
               </li>
             ))}
           </ul>
-        </details>
+        </div>
       ) : null}
 
       <div className="todo-tray__footer">
@@ -80,14 +76,6 @@ export function TodoTray({ todos }: { todos: EngineTodo[] }): JSX.Element | null
         <span className="todo-tray__progress-text">
           {completed.length}/{total} 个任务已完成
         </span>
-        <button
-          type="button"
-          className="todo-tray__close"
-          title="收起任务托盘"
-          onClick={() => setDismissed(todos)}
-        >
-          <Icon name="close" size={16} />
-        </button>
       </div>
     </div>
   )

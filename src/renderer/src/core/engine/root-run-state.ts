@@ -40,7 +40,12 @@ export function applyRootRun(
     assistantFound = true
     const interactions = run.pending.map(item => normalizeRunPending(item, run.runId)).filter(item => item !== null)
     const pending = interactions.find(item => item.status !== 'answered')
-    const error = typeof run.error === 'string' ? run.error : run.error?.message
+    // A waiting run carries the ask/permission question in `run.error` as a
+    // durable diagnostic for recovery. It is not a failure and must not render
+    // the question again in the red message error strip below the card.
+    const error = run.status === 'failed' || run.status === 'interrupted' || run.status === 'cancelled'
+      ? typeof run.error === 'string' ? run.error : run.error?.message
+      : undefined
     return {
       ...base,
       id: run.assistantMessageId || message.id,

@@ -3,7 +3,7 @@ import './apple-chat-panels.css'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import type { EngineFileChange } from '@shared/ipc'
 import { Icon } from '@renderer/workbench/icons'
-import { onSnapshot, requestOrThrow } from '@renderer/core/engine/client'
+import { onSnapshot, onStreamEvent, requestOrThrow } from '@renderer/core/engine/client'
 import { dismissRevertReport, getRevertReport, groupRevertResults, revertChanges, revertComplete, revertStatusLabel, revertSummary, subscribeReverts } from '@renderer/core/engine/change-revert'
 import { gitStageFiles } from '@renderer/core/git/git-client'
 import { changeIdsOf, keepChanges, stageAndKeepChanges } from '@renderer/core/engine/change-actions'
@@ -137,6 +137,18 @@ function ChangesPanelContent({
 
   useEffect(() => onSnapshot((snapshot) => {
     if (snapshot.phase === 'ready') { setError(null); void refresh() }
+  }), [refresh])
+
+  // 文件工具会在回合仍在流式输出时先发出 fileChange 帧；只等 true→false
+  // 会让底部改动区落后一整轮，用户会误以为刚写入的文件没有被记录。
+  // 这里监听同一条 IPC 流，收到变更记录后立即从 /changes 读取带完整快照的净视图。
+  useEffect(() => onStreamEvent((event) => {
+    if (event.type !== 'payload') return
+    const payload = event.payload as typeof event.payload & {
+      toolResult?: { change?: unknown }
+      toolEnd?: { change?: unknown }
+    }
+    if (payload.fileChange || payload.toolResult?.change || payload.toolEnd?.change) void refresh()
   }), [refresh])
 
   // 一轮对话结束（true→false）时快照刚落库，此时刷新

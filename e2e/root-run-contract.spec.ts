@@ -45,6 +45,16 @@ test('历史恢复缺少assistant行时仍根据run重建等待卡并保留reque
   expect(restored[1]).toMatchObject({ id: waiting.assistantMessageId, status: 'waiting', modelId: 'original-model', pending: { requestId: 'request-7', runId: waiting.runId } })
   expect(buildToolResponse(restored[1].pending!, ['feature'])).toEqual({ requestId: 'request-7', runId: waiting.runId, toolCallId: 'call-3', name: 'ask_user', output: 'feature' })
 })
+test('等待用户回答时不把问题文本误显示成红色错误', () => {
+  const waiting = run({
+    status: 'waiting',
+    error: { code: 'NEEDS_USER', message: 'README 优化按哪个范围执行?', retryable: false },
+    pending: [{ requestId: 'request-8', kind: 'ask', toolCallId: 'call-8', toolName: 'ask_user', args: { question: 'README 优化按哪个范围执行?' }, status: 'pending' }]
+  })
+  const result = applyRootRun([message('server-assistant-2', 'assistant')], waiting)[0]
+  expect(result.status).toBe('waiting')
+  expect(result.error).toBeUndefined()
+})
 test('不同请求ID即使同toolcall也保留审批记录，拒绝不可显示放行', () => {
   const item = { requestId: 'request', kind: 'permission' as const, toolCallId: 'call', toolName: 'write_file', args: { path: 'file' }, status: 'answered' as const, output: 'rejected' }
   const pending = normalizeRunPending(item, 'run')!

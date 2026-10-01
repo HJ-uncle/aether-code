@@ -15,6 +15,10 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 // acceleration by default on Windows; advanced users can opt back in for a
 // comparison run with AETHER_ENABLE_GPU=1.
 if (process.platform === 'win32' && process.env.AETHER_ENABLE_GPU !== '1') {
+  // Some corporate Exploit Protection policies still spawn a Chromium GPU
+  // child after disableHardwareAcceleration(). Keep GPU work in the main
+  // process so a blocked child cannot trigger Chromium's fatal retry loop.
+  app.commandLine.appendSwitch('in-process-gpu')
   app.disableHardwareAcceleration()
 }
 

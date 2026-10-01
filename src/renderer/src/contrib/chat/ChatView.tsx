@@ -1085,30 +1085,33 @@ export function ChatView(): JSX.Element {
 
       {selectMode ? (
         <div className="chat__select-bar">
-          <button type="button" className="chat__toolbar-btn" onClick={toggleAll}>
-            {allSelected ? '取消全选' : '全选'}
-          </button>
-          <span className="chat__select-count">已选 {selectedIds.size} 项</span>
-          <div className="chat__toolbar-spacer" />
-          <button
-            type="button"
-            className="chat__toolbar-btn"
-            disabled={selectedIds.size === 0}
-            onClick={copySelected}
-          >
-            复制
-          </button>
-          <button
-            type="button"
-            className="chat__toolbar-btn"
-            disabled={selectedIds.size === 0}
-            onClick={exportSelected}
-          >
-            导出
-          </button>
-          <button type="button" className="chat__toolbar-btn" onClick={toggleSelectMode}>
-            完成
-          </button>
+          <div className="chat__select-leading">
+            <button type="button" className="chat__toolbar-btn" onClick={toggleAll}>
+              {allSelected ? '取消全选' : '全选'}
+            </button>
+            <span className="chat__select-count">已选 {selectedIds.size} 项</span>
+          </div>
+          <div className="chat__select-actions">
+            <button
+              type="button"
+              className="chat__toolbar-btn"
+              disabled={selectedIds.size === 0}
+              onClick={copySelected}
+            >
+              复制
+            </button>
+            <button
+              type="button"
+              className="chat__toolbar-btn"
+              disabled={selectedIds.size === 0}
+              onClick={exportSelected}
+            >
+              导出
+            </button>
+            <button type="button" className="chat__toolbar-btn chat__toolbar-btn--done" onClick={toggleSelectMode}>
+              完成
+            </button>
+          </div>
         </div>
       ) : null}
 
