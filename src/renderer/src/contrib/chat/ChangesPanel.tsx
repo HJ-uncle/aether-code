@@ -293,18 +293,25 @@ function ChangesPanelContent({
                 </span>
                 {dir ? <span className="changes-panel__dir" title={dir}>{dir}</span> : null}
               </span>
-              {change.projectionIssue ? <span title={issueLabels[change.projectionIssue]} aria-label={issueLabels[change.projectionIssue]}>⚠</span> : null}
+              {/* Keep the diagnostic column mounted even when a row has no issue;
+                  otherwise CSS grid shifts every action column horizontally. */}
+              <span
+                className="changes-panel__issue"
+                title={change.projectionIssue ? issueLabels[change.projectionIssue] : undefined}
+                aria-label={change.projectionIssue ? issueLabels[change.projectionIssue] : undefined}
+                aria-hidden={change.projectionIssue ? undefined : true}
+              >
+                {change.projectionIssue ? '⚠' : ''}
+              </span>
               <span className="changes-panel__spacer" />
-              {stats ? (
-                <span className="changes-panel__stats" title={stats.approximate ? DIFF_APPROXIMATION_HINT : undefined}>
-                  {stats.added > 0 ? (
-                    <span className="changes-panel__add">{stats.approximate ? '≈' : ''}+{stats.added}</span>
-                  ) : null}
-                  {stats.removed > 0 ? (
-                    <span className="changes-panel__del">{stats.approximate ? '≈' : ''}-{stats.removed}</span>
-                  ) : null}
-                </span>
-              ) : null}
+              <span className="changes-panel__stats" title={stats?.approximate ? DIFF_APPROXIMATION_HINT : undefined}>
+                {stats !== null && stats !== undefined && stats.added > 0 ? (
+                  <span className="changes-panel__add">{stats.approximate ? '≈' : ''}+{stats.added}</span>
+                ) : null}
+                {stats !== null && stats !== undefined && stats.removed > 0 ? (
+                  <span className="changes-panel__del">{stats.approximate ? '≈' : ''}-{stats.removed}</span>
+                ) : null}
+              </span>
               <span className={`changes-panel__badge changes-panel__badge--${badge.toLowerCase()}`}>
                 {badge}
               </span>

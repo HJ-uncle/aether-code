@@ -49,6 +49,9 @@
   --control-h: 24px;
   --control-h-lg: 28px;
 
+  /* 所有工作区横向 chrome 使用同一条基线，避免三列标题/工具条错位。 */
+  --chrome-h: 32px;
+
   /* 间距节奏：4 的倍数为基准，控件内边距 / 区块间距都从这里取，避免 5px、7px 这类碎值 */
   --space-1: 4px;
   --space-2: 8px;
@@ -133,14 +136,15 @@
 
   /* 编辑器 Chrome：把标签/路径/操作条与 Monaco 画布分层，
      让编辑器像一个有明确层次的工作区，而不是一整块灰色面板。 */
-  --editor-chrome: #1f2023;
-  --editor-chrome-deep: #151619;
-  --editor-canvas: #1e1e20;
+  /* 编辑器与资源管理器、对话使用同一工作区表面层级。 */
+  --editor-chrome: var(--bg-surface);
+  --editor-chrome-deep: var(--bg-surface);
+  --editor-canvas: var(--bg-surface);
   /* 编辑器标签的选中态不能固定成蓝色：它必须跟随当前强调色，
      否则切换成紫/粉/橙主题后设置导航已变色，顶部标签仍会残留蓝色。 */
   --editor-tab-active: color-mix(in srgb, var(--accent) 16%, var(--editor-chrome));
   --editor-tab-hover: rgba(255, 255, 255, 0.075);
-  --editor-border: rgba(255, 255, 255, 0.14);
+  --editor-border: var(--border);
   --editor-active-border: var(--accent);
   --editor-active-fg: color-mix(in srgb, var(--accent) 72%, var(--fg-strong));
 
@@ -228,13 +232,13 @@
 
   --bg-inset: rgba(0, 0, 0, 0.05);
 
-  --editor-chrome: #f2f3f5;
-  --editor-chrome-deep: #e8eaee;
-  --editor-canvas: #ffffff;
+  --editor-chrome: var(--bg-surface);
+  --editor-chrome-deep: var(--bg-surface);
+  --editor-canvas: var(--bg-surface);
   /* 浅色下用更轻的强调色混合，保持标签与画布的层次，同时仍能看出当前主题。 */
   --editor-tab-active: color-mix(in srgb, var(--accent) 12%, var(--editor-chrome));
   --editor-tab-hover: rgba(0, 0, 0, 0.055);
-  --editor-border: rgba(0, 0, 0, 0.14);
+  --editor-border: var(--border);
   --editor-active-border: var(--accent);
   --editor-active-fg: color-mix(in srgb, var(--accent) 82%, var(--fg-strong));
 

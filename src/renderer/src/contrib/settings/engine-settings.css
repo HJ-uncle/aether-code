@@ -207,11 +207,18 @@
 
 .engine-runtime__selector {
   display: grid;
-  grid-template-columns: 88px minmax(220px, 390px);
+  /* The selector belongs to the right control column; the label fills the
+     left track so it aligns with every other setting row. */
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 360px);
   align-items: center;
   gap: var(--space-4);
   min-width: 0;
-  padding: 8px 18px 12px;
+  padding: 10px 18px 14px;
+}
+
+.engine-runtime__selector-copy {
+  justify-content: center;
+  min-height: 32px;
 }
 
 .engine-runtime__select {
@@ -252,6 +259,12 @@
   justify-content: flex-end;
   gap: var(--space-2);
   padding: 12px 18px 16px;
+}
+
+.settings-view--engine .engine-runtime__actions {
+  min-height: 44px;
+  align-items: center;
+  border-top: 1px solid var(--border);
 }
 
 .engine-runtime__actions .btn {
@@ -425,6 +438,50 @@
 /* ── Engine status: one calm primary row, diagnostics on demand ─────────── */
 .settings-view--engine {
   container-type: inline-size;
+  /* Keep every engine section on one optical grid.  Custom runtime rows use
+     the same inset as the shared settings rows below, so controls terminate
+     on one vertical edge instead of drifting with their content width. */
+  --engine-gutter: 18px;
+}
+
+/* Shared setting rows ----------------------------------------------------
+ * The generic settings primitive is intentionally permissive because some
+ * pages contain long inline content.  Engine settings are a denser, form-
+ * like surface: a two-column grid keeps labels and controls on a stable
+ * baseline while preserving a single right edge for every control. */
+.settings-view--engine .sg__row:not(.sg__row--content) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  column-gap: var(--space-4);
+  min-height: 48px;
+  padding: 9px var(--engine-gutter);
+  flex-wrap: initial;
+}
+
+.settings-view--engine .sg__row-text {
+  min-width: 0;
+}
+
+.settings-view--engine .sg__row-control {
+  min-width: 0;
+  max-width: min(100%, 360px);
+  justify-self: end;
+  justify-content: flex-end;
+}
+
+.settings-view--engine .settings-view__token-field {
+  justify-content: flex-end;
+  max-width: 100%;
+}
+
+.settings-view--engine .engine-runtime__import,
+.settings-view--engine .engine-runtime__catalog-head,
+.settings-view--engine .engine-runtime__selector,
+.settings-view--engine .engine-runtime__actions,
+.settings-view--engine .engine-status__hero {
+  padding-right: var(--engine-gutter);
+  padding-left: var(--engine-gutter);
 }
 
 .engine-status__content {
@@ -549,12 +606,17 @@
 }
 
 @container (max-width: 520px) {
+  .settings-view--engine .sg__row:not(.sg__row--content) {
+    grid-template-columns: minmax(0, 1fr) max-content;
+    row-gap: 5px;
+  }
+
   .engine-status__hero {
     grid-template-columns: auto minmax(0, 1fr);
   }
   .engine-status__badge {
     grid-column: 2;
-    justify-self: start;
+    justify-self: end;
   }
   .engine-runtime__meta {
     grid-template-columns: 1fr;

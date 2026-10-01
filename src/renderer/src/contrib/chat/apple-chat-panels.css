@@ -9,7 +9,8 @@
 
 .changes-panel__item {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto auto;
+  /* Keep the right-side action columns fixed even when a row has no issue or diff. */
+  grid-template-columns: auto minmax(0, 1fr) 18px minmax(52px, 62px) 24px 64px 28px;
   gap: var(--space-2);
   min-height: 48px;
   padding: 8px 12px;
@@ -39,7 +40,22 @@
   display: none;
 }
 
+.changes-panel__issue {
+  grid-column: 3;
+  width: 18px;
+  text-align: center;
+  color: var(--warn);
+  font-size: 13px;
+}
+
+.changes-panel__issue[aria-hidden='true'] {
+  visibility: hidden;
+}
+
 .changes-panel__stats {
+  grid-column: 4;
+  min-width: 52px;
+  justify-content: flex-end;
   align-self: center;
 }
 
@@ -50,10 +66,12 @@
 }
 
 .changes-panel__badge {
+  grid-column: 5;
   align-self: center;
 }
 
 .changes-panel__confirm {
+  grid-column: 6;
   align-self: center;
   min-height: 28px;
   padding: 4px 12px;
@@ -63,6 +81,11 @@
 
 .changes-panel__confirm:hover:not(:disabled) {
   background: var(--bg-active);
+}
+
+.changes-panel__item > .action-menu {
+  grid-column: 7;
+  justify-self: end;
 }
 
 .changes-panel__footer {
@@ -117,17 +140,17 @@
 
 @media (max-width: 620px) {
   .changes-panel__item {
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-columns: auto minmax(0, 1fr) 18px minmax(48px, auto) 24px 56px 28px;
   }
 
   .changes-panel__stats {
-    grid-column: 2;
-    grid-row: 2;
-    justify-self: start;
+    grid-column: 4;
+    grid-row: 1;
+    justify-self: end;
   }
 
   .changes-panel__badge {
-    grid-column: 3;
+    grid-column: 5;
     grid-row: 1;
   }
 }
