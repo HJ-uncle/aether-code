@@ -214,12 +214,25 @@ function registerProviders(): void {
     } catch (error) { return { edits: [], rejectReason: `重命名失败：${error instanceof Error ? error.message : String(error)}` } }
   } }))
   providersDisposed.push(monaco.languages.registerDocumentFormattingEditProvider(selector, { displayName: 'TypeScript 项目语言服务', async provideDocumentFormattingEdits(model, options, token) {
-    const result = await lspRequest<Array<{ range: LspRange; newText: string }> | null>('textDocument/formatting', { textDocument: { uri: model.uri.toString() }, options }, token)
-    return result?.map(mapEdit) ?? []
+    try {
+      const result = await lspRequest<Array<{ range: LspRange; newText: string }> | null>('textDocument/formatting', { textDocument: { uri: model.uri.toString() }, options }, token)
+      return result?.map(mapEdit) ?? []
+    } catch (error) {
+      // Monaco may start a second formatting request while the first one is still
+      // in flight. A cancelled provider call is expected during that handoff and
+      // must resolve quietly instead of surfacing an uncaught page error.
+      if (token.isCancellationRequested || (error instanceof Error && /cancel/i.test(error.message))) return []
+      throw error
+    }
   } }))
   providersDisposed.push(monaco.languages.registerDocumentRangeFormattingEditProvider(selector, { displayName: 'TypeScript 项目语言服务', async provideDocumentRangeFormattingEdits(model, range, options, token) {
-    const result = await lspRequest<Array<{ range: LspRange; newText: string }> | null>('textDocument/rangeFormatting', { textDocument: { uri: model.uri.toString() }, range: { start: { line: range.startLineNumber - 1, character: range.startColumn - 1 }, end: { line: range.endLineNumber - 1, character: range.endColumn - 1 } }, options }, token)
-    return result?.map(mapEdit) ?? []
+    try {
+      const result = await lspRequest<Array<{ range: LspRange; newText: string }> | null>('textDocument/rangeFormatting', { textDocument: { uri: model.uri.toString() }, range: { start: { line: range.startLineNumber - 1, character: range.startColumn - 1 }, end: { line: range.endLineNumber - 1, character: range.endColumn - 1 } }, options }, token)
+      return result?.map(mapEdit) ?? []
+    } catch (error) {
+      if (token.isCancellationRequested || (error instanceof Error && /cancel/i.test(error.message))) return []
+      throw error
+    }
   } }))
   providersDisposed.push(monaco.languages.registerSignatureHelpProvider(selector, { signatureHelpTriggerCharacters: ['(', ',', '<'], signatureHelpRetriggerCharacters: [','], async provideSignatureHelp(model, position, token, context) { const result = await lspRequest<{ signatures?: Array<{ label: string; documentation?: unknown; parameters?: Array<{ label: string | [number, number]; documentation?: unknown }> }>; activeSignature?: number; activeParameter?: number } | null>('textDocument/signatureHelp', { ...positionParams(model, position), context: { triggerKind: context.triggerKind, triggerCharacter: context.triggerCharacter, isRetrigger: context.isRetrigger } }, token).catch(() => null); if (!result?.signatures?.length) return null; return { value: { signatures: result.signatures.map((signature) => ({ label: signature.label, documentation: markdown(signature.documentation), parameters: (signature.parameters ?? []).map((parameter) => ({ label: parameter.label, documentation: markdown(parameter.documentation) })) })), activeSignature: result.activeSignature ?? 0, activeParameter: result.activeParameter ?? 0 }, dispose() {} } } }))
   providersDisposed.push(monaco.languages.registerDocumentSymbolProvider(selector, {

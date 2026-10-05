@@ -13,6 +13,7 @@ import {
   Toggle
 } from './SettingsGroup'
 import './engine-settings.css'
+import './settings-pages.css'
 
 const ENGINE_PHASE_LABELS: Record<string, string> = {
   idle: '未启动',
@@ -417,6 +418,9 @@ export function EngineSettingsView(): JSX.Element {
                   </div>
                 </SettingsDisclosure>
               ) : null}
+              {/* 只有存在可执行操作时才渲染这一行。默认引擎下三个按钮都不出现，
+                  空容器仍会吃掉自身高度，在「运行版本」和下方说明之间留下一段空隙 */}
+              {runtimeCatalog.activeId !== null || selectedRuntimeId !== '' ? (
               <div className="engine-runtime__actions" aria-label="引擎版本操作">
                 {selectedRuntimeId !== (runtimeCatalog.activeId ?? '') ? (
                   <button
@@ -455,6 +459,7 @@ export function EngineSettingsView(): JSX.Element {
                   <span className="engine-runtime__selection-note">此版本正在运行</span>
                 ) : null}
               </div>
+              ) : null}
             </SettingsContent>
           ) : null}
         </SettingsGroup>
@@ -464,7 +469,7 @@ export function EngineSettingsView(): JSX.Element {
         {mode === 'embedded' ? (
           <SettingsRow label="首选端口" description="端口被占用时自动向后探测可用端口">
             <input
-              className="field__input sg__input"
+              className="field__input sg__input sg__input--port"
               type="number"
               min={1024}
               max={65535}

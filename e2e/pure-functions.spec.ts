@@ -19,6 +19,7 @@ import {
 } from '../src/renderer/src/core/git/git-format'
 import { compileExclude, isExcluded } from '../src/renderer/src/core/workspace/exclude'
 import { DEFAULT_SEARCH_EXCLUDE } from '../src/shared/ipc'
+import { resolveActiveNavId } from '../src/renderer/src/contrib/chat/message-nav'
 import {
   compileSearchExclude,
   isSearchExcluded,
@@ -81,6 +82,19 @@ test.describe('类型判定', () => {
   test('data URL 带正确 MIME；未知类型回退 octet-stream', () => {
     expect(toDataUrl('AAAA', 'a.png')).toBe('data:image/png;base64,AAAA')
     expect(toDataUrl('AAAA', 'a.bin')).toBe('data:application/octet-stream;base64,AAAA')
+  })
+})
+
+test.describe('会话消息导航', () => {
+  test('只按外层轮次锚点确定当前高亮，嵌套消息不会覆盖轮次 ID', () => {
+    const anchors = [
+      { id: 'turn-1', top: 16 },
+      { id: 'turn-2', top: 420 },
+      { id: 'turn-3', top: 860 }
+    ]
+    expect(resolveActiveNavId(anchors, 20)).toBe('turn-1')
+    expect(resolveActiveNavId(anchors, 500)).toBe('turn-2')
+    expect(resolveActiveNavId(anchors, 8)).toBeNull()
   })
 })
 

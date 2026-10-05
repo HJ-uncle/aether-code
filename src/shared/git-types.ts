@@ -183,7 +183,7 @@ export interface GitBranchListResult extends GitResult {
 /** 提交信息建议结果（AI 生成失败时回退本地启发式；aiContext 供渲染层再喂给 LLM） */
 export interface GitSuggestMessageResult extends GitResult {
   message?: string
-  /** 供 AI 生成提交信息的改动摘要（numstat + 截断 diff 片段）；无改动时为空 */
+  /** 供 AI 生成提交信息的统计、完整文件清单和头尾 diff 片段；无改动时为空 */
   aiContext?: string
 }
 

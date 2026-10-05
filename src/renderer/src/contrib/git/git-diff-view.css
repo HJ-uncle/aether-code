@@ -5,7 +5,7 @@
 .git-diff-view__path { color: var(--fg); min-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .git-diff-view__scope { flex: 0 0 auto; padding-left: var(--space-2); border-left: 1px solid var(--editor-border); color: var(--fg-muted); white-space: nowrap; }
 .git-diff-view__actions { display: flex; align-items: center; gap: var(--space-1); flex: 0 0 auto; }
-.git-diff-view__toolbar button { display: inline-flex; align-items: center; gap: 4px; color: var(--fg); background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); cursor: pointer; }
+.git-diff-view__toolbar button { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--fg); background: transparent; border: 1px solid transparent; border-radius: var(--radius); padding: var(--space-1) var(--space-2); cursor: pointer; }
 .git-diff-view__toolbar button:hover:not(:disabled) { background: var(--editor-tab-hover); border-color: var(--editor-border); }
 .git-diff-view__segmented { display: inline-flex; padding: 2px; border: 1px solid var(--editor-border); border-radius: var(--radius); background: var(--editor-chrome-deep); }
 .git-diff-view__segmented button { padding: 3px 7px; color: var(--fg-muted); }

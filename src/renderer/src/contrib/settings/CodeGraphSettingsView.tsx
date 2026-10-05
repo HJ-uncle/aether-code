@@ -5,6 +5,7 @@ import { isRemoteEngine } from '@renderer/core/engine/source'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { Icon } from '@renderer/workbench/icons'
 import { SettingsContent, SettingsGroup } from './SettingsGroup'
+import './settings-pages.css'
 
 /**
  * 代码图索引设置
@@ -167,7 +168,7 @@ export function CodeGraphSettingsView(): JSX.Element {
         : null
 
   return (
-    <div className="settings-view">
+    <div className="settings-view settings-view--codegraph">
       <SettingsGroup
         title="代码图索引"
         footer="建索引时自动排除依赖与构建产物（node_modules、dist、build、out 等），并遵循项目内的 .gitignore 规则；对话页脚的「建索引」按钮可完成首次创建，已有索引时无需重复操作。"

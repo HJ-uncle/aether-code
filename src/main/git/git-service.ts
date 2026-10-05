@@ -986,16 +986,31 @@ export async function appendGitignore(cwd: string, filePath: string): Promise<Gi
  * 提交信息，失败/未配置时直接展示本地文案。
  */
 
-/** 收集供 AI 参考的改动上下文：文件清单 + 截断的 unified diff 片段 */
+/** 收集供 AI 参考的改动上下文：统计、文件清单 + 截断的 unified diff 片段。 */
 async function collectAiContext(root: string, staged: boolean): Promise<string> {
   const args = staged ? ['diff', '--cached'] : ['diff']
-  const [numstat, diff] = await Promise.all([
+  const [stat, nameStatus, numstat, diff, untracked] = await Promise.all([
     runGit(root, [...args, '--stat']).catch(() => ''),
-    runGit(root, args).catch(() => '')
+    runGit(root, [...args, '--name-status']).catch(() => ''),
+    runGit(root, [...args, '--numstat']).catch(() => ''),
+    runGit(root, args).catch(() => ''),
+    // 未跟踪文件不会出现在 git diff 中，但仍属于工作区改动；暂存区优先时
+    // 刻意不混入，避免 AI 把未暂存内容写进本次提交说明。
+    staged ? Promise.resolve('') : runGit(root, ['ls-files', '--others', '--exclude-standard']).catch(() => '')
   ])
-  // diff 截断：单文件超长 diff 会让轻模型跑题，只保留头部约 6k 字符
-  const truncated = diff.length > 6000 ? `${diff.slice(0, 6000)}\n...（diff 过长已截断）` : diff
-  const sections = [numstat.trim(), truncated.trim()].filter(Boolean)
+  // 统计和文件清单完整保留，确保大范围改动不会被头部几个文件代表掉。
+  // diff 只取头尾各一半，避免把轻任务模型的上下文预算耗在重复代码上，同时
+  // 让排在后面的文件也能进入上下文，而不是永远只由字母靠前的文件代表。
+  const diffLimit = 12_000
+  const truncated = diff.length > diffLimit
+    ? `${diff.slice(0, Math.ceil(diffLimit / 2))}\n...（diff 中间片段已省略，完整范围见文件清单）...\n${diff.slice(-Math.floor(diffLimit / 2))}`
+    : diff
+  const sections: string[] = []
+  if (stat.trim()) sections.push(`【变更统计】\n${stat.trim()}`)
+  if (nameStatus.trim()) sections.push(`【文件状态】\n${nameStatus.trim()}`)
+  if (numstat.trim()) sections.push(`【逐文件行数】\n${numstat.trim()}`)
+  if (untracked.trim()) sections.push(`【未跟踪文件】\n${untracked.trim()}`)
+  if (truncated.trim()) sections.push(`【diff 片段】\n${truncated.trim()}`)
   return sections.join('\n\n')
 }
 
@@ -1032,6 +1047,21 @@ export async function suggestCommitMessage(cwd: string): Promise<GitSuggestMessa
       else group.modified.add(p)
     }
 
+    // 统计行级规模供本地兜底文案使用；未跟踪文件没有 numstat，仍由文件数说明范围。
+    const numstatOut = await runGit(root, [
+      'diff',
+      ...(scope === 'staged' ? ['--cached'] : []),
+      '--numstat'
+    ]).catch(() => '')
+    let insertions = 0
+    let deletions = 0
+    for (const line of numstatOut.split('\n')) {
+      const match = /^(\d+)\s+(\d+)\s+/.exec(line)
+      if (!match) continue
+      insertions += Number(match[1])
+      deletions += Number(match[2])
+    }
+
     const total = group.added.size + group.modified.size + group.deleted.size
     if (total === 0) {
       return { success: false, error: '暂存区与工作区都没有可总结的改动。' }
@@ -1052,8 +1082,23 @@ export async function suggestCommitMessage(cwd: string): Promise<GitSuggestMessa
     if (group.modified.size > 0) parts.push(`更新 ${group.modified.size} 个文件`)
     if (group.deleted.size > 0) parts.push(`删除 ${group.deleted.size} 个文件`)
     const scopePrefix = scope === 'staged' ? '' : ''
+    const areas = [...dirCount.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([dir, count]) => `${dir || '根目录'}（${count}）`)
+    const filePreview = allPaths.slice(0, 6)
+    const filePreviewText = filePreview.length > 0
+      ? `${filePreview.join('、')}${allPaths.length > filePreview.length ? ` 等 ${allPaths.length} 个文件` : ''}`
+      : '工作区'
     const where = mainDir ? `${mainDir} 相关` : ''
-    const message = `${scopePrefix}chore: ${parts.join('，')}（${where || '工作区'}）`
+    const message = [
+      `${scopePrefix}chore: ${parts.join('，')}（${where || '工作区'}）`,
+      '',
+      `1. 变更规模：${parts.join('，')}`,
+      `2. 代码规模：新增 ${insertions} 行，删除 ${deletions} 行`,
+      `3. 主要范围：${areas.join('、') || '工作区'}`,
+      `4. 涉及文件：${filePreviewText}`
+    ].join('\n')
     const aiContext = await collectAiContext(root, scope === 'staged')
     return { success: true, message, aiContext }
   } catch (error) {

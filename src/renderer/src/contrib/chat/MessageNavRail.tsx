@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type JSX } from 'react'
 import type { ChatMessage } from '@renderer/core/engine/useChat'
 import { ContextMenu, type ContextMenuItem } from '@renderer/workbench/ContextMenu'
 import { Icon } from '@renderer/workbench/icons'
+import { resolveActiveNavId } from './message-nav'
 
 /** 可选的标记颜色（存 localStorage 的是色值本身，换主题也不失真） */
 const MARK_COLORS: { color: string; name: string }[] = [
@@ -91,12 +92,20 @@ export function MessageNavRail({
     const container = containerRef.current
     if (!container) return
     const probe = container.scrollTop + container.clientHeight / 3
-    let current: string | null = null
-    for (const el of container.querySelectorAll<HTMLElement>('[data-turn-id]')) {
-      if (el.offsetTop <= probe) current = el.dataset.turnId ?? null
-      else break
-    }
-    setActiveId(current)
+    const containerTop = container.getBoundingClientRect().top
+    // Only the outer turn wrappers are navigation anchors. MessageItem also puts
+    // data-turn-id on each article; using querySelectorAll('[data-turn-id]') lets
+    // those nested nodes overwrite the real turn id, so no dot can become active.
+    const anchors = Array.from(container.children)
+      .filter(
+        (node): node is HTMLElement =>
+          node instanceof HTMLElement && node.classList.contains('chat__turn') && Boolean(node.dataset.turnId)
+      )
+      .map((node) => ({
+        id: node.dataset.turnId!,
+        top: node.getBoundingClientRect().top - containerTop + container.scrollTop
+      }))
+    setActiveId(resolveActiveNavId(anchors, probe))
   }, [containerRef])
 
   // 监听器只绑一次（turns 每次消息变化都是新数组，放进依赖会让 scroll 监听反复重绑）
@@ -125,9 +134,15 @@ export function MessageNavRail({
     (turn: NavTurn) => {
       const container = containerRef.current
       if (!container) return
-      const el = container.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(turn.id)}"]`)
+      const el = Array.from(container.children).find(
+        (node): node is HTMLElement =>
+          node instanceof HTMLElement &&
+          node.classList.contains('chat__turn') &&
+          node.dataset.turnId === turn.id
+      )
       if (!el) return
-      container.scrollTop = el.offsetTop - 8
+      const top = el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
+      container.scrollTop = Math.max(0, top - 8)
       setActiveId(turn.id)
     },
     [containerRef]
@@ -248,6 +263,7 @@ export function MessageNavRail({
               style={mark ? { background: mark } : undefined}
               title={turn.preview}
               aria-label={`跳转到：${turn.preview}`}
+              aria-current={turn.id === activeId ? 'true' : undefined}
               onClick={() => jumpTo(turn)}
               onContextMenu={(event) => openMenu(turn, event)}
             />
@@ -273,6 +289,7 @@ export function MessageNavRail({
                 key={turn.id}
                 type="button"
                 className={`chat__nav-item${turn.id === activeId ? ' is-active' : ''}`}
+                aria-current={turn.id === activeId ? 'true' : undefined}
                 onClick={() => jumpTo(turn)}
                 onContextMenu={(event) => openMenu(turn, event)}
               >

@@ -2,6 +2,7 @@ import { useState, type JSX } from 'react'
 import type { FilesExclude } from '@shared/ipc'
 import { useApp } from '@renderer/core/app-context'
 import { SettingsGroup, Toggle } from './SettingsGroup'
+import './settings-pages.css'
 
 /**
  * 排除规则表（files.exclude 与 search.exclude 共用）
@@ -68,6 +69,8 @@ export interface ExcludeSettingsViewProps {
   placeholder: string
   /** 表格的 aria-label */
   ariaLabel: string
+  /** 根节点附加类名，供文件排除与搜索排除页面复用同一视图 */
+  className?: string
 }
 
 export function ExcludeSettingsView({
@@ -78,7 +81,8 @@ export function ExcludeSettingsView({
   hint,
   emptyHint,
   placeholder,
-  ariaLabel
+  ariaLabel,
+  className
 }: ExcludeSettingsViewProps): JSX.Element {
   const [rows, setRows] = useState<DraftRow[]>(() => toDraft(value))
 
@@ -114,7 +118,7 @@ export function ExcludeSettingsView({
   const dirty = !sameExclude(fromDraft(rows), value)
 
   return (
-    <div className="settings-view">
+    <div className={`settings-view${className ? ` ${className}` : ''}`}>
       <SettingsGroup title={legend} footer={typeof hint === 'string' ? hint : undefined}>
         {typeof hint === 'string' ? null : <div className="sg__hint-block">{hint}</div>}
 

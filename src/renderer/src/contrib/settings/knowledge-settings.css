@@ -6,8 +6,13 @@
 .knowledge-toolbar__base { margin-top: 12px; color: var(--fg-muted); font-size: 12px; }
 .knowledge-toolbar__base select { min-width: 220px; }
 .knowledge-upload__fields { align-items: stretch; flex-direction: column; }
-.knowledge-file-drop { display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 76px; padding: 16px; border: 1px dashed var(--border-strong, var(--border)); border-radius: var(--radius); background: var(--bg-inset); cursor: pointer; transition: border-color .15s, background .15s; }
-.knowledge-file-drop:hover, .knowledge-file-drop:focus-within { border-color: var(--accent); background: var(--bg-hover, var(--bg-inset)); }
+.knowledge-file-drop { display: flex; align-items: center; justify-content: center; gap: var(--space-2); min-height: 76px; padding: var(--space-4); border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); background: var(--bg-inset); cursor: pointer; transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out); }
+.knowledge-file-drop:hover, .knowledge-file-drop:focus-within { border-color: var(--accent); background: var(--bg-hover); }
+.knowledge-file-drop.is-dragging {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: var(--focus-ring);
+}
 .knowledge-file-drop__title { color: var(--fg-strong); font-size: 12px; font-weight: 600; }
 .knowledge-file-drop__hint { color: var(--fg-muted); font-size: 11px; }
 .knowledge-file-drop__button { flex: none; }
@@ -38,7 +43,7 @@
 .knowledge-edit-form { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .knowledge-edit-form .field__input { min-width: 170px; }
 .knowledge-size-hint { color: var(--fg-faint); font-size: 10px; }
-.knowledge-validation-error { color: var(--danger-fg, var(--fg-muted)); font-size: 11px; }
+.knowledge-validation-error { color: var(--danger-fg); font-size: 11px; }
 .knowledge-document-detail { margin: 0 18px 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-inset); }
 .knowledge-document-detail__heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; color: var(--fg-strong); font-size: 12px; }
 .knowledge-document-detail__body { display: flex; flex-direction: column; gap: 8px; }
@@ -46,9 +51,60 @@
 .knowledge-document-detail__body span { color: var(--fg-muted); font-size: 11px; }
 .knowledge-document-detail pre { max-height: 260px; margin: 0; overflow: auto; padding: 9px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--fg); font: inherit; font-size: 11px; line-height: 1.45; white-space: pre-wrap; }
 
+/* 知识库页面使用 inset grouped cards，而不是多层深色矩形。 */
+.knowledge-toolbar,
+.knowledge-upload,
+.knowledge-search {
+  padding: 18px 20px;
+  background: var(--bg-elevated);
+}
+
+.knowledge-toolbar__fields,
+.knowledge-upload__fields,
+.knowledge-search__bar {
+  gap: 10px;
+}
+
+.knowledge-documents {
+  border-top: 0;
+  background: var(--bg-elevated);
+}
+
+.knowledge-document {
+  min-height: 52px;
+  padding: 12px 20px;
+  border-bottom-color: var(--border);
+}
+
+.knowledge-document__actions,
+.knowledge-meta-actions {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  gap: 4px;
+}
+
+.knowledge-document-detail {
+  margin: 0 20px 14px;
+  border-color: transparent;
+  border-radius: var(--radius-lg);
+  background: var(--bg-inset);
+}
+
+.knowledge-document-detail pre {
+  border-color: var(--border);
+  background: var(--bg-app);
+}
+
+.knowledge-result {
+  border-color: var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-inset);
+}
+
 @container (max-width: 620px) {
   .knowledge-document { align-items: flex-start; flex-direction: column; }
-  .knowledge-document__actions { width: 100%; }
+  .knowledge-document__actions { width: 100%; flex-wrap: wrap; white-space: normal; }
   .knowledge-toolbar__fields, .knowledge-toolbar__base { align-items: stretch; flex-direction: column; }
   /* The desktop fields use flex-basis values to share one horizontal row.
      When the row becomes a column those bases are heights, which stretches
@@ -66,5 +122,70 @@
   .knowledge-toolbar__base select { min-width: 0; width: 100%; }
   .knowledge-file-drop { align-items: flex-start; flex-direction: column; }
   .knowledge-document-summary { align-items: flex-start; }
+}
+
+/* Grouped document workspace: keep the library, composer and search tools
+ * visually distinct while retaining one continuous preferences column. */
+.settings-view--knowledge .sg__card {
+  overflow: hidden;
+}
+
+.settings-view--knowledge .knowledge-toolbar,
+.settings-view--knowledge .knowledge-upload,
+.settings-view--knowledge .knowledge-search {
+  padding: 18px 20px;
+  background: var(--bg-elevated);
+}
+
+.settings-view--knowledge .knowledge-toolbar__fields,
+.settings-view--knowledge .knowledge-toolbar__base,
+.settings-view--knowledge .knowledge-upload__fields,
+.settings-view--knowledge .knowledge-search__bar {
+  gap: 10px;
+}
+
+.settings-view--knowledge .knowledge-toolbar__fields .field__input,
+.settings-view--knowledge .knowledge-toolbar__base select {
+  min-height: 34px;
+  border-radius: 8px;
+}
+
+.settings-view--knowledge .knowledge-toolbar__fields .btn {
+  min-width: 110px;
+}
+
+.settings-view--knowledge .knowledge-file-drop {
+  min-height: 92px;
+  border-radius: 10px;
+  background: var(--bg-inset);
+}
+
+.settings-view--knowledge .knowledge-upload__textarea {
+  min-height: 150px;
+  border-radius: 8px;
+}
+
+.settings-view--knowledge .knowledge-documents {
+  border-top: 1px solid var(--border);
+}
+
+.settings-view--knowledge .knowledge-document {
+  min-height: 60px;
+  padding: 13px 20px;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.settings-view--knowledge .knowledge-document:hover {
+  background: var(--bg-hover);
+}
+
+.settings-view--knowledge .knowledge-document-detail,
+.settings-view--knowledge .knowledge-result {
+  border-color: var(--border);
+  border-radius: 10px;
+}
+
+.settings-view--knowledge .knowledge-result {
+  padding: 12px 14px;
 }
 

@@ -76,7 +76,7 @@
   align-self: center;
   min-height: 24px;
   padding: 2px 9px;
-  border-radius: 7px;
+  border-radius: var(--radius);
   background: var(--bg-hover);
 }
 
@@ -99,7 +99,7 @@
 .changes-panel__footer-btn {
   min-height: 24px;
   padding: 2px 8px;
-  border-radius: 7px;
+  border-radius: var(--radius);
 }
 
 .changes-panel__count {
@@ -116,7 +116,7 @@
 .session-tray__tab {
   min-height: 24px;
   padding: 2px 8px;
-  border-radius: 7px;
+  border-radius: var(--radius);
 }
 
 .session-tray__tab.is-active {
@@ -131,7 +131,7 @@
 .session-tray__action {
   min-height: 24px;
   padding: 2px 8px;
-  border-radius: 7px;
+  border-radius: var(--radius);
 }
 
 .session-tray__queue {

@@ -25,6 +25,26 @@ import type {
 /** 文本文件读取上限：再大 Monaco 也会卡，提前截断并告知用户 */
 const MAX_TEXT_BYTES = 4 * 1024 * 1024
 
+/**
+ * Windows 文件观察器、索引器或杀毒软件可能在原子替换的瞬间短暂持有目标文件。
+ * 只对这些瞬时错误重试，保留 rename 的原子写入语义并让真正的权限错误继续上抛。
+ */
+const RETRYABLE_RENAME_CODES = new Set(['EPERM', 'EACCES', 'EBUSY'])
+
+async function renameWithRetry(source: string, destination: string): Promise<void> {
+  const attempts = 8
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      await fsp.rename(source, destination)
+      return
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (!code || !RETRYABLE_RENAME_CODES.has(code) || attempt === attempts - 1) throw error
+      await new Promise<void>((resolve) => setTimeout(resolve, 25 * (attempt + 1)))
+    }
+  }
+}
+
 /** 快速打开的文件清单上限：超出按目录序截断（正常项目远达不到） */
 const MAX_LIST_FILES = 20000
 
@@ -270,7 +290,7 @@ export async function writeFile(filePath: string, content: string): Promise<FsSt
   const temporary = `${safePath}.aether-write-${randomUUID()}.tmp`
   try {
     await fsp.writeFile(temporary, content, 'utf-8')
-    await fsp.rename(temporary, safePath)
+    await renameWithRetry(temporary, safePath)
   } finally {
     // A failed rename must not leave an unbounded set of hidden temp files.
     try { await fsp.rm(temporary, { force: true }) } catch { /* best effort cleanup */ }

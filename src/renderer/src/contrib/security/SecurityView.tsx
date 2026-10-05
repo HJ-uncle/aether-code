@@ -17,6 +17,7 @@ import { Icon } from '@renderer/workbench/icons'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { Select } from '@renderer/workbench/Select'
 import { SettingsContent, SettingsGroup, SettingsRow, Toggle } from '../settings/SettingsGroup'
+import '../settings/settings-pages.css'
 
 /**
  * 安全视图
@@ -106,7 +107,7 @@ export function SecurityView(): JSX.Element {
   const activeDescriptor = MODE_DESCRIPTORS.find((item) => item.value === mode)
 
   return (
-    <div className="settings-view">
+    <div className="settings-view settings-view--security">
       {!ready ? <div className="notice">引擎未就绪，无法读写安全策略。</div> : null}
 
       {/* ── 会话安全模式 ── */}

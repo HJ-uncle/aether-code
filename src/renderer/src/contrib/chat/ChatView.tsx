@@ -29,7 +29,6 @@ import { Popover } from '@renderer/workbench/Popover'
 import { ContextMenu } from '@renderer/workbench/ContextMenu'
 import { ModelPicker } from '../models/ModelPicker'
 import { ComposerOptions } from './ComposerOptions'
-import { KnowledgePicker } from './KnowledgePicker'
 import { MessageNavRail, type NavTurn } from './MessageNavRail'
 import {
   asUsageFrame,
@@ -274,6 +273,11 @@ export function ChatView(): JSX.Element {
   const { models, loaded: modelsLoaded } = useModels()
   const workspace = useWorkspace()
   const [input, setInput] = useState('')
+  /** 同步记录编辑器的最新文本，避免润色请求返回时覆盖用户刚刚的修改。 */
+  const inputValueRef = useRef('')
+  useEffect(() => {
+    inputValueRef.current = input
+  }, [input])
   /** AI 润色进行中（禁用润色按钮，防止重复点击） */
   const [polishing, setPolishing] = useState(false)
   /** 输入框里的引用 chip（文件/目录/源码/终端），由 MentionInput 序列化时同步 */
@@ -286,6 +290,7 @@ export function ChatView(): JSX.Element {
   /** 用户手动选择的模型；null 表示未选择，跟随设置（设置异步加载后自动生效） */
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
   const modelId = selectedModelId ?? settings.lastModelId
+  const activeSessionIdRef = useRef('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<MentionInputHandle>(null)
   /** @ 触发的内联补全关键词；null 表示未触发（光标不在 @ 段内） */
@@ -311,11 +316,14 @@ export function ChatView(): JSX.Element {
   /** AI 润色输入框内容：用轻任务模型改写得更清晰；chip 引用会随文本一起被序列化给模型 */
   const handlePolish = async (): Promise<void> => {
     const text = input.trim()
-    if (!canExecute || sourceEpoch !== getEngineSource() || polishing || !text) return
+    if (!canExecute || polishing || !text) return
+    const requestSessionId = sessionId
+    activeSessionIdRef.current = requestSessionId
     setPolishing(true)
     try {
       const res = await utilityChat({
-        model: settings.utilityModelId || undefined,
+        // 轻任务模型为空时跟随当前主对话模型。
+        model: settings.utilityModelId || modelId || undefined,
         systemPrompt:
           '你是「发给 AI 编程助手的指令」的润色器。把用户的草稿改写得更清晰、具体、可执行：' +
           '补全主语和对象、拆开含糊的复合要求、修正错别字；保留原文中的 @路径 引用 token 原样不动；' +
@@ -324,12 +332,18 @@ export function ChatView(): JSX.Element {
         temperature: 0.3,
         maxTokens: 1500
       })
-      if (sourceEpoch !== getEngineSource()) return
+      // Utility calls are independent, one-shot requests. A background engine
+      // reconnect may advance its generation while the request is in flight;
+      // do not discard a valid result when the user is still in this session.
+      if (activeSessionIdRef.current !== requestSessionId) return
+      // 请求期间用户可能已经继续编辑；此时丢弃旧结果，绝不能覆盖新草稿。
+      if (inputValueRef.current.trim() !== text) return
       const polished = res.text.trim()
       if (polished && polished !== text) {
         const draft = preserveMentions(polished, mentionsRef.current)
         mentionsRef.current = draft.mentions
         resourceTextRef.current = draft.text
+        inputValueRef.current = draft.text
         inputRef.current?.setDraft(draft.text, draft.mentions)
         setInput(draft.text)
         scheduleDraftSave(draft.text)
@@ -338,10 +352,10 @@ export function ChatView(): JSX.Element {
         setToast('润色结果与原文一致')
       }
     } catch (err) {
-      if (sourceEpoch !== getEngineSource()) return
+      if (activeSessionIdRef.current !== requestSessionId) return
       setToast(err instanceof Error ? `润色失败：${err.message}` : '润色失败，请稍后重试')
     } finally {
-      if (sourceEpoch === getEngineSource()) setPolishing(false)
+      if (activeSessionIdRef.current === requestSessionId) setPolishing(false)
     }
   }
 
@@ -449,6 +463,9 @@ export function ChatView(): JSX.Element {
     void updateSettings({ lastSessionId: generated })
     return generated
   }, [settings.lastSessionId, settingsLoaded, updateSettings])
+  useEffect(() => {
+    activeSessionIdRef.current = sessionId
+  }, [sessionId])
 
   const sourceSessionKey = JSON.stringify([connectionKey, sourceEpoch, sessionId])
   const displayedSessionRef = useRef(sourceSessionKey)
@@ -457,8 +474,8 @@ export function ChatView(): JSX.Element {
   useEffect(() => {
     if (!sessionId) return
     const stored = loadComposerResources(sessionId, storageSource)
-    // KnowledgePicker is the canonical KB binding UI; merge its selection into the
-    // slash resource state so either entry point produces the same request.
+    // Restore knowledge-base bindings into the slash resource state so persisted
+    // session selections continue to be sent even though the composer stays compact.
     const knowledgeBases = getKnowledgeBaseBindingIds(sessionId, storageSource)
     setComposerResources({ ...stored, knowledgeBases: knowledgeBases.length ? knowledgeBases : stored.knowledgeBases })
     // The input draft is restored by the following effect. Reset this edge detector
@@ -1428,6 +1445,7 @@ export function ChatView(): JSX.Element {
             onChange={(text, mentions) => {
               mentionsRef.current = mentions
               reconcileComposerResources(text)
+              inputValueRef.current = text
               setInput(text)
               scheduleDraftSave(text)
             }}
@@ -1540,29 +1558,6 @@ export function ChatView(): JSX.Element {
             ) : null}
 
             <ComposerOptions sessionId={sessionId} />
-            <KnowledgePicker
-              sessionId={sessionId}
-              source={sourceEpoch}
-              disabled={!canExecute}
-              selectedIds={composerResources.knowledgeBases}
-              onSelectionChange={(ids) => {
-                const next = { ...composerResources, knowledgeBases: ids }
-                updateComposerResources(next)
-              }}
-            />
-            <button
-              type="button"
-              className={`chat__resource-trigger${resourceQuery !== null ? ' is-active' : ''}`}
-              disabled={!canExecute}
-              title="插入 MCP、技能或知识库（也可输入 / 唤起）"
-              aria-label="选择 MCP、技能或知识库"
-              onClick={() => {
-                inputRef.current?.focus()
-                document.execCommand('insertText', false, '/')
-              }}
-            >
-              <span>/</span><span className="chat__resource-trigger-label">资源</span>
-            </button>
 
             {/* 仅当项目「尚未建索引」时才露出建索引入口；已建索引则不占位（重建走设置页 / 菜单） */}
             {!remoteReadOnly && cgIndex.known && !cgIndex.initialized ? (

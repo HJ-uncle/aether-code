@@ -16,6 +16,7 @@ import {
   resetCommandKeybindings,
   setUserKeybinding
 } from '@renderer/core/platform/user-keybindings'
+import './settings-pages.css'
 
 /**
  * 键盘快捷方式编辑器（对标 VS Code 的 Keyboard Shortcuts Editor）

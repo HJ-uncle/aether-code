@@ -34,7 +34,7 @@ async function openSettings(): Promise<void> {
     await page.keyboard.press('Enter')
   }
   await expect(page.locator('.app-settings')).toBeVisible()
-  await page.getByRole('tab', { name: '通用', exact: true }).click()
+  await page.getByRole('tab', { name: '引擎管理', exact: true }).click()
 }
 
 async function selectArchive(filePath: string | null): Promise<void> {
@@ -134,7 +134,7 @@ test.describe.serial('本地引擎导入设置', () => {
       await page.getByRole('tab', { name: section.tab, exact: true }).click()
       await expect(page.getByText(section.marker, { exact: true }).first()).toBeVisible()
     }
-    await page.getByRole('tab', { name: '通用', exact: true }).click()
+    await page.getByRole('tab', { name: '引擎管理', exact: true }).click()
   })
 
   test('取消原生文件选择保持引擎与已导入列表不变，不显示错误', async () => {
@@ -254,8 +254,8 @@ test.describe.serial('真实本地引擎包导入与激活', () => {
       await realPage.locator('.palette__input').fill('设置')
       await realPage.keyboard.press('Enter')
     }
-    await expect(realPage.getByRole('tab', { name: '通用', exact: true })).toBeVisible()
-    await realPage.getByRole('tab', { name: '通用', exact: true }).click()
+    await expect(realPage.getByRole('tab', { name: '引擎管理', exact: true })).toBeVisible()
+    await realPage.getByRole('tab', { name: '引擎管理', exact: true }).click()
     await expect(realPage.getByRole('button', { name: '导入引擎…', exact: true })).toBeVisible()
   })
 

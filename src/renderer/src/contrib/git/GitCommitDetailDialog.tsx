@@ -165,7 +165,7 @@ export function GitCommitDetailDialog({
             <div className="git-commitdlg__subject">{info.subject}</div>
             <div className="git-commitdlg__meta">
               <span className="git-commitdlg__meta-item">
-                <Icon name="settings" size={16} />
+                <Icon name="account-outline" size={16} />
                 {info.author}
               </span>
               <span className="git-commitdlg__meta-item">

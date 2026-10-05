@@ -12,15 +12,18 @@ import { useEffect, useRef, type JSX, type ReactNode } from 'react'
 export function SettingsGroup({
   title,
   footer,
-  children
+  children,
+  className
 }: {
   title: string
   /** 组下方的灰字说明 */
   footer?: string
   children: ReactNode
+  /** 供复杂设置页在保留统一卡片原语的同时附加页面语义类名 */
+  className?: string
 }): JSX.Element {
   return (
-    <section className="sg">
+    <section className={`sg${className ? ` ${className}` : ''}`}>
       <h3 className="sg__title">{title}</h3>
       <div className="sg__card">{children}</div>
       {footer ? <p className="sg__footer">{footer}</p> : null}

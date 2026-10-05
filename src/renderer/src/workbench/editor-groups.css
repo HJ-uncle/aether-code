@@ -36,7 +36,7 @@
   justify-content: center;
   flex: 0 0 auto;
   min-width: 28px;
-  height: 26px;
+  height: var(--control-h-compact);
   padding: 0 5px;
   color: var(--fg-muted);
 }

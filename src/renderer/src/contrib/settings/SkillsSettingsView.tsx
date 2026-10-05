@@ -8,6 +8,7 @@ import { Select } from '@renderer/workbench/Select'
 import { SettingsContent, SettingsGroup, SettingsRow, Toggle } from './SettingsGroup'
 import type { EngineUploadInput } from '@shared/ipc'
 import './skills-settings.css'
+import './settings-pages.css'
 
 type SkillScope = 'project' | 'global'
 type ConflictStrategy = 'reject' | 'overwrite' | 'versioned'
@@ -354,10 +355,6 @@ function SkillsSettingsContent({ source, projectRoot }: { source: number; projec
   return (
     <div className="settings-view settings-view--skills">
       <div className="skills-page-header">
-        <div>
-          <h2>技能</h2>
-          <p>管理项目和全局技能，并在对话中按需启用。</p>
-        </div>
         <span className="skills-page-header__count" aria-live="polite">{skills.length} 个技能</span>
       </div>
 

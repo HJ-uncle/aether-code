@@ -114,6 +114,12 @@ function bridgeId(command: NativeEditorCommand): string {
   return `aether.native.${command.id}`
 }
 
+/** Monaco can cancel an in-flight provider call when the same command is
+ * dispatched again (the command palette closes before the action promise
+ * settles). Reuse the existing run so repeated dispatches do not create a
+ * cancellation storm in the language worker. */
+const nativeCommandRuns = new Map<string, Promise<void>>()
+
 /**
  * Monaco 0.56 把定义/引用注册成 Action2，getAction() 无法取得它们。
  * 用公开 addAction/trigger 桥接，并沿用原生命令的 provider 条件，避免无服务时静默返回。
@@ -166,8 +172,10 @@ export function registerEditorCommands(): () => void {
       id: `aether.editor.${command.id}`,
       title: command.title,
       category: '编辑器',
-      run: () =>
-        withEditor(command.title, async (instance) => {
+      run: () => {
+        const previous = nativeCommandRuns.get(command.id)
+        if (previous) return previous
+        const current = withEditor(command.title, async (instance) => {
           const action = instance.getAction(
             command.bridgePrecondition ? bridgeId(command) : command.nativeId
           )
@@ -177,6 +185,11 @@ export function registerEditorCommands(): () => void {
           }
           await action.run()
         })
+        nativeCommandRuns.set(command.id, current)
+        return current.finally(() => {
+          if (nativeCommandRuns.get(command.id) === current) nativeCommandRuns.delete(command.id)
+        })
+      }
     })),
     {
       id: 'aether.editor.toggleWordWrap',

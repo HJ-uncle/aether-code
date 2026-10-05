@@ -43,6 +43,42 @@ import { PromptDialog } from '../../workbench/PromptDialog'
 import { pickDivergedStrategy } from './DivergedStrategyDialog'
 import { Icon } from '../../workbench/icons'
 
+/**
+ * 规整模型返回的提交信息，保留标题下面的正文。
+ *
+ * 轻任务模型有时会把结果包在 Markdown 围栏或“提交信息：”标签里；
+ * 这里只清理包装，不截断正文，避免几十个文件的改动最后只剩一句标题。
+ */
+export function cleanAiCommitMessage(raw: string): string {
+  let text = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+  // 只去掉包裹整段结果的围栏；正文里的 Markdown 反引号属于有效内容，不能全局删除。
+  if (text.startsWith('```')) {
+    const openingLineEnd = text.indexOf('\n')
+    text = openingLineEnd >= 0 ? text.slice(openingLineEnd + 1) : text.slice(3)
+    text = text.replace(/\s*```$/i, '').trim()
+  }
+  if (!text) return ''
+
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+  while (lines.length > 0 && !lines[0].trim()) lines.shift()
+  if (lines.length === 0) return ''
+
+  // 常见的模型包装标签不属于提交正文。
+  lines[0] = lines[0]
+    .replace(/^(?:提交信息|commit message|message|标题)\s*[:：]\s*/i, '')
+    .trim()
+  while (lines.length > 0 && !lines[lines.length - 1].trim()) lines.pop()
+  let value = lines.join('\n').trim()
+  if (value.length >= 2) {
+    const first = value[0]
+    const last = value[value.length - 1]
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) value = value.slice(1, -1).trim()
+  }
+  return value
+}
+
 /** 远程操作的中文名（进度文案与失败提示共用） */
 const labels: Record<GitRemoteAction, string> = {
   sync: '同步',
@@ -126,31 +162,40 @@ export function GitCommitBar(): JSX.Element {
         return
       }
       // AI 增强：有改动上下文时让轻任务模型读 diff 生成更贴合的信息；
-      // 失败（未配置模型 / 引擎不可用）时静默回退到本地启发式文案。
+      // 失败（未配置模型 / 引擎不可用）时保留本地启发式文案，但明确告知用户，
+      // 避免按钮看起来像没有执行任何操作。
       if (res.aiContext) {
+        let aiError: string | null = null
         try {
           const ai = await utilityChat({
-            model: settings.utilityModelId || undefined,
+            // 轻任务模型为空时跟随当前主对话模型；设置页的语义就是如此。
+            model: settings.utilityModelId || settings.lastModelId || undefined,
             systemPrompt:
-              '你是资深工程师，负责根据 git 改动摘要撰写提交信息。规则：使用中文；' +
-              '单行、不超过 72 个字符；遵循 Conventional Commits（feat/fix/refactor/docs/style/test/chore/build/perf 前缀）；' +
-              '概括「改了什么、为什么」，不要罗列每个文件；不要输出解释、引号或代码围栏。',
-            userPrompt: `以下是本次 git 改动的统计与 diff 片段，请生成一行提交信息：\n\n${res.aiContext}`,
+              '你是资深工程师，负责根据完整 git 改动摘要撰写提交信息。规则：使用中文；' +
+              '第一行写 Conventional Commits 标题（feat/fix/refactor/docs/style/test/chore/build/perf 前缀，尽量不超过 72 个字符）；' +
+              '标题后空一行，再写 3-6 条带序号的正文要点（使用“1. ”、“2. ”格式），按功能或目录归纳具体改动及目的，覆盖主要改动而不是只写一个笼统结论；' +
+              '只根据提供的统计、文件清单和 diff 片段，不要臆测；不要逐行罗列文件，不要输出解释、引号或代码围栏。',
+            userPrompt: `以下是本次 git 改动的统计、文件清单和 diff 片段。请生成完整的标题 + 正文提交信息，确保正文能反映这次较大范围改动：\n\n${res.aiContext}`,
             temperature: 0.4,
-            maxTokens: 200
+            // Reasoning models can spend the first few hundred tokens on hidden
+            // thinking; reserve enough room for the visible one-line result.
+            // Thinking tokens are counted by the gateway even at low effort;
+            // keep enough reserve for both the title and the grouped body.
+            maxTokens: 4000
           })
-          const cleaned = ai.text
-            .replace(/^[​\s]+/, '')
-            .replace(/```[a-z]*\n?/gi, '')
-            .replace(/^["'`]+|["'`]+$/g, '')
-            .split('\n')[0]
-            .trim()
+          const cleaned = cleanAiCommitMessage(ai.text)
           if (cleaned) {
             setCommitMessage(cleaned)
             return
           }
-        } catch {
-          // 回退本地文案
+          aiError = 'AI 返回了空内容'
+        } catch (err) {
+          aiError = err instanceof Error ? err.message : '请求失败'
+        }
+        if (res.message) {
+          setCommitMessage(res.message)
+          toast.warning(`AI 提交信息不可用（${aiError ?? '返回为空'}），已使用本地摘要`)
+          return
         }
       }
       if (res.message) setCommitMessage(res.message)

@@ -66,6 +66,11 @@ export function ContextMenu({ x, y, items, onClose, anchor = null }: ContextMenu
   }, [x, y])
 
   useEffect(() => {
+    // 右键标签时，激活非焦点编辑组会同步 Monaco 视图并让标签栏自动滚动。
+    // 这次滚动发生在菜单挂载之后，但并不表示用户已经滚动了锚点；忽略这
+    // 一小段同步窗口，否则菜单会在首帧被自己的激活动作卸载。
+    const anchorTabBar = anchor?.closest('.editor-tabs') ?? null
+    const ignoreAnchorScrollUntil = anchorTabBar ? performance.now() + 250 : 0
     const onPointerDown = (event: MouseEvent): void => {
       const target = event.target as Node
       // 点在主菜单或任一子菜单内部都不算「点外部」
@@ -78,6 +83,12 @@ export function ContextMenu({ x, y, items, onClose, anchor = null }: ContextMenu
     }
     // 滚动后菜单位置就不再对应目标行，直接关闭比留在原地更不容易误点
     const onScroll = (event: Event): void => {
+      if (
+        anchorTabBar &&
+        performance.now() < ignoreAnchorScrollUntil &&
+        event.target instanceof Node &&
+        anchorTabBar.contains(event.target)
+      ) return
       // 切换标签会让 Monaco 内容区恢复滚动位置；它与标签锚点无关，
       // 不应把刚打开的标签菜单吞掉。真正滚动锚点所在容器（或页面）时仍关闭。
       if (anchor && event.target instanceof Node && event.target !== document && !event.target.contains(anchor)) return

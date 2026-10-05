@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type JSX } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type JSX } from 'react'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { cssVar, watchTheme } from '@renderer/core/theme/palette'
 import { monaco } from '@renderer/core/editor/monaco-setup'
@@ -8,6 +8,15 @@ import { toast } from '@renderer/core/toast'
 import { buildSourcePreviewDocument } from './source-preview-document'
 import bridgeSource from './preview-bridge.js?raw'
 import './source-preview.css'
+
+function toDataUrl(html: string): string {
+  const bytes = new TextEncoder().encode(html)
+  let binary = ''
+  for (let offset = 0; offset < bytes.length; offset += 8192) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192))
+  }
+  return `data:text/html;base64,${btoa(binary)}`
+}
 
 export interface SourcePreviewHandle {
   scrollToRatio: (ratio: number) => void
@@ -25,6 +34,7 @@ export const SourcePreview = forwardRef<SourcePreviewHandle, {
   const [document, setDocument] = useState('')
   const [error, setError] = useState('')
   const [themeRevision, setThemeRevision] = useState(0)
+  const previewSource = useMemo(() => document ? toDataUrl(document) : '', [document])
   const onScrollRef = useRef(onScroll)
   onScrollRef.current = onScroll
   const ratioRef = useRef(0)
@@ -74,7 +84,7 @@ export const SourcePreview = forwardRef<SourcePreviewHandle, {
   return <section className="source-preview" aria-label={kind === 'markdown' ? 'Markdown 预览' : 'HTML 预览'}>
     {error ? <div className="source-preview__message" role="alert">{error}</div> : null}
     {!document && !error ? <div className="source-preview__message" role="status">正在生成预览…</div> : null}
-    {document ? <iframe ref={frame} title={kind === 'markdown' ? 'Markdown 预览内容' : 'HTML 预览内容'}
-      sandbox="allow-scripts" referrerPolicy="no-referrer" srcDoc={document} /> : null}
+    {previewSource ? <iframe ref={frame} title={kind === 'markdown' ? 'Markdown 预览内容' : 'HTML 预览内容'}
+      sandbox="allow-scripts allow-same-origin" referrerPolicy="no-referrer" src={previewSource} /> : null}
   </section>
 })

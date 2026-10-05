@@ -345,35 +345,34 @@ test.describe.serial('知识库设置与聊天绑定真机验收', () => {
     expect(documents.some(document => document.filename === 'too-large.txt')).toBe(false)
   })
 
-  test('聊天知识库选择器可绑定当前会话，关闭后重开会刷新知识库列表', async () => {
-    const picker = page.getByRole('button', { name: '选择知识库', exact: true })
-    await expect(picker).toBeVisible()
-
+  test('聊天资源选择器可绑定当前会话，关闭后重开会刷新知识库列表', async () => {
     // Recreate a base after the previous lifecycle test so the picker sees a real document count.
     const base: Base = { id: `kb-ui-${++baseCounter}`, name: '聊天绑定知识库', description: '', documentCount: 0, chunkCount: 0, createdAt: now(), updatedAt: now() }
     bases.push(base)
     const document: Document = { id: `doc-ui-${++documentCounter}`, knowledgeBaseId: base.id, filename: 'binding.txt', contentType: 'text/plain', content: 'binding', chunkCount: 1, status: 'ready', error: null, createdAt: now(), updatedAt: now() }
     documents.push(document)
 
-    await picker.click()
-    const menu = page.getByRole('menu', { name: '知识库选择', exact: true })
-    await expect(menu).toBeVisible()
-    const item = menu.getByRole('menuitemcheckbox', { name: /聊天绑定知识库.*1 篇文档/ })
+    const composer = page.locator('.chat__input')
+    await composer.click()
+    await composer.fill('')
+    await composer.type('/kb')
+    const resources = page.getByRole('listbox', { name: '选择 MCP、技能或知识库', exact: true })
+    await expect(resources).toBeVisible()
+
+    const item = resources.getByRole('option').filter({ hasText: '聊天绑定知识库' })
     await expect(item).toBeVisible()
     await item.click()
-    await expect(item).toHaveAttribute('aria-checked', 'true')
-    expect(await page.evaluate(id => Object.values(localStorage).some(value => value.includes(id)), base.id)).toBe(true)
-    await picker.click()
-    await expect(menu).toHaveCount(0)
     await expect(page.locator('.resource-binding-chip.is-kb')).toContainText(base.id)
+    expect(await page.evaluate(id => Object.values(localStorage).some(value => value.includes(id)), base.id)).toBe(true)
     await page.locator('.resource-binding-chip.is-kb').click()
     expect(await page.evaluate(id => Object.values(localStorage).some(value => value.includes(id)), base.id)).toBe(false)
-    await expect(picker).toContainText('知识库：关闭')
 
     const refreshed: Base = { id: `kb-ui-${++baseCounter}`, name: '重新打开后出现的知识库', description: '', documentCount: 0, chunkCount: 0, createdAt: now(), updatedAt: now() }
     bases.push(refreshed)
-    await picker.click()
-    await expect(menu).toBeVisible()
-    await expect(menu.getByRole('menuitemcheckbox', { name: /重新打开后出现的知识库/ })).toBeVisible()
+    await composer.click()
+    await composer.fill('')
+    await composer.type('/kb')
+    await expect(resources).toBeVisible()
+    await expect(resources.getByRole('option', { name: /重新打开后出现的知识库/ })).toBeVisible()
   })
 })

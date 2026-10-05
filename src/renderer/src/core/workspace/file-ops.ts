@@ -20,6 +20,7 @@ import {
   getSelection,
   getWorkspaceState,
   onWorkspaceChanged,
+  removeEntriesFromWorkspace,
   refreshDirectory,
   setSelection,
   setSelectionAnchor
@@ -305,8 +306,19 @@ export async function trashEntries(targetPaths: string[]): Promise<void> {
     }
   }
 
-  for (const dir of new Set(targetPaths.map((item) => paths.dirname(item)))) {
-    await refreshDirectory(toCacheKey(dir))
+  // 先更新树的内存快照，避免系统回收站的异步目录通知让旧行留在界面上。
+  removeEntriesFromWorkspace(targetPaths)
+
+  // paths.dirname 统一产出正斜杠，而 Windows 工作区缓存的 key 来自
+  // readDir，使用的是反斜杠；不归一化会让 refreshDirectory 静默跳过，
+  // 删除虽已落盘，树上却一直残留被删行。优先从当前缓存里找同路径的
+  // 原始 key，兼容历史会话里混用分隔符的缓存。
+  for (const rawDir of new Set(targetPaths.map((item) => paths.dirname(item)))) {
+    const wanted = normalizeForCompare(rawDir)
+    const cached = [...getWorkspaceState().children.keys()].find(
+      (key) => normalizeForCompare(key) === wanted
+    )
+    await refreshDirectory(cached ?? toCacheKey(rawDir))
   }
 
   clearUndo()

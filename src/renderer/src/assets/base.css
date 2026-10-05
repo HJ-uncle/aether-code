@@ -19,6 +19,15 @@ body,
   margin: 0;
 }
 
+:root,
+[data-appearance='dark'] {
+  color-scheme: dark;
+}
+
+[data-appearance='light'] {
+  color-scheme: light;
+}
+
 body {
   background: var(--bg-app);
   color: var(--fg);
@@ -35,6 +44,13 @@ button {
   background: none;
   border: none;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out),
+    opacity var(--duration-fast) var(--ease-out);
 }
 
 button:disabled {
@@ -43,11 +59,39 @@ button:disabled {
 }
 
 input,
-textarea {
+textarea,
+select {
   font-family: inherit;
   font-size: inherit;
   /* 文本插入光标也吃强调色：与焦点环、选中态同一套交互语义 */
   caret-color: var(--accent);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--fg-faint);
+  opacity: 1;
+}
+
+/* 统一原生控件的 macOS 基础形态；业务组件仍可通过自己的 class 调整布局。 */
+select,
+input:not([type='checkbox']):not([type='radio']):not([type='file']):not(.inputarea):not(.xterm-helper-textarea),
+textarea:not(.inputarea):not(.xterm-helper-textarea) {
+  min-height: var(--control-h);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--fg-strong);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+select:hover,
+input:not([type='checkbox']):not([type='radio']):not([type='file']):not(.inputarea):not(.xterm-helper-textarea):hover,
+textarea:not(.inputarea):not(.xterm-helper-textarea):hover {
+  border-color: var(--border-strong);
 }
 
 /* 文本选区：强调色低饱和底 —— 全局着色范围的最后一块拼图，

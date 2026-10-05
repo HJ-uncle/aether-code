@@ -135,7 +135,7 @@
   grid-column: 1 / -1;
   width: 100%;
   height: 2px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: linear-gradient(90deg, transparent, var(--accent), transparent);
   content: '';
   opacity: 0.8;
@@ -197,7 +197,7 @@
   flex: none;
   padding: 3px 8px;
   border: 1px solid color-mix(in srgb, var(--ok) 34%, var(--border));
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--ok-soft);
   color: var(--ok-fg) !important;
   font-size: 10px !important;
@@ -225,6 +225,13 @@
   display: block;
   width: 100%;
   min-width: 0;
+}
+
+/* Popover 的触发区包裹层默认是 inline-flex（宽度由内容决定）。
+   不把它拉满，里面 .select__trigger 的 width:100% 会因为父级是 auto 宽而
+   退化成内容宽 —— 控件缩在右轨道左侧，右边缘与上下行对不齐。 */
+.engine-runtime__select .popover__trigger {
+  width: 100%;
 }
 
 .engine-runtime__select .select__trigger {
@@ -390,7 +397,7 @@
   border-right: 1.5px solid var(--fg-muted);
   border-bottom: 1.5px solid var(--fg-muted);
   transform: rotate(45deg) translateY(-2px);
-  transition: transform 160ms ease;
+  transition: transform var(--duration-fast) var(--ease-out);
 }
 
 .sg__disclosure[open] .sg__disclosure-chevron {
@@ -484,6 +491,11 @@
   padding-left: var(--engine-gutter);
 }
 
+/* ── 当前状态：按「分组列表」排版 ────────────────────────────────────
+ * 一张卡片只讲一件事。顶部一行给「状态词 + 连在哪 + 状态胶囊」，
+ * 下面用等宽标签列逐条给细节，每行一条细线、左右各留同一条缩进。
+ * 标签形成一条竖线、值形成另一条，视线不用来回找。
+ * 长路径一律省略号收尾（悬停看全路径），宁可截断也不让行内换行把节奏打乱。 */
 .engine-status__content {
   display: block;
   padding: 0;
@@ -492,13 +504,13 @@
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--space-3);
-  padding: 14px 18px 12px;
+  column-gap: 12px;
+  padding: 18px var(--engine-gutter) 15px;
 }
 
 .engine-status__dot {
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: var(--fg-faint);
   box-shadow: 0 0 0 4px var(--bg-active);
@@ -522,26 +534,31 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 .engine-status__hero-copy strong {
   color: var(--fg-strong);
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
 }
 .engine-status__hero-copy span {
   overflow: hidden;
   color: var(--fg-muted);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .engine-status__badge {
-  padding: 3px 9px;
+  padding: 3px 10px;
   border: 1px solid var(--border-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--fg-muted);
   font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
   white-space: nowrap;
 }
 .engine-status__dot.is-ready + .engine-status__hero-copy + .engine-status__badge {
@@ -551,9 +568,19 @@
 }
 
 .engine-status__kv-summary {
-  margin: 0 18px 12px;
-  padding-top: 10px;
+  margin: 0;
+  padding: 0 var(--engine-gutter);
+}
+/* 概览的两条就是普通列表行，接上分隔线即可 */
+.engine-status__kv-summary dt,
+.engine-status__kv-summary dd {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
   border-top: 1px solid var(--border);
+}
+.engine-status__kv-summary dd {
+  color: var(--fg-strong);
 }
 .engine-status__error {
   margin: 0 18px 14px;
@@ -562,20 +589,46 @@
   margin-top: -10px;
 }
 
+/* 保存按钮行：默认只左右各留 2px，比上方卡片的 18px 缩进多探出一截，
+   和卡片里的控件右边缘对不上。这里改成与卡片同一条缩进线。 */
+.settings-view--engine .settings-view__actions {
+  padding-right: var(--engine-gutter);
+  padding-left: var(--engine-gutter);
+}
+
 /* Details use a quiet list rather than metadata chips. */
 .engine-runtime__details {
-  margin: 0 18px;
+  margin: 0 var(--engine-gutter);
   border-top-color: var(--border);
 }
 
 .engine-runtime__details .sg__disclosure-summary {
-  padding-right: 0;
-  padding-left: 0;
+  padding: 13px 0 11px;
 }
 
 .engine-runtime__details .sg__disclosure-body {
   padding-right: 0;
+  padding-bottom: 10px;
   padding-left: 0;
+}
+
+/* 概览与详情共用同一条标签列宽，两段列表的左边缘才对得上 */
+.engine-status__kv-summary,
+.engine-runtime__details .kv {
+  grid-template-columns: 64px minmax(0, 1fr);
+  column-gap: 16px;
+}
+
+.engine-runtime__details .kv dt,
+.engine-runtime__details .kv dd {
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  border-top: 1px solid var(--border);
+}
+.engine-runtime__details .kv dd {
+  color: var(--fg-strong);
+  font-size: 12px;
 }
 .engine-runtime__meta {
   display: grid;
@@ -621,4 +674,24 @@
   .engine-runtime__meta {
     grid-template-columns: 1fr;
   }
+}
+
+/* Keep the engine page aligned with the other preference groups after the
+ * runtime catalog grows beyond the first viewport. */
+.settings-view--engine .sg__card {
+  overflow: hidden;
+}
+
+.settings-view--engine .sg-radio {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 0%, transparent);
+}
+
+.settings-view--engine .sg__row--clickable:hover .sg-radio {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.settings-view--engine .engine-runtime__catalog-head,
+.settings-view--engine .engine-runtime__selector,
+.settings-view--engine .engine-runtime__actions {
+  padding-block: 14px;
 }

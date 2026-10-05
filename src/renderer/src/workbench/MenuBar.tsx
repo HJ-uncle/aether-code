@@ -273,7 +273,7 @@ export function MenuBar(): JSX.Element {
         <button
           type="button"
           className="menu-bar__action"
-          title="设置（通用 / 模型 / 安全 / 代码图）"
+          title="设置（引擎管理 / 模型 / 安全 / 代码图）"
           aria-label="设置"
           onClick={() => openAppSettings()}
         >

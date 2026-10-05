@@ -147,7 +147,7 @@ export function GitCommitHoverCard({
         </div>
         <div className="git-hovercard__meta">
           <span className="git-hovercard__meta-item">
-            <Icon name="settings" size={16} />
+            <Icon name="account-outline" size={16} />
             {commit.author}
           </span>
           <span className="git-hovercard__meta-item" title={fullDate(commit.date)}>

@@ -16,7 +16,7 @@ let sectionRequest: SectionRequest | null = null
 let nonceCounter = 0
 const sectionListeners = new Set<() => void>()
 
-/** 打开设置主区视图；传分区 id 时定位到该分区（默认通用） */
+/** 打开设置主区视图；传分区 id 时定位到该分区（默认引擎管理） */
 export function openAppSettings(section?: string): void {
   sectionRequest = { section: section ?? DEFAULT_SETTINGS_SECTION, nonce: ++nonceCounter }
   showEditorView('app-settings')

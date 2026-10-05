@@ -31,7 +31,7 @@ export interface LayoutState {
 const STORAGE_KEY = 'aether.ide.layout'
 
 const DEFAULTS: LayoutState = {
-  sidebarWidth: 320,
+  sidebarWidth: 280,
   panelHeight: 220,
   sidebarVisible: true,
   panelVisible: false,
@@ -40,7 +40,7 @@ const DEFAULTS: LayoutState = {
   activeEditorView: 'app-settings',
   closedEditorViews: [],
   chatPanelVisible: true,
-  chatPanelWidth: 420,
+  chatPanelWidth: 380,
   chatOnLeft: false
 }
 
@@ -60,7 +60,15 @@ function load(): LayoutState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return { ...DEFAULTS }
-    return { ...DEFAULTS, ...(JSON.parse(raw) as Partial<LayoutState>) }
+    const saved = JSON.parse(raw) as Partial<LayoutState>
+    const state = { ...DEFAULTS, ...saved }
+    // The previous defaults made the shell feel cramped. Migrate only that
+    // untouched pair; a user who resized either panel keeps their preference.
+    if (saved.sidebarWidth === 320 && saved.chatPanelWidth === 420) {
+      state.sidebarWidth = DEFAULTS.sidebarWidth
+      state.chatPanelWidth = DEFAULTS.chatPanelWidth
+    }
+    return state
   } catch {
     return { ...DEFAULTS }
   }

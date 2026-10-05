@@ -32,6 +32,7 @@ import {
   useEditorGroups,
   type EditorGroup
 } from '@renderer/core/editor/editor-groups'
+import { fileIdentity } from '@renderer/core/editor/file-identity'
 import { copyFilePaths, revealFile } from '@renderer/core/editor/file-context-actions'
 import { addFilesToChat } from '@renderer/contrib/chat/editor-context'
 import { setContextKey } from '@renderer/core/platform/context-keys'
@@ -330,7 +331,9 @@ function EditorGroupView({ group, first, focused, split }: {
 
   return (
     <section className={`editor-area${focused ? ' is-focused-group' : ''}`} aria-label={first ? '编辑区' : '右侧编辑区'} data-editor-group={group.id}
-      onPointerDownCapture={() => focusEditorGroup(group.id)} onFocusCapture={() => focusEditorGroup(group.id)}>
+      // 已经是焦点组时不要每次右键/中键都再次同步活动文档；同步会让标签栏
+      // 恢复滚动位置，正好把刚打开的右键菜单卸载掉。
+      onPointerDownCapture={() => { if (!focused) focusEditorGroup(group.id) }} onFocusCapture={() => { if (!focused) focusEditorGroup(group.id) }}>
       <header className="editor-tabs" role="tablist" onKeyDown={handleTabsKeyDown}>
         {tabs.map((tab) => (
           <div
@@ -342,8 +345,10 @@ function EditorGroupView({ group, first, focused, split }: {
             tabIndex={tab.key === activeKey ? 0 : -1}
             title={tab.filePath ?? tab.title}
             onClick={() => activateGroupTab(group.id, tab.key)}
-            // 中键关闭：与 VS Code 一致（浏览器标签的习惯），只对可关闭标签生效
-            onAuxClick={(event: ReactMouseEvent) => {
+            // 中键关闭：与 VS Code 一致（浏览器标签的习惯），只对可关闭标签生效。
+            // Electron/Chromium 在 div 上有时只派发 mousedown，不派发 auxclick；
+            // 在按下阶段处理才能保证真实鼠标和 Playwright 的中键路径一致。
+            onMouseDown={(event: ReactMouseEvent) => {
               if (event.button !== 1 || !tab.closable) return
               event.preventDefault()
               handleClose(tab.key)
@@ -352,7 +357,9 @@ function EditorGroupView({ group, first, focused, split }: {
               event.preventDefault()
               // 右键同时激活该标签：菜单里的「关闭其他」等操作要作用在
               // 用户指向的标签上，而不是当前激活的另一个
-              activateGroupTab(group.id, tab.key)
+              // 右键当前标签无需再次激活；重复激活会让编辑器恢复滚动位置，
+              // 触发标签栏 scroll，从而把刚打开的菜单误关掉。
+              if (group.activeKey !== tab.key) activateGroupTab(group.id, tab.key)
               setMenu({ x: event.clientX, y: event.clientY, key: tab.key, anchor: event.currentTarget })
             }}
           >
@@ -438,7 +445,12 @@ function renderStaticView(views: ViewRegistration[], activeKey: string): JSX.Ele
 async function closeFileTabs(filePaths: string[], groupId = getEditorGroups().focusedGroupId, closeGroup = false): Promise<void> {
   const group = getEditorGroups().groups.find((item) => item.id === groupId)
   if (!group) return
-  const paths = filePaths.map((path) => getDocument(path)?.path).filter((path): path is string => Boolean(path) && group.paths.includes(path!))
+  // 文档路径来自主进程，标签组路径来自恢复快照；Windows 盘符大小写或
+  // 分隔符历史差异不能让待关闭项在 includes() 里静默掉出批次。
+  const paths = filePaths.flatMap((path) => {
+    const canonical = getDocument(path)?.path ?? path
+    return group.paths.find((entry) => fileIdentity(entry) === fileIdentity(canonical)) ?? []
+  })
   const finalDocuments = finalDocumentsForGroupClose(groupId, paths)
   const approved = await confirmDocumentClose(finalDocuments, {
     read: getDocument,

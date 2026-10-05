@@ -6,6 +6,7 @@ import { SettingsContent, SettingsGroup, SettingsRow, Toggle } from './SettingsG
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import './mcp-settings.css'
+import './settings-pages.css'
 
 type Transport = 'stdio' | 'sse' | 'http' | 'streamableHttp'
 interface McpServer { id: string; name: string; description?: string; transportType: Transport; url?: string; command?: string; args?: string[]; env?: Record<string, string>; headers?: Record<string, string>; disabledTools?: string[]; enabled?: boolean; scope?: 'project' | 'global'; isBuiltIn?: boolean }

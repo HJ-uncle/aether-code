@@ -44,13 +44,19 @@
   --radius-xl: 10px;
   /* 浮层/弹窗专用：比容器更圆，是 macOS 面板的标志性特征 */
   --radius-panel: 12px;
+  --radius-pill: 999px;
+  --radius-round: 50%;
 
   /* 控件尺寸（macOS 标准控件高度偏紧凑，正文 13px） */
-  --control-h: 24px;
-  --control-h-lg: 28px;
+  --control-h-compact: 24px;
+  --control-h: 28px;
+  --control-h-lg: 34px;
+  /* macOS window chrome reserves a quiet 48px drag zone.  The extra breathing
+     room keeps menus and window actions from reading as a cramped web toolbar. */
+  --titlebar-h: 46px;
 
   /* 所有工作区横向 chrome 使用同一条基线，避免三列标题/工具条错位。 */
-  --chrome-h: 32px;
+  --chrome-h: 36px;
 
   /* 间距节奏：4 的倍数为基准，控件内边距 / 区块间距都从这里取，避免 5px、7px 这类碎值 */
   --space-1: 4px;
@@ -58,6 +64,15 @@
   --space-3: 12px;
   --space-4: 16px;
   --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+
+  /* 统一的动效曲线与时长，所有业务组件共享同一套反馈节奏。 */
+  --ease-out: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 400ms;
 
   /* 层级（z-index）：越靠后的用途越"浮"在上层，新浮层一律从这里取值 */
   --z-content: 1; /* 内容里需要抬起的自绘元素 */
@@ -65,19 +80,24 @@
   --z-popover: 100; /* 浮层：popover / 下拉菜单 / 选择器 */
   --z-overlay: 200; /* 遮罩：模态框、命令面板 */
 
-  --activity-bar-w: 48px;
-  --status-bar-h: 24px;
+  --activity-bar-w: 54px;
+  --status-bar-h: 28px;
 }
 
 /* ==================== 深色外观（默认） ==================== */
 
-:root,
+:root:not([data-appearance='light']),
 [data-appearance='dark'] {
   /* 灰阶层级：app(最底) → surface(侧栏/面板) → elevated(浮层/卡片) → input(输入控件) */
   --bg-app: #1c1c1e;
   --bg-surface: #232325;
   --bg-elevated: #2c2c2e;
   --bg-input: #3a3a3c;
+  /* Explicit workbench levels keep the three-column shell readable at a glance. */
+  --bg-activity: #202023;
+  --bg-sidebar: #262629;
+  --bg-editor: #1b1b1d;
+  --bg-panel: #242427;
   --bg-hover: rgba(255, 255, 255, 0.055);
   --bg-active: rgba(255, 255, 255, 0.1);
   /* 选中态（列表/文件树里"被选中待操作"的行）。
@@ -106,7 +126,7 @@
   --fg: #e5e5e7;
   --fg-strong: #ffffff;
   --fg-muted: #9a9a9e;
-  --fg-faint: #6e6e73;
+  --fg-faint: #85858a;
 
   /* 语义色（macOS Dark） */
   --danger: #ff453a;
@@ -130,6 +150,10 @@
   --git-modified: #e2c08d;
   --git-added: #73c991;
   --git-deleted: #f14c4c;
+  --git-author: #59a4f9;
+  --git-ref-head: #59a4f9;
+  --git-ref-remote: #b180d7;
+  --git-ref-tag: #e2c08d;
 
   /* 安全/不可用表面：用于禁用态、只读区、代码块底 */
   --bg-inset: rgba(0, 0, 0, 0.22);
@@ -167,6 +191,14 @@
   --material-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.07);
   --material-border: rgba(255, 255, 255, 0.1);
   --material-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  --shadow-control:
+    0 0 0 0.5px rgba(0, 0, 0, 0.28),
+    0 1px 2px rgba(0, 0, 0, 0.22);
+  --shadow-card:
+    0 0 0 0.5px rgba(0, 0, 0, 0.24),
+    0 4px 14px rgba(0, 0, 0, 0.2);
+  --shadow-inset: inset 0 0 0 0.5px rgba(0, 0, 0, 0.24);
+  --editor-minimap-shadow: inset -6px 0 6px -6px rgba(0, 0, 0, 0.5);
   /* 遮罩黑度：浅色外观下要更浅，否则对比过强像"关灯" */
   --overlay-bg: rgba(0, 0, 0, 0.36);
   --scrollbar-thumb: rgba(255, 255, 255, 0.16);
@@ -193,6 +225,10 @@
   --bg-surface: #fafafa;
   --bg-elevated: #ffffff;
   --bg-input: #ffffff;
+  --bg-activity: #e9e9ec;
+  --bg-sidebar: #f7f7f9;
+  --bg-editor: #ffffff;
+  --bg-panel: #f4f4f6;
   /* 浅色下 hover 要用"加黑"而不是"加白"，方向必须反转 */
   --bg-hover: rgba(0, 0, 0, 0.045);
   --bg-active: rgba(0, 0, 0, 0.08);
@@ -208,7 +244,7 @@
   --fg: #2b2b2e;
   --fg-strong: #000000;
   --fg-muted: #6e6e73;
-  --fg-faint: #9a9a9e;
+  --fg-faint: #85858a;
 
   /* 语义色（macOS Light）：比 Dark 版更深，浅底上才有足够对比 */
   --danger: #d70015;
@@ -229,6 +265,10 @@
   --git-modified: #9a6700;
   --git-added: #116329;
   --git-deleted: #cf222e;
+  --git-author: #0969da;
+  --git-ref-head: #0969da;
+  --git-ref-remote: #8250df;
+  --git-ref-tag: #9a6700;
 
   --bg-inset: rgba(0, 0, 0, 0.05);
 
@@ -252,9 +292,38 @@
   --material-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.9);
   --material-border: rgba(0, 0, 0, 0.08);
   --material-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
+  --shadow-control:
+    0 0 0 0.5px rgba(0, 0, 0, 0.12),
+    0 1px 2px rgba(0, 0, 0, 0.08);
+  --shadow-card:
+    0 0 0 0.5px rgba(0, 0, 0, 0.1),
+    0 4px 14px rgba(0, 0, 0, 0.08);
+  --shadow-inset: inset 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+  --editor-minimap-shadow: inset -6px 0 6px -6px rgba(0, 0, 0, 0.24);
   --overlay-bg: rgba(0, 0, 0, 0.2);
   --scrollbar-thumb: rgba(0, 0, 0, 0.2);
   --scrollbar-thumb-hover: rgba(0, 0, 0, 0.35);
+
+  /* 语法高亮也属于主题令牌，避免 Markdown 在浅色模式里残留深色主题色。 */
+  --syntax-keyword: #9b4dca;
+  --syntax-string: #2f8f46;
+  --syntax-number: #a75d16;
+  --syntax-title: #1671b8;
+  --syntax-type: #9a6b00;
+  --syntax-variable: #c23845;
+  --syntax-meta: #007b86;
+}
+
+/* 深色语法色需要更亮，确保代码块在暗底上仍能保持清晰层次。 */
+:root:not([data-appearance='light']),
+[data-appearance='dark'] {
+  --syntax-keyword: #c792ea;
+  --syntax-string: #98c379;
+  --syntax-number: #d19a66;
+  --syntax-title: #61afef;
+  --syntax-type: #e5c07b;
+  --syntax-variable: #e06c75;
+  --syntax-meta: #56b6c2;
 }
 
 /* ==================== 强调色 ==================== */

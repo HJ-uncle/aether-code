@@ -8,7 +8,7 @@
 .source-preview iframe { flex: 1; width: 100%; min-height: 0; border: 0; background: var(--bg-app); }
 .source-preview__message { padding: var(--space-3); color: var(--fg-muted); font-size: 12px; }
 .source-preview__message[role='alert'] { color: var(--danger-fg); }
-.editor-preview-modes { display: flex; align-items: center; gap: 2px; border: 1px solid var(--border); border-radius: var(--radius); padding: 2px; }
+.editor-preview-modes { display: flex; align-items: center; gap: var(--space-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 2px; }
 .editor-preview-modes .editor-toolbar__button { height: 20px; padding: 0 6px; }
 .editor-preview-modes [aria-pressed='true'] { background: var(--bg-selected); color: var(--fg-strong); }
 .doc-view__external-change { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-3); background: var(--warn-soft); color: var(--warn); font-size: 12px; }

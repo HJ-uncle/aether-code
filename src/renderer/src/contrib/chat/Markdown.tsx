@@ -260,7 +260,7 @@ function TableBlock({ token, prefix }: { token: Tokens.Table; prefix: string }):
         <thead>
           <tr>
             {token.header.map((cell, index) => (
-              <th key={`${prefix}-h-${index}`}>
+              <th key={`${prefix}-h-${index}`} style={{ textAlign: token.align?.[index] ?? 'left' }}>
                 {renderInline(cell.tokens, `${prefix}-h-${index}`)}
               </th>
             ))}
@@ -270,7 +270,7 @@ function TableBlock({ token, prefix }: { token: Tokens.Table; prefix: string }):
           {token.rows.map((row, rowIndex) => (
             <tr key={`${prefix}-r-${rowIndex}`}>
               {row.map((cell, cellIndex) => (
-                <td key={`${prefix}-r-${rowIndex}-c-${cellIndex}`}>
+                <td key={`${prefix}-r-${rowIndex}-c-${cellIndex}`} style={{ textAlign: token.align?.[cellIndex] ?? 'left' }}>
                   {renderInline(cell.tokens, `${prefix}-r-${rowIndex}-c-${cellIndex}`)}
                 </td>
               ))}

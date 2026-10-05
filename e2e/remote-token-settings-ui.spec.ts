@@ -186,7 +186,7 @@ async function openEngineSettings(): Promise<void> {
     await page.keyboard.press('Enter')
   }
   await expect(page.locator('.app-settings')).toBeVisible()
-  await page.getByRole('tab', { name: '通用', exact: true }).click()
+  await page.getByRole('tab', { name: '引擎管理', exact: true }).click()
 }
 
 async function expectPhase(phase: 'ready' | 'error'): Promise<void> {

@@ -340,6 +340,34 @@ export async function refreshDirectory(dir: string): Promise<void> {
 }
 
 /**
+ * 先把已删除的条目从树缓存中摘掉，再等待目录重读。
+ *
+ * Windows 的系统回收站可能在 IPC 返回后才完成目录通知；如果只依赖一次
+ * readDir，旧条目会在虚拟树里短暂复活，甚至在读目录结果先后交错时一直残留。
+ * 这里按规范化路径同步移除，随后由 file-ops 再做一次磁盘刷新。
+ */
+export function removeEntriesFromWorkspace(targetPaths: string[]): void {
+  if (targetPaths.length === 0) return
+  const targets = targetPaths.map(expandedPathKey)
+  const isTarget = (path: string): boolean => targets.some((target) =>
+    expandedPathKey(path) === target || expandedPathKey(path).startsWith(`${target}/`)
+  )
+  const nextChildren = new Map(state.children)
+  let changed = false
+  for (const [dir, entries] of nextChildren) {
+    const filtered = entries.filter((entry) => !isTarget(entry.path))
+    if (filtered.length !== entries.length) {
+      nextChildren.set(dir, filtered)
+      changed = true
+    }
+  }
+  if (!changed) return
+  const selection = new Set([...state.selection].filter((path) => !isTarget(path)))
+  const selectionAnchor = state.selectionAnchor && isTarget(state.selectionAnchor) ? null : state.selectionAnchor
+  setState({ children: nextChildren, selection, selectionAnchor })
+}
+
+/**
  * 收起全部目录，但保留 root 本身已加载的子项。
  *
  * 只清 expanded，不清 children：缓存留着，用户再展开时是瞬时的，

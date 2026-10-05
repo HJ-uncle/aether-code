@@ -7,6 +7,7 @@ import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { Select } from '@renderer/workbench/Select'
 import { SettingsContent, SettingsGroup, SettingsRow } from '../settings/SettingsGroup'
 import { ModelFormDialog } from './ModelFormDialog'
+import '../settings/settings-pages.css'
 
 /**
  * 模型管理页
@@ -44,7 +45,7 @@ export function ModelsSettingsView(): JSX.Element {
   }
 
   return (
-    <div className="settings-view">
+    <div className="settings-view settings-view--models">
       {!ready ? <div className="notice">引擎未就绪，无法读取模型配置。</div> : null}
 
       <div className="settings-view__actions">

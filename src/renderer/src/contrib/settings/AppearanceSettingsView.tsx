@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import type { AccentColor, Appearance } from '@shared/ipc'
 import { useApp } from '@renderer/core/app-context'
 import { Segmented, SettingsContent, SettingsGroup } from './SettingsGroup'
+import './settings-pages.css'
 
 /**
  * 外观设置
@@ -35,7 +36,7 @@ export function AppearanceSettingsView(): JSX.Element {
   const { settings, updateSettings } = useApp()
 
   return (
-    <div className="settings-view">
+    <div className="settings-view settings-view--appearance">
       <SettingsGroup title="外观">
         <SettingsContent>
           <div className="sg-row-inline">

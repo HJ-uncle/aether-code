@@ -25,6 +25,7 @@ import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/so
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { SettingsContent, SettingsGroup, SettingsRow } from './SettingsGroup'
 import './knowledge-settings.css'
+import './settings-pages.css'
 
 function formatDate(timestamp?: number): string { return timestamp ? new Date(timestamp * 1000).toLocaleString() : '—' }
 function statusLabel(status?: KnowledgeDocument['status']): string {
@@ -63,6 +64,7 @@ function KnowledgeSettingsContent({ source }: { source: number }): JSX.Element {
   const [notice, setNotice] = useState('')
   const [supportedFormats, setSupportedFormats] = useState(KNOWLEDGE_SUPPORTED_FORMATS)
   const [supportedExtensions, setSupportedExtensions] = useState<string[]>([])
+  const [fileDragging, setFileDragging] = useState(false)
   // Keep an invalid file selection from falling through to an older textarea
   // value. The error is cleared as soon as the user edits or selects a valid
   // replacement.
@@ -309,7 +311,7 @@ function KnowledgeSettingsContent({ source }: { source: number }): JSX.Element {
 
   return (
     <div className="settings-view settings-view--knowledge">
-      <SettingsGroup title="知识库" footer="知识库按引擎租户隔离；文档会切块并建立全文检索索引。">
+      <SettingsGroup title="知识库内容" footer="知识库按引擎租户隔离；文档会切块并建立全文检索索引。">
         <SettingsContent className="knowledge-toolbar">
           <div className="knowledge-toolbar__fields">
             <input className="field__input" value={name} onChange={event => setName(event.target.value)} placeholder="新知识库名称" aria-label="知识库名称" />
@@ -339,7 +341,21 @@ function KnowledgeSettingsContent({ source }: { source: number }): JSX.Element {
         <SettingsContent className="knowledge-upload">
           <div className="knowledge-upload__fields">
             <input className="field__input" value={filename} onChange={event => setFilename(event.target.value)} placeholder="文件名" aria-label="文档文件名" />
-            <label className="knowledge-file-drop" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); const file = event.dataTransfer.files?.[0]; if (file) void readFile(file) }}>
+            <label
+              className={`knowledge-file-drop${fileDragging ? ' is-dragging' : ''}`}
+              onDragEnter={event => { event.preventDefault(); setFileDragging(true) }}
+              onDragOver={event => { event.preventDefault(); setFileDragging(true) }}
+              onDragLeave={event => {
+                const nextTarget = event.relatedTarget
+                if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) setFileDragging(false)
+              }}
+              onDrop={event => {
+                event.preventDefault()
+                setFileDragging(false)
+                const file = event.dataTransfer.files?.[0]
+                if (file) void readFile(file)
+              }}
+            >
               <span className="knowledge-file-drop__title">拖拽文件到这里</span>
               <span className="knowledge-file-drop__hint">或</span>
               <span role="button" tabIndex={0} className="btn knowledge-file-drop__button" onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.currentTarget.closest('label')?.querySelector<HTMLInputElement>('input[type="file"]')?.click() } }}>选择文件</span>

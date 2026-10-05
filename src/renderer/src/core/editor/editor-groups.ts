@@ -194,6 +194,14 @@ onEditorChanged(() => {
   const paths = getEditorState().order
   const alive = new Set(paths)
   const added = paths.filter((path) => !knownPaths.has(path))
+  // Quick Open publishes the requested layout key before its asynchronous file
+  // load registers the document. Re-apply that pending activation when the
+  // document arrives, otherwise the focused split can keep rendering the
+  // previously active document while the new tab is appended in the background.
+  const pendingActivePath = activePath(getLayout().activeEditorView)
+  const pendingActive = pendingActivePath
+    ? added.find((path) => fileIdentity(path) === fileIdentity(pendingActivePath))
+    : undefined
   for (const path of added) renamedViewPaths.delete(fileIdentity(path))
   knownPaths = alive
   let changed = false
@@ -202,7 +210,10 @@ onEditorChanged(() => {
     if (group.id === state.focusedGroupId) remaining.push(...added.filter((path) => !remaining.includes(path)))
     const current = activePath(group.activeKey)
     const activeKey = current && !alive.has(current)
-      ? (remaining.length ? documentKey(remaining[remaining.length - 1]) : '') : group.activeKey
+      ? (remaining.length ? documentKey(remaining[remaining.length - 1]) : '')
+      : group.id === state.focusedGroupId && pendingActive
+        ? documentKey(pendingActive)
+        : group.activeKey
     if (remaining.length === group.paths.length && remaining.every((path, index) => path === group.paths[index]) && activeKey === group.activeKey) return group
     changed = true
     return { ...group, paths: remaining, activeKey }

@@ -128,7 +128,7 @@
   min-height: 18px;
   padding: 0 6px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--fg-muted);
   font-style: normal;
   font-size: 10px;
@@ -165,5 +165,41 @@
   .settings-view--skills .skills-create-field { grid-template-columns: 1fr; gap: 5px; }
   .settings-view--skills .skills-create-overwrite,
   .settings-view--skills .skills-create-actions { margin-left: 0; }
+}
+
+/* Keep the long skills page scannable: imports and history are inset cards,
+ * while each installed skill reads as a single list row. */
+.settings-view--skills .skills-import-drop {
+  min-height: 100px;
+  border-radius: 10px;
+  background: var(--bg-inset);
+}
+
+.settings-view--skills .skills-card {
+  min-height: 64px;
+  padding: 12px 2px;
+  border-top-color: var(--border);
+}
+
+.settings-view--skills .skills-card__main span:first-child {
+  color: var(--fg-strong);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.settings-view--skills .skills-card__main:hover span:first-child {
+  color: var(--accent);
+}
+
+.settings-view--skills .skills-scope-badge {
+  background: var(--bg-inset);
+}
+
+.settings-view--skills .skills-detail pre {
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
 }
 

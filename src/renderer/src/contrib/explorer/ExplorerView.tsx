@@ -69,8 +69,8 @@ import { PromptDialog } from '@renderer/workbench/PromptDialog'
 import { Icon } from '@renderer/workbench/icons'
 import { FileGlyph } from './FileGlyph'
 
-/** 行高，必须与 .tree-row 的 margin/字号保持协调（虚拟滚动按它换算偏移） */
-const ROW_HEIGHT = 24
+/** 行高，必须与最终 .tree-row 的 CSS 高度一致（虚拟滚动按它换算偏移）。 */
+const ROW_HEIGHT = 30
 /** 视口外多渲染的行数：留一屏缓冲，快速滚动时才不会看到空白 */
 const OVERSCAN = 10
 /**
