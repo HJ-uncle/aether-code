@@ -5261,7 +5261,7 @@
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--accent-fg);
   box-shadow:
     0 1px 3px rgba(0, 0, 0, 0.3),
     0 0 1px rgba(0, 0, 0, 0.15);

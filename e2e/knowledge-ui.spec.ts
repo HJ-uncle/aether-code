@@ -143,6 +143,11 @@ test.describe.serial('知识库设置与聊天绑定真机验收', () => {
         const parts = knowledgePath.split('/').filter(Boolean).map(decodeURIComponent)
         const method = request.method ?? 'GET'
 
+        if (parts[0] === 'formats' && method === 'GET') return responseJson(response, {
+          extensions: ['.txt', '.md', '.json', '.pdf', '.docx', '.xlsx', '.png'],
+          description: '文本/代码、表格、文档、PDF 和图片 OCR'
+        })
+
         if (parts[0] === 'bases') {
           if (method === 'GET' && parts.length === 1) return responseJson(response, bases.map(baseWithCounts))
           if (method === 'POST' && parts.length === 1) {
@@ -243,6 +248,16 @@ test.describe.serial('知识库设置与聊天绑定真机验收', () => {
     }
   })
 
+  test('知识库创建栏在窄设置面板保持紧凑控件高度', async () => {
+    const heights = await page.locator('.knowledge-toolbar__fields .field__input').evaluateAll(
+      elements => elements.map(element => Math.round(element.getBoundingClientRect().height))
+    )
+    // The settings body is intentionally narrow beside the explorer/chat panes.
+    // Desktop flex-basis values must not become 180/240px vertical heights.
+    expect(heights.length).toBe(2)
+    expect(Math.max(...heights)).toBeLessThanOrEqual(40)
+  })
+
   test('创建并编辑知识库，保存后的名称和描述可重新读取', async () => {
     await page.getByLabel('知识库名称', { exact: true }).fill('知识库界面验收')
     await page.getByLabel('知识库描述', { exact: true }).fill('知识库编辑描述')
@@ -289,6 +304,38 @@ test.describe.serial('知识库设置与聊天绑定真机验收', () => {
     expect(documents).toHaveLength(0)
   })
 
+  test('格式说明与当前知识库作用域保持同步', async () => {
+    const formats = page.locator('.knowledge-formats')
+    await formats.locator('summary').click()
+    await expect(formats).toContainText('文本/代码、表格、文档、PDF 和图片 OCR')
+    const fileInput = page.locator('input[type="file"][aria-label="选择文档文件"]')
+    await expect(fileInput).toHaveAttribute('accept', expect.stringContaining('.pdf'))
+    await fileInput.setInputFiles({ name: 'fixture.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4') })
+    await expect(page.locator('.knowledge-file-drop__selected')).toContainText('fixture.pdf')
+    // Continue with a plain-text upload so this test keeps the fixture focused on
+    // the UI selection path; the engine's multipart extraction is covered by the
+    // knowledge route tests.
+    await page.getByLabel('文档内容', { exact: true }).fill('')
+
+    await page.getByLabel('知识库名称', { exact: true }).fill('第二个知识库')
+    await page.getByRole('button', { name: '新建知识库', exact: true }).click()
+    await expect(page.locator('#knowledge-base-select')).toHaveValue(/kb-ui-/)
+    await page.getByLabel('文档文件名', { exact: true }).fill('second.txt')
+    await page.getByLabel('文档内容', { exact: true }).fill('SECOND_KB_MARKER')
+    await page.getByRole('button', { name: '上传并索引', exact: true }).click()
+    await expect(documentRow('second.txt')).toBeVisible()
+
+    // Switching to all bases and back must update both the list and retrieval scope.
+    await page.locator('#knowledge-base-select').selectOption('')
+    await expect(documentRow('second.txt')).toBeVisible()
+    await page.locator('#knowledge-base-select').selectOption({ label: '第二个知识库' })
+    await expect(page.locator('.knowledge-document-summary')).toContainText('“第二个知识库”中的文档')
+    await expect(documentRow('second.txt')).toBeVisible()
+    await page.getByLabel('知识库检索关键词', { exact: true }).fill('SECOND_KB_MARKER')
+    await page.getByRole('button', { name: '检索', exact: true }).click()
+    await expect(page.locator('.knowledge-results')).toContainText('SECOND_KB_MARKER')
+  })
+
   test('超过文档大小限制时 UI 阻止上传且不创建文档', async () => {
     await page.getByLabel('文档文件名', { exact: true }).fill('too-large.txt')
     await page.getByLabel('文档内容', { exact: true }).fill('x'.repeat(oversizedContent))
@@ -316,9 +363,13 @@ test.describe.serial('知识库设置与聊天绑定真机验收', () => {
     await item.click()
     await expect(item).toHaveAttribute('aria-checked', 'true')
     expect(await page.evaluate(id => Object.values(localStorage).some(value => value.includes(id)), base.id)).toBe(true)
-
     await picker.click()
     await expect(menu).toHaveCount(0)
+    await expect(page.locator('.resource-binding-chip.is-kb')).toContainText(base.id)
+    await page.locator('.resource-binding-chip.is-kb').click()
+    expect(await page.evaluate(id => Object.values(localStorage).some(value => value.includes(id)), base.id)).toBe(false)
+    await expect(picker).toContainText('知识库：关闭')
+
     const refreshed: Base = { id: `kb-ui-${++baseCounter}`, name: '重新打开后出现的知识库', description: '', documentCount: 0, chunkCount: 0, createdAt: now(), updatedAt: now() }
     bases.push(refreshed)
     await picker.click()

@@ -97,7 +97,7 @@ const REMOTE_READ_ROUTES = [
   /^\/(health|meta|metrics)$/,
   /^\/api\/v1\/(models|models\/capability-defs|tools|system-tools|external-skills|changes|todos)$/,
   /^\/api\/v1\/conversation\/(sessions|history|archive)$/,
-  /^\/api\/v1\/(mcp\/servers(?:\/[a-zA-Z0-9_-]+)?|skills(?:\/[a-zA-Z0-9_.-]+)?|knowledge\/documents(?:\/[a-zA-Z0-9_-]+)?|knowledge\/bases(?:\/[a-zA-Z0-9_-]+)?|knowledge\/status)$/,
+  /^\/api\/v1\/(mcp\/servers(?:\/[a-zA-Z0-9_-]+)?|skills(?:\/[a-zA-Z0-9_.-]+)?|knowledge\/(?:formats|documents(?:\/[a-zA-Z0-9_-]+)?|bases(?:\/[a-zA-Z0-9_-]+)?|status))$/,
   /^\/api\/v1\/skills\/imports(?:\/[a-zA-Z0-9_-]+)?(?:\/chunks)?$/,
   /^\/api\/v1\/chat\/(snapshot|status|runs|stream)$/,
   /^\/api\/v1\/security\/(mode|policies)$/,
@@ -126,7 +126,7 @@ export function remoteRequestError(mode: 'embedded' | 'remote', method: string, 
   const pathname = normalizeEnginePath(path).split('?')[0]
   if (method === 'GET' && REMOTE_READ_ROUTES.some(route => route.test(pathname))) return null
   if (method === 'POST' && REMOTE_CHAT_ROUTES.some(route => route.test(pathname))) return null
-  if (method === 'POST' && /^\/api\/v1\/(mcp\/servers|skills)$/.test(pathname)) return null
+  if (method === 'POST' && /^\/api\/v1\/(mcp\/servers|mcp\/config\/import|skills)$/.test(pathname)) return null
   if (method === 'PUT' && /^\/api\/v1\/(knowledge\/(documents|bases)\/[a-zA-Z0-9_-]+|mcp\/servers\/[a-zA-Z0-9_-]+)$/.test(pathname)) return null
   if (method === 'PATCH' && /^\/api\/v1\/(mcp\/servers|skills)\/[a-zA-Z0-9_-]+$/.test(pathname)) return null
   if (method === 'DELETE' && /^\/api\/v1\/(knowledge\/(documents|bases)|mcp\/servers|skills)\/[a-zA-Z0-9_-]+$/.test(pathname)) return null

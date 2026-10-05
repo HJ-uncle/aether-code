@@ -79,7 +79,7 @@ test('远端扩展资源管理全部开放到对应引擎', () => {
   const routes: Array<[string, string]> = [
     ['GET', '/mcp/servers'], ['POST', '/mcp/servers'], ['GET', '/mcp/servers/fixture'], ['PUT', '/mcp/servers/fixture'], ['PATCH', '/mcp/servers/fixture'], ['DELETE', '/mcp/servers/fixture'], ['POST', '/mcp/servers/fixture/test'], ['POST', '/mcp/servers/fixture/enable'], ['POST', '/mcp/servers/fixture/disable'],
     ['GET', '/skills'], ['POST', '/skills'], ['GET', '/skills/fixture'], ['PATCH', '/skills/fixture'], ['DELETE', '/skills/fixture'], ['POST', '/skills/imports'], ['GET', '/skills/imports/import-1'], ['POST', '/skills/imports/chunks'], ['POST', '/skills/imports/chunks/merge'], ['GET', '/skills/imports/chunks'],
-    ['GET', '/knowledge/bases'], ['POST', '/knowledge/bases'], ['PUT', '/knowledge/bases/base-1'], ['DELETE', '/knowledge/bases/base-1'], ['GET', '/knowledge/documents'], ['POST', '/knowledge/documents'], ['GET', '/knowledge/documents/doc-1'], ['PUT', '/knowledge/documents/doc-1'], ['DELETE', '/knowledge/documents/doc-1'], ['POST', '/knowledge/search']
+    ['GET', '/knowledge/formats'], ['GET', '/knowledge/bases'], ['POST', '/knowledge/bases'], ['PUT', '/knowledge/bases/base-1'], ['DELETE', '/knowledge/bases/base-1'], ['GET', '/knowledge/documents'], ['POST', '/knowledge/documents'], ['GET', '/knowledge/documents/doc-1'], ['PUT', '/knowledge/documents/doc-1'], ['DELETE', '/knowledge/documents/doc-1'], ['POST', '/knowledge/search']
   ]
   for (const [method, path] of routes) expect(remoteRequestError('remote', method, path), `${method} ${path}`).toBeNull()
 })

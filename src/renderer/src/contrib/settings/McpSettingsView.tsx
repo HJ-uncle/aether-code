@@ -29,6 +29,10 @@ export function McpSettingsView(): JSX.Element {
   const [notice, setNotice] = useState('')
   const [discoveredTools, setDiscoveredTools] = useState<Record<string, McpTool[]>>({})
   const [formOpen, setFormOpen] = useState(false)
+  const [jsonOpen, setJsonOpen] = useState(true)
+  const [jsonText, setJsonText] = useState('{\n  "mcpServers": {}\n}')
+  const [jsonScope, setJsonScope] = useState<'project' | 'global'>('project')
+  const [jsonBusy, setJsonBusy] = useState(false)
   const refresh = useCallback(async () => {
     setError('')
     if (!remote && !workspace.root) { setServers([]); return }
@@ -65,7 +69,7 @@ export function McpSettingsView(): JSX.Element {
   const edit = (server: McpServer): void => { setEditing(server.id); setFormOpen(true); setForm({ id: server.id, name: server.name, description: server.description ?? '', transportType: server.transportType, url: server.url ?? '', command: server.command ?? '', args: (server.args ?? []).join('\n'), env: JSON.stringify(server.env ?? {}, null, 2), headers: JSON.stringify(server.headers ?? {}, null, 2), disabledTools: (server.disabledTools ?? []).join('\n'), scope: server.scope ?? 'project' }) }
   const toggle = async (server: McpServer, enabled: boolean): Promise<void> => { setBusy(true); setError(''); try { await requestOrThrow({ method: 'POST', path: `/mcp/servers/${encodeURIComponent(server.id)}/${enabled ? 'enable' : 'disable'}`, query: { ...(query ?? {}), scope: server.scope ?? 'project' } }); await refresh() } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setBusy(false) } }
   const remove = async (server: McpServer): Promise<void> => { if (busy) return; const confirmed = await confirmDialog({ title: '删除 MCP 配置', body: `确定删除「${server.name || server.id}」吗？`, confirmText: '删除', danger: true }); if (!confirmed) return; setBusy(true); setError(''); try { await requestOrThrow({ method: 'DELETE', path: `/mcp/servers/${encodeURIComponent(server.id)}`, query: { ...(query ?? {}), scope: server.scope ?? 'project' } }); await refresh(); setNotice('MCP 配置已删除') } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setBusy(false) } }
-  const test = async (server: McpServer): Promise<void> => { setBusy(true); setError(''); setNotice(''); try { const result = await requestOrThrow<{ toolCount: number; tools?: McpTool[] }>({ method: 'POST', path: `/mcp/servers/${encodeURIComponent(server.id)}/test`, query }); setDiscoveredTools(current => ({ ...current, [server.id]: result.tools ?? [] })); setNotice(`${server.name} 连接成功，发现 ${result.toolCount} 个工具`) } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setBusy(false) } }
+  const test = async (server: McpServer): Promise<void> => { setBusy(true); setError(''); setNotice(''); try { const result = await requestOrThrow<{ toolCount: number; tools?: McpTool[] }>({ method: 'POST', path: `/mcp/servers/${encodeURIComponent(server.id)}/test`, query: { ...(query ?? {}), scope: server.scope ?? 'project' } }); setDiscoveredTools(current => ({ ...current, [server.id]: result.tools ?? [] })); setNotice(`${server.name} 连接成功，发现 ${result.toolCount} 个工具`) } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setBusy(false) } }
   const toolDefinitionName = (server: McpServer, tool: McpTool): string => {
     const prefix = `mcp_${server.id}_`
     return tool.name.startsWith(prefix) ? tool.name.slice(prefix.length) : tool.name
@@ -77,8 +81,34 @@ export function McpSettingsView(): JSX.Element {
     setBusy(true); setError('')
     try { await requestOrThrow({ method: 'PATCH', path: `/mcp/servers/${encodeURIComponent(server.id)}`, query: { ...(query ?? {}), scope: server.scope ?? 'project' }, body: { disabledTools: [...disabled] } }); await refresh() } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setBusy(false) }
   }
+  const exportJson = async (): Promise<void> => {
+    setJsonBusy(true); setError(''); setNotice('')
+    try {
+      const value = await requestOrThrow<{ mcpServers: Record<string, unknown> }>({ method: 'GET', path: '/mcp/config/export', query: { ...(query ?? {}), scope: jsonScope } })
+      setJsonText(JSON.stringify(value, null, 2)); setNotice('已加载当前 MCP JSON')
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setJsonBusy(false) }
+  }
+  const importJson = async (): Promise<void> => {
+    setJsonBusy(true); setError(''); setNotice('')
+    try {
+      const config: unknown = JSON.parse(jsonText)
+      await requestOrThrow({ method: 'POST', path: '/mcp/config/import', query, body: { scope: jsonScope, config } })
+      await refresh(); setNotice('MCP JSON 已校验并原子保存')
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setJsonBusy(false) }
+  }
+  const readJsonFile = async (file: File | undefined): Promise<void> => {
+    if (!file) return
+    try { setJsonText(await file.text()); setNotice(`已载入 ${file.name}，请检查后应用`) } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
+  }
   return <div className="settings-view settings-view--mcp">
-    <SettingsGroup title="MCP 服务器" footer={remote ? '当前管理远端引擎的 MCP 配置。凭据只发送到该引擎。' : '项目配置写入当前工作区的 .aether/mcp.json；全局配置供其他项目复用。'}>
+    <SettingsGroup title="MCP JSON 配置" footer="可粘贴标准 mcpServers JSON，一次导入多个服务器。导入前会校验全部条目，失败时不会写入任何更改。未知字段会原样保留，但引擎只使用已支持的传输与连接字段。">
+      <SettingsContent className="mcp-json__toolbar">
+        <div className="mcp-json__scope"><span>保存层级</span><select className="field__input" value={jsonScope} disabled={jsonBusy} onChange={e => setJsonScope(e.target.value as 'project' | 'global')}><option value="project">项目</option><option value="global">全局</option></select></div>
+        <div className="mcp-toolbar"><label className="btn"><input type="file" accept=".json,application/json" hidden onChange={e => void readJsonFile(e.target.files?.[0])} />导入 JSON 文件</label><button type="button" className="btn" disabled={jsonBusy || remote} title={remote ? '远端读取配置可能包含凭据；请在远端主机上导出后导入' : '读取当前配置'} onClick={() => void exportJson()}>读取当前配置</button><button type="button" className="btn btn--primary" disabled={jsonBusy || !jsonText.trim()} onClick={() => void importJson()}>{jsonBusy ? '处理中…' : '应用 JSON'}</button><button type="button" className="btn" disabled={jsonBusy} onClick={() => setJsonOpen(value => !value)}>{jsonOpen ? '收起' : '展开'}</button></div>
+      </SettingsContent>
+      {jsonOpen ? <SettingsContent><textarea className="field__input mcp-json__editor" value={jsonText} disabled={jsonBusy} onChange={e => setJsonText(e.target.value)} spellCheck={false} aria-label="MCP JSON 配置" placeholder={'{\n  "mcpServers": {\n    "my-server": {\n      "type": "streamableHttp",\n      "url": "https://example.com/mcp"\n    }\n  }\n}'} /></SettingsContent> : null}
+    </SettingsGroup>
+    <SettingsGroup title="MCP 服务器" footer={remote ? '当前管理远端引擎的 MCP 配置。凭据只发送到该引擎；远端读取完整 JSON 已关闭，请通过导入提交你明确提供的配置。' : '项目配置写入当前工作区的 .aether/mcp.json；全局配置供其他项目复用。'}>
       <SettingsContent><div className="mcp-toolbar"><button type="button" className="btn" disabled={busy} onClick={() => void refresh()}>刷新</button><button type="button" className="btn btn--primary" disabled={busy} onClick={() => { setForm(blank); setEditing(null); setFormOpen(true) }}>新增服务器</button></div></SettingsContent>
       {servers.length === 0 ? <SettingsContent><span className="mcp-empty">暂无 MCP 服务器</span></SettingsContent> : servers.map(server => <div key={server.id} className="mcp-server-block"><SettingsRow label={server.name || server.id} description={`${server.id} · ${server.transportType}${server.scope === 'global' ? ' · 全局' : ' · 项目'}`}><div className="mcp-actions"><Toggle checked={server.enabled !== false} onChange={value => void toggle(server, value)} label={`${server.name} 启用`} disabled={busy || server.isBuiltIn === true} /><button type="button" className="btn" disabled={busy} onClick={() => void test(server)}>测试</button><button type="button" className="btn" disabled={busy} onClick={() => { setEditing(server.id); edit(server) }}>编辑</button><button type="button" className="btn btn--danger-ghost" disabled={busy || server.isBuiltIn === true} onClick={() => void remove(server)}>删除</button></div></SettingsRow>{discoveredTools[server.id]?.map(tool => <SettingsRow key={tool.name} label={toolDefinitionName(server, tool)} description={tool.description}><Toggle checked={!server.disabledTools?.includes(toolDefinitionName(server, tool))} onChange={value => void toggleTool(server, tool, value)} label={`${toolDefinitionName(server, tool)} 启用`} disabled={busy} /></SettingsRow>)}</div>)}
     </SettingsGroup>

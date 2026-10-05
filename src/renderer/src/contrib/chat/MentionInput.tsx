@@ -36,6 +36,10 @@ export interface MentionInputHandle {
   insertMention: (mention: Mention) => void
   /** @ 补全选中：把光标前的「@关键词」文本替换为 chip */
   completeMention: (mention: Mention) => void
+  /** / 资源补全：把光标前的 /关键词消费掉；资源以 composer chip 展示并走独立绑定字段 */
+  completeSlash: (token: string) => void
+  /** 删除遗留的手工资源 token（兼容旧草稿），同时保留其它 @ 引用 chip */
+  removeTextToken: (token: string) => void
   /** 整体替换输入框文本（原 mention chip 全部丢弃，用于 AI 润色回填） */
   setText: (text: string) => void
   setDraft: (text: string, mentions: Mention[]) => void
@@ -122,11 +126,13 @@ interface MentionInputProps {
    * 光标移开或关键词失效时回调 null。父组件据此弹出/关闭文件选择面板。
    */
   onMentionQuery?: (keyword: string | null) => void
+  /** / 资源补全触发；与 @ 文件引用互相独立 */
+  onSlashQuery?: (keyword: string | null) => void
 }
 
 export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
   function MentionInput(
-    { value, disabled, placeholder, onChange, onSubmit, onPasteFiles, onPasteText, onMentionQuery },
+    { value, disabled, placeholder, onChange, onSubmit, onPasteFiles, onPasteText, onMentionQuery, onSlashQuery },
     ref
   ): JSX.Element {
     const boxRef = useRef<HTMLDivElement>(null)
@@ -401,11 +407,31 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       return keyword
     }, [])
 
+    const detectSlashQuery = useCallback((): string | null => {
+      const box = boxRef.current
+      const selection = window.getSelection()
+      if (!box || !selection || selection.rangeCount === 0) return null
+      const range = selection.getRangeAt(0)
+      if (!range.collapsed || range.startContainer.nodeType !== Node.TEXT_NODE || !box.contains(range.startContainer)) return null
+      const before = (range.startContainer.textContent ?? '').slice(0, range.startOffset)
+      const slash = before.lastIndexOf('/')
+      if (slash < 0) return null
+      const prev = slash > 0 ? before[slash - 1] : ''
+      if (prev && !/[\s　]/.test(prev)) return null
+      const keyword = before.slice(slash + 1)
+      if (/[\s　/@]/.test(keyword)) return null
+      return keyword
+    }, [])
+
     /** 光标变化（输入/点击/方向键）后同步 @ 触发状态给父组件 */
     const syncMentionQuery = useCallback(() => {
       if (!onMentionQuery) return
       onMentionQuery(composingRef.current ? null : detectMentionQuery())
     }, [onMentionQuery, detectMentionQuery])
+    const syncSlashQuery = useCallback(() => {
+      if (!onSlashQuery) return
+      onSlashQuery(composingRef.current ? null : detectSlashQuery())
+    }, [onSlashQuery, detectSlashQuery])
 
     /**
      * 把光标前的「@关键词」替换为 chip（@ 补全面板选中项时调用）。
@@ -437,11 +463,61 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       [insertMention, onMentionQuery]
     )
 
+    const completeSlash = useCallback((_token: string) => {
+      const box = boxRef.current
+      const selection = window.getSelection()
+      if (!box || !selection || selection.rangeCount === 0) return
+      const range = selection.getRangeAt(0)
+      const node = range.startContainer
+      if (range.collapsed && node.nodeType === Node.TEXT_NODE && box.contains(node)) {
+        const before = (node.textContent ?? '').slice(0, range.startOffset)
+        const slash = before.lastIndexOf('/')
+        if (slash >= 0) {
+          const replace = document.createRange()
+          replace.setStart(node, slash)
+          replace.setEnd(node, range.startOffset)
+          replace.deleteContents()
+          selection.removeAllRanges()
+          selection.addRange(replace)
+        }
+      }
+      // Resource bindings are carried in the chat request's skills/mcpServers/
+      // knowledgeBases fields. Do not leave a raw `/mcp:id` command in the
+      // user-visible prompt: it duplicated the binding chip and was easy to
+      // desynchronise when either one was removed.
+      onSlashQuery?.(null)
+      emitChange()
+    }, [emitChange, onSlashQuery])
+
+    const removeTextToken = useCallback((token: string) => {
+      const box = boxRef.current
+      if (!box || !token) return
+      const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT)
+      let node: Node | null
+      while ((node = walker.nextNode())) {
+        const text = node.textContent ?? ''
+        const offset = text.indexOf(token)
+        if (offset < 0) continue
+        const range = document.createRange()
+        range.setStart(node, offset)
+        range.setEnd(node, offset + token.length)
+        range.deleteContents()
+        box.focus()
+        const selection = window.getSelection()
+        selection?.removeAllRanges(); selection?.addRange(range)
+        emitChange()
+        syncSlashQuery()
+        return
+      }
+    }, [emitChange, syncSlashQuery])
+
     useImperativeHandle(
       ref,
       () => ({
         insertMention,
         completeMention,
+        completeSlash,
+        removeTextToken,
         setText: (text: string) => {
           rebuildFromText(text)
           emitChange()
@@ -453,22 +529,23 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         },
         focus: () => boxRef.current?.focus()
       }),
-      [insertMention, completeMention, rebuildFromText, restoreDraft, emitChange]
+      [insertMention, completeMention, completeSlash, removeTextToken, rebuildFromText, restoreDraft, emitChange]
     )
 
     // 光标移动（点击/方向键）不产生 input 事件，用 selectionchange 补齐 @ 触发检测
     useEffect(() => {
-      if (!onMentionQuery) return
+      if (!onMentionQuery && !onSlashQuery) return
       const handler = () => {
         const box = boxRef.current
         const selection = window.getSelection()
         if (!box || !selection || selection.rangeCount === 0) return
         if (!box.contains(selection.getRangeAt(0).startContainer)) return
         syncMentionQuery()
+        syncSlashQuery()
       }
       document.addEventListener('selectionchange', handler)
       return () => document.removeEventListener('selectionchange', handler)
-    }, [onMentionQuery, syncMentionQuery])
+    }, [onMentionQuery, onSlashQuery, syncMentionQuery, syncSlashQuery])
 
     // 外部回填（撤回消息重新编辑等）：value 与内部序列化结果不一致时重建 DOM
     useEffect(() => {
@@ -487,6 +564,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         onInput={() => {
           emitChange()
           syncMentionQuery()
+          syncSlashQuery()
         }}
         onCompositionStart={() => {
           composingRef.current = true
@@ -494,6 +572,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         onCompositionEnd={() => {
           composingRef.current = false
           emitChange()
+          syncSlashQuery()
         }}
         onPaste={(event) => {
           const files = [...event.clipboardData.files]
@@ -526,6 +605,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
               removeChip(chip)
             }
           }
+          syncSlashQuery()
         }}
         suppressContentEditableWarning
       />

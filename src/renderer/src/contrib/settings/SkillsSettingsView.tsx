@@ -31,6 +31,15 @@ function skillKey(skill: Pick<SkillListItem, 'id' | 'name'>): string {
   return skill.id || skill.name
 }
 
+/**
+ * A name is not a stable identity when project and global layers contain a
+ * skill with the same name. Keep scope in the client key so a refresh or an
+ * edit never updates the wrong row.
+ */
+function skillIdentity(skill: Pick<SkillListItem, 'id' | 'name' | 'scope'>): string {
+  return `${skill.scope}:${skill.id || skill.name}`
+}
+
 interface ImportRecord {
   importId: string
   filename: string
@@ -104,6 +113,12 @@ function SkillsSettingsContent({ source, projectRoot }: { source: number; projec
   const [record, setRecord] = useState<ImportRecord | null>(null)
   const [history, setHistory] = useState<ImportRecord[]>([])
   const [busy, setBusy] = useState(false)
+  const [createBusy, setCreateBusy] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createName, setCreateName] = useState('')
+  const [createDescription, setCreateDescription] = useState('')
+  const [createContent, setCreateContent] = useState('')
+  const [createOverwrite, setCreateOverwrite] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [error, setError] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
@@ -114,7 +129,7 @@ function SkillsSettingsContent({ source, projectRoot }: { source: number; projec
   const refresh = useCallback(async (): Promise<void> => {
     setError('')
     try {
-      const result = await request<{ list?: unknown }>({ method: 'GET', path: '/skills', query: { reload: 1, path: projectRoot || undefined } })
+      const result = await request<{ list?: unknown }>({ method: 'GET', path: '/skills', query: { reload: 1, all: 1, path: projectRoot || undefined } })
       if (!isCurrent()) return
       if (!result.ok) throw new Error(result.message || `读取技能失败（${result.code}）`)
       setSkills(normalizeList(result.data))
@@ -134,11 +149,19 @@ function SkillsSettingsContent({ source, projectRoot }: { source: number; projec
 
   useEffect(() => { void refresh(); void refreshHistory() }, [refresh, refreshHistory])
 
-  const showDetail = async (name: string): Promise<void> => {
+  // Import status and an opened detail belong to the selected layer. Clear
+  // them when the target changes so a completed project import is never shown
+  // as the result of a subsequent global operation.
+  useEffect(() => {
+    setRecord(null)
+    setDetail(null)
+    setError('')
+  }, [scope])
+
+  const showDetail = async (skill: SkillListItem): Promise<void> => {
     setError('')
     try {
-      const skill = skills.find((item) => item.name === name)
-      setDetail(await requestOrThrow<SkillDetail>({ method: 'GET', path: `/skills/${encodeURIComponent(skill ? skillKey(skill) : name)}`, query: { path: projectRoot || undefined } }))
+      setDetail(await requestOrThrow<SkillDetail>({ method: 'GET', path: `/skills/${encodeURIComponent(skillKey(skill))}`, query: { path: projectRoot || undefined, scope: skill.scope } }))
     } catch (cause) {
       setError(errorMessage(cause))
     }
@@ -147,9 +170,9 @@ function SkillsSettingsContent({ source, projectRoot }: { source: number; projec
   const setEnabled = async (skill: SkillListItem, enabled: boolean): Promise<void> => {
     setError('')
     try {
-      await requestOrThrow({ method: 'PATCH', path: `/skills/${encodeURIComponent(skillKey(skill))}`, query: { path: projectRoot || undefined }, body: { enabled, scope: skill.scope } })
-      setSkills((current) => current.map((item) => item.name === skill.name ? { ...item, enabled } : item))
-      if (detail?.name === skill.name) setDetail({ ...detail, enabled })
+      await requestOrThrow({ method: 'PATCH', path: `/skills/${encodeURIComponent(skillKey(skill))}`, query: { path: projectRoot || undefined, scope: skill.scope }, body: { enabled } })
+      setSkills((current) => current.map((item) => skillIdentity(item) === skillIdentity(skill) ? { ...item, enabled } : item))
+      if (detail && skillIdentity(detail) === skillIdentity(skill)) setDetail({ ...detail, enabled })
     } catch (cause) {
       setError(errorMessage(cause))
     }
@@ -165,8 +188,8 @@ function SkillsSettingsContent({ source, projectRoot }: { source: number; projec
     if (!confirmed) return
     setError('')
     try {
-      await requestOrThrow({ method: 'DELETE', path: `/skills/${encodeURIComponent(skillKey(skill))}`, query: { path: projectRoot || undefined } })
-      if (detail?.name === skill.name) setDetail(null)
+      await requestOrThrow({ method: 'DELETE', path: `/skills/${encodeURIComponent(skillKey(skill))}`, query: { path: projectRoot || undefined, scope: skill.scope } })
+      if (detail && skillIdentity(detail) === skillIdentity(skill)) setDetail(null)
       await refresh()
     } catch (cause) {
       setError(errorMessage(cause))
@@ -279,6 +302,48 @@ function SkillsSettingsContent({ source, projectRoot }: { source: number; projec
     }
   }
 
+  const createSkill = async (): Promise<void> => {
+    // Keep the friendly form permissive while always producing a route-safe
+    // directory name. Leading separators are trimmed because the API requires
+    // a letter/number as the first character.
+    const name = createName.trim().toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^[^a-z0-9]+/, '')
+      .replace(/[^a-z0-9]+$/, '')
+    const content = createContent.trim()
+    if (!name) {
+      setError('技能名称至少需要一个字母或数字')
+      return
+    }
+    if (!content || createBusy || busy || !isCurrent()) return
+    setCreateBusy(true)
+    setError('')
+    try {
+      await requestOrThrow({
+        method: 'POST',
+        path: '/skills',
+        body: {
+          name,
+          description: createDescription.trim() || name,
+          content,
+          scope,
+          overwrite: createOverwrite,
+          ...(projectRoot && scope === 'project' ? { projectRoot } : {})
+        }
+      })
+      setCreateName('')
+      setCreateDescription('')
+      setCreateContent('')
+      setCreateOverwrite(false)
+      setCreateOpen(false)
+      await refresh()
+    } catch (cause) {
+      if (isCurrent()) setError(errorMessage(cause))
+    } finally {
+      if (isCurrent()) setCreateBusy(false)
+    }
+  }
+
   const onDrop = (event: DragEvent<HTMLDivElement>): void => {
     event.preventDefault()
     setDragging(false)
@@ -288,6 +353,14 @@ function SkillsSettingsContent({ source, projectRoot }: { source: number; projec
 
   return (
     <div className="settings-view settings-view--skills">
+      <div className="skills-page-header">
+        <div>
+          <h2>技能</h2>
+          <p>管理项目和全局技能，并在对话中按需启用。</p>
+        </div>
+        <span className="skills-page-header__count" aria-live="polite">{skills.length} 个技能</span>
+      </div>
+
       <SettingsGroup title="技能层级">
         <SettingsRow label="导入到" description="项目层仅对当前工作区生效，全局层可供其他工作区使用">
           <Select
@@ -317,7 +390,23 @@ function SkillsSettingsContent({ source, projectRoot }: { source: number; projec
         </SettingsRow>
       </SettingsGroup>
 
-      <SettingsGroup title="导入技能" footer="支持 ZIP、TAR、TGZ、GZ 压缩包及单个 SKILL.md；压缩包必须包含带 frontmatter 的 SKILL.md。">
+      <SettingsGroup title="创建技能" footer="可以直接创建一个技能正文；名称会自动规范化为安全目录名，描述可留空。">
+        <SettingsContent className="skills-create-content">
+          <div className="skills-create-toolbar">
+            <span className="skills-create-hint">不需要先准备压缩包，创建后会立即出现在技能列表。</span>
+            <button type="button" className="btn btn--primary" disabled={busy || createBusy} onClick={() => setCreateOpen(value => !value)}>{createOpen ? '收起创建表单' : '直接创建技能'}</button>
+          </div>
+          {createOpen ? <div className="skills-create-form">
+            <label className="skills-create-field"><span>名称</span><input className="field__input" value={createName} disabled={createBusy || busy} onChange={event => setCreateName(event.target.value)} placeholder="例如 release-notes" aria-label="新技能名称" /></label>
+            <label className="skills-create-field"><span>描述 <em>可选</em></span><input className="field__input" value={createDescription} disabled={createBusy || busy} onChange={event => setCreateDescription(event.target.value)} placeholder="技能用途和适用场景" aria-label="新技能描述" /></label>
+            <label className="skills-create-field skills-create-field--content"><span>技能正文</span><textarea className="field__input" value={createContent} disabled={createBusy || busy} onChange={event => setCreateContent(event.target.value)} placeholder="输入技能正文；可以是普通 Markdown，不要求 frontmatter" aria-label="新技能正文" rows={9} /></label>
+            <label className="skills-create-overwrite"><input type="checkbox" checked={createOverwrite} disabled={createBusy || busy} onChange={event => setCreateOverwrite(event.target.checked)} /> 已存在时覆盖并备份旧版本</label>
+            <div className="skills-create-actions"><button type="button" className="btn btn--primary" disabled={!createName.trim() || !createContent.trim() || createBusy || busy} onClick={() => void createSkill()}>{createBusy ? '创建中…' : '创建技能'}</button><button type="button" className="btn" disabled={createBusy || busy} onClick={() => setCreateOpen(false)}>取消</button></div>
+          </div> : null}
+        </SettingsContent>
+      </SettingsGroup>
+
+      <SettingsGroup title="导入技能" footer="支持 ZIP、TAR、TGZ、GZ 压缩包及单个 SKILL.md；正文可以没有完整 frontmatter，系统会从目录名或文件名推断技能名称。">
         <SettingsContent>
           <div
             className={`skills-import-drop${dragging ? ' is-dragging' : ''}`}
@@ -349,10 +438,10 @@ function SkillsSettingsContent({ source, projectRoot }: { source: number; projec
           </div>
           {skills.map((skill) => (
             <div className={`skills-card${skill.enabled ? '' : ' is-disabled'}`} key={`${skill.scope}:${skill.name}`}>
-              <button type="button" className="skills-card__main" onClick={() => void showDetail(skill.name)}>
+              <button type="button" className="skills-card__main" onClick={() => void showDetail(skill)}>
                 <strong>{skill.name}</strong>
                 <span>{skill.description}</span>
-                <small>{skill.scope === 'global' ? '全局层' : '项目层'}{skill.enabled ? '' : ' · 已停用'}</small>
+                <small><i className="skills-scope-badge">{skill.scope === 'global' ? '全局层' : '项目层'}</i>{skill.enabled ? '已启用' : '已停用'}</small>
               </button>
               <Toggle checked={skill.enabled} onChange={(enabled) => void setEnabled(skill, enabled)} label={`${skill.name} 启用`} disabled={busy} />
               <button type="button" className="btn btn--danger-ghost" disabled={busy} onClick={() => void remove(skill)}>删除</button>

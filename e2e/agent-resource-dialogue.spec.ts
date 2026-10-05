@@ -166,6 +166,23 @@ test.describe.serial('真实 Agent 资源对话闭环', () => {
     await item.click()
     await expect(picker).toContainText('知识库：1 个')
     expect(await page.evaluate(id => Object.values(localStorage).some(value => value.includes(id)), kbId)).toBe(true)
+
+    // Slash resource selection is session-scoped and represented by one binding
+    // chip. The protocol token is consumed rather than left as duplicate prompt
+    // text; removing and re-adding the chip must stay in sync with the composer.
+    const composer = page.locator('.chat__input')
+    await composer.click(); await composer.type('/mcp')
+    const resources = page.getByRole('listbox', { name: '选择 MCP、技能或知识库', exact: true })
+    await expect(resources).toBeVisible()
+    await resources.getByRole('option').filter({ hasText: 'Fixture MCP' }).click()
+    await expect(page.locator('.resource-binding-chip.is-mcp')).toContainText('fixture-mcp')
+    await expect(composer).not.toContainText('/mcp:fixture-mcp')
+    await page.locator('.resource-binding-chip.is-mcp').click()
+    await expect(page.locator('.resource-binding-chip.is-mcp')).toHaveCount(0)
+    await composer.click(); await composer.type('/mcp')
+    await resources.getByRole('option').filter({ hasText: 'Fixture MCP' }).click()
+    await expect(page.locator('.resource-binding-chip.is-mcp')).toContainText('fixture-mcp')
+
     await send('请使用技能和 MCP，并引用 RAG_FIXTURE_TOKEN [agent-resource]')
     await expect(page.locator('.message--assistant')).toContainText('AGENT_DIALOGUE_OK', { timeout: 90_000 })
     expect(providerErrors).toEqual([]); expect(ragSeen).toBe(true); expect(mcpToolName).toBeTruthy(); expect(providerRequests).toBe(3)

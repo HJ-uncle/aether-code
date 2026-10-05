@@ -6,6 +6,16 @@
 .knowledge-toolbar__base { margin-top: 12px; color: var(--fg-muted); font-size: 12px; }
 .knowledge-toolbar__base select { min-width: 220px; }
 .knowledge-upload__fields { align-items: stretch; flex-direction: column; }
+.knowledge-file-drop { display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 76px; padding: 16px; border: 1px dashed var(--border-strong, var(--border)); border-radius: var(--radius); background: var(--bg-inset); cursor: pointer; transition: border-color .15s, background .15s; }
+.knowledge-file-drop:hover, .knowledge-file-drop:focus-within { border-color: var(--accent); background: var(--bg-hover, var(--bg-inset)); }
+.knowledge-file-drop__title { color: var(--fg-strong); font-size: 12px; font-weight: 600; }
+.knowledge-file-drop__hint { color: var(--fg-muted); font-size: 11px; }
+.knowledge-file-drop__button { flex: none; }
+.knowledge-file-drop__selected { min-width: 0; overflow: hidden; color: var(--accent); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.knowledge-file-input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.knowledge-formats { color: var(--fg-muted); font-size: 11px; }
+.knowledge-formats summary { cursor: pointer; color: var(--fg); }
+.knowledge-formats p { margin: 8px 0 0; line-height: 1.5; }
 .knowledge-upload__textarea { width: 100%; min-height: 130px; resize: vertical; }
 .knowledge-upload__fields .btn { align-self: flex-start; }
 .knowledge-documents { border-top: 1px solid var(--border); }
@@ -14,6 +24,10 @@
 .knowledge-document strong { color: var(--fg-strong); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .knowledge-document span, .knowledge-meta, .knowledge-empty { color: var(--fg-muted); font-size: 11px; }
 .knowledge-empty { padding: 13px 18px; }
+.knowledge-document-summary { align-items: center; justify-content: space-between; }
+.knowledge-document-summary > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.knowledge-document-summary strong { color: var(--fg); font-size: 12px; }
+.knowledge-document-summary span { color: var(--fg-muted); font-size: 11px; }
 .knowledge-search__bar .field__input { flex: 1 1 240px; }
 .knowledge-results { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 .knowledge-result { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-inset); }
@@ -31,4 +45,26 @@
 .knowledge-document-detail__body > div { display: flex; flex-direction: column; gap: 3px; }
 .knowledge-document-detail__body span { color: var(--fg-muted); font-size: 11px; }
 .knowledge-document-detail pre { max-height: 260px; margin: 0; overflow: auto; padding: 9px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--fg); font: inherit; font-size: 11px; line-height: 1.45; white-space: pre-wrap; }
+
+@container (max-width: 620px) {
+  .knowledge-document { align-items: flex-start; flex-direction: column; }
+  .knowledge-document__actions { width: 100%; }
+  .knowledge-toolbar__fields, .knowledge-toolbar__base { align-items: stretch; flex-direction: column; }
+  /* The desktop fields use flex-basis values to share one horizontal row.
+     When the row becomes a column those bases are heights, which stretches
+     native inputs into oversized blocks. Reset the flex sizing for the
+     narrow layout and let the controls keep their normal control height. */
+  /* The desktop first/second field selectors are more specific than the
+     generic rule above, so reset those bases explicitly when stacking. */
+  .knowledge-toolbar__fields .field__input,
+  .knowledge-toolbar__fields .field__input:first-child,
+  .knowledge-toolbar__fields .field__input:nth-child(2) {
+    flex: 0 0 auto;
+    width: 100%;
+  }
+  .knowledge-toolbar__fields .btn { align-self: stretch; }
+  .knowledge-toolbar__base select { min-width: 0; width: 100%; }
+  .knowledge-file-drop { align-items: flex-start; flex-direction: column; }
+  .knowledge-document-summary { align-items: flex-start; }
+}
 

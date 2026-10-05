@@ -44,7 +44,8 @@ import { useAttachments, shouldAttachPastedText, createPastedTextFile } from './
 import { readFile } from '@renderer/core/workspace/fs-client'
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
 import { Dialog } from '@renderer/workbench/Dialog'
-import { getKnowledgeBaseBindingIds } from '@renderer/core/engine/knowledge'
+import { getKnowledgeBaseBindingIds, saveKnowledgeBinding } from '@renderer/core/engine/knowledge'
+import { ResourcePicker, type ResourceItem } from './ResourcePicker'
 
 /** 上下文窗口估算基数：引擎未下发各模型窗口上限，按常见的 200k 估算占比 */
 const CONTEXT_WINDOW_FALLBACK = 200_000
@@ -53,6 +54,18 @@ const CONTEXT_WINDOW_FALLBACK = 200_000
 const MESSAGE_PAGE_SIZE = 300
 /** 距顶多少 px 内触发加载更早消息 */
 const LOAD_EARLIER_PX = 120
+
+type ComposerResources = { skills: string[]; mcpServers: string[]; knowledgeBases: string[] }
+function resourceBindingKey(sessionId: string, source: string): string { return `aether:composer-resources:${source || 'embedded'}:${sessionId}` }
+function loadComposerResources(sessionId: string, source: string): ComposerResources {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(resourceBindingKey(sessionId, source)) || '{}') as Partial<ComposerResources>
+    return { skills: Array.isArray(parsed.skills) ? parsed.skills.filter(v => typeof v === 'string') : [], mcpServers: Array.isArray(parsed.mcpServers) ? parsed.mcpServers.filter(v => typeof v === 'string') : [], knowledgeBases: Array.isArray(parsed.knowledgeBases) ? parsed.knowledgeBases.filter(v => typeof v === 'string') : [] }
+  } catch { return { skills: [], mcpServers: [], knowledgeBases: [] } }
+}
+function saveComposerResources(sessionId: string, source: string, value: ComposerResources): void {
+  try { localStorage.setItem(resourceBindingKey(sessionId, source), JSON.stringify(value)) } catch { /* private browsing */ }
+}
 
 /** 按工作区相对路径读 base64 data URL（图片缩略图 / 放大查看共用） */
 function useAttachmentImageSrc(root: string | null, file: ChatAttachment): string | null {
@@ -277,6 +290,13 @@ export function ChatView(): JSX.Element {
   const inputRef = useRef<MentionInputHandle>(null)
   /** @ 触发的内联补全关键词；null 表示未触发（光标不在 @ 段内） */
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
+  /** / 资源菜单触发的关键词；选择后绑定到本轮会话并显示为资源 chip。 */
+  const [resourceQuery, setResourceQuery] = useState<string | null>(null)
+  const [composerResources, setComposerResources] = useState<ComposerResources>({ skills: [], mcpServers: [], knowledgeBases: [] })
+  /** Last input snapshot used to detect a user deleting a /resource token manually. */
+  const resourceTextRef = useRef('')
+  /** Clearing the editor after send must not clear the session's resource bindings. */
+  const suppressResourceReconcileRef = useRef(false)
   /** 「+」菜单里手动打开的工作空间选择面板（与 @ 补全共用 FileRefPalette） */
   const [manualPalette, setManualPalette] = useState(false)
   /** 「+」按钮弹出的附件/引用菜单（视口坐标） */
@@ -309,6 +329,7 @@ export function ChatView(): JSX.Element {
       if (polished && polished !== text) {
         const draft = preserveMentions(polished, mentionsRef.current)
         mentionsRef.current = draft.mentions
+        resourceTextRef.current = draft.text
         inputRef.current?.setDraft(draft.text, draft.mentions)
         setInput(draft.text)
         scheduleDraftSave(draft.text)
@@ -331,6 +352,9 @@ export function ChatView(): JSX.Element {
     setAttachmentDragging(false)
     mentionsRef.current = []
     setMentionQuery(null)
+    setResourceQuery(null)
+    setComposerResources({ skills: [], mcpServers: [], knowledgeBases: [] })
+    resourceTextRef.current = ''
     setManualPalette(false)
     setAttachMenu(null)
     setPreviewImage(null)
@@ -429,6 +453,85 @@ export function ChatView(): JSX.Element {
   const sourceSessionKey = JSON.stringify([connectionKey, sourceEpoch, sessionId])
   const displayedSessionRef = useRef(sourceSessionKey)
   useLayoutEffect(() => { displayedSessionRef.current = sourceSessionKey }, [sourceSessionKey])
+
+  useEffect(() => {
+    if (!sessionId) return
+    const stored = loadComposerResources(sessionId, storageSource)
+    // KnowledgePicker is the canonical KB binding UI; merge its selection into the
+    // slash resource state so either entry point produces the same request.
+    const knowledgeBases = getKnowledgeBaseBindingIds(sessionId, storageSource)
+    setComposerResources({ ...stored, knowledgeBases: knowledgeBases.length ? knowledgeBases : stored.knowledgeBases })
+    // The input draft is restored by the following effect. Reset this edge detector
+    // here so a session/source switch cannot remove bindings from the new session.
+    resourceTextRef.current = ''
+  }, [sessionId, storageSource, sourceEpoch])
+
+  const updateComposerResources = useCallback((next: ComposerResources): void => {
+    setComposerResources(next)
+    if (sessionId) saveComposerResources(sessionId, storageSource, next)
+  }, [sessionId, storageSource])
+
+  const chooseComposerResource = useCallback((item: ResourceItem): void => {
+    const key = item.kind === 'skill' ? 'skills' : item.kind === 'mcp' ? 'mcpServers' : 'knowledgeBases'
+    const current = item.kind === 'kb' ? getKnowledgeBaseBindingIds(sessionId, storageSource) : composerResources[key]
+    // A binding is session-scoped. Selecting the same row again should focus the
+    // existing chip instead of appending a second raw `/kind:id` token that cannot
+    // be removed independently from the single binding entry.
+    if (current.includes(item.id)) {
+      // The binding already exists (for example, selected through the dedicated
+      // KB picker), but the slash query still needs to be consumed from the draft.
+      suppressResourceReconcileRef.current = true
+      inputRef.current?.completeSlash(`/${item.kind}:${item.id}`)
+      suppressResourceReconcileRef.current = false
+      inputRef.current?.focus()
+      setResourceQuery(null)
+      return
+    }
+    const next = current.includes(item.id) ? current : [...current, item.id]
+    updateComposerResources({ ...composerResources, [key]: next })
+    if (item.kind === 'kb' && sessionId) saveKnowledgeBinding(sessionId, next, storageSource)
+    suppressResourceReconcileRef.current = true
+    inputRef.current?.completeSlash(`/${item.kind}:${item.id}`)
+    suppressResourceReconcileRef.current = false
+    setResourceQuery(null)
+  }, [composerResources, sessionId, storageSource, updateComposerResources])
+
+  /** Remove bindings whose slash token the user deleted from the draft. */
+  const reconcileComposerResources = useCallback((text: string): void => {
+    const previous = resourceTextRef.current
+    resourceTextRef.current = text
+    if (suppressResourceReconcileRef.current || !previous || !sessionId) return
+    const removed: Array<{ kind: 'skill' | 'mcp' | 'kb'; id: string }> = []
+    const inspect = (kind: 'skill' | 'mcp' | 'kb', ids: readonly string[]): void => {
+      for (const id of ids) {
+        const token = `/${kind}:${id}`
+        if (previous.includes(token) && !text.includes(token)) removed.push({ kind, id })
+      }
+    }
+    inspect('skill', composerResources.skills)
+    inspect('mcp', composerResources.mcpServers)
+    inspect('kb', composerResources.knowledgeBases)
+    if (!removed.length) return
+    setComposerResources(current => {
+      let next = current
+      for (const { kind, id } of removed) {
+        const key = kind === 'skill' ? 'skills' : kind === 'mcp' ? 'mcpServers' : 'knowledgeBases'
+        const values = next[key].filter(value => value !== id)
+        if (values !== next[key]) next = { ...next, [key]: values }
+        if (kind === 'kb') saveKnowledgeBinding(sessionId, values, storageSource)
+      }
+      saveComposerResources(sessionId, storageSource, next)
+      return next
+    })
+  }, [composerResources.knowledgeBases, composerResources.mcpServers, composerResources.skills, sessionId, storageSource])
+
+  const removeComposerResource = useCallback((kind: 'skill' | 'mcp' | 'kb', id: string): void => {
+    const key = kind === 'skill' ? 'skills' : kind === 'mcp' ? 'mcpServers' : 'knowledgeBases'
+    const next = composerResources[key].filter(item => item !== id)
+    updateComposerResources({ ...composerResources, [key]: next })
+    inputRef.current?.removeTextToken(`/${kind}:${id}`)
+    if (kind === 'kb') saveKnowledgeBinding(sessionId, next, storageSource)
+  }, [composerResources, sessionId, storageSource, updateComposerResources])
 
   // 切换会话时重置分页窗口（sessionId 声明之后，依赖其值）
   useEffect(() => {
@@ -634,6 +737,8 @@ export function ChatView(): JSX.Element {
       agentId: settings.lastAgentId || undefined,
       model: modelId || undefined,
       knowledgeBases: getKnowledgeBaseBindingIds(sessionId, storageSource),
+      skills: composerResources.skills,
+      mcpServers: composerResources.mcpServers,
       // 按用途指派：子代理 / 轻任务模型（空 = 跟随主模型，引擎侧回退）
       subagentModel: settings.subagentModelId || undefined,
       utilityModel: settings.utilityModelId || undefined,
@@ -641,10 +746,13 @@ export function ChatView(): JSX.Element {
       workspacePaths: remoteReadOnly ? [] : currentWorkspacePaths(),
       thinkingMode: resolveThinkingMode(settings.thinkingMode)
     }),
-    [modelId, remoteReadOnly, sessionId, storageSource, settings.lastAgentId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode]
+    [modelId, remoteReadOnly, sessionId, storageSource, composerResources, settings.lastAgentId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode]
   )
 
   const submit = useCallback(() => {
+    // When the slash palette is open, Enter belongs to palette selection;
+    // ResourcePicker's document listener consumes it after this guard.
+    if (resourceQuery !== null) return
     const text = input.trim()
     // 允许「只发附件」：丢张截图直接问，是视觉模型的常见用法
     const files = remoteReadOnly ? [] : attach.attachments
@@ -653,7 +761,12 @@ export function ChatView(): JSX.Element {
     const message = buildMentionMessage(text, remoteReadOnly ? [] : mentionsRef.current)
     setInput('')
     mentionsRef.current = []
+    // Clearing the editor after a send is not a user deletion. Keep the
+    // session-scoped resource bindings and only reset the edge detector.
+    suppressResourceReconcileRef.current = true
     inputRef.current?.clear()
+    suppressResourceReconcileRef.current = false
+    resourceTextRef.current = ''
     attach.clear()
     // 发送成功后该会话草稿即作废
     window.clearTimeout(draftTimerRef.current)
@@ -670,7 +783,7 @@ export function ChatView(): JSX.Element {
       attachments: files.length > 0 ? files : undefined
     })
     scrollToBottom(true)
-  }, [attach, buildSendOptions, input, canExecute, remoteReadOnly, sourceEpoch, storageSource, send, sessionId, resumeFollowBottom, scrollToBottom])
+  }, [attach, buildSendOptions, input, canExecute, remoteReadOnly, sourceEpoch, storageSource, send, sessionId, resumeFollowBottom, scrollToBottom, resourceQuery])
 
   /** 托盘的「发送」：空闲时按当前模式（逐条/合并）立即发出队列 */
   const flushQueueFromTray = useCallback(() => {
@@ -805,6 +918,8 @@ export function ChatView(): JSX.Element {
           agentId: settings.lastAgentId || undefined,
           model: modelId || undefined,
           knowledgeBases: getKnowledgeBaseBindingIds(sessionId, storageSource),
+          skills: composerResources.skills,
+          mcpServers: composerResources.mcpServers,
           subagentModel: settings.subagentModelId || undefined,
           utilityModel: settings.utilityModelId || undefined,
           workspacePaths: currentWorkspacePaths(),
@@ -812,7 +927,7 @@ export function ChatView(): JSX.Element {
         }).catch(showError)
       })
     },
-    [canExecute, remoteReadOnly, sourceEpoch, messages, modelId, retryFrom, sessionId, storageSource, settings.lastAgentId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode, showError]
+    [canExecute, remoteReadOnly, sourceEpoch, messages, modelId, retryFrom, sessionId, storageSource, composerResources, settings.lastAgentId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode, showError]
   )
 
   const deleteTurnById = useCallback(
@@ -840,6 +955,7 @@ export function ChatView(): JSX.Element {
   const refillFromMessage = useCallback((message: ChatMessage) => {
     const draft = userMessageDraft(message.content)
     mentionsRef.current = draft.mentions
+    resourceTextRef.current = draft.text
     inputRef.current?.setDraft(draft.text, draft.mentions)
     setInput(draft.text)
     saveChatDraft(sessionId, draft.text, storageSource, draft.mentions)
@@ -865,6 +981,7 @@ export function ChatView(): JSX.Element {
             saveChatDraft(sessionId, draft.text, storageSource, draft.mentions)
             if (displayedSessionRef.current !== sourceSessionKey) return
             mentionsRef.current = draft.mentions
+            resourceTextRef.current = draft.text
             inputRef.current?.setDraft(draft.text, draft.mentions)
             setInput(draft.text)
           })
@@ -1293,15 +1410,24 @@ export function ChatView(): JSX.Element {
             </div>
           ) : null}
 
+          {(composerResources.skills.length + composerResources.mcpServers.length + composerResources.knowledgeBases.length) > 0 ? (
+            <div className="resource-binding-strip" aria-label="本轮对话资源">
+              {composerResources.skills.map(id => <button key={`skill:${id}`} type="button" aria-label={`移除技能 ${id}`} className="resource-binding-chip is-skill" title={`移除技能 ${id}`} onClick={() => removeComposerResource('skill', id)}>技能 · {id}<span aria-hidden="true">×</span></button>)}
+              {composerResources.mcpServers.map(id => <button key={`mcp:${id}`} type="button" aria-label={`移除 MCP ${id}`} className="resource-binding-chip is-mcp" title={`移除 MCP ${id}`} onClick={() => removeComposerResource('mcp', id)}>MCP · {id}<span aria-hidden="true">×</span></button>)}
+              {composerResources.knowledgeBases.map(id => <button key={`kb:${id}`} type="button" aria-label={`移除知识库 ${id}`} className="resource-binding-chip is-kb" title={`移除知识库 ${id}`} onClick={() => removeComposerResource('kb', id)}>知识库 · {id}<span aria-hidden="true">×</span></button>)}
+            </div>
+          ) : null}
+
           <MentionInput
             ref={inputRef}
             value={input}
             disabled={!settingsLoaded}
             placeholder={
-              ready && remoteReadOnly ? '输入远端任务，Enter 发送，Shift+Enter 换行' : ready ? '输入消息，Enter 发送，Shift+Enter 换行；@ 引用文件，可拖入或粘贴文件' : '可先准备问题和代码引用，引擎就绪后发送'
+              ready && remoteReadOnly ? '输入远端任务，Enter 发送，Shift+Enter 换行；/ 选择 MCP、技能或知识库' : ready ? '输入消息，Enter 发送，Shift+Enter 换行；@ 引用文件，/ 选择 MCP、技能或知识库' : '可先准备问题和代码引用，引擎就绪后发送'
             }
             onChange={(text, mentions) => {
               mentionsRef.current = mentions
+              reconcileComposerResources(text)
               setInput(text)
               scheduleDraftSave(text)
             }}
@@ -1313,7 +1439,8 @@ export function ChatView(): JSX.Element {
               attach.accept([createPastedTextFile(text)])
               return true
             }}
-            onMentionQuery={setMentionQuery}
+            onMentionQuery={(query) => { setMentionQuery(query); if (query !== null) setResourceQuery(null) }}
+            onSlashQuery={(query) => { setResourceQuery(query); if (query !== null) setMentionQuery(null) }}
           />
           {!remoteReadOnly && canExecute && workspace.root && (mentionQuery !== null || manualPalette) ? (
             <FileRefPalette
@@ -1331,6 +1458,15 @@ export function ChatView(): JSX.Element {
                 setMentionQuery(null)
                 inputRef.current?.focus()
               }}
+            />
+          ) : null}
+          {resourceQuery !== null ? (
+            <ResourcePicker
+              query={resourceQuery}
+              projectPath={remoteReadOnly ? settings.remoteWorkspaceRoot.trim() || undefined : workspace.root || undefined}
+              source={sourceEpoch}
+              onSelect={chooseComposerResource}
+              onClose={() => { setResourceQuery(null); inputRef.current?.focus() }}
             />
           ) : null}
           {attachHint ? <div className="chat__attach-hint">{attachHint}</div> : null}
@@ -1404,7 +1540,29 @@ export function ChatView(): JSX.Element {
             ) : null}
 
             <ComposerOptions sessionId={sessionId} />
-            <KnowledgePicker sessionId={sessionId} source={sourceEpoch} disabled={!canExecute} />
+            <KnowledgePicker
+              sessionId={sessionId}
+              source={sourceEpoch}
+              disabled={!canExecute}
+              selectedIds={composerResources.knowledgeBases}
+              onSelectionChange={(ids) => {
+                const next = { ...composerResources, knowledgeBases: ids }
+                updateComposerResources(next)
+              }}
+            />
+            <button
+              type="button"
+              className={`chat__resource-trigger${resourceQuery !== null ? ' is-active' : ''}`}
+              disabled={!canExecute}
+              title="插入 MCP、技能或知识库（也可输入 / 唤起）"
+              aria-label="选择 MCP、技能或知识库"
+              onClick={() => {
+                inputRef.current?.focus()
+                document.execCommand('insertText', false, '/')
+              }}
+            >
+              <span>/</span><span className="chat__resource-trigger-label">资源</span>
+            </button>
 
             {/* 仅当项目「尚未建索引」时才露出建索引入口；已建索引则不占位（重建走设置页 / 菜单） */}
             {!remoteReadOnly && cgIndex.known && !cgIndex.initialized ? (

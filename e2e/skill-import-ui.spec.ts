@@ -213,6 +213,18 @@ test.describe.serial('技能导入管理真机闭环', () => {
     expect((await listSkills()).find((skill) => skill.name === singleName)?.enabled).toBe(true)
   })
 
+  test('可以直接创建普通 Markdown 技能，不要求先准备 frontmatter 压缩包', async () => {
+    await page.getByRole('button', { name: '直接创建技能', exact: true }).click()
+    await page.getByLabel('新技能名称', { exact: true }).fill('Direct UI Skill')
+    await page.getByLabel('新技能正文', { exact: true }).fill('# Direct UI Skill\n\nDIRECT_CREATE_MARKER')
+    await page.getByRole('button', { name: '创建技能', exact: true }).click()
+    await expect(card('direct-ui-skill')).toBeVisible()
+    const installed = join(workspace, '.aether', 'skills', 'direct-ui-skill', 'SKILL.md')
+    await expect.poll(() => existsSync(installed)).toBe(true)
+    expect(readFileSync(installed, 'utf8')).toContain('DIRECT_CREATE_MARKER')
+    expect((await listSkills()).find((skill) => skill.name === 'direct-ui-skill')?.enabled).toBe(true)
+  })
+
   test('拖拽 ZIP 导入全局层并校验附带文件', async () => {
     await page.getByRole('button', { name: '技能导入层级', exact: true }).click()
     await page.getByRole('menuitem', { name: '全局层', exact: true }).click()
@@ -281,7 +293,8 @@ test.describe.serial('技能导入管理真机闭环', () => {
     for (const [name, directory] of [
       [singleName, join(workspace, '.aether', 'skills', 'imported-skill')],
       [zipName, join(fixture, 'global', 'skills', zipName)],
-      [chunkName, join(workspace, '.aether', 'skills', chunkName)]
+      [chunkName, join(workspace, '.aether', 'skills', chunkName)],
+      ['direct-ui-skill', join(workspace, '.aether', 'skills', 'direct-ui-skill')]
     ]) {
       await card(name).getByRole('button', { name: '删除', exact: true }).click()
       const dialog = page.getByRole('dialog', { name: '删除技能？', exact: true })

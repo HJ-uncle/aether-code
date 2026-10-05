@@ -1,7 +1,9 @@
-import { requestOrThrow } from './client'
+import { requestOrThrow, upload } from './client'
 import { getEngineStorageKey } from './source'
 
 export const MAX_KNOWLEDGE_DOCUMENT_BYTES = 1024 * 1024
+export const MAX_KNOWLEDGE_UPLOAD_BYTES = 2 * 1024 * 1024
+export const KNOWLEDGE_SUPPORTED_FORMATS = '文本/代码：.txt .md .markdown .json .html .htm .xml .svg .csv .ts .tsx .js .jsx .py .go .java .c .cpp .h .hpp .rs .css .scss .less .sh .yaml .yml .toml .ini .lock .log；表格：.xlsx .xls；文档：.docx .doc；PDF：.pdf（扫描件按 OCR 处理）；图片 OCR：.png .jpg .jpeg .gif .webp .bmp .tiff。'
 export function knowledgeDocumentByteLength(value: string): number { return new Blob([value]).size }
 export function validateKnowledgeDocumentText(value: string): void {
   if (!value.trim()) throw new Error('文档正文不能为空')
@@ -78,6 +80,17 @@ export function getKnowledgeDocument(id: string): Promise<KnowledgeDocument> {
 }
 export function uploadKnowledgeDocument(input: KnowledgeDocumentInput): Promise<KnowledgeDocument> {
   return requestOrThrow<KnowledgeDocument>({ method: 'POST', path: '/knowledge/documents', body: input })
+}
+export async function uploadKnowledgeFile(file: File, knowledgeBaseId?: string): Promise<KnowledgeDocument> {
+  const result = await upload<KnowledgeDocument>({
+    path: '/knowledge/documents', fileName: file.name, type: file.type || 'application/octet-stream',
+    data: new Uint8Array(await file.arrayBuffer()), fields: knowledgeBaseId ? { knowledgeBaseId } : undefined
+  })
+  if (!result.ok) throw new Error(result.message || `请求失败（code ${result.code}）`)
+  return result.data as KnowledgeDocument
+}
+export function listKnowledgeFormats(): Promise<{ extensions: string[]; description: string }> {
+  return requestOrThrow<{ extensions: string[]; description: string }>({ method: 'GET', path: '/knowledge/formats' })
 }
 export function updateKnowledgeDocument(id: string, input: Partial<KnowledgeDocumentInput>): Promise<KnowledgeDocument> {
   return requestOrThrow<KnowledgeDocument>({ method: 'PUT', path: '/knowledge/documents/' + encode(id), body: input })

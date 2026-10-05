@@ -140,6 +140,10 @@ export interface SendOptions {
   model?: string
   /** Knowledge-base IDs selected for this session; an empty array explicitly disables RAG. */
   knowledgeBases?: string[]
+  /** Skill IDs explicitly selected from the composer resource menu. */
+  skills?: string[]
+  /** MCP server IDs explicitly selected from the composer resource menu. */
+  mcpServers?: string[]
   /**
    * 绑定的工作区路径。
    *
@@ -737,6 +741,8 @@ export function useChat(): {
         agentId: options.agentId || undefined,
         model: options.model || undefined,
         knowledgeBases: options.knowledgeBases,
+        skills: options.skills,
+        mcpServers: options.mcpServers,
         workspacePaths: !isRemoteEngine() && options.workspacePaths?.length ? options.workspacePaths : undefined,
         // undefined 不参与 JSON 序列化 → 引擎收到「未指定」，按其能力判断
         thinkingMode: options.thinkingMode,

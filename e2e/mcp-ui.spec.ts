@@ -246,6 +246,24 @@ test.describe.serial('MCP 设置真实引擎闭环', () => {
     expect(httpHeaders.some(headers => headers['mcp-session-id'] === 'mcp-ui-session')).toBe(true)
   })
 
+  test('JSON 编辑器可批量导入、读取并保留标准 type 配置', async () => {
+    const jsonServer = {
+      'json-ui': {
+        type: 'stdio',
+        name: 'JSON UI',
+        command: process.execPath,
+        args: ['-e', stdioServerScript()],
+        env: {}
+      }
+    }
+    await page.getByLabel('MCP JSON 配置', { exact: true }).fill(JSON.stringify({ mcpServers: jsonServer }, null, 2))
+    await page.getByRole('button', { name: '应用 JSON', exact: true }).click()
+    await expect(serverBlock('json-ui')).toBeVisible()
+    await expect.poll(() => JSON.parse(readFileSync(projectConfig(), 'utf8')).mcpServers['json-ui'].transportType).toBe('stdio')
+    await page.getByRole('button', { name: '读取当前配置', exact: true }).click()
+    await expect(page.getByLabel('MCP JSON 配置', { exact: true })).toContainText('json-ui')
+  })
+
   test('错误配置可恢复，删除项目和全局记录并验证磁盘清理', async () => {
     await page.getByRole('button', { name: '新增服务器', exact: true }).click()
     await page.getByLabel('MCP id', { exact: true }).fill('ui-invalid')
@@ -272,7 +290,7 @@ test.describe.serial('MCP 设置真实引擎闭环', () => {
     await expect(serverBlock('ui-invalid').getByRole('switch', { name: 'echo 启用', exact: true })).toBeVisible()
     await expect(page.locator('.settings-view--mcp [role="alert"]')).toHaveCount(0)
 
-    for (const id of ['ui-invalid', 'ui-http', 'ui-global', 'ui-stdio']) {
+    for (const id of ['ui-invalid', 'ui-http', 'json-ui', 'ui-global', 'ui-stdio']) {
       const block = serverBlock(id)
       await block.getByRole('button', { name: '删除', exact: true }).click()
       await confirmDelete()

@@ -8,11 +8,15 @@ import {
   listKnowledgeDocuments,
   knowledgeDocumentByteLength,
   MAX_KNOWLEDGE_DOCUMENT_BYTES,
+  MAX_KNOWLEDGE_UPLOAD_BYTES,
   validateKnowledgeDocumentText,
   searchKnowledge,
   updateKnowledgeBase,
   updateKnowledgeDocument,
   uploadKnowledgeDocument,
+  uploadKnowledgeFile,
+  listKnowledgeFormats,
+  KNOWLEDGE_SUPPORTED_FORMATS,
   type KnowledgeBase,
   type KnowledgeDocument,
   type KnowledgeSearchResult
@@ -47,6 +51,7 @@ function KnowledgeSettingsContent({ source }: { source: number }): JSX.Element {
   const [description, setDescription] = useState('')
   const [filename, setFilename] = useState('notes.txt')
   const [content, setContent] = useState('')
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<KnowledgeSearchResult[]>([])
   const [detailDocument, setDetailDocument] = useState<KnowledgeDocument | null>(null)
@@ -56,6 +61,13 @@ function KnowledgeSettingsContent({ source }: { source: number }): JSX.Element {
   const [busy, setBusy] = useState<'base' | 'document' | 'search' | null>(null)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [supportedFormats, setSupportedFormats] = useState(KNOWLEDGE_SUPPORTED_FORMATS)
+  const [supportedExtensions, setSupportedExtensions] = useState<string[]>([])
+  // Keep an invalid file selection from falling through to an older textarea
+  // value. The error is cleared as soon as the user edits or selects a valid
+  // replacement.
+  const [fileError, setFileError] = useState('')
+  const [refreshing, setRefreshing] = useState(false)
 
   const refreshSequence = useRef(0)
   const detailRequest = useRef(0)
@@ -66,19 +78,36 @@ function KnowledgeSettingsContent({ source }: { source: number }): JSX.Element {
     if (!isCurrent()) return
     const sequence = ++refreshSequence.current
     const sourceAtStart = getEngineSource()
-    const [nextBases, nextDocs] = await Promise.all([
-      listKnowledgeBases(),
-      listKnowledgeDocuments(baseId || undefined)
-    ])
-    if (!isCurrent() || sequence !== refreshSequence.current || sourceAtStart !== getEngineSource()) return
-    setBases(nextBases)
-    setDocuments(nextDocs)
-    if (baseId && !nextBases.some(base => base.id === baseId)) setSelectedBase('')
+    setRefreshing(true)
+    try {
+      const [nextBases, nextDocs] = await Promise.all([
+        listKnowledgeBases(),
+        listKnowledgeDocuments(baseId || undefined)
+      ])
+      if (!isCurrent() || sequence !== refreshSequence.current || sourceAtStart !== getEngineSource()) return
+      setBases(nextBases)
+      setDocuments(nextDocs)
+      if (baseId && !nextBases.some(base => base.id === baseId)) {
+        setSelectedBase('')
+        setDetailDocument(null)
+        setEditingDocumentId('')
+      }
+    } finally {
+      if (isCurrent() && sequence === refreshSequence.current && sourceAtStart === getEngineSource()) setRefreshing(false)
+    }
   }, [isCurrent])
 
   useEffect(() => {
     mounted.current = true
     void refresh('').catch((reason: unknown) => { if (isCurrent()) setError(reason instanceof Error ? reason.message : String(reason)) })
+    // Keep the format hint in sync with the active engine. Older remote engines
+    // may not expose this endpoint, so the built-in list remains a safe fallback.
+    void listKnowledgeFormats().then(value => {
+      if (!isCurrent() || !value || !Array.isArray(value.extensions)) return
+      const extensions = value.extensions.filter((item): item is string => typeof item === 'string' && item.startsWith('.'))
+      if (extensions.length) setSupportedExtensions(extensions)
+      if (typeof value.description === 'string' && value.description.trim()) setSupportedFormats(value.description)
+    }).catch(() => { /* endpoint is optional for older engines */ })
     return () => {
       mounted.current = false
       refreshSequence.current += 1
@@ -90,6 +119,7 @@ function KnowledgeSettingsContent({ source }: { source: number }): JSX.Element {
   const selected = useMemo(() => bases.find(base => base.id === selectedBase) || null, [bases, selectedBase])
   const contentTooLarge = documentBytes(content) > MAX_DOCUMENT_BYTES
   const editContentTooLarge = documentBytes(editContent) > MAX_DOCUMENT_BYTES
+  const documentContentEditable = detailDocument?.contentExact !== false
   const run = async (operation: () => Promise<void>): Promise<void> => {
     if (!isCurrent()) return
     setError('')
@@ -159,29 +189,50 @@ function KnowledgeSettingsContent({ source }: { source: number }): JSX.Element {
   const readFile = async (file: File): Promise<void> => {
     const requestId = ++fileRequest.current
     setError('')
+    setFileError('')
     try {
-      if (file.size > MAX_DOCUMENT_BYTES) throw new Error('文档正文不能超过 1 MiB')
+      if (file.size > MAX_KNOWLEDGE_UPLOAD_BYTES) throw new Error('上传文件不能超过 2 MiB')
       const text = await file.text()
       if (!isCurrent() || requestId !== fileRequest.current) return
+      setSelectedFile(file)
+      // Binary formats are extracted by the engine during multipart upload;
+      // text files remain editable in the preview area.
+      const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase()
+      const binary = ['.xlsx', '.xls', '.docx', '.doc', '.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff'].includes(ext)
+      if (binary) {
+        setFilename(file.name)
+        setContent('')
+        setNotice('已选择文件，上传时由引擎提取文本并建立索引')
+        return
+      }
       validateKnowledgeDocumentText(text)
       setFilename(file.name)
       setContent(text)
       setNotice('已读取文件，点击上传并索引')
-    } catch (reason: unknown) { if (isCurrent() && requestId === fileRequest.current) setError(reason instanceof Error ? reason.message : String(reason)) }
+    } catch (reason: unknown) {
+      if (isCurrent() && requestId === fileRequest.current) {
+        // Do not leave an invalid text file armed for upload after validation
+        // fails; otherwise the upload button would bypass the text-size guard.
+        setSelectedFile(null)
+        const message = reason instanceof Error ? reason.message : String(reason)
+        setFileError(message)
+        setError(message)
+      }
+    }
   }
 
   const upload = async (): Promise<void> => {
-    if (!filename.trim() || busy) return
-    try { validateKnowledgeDocumentText(content) } catch (reason: unknown) { setError(reason instanceof Error ? reason.message : String(reason)); return }
+    if (!filename.trim() || busy || fileError) return
+    if (!selectedFile) {
+      try { validateKnowledgeDocumentText(content) } catch (reason: unknown) { setError(reason instanceof Error ? reason.message : String(reason)); return }
+    }
     setBusy('document')
     await run(async () => {
-      await uploadKnowledgeDocument({
-        filename: filename.trim(),
-        content,
-        ...(selectedBase ? { knowledgeBaseId: selectedBase } : {})
-      })
+      if (selectedFile) await uploadKnowledgeFile(selectedFile, selectedBase || undefined)
+      else await uploadKnowledgeDocument({ filename: filename.trim(), content, ...(selectedBase ? { knowledgeBaseId: selectedBase } : {}) })
       if (!isCurrent()) return
       setContent('')
+      setSelectedFile(null)
       await refresh(selectedBase)
       if (isCurrent()) setNotice('文档已加入索引')
     })
@@ -230,10 +281,13 @@ function KnowledgeSettingsContent({ source }: { source: number }): JSX.Element {
 
   const saveDocumentEdit = async (): Promise<void> => {
     if (!editingDocumentId || !editFilename.trim() || busy) return
-    try { validateKnowledgeDocumentText(editContent) } catch (reason: unknown) { setError(reason instanceof Error ? reason.message : String(reason)); return }
+    const contentEditable = documentContentEditable
+    if (contentEditable) {
+      try { validateKnowledgeDocumentText(editContent) } catch (reason: unknown) { setError(reason instanceof Error ? reason.message : String(reason)); return }
+    }
     setBusy('document')
     await run(async () => {
-      const updated = await updateKnowledgeDocument(editingDocumentId, { filename: editFilename.trim(), content: editContent })
+      const updated = await updateKnowledgeDocument(editingDocumentId, { filename: editFilename.trim(), ...(contentEditable ? { content: editContent } : {}) })
       if (!isCurrent()) return
       setDetailDocument(updated)
       setEditingDocumentId('')
@@ -264,7 +318,7 @@ function KnowledgeSettingsContent({ source }: { source: number }): JSX.Element {
           </div>
           <div className="knowledge-toolbar__base">
             <label htmlFor="knowledge-base-select">当前知识库</label>
-            <select id="knowledge-base-select" className="field__input" value={selectedBase} onChange={event => { setSelectedBase(event.target.value); setDetailDocument(null); setEditingDocumentId(''); void refresh(event.target.value) }}>
+            <select id="knowledge-base-select" className="field__input" value={selectedBase} onChange={event => { const next = event.target.value; setSelectedBase(next); setDetailDocument(null); setEditingDocumentId(''); setResults([]); void refresh(next) }}>
               <option value="">全部知识库</option>
               {bases.map(base => <option key={base.id} value={base.id}>{base.name}</option>)}
             </select>
@@ -285,12 +339,23 @@ function KnowledgeSettingsContent({ source }: { source: number }): JSX.Element {
         <SettingsContent className="knowledge-upload">
           <div className="knowledge-upload__fields">
             <input className="field__input" value={filename} onChange={event => setFilename(event.target.value)} placeholder="文件名" aria-label="文档文件名" />
-            <input type="file" accept=".txt,.md,.markdown,.csv,.json,.html,.xml" onChange={event => { const file = event.target.files?.[0]; if (file) void readFile(file) }} aria-label="选择文档文件" />
-            <textarea className="field__input knowledge-upload__textarea" value={content} onChange={event => setContent(event.target.value)} placeholder="粘贴文档文本" aria-label="文档内容" rows={6} />
+            <label className="knowledge-file-drop" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); const file = event.dataTransfer.files?.[0]; if (file) void readFile(file) }}>
+              <span className="knowledge-file-drop__title">拖拽文件到这里</span>
+              <span className="knowledge-file-drop__hint">或</span>
+              <span role="button" tabIndex={0} className="btn knowledge-file-drop__button" onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.currentTarget.closest('label')?.querySelector<HTMLInputElement>('input[type="file"]')?.click() } }}>选择文件</span>
+              {selectedFile ? <span className="knowledge-file-drop__selected" title={selectedFile.name}>已选择：{selectedFile.name}</span> : null}
+              <input className="knowledge-file-input" type="file" accept={supportedExtensions.length ? supportedExtensions.join(',') : '.txt,.md,.markdown,.json,.html,.htm,.xml,.svg,.csv,.ts,.tsx,.js,.jsx,.py,.go,.java,.c,.cpp,.h,.hpp,.rs,.css,.scss,.less,.sh,.yaml,.yml,.toml,.ini,.lock,.log,.xlsx,.xls,.docx,.doc,.pdf,.png,.jpg,.jpeg,.gif,.webp,.bmp,.tiff'} onChange={event => { const file = event.target.files?.[0]; event.currentTarget.value = ''; if (file) void readFile(file) }} aria-label="选择文档文件" />
+            </label>
+            <details className="knowledge-formats"><summary>支持的文件格式</summary><p>{supportedFormats}</p></details>
+            <textarea className="field__input knowledge-upload__textarea" value={content} onChange={event => { setFileError(''); setSelectedFile(null); setContent(event.target.value) }} placeholder="粘贴文档文本" aria-label="文档内容" rows={6} />
             <div className="knowledge-size-hint">{documentBytes(content)} / {MAX_DOCUMENT_BYTES} bytes</div>
             {contentTooLarge ? <div className="knowledge-validation-error" role="alert">文档正文不能超过 1 MiB</div> : null}
-            <button type="button" className="btn btn--primary" disabled={!filename.trim() || !content.trim() || contentTooLarge || busy !== null} onClick={() => void upload()}>{busy === 'document' ? '索引中…' : '上传并索引'}</button>
+            <button type="button" className="btn btn--primary" disabled={Boolean(fileError) || !filename.trim() || (!content.trim() && !selectedFile) || contentTooLarge || busy !== null} onClick={() => void upload()}>{busy === 'document' ? '索引中…' : '上传并索引'}</button>
           </div>
+        </SettingsContent>
+        <SettingsContent className="knowledge-document-summary">
+          <div><strong>{selected ? `“${selected.name}”中的文档` : '全部知识库文档'}</strong><span>{documents.length} 篇 · {refreshing ? '同步中…' : '已同步'}</span></div>
+          <button type="button" className="btn" disabled={busy !== null || refreshing} onClick={() => void refresh(selectedBase)}>刷新</button>
         </SettingsContent>
         <div className="knowledge-documents" aria-label="知识库文档列表">
           {documents.length === 0 ? <div className="knowledge-empty">暂无文档</div> : documents.map(document => (
@@ -308,10 +373,10 @@ function KnowledgeSettingsContent({ source }: { source: number }): JSX.Element {
           <div className="knowledge-document-detail__heading"><strong>{editingDocumentId ? '编辑文档' : '文档详情'}</strong><button type="button" className="btn" onClick={() => { detailRequest.current += 1; setDetailDocument(null); setEditingDocumentId('') }}>关闭</button></div>
           {editingDocumentId ? <div className="knowledge-edit-form">
             <input className="field__input" value={editFilename} onChange={event => setEditFilename(event.target.value)} aria-label="编辑文档文件名" />
-            <textarea className="field__input knowledge-upload__textarea" value={editContent} onChange={event => setEditContent(event.target.value)} aria-label="编辑文档内容" rows={8} />
+            <textarea className="field__input knowledge-upload__textarea" value={editContent} disabled={!documentContentEditable} onChange={event => setEditContent(event.target.value)} aria-label="编辑文档内容" placeholder={documentContentEditable ? '文档正文' : '此文件未保存原文，仅支持修改文件名'} rows={8} />
             <div className="knowledge-size-hint">{documentBytes(editContent)} / {MAX_DOCUMENT_BYTES} bytes</div>
             {editContentTooLarge ? <div className="knowledge-validation-error" role="alert">文档正文不能超过 1 MiB</div> : null}
-            <div className="knowledge-meta-actions"><button type="button" className="btn btn--primary" disabled={!editFilename.trim() || !editContent.trim() || editContentTooLarge || busy !== null} onClick={() => void saveDocumentEdit()}>{busy === 'document' ? '保存中…' : '保存文档'}</button><button type="button" className="btn" disabled={busy !== null} onClick={() => setEditingDocumentId('')}>取消</button></div>
+            <div className="knowledge-meta-actions"><button type="button" className="btn btn--primary" disabled={!editFilename.trim() || (documentContentEditable && !editContent.trim()) || (documentContentEditable && editContentTooLarge) || busy !== null} onClick={() => void saveDocumentEdit()}>{busy === 'document' ? '保存中…' : '保存文档'}</button><button type="button" className="btn" disabled={busy !== null} onClick={() => setEditingDocumentId('')}>取消</button></div>
           </div> : <div className="knowledge-document-detail__body"><div><strong>{detailDocument.filename}</strong><span>{detailDocument.contentType} · {detailDocument.chunkCount} 个片段 · {detailDocument.contentExact === false ? '原文不可用' : '原文已保存'}</span></div><pre>{detailDocument.content ?? '暂无原文'}</pre><button type="button" className="btn" disabled={busy !== null} onClick={() => { setEditingDocumentId(detailDocument.id); setEditFilename(detailDocument.filename); setEditContent(detailDocument.content ?? '') }}>编辑文档</button></div>}
         </div> : null}
       </SettingsGroup>
