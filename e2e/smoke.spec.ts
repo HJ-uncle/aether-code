@@ -79,6 +79,55 @@ async function ensureExplorerVisible(): Promise<void> {
 const BIG_DIR_SIZE = 400
 
 /**
+ * 把虚拟化树滚到指定路径。
+ *
+ * 资源管理器只把可见窗口挂进 DOM；`.e2e-tmp` 下其它 spec 的临时目录很多时，
+ * 夹具目录可能在首屏之外。测试不能依赖 locator 自动滚动（目标行尚未挂载），
+ * 因此按真实滚动容器的总高度分段前进，直到目标行挂载后再交给 Playwright 断言。
+ */
+async function revealTreeRow(target: string): Promise<void> {
+  const tree = page.locator('.explorer__tree')
+  await tree.evaluate(async (element, targetPath) => {
+    const waitForRender = async (): Promise<void> => {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      )
+    }
+    const hasTarget = (): boolean =>
+      [...element.querySelectorAll<HTMLElement>('.explorer__rows .tree-row')].some(
+        (row) => row.dataset.path === targetPath
+      )
+    if (hasTarget()) {
+      const row = [...element.querySelectorAll<HTMLElement>('.explorer__rows .tree-row')].find(
+        (item) => item.dataset.path === targetPath
+      )!
+      row.scrollIntoView({ block: 'center' })
+      await waitForRender()
+      return
+    }
+    element.scrollTop = 0
+    await waitForRender()
+    for (let attempt = 0; attempt < 240; attempt += 1) {
+      if (hasTarget()) {
+        const row = [...element.querySelectorAll<HTMLElement>('.explorer__rows .tree-row')].find(
+          (item) => item.dataset.path === targetPath
+        )!
+        row.scrollIntoView({ block: 'center' })
+        await waitForRender()
+        return
+      }
+      const bottom = Math.max(0, element.scrollHeight - element.clientHeight)
+      if (element.scrollTop >= bottom) break
+      const previous = element.scrollTop
+      element.scrollTop = Math.min(bottom, previous + Math.max(1, element.clientHeight * 0.8))
+      await waitForRender()
+      if (element.scrollTop <= previous) break
+    }
+  }, target)
+  await expect(page.locator(rowSelector(target))).toBeVisible({ timeout: 15_000 })
+}
+
+/**
  * 确保某个目录处于展开状态。
  *
  * 点一下目录是「切换」而不是「打开」：用例之间共享同一个窗口，
@@ -88,12 +137,10 @@ const BIG_DIR_SIZE = 400
 async function ensureDirExpanded(dir: string): Promise<void> {
   // Fixture paths live below .e2e-tmp/smoke-fixtures. Expand the workspace root
   // and every ancestor first so the requested row is mounted even when a
-  // previous test collapsed the root or an intermediate directory.
+  // previous test scrolled the virtualized tree past it.
   const insideWorkspace =
     dir !== APP_ROOT && (dir.startsWith(APP_ROOT + '\\') || dir.startsWith(APP_ROOT + '/'))
   if (insideWorkspace) {
-    // The root row can be virtualized out after a preceding test scrolled the
-    // tree. Return to the top before locating it.
     await page.locator('.explorer__tree').evaluate((el) => {
       el.scrollTop = 0
     })
@@ -101,13 +148,12 @@ async function ensureDirExpanded(dir: string): Promise<void> {
     const parent = resolve(dir, '..')
     if (parent !== APP_ROOT) await ensureDirExpanded(parent)
   }
+  await revealTreeRow(dir)
   const row = page.locator(rowSelector(dir))
-  await expect(row).toBeVisible({ timeout: 15_000 })
   if ((await row.getAttribute('aria-expanded')) === 'true') return
   await row.click()
   await expect(row).toHaveAttribute('aria-expanded', 'true', { timeout: 15_000 })
 }
-
 function prepareFixtures(): void {
   rmSync(FIXTURE_DIR, { recursive: true, force: true })
   mkdirSync(FIXTURE_DIR, { recursive: true })
@@ -178,6 +224,7 @@ async function restoreFixtureViaApp(opts: {
   const tree = page.locator('.explorer__tree')
 
   for (const path of opts.removePaths ?? []) {
+    await revealTreeRow(path)
     const row = page.locator(rowSelector(path))
     await expect(row).toBeVisible({ timeout: 15_000 })
     await row.click()
@@ -188,6 +235,7 @@ async function restoreFixtureViaApp(opts: {
     await expect(row).toHaveCount(0, { timeout: 15_000 })
   }
 
+  await revealTreeRow(opts.from)
   const source = page.locator(rowSelector(opts.from))
   await expect(source).toBeVisible({ timeout: 15_000 })
   await source.click()
@@ -195,11 +243,13 @@ async function restoreFixtureViaApp(opts: {
   await expect(source).toHaveClass(/is-cut/)
 
   // 落点：根目录那一行。点它把它设为光标行，粘贴才会落在根目录下
+  await revealTreeRow(opts.root)
   const rootRow = page.locator(rowSelector(opts.root))
   await expect(rootRow).toBeVisible({ timeout: 15_000 })
   await rootRow.click()
   await tree.press('Control+v')
 
+  await revealTreeRow(join(opts.root, 'move-a.txt'))
   await expect(page.locator(rowSelector(join(opts.root, 'move-a.txt')))).toBeVisible({
     timeout: 15_000
   })
@@ -306,6 +356,7 @@ test('资源管理器：点击目录可展开', async () => {
 
   // src 是项目里必然存在的目录。注意不能只写 hasText: 'src'：
   // 那会同时匹配到 src-runner 之类的兄弟目录，展开的却是另一个
+  await revealTreeRow(join(APP_ROOT, 'src'))
   const src = page.locator(rowSelector(join(APP_ROOT, 'src')))
   await expect(src).toBeVisible()
   await src.click()
@@ -322,6 +373,7 @@ test('编辑器：打开文件后 Monaco 挂载并显示内容', async () => {
   // 侧边栏可能停在上个用例切过去的视图上，先确保资源管理器可见
   await ensureExplorerVisible()
 
+  await revealTreeRow(join(APP_ROOT, 'package.json'))
   const packageRow = page.locator(rowSelector(join(APP_ROOT, 'package.json')))
   await expect(packageRow).toBeVisible({ timeout: 15_000 })
   await packageRow.click()
@@ -362,7 +414,9 @@ test('安全视图：渲染三种会话模式与引擎侧策略规则', async ()
 
   // 选择后当前 Popover 仍保持打开；重复点击 trigger 会把菜单关掉，
   // 无法验证选中项是否真的带上 active 状态。
-  await expect(page.locator('.composer-options__dd-item[role="menuitem"]', { hasText: '标准模式' })).toHaveClass(/is-active/)
+  await expect(
+    page.locator('.composer-options__dd-item[role="menuitem"]', { hasText: '标准模式' })
+  ).toHaveClass(/is-active/)
   await page.keyboard.press('Escape')
   await expect(page.locator('.composer-options__dd-menu')).toHaveCount(0)
 
@@ -388,15 +442,19 @@ test('安全视图：渲染三种会话模式与引擎侧策略规则', async ()
 
   // 安全页挂载时会重新向引擎 GET 模式，能读到刚才写入的 standard，
   // 才算证明了这一步真的落到引擎（只看界面变化不足为凭）
-  await expect(
-    modeRows.filter({ hasText: '标准模式' }).locator('[role="radio"]')
-  ).toHaveAttribute('aria-checked', 'true')
+  await expect(modeRows.filter({ hasText: '标准模式' }).locator('[role="radio"]')).toHaveAttribute(
+    'aria-checked',
+    'true'
+  )
 
   // 规则来自引擎，内置兜底规则必然存在
   const policyGroup = page.locator('.sg').filter({ hasText: '策略规则' }).first()
   await expect
     .poll(
-      async () => policyGroup.locator('.sg__select-field .select__trigger[title="命中该规则时的动作"]').count(),
+      async () =>
+        policyGroup
+          .locator('.sg__select-field .select__trigger[title="命中该规则时的动作"]')
+          .count(),
       {
         timeout: 30_000
       }
@@ -445,6 +503,7 @@ test('文件排除：设置里的规则即时生效，且重开窗口后仍然�
   await ensureDirExpanded(FIXTURE_DIR)
 
   // 夹具在启动时就被读进缓存，把 *.txt 排除掉应当立刻让它从树里消失
+  await revealTreeRow(join(FIXTURE_DIR, 'move-a.txt'))
   const fixtureRow = page.locator(rowSelector(join(FIXTURE_DIR, 'move-a.txt')))
   await expect(fixtureRow).toBeVisible({ timeout: 15_000 })
 
@@ -467,6 +526,7 @@ test('文件排除：设置里的规则即时生效，且重开窗口后仍然�
   await expect(fixtureRow).toHaveCount(0, { timeout: 15_000 })
   await expect(page.locator(rowSelector(join(FIXTURE_DIR, 'replace.txt')))).toHaveCount(0)
   // 不命中的条目必须留下 —— 否则就是把整棵树误删了
+  await revealTreeRow(join(FIXTURE_DIR, 'fixture.bin'))
   await expect(page.locator(rowSelector(join(FIXTURE_DIR, 'fixture.bin')))).toBeVisible()
 
   // 重开窗口：规则必须是从 settings.json 读回来的，而不是只活在内存里。
@@ -497,11 +557,15 @@ test('文件排除：设置里的规则即时生效，且重开窗口后仍然�
   // 取消勾选 = 显式不排除：文件应立刻回来。这一步同时把状态收拾干净，
   // 后面依赖 .txt 夹具的用例（新建文件 / 拖拽 / 重命名）才不会连带被隐藏。
   await page.locator('.sg__row').last().locator('.toggle[role="switch"]').last().click()
+  await revealTreeRow(join(FIXTURE_DIR, 'move-a.txt'))
   await expect(restoredRow).toBeVisible({ timeout: 15_000 })
 })
 
 test('资源管理器：右键新建文件后出现在树中', async () => {
-  await page.locator('.tree-row', { hasText: 'smoke-fixtures' }).first().click({ button: 'right' })
+  await ensureExplorerVisible()
+  await ensureDirExpanded(FIXTURE_DIR)
+  await revealTreeRow(FIXTURE_DIR)
+  await page.locator(rowSelector(FIXTURE_DIR)).click({ button: 'right' })
   await page.getByRole('menuitem', { name: '新建文件', exact: true }).click()
 
   // Electron 没有 window.prompt，这里验证的是自建对话框真的接上了
@@ -510,18 +574,22 @@ test('资源管理器：右键新建文件后出现在树中', async () => {
   await input.fill('created.txt')
   await page.locator('.modal--prompt .btn--primary').click()
 
-  await expect(page.locator('.tree-row', { hasText: 'created.txt' })).toBeVisible({
+  await revealTreeRow(join(FIXTURE_DIR, 'created.txt'))
+  await expect(page.locator(rowSelector(join(FIXTURE_DIR, 'created.txt')))).toBeVisible({
     timeout: 15_000
   })
   // 同目录的夹具文件也应可见：说明新建后目录已被展开，用户能看到结果
-  await expect(page.locator('.tree-row', { hasText: 'fixture.bin' })).toBeVisible()
+  await revealTreeRow(join(FIXTURE_DIR, 'fixture.bin'))
+  await expect(page.locator(rowSelector(join(FIXTURE_DIR, 'fixture.bin')))).toBeVisible()
 })
 
 test('资源管理器：多选（Ctrl 加选、Shift 连选、Ctrl+A 全选、Esc 清除）', async () => {
   await ensureExplorerVisible()
   await ensureDirExpanded(FIXTURE_DIR)
 
+  await revealTreeRow(join(FIXTURE_DIR, 'move-a.txt'))
   const moveA = page.locator(rowSelector(join(FIXTURE_DIR, 'move-a.txt')))
+  await revealTreeRow(join(FIXTURE_DIR, 'move-b.txt'))
   const moveB = page.locator(rowSelector(join(FIXTURE_DIR, 'move-b.txt')))
   await expect(moveA).toBeVisible({ timeout: 15_000 })
 
@@ -556,6 +624,7 @@ test('资源管理器：选中行按焦点降级，树持有焦点时当前行�
   // 这里显式展开，用例自身闭环，不依赖执行顺序。
   await ensureDirExpanded(FIXTURE_DIR)
 
+  await revealTreeRow(join(FIXTURE_DIR, 'move-a.txt'))
   const moveA = page.locator(rowSelector(join(FIXTURE_DIR, 'move-a.txt')))
   await expect(moveA).toBeVisible({ timeout: 15_000 })
 
@@ -628,26 +697,30 @@ test('资源管理器：缩进参考线与排序/收起全部入口可用', asyn
   // 参考线数量 == 层级深度：树的第一行是根目录本身，根下的夹具目录是第二层。
   // `.e2e-tmp/smoke-fixtures/sub/nested.txt` 是根 → .e2e-tmp → smoke-fixtures → sub → nested.txt 共 5 层，故 4 条；
   // `.e2e-tmp/smoke-fixtures/move-a.txt` 是 4 层，故 3 条。
+  await revealTreeRow(join(FIXTURE_DIR, 'sub', 'nested.txt'))
   const child = page.locator(rowSelector(join(FIXTURE_DIR, 'sub', 'nested.txt')))
   await expect(child).toBeVisible({ timeout: 15_000 })
   await expect(child).toHaveAttribute('aria-level', '5')
   await expect(child.locator('.explorer__indent')).toHaveCount(4)
 
+  await revealTreeRow(join(FIXTURE_DIR, 'move-a.txt'))
   const topLevel = page.locator(rowSelector(join(FIXTURE_DIR, 'move-a.txt')))
   await expect(topLevel).toHaveAttribute('aria-level', '4')
   await expect(topLevel.locator('.explorer__indent')).toHaveCount(3)
 
   // .e2e-tmp 的其他文件数量会变化，排序后夹具末行可能被虚拟化移出 DOM。
   // 分段滚过完整子树再比较顺序，既不依赖窗口高度，也不把粘性父级克隆算进去。
-  const directChildPaths = async (): Promise<string[]> => page.locator('.explorer__tree').evaluate(
-    async (tree, root) => {
+  const directChildPaths = async (): Promise<string[]> =>
+    page.locator('.explorer__tree').evaluate(async (tree, root) => {
       const originalScrollTop = tree.scrollTop
       const normalizedRoot = root.replace(/\\/g, '/')
       const children = new Map<string, number>()
       let enteredSubtree = false
       const nextRender = async (): Promise<void> => {
         // scroll 触发 React 更新虚拟切片；等下一次绘制，而不是猜一个固定延迟。
-        await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())))
+        await new Promise<void>((done) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => done()))
+        )
       }
       try {
         tree.scrollTop = 0
@@ -661,13 +734,22 @@ test('资源管理器：缩进参考线与排序/收起全部入口可用', asyn
             if (path === normalizedRoot || path.startsWith(normalizedRoot + '/')) {
               enteredSubtree = true
               if (path.slice(0, path.lastIndexOf('/')) === normalizedRoot) {
-                children.set(rawPath, row.getBoundingClientRect().top - tree.getBoundingClientRect().top + tree.scrollTop)
+                children.set(
+                  rawPath,
+                  row.getBoundingClientRect().top -
+                    tree.getBoundingClientRect().top +
+                    tree.scrollTop
+                )
               }
             } else if (enteredSubtree) {
               // 滚动重叠区也可能包含子树前面的行，只有已收过的直属子项之后才是边界。
               const lastChildTop = Math.max(-Infinity, ...children.values())
-              const rowTop = row.getBoundingClientRect().top - tree.getBoundingClientRect().top + tree.scrollTop
-              if (children.size && rowTop > lastChildTop) { passedSubtree = true; break }
+              const rowTop =
+                row.getBoundingClientRect().top - tree.getBoundingClientRect().top + tree.scrollTop
+              if (children.size && rowTop > lastChildTop) {
+                passedSubtree = true
+                break
+              }
             }
           }
           const bottom = Math.max(0, tree.scrollHeight - tree.clientHeight)
@@ -682,8 +764,7 @@ test('资源管理器：缩进参考线与排序/收起全部入口可用', asyn
         tree.scrollTop = originalScrollTop
         await nextRender()
       }
-    }, FIXTURE_DIR
-  )
+    }, FIXTURE_DIR)
   const sortBtn = page.locator('.explorer__btn[aria-label="切换排序方式"]')
   const before = await directChildPaths()
   const diskChildren = readdirSync(FIXTURE_DIR).map((name) => join(FIXTURE_DIR, name))
@@ -706,8 +787,11 @@ test('资源管理器：拖拽把多选项移入目标目录，Ctrl+Z 撤销回�
   await ensureExplorerVisible()
   await ensureDirExpanded(FIXTURE_DIR)
 
+  await revealTreeRow(join(FIXTURE_DIR, 'move-a.txt'))
   const moveA = page.locator(rowSelector(join(FIXTURE_DIR, 'move-a.txt')))
+  await revealTreeRow(join(FIXTURE_DIR, 'move-b.txt'))
   const moveB = page.locator(rowSelector(join(FIXTURE_DIR, 'move-b.txt')))
+  await revealTreeRow(join(FIXTURE_DIR, 'sub'))
   const sub = page.locator(rowSelector(join(FIXTURE_DIR, 'sub')))
   await expect(moveA).toBeVisible({ timeout: 15_000 })
   await expect(sub).toBeVisible({ timeout: 15_000 })
@@ -766,6 +850,7 @@ test('资源管理器：虚拟滚动只挂载可见行', async () => {
   await ensureDirExpanded(join(FIXTURE_DIR, 'big'))
 
   // 先确认目录真的展开了（否则"行数少"只是因为没展开）
+  await revealTreeRow(join(FIXTURE_DIR, 'big', 'item-000.txt'))
   await expect(page.locator(rowSelector(join(FIXTURE_DIR, 'big', 'item-000.txt')))).toBeVisible({
     timeout: 20_000
   })
@@ -801,6 +886,7 @@ test('资源管理器：虚拟滚动只挂载可见行', async () => {
   await tree.evaluate((el) => {
     el.scrollTop = 0
   })
+  await revealTreeRow(join(FIXTURE_DIR, 'big'))
   const bigRow = page.locator(rowSelector(join(FIXTURE_DIR, 'big')))
   await expect(bigRow).toBeVisible()
   if ((await bigRow.getAttribute('aria-expanded')) === 'true') await bigRow.click()
@@ -816,6 +902,7 @@ test('预览：PNG 走图片预览，未知二进制走十六进制', async () =
 
   // 图片：resources/icon.png 是稳定的真实 PNG
   await ensureDirExpanded(join(APP_ROOT, 'resources'))
+  await revealTreeRow(join(APP_ROOT, 'resources', 'icon.png'))
   const icon = page.locator(rowSelector(join(APP_ROOT, 'resources', 'icon.png')))
   await expect(icon).toBeVisible({ timeout: 15_000 })
   await icon.click()
@@ -829,6 +916,7 @@ test('预览：PNG 走图片预览，未知二进制走十六进制', async () =
   // 十六进制：.e2e-tmp/smoke-fixtures/fixture.bin 内容为 0x00..0x13。
   // 直接重新点开夹具目录，不依赖它在上一个用例结束时是否展开
   await ensureDirExpanded(FIXTURE_DIR)
+  await revealTreeRow(join(FIXTURE_DIR, 'fixture.bin'))
   const fixture = page.locator(rowSelector(join(FIXTURE_DIR, 'fixture.bin')))
   await expect(fixture).toBeVisible({ timeout: 15_000 })
   await fixture.click()
@@ -841,7 +929,10 @@ test('预览：PNG 走图片预览，未知二进制走十六进制', async () =
 })
 
 test('版本控制：状态栏入口打开侧边栏视图并给出仓库信息', async () => {
-  const gitItem = page.locator('.status-bar button.status-bar__item').filter({ has: page.locator('svg') }).first()
+  const gitItem = page
+    .locator('.status-bar button.status-bar__item')
+    .filter({ has: page.locator('svg') })
+    .first()
   await expect(gitItem).toBeVisible({ timeout: 30_000 })
 
   await gitItem.click()
@@ -1259,7 +1350,9 @@ test('资源管理器：剪切/复制/粘贴（Ctrl+X/C/V 与右键菜单）', a
   await ensureDirExpanded(FIXTURE_DIR)
   const tree = page.locator('.explorer__tree')
 
+  await revealTreeRow(join(FIXTURE_DIR, 'move-a.txt'))
   const moveA = page.locator(rowSelector(join(FIXTURE_DIR, 'move-a.txt')))
+  await revealTreeRow(join(FIXTURE_DIR, 'sub'))
   const sub = page.locator(rowSelector(join(FIXTURE_DIR, 'sub')))
   await expect(moveA).toBeVisible({ timeout: 15_000 })
   await moveA.click()
@@ -1282,6 +1375,7 @@ test('资源管理器：剪切/复制/粘贴（Ctrl+X/C/V 与右键菜单）', a
   await expect(sub).toBeVisible({ timeout: 15_000 })
   await sub.click()
   await tree.press('Control+v')
+  await revealTreeRow(join(FIXTURE_DIR, 'sub', 'move-a.txt'))
   const movedIntoSub = page.locator(rowSelector(join(FIXTURE_DIR, 'sub', 'move-a.txt')))
   await expect(movedIntoSub).toBeVisible({ timeout: 15_000 })
   expect(existsSync(join(FIXTURE_DIR, 'move-a.txt'))).toBe(false)
@@ -1294,6 +1388,7 @@ test('资源管理器：剪切/复制/粘贴（Ctrl+X/C/V 与右键菜单）', a
   await tree.press('Control+c')
   await expect(movedIntoSub).not.toHaveClass(/is-cut/)
   await tree.press('Control+v')
+  await revealTreeRow(join(FIXTURE_DIR, 'sub', 'move-a copy.txt'))
   const copied = page.locator(rowSelector(join(FIXTURE_DIR, 'sub', 'move-a copy.txt')))
   await expect(copied).toBeVisible({ timeout: 15_000 })
   expect(existsSync(join(FIXTURE_DIR, 'sub', 'move-a.txt'))).toBe(true)
@@ -1333,7 +1428,9 @@ test('资源管理器：拖拽悬停在收起目录上会自动展开', async ()
     el.scrollTop = 0
   })
 
+  await revealTreeRow(join(FIXTURE_DIR, 'move-a.txt'))
   const moveA = page.locator(rowSelector(join(FIXTURE_DIR, 'move-a.txt')))
+  await revealTreeRow(hoverDir)
   const hoverRow = page.locator(rowSelector(hoverDir))
   await expect(moveA).toBeVisible({ timeout: 15_000 })
   await expect(hoverRow).toBeVisible({ timeout: 15_000 })
@@ -1365,58 +1462,88 @@ test('资源管理器：拖拽悬停在收起目录上会自动展开', async ()
 test('资源管理器：git 徽章只在仓库内出现且与仓库信息一致', async () => {
   await ensureExplorerVisible()
 
-  // 先读状态栏的判断：本机这份仓库是否被 git 跟踪，决定徽章该出现还是该缺席
-  const gitItem = page.locator('.status-bar button.status-bar__item').filter({ has: page.locator('svg') }).first()
+  // 先读状态栏的判断：本机这份仓库是否被 git 跟踪，决定徽章该出现还是该缺席。
+  const gitItem = page
+    .locator('.status-bar button.status-bar__item')
+    .filter({ has: page.locator('svg') })
+    .first()
   await expect(gitItem).toBeVisible({ timeout: 30_000 })
   const isRepo = !(await gitItem.innerText()).includes('非 Git 仓库')
 
   if (!isRepo) {
-    // 非仓库时**不能**有任何徽章：否则就是在编造状态
+    // 非仓库时不能有任何徽章：否则就是在编造状态。
     await expect(page.locator('.tree-row__git')).toHaveCount(0)
     return
   }
 
-  // 是仓库时，徽章只挂在当前虚拟窗口的行上；先把树分段滚完再收集，
-  // 否则前一个测试留下的滚动位置会把带改动的行留在 DOM 之外。
-  const snapshot = await page.locator('.explorer__tree').evaluate(async (tree) => {
-    const originalScrollTop = tree.scrollTop
-    const found = new Map<string, { text: string; title: string }>()
-    const nextRender = async (): Promise<void> => {
-      await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())))
-    }
-    try {
-      tree.scrollTop = 0
-      await nextRender()
-      while (true) {
-        for (const row of tree.querySelectorAll('.explorer__rows .tree-row')) {
-          const path = row.getAttribute('data-path')
-          const badge = row.querySelector('.tree-row__git')
-          if (path && badge) found.set(path, {
-            text: badge.textContent ?? '',
-            title: badge.getAttribute('title') ?? ''
-          })
-        }
-        const bottom = Math.max(0, tree.scrollHeight - tree.clientHeight)
-        if (tree.scrollTop >= bottom) break
-        const previous = tree.scrollTop
-        tree.scrollTop = Math.min(bottom, previous + Math.max(1, tree.clientHeight / 2))
-        await nextRender()
-        if (tree.scrollTop <= previous) break
-      }
-      return [...found.entries()].map(([path, badge]) => ({ path, ...badge }))
-    } finally {
-      tree.scrollTop = originalScrollTop
-      await nextRender()
-    }
-  })
   const status = await page.evaluate((cwd) => window.aether.git.status(cwd), WORKSPACE_DIR)
   expect(status.success).toBe(true)
   expect(status.isRepo).toBe(true)
-  const changedPaths = (status.files ?? []).map((file) => join(WORKSPACE_DIR, file.path).replace(/\\/g, '/'))
+  const changedPaths = (status.files ?? []).map((file) =>
+    join(WORKSPACE_DIR, file.path).replace(/\\/g, '/')
+  )
   if (changedPaths.length === 0) {
-    expect(snapshot).toEqual([])
+    // 仓库干净时，等待一次渲染窗口确认没有陈旧徽章；不能把“没有变更”
+    // 当作测试失败，也不能接受 UI 残留上一轮状态。
+    await expect
+      .poll(async () => page.locator('.tree-row__git').count(), { timeout: 10_000 })
+      .toBe(0)
     return
   }
+
+  // Git 状态和资源树分别异步加载。此时虚拟树可能停在 .e2e-tmp 的
+  // ignored 子树，当前屏幕没有徽章并不表示 Git 徽章缺失；先展开一条
+  // 真实存在的改动路径的父目录，再在 expect.poll 中扫描整个虚拟窗口。
+  // 删除的改动没有可渲染行，跳过它们，避免把合法的 deleted 状态误报成 UI 缺陷。
+  const visibleChangedPath = changedPaths.map((path) => resolve(path)).find((path) => existsSync(path))
+  if (!visibleChangedPath) return
+  await ensureDirExpanded(resolve(visibleChangedPath, '..'))
+  await revealTreeRow(visibleChangedPath)
+
+  const collectGitBadges = async (): Promise<
+    Array<{ path: string; text: string; title: string }>
+  > =>
+    page.locator('.explorer__tree').evaluate(async (tree) => {
+      const originalScrollTop = tree.scrollTop
+      const found = new Map<string, { text: string; title: string }>()
+      const nextRender = async (): Promise<void> => {
+        await new Promise<void>((done) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => done()))
+        )
+      }
+      try {
+        tree.scrollTop = 0
+        await nextRender()
+        for (let attempt = 0; attempt < 240; attempt += 1) {
+          for (const row of tree.querySelectorAll('.explorer__rows .tree-row')) {
+            const path = row.getAttribute('data-path')
+            const badge = row.querySelector('.tree-row__git')
+            if (path && badge)
+              found.set(path, {
+                text: badge.textContent ?? '',
+                title: badge.getAttribute('title') ?? ''
+              })
+          }
+          const bottom = Math.max(0, tree.scrollHeight - tree.clientHeight)
+          if (tree.scrollTop >= bottom) break
+          const previous = tree.scrollTop
+          tree.scrollTop = Math.min(bottom, previous + Math.max(1, tree.clientHeight / 2))
+          await nextRender()
+          if (tree.scrollTop <= previous) break
+        }
+        return [...found.entries()].map(([path, badge]) => ({ path, ...badge }))
+      } finally {
+        tree.scrollTop = originalScrollTop
+        await nextRender()
+      }
+    })
+
+  // Poll the full scan, rather than the currently mounted virtual rows. The
+  // first scan can legitimately happen before Git state reaches the renderer.
+  await expect
+    .poll(async () => (await collectGitBadges()).length, { timeout: 30_000 })
+    .toBeGreaterThan(0)
+  const snapshot = await collectGitBadges()
   expect(snapshot.length).toBeGreaterThan(0)
 
   // 每个徽章字符必须落在 git 的状态字母表内，且带悬浮说明。
@@ -1424,15 +1551,16 @@ test('资源管理器：git 徽章只在仓库内出现且与仓库信息一致'
     expect(['M', 'A', 'D', 'R', 'C', 'U', '·', '●']).toContain(badge.text.trim())
     expect(badge.title.length).toBeGreaterThan(0)
     const path = badge.path.replace(/\\/g, '/')
-    expect(changedPaths.some((changed) => changed === path || changed.startsWith(path + '/'))).toBe(true)
+    expect(changedPaths.some((changed) => changed === path || changed.startsWith(path + '/'))).toBe(
+      true
+    )
   }
 
-  // 反过来：带徽章的行必须是真实存在的文件行，不是凭空多插的节点
+  // 反过来：带徽章的行必须是真实存在的文件行，不是凭空多插的节点。
   for (const { path } of snapshot) {
     expect(existsSync(path)).toBe(true)
   }
 })
-
 // ==================== 编辑器标签（P4） ====================
 //
 // 覆盖：多标签打开与切换、右键菜单四种关闭、中键关闭、Ctrl+W、
@@ -1446,6 +1574,7 @@ test('资源管理器：git 徽章只在仓库内出现且与仓库信息一致'
 async function openFixtureTab(name: string): Promise<void> {
   await ensureExplorerVisible()
   await ensureDirExpanded(FIXTURE_DIR)
+  await revealTreeRow(join(FIXTURE_DIR, name))
   const row = page.locator(rowSelector(join(FIXTURE_DIR, name)))
   await expect(row).toBeVisible({ timeout: 15_000 })
   await row.click()

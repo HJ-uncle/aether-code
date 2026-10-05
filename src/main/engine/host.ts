@@ -223,6 +223,9 @@ export class EngineHost extends EventEmitter {
         ...runtimeConfig.env,
         ELECTRON_RUN_AS_NODE: '1',
         HOST: '127.0.0.1',
+        // Embedded instances are owned by this desktop process and protected
+        // by the random instance token. Preserve an explicit operator setting.
+        AUTH_ENABLED: process.env.AUTH_ENABLED ?? 'false',
         ENCRYPTION_KEY: secret.key,
         AETHER_INSTANCE_TOKEN: this.instanceToken
       },

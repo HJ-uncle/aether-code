@@ -1,0 +1,72 @@
+.settings-view--skills .skills-import-drop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 92px;
+  padding: 18px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+}
+
+.settings-view--skills .skills-import-drop.is-dragging {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.settings-view--skills .skills-import-drop > span {
+  color: var(--fg-muted);
+  margin-right: auto;
+}
+
+.settings-view--skills .skills-import-status {
+  margin-top: 10px;
+  color: var(--text-muted, var(--vscode-descriptionForeground));
+}
+
+.settings-view--skills .skills-import-status.is-failed { color: var(--danger-fg); }
+.settings-view--skills .skills-import-status.is-imported { color: var(--ok-fg); }
+
+.settings-view--skills .skills-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.settings-view--skills .skills-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.settings-view--skills .skills-card.is-disabled { opacity: .62; }
+
+.settings-view--skills .skills-card__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.settings-view--skills .skills-card__main span,
+.settings-view--skills .skills-card__main small { overflow: hidden; color: var(--fg-muted); text-overflow: ellipsis; white-space: nowrap; }
+
+.settings-view--skills .skills-detail { width: 100%; }
+.settings-view--skills .skills-detail__meta { margin-bottom: 10px; color: var(--fg-muted); }
+.settings-view--skills .skills-detail pre { max-height: 360px; overflow: auto; padding: 12px; white-space: pre-wrap; background: var(--bg-inset); border-radius: var(--radius); }
+.settings-view--skills .skills-history-empty { color: var(--fg-muted); }
+.settings-view--skills .skills-history-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 9px 0; border-top: 1px solid var(--border); }
+.settings-view--skills .skills-history-row > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.settings-view--skills .skills-history-row strong, .settings-view--skills .skills-history-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-view--skills .skills-history-row span { color: var(--fg-muted); font-size: 11px; }
+

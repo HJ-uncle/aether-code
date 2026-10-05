@@ -12,6 +12,9 @@ import { SearchExcludeSettingsView } from './SearchExcludeSettingsView'
 import { ModelsSettingsView } from '../models/ModelsSettingsView'
 import { SecurityView } from '../security/SecurityView'
 import { KeybindingsSettingsView } from './KeybindingsSettingsView'
+import { SkillsSettingsView } from './SkillsSettingsView'
+import { KnowledgeSettingsView } from './KnowledgeSettingsView'
+import { McpSettingsView } from './McpSettingsView'
 import type { IconName } from '@renderer/workbench/icons'
 import { Icon } from '@renderer/workbench/icons'
 
@@ -45,6 +48,9 @@ const SECTIONS: Section[] = [
   { id: 'models', label: '模型', icon: 'model', component: ModelsSettingsView },
   { id: 'security', label: '安全', icon: 'shield', component: SecurityView },
   { id: 'codegraph', label: '代码图', icon: 'graph', component: CodeGraphSettingsView },
+  { id: 'mcp', label: 'MCP', icon: 'cloud-upload-outline', component: McpSettingsView },
+  { id: 'skills', label: '技能', icon: 'package-variant-closed', component: SkillsSettingsView },
+  { id: 'knowledge', label: '知识库', icon: 'folder-outline', component: KnowledgeSettingsView },
   { id: 'keybindings', label: '键盘', icon: 'keyboard', component: KeybindingsSettingsView }
 ]
 

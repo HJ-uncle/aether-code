@@ -47,8 +47,26 @@ export async function prepareRemoteChatBody(body: unknown, context: RemoteChatCo
   const input = body as Record<string, unknown>
   if (typeof input.sessionId !== 'string' || !input.sessionId.trim()) throw new Error('远端聊天缺少会话 ID')
   if (input.message !== undefined && typeof input.message !== 'string') throw new Error('远端聊天消息必须是文本；文件请使用附件上传入口')
-  const allowed = ['message', 'sessionId', 'agentId', 'model', 'subagentModel', 'utilityModel', 'thinkingMode', 'runId']
+  // These are server-side resource selectors. They contain identifiers only and
+  // are safe to forward; local paths, inline skill contents and inline MCP
+  // credentials remain deliberately stripped from remote requests.
+  const allowed = [
+    'message', 'sessionId', 'agentId', 'model', 'subagentModel', 'utilityModel',
+    'thinkingMode', 'runId', 'skills', 'mcpServers', 'knowledgeBases',
+    'allowedTools', 'ragTopK'
+  ]
   const clean = Object.fromEntries(allowed.filter(key => input[key] !== undefined).map(key => [key, input[key]]))
+  for (const key of ['skills', 'mcpServers', 'knowledgeBases', 'allowedTools']) {
+    if (clean[key] !== undefined) {
+      if (!Array.isArray(clean[key]) || clean[key].some(item => typeof item !== 'string' || item.length > 256)) {
+        throw new Error(`远端聊天 ${key} 选择器无效`)
+      }
+      clean[key] = [...new Set(clean[key] as string[])]
+    }
+  }
+  if (clean.ragTopK !== undefined && (typeof clean.ragTopK !== 'number' || !Number.isInteger(clean.ragTopK) || clean.ragTopK < 0 || clean.ragTopK > 50)) {
+    throw new Error('远端聊天 ragTopK 无效')
+  }
   if (input.toolResponse !== undefined) {
     if (!input.toolResponse || typeof input.toolResponse !== 'object' || Array.isArray(input.toolResponse)) {
       throw new Error('远端审批响应无效')

@@ -214,7 +214,19 @@ test.describe.serial('Aether 编辑器命令', () => {
     }).toPass({ timeout: 30_000, intervals: [250, 500, 1000] })
     expect(readFileSync(jsonFile, 'utf8')).toBe(JSON_SOURCE)
     await page.keyboard.press('Control+s')
-    await expect.poll(() => readFileSync(jsonFile, 'utf8')).not.toBe(JSON_SOURCE)
+    // 只把完整且可解析的 JSON 视为保存完成，避免文件观察器或平台
+    // 写入窗口把中间内容误判成最终结果。
+    await expect
+      .poll(() => {
+        const candidate = readFileSync(jsonFile, 'utf8')
+        if (candidate === JSON_SOURCE || !candidate.includes('\n')) return null
+        try {
+          return JSON.parse(candidate) as unknown
+        } catch {
+          return null
+        }
+      })
+      .toEqual(JSON.parse(JSON_SOURCE))
     const formatted = readFileSync(jsonFile, 'utf8')
     expect(formatted).toContain('\n')
     expect(JSON.parse(formatted)).toEqual(JSON.parse(JSON_SOURCE))

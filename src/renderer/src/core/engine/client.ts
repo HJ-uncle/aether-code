@@ -8,6 +8,7 @@
  */
 import type {
   AppSettings,
+  EngineUploadInput,
   EngineRequestInput,
   EngineRequestResult,
   EngineSnapshot,
@@ -63,6 +64,10 @@ export function onEngineLog(
  */
 export function request<T = unknown>(input: EngineRequestInput): Promise<EngineRequestResult<T>> {
   return bridge().engine.request<T>({ ...input, expectedEngine: input.expectedEngine ?? getExpectedEngine() })
+}
+
+export function upload<T = unknown>(input: Omit<EngineUploadInput, 'expectedEngine'>): Promise<EngineRequestResult<T>> {
+  return bridge().engine.upload<T>({ ...input, expectedEngine: getExpectedEngine() })
 }
 
 /** 发起请求并在业务失败时抛错，适合「失败即中断」的调用场景 */

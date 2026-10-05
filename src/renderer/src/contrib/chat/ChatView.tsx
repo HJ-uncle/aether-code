@@ -29,6 +29,7 @@ import { Popover } from '@renderer/workbench/Popover'
 import { ContextMenu } from '@renderer/workbench/ContextMenu'
 import { ModelPicker } from '../models/ModelPicker'
 import { ComposerOptions } from './ComposerOptions'
+import { KnowledgePicker } from './KnowledgePicker'
 import { MessageNavRail, type NavTurn } from './MessageNavRail'
 import {
   asUsageFrame,
@@ -43,6 +44,7 @@ import { useAttachments, shouldAttachPastedText, createPastedTextFile } from './
 import { readFile } from '@renderer/core/workspace/fs-client'
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
 import { Dialog } from '@renderer/workbench/Dialog'
+import { getKnowledgeBaseBindingIds } from '@renderer/core/engine/knowledge'
 
 /** 上下文窗口估算基数：引擎未下发各模型窗口上限，按常见的 200k 估算占比 */
 const CONTEXT_WINDOW_FALLBACK = 200_000
@@ -631,6 +633,7 @@ export function ChatView(): JSX.Element {
       sessionId,
       agentId: settings.lastAgentId || undefined,
       model: modelId || undefined,
+      knowledgeBases: getKnowledgeBaseBindingIds(sessionId, storageSource),
       // 按用途指派：子代理 / 轻任务模型（空 = 跟随主模型，引擎侧回退）
       subagentModel: settings.subagentModelId || undefined,
       utilityModel: settings.utilityModelId || undefined,
@@ -638,7 +641,7 @@ export function ChatView(): JSX.Element {
       workspacePaths: remoteReadOnly ? [] : currentWorkspacePaths(),
       thinkingMode: resolveThinkingMode(settings.thinkingMode)
     }),
-    [modelId, remoteReadOnly, sessionId, settings.lastAgentId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode]
+    [modelId, remoteReadOnly, sessionId, storageSource, settings.lastAgentId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode]
   )
 
   const submit = useCallback(() => {
@@ -801,6 +804,7 @@ export function ChatView(): JSX.Element {
           sessionId,
           agentId: settings.lastAgentId || undefined,
           model: modelId || undefined,
+          knowledgeBases: getKnowledgeBaseBindingIds(sessionId, storageSource),
           subagentModel: settings.subagentModelId || undefined,
           utilityModel: settings.utilityModelId || undefined,
           workspacePaths: currentWorkspacePaths(),
@@ -808,7 +812,7 @@ export function ChatView(): JSX.Element {
         }).catch(showError)
       })
     },
-    [canExecute, remoteReadOnly, sourceEpoch, messages, modelId, retryFrom, sessionId, settings.lastAgentId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode, showError]
+    [canExecute, remoteReadOnly, sourceEpoch, messages, modelId, retryFrom, sessionId, storageSource, settings.lastAgentId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode, showError]
   )
 
   const deleteTurnById = useCallback(
@@ -1400,6 +1404,7 @@ export function ChatView(): JSX.Element {
             ) : null}
 
             <ComposerOptions sessionId={sessionId} />
+            <KnowledgePicker sessionId={sessionId} source={sourceEpoch} disabled={!canExecute} />
 
             {/* 仅当项目「尚未建索引」时才露出建索引入口；已建索引则不占位（重建走设置页 / 菜单） */}
             {!remoteReadOnly && cgIndex.known && !cgIndex.initialized ? (

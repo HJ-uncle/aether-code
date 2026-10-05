@@ -11,6 +11,7 @@
 import { shell, dialog } from 'electron'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
 import { markGitignored } from './gitignore-matcher'
 import type {
@@ -262,7 +263,18 @@ export async function revealPath(target: string): Promise<void> {
 export async function writeFile(filePath: string, content: string): Promise<FsStat> {
   const safePath = assertAllowed(filePath)
   await fsp.mkdir(path.dirname(safePath), { recursive: true })
-  await fsp.writeFile(safePath, content, 'utf-8')
+  // Write beside the destination and replace it only after the complete
+  // payload is on disk. A direct writeFile truncates first, so readers such as
+  // the editor's file watcher can briefly observe an empty/partial file and
+  // reload that transient state while a save is in progress.
+  const temporary = `${safePath}.aether-write-${randomUUID()}.tmp`
+  try {
+    await fsp.writeFile(temporary, content, 'utf-8')
+    await fsp.rename(temporary, safePath)
+  } finally {
+    // A failed rename must not leave an unbounded set of hidden temp files.
+    try { await fsp.rm(temporary, { force: true }) } catch { /* best effort cleanup */ }
+  }
   return statPath(safePath)
 }
 

@@ -5514,12 +5514,24 @@ textarea.field__input {
 /* ==================== 模型选择器 ==================== */
 
 .model-picker {
-  flex: 0 1 auto;
+  /* The toolbar also contains the KB picker, context ring and send button.
+     Give the model control a bounded flexible slot so a long model id cannot
+     overflow its flex item and intercept the adjacent send button. */
+  flex: 0 1 35%;
+  max-width: 260px;
   min-width: 0;
+  overflow: hidden;
+}
+
+.chat__toolbar > .model-picker > .popover__trigger {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .model-picker__trigger {
-  max-width: 260px;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

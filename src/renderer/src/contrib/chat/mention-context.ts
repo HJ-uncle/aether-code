@@ -6,7 +6,7 @@
  *
  * 做法（学 wuzu PromptMentionInput 的 Flow 式原数据替换）：发送时把正文里每个引用的
  * 显示文字**原位替换成它的原数据**——源码引用换成「标签行 + 代码围栏原文」、终端引用换成
- * 「标签行 + 输出原文」、文件/目录引用保留 `@路径` 标签（内容让 AI 自己读）。模型拿到的是
+ * 「标签行 + 输出原文」、未保存文件引用携带编辑缓冲区；普通文件/目录保留 `@路径` 标签。模型拿到的是
  * 原数据本身，被要求「原封不动输出」时自然输出得出来。
  *
  * 替换会改掉区间长度，所以正文末尾挂一行 HTML 注释，里面是**替换后**的字符下标：气泡渲染
@@ -56,12 +56,16 @@ export interface PromptRef {
   e: number
   /** 行号范围 [起, 止]，仅源码引用 */
   r?: [number, number]
+  /** 列号范围 [起, 止]，仅源码引用；用于精确回填选区。 */
+  c?: [number, number]
 }
 
 /** 机器数据行前缀（HTML 注释，正文里对模型是噪声但无害） */
 const REF_DATA_PREFIX = '<!--aether-refs:'
 const REF_DATA_SUFFIX = '-->'
-const REF_DATA_RE = /\n?<!--aether-refs:([\s\S]*?)-->/
+// Only our final single-line footer is metadata. Similar text inside a snapshot
+// is user data and must survive display, draft recovery and retransmission.
+const REF_DATA_RE = /\n<!--aether-refs:([^\r\n]*)-->[ \t]*(?:\r?\n)?$/
 
 /**
  * 旧版发送协议在正文末尾追加的说明块。
@@ -73,7 +77,7 @@ export const LEGACY_SNAPSHOT_MARKER = '\n\n以下为添加到对话时的编辑�
 
 /** `<reference …>…</reference>` 结构化块（捕获类型 / 路径 / 行号区间 / 块内原文） */
 const REF_BLOCK_RE =
-  /<reference type="(code|terminal)" path="([^"]*)"(?: lines="(\d+)-(\d+)")?>\n([\s\S]*?)\n<\/reference>/g
+  /<reference type="(file|code|terminal)" path="([^"]*)"(?: lines="(\d+)-(\d+)")?(?: columns="(\d+)-(\d+)")?>\n(`{3,})([^\r\n]*)\n([\s\S]*?)\n\7\n<\/reference>/g
 
 /** 常见后缀 → 代码围栏语言标识（拿不到就留空，围栏照样成立） */
 const LANG_BY_EXT: Record<string, string> = {
@@ -137,7 +141,13 @@ function langFor(path: string): string {
 }
 
 function escapeAttr(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function fenceFor(content: string): string {
+  let longest = 0
+  for (const match of content.matchAll(/`+/g)) longest = Math.max(longest, match[0].length)
+  return '`'.repeat(Math.max(3, longest + 1))
 }
 
 /**
@@ -147,18 +157,19 @@ function escapeAttr(value: string): string {
  * 否则模型会把句子里的 `@xxx` 标签当成提问对象去解释语法。标签显示文字不放进替换内容
  * ——气泡与回填靠机器数据里的 d 还原，不靠它。
  *
- * 返回 undefined 表示不替换、保留 `@路径` 标签本身（文件/目录/协作 Agent、没有快照）。
+ * 返回 undefined 表示目录/协作 Agent，保留标签；空字符串是有效快照。
  */
 export function formatReferenceBlock(mention: Mention, content: string): string | undefined {
-  if (mention.source !== 'code' && mention.source !== 'terminal') return undefined
-  if (!content) return undefined
+  if (mention.source !== 'file' && mention.source !== 'code' && mention.source !== 'terminal') return undefined
   const path = escapeAttr(mention.path ?? '')
-  if (mention.source === 'code') {
-    const lines = mention.startLine
-      ? ` lines="${mention.startLine}-${mention.endLine ?? mention.startLine}"` : ''
-    return `<reference type="code" path="${path}"${lines}>\n\`\`\`${langFor(mention.path ?? '')}\n${content}\n\`\`\`\n</reference>`
-  }
-  return `<reference type="terminal" path="${path}">\n\`\`\`\n${content}\n\`\`\`\n</reference>`
+  const type = mention.source
+  const lines = mention.source === 'code' && mention.startLine
+    ? ` lines="${mention.startLine}-${mention.endLine ?? mention.startLine}"` : ''
+  const columns = mention.source === 'code' && mention.startColumn
+    ? ` columns="${mention.startColumn}-${mention.endColumn ?? mention.startColumn}"` : ''
+  const fence = fenceFor(content)
+  const language = mention.source === 'code' ? langFor(mention.path ?? '') : ''
+  return `<reference type="${type}" path="${path}"${lines}${columns}>\n${fence}${language}\n${content}\n${fence}\n</reference>`
 }
 
 /** 在正文里定位每枚引用的 token 区间；textOffset 对不上时从上一枚之后重新查找 */
@@ -214,8 +225,9 @@ export function buildMentionMessage(text: string, mentions: readonly Mention[]):
   for (const { mention, start, end } of located) {
     if (start < cursor) continue
     const prefix = body.slice(cursor, start)
-    if (prefix && !/\s$/.test(prefix)) out += ' '
+    if (afterRef && prefix && !/^\s/.test(prefix)) out += ' '
     out += prefix
+    if (out && !/\s$/.test(out)) out += ' '
     const refStart = out.length
     const block = (mention.content !== undefined ? formatReferenceBlock(mention, mention.content) : undefined)
       ?? body.slice(start, end)
@@ -228,6 +240,9 @@ export function buildMentionMessage(text: string, mentions: readonly Mention[]):
       e: refStart + block.length,
       ...(mention.source === 'code' && mention.startLine
         ? { r: [mention.startLine, mention.endLine ?? mention.startLine] as [number, number] }
+        : {}),
+      ...(mention.source === 'code' && mention.startColumn
+        ? { c: [mention.startColumn, mention.endColumn ?? mention.startColumn] as [number, number] }
         : {})
     })
     cursor = end
@@ -238,7 +253,9 @@ export function buildMentionMessage(text: string, mentions: readonly Mention[]):
   if (afterRef && tail && !/^\s/.test(tail)) out += ' '
   out += tail
   if (!refs.length) return body
-  return `${out}\n${REF_DATA_PREFIX}${JSON.stringify(refs)}${REF_DATA_SUFFIX}`
+  // A path/display label can itself contain HTML comment terminators.
+  const metadata = JSON.stringify(refs).replace(/</g, '\\u003c').replace(/>/g, '\\u003e')
+  return `${out}\n${REF_DATA_PREFIX}${metadata}${REF_DATA_SUFFIX}`
 }
 
 // ==================== 接收：正文 + 引用列表 ====================
@@ -251,13 +268,21 @@ function isValidRefShape(value: unknown): value is PromptRef {
   if (typeof r.p !== 'string' || typeof r.d !== 'string') return false
   if (typeof r.s !== 'number' || typeof r.e !== 'number') return false
   if (!Number.isInteger(r.s) || !Number.isInteger(r.e)) return false
+  const pair = (value: unknown): value is [number, number] => Array.isArray(value) && value.length === 2 &&
+    value.every(item => Number.isSafeInteger(item) && item > 0)
+  if (r.r !== undefined && (!pair(r.r) || r.r[1] < r.r[0])) return false
+  // Monaco ranges may end at a smaller column when the selection spans lines
+  // (for example `2:10` → `3:2`). Only same-line ranges have an ordering
+  // constraint; cross-line ranges are valid and must survive replay.
+  if (r.c !== undefined && (!pair(r.c) || (r.r?.[0] === r.r?.[1] && r.c[1] < r.c[0]))) return false
   return r.s >= 0 && r.s < r.e
 }
 
 /** 剥掉围栏行，取出 <reference> 块里的原文 */
 function unfence(inner: string): string {
   const lines = inner.split('\n')
-  if (lines.length >= 2 && /^```/.test(lines[0]) && lines[lines.length - 1].trim() === '```') {
+  const fence = /^(`{3,})[^`\r\n]*$/.exec(lines[0])?.[1]
+  if (lines.length >= 2 && fence && lines[lines.length - 1] === fence) {
     return lines.slice(1, -1).join('\n')
   }
   return inner
@@ -274,10 +299,12 @@ export function recoverRefsFromReferenceBlocks(body: string): PromptRef[] {
   REF_BLOCK_RE.lastIndex = 0
   let match: RegExpExecArray | null
   while ((match = REF_BLOCK_RE.exec(body)) !== null) {
-    const type = match[1] as 'code' | 'terminal'
-    const path = match[2].replace(/&quot;/g, '"').replace(/&amp;/g, '&')
+    const type = match[1] as 'file' | 'code' | 'terminal'
+    const path = match[2].replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
     const startLine = match[3] ? Number(match[3]) : undefined
     const endLine = match[4] ? Number(match[4]) : undefined
+    const startColumn = match[5] ? Number(match[5]) : undefined
+    const endColumn = match[6] ? Number(match[6]) : undefined
     const display = type === 'code'
       ? `@${formatPathDisplay(path)}${startLine ? `:${startLine}${endLine && endLine !== startLine ? `-${endLine}` : ''}` : ''}`
       : `@${formatPathDisplay(path)}`
@@ -287,7 +314,8 @@ export function recoverRefsFromReferenceBlocks(body: string): PromptRef[] {
       d: display.replace(/^@/, ''),
       s: match.index,
       e: match.index + match[0].length,
-      ...(type === 'code' && startLine ? { r: [startLine, endLine ?? startLine] as [number, number] } : {})
+      ...(type === 'code' && startLine ? { r: [startLine, endLine ?? startLine] as [number, number] } : {}),
+      ...(type === 'code' && startColumn ? { c: [startColumn, endColumn ?? startColumn] as [number, number] } : {})
     })
   }
   return out
@@ -311,8 +339,9 @@ export function parseMentionContent(content: string): { body: string; refs: Prom
   }
 
   // 旧协议的说明块：截断即可（该格式从不产出下标数据，没有错位风险）
+  const blocks = recoverRefsFromReferenceBlocks(body)
   const legacy = body.indexOf(LEGACY_SNAPSHOT_MARKER)
-  if (legacy !== -1) body = body.slice(0, legacy)
+  if (dataText === null && legacy !== -1 && !blocks.some(ref => ref.s <= legacy && ref.e > legacy)) body = body.slice(0, legacy)
 
   if (dataText === null) return { body, refs: recoverRefsFromReferenceBlocks(body) }
 
@@ -328,16 +357,21 @@ export function parseMentionContent(content: string): { body: string; refs: Prom
   let searchFrom = 0
   for (const candidate of parsed.filter(isValidRefShape).sort((a, b) => a.s - b.s)) {
     if (candidate.s < searchFrom || candidate.e > body.length) continue
+    const isBlock = blocks.some(ref => ref.s === candidate.s && ref.e === candidate.e && ref.t === candidate.t && ref.p === candidate.p)
+    if (!isBlock && body.slice(candidate.s, candidate.e) !== mentionToken(refToMention(candidate))) continue
     refs.push({ ...candidate })
     searchFrom = candidate.e
   }
-  // 注释在但一条都没落地（正文被改写过）：退到扫块重建，别把原数据当正文
-  return refs.length > 0 ? { body, refs } : { body, refs: recoverRefsFromReferenceBlocks(body) }
+  // Recover each lost/shifted block, even when other metadata ranges remain valid.
+  for (const block of blocks) {
+    if (!refs.some(ref => ref.s < block.e && ref.e > block.s)) refs.push(block)
+  }
+  return { body, refs: refs.sort((a, b) => a.s - b.s) }
 }
 
 /** 引用区间在原数据块里的原文（回填时把快照一起带回去，不必重新读盘） */
 function contentFromBody(body: string, ref: PromptRef): string | undefined {
-  if (ref.t !== 'code' && ref.t !== 'terminal') return undefined
+  if (ref.t !== 'file' && ref.t !== 'code' && ref.t !== 'terminal') return undefined
   const slice = body.slice(ref.s, ref.e)
   const match = /^<reference [^>]*>\n([\s\S]*)\n<\/reference>$/.exec(slice)
   return match ? unfence(match[1]) : undefined
@@ -350,6 +384,7 @@ export function refToMention(ref: PromptRef, content?: string): Mention {
     source: ref.t,
     ...(ref.p ? { path: ref.p } : {}),
     ...(ref.r ? { startLine: ref.r[0], endLine: ref.r[1] } : {}),
+    ...(ref.c ? { startColumn: ref.c[0], endColumn: ref.c[1] } : {}),
     ...(content !== undefined ? { content } : {})
   }
 }

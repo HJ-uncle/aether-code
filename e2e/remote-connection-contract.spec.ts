@@ -75,6 +75,15 @@ test('远端只开放明确的读取与会话执行接口，未授权修改仍�
   expect(remoteRequestError('embedded', 'POST', '/workspace/file')).toBeNull()
 })
 
+test('远端扩展资源管理全部开放到对应引擎', () => {
+  const routes: Array<[string, string]> = [
+    ['GET', '/mcp/servers'], ['POST', '/mcp/servers'], ['GET', '/mcp/servers/fixture'], ['PUT', '/mcp/servers/fixture'], ['PATCH', '/mcp/servers/fixture'], ['DELETE', '/mcp/servers/fixture'], ['POST', '/mcp/servers/fixture/test'], ['POST', '/mcp/servers/fixture/enable'], ['POST', '/mcp/servers/fixture/disable'],
+    ['GET', '/skills'], ['POST', '/skills'], ['GET', '/skills/fixture'], ['PATCH', '/skills/fixture'], ['DELETE', '/skills/fixture'], ['POST', '/skills/imports'], ['GET', '/skills/imports/import-1'], ['POST', '/skills/imports/chunks'], ['POST', '/skills/imports/chunks/merge'], ['GET', '/skills/imports/chunks'],
+    ['GET', '/knowledge/bases'], ['POST', '/knowledge/bases'], ['PUT', '/knowledge/bases/base-1'], ['DELETE', '/knowledge/bases/base-1'], ['GET', '/knowledge/documents'], ['POST', '/knowledge/documents'], ['GET', '/knowledge/documents/doc-1'], ['PUT', '/knowledge/documents/doc-1'], ['DELETE', '/knowledge/documents/doc-1'], ['POST', '/knowledge/search']
+  ]
+  for (const [method, path] of routes) expect(remoteRequestError('remote', method, path), `${method} ${path}`).toBeNull()
+})
+
 test('远端目录按服务端语义校验，既有会话目录与空沙箱优先且损坏记录拒绝', () => {
   expect(validateRemoteWorkspaceRoot(' /srv/project ')).toBe('/srv/project')
   expect(validateRemoteWorkspaceRoot('D:\\project')).toBe('D:\\project')
@@ -104,6 +113,30 @@ test('远端审批只携带关联标识与回答，原始工作区交给服务�
     sessionId: 'approval-session', runId: 'approval-run',
     toolResponse: { runId: 'approval-run', requestId: 'request-1', toolCallId: 'tool-1', name: 'ask_user', output: 'approved' }
   })
+})
+
+test('远端聊天保留服务端资源选择器，但不泄漏本地内联资源', async () => {
+  const server = createServer((_request, response) => {
+    response.setHeader('content-type', 'application/json')
+    response.end(JSON.stringify({ code: 200, data: { runs: [] } }))
+  })
+  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
+  const context = { baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, headers: {}, signal: new AbortController().signal, configuredRoot: '' }
+  try {
+    const result = await prepareRemoteChatBody({
+    sessionId: 'selector-session', message: '查知识库', skills: ['fixture-skill'],
+    mcpServers: ['fixture-mcp'], knowledgeBases: ['kb-1'], allowedTools: ['read_file'], ragTopK: 8,
+    workspacePaths: ['C:/local-only'], inlineSkills: [{ id: 'secret', promptContent: 'local secret' }],
+    inlineMcpServers: [{ id: 'secret-mcp', name: 'secret', transportType: 'http', url: 'http://local' }]
+  }, context)
+    expect(result).toMatchObject({ sessionId: 'selector-session', message: '查知识库', skills: ['fixture-skill'], mcpServers: ['fixture-mcp'], knowledgeBases: ['kb-1'], allowedTools: ['read_file'], ragTopK: 8 })
+    expect(result).toEqual(expect.objectContaining({ workspacePaths: [] }))
+    expect(result).not.toHaveProperty('inlineSkills')
+    expect(result).not.toHaveProperty('inlineMcpServers')
+  } finally {
+    server.closeAllConnections()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  }
 })
 
 test('远端附件只接受真实上传登记，路径和类型取主进程登记值且拒绝跨源跨会话', () => {

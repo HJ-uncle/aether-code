@@ -101,7 +101,9 @@ test.describe.serial('D1 模型配置无损编辑', () => {
     await page.getByRole('button', { name: '设置', exact: true }).click()
     await page.getByRole('tab', { name: '模型', exact: true }).click()
     await page.locator('.settings-view').getByRole('button', { name: '刷新', exact: true }).click()
-    await expect(page.locator('.settings-view').getByRole('button', { name: '编辑', exact: true })).toBeVisible()
+    await expect(
+      page.getByRole('region', { name: '编辑区' }).getByRole('button', { name: '编辑', exact: true })
+    ).toBeVisible()
   })
   test.afterAll(async () => {
     await app?.close()

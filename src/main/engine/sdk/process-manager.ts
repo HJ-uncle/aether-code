@@ -78,7 +78,12 @@ export function startProcess(opts: StartProcessOptions): ProcessHandle {
   const binDir = path.dirname(opts.binPath)
 
   const callerEnv = opts.env ?? {}
-  const skillsRootEnv: Record<string, string> = callerEnv['SKILLS_ROOT']
+  // Keep an explicit launcher environment (including the test/development
+  // process environment) ahead of package auto-discovery.  runtimeEnvironment
+  // commonly passes an empty override object, so checking only callerEnv here
+  // silently replaced SKILLS_ROOT inherited from the Electron process with
+  // the bundled runtime's empty SKILLs directory.
+  const skillsRootEnv: Record<string, string> = callerEnv['SKILLS_ROOT'] || process.env.SKILLS_ROOT
     ? {}
     : { SKILLS_ROOT: resolveSkillsRoot(binDir) }
 

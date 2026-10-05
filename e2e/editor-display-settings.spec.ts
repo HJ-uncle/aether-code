@@ -49,6 +49,8 @@ test('用户偏好经过 JSON 落盘恢复后所有字段都映射到 Monaco', (
     fontLigatures: true,
     tabSize: 4,
     wordWrap: 'on',
-    minimap: { enabled: false, maxColumn: 80 }
+    minimap: { enabled: false, maxColumn: 80 },
+    // Reserve all lanes so diagnostics and source-control markers remain visible.
+    overviewRulerLanes: 3
   })
 })

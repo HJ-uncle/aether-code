@@ -138,6 +138,8 @@ export interface SendOptions {
   sessionId: string
   agentId?: string
   model?: string
+  /** Knowledge-base IDs selected for this session; an empty array explicitly disables RAG. */
+  knowledgeBases?: string[]
   /**
    * 绑定的工作区路径。
    *
@@ -734,6 +736,7 @@ export function useChat(): {
         sessionId: options.sessionId || undefined,
         agentId: options.agentId || undefined,
         model: options.model || undefined,
+        knowledgeBases: options.knowledgeBases,
         workspacePaths: !isRemoteEngine() && options.workspacePaths?.length ? options.workspacePaths : undefined,
         // undefined 不参与 JSON 序列化 → 引擎收到「未指定」，按其能力判断
         thinkingMode: options.thinkingMode,

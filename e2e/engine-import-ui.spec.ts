@@ -125,6 +125,18 @@ test.describe.serial('本地引擎导入设置', () => {
     await expect(page.getByRole('menu')).toHaveCount(0)
   })
 
+  test('设置页暴露 MCP、技能和知识库完整入口', async () => {
+    for (const section of [
+      { tab: 'MCP', marker: 'MCP 服务器' },
+      { tab: '技能', marker: '导入技能' },
+      { tab: '知识库', marker: '知识库' }
+    ]) {
+      await page.getByRole('tab', { name: section.tab, exact: true }).click()
+      await expect(page.getByText(section.marker, { exact: true }).first()).toBeVisible()
+    }
+    await page.getByRole('tab', { name: '通用', exact: true }).click()
+  })
+
   test('取消原生文件选择保持引擎与已导入列表不变，不显示错误', async () => {
     const before = await page.evaluate(async () => ({
       snapshot: await window.aether.engine.getSnapshot(),

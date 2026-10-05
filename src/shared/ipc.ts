@@ -19,6 +19,7 @@ export const IPC = {
     engineActivateLocalRuntime: 'engine:activate-local-runtime',
     engineDeleteLocalRuntime: 'engine:delete-local-runtime',
     engineRequest: 'engine:request',
+    engineUpload: 'engine:upload',
     engineUploadAttachment: 'engine:upload-attachment',
     engineStreamStart: 'engine:stream:start',
     engineStreamAbort: 'engine:stream:abort',
@@ -484,6 +485,16 @@ export interface RemoteAttachmentResult {
   name: string
   type: string
   size: number
+}
+
+/** Multipart upload to an engine route (skill/knowledge imports). */
+export interface EngineUploadInput {
+  expectedEngine: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId'>
+  path: string
+  fileName: string
+  type?: string
+  data: Uint8Array
+  fields?: Record<string, string>
 }
 
 export interface EngineRequestResult<T = unknown> {

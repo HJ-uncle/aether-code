@@ -20,7 +20,7 @@ import type {
   StreamStartInput,
   TerminalCreateInput
 } from '../shared/ipc'
-import { engineRequest } from './engine/client'
+import { engineRequest, engineUpload } from './engine/client'
 import { uploadRemoteAttachment } from './engine/upload-remote-attachment'
 import { engineHost } from './engine/host'
 import { onEngineLog } from './engine/logger'
@@ -197,6 +197,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.invoke.engineRequest, (_event, input: EngineRequestInput) =>
     engineRequest(input)
   )
+  ipcMain.handle(IPC.invoke.engineUpload, (_event, input) => engineUpload(input))
   ipcMain.handle(IPC.invoke.engineUploadAttachment, (_event, input) => uploadRemoteAttachment(input))
 
   // ── 流式请求 ──

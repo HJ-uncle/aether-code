@@ -8,6 +8,7 @@ import type {
   CopyIntoWorkspaceResult,
   EngineLogEntry,
   EngineRequestInput,
+  EngineUploadInput,
   RemoteAttachmentInput,
   RemoteAttachmentResult,
   EngineRequestResult,
@@ -81,6 +82,8 @@ const api = {
 
     request: <T = unknown>(input: EngineRequestInput): Promise<EngineRequestResult<T>> =>
       ipcRenderer.invoke(IPC.invoke.engineRequest, input),
+    upload: <T = unknown>(input: EngineUploadInput): Promise<EngineRequestResult<T>> =>
+      ipcRenderer.invoke(IPC.invoke.engineUpload, input),
     uploadAttachment: (input: RemoteAttachmentInput): Promise<RemoteAttachmentResult> =>
       ipcRenderer.invoke(IPC.invoke.engineUploadAttachment, input),
 
