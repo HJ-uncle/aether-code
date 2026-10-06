@@ -85,7 +85,7 @@ const BIG_DIR_SIZE = 400
  * 夹具目录可能在首屏之外。测试不能依赖 locator 自动滚动（目标行尚未挂载），
  * 因此按真实滚动容器的总高度分段前进，直到目标行挂载后再交给 Playwright 断言。
  */
-async function revealTreeRow(target: string): Promise<void> {
+async function revealTreeRow(target: string, required = true): Promise<boolean> {
   const tree = page.locator('.explorer__tree')
   await tree.evaluate(async (element, targetPath) => {
     const waitForRender = async (): Promise<void> => {
@@ -124,7 +124,9 @@ async function revealTreeRow(target: string): Promise<void> {
       if (element.scrollTop <= previous) break
     }
   }, target)
-  await expect(page.locator(rowSelector(target))).toBeVisible({ timeout: 15_000 })
+  const row = page.locator(rowSelector(target))
+  if (required) await expect(row).toBeVisible({ timeout: 15_000 })
+  return row.isVisible()
 }
 
 /**
@@ -135,9 +137,9 @@ async function revealTreeRow(target: string): Promise<void> {
  * 这里按状态幂等，避免用例之间的执行顺序变成隐式依赖。
  */
 async function ensureDirExpanded(dir: string): Promise<void> {
-  // Fixture paths live below .e2e-tmp/smoke-fixtures. Expand the workspace root
-  // and every ancestor first so the requested row is mounted even when a
-  // previous test scrolled the virtualized tree past it.
+  // A collapsed single-child directory chain is one compact row whose path is
+  // the final directory. Look for that row before requiring each ancestor:
+  // after Collapse All, .e2e-tmp itself may not have a standalone row.
   const insideWorkspace =
     dir !== APP_ROOT && (dir.startsWith(APP_ROOT + '\\') || dir.startsWith(APP_ROOT + '/'))
   if (insideWorkspace) {
@@ -146,7 +148,9 @@ async function ensureDirExpanded(dir: string): Promise<void> {
     })
     await ensureDirExpanded(APP_ROOT)
     const parent = resolve(dir, '..')
-    if (parent !== APP_ROOT) await ensureDirExpanded(parent)
+    if (parent !== APP_ROOT && !(await revealTreeRow(dir, false))) {
+      await ensureDirExpanded(parent)
+    }
   }
   await revealTreeRow(dir)
   const row = page.locator(rowSelector(dir))
@@ -176,6 +180,10 @@ function prepareFixtures(): void {
   // 刷新按钮也只重读根目录 —— 新目录永远不出现。
   mkdirSync(join(FIXTURE_DIR, 'hover'), { recursive: true })
   writeFileSync(join(FIXTURE_DIR, 'hover', 'inside.txt'), 'inside', 'utf-8')
+
+  // 缓存加载后折叠为一个紧凑行，验证三种展开手势都能一次展开完整链条。
+  mkdirSync(join(FIXTURE_DIR, 'compact', 'middle', 'leaf'), { recursive: true })
+  writeFileSync(join(FIXTURE_DIR, 'compact', 'middle', 'leaf', 'inside.txt'), 'compact', 'utf-8')
 
   // 多标签用例的夹具：两个只读文本文件。tab-a 的内容行数造得比视口高，
   // 才能把「滚动位置」这件事验出区别（一屏放得下的文件无所谓滚动到第几行）。
@@ -834,6 +842,59 @@ test('资源管理器：拖拽把多选项移入目标目录，Ctrl+Z 撤销回�
   expect(existsSync(join(FIXTURE_DIR, 'sub', 'move-a.txt'))).toBe(false)
 })
 
+test('资源管理器：紧凑目录通过点击、方向键和拖拽悬停一次展开', async () => {
+  await ensureExplorerVisible()
+  const leafPath = join(FIXTURE_DIR, 'compact', 'middle', 'leaf')
+  const tree = page.locator('.explorer__tree')
+  // 首次逐级打开，让真实目录内容进入缓存，随后收起才会形成紧凑链。
+  await ensureDirExpanded(leafPath)
+  await revealTreeRow(join(leafPath, 'inside.txt'))
+
+  for (const gesture of ['click', 'keyboard', 'hover'] as const) {
+    await test.step(gesture, async () => {
+      await page.locator('.explorer__btn[aria-label="全部收起"]').click()
+      await ensureDirExpanded(FIXTURE_DIR)
+      await revealTreeRow(leafPath)
+      const leaf = page.locator(rowSelector(leafPath))
+      await expect(leaf.locator('.tree-row__chain')).toHaveText('compact/middle')
+      await expect(leaf).toHaveAttribute('aria-expanded', 'false')
+
+      if (gesture === 'click') {
+        await leaf.click()
+      } else if (gesture === 'keyboard') {
+        // Ctrl 点击仅设置选区和键盘光标，不先展开目录。
+        await leaf.click({ modifiers: ['Control'] })
+        await tree.press('ArrowRight')
+      } else {
+        const sourcePath = join(FIXTURE_DIR, 'move-a.txt')
+        await revealTreeRow(sourcePath)
+        const source = page.locator(rowSelector(sourcePath))
+        await source.click()
+        const from = (await source.boundingBox())!
+        const to = (await leaf.boundingBox())!
+        await page.mouse.move(from.x + 30, from.y + from.height / 2)
+        await page.mouse.down()
+        try {
+          await page.mouse.move(from.x + 50, from.y + 20, { steps: 5 })
+          await page.mouse.move(to.x + 30, to.y + to.height / 2, { steps: 5 })
+          await expect(leaf).toHaveAttribute('aria-expanded', 'true', { timeout: 10_000 })
+        } finally {
+          // 悬停展开之后取消投放，避免改变后续用例的文件夹具。
+          await page.mouse.move(1, 1)
+          await page.mouse.up()
+        }
+        expect(existsSync(sourcePath)).toBe(true)
+        expect(existsSync(join(leafPath, 'move-a.txt'))).toBe(false)
+      }
+
+      await expect(leaf).toHaveAttribute('aria-expanded', 'true')
+      await expect(page.locator(rowSelector(join(FIXTURE_DIR, 'compact')))).toHaveAttribute('aria-expanded', 'true')
+      await expect(page.locator(rowSelector(join(FIXTURE_DIR, 'compact', 'middle')))).toHaveAttribute('aria-expanded', 'true')
+      await revealTreeRow(join(leafPath, 'inside.txt'))
+    })
+  }
+})
+
 test('资源管理器：虚拟滚动只挂载可见行', async () => {
   await ensureExplorerVisible()
   await ensureDirExpanded(FIXTURE_DIR)
@@ -946,7 +1007,7 @@ test('版本控制：状态栏入口打开侧边栏视图并给出仓库信息',
   // 若将来项目本身变成仓库，则必须给出变更与提交历史两个分区。
   const label = await gitItem.innerText()
   if (label.includes('非 Git 仓库')) {
-    await expect(gitPanel).toContainText('不是 git 仓库')
+    await expect(gitPanel).toContainText(/不是\s+git\s+仓库/i)
   } else {
     await expect(gitPanel).toContainText('变更')
     await expect(gitPanel).toContainText('提交历史')

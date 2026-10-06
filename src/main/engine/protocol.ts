@@ -101,9 +101,21 @@ const REMOTE_READ_ROUTES = [
   /^\/api\/v1\/skills\/imports(?:\/[a-zA-Z0-9_-]+)?(?:\/chunks)?$/,
   /^\/api\/v1\/chat\/(snapshot|status|runs|stream)$/,
   /^\/api\/v1\/security\/(mode|policies)$/,
+  // Remote Explorer/editor requests are session-scoped by the engine. They
+  // carry only a relative path and never resolve the IDE's local workspace.
+  /^\/api\/v1\/workspace\/(files|directory|file\/(info|content))$/,
+  /^\/api\/v1\/git\/(status|branch-info|divergence|incoming|diff|head-file|head-file-content|list-branches|list-remote-branches|list-remotes|list-stashes|stash-show|stash-show-files|list-tags|log|commit-show|show-commit-file|file-history|blame|user-name|list-authors)$/,
+  /^\/api\/v1\/terminal\/create$/,
+  /^\/api\/v1\/mcp\/config\/export$/,
+  /^\/api\/v1\/codegraph\/status$/,
+  // Remote Monaco language service requests are session-scoped by the
+  // engine and never resolve a client-local workspace path.
+  /^\/api\/v1\/lsp\/request$/,
+  /^\/api\/v1\/lsp\/adapters$/,
   /^\/api\/v1\/subagent\/runs(?:\/[a-zA-Z0-9_-]+(?:\/events)?)?$/,
   /^\/api\/v1\/command-jobs(?:\/[a-zA-Z0-9_-]+(?:\/output)?)?$/,
   /^\/api\/v1\/sessions\/[a-zA-Z0-9_-]+\/binding$/
+  ,/^\/api\/v1\/memory\/(settings|recall\/[a-zA-Z0-9_.:-]+|list|graph)$/
 ]
 
 const REMOTE_CHAT_ROUTES = [
@@ -118,6 +130,8 @@ const REMOTE_CHAT_ROUTES = [
   ,/^\/api\/v1\/mcp\/servers(?:\/[a-zA-Z0-9_-]+)?\/(?:enable|disable)$/
   ,/^\/api\/v1\/skills\/imports(?:\/chunks)?(?:\/[a-zA-Z0-9_-]+)?(?:\/merge)?$/
   ,/^\/api\/v1\/knowledge\/(documents|bases|search)$/
+  ,/^\/api\/v1\/memory\/(remember|link|consolidate)$/
+  ,/^\/api\/v1\/workspace\/(bind|file|file\/create|folder\/create|file\/trash|file\/move|file\/copy)$/
 ]
 
 /** Conversation execution uses server-side workspace paths, never the local IDE root. */
@@ -127,11 +141,38 @@ export function remoteRequestError(mode: 'embedded' | 'remote', method: string, 
   if (method === 'GET' && REMOTE_READ_ROUTES.some(route => route.test(pathname))) return null
   if (method === 'POST' && REMOTE_CHAT_ROUTES.some(route => route.test(pathname))) return null
   if (method === 'POST' && /^\/api\/v1\/(mcp\/servers|mcp\/config\/import|skills)$/.test(pathname)) return null
+  if (method === 'POST' && pathname === '/api/v1/git/action') return null
+  if (method === 'POST' && /^\/api\/v1\/(security\/policies(?:\/reset)?|changes\/(keep-all|keep-many)|codegraph\/index|lsp\/diagnose)$/.test(pathname)) return null
+  if (method === 'POST' && pathname === '/api/v1/lsp/request') return null
   if (method === 'PUT' && /^\/api\/v1\/(knowledge\/(documents|bases)\/[a-zA-Z0-9_-]+|mcp\/servers\/[a-zA-Z0-9_-]+)$/.test(pathname)) return null
+  if (method === 'PUT' && /^\/api\/v1\/memory\/(settings|[a-zA-Z0-9_.:-]+)$/.test(pathname)) return null
   if (method === 'PATCH' && /^\/api\/v1\/(mcp\/servers|skills)\/[a-zA-Z0-9_-]+$/.test(pathname)) return null
+  if (method === 'PATCH' && /^\/api\/v1\/security\/policies\/[0-9]+$/.test(pathname)) return null
+  if (method === 'PUT' && pathname === '/api/v1/security/mode') return null
+  if (method === 'PUT' && /^\/api\/v1\/security\/policies\/[0-9]+$/.test(pathname)) return null
   if (method === 'DELETE' && /^\/api\/v1\/(knowledge\/(documents|bases)|mcp\/servers|skills)\/[a-zA-Z0-9_-]+$/.test(pathname)) return null
+  if (method === 'DELETE' && /^\/api\/v1\/memory\/[a-zA-Z0-9_.:-]+$/.test(pathname)) return null
+  if (method === 'DELETE' && /^\/api\/v1\/(?:models\/(?!capability-defs$|detect-capabilities$)[a-zA-Z0-9_.-]+|skills\/imports\/[a-zA-Z0-9_.-]+|security\/policies\/[0-9]+)$/.test(pathname)) return null
+  if (method === 'DELETE' && /^\/api\/v1\/terminal\/[a-zA-Z0-9_-]+$/.test(pathname)) return null
+  if (method === 'DELETE' && pathname === '/api/v1/lsp/session') return null
+  // Conversation deletion mutates engine-owned records but never touches the
+  // IDE's local workspace, so it is safe and supported for remote engines.
+  if (
+    method === 'DELETE' &&
+    (
+      pathname === '/api/v1/conversation/history' ||
+      /^\/api\/v1\/conversation\/(turns|messages)\/[a-zA-Z0-9_-]+$/.test(pathname) ||
+      /^\/api\/v1\/sessions\/[a-zA-Z0-9_-]+$/.test(pathname)
+    )
+  ) return null
+  // Truncation only removes engine-owned conversation rows. It is the remote
+  // counterpart of retrying a turn; no local workspace path is resolved here.
+  if (method === 'POST' && pathname === '/api/v1/conversation/truncate') return null
+  // Change snapshots are stored by the engine. A remote revert therefore
+  // operates on the remote engine workspace and does not require a local path.
+  if (method === 'POST' && pathname === '/api/v1/changes/revert-batch') return null
   if (method === 'PUT' && /^\/api\/v1\/models\/(?!capability-defs$|detect-capabilities$)[a-zA-Z0-9_-]+$/.test(pathname)) return null
-  return '此入口尚未接入远端服务；远端聊天、MCP、技能和知识库管理可用，文件与 Git 操作仍使用本机工作区。'
+  return '此入口尚未接入远端服务；请使用已接入的远端工作区、聊天、MCP、技能、知识库与代码图接口。'
 }
 
 /** Used by both ordinary requests and every SSE method, including resume. */

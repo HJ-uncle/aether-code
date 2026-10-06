@@ -6933,13 +6933,77 @@ select.field__input {
   color: var(--fg-muted);
 }
 
-/* 已回答：卡片坍缩成一行记录，撤掉警示色与外框，避免看起来仍在等待 */
-.pending-card--done {
+/* 已完成/已失效的交互合并成一条历史记录，默认收起以保持对话流紧凑。 */
+.pending-card--history {
+  display: block;
+  margin-top: 10px;
   gap: 0;
   padding: 0;
   border: none;
   border-radius: 0;
   background: transparent;
+}
+
+.pending-card--history .pending-card__summary {
+  color: var(--fg-faint);
+}
+
+.interaction-history > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.interaction-history__chevron {
+  transform: rotate(-90deg);
+  transition: transform 0.15s ease;
+}
+
+.interaction-history[open] > summary .interaction-history__chevron {
+  transform: rotate(0deg);
+}
+
+.pending-card__history-list {
+  margin: 4px 0 0 25px;
+  border-left: 1px solid var(--border);
+}
+
+.pending-card__history-item {
+  padding: 7px 0 7px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pending-card__history-item:last-child {
+  border-bottom: 0;
+}
+
+.pending-card__history-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+.pending-card__history-row svg {
+  flex: 0 0 auto;
+  color: var(--fg-faint);
+}
+
+.pending-card__history-row .pending-card__summary-choice {
+  overflow: visible;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.pending-card__history-question {
+  margin-top: 3px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .pending-card__summary {
@@ -7438,6 +7502,17 @@ select.field__input {
   padding: 4px 10px 6px;
   color: var(--warn);
   font-size: 12px;
+}
+
+.composer-options__error button {
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 /*
@@ -10859,5 +10934,225 @@ select.field__input {
 
   .app-settings__title {
     font-size: 22px;
+  }
+}
+
+/*
+ * 小屏工作台的最后一层布局收口。
+ * 设置页运行在编辑器主区里，viewport media query 只能看到整个窗口，
+ * 无法知道聊天面板和活动栏已经占走了多少空间。用命名容器让导航、
+ * 正文和各设置子页共享同一个实际宽度基准。
+ */
+.app-settings {
+  container-type: inline-size;
+  container-name: settings-shell;
+}
+
+.app-settings__body {
+  container-type: inline-size;
+  container-name: settings-body;
+}
+
+@container settings-shell (max-width: 760px) {
+  .app-settings__body {
+    padding: 24px 18px 48px;
+  }
+
+  .app-settings__header {
+    margin-bottom: 22px;
+  }
+
+  .app-settings__title {
+    font-size: 22px;
+  }
+}
+
+@container settings-shell (max-width: 560px) {
+  .app-settings__body {
+    padding: 20px 14px 40px;
+  }
+
+  .app-settings__header {
+    margin-bottom: 18px;
+  }
+
+  .app-settings__header-eyebrow {
+    margin-bottom: 6px;
+    font-size: 10px;
+  }
+
+  .app-settings__title {
+    font-size: 20px;
+  }
+
+  .app-settings__subtitle {
+    font-size: 12px;
+  }
+}
+
+@container settings-body (max-width: 620px) {
+  .app-settings__header {
+    max-width: none;
+  }
+
+  .app-settings__body > .settings-view,
+  .app-settings__body > .keybindings {
+    width: 100%;
+  }
+
+  .settings-view .sg {
+    margin-bottom: 22px;
+  }
+
+  .settings-view .sg__title {
+    margin-left: 2px;
+  }
+
+  .settings-view .sg__row {
+    min-width: 0;
+  }
+
+  .settings-view .sg__row-text,
+  .settings-view .sg__row-control {
+    min-width: 0;
+  }
+
+  .settings-view .sg__row-desc {
+    overflow-wrap: anywhere;
+  }
+}
+
+@container settings-body (max-width: 460px) {
+  .app-settings__body {
+    padding-inline: 12px;
+  }
+
+  .settings-view .sg__card {
+    border-radius: var(--radius-lg);
+  }
+
+  .settings-view .sg__row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px 14px;
+  }
+
+  .settings-view .sg__row-control {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .settings-view .sg__row-control .toggle,
+  .settings-view .sg__row-control .segmented {
+    margin-left: auto;
+  }
+
+  .settings-view .sg__row--content {
+    padding: 14px;
+  }
+
+  .settings-view .sg__footer {
+    margin-inline: 2px;
+  }
+
+  .app-settings__body .keybindings__row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .keybindings__source,
+  .keybindings__actions {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .keybindings__actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+/* 窄窗口将设置导航改为图标栏；设置页的外层资源管理器由下方聚焦模式
+ * 收起，恢复普通编辑器视图时仍由工作台状态控制侧栏显隐。 */
+@media (max-width: 1200px) {
+  .app-settings {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+
+  .app-settings__nav {
+    align-items: center;
+    padding: var(--space-4) 8px var(--space-5);
+  }
+
+  .app-settings__nav-header {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .app-settings__nav-header > div:last-child,
+  .app-settings__nav-group-title,
+  .app-settings__nav-item span {
+    display: none;
+  }
+
+  .app-settings__nav-item {
+    justify-content: center;
+    width: 40px;
+    padding: 0;
+  }
+
+  .app-settings__nav-item.is-active::before {
+    left: 0;
+  }
+}
+
+@media (max-width: 560px) {
+  .app-settings {
+    grid-template-columns: 52px minmax(0, 1fr);
+  }
+
+  .app-settings__nav {
+    padding-inline: 6px;
+  }
+
+  .app-settings__nav-item {
+    width: 38px;
+  }
+}
+
+/* 设置是当前主任务时，收起资源管理器和它的分隔条，给正文让出连续
+ * 阅读空间；聊天面板保留，方便从设置页继续验证对话交互。 */
+@media (max-width: 1280px) {
+  .workbench:has(.app-settings) .workbench__sidebar,
+  .workbench:has(.app-settings) .workbench__sidebar + .resizer--vertical {
+    display: none;
+  }
+}
+
+.explorer__root {
+  min-width: 0;
+}
+
+.status-bar__item {
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .status-bar__item--muted,
+  .status-bar .git-sync__label,
+  .status-bar .git-sync__badge {
+    display: none;
+  }
+}
+
+@media (max-width: 620px) {
+  .status-bar__item {
+    padding-inline: 5px;
+  }
+
+  .status-bar__item--branch {
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }

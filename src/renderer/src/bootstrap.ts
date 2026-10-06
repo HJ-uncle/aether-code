@@ -7,6 +7,7 @@
 import { registerContributions } from './contrib'
 import { installKeybindingDispatcher } from './core/platform/keybindings'
 import { restoreLastFolder } from './core/workspace/workspace-store'
+import { wireWorkspaceLiveSync } from './core/workspace/live-sync'
 import { wireTsLsp } from './core/lsp/lifecycle'
 
 export function bootstrapRenderer(): () => void {
@@ -16,10 +17,12 @@ export function bootstrapRenderer(): () => void {
   // TS 语言服务跟随工作区启动/停止。监听必须在 restoreLastFolder 之前注册：
   // 后者是异步的，完成后才触发工作区变化回调，先注册就不会漏掉首次启动
   wireTsLsp()
+  const disposeWorkspaceLiveSync = wireWorkspaceLiveSync()
   void restoreLastFolder()
 
   return () => {
     disposeContributions()
     disposeKeybindings()
+    disposeWorkspaceLiveSync()
   }
 }

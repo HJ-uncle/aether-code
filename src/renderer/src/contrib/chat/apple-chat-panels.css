@@ -89,6 +89,14 @@
   justify-self: end;
 }
 
+/* 长改动列表只占有限高度，滚动留在列表内部，底部操作栏与说明始终可见。 */
+.changes-panel__list {
+  max-height: min(320px, 36vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
 .changes-panel__footer {
   gap: 6px;
   min-height: 34px;
@@ -104,6 +112,27 @@
 
 .changes-panel__count {
   background: var(--accent-soft);
+}
+
+/* Remote status stays within the tray hierarchy instead of rendering as an
+   unstyled paragraph that competes with the file list. */
+.changes-panel__notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-inset);
+  color: var(--fg-muted);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.changes-panel__notice > svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--accent);
 }
 
 .session-tray__bar {
@@ -153,5 +182,109 @@
   .changes-panel__badge {
     grid-column: 5;
     grid-row: 1;
+  }
+}
+
+/*
+ * 对话输入区是右侧可调整宽度的面板，窗口媒体查询无法反映它的真实空间。
+ * 这些规则使用 .chat__composer 的容器宽度，让窄侧栏仍保持完整的控制层级：
+ * 发送键、模型选择和偏好入口始终有自己的命中区域，长模型名只在中间截断。
+ */
+@container composer (max-width: 520px) {
+  .chat__surface {
+    padding: 10px 10px 8px;
+    gap: 5px;
+  }
+
+  .chat__toolbar {
+    gap: 3px;
+  }
+
+  .chat__toolbar .model-picker {
+    flex: 1 1 96px;
+    max-width: 170px;
+  }
+
+  .chat__toolbar .model-picker__trigger {
+    padding-inline: 6px;
+  }
+
+  .chat__toolbar .chat__send {
+    width: 28px;
+    height: 28px;
+  }
+}
+
+@container composer (max-width: 390px) {
+  .chat__toolbar .model-picker {
+    flex-basis: 72px;
+    max-width: 132px;
+  }
+
+  /* 建索引是低频入口，保留图标和 title，避免它吞掉发送键的空间。 */
+  .chat__index-cta {
+    width: 26px;
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .chat__index-cta .picker__label {
+    display: none;
+  }
+}
+
+@container composer (max-width: 330px) {
+  .chat__surface {
+    padding-inline: 8px;
+  }
+
+  .chat__toolbar {
+    gap: 2px;
+  }
+
+  /* 润色是低频动作，在极窄面板仅保留 24px 图标命中区，不挤掉主操作。 */
+  .chat__polish-btn,
+  .composer-options__trigger {
+    width: 24px;
+    height: 24px;
+  }
+
+  .chat__toolbar .model-picker {
+    flex-basis: 58px;
+    max-width: 108px;
+  }
+
+  .chat__toolbar .model-picker__trigger {
+    height: 24px;
+    padding-inline: 5px;
+    gap: 3px;
+  }
+}
+
+/* 顶部会话栏同样按自身宽度换行，避免工作区名称挤压新建/多选。 */
+.chat__topbar {
+  container-type: inline-size;
+  container-name: chat-topbar;
+}
+
+@container chat-topbar (max-width: 520px) {
+  .chat__topbar {
+    align-content: center;
+    min-height: 38px;
+    padding-inline: 8px;
+    gap: 3px 6px;
+  }
+
+  .chat__topbar .chat__workspace {
+    flex: 1 1 100px;
+  }
+
+  .chat__topbar .chat__toolbar-spacer {
+    display: none;
+  }
+
+  .chat__topbar .chat__toolbar-btn {
+    padding-inline: 6px;
+    font-size: 11px;
   }
 }

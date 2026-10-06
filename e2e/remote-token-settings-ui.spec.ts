@@ -378,12 +378,16 @@ test.describe.serial('远端令牌设置真实界面闭环', () => {
     await historyRow.click()
     await expect(page.locator('.chat-panel')).toContainText(historyTitle)
     await expect(page.locator('.chat-panel')).toContainText(historyReply)
+    await historyRow.click({ button: 'right' })
+    await expect(page.getByRole('menuitem', { name: '删除会话', exact: true })).toBeEnabled()
+    await page.keyboard.press('Escape')
     const chat = page.locator('.chat-panel')
     await expect(chat.locator('.chat__workspace')).toContainText('远端')
     await expect(chat.locator('.chat__input')).toHaveAttribute('contenteditable', 'true')
     await expect(chat.getByRole('button', { name: '发送', exact: true })).toBeDisabled()
-    await expect(chat.getByRole('button', { name: '重新发送', exact: true })).toBeDisabled()
-    await expect(chat.getByRole('button', { name: '重新生成', exact: true })).toBeDisabled()
+    await expect(chat.getByRole('button', { name: '重新发送', exact: true })).toBeEnabled()
+    await expect(chat.getByRole('button', { name: '重新生成', exact: true })).toBeEnabled()
+    await expect(chat.getByRole('button', { name: '回退到此处', exact: true })).toBeEnabled()
     await expect.poll(() => apiRequests.slice(firstRequest).some(request =>
       request.method === 'GET' && request.path === '/api/v1/changes' &&
       request.sessionId === historySessionId && request.accepted
@@ -396,6 +400,39 @@ test.describe.serial('远端令牌设置真实界面闭环', () => {
     }), historySessionId)
     expect(history.ok, history.message).toBe(true)
     expect(history.data).toEqual(historyRows)
+    const clear = await page.evaluate(sessionId => window.aether.engine.request({
+      method: 'DELETE', path: '/conversation/history', query: { sessionId }
+    }), historySessionId)
+    expect(clear.ok, clear.message).toBe(true)
+    const turn = await page.evaluate(sessionId => window.aether.engine.request({
+      method: 'DELETE', path: '/conversation/turns/remote-turn-1', query: { sessionId }
+    }), historySessionId)
+    expect(turn.ok, turn.message).toBe(true)
+    const truncate = await page.evaluate(sessionId => window.aether.engine.request({
+      method: 'POST', path: '/conversation/truncate', body: { sessionId, messageId: 'remote-ui-user' }
+    }), historySessionId)
+    expect(truncate.ok, truncate.message).toBe(true)
+    const revert = await page.evaluate(sessionId => window.aether.engine.request({
+      method: 'POST', path: '/changes/revert-batch', body: { sessionId, scope: 'all', fromTurnId: 'remote-turn-1' }
+    }), historySessionId)
+    expect(revert.ok, revert.message).toBe(true)
+    const deletion = await page.evaluate(sessionId => window.aether.engine.request({
+      method: 'DELETE', path: `/sessions/${encodeURIComponent(sessionId)}`, query: { keepWorkspace: 'true' }
+    }), 'remote-delete-probe')
+    expect(deletion.ok, deletion.message).toBe(true)
+    expect(apiRequests.slice(firstRequest).some(request =>
+      request.method === 'DELETE' && request.path === '/api/v1/sessions/remote-delete-probe' && request.accepted
+    )).toBe(true)
+    for (const [method, path] of [
+      ['DELETE', '/api/v1/conversation/history'],
+      ['DELETE', '/api/v1/conversation/turns/remote-turn-1'],
+      ['POST', '/api/v1/conversation/truncate'],
+      ['POST', '/api/v1/changes/revert-batch']
+    ]) {
+      expect(apiRequests.slice(firstRequest).some(request =>
+        request.method === method && request.path === path && request.accepted
+      ), `Authenticated remote history mutation reached external engine: ${method} ${path}`).toBe(true)
+    }
     for (const path of ['/api/v1/conversation/sessions', '/api/v1/conversation/history', '/api/v1/changes']) {
       expect(apiRequests.slice(firstRequest).some(request =>
         request.method === 'GET' && request.path === path && request.accepted

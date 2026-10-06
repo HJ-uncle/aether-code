@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type JSX } from 'react'
 import { requestOrThrow } from '@renderer/core/engine/client'
 import { useApp } from '@renderer/core/app-context'
-import { isRemoteEngine } from '@renderer/core/engine/source'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { Icon } from '@renderer/workbench/icons'
 import { SettingsContent, SettingsGroup } from './SettingsGroup'
@@ -53,9 +52,11 @@ function fmtBytes(bytes?: number): string {
 }
 
 export function CodeGraphSettingsView(): JSX.Element {
-  const { engine } = useApp()
+  const { engine, settings } = useApp()
   const isRemote = engine.snapshot.mode === 'remote'
   const workspace = useWorkspace()
+  const projectRoot = isRemote ? settings.remoteWorkspaceRoot.trim() : workspace.root
+  const sessionId = settings.lastSessionId || undefined
   const [status, setStatus] = useState<CgStatus | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -70,7 +71,7 @@ export function CodeGraphSettingsView(): JSX.Element {
   }, [])
 
   const refresh = useCallback(async () => {
-    if (isRemoteEngine() || !workspace.root) {
+    if (!projectRoot && !sessionId) {
       setStatus(null)
       setLoadError(null)
       setActionError(null)
@@ -81,31 +82,26 @@ export function CodeGraphSettingsView(): JSX.Element {
       const s = await requestOrThrow<CgStatus>({
         method: 'GET',
         path: '/codegraph/status',
-        query: { path: workspace.root ?? undefined }
+        query: { path: projectRoot || undefined, sessionId }
       })
-      if (isRemoteEngine()) return
       setStatus(s)
       setLoadError(null)
     } catch (e) {
-      if (isRemoteEngine()) return
       setLoadError(e instanceof Error ? e.message.slice(0, 80) : '状态查询失败')
     }
-  }, [workspace.root, isRemote])
+  }, [projectRoot, sessionId])
 
   /** 索引任务期间轮询状态，结束后停在最终结果（status 自带统计） */
   const poll = useCallback(() => {
     stopPoll()
-    if (isRemoteEngine()) return
     pollRef.current = setInterval(() => {
-      if (isRemoteEngine()) { stopPoll(); return }
       void (async () => {
         try {
           const s = await requestOrThrow<CgStatus>({
             method: 'GET',
             path: '/codegraph/status',
-            query: { path: workspace.root ?? undefined }
+            query: { path: projectRoot || undefined, sessionId }
           })
-          if (isRemoteEngine()) return
           setStatus(s)
           if (!s.indexing) {
             stopPoll()
@@ -118,7 +114,7 @@ export function CodeGraphSettingsView(): JSX.Element {
         }
       })()
     }, 1500)
-  }, [workspace.root, stopPoll])
+  }, [projectRoot, sessionId, stopPoll])
 
   // 切换页面会让本组件卸载再挂载：卸载时必须停掉旧定时器，否则会泄漏多个轮询。
   useEffect(() => stopPoll, [stopPoll, isRemote])
@@ -137,14 +133,14 @@ export function CodeGraphSettingsView(): JSX.Element {
   }, [status?.indexing, poll, stopPoll])
 
   const rebuild = useCallback(async () => {
-    if (isRemoteEngine() || !workspace.root || working) return
+    if ((!projectRoot && !sessionId) || working) return
     setWorking(true)
     setActionError(null)
     try {
       const r = await requestOrThrow<{ started: boolean; alreadyRunning?: boolean }>({
         method: 'POST',
         path: '/codegraph/index',
-        body: { path: workspace.root, force: true }
+        body: { path: projectRoot || undefined, sessionId, force: true }
       })
       if (r.started) {
         poll()
@@ -156,7 +152,7 @@ export function CodeGraphSettingsView(): JSX.Element {
       setWorking(false)
       setActionError(e instanceof Error ? e.message.slice(0, 80) : '请求失败')
     }
-  }, [workspace.root, working, poll])
+  }, [projectRoot, sessionId, working, poll])
 
   const run = status?.run
   const runActive = status?.indexing === true
@@ -174,17 +170,15 @@ export function CodeGraphSettingsView(): JSX.Element {
         footer="建索引时自动排除依赖与构建产物（node_modules、dist、build、out 等），并遵循项目内的 .gitignore 规则；对话页脚的「建索引」按钮可完成首次创建，已有索引时无需重复操作。"
       >
         <SettingsContent>
-          {isRemote ? (
-            <p className="sg__note">当前远端连接尚未接入代码图索引管理；创建、重建和状态查询暂不可用。本机项目目录不会传给远端引擎。</p>
-          ) : !workspace.root ? (
-            <p className="sg__note">先打开一个项目目录，再在这里管理它的代码图索引。</p>
+          {!projectRoot && !sessionId ? (
+            <p className="sg__note">先打开一个项目目录或建立会话，再在这里管理代码图索引。</p>
           ) : status == null && !loadError ? (
             <p className="sg__note">正在加载索引状态…</p>
           ) : (
             <dl className="kv">
               <dt>项目</dt>
-              <dd className="kv__mono" title={status?.root ?? workspace.root}>
-                {workspace.root.replace(/\\/g, '/').split('/').pop()}
+              <dd className="kv__mono" title={status?.root ?? projectRoot ?? sessionId}>
+                {(status?.root ?? projectRoot ?? '远端会话').replace(/\\/g, '/').split('/').pop()}
               </dd>
               <dt>状态</dt>
               <dd>
@@ -220,11 +214,11 @@ export function CodeGraphSettingsView(): JSX.Element {
               ) : null}
             </dl>
           )}
-          {!isRemote && loadError ? <div className="settings-view__error">{loadError}</div> : null}
-          {!isRemote && run?.phase === 'failed' && run.error ? (
+          {loadError ? <div className="settings-view__error">{loadError}</div> : null}
+          {run?.phase === 'failed' && run.error ? (
             <div className="settings-view__error">{run.error.slice(0, 120)}</div>
           ) : null}
-          {!isRemote && actionError ? <div className="settings-view__error">{actionError}</div> : null}
+          {actionError ? <div className="settings-view__error">{actionError}</div> : null}
         </SettingsContent>
       </SettingsGroup>
 
@@ -232,9 +226,9 @@ export function CodeGraphSettingsView(): JSX.Element {
         <button
           type="button"
           className="btn btn--primary"
-          disabled={isRemote || !workspace.root || working || runActive}
+          disabled={(!projectRoot && !sessionId) || working || runActive}
           title={
-            isRemote ? '当前远端连接尚不支持创建或重建代码图索引' : status?.initialized
+            status?.initialized
               ? '丢弃现有索引并全量重建（依赖大量变更或索引异常时使用；依赖目录、构建产物等会被自动排除）'
               : '为当前项目创建代码图索引（Agent 随之可查询符号 / 调用关系 / 影响面）'
           }
@@ -246,8 +240,8 @@ export function CodeGraphSettingsView(): JSX.Element {
         <button
           type="button"
           className="btn"
-          disabled={isRemote || !workspace.root || working}
-          title={isRemote ? '当前远端连接尚不支持查询代码图索引状态' : '刷新当前项目的索引状态'}
+          disabled={(!projectRoot && !sessionId) || working}
+          title="刷新当前项目的索引状态"
           onClick={() => void refresh()}
         >
           刷新状态

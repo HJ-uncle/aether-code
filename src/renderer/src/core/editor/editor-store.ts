@@ -18,6 +18,7 @@ import { getWorkspaceState } from '../workspace/workspace-store'
 import { activateDocument } from './editor-activation'
 import { fileIdentity } from './file-identity'
 import { getActiveEditor } from './active-editor'
+import { workspaceConnectionKey } from '../workspace/connection'
 
 export interface OpenDocument {
   path: string
@@ -36,6 +37,8 @@ export interface OpenDocument {
   error: string | null
   externalChange?: 'modified' | 'deleted'
   diskContent?: string
+  /** Connection/session identity that owns this document buffer. */
+  workspaceKey: string
 }
 
 export interface EditorState {
@@ -229,6 +232,9 @@ export async function openFile(
 ): Promise<void> {
   filePath = resolveDocumentPath(filePath)
   if (state.docs.has(filePath)) {
+    if (state.docs.get(filePath)?.workspaceKey !== workspaceConnectionKey()) {
+      throw new Error('工作区连接或会话已经切换，请关闭旧文档后重新打开。')
+    }
     requestReveal(filePath, line, column, length)
     return
   }
@@ -245,6 +251,7 @@ export async function openFile(
     size: 0,
     loading: true,
     error: null
+    ,workspaceKey: workspaceConnectionKey()
   }
 
   const nextDocs = new Map(state.docs)
@@ -255,6 +262,7 @@ export async function openFile(
   try {
     const file = await readFile(filePath)
     if (state.docs.get(filePath) !== placeholder) return
+    if (placeholder.workspaceKey !== workspaceConnectionKey()) throw new Error('工作区连接或会话已切换，已取消打开')
     const loaded: OpenDocument = {
       // 保持调用方传入的路径：docs/order 的 key 都是它。
       // 主进程返回的 path 经 resolve 规范化，分隔符可能与调用方不一致，
@@ -269,7 +277,8 @@ export async function openFile(
       tooLarge: Boolean(file.tooLarge),
       size: file.size,
       loading: false,
-      error: null
+      error: null,
+      workspaceKey: placeholder.workspaceKey
     }
     const withLoaded = new Map(state.docs)
     withLoaded.set(filePath, loaded)
@@ -360,6 +369,7 @@ async function saveDocumentNow(filePath: string, identity: DocumentIdentity | un
   if (identity && !sameDocument(filePath, identity, false)) throw new Error('文件已关闭或路径已更改，本次保存已取消。')
   const doc = state.docs.get(filePath)
   if (!doc || doc.isBinary || doc.loading) return
+  if (doc.workspaceKey !== workspaceConnectionKey()) throw new Error('工作区连接或会话已经切换，本次保存已取消。')
   if (doc.truncated) throw new Error('当前只载入文件的部分内容，已阻止覆盖保存。请使用完整文件编辑器处理。')
 
   setState({ saving: new Set(state.saving).add(filePath) })
@@ -368,7 +378,7 @@ async function saveDocumentNow(filePath: string, identity: DocumentIdentity | un
     // Another workbench or the AI may have edited this file since it was opened.
     // Preserve the user's buffer instead of silently overwriting newer disk contents.
     const disk = await readFile(filePath)
-    if (!sameDocument(filePath, identity, false)) throw new Error('文件已关闭或路径已更改，本次保存已取消。')
+    if (!sameDocument(filePath, identity, false) || doc.workspaceKey !== workspaceConnectionKey()) throw new Error('工作区连接或会话已经切换，本次保存已取消。')
     if (disk.truncated || disk.isBinary || (disk.content !== doc.savedContent && disk.content !== doc.content)) {
       throw new Error('文件已在其他编辑器或工具中修改，未覆盖磁盘内容。请先保留当前修改并重新加载文件。')
     }
@@ -433,7 +443,7 @@ export async function reloadDocuments(filePaths: string[]): Promise<void> {
   for (const requestedPath of filePaths) {
     const filePath = resolveDocumentPath(requestedPath)
     const doc = state.docs.get(filePath)
-    if (!doc || doc.isBinary || doc.loading || state.saving.has(filePath)) continue
+    if (!doc || doc.isBinary || doc.loading || state.saving.has(filePath) || doc.workspaceKey !== workspaceConnectionKey()) continue
     const identity = getDocumentIdentity(filePath)
     try {
       const file = await readFile(filePath)

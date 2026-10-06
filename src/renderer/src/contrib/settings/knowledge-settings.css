@@ -1,4 +1,15 @@
 .settings-view--knowledge { container-type: inline-size; }
+
+/* SettingsContent is also an sg__row.  Give these full-width workspaces one
+   deliberate inset instead of stacking the generic row padding with the
+   workspace padding (the doubled inset is especially obvious in a narrow
+   settings column). */
+.settings-view--knowledge .sg__row.knowledge-toolbar,
+.settings-view--knowledge .sg__row.knowledge-upload,
+.settings-view--knowledge .sg__row.knowledge-search {
+  align-items: stretch;
+  padding: 18px 20px;
+}
 .knowledge-toolbar, .knowledge-upload, .knowledge-search { display: block; padding: 14px 18px; }
 .knowledge-toolbar__fields, .knowledge-toolbar__base, .knowledge-upload__fields, .knowledge-search__bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .knowledge-toolbar__fields .field__input:first-child { flex: 1 1 180px; }
@@ -102,7 +113,7 @@
   background: var(--bg-inset);
 }
 
-@container (max-width: 620px) {
+@container settings-body (max-width: 620px) {
   .knowledge-document { align-items: flex-start; flex-direction: column; }
   .knowledge-document__actions { width: 100%; flex-wrap: wrap; white-space: normal; }
   .knowledge-toolbar__fields, .knowledge-toolbar__base { align-items: stretch; flex-direction: column; }
@@ -122,6 +133,37 @@
   .knowledge-toolbar__base select { min-width: 0; width: 100%; }
   .knowledge-file-drop { align-items: flex-start; flex-direction: column; }
   .knowledge-document-summary { align-items: flex-start; }
+}
+
+@container settings-body (max-width: 460px) {
+  .settings-view--knowledge .sg__row.knowledge-toolbar,
+  .settings-view--knowledge .sg__row.knowledge-upload,
+  .settings-view--knowledge .sg__row.knowledge-search {
+    padding: 14px;
+  }
+
+  .knowledge-file-drop {
+    min-height: 88px;
+  }
+
+  .knowledge-upload__fields .btn,
+  .knowledge-toolbar__fields .btn,
+  .knowledge-toolbar__base .btn {
+    width: 100%;
+  }
+
+  .knowledge-edit-form,
+  .knowledge-meta-actions,
+  .knowledge-search__bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .knowledge-edit-form .field__input,
+  .knowledge-search__bar .field__input {
+    width: 100%;
+    min-width: 0;
+  }
 }
 
 /* Grouped document workspace: keep the library, composer and search tools

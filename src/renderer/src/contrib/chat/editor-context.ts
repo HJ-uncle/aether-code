@@ -2,7 +2,6 @@ import type { editor, IRange } from 'monaco-editor'
 import { getDocument, isDirty } from '@renderer/core/editor/editor-store'
 import { fileIdentity } from '@renderer/core/editor/file-identity'
 import { getActiveEditor } from '@renderer/core/editor/active-editor'
-import { isRemoteEngine } from '@renderer/core/engine/source'
 import { showChatPanel } from '@renderer/core/platform/layout-state'
 import { getWorkspaceState } from '@renderer/core/workspace/workspace-store'
 import { toast } from '@renderer/core/toast'
@@ -25,10 +24,6 @@ function referencePath(path: string): string {
 }
 
 function queue(mentions: Mention[]): boolean {
-  if (isRemoteEngine()) {
-    toast.info('当前是远端会话，请切换到本地会话后添加本地文件。')
-    return false
-  }
   if (!mentions.length) return false
   showChatPanel()
   pushPendingMentions(mentions)

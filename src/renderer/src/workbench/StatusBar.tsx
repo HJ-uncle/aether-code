@@ -35,8 +35,11 @@ export function StatusBar(): JSX.Element {
   // 问题计数：点击打开问题面板（对齐 VS Code 状态栏的错误/警告计数）
   const { byFile: problemFiles } = useProblems()
 
+  // During a remote outage EngineHost reports `starting` while retrying. The
+  // Stop command must remain usable to cancel that reconnect loop.
+  const remoteReconnecting = snapshot.mode === 'remote' && snapshot.phase === 'starting' && snapshot.error?.includes('正在重新连接') === true
   const busy =
-    snapshot.phase === 'starting' ||
+    (snapshot.phase === 'starting' && !remoteReconnecting) ||
     snapshot.phase === 'installing' ||
     snapshot.phase === 'stopping'
 
@@ -73,7 +76,7 @@ export function StatusBar(): JSX.Element {
         onClick={() => void executeCommand('aether.output.show')}
       >
         <span className={`status-dot status-dot--${snapshot.phase}`} />
-        引擎：{PHASE_LABEL[snapshot.phase]}
+        引擎：{remoteReconnecting ? '重新连接中' : snapshot.mode === 'remote' && snapshot.phase === 'starting' ? '连接中' : PHASE_LABEL[snapshot.phase]}
         {snapshot.baseUrl ? ` · ${snapshot.baseUrl.replace('http://', '')}` : ''}
       </button>
 
@@ -164,8 +167,8 @@ export function StatusBar(): JSX.Element {
         type="button"
         className="status-bar__item"
         disabled={busy}
-        title="重启引擎"
-        aria-label="重启引擎"
+        title={snapshot.mode === 'remote' ? '重新连接远端引擎' : '重启引擎'}
+        aria-label={snapshot.mode === 'remote' ? '重新连接远端引擎' : '重启引擎'}
         onClick={() => void executeCommand('aether.engine.restart')}
       >
         <Icon name="restart" size={16} />

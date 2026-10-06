@@ -39,6 +39,7 @@ function load<T>(relative: string, imports: Record<string, unknown>, globals: Re
 }
 
 function fixture() {
+  let connectionKey = 'embedded'
   const writes: { path: string; content: string }[] = []
   const persisted: string[] = []
   const io = {
@@ -61,6 +62,7 @@ function fixture() {
     './editor-activation': { activateDocument: () => {} },
     './file-identity': { fileIdentity: (value: string) => value.toLowerCase() },
     './active-editor': { getActiveEditor: () => null }
+    , '../workspace/connection': { workspaceConnectionKey: () => connectionKey }
   })
   const recovery = (): Recovery => {
     const storage = new Map([['aether.editor.recovery:d:/workspace', JSON.stringify({
@@ -79,7 +81,7 @@ function fixture() {
       window: { addEventListener: () => {}, removeEventListener: () => {} }
     })
   }
-  return { store, io, writes, persisted, recovery }
+  return { store, io, writes, persisted, recovery, switchConnection: (key: string) => { connectionKey = key } }
 }
 
 test('保存预读等待期间重命名，取消旧路径写盘并保留新路径草稿', async () => {
@@ -97,6 +99,15 @@ test('保存预读等待期间重命名，取消旧路径写盘并保留新路�
   expect(writes).toEqual([])
   expect(store.getDocument('D:/workspace/renamed.txt')?.content).toBe('draft')
   expect([...store.getEditorState().saving]).toEqual([])
+})
+
+test('远程连接或会话切换后旧文档禁止写入新工作区', async () => {
+  const { store, switchConnection, writes } = fixture()
+  await store.openFile(path)
+  store.setDocumentContent(path, 'local draft')
+  switchConnection('remote:next-session')
+  await expect(Promise.resolve(store.saveDocument(path))).rejects.toThrow('连接或会话已经切换')
+  expect(writes).toEqual([])
 })
 
 test('保存期间继续输入合法，已落盘快照之外的新输入保持dirty', async () => {

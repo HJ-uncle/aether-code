@@ -173,6 +173,8 @@ export function AppSettingsView(): JSX.Element {
                   type="button"
                   role="tab"
                   aria-selected={item.id === active}
+                  aria-label={item.label}
+                  title={item.label}
                   className={`app-settings__nav-item${item.id === active ? ' is-active' : ''}`}
                   onClick={() => setActive(item.id)}
                 >

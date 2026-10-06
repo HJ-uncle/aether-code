@@ -5,7 +5,8 @@
  * 标签切换只是显隐 DOM（xterm 只能 open 一次），shell 进程与
  * 滚动缓冲始终存活；后台会话的输出照常写入各自的缓冲。
  *
- * 本地轨：node-pty 跑在 IDE 主进程，经 IPC 收发，不依赖引擎。
+ * 本地轨：node-pty 跑在 IDE 主进程，经 IPC 收发；远端轨由主进程代理
+ * 引擎的 authenticated WebSocket。会话对象对上层保持同一 transport 面。
  * 会话对象本身不可变（id/title/term/fit/transport），可变的运行态
  * （attached/dead/cleanup）放在模块级 internals 登记表里，
  * 更新走「取旧值 → 展开覆盖 → set 新对象」。
@@ -14,6 +15,8 @@ import { useSyncExternalStore } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { toast } from '@renderer/core/toast'
+import { getSettings } from '@renderer/core/engine/client'
+import { getEngineStorageKey, isRemoteEngine, sessionStorageKey } from '@renderer/core/engine/source'
 import { buildTerminalTheme } from './terminal-theme'
 
 /** 本地轨共用的会话操作面：上层不感知数据是走 IPC 还是 WS */
@@ -189,7 +192,16 @@ export async function createLocalSession(cwd?: string): Promise<void> {
   setState({ creating: true, createFailed: null, closedAll: false })
   try {
     // 后台创建用默认尺寸，首次挂载时由 fit 修正
-    const { id } = await window.aether.terminal.create({ cwd, cols: 80, rows: 24 })
+    let sessionId: string | undefined
+    if (isRemoteEngine()) {
+      const settings = await getSettings()
+      sessionId = settings.lastSessionId.trim()
+      const source = getEngineStorageKey()
+      if (source) {
+        try { sessionId = localStorage.getItem(sessionStorageKey('aether:lastSessionId', source))?.trim() || sessionId } catch { /* optional persistence */ }
+      }
+    }
+    const { id } = await window.aether.terminal.create({ cwd, cols: 80, rows: 24, ...(sessionId ? { sessionId } : {}) })
     const { term, fit } = newTerminal()
 
     const transport: TerminalTransport = {
@@ -206,7 +218,7 @@ export async function createLocalSession(cwd?: string): Promise<void> {
     })
     const offExit = window.aether.terminal.onExit((info) => {
       if (info.id !== id) return
-      markDead(id, term, `进程已退出，代码 ${info.exitCode}`)
+      markDead(id, term, info.reason ?? `进程已退出，代码 ${info.exitCode}`)
     })
     const offInput = term.onData((data) => transport.write(data))
     withInternals(id, {

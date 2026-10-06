@@ -152,13 +152,18 @@ test('普通HTTP与恢复SSE共用实例头和根路径规则', () => {
   expect(normalizeEnginePath('/api/v1/tools')).toBe('/api/v1/tools')
 })
 
-test('remote 放行服务端会话聊天，仍阻止客户端路径接口和未开放的改动操作', () => {
+test('remote 放行服务端会话、工作区与历史管理，仍阻止未接入的改动操作', () => {
   expect(remoteRequestError('remote', 'GET', '/models')).toBeNull()
   expect(remoteRequestError('remote', 'POST', '/chat')).toBeNull()
   expect(remoteRequestError('remote', 'POST', '/chat/cancel')).toBeNull()
   for (const [method, path] of [
-    ['GET', '/api/v1/workspace/file/content'], ['POST', '/workspace/file'],
-    ['POST', '/changes/revert'], ['POST', '/changes/revert-batch']
-  ]) expect(remoteRequestError('remote', method, path), method + ' ' + path).toContain('尚未接入远端')
+    ['GET', '/api/v1/workspace/file/content'], ['POST', '/workspace/file']
+  ]) expect(remoteRequestError('remote', method, path), method + ' ' + path).toBeNull()
+  expect(remoteRequestError('remote', 'POST', '/changes/revert'), 'POST /changes/revert').toContain('尚未接入远端')
+  for (const [method, path] of [
+    ['DELETE', '/conversation/history'], ['DELETE', '/conversation/turns/turn-1'],
+    ['DELETE', '/conversation/messages/message-1'], ['DELETE', '/sessions/session-1'],
+    ['POST', '/conversation/truncate'], ['POST', '/changes/revert-batch']
+  ]) expect(remoteRequestError('remote', method, path), method + ' ' + path).toBeNull()
   expect(remoteRequestError('embedded', 'POST', '/chat')).toBeNull()
 })

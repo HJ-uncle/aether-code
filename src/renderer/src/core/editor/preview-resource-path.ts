@@ -1,4 +1,5 @@
 import { fileIdentity } from './file-identity'
+import { isRemoteEngine } from '../engine/source'
 
 function fileUrl(path: string): URL {
   const normalized = path.replace(/\\/g, '/')
@@ -9,6 +10,30 @@ function fileUrl(path: string): URL {
 /** Resolve only local project resources; a preview never expands the user's filesystem grant. */
 export function resolvePreviewResource(filePath: string, reference: string, workspaceRoot: string): string | null {
   if (!workspaceRoot || !reference.trim() || /[\u0000-\u001f]/.test(reference)) return null
+  // Remote workspace paths use the server's absolute label in the renderer.
+  // Resolve them without constructing a file: URL, then the normal fs-client
+  // adapter can fetch the resource from the engine session. Keep the
+  // `remote://` form for callers/tests that use an explicit virtual root.
+  if (isRemoteEngine() || workspaceRoot.startsWith('remote://')) {
+    try {
+      const source = reference.replace(/\\/g, '/').split(/[?#]/, 1)[0]
+      if (!source || source.startsWith('/') || /^[a-z]+:/i.test(source)) return null
+      const base = filePath.replace(/\\/g, '/').split(/[?#]/, 1)[0]
+      const prefix = workspaceRoot.replace(/\\/g, '/').replace(/\/+$/, '')
+      const baseRelative = base.startsWith(`${prefix}/`) ? base.slice(prefix.length + 1) : ''
+      const segments = [...baseRelative.split('/').slice(0, -1), ...source.split('/')]
+      const resolved: string[] = []
+      for (const segment of segments) {
+        if (!segment || segment === '.') continue
+        if (segment === '..') { if (resolved.length === 0) return null; resolved.pop() }
+        else resolved.push(decodeURIComponent(segment))
+      }
+      const result = `${prefix}/${resolved.join('/')}`
+      return result.startsWith(`${prefix}/`) ? result : null
+    } catch {
+      return null
+    }
+  }
   try {
     const source = reference.replace(/\\/g, '/')
     const base = fileUrl(filePath)

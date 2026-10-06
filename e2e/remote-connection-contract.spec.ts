@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { clearRemoteAttachments, rememberRemoteAttachment, remoteAttachmentsForRequest } from '../src/main/engine/remote-attachments'
 import { prepareRemoteChatBody, selectRemoteWorkspacePaths, validateRemoteWorkspaceRoot } from '../src/main/engine/remote-workspace'
 import { remoteInstanceToken, remoteRequestError, validateRemoteInstanceToken } from '../src/main/engine/protocol'
+import { remoteWorkspaceRelativePath } from '../src/renderer/src/core/workspace/fs-client'
 
 test('手动本机开发地址可无token，非本机仍需明确凭据', () => {
   for (const url of ['http://localhost:12323', 'http://127.0.0.1:12323', 'http://[::1]:12323']) {
@@ -26,17 +27,17 @@ test('远端令牌在保存和环境变量入口使用同一请求头边界', ()
   }
 })
 
-test('远端只开放明确的读取与会话执行接口，未授权修改仍拒绝', () => {
+test('远端开放已接入的管理与会话接口，仍拒绝未接入路径', () => {
   const reads = [
     '/health', '/meta', '/metrics', '/models', '/tools', '/system-tools', '/external-skills',
-    '/conversation/sessions', '/conversation/history?sessionId=fixture', '/conversation/archive?sessionId=fixture',
+    '/conversation/sessions', '/conversation/archive?sessionId=fixture',
     '/api/v1/chat/snapshot', '/chat/status', '/chat/runs', '/chat/stream',
     '/changes', '/todos', '/subagent/runs', '/subagent/runs/run-1', '/subagent/runs/run-1/events',
     '/command-jobs', '/command-jobs/job-1', '/command-jobs/job-1/output',
-    '/security/mode', '/security/policies', '/models/capability-defs', '/sessions/test/binding'
+    '/models/capability-defs', '/sessions/test/binding'
   ]
   const actions = [
-    '/chat', '/chat/cancel', '/utility/chat', '/conversation/compress',
+    '/chat', '/chat/cancel', '/utility/chat', '/conversation/compress', '/conversation/truncate', '/changes/revert-batch',
     '/subagent/cancel', '/subagent/runs/run-1/cancel', '/command-jobs/job-1/cancel'
   ]
   for (const path of reads) {
@@ -46,6 +47,15 @@ test('远端只开放明确的读取与会话执行接口，未授权修改仍�
       expect(remoteRequestError('remote', method, path), method + ' ' + path).toBeTruthy()
     }
   }
+  for (const path of ['/security/mode', '/security/policies', '/mcp/config/export', '/codegraph/status', '/lsp/adapters']) {
+    expect(remoteRequestError('remote', 'GET', path), `GET ${path}`).toBeNull()
+  }
+  for (const path of ['/git/status', '/git/branch-info', '/git/divergence', '/git/incoming', '/git/diff', '/git/head-file', '/git/head-file-content', '/git/list-branches', '/git/list-remote-branches', '/git/list-remotes', '/git/list-stashes', '/git/stash-show', '/git/stash-show-files', '/git/list-tags', '/git/log', '/git/commit-show', '/git/show-commit-file', '/git/file-history', '/git/blame', '/git/user-name', '/git/list-authors']) {
+    expect(remoteRequestError('remote', 'GET', path), `GET ${path}`).toBeNull()
+    expect(remoteRequestError('remote', 'POST', path), `POST ${path}`).toBeTruthy()
+  }
+  expect(remoteRequestError('remote', 'POST', '/git/action')).toBeNull()
+  expect(remoteRequestError('remote', 'GET', '/conversation/history?sessionId=fixture')).toBeNull()
   for (const path of actions) {
     expect(remoteRequestError('remote', 'POST', path), path).toBeNull()
     expect(remoteRequestError('remote', 'POST', '/api/v1' + path + '?fixture=1'), path).toBeNull()
@@ -54,23 +64,54 @@ test('远端只开放明确的读取与会话执行接口，未授权修改仍�
     }
   }
   for (const path of [
-    '/workspace/file/content', '/workspace/file', '/lsp/diagnostics', '/changes/revert-batch',
-    '/changes/keep-all', '/changes/change-1/keep', '/conversation/truncate', '/conversation/turns/turn-1',
-    '/sessions/session-1', '/models/../workspace/file/content', '/conversation/history/extra',
+    '/workspace/file/unknown', '/workspace/not-allowed', '/lsp/diagnostics',
+    '/changes/change-1/keep',
+    '/models/../workspace/file/content', '/conversation/history/extra',
     '/subagent/runs/../cancel', '/command-jobs/%2e%2e/workspace', '/changes/anything', '/unknown'
   ]) {
     for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']) {
       expect(remoteRequestError('remote', method, path), method + ' ' + path).toBeTruthy()
     }
   }
+  for (const path of ['/workspace/files', '/workspace/file/info', '/workspace/file/content']) {
+    expect(remoteRequestError('remote', 'GET', path), `GET ${path}`).toBeNull()
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      expect(remoteRequestError('remote', method, path), `${method} ${path}`).toBeTruthy()
+    }
+  }
+  for (const path of ['/workspace/file', '/workspace/file/create', '/workspace/folder/create', '/workspace/file/trash', '/workspace/file/move']) {
+    expect(remoteRequestError('remote', 'POST', path), `POST ${path}`).toBeNull()
+    for (const method of ['GET', 'PUT', 'PATCH', 'DELETE']) {
+      expect(remoteRequestError('remote', method, path), `${method} ${path}`).toBeTruthy()
+    }
+  }
+  for (const [method, path] of [
+    ['DELETE', '/conversation/history?sessionId=fixture'],
+    ['DELETE', '/conversation/turns/turn-1?sessionId=fixture'],
+    ['DELETE', '/conversation/messages/message-1?sessionId=fixture'],
+    ['DELETE', '/sessions/session-1?keepWorkspace=true'],
+    ['POST', '/conversation/truncate'],
+    ['POST', '/changes/revert-batch']
+  ] as const) {
+    expect(remoteRequestError('remote', method, path), `${method} ${path}`).toBeNull()
+  }
+  for (const [method, path] of [
+    ['POST', '/security/policies'], ['POST', '/security/policies/reset'],
+    ['PUT', '/security/mode'], ['PUT', '/security/policies/1'], ['DELETE', '/security/policies/1'],
+    ['DELETE', '/models/model-1'], ['DELETE', '/skills/imports/import-1'],
+    ['POST', '/changes/keep-all'], ['POST', '/changes/keep-many'],
+    ['POST', '/codegraph/index'], ['POST', '/lsp/diagnose']
+  ] as const) {
+    expect(remoteRequestError('remote', method, path), `${method} ${path}`).toBeNull()
+  }
   for (const path of ['/models', '/models/detect-capabilities', '/models/model-1/test']) {
     expect(remoteRequestError('remote', 'POST', path), path).toBeNull()
-    for (const method of ['PATCH', 'DELETE']) expect(remoteRequestError('remote', method, path)).toBeTruthy()
+    for (const method of ['PATCH']) expect(remoteRequestError('remote', method, path)).toBeTruthy()
   }
   expect(remoteRequestError('remote', 'PUT', '/models/detect-capabilities')).toBeTruthy()
   expect(remoteRequestError('remote', 'PUT', '/models/model-1')).toBeNull()
   expect(remoteRequestError('remote', 'POST', '/models/model-1')).toBeTruthy()
-  expect(remoteRequestError('remote', 'DELETE', '/models/model-1')).toBeTruthy()
+  expect(remoteRequestError('remote', 'DELETE', '/models/model-1')).toBeNull()
   expect(remoteRequestError('remote', 'PUT', '/models/model-1/test')).toBeTruthy()
   expect(remoteRequestError('embedded', 'POST', '/workspace/file')).toBeNull()
 })
@@ -98,6 +139,14 @@ test('远端目录按服务端语义校验，既有会话目录与空沙箱优�
   for (const runs of [null, {}, [{ workspacePaths: 'invalid' }], [{}], [null], [{ workspacePaths: [''] }], [{ workspacePaths: ['relative'] }]]) {
     expect(() => selectRemoteWorkspacePaths(runs, '/srv/configured')).toThrow('远端')
   }
+})
+
+test('远端文件请求只携带会话内相对路径，不泄漏客户端绝对路径', () => {
+  const context = { sessionId: 'workspace-session', root: 'D:/server/project' }
+  expect(remoteWorkspaceRelativePath(context, 'D:/server/project/src/main.ts')).toBe('src/main.ts')
+  expect(remoteWorkspaceRelativePath(context, 'D:/server/project')).toBe('')
+  expect(() => remoteWorkspaceRelativePath(context, 'C:/local/project/private.ts')).toThrow('超出当前工作区')
+  expect(() => remoteWorkspaceRelativePath(context, 'D:/server/project/../secret.ts')).toThrow('远程路径无效')
 })
 
 test('远端审批只携带关联标识与回答，原始工作区交给服务端恢复', async () => {

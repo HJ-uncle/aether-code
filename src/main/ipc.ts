@@ -34,6 +34,7 @@ import {
   resizeTerminal,
   writeTerminal
 } from './terminal/pty-service'
+import { remoteTerminalService } from './terminal/remote-terminal'
 import { replaceWorkspace, searchWorkspace, previewReplaceWorkspace } from './search/search-service'
 import { getSettings, updateSettings } from './settings-store'
 import type { AppSettings, RemoteTokenStatus } from '../shared/ipc'
@@ -576,8 +577,14 @@ export function registerIpcHandlers(): void {
 
   // ── 终端（node-pty，多实例按 id 路由）──
   // 数据回发绑定到发起窗口：单窗口应用下等价于全局广播，但语义上更准确。
-  ipcMain.handle(IPC.invoke.terminalCreate, (event, input: TerminalCreateInput) => {
+  ipcMain.handle(IPC.invoke.terminalCreate, async (event, input: TerminalCreateInput) => {
     const sender = event.sender
+    if (engineHost.getSnapshot().mode === 'remote') {
+      return remoteTerminalService.create(input, {
+        onData: (id, chunk) => { if (!sender.isDestroyed()) sender.send(IPC.event.terminalData, { id, chunk }) },
+        onExit: (info) => { if (!sender.isDestroyed()) sender.send(IPC.event.terminalExit, info) }
+      })
+    }
     return createTerminal(
       input,
       (id, chunk) => {
@@ -588,13 +595,18 @@ export function registerIpcHandlers(): void {
       }
     )
   })
-  ipcMain.handle(IPC.invoke.terminalWrite, (_event, id: string, data: string) =>
-    writeTerminal(id, data)
-  )
-  ipcMain.handle(IPC.invoke.terminalResize, (_event, id: string, cols: number, rows: number) =>
-    resizeTerminal(id, cols, rows)
-  )
-  ipcMain.handle(IPC.invoke.terminalDispose, (_event, id: string) => disposeTerminal(id))
+  ipcMain.handle(IPC.invoke.terminalWrite, (_event, id: string, data: string) => {
+    if (remoteTerminalService.owns(id)) return remoteTerminalService.write(id, data)
+    return writeTerminal(id, data)
+  })
+  ipcMain.handle(IPC.invoke.terminalResize, (_event, id: string, cols: number, rows: number) => {
+    if (remoteTerminalService.owns(id)) return remoteTerminalService.resize(id, cols, rows)
+    return resizeTerminal(id, cols, rows)
+  })
+  ipcMain.handle(IPC.invoke.terminalDispose, (_event, id: string) => {
+    if (remoteTerminalService.owns(id)) return remoteTerminalService.dispose(id)
+    return disposeTerminal(id)
+  })
 
   // ── TS 语言服务（typescript-language-server，单实例）──
   // 与引擎 SSE 同款双向长连接：渲染进程发 JSON-RPC 经 lsp:send 进 stdin，

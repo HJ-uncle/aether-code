@@ -14,6 +14,7 @@ import { refreshModels, resetModelStore } from './engine/model-store'
 import { resetSecurityModeStore } from './engine/security-store'
 import { setContextKeys } from './platform/context-keys'
 import { AppContext, type AppContextValue } from './app-context'
+import { publishWorkspaceSelection } from './workspace/connection'
 
 /** 引擎阶段 → 上下文键，让命令/视图用 when 表达式声明可用性 */
 function contextKeysFor(snapshot: EngineSnapshot): Record<string, boolean> {
@@ -127,6 +128,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
       const next = { ...currentSettings, lastSessionId: sessionId }
       setSettings(next)
       publishSettings(next)
+      publishWorkspaceSelection(next, storageSource)
       setSelectedSource(storageSource)
     })()
     return () => { alive = false }
@@ -147,6 +149,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
     const visible = { ...next, lastSessionId: ownsSelection ? patch.lastSessionId! : currentSettings.lastSessionId }
     setSettings(visible)
     publishSettings(visible)
+    if (source === getEngineSource()) publishWorkspaceSelection(visible, storageSource)
   }, [])
 
   const value = useMemo<AppContextValue>(

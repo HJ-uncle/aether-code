@@ -177,11 +177,15 @@ export interface TerminalCreateInput {
   cwd?: string
   cols: number
   rows: number
+  /** Endpoint-local conversation identity for remote PTY sessions. */
+  sessionId?: string
 }
 
 export interface TerminalExitInfo {
   id: string
   exitCode: number
+  /** Optional transport reason (remote disconnect/reconnect), not a PTY stderr line. */
+  reason?: string
 }
 
 export interface TerminalDataEvent {
@@ -635,13 +639,10 @@ export interface LspExitInfo {
 // ==================== 文件系统契约 ====================
 
 /**
- * 文件系统由 IDE 自己实现，不走引擎的 workspace API。
- *
- * 原因（实测确认）：引擎的 /workspace 路由只把 { tenantId, sessionId } 传给
- * getPaths()，返回的永远是沙箱目录 `<WORKSPACE_ROOT>/<tenantId>/<sessionId>`；
- * 能绑定任意目录的 workspacePaths 字段只有 /chat 会读。
- * 加上其树接口是一次性递归、过滤隐藏文件、文本 500KB 截断，不适合做 IDE。
- * 因此本地模式下由主进程直接访问真实文件系统（与本地终端同一思路）。
+ * 文件系统传输按引擎模式选择：本地模式由主进程直接访问真实文件系统，
+ * 远端模式由 renderer 通过引擎的 /workspace API 访问会话沙箱。
+ * 两种模式都保持这份 FsEntry/FsFileContent/FsStat 形状，让 Explorer、Monaco
+ * 和文件操作不感知传输差异；远端请求只发送 sessionId 与工作区内相对路径。
  */
 
 export interface FsEntry {

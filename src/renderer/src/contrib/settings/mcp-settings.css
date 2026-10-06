@@ -87,3 +87,55 @@
   .settings-view--mcp .mcp-form { grid-template-columns: 1fr; }
   .settings-view--mcp .mcp-form > * { grid-column: 1; }
 }
+
+/* SettingsContent is an sg__row as well; these full-width MCP surfaces own
+   their inset so the generic row padding is not added a second time. */
+.settings-view--mcp .sg__row.mcp-json__toolbar,
+.settings-view--mcp .sg__row:has(.mcp-json__editor),
+.settings-view--mcp .sg__row:has(> .mcp-toolbar) {
+  align-items: stretch;
+  padding: 14px 18px;
+}
+
+@container settings-body (max-width: 640px) {
+  .settings-view--mcp .mcp-form { grid-template-columns: 1fr; }
+  .settings-view--mcp .mcp-form > * { grid-column: 1; }
+}
+
+@container settings-body (max-width: 560px) {
+  .settings-view--mcp .mcp-json__toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .settings-view--mcp .mcp-json__scope,
+  .settings-view--mcp .mcp-json__scope .field__input,
+  .settings-view--mcp .mcp-toolbar,
+  .settings-view--mcp .mcp-toolbar .btn {
+    width: 100%;
+  }
+
+  .settings-view--mcp .mcp-json__scope {
+    justify-content: space-between;
+  }
+
+  .settings-view--mcp .mcp-toolbar,
+  .settings-view--mcp .mcp-actions,
+  .settings-view--mcp .mcp-form__actions {
+    justify-content: flex-start;
+  }
+
+  .settings-view--mcp .mcp-actions {
+    width: 100%;
+  }
+
+  .settings-view--mcp .mcp-actions .btn {
+    flex: 1 1 auto;
+  }
+
+  .settings-view--mcp .mcp-scope {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+}

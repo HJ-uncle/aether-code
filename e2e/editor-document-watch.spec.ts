@@ -16,7 +16,8 @@ test('连续安装、卸载、重装后保留新实例监听，最后卸载才�
     module, exports: module.exports, console,
     require: () => ({
       getEditorState: () => ({ docs: new Map([[path, {}]]), saving: new Set() }),
-      onEditorChanged: () => () => {}, reloadDocuments: async () => {}, resolveDocumentPath: (value: string) => value
+      onEditorChanged: () => () => {}, reloadDocuments: async () => {}, resolveDocumentPath: (value: string) => value,
+      isRemoteEngine: () => false
     }),
     window: {
       addEventListener: () => {}, removeEventListener: () => {},

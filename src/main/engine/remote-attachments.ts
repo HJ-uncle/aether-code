@@ -16,8 +16,19 @@ export function rememberRemoteAttachment(target: Target, sessionId: string, path
 export function remoteAttachmentsForRequest(input: unknown, target: Target, sessionId: string): Array<{ name: string; type: string }> {
   if (!Array.isArray(input)) return []
   return input.flatMap(value => {
-    if (!value || typeof value !== 'object' || typeof value.remoteUploadId !== 'string') return []
-    const saved = uploaded.get(value.remoteUploadId)
+    if (!value || typeof value !== 'object') return []
+    const candidate = value as { remoteUploadId?: unknown; name?: unknown; type?: unknown }
+    // Persisted history has the server-relative attachment name but not the
+    // in-memory upload token. Accept only a strictly relative workspace path;
+    // absolute paths and traversal can never cross the session sandbox.
+    if (typeof candidate.name === 'string' && candidate.name.trim()) {
+      const name = candidate.name.replace(/\\/g, '/')
+      if (!name.startsWith('/') && !/^[A-Za-z]:\//.test(name) && !name.split('/').includes('..')) {
+        return [{ name, type: typeof candidate.type === 'string' ? candidate.type : 'application/octet-stream' }]
+      }
+    }
+    if (typeof candidate.remoteUploadId !== 'string') return []
+    const saved = uploaded.get(candidate.remoteUploadId)
     if (!saved || saved.sessionId !== sessionId || saved.target !== targetKey(target)) {
       throw new Error('远端附件所属连接或会话已变化，请重新选择文件上传')
     }

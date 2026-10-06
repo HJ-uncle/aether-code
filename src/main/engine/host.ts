@@ -28,6 +28,9 @@ const PREFERRED_PORT = 12323
 const STARTUP_TIMEOUT_MS = 60_000
 const HEALTH_INTERVAL_MS = 5_000
 const HEALTH_FAILURE_THRESHOLD = 3
+/** Remote links should survive short network flaps and service restarts. */
+const REMOTE_RECONNECT_INITIAL_MS = 1_000
+const REMOTE_RECONNECT_MAX_MS = 30_000
 
 export interface EngineHostEvents {
   snapshot: (snapshot: EngineSnapshot) => void
@@ -52,6 +55,11 @@ export class EngineHost extends EventEmitter {
   }
   private healthTimer: ReturnType<typeof setInterval> | null = null
   private healthFailures = 0
+  private remoteReconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private remoteReconnectAttempt = 0
+  /** Explicitly disabled by stop(); enabled while a remote target is selected. */
+  private remoteReconnectEnabled = false
+  private remoteTarget: { url: string; workspaceRoot: string } | null = null
   private starting: Promise<EngineSnapshot> | null = null
   private generation = 0
   private startupController: AbortController | null = null
@@ -90,9 +98,17 @@ export class EngineHost extends EventEmitter {
     return engineHeaders(this.instanceToken)
   }
 
-  async start(mode: 'embedded' | 'remote', remoteBaseUrl = '', remoteWorkspaceRoot = ''): Promise<EngineSnapshot> {
+  async start(mode: 'embedded' | 'remote', remoteBaseUrl = '', remoteWorkspaceRoot = '', autoReconnect = false): Promise<EngineSnapshot> {
     if (this.starting) return this.starting
     const normalizedRemote = remoteBaseUrl.trim().replace(/\/+$/, '')
+    const configuredRoot = mode === 'remote' ? validateRemoteWorkspaceRoot(remoteWorkspaceRoot) : ''
+    // A direct start is an explicit user action. It supersedes a pending
+    // reconnect attempt and starts the backoff from the beginning.
+    if (!autoReconnect) this.cancelRemoteReconnect()
+    this.remoteReconnectEnabled = mode === 'remote'
+    this.remoteTarget = mode === 'remote'
+      ? { url: normalizedRemote, workspaceRoot: configuredRoot }
+      : null
     if (
       this.snapshot.phase === 'ready' &&
       this.snapshot.mode === mode &&
@@ -100,7 +116,6 @@ export class EngineHost extends EventEmitter {
     )
       return this.snapshot
 
-    const configuredRoot = mode === 'remote' ? validateRemoteWorkspaceRoot(remoteWorkspaceRoot) : ''
     const generation = ++this.generation
     this.startupController?.abort()
     const controller = new AbortController()
@@ -188,6 +203,9 @@ export class EngineHost extends EventEmitter {
       protocolVersion: meta.protocolVersion,
       instanceId: meta.instanceId
     })
+    // A successful handshake means the service is back. Do not carry an old
+    // network flap's attempt count into the next outage.
+    this.remoteReconnectAttempt = 0
     this.startHealthWatch()
   }
 
@@ -317,6 +335,11 @@ export class EngineHost extends EventEmitter {
 
   async stop(): Promise<EngineSnapshot> {
     const generation = ++this.generation
+    // stop() is explicit: never let a health check or pending timer reconnect
+    // after the user has shut the engine down.
+    this.remoteReconnectEnabled = false
+    this.remoteTarget = null
+    this.cancelRemoteReconnect()
     this.startupController?.abort()
     this.startupController = null
     this.starting = null
@@ -346,6 +369,45 @@ export class EngineHost extends EventEmitter {
     this.healthTimer = null
   }
 
+  private cancelRemoteReconnect(): void {
+    if (this.remoteReconnectTimer) clearTimeout(this.remoteReconnectTimer)
+    this.remoteReconnectTimer = null
+    this.remoteReconnectAttempt = 0
+  }
+
+  /**
+   * Keep a remote connection alive through transient network failures and a
+   * remote service restart. The loop is owned by the main process so all
+   * renderer requests observe one connection state. It intentionally has no
+   * retry ceiling; stop() disables it for an explicit user shutdown.
+   */
+  private scheduleRemoteReconnect(reason: string): void {
+    if (!this.remoteReconnectEnabled || this.snapshot.mode !== 'remote' || !this.remoteTarget) return
+    if (this.remoteReconnectTimer || this.starting) return
+    const attempt = ++this.remoteReconnectAttempt
+    const delay = Math.min(
+      REMOTE_RECONNECT_MAX_MS,
+      REMOTE_RECONNECT_INITIAL_MS * 2 ** Math.min(attempt - 1, 10)
+    )
+    this.stopHealthWatch()
+    this.transportController.abort()
+    this.patch({
+      phase: 'starting',
+      baseUrl: '',
+      port: null,
+      pid: null,
+      error: `${reason}；正在重新连接（第 ${attempt} 次，${Math.ceil(delay / 1000)} 秒后）`
+    })
+    this.remoteReconnectTimer = setTimeout(() => {
+      this.remoteReconnectTimer = null
+      const target = this.remoteTarget
+      if (!target || !this.remoteReconnectEnabled) return
+      void this.start('remote', target.url, target.workspaceRoot, true).then((snapshot) => {
+        if (snapshot.phase === 'error') this.scheduleRemoteReconnect('远端引擎暂时不可用')
+      })
+    }, delay)
+  }
+
   private async checkHealth(): Promise<void> {
     const { baseUrl, instanceId } = this.snapshot
     const generation = this.generation
@@ -363,13 +425,22 @@ export class EngineHost extends EventEmitter {
     } catch {
       if (!this.current(generation) || this.snapshot.phase !== 'ready') return
       if (++this.healthFailures >= HEALTH_FAILURE_THRESHOLD) {
-        this.stopHealthWatch()
-        this.transportController.abort()
-        this.patch({
-          phase: 'error',
-          baseUrl: '',
-          error: `引擎失去响应或实例已变化（连续 ${this.healthFailures} 次检查失败）`
-        })
+        if (this.snapshot.mode === 'remote') {
+          this.scheduleRemoteReconnect(
+            `远端引擎失去响应或已重启（连续 ${this.healthFailures} 次检查失败）`
+          )
+        } else {
+          // Embedded processes are owned by this desktop and cannot be
+          // repaired by reconnecting. Preserve the existing terminal error
+          // state for local callers.
+          this.stopHealthWatch()
+          this.transportController.abort()
+          this.patch({
+            phase: 'error',
+            baseUrl: '',
+            error: `引擎失去响应（连续 ${this.healthFailures} 次检查失败）`
+          })
+        }
       }
     }
   }
@@ -440,13 +511,15 @@ export class EngineHost extends EventEmitter {
       if (!contentType.includes('text/event-stream')) {
         const text = await res.text()
         let message = `引擎返回了非流式响应（HTTP ${res.status}）`
+        let code: number | undefined
         try {
           const envelope = JSON.parse(text) as { code?: number; message?: string }
           if (envelope.message) message = envelope.message
+          if (typeof envelope.code === 'number') code = envelope.code
         } catch {
           if (text) message = text.slice(0, 500)
         }
-        this.emit('stream', { streamId, type: 'error', message } satisfies StreamEvent)
+        this.emit('stream', { streamId, type: 'error', status: res.status, code, message } satisfies StreamEvent)
         return
       }
 

@@ -460,3 +460,23 @@
   .settings-view--security .sg__row-control { width: 100%; justify-content: flex-start; }
 }
 
+/* Settings can be narrow inside a wide workbench. Keep this after the desktop
+ * table rules: mixing their fixed columns with an earlier first-column action
+ * placement gives that cell zero width and pushes its right-aligned buttons
+ * underneath the settings navigation. */
+@container settings-body (max-width: 620px) {
+  .keybindings__head { display: none; }
+  .keybindings__row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .keybindings__source,
+  .keybindings__actions { grid-column: 1; grid-row: auto; }
+  .keybindings__actions {
+    width: 100%;
+    min-width: 0;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  .keybindings__key,
+  .keybindings__search { min-width: 0; max-width: 100%; }
+  .keybindings__key { overflow-wrap: anywhere; }
+}
+

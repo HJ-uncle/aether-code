@@ -1,4 +1,5 @@
 import { getEditorState, onEditorChanged, reloadDocuments, resolveDocumentPath } from './editor-store'
+import { isRemoteEngine } from '../engine/source'
 
 let watcherGeneration = 0
 
@@ -28,7 +29,10 @@ export function watchOpenDocuments(): () => void {
     if (key === lastPaths) return
     lastPaths = key
     chain = chain.then(async () => {
-      if (!disposed) {
+      // The main-process watcher can only observe local authorized roots.
+      // Remote documents are reloaded through fs-client on explicit focus or
+      // user action; never send virtual remote paths to local IPC.
+      if (!disposed && !isRemoteEngine()) {
         await window.aether.fs.watchDocuments(paths)
         if (!disposed) enqueue(paths)
       }
@@ -46,7 +50,7 @@ export function watchOpenDocuments(): () => void {
     window.removeEventListener('focus', refresh)
     // StrictMode 重挂载或工作台重建后，旧实例的异步清理不能清掉新实例的监听。
     void chain.then(() => {
-      if (watcherGeneration === generation) return window.aether.fs.watchDocuments([])
+      if (watcherGeneration === generation && !isRemoteEngine()) return window.aether.fs.watchDocuments([])
       return undefined
     }).catch((error: unknown) => console.error('[editor] 文件监听清理失败', error))
   }

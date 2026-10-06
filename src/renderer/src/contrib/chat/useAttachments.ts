@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { getEngineSource, isRemoteEngine, subscribeEngineSource } from '@renderer/core/engine/source'
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
 import { copyIntoWorkspace } from '@renderer/core/workspace/fs-client'
+import { uploadAttachment } from '@renderer/core/engine/client'
 
 /**
  * 聊天附件（图片 / 文本 / 文档）
@@ -149,7 +150,7 @@ export interface UseAttachmentsResult {
   clearError: () => void
 }
 
-export function useAttachments(root: string | null): UseAttachmentsResult {
+export function useAttachments(root: string | null, sessionId = ''): UseAttachmentsResult {
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [uploading, setUploading] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -172,13 +173,17 @@ export function useAttachments(root: string | null): UseAttachmentsResult {
     void Promise.resolve().then(() => { if (generation === generationRef.current) clear() })
     const off = subscribeEngineSource(clear)
     return () => { generationRef.current++; pendingBatchesRef.current = 0; off() }
-  }, [root, clear])
+  }, [root, sessionId, clear])
 
   const accept = useCallback(
     (files: File[]) => {
       if (files.length === 0 || renderSource !== getEngineSource()) return
-      if (isRemoteEngine()) { setError('远端附件上传尚未授权'); return }
-      if (!root) {
+      const remote = isRemoteEngine()
+      if (remote && !sessionId) {
+        setError('请先建立远端会话，再上传附件')
+        return
+      }
+      if (!remote && !root) {
         setError('请先打开一个项目目录，附件需要落盘到工作区')
         return
       }
@@ -202,12 +207,16 @@ export function useAttachments(root: string | null): UseAttachmentsResult {
           try {
             const data = await readBytes(file)
             if (!isCurrent()) return
-            const result = await copyIntoWorkspace({ root, fileName: file.name, data })
+            const result = remote
+              ? await uploadAttachment({ sessionId, fileName: file.name, type: file.type || 'application/octet-stream', data })
+              : await copyIntoWorkspace({ root: root as string, fileName: file.name, data })
             if (!isCurrent()) return
+            const attachmentPath = 'relativePath' in result ? result.relativePath : result.path
             setAttachments((prev) => [
               ...prev,
               {
-                path: result.relativePath,
+                path: attachmentPath,
+                ...(remote && 'remoteUploadId' in result ? { remoteUploadId: result.remoteUploadId } : {}),
                 name: file.name,
                 type: file.type || 'application/octet-stream',
                 size: result.size
@@ -221,18 +230,21 @@ export function useAttachments(root: string | null): UseAttachmentsResult {
         if (isCurrent()) { pendingBatchesRef.current--; setUploading(pendingBatchesRef.current > 0) }
       })()
     },
-    [root, renderSource]
+    [root, renderSource, sessionId]
   )
 
   const pick = useCallback(() => {
     if (renderSource !== getEngineSource()) return
-    if (isRemoteEngine()) { setError('远端附件上传尚未授权'); return }
-    if (!root) {
+    if (isRemoteEngine() && !sessionId) {
+      setError('请先建立远端会话，再上传附件')
+      return
+    }
+    if (!isRemoteEngine() && !root) {
       setError('请先打开一个项目目录，附件需要落盘到工作区')
       return
     }
     inputRef.current?.click()
-  }, [root, renderSource])
+  }, [root, renderSource, sessionId])
 
   const remove = useCallback((path: string) => {
     setAttachments((prev) => prev.filter((item) => item.path !== path))

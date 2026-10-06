@@ -1,6 +1,5 @@
 import { useEffect, useState, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
-import { isRemoteEngine } from '@renderer/core/engine/source'
 import { removeModel, useModels } from '@renderer/core/engine/model-store'
 import { Icon } from '@renderer/workbench/icons'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
@@ -18,8 +17,7 @@ import '../settings/settings-pages.css'
  * 就是实际可用的模型集合。
  */
 export function ModelsSettingsView(): JSX.Element {
-  const { engine, ready, settings, updateSettings } = useApp()
-  const isRemote = engine.snapshot.mode === 'remote'
+  const { ready, settings, updateSettings } = useApp()
   const { models, loading, error, loaded, refresh } = useModels()
   const [editing, setEditing] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
@@ -95,17 +93,16 @@ export function ModelsSettingsView(): JSX.Element {
                 type="button"
                 className="exclude-row__remove"
                 aria-label={`删除模型 ${model.modelId}`}
-                title={isRemote ? '当前远端连接尚不支持删除模型；可以添加或编辑模型' : '删除该模型'}
-                disabled={isRemote || busyId === model.id}
+                title="删除该模型"
+                disabled={busyId === model.id}
                 onClick={() => {
-                  if (isRemoteEngine()) return
                   void confirmDialog({
                     title: '删除模型',
                     body: `确定删除模型「${model.modelId}」吗？此操作不可撤销。`,
                     confirmText: '删除',
                     danger: true
                   }).then((confirmed) => {
-                    if (!confirmed || isRemoteEngine()) return
+                    if (!confirmed) return
                     void guard(model.id, () => removeModel(model.id))
                   })
                 }}

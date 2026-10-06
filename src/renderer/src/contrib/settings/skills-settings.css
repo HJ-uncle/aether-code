@@ -155,6 +155,27 @@
 .settings-view--skills .skills-create-overwrite { display: inline-flex; align-items: center; gap: 7px; margin-left: 112px; color: var(--fg-muted); font-size: 11px; }
 .settings-view--skills .skills-create-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-left: 112px; }
 
+/* Full-width skill workspaces are SettingsContent rows. Keep one source of
+   truth for their inset and allow text to wrap instead of pushing action
+   controls beyond the narrow content column. */
+.settings-view--skills .sg__row.skills-create-content,
+.settings-view--skills .sg__row:has(.skills-import-drop),
+.settings-view--skills .sg__row:has(.skills-list-head),
+.settings-view--skills .sg__row:has(.skills-history-row),
+.settings-view--skills .sg__row:has(.skills-detail) {
+  align-items: stretch;
+  padding: 16px 18px;
+}
+
+.settings-view--skills .skills-create-hint,
+.settings-view--skills .skills-card__main span,
+.settings-view--skills .skills-card__main small,
+.settings-view--skills .skills-history-row strong,
+.settings-view--skills .skills-history-row span {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 @media (max-width: 560px) {
   .settings-view--skills .skills-page-header { margin-bottom: 16px; }
   .settings-view--skills .skills-page-header__count { display: none; }
@@ -165,6 +186,43 @@
   .settings-view--skills .skills-create-field { grid-template-columns: 1fr; gap: 5px; }
   .settings-view--skills .skills-create-overwrite,
   .settings-view--skills .skills-create-actions { margin-left: 0; }
+}
+
+@container settings-body (max-width: 560px) {
+  .settings-view--skills .sg__row.skills-create-content,
+  .settings-view--skills .sg__row:has(.skills-import-drop),
+  .settings-view--skills .sg__row:has(.skills-list-head),
+  .settings-view--skills .sg__row:has(.skills-history-row),
+  .settings-view--skills .sg__row:has(.skills-detail) {
+    padding: 14px;
+  }
+
+  .settings-view--skills .skills-page-header {
+    margin-inline: 0;
+  }
+
+  .settings-view--skills .skills-create-toolbar,
+  .settings-view--skills .skills-list-head,
+  .settings-view--skills .skills-history-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-view--skills .skills-create-toolbar .btn,
+  .settings-view--skills .skills-list-head .btn,
+  .settings-view--skills .skills-history-row .btn {
+    align-self: flex-start;
+  }
+
+  .settings-view--skills .skills-card {
+    align-items: stretch;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .settings-view--skills .skills-card__main {
+    flex-basis: calc(100% - 36px);
+  }
 }
 
 /* Keep the long skills page scannable: imports and history are inset cards,

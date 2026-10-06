@@ -157,8 +157,12 @@ export function EngineSettingsView(): JSX.Element {
     clearRemoteToken ||
     autoStart !== settings.autoStartEngine
 
+  // A remote outage is represented as `starting` while EngineHost performs
+  // bounded-backoff reconnects. Keep Stop available so the user can cancel
+  // that loop explicitly; ordinary startup remains busy/locked.
+  const remoteReconnecting = snapshot.mode === 'remote' && snapshot.phase === 'starting' && snapshot.error?.includes('正在重新连接') === true
   const lifecycleBusy =
-    snapshot.phase === 'starting' ||
+    (snapshot.phase === 'starting' && !remoteReconnecting) ||
     snapshot.phase === 'installing' ||
     snapshot.phase === 'stopping'
   const busy = lifecycleBusy || runtimeBusy !== null || saving
@@ -493,7 +497,7 @@ export function EngineSettingsView(): JSX.Element {
             </SettingsRow>
             <SettingsRow
               label="远端工作目录"
-              description="可选，填写远端机器上的绝对目录；保存并重启后对新会话生效，已有会话保留服务端目录。留空使用服务端沙箱。此设置不会打开或映射本机文件。"
+              description="可选，填写远端机器上的绝对目录；保存并重新连接后对新会话生效，已有会话保留服务端目录。留空使用服务端沙箱。此设置不会打开或映射本机文件。"
             >
               <input
                 className="field__input sg__input sg__input--wide"
@@ -507,7 +511,7 @@ export function EngineSettingsView(): JSX.Element {
             </SettingsRow>
             <SettingsRow
               label="远端令牌"
-              description="与目标引擎的 AETHER_INSTANCE_TOKEN 一致；通过系统密钥存储加密保存，留空保留原值。修改后点击“保存并重启”。清除已保存的令牌后，若启动环境变量仍存在，将继续使用该变量。"
+              description="与目标引擎的 AETHER_INSTANCE_TOKEN 一致；通过系统密钥存储加密保存，留空保留原值。修改后点击“保存并重新连接”。清除已保存的令牌后，若启动环境变量仍存在，将继续使用该变量。"
             >
               <div className="settings-view__token-field">
                 <input
@@ -579,10 +583,10 @@ export function EngineSettingsView(): JSX.Element {
           type="button"
           className="btn"
           disabled={!dirty || busy || saving}
-          title="保存设置并重启引擎使其生效"
+          title={mode === 'remote' ? '保存设置并重新连接远端引擎' : '保存设置并重启引擎使其生效'}
           onClick={() => void save(true)}
         >
-          保存并重启
+          {mode === 'remote' ? '保存并重新连接' : '保存并重启'}
         </button>
         {saved ? <span className="settings-view__saved">已保存</span> : null}
         {saveError ? <span className="settings-view__error">{saveError}</span> : null}
@@ -593,7 +597,7 @@ export function EngineSettingsView(): JSX.Element {
           <div className="engine-status__hero">
             <span className={`engine-status__dot is-${snapshot.phase}`} aria-hidden="true" />
             <div className="engine-status__hero-copy">
-              <strong>{ENGINE_PHASE_LABELS[snapshot.phase] ?? snapshot.phase}</strong>
+              <strong>{remoteReconnecting ? '重新连接中' : snapshot.mode === 'remote' && snapshot.phase === 'starting' ? '连接中' : ENGINE_PHASE_LABELS[snapshot.phase] ?? snapshot.phase}</strong>
               <span>
                 {snapshot.mode === 'remote' ? '远端服务' : '本地内置'} ·{' '}
                 {snapshot.baseUrl || '尚未连接'}
@@ -605,7 +609,7 @@ export function EngineSettingsView(): JSX.Element {
           </div>
           <dl className="kv engine-status__kv-summary">
             <dt>阶段</dt>
-            <dd>{ENGINE_PHASE_LABELS[snapshot.phase] ?? snapshot.phase}</dd>
+            <dd>{remoteReconnecting ? '重新连接中' : snapshot.mode === 'remote' && snapshot.phase === 'starting' ? '连接中' : ENGINE_PHASE_LABELS[snapshot.phase] ?? snapshot.phase}</dd>
             <dt>来源</dt>
             <dd>
               {snapshot.mode === 'remote'
@@ -668,13 +672,13 @@ export function EngineSettingsView(): JSX.Element {
             onClick={() => void engine.start()}
           >
             <Icon name="play" size={16} />
-            启动
+            {snapshot.mode === 'remote' ? '连接' : '启动'}
           </button>
         ) : null}
         {snapshot.phase !== 'idle' && snapshot.phase !== 'error' ? (
           <button type="button" className="btn" disabled={busy} onClick={() => void engine.stop()}>
             <Icon name="stop" size={16} />
-            停止
+            {snapshot.mode === 'remote' ? '断开连接' : '停止'}
           </button>
         ) : null}
         {snapshot.phase === 'ready' ? (
@@ -685,7 +689,7 @@ export function EngineSettingsView(): JSX.Element {
             onClick={() => void engine.restart()}
           >
             <Icon name="restart" size={16} />
-            重启
+            {snapshot.mode === 'remote' ? '重新连接' : '重启'}
           </button>
         ) : null}
       </div>

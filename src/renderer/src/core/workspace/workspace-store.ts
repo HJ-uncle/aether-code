@@ -12,9 +12,11 @@
 import { useSyncExternalStore } from 'react'
 import type { FsEntry } from '@shared/ipc'
 import { ipcErrorMessage } from '../ipc-error'
-import { allowRoot, paths, pickFolder, readDir } from './fs-client'
+import { allowRoot, paths, pickFolder, readDir, remoteWorkspaceContext } from './fs-client'
 import { rememberRecentFolder } from './recent-folders'
 import { getSettings, updateSettings } from '../engine/client'
+import { getEngineSource, isRemoteEngine, subscribeEngineSource } from '../engine/source'
+import { onWorkspaceConnectionChanged, workspaceConnectionKey } from './connection'
 
 export interface WorkspaceState {
   root: string | null
@@ -48,6 +50,11 @@ let state: WorkspaceState = {
   selectionAnchor: null,
   clipboard: null
 }
+
+/** Serial identity for open-folder requests; older picker responses are stale. */
+let openFolderRequestId = 0
+/** Increments whenever the mounted workspace identity is reset. */
+let workspaceEpoch = 0
 
 const listeners = new Set<() => void>()
 
@@ -146,29 +153,101 @@ export function onWorkspaceChanged(listener: () => void): () => void {
   return () => listeners.delete(listener)
 }
 
+// A remote endpoint/session switch invalidates every cached entry. Keep the
+// tree closed until the new source has selected its session; this prevents a
+// stale remote path from being opened or saved against the next connection.
+// Embedded engine lifecycle changes (idle → ready) keep the same local
+// workspace identity and must not invalidate a directory read in flight.
+let mountedConnectionKey = workspaceConnectionKey()
+let mountedRemoteGeneration = isRemoteEngine() ? getEngineSource() : null
+onWorkspaceConnectionChanged(() => {
+  const nextKey = workspaceConnectionKey()
+  const remote = isRemoteEngine()
+  const changed = nextKey !== mountedConnectionKey ||
+    (remote && mountedRemoteGeneration !== getEngineSource())
+  mountedConnectionKey = nextKey
+  mountedRemoteGeneration = remote ? getEngineSource() : null
+  if (!changed) return
+  workspaceEpoch += 1
+  restorePromise = null
+  setState({ root: null, children: new Map(), expanded: new Set(), loading: new Set(), activeFilePath: null, selection: new Set(), selectionAnchor: null, error: null })
+  if (remote && nextKey !== 'remote:unavailable') void restoreLastFolder()
+})
+
 /** 加载某目录的子项并写入缓存。恢复旧展开状态时，过期目录的失败应被静默忽略。 */
 async function loadChildren(
   dir: string,
-  options: { reportError?: boolean } = {}
+  options: { reportError?: boolean; showLoading?: boolean } = {}
 ): Promise<FsEntry[] | null> {
   const reportError = options.reportError ?? true
-  setState({ loading: new Set(state.loading).add(dir) })
+  const showLoading = options.showLoading ?? true
+  // A directory request can outlive an endpoint/session switch (or a quick
+  // local workspace switch).  Capture the identity and root before awaiting
+  // the transport; a late response must never overwrite the next workspace.
+  const startedKey = workspaceConnectionKey()
+  const startedGeneration = getEngineSource()
+  const startedRoot = state.root
+  const startedEpoch = workspaceEpoch
+  const current = (): boolean =>
+    state.root === startedRoot &&
+    workspaceEpoch === startedEpoch &&
+    workspaceConnectionKey() === startedKey &&
+    // Local filesystem reads do not depend on the engine transport. The
+    // embedded engine can move from idle to ready while a directory is being
+    // read; that lifecycle transition must not discard an otherwise valid
+    // local response. Remote reads remain pinned to the endpoint generation.
+    (startedKey === 'embedded' || getEngineSource() === startedGeneration)
+  if (showLoading) setState({ loading: new Set(state.loading).add(dir) })
   try {
     const entries = await readDir(dir)
-    const nextChildren = new Map(state.children)
-    nextChildren.set(dir, entries)
+    if (!current()) return null
+    const previous = state.children.get(dir)
+    const unchanged = previous !== undefined && sameDirectoryEntries(previous, entries)
+    const nextChildren = unchanged ? state.children : new Map(state.children)
+    if (!unchanged) nextChildren.set(dir, entries)
     const nextLoading = new Set(state.loading)
     nextLoading.delete(dir)
-    setState({ children: nextChildren, loading: nextLoading, error: null })
-    return entries
+    // Background polling should be invisible when the directory has not
+    // changed: avoid replacing the map/array and avoid a render altogether.
+    if (!unchanged || nextLoading.size !== state.loading.size || state.error !== null) {
+      setState({ children: nextChildren, loading: nextLoading, error: null })
+    }
+    return unchanged ? previous : entries
   } catch (err) {
-    const nextLoading = new Set(state.loading)
-    nextLoading.delete(dir)
-    setState(
-      reportError ? { loading: nextLoading, error: ipcErrorMessage(err) } : { loading: nextLoading }
-    )
+    // The caller intentionally became stale.  The connection listener will
+    // clear the old tree; surfacing this transient cancellation as a user
+    // error only creates a misleading red banner during reconnects.
+    if (!current()) return null
+    if (showLoading || reportError) {
+      const nextLoading = new Set(state.loading)
+      nextLoading.delete(dir)
+      setState(
+        reportError ? { loading: nextLoading, error: ipcErrorMessage(err) } : { loading: nextLoading }
+      )
+    }
     return null
   }
+}
+
+/**
+ * Directory reads are also used as a remote polling fallback. Reusing the
+ * previous array when metadata is identical keeps the explorer from treating
+ * an unchanged poll as a tree mutation and prevents needless React renders.
+ */
+function sameDirectoryEntries(left: FsEntry[], right: FsEntry[]): boolean {
+  if (left === right) return true
+  if (left.length !== right.length) return false
+  // Remote filesystems do not promise a stable readdir order. Compare by
+  // canonical path so an order-only response difference does not look like a
+  // workspace mutation and cause the tree to repaint.
+  const byPath = new Map(right.map((entry) => [entry.path, entry]))
+  for (const a of left) {
+    const b = byPath.get(a.path)
+    if (!b) return false
+    if (a.name !== b.name || a.path !== b.path || a.isDirectory !== b.isDirectory ||
+        a.size !== b.size || a.mtimeMs !== b.mtimeMs) return false
+  }
+  return true
 }
 
 /**
@@ -227,9 +306,27 @@ function restoredHasKey(restored: Set<string>, key: string): boolean {
 
 /** 打开指定文件夹（已授权则直接切换） */
 export async function openFolderAt(root: string): Promise<void> {
-  // 授权前置：主进程的文件白名单在内存里，不经「打开文件夹」选择框进来的目录
-  // （最近打开、启动恢复）必须显式补授权，否则 readDir 会被越界校验拦下
-  await allowRoot(root)
+  const requestId = ++openFolderRequestId
+  const remote = isRemoteEngine()
+  const requestedKey = workspaceConnectionKey()
+  const requestedGeneration = getEngineSource()
+  if (remote) {
+    // Remote paths are virtual UI labels. The engine receives only the
+    // sessionId and relative paths from fs-client, so a stale local path can
+    // never be sent to the remote machine when the connection changes.
+    root = (await remoteWorkspaceContext()).root
+    // Resolving the server-side root is asynchronous.  If the user switched
+    // session/endpoint while it was in flight, abandon this restore rather
+    // than mounting the old remote tree into the new connection.
+    if (requestId !== openFolderRequestId || workspaceConnectionKey() !== requestedKey || getEngineSource() !== requestedGeneration) return
+  } else {
+    // 授权前置：主进程的文件白名单在内存里，不经「打开文件夹」选择框进来的目录
+    // （最近打开、启动恢复）必须显式补授权，否则 readDir 会被越界校验拦下
+    await allowRoot(root)
+    // The local picker may resolve after the user connects a remote engine;
+    // never mount that local result into the new remote transport.
+    if (requestId !== openFolderRequestId || isRemoteEngine()) return
+  }
   // 根目录默认展开：树的第一行是根节点本身（见 ExplorerView），
   // 不在 expanded 里的话打开文件夹只会看到光秃秃的一行根。
   const persisted = loadExpandedDirs(root)
@@ -245,6 +342,7 @@ export async function openFolderAt(root: string): Promise<void> {
     selection: new Set(),
     selectionAnchor: null
   })
+  workspaceEpoch += 1
   const rootEntries = await loadChildren(root)
   const restored = await restoreExpandedDirs(root, persisted, rootEntries)
   setState({ expanded: restored })
@@ -258,15 +356,21 @@ export async function openFolderAt(root: string): Promise<void> {
   ) {
     persistExpandedDirs()
   }
-  // 记入「最近打开的项目」：启动时自动恢复也算一次使用，下次仍在列表最前
-  rememberRecentFolder(root)
-  // 记住当前项目，下次启动自动恢复（restoreLastFolder 读 settings.lastFolder）
-  void updateSettings({ lastFolder: root })
+  if (!remote) {
+    // 记入「最近打开的项目」：启动时自动恢复也算一次使用，下次仍在列表最前
+    rememberRecentFolder(root)
+    // 记住当前项目，下次启动自动恢复（restoreLastFolder 读 settings.lastFolder）
+    void updateSettings({ lastFolder: root })
+  }
 }
 
 /** 弹出目录选择框并打开 */
 export async function pickAndOpenFolder(): Promise<void> {
   try {
+    if (isRemoteEngine()) {
+      await openFolderAt((await remoteWorkspaceContext()).root)
+      return
+    }
     const folder = await pickFolder()
     if (!folder) return
     await openFolderAt(folder)
@@ -278,13 +382,59 @@ export async function pickAndOpenFolder(): Promise<void> {
 /** 启动恢复只跑一次；重复调用复用同一 promise（见 workspaceRestoreSettled） */
 let restorePromise: Promise<void> | null = null
 
+/**
+ * bootstrapRenderer runs before React publishes the engine source. A remote
+ * settings file must therefore wait for the remote snapshot before opening a
+ * workspace; otherwise the first read could accidentally hit local IPC.
+ */
+function waitForRemoteEngine(): Promise<void> {
+  if (isRemoteEngine()) return Promise.resolve()
+  return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+      dispose()
+      reject(new Error('远端引擎尚未就绪，无法打开远程工作区'))
+    }, 30_000)
+    const dispose = subscribeEngineSource(() => {
+      if (!isRemoteEngine()) return
+      if (timer) clearTimeout(timer)
+      timer = null
+      dispose()
+      resolve()
+    })
+  })
+}
+
+async function waitForRemoteWorkspaceContext(): Promise<Awaited<ReturnType<typeof remoteWorkspaceContext>>> {
+  let lastError: unknown = null
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    try {
+      return await remoteWorkspaceContext()
+    } catch (error) {
+      lastError = error
+      await new Promise<void>((resolve) => setTimeout(resolve, 100))
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('远端工作区会话尚未就绪')
+}
+
 /** 应用启动时恢复上次打开的文件夹 */
 export function restoreLastFolder(): Promise<void> {
   restorePromise ??= (async (): Promise<void> => {
     try {
       const settings = await getSettings()
-      if (!settings.lastFolder) return
-      await openFolderAt(settings.lastFolder)
+      if (isRemoteEngine()) {
+        // The selected remote session lives in endpoint-local storage and may
+        // not be reflected in the main settings response yet.
+        const context = await waitForRemoteWorkspaceContext()
+        await openFolderAt(context.root)
+      } else if (settings.engineMode === 'remote') {
+        await waitForRemoteEngine()
+        const context = await waitForRemoteWorkspaceContext()
+        await openFolderAt(context.root)
+      } else {
+        if (!settings.lastFolder) return
+        await openFolderAt(settings.lastFolder)
+      }
     } catch (err) {
       // 目录已被删除或无权限：不打断启动，也不清空设置，让用户自己重新选择
       setState({ error: ipcErrorMessage(err), root: null })
@@ -333,10 +483,17 @@ export async function expandDirectory(dir: string): Promise<void> {
 }
 
 /** 重新读取目录（文件操作后刷新） */
-export async function refreshDirectory(dir: string): Promise<void> {
+export async function refreshDirectory(
+  dir: string,
+  options: { background?: boolean } = {}
+): Promise<FsEntry[] | null> {
   if (state.children.has(dir) || state.root === dir) {
-    await loadChildren(dir)
+    return loadChildren(dir, {
+      reportError: !options.background,
+      showLoading: !options.background
+    })
   }
+  return null
 }
 
 /**
@@ -386,6 +543,10 @@ export function setActiveFile(filePath: string | null): void {
 
 /** 关闭工作区 */
 export function closeFolder(): void {
+  // Invalidate directory requests that are still reading the old root before
+  // clearing the cache; a late response must not resurrect a closed tree.
+  openFolderRequestId += 1
+  workspaceEpoch += 1
   setState({
     root: null,
     children: new Map(),

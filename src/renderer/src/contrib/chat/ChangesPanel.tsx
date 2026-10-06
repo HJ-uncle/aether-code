@@ -9,6 +9,8 @@ import { gitStageFiles } from '@renderer/core/git/git-client'
 import { changeIdsOf, keepChanges, stageAndKeepChanges } from '@renderer/core/engine/change-actions'
 import { assertEngineSource, getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
+import { assertWorkspaceTarget } from '@renderer/core/workspace/connection'
+import { remoteWorkspaceContext, remoteWorkspaceRelativePath } from '@renderer/core/workspace/fs-client'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { toast } from '@renderer/core/toast'
 import { useApp } from '@renderer/core/app-context'
@@ -98,7 +100,7 @@ function ChangesPanelContent({
 }: ChangesPanelProps & { source: number }): JSX.Element | null {
   const [changes, setChanges] = useState<EngineFileChange[]>([])
   const { engine } = useApp()
-  const remoteReadOnly = engine.snapshot.mode === 'remote'
+  const remote = engine.snapshot.mode === 'remote'
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const workspace = useWorkspace()
@@ -169,7 +171,6 @@ function ChangesPanelContent({
 
   const act = useCallback(
     async (action: () => Promise<unknown>): Promise<void> => {
-      if (remoteReadOnly) return
       if (!mounted.current) return
       setBusy(true)
       setError(null)
@@ -183,7 +184,7 @@ function ChangesPanelContent({
         if (mounted.current) setBusy(false)
       }
     },
-    [refresh, remoteReadOnly, source]
+    [refresh, source]
   )
 
   const keepOne = (change: EngineFileChange): Promise<void> =>
@@ -219,22 +220,44 @@ function ChangesPanelContent({
    */
   const stageChanges = useCallback(
     async (targets: EngineFileChange[]): Promise<void> => {
-      if (remoteReadOnly) return
       if (!mounted.current) return
       setBusy(true)
       setError(null)
       try {
         assertEngineSource(source)
         const root = workspace.root
-        if (!root) throw new Error('未打开工作区，无法暂存')
+        if (!root && !remote) throw new Error('未打开工作区，无法暂存')
+        // Engine change records use the server's absolute path while the
+        // remote Git API accepts only a workspace-relative path. Keep the
+        // transformed rows local to this action so the UI still retains the
+        // canonical paths used by keep/revert and display.
+        const remoteContext = remote ? await remoteWorkspaceContext() : null
+        if (remoteContext && remoteContext.sessionId !== sessionId) {
+          throw new Error('当前工作区会话与改动会话不一致，请切换到对应会话后重试')
+        }
+        const stageRoot = remoteContext?.root ?? root
+        if (!stageRoot) throw new Error('未打开工作区，无法暂存')
+        const stageTargets = remoteContext
+          ? targets.map(change => ({ ...change, path: remoteWorkspaceRelativePath(remoteContext, change.path) }))
+          : targets
         const staged = await stageAndKeepChanges(
-          paths => gitStageFiles(root, paths),
-          input => { assertEngineSource(source); return requestOrThrow(input) },
+          paths => {
+            if (remoteContext) assertWorkspaceTarget(remoteContext.target)
+            return gitStageFiles(stageRoot, paths)
+          },
+          input => {
+            assertEngineSource(source)
+            if (remoteContext) {
+              assertWorkspaceTarget(remoteContext.target)
+              return requestOrThrow({ ...input, expectedEngine: remoteContext.target.expectedEngine })
+            }
+            return requestOrThrow(input)
+          },
           sessionId,
-          targets
+          stageTargets
         )
         if (!staged) {
-          toast.warning('没有可暂存的改动（全部被 .gitignore 忽略或文件已不存在）')
+          toast.warning('没有可暂存的改动（文件可能已不存在或路径已变化）')
           return
         }
         await refresh()
@@ -244,7 +267,7 @@ function ChangesPanelContent({
         if (mounted.current) setBusy(false)
       }
     },
-    [refresh, remoteReadOnly, sessionId, source, workspace.root]
+    [refresh, remote, sessionId, source, workspace.root]
   )
 
   const revertAll = async (): Promise<void> =>
@@ -318,7 +341,7 @@ function ChangesPanelContent({
               <button
                 type="button"
                 className="changes-panel__confirm"
-                disabled={remoteReadOnly || busy || streaming}
+                disabled={busy || streaming}
                 title="确认保留本组文件改动"
                 onClick={() => void keepOne(change)}
               >
@@ -326,14 +349,14 @@ function ChangesPanelContent({
               </button>
               <ActionMenu
                 label={`${name} 的更多操作`}
-                disabled={remoteReadOnly || busy || streaming}
+                disabled={busy || streaming}
                 items={[
                   {
                     id: 'stage',
                     label: '暂存并保留',
-                    description: '写入 Git 暂存区后移除待确认记录',
+                    description: remote ? '写入当前远端仓库后移除待确认记录' : '写入 Git 暂存区后移除待确认记录',
                     icon: 'copy',
-                    disabled: !workspace.root || remoteReadOnly || busy || streaming,
+                    disabled: (!workspace.root && !remote) || busy || streaming,
                     onSelect: () => stageChanges([change])
                   },
                   {
@@ -342,7 +365,7 @@ function ChangesPanelContent({
                     description: '检查版本后恢复到改动前',
                     icon: 'restart',
                     danger: true,
-                    disabled: remoteReadOnly || busy || streaming,
+                    disabled: busy || streaming,
                     onSelect: () => revertOneWithConfirm(change)
                   }
                 ]}
@@ -353,7 +376,12 @@ function ChangesPanelContent({
       </ul>
 
       {error ? <div className="changes-panel__error">{error}</div> : null}
-      {remoteReadOnly && changes.length > 0 ? <div>远端改动快照只读；尚未配置工作区映射，不能撤回或暂存到本地仓库。</div> : null}
+      {remote && changes.length > 0 ? (
+        <div className="changes-panel__notice" role="status">
+          <Icon name="info" size={14} />
+          <span>远端工作区：保留仅确认改动，撤回才会恢复文件；暂存会写入当前远端仓库。</span>
+        </div>
+      ) : null}
 
       {changes.length > 1 ? (
         <div className="changes-panel__footer">
@@ -362,7 +390,7 @@ function ChangesPanelContent({
           <button
             type="button"
             className="changes-panel__footer-btn"
-            disabled={remoteReadOnly || busy || streaming}
+            disabled={busy || streaming}
             title="检查版本后撤回本会话全部待确认改动"
             onClick={() => void revertAll()}
           >
@@ -372,8 +400,8 @@ function ChangesPanelContent({
           <button
             type="button"
             className="changes-panel__footer-btn"
-            disabled={remoteReadOnly || busy || streaming || !workspace.root}
-            title="暂存所列文件的当前全部内容，并保留改动记录"
+            disabled={busy || streaming || (!workspace.root && !remote)}
+            title={remote ? '暂存到当前远端仓库，并移除待确认记录' : '暂存所列文件的当前全部内容，并保留改动记录'}
             onClick={() => void stageChanges(changes)}
           >
             <Icon name="copy" size={16} />
@@ -382,7 +410,7 @@ function ChangesPanelContent({
           <button
             type="button"
             className="changes-panel__footer-btn changes-panel__footer-btn--keep"
-            disabled={remoteReadOnly || busy || streaming}
+            disabled={busy || streaming}
             title="确认保留全部改动（从待确认列表移除）"
             onClick={() => void keepAll()}
           >

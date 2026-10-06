@@ -21,6 +21,7 @@ import {
   type PendingInteraction
 } from './pending'
 import { patchSessionMeta } from '@renderer/contrib/history/session-meta'
+import type { MemoryScope } from './memory'
 
 // ==================== 模型 ====================
 
@@ -108,6 +109,8 @@ export interface ChatMessage {
 export interface ChatAttachment {
   /** 相对工作区根的路径（引擎 attachments[].name 用的就是它） */
   path: string
+  /** 远端上传后由主进程分配的 opaque 引用；本地附件不设置。 */
+  remoteUploadId?: string
   /** 原始文件名（界面展示用） */
   name: string
   /** MIME，仅作提示 */
@@ -167,6 +170,11 @@ export interface SendOptions {
   subagentModel?: string
   /** 轻任务专用模型（图片理解等旁路调用）；来自设置「按用途指派」 */
   utilityModel?: string
+  /**
+   * 已由会话设置确认的长期记忆范围。缺省时由引擎兼容旧客户端并自行决定；
+   * Aether UI 会在设置尚未确认时显式发送 off，避免误把旧会话升级成全局记忆。
+   */
+  memoryScope?: MemoryScope
 }
 
 function newId(): string {
@@ -308,6 +316,7 @@ export function useChat(): {
   const activeRunIdRef = useRef<string | null>(null)
   const optimisticIdsRef = useRef<{ userId?: string; assistantId?: string }>({})
   const answeringRef = useRef(new Set<string>())
+  const approvalRefreshRef = useRef<{ sessionId: string; source: number } | null>(null)
   const historyRequestRef = useRef(0)
   const consumedEventIdRef = useRef<string | null>(null)
   const recoveryAttemptsRef = useRef(0)
@@ -326,6 +335,7 @@ export function useChat(): {
     optimisticIdsRef.current = {}
     rootRunsRef.current.clear()
     answeringRef.current.clear()
+    approvalRefreshRef.current = null
     pendingPatchesRef.current = []
     if (throttleTimerRef.current) clearTimeout(throttleTimerRef.current)
     throttleTimerRef.current = null
@@ -425,6 +435,7 @@ export function useChat(): {
     optimisticIdsRef.current = {}
     rootRunsRef.current.clear()
     answeringRef.current.clear()
+    approvalRefreshRef.current = null
     pendingPatchesRef.current = []
     if (throttleTimerRef.current) clearTimeout(throttleTimerRef.current)
     throttleTimerRef.current = null
@@ -489,6 +500,26 @@ export function useChat(): {
       setMessages(previous => patchLastAssistant(previous, message => finishTransport(message, '连接多次中断，请重新打开此会话恢复')))
     }
 
+    function refreshWaitingRun(sessionId: string): void {
+      const refresh = { sessionId, source: getEngineSource() }
+      approvalRefreshRef.current = refresh
+      setStreaming(true)
+      // A conflict says this client's request may be stale, not that it was
+      // rejected. Let the durable snapshot decide whether it remains pending.
+      void recoverRef.current(sessionId).catch(() => {}).finally(() => {
+        if (approvalRefreshRef.current !== refresh) return
+        approvalRefreshRef.current = null
+        if (refresh.source === getEngineSource() && viewSessionRef.current === sessionId && !activeStreamRef.current) setStreaming(false)
+      })
+    }
+
+    function isApprovalConflict(status: number | undefined, code: unknown, message: string): boolean {
+      // Older engines wrap admission failures in HTTP 200 JSON or SSE errors.
+      // Match only explicit request conflicts; temporary outages stay retryable.
+      return status === 404 || status === 409 || [404, 409, 40400, 40900].includes(Number(code)) ||
+        /^(Run is no longer waiting|Request already answered differently|Pending request not found(?: for this run and session)?|Run not found)$/.test(message)
+    }
+
     function applyEvent(event: StreamEvent): void {
       if (event.type === 'snapshot-required' || (event.type === 'payload' && (event.payload as { code?: string }).code === 'snapshot_required')) {
         const sessionId = activeSessionRef.current
@@ -498,6 +529,14 @@ export function useChat(): {
         setStreaming(false)
         if (sessionId && viewSessionRef.current === sessionId) recover(sessionId)
         return
+      }
+      if (event.type === 'payload') {
+        const failure = event.payload as { error?: unknown; code?: unknown }
+        if (typeof failure.error === 'string' && isApprovalConflict(undefined, failure.code, failure.error)) {
+          applyEvent({ streamId: event.streamId, type: 'error', message: failure.error,
+            code: typeof failure.code === 'number' ? failure.code : undefined })
+          return
+        }
       }
       if (event.type === 'done' || event.type === 'error') {
         // 终态是关键帧：先立即 flush 掉攒着的流式 patch，再落终态 ——
@@ -510,6 +549,11 @@ export function useChat(): {
         answeringRef.current.clear()
         reconcile()
         if (run?.status === 'succeeded') void drainQueueRef.current()
+        else if (event.type === 'error' && run?.status === 'waiting' && isApprovalConflict(event.status, event.code, event.message) &&
+          activeSessionRef.current === viewSessionRef.current) {
+          const sessionId = activeSessionRef.current
+          if (sessionId) refreshWaitingRun(sessionId)
+        }
         else if (event.type === 'error' && run?.status === 'running' && activeSessionRef.current === viewSessionRef.current) {
           const sessionId = activeSessionRef.current
           if (sessionId) recover(sessionId)
@@ -584,7 +628,10 @@ export function useChat(): {
     async (text: string, options: SendOptions) => {
       assertEngineSource(renderSource)
       const trimmed = text.trim()
-      const attachments = isRemoteEngine() ? [] : options.attachments ?? []
+      // Remote attachments are uploaded into the server session workspace by
+      // useAttachments; keep their registered paths when constructing chat
+      // requests. Only local workspace paths remain mode-gated below.
+      const attachments = options.attachments ?? []
       if ((!trimmed && attachments.length === 0)) return
 
       // 顺手记下「这条会话在哪个项目里」——会话历史面板的「打开项目目录」靠它
@@ -701,7 +748,7 @@ export function useChat(): {
     async (text: string, options: SendOptions) => {
       assertEngineSource(renderSource)
       const trimmed = text.trim()
-      const attachments = isRemoteEngine() ? [] : options.attachments ?? []
+      const attachments = options.attachments ?? []
       // 允许「只发附件不发文字」：多模态模型的常见用法就是丢张图让它看
       if ((!trimmed && attachments.length === 0) || activeStreamRef.current) return
 
@@ -748,10 +795,17 @@ export function useChat(): {
         thinkingMode: options.thinkingMode,
         subagentModel: options.subagentModel || undefined,
         utilityModel: options.utilityModel || undefined,
-        // 引擎只读 name（相对工作区路径）；type 仅作提示，content 留给内联场景
+        memoryScope: options.memoryScope,
+        // Local attachments use a relative name. Remote uploads are referenced
+        // by the opaque ID recorded by the main process so arbitrary paths can
+        // never be injected into a remote request.
         attachments:
           attachments.length > 0
-            ? attachments.map((file) => ({ name: file.path, type: file.type }))
+            ? isRemoteEngine()
+              ? attachments.map((file) => file.remoteUploadId
+                ? { remoteUploadId: file.remoteUploadId }
+                : { name: file.path, type: file.type })
+              : attachments.map((file) => ({ name: file.path, type: file.type }))
             : undefined
       })
     },
@@ -870,20 +924,37 @@ export function useChat(): {
     ) => {
       const source = getEngineSource()
       assertEngineSource(renderSource)
-      if (activeStreamRef.current || answeringRef.current.has(requestId)) return
+      // A security-mode request may finish after its card was unmounted. Old
+      // callbacks must never retarget the hook to the session they captured.
+      if (viewSessionRef.current !== options.sessionId) return
+      if (activeStreamRef.current || approvalRefreshRef.current || answeringRef.current.has(requestId)) return
       const target = messages.find(message => message.interactions?.some(item => item.requestId === requestId && item.status === 'pending'))
       const pending = target?.interactions?.find(item => item.requestId === requestId && item.status === 'pending')
-      if (!target?.run || !pending?.runId || target.run.sessionId !== options.sessionId) throw new Error('待应答请求已变化，请重新加载会话')
+      const currentRun = pending?.runId ? rootRunsRef.current.get(pending.runId) : undefined
+      const currentPending = currentRun?.pending.find(item => item.requestId === requestId)
+      if (!target?.run || !pending?.runId || target.run.status !== 'waiting' ||
+        target.run.sessionId !== options.sessionId || pending.runId !== target.run.runId || target.runId !== pending.runId ||
+        currentRun?.sessionId !== options.sessionId || currentRun.status !== 'waiting' || currentPending?.status !== 'pending' ||
+        currentPending.toolCallId !== pending.toolCallId || currentPending.toolName !== pending.toolName || currentPending.kind !== pending.kind) {
+        throw new Error('待应答请求已变化，请重新加载会话')
+      }
       answeringRef.current.add(requestId)
       activeRunIdRef.current = target.runId ?? null
       optimisticIdsRef.current = { assistantId: target.id }
       setStreaming(true)
+      let responseStreamId: string | null = null
       try {
         // The engine restores the original model/workspace and acknowledges the request before UI marks it answered.
-        await runStream({ sessionId: options.sessionId, runId: target.runId, toolResponse: buildToolResponse(pending, values) })
+        const response = runStream({ sessionId: options.sessionId, runId: target.runId, toolResponse: buildToolResponse(pending, values) })
+        responseStreamId = activeStreamRef.current
+        await response
       } catch (error) {
-        if (source !== getEngineSource()) return
+        if (source !== getEngineSource() || viewSessionRef.current !== options.sessionId ||
+          (activeStreamRef.current !== null && activeStreamRef.current !== responseStreamId)) return
         answeringRef.current.delete(requestId)
+        // IPC failures can reject before emitting a stream event. Release only
+        // this submission so the unchanged durable request can be retried.
+        if (activeStreamRef.current === responseStreamId) activeStreamRef.current = null
         setStreaming(false)
         throw error
       }
@@ -925,7 +996,6 @@ export function useChat(): {
    */
   const clear = useCallback(
     async (sessionId?: string): Promise<void> => {
-      if (isRemoteEngine()) throw new Error('远端会话暂不支持删除历史')
       const source = getEngineSource()
       assertEngineSource(renderSource)
       if (activeStreamRef.current) return
@@ -970,7 +1040,6 @@ export function useChat(): {
   /** 删除一整轮对话（该消息所在轮：从轮首用户消息到下一个用户消息之前），同步删引擎侧历史 */
   const deleteTurn = useCallback(
     async (sessionId: string, message: ChatMessage): Promise<void> => {
-      if (isRemoteEngine()) throw new Error('远端会话暂不支持删除轮次')
       const source = getEngineSource()
       assertEngineSource(renderSource)
       if (activeStreamRef.current) return
@@ -997,7 +1066,6 @@ export function useChat(): {
    */
   const retryFrom = useCallback(
     async (userMessage: ChatMessage, options: SendOptions): Promise<void> => {
-      if (isRemoteEngine()) throw new Error('远端会话暂不支持截断重试，请发送新消息继续')
       const source = getEngineSource()
       assertEngineSource(renderSource)
       if (activeStreamRef.current) return
@@ -1033,7 +1101,6 @@ export function useChat(): {
    */
   const revertFrom = useCallback(
     async (sessionId: string, userMessage: ChatMessage): Promise<void> => {
-      if (isRemoteEngine()) throw new Error('远端会话暂不支持回退文件')
       const source = getEngineSource()
       assertEngineSource(renderSource)
       if (activeStreamRef.current) throw new Error('会话运行中，请先停止再回退')

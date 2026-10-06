@@ -12,6 +12,8 @@ import type {
   EngineRequestInput,
   EngineRequestResult,
   EngineSnapshot,
+  RemoteAttachmentInput,
+  RemoteAttachmentResult,
   StreamEvent,
   StreamStartInput
 } from '@shared/ipc'
@@ -68,6 +70,11 @@ export function request<T = unknown>(input: EngineRequestInput): Promise<EngineR
 
 export function upload<T = unknown>(input: Omit<EngineUploadInput, 'expectedEngine'>): Promise<EngineRequestResult<T>> {
   return bridge().engine.upload<T>({ ...input, expectedEngine: getExpectedEngine() })
+}
+
+/** 上传附件到远程引擎当前会话工作区。 */
+export function uploadAttachment(input: Omit<RemoteAttachmentInput, 'expectedEngine'>): Promise<RemoteAttachmentResult> {
+  return bridge().engine.uploadAttachment({ ...input, expectedEngine: getExpectedEngine() })
 }
 
 /** 发起请求并在业务失败时抛错，适合「失败即中断」的调用场景 */

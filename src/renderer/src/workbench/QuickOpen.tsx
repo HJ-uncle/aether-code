@@ -5,7 +5,7 @@ import { executeCommand, isCommandEnabled, registerCommand } from '@renderer/cor
 import { recordCommandRun } from '@renderer/core/platform/commands-history'
 import { registerKeybinding } from '@renderer/core/platform/keybindings'
 import { getLayout, setLayout } from '@renderer/core/platform/layout-state'
-import { paths } from '@renderer/core/workspace/fs-client'
+import { listAllFiles, paths } from '@renderer/core/workspace/fs-client'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { buildCommandItems, type CommandItem } from './command-filter'
 import { FuzzyText } from './FuzzyText'
@@ -144,8 +144,7 @@ function QuickOverlay({
   useEffect(() => {
     if (!root) return
     let cancelled = false
-    window.aether.fs
-      .listAll(root)
+    listAllFiles(root)
       .then((list) => {
         if (!cancelled) setFiles(list)
       })

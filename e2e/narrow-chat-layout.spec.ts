@@ -243,3 +243,31 @@ test('窗口缩到最小尺寸时顶栏按钮依然完整', async () => {
   expectTopbarIntact(narrowProbe, '最小窗口 + 最小宽度面板')
   expect(narrowProbe.bar.height, '最小窗口下顶栏高度应有效').toBeGreaterThanOrEqual(30)
 })
+
+test('最小窗口打开设置时让正文获得可读宽度', async () => {
+  await page.getByRole('button', { name: '设置', exact: true }).click()
+  await expect(page.locator('.app-settings')).toBeVisible()
+
+  const geometry = await page.evaluate(() => {
+    const rect = (selector: string): DOMRect => {
+      const element = document.querySelector(selector)
+      if (!(element instanceof HTMLElement)) throw new Error(`缺少探针元素：${selector}`)
+      return element.getBoundingClientRect()
+    }
+    const body = document.querySelector('.app-settings__body')
+    if (!(body instanceof HTMLElement)) throw new Error('设置正文不存在')
+    return {
+      navWidth: rect('.app-settings__nav').width,
+      bodyWidth: rect('.app-settings__body').width,
+      sidebarDisplay: getComputedStyle(document.querySelector('.workbench__sidebar') as Element).display,
+      horizontalOverflow: body.scrollWidth - body.clientWidth
+    }
+  })
+
+  expect(geometry.sidebarDisplay, '设置页小屏应收起资源管理器').toBe('none')
+  expect(geometry.navWidth, '设置导航应切成紧凑图标栏').toBeGreaterThanOrEqual(48)
+  expect(geometry.navWidth, '设置导航不应挤占正文').toBeLessThanOrEqual(64)
+  expect(geometry.bodyWidth, '设置正文应保留可读宽度').toBeGreaterThan(360)
+  expect(geometry.horizontalOverflow, '设置正文不应出现横向溢出').toBeLessThanOrEqual(1)
+  await expect(page.getByRole('tab', { name: '引擎管理', exact: true })).toBeVisible()
+})

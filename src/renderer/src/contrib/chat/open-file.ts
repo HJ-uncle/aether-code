@@ -3,6 +3,8 @@ import { openFile } from '@renderer/core/editor/editor-store'
 import { getWorkspaceState } from '@renderer/core/workspace/workspace-store'
 import { getSnapshot } from '@renderer/core/engine/client'
 import { resolveChatPath } from './chat-file-path'
+import { isRemoteEngine } from '@renderer/core/engine/source'
+import { remoteWorkspaceContext } from '@renderer/core/workspace/fs-client'
 
 /**
  * 从聊天里打开文件：读进编辑器标签并激活，可带行号定位。
@@ -18,8 +20,16 @@ import { resolveChatPath } from './chat-file-path'
  * - 尾部可带 :line 或 :line:column（用户截图里 `file.ts:15` 这种写法）。
  */
 export async function openFileFromChat(rawPath: string): Promise<void> {
-  // Remote records name another filesystem; matching local paths are unrelated files.
-  if ((await getSnapshot()).mode === 'remote') return
+  if ((await getSnapshot()).mode === 'remote' || isRemoteEngine()) {
+    const context = await remoteWorkspaceContext()
+    const match = /:(\d+)(?::(\d+))?$/.exec(rawPath.trim())
+    const pathText = (match ? rawPath.trim().slice(0, match.index) : rawPath).trim().replace(/^[`'"<]+|[`'">]+$/g, '')
+    if (!pathText || pathText.startsWith('/') || /^[A-Za-z]:[\\/]/.test(pathText)) return
+    const filePath = `${context.root}/${pathText.replace(/^[/\\]+|[/\\]+$/g, '')}`
+    await openFile(filePath, match ? Number(match[1]) : undefined, match?.[2] ? Number(match[2]) : undefined)
+    activateDocument(filePath)
+    return
+  }
   const target = resolveChatPath(rawPath, getWorkspaceState().root)
   if (!target) return
   await openFile(target.filePath, target.line, target.column)

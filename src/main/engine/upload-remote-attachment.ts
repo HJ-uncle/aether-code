@@ -43,7 +43,9 @@ export async function uploadRemoteAttachment(input: RemoteAttachmentInput): Prom
   if (!path || info.data?.size !== input.data.byteLength) throw new Error('远端附件路径或大小校验失败')
   signal.throwIfAborted()
   return {
-    remoteUploadId: rememberRemoteAttachment(target, input.sessionId, path, input.type),
-    path, name: input.fileName, type: input.type, size: input.data.byteLength
+    remoteUploadId: rememberRemoteAttachment(target, input.sessionId, serverPath, input.type),
+    // Keep the renderer's attachment path relative to the server workspace so
+    // previews use the same session-relative contract as Explorer/editor.
+    path: serverPath, name: input.fileName, type: input.type, size: input.data.byteLength
   }
 }

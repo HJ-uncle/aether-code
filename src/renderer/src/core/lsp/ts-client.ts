@@ -1,8 +1,13 @@
 /** Monaco <-> typescript-language-server bridge. */
 import * as monaco from 'monaco-editor'
+import type { LspMessage } from '@shared/ipc'
 import { parseWorkspaceTextEdits } from './workspace-edit'
 import { registerWorkspaceActions, type WorkspaceActionBridge } from './code-actions'
 import { clearFileProblems, setFileProblems, type ProblemItem } from './problems-store'
+import { requestOrThrow } from '../engine/client'
+import { assertWorkspaceTarget } from '../workspace/connection'
+import { remoteWorkspaceContext, type RemoteWorkspaceContext } from '../workspace/fs-client'
+import { canReuseLspSession } from './session-state'
 
 let referenceModels: typeof import('../editor/reference-models') | null = null
 let workspaceActions: WorkspaceActionBridge | null = null
@@ -47,9 +52,32 @@ const pendingRequests = new Map<number, PendingRequest>()
 let disposeMessageListener: (() => void) | null = null
 let disposeExitListener: (() => void) | null = null
 let sessionGeneration = 0
+/** Remote mode uses the engine's session-scoped JSON-RPC endpoint instead of
+ * spawning a language server in the Electron main process. */
+let remoteTransport = false
+/** Context pinned to the engine/session that owns the active remote LSP. */
+let remoteSessionContext: RemoteWorkspaceContext | null = null
 
 function rejectPending(reason: Error): void {
   for (const [id, pending] of pendingRequests) { clearTimeout(pending.timer); pending.cancellationDisposable?.dispose(); pending.reject(reason); pendingRequests.delete(id) }
+}
+interface LspSendResult { ok: boolean; data?: unknown }
+async function sendRemote(message: LspMessage): Promise<LspSendResult> {
+  // Once initialized, every JSON-RPC message must stay on that engine.  A
+  // reconnect can replace the current workspace context while shutdown of
+  // the old session is still pending; looking it up for each message could
+  // otherwise send old-session traffic (including DELETE) to the new engine.
+  const context = remoteSessionContext ?? await remoteWorkspaceContext()
+  assertWorkspaceTarget(context.target)
+  const data = await requestOrThrow({
+    method: 'POST', path: '/lsp/request', expectedEngine: context.target.expectedEngine,
+    body: { sessionId: context.sessionId, workspaceRoot: context.root, method: String(message.method ?? ''), params: message.params ?? {} }
+  })
+  assertWorkspaceTarget(context.target)
+  return { ok: true, data }
+}
+function sendMessage(message: LspMessage): Promise<LspSendResult> {
+  return remoteTransport ? sendRemote(message) : window.aether.lsp.send(message)
 }
 function lspRequest<T = unknown>(method: string, params?: unknown, token?: monaco.CancellationToken, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   if (token?.isCancellationRequested) return Promise.reject(new Error('LSP request cancelled'))
@@ -57,17 +85,21 @@ function lspRequest<T = unknown>(method: string, params?: unknown, token?: monac
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
       const pending = pendingRequests.get(id); if (!pending) return
-      pendingRequests.delete(id); pending.cancellationDisposable?.dispose(); void window.aether.lsp.send({ jsonrpc: '2.0', method: '$/cancelRequest', params: { id } }); reject(new Error(`LSP request timed out: ${method}`))
+      pendingRequests.delete(id); pending.cancellationDisposable?.dispose(); void sendMessage({ jsonrpc: '2.0', method: '$/cancelRequest', params: { id } }); reject(new Error(`LSP request timed out: ${method}`))
     }, timeoutMs)
     const pending: PendingRequest = { resolve: resolve as (value: unknown) => void, reject, timer }
-    if (token) pending.cancellationDisposable = token.onCancellationRequested(() => { if (!pendingRequests.delete(id)) return; clearTimeout(timer); pending.cancellationDisposable?.dispose(); void window.aether.lsp.send({ jsonrpc: '2.0', method: '$/cancelRequest', params: { id } }); reject(new Error('LSP request cancelled')) })
+    if (token) pending.cancellationDisposable = token.onCancellationRequested(() => { if (!pendingRequests.delete(id)) return; clearTimeout(timer); pending.cancellationDisposable?.dispose(); void sendMessage({ jsonrpc: '2.0', method: '$/cancelRequest', params: { id } }); reject(new Error('LSP request cancelled')) })
     pendingRequests.set(id, pending)
-    void window.aether.lsp.send({ jsonrpc: '2.0', id, method, params }).then((result) => {
-      if (!result.ok) { const current = pendingRequests.get(id); if (!current) return; pendingRequests.delete(id); clearTimeout(current.timer); current.cancellationDisposable?.dispose(); current.reject(new Error(`LSP send failed: ${method}`)) }
+    void sendMessage({ jsonrpc: '2.0', id, method, params }).then((result) => {
+      const current = pendingRequests.get(id); if (!current) return
+      if (!result.ok) { pendingRequests.delete(id); clearTimeout(current.timer); current.cancellationDisposable?.dispose(); current.reject(new Error(`LSP send failed: ${method}`)); return }
+      // The remote JSON-RPC bridge returns the response body in the same HTTP
+      // round trip; local stdio still resolves through handleMessage().
+      if (remoteTransport) { pendingRequests.delete(id); clearTimeout(current.timer); current.cancellationDisposable?.dispose(); current.resolve(result.data) }
     }).catch((error: unknown) => { const current = pendingRequests.get(id); if (!current) return; pendingRequests.delete(id); clearTimeout(current.timer); current.cancellationDisposable?.dispose(); current.reject(error) })
   })
 }
-function lspNotify(method: string, params?: unknown): void { void window.aether.lsp.send({ jsonrpc: '2.0', method, params }).catch(() => undefined) }
+function lspNotify(method: string, params?: unknown): void { void sendMessage({ jsonrpc: '2.0', method, params }).catch(() => undefined) }
 
 interface LspRange { start: { line: number; character: number }; end: { line: number; character: number } }
 interface LspDiagnostic { range: LspRange; severity?: number; code?: string | number; codeDescription?: { href?: string }; source?: string; message: string; tags?: number[]; relatedInformation?: Array<{ location: { uri: string; range: LspRange }; message: string }> }
@@ -245,9 +277,40 @@ function mapCompletionItem(item: Record<string, unknown>, defaultRange: monaco.l
 
 let running = false; let activeRoot: string | null = null; let lifecycleChain: Promise<unknown> = Promise.resolve()
 function enqueue<T>(operation: () => Promise<T>): Promise<T> { const next = lifecycleChain.then(operation, operation); lifecycleChain = next.catch(() => undefined); return next }
-async function startInternal(rootPath: string, serverEntry: string): Promise<boolean> { if (running && activeRoot === rootPath) return true; if (running) await stopInternal(); const generation = ++sessionGeneration; const rootUri = monaco.Uri.file(rootPath).toString(); let started: { ok: boolean }; try { started = await window.aether.lsp.start({ rootUri, serverEntry }) } catch { setBuiltinTsFeatures(false); return false }; if (!started.ok || generation !== sessionGeneration) { setBuiltinTsFeatures(false); return false }; disposeMessageListener = window.aether.lsp.onMessage((message) => handleMessage(message, generation)); disposeExitListener = window.aether.lsp.onExit(() => { if (generation !== sessionGeneration) return; running = false; activeRoot = null; notifyServiceChanged(); rejectPending(new Error('LSP server exited')); disposeProviders(); disposeModelListeners(); setBuiltinTsFeatures(false); for (const model of monaco.editor.getModels()) monaco.editor.setModelMarkers(model, MARKER_OWNER, []); for (const filePath of tsProblemFiles) clearFileProblems(filePath, 'tsserver'); tsProblemFiles.clear(); disposeMessageListener?.(); disposeExitListener?.(); disposeMessageListener = null; disposeExitListener = null }); try { const initialized = await lspRequest<{ capabilities?: { executeCommandProvider?: { commands?: string[] }; codeActionProvider?: boolean | { resolveProvider?: boolean } } }>('initialize', { processId: null, rootUri, initializationOptions: { locale: 'zh-CN' }, capabilities: { workspace: { applyEdit: true, workspaceEdit: { documentChanges: true, failureHandling: 'abort' } }, textDocument: { publishDiagnostics: { relatedInformation: true, versionSupport: true, tagSupport: { valueSet: [1, 2] }, codeDescriptionSupport: true }, hover: { contentFormat: ['markdown', 'plaintext'] }, completion: { completionItem: { snippetSupport: true, documentationFormat: ['markdown', 'plaintext'], resolveSupport: { properties: ['documentation', 'detail', 'additionalTextEdits', 'textEdit', 'command'] } } }, codeAction: { dataSupport: true, disabledSupport: true, isPreferredSupport: true, resolveSupport: { properties: ['edit', 'command'] }, codeActionLiteralSupport: { codeActionKind: { valueSet: ['quickfix', 'refactor', 'refactor.extract', 'refactor.inline', 'refactor.rewrite', 'source', 'source.organizeImports', 'source.fixAll'] } } }, definition: { linkSupport: true }, rename: { prepareSupport: true }, signatureHelp: { signatureInformation: { documentationFormat: ['markdown', 'plaintext'], parameterInformation: { labelOffsetSupport: true } } }, documentSymbol: { hierarchicalDocumentSymbolSupport: true } } }, workspaceFolders: [{ uri: rootUri, name: rootPath.split(/[\\/]/).pop() ?? rootPath }] }, undefined, INITIALIZE_TIMEOUT_MS); serverCommands = initialized.capabilities?.executeCommandProvider?.commands ? new Set(initialized.capabilities.executeCommandProvider.commands) : null; const codeAction = initialized.capabilities?.codeActionProvider; codeActionResolveSupported = typeof codeAction === 'object' && codeAction.resolveProvider === true; lspNotify('initialized', {}) } catch { await stopInternal(); setBuiltinTsFeatures(false); return false }; if (generation !== sessionGeneration) { await stopInternal(); return false }; running = true; activeRoot = rootPath; setBuiltinTsFeatures(true); registerProviders(); syncAllModels(); notifyServiceChanged(); createModelSubscription = monaco.editor.onDidCreateModel((model) => { if (running) attachModel(model) }); disposeModelSubscription = monaco.editor.onWillDisposeModel((model) => { if (running) detachModel(model) }); return true }
+async function startInternal(rootPath: string, serverEntry: string): Promise<boolean> { if (canReuseLspSession(running, activeRoot, remoteTransport ? 'remote' : 'local', rootPath, 'local')) return true; if (running) await stopInternal(); remoteTransport = false; remoteSessionContext = null; const generation = ++sessionGeneration; const rootUri = monaco.Uri.file(rootPath).toString(); let started: { ok: boolean }; try { started = await window.aether.lsp.start({ rootUri, serverEntry }) } catch { setBuiltinTsFeatures(false); return false }; if (!started.ok || generation !== sessionGeneration) { setBuiltinTsFeatures(false); return false }; disposeMessageListener = window.aether.lsp.onMessage((message) => handleMessage(message, generation)); disposeExitListener = window.aether.lsp.onExit(() => { if (generation !== sessionGeneration) return; running = false; activeRoot = null; notifyServiceChanged(); rejectPending(new Error('LSP server exited')); disposeProviders(); disposeModelListeners(); setBuiltinTsFeatures(false); for (const model of monaco.editor.getModels()) monaco.editor.setModelMarkers(model, MARKER_OWNER, []); for (const filePath of tsProblemFiles) clearFileProblems(filePath, 'tsserver'); tsProblemFiles.clear(); disposeMessageListener?.(); disposeExitListener?.(); disposeMessageListener = null; disposeExitListener = null }); try { const initialized = await lspRequest<{ capabilities?: { executeCommandProvider?: { commands?: string[] }; codeActionProvider?: boolean | { resolveProvider?: boolean } } }>('initialize', { processId: null, rootUri, initializationOptions: { locale: 'zh-CN' }, capabilities: { workspace: { applyEdit: true, workspaceEdit: { documentChanges: true, failureHandling: 'abort' } }, textDocument: { publishDiagnostics: { relatedInformation: true, versionSupport: true, tagSupport: { valueSet: [1, 2] }, codeDescriptionSupport: true }, hover: { contentFormat: ['markdown', 'plaintext'] }, completion: { completionItem: { snippetSupport: true, documentationFormat: ['markdown', 'plaintext'], resolveSupport: { properties: ['documentation', 'detail', 'additionalTextEdits', 'textEdit', 'command'] } } }, codeAction: { dataSupport: true, disabledSupport: true, isPreferredSupport: true, resolveSupport: { properties: ['edit', 'command'] }, codeActionLiteralSupport: { codeActionKind: { valueSet: ['quickfix', 'refactor', 'refactor.extract', 'refactor.inline', 'refactor.rewrite', 'source', 'source.organizeImports', 'source.fixAll'] } } }, definition: { linkSupport: true }, rename: { prepareSupport: true }, signatureHelp: { signatureInformation: { documentationFormat: ['markdown', 'plaintext'], parameterInformation: { labelOffsetSupport: true } } }, documentSymbol: { hierarchicalDocumentSymbolSupport: true } } }, workspaceFolders: [{ uri: rootUri, name: rootPath.split(/[\\/]/).pop() ?? rootPath }] }, undefined, INITIALIZE_TIMEOUT_MS); serverCommands = initialized.capabilities?.executeCommandProvider?.commands ? new Set(initialized.capabilities.executeCommandProvider.commands) : null; const codeAction = initialized.capabilities?.codeActionProvider; codeActionResolveSupported = typeof codeAction === 'object' && codeAction.resolveProvider === true; lspNotify('initialized', {}) } catch { await stopInternal(); setBuiltinTsFeatures(false); return false }; if (generation !== sessionGeneration) { await stopInternal(); return false }; running = true; activeRoot = rootPath; setBuiltinTsFeatures(true); registerProviders(); syncAllModels(); notifyServiceChanged(); createModelSubscription = monaco.editor.onDidCreateModel((model) => { if (running) attachModel(model) }); disposeModelSubscription = monaco.editor.onWillDisposeModel((model) => { if (running) detachModel(model) }); return true }
+
+/** Start the same Monaco providers against the session-scoped remote service. */
+async function startRemoteInternal(rootPath: string): Promise<boolean> {
+  if (canReuseLspSession(running, activeRoot, remoteTransport ? 'remote' : 'local', rootPath, 'remote')) return true
+  if (running) await stopInternal()
+  remoteTransport = true
+  remoteSessionContext = null
+  const generation = ++sessionGeneration
+  const rootUri = monaco.Uri.file(rootPath).toString()
+  try {
+    const context = await remoteWorkspaceContext()
+    if (generation !== sessionGeneration) { remoteTransport = false; remoteSessionContext = null; return false }
+    remoteSessionContext = context
+    const initialized = await lspRequest<{ capabilities?: { codeActionProvider?: boolean | { resolveProvider?: boolean } } }>('initialize', { processId: null, rootUri, initializationOptions: { locale: 'zh-CN' } }, undefined, INITIALIZE_TIMEOUT_MS)
+    if (generation !== sessionGeneration) { remoteTransport = false; remoteSessionContext = null; return false }
+    const codeAction = initialized.capabilities?.codeActionProvider
+    codeActionResolveSupported = typeof codeAction === 'object' && codeAction.resolveProvider === true
+    serverCommands = null
+    lspNotify('initialized', {})
+  } catch {
+    remoteTransport = false
+    remoteSessionContext = null
+    setBuiltinTsFeatures(false)
+    return false
+  }
+  running = true; activeRoot = rootPath; setBuiltinTsFeatures(true); registerProviders(); syncAllModels(); notifyServiceChanged()
+  createModelSubscription = monaco.editor.onDidCreateModel((model) => { if (running) attachModel(model) })
+  disposeModelSubscription = monaco.editor.onWillDisposeModel((model) => { if (running) detachModel(model) })
+  return true
+}
 export function startTsLsp(rootPath: string, serverEntry: string): Promise<boolean> { return enqueue(() => startInternal(rootPath, serverEntry)) }
-async function stopInternal(): Promise<void> { const wasRunning = running; ++sessionGeneration; running = false; activeRoot = null; notifyServiceChanged(); disposeProviders(); if (wasRunning) { await lspRequest('shutdown', undefined, undefined, 2_000).catch(() => undefined); lspNotify('exit') }; rejectPending(new Error('LSP stopped')); disposeModelListeners(); for (const model of monaco.editor.getModels()) monaco.editor.setModelMarkers(model, MARKER_OWNER, []); for (const filePath of tsProblemFiles) clearFileProblems(filePath, 'tsserver'); tsProblemFiles.clear(); disposeMessageListener?.(); disposeExitListener?.(); disposeMessageListener = null; disposeExitListener = null; try { await window.aether.lsp.stop() } finally { setBuiltinTsFeatures(false) } }
+export function startRemoteTsLsp(rootPath: string): Promise<boolean> { return enqueue(() => startRemoteInternal(rootPath)) }
+async function stopInternal(): Promise<void> { const wasRunning = running; const wasRemote = remoteTransport; const sessionContext = remoteSessionContext; ++sessionGeneration; running = false; activeRoot = null; notifyServiceChanged(); disposeProviders(); if (wasRunning) { await lspRequest('shutdown', undefined, undefined, 2_000).catch(() => undefined); lspNotify('exit') }; rejectPending(new Error('LSP stopped')); disposeModelListeners(); for (const model of monaco.editor.getModels()) monaco.editor.setModelMarkers(model, MARKER_OWNER, []); for (const filePath of tsProblemFiles) clearFileProblems(filePath, 'tsserver'); tsProblemFiles.clear(); disposeMessageListener?.(); disposeExitListener?.(); disposeMessageListener = null; disposeExitListener = null; if (wasRemote) { if (sessionContext) { try { await requestOrThrow({ method: 'DELETE', path: '/lsp/session', query: { sessionId: sessionContext.sessionId }, expectedEngine: sessionContext.target.expectedEngine }) } catch { /* connection may already be gone */ } } remoteTransport = false; remoteSessionContext = null } else { try { await window.aether.lsp.stop() } finally { remoteTransport = false; remoteSessionContext = null } } setBuiltinTsFeatures(false) }
 export function stopTsLsp(): Promise<void> { return enqueue(stopInternal) }
 export function isTsLspRunning(): boolean { return running }
 

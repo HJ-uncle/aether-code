@@ -10,6 +10,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
+import { listAllFiles } from '@renderer/core/workspace/fs-client'
 import { formatPathDisplay, type Mention } from './MentionInput'
 
 interface FileRefPaletteProps {
@@ -45,8 +46,7 @@ export function FileRefPalette({
   // 全量列表只拉一次（按 root 缓存于组件存活期内）
   useEffect(() => {
     let cancelled = false
-    void window.aether.fs
-      .listAll(root)
+    void listAllFiles(root)
       .then((files) => {
         if (cancelled) return
         const dirs = new Set<string>()

@@ -16,9 +16,53 @@ import type {
   SearchOutcome
 } from '@shared/ipc'
 import { getAppSettings, onAppSettingsChanged } from '@renderer/core/app-context'
+import { requestOrThrow } from '@renderer/core/engine/client'
+import { getEngineSource, getExpectedEngine, isRemoteEngine, subscribeEngineSource } from '@renderer/core/engine/source'
 import { documentKey, openFile, reloadDocuments } from '@renderer/core/editor/editor-store'
 import { setLayout } from '@renderer/core/platform/layout-state'
-import { paths } from '@renderer/core/workspace/fs-client'
+import { listAllFiles, paths, remoteWorkspaceContext } from '@renderer/core/workspace/fs-client'
+import { previewRemoteReplace as previewRemoteReplaceSafe, replaceRemoteWorkspace as replaceRemoteWorkspaceSafe, searchRemoteWorkspace as searchRemoteWorkspaceSafe, type RemoteSearchTransport } from './remote-search'
+
+async function remoteTransport(): Promise<RemoteSearchTransport> {
+  const source = getEngineSource()
+  const expectedEngine = getExpectedEngine()
+  const assertCurrent = (): void => {
+    if (!isRemoteEngine() || source !== getEngineSource()) {
+      throw new Error('引擎连接或会话已切换，已停止后续搜索和替换')
+    }
+  }
+  assertCurrent()
+  const context = await remoteWorkspaceContext()
+  assertCurrent()
+  const treeFromFiles = (files: string[]): import('./remote-search').RemoteWorkspaceItem => {
+    const root: import('./remote-search').RemoteWorkspaceItem = { name: '.', type: 'dir', children: [] }
+    for (const value of files) {
+      const parts = value.replace(/\\/g, '/').split('/').filter(Boolean)
+      let node = root
+      for (let index = 0; index < parts.length; index += 1) {
+        const name = parts[index]
+        const isFile = index === parts.length - 1
+        const children = node.children ?? (node.children = [])
+        let child = children.find(item => item.name === name)
+        if (!child) {
+          child = { name, type: isFile ? 'file' : 'dir', ...(isFile ? {} : { children: [] }) }
+          children.push(child)
+        }
+        node = child
+      }
+    }
+    return root
+  }
+  return {
+    assertCurrent,
+    // /workspace/files predates explicit workspace binding and only lists the
+    // private session scratch directory. Build the same tree from the bound,
+    // session-scoped directory walker used by Explorer and Quick Open.
+    listFiles: async () => { assertCurrent(); const files = await listAllFiles(context.root); assertCurrent(); return treeFromFiles(files) },
+    readFile: (path) => { assertCurrent(); return requestOrThrow({ method: 'GET', path: '/workspace/file/content', query: { sessionId: context.sessionId, path }, expectedEngine }) },
+    writeFile: (path, content) => { assertCurrent(); return requestOrThrow({ method: 'POST', path: '/workspace/file', body: { sessionId: context.sessionId, path, content }, expectedEngine }).then(() => undefined) }
+  }
+}
 
 export interface SearchState {
   query: string
@@ -179,6 +223,7 @@ onAppSettingsChanged(() => {
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let runSeq = 0
+subscribeEngineSource(() => { runSeq += 1 })
 
 /** 输入/选项变化后调度：300ms 防抖，清空立即生效 */
 export function scheduleSearch(root: string | null): void {
@@ -206,12 +251,9 @@ export async function runSearch(root: string): Promise<void> {
   setState({ searching: true })
 
   try {
-    const outcome: SearchOutcome = await window.aether.search.query(
-      root,
-      query,
-      getSearchOptions(),
-      activeExcludes()
-    )
+    const outcome: SearchOutcome = isRemoteEngine()
+      ? await searchRemoteWorkspaceSafe(await remoteTransport(), query, getSearchOptions(), activeExcludes())
+      : await window.aether.search.query(root, query, getSearchOptions(), activeExcludes())
     if (seq !== runSeq) return // 已有更新的搜索，丢弃过期响应
     setState({
       hits: outcome.hits,
@@ -346,13 +388,9 @@ export async function openReplacePreview(root: string): Promise<void> {
   setState({ previewVisible: true, previewBusy: true, previewOutcome: null })
 
   try {
-    const outcome = await window.aether.search.preview(
-      root,
-      query,
-      getSearchOptions(),
-      state.replaceQuery,
-      activeExcludes()
-    )
+    const outcome = isRemoteEngine()
+      ? await previewRemoteReplaceSafe(await remoteTransport(), query, getSearchOptions(), state.replaceQuery, activeExcludes())
+      : await window.aether.search.preview(root, query, getSearchOptions(), state.replaceQuery, activeExcludes())
     setState({ previewBusy: false, previewOutcome: outcome })
   } catch {
     setState({
@@ -386,14 +424,10 @@ export async function replaceAll(root: string): Promise<void> {
   setState({ replaceBusy: true, replaceMessage: null })
 
   try {
-    const outcome = await window.aether.search.replace(
-      root,
-      query,
-      getSearchOptions(),
-      state.replaceQuery,
-      activeExcludes()
-    )
-    if (outcome.error) {
+    const outcome = isRemoteEngine()
+      ? await replaceRemoteWorkspaceSafe(await remoteTransport(), query, getSearchOptions(), state.replaceQuery, activeExcludes())
+      : await window.aether.search.replace(root, query, getSearchOptions(), state.replaceQuery, activeExcludes())
+    if (outcome.error && outcome.files.length === 0) {
       setState({ replaceBusy: false, replaceMessage: outcome.error })
       return
     }
@@ -401,7 +435,9 @@ export async function replaceAll(root: string): Promise<void> {
     await reloadDocuments(outcome.files.map((rel) => paths.join(root, rel)))
     setState({
       replaceBusy: false,
-      replaceMessage: `已替换 ${outcome.replacements} 处（${outcome.files.length} 个文件）`
+      replaceMessage: outcome.error
+        ? `已替换 ${outcome.replacements} 处（${outcome.files.length} 个文件）；${outcome.error}`
+        : `已替换 ${outcome.replacements} 处（${outcome.files.length} 个文件）`
     })
     await runSearch(root) // 替换后结果已变化，立即刷新
   } catch {

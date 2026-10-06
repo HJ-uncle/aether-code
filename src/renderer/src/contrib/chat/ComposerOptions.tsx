@@ -3,6 +3,8 @@ import { useApp } from '@renderer/core/app-context'
 import { useModels } from '@renderer/core/engine/model-store'
 import { changeSecurityMode, useSecurityMode } from '@renderer/core/engine/security-store'
 import { MODE_DESCRIPTORS, type SecurityMode } from '@renderer/core/engine/security'
+import { changeMemoryScope, useMemoryScope } from '@renderer/core/engine/memory-store'
+import { MEMORY_SCOPE_DESCRIPTORS, type MemoryScope } from '@renderer/core/engine/memory'
 import { Icon } from '@renderer/workbench/icons'
 import { Popover } from '@renderer/workbench/Popover'
 
@@ -63,10 +65,17 @@ function MenuOption({
  * 弹层与菜单统一走 Popover（portal 挂 body、防裁切、防出界）。
  */
 export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Element {
-  const { engine, ready, settings, updateSettings } = useApp()
-  const remoteReadOnly = engine.snapshot.mode === 'remote'
+  const { ready, settings, updateSettings } = useApp()
   const { models } = useModels()
   const { mode: storedMode, loaded, loading, error, refresh } = useSecurityMode(sessionId)
+  const {
+    scope: storedMemoryScope,
+    enabled: memoryEnabled,
+    loaded: memoryLoaded,
+    loading: memoryLoading,
+    error: memoryError,
+    refresh: refreshMemory
+  } = useMemoryScope(sessionId)
   const mode = ready ? storedMode : null
 
   // 引擎重启会把安全模式 store 清空：会话就绪后补拉一次（Popover 内部管理开关状态，
@@ -74,6 +83,12 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
   useEffect(() => {
     if (ready && sessionId && !loaded && !loading && !error) void refresh(sessionId)
   }, [ready, sessionId, loaded, loading, error, refresh])
+
+  // Memory scope is persisted by the engine (tenant + session), so refresh it
+  // after a connection/session switch instead of copying it to localStorage.
+  useEffect(() => {
+    if (ready && sessionId && !memoryLoaded && !memoryLoading && !memoryError) void refreshMemory(sessionId)
+  }, [ready, sessionId, memoryLoaded, memoryLoading, memoryError, refreshMemory])
 
   const currentModel = models.find((m) => m.modelId === settings.lastModelId)
   const thinkDescriptor =
@@ -88,6 +103,14 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
   const secSummary = loading
     ? '正在读取安全模式…'
     : error ?? (secDescriptor ? [secDescriptor.summary, secDescriptor.warning].filter(Boolean).join(' ') : '尚未确认引擎当前权限')
+  const memoryDescriptor = MEMORY_SCOPE_DESCRIPTORS.find((item) => item.value === storedMemoryScope) ?? MEMORY_SCOPE_DESCRIPTORS[0]
+  const memorySummary = memoryLoading
+    ? '正在读取记忆设置…'
+    : memoryError
+      ? memoryError
+      : memoryEnabled === false
+        ? '引擎未启用长期记忆；切换时会提示错误'
+        : memoryDescriptor.summary
 
   const pickThinking = (next: string): void => {
     if (!ready) return
@@ -95,8 +118,13 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
   }
 
   const pickSecurity = (next: string): void => {
-    if (remoteReadOnly || next === mode || loading || !ready || !sessionId) return
+    if (next === mode || loading || !ready || !sessionId) return
     void changeSecurityMode(sessionId, next as SecurityMode).catch(() => undefined)
+  }
+
+  const pickMemory = (next: string): void => {
+    if (next === storedMemoryScope || memoryLoading || !ready || !sessionId) return
+    void changeMemoryScope(sessionId, next as MemoryScope).catch(() => undefined)
   }
 
   return (
@@ -120,6 +148,54 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
       )}
     >
       <div className="composer-options__popup">
+        <div className="composer-options__row">
+          <Icon name="graph" size={16} />
+          <div className="composer-options__text">
+            <div className="composer-options__title">长期记忆</div>
+            <div className="composer-options__summary">{memorySummary}</div>
+          </div>
+          <Popover
+            className="composer-options__dd"
+            label="长期记忆"
+            placement="up"
+            align="end"
+            width={260}
+            flush
+            trigger={({ open: isOpen }) => (
+              <button
+                type="button"
+                className={`composer-options__dd-btn${isOpen ? ' is-open' : ''}`}
+                disabled={!ready || !sessionId || memoryLoading}
+                title={!sessionId ? '先发一条消息建立会话，之后才能设置长期记忆' : '选择长期记忆范围'}
+              >
+                <span>{memoryLoading ? '读取中…' : memoryDescriptor.label}</span>
+                <span className="composer-options__dd-caret">⌄</span>
+              </button>
+            )}
+          >
+            <div className="composer-options__dd-menu">
+              {MEMORY_SCOPE_DESCRIPTORS.map((item) => (
+                <MenuOption
+                  key={item.value}
+                  value={item.value}
+                  current={storedMemoryScope ?? ''}
+                  label={item.label}
+                  summary={item.summary}
+                  disabled={!ready || !sessionId || memoryLoading}
+                  onSelect={pickMemory}
+                />
+              ))}
+            </div>
+          </Popover>
+        </div>
+
+        {memoryError ? (
+          <div className="composer-options__error">
+            {memoryError}
+            <button type="button" onClick={() => void refreshMemory(sessionId)}>重新读取记忆设置</button>
+          </div>
+        ) : null}
+
         <div className="composer-options__row">
           <Icon name="brain" size={16} />
           <div className="composer-options__text">
@@ -181,7 +257,7 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
               <button
                 type="button"
                 className={`composer-options__dd-btn${isOpen ? ' is-open' : ''}`}
-                disabled={remoteReadOnly || !ready || !sessionId || loading}
+                disabled={!ready || !sessionId || loading}
                 title={
                   !sessionId
                     ? '先发一条消息建立会话，之后才能设置安全模式'
@@ -201,7 +277,7 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
                   current={mode ?? ''}
                   label={item.label}
                   summary={[item.summary, item.warning].filter(Boolean).join(' ')}
-                  disabled={remoteReadOnly}
+                  disabled={!ready || !sessionId || loading}
                   onSelect={pickSecurity}
                 />
               ))}

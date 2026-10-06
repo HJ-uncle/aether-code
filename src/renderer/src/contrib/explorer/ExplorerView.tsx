@@ -853,7 +853,7 @@ export function ExplorerView(): JSX.Element {
 
       if (expand && !row.isExpanded) {
         revealDirRef.current = row.entry.path
-        void expandDirectory(row.entry.path)
+        void expandVisibleDirectory(row.entry.path)
       } else if (!expand && row.isExpanded) {
         void toggleExpand(row.entry.path)
       }
@@ -1402,7 +1402,7 @@ export function ExplorerView(): JSX.Element {
       else await createFolderIn(action.dir, name)
 
       // 新建后把目录展开，否则在收起状态下点"新建"看不到任何结果
-      await expandDirectory(action.dir)
+      await expandVisibleDirectory(action.dir)
     },
     [nameAction]
   )
@@ -1457,7 +1457,7 @@ export function ExplorerView(): JSX.Element {
       state.timer = null
       state.dir = null
       revealDirRef.current = dir
-      void expandDirectory(dir)
+      void expandVisibleDirectory(dir)
     }, HOVER_EXPAND_MS)
   }, [])
 
@@ -1889,10 +1889,33 @@ function dropTargetAt(
   return hit.dataset.dir ?? hit.dataset.parentDir ?? null
 }
 
+/**
+ * 紧凑行代表的是目录链的末端。展开末端前先展开被合并的祖先，
+ * 否则合并逻辑会因末端已展开而拆链，末端反而藏到未展开的父级里。
+ * 鼠标、键盘与拖拽悬停共用此路径；已展开的祖先不再重复处理。
+ */
+async function expandVisibleDirectory(dir: string): Promise<void> {
+  const { root, expanded } = getWorkspaceState()
+  const chain = [dir]
+  let current = dir
+  while (root && current !== root && paths.contains(root, current)) {
+    const parentPath = paths.dirname(current)
+    const parent = paths.relative(root, parentPath) === '' ? root : toCacheKey(parentPath)
+    if (parent === current || !paths.contains(root, parent) || expanded.has(parent)) break
+    chain.unshift(parent)
+    current = parent
+  }
+  for (const path of chain) {
+    if (getWorkspaceState().root !== root) return
+    await expandDirectory(path)
+  }
+}
+
 /** 打开条目：目录切换展开，文件打开为标签。行点击与右键菜单共用 */
 function openEntry(entry: FsEntry): void {
   if (entry.isDirectory) {
-    void toggleExpand(entry.path)
+    if (getWorkspaceState().expanded.has(entry.path)) void toggleExpand(entry.path)
+    else void expandVisibleDirectory(entry.path)
     return
   }
   void openFile(entry.path)

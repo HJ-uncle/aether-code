@@ -245,7 +245,9 @@ export function SessionHistoryView(): JSX.Element {
 
   const deleteSession = useCallback(
     (sessionId: string) => {
-      if (isRemoteEngine() || source !== getEngineSource()) return
+      // Session deletion is an engine-owned operation and is available for
+      // remote connections too. Remote mode only blocks local workspace actions.
+      if (source !== getEngineSource()) return
       const item = sessions.find((s) => s.sessionId === sessionId)
       const title = sessionTitle(item ?? { sessionId }, metaTable[sessionId]?.name)
       void confirmDialog({
@@ -254,7 +256,7 @@ export function SessionHistoryView(): JSX.Element {
         danger: true,
         confirmText: '删除'
       }).then((confirmed) => {
-        if (!confirmed || isRemoteEngine() || source !== getEngineSource()) return
+        if (!confirmed || source !== getEngineSource()) return
         // 删的是当前会话：先换一个新 ID，避免删除后还挂在已销毁的会话上
         const isCurrent = sessionId === settings.lastSessionId
         // 刚新建、还没发过消息的会话在引擎侧没有记录，DELETE 会失败；
@@ -410,7 +412,6 @@ export function SessionHistoryView(): JSX.Element {
       {
         id: 'delete',
         label: '删除会话',
-        disabled: isRemoteEngine(),
         danger: true,
         onSelect: () => {
           setMenu(null)

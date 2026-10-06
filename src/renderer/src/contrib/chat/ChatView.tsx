@@ -18,6 +18,7 @@ import { registerPendingSession, requestSessionListRefresh, touchPendingSession 
 import { openFileFromChat } from './open-file'
 import { useModels } from '@renderer/core/engine/model-store'
 import { changeSecurityMode } from '@renderer/core/engine/security-store'
+import { useMemoryScope } from '@renderer/core/engine/memory-store'
 import { requestOrThrow } from '@renderer/core/engine/client'
 import { utilityChat } from '@renderer/core/engine/utility-chat'
 import { openAppSettings } from '@renderer/contrib/settings/app-settings-navigation'
@@ -45,6 +46,7 @@ import type { ChatAttachment } from '@renderer/core/engine/useChat'
 import { Dialog } from '@renderer/workbench/Dialog'
 import { getKnowledgeBaseBindingIds, saveKnowledgeBinding } from '@renderer/core/engine/knowledge'
 import { ResourcePicker, type ResourceItem } from './ResourcePicker'
+import './apple-chat-panels.css'
 
 /** 上下文窗口估算基数：引擎未下发各模型窗口上限，按常见的 200k 估算占比 */
 const CONTEXT_WINDOW_FALLBACK = 200_000
@@ -68,12 +70,10 @@ function saveComposerResources(sessionId: string, source: string, value: Compose
 
 /** 按工作区相对路径读 base64 data URL（图片缩略图 / 放大查看共用） */
 function useAttachmentImageSrc(root: string | null, file: ChatAttachment): string | null {
-  const { engine } = useApp()
-  const remoteReadOnly = engine.snapshot.mode === 'remote'
   const [src, setSrc] = useState<string | null>(null)
   useEffect(() => {
     let alive = true
-    if (!remoteReadOnly && root && file.type.startsWith('image/')) {
+    if (root && file.type.startsWith('image/')) {
       void readFile(`${root}/${file.path}`)
         .then((result) => {
           if (alive && result.base64) setSrc(`data:${file.type};base64,${result.base64}`)
@@ -83,8 +83,8 @@ function useAttachmentImageSrc(root: string | null, file: ChatAttachment): strin
     return () => {
       alive = false
     }
-  }, [root, file.path, file.type, remoteReadOnly])
-  return remoteReadOnly ? null : src
+  }, [root, file.path, file.type])
+  return src
 }
 
 /** 附件预览状态：图片带 data URL，文本附件由弹窗按路径回读内容 */
@@ -103,15 +103,13 @@ function AttachmentPreviewDialog({
   preview: AttachmentPreview
   onClose: () => void
 }): JSX.Element {
-  const { engine } = useApp()
-  const remoteReadOnly = engine.snapshot.mode === 'remote'
   const { file, src } = preview
   const isImage = file.type.startsWith('image/')
   const [text, setText] = useState<string | null>(null)
 
   useEffect(() => {
     let alive = true
-    if (!remoteReadOnly && !isImage && root) {
+    if (!isImage && root) {
       void readFile(`${root}/${file.path}`)
         .then((result) => {
           if (alive) setText(result.truncated ? `${result.content}\n\n…（内容过长已截断）` : result.content)
@@ -123,11 +121,11 @@ function AttachmentPreviewDialog({
     return () => {
       alive = false
     }
-  }, [isImage, root, file.path, remoteReadOnly])
+  }, [isImage, root, file.path])
 
   return (
     <Dialog title={file.name} className="modal--image-preview" width={860} onClose={onClose}>
-      {remoteReadOnly ? <p>远端附件仅展示历史记录；尚未配置工作区映射，无法读取文件内容。</p> : isImage ? (
+      {isImage ? (
         <div className="image-preview">
           {src ? <img src={src} alt={file.name} /> : <span className="image-preview__loading">加载中…</span>}
         </div>
@@ -150,8 +148,6 @@ function AttachmentChip({
   onRemove?: () => void
   onPreview: (file: ChatAttachment, src: string | null) => void
 }): JSX.Element {
-  const { engine } = useApp()
-  const remoteReadOnly = engine.snapshot.mode === 'remote'
   const isImage = file.type.startsWith('image/')
   const isText = !isImage && (file.type.startsWith('text/') || /\.(txt|md|markdown|json|jsonc|log|csv|tsv|xml|ya?ml|toml|ini)$/i.test(file.name))
   const src = useAttachmentImageSrc(root, file)
@@ -192,7 +188,7 @@ function AttachmentChip({
 
   return (
     <span className={`attach-chip${isText ? ' attach-chip--clickable' : ''}`} title={file.path}>
-      {isText && !remoteReadOnly ? (
+      {isText ? (
         <button
           type="button"
           className="attach-chip__open"
@@ -202,7 +198,7 @@ function AttachmentChip({
           {body}
         </button>
       ) : (
-        <>{body}{remoteReadOnly ? <span className="attach-chip__size">远端附件</span> : null}</>
+        <>{body}</>
       )}
       {onRemove ? (
         <button
@@ -272,6 +268,21 @@ export function ChatView(): JSX.Element {
   const { messages, commandJobs, streaming, historyCompacted, loadArchive, todos, send, respond, abort, loadHistory, resumeStream, deleteTurn, retryFrom, revertFrom, queue, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, queueSendMode, setQueueSendMode, retargetQueuedModel } = useChat()
   const { models, loaded: modelsLoaded } = useModels()
   const workspace = useWorkspace()
+  // 会话 ID 首次使用时生成并持久化，保证多轮对话共享上下文。
+  // 必须等设置加载完成再决定：设置未就绪时 lastSessionId 是空默认值，
+  // 此时直接生成新 ID 会把磁盘上的持久化会话覆盖掉（历史随之丢失）
+  const sessionId = useMemo(() => {
+    if (!settingsLoaded) return ''
+    if (settings.lastSessionId) return settings.lastSessionId
+    const generated = newSessionId()
+    void updateSettings({ lastSessionId: generated })
+    return generated
+  }, [settings.lastSessionId, settingsLoaded, updateSettings])
+  const {
+    scope: memorySettingsScope,
+    loaded: memorySettingsLoaded
+  } = useMemoryScope(sessionId)
+  const codegraphRoot = remoteReadOnly ? settings.remoteWorkspaceRoot.trim() || undefined : workspace.root || undefined
   const [input, setInput] = useState('')
   /** 同步记录编辑器的最新文本，避免润色请求返回时覆盖用户刚刚的修改。 */
   const inputValueRef = useRef('')
@@ -307,7 +318,7 @@ export function ChatView(): JSX.Element {
   /** 「+」按钮弹出的附件/引用菜单（视口坐标） */
   const [attachMenu, setAttachMenu] = useState<{ x: number; y: number } | null>(null)
   // 附件：落盘到当前工作区，发送时把相对路径交给引擎（图片→视觉/OCR，文本→smart_read）
-  const attach = useAttachments(remoteReadOnly ? null : workspace.root)
+  const attach = useAttachments(workspace.root, sessionId)
   // 附件进度提示只在出现后短暂停留，避免常驻噪音
   const [attachHint, setAttachHint] = useState<string | null>(null)
   /** 附件点击预览（图片放大 / 文本查看，统一 AttachmentPreviewDialog） */
@@ -453,16 +464,6 @@ export function ChatView(): JSX.Element {
     [turns]
   )
 
-  // 会话 ID 首次使用时生成并持久化，保证多轮对话共享上下文。
-  // 必须等设置加载完成再决定：设置未就绪时 lastSessionId 是空默认值，
-  // 此时直接生成新 ID 会把磁盘上的持久化会话覆盖掉（历史随之丢失）
-  const sessionId = useMemo(() => {
-    if (!settingsLoaded) return ''
-    if (settings.lastSessionId) return settings.lastSessionId
-    const generated = newSessionId()
-    void updateSettings({ lastSessionId: generated })
-    return generated
-  }, [settings.lastSessionId, settingsLoaded, updateSettings])
   useEffect(() => {
     activeSessionIdRef.current = sessionId
   }, [sessionId])
@@ -626,8 +627,9 @@ export function ChatView(): JSX.Element {
   const [hasNewWhileUnfollowed, setHasNewWhileUnfollowed] = useState(false)
   /** 使 pending 的 rAF 滚动回调作废的计数器：用户离开吸底后，旧滚动不再执行 */
   const scrollGenerationRef = useRef(0)
-  /** 距底 < 80px 才恢复跟随（阈值故意远小于离底判定，防止误拉回） */
-  const RESUME_FOLLOW_PX = 80
+  /** 对齐 Wuzu：距底 8px 内才恢复跟随；较大的距离只用于显示回到底部按钮。 */
+  const RESUME_FOLLOW_PX = 8
+  const SHOW_BACK_TO_BOTTOM_PX = 80
 
   const measureDistToBottom = useCallback((): number => {
     const el = scrollRef.current
@@ -647,14 +649,18 @@ export function ChatView(): JSX.Element {
       if (!el) return
       if (!force && !followBottom) {
         // 非跟随时不滚动，按实际距离决定「回到底部」按钮浮不浮出
-        setHasNewWhileUnfollowed(measureDistToBottom() > RESUME_FOLLOW_PX)
+        setHasNewWhileUnfollowed(measureDistToBottom() > SHOW_BACK_TO_BOTTOM_PX)
         return
       }
       const generation = scrollGenerationRef.current
-      // 先贴一次，再在下一帧贴第二次：覆盖「DOM 已插入但布局未撑开」的那一帧
+      // 先贴一次，再连续两帧贴底：覆盖「DOM 已插入但布局未撑开」的异步布局，
+      // 每一帧都检查 generation，防止用户上翻后被旧的自动滚动拉回。
       requestAnimationFrame(() => {
         if (scrollGenerationRef.current !== generation) return
         el.scrollTop = el.scrollHeight
+        requestAnimationFrame(() => {
+          if (scrollGenerationRef.current === generation) el.scrollTop = el.scrollHeight
+        })
       })
       el.scrollTop = el.scrollHeight
     },
@@ -665,6 +671,8 @@ export function ChatView(): JSX.Element {
   // 点消息内部不算 —— 否则点气泡里的按钮会被误判为离开底部。
   const handleListWheel = useCallback(
     (event: React.WheelEvent<HTMLDivElement>) => {
+      // 思考正文有自己的滚动区域；上翻它不能改变外层消息列表的跟随状态。
+      if ((event.target as HTMLElement).closest('.logline__detail--thinking')) return
       if (event.deltaY >= 0) return
       const el = scrollRef.current
       if (!el || el.scrollHeight <= el.clientHeight) return
@@ -695,6 +703,24 @@ export function ChatView(): JSX.Element {
   useEffect(() => {
     scrollToBottom(followBottom)
   }, [messages, scrollToBottom, followBottom])
+
+  // 切换会话或引擎来源时恢复 Wuzu 的默认状态：新会话第一次渲染始终从底部开始，
+  // 不继承上一个会话用户上翻后的暂停状态。
+  useEffect(() => {
+    scrollGenerationRef.current += 1
+    const generation = scrollGenerationRef.current
+    setFollowBottom(true)
+    setHasNewWhileUnfollowed(false)
+    const frame = requestAnimationFrame(() => {
+      const el = scrollRef.current
+      if (!el || scrollGenerationRef.current !== generation) return
+      el.scrollTop = el.scrollHeight
+      requestAnimationFrame(() => {
+        if (scrollGenerationRef.current === generation) el.scrollTop = el.scrollHeight
+      })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [sessionId, sourceEpoch])
 
   // 回到底部按钮：立即贴底并恢复跟随
   const jumpToBottom = useCallback(() => {
@@ -759,11 +785,14 @@ export function ChatView(): JSX.Element {
       // 按用途指派：子代理 / 轻任务模型（空 = 跟随主模型，引擎侧回退）
       subagentModel: settings.subagentModelId || undefined,
       utilityModel: settings.utilityModelId || undefined,
+      // Do not guess global while the engine has not confirmed this session's
+      // setting. Sending off is the safe compatibility behavior for old sessions.
+      memoryScope: memorySettingsLoaded ? (memorySettingsScope ?? 'off') : 'off',
       // 从 store 直接读取而非依赖闭包：发送瞬间的根目录才是准确的
       workspacePaths: remoteReadOnly ? [] : currentWorkspacePaths(),
       thinkingMode: resolveThinkingMode(settings.thinkingMode)
     }),
-    [modelId, remoteReadOnly, sessionId, storageSource, composerResources, settings.lastAgentId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode]
+    [modelId, remoteReadOnly, sessionId, storageSource, composerResources, memorySettingsLoaded, memorySettingsScope, settings.lastAgentId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode]
   )
 
   const submit = useCallback(() => {
@@ -772,10 +801,13 @@ export function ChatView(): JSX.Element {
     if (resourceQuery !== null) return
     const text = input.trim()
     // 允许「只发附件」：丢张截图直接问，是视觉模型的常见用法
-    const files = remoteReadOnly ? [] : attach.attachments
-    if ((!text && files.length === 0) || (!remoteReadOnly && attach.uploading) || !canExecute || !sessionId || sourceEpoch !== getEngineSource()) return
+    const files = attach.attachments
+    if ((!text && files.length === 0) || attach.uploading || !canExecute || !sessionId || sourceEpoch !== getEngineSource()) return
     // 流式进行中不再拦截：send 内部会入队，当前流结束后自动按序发出
-    const message = buildMentionMessage(text, remoteReadOnly ? [] : mentionsRef.current)
+    // Mentions are workspace-relative.  They are safe for remote sessions;
+    // the main-process remote adapter strips local paths and resolves them
+    // against the session-bound server workspace.
+    const message = buildMentionMessage(text, mentionsRef.current)
     setInput('')
     mentionsRef.current = []
     // Clearing the editor after a send is not a user deletion. Keep the
@@ -800,7 +832,7 @@ export function ChatView(): JSX.Element {
       attachments: files.length > 0 ? files : undefined
     })
     scrollToBottom(true)
-  }, [attach, buildSendOptions, input, canExecute, remoteReadOnly, sourceEpoch, storageSource, send, sessionId, resumeFollowBottom, scrollToBottom, resourceQuery])
+  }, [attach, buildSendOptions, input, canExecute, sourceEpoch, storageSource, send, sessionId, resumeFollowBottom, scrollToBottom, resourceQuery])
 
   /** 托盘的「发送」：空闲时按当前模式（逐条/合并）立即发出队列 */
   const flushQueueFromTray = useCallback(() => {
@@ -817,11 +849,11 @@ export function ChatView(): JSX.Element {
    */
   const allowAllForSession = useCallback(
     async () => {
-      if (remoteReadOnly || !canExecute || sourceEpoch !== getEngineSource()) throw new Error('当前连接不能修改安全模式')
+      if (!canExecute || sourceEpoch !== getEngineSource()) throw new Error('当前连接不能修改安全模式')
       await changeSecurityMode(sessionId, 'full-access')
       if (sourceEpoch !== getEngineSource()) throw new Error('引擎连接已变化，请在当前会话重试')
     },
-    [canExecute, remoteReadOnly, sessionId, sourceEpoch]
+    [canExecute, sessionId, sourceEpoch]
   )
 
   /**
@@ -918,7 +950,7 @@ export function ChatView(): JSX.Element {
   /** 删除引擎侧该消息之后的历史并重新发送（重新发送 / 重新生成共用） */
   const retryTurn = useCallback(
     (message: ChatMessage) => {
-      if (remoteReadOnly || !canExecute || sourceEpoch !== getEngineSource()) return
+      if (!canExecute || sourceEpoch !== getEngineSource()) return
       // 重新生成（助手消息）等价于从它前面的用户提问处重发
       const index = messages.findIndex((m) => m.id === message.id)
       const userMessage =
@@ -939,17 +971,18 @@ export function ChatView(): JSX.Element {
           mcpServers: composerResources.mcpServers,
           subagentModel: settings.subagentModelId || undefined,
           utilityModel: settings.utilityModelId || undefined,
-          workspacePaths: currentWorkspacePaths(),
+          memoryScope: memorySettingsLoaded ? (memorySettingsScope ?? 'off') : 'off',
+          workspacePaths: remoteReadOnly ? [] : currentWorkspacePaths(),
           thinkingMode: resolveThinkingMode(settings.thinkingMode)
         }).catch(showError)
       })
     },
-    [canExecute, remoteReadOnly, sourceEpoch, messages, modelId, retryFrom, sessionId, storageSource, composerResources, settings.lastAgentId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode, showError]
+    [canExecute, remoteReadOnly, sourceEpoch, messages, modelId, retryFrom, sessionId, storageSource, composerResources, memorySettingsLoaded, memorySettingsScope, settings.lastAgentId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode, showError]
   )
 
   const deleteTurnById = useCallback(
     (message: ChatMessage) => {
-      if (remoteReadOnly || !canExecute || sourceEpoch !== getEngineSource()) return
+      if (!canExecute || sourceEpoch !== getEngineSource()) return
       void confirmDialog({
         title: '删除本轮',
         body: '删除这一轮问答（含引擎侧历史）？',
@@ -960,7 +993,7 @@ export function ChatView(): JSX.Element {
         void deleteTurn(sessionId, message).catch((err) => showError(err))
       })
     },
-    [canExecute, remoteReadOnly, sourceEpoch, deleteTurn, sessionId, showError]
+    [canExecute, sourceEpoch, deleteTurn, sessionId, showError]
   )
 
   /**
@@ -982,7 +1015,7 @@ export function ChatView(): JSX.Element {
   /** 消息级回退（对齐 wuzu revert-files）：恢复该消息后全部文件改动（含已保留）并截断对话，原文回填输入框 */
   const revertToMessage = useCallback(
     (message: ChatMessage) => {
-      if (remoteReadOnly || !canExecute || sourceEpoch !== getEngineSource()) return
+      if (!canExecute || sourceEpoch !== getEngineSource()) return
       void confirmDialog({
         title: '回退到此处',
         body: '按轮次回退此消息及后续改动（包含已保留）。文件版本有冲突或缺少快照时将保留并报告；仅全部文件回退完成后删除对应对话。',
@@ -1005,7 +1038,7 @@ export function ChatView(): JSX.Element {
           .catch(showError)
       })
     },
-    [canExecute, remoteReadOnly, sourceEpoch, sourceSessionKey, storageSource, revertFrom, sessionId, showError]
+    [canExecute, sourceEpoch, sourceSessionKey, storageSource, revertFrom, sessionId, showError]
   )
 
   /** 挂起卡片的应答提交：引用稳定，保证 MessageItem memo 生效（流式时不让所有历史消息跟着重渲染） */
@@ -1061,7 +1094,7 @@ export function ChatView(): JSX.Element {
 
   /** 查一次索引状态：是否已建索引（进入会话 / 切换项目时调用） */
   const refreshCgState = useCallback(async () => {
-    if (remoteReadOnly || !ready || !workspace.root || sourceEpoch !== getEngineSource()) {
+    if (!ready || (!codegraphRoot && !sessionId) || sourceEpoch !== getEngineSource()) {
       setCgIndex((s) => ({ ...s, initialized: false, known: true }))
       return
     }
@@ -1069,7 +1102,7 @@ export function ChatView(): JSX.Element {
       const s = await requestOrThrow<{ initialized: boolean; indexing: boolean }>({
         method: 'GET',
         path: '/codegraph/status',
-        query: { sessionId, path: workspace.root }
+        query: { sessionId, path: codegraphRoot }
       })
       if (sourceEpoch !== getEngineSource()) return
       setCgIndex((prev) => ({ ...prev, initialized: s.initialized, known: true, busy: s.indexing }))
@@ -1080,12 +1113,12 @@ export function ChatView(): JSX.Element {
     }
     // pollCgStatus 定义在下方（useCallback 引用稳定），此处不列入依赖以免循环
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, workspace.root, remoteReadOnly, ready, sourceEpoch])
+  }, [sessionId, codegraphRoot, ready, sourceEpoch])
 
   /** 轮询引擎 /codegraph/status 直到索引完成/失败；label 短暂展示结果后复位 */
   const pollCgStatus = useCallback(() => {
     stopCgPoll()
-    if (remoteReadOnly || sourceEpoch !== getEngineSource()) return
+    if (sourceEpoch !== getEngineSource()) return
     cgPollRef.current = setInterval(() => {
       if (sourceEpoch !== getEngineSource()) { stopCgPoll(); return }
       void (async () => {
@@ -1101,7 +1134,7 @@ export function ChatView(): JSX.Element {
           }>({
             method: 'GET',
             path: '/codegraph/status',
-            query: { sessionId, path: workspace.root || undefined }
+            query: { sessionId, path: codegraphRoot }
           })
           if (sourceEpoch !== getEngineSource()) return
           if (s.indexing && s.run) {
@@ -1133,10 +1166,10 @@ export function ChatView(): JSX.Element {
         setTimeout(() => { if (sourceEpoch === getEngineSource()) setCgIndex((prev) => ({ ...prev, busy: false, label: null })) }, 4000)
       })()
     }, 1500)
-  }, [sessionId, workspace.root, stopCgPoll, remoteReadOnly, sourceEpoch])
+  }, [sessionId, codegraphRoot, stopCgPoll, sourceEpoch])
 
   const startCgIndex = useCallback(async () => {
-    if (remoteReadOnly || !canExecute || sourceEpoch !== getEngineSource() || !sessionId || !workspace.root || cgIndex.busy) return
+    if (!canExecute || sourceEpoch !== getEngineSource() || !sessionId || (!codegraphRoot && !sessionId) || cgIndex.busy) return
     setCgIndex((prev) => ({ ...prev, busy: true, label: '启动中…' }))
     try {
       const r = await requestOrThrow<{
@@ -1146,7 +1179,7 @@ export function ChatView(): JSX.Element {
       }>({
         method: 'POST',
         path: '/codegraph/index',
-        body: { sessionId, path: workspace.root }
+        body: { sessionId, path: codegraphRoot }
       })
       if (sourceEpoch !== getEngineSource()) return
       if (r.alreadyInitialized && !r.started) {
@@ -1170,7 +1203,7 @@ export function ChatView(): JSX.Element {
       }))
       setTimeout(() => { if (sourceEpoch === getEngineSource()) setCgIndex((prev) => ({ ...prev, busy: false, label: null })) }, 4000)
     }
-  }, [remoteReadOnly, canExecute, sourceEpoch, sessionId, workspace.root, cgIndex.busy, pollCgStatus])
+  }, [canExecute, sourceEpoch, sessionId, codegraphRoot, cgIndex.busy, pollCgStatus])
 
   // 进入会话 / 切换项目时同步一次索引状态（决定页脚是否显示「建索引」）
   useEffect(() => {
@@ -1258,7 +1291,7 @@ export function ChatView(): JSX.Element {
           sessionId={sessionId}
           turns={navTurns}
           containerRef={scrollRef}
-          disabled={remoteReadOnly || streaming || selectMode}
+          disabled={!canExecute || streaming || selectMode}
           onCopy={copyMessage}
           onRetry={retryTurn}
           onRevert={revertToMessage}
@@ -1266,6 +1299,7 @@ export function ChatView(): JSX.Element {
         />
         <div
           className="chat__messages"
+          data-chat-scroll-region="true"
           ref={scrollRef}
           onWheel={handleListWheel}
           onPointerDown={handleListPointerDown}
@@ -1344,8 +1378,8 @@ export function ChatView(): JSX.Element {
                   onRefill={refillFromMessage}
                   onRevertFiles={revertToMessage}
                   onDeleteTurn={deleteTurnById}
-                  canAct={!remoteReadOnly && canExecute && !streaming && !selectMode}
-                  workspaceRoot={remoteReadOnly ? null : workspace.root}
+                  canAct={canExecute && !streaming && !selectMode}
+                  workspaceRoot={workspace.root}
                   onPreviewImage={(f, src) => setPreviewImage({ file: f, src })}
                 />
                 ))
@@ -1377,7 +1411,7 @@ export function ChatView(): JSX.Element {
         streaming={streaming}
         todos={todos}
         queue={queue}
-        workspaceRoot={remoteReadOnly ? null : workspace.root}
+        workspaceRoot={workspace.root}
         queueSendMode={queueSendMode}
         onSetQueueSendMode={setQueueSendMode}
         onUpdateQueued={updateQueued}
@@ -1393,7 +1427,7 @@ export function ChatView(): JSX.Element {
           // 不 preventDefault 的话浏览器会直接打开被拖入的文件
           if (!event.dataTransfer.types.includes('Files')) return
           event.preventDefault()
-          if (remoteReadOnly || !canExecute) return
+          if (!canExecute) return
           attach.setDragging(true)
         }}
         onDragLeave={(event) => {
@@ -1405,12 +1439,12 @@ export function ChatView(): JSX.Element {
           if (!event.dataTransfer.files.length) return
           event.preventDefault()
           attach.setDragging(false)
-          if (remoteReadOnly || !canExecute) return
+          if (!canExecute) return
           attach.accept([...event.dataTransfer.files])
         }}
       >
         <div className="chat__surface">
-          {!remoteReadOnly && (attach.attachments.length > 0 || attach.uploading) ? (
+          {(attach.attachments.length > 0 || attach.uploading) ? (
             <div className="chat__attach-strip">
               {attach.attachments.map((file) => (
                 <AttachmentChip
@@ -1440,7 +1474,7 @@ export function ChatView(): JSX.Element {
             value={input}
             disabled={!settingsLoaded}
             placeholder={
-              ready && remoteReadOnly ? '输入远端任务，Enter 发送，Shift+Enter 换行；/ 选择 MCP、技能或知识库' : ready ? '输入消息，Enter 发送，Shift+Enter 换行；@ 引用文件，/ 选择 MCP、技能或知识库' : '可先准备问题和代码引用，引擎就绪后发送'
+              ready ? '输入消息，Enter 发送，Shift+Enter 换行；@ 引用文件，/ 选择 MCP、技能或知识库' : '可先准备问题和代码引用，引擎就绪后发送'
             }
             onChange={(text, mentions) => {
               mentionsRef.current = mentions
@@ -1450,17 +1484,17 @@ export function ChatView(): JSX.Element {
               scheduleDraftSave(text)
             }}
             onSubmit={submit}
-            onPasteFiles={(files) => { if (!remoteReadOnly && canExecute) attach.accept(files) }}
+            onPasteFiles={(files) => { if (canExecute) attach.accept(files) }}
             onPasteText={(text) => {
               // 长文本落成「粘贴的文本-xxx.txt」附件；短文本返回 false 由输入框自行插入
-              if (remoteReadOnly || !canExecute || !shouldAttachPastedText(text) || !workspace.root) return false
+              if (!canExecute || !shouldAttachPastedText(text) || (!remoteReadOnly && !workspace.root)) return false
               attach.accept([createPastedTextFile(text)])
               return true
             }}
             onMentionQuery={(query) => { setMentionQuery(query); if (query !== null) setResourceQuery(null) }}
             onSlashQuery={(query) => { setResourceQuery(query); if (query !== null) setMentionQuery(null) }}
           />
-          {!remoteReadOnly && canExecute && workspace.root && (mentionQuery !== null || manualPalette) ? (
+          {canExecute && workspace.root && (mentionQuery !== null || manualPalette) ? (
             <FileRefPalette
               root={workspace.root}
               keyword={mentionQuery ?? ''}
@@ -1490,7 +1524,7 @@ export function ChatView(): JSX.Element {
           {attachHint ? <div className="chat__attach-hint">{attachHint}</div> : null}
           {previewImage ? (
             <AttachmentPreviewDialog
-              root={remoteReadOnly ? null : workspace.root}
+              root={workspace.root}
               preview={previewImage}
               onClose={() => setPreviewImage(null)}
             />
@@ -1504,7 +1538,7 @@ export function ChatView(): JSX.Element {
               const files = [...(event.target.files ?? [])]
               // 清空 value：否则再次选择同一个文件不会触发 change
               event.target.value = ''
-              if (remoteReadOnly || !canExecute) return
+              if (!canExecute) return
               attach.accept(files)
             }}
           />
@@ -1514,9 +1548,9 @@ export function ChatView(): JSX.Element {
             <button
               type="button"
               className={`chat__icon-btn${attach.dragging ? ' is-active' : ''}`}
-              disabled={remoteReadOnly || !canExecute || attach.uploading || !workspace.root}
+              disabled={!canExecute || attach.uploading || (!remoteReadOnly && !workspace.root)}
               title={
-                remoteReadOnly ? '远端附件上传尚未启用；可以直接输入或粘贴文本' : workspace.root
+                remoteReadOnly ? '上传附件到远端引擎当前会话工作区' : workspace.root
                   ? '添加附件或引用（图片 / 文本 / 工作空间文件 / 目录）'
                   : '先打开一个项目目录再添加附件'
               }
@@ -1528,7 +1562,7 @@ export function ChatView(): JSX.Element {
             >
               <Icon name="plus" size={16} />
             </button>
-            {!remoteReadOnly && attachMenu ? (
+            {attachMenu ? (
               <ContextMenu
                 x={attachMenu.x}
                 y={attachMenu.y - 8}
@@ -1560,15 +1594,15 @@ export function ChatView(): JSX.Element {
             <ComposerOptions sessionId={sessionId} />
 
             {/* 仅当项目「尚未建索引」时才露出建索引入口；已建索引则不占位（重建走设置页 / 菜单） */}
-            {!remoteReadOnly && cgIndex.known && !cgIndex.initialized ? (
+            {cgIndex.known && !cgIndex.initialized ? (
               <button
                 type="button"
                 className={`chat__index-cta${cgIndex.busy ? ' is-active' : ''}`}
-                disabled={!canExecute || !sessionId || !workspace.root || cgIndex.busy}
+                disabled={!canExecute || !sessionId || (!codegraphRoot && !sessionId) || cgIndex.busy}
                 title={
-                  workspace.root
-                    ? `为「${workspace.root.replace(/\\/g, '/').split('/').pop()}」创建代码图索引（Agent 随之可查询符号 / 调用关系 / 影响面）`
-                    : '先打开一个项目目录再创建索引'
+                  codegraphRoot
+                    ? `为「${codegraphRoot.replace(/\\/g, '/').split('/').pop()}」创建代码图索引（Agent 随之可查询符号 / 调用关系 / 影响面）`
+                    : '为当前会话工作区创建代码图索引'
                 }
                 onClick={() => void startCgIndex()}
               >
@@ -1581,7 +1615,7 @@ export function ChatView(): JSX.Element {
 
             <button
               type="button"
-              className="chat__icon-btn"
+              className="chat__icon-btn chat__polish-btn"
               disabled={!canExecute || polishing || !input.trim()}
               title="AI 润色：让指令更清晰具体（使用轻任务模型）"
               aria-label="AI 润色输入"
@@ -1622,7 +1656,7 @@ export function ChatView(): JSX.Element {
                 type="button"
                 className="chat__send"
                 disabled={
-                  !canExecute || (!remoteReadOnly && attach.uploading) || (!input.trim() && (remoteReadOnly || attach.attachments.length === 0))
+                  !canExecute || attach.uploading || (!input.trim() && attach.attachments.length === 0)
                 }
                 title="发送（Enter）"
                 aria-label="发送"
@@ -2151,16 +2185,31 @@ const MessageItem = memo(function MessageItem({
       </div>
 
       {message.run ? <div className="pending-card__hint" role="status" aria-label="运行状态">{message.status === 'interrupted' ? '已中断' : message.status === 'aborted' ? '已取消' : message.status === 'error' ? '失败' : rootStatusLabel(message.run.status)}</div> : null}
-      {(message.interactions ?? (message.pending ? [message.pending] : [])).map((pending) => (
-        <PendingCard
-          key={pending.requestId ?? pending.toolCallId}
-          pending={pending}
-          answered={pending.status === 'answered' ? pending.output || '已提交' : undefined}
-          disabled={disabled || !pending.requestId || message.run?.status !== 'waiting'}
-          onAllowAll={onAllowAll}
-          onRespond={(values) => { if (pending.requestId) onRespond(pending.requestId, values) }}
-        />
-      ))}
+      {(() => {
+        const interactions = message.interactions ?? (message.pending ? [message.pending] : [])
+        // 只有仍处于 waiting 的请求才是可操作的待办。已回答项以及终态运行
+        // 中遗留的 pending 记录属于审计历史，折叠展示，避免对话区不断堆积
+        // 已完成的警示卡片，也避免让用户误以为它们仍在等待选择。
+        // 无 durable requestId 的旧交互无法走当前应答协议，不能显示永久禁用
+        // 的操作按钮。保留为历史记录，等待新的运行快照提供可应答请求。
+        const active = interactions.filter(item => item.status === 'pending' &&
+          Boolean(item.requestId) && item.runId === message.run?.runId && message.run?.status === 'waiting')
+        const history = interactions.filter(item => !active.includes(item))
+        return (
+          <>
+            {history.length > 0 ? <InteractionHistory interactions={history} /> : null}
+            {active.map((pending) => (
+              <PendingCard
+                key={pending.requestId ?? pending.toolCallId}
+                pending={pending}
+                disabled={disabled || !pending.requestId || message.run?.status !== 'waiting'}
+                onAllowAll={onAllowAll}
+                onRespond={(values) => { if (pending.requestId) onRespond(pending.requestId, values) }}
+              />
+            ))}
+          </>
+        )
+      })()}
 
       {message.error ? <div className="message__error">{message.error}</div> : null}
     </article>
@@ -2307,25 +2356,40 @@ function MessageTimeline({
     ) : null
   }
 
+  // Wuzu Code 只自动展开当前时间线末尾的过程块；较早的过程块保留为摘要，
+  // 否则一次包含多轮工具调用的回答会把正文推到很远的位置。
+  const lastProcessIndex = inline.reduce(
+    (last, item, itemIndex) => (item.type === 'process' ? itemIndex : last),
+    -1
+  )
+
   return (
     <>
-      {inline.map((segment, index) =>
-        segment.type === 'process' ? (
-          <ProcessGroup key={`p-${index}`} entries={segment.entries} streaming={streaming} collapseKey={`${message.id}:${index}`} />
-        ) : segment.type === 'tool' ? (
-          <div key={`t-${segment.tool.id}`} className="message__tools">
-            <ToolItem tool={segment.tool} sessionId={sessionId} />
-          </div>
-        ) : segment.type === 'subagent-group' ? (
-          <div key={`sg-${segment.tools[0].id}`} className="message__tools">
-            <SubagentGroup tools={segment.tools} sessionId={sessionId} />
-          </div>
-        ) : (
-          <div key={`c-${index}`} className="message__content">
-            <Markdown text={segment.text} />
-          </div>
+      {inline.map((segment, index) => {
+        return (
+          segment.type === 'process' ? (
+            <ProcessGroup
+              key={`p-${index}`}
+              entries={segment.entries}
+              streaming={streaming}
+              autoOpen={streaming && index === lastProcessIndex}
+              collapseKey={`${message.id}:${index}`}
+            />
+          ) : segment.type === 'tool' ? (
+            <div key={`t-${segment.tool.id}`} className="message__tools">
+              <ToolItem tool={segment.tool} sessionId={sessionId} />
+            </div>
+          ) : segment.type === 'subagent-group' ? (
+            <div key={`sg-${segment.tools[0].id}`} className="message__tools">
+              <SubagentGroup tools={segment.tools} sessionId={sessionId} />
+            </div>
+          ) : (
+            <div key={`c-${index}`} className="message__content">
+              <Markdown text={segment.text} />
+            </div>
+          )
         )
-      )}
+      })}
       {streaming && !message.pending ? (
         <div className="message__streaming-hint">
           <span className="message__spinner" />
@@ -2390,21 +2454,24 @@ function SubagentGroup({
  * 对齐 wuzu-client 的双层折叠形制：
  * - 单条思考 / 工具调用是一行 24px 紧凑日志行（圆点 + 名称 + 摘要 + hover 才出现的箭头）；
  * - 一轮结束后，整段过程收成一行摘要「过程 · 思考 N 段 · 工具调用 M」，点开原样还原；
- *   流式进行中保持展开，方便实时围观；用户手动点过后以用户为准。
+ *   流式进行中只展开时间线最后一段，方便实时围观；用户手动点过后以用户为准。
  */
 function ProcessGroup({
   entries,
   streaming,
+  autoOpen,
   collapseKey
 }: {
   entries: CompactEntry[]
   streaming: boolean
+  /** 只有当前时间线最后一个过程块才有自动展开资格。 */
+  autoOpen: boolean
   /** 折叠记忆的稳定 key（消息 id）；分页回收/切换会话后能恢复用户手动的折叠选择 */
   collapseKey?: string
 }): JSX.Element {
-  // 折叠状态：默认流式展开 / 结束收起；一旦用户手动点过，以用户选择为准（并跨重建记忆）
+  // 折叠状态：默认只展开当前末段 / 历史收起；一旦用户手动点过，以用户选择为准
   const [manual, setManual] = useCollapseMemory(collapseKey ? `process:${collapseKey}` : undefined)
-  const expanded = manual ?? streaming
+  const expanded = manual ?? autoOpen
 
   const thinkingCount = entries.filter((entry) => entry.kind === 'thinking').length
   const toolCount = entries.length - thinkingCount
@@ -2415,6 +2482,10 @@ function ProcessGroup({
     (entry) => entry.kind === 'tool' && entry.tool.state === 'error'
   ).length
   if (failCount > 0) summaryParts.push(`${failCount} 失败`)
+  const lastThinkingIndex = entries.reduce(
+    (last, entry, index) => (entry.kind === 'thinking' ? index : last),
+    -1
+  )
 
   return (
     <div className="process">
@@ -2434,7 +2505,12 @@ function ProcessGroup({
         <div className="process__body">
           {entries.map((entry, index) =>
             entry.kind === 'thinking' ? (
-              <ThinkingRow key={`think-${index}`} text={entry.text} />
+              <ThinkingRow
+                key={`think-${index}`}
+                text={entry.text}
+                autoOpen={autoOpen && index === lastThinkingIndex}
+                memoryKey={collapseKey ? `think:${collapseKey}:${index}` : undefined}
+              />
             ) : (
               <CompactToolRow key={entry.tool.id} tool={entry.tool} />
             )
@@ -2446,10 +2522,48 @@ function ProcessGroup({
 }
 
 /** 思考行：紫色圆点 + 单行预览，展开看全文（左侧竖线表示从属于该行） */
-function ThinkingRow({ text }: { text: string }): JSX.Element | null {
-  // key 用文本前 32 字兜底（思考段无 id）；分页回收后恢复用户手动的展开选择
-  const [memory, setMemory] = useCollapseMemory(`think:${text.slice(0, 32)}`)
-  const open = memory ?? false
+function ThinkingRow({
+  text,
+  autoOpen,
+  memoryKey
+}: {
+  text: string
+  autoOpen: boolean
+  memoryKey?: string
+}): JSX.Element | null {
+  // 使用消息/过程/索引组成稳定 key；不能用思考文本本身，否则流式追加前 32 字变化时
+  // 会把用户刚刚手动折叠的状态重置掉。
+  const [memory, setMemory] = useCollapseMemory(memoryKey)
+  const open = memory ?? autoOpen
+  const detailRef = useRef<HTMLPreElement | null>(null)
+  const followDetailRef = useRef(true)
+  const THINKING_RESUME_PX = 40
+
+  const syncDetailFollow = useCallback((): void => {
+    const el = detailRef.current
+    if (!el) return
+    followDetailRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= THINKING_RESUME_PX
+  }, [])
+
+  // 打开思考区时从底部开始；之后只在用户仍贴底时跟随新增文本。
+  useEffect(() => {
+    if (!open) return
+    followDetailRef.current = true
+    const frame = requestAnimationFrame(() => {
+      const el = detailRef.current
+      if (el && followDetailRef.current) el.scrollTop = el.scrollHeight
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [open])
+
+  useEffect(() => {
+    if (!open || !followDetailRef.current) return
+    const frame = requestAnimationFrame(() => {
+      const el = detailRef.current
+      if (el && followDetailRef.current) el.scrollTop = el.scrollHeight
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [open, text])
   const preview = text.replace(/\s+/g, ' ').trim()
   // 空/纯空白思考不渲染（回放路径历史里可能残留，避免一列孤立箭头）
   if (!preview) return null
@@ -2470,8 +2584,12 @@ function ThinkingRow({ text }: { text: string }): JSX.Element | null {
         <Icon name="chevron" size={16} className="logline__chevron" />
       </button>
       {open ? (
-        <div className="logline__detail">
-          <pre>{text}</pre>
+        <div className="logline__detail logline__detail--thinking">
+          <pre
+            ref={detailRef}
+            onScroll={syncDetailFollow}
+            onWheel={(event) => event.stopPropagation()}
+          >{text}</pre>
         </div>
       ) : null}
     </div>
@@ -2753,33 +2871,26 @@ function UsageMeter({
  */
 function PendingCard({
   pending,
-  answered,
   disabled,
   onAllowAll,
   onRespond
 }: {
   pending: PendingInteraction
-  answered?: string
   disabled: boolean
   onAllowAll: () => Promise<void>
   onRespond: (values: string[]) => void
 }): JSX.Element {
-  const { engine } = useApp()
-  const remoteReadOnly = engine.snapshot.mode === 'remote'
   const sourceEpoch = getEngineSource()
   const [groupSelected, setGroupSelected] = useState<Record<number, string[]>>({})
   const [groupInput, setGroupInput] = useState<Record<number, string>>({})
   const [allowAllBusy, setAllowAllBusy] = useState(false)
   const [allowAllError, setAllowAllError] = useState<string | null>(null)
+  const currentRequestRef = useRef(true)
+  useEffect(() => {
+    currentRequestRef.current = true
+    return () => { currentRequestRef.current = false }
+  }, [pending.requestId, pending.runId, sourceEpoch])
   const isPermission = pending.kind === 'permission'
-  const isAnswered = Boolean(answered)
-  // 回传存的是 value（授权场景是 approved/rejected 英文值），回显时反查成中文 label
-  const answeredText = answered
-    ? answered
-        .split('，')
-        .map((value) => pending.options.find((option) => option.value === value)?.label ?? value)
-        .join('、')
-    : ''
 
   const toggle = (groupIndex: number, value: string, multi: boolean): void => {
     setGroupSelected((prev) => {
@@ -2801,47 +2912,23 @@ function PendingCard({
    * 失败只提示，不阻断。
    */
   const allowAll = async (): Promise<void> => {
-    if (remoteReadOnly || disabled || allowAllBusy || sourceEpoch !== getEngineSource()) return
+    if (disabled || allowAllBusy || sourceEpoch !== getEngineSource()) return
     setAllowAllBusy(true)
     setAllowAllError(null)
     try {
       await onAllowAll()
     } catch (err) {
-      setAllowAllError(err instanceof Error ? err.message : String(err))
+      if (currentRequestRef.current) setAllowAllError(err instanceof Error ? err.message : String(err))
     } finally {
-      setAllowAllBusy(false)
+      if (currentRequestRef.current) setAllowAllBusy(false)
     }
-    if (sourceEpoch === getEngineSource()) onRespond(['approved'])
-  }
-
-  /**
-   * 已回答：卡片坍缩成一行「已确认记录」。
-   *
-   * 交互一旦完成就不再需要占屏 —— 保留整张卡片会让用户以为还在等答复
-   * （警示色边框 + 大块留白）。这里只留一行摘要，需要看原始命令时展开。
-   */
-  if (isAnswered) {
-    return (
-      <details className="pending-card pending-card--done">
-        <summary className="pending-card__summary">
-          <Icon name={isPermission ? 'shield' : 'chat'} size={16} />
-          <span className="pending-card__summary-text">
-            {isPermission ? pending.output === 'rejected' ? '已拒绝这次操作' : '已批准这次操作' : '已应答 Agent 提问'}
-          </span>
-          <span className="pending-card__summary-choice">{answeredText}</span>
-        </summary>
-        <div className="pending-card__detail">
-          <div className="pending-card__detail-label">{isPermission ? '被拦截的操作' : '问题'}</div>
-          <div className="pending-card__question">{pending.question}</div>
-        </div>
-      </details>
-    )
+    if (currentRequestRef.current && sourceEpoch === getEngineSource()) onRespond(['approved'])
   }
 
   return (
     <div className={`pending-card${isPermission ? ' pending-card--permission' : ''}`}>
       <div className="pending-card__title">
-        <span>{isPermission ? '安全策略需要你确认' : '需要你确认'}</span>
+        <span>{isPermission ? '允许这次操作？' : '需要你确认'}</span>
         <span className="pending-card__state">等待你的选择</span>
       </div>
 
@@ -2882,6 +2969,7 @@ function PendingCard({
                         key={option.value}
                         type="button"
                         className={`pending-card__choice${checked ? ' pending-card__choice--on' : ''}`}
+                        aria-pressed={checked}
                         disabled={disabled}
                         onClick={() => toggle(groupIndex, option.value, group.multiSelect)}
                       >
@@ -2905,6 +2993,7 @@ function PendingCard({
                 <input
                   type="text"
                   className="pending-card__input"
+                  aria-label={group.question}
                   placeholder="或直接输入回复…"
                   disabled={disabled}
                   value={groupInput[groupIndex] ?? ''}
@@ -2949,7 +3038,7 @@ function PendingCard({
         </>
       )}
 
-      {isPermission && !remoteReadOnly ? (
+      {isPermission ? (
         <div className="pending-card__footer">
           <button
             type="button"
@@ -2963,7 +3052,7 @@ function PendingCard({
           </button>
           {allowAllError ? (
             <span className="pending-card__hint pending-card__hint--error">
-              切换模式失败（本次已放行）：{allowAllError}
+              未切换会话模式：{allowAllError}
             </span>
           ) : (
             <span className="pending-card__hint">连续被拦时用它一次放开</span>
@@ -2973,6 +3062,70 @@ function PendingCard({
 
       {disabled ? <div className="pending-card__hint">等待上一轮响应结束后可继续操作</div> : null}
     </div>
+  )
+}
+
+/**
+ * 已处理的交互记录只保留一条可展开的时间线摘要。
+ * RootRun 会永久保留 answered 记录以保证幂等应答和审计，因此不能在 UI
+ * 层把每一条记录都当成新的待办卡片渲染。
+ */
+function InteractionHistory({ interactions }: { interactions: PendingInteraction[] }): JSX.Element {
+  const permissionCount = interactions.filter(item => item.kind === 'permission').length
+  const summary = '确认记录'
+
+  const choiceText = (pending: PendingInteraction): string => {
+    if (!pending.output) return pending.status === 'answered' ? '已提交' : pending.requestId && pending.runId ? '未执行' : '请重新发起任务'
+    // Free-text answers can contain commas; preserve the submitted text exactly.
+    return pending.output
+  }
+
+  const statusText = (pending: PendingInteraction): string => {
+    if (pending.status === 'answered') {
+      if (pending.kind === 'permission') {
+        if (pending.output === 'approved') return '已允许这次操作'
+        if (pending.output === 'rejected') return '已拒绝这次操作'
+        return '已处理，未记录授权结果'
+      }
+      return '已应答 Agent 提问'
+    }
+    if (!pending.requestId || !pending.runId) return '历史请求，当前不可应答'
+    return '已结束，未执行'
+  }
+
+  return (
+    <details className="interaction-history pending-card--history">
+      <summary className="pending-card__summary">
+        <Icon name="chevron" size={14} className="interaction-history__chevron" />
+        <Icon name={permissionCount === interactions.length ? 'shield' : 'chat'} size={16} />
+        <span className="pending-card__summary-text">{summary}</span>
+        <span className="pending-card__summary-choice">{interactions.length} 项</span>
+      </summary>
+      <div className="pending-card__history-list">
+        {interactions.map((pending, index) => (
+          <div
+            className="pending-card__history-item"
+            key={pending.requestId ?? pending.toolCallId ?? index}
+            // Older persisted runs may predate requestId; toolCallId is still
+            // stable and keeps each audit entry addressable after recovery.
+            data-request-id={pending.requestId ?? pending.toolCallId}
+          >
+            <div className="pending-card__history-row interaction-history__result">
+              <Icon name={pending.kind === 'permission' ? 'shield' : 'chat'} size={14} />
+              <span>{statusText(pending)}</span>
+              {pending.kind === 'ask' ? (
+                <span className="pending-card__summary-choice">{choiceText(pending)}</span>
+              ) : null}
+            </div>
+            <div className="pending-card__history-question">{
+              pending.kind === 'ask' && pending.groups.length > 1
+                ? pending.groups.map((group, index) => `${index + 1}. ${group.question}`).join('\n')
+                : pending.question
+            }</div>
+          </div>
+        ))}
+      </div>
+    </details>
   )
 }
 

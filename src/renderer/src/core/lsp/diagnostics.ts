@@ -9,6 +9,8 @@
  * （编辑器波浪线）。失败在面板中如实展示，不打断保存流程。
  */
 import { requestOrThrow } from '../engine/client'
+import { isRemoteEngine } from '../engine/source'
+import { remoteWorkspaceContext, remoteWorkspaceRelativePath } from '../workspace/fs-client'
 import { acquireModel, languageForPath, monaco, peekModel } from '../editor/monaco-setup'
 import { clearFileProblems, diagnosticFileKey, setFileProblems, setFileDiagnosis, type DiagnosisStatus, type ProblemItem } from './problems-store'
 import { isTsLspRunning } from './ts-client'
@@ -64,10 +66,22 @@ export async function diagnoseDocument(filePath: string, content: string): Promi
 
   let result: DiagnoseResult
   try {
+    // The remote engine cannot resolve a client-machine absolute path. Remote
+    // workspace files are addressed by session-relative paths, using the same
+    // binding as the explorer/file client. Local requests retain their
+    // absolute path so existing embedded diagnostics remain unchanged.
+    const body: { filePath: string; content: string; sessionId?: string } = { filePath, content }
+    if (isRemoteEngine()) {
+      const context = await remoteWorkspaceContext()
+      const relative = remoteWorkspaceRelativePath(context, filePath)
+      if (!relative) throw new Error('远程诊断文件不在当前工作区内')
+      body.filePath = relative
+      body.sessionId = context.sessionId
+    }
     result = await requestOrThrow<DiagnoseResult>({
       method: 'POST',
       path: '/lsp/diagnose',
-      body: { filePath, content }
+      body
     })
   } catch (error) {
     if (seqByFile.get(fileKey) === seq) {
