@@ -1,0 +1,279 @@
+{
+  "target": "D:\\dev\\ai-agent-engine\\src\\terminal\\workspace-shell.mjs",
+  "fixture": "D:\\dev\\aether-code\\.e2e-tmp\\audit-workspace-shell-SVRhmg",
+  "platform": "win32",
+  "nodeVersion": "v24.20.0",
+  "generatedAt": "2026-10-06T16:05:57.854Z",
+  "scope": "Fresh isolated fixtures only; synthetic credential; loopback only; no production APIs or credentials.",
+  "caveat": "blockedByEnvironment is not a security pass. Root deletion and concurrency are robustness risks, distinct from an isolation escape.",
+  "counts": {
+    "vulnerable": 18,
+    "blocked": 5,
+    "pass": 1,
+    "error": 0
+  },
+  "results": [
+    {
+      "id": "builtin-inside-read",
+      "status": "pass",
+      "description": "正常读取工作区文件",
+      "evidence": {
+        "canaryRead": true
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "cat inside.txt\nAUDIT_CANARY_c75ab67f-448d-4146-a1ff-d7778f307b59\n~ $ "
+    },
+    {
+      "id": "builtin-dotdot-read",
+      "status": "blocked",
+      "description": "内置 cat 路径边界",
+      "evidence": {
+        "canaryRead": false
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "cat ../outside/canary.txt\n⛔ 禁止访问工作空间外路径\n~ $ "
+    },
+    {
+      "id": "builtin-absolute-read",
+      "status": "blocked",
+      "description": "内置 cat 路径边界",
+      "evidence": {
+        "canaryRead": false
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "cat \"D:\\dev\\aether-code\\.e2e-tmp\\audit-workspace-shell-SVRhmg\\builtin-absolute-read\\outside\\canary.txt\"\n⛔ 禁止访问工作空间外路径\n~ $ "
+    },
+    {
+      "id": "builtin-sibling-prefix",
+      "status": "blocked",
+      "description": "内置 cat 路径边界",
+      "evidence": {
+        "canaryRead": false
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "cat ../workspace-other/canary.txt\n⛔ 禁止访问工作空间外路径\n~ $ "
+    },
+    {
+      "id": "node-script-read",
+      "status": "vulnerable",
+      "description": "Node 脚本读取工作区外 canary",
+      "evidence": {
+        "canaryRead": true
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "node read.cjs\nAUDIT_CANARY_e14b9db0-f686-4763-82d2-9138537d37d0\n~ $ "
+    },
+    {
+      "id": "node-inline-read",
+      "status": "vulnerable",
+      "description": "Node 单行解释器读取工作区外 canary",
+      "evidence": {
+        "canaryRead": true
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "node -e \"console.log(require('node:fs').readFileSync('../outside/canary.txt','utf8'))\"\nAUDIT_CANARY_6e8fb357-0eb8-457a-8a78-6d17c4f4d354\n~ $ "
+    },
+    {
+      "id": "node-script-write",
+      "status": "vulnerable",
+      "description": "Node 脚本写入工作区外文件",
+      "evidence": {
+        "outsideFixtureFileCreated": true
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "node write.cjs\nAUDIT_WRITE_DONE\n~ $ "
+    },
+    {
+      "id": "native-shell-read",
+      "status": "vulnerable",
+      "description": "原生系统命令读取工作区外 canary",
+      "evidence": {
+        "canaryRead": true
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "cmd.exe /d /c type \"D:\\dev\\aether-code\\.e2e-tmp\\audit-workspace-shell-SVRhmg\\native-shell-read\\outside\\canary.txt\"\nAUDIT_CANARY_77139014-92f0-486b-a22f-8a66ce83f189~ $ "
+    },
+    {
+      "id": "python-read-write",
+      "status": "blocked",
+      "description": "Python 不可用，未验证此路径",
+      "evidence": {
+        "blockedByEnvironment": true
+      }
+    },
+    {
+      "id": "compound-command-write",
+      "status": "vulnerable",
+      "description": "&& 组合命令执行并越界写入",
+      "evidence": {
+        "outsideFixtureFileCreated": true
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "node --version && node write.cjs\nv24.20.0\nAUDIT_WRITE_DONE\n~ $ "
+    },
+    {
+      "id": "redirect-outside-write",
+      "status": "vulnerable",
+      "description": "输出重定向写入工作区外文件",
+      "evidence": {
+        "outsideFixtureFileCreated": true
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "node --version > ../outside/changed.txt\n~ $ "
+    },
+    {
+      "id": "pipe-outside-write",
+      "status": "vulnerable",
+      "description": "管道执行越界写入脚本",
+      "evidence": {
+        "outsideFixtureFileCreated": true
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "node --version | node write.cjs\nAUDIT_WRITE_DONE\n~ $ "
+    },
+    {
+      "id": "npm-script-write",
+      "status": "vulnerable",
+      "description": "npm 项目脚本越界写入（无安装、无网络）",
+      "evidence": {
+        "outsideFixtureFileCreated": true
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "npm run probe --ignore-scripts\n\n> private-sandbox-audit@1.0.0 probe\n> node write.cjs\n\nAUDIT_WRITE_DONE\n~ $ "
+    },
+    {
+      "id": "builtin-env-canary",
+      "status": "vulnerable",
+      "description": "env 命令读取假引擎凭据",
+      "evidence": {
+        "canaryRead": true
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "env AUDIT_FAKE_ENGINE_TOKEN\nAUDIT_CANARY_88ea6845-0c3a-41e4-8cdb-e9ab26cdc0cb\n~ $ "
+    },
+    {
+      "id": "child-env-canary",
+      "status": "vulnerable",
+      "description": "子进程继承假引擎凭据",
+      "evidence": {
+        "canaryRead": true
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "node env.cjs\nAUDIT_CANARY_2b6cea73-8144-4f9f-9533-ca0fb88c044a\n~ $ "
+    },
+    {
+      "id": "junction-cat",
+      "status": "vulnerable",
+      "description": "内置 cat 通过目录链接读取工作区外 canary",
+      "evidence": {
+        "canaryRead": true
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "cat linked/canary.txt\nAUDIT_CANARY_9d3922ed-5966-466c-aca2-296d3b5c0f76\n~ $ "
+    },
+    {
+      "id": "junction-touch",
+      "status": "vulnerable",
+      "description": "内置 touch 通过目录链接写入工作区外路径",
+      "evidence": {
+        "outsideFixtureFileCreated": true
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "touch linked/changed.txt\n~ $ "
+    },
+    {
+      "id": "junction-mkdir",
+      "status": "vulnerable",
+      "description": "内置 mkdir 通过目录链接写入工作区外路径",
+      "evidence": {
+        "outsideFixtureFileCreated": true
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "mkdir linked/changed.txt\n已创建: linked/changed.txt\n~ $ "
+    },
+    {
+      "id": "junction-cp",
+      "status": "vulnerable",
+      "description": "内置 cp 通过目录链接写入工作区外路径",
+      "evidence": {
+        "outsideFixtureFileCreated": true
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "cp inside.txt linked/changed.txt\n已复制: inside.txt → linked/changed.txt\n~ $ "
+    },
+    {
+      "id": "junction-rm",
+      "status": "vulnerable",
+      "description": "内置 rm 通过目录链接删除工作区外 canary",
+      "evidence": {
+        "outsideCanaryDeleted": true
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "rm linked/canary.txt\n已删除: linked/canary.txt\n~ $ "
+    },
+    {
+      "id": "root-delete",
+      "status": "blocked",
+      "description": "工作区根目录未设保护，可被内置 rm 整体删除",
+      "evidence": {
+        "workspaceDeleted": false
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "rm -rf .\nrm: EPERM, Permission denied: \\\\?\\D:\\dev\\aether-code\\.e2e-tmp\\audit-workspace-shell-SVRhmg\\root-delete\\workspace '\\\\?\\D:\\dev\\aether-code\\.e2e-tmp\\audit-workspace-shell-SVRhmg\\root-delete\\workspace'\n~ $ "
+    },
+    {
+      "id": "loopback-canary-transfer",
+      "status": "vulnerable",
+      "description": "子进程可绕过引擎网络策略向 loopback 发送假凭据",
+      "evidence": {
+        "receivedCanary": true,
+        "destination": "127.0.0.1 only"
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "node network.cjs\nAUDIT_NETWORK_DONE\n~ $ "
+    },
+    {
+      "id": "invalid-regex",
+      "status": "vulnerable",
+      "description": "未捕获正则构造异常导致终端退出",
+      "evidence": {
+        "unexpectedExit": true
+      },
+      "exitCode": 1,
+      "completed": false,
+      "outputTail": "grep [ inside.txt\nfile:///D:/dev/ai-agent-engine/src/terminal/workspace-shell.mjs:300\n    const regex = new RegExp(pattern, iFlag ? 'gi' : 'g')\n                  ^\n\nSyntaxError: Invalid regular expression: /[/g: Unterminated character class\n    at new RegExp (<anonymous>)\n    at Object.grep (file:///D:/dev/ai-agent-engine/src/terminal/workspace-shell.mjs:300:19)\n    at Interface.<anonymous> (file:///D:/dev/ai-agent-engine/src/terminal/workspace-shell.mjs:644:26)\n    at Interface.emit (node:events:514:28)\n    at [_onLine] [as _onLine] (node:internal/readline/interface:474:12)\n    at [_line] [as _line] (node:internal/readline/interface:969:18)\n    at [_ttyWrite] [as _ttyWrite] (node:internal/readline/interface:1485:22)\n    at Socket.onkeypress (node:internal/readline/interface:289:20)\n    at Socket.emit (node:events:514:28)\n    at emitKeys (node:internal/readline/utils:371:14)\n\nNode.js v24.20.0\n"
+    },
+    {
+      "id": "concurrent-lines",
+      "status": "vulnerable",
+      "description": "readline 异步 line 回调存在命令并发、currentChild 覆盖风险",
+      "evidence": {
+        "orderRace": true
+      },
+      "exitCode": 0,
+      "completed": true,
+      "outputTail": "node slow.cjs\nnode check.cjs\nAUDIT_ORDER_RACE\n~ $ AUDIT_SLOW_DONE\n~ $ "
+    }
+  ]
+}

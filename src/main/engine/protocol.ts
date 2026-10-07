@@ -175,6 +175,26 @@ export function remoteRequestError(mode: 'embedded' | 'remote', method: string, 
   return '此入口尚未接入远端服务；请使用已接入的远端工作区、聊天、MCP、技能、知识库与代码图接口。'
 }
 
+/** Reject client-local absolute paths before they can reach a remote engine. */
+export function remoteWorkspacePathError(mode: 'embedded' | 'remote', method: string, path: string, body: unknown): string | null {
+  if (mode !== 'remote' || method !== 'POST') return null
+  const pathname = normalizeEnginePath(path).split('?')[0]
+  if (!/^\/api\/v1\/workspace\/(?:file|file\/create|folder\/create|file\/trash|file\/move|file\/copy)$/.test(pathname)) return null
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return '远端工作区请求缺少有效的相对路径参数'
+  const record = body as Record<string, unknown>
+  const fields = ['path', 'srcPath', 'destPath']
+  for (const field of fields) {
+    const value = record[field]
+    if (value === undefined) continue
+    if (typeof value !== 'string' || !value.trim()) return '远端工作区路径无效'
+    const normalized = value.replace(/\\/g, '/')
+    if (/^(?:[A-Za-z]:\/|\/\/|\/)/.test(normalized) || normalized.split('/').some(segment => segment === '..')) {
+      return '远端工作区不能使用本机绝对路径或越界路径'
+    }
+  }
+  return null
+}
+
 /** Used by both ordinary requests and every SSE method, including resume. */
 export function engineHeaders(instanceToken: string): Record<string, string> {
   return {

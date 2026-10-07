@@ -20,6 +20,7 @@ import {
   normalizeEnginePath,
   parseEngineMeta,
   remoteRequestError,
+  remoteWorkspacePathError,
   remoteInstanceToken,
   type EngineMeta
 } from './protocol'
@@ -463,7 +464,7 @@ export class EngineHost extends EventEmitter {
     expectedEngine?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId'>
   ): Promise<void> {
     const snapshot = this.snapshot
-    const unsupported = engineTargetError(snapshot, expectedEngine) ?? remoteRequestError(snapshot.mode, method, path)
+    const unsupported = engineTargetError(snapshot, expectedEngine) ?? remoteRequestError(snapshot.mode, method, path) ?? remoteWorkspacePathError(snapshot.mode, method, path, body)
     if (unsupported) {
       this.emit('stream', { streamId, type: 'error', message: unsupported } satisfies StreamEvent)
       return

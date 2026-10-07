@@ -258,7 +258,7 @@ async function expectNoPublicSecret(): Promise<void> {
 async function saveTokenAndExpect(token: string, phase: 'ready' | 'error'): Promise<void> {
   const firstProbe = probes.length
   await page.getByLabel('远端令牌', { exact: true }).fill(token)
-  await page.getByRole('button', { name: '保存并重启', exact: true }).click()
+  await page.getByRole('button', { name: /保存并(?:重新连接|重启)/, exact: true }).click()
   await expect.poll(() => probes.length).toBeGreaterThan(firstProbe)
   await expectPhase(phase)
   expect(probes.slice(firstProbe)).toContainEqual({ token, accepted: phase === 'ready' })
@@ -588,7 +588,7 @@ test.describe.serial('远端令牌设置真实界面闭环', () => {
       }).locator('input')
       await address.fill(replacementUrl)
       await page.getByLabel('远端令牌', { exact: true }).fill(rollbackToken)
-      const save = page.getByRole('button', { name: '保存并重启', exact: true })
+      const save = page.getByRole('button', { name: /保存并(?:重新连接|重启)/, exact: true })
       await save.click()
       const failure = page.locator('.app-settings .settings-view__actions .settings-view__error')
       await failure.scrollIntoViewIfNeeded()
@@ -652,7 +652,7 @@ test.describe.serial('远端令牌设置真实界面闭环', () => {
     await expectStoredCredential()
     let firstProbe = probes.length
     await page.getByRole('button', { name: '清除令牌', exact: true }).click()
-    await page.getByRole('button', { name: '保存并重启', exact: true }).click()
+    await page.getByRole('button', { name: /保存并(?:重新连接|重启)/, exact: true }).click()
     await expect.poll(() => probes.length).toBeGreaterThan(firstProbe)
     await expectPhase('error')
     expect(probes.slice(firstProbe).every(probe => probe.token === undefined && !probe.accepted)).toBe(true)

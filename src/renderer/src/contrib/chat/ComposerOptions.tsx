@@ -18,7 +18,7 @@ const THINKING_OPTIONS: Array<{
   label: string
   summary: string
 }> = [
-  { value: 'off', label: 'Off', summary: '关闭思考，回答最快最省' },
+  { value: 'off', label: 'Off', summary: '请求关闭模型推理，下一次发送生效' },
   { value: 'low', label: 'Low', summary: '几乎不思考，改小东西最快' },
   { value: 'high', label: 'High', summary: '默认，由引擎按模型能力决定' },
   { value: 'max', label: 'Max', summary: '想到底，最慢最贵' }
@@ -96,7 +96,7 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
   const secDescriptor = MODE_DESCRIPTORS.find((item) => item.value === mode)
   const thinkSummary =
     settings.thinkingMode === 'off'
-      ? '思考已关闭，回答最快最省'
+      ? '下一次发送请求关闭推理；当前运行沿用原设置'
       : currentModel?.capabilities?.thinking
         ? thinkDescriptor.summary
         : '当前模型未声明支持推理；选 Max 会由引擎记录告警'
@@ -140,7 +140,7 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
           type="button"
           className={`composer-options__trigger${isOpen ? ' is-open' : ''}`}
           disabled={!ready}
-          title="对话偏好：思考档位 / 安全模式"
+          title="对话偏好：长期记忆 / 思考档位 / 安全模式"
           aria-label="对话偏好"
         >
           <Icon name="settings" size={16} />

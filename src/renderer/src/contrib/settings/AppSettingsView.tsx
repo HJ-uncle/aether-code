@@ -46,7 +46,7 @@ const SECTIONS: Section[] = [
   {
     id: 'general',
     label: '引擎管理',
-    icon: 'settings',
+    icon: 'engine',
     group: '基础',
     description: '管理引擎连接、启动方式和运行状态。',
     component: EngineSettingsView
@@ -154,15 +154,6 @@ export function AppSettingsView(): JSX.Element {
   return (
     <div className="app-settings">
       <aside className="app-settings__nav" aria-label="设置分区">
-        <div className="app-settings__nav-header">
-          <div className="app-settings__nav-header-icon" aria-hidden="true">
-            <Icon name="settings" size={18} />
-          </div>
-          <div>
-            <strong>设置</strong>
-            <span>应用与工作区</span>
-          </div>
-        </div>
         <div className="app-settings__nav-list" role="tablist" aria-label="设置分区">
           {SECTION_GROUPS.map((group) => (
             <div className="app-settings__nav-group" key={group.label} role="presentation">

@@ -686,6 +686,7 @@ export function EngineSettingsView(): JSX.Element {
             type="button"
             className="btn"
             disabled={busy}
+            aria-label="重启"
             onClick={() => void engine.restart()}
           >
             <Icon name="restart" size={16} />

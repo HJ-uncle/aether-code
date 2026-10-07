@@ -1,0 +1,134 @@
+{
+  "createdAt": "2026-10-06T16:07:05.383Z",
+  "fixture": "D:\\dev\\aether-code\\.e2e-tmp\\audit-engine-boundaries-qMkzkJ",
+  "scope": "Actual engine source; isolated DB; terminal route PTY stub; real command child processes",
+  "sourceHashes": {
+    "terminal/index.ts": "279f93b3e84f1fcd0ddad217746621e1ab84afc5def886220c2f59fed37ff1a6",
+    "api/http/routes/terminal.ts": "15fa3f26eb01ba48b49605a99671d6811d465e3faf23e6c6787ecd80cc2c6ec8",
+    "security/policy-engine.ts": "7cd7c2d637171dd2cb103b97fd47f078a7ee9c2c0c6da2f8e4e5e8fbfbd16506",
+    "auth/middleware.ts": "4a8d39ec5eb05e79de036d23dc72bfee79e2955194b13fdc56c59e0ede9963ed",
+    "workspace/manager.ts": "f3c04bb25a7e974ad007b8b7012f08c0c68a5786057492bae3ce1e6a7a22c49f"
+  },
+  "findings": [
+    {
+      "id": "API-anonymous-auth-enabled",
+      "status": "vulnerable",
+      "evidence": {
+        "code": 200,
+        "authEnabled": true,
+        "instanceTokenConfigured": false
+      }
+    },
+    {
+      "id": "API-instance-token-negative-control",
+      "status": "blocked",
+      "evidence": {
+        "httpStatus": 401
+      }
+    },
+    {
+      "id": "API-viewer-mutates-global-network-policy",
+      "status": "vulnerable",
+      "evidence": {
+        "code": 200,
+        "suppliedRole": "viewer"
+      }
+    },
+    {
+      "id": "API-anonymous-mode-escalation",
+      "status": "vulnerable",
+      "evidence": {
+        "code": 200
+      }
+    },
+    {
+      "id": "API-cross-tenant-terminal-read-write",
+      "status": "vulnerable",
+      "evidence": {
+        "owner": "audit-a",
+        "caller": "audit-b",
+        "pty": "stubbed; real route/auth/WebSocket"
+      }
+    },
+    {
+      "id": "API-cross-tenant-terminal-delete",
+      "status": "vulnerable",
+      "evidence": {
+        "code": 200,
+        "pty": "stubbed"
+      }
+    },
+    {
+      "id": "POLICY-tenant-session-key-collision",
+      "status": "vulnerable",
+      "evidence": "Distinct tenant/session pairs share colon-joined key"
+    },
+    {
+      "id": "PATH-session-id-traversal",
+      "status": "vulnerable",
+      "evidence": {
+        "outsideWorkspaceRoot": true,
+        "noWritePerformed": true
+      }
+    },
+    {
+      "id": "PATH-direct-traversal-negative-control",
+      "status": "blocked",
+      "evidence": {
+        "denied": true
+      }
+    },
+    {
+      "id": "API-session-traversal-read",
+      "status": "vulnerable",
+      "evidence": {
+        "code": 200,
+        "canaryRead": true
+      }
+    },
+    {
+      "id": "API-junction-file-read",
+      "status": "vulnerable",
+      "evidence": {
+        "code": 200,
+        "canaryRead": true
+      }
+    },
+    {
+      "id": "API-workspace-binding-cross-tenant",
+      "status": "vulnerable",
+      "evidence": {
+        "bindingCode": 200,
+        "readCode": 200,
+        "owner": "audit-a",
+        "caller": "audit-b"
+      }
+    },
+    {
+      "id": "POLICY-safe-interpreter-outside-read-write",
+      "status": "vulnerable",
+      "evidence": {
+        "toolSuccess": true,
+        "markerExists": true,
+        "needsConfirmation": false
+      }
+    },
+    {
+      "id": "NETWORK-safe-guard-negative-control",
+      "status": "blocked",
+      "evidence": {
+        "denied": true,
+        "hits": 0
+      }
+    },
+    {
+      "id": "NETWORK-safe-interpreter-bypass",
+      "status": "vulnerable",
+      "evidence": {
+        "hits": 1,
+        "toolSuccess": true,
+        "destination": "audit-owned loopback only"
+      }
+    }
+  ]
+}

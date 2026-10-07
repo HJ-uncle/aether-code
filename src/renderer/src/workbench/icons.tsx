@@ -86,6 +86,7 @@ export type IconName =
   | 'star'
   | 'star-outline'
   | 'fit-screen'
+  | 'engine'
 
 /** mdi:crosshairs-gps —— 资源管理器「定位当前文件」，与 wuzu-client 同图标 */
 const MDI_LOCATE =
@@ -422,6 +423,13 @@ const PATHS: Record<IconName, JSX.Element> = {
   'fit-screen': (
     <path
       d="M4 4h6v2H6v4H4V4zm10 0h6v6h-2V6h-4V4zM4 14h2v4h4v2H4v-6zm14 0h2v6h-6v-2h4v-4z"
+      fill="currentColor"
+    />
+  ),
+  // mdi:engine —— 引擎管理
+  engine: (
+    <path
+      d="M7 4v2h3v2H7L5 10v3H3v-3H1v8h2v-3h2v3h3l2 2h8v-4h2v3h3V9h-3v3h-2V8h-6V6h3V4H7z"
       fill="currentColor"
     />
   ),
