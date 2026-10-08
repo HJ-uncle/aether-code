@@ -14,6 +14,7 @@ export function SearchExcludeSettingsView(): JSX.Element {
 
   return (
     <ExcludeSettingsView
+      settingKey="searchExclude"
       className="settings-view--search-exclude"
       value={value}
       defaults={DEFAULT_SEARCH_EXCLUDE}

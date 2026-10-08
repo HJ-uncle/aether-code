@@ -1,8 +1,8 @@
 import { CODE_TOOL_PROFILE_HEADERS } from './tool-profile'
 import type { EngineSnapshot } from '../../shared/ipc'
 
-export function engineTargetError(snapshot: EngineSnapshot, expected?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId'>): string | null {
-  return expected && (snapshot.mode !== expected.mode || snapshot.baseUrl !== expected.baseUrl || snapshot.instanceId !== expected.instanceId)
+export function engineTargetError(snapshot: EngineSnapshot, expected?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>): string | null {
+  return expected && (snapshot.mode !== expected.mode || snapshot.baseUrl !== expected.baseUrl || snapshot.instanceId !== expected.instanceId || (snapshot.accountId ?? null) !== (expected.accountId ?? null))
     ? '引擎连接已经切换，请在当前会话重新操作。'
     : null
 }
@@ -66,6 +66,32 @@ export function assertEngineHealth(value: unknown): void {
   }
 }
 
+/**
+ * Distinguish the two credentials checked by the remote handshake.
+ *
+ * The engine validates the instance token before the user credential. A bad
+ * instance token therefore has a stable message, while API key/JWT failures
+ * come from the user-auth middleware. Keep this mapping deliberately narrow:
+ * an unknown 401 must retain the conservative instance-token guidance instead
+ * of guessing which credential failed.
+ */
+export type EngineProbeAuthFailure = 'instance-token' | 'user-credential' | 'unknown'
+
+export function classifyEngineProbeAuthFailure(message: unknown): EngineProbeAuthFailure {
+  if (typeof message !== 'string') return 'unknown'
+  const normalized = message.trim()
+  if (/^invalid or missing instance token$/i.test(normalized)) return 'instance-token'
+  if (
+    /^authentication required$/i.test(normalized) ||
+    /^invalid api key(?::|$)/i.test(normalized) ||
+    /^invalid jwt(?::|$)/i.test(normalized) ||
+    /^invalid (?:account )?session(?::|$)/i.test(normalized) ||
+    /^登录已失效/.test(normalized) ||
+    /^jwt authentication is not configured$/i.test(normalized)
+  ) return 'user-credential'
+  return 'unknown'
+}
+
 /** A manually started loopback development engine may use its standalone auth contract. */
 export function remoteInstanceToken(url: string, configuredToken?: string): string {
   const parsed = new URL(url)
@@ -114,8 +140,8 @@ const REMOTE_READ_ROUTES = [
   /^\/api\/v1\/lsp\/adapters$/,
   /^\/api\/v1\/subagent\/runs(?:\/[a-zA-Z0-9_-]+(?:\/events)?)?$/,
   /^\/api\/v1\/command-jobs(?:\/[a-zA-Z0-9_-]+(?:\/output)?)?$/,
-  /^\/api\/v1\/sessions\/[a-zA-Z0-9_-]+\/binding$/
-  ,/^\/api\/v1\/memory\/(settings|recall\/[a-zA-Z0-9_.:-]+|list|graph)$/
+  /^\/api\/v1\/sessions\/[a-zA-Z0-9_-]+\/binding$/,
+  /^\/api\/v1\/memory\/(settings|recall\/[a-zA-Z0-9_.:-]+|list|graph|[a-zA-Z0-9_.:-]+)$/
 ]
 
 const REMOTE_CHAT_ROUTES = [
@@ -125,13 +151,13 @@ const REMOTE_CHAT_ROUTES = [
   /^\/api\/v1\/conversation\/compress$/,
   /^\/api\/v1\/subagent\/cancel$/,
   /^\/api\/v1\/subagent\/runs\/[a-zA-Z0-9_-]+\/cancel$/,
-  /^\/api\/v1\/command-jobs\/[a-zA-Z0-9_-]+\/cancel$/
-  ,/^\/api\/v1\/mcp\/servers\/[a-zA-Z0-9_-]+\/test$/
-  ,/^\/api\/v1\/mcp\/servers(?:\/[a-zA-Z0-9_-]+)?\/(?:enable|disable)$/
-  ,/^\/api\/v1\/skills\/imports(?:\/chunks)?(?:\/[a-zA-Z0-9_-]+)?(?:\/merge)?$/
-  ,/^\/api\/v1\/knowledge\/(documents|bases|search)$/
-  ,/^\/api\/v1\/memory\/(remember|link|consolidate)$/
-  ,/^\/api\/v1\/workspace\/(bind|file|file\/create|folder\/create|file\/trash|file\/move|file\/copy)$/
+  /^\/api\/v1\/command-jobs\/[a-zA-Z0-9_-]+\/cancel$/,
+  /^\/api\/v1\/mcp\/servers\/[a-zA-Z0-9_-]+\/test$/,
+  /^\/api\/v1\/mcp\/servers(?:\/[a-zA-Z0-9_-]+)?\/(?:enable|disable)$/,
+  /^\/api\/v1\/skills\/imports(?:\/chunks)?(?:\/[a-zA-Z0-9_-]+)?(?:\/merge)?$/,
+  /^\/api\/v1\/knowledge\/(documents|bases|search)$/,
+  /^\/api\/v1\/memory\/(remember|nodes|link|consolidate)$/,
+  /^\/api\/v1\/workspace\/(bind|file|file\/create|folder\/create|file\/trash|file\/move|file\/copy)$/
 ]
 
 /** Conversation execution uses server-side workspace paths, never the local IDE root. */
@@ -208,4 +234,10 @@ export function normalizeEnginePath(path: string): string {
   if (/^\/(health|meta|metrics|openapi\.json|auth)(\/|$)/.test(trimmed)) return trimmed
   if (/^\/api\/v1(\/|$)/.test(trimmed)) return trimmed
   return `/api/v1${trimmed}`
+}
+
+/** Resolve dot segments exactly as fetch does before guarding credential-returning routes. */
+export function isAccountRequestPath(path: string): boolean {
+  const resolved = new URL(normalizeEnginePath(path), 'http://engine.invalid').pathname
+  try { return /^\/auth(?:\/|$)/.test(decodeURIComponent(resolved)) } catch { return true }
 }

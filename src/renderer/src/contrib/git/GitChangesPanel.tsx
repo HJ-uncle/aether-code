@@ -66,6 +66,7 @@ import {
   refreshGit,
   selectGitFile,
   reloadLog,
+  startGitAutoFetch,
   renameBranch,
   revertCommit,
   addRemote,
@@ -331,6 +332,12 @@ export function GitChangesPanel(): JSX.Element {
   const cloneFlow = useGitCloneFlow()
   const workspace = useWorkspace()
   const recentFolders = useSyncExternalStore(onRecentFoldersChanged, getRecentFolders)
+
+  // Git 的后台获取是工作台级能力；面板首次挂载时启动一次，之后由偏好
+  // 与工作区状态控制下一次调度，避免只打开过一次 Git 面板才生效。
+  useEffect(() => {
+    startGitAutoFetch()
+  }, [workspace.root])
 
   // 克隆流程的宿主回调（目录选择/确认/打开工作区）幂等注入一次。
   useEffect(() => {

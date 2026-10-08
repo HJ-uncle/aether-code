@@ -40,6 +40,7 @@ export interface PreviewDocumentInput {
   channel: string
   bridgeScript: string
   colors: { background: string; foreground: string; muted: string; border: string; accent: string }
+  remote?: boolean
 }
 
 /** Static resources use the existing workspace-checked IPC; the iframe gets only self-contained bytes. */
@@ -49,6 +50,7 @@ export async function buildSourcePreviewDocument(input: PreviewDocumentInput): P
   const document = new DOMParser().parseFromString(html, 'text/html')
   const resources = new Map<string, Promise<Awaited<ReturnType<typeof readFile>> | null>>()
   let totalBytes = 0
+  const remote = input.remote ?? false
   const load = (path: string): Promise<Awaited<ReturnType<typeof readFile>> | null> => {
     const key = fileIdentity(path)
     const existing = resources.get(key)
@@ -70,7 +72,7 @@ export async function buildSourcePreviewDocument(input: PreviewDocumentInput): P
   }
   const resourceUrl = async (reference: string, fromPath: string): Promise<string> => {
     if (/^data:(?:image\/(?:png|jpeg|gif|webp|svg\+xml|avif)|font\/[^;,]+|audio\/[^;,]+|video\/[^;,]+)[;,]/i.test(reference)) return reference
-    const path = resolvePreviewResource(fromPath, reference, input.workspaceRoot)
+    const path = resolvePreviewResource(fromPath, reference, input.workspaceRoot, remote)
     if (!path) return ''
     const mime = MIME[paths.basename(path).split('.').pop()?.toLowerCase() ?? '']
     if (!mime) return ''
@@ -80,7 +82,7 @@ export async function buildSourcePreviewDocument(input: PreviewDocumentInput): P
   }
   const rewriteCss = async (css: string, fromPath: string, ancestors: string[] = []): Promise<string> => {
     const expanded = await replaceAsync(css, /@import\s+(?:url\(\s*)?["']([^"']+)["']\s*\)?\s*([^;]*);/gi, async (match) => {
-      const path = resolvePreviewResource(fromPath, match[1], input.workspaceRoot)
+      const path = resolvePreviewResource(fromPath, match[1], input.workspaceRoot, remote)
       if (!path || ancestors.includes(fileIdentity(path)) || ancestors.length >= 4 || !/\.css$/i.test(path)) return ''
       const file = await load(path)
       if (!file || file.isBinary) return ''
@@ -103,7 +105,7 @@ export async function buildSourcePreviewDocument(input: PreviewDocumentInput): P
   }
   await Promise.all([...document.querySelectorAll('link')].map(async (link) => {
     if (link.rel !== 'stylesheet') { link.remove(); return }
-    const path = resolvePreviewResource(input.filePath, link.getAttribute('href') ?? '', input.workspaceRoot)
+    const path = resolvePreviewResource(input.filePath, link.getAttribute('href') ?? '', input.workspaceRoot, remote)
     const file = path && /\.css$/i.test(path) ? await load(path) : null
     if (!path || !file || file.isBinary) { link.remove(); return }
     const style = document.createElement('style')
@@ -129,7 +131,7 @@ export async function buildSourcePreviewDocument(input: PreviewDocumentInput): P
   document.querySelectorAll('a').forEach((anchor) => {
     const href = anchor.getAttribute('href') ?? ''
     if (href.startsWith('#')) return
-    const path = resolvePreviewResource(input.filePath, href, input.workspaceRoot)
+    const path = resolvePreviewResource(input.filePath, href, input.workspaceRoot, remote)
     anchor.removeAttribute('href')
     anchor.removeAttribute('target')
     if (path) { anchor.setAttribute('data-aether-local-path', path); anchor.setAttribute('href', '#') }

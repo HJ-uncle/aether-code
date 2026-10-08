@@ -18,6 +18,7 @@ import { toast } from '@renderer/core/toast'
 import { getSettings } from '@renderer/core/engine/client'
 import { getEngineStorageKey, isRemoteEngine, sessionStorageKey } from '@renderer/core/engine/source'
 import { buildTerminalTheme } from './terminal-theme'
+import { getTerminalPreferences, onTerminalPreferencesChanged } from './terminal-preferences'
 
 /** 本地轨共用的会话操作面：上层不感知数据是走 IPC 还是 WS */
 export interface TerminalTransport {
@@ -80,6 +81,20 @@ let state: TerminalState = {
 }
 const listeners = new Set<() => void>()
 
+// Settings changes apply to existing sessions as well as newly created ones,
+// matching VS Code's live terminal preference behavior.
+onTerminalPreferencesChanged(() => {
+  const preferences = getTerminalPreferences()
+  for (const session of state.sessions) {
+    session.term.options.fontFamily = preferences.fontFamily
+    session.term.options.fontSize = preferences.fontSize
+    session.term.options.lineHeight = preferences.lineHeight
+    session.term.options.cursorBlink = preferences.cursorBlink
+    session.term.options.scrollback = preferences.scrollback
+  }
+  if (state.sessions.length > 0) setState({ sessions: [...state.sessions] })
+})
+
 function setState(patch: Partial<TerminalState>): void {
   state = { ...state, ...patch }
   for (const listener of listeners) listener()
@@ -135,10 +150,13 @@ export async function copyTerminalSelection(selection: string): Promise<void> {
 }
 
 function newTerminal(): { term: Terminal; fit: FitAddon } {
+  const preferences = getTerminalPreferences()
   const term = new Terminal({
-    fontFamily: 'Consolas, "Cascadia Mono", monospace',
-    fontSize: 12,
-    cursorBlink: true,
+    fontFamily: preferences.fontFamily,
+    fontSize: preferences.fontSize,
+    lineHeight: preferences.lineHeight,
+    cursorBlink: preferences.cursorBlink,
+    scrollback: preferences.scrollback,
     allowProposedApi: true,
     // 背景与面板区同材质（--bg-surface），终端不再是一块"贴进来的黑砖"
     theme: buildTerminalTheme()

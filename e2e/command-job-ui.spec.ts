@@ -16,8 +16,9 @@ type Body = { stream?: boolean; tools?: Array<{ function: { name: string; parame
 const root = resolve(__dirname, '..'), engineRoot = resolve(root, '..', 'ai-agent-engine'), model = 'd7-command-fixture', key = '7'.repeat(64)
 let fixture = '', baseUrl = '', app: ElectronApplication | undefined, page: Page
 const requests: Array<{ scenario: string; body: Body }> = [], errors: string[] = []
+let callSequence = 0
 function respond(response: ServerResponse, body: Body, content: string, calls: Array<{ name: string; args: unknown }> = []) {
-  const tool_calls = calls.map((call, index) => ({ id: `d7-call-${index}`, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.args) } }))
+  const tool_calls = calls.map(call => ({ id: `d7-call-${callSequence++}`, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.args) } }))
   const finish = calls.length ? 'tool_calls' : 'stop'
   if (body.stream) {
     response.writeHead(200, { 'Content-Type': 'text/event-stream' })
@@ -34,9 +35,20 @@ const provider = createServer((incoming, response) => {
     const scenario = JSON.stringify(body.messages[index]?.content).match(/\[d7:(\w+)\]/)?.[1]
     if (!scenario) throw new Error('D7 missing provider scenario')
     requests.push({ scenario, body })
+    if (scenario === 'failures') {
+      // Safe mode asks before each host-interpreter launch.  The first batch
+      // therefore leaves sibling calls interrupted; replay the remaining calls
+      // on subsequent provider turns so the fixture still exercises failed,
+      // timed-out, and foreground command states.
+      const attempt = requests.filter(request => request.scenario === 'failures').length
+      if (attempt === 1) respond(response, body, '', [command('failure'), command('timeout', 900), command('foreground', 10000, false)])
+      else if (attempt === 2) respond(response, body, '', [command('timeout', 900), command('foreground', 10000, false)])
+      else if (attempt === 3) respond(response, body, '', [command('foreground', 10000, false)])
+      else respond(response, body, `D7_PARENT_FINISHED_${scenario}`)
+      return
+    }
     if (body.messages.slice(index + 1).some(message => message.role === 'tool')) { respond(response, body, `D7_PARENT_FINISHED_${scenario}`); return }
     if (scenario === 'child') { respond(response, body, '', [{ name: 'subagent', args: { task: '[d7:childworker] Launch the fixture background worker and return immediately.', description: 'D7 child background job', role: 'implementer', access: 'inherit', maxSteps: 4 } }]); return }
-    if (scenario === 'failures') { respond(response, body, '', [command('failure'), command('timeout', 900), command('foreground', 10000, false)]); return }
     respond(response, body, '', [command(scenario)])
   })().catch(error => { errors.push(String(error)); if (!response.headersSent) response.writeHead(500); response.end(String(error)) })
 })
@@ -55,8 +67,36 @@ function env(): NodeJS.ProcessEnv { return { ...process.env, AETHER_IDE_ENGINE_E
 async function launch() { app = await electron.launch({ args: ['.', `--user-data-dir=${fixture}`], cwd: root, env: env() }); page = await app.firstWindow(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90000 }) }
 async function select(scenario: string) { await page.evaluate(lastSessionId => window.aether.settings.update({ lastSessionId }), `d7-${scenario}`); await page.reload(); await expect(page.locator('.chat__input')).toHaveAttribute('contenteditable', 'true') }
 async function send(scenario: string) { await page.locator('.chat__input').fill(`[d7:${scenario}]`); await page.getByRole('button', { name: '发送', exact: true }).click() }
+async function setSecurityMode(sessionId: string, mode: 'safe' | 'standard' | 'full-access'): Promise<void> {
+  const response = await page.evaluate(({ sessionId, mode }) => window.aether.engine.request({ method: 'PUT', path: '/security/mode', body: { sessionId, mode } }), { sessionId, mode })
+  expect(response.ok, response.message).toBe(true)
+}
 async function snapshot(scenario: string) { const response = await page.evaluate(sessionId => window.aether.engine.request<ChatRecoverySnapshot>({ method: 'GET', path: '/chat/snapshot', query: { sessionId } }), `d7-${scenario}`); expect(response.ok, response.message).toBe(true); return response.data! }
-async function finished(scenario: string) { await expect.poll(async () => (await snapshot(scenario)).run?.status).toBe('succeeded'); await expect(page.getByRole('button', { name: '停止生成', exact: true })).toBeHidden(); expect(errors).toEqual([]) }
+async function finished(scenario: string) {
+  // Safe mode deliberately asks before launching host interpreters (the fixture
+  // uses Node).  Drive the real approval card instead of weakening the policy
+  // just for this end-to-end fixture.  A resumed run may expose another approval
+  // after a tool batch; keep acknowledging only while the durable run says it
+  // is waiting, then let the normal terminal assertion verify completion.
+  for (let attempts = 0; attempts < 8; attempts++) {
+    const status = (await snapshot(scenario)).run?.status
+    if (status === 'succeeded') break
+    if (status !== 'waiting') {
+      // The approval response can complete the run before the next snapshot;
+      // wait for either terminal success or another durable waiting request.
+      await expect.poll(async () => {
+        const next = (await snapshot(scenario)).run?.status
+        return next === 'waiting' || next === 'succeeded'
+      }).toBe(true)
+      if ((await snapshot(scenario)).run?.status === 'succeeded') break
+    }
+    const allow = page.getByRole('button', { name: '允许执行', exact: true }).last()
+    await expect(allow).toBeVisible({ timeout: 10_000 })
+    await allow.click()
+  }
+  await expect.poll(async () => (await snapshot(scenario)).run?.status).toBe('succeeded')
+  await expect(page.getByRole('button', { name: '停止生成', exact: true })).toBeHidden(); expect(errors).toEqual([])
+}
 async function jobs(scenario: string): Promise<CommandJobSnapshot[]> { const response = await page.evaluate(sessionId => window.aether.engine.request<{ jobs: CommandJobSnapshot[] }>({ method: 'GET', path: '/command-jobs', query: { sessionId } }), `d7-${scenario}`); expect(response.ok, response.message).toBe(true); return response.data!.jobs }
 function card(id: string): Locator { return page.locator(`.command-job-card[data-job-id="${id}"]`) }
 function marker(name: string) { return join(fixture, 'workspace', name) }
@@ -108,10 +148,14 @@ const {rootRunStore}=await import(${JSON.stringify(url('storage/root-runs/index.
     const all = await jobs('failures'), failed = all.find(job => job.args.includes('failure'))!, timed = all.find(job => job.args.includes('timeout'))!, foreground = all.find(job => job.args.includes('foreground'))!
     await expect(page.locator('.command-job-card')).toHaveCount(2); await expect(card(failed.jobId)).toHaveAttribute('data-status', 'failed'); await expect(card(failed.jobId)).toContainText('退出码 7'); await expect(card(failed.jobId).getByLabel('命令输出')).toContainText('D7_FAILURE_REASON')
     await expect(card(timed.jobId)).toHaveAttribute('data-status', 'timed_out'); await expect(card(timed.jobId)).toContainText('COMMAND_TIMEOUT')
-    expect(foreground).toMatchObject({ background: false, status: 'succeeded', exitCode: 0 }); await page.reload(); await expect(card(failed.jobId)).toHaveAttribute('data-status', 'failed'); await expect(card(timed.jobId)).toHaveAttribute('data-status', 'timed_out'); expect(callCount('failures')).toBe(2)
+    expect(foreground).toMatchObject({ background: false, status: 'succeeded', exitCode: 0 }); await page.reload(); await expect(card(failed.jobId)).toHaveAttribute('data-status', 'failed'); await expect(card(timed.jobId)).toHaveAttribute('data-status', 'timed_out'); expect(callCount('failures')).toBe(4)
   })
   test('子代理派发后父/子结束仍能发现后台命令，归属恢复且可单独停止', async () => {
-    await select('child'); await send('child'); await finished('child')
+    await select('child');
+    // The child approval is owned by the subagent and has no root UI card.
+    // Use standard mode for this ownership/recovery fixture so it can launch
+    // its worker; safe-mode approval remains covered by the root command cases.
+    await setSecurityMode('d7-child', 'standard'); await send('child'); await finished('child')
     const job = (await jobs('child'))[0]; expect(job.ownerSessionId).not.toBe(job.sessionId); expect(job.ownerRunId).toBeTruthy(); expect(job.status).toBe('running')
     const panel = page.getByRole('region', { name: '子代理后台命令' }); await expect(panel.locator('.command-job-card')).toHaveCount(1); await expect(card(job.jobId)).toContainText(job.ownerRunId!); await expect(card(job.jobId).getByLabel('命令输出')).toContainText('D7_START_childworker')
     await page.reload(); await expect(panel.locator('.command-job-card')).toHaveCount(1); await card(job.jobId).getByRole('button', { name: '停止命令', exact: true }).click(); await expect(card(job.jobId)).toHaveAttribute('data-status', 'cancelled')

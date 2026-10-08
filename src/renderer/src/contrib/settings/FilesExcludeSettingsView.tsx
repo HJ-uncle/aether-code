@@ -13,6 +13,7 @@ export function FilesExcludeSettingsView(): JSX.Element {
 
   return (
     <ExcludeSettingsView
+      settingKey="filesExclude"
       className="settings-view--files-exclude"
       value={value}
       defaults={DEFAULT_FILES_EXCLUDE}

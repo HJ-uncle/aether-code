@@ -549,6 +549,27 @@ export function useChat(): {
         answeringRef.current.clear()
         reconcile()
         if (run?.status === 'succeeded') void drainQueueRef.current()
+        else if (!run && event.type === 'done' && activeSessionRef.current === viewSessionRef.current) {
+          // A remote proxy may close the SSE stream just after the payloads and
+          // before the terminal run frame is observed locally. Recover the
+          // durable snapshot so the message gets its real status instead of
+          // remaining an unlabelled interrupted transport.
+          const sessionId = activeSessionRef.current
+          if (sessionId) {
+            recover(sessionId)
+            // The remote HTTP response can close one tick before the engine
+            // finishes writing the history projection. A couple of bounded
+            // re-reads close that persistence gap without reopening a live
+            // stream or disturbing a newer user request.
+            for (const delay of [100, 400]) {
+              window.setTimeout(() => {
+                if (activeSessionRef.current === sessionId && !activeStreamRef.current) {
+                  void recoverRef.current(sessionId)
+                }
+              }, delay)
+            }
+          }
+        }
         else if (event.type === 'error' && run?.status === 'waiting' && isApprovalConflict(event.status, event.code, event.message) &&
           activeSessionRef.current === viewSessionRef.current) {
           const sessionId = activeSessionRef.current

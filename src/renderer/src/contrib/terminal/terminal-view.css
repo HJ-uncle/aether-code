@@ -1,0 +1,100 @@
+/*
+ * Terminal tabs are a toolbar, rather than a second navigation pane. Keeping
+ * them above the prompt leaves the terminal's content as the primary surface
+ * and prevents a lone session from reserving an empty 150px side rail.
+ *
+ * The base rules live in components.css for legacy views. The extra root
+ * class keeps this compact layout scoped to TerminalView and gives the local
+ * rules enough specificity to be the final word without changing global CSS.
+ */
+.terminal-view.terminal-view--tabs {
+  flex-direction: column;
+  gap: 0;
+  padding: 4px 8px 4px 8px;
+}
+
+.terminal-view.terminal-view--tabs .terminal-view__main {
+  order: 2;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+}
+
+.terminal-view.terminal-view--tabs .terminal-view__side {
+  order: 1;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  width: 100%;
+  min-height: var(--control-h);
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.terminal-view.terminal-view--tabs .terminal-view__side-actions {
+  flex: 0 0 auto;
+  order: 2;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  padding: 2px 0 2px var(--space-2);
+}
+
+.terminal-view.terminal-view--tabs .terminal-view__side-btn {
+  width: var(--control-h-compact);
+  height: var(--control-h-compact);
+}
+
+.terminal-view.terminal-view--tabs .terminal-view__list {
+  display: flex;
+  flex: 1 1 auto;
+  order: 1;
+  align-items: center;
+  min-width: 0;
+  min-height: var(--control-h);
+  gap: var(--space-1);
+  padding: 2px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.terminal-view.terminal-view--tabs .terminal-view__item {
+  flex: 0 1 180px;
+  min-width: 108px;
+  max-width: 220px;
+  min-height: var(--control-h-compact);
+  padding: 2px var(--space-1) 2px var(--space-2);
+  gap: var(--space-1);
+  border-radius: var(--radius);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.terminal-view.terminal-view--tabs .terminal-view__item.is-active {
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.terminal-view.terminal-view--tabs .terminal-view__item-close {
+  flex: 0 0 auto;
+  width: var(--control-h-compact);
+  height: var(--control-h-compact);
+  align-items: center;
+  justify-content: center;
+}
+
+/* With one tab there is no reason to show a scroll track or a broad empty
+ * navigation surface; actions remain available at the trailing edge. */
+@media (max-width: 560px) {
+  .terminal-view.terminal-view--tabs {
+    padding-inline: 4px;
+  }
+
+  .terminal-view.terminal-view--tabs .terminal-view__item {
+    min-width: 96px;
+    max-width: 160px;
+  }
+}

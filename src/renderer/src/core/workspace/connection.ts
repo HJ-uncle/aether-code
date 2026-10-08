@@ -23,7 +23,7 @@ export function workspaceConnectionKey(): string {
 export interface WorkspaceTarget {
   key: string
   generation: number
-  expectedEngine: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId'>
+  expectedEngine: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>
   sessionId: string
   workspaceRoot: string
 }

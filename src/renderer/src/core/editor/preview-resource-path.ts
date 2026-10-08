@@ -1,5 +1,4 @@
 import { fileIdentity } from './file-identity'
-import { isRemoteEngine } from '../engine/source'
 
 function fileUrl(path: string): URL {
   const normalized = path.replace(/\\/g, '/')
@@ -8,13 +7,13 @@ function fileUrl(path: string): URL {
 }
 
 /** Resolve only local project resources; a preview never expands the user's filesystem grant. */
-export function resolvePreviewResource(filePath: string, reference: string, workspaceRoot: string): string | null {
+export function resolvePreviewResource(filePath: string, reference: string, workspaceRoot: string, remote = false): string | null {
   if (!workspaceRoot || !reference.trim() || /[\u0000-\u001f]/.test(reference)) return null
   // Remote workspace paths use the server's absolute label in the renderer.
   // Resolve them without constructing a file: URL, then the normal fs-client
   // adapter can fetch the resource from the engine session. Keep the
   // `remote://` form for callers/tests that use an explicit virtual root.
-  if (isRemoteEngine() || workspaceRoot.startsWith('remote://')) {
+  if (remote || workspaceRoot.startsWith('remote://')) {
     try {
       const source = reference.replace(/\\/g, '/').split(/[?#]/, 1)[0]
       if (!source || source.startsWith('/') || /^[a-z]+:/i.test(source)) return null

@@ -8,6 +8,8 @@
  */
 import { app, dialog, ipcMain, webContents, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { IPC } from '../shared/ipc'
+import { accountService, configureAccountService } from './account/service'
+import type { AccountProfileInput } from '../shared/account'
 import type {
   CopyIntoWorkspaceInput,
   EngineRequestInput,
@@ -37,7 +39,7 @@ import {
 import { remoteTerminalService } from './terminal/remote-terminal'
 import { replaceWorkspace, searchWorkspace, previewReplaceWorkspace } from './search/search-service'
 import { getSettings, updateSettings } from './settings-store'
-import type { AppSettings, RemoteTokenStatus } from '../shared/ipc'
+import type { AppSettings, RemoteAuthCredential, RemoteAuthStatus, RemoteTokenStatus } from '../shared/ipc'
 import type { GitCloneOptions, GitLogQuery, GitResult } from '../shared/git-types'
 import { addSshKeyToAgent } from './git/ssh-agent'
 import { cancelClone, cloneRepository } from './git/git-clone'
@@ -45,6 +47,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { resolveRuntime } from './engine/runtime'
 import { clearRemoteInstanceToken, remoteInstanceTokenConfigured, setRemoteInstanceToken, withRemoteInstanceTokenChange } from './engine/remote-token'
+import { remoteAuthStatus, withRemoteAuthChange } from './engine/remote-auth'
 import { importLocalRuntime } from './engine/import-local-runtime'
 import { getActiveRuntimeId, listLocalRuntimes, removeLocalRuntime, setActiveRuntimeId } from './engine/local-runtime-store'
 import type { EngineImportProgress, EngineRuntimeCatalog } from '../shared/engine-import'
@@ -65,6 +68,36 @@ function broadcast(channel: string, payload: unknown): void {
 }
 
 export function registerIpcHandlers(): void {
+  configureAccountService({
+    target: () => engineHost.accountTarget(),
+    changed: state => broadcast(IPC.event.accountChanged, state),
+    identityChanged: async () => {
+      abortAllStreams()
+      engineHost.accountIdentityChanged()
+      await remoteTerminalService.disposeAll()
+      if (engineHost.getSnapshot().phase !== 'ready') {
+        const settings = getSettings()
+        await engineHost.start(settings.engineMode, settings.remoteBaseUrl, settings.remoteWorkspaceRoot)
+      }
+    }
+  })
+  ipcMain.handle(IPC.invoke.accountAction, (_event, action: unknown, ...args: unknown[]) => {
+    switch (action) {
+      case 'getState': return accountService.getState()
+      case 'register': return accountService.register()
+      case 'login': return accountService.login(args[0] as string)
+      case 'updateProfile': return accountService.updateProfile(args[0] as AccountProfileInput)
+      case 'logout': return accountService.logout(args[0] === true)
+      case 'sessions': return accountService.sessions()
+      case 'revokeSession': return accountService.revokeSession(args[0] as string)
+      case 'exportRecovery': return accountService.exportRecovery()
+      case 'importRecovery': return accountService.importRecovery()
+      case 'externalLogin': return accountService.externalLogin(args[0] as string, args[1] as 'login' | 'link', args[2] as string | undefined)
+      case 'cancelExternalLogin': return accountService.cancelExternalLogin()
+      case 'unlink': return accountService.unlink(args[0] as string)
+      default: throw new Error('未知账号操作。')
+    }
+  })
   // ── 引擎状态广播 ──
   engineHost.on('snapshot', (snapshot: EngineSnapshot) => {
     broadcast(IPC.event.engineSnapshot, snapshot)
@@ -261,6 +294,10 @@ export function registerIpcHandlers(): void {
     }
   }
   ipcMain.handle(IPC.invoke.settingsRemoteTokenStatus, remoteTokenStatus)
+  ipcMain.handle(IPC.invoke.settingsRemoteAuthStatus, (_event, url: string): RemoteAuthStatus => {
+    if (typeof url !== 'string') throw new Error('远端地址必须是字符串')
+    return remoteAuthStatus(url)
+  })
   ipcMain.handle(IPC.invoke.settingsSetRemoteToken, (_event, token: string) => {
     ensureNotActivatingRuntime()
     if (typeof token !== 'string') throw new Error('远端令牌必须是字符串')
@@ -272,9 +309,9 @@ export function registerIpcHandlers(): void {
     clearRemoteInstanceToken()
     return remoteTokenStatus()
   })
-  ipcMain.handle(IPC.invoke.settingsSaveEngine, (_event, patch: Partial<AppSettings>, token: string) => {
+  ipcMain.handle(IPC.invoke.settingsSaveEngine, (_event, patch: Partial<AppSettings>, token?: string, auth?: RemoteAuthCredential | null) => {
     ensureNotActivatingRuntime()
-    if (typeof token !== 'string') throw new Error('远端令牌必须是字符串')
+    if (token !== undefined && typeof token !== 'string') throw new Error('远端令牌必须是字符串')
     // Never spread a credential-bearing object into ordinary persisted settings.
     const connection = {
       engineMode: patch.engineMode,
@@ -288,7 +325,14 @@ export function registerIpcHandlers(): void {
       !Number.isInteger(connection.preferredPort) || connection.preferredPort! < 1 || connection.preferredPort! > 65535) {
       throw new Error('引擎连接设置无效')
     }
-    return withRemoteInstanceTokenChange(token, () => updateSettings(connection))
+    const save = (): AppSettings => updateSettings(connection)
+    const withAuth = (): AppSettings =>
+      withRemoteAuthChange(
+        typeof connection.remoteBaseUrl === 'string' ? connection.remoteBaseUrl : getSettings().remoteBaseUrl,
+        auth,
+        save
+      )
+    return token === undefined ? withAuth() : withRemoteInstanceTokenChange(token, withAuth)
   })
 
   // ── 文件系统 ──
@@ -580,6 +624,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.invoke.terminalCreate, async (event, input: TerminalCreateInput) => {
     const sender = event.sender
     if (engineHost.getSnapshot().mode === 'remote') {
+      await engineHost.prepareRequestHeaders()
       return remoteTerminalService.create(input, {
         onData: (id, chunk) => { if (!sender.isDestroyed()) sender.send(IPC.event.terminalData, { id, chunk }) },
         onExit: (info) => { if (!sender.isDestroyed()) sender.send(IPC.event.terminalExit, info) }

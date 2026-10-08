@@ -1,10 +1,11 @@
 import { useEffect, useState, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
-import type { EngineMode } from '@shared/ipc'
+import type { EngineMode, RemoteAuthCredential, RemoteAuthStatus } from '@shared/ipc'
 import type { EngineImportProgress, EngineRuntimeCatalog } from '@shared/engine-import'
 import { Icon } from '@renderer/workbench/icons'
 import { Select } from '@renderer/workbench/Select'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
+import { openAppSettings } from './app-settings-navigation'
 import {
   SettingsContent,
   SettingsDisclosure,
@@ -37,6 +38,8 @@ const INITIAL_IMPORT_PROGRESS: EngineImportProgress = {
   bytes: 0,
   message: ''
 }
+
+const EMPTY_REMOTE_AUTH: RemoteAuthStatus = { configured: false, type: null, source: 'none' }
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
@@ -75,6 +78,12 @@ export function EngineSettingsView(): JSX.Element {
     'none'
   )
   const [clearRemoteToken, setClearRemoteToken] = useState(false)
+  const [remoteAuthStatus, setRemoteAuthStatus] = useState<RemoteAuthStatus>(EMPTY_REMOTE_AUTH)
+  const [remoteAuthType, setRemoteAuthType] = useState<RemoteAuthCredential['type']>('api-key')
+  const [remoteAuthValue, setRemoteAuthValue] = useState('')
+  const [clearRemoteAuth, setClearRemoteAuth] = useState(false)
+  const [authStatusLoading, setAuthStatusLoading] = useState(false)
+  const [authStatusError, setAuthStatusError] = useState('')
   const [autoStart, setAutoStart] = useState(settings.autoStartEngine)
   const [saved, setSaved] = useState(false)
   const [saveError, setSaveError] = useState('')
@@ -120,6 +129,39 @@ export function EngineSettingsView(): JSX.Element {
 
   useEffect(() => {
     let alive = true
+    if (mode !== 'remote' || !remoteUrl.trim()) {
+      setRemoteAuthStatus(EMPTY_REMOTE_AUTH)
+      setAuthStatusLoading(false)
+      setAuthStatusError('')
+      return () => {
+        alive = false
+      }
+    }
+    setAuthStatusLoading(true)
+    setAuthStatusError('')
+    setRemoteAuthStatus(EMPTY_REMOTE_AUTH)
+    // Status follows the destination; a delayed response from the previous server must not
+    // display its credential as available on the newly entered address.
+    const timer = window.setTimeout(() => {
+      void window.aether.settings.remoteAuthStatus(remoteUrl.trim())
+        .then((status) => {
+          if (!alive) return
+          setRemoteAuthStatus(status)
+          setRemoteAuthType(status.type ?? 'api-key')
+        })
+        .catch((error: unknown) => {
+          if (alive) setAuthStatusError(error instanceof Error ? error.message : String(error))
+        })
+        .finally(() => { if (alive) setAuthStatusLoading(false) })
+    }, 200)
+    return () => {
+      alive = false
+      window.clearTimeout(timer)
+    }
+  }, [mode, remoteUrl])
+
+  useEffect(() => {
+    let alive = true
     void window.aether.settings
       .remoteTokenStatus()
       .then((status) => {
@@ -144,6 +186,10 @@ export function EngineSettingsView(): JSX.Element {
     setMode(settings.engineMode)
     setPort(String(settings.preferredPort))
     setRemoteUrl(settings.remoteBaseUrl)
+    if (settings.remoteBaseUrl !== syncedSettings.remoteBaseUrl) {
+      setRemoteAuthValue('')
+      setClearRemoteAuth(false)
+    }
     setRemoteWorkspaceRoot(settings.remoteWorkspaceRoot)
     setAutoStart(settings.autoStartEngine)
   }
@@ -155,6 +201,8 @@ export function EngineSettingsView(): JSX.Element {
     remoteWorkspaceRoot !== settings.remoteWorkspaceRoot ||
     remoteToken.trim().length > 0 ||
     clearRemoteToken ||
+    remoteAuthValue.trim().length > 0 ||
+    clearRemoteAuth ||
     autoStart !== settings.autoStartEngine
 
   // A remote outage is represented as `starting` while EngineHost performs
@@ -252,6 +300,11 @@ export function EngineSettingsView(): JSX.Element {
       if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535)
         throw new Error('端口必须是 1–65535 的整数')
       const tokenMutation = clearRemoteToken ? '' : remoteToken.trim() || undefined
+      const authMutation: RemoteAuthCredential | null | undefined = clearRemoteAuth
+        ? null
+        : remoteAuthValue.trim()
+          ? { type: remoteAuthType, value: remoteAuthValue.trim() }
+          : undefined
       await updateSettings(
         {
           engineMode: mode,
@@ -260,7 +313,8 @@ export function EngineSettingsView(): JSX.Element {
           remoteWorkspaceRoot: remoteWorkspaceRoot.trim(),
           autoStartEngine: autoStart
         },
-        tokenMutation
+        tokenMutation,
+        authMutation
       )
       if (tokenMutation !== undefined) {
         const status = await window.aether.settings.remoteTokenStatus()
@@ -268,8 +322,16 @@ export function EngineSettingsView(): JSX.Element {
         setRemoteTokenSource(status.source)
         setTokenStatusError('')
       }
+      if (authMutation !== undefined) {
+        const status = await window.aether.settings.remoteAuthStatus(remoteUrl.trim())
+        setRemoteAuthStatus(status)
+        setRemoteAuthType(status.type ?? 'api-key')
+        setAuthStatusError('')
+      }
       setRemoteToken('')
       setClearRemoteToken(false)
+      setRemoteAuthValue('')
+      setClearRemoteAuth(false)
       setSaved(true)
       window.setTimeout(() => setSaved(false), 1600)
       if (restart) await engine.restart()
@@ -485,14 +547,21 @@ export function EngineSettingsView(): JSX.Element {
           <>
             <SettingsRow
               label="远端地址"
-              description="本机独立开发服务可填 http://127.0.0.1:12323；其他地址请在下方填写连接令牌。更换服务地址时，请同时替换或清除已保存的令牌。"
+              description="填写 HTTPS 服务地址后，可在个人账号中登录；本机可使用 HTTP。更换地址时，请同时替换或清除实例令牌。"
             >
               <input
                 className="field__input sg__input sg__input--wide"
                 type="text"
-                placeholder="http://192.168.1.10:12323"
+                placeholder="https://aether.example.com"
                 value={remoteUrl}
-                onChange={(event) => setRemoteUrl(event.target.value)}
+                disabled={saving}
+                aria-label="远端地址"
+                onChange={(event) => {
+                  setRemoteUrl(event.target.value)
+                  // Draft credentials belong to the address at which they were entered.
+                  setRemoteAuthValue('')
+                  setClearRemoteAuth(false)
+                }}
               />
             </SettingsRow>
             <SettingsRow
@@ -511,7 +580,7 @@ export function EngineSettingsView(): JSX.Element {
             </SettingsRow>
             <SettingsRow
               label="远端令牌"
-              description="与目标引擎的 AETHER_INSTANCE_TOKEN 一致；通过系统密钥存储加密保存，留空保留原值。修改后点击“保存并重新连接”。清除已保存的令牌后，若启动环境变量仍存在，将继续使用该变量。"
+              description="引擎实例的连接令牌，由服务管理员提供。加密保存，留空保留；清除后仍可使用启动环境中的令牌。账号登录在个人账号中管理。"
             >
               <div className="settings-view__token-field">
                 <input
@@ -560,6 +629,80 @@ export function EngineSettingsView(): JSX.Element {
                 </div>
               </SettingsContent>
             ) : null}
+            <SettingsRow label="个人账号" description="一键登录、完善个人资料，并管理第三方绑定和恢复凭证。">
+              <button className="btn" type="button" disabled={saving} onClick={() => openAppSettings('account')}>管理个人账号</button>
+            </SettingsRow>
+            <SettingsDisclosure title="高级用户认证" description="管理员 API Key / JWT 兼容配置。个人账号登录后优先使用账号会话。">
+            <SettingsRow
+              label="认证方式"
+              description={remoteAuthStatus.configured
+                ? `当前已保存：${remoteAuthStatus.type === 'bearer' ? 'JWT' : 'API Key'}。下方选择仅用于新输入的凭据，填写并保存后替换。`
+                : '选择新凭据的类型，填写并保存后生效。'}
+            >
+              <Select
+                value={remoteAuthType}
+                options={[
+                  { value: 'api-key', label: 'API Key' },
+                  { value: 'bearer', label: 'JWT（Bearer）' }
+                ]}
+                onChange={(value) => {
+                  if (value === 'api-key' || value === 'bearer') setRemoteAuthType(value)
+                }}
+                disabled={saving || authStatusLoading}
+                ariaLabel="远端认证方式"
+                width={220}
+              />
+            </SettingsRow>
+            <SettingsRow
+              label="用户认证凭据"
+              description="仅用于当前服务地址，通过系统密钥存储加密保存。留空保留原值；修改后保存并重新连接。清除后仍可使用绑定此地址的启动环境凭据。"
+            >
+              <div className="settings-view__token-field">
+                <input
+                  className="field__input sg__input sg__input--wide"
+                  type="password"
+                  autoComplete="new-password"
+                  aria-label="远端用户认证凭据"
+                  maxLength={16384}
+                  disabled={saving || authStatusLoading}
+                  placeholder={
+                    authStatusLoading
+                      ? '正在读取当前地址的配置…'
+                      : clearRemoteAuth
+                        ? '保存后清除已存凭据'
+                        : authStatusError
+                          ? '读取失败，可重新输入或清除'
+                          : remoteAuthStatus.configured
+                            ? `${remoteAuthStatus.source === 'environment' ? '环境已提供' : '已配置'} ${remoteAuthStatus.type === 'bearer' ? 'JWT' : 'API Key'}（输入可替换）`
+                            : `输入${remoteAuthType === 'bearer' ? ' JWT' : ' API Key'}`
+                  }
+                  value={remoteAuthValue}
+                  onChange={(event) => {
+                    setRemoteAuthValue(event.target.value)
+                    setClearRemoteAuth(false)
+                  }}
+                />
+                {remoteAuthStatus.source === 'stored' || authStatusError ? (
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={saving || authStatusLoading || clearRemoteAuth}
+                    onClick={() => {
+                      setRemoteAuthValue('')
+                      setClearRemoteAuth(true)
+                    }}
+                  >
+                    清除凭据
+                  </button>
+                ) : null}
+              </div>
+            </SettingsRow>
+            {authStatusError ? (
+              <SettingsContent>
+                <div className="settings-view__error" role="alert">{authStatusError}</div>
+              </SettingsContent>
+            ) : null}
+            </SettingsDisclosure>
           </>
         )}
       </SettingsGroup>

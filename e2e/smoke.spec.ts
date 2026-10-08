@@ -911,7 +911,12 @@ test('资源管理器：虚拟滚动只挂载可见行', async () => {
   await ensureDirExpanded(join(FIXTURE_DIR, 'big'))
 
   // 先确认目录真的展开了（否则"行数少"只是因为没展开）
-  await revealTreeRow(join(FIXTURE_DIR, 'big', 'item-000.txt'))
+  // Expanded state is published before the asynchronous stat/read of 400 children.
+  // Re-scan after loading progresses; waiting at the bottom of a virtual tree
+  // cannot make an earlier row mount itself.
+  await expect.poll(() => revealTreeRow(join(FIXTURE_DIR, 'big', 'item-000.txt'), false), {
+    timeout: 20_000
+  }).toBe(true)
   await expect(page.locator(rowSelector(join(FIXTURE_DIR, 'big', 'item-000.txt')))).toBeVisible({
     timeout: 20_000
   })

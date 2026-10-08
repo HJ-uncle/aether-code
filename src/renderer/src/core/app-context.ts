@@ -7,13 +7,15 @@
  * 本文件 re-export AppProvider，让既有 import 路径保持不变。
  */
 import { createContext, useContext } from 'react'
-import type { AppSettings } from '@shared/ipc'
+import type { AppSettings, RemoteAuthCredential } from '@shared/ipc'
 import type { useEngine } from './engine/useEngine'
 
 export interface AppContextValue {
   engine: ReturnType<typeof useEngine>
   settings: AppSettings
-  updateSettings: (patch: Partial<AppSettings>, remoteToken?: string) => Promise<void>
+  /** 当前用户级设置；settings 在打开工作区后会叠加工作区覆盖值。 */
+  userSettings: AppSettings
+  updateSettings: (patch: Partial<AppSettings>, remoteToken?: string, remoteAuth?: RemoteAuthCredential | null) => Promise<void>
   /** 引擎是否可用（用于命令 when 条件） */
   ready: boolean
   /**

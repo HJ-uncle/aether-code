@@ -1,6 +1,6 @@
 import type { EngineSnapshot } from '@shared/ipc'
 
-type SourceSnapshot = Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'phase'>
+type SourceSnapshot = Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'phase' | 'accountId'>
 let snapshot: SourceSnapshot = { mode: 'embedded', baseUrl: '', phase: 'idle' }
 let generation = 0
 let storageSource = ''
@@ -8,15 +8,16 @@ const listeners = new Set<() => void>()
 
 /** Transport identities expire at restart; persisted preferences keep the endpoint identity. */
 export function engineConnectionKey(value: SourceSnapshot): string {
-  return JSON.stringify([value.mode, value.baseUrl.replace(/\/+$/, ''), value.instanceId ?? null])
+  return JSON.stringify([value.mode, value.baseUrl.replace(/\/+$/, ''), value.instanceId ?? null, value.accountId ?? null])
 }
-export function engineStorageKey(value: Pick<SourceSnapshot, 'mode' | 'baseUrl'>): string {
-  return value.mode === 'embedded' ? '' : 'remote:' + value.baseUrl.replace(/\/+$/, '')
+export function engineStorageKey(value: Pick<SourceSnapshot, 'mode' | 'baseUrl' | 'accountId'>): string {
+  const endpoint = value.mode === 'embedded' ? '' : 'remote:' + value.baseUrl.replace(/\/+$/, '')
+  return value.accountId ? endpoint + ':account:' + value.accountId : endpoint
 }
 export function getEngineStorageKey(): string { return storageSource }
 export function getEngineSource(): number { return generation }
-export function getExpectedEngine(): Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId'> {
-  return { mode: snapshot.mode, baseUrl: snapshot.baseUrl, instanceId: snapshot.instanceId }
+export function getExpectedEngine(): Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'> {
+  return { mode: snapshot.mode, baseUrl: snapshot.baseUrl, instanceId: snapshot.instanceId, accountId: snapshot.accountId }
 }
 export function isRemoteEngine(): boolean { return snapshot.mode === 'remote' }
 export function isEngineReady(): boolean { return snapshot.phase === 'ready' }

@@ -65,6 +65,12 @@
   line-height: 1.45;
 }
 
+.settings-view .sg__scope-note {
+  padding: 9px 18px 0;
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+
 .settings-view .sg__footer {
   max-width: 72ch;
   margin: 8px 6px 0;
@@ -100,6 +106,29 @@
 .settings-view .btn {
   min-height: 30px;
   border-radius: 7px;
+}
+
+.settings-inline-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.settings-number-input {
+  width: 88px;
+  text-align: right;
+}
+
+.settings-unit {
+  color: var(--fg-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.settings-view--workbench .sg__row-control,
+.settings-view--git .sg__row-control {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .settings-view__actions {
@@ -346,6 +375,32 @@
   min-width: 0;
 }
 
+/* Exclusion rules are compact controls rather than descriptive preference
+ * rows. Keep the pattern, switch, and remove action on one scan line even
+ * when the shared narrow-settings rule stacks ordinary rows vertically. */
+.settings-view--files-exclude .sg__row,
+.settings-view--search-exclude .sg__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 12px;
+}
+
+.app-settings__body .settings-view--files-exclude .sg__row-control,
+.app-settings__body .settings-view--search-exclude .sg__row-control {
+  width: auto;
+  min-width: max-content;
+  justify-content: flex-end;
+}
+
+.app-settings__body .settings-view--files-exclude .sg__row-control .toggle,
+.app-settings__body .settings-view--search-exclude .sg__row-control .toggle,
+.app-settings__body .settings-view--files-exclude .sg__row-control .segmented,
+.app-settings__body .settings-view--search-exclude .sg__row-control .segmented {
+  margin-left: 0;
+}
+
 .exclude-row__remove {
   display: grid;
   place-items: center;
@@ -478,5 +533,192 @@
   .keybindings__key,
   .keybindings__search { min-width: 0; max-width: 100%; }
   .keybindings__key { overflow-wrap: anywhere; }
+}
+
+/* VS Code-style settings affordances: one searchable registry above the
+ * navigation/content split, with a small scope switch and filter button. */
+.app-settings {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.app-settings__toolbar {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 18px 9px;
+  border-bottom: 1px solid var(--border);
+  background: var(--material-bg-thin);
+  backdrop-filter: blur(var(--material-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--material-blur)) saturate(180%);
+}
+
+.app-settings__search-wrap {
+  display: flex;
+  flex: 1 1 360px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 760px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--fg-faint);
+  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.app-settings__search-wrap:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.app-settings__search {
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 32px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--fg-strong);
+  font-size: 12px;
+}
+
+.app-settings__search::placeholder { color: var(--fg-faint); }
+
+.app-settings__search-clear,
+.app-settings__filter {
+  display: inline-grid;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+
+.app-settings__search-clear:hover,
+.app-settings__filter:hover,
+.app-settings__filter.is-active {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+.app-settings__scope {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-inset);
+}
+
+.app-settings__scope button {
+  min-width: 52px;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.app-settings__scope button:hover { color: var(--fg-strong); }
+
+.app-settings__scope button.is-active {
+  background: var(--bg-elevated);
+  color: var(--fg-strong);
+  box-shadow: var(--shadow-card);
+}
+
+.app-settings__search-results {
+  position: absolute;
+  top: calc(100% - 2px);
+  right: 18px;
+  left: 18px;
+  display: grid;
+  max-height: min(420px, 60vh);
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-popover);
+}
+
+.app-settings__search-result {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-settings__search-result:hover,
+.app-settings__search-result[aria-selected='true'] { background: var(--bg-hover); }
+
+.app-settings__search-result-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 2px;
+}
+
+.app-settings__search-result-copy strong {
+  overflow: hidden;
+  color: var(--fg-strong);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-settings__search-result-copy small {
+  overflow: hidden;
+  color: var(--fg-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-settings__search-result-meta {
+  flex: none;
+  color: var(--fg-faint);
+  font-size: 10px;
+}
+
+.app-settings__search-empty,
+.app-settings__nav-empty {
+  padding: 14px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.app-settings__nav-empty { margin: 0; }
+
+@media (max-width: 720px) {
+  .app-settings__toolbar {
+    flex-wrap: wrap;
+    padding-inline: 12px;
+  }
+
+  .app-settings__search-wrap { flex-basis: 100%; max-width: none; }
+  .app-settings__scope { margin-left: auto; }
+  .app-settings__search-results { right: 12px; left: 12px; }
 }
 

@@ -7,6 +7,11 @@ import { getSettings } from '../settings-store'
 import { logger } from './logger'
 import { ensureEncryptionKey } from './secrets'
 import { getRemoteInstanceToken } from './remote-token'
+import { getRemoteAuth } from './remote-auth'
+import { remoteAuthHeaders } from './remote-auth-contract'
+import { remoteAuthTarget } from './remote-auth-contract'
+import { readAccountCredential } from '../account/credential-store'
+import { assertAccountTransport, ensureAccountSession, type AccountTarget } from '../account/service'
 import { prepareRemoteChatBody, validateRemoteWorkspaceRoot } from './remote-workspace'
 import { clearRemoteAttachments } from './remote-attachments'
 import { findAvailablePort } from './sdk/port-finder'
@@ -18,7 +23,9 @@ import {
   engineHeaders,
   engineTargetError,
   normalizeEnginePath,
+  isAccountRequestPath,
   parseEngineMeta,
+  classifyEngineProbeAuthFailure,
   remoteRequestError,
   remoteWorkspacePathError,
   remoteInstanceToken,
@@ -80,6 +87,10 @@ export class EngineHost extends EventEmitter {
   }
 
   private patch(next: Partial<EngineSnapshot>): EngineSnapshot {
+    if (next.phase === 'ready') {
+      const scope = this.snapshot.mode === 'remote' ? remoteAuthTarget(this.remoteTarget?.url || next.baseUrl || this.snapshot.baseUrl) : 'embedded'
+      next.accountId = readAccountCredential(scope).credential?.user.id ?? null
+    }
     this.snapshot = { ...this.snapshot, ...next, updatedAt: Date.now() }
     this.emit('snapshot', this.snapshot)
     return this.snapshot
@@ -95,8 +106,43 @@ export class EngineHost extends EventEmitter {
   get requestSignal(): AbortSignal {
     return this.transportController.signal
   }
+  accountTarget(baseUrl?: string): AccountTarget {
+    const settings = getSettings()
+    const active = !!baseUrl || this.snapshot.phase === 'ready'
+    const remote = active ? this.snapshot.mode === 'remote' : settings.engineMode === 'remote'
+    const url = remote ? remoteAuthTarget(baseUrl || (active ? this.snapshot.baseUrl : settings.remoteBaseUrl)) : (baseUrl || this.snapshot.baseUrl)
+    const activeToken = remote && this.snapshot.mode === 'remote' && this.remoteTarget?.url === url ? this.instanceToken : ''
+    const token = remote ? (activeToken || getRemoteInstanceToken() || process.env.AETHER_IDE_REMOTE_INSTANCE_TOKEN || '') : this.instanceToken
+    return { scope: remote ? url : 'embedded', url, headers: engineHeaders(token) }
+  }
+
+  async prepareRequestHeaders(baseUrl?: string): Promise<Record<string, string>> {
+    const target = this.accountTarget(baseUrl || this.baseUrl)
+    if (target.url) await ensureAccountSession(target)
+    return this.requestHeaders()
+  }
+
+  /** Account changes invalidate in-flight requests before the UI can select new data. */
+  accountIdentityChanged(): void {
+    this.transportController.abort()
+    this.transportController = new AbortController()
+    clearRemoteAttachments()
+    this.patch({ accountId: readAccountCredential(this.accountTarget().scope).credential?.user.id ?? null })
+  }
+
   requestHeaders(): Record<string, string> {
-    return engineHeaders(this.instanceToken)
+    const headers = engineHeaders(this.instanceToken)
+    // User credentials are scoped to the exact remote service URL and are kept
+    // separate from the instance token. Use remoteTarget during the handshake
+    // because the public snapshot has no baseUrl until authentication succeeds.
+    const target = this.snapshot.mode === 'remote' ? this.remoteTarget?.url ?? this.snapshot.baseUrl : ''
+    const account = readAccountCredential(this.snapshot.mode === 'remote' && target ? remoteAuthTarget(target) : 'embedded')
+    if (account.credential) {
+      if (target) assertAccountTransport(target)
+      headers.Authorization = `Bearer ${account.credential.accessToken}`
+    }
+    else if (target && !account.managed) Object.assign(headers, remoteAuthHeaders(getRemoteAuth(target).credential))
+    return headers
   }
 
   async start(mode: 'embedded' | 'remote', remoteBaseUrl = '', remoteWorkspaceRoot = '', autoReconnect = false): Promise<EngineSnapshot> {
@@ -183,11 +229,22 @@ export class EngineHost extends EventEmitter {
     if (!url) throw new Error('未配置远端引擎地址')
     // Prefer the encrypted setting; keep the environment variable as a migration and
     // headless-launch fallback. Never return the secret through settings or snapshots.
-    this.instanceToken = remoteInstanceToken(
-      url,
-      getRemoteInstanceToken() || process.env.AETHER_IDE_REMOTE_INSTANCE_TOKEN
-    )
-    const meta = await this.handshake(url, signal)
+    // If an operator rotated the token and left an older encrypted value behind,
+    // retry once with the explicit environment value after an auth rejection. This
+    // keeps the stored credential private while allowing supervised deployments to
+    // rotate their token without being permanently pinned to stale local state.
+    const storedToken = getRemoteInstanceToken()
+    const environmentToken = process.env.AETHER_IDE_REMOTE_INSTANCE_TOKEN?.trim() ?? ''
+    this.instanceToken = remoteInstanceToken(url, storedToken || environmentToken)
+    let meta: EngineMeta
+    try {
+      meta = await this.handshake(url, signal)
+    } catch (error) {
+      const credentialRejected = error instanceof Error && error.message.startsWith('引擎拒绝连接凭据：')
+      if (!credentialRejected || !storedToken || !environmentToken || this.instanceToken === environmentToken) throw error
+      this.instanceToken = remoteInstanceToken(url, environmentToken)
+      meta = await this.handshake(url, signal)
+    }
     if (!this.current(generation, signal)) return
     this.patch({
       phase: 'ready',
@@ -287,14 +344,19 @@ export class EngineHost extends EventEmitter {
     // Public metadata is insufficient to establish that the authenticated transport works.
     const probe = await fetch(`${baseUrl}/api/v1/tools`, {
       ...options,
-      headers: this.requestHeaders()
+      headers: await this.prepareRequestHeaders(baseUrl)
     })
+    const probeBody = await probe.json().catch(() => null) as { code?: unknown; message?: unknown } | null
     if (probe.status === 401 || probe.status === 403) {
+      if (classifyEngineProbeAuthFailure(probeBody?.message) === 'user-credential') {
+        const account = readAccountCredential(this.accountTarget(baseUrl).scope)
+        if (account.managed || !getRemoteAuth(baseUrl).credential) throw new Error('目标引擎需要用户认证：请点击右上角登录，或在设置→个人账号中恢复已有账号；实例令牌仅用于实例校验。')
+        throw new Error('目标引擎拒绝了用户认证凭据：请检查高级用户认证中的 API Key 或 JWT 是否有效，或通过右上角登录账号。')
+      }
       throw new Error('引擎拒绝连接凭据：请在设置→引擎→远端令牌中填写与目标引擎 AETHER_INSTANCE_TOKEN 一致的值，或在启动 Aether Code 的进程中设置 AETHER_IDE_REMOTE_INSTANCE_TOKEN；保存后重新连接。')
     }
     if (!probe.ok) throw new Error(`引擎实例认证失败（HTTP ${probe.status}）`)
-    const body = (await probe.json()) as { code?: number }
-    if (body?.code !== 200 && body?.code !== 0) throw new Error('引擎实例认证探针返回失败')
+    if (probeBody?.code !== 200 && probeBody?.code !== 0) throw new Error('引擎实例认证探针返回失败')
     return meta
   }
 
@@ -461,9 +523,13 @@ export class EngineHost extends EventEmitter {
     signal: AbortSignal,
     method: 'GET' | 'POST' = 'POST',
     query?: Record<string, string>,
-    expectedEngine?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId'>
+    expectedEngine?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>
   ): Promise<void> {
     const snapshot = this.snapshot
+    if (isAccountRequestPath(path)) {
+      this.emit('stream', { streamId, type: 'error', message: '请通过账号入口操作认证。' } satisfies StreamEvent)
+      return
+    }
     const unsupported = engineTargetError(snapshot, expectedEngine) ?? remoteRequestError(snapshot.mode, method, path) ?? remoteWorkspacePathError(snapshot.mode, method, path, body)
     if (unsupported) {
       this.emit('stream', { streamId, type: 'error', message: unsupported } satisfies StreamEvent)
@@ -478,7 +544,7 @@ export class EngineHost extends EventEmitter {
 
     try {
       const normalizedPath = normalizeEnginePath(path)
-      const headers = { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...this.requestHeaders() }
+      const headers = { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...await this.prepareRequestHeaders(baseUrl) }
       const requestBody = snapshot.mode === 'remote' && method === 'POST' && normalizedPath.split('?')[0] === '/api/v1/chat'
         ? await prepareRemoteChatBody(body, { baseUrl, headers, signal: requestSignal, configuredRoot: this.remoteWorkspaceRoot, target: snapshot })
         : body

@@ -212,7 +212,8 @@ await audit('concurrent-lines', '连续粘贴的命令是否保持顺序', async
   write(path.join(ctx.root, 'slow.cjs'), "setTimeout(()=>{require('node:fs').writeFileSync('finished.txt','done');console.log('AUDIT_SLOW_DONE')},350)")
   write(path.join(ctx.root, 'check.cjs'), "console.log(require('node:fs').existsSync('finished.txt')?'AUDIT_ORDER_OK':'AUDIT_ORDER_RACE')")
   const run = await shell(ctx, 'node slow.cjs\rnode check.cjs', { done: output => output.includes('AUDIT_SLOW_DONE') && /AUDIT_ORDER_(OK|RACE)/.test(output) })
-  record('concurrent-lines', run.output.includes('AUDIT_ORDER_RACE') ? 'vulnerable' : (run.output.includes('AUDIT_ORDER_OK') ? 'pass' : 'error'), 'readline 异步 line 回调存在命令并发、currentChild 覆盖风险', { orderRace: run.output.includes('AUDIT_ORDER_RACE') }, run)
+  const refusedExternal = /外部|受限文件终端|不支持|隔离执行器/.test(run.output)
+  record('concurrent-lines', run.output.includes('AUDIT_ORDER_RACE') ? 'vulnerable' : (run.output.includes('AUDIT_ORDER_OK') ? 'pass' : (refusedExternal ? 'blocked' : 'error')), 'readline 异步 line 回调存在命令并发、currentChild 覆盖风险', { orderRace: run.output.includes('AUDIT_ORDER_RACE'), refusedExternal }, run)
 })
 
 for (const child of activeChildren) child.kill()

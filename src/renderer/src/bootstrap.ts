@@ -10,7 +10,23 @@ import { restoreLastFolder } from './core/workspace/workspace-store'
 import { wireWorkspaceLiveSync } from './core/workspace/live-sync'
 import { wireTsLsp } from './core/lsp/lifecycle'
 
+/**
+ * Monaco's native quick-input hover list rejects its pending Delayer when the
+ * picker is disposed. That cancellation is expected during a fast close, but
+ * Monaco 0.56 leaves the rejection unhandled. Keep it from surfacing as a
+ * renderer error while preserving every other unhandled rejection.
+ */
+function installMonacoCancellationGuard(): () => void {
+  const onUnhandledRejection = (event: PromiseRejectionEvent): void => {
+    const reason = event.reason as { name?: unknown; message?: unknown } | null
+    if (reason?.name === 'Canceled' && reason?.message === 'Canceled') event.preventDefault()
+  }
+  window.addEventListener('unhandledrejection', onUnhandledRejection)
+  return () => window.removeEventListener('unhandledrejection', onUnhandledRejection)
+}
+
 export function bootstrapRenderer(): () => void {
+  const disposeMonacoCancellationGuard = installMonacoCancellationGuard()
   const disposeContributions = registerContributions()
   const disposeKeybindings = installKeybindingDispatcher()
 
@@ -21,6 +37,7 @@ export function bootstrapRenderer(): () => void {
   void restoreLastFolder()
 
   return () => {
+    disposeMonacoCancellationGuard()
     disposeContributions()
     disposeKeybindings()
     disposeWorkspaceLiveSync()

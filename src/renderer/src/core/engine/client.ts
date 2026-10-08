@@ -14,6 +14,7 @@ import type {
   EngineSnapshot,
   RemoteAttachmentInput,
   RemoteAttachmentResult,
+  RemoteAuthCredential,
   StreamEvent,
   StreamStartInput
 } from '@shared/ipc'
@@ -126,6 +127,8 @@ export function getSettings(): Promise<AppSettings> {
   return bridge().settings.get()
 }
 
-export function updateSettings(patch: Partial<AppSettings>, remoteToken?: string): Promise<AppSettings> {
-  return remoteToken === undefined ? bridge().settings.update(patch) : bridge().settings.saveEngine(patch, remoteToken)
+export function updateSettings(patch: Partial<AppSettings>, remoteToken?: string, remoteAuth?: RemoteAuthCredential | null): Promise<AppSettings> {
+  return remoteToken === undefined && remoteAuth === undefined
+    ? bridge().settings.update(patch)
+    : bridge().settings.saveEngine(patch, remoteToken, remoteAuth)
 }

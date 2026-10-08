@@ -1,20 +1,20 @@
 {
-  "createdAt": "2026-10-06T16:07:05.383Z",
-  "fixture": "D:\\dev\\aether-code\\.e2e-tmp\\audit-engine-boundaries-qMkzkJ",
+  "createdAt": "2026-10-07T01:23:15.012Z",
+  "fixture": "D:\\dev\\aether-code\\.e2e-tmp\\audit-engine-boundaries-pVnF1I",
   "scope": "Actual engine source; isolated DB; terminal route PTY stub; real command child processes",
   "sourceHashes": {
-    "terminal/index.ts": "279f93b3e84f1fcd0ddad217746621e1ab84afc5def886220c2f59fed37ff1a6",
-    "api/http/routes/terminal.ts": "15fa3f26eb01ba48b49605a99671d6811d465e3faf23e6c6787ecd80cc2c6ec8",
-    "security/policy-engine.ts": "7cd7c2d637171dd2cb103b97fd47f078a7ee9c2c0c6da2f8e4e5e8fbfbd16506",
-    "auth/middleware.ts": "4a8d39ec5eb05e79de036d23dc72bfee79e2955194b13fdc56c59e0ede9963ed",
-    "workspace/manager.ts": "f3c04bb25a7e974ad007b8b7012f08c0c68a5786057492bae3ce1e6a7a22c49f"
+    "terminal/index.ts": "396a1365f23935a7eb96463824875a0aefc254cc6d6381592701fd7e6a9e4eea",
+    "api/http/routes/terminal.ts": "a61f01b8a59b4225040f49a9b2f192f332c512a184b3dceffe44c2b218752ad1",
+    "security/policy-engine.ts": "a2bae3a51289b6eb682f3a4b6d8ed1e21d107c6f5c2ff7f8b80071ed77ecb35c",
+    "auth/middleware.ts": "d479df4a4108d7412fe0dc303195af5c9a385d8cc1b73c630834f354574d47e9",
+    "workspace/manager.ts": "148df8555a33258c774fab16a510b630556248c2be29bfc267dec1144c0a64ca"
   },
   "findings": [
     {
       "id": "API-anonymous-auth-enabled",
-      "status": "vulnerable",
+      "status": "blocked",
       "evidence": {
-        "code": 200,
+        "code": 40100,
         "authEnabled": true,
         "instanceTokenConfigured": false
       }
@@ -28,22 +28,22 @@
     },
     {
       "id": "API-viewer-mutates-global-network-policy",
-      "status": "vulnerable",
+      "status": "blocked",
       "evidence": {
-        "code": 200,
+        "code": 41015,
         "suppliedRole": "viewer"
       }
     },
     {
       "id": "API-anonymous-mode-escalation",
-      "status": "vulnerable",
+      "status": "blocked",
       "evidence": {
-        "code": 200
+        "code": 40100
       }
     },
     {
       "id": "API-cross-tenant-terminal-read-write",
-      "status": "vulnerable",
+      "status": "blocked",
       "evidence": {
         "owner": "audit-a",
         "caller": "audit-b",
@@ -52,24 +52,21 @@
     },
     {
       "id": "API-cross-tenant-terminal-delete",
-      "status": "vulnerable",
+      "status": "blocked",
       "evidence": {
-        "code": 200,
+        "code": 40400,
         "pty": "stubbed"
       }
     },
     {
       "id": "POLICY-tenant-session-key-collision",
-      "status": "vulnerable",
+      "status": "blocked",
       "evidence": "Distinct tenant/session pairs share colon-joined key"
     },
     {
       "id": "PATH-session-id-traversal",
-      "status": "vulnerable",
-      "evidence": {
-        "outsideWorkspaceRoot": true,
-        "noWritePerformed": true
-      }
+      "status": "blocked",
+      "evidence": "Error: sessionId is not a valid identifier"
     },
     {
       "id": "PATH-direct-traversal-negative-control",
@@ -80,37 +77,37 @@
     },
     {
       "id": "API-session-traversal-read",
-      "status": "vulnerable",
+      "status": "blocked",
       "evidence": {
-        "code": 200,
-        "canaryRead": true
+        "code": 50000,
+        "canaryRead": false
       }
     },
     {
       "id": "API-junction-file-read",
-      "status": "vulnerable",
+      "status": "blocked",
       "evidence": {
-        "code": 200,
-        "canaryRead": true
+        "code": 50000,
+        "canaryRead": false
       }
     },
     {
       "id": "API-workspace-binding-cross-tenant",
-      "status": "vulnerable",
+      "status": "blocked",
       "evidence": {
-        "bindingCode": 200,
-        "readCode": 200,
+        "bindingCode": 40300,
+        "readCode": 40400,
         "owner": "audit-a",
         "caller": "audit-b"
       }
     },
     {
       "id": "POLICY-safe-interpreter-outside-read-write",
-      "status": "vulnerable",
+      "status": "blocked",
       "evidence": {
-        "toolSuccess": true,
-        "markerExists": true,
-        "needsConfirmation": false
+        "toolSuccess": false,
+        "markerExists": false,
+        "needsConfirmation": true
       }
     },
     {
@@ -123,10 +120,10 @@
     },
     {
       "id": "NETWORK-safe-interpreter-bypass",
-      "status": "vulnerable",
+      "status": "blocked",
       "evidence": {
-        "hits": 1,
-        "toolSuccess": true,
+        "hits": 0,
+        "toolSuccess": false,
         "destination": "audit-owned loopback only"
       }
     }

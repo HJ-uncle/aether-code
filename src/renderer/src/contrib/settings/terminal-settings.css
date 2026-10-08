@@ -1,0 +1,22 @@
+.settings-view--terminal .terminal-settings__font {
+  width: min(280px, 100%);
+  text-align: left;
+}
+
+.settings-view--terminal .terminal-settings__number {
+  width: 96px;
+  text-align: right;
+}
+
+@container settings-body (max-width: 460px) {
+  .settings-view--terminal .sg__row-control {
+    width: auto;
+    min-width: max-content;
+  }
+
+  .settings-view--workbench .sg__row-control,
+  .settings-view--git .sg__row-control {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}

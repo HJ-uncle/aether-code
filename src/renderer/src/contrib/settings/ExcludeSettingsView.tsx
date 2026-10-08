@@ -1,8 +1,11 @@
-import { useState, type JSX } from 'react'
+import { useState, useSyncExternalStore, type JSX } from 'react'
 import type { FilesExclude } from '@shared/ipc'
 import { useApp } from '@renderer/core/app-context'
 import { SettingsGroup, Toggle } from './SettingsGroup'
 import './settings-pages.css'
+import { useSettingsScope } from './settings-scope'
+import { useWorkspace } from '@renderer/core/workspace/workspace-store'
+import { clearWorkspaceSetting, getWorkspaceSettings, onWorkspaceSettingsChanged, setWorkspaceSettings } from '@renderer/core/workspace/workspace-settings'
 
 /**
  * 排除规则表（files.exclude 与 search.exclude 共用）
@@ -53,6 +56,7 @@ function sameExclude(a: FilesExclude, b: FilesExclude): boolean {
 }
 
 export interface ExcludeSettingsViewProps {
+  settingKey: 'filesExclude' | 'searchExclude'
   /** 当前设置里的这张表 */
   value: FilesExclude
   /** 出厂默认值（「恢复默认」用） */
@@ -75,6 +79,7 @@ export interface ExcludeSettingsViewProps {
 
 export function ExcludeSettingsView({
   value,
+  settingKey,
   defaults,
   onChange,
   legend,
@@ -84,6 +89,8 @@ export function ExcludeSettingsView({
   ariaLabel,
   className
 }: ExcludeSettingsViewProps): JSX.Element {
+  const scope = useSettingsScope()
+  const workspace = useWorkspace()
   const [rows, setRows] = useState<DraftRow[]>(() => toDraft(value))
 
   // 设置异步加载完成后对一次账：别处改了设置、或预设文件补了默认值，
@@ -112,6 +119,10 @@ export function ExcludeSettingsView({
   }
 
   const reset = (): void => {
+    if (scope === 'workspace' && workspace.root) {
+      clearWorkspaceSetting(workspace.root, settingKey)
+      return
+    }
     persist(toDraft({ ...defaults }))
   }
 
@@ -120,6 +131,9 @@ export function ExcludeSettingsView({
   return (
     <div className={`settings-view${className ? ` ${className}` : ''}`}>
       <SettingsGroup title={legend} footer={typeof hint === 'string' ? hint : undefined}>
+        <div className="sg__scope-note">
+          当前作用域：{scope === 'workspace' ? `工作区${workspace.root ? '' : '（未打开工作区，将保存到用户设置）'}` : '用户'}
+        </div>
         {typeof hint === 'string' ? null : <div className="sg__hint-block">{hint}</div>}
 
         {rows.length === 0 && <div className="sg__empty">{emptyHint}</div>}
@@ -175,6 +189,22 @@ export function ExcludeSettingsView({
 export function useExcludeSettings(
   key: 'filesExclude' | 'searchExclude'
 ): [FilesExclude, (next: FilesExclude) => void] {
-  const { settings, updateSettings } = useApp()
-  return [settings[key], (next) => void updateSettings({ [key]: next })]
+  const { userSettings, updateSettings } = useApp()
+  const scope = useSettingsScope()
+  const workspace = useWorkspace()
+  const workspaceSettings = useSyncExternalStore(
+    onWorkspaceSettingsChanged,
+    () => getWorkspaceSettings(workspace.root),
+    () => getWorkspaceSettings(null)
+  )
+  const workspaceValue = scope === 'workspace' ? workspaceSettings[key] : undefined
+  const value = scope === 'workspace' ? (workspaceValue ?? userSettings[key]) : userSettings[key]
+  const setValue = (next: FilesExclude): void => {
+    if (scope === 'workspace' && workspace.root) {
+      setWorkspaceSettings(workspace.root, key === 'filesExclude' ? { filesExclude: next } : { searchExclude: next })
+    } else {
+      void updateSettings(key === 'filesExclude' ? { filesExclude: next } : { searchExclude: next })
+    }
+  }
+  return [value, setValue]
 }

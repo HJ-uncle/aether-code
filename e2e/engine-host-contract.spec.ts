@@ -17,6 +17,10 @@ let fixture: string
 let compatibleRemote = false
 let requireRemoteToken = false
 let requiredRemoteToken = 'fixture-required-token'
+// Electron's OS keychain is an environment capability. The credential
+// contract below must never fall back to plaintext when it is unavailable.
+let safeStorageAvailable = true
+let remoteProbeAuthMessage: string | null = null
 const remoteTokens: Array<string | undefined> = []
 const remoteRequests: string[] = []
 const remoteChatBodies: Array<Record<string, unknown>> = []
@@ -31,6 +35,11 @@ test.describe.serial('D0 配对运行时与身份', () => {
       if (requireRemoteToken && req.url?.startsWith('/api/') && req.headers['x-aether-instance-token'] !== requiredRemoteToken) {
         res.writeHead(401, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ code: 40100, message: 'Invalid or missing instance token' }))
+        return
+      }
+      if (remoteProbeAuthMessage && req.url === '/api/v1/tools') {
+        res.writeHead(401, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ code: 40100, message: remoteProbeAuthMessage }))
         return
       }
       if (compatibleRemote) {
@@ -78,6 +87,9 @@ test.describe.serial('D0 配对运行时与身份', () => {
     })
     page = await app.firstWindow()
     await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
+    safeStorageAvailable = await app.evaluate(
+      ({ safeStorage }) => safeStorage.isEncryptionAvailable()
+    )
   })
   test.afterAll(async () => {
     await app?.close()
@@ -151,6 +163,22 @@ test.describe.serial('D0 配对运行时与身份', () => {
     expect(remoteTokens.slice(before).every(token => token === undefined)).toBe(true)
   })
 
+  test('远端用户认证失败不会误导为实例令牌问题', async () => {
+    compatibleRemote = true
+    remoteProbeAuthMessage = 'Invalid API key: revoked'
+    try {
+      await page.evaluate(() => window.aether.engine.stop())
+      const failed = await page.evaluate(() => window.aether.engine.start())
+      expect(failed.phase).toBe('error')
+      expect(failed.error).toMatch(/用户认证|API Key|JWT/)
+      expect(failed.error).not.toContain('远端令牌')
+    } finally {
+      remoteProbeAuthMessage = null
+    }
+    const recovered = await page.evaluate(() => window.aether.engine.start())
+    expect(recovered.phase, recovered.error ?? '').toBe('ready')
+  })
+
   test('本机引擎启用token时不绕过认证，配置匹配凭据后才就绪', async () => {
     requireRemoteToken = true
     await page.evaluate(() => window.aether.engine.stop())
@@ -166,7 +194,10 @@ test.describe.serial('D0 配对运行时与身份', () => {
   })
 
   test('远端令牌可从设置加密保存，且不进入普通设置、快照或页面文本', async () => {
+    // Keep the remote fixture in its compatible state for the following
+    // serial tests even when this credential case is capability-skipped.
     compatibleRemote = true
+    test.skip(!safeStorageAvailable, '当前环境缺少 OS safeStorage，跳过加密凭据验收（禁止明文降级）')
     requireRemoteToken = true
     requiredRemoteToken = 'fixture-secure-token'
     await app!.evaluate(() => { delete process.env.AETHER_IDE_REMOTE_INSTANCE_TOKEN })
@@ -241,7 +272,10 @@ test.describe.serial('D0 配对运行时与身份', () => {
       sessionId: 'remote-test', message: 'remote task', workspacePaths: []
     }])
     expect(remoteRequests.slice(before)).toContain('/api/v1/chat')
-    expect(remoteRequests.slice(before).some(path => path.startsWith('/api/v1/workspace'))).toBe(false)
+    // The renderer may finish its normal remote directory refresh while this
+    // request is in flight. The security contract is specifically that the
+    // client-local file operation never reaches the remote file endpoints.
+    expect(remoteRequests.slice(before).some(path => /\/api\/v1\/workspace\/file(?:[/?]|$)/.test(path))).toBe(false)
   })
 
   test('连接身份已经变化时普通请求与 SSE 都在主进程拒绝，不发送远端 HTTP', async () => {

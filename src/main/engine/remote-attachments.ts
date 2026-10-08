@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { EngineSnapshot } from '../../shared/ipc'
 
-type Target = Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId'>
+type Target = Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>
 interface UploadedAttachment { sessionId: string; target: string; path: string; type: string }
 const uploaded = new Map<string, UploadedAttachment>()
 const targetKey = (target: Target): string => JSON.stringify([target.mode, target.baseUrl, target.instanceId])

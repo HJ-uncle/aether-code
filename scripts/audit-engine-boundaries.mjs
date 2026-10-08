@@ -36,7 +36,15 @@ function result(id, vulnerable, evidence) {
   findings.push({ id, status: vulnerable ? 'vulnerable' : 'blocked', evidence })
 }
 async function probe(id, fn) {
-  try { await fn() } catch (error) { findings.push({ id, status: 'inconclusive', evidence: String(error) }) }
+  try {
+    await fn()
+  } catch (error) {
+    // A rejected malformed tenant/session ID is the expected post-fix control,
+    // while unrelated exceptions remain inconclusive and fail the audit.
+    const message = String(error)
+    const blockedByValidation = id === 'PATH-session-id-traversal' && /valid identifier|Path is invalid/i.test(message)
+    findings.push({ id, status: blockedByValidation ? 'blocked' : 'inconclusive', evidence: message })
+  }
 }
 const dbModule = await source('storage/sqlite/db.ts')
 await dbModule.initDb()

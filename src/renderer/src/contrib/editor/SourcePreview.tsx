@@ -4,6 +4,7 @@ import { cssVar, watchTheme } from '@renderer/core/theme/palette'
 import { monaco } from '@renderer/core/editor/monaco-setup'
 import { openWorkspaceResource } from '@renderer/core/editor/monaco-workspace'
 import { resolvePreviewResource } from '@renderer/core/editor/preview-resource-path'
+import { isRemoteEngine } from '@renderer/core/engine/source'
 import { toast } from '@renderer/core/toast'
 import { buildSourcePreviewDocument } from './source-preview-document'
 import bridgeSource from './preview-bridge.js?raw'
@@ -50,6 +51,7 @@ export const SourcePreview = forwardRef<SourcePreviewHandle, {
     const timer = setTimeout(() => {
       void buildSourcePreviewDocument({
         filePath, content, kind, workspaceRoot: root ?? '', channel,
+        remote: isRemoteEngine(),
         bridgeScript: bridgeSource.replace(/\r\n?/g, '\n'),
         colors: {
           background: cssVar('--bg-app'), foreground: cssVar('--fg'), muted: cssVar('--fg-muted'),
@@ -72,7 +74,7 @@ export const SourcePreview = forwardRef<SourcePreviewHandle, {
         onScrollRef.current(ratioRef.current)
       }
       if (event.data.type === 'aether.preview.openFile' && typeof event.data.path === 'string') {
-        const safePath = resolvePreviewResource(filePath, event.data.path, root ?? '')
+        const safePath = resolvePreviewResource(filePath, event.data.path, root ?? '', isRemoteEngine())
         if (safePath) void openWorkspaceResource(monaco.Uri.file(safePath)).catch(() => toast.error('无法打开预览中的文件链接'))
       }
     }

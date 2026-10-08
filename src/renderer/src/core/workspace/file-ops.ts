@@ -300,6 +300,10 @@ export async function trashEntries(targetPaths: string[]): Promise<void> {
   for (const target of targetPaths) {
     try {
       await trash(target)
+      // Windows shell.trashItem may resolve before the source directory stops
+      // reporting the item. Refresh only after the path disappears, otherwise
+      // the just-deleted entry is read back into the explorer cache.
+      await waitForPathGone(target)
       closeDocumentsInside(target)
     } catch (err) {
       if (firstError === null) firstError = err
@@ -321,9 +325,26 @@ export async function trashEntries(targetPaths: string[]): Promise<void> {
     await refreshDirectory(cached ?? toCacheKey(rawDir))
   }
 
+  // A platform watcher or a slow recycle-bin move can finish between the
+  // first in-memory removal and the directory read above. Apply the removal
+  // once more so a stale read cannot resurrect a row the user just deleted.
+  removeEntriesFromWorkspace(targetPaths)
+
   clearUndo()
 
   if (firstError !== null) throw firstError
+}
+
+async function waitForPathGone(target: string, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      await stat(target)
+    } catch {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
 }
 
 /**

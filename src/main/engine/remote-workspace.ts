@@ -38,7 +38,7 @@ interface RemoteChatContext {
   headers: Record<string, string>
   signal: AbortSignal
   configuredRoot: string
-  target?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId'>
+  target?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>
 }
 
 /** Never transfer the client's workspace, attachments or implicit local context to a server. */

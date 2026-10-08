@@ -11,14 +11,14 @@
 
 const STORAGE_KEY = 'aether:git:autoFetch'
 
-const DEFAULT_AUTO_FETCH = true
-const DEFAULT_INTERVAL_MS = 180000
+export const DEFAULT_GIT_AUTO_FETCH = true
+export const DEFAULT_GIT_AUTO_FETCH_INTERVAL_MS = 180000
 /** 间隔下限 30s：太密会把 git fetch IPC 打爆；上限 1h 防误输入 */
 const MIN_INTERVAL_MS = 30000
 const MAX_INTERVAL_MS = 3600000
 
 function clampInterval(value: number): number {
-  if (!Number.isFinite(value)) return DEFAULT_INTERVAL_MS
+  if (!Number.isFinite(value)) return DEFAULT_GIT_AUTO_FETCH_INTERVAL_MS
   return Math.min(MAX_INTERVAL_MS, Math.max(MIN_INTERVAL_MS, Math.round(value)))
 }
 
@@ -26,22 +26,43 @@ function loadAutoFetch(): boolean {
   try {
     return localStorage.getItem(`${STORAGE_KEY}:enabled`) !== '0'
   } catch {
-    return DEFAULT_AUTO_FETCH
+    return DEFAULT_GIT_AUTO_FETCH
   }
 }
 
 function loadIntervalMs(): number {
   try {
     const raw = Number(localStorage.getItem(`${STORAGE_KEY}:intervalMs`))
-    if (!raw) return DEFAULT_INTERVAL_MS
+    if (!raw) return DEFAULT_GIT_AUTO_FETCH_INTERVAL_MS
     return clampInterval(raw)
   } catch {
-    return DEFAULT_INTERVAL_MS
+    return DEFAULT_GIT_AUTO_FETCH_INTERVAL_MS
   }
 }
 
 let autoFetch = loadAutoFetch()
 let autoFetchIntervalMs = loadIntervalMs()
+const listeners = new Set<() => void>()
+
+export interface GitPreferences {
+  autoFetch: boolean
+  autoFetchIntervalMs: number
+}
+
+let preferences: Readonly<GitPreferences> = Object.freeze({ autoFetch, autoFetchIntervalMs })
+
+export function getGitPreferences(): Readonly<GitPreferences> {
+  return preferences
+}
+
+export function onGitPreferencesChanged(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
+function notify(): void {
+  for (const listener of listeners) listener()
+}
 
 export function getGitAutoFetch(): boolean {
   return autoFetch
@@ -52,19 +73,26 @@ export function getGitAutoFetchIntervalMs(): number {
 }
 
 export function setGitAutoFetch(value: boolean): void {
+  if (autoFetch === value) return
   autoFetch = value
   try {
     localStorage.setItem(`${STORAGE_KEY}:enabled`, value ? '1' : '0')
   } catch {
     /* 忽略：localStorage 不可用时仅本次会话生效 */
   }
+  preferences = Object.freeze({ autoFetch, autoFetchIntervalMs })
+  notify()
 }
 
 export function setGitAutoFetchIntervalMs(value: number): void {
-  autoFetchIntervalMs = clampInterval(value)
+  const next = clampInterval(value)
+  if (autoFetchIntervalMs === next) return
+  autoFetchIntervalMs = next
   try {
     localStorage.setItem(`${STORAGE_KEY}:intervalMs`, String(autoFetchIntervalMs))
   } catch {
     /* 忽略 */
   }
+  preferences = Object.freeze({ autoFetch, autoFetchIntervalMs })
+  notify()
 }

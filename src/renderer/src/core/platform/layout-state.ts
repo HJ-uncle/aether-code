@@ -30,7 +30,7 @@ export interface LayoutState {
 
 const STORAGE_KEY = 'aether.ide.layout'
 
-const DEFAULTS: LayoutState = {
+export const DEFAULT_LAYOUT: Readonly<LayoutState> = Object.freeze({
   sidebarWidth: 280,
   panelHeight: 220,
   sidebarVisible: true,
@@ -42,7 +42,7 @@ const DEFAULTS: LayoutState = {
   chatPanelVisible: true,
   chatPanelWidth: 380,
   chatOnLeft: false
-}
+})
 
 export const LAYOUT_LIMITS = {
   sidebarMin: 200,
@@ -59,18 +59,18 @@ const listeners = new Set<() => void>()
 function load(): LayoutState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { ...DEFAULTS }
+    if (!raw) return { ...DEFAULT_LAYOUT }
     const saved = JSON.parse(raw) as Partial<LayoutState>
-    const state = { ...DEFAULTS, ...saved }
+    const state = { ...DEFAULT_LAYOUT, ...saved }
     // The previous defaults made the shell feel cramped. Migrate only that
     // untouched pair; a user who resized either panel keeps their preference.
     if (saved.sidebarWidth === 320 && saved.chatPanelWidth === 420) {
-      state.sidebarWidth = DEFAULTS.sidebarWidth
-      state.chatPanelWidth = DEFAULTS.chatPanelWidth
+      state.sidebarWidth = DEFAULT_LAYOUT.sidebarWidth
+      state.chatPanelWidth = DEFAULT_LAYOUT.chatPanelWidth
     }
     return state
   } catch {
-    return { ...DEFAULTS }
+    return { ...DEFAULT_LAYOUT }
   }
 }
 
@@ -113,6 +113,19 @@ export function setLayout(patch: Partial<LayoutState>): void {
   state = next
   persist()
   for (const listener of listeners) listener()
+}
+
+/** 恢复工作台布局默认值，同时保留当前打开的视图上下文。 */
+export function resetLayout(): void {
+  setLayout({
+    sidebarWidth: DEFAULT_LAYOUT.sidebarWidth,
+    panelHeight: DEFAULT_LAYOUT.panelHeight,
+    sidebarVisible: DEFAULT_LAYOUT.sidebarVisible,
+    panelVisible: DEFAULT_LAYOUT.panelVisible,
+    chatPanelVisible: DEFAULT_LAYOUT.chatPanelVisible,
+    chatPanelWidth: DEFAULT_LAYOUT.chatPanelWidth,
+    chatOnLeft: DEFAULT_LAYOUT.chatOnLeft
+  })
 }
 
 export function onLayoutChanged(listener: () => void): () => void {

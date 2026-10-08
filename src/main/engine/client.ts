@@ -1,6 +1,6 @@
 /** Main-process HTTP bridge: shared transport identity and strict response envelopes. */
 import { engineHost } from './host'
-import { engineTargetError, normalizeEnginePath, remoteRequestError, remoteWorkspacePathError } from './protocol'
+import { engineTargetError, isAccountRequestPath, normalizeEnginePath, remoteRequestError, remoteWorkspacePathError } from './protocol'
 import { prepareRemoteChatBody } from './remote-workspace'
 import type { EngineRequestInput, EngineRequestResult, EngineUploadInput } from '../../shared/ipc'
 
@@ -18,6 +18,7 @@ function buildQuery(query: EngineRequestInput['query']): string {
 export async function engineRequest<T = unknown>(
   input: EngineRequestInput
 ): Promise<EngineRequestResult<T>> {
+  if (isAccountRequestPath(input.path)) return { ok: false, code: 403, message: '请通过账号入口操作认证。', data: null }
   const snapshot = engineHost.getSnapshot()
   // Keep this check local to the transport as a defense in depth: callers
   // must never be able to send a client-local absolute path to a remote
@@ -34,7 +35,7 @@ export async function engineRequest<T = unknown>(
   const signal = AbortSignal.any([engineHost.requestSignal, AbortSignal.timeout(120000)])
   const headers: Record<string, string> = {
     Accept: 'application/json',
-    ...engineHost.requestHeaders()
+    ...await engineHost.prepareRequestHeaders(baseUrl)
   }
   const requestBody = snapshot.mode === 'remote' && input.method === 'POST' && path.split('?')[0] === '/api/v1/chat'
     ? await prepareRemoteChatBody(input.body, { baseUrl, headers, signal, configuredRoot: engineHost.remoteWorkspaceRoot, target: snapshot })
@@ -98,6 +99,7 @@ export async function engineRequest<T = unknown>(
 
 /** Multipart bridge used by Skill/knowledge import UIs. */
 export async function engineUpload<T = unknown>(input: EngineUploadInput): Promise<EngineRequestResult<T>> {
+  if (isAccountRequestPath(input.path)) return { ok: false, code: 403, message: '请通过账号入口操作认证。', data: null }
   const snapshot = engineHost.getSnapshot()
   const unsupported = engineTargetError(snapshot, input.expectedEngine) ?? remoteRequestError(snapshot.mode, 'POST', input.path)
   if (unsupported) return { ok: false, code: 409, message: unsupported, data: null }
@@ -110,7 +112,7 @@ export async function engineUpload<T = unknown>(input: EngineUploadInput): Promi
   for (const [key, value] of Object.entries(input.fields ?? {})) form.set(key, value)
   form.set('file', new Blob([Uint8Array.from(input.data)], { type: input.type || 'application/octet-stream' }), input.fileName)
   const signal = AbortSignal.any([engineHost.requestSignal, AbortSignal.timeout(120000)])
-  const res = await fetch(`${baseUrl}${path}`, { method: 'POST', headers: engineHost.requestHeaders(), body: form, signal, redirect: 'error' })
+  const res = await fetch(`${baseUrl}${path}`, { method: 'POST', headers: await engineHost.prepareRequestHeaders(baseUrl), body: form, signal, redirect: 'error' })
   let payload: unknown
   try { payload = await res.json() } catch { return { ok: false, code: res.status, message: `响应不是合法 JSON（HTTP ${res.status}）`, data: null } }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { ok: false, code: res.status, message: '引擎响应信封无效', data: null }

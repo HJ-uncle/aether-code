@@ -147,6 +147,16 @@ for (const mode of ['embedded', 'remote'] as const) {
         env: { ...env(), AETHER_IDE_REMOTE_INSTANCE_TOKEN: token } })
       page = await app.firstWindow()
       await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
+      if (mode === 'remote') {
+        // Remote sessions are endpoint-local. Seed the endpoint-scoped
+        // selection so this contract uses a stable ID instead of the random
+        // placeholder generated during the first render.
+        await page.evaluate(({ url, sessionId }) => {
+          localStorage.setItem(`aether:lastSessionId:${encodeURIComponent(`remote:${url}`)}`, sessionId)
+        }, { url: remoteUrl, sessionId: `thinking-mode-${mode}` })
+        await page.reload()
+        await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
+      }
       await expect(page.locator('.chat__input')).toHaveAttribute('contenteditable', 'true')
       expect(await page.evaluate(() => window.aether.engine.getSnapshot())).toMatchObject({ mode, phase: 'ready' })
     })

@@ -24,12 +24,13 @@ import {
   type TerminalSession
 } from './terminal-store'
 import { buildTerminalTheme } from './terminal-theme'
+import './terminal-view.css'
 
 /**
  * 终端视图（面板区）
  *
- * 形态对齐 VS Code：左侧终端内容区 + 右侧实例列表。
- * 列表只是会话切换器——xterm 实例与会话绑定，切换靠 DOM 显隐，
+ * 形态对齐 macOS 工具栏：终端内容区 + 顶部紧凑实例标签。
+ * 标签栏只是会话切换器——xterm 实例与会话绑定，切换靠 DOM 显隐，
  * 后台会话的 shell 与滚动缓冲始终存活。
  */
 export function TerminalView(): JSX.Element {
@@ -68,7 +69,7 @@ export function TerminalView(): JSX.Element {
   )
 
   return (
-    <div className="terminal-view" aria-label="终端">
+    <div className="terminal-view terminal-view--tabs" aria-label="终端">
       <div className="terminal-view__main">
         {state.sessions.map((session) => (
           <SessionSlot key={session.id} session={session} active={session.id === state.activeId} />

@@ -8,16 +8,114 @@
 import { spawn, type IPty } from 'node-pty'
 import { homedir, platform } from 'node:os'
 import { randomUUID } from 'node:crypto'
+import { dirname, delimiter, join, normalize, resolve } from 'node:path'
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import type { TerminalCreateInput, TerminalExitInfo } from '@shared/ipc'
 
 const terminals = new Map<string, IPty>()
+const temporaryHomes = new Map<string, string>()
 
-function pickShell(): { file: string; args: string[] } {
-  if (platform() === 'win32') {
-    // pwsh（PowerShell 7）若可用则优先，退回系统自带 powershell
-    return { file: 'powershell.exe', args: ['-NoLogo'] }
+interface ShellSpec {
+  file: string
+  args: string[]
+  env: Record<string, string>
+  homeDir?: string
+}
+
+function envRecord(): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)
+  )
+}
+
+function pathKey(value: string): string {
+  return normalize(resolve(value)).replace(/[\\/]+$/, '').toLowerCase()
+}
+
+/** Remove only a foreign PowerShell installation's module directory. */
+function filterForeignPowerShellModules(env: Record<string, string>, selectedFile: string): Record<string, string> {
+  const raw = env.PSModulePath
+  if (!raw) return env
+  const selectedRoot = pathKey(dirname(selectedFile))
+  const entries = raw.split(delimiter)
+  const filtered = entries.filter((entry) => {
+    const modulePath = entry.trim()
+    if (!modulePath || !/[\\/]Modules$/i.test(modulePath)) return true
+    const installRoot = dirname(modulePath)
+    const hasPowerShellHost = existsSync(join(installRoot, 'pwsh.exe')) || existsSync(join(installRoot, 'powershell.exe'))
+    return !hasPowerShellHost || pathKey(installRoot) === selectedRoot
+  })
+  if (filtered.length === entries.length) return env
+  return { ...env, PSModulePath: filtered.join(delimiter) }
+}
+
+function findOnPath(executable: string): string | null {
+  const pathValue = process.env.PATH ?? ''
+  for (const rawEntry of pathValue.split(delimiter)) {
+    const entry = rawEntry.trim().replace(/^"|"$/g, '')
+    if (!entry) continue
+    const candidate = join(entry, executable)
+    if (existsSync(candidate)) return resolve(candidate)
   }
-  return { file: process.env.SHELL || '/bin/bash', args: ['--login'] }
+  return null
+}
+
+/**
+ * ConPTY hosts may run under a read-only profile (CI, managed sandboxes,
+ * locked-down desktop profiles). Give PSReadLine a disposable writable home
+ * in that case so its history attempt cannot block the first command.
+ */
+function ensurePowerShellProfile(env: Record<string, string>): { env: Record<string, string>; homeDir?: string } {
+  const appData = env.APPDATA ?? join(env.USERPROFILE ?? homedir(), 'AppData', 'Roaming')
+  const historyDir = join(appData, 'Microsoft', 'Windows', 'PowerShell', 'PSReadLine')
+  const historyFile = join(historyDir, 'ConsoleHost_history.txt')
+  try {
+    mkdirSync(historyDir, { recursive: true })
+    accessSync(existsSync(historyFile) ? historyFile : historyDir, constants.W_OK)
+    return { env }
+  } catch {
+    try {
+      const homeDir = mkdtempSync(join(tmpdir(), 'aether-terminal-home-'))
+      const fallbackAppData = join(homeDir, 'AppData', 'Roaming')
+      mkdirSync(fallbackAppData, { recursive: true })
+      return {
+        homeDir,
+        env: {
+          ...env,
+          USERPROFILE: homeDir,
+          APPDATA: fallbackAppData,
+          LOCALAPPDATA: join(homeDir, 'AppData', 'Local'),
+          HOMEDRIVE: env.SystemDrive ?? 'C:',
+          HOMEPATH: '\\'
+        }
+      }
+    } catch {
+      return { env }
+    }
+  }
+}
+
+function cleanupTemporaryHome(homeDir: string | undefined): void {
+  if (!homeDir) return
+  try { rmSync(homeDir, { recursive: true, force: true }) } catch { /* cleanup is best effort */ }
+}
+
+function pickShell(): ShellSpec {
+  const env = envRecord()
+  if (platform() === 'win32') {
+    const pwsh = findOnPath('pwsh.exe')
+    if (pwsh) {
+      const profile = ensurePowerShellProfile(env)
+      return { file: pwsh, args: ['-NoLogo'], ...profile }
+    }
+    const systemRoot = env.SystemRoot || env.WINDIR || 'C:\\Windows'
+    const powershell = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    const file = existsSync(powershell) ? powershell : 'powershell.exe'
+    const profile = ensurePowerShellProfile(filterForeignPowerShellModules(env, file))
+    return { file, args: ['-NoLogo'], ...profile }
+  }
+  return { file: process.env.SHELL || '/bin/bash', args: ['--login'], env }
 }
 
 export function createTerminal(
@@ -26,23 +124,33 @@ export function createTerminal(
   onExit: (info: TerminalExitInfo) => void
 ): { id: string } {
   const id = randomUUID()
-  const { file, args } = pickShell()
-  const pty = spawn(file, args, {
-    name: 'xterm-256color',
-    cols: input.cols,
-    rows: input.rows,
-    cwd: input.cwd && input.cwd.length > 0 ? input.cwd : homedir(),
-    env: process.env as Record<string, string>
-  })
+  const { file, args, env, homeDir } = pickShell()
+  let pty: IPty
+  try {
+    pty = spawn(file, args, {
+      name: 'xterm-256color',
+      cols: input.cols,
+      rows: input.rows,
+      cwd: input.cwd && input.cwd.length > 0 ? input.cwd : homeDir ?? homedir(),
+      env
+    })
+  } catch (error) {
+    cleanupTemporaryHome(homeDir)
+    throw error
+  }
 
   pty.onData((chunk) => onData(id, chunk))
   pty.onExit(({ exitCode }) => {
     // 已被 dispose 的会话不再上报退出，避免渲染层误标「已退出」
     if (terminals.get(id) !== pty) return
     terminals.delete(id)
+    const temporaryHome = temporaryHomes.get(id)
+    temporaryHomes.delete(id)
+    cleanupTemporaryHome(temporaryHome)
     onExit({ id, exitCode })
   })
   terminals.set(id, pty)
+  if (homeDir) temporaryHomes.set(id, homeDir)
   return { id }
 }
 
@@ -66,6 +174,9 @@ export function disposeTerminal(id: string): void {
   } catch {
     // 忽略
   }
+  const temporaryHome = temporaryHomes.get(id)
+  temporaryHomes.delete(id)
+  cleanupTemporaryHome(temporaryHome)
 }
 
 /** 应用退出时回收全部 shell，不留孤儿进程 */

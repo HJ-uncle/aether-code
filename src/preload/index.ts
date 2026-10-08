@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import { IPC } from '../shared/ipc'
+import type { AccountApi, AccountState } from '../shared/account'
 import type { EngineImportProgress, EngineRuntimeCatalog, EngineRuntimeInfo } from '../shared/engine-import'
 import type {
   AppSettings,
@@ -30,7 +31,9 @@ import type {
   TerminalCreateInput,
   TerminalDataEvent,
   TerminalExitInfo,
-  RemoteTokenStatus
+  RemoteTokenStatus,
+  RemoteAuthCredential,
+  RemoteAuthStatus
 } from '../shared/ipc'
 import type {
   GitBlameResult,
@@ -65,6 +68,25 @@ import type {
  * 通道被写死在 preload 里，页面代码无法自行拼通道名。
  */
 const api = {
+  account: {
+    getState: () => ipcRenderer.invoke(IPC.invoke.accountAction, 'getState'),
+    register: () => ipcRenderer.invoke(IPC.invoke.accountAction, 'register'),
+    login: (key: string) => ipcRenderer.invoke(IPC.invoke.accountAction, 'login', key),
+    updateProfile: (input) => ipcRenderer.invoke(IPC.invoke.accountAction, 'updateProfile', input),
+    logout: (all?: boolean) => ipcRenderer.invoke(IPC.invoke.accountAction, 'logout', all),
+    sessions: () => ipcRenderer.invoke(IPC.invoke.accountAction, 'sessions'),
+    revokeSession: (id: string) => ipcRenderer.invoke(IPC.invoke.accountAction, 'revokeSession', id),
+    exportRecovery: () => ipcRenderer.invoke(IPC.invoke.accountAction, 'exportRecovery'),
+    importRecovery: () => ipcRenderer.invoke(IPC.invoke.accountAction, 'importRecovery'),
+    externalLogin: (id, mode, credential) => ipcRenderer.invoke(IPC.invoke.accountAction, 'externalLogin', id, mode, credential),
+    cancelExternalLogin: () => ipcRenderer.invoke(IPC.invoke.accountAction, 'cancelExternalLogin'),
+    unlink: (id: string) => ipcRenderer.invoke(IPC.invoke.accountAction, 'unlink', id),
+    onChanged: (listener: (state: AccountState) => void) => {
+      const handler = (_event: unknown, state: AccountState): void => listener(state)
+      ipcRenderer.on(IPC.event.accountChanged, handler)
+      return () => ipcRenderer.removeListener(IPC.event.accountChanged, handler)
+    }
+  } satisfies AccountApi,
   engine: {
     getSnapshot: (): Promise<EngineSnapshot> => ipcRenderer.invoke(IPC.invoke.engineGetSnapshot),
     start: (): Promise<EngineSnapshot> => ipcRenderer.invoke(IPC.invoke.engineStart),
@@ -118,8 +140,10 @@ const api = {
     get: (): Promise<AppSettings> => ipcRenderer.invoke(IPC.invoke.settingsGet),
     update: (patch: Partial<AppSettings>): Promise<AppSettings> =>
       ipcRenderer.invoke(IPC.invoke.settingsUpdate, patch),
-    saveEngine: (patch: Partial<AppSettings>, token: string): Promise<AppSettings> =>
-      ipcRenderer.invoke(IPC.invoke.settingsSaveEngine, patch, token),
+    saveEngine: (patch: Partial<AppSettings>, token?: string, auth?: RemoteAuthCredential | null): Promise<AppSettings> =>
+      ipcRenderer.invoke(IPC.invoke.settingsSaveEngine, patch, token, auth),
+    remoteAuthStatus: (url: string): Promise<RemoteAuthStatus> =>
+      ipcRenderer.invoke(IPC.invoke.settingsRemoteAuthStatus, url),
     remoteTokenStatus: (): Promise<RemoteTokenStatus> =>
       ipcRenderer.invoke(IPC.invoke.settingsRemoteTokenStatus),
     setRemoteToken: (token: string): Promise<RemoteTokenStatus> =>

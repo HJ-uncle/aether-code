@@ -16,7 +16,7 @@ export async function uploadRemoteAttachment(input: RemoteAttachmentInput): Prom
   if (typeof input.fileName !== 'string' || !input.fileName.trim() || typeof input.type !== 'string') throw new Error('附件信息无效')
   if (!(input.data instanceof Uint8Array) || input.data.byteLength > 20 * 1024 * 1024) throw new Error('附件必须是至多 20MB 的文件')
   const signal = AbortSignal.any([engineHost.requestSignal, AbortSignal.timeout(120000)])
-  const headers = engineHost.requestHeaders()
+  const headers = await engineHost.prepareRequestHeaders()
   const confirmation = await dialog.showMessageBox({
     type: 'question', title: '上传附件到远端引擎',
     message: `将“${input.fileName}”上传到远端引擎？`,

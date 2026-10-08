@@ -10,6 +10,7 @@
 export const IPC = {
   /** 渲染进程 → 主进程（invoke） */
   invoke: {
+    accountAction: 'account:action',
     engineGetSnapshot: 'engine:get-snapshot',
     engineStart: 'engine:start',
     engineStop: 'engine:stop',
@@ -26,6 +27,7 @@ export const IPC = {
     settingsGet: 'settings:get',
     settingsUpdate: 'settings:update',
     settingsRemoteTokenStatus: 'settings:remote-token-status',
+    settingsRemoteAuthStatus: 'settings:remote-auth-status',
     settingsSetRemoteToken: 'settings:set-remote-token',
     settingsClearRemoteToken: 'settings:clear-remote-token',
     settingsSaveEngine: 'settings:save-engine',
@@ -154,6 +156,7 @@ export const IPC = {
   },
   /** 主进程 → 渲染进程（send） */
   event: {
+    accountChanged: 'account:changed',
     fsDocumentsChanged: 'fs:documents-changed',
     engineSnapshot: 'engine:snapshot',
     engineLog: 'engine:log',
@@ -294,6 +297,8 @@ export interface EngineSnapshot {
   buildId?: string | null
   protocolVersion?: number | null
   instanceId?: string | null
+  /** Internal identity is part of the connection boundary, never a credential. */
+  accountId?: string | null
   /** 数据目录（SQLite 文件路径） */
   dataDir: string | null
   error: string | null
@@ -424,6 +429,18 @@ export interface RemoteTokenStatus {
   source: RemoteTokenSource
 }
 
+/** User credentials are stored separately from public settings and bound to one remote address. */
+export interface RemoteAuthCredential {
+  type: 'api-key' | 'bearer'
+  value: string
+}
+
+export interface RemoteAuthStatus {
+  configured: boolean
+  type: RemoteAuthCredential['type'] | null
+  source: 'stored' | 'environment' | 'none'
+}
+
 export const DEFAULT_SETTINGS: AppSettings = {
   engineMode: 'embedded',
   preferredPort: 12323,
@@ -467,7 +484,7 @@ export interface StandardResponse<T = unknown> {
 
 export interface EngineRequestInput {
   /** Reject delayed requests after the user changes the active engine. */
-  expectedEngine?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId'>
+  expectedEngine?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   /** 相对 /api/v1 的路径，如 '/agents'；以 /health、/models、/metrics 开头时按根路径处理 */
   path: string
@@ -476,7 +493,7 @@ export interface EngineRequestInput {
 }
 
 export interface RemoteAttachmentInput {
-  expectedEngine: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId'>
+  expectedEngine: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>
   sessionId: string
   fileName: string
   type: string
@@ -493,7 +510,7 @@ export interface RemoteAttachmentResult {
 
 /** Multipart upload to an engine route (skill/knowledge imports). */
 export interface EngineUploadInput {
-  expectedEngine: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId'>
+  expectedEngine: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>
   path: string
   fileName: string
   type?: string
@@ -597,7 +614,7 @@ export type StreamEvent = { streamId: string; eventId?: string } & (
 )
 
 export interface StreamStartInput {
-  expectedEngine?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId'>
+  expectedEngine?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>
   streamId: string
   path: string
   body: unknown

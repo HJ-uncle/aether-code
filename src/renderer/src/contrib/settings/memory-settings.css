@@ -1,0 +1,22 @@
+.memory-settings__toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.memory-settings__toolbar .field__input { flex: 1 1 180px; min-width: 120px; }
+.memory-settings__scope { display: flex; gap: 6px; }
+.memory-settings__scope button { border: 1px solid var(--border); border-radius: 7px; background: var(--bg-elevated); color: var(--fg-muted); padding: 6px 12px; cursor: pointer; }
+.memory-settings__scope button.is-active { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.memory-settings__session { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr); gap: 8px; align-items: center; }
+.memory-settings__list { display: grid; gap: 1px; }
+.memory-settings__item { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; padding: 12px 4px; border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent); }
+.memory-settings__item:last-child { border-bottom: 0; }
+.memory-settings__summary { color: var(--fg-strong); font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+.memory-settings__meta { color: var(--fg-muted); font-size: 11px; margin-top: 4px; display: flex; gap: 8px; flex-wrap: wrap; }
+.memory-settings__actions { display: flex; gap: 5px; }
+.memory-settings__actions .btn { min-width: 28px; padding: 4px 8px; }
+.memory-settings__empty { padding: 28px 12px; text-align: center; color: var(--fg-muted); }
+.memory-settings__editor { display: grid; gap: 10px; }
+.memory-settings__editor-row { display: grid; grid-template-columns: 1fr 160px; gap: 8px; }
+.memory-settings__editor-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.memory-settings__detail { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg-muted); font-size: 12px; line-height: 1.5; margin: 10px 0; max-height: 220px; overflow: auto; }
+.memory-settings__pager { display: flex; justify-content: space-between; align-items: center; color: var(--fg-muted); font-size: 11px; padding-top: 10px; }
+.memory-settings__error { color: var(--danger, #ff453a); font-size: 12px; margin: 8px 4px; }
+.memory-settings__notice { color: var(--success, #30d158); font-size: 12px; margin: 8px 4px; }
+@media (max-width: 640px) { .memory-settings__session, .memory-settings__editor-row { grid-template-columns: 1fr; } .memory-settings__item { grid-template-columns: 1fr; } }

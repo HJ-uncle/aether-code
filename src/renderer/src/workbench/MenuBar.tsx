@@ -4,6 +4,7 @@ import { executeCommand } from '@renderer/core/platform/commands'
 import { getKeybindingHint } from '@renderer/core/platform/keybindings'
 import { setLayout, toggleChatPanel, toggleChatPosition } from '@renderer/core/platform/layout-state'
 import { openAppSettings } from '@renderer/contrib/settings/app-settings-navigation'
+import { AccountMenu } from '@renderer/contrib/account/AccountMenu'
 import { Icon } from '@renderer/workbench/icons'
 import brandIcon from '@renderer/assets/icon.png'
 import { useLayout } from './useLayout'
@@ -279,6 +280,7 @@ export function MenuBar(): JSX.Element {
         >
           <Icon name="settings" size={16} />
         </button>
+        <AccountMenu />
       </div>
       <WindowControls />
     </header>

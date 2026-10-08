@@ -114,7 +114,7 @@ import {
   gitUnstage,
   gitUnstageFiles
 } from './git-client'
-import { getGitAutoFetch, getGitAutoFetchIntervalMs } from './git-pref'
+import { getGitAutoFetch, getGitAutoFetchIntervalMs, onGitPreferencesChanged } from './git-pref'
 
 /** 可能长时间运行的写操作名：执行期间 UI 一律禁用其他 git 入口 */
 const LONG_OPS = new Set([
@@ -596,6 +596,7 @@ let autoFetchBusy = false
 let lastAutoFetchOkAt = 0
 let autoFetchFailures = 0
 let disposed = false
+let autoFetchPreferenceDispose: (() => void) | null = null
 
 function autoFetchGateBlocked(): boolean {
   return (
@@ -661,6 +662,9 @@ function scheduleAutoFetch(): void {
 export function startGitAutoFetch(): void {
   if (disposed || autoFetchStarted) return
   autoFetchStarted = true
+  autoFetchPreferenceDispose ??= onGitPreferencesChanged(() => {
+    if (autoFetchStarted) scheduleAutoFetch()
+  })
   scheduleAutoFetch()
 }
 
@@ -684,6 +688,8 @@ export function disposeGitStore(): void {
     clearTimeout(fsRefreshTimer)
     fsRefreshTimer = null
   }
+  autoFetchPreferenceDispose?.()
+  autoFetchPreferenceDispose = null
   autoFetchStarted = false
 }
 
