@@ -15,3 +15,17 @@ export function settingsPatchForSource(source: string, patch: Partial<AppSetting
   if (source) delete persisted.lastSessionId
   return persisted
 }
+
+/** 主设置只保存 embedded 会话；远端的普通设置响应不能替换 endpoint 当前选择。 */
+export function sessionIdAfterSettingsUpdate(input: {
+  requestSource: number
+  currentSource: number
+  storageSource: string
+  currentSessionId: string
+  persistedSessionId: string
+  requestedSessionId?: string
+}): string {
+  if (input.requestSource !== input.currentSource) return input.currentSessionId
+  if (input.requestedSessionId) return input.requestedSessionId
+  return input.storageSource ? input.currentSessionId : input.persistedSessionId
+}

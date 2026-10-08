@@ -9,17 +9,18 @@ import { showChatPanel } from '@renderer/core/platform/layout-state'
 // mention chip。对齐 wuzu-client codeWorkspace 的 pendingTerminalRefs /
 // pendingCodeRefs（消费端用 splice(0) 原子取空，这里用 consume 返回值等价）。
 
-let pending: Mention[] = []
+interface MentionScope { sessionId: string; source: number }
+let pending: { mention: Mention; scope?: MentionScope }[] = []
 const listeners = new Set<() => void>()
 
 /** 入队一条待插入输入框的引用（终端选中文本 / 编辑器选区） */
-export function pushPendingMention(mention: Mention): void {
-  pushPendingMentions([mention])
+export function pushPendingMention(mention: Mention, scope?: MentionScope): void {
+  pushPendingMentions([mention], scope)
 }
 
-export function pushPendingMentions(mentions: Mention[]): void {
+export function pushPendingMentions(mentions: Mention[], scope?: MentionScope): void {
   showChatPanel()
-  pending = [...pending, ...mentions]
+  pending = [...pending, ...mentions.map(mention => ({ mention, scope }))]
   for (const listener of listeners) listener()
 }
 
@@ -27,10 +28,12 @@ export function pushPendingMentions(mentions: Mention[]): void {
  * 原子地取出并清空当前队列（对齐 wuzu splice(0)）。
  * ChatView 消费后逐个 insertMention。
  */
-export function consumePendingMentions(): Mention[] {
+export function consumePendingMentions(scope?: MentionScope): Mention[] {
   const current = pending
   pending = []
-  return current
+  // Attachments may finish while the hidden composer is switching accounts or
+  // conversations. A reference scoped to the old composer must never leak.
+  return current.filter(item => !item.scope || (item.scope.sessionId === scope?.sessionId && item.scope.source === scope?.source)).map(item => item.mention)
 }
 
 /** 供 ChatView 在有新引用入队时被通知（useEffect 订阅） */

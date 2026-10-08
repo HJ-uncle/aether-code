@@ -4,7 +4,7 @@ import { fileIdentity } from './file-identity'
 import { getActiveEditor, setActiveEditorGroup } from './active-editor'
 import { getLayout, onLayoutChanged, setLayout } from '../platform/layout-state'
 import { setActiveFile } from '../workspace/workspace-store'
-import { getViews } from '../../workbench/view-registry'
+import { getView, getViews, updateView } from '../../workbench/view-registry'
 import { onDocumentRenamed } from './editor-store'
 
 export interface EditorGroup {
@@ -122,6 +122,19 @@ export function splitDocumentToRight(path: string): void {
     publish([...state.groups, target])
   }
   activateGroupTab(target.id, documentKey(canonical))
+}
+
+/** Move a registered editor surface beside code without duplicating its native view. */
+export function openViewToRight(viewId: string): void {
+  let target = state.groups[1]
+  if (!target) {
+    target = { id: `group-${nextGroupId++}`, paths: [], activeKey: '' }
+    publish([...state.groups, target])
+  }
+  updateView(viewId, { editorGroupId: target.id })
+  const layout = getLayout()
+  setLayout({ closedEditorViews: layout.closedEditorViews.filter((id) => id !== viewId) })
+  activateGroupTab(target.id, viewId)
 }
 
 export function moveDocumentToOtherGroup(groupId: string, path: string): void {
@@ -255,7 +268,8 @@ onLayoutChanged(() => {
   const key = getLayout().activeEditorView
   const group = state.groups.find((item) => item.id === state.focusedGroupId) ?? state.groups[0]
   if (group.activeKey === key) return
-  const target = activePath(key) ? group : state.groups[0]
+  const assigned = getView(key)?.editorGroupId
+  const target = activePath(key) ? group : state.groups.find((item) => item.id === assigned) ?? state.groups[0]
   activateGroupTab(target.id, key)
 })
 

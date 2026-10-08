@@ -11,7 +11,9 @@ import { SessionTray } from './SessionTray'
 import { FileChangeCard } from './FileChangeCard'
 import { SubagentCard } from './SubagentCard'
 import { exportSubagentDetails, toolStatusLabel } from '@renderer/core/engine/subagent-state'
+import { exportToolDiagnostics, toolFailureMessage } from '@renderer/core/engine/tool-feedback'
 import { Markdown } from './Markdown'
+import { getSessionMeta } from '../history/session-meta'
 import { toolDisplayName, toolParamSummary, toolPathArg } from './tool-names'
 import { useCollapseMemory } from './useCollapseMemory'
 import { registerPendingSession, requestSessionListRefresh, touchPendingSession } from '../history/pending-sessions'
@@ -268,16 +270,9 @@ export function ChatView(): JSX.Element {
   const { messages, commandJobs, streaming, historyCompacted, loadArchive, todos, send, respond, abort, loadHistory, resumeStream, deleteTurn, retryFrom, revertFrom, queue, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, queueSendMode, setQueueSendMode, retargetQueuedModel } = useChat()
   const { models, loaded: modelsLoaded } = useModels()
   const workspace = useWorkspace()
-  // 会话 ID 首次使用时生成并持久化，保证多轮对话共享上下文。
-  // 必须等设置加载完成再决定：设置未就绪时 lastSessionId 是空默认值，
-  // 此时直接生成新 ID 会把磁盘上的持久化会话覆盖掉（历史随之丢失）
-  const sessionId = useMemo(() => {
-    if (!settingsLoaded) return ''
-    if (settings.lastSessionId) return settings.lastSessionId
-    const generated = newSessionId()
-    void updateSettings({ lastSessionId: generated })
-    return generated
-  }, [settings.lastSessionId, settingsLoaded, updateSettings])
+  // AppProvider 按引擎来源统一恢复或创建会话。这里提前创建会与远端选择
+  // 竞争：本地设置为空的首帧会覆盖刚恢复的远端会话，使历史响应失效。
+  const sessionId = settingsLoaded ? settings.lastSessionId : ''
   const {
     scope: memorySettingsScope,
     loaded: memorySettingsLoaded
@@ -592,14 +587,14 @@ export function ChatView(): JSX.Element {
   // 先恢复草稿再插入新引用，避免打开隐藏的对话面板时被恢复 effect 覆盖。
   useEffect(() => {
     const drain = (): void => {
-      if (!sessionId || remoteReadOnly || sourceEpoch !== getEngineSource() || !inputRef.current) return
-      const queue = consumePendingMentions()
+      if (!sessionId || sourceEpoch !== getEngineSource() || !inputRef.current) return
+      const queue = consumePendingMentions({ sessionId, source: sourceEpoch })
       for (const mention of queue) inputRef.current.insertMention(mention)
       if (queue.length) inputRef.current.focus()
     }
     drain()
     return subscribePendingMentions(drain)
-  }, [sessionId, remoteReadOnly, sourceEpoch])
+  }, [sessionId, sourceEpoch])
 
   /** 用户编辑后防抖保存草稿（仅 onChange 路径，程序化 setInput 由调用方自行保存） */
   const scheduleDraftSave = useCallback(
@@ -1929,7 +1924,7 @@ function serializeMessages(selected: ChatMessage[]): string {
           const toolLines = exportedTools.map((tool) => {
             const state = toolStatusLabel(tool)
             const summary = tool.args ? toolParamSummary(tool.args) : ''
-            const details = tool.commandJob ? exportCommandJob(tool.commandJob) : tool.name === 'subagent' ? exportSubagentDetails(tool) : tool.error ?? ''
+            const details = tool.commandJob ? exportCommandJob(tool.commandJob) : tool.name === 'subagent' ? exportSubagentDetails(tool) : exportToolDiagnostics(tool)
             return `- ${toolDisplayName(tool.name)}${summary ? `：${summary}` : ''}（${state}）${details ? `\n\n${details}\n` : ''}`
           })
           parts.push(`\n**工具调用**\n\n${toolLines.join('\n')}`)
@@ -2384,7 +2379,8 @@ function MessageTimeline({
             </div>
           ) : (
             <div key={`c-${index}`} className="message__content">
-              <Markdown text={segment.text} />
+              <Markdown text={segment.text} fileContext={{ sessionId: message.run?.sessionId ?? sessionId,
+                workspaceRoot: message.run?.workspacePaths?.[0] ?? getSessionMeta(message.run?.sessionId ?? sessionId).workspacePath }} />
             </div>
           )
         )
@@ -2658,7 +2654,7 @@ function CompactToolRow({ tool }: { tool: ToolActivity }): JSX.Element {
       {open && hasDetail ? (
         <div className="logline__detail">
           {tool.args ? <pre>{tool.args}</pre> : null}
-          {tool.error ? <div className="message__error">{tool.error}</div> : null}
+          {toolFailureMessage(tool) ? <div className="message__error">{toolFailureMessage(tool)}</div> : null}
           {tool.result ? <pre>{tool.result}</pre> : null}
         </div>
       ) : null}

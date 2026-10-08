@@ -13,10 +13,22 @@ export interface ModelFormState {
   apiKey: string
   vision: boolean | null
   thinking: boolean | null
+  /** 上下文窗口（token 数）文本框原样内容，空串表示不覆盖 */
+  contextWindow: string
 }
 
 function choice(value: boolean | undefined): boolean | null {
   return typeof value === 'boolean' ? value : null
+}
+
+/** 文本框 → token 数；空串 / 非正整数返回 null（不覆盖），无法解析抛错留给表单校验 */
+function parseContextWindow(text: string): number | null {
+  const trimmed = text.trim()
+  if (!trimmed) return null
+  if (!/^\d+$/.test(trimmed)) throw new Error('上下文窗口必须是正整数')
+  const value = Number(trimmed)
+  if (value <= 0) throw new Error('上下文窗口必须是正整数')
+  return value
 }
 
 /** Form choices describe manual overrides, never inferred/resolved defaults. */
@@ -28,7 +40,10 @@ export function initialModelForm(model?: EngineModel): ModelFormState {
     baseUrl: model?.baseUrl ?? 'https://api.deepseek.com',
     apiKey: '',
     vision: choice(model?.capabilityOverrides?.vision),
-    thinking: choice(model?.capabilityOverrides?.thinking)
+    thinking: choice(model?.capabilityOverrides?.thinking),
+    contextWindow: model?.capabilityOverrides?.contextWindow
+      ? String(model.capabilityOverrides.contextWindow)
+      : ''
   }
 }
 
@@ -42,6 +57,10 @@ export function buildModelUpdate(model: EngineModel, form: ModelFormState): Upda
   for (const key of ['vision', 'thinking'] as const) {
     if (form[key] !== choice(model.capabilityOverrides?.[key])) capabilities[key] = form[key]
   }
+  const contextWindow = parseContextWindow(form.contextWindow)
+  if (contextWindow !== (model.capabilityOverrides?.contextWindow ?? null)) {
+    capabilities.contextWindow = contextWindow
+  }
   if (Object.keys(capabilities).length) patch.capabilityOverrides = capabilities
   return patch
 }
@@ -50,5 +69,7 @@ export function newModelOverrides(form: ModelFormState): ModelCapabilities | und
   const overrides: ModelCapabilities = {}
   if (form.vision !== null) overrides.vision = form.vision
   if (form.thinking !== null) overrides.thinking = form.thinking
+  const contextWindow = parseContextWindow(form.contextWindow)
+  if (contextWindow !== null) overrides.contextWindow = contextWindow
   return Object.keys(overrides).length ? overrides : undefined
 }

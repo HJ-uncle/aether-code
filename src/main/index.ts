@@ -8,6 +8,7 @@ import { abortAllStreams, disposeLsp, registerIpcHandlers } from './ipc'
 import { disposeAllTerminals } from './terminal/pty-service'
 import { remoteTerminalService } from './terminal/remote-terminal'
 import { getSettings } from './settings-store'
+import { registerBrowserIpc } from './browser-ipc'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 
 // Windows Electron builds on machines with Exploit Protection or older GPU
@@ -118,6 +119,7 @@ function createWindow(): void {
   })
   if (winState.maximized) mainWindow.maximize()
   trackWindowState(mainWindow)
+  registerBrowserIpc(mainWindow)
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()

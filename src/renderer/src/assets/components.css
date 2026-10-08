@@ -3806,15 +3806,15 @@
 .ctx-card {
   /* git-stashcard 提供 fixed 定位/背景/边框/投影，这里补布局差异（对齐 wuzu ContextUsageRing） */
   cursor: default;
-  min-width: 200px;
-  max-width: 280px;
-  padding: 12px 14px;
+  min-width: 150px;
+  max-width: 200px;
+  padding: 8px 10px;
 }
 .ctx-card__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--fg);
 }
@@ -3822,36 +3822,36 @@
   color: var(--danger-fg);
 }
 .ctx-card__percent {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 1;
   color: var(--fg-strong);
   font-variant-numeric: tabular-nums;
 }
 .ctx-card__percent-sign {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 400;
 }
 .ctx-card__tokens {
-  margin-top: 12px;
+  margin-top: 6px;
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   line-height: 1.3;
 }
 .ctx-card__tokens-value {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--fg);
   font-variant-numeric: tabular-nums;
 }
 .ctx-card__tokens-label {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--fg-faint);
 }
 .ctx-card__bar {
-  margin-top: 10px;
-  height: 4px;
+  margin-top: 6px;
+  height: 3px;
   border-radius: 2px;
   background: var(--bg-hover);
   overflow: hidden;
@@ -3866,19 +3866,19 @@
   background: var(--danger-fg);
 }
 .ctx-card__status {
-  margin-top: 10px;
-  font-size: 12px;
+  margin-top: 6px;
+  font-size: 11px;
   color: var(--fg-muted);
 }
 .ctx-card__error {
   margin-top: 4px;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--danger-fg);
   word-break: break-all;
 }
 .ctx-card__hint {
-  margin-top: 10px;
-  font-size: 11px;
+  margin-top: 6px;
+  font-size: 10px;
   line-height: 1.4;
   color: var(--fg-faint);
 }

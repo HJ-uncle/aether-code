@@ -9,6 +9,7 @@ import { installKeybindingDispatcher } from './core/platform/keybindings'
 import { restoreLastFolder } from './core/workspace/workspace-store'
 import { wireWorkspaceLiveSync } from './core/workspace/live-sync'
 import { wireGitLiveSync } from './core/git/live-sync'
+import { wireBrowserConnection } from './core/browser/connection'
 import { wireTsLsp } from './core/lsp/lifecycle'
 
 /**
@@ -36,6 +37,7 @@ export function bootstrapRenderer(): () => void {
   wireTsLsp()
   const disposeWorkspaceLiveSync = wireWorkspaceLiveSync()
   const disposeGitLiveSync = wireGitLiveSync()
+  const disposeBrowserConnection = wireBrowserConnection()
   void restoreLastFolder()
 
   return () => {
@@ -44,5 +46,6 @@ export function bootstrapRenderer(): () => void {
     disposeKeybindings()
     disposeWorkspaceLiveSync()
     disposeGitLiveSync()
+    disposeBrowserConnection()
   }
 }

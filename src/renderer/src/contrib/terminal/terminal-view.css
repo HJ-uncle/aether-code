@@ -83,6 +83,24 @@
   box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 
+.terminal-view.terminal-view--tabs .terminal-view__item:focus-visible {
+  outline: 1px solid var(--border-strong);
+  outline-offset: -1px;
+}
+
+.terminal-view.terminal-view--tabs .terminal-view__item:focus-within .terminal-view__item-close {
+  opacity: 1;
+}
+
+.terminal-view > .context-menu {
+  max-height: calc(100vh - 8px);
+  overflow-y: auto;
+}
+
+.terminal-view > .context-menu > .context-menu__item {
+  flex-shrink: 0;
+}
+
 .terminal-view.terminal-view--tabs .terminal-view__item-close {
   flex: 0 0 auto;
   width: var(--control-h-compact);

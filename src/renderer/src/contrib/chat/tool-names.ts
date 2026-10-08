@@ -1,4 +1,5 @@
 import { getWorkspaceState } from '@renderer/core/workspace/workspace-store'
+import { commandInvocation } from '@renderer/core/engine/tool-feedback'
 
 /**
  * 工具展示辅助：英文名 → 中文名 + 参数摘要
@@ -108,6 +109,8 @@ export function toolPathArg(argsJson: string): string | null {
  */
 export function toolParamSummary(argsJson: string): string {
   if (!argsJson) return ''
+  const command = commandInvocation(argsJson)
+  if (command) return condense(command)
   try {
     const args: unknown = JSON.parse(argsJson)
     if (args && typeof args === 'object') {

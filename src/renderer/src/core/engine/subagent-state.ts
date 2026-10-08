@@ -1,4 +1,5 @@
 import { commandStatusLabels } from './command-job-state'
+import { commandFailureLabel } from './tool-feedback'
 import type {
   SubagentError,
   SubagentEvent,
@@ -257,6 +258,8 @@ export function runToolState(run: SubagentRun): ToolActivity['state'] {
 }
 
 export function toolStatusLabel(tool: ToolActivity): string {
+  const commandFailure = commandFailureLabel(tool)
+  if (commandFailure) return commandFailure
   if (tool.commandJob) return commandStatusLabels[tool.commandJob.status]
   if (tool.subagent) return STATUS_LABELS[tool.subagent.status]
   if (tool.state === 'unknown') return '状态未知'

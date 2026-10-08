@@ -1,21 +1,14 @@
-import { memo, useMemo, type JSX } from 'react'
+import { createContext, memo, useContext, useMemo, type JSX } from 'react'
 import { Marked, type Token, type Tokens } from 'marked'
 import hljs from 'highlight.js'
 import { Icon } from '@renderer/workbench/icons'
-import { openFileFromChat } from './open-file'
+import { openArtifactFromChat, openFileFromChat } from './open-file'
 import { useApp } from '@renderer/core/app-context'
+import { toast } from '@renderer/core/toast'
+import { classifyChatLink, type ChatFileContext } from './chat-link'
 
-/** 链接 href 是否指向本地文件（而非 http 外链/锚点）：模型常用 [名字](path/to/file.ts) 引用代码 */
-function looksLikeFileHref(href: string): boolean {
-  if (!href) return false
-  if (/^[a-z][a-z0-9+.-]*:/i.test(href) && !/^[A-Za-z]:[\\/]/.test(href)) {
-    // 有协议前缀（http:、mailto: 等）的是外链；Windows 盘符 C:\ 除外
-    return false
-  }
-  if (href.startsWith('#')) return false
-  // 得带扩展名才算文件引用，避免把普通锚文本误判
-  return /\.[A-Za-z0-9]{1,10}(:\d+(:\d+)?)?$/.test(href)
-}
+/** Nested Markdown links inherit their message's workspace instead of the active editor's. */
+const FileContext = createContext<ChatFileContext | undefined>(undefined)
 
 /**
  * Markdown 渲染（助手正文专用）
@@ -87,16 +80,24 @@ function copyCode(event: React.MouseEvent<HTMLButtonElement>): void {
 
 function ChatLink({ token, prefix }: { token: Tokens.Link; prefix: string }): JSX.Element {
   const { engine } = useApp()
+  const context = useContext(FileContext)
   const href = token.href ?? ''
-  const local = looksLikeFileHref(href)
+  const target = classifyChatLink(href, context?.sessionId, engine.snapshot.baseUrl)
+  if (target.kind === 'artifact' || target.kind === 'invalid') {
+    return <a href={href} title={target.kind === 'artifact' ? `在编辑器中打开 ${target.path}` : target.message} onClick={(event) => {
+      event.preventDefault()
+      if (target.kind === 'invalid' || !context) { toast.error(target.kind === 'invalid' ? target.message : '文件链接缺少会话信息。'); return }
+      void openArtifactFromChat(target, context).catch(error => toast.error(`打开文件失败：${error instanceof Error ? error.message : String(error)}`))
+    }}>{renderInline(token.tokens, prefix)}</a>
+  }
   const remoteFile = !href.startsWith('#') && !/^(?:https?:|mailto:|tel:)/i.test(href)
   if (engine.snapshot.mode === 'remote' && remoteFile) {
     return <span title={`远端路径（尚未映射）：${href}`}>{renderInline(token.tokens, prefix)}</span>
   }
-  if (local) {
+  if (target.kind === 'file') {
     return <a href={href} title={`在编辑器中打开 ${href}`} onClick={(event) => {
       event.preventDefault()
-      void openFileFromChat(href)
+      void openFileFromChat(href, context).catch(error => toast.error(`打开文件失败：${error instanceof Error ? error.message : String(error)}`))
     }}>{renderInline(token.tokens, prefix)}</a>
   }
   return <a href={href} title={token.title ?? undefined} target="_blank" rel="noreferrer noopener">{renderInline(token.tokens, prefix)}</a>
@@ -363,7 +364,7 @@ function tokenizeIncremental(text: string): Token[] {
   return [...head, ...tailTokens]
 }
 
-export const Markdown = memo(function Markdown({ text }: { text: string }): JSX.Element {
+export const Markdown = memo(function Markdown({ text, fileContext }: { text: string; fileContext?: ChatFileContext }): JSX.Element {
   const tokens = useMemo(() => tokenizeIncremental(text), [text])
-  return <div className="md">{renderBlock(tokens, 'md')}</div>
+  return <FileContext.Provider value={fileContext}><div className="md">{renderBlock(tokens, 'md')}</div></FileContext.Provider>
 })

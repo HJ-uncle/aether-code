@@ -79,7 +79,11 @@ export function ContextMenu({ x, y, items, onClose, anchor = null }: ContextMenu
       onClose()
     }
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        onClose()
+      }
     }
     // 滚动后菜单位置就不再对应目标行，直接关闭比留在原地更不容易误点
     const onScroll = (event: Event): void => {
@@ -96,7 +100,9 @@ export function ContextMenu({ x, y, items, onClose, anchor = null }: ContextMenu
     }
 
     document.addEventListener('mousedown', onPointerDown)
-    document.addEventListener('keydown', onKey)
+    // xterm consumes Escape at its input. The open menu owns this key before
+    // it reaches the terminal, otherwise it stays open and blocks its tabs.
+    document.addEventListener('keydown', onKey, true)
     window.addEventListener('resize', onScroll)
     window.addEventListener('blur', onScroll)
     // capture: 捕获阶段，任意可滚动容器（侧边栏、编辑器）滚动都能收到
@@ -104,7 +110,7 @@ export function ContextMenu({ x, y, items, onClose, anchor = null }: ContextMenu
 
     return () => {
       document.removeEventListener('mousedown', onPointerDown)
-      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('keydown', onKey, true)
       window.removeEventListener('resize', onScroll)
       window.removeEventListener('blur', onScroll)
       document.removeEventListener('scroll', onScroll, true)

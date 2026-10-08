@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX, type ReactNode } from 'react'
 import { DEFAULT_SETTINGS, type AppSettings, type EngineSnapshot, type RemoteAuthCredential } from '@shared/ipc'
 import { useEngine } from './engine/useEngine'
-import { selectSessionId, settingsPatchForSource } from './engine/session-selection'
+import { selectSessionId, sessionIdAfterSettingsUpdate, settingsPatchForSource } from './engine/session-selection'
 import { engineConnectionKey, getEngineStorageKey, getEngineSource, isEngineReady, sessionStorageKey, subscribeEngineSource } from './engine/source'
 import { getSettings, updateSettings as persistSettings } from './engine/client'
 import { refreshModels, resetModelStore } from './engine/model-store'
@@ -65,6 +65,8 @@ function publishSettings(next: AppSettings): void {
 export function AppProvider({ children }: { children: ReactNode }): JSX.Element {
   const engine = useEngine()
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
+  // 异步设置响应必须读取最新选择，不能使用发起请求时闭包里的会话。
+  const sessionIdRef = useRef(DEFAULT_SETTINGS.lastSessionId)
   const [settingsLoaded, setSettingsLoaded] = useState(false)
   const selectedSourceRef = useRef<string | null>(null)
   const [selectedSource, setSelectedSource] = useState<string | null>(null)
@@ -88,6 +90,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
     let alive = true
     void getSettings().then((value) => {
       if (!alive) return
+      sessionIdRef.current = value.lastSessionId
       setSettings(value)
       publishSettings({ ...value, ...getWorkspaceSettings(getWorkspaceState().root) })
       setSettingsLoaded(true)
@@ -142,6 +145,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
         void persistSettings({ lastSessionId: sessionId }).catch(() => {})
       }
       const next = { ...settings, lastSessionId: sessionId }
+      sessionIdRef.current = sessionId
       setSettings(next)
       publishSettings({ ...next, ...getWorkspaceSettings(getWorkspaceState().root) })
       publishWorkspaceSelection(next, storageSource)
@@ -157,12 +161,19 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
     const next = Object.keys(persistedPatch).length > 0 || remoteToken !== undefined || remoteAuth !== undefined
       ? await persistSettings(persistedPatch, remoteToken, remoteAuth)
       : await getSettings()
-    if (storageSource && patch.lastSessionId) {
+    const currentSource = getEngineSource()
+    if (source === currentSource && storageSource && patch.lastSessionId) {
       try { localStorage.setItem(sessionStorageKey('aether:lastSessionId', storageSource), patch.lastSessionId) } catch { /* optional persistence */ }
     }
-    // A response for the old server cannot replace the new server's selected session.
-    const ownsSelection = source === getEngineSource() && Boolean(patch.lastSessionId)
-    const nextUserSettings = { ...next, lastSessionId: ownsSelection ? patch.lastSessionId! : next.lastSessionId }
+    const nextUserSettings = { ...next, lastSessionId: sessionIdAfterSettingsUpdate({
+      requestSource: source,
+      currentSource,
+      storageSource,
+      currentSessionId: sessionIdRef.current,
+      persistedSessionId: next.lastSessionId,
+      requestedSessionId: patch.lastSessionId
+    }) }
+    sessionIdRef.current = nextUserSettings.lastSessionId
     setSettings(nextUserSettings)
     const visible = { ...nextUserSettings, ...getWorkspaceSettings(getWorkspaceState().root) }
     publishSettings(visible)

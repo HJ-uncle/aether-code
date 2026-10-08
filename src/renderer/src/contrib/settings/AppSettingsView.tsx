@@ -21,6 +21,9 @@ import { EditorSettingsView } from './EditorSettingsView'
 import { TerminalSettingsView } from './TerminalSettingsView'
 import { GitSettingsView } from './GitSettingsView'
 import { WorkbenchSettingsView } from './WorkbenchSettingsView'
+import { BrowserSettingsView } from '../browser/BrowserSettingsView'
+import { useBrowserState } from '../browser/browser-store'
+import { DEFAULT_BROWSER_SETTINGS } from '@shared/browser'
 import { getEditorDisplayOptions, onEditorDisplayOptionsChanged } from '@renderer/core/editor/editor-display-options'
 import { DEFAULT_EDITOR_DISPLAY_OPTIONS } from '@renderer/core/editor/editor-display-options'
 import { DEFAULT_TERMINAL_PREFERENCES, getTerminalPreferences, onTerminalPreferencesChanged } from '@renderer/contrib/terminal/terminal-preferences'
@@ -148,6 +151,11 @@ const SECTIONS: Section[] = [
     component: WorkbenchSettingsView
   },
   {
+    id: 'browser', label: '浏览器', icon: 'eye-outline', group: '功能',
+    description: '在编辑区运行网页，调整浏览器会话、视口与 AI 操作偏好。',
+    component: BrowserSettingsView
+  },
+  {
     id: 'security',
     label: '安全',
     icon: 'shield',
@@ -214,6 +222,7 @@ export function AppSettingsView(): JSX.Element {
   const layout = useSyncExternalStore(onLayoutChanged, getLayout)
   const userKeybindings = useSyncExternalStore(onUserKeybindingsChanged, getUserKeybindingRules)
   const settingDefinitions = useSyncExternalStore(onSettingsRegistryChanged, getSettingsDefinitions)
+  const { settings: browserSettings } = useBrowserState()
   const [active, setActive] = useState(request?.section ?? DEFAULT_SETTINGS_SECTION)
   const [consumedNonce, setConsumedNonce] = useState(request?.nonce ?? 0)
   const [query, setQuery] = useState('')
@@ -224,7 +233,13 @@ export function AppSettingsView(): JSX.Element {
     setConsumedNonce(request.nonce)
     setActive(request.section)
   }
-  const modifiedKeys = useMemo(() => getModifiedKeys(settings, editorOptions, terminalPreferences, gitPreferences, layout, userKeybindings), [editorOptions, gitPreferences, layout, settings, terminalPreferences, userKeybindings])
+  const modifiedKeys = useMemo(() => {
+    const keys = getModifiedKeys(settings, editorOptions, terminalPreferences, gitPreferences, layout, userKeybindings)
+    for (const key of ['homeUrl', 'zoomFactor', 'defaultViewport', 'persistSession', 'aiEnabled'] as const) {
+      if (JSON.stringify(browserSettings[key]) !== JSON.stringify(DEFAULT_BROWSER_SETTINGS[key])) keys.add(`browser.${key}`)
+    }
+    return keys
+  }, [browserSettings, editorOptions, gitPreferences, layout, settings, terminalPreferences, userKeybindings])
   const results = useMemo(() => {
     const candidates = query.trim()
       ? searchSettings(query, scope, modifiedKeys)

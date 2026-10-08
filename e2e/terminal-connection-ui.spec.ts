@@ -117,7 +117,7 @@ test.describe.serial('远端终端连接就绪', () => {
   test('断开后禁止新建，主动关闭全部后重连不擅自新开终端', async () => {
     await page.evaluate(() => window.aether.engine.stop())
     await expect(page.getByRole('button', { name: '新建终端', exact: true })).toBeDisabled()
-    await expect(page.locator('.terminal-view__item')).toContainText('已退出')
+    await expect(page.locator('.terminal-view__item')).toContainText('已断开')
     await page.getByRole('button', { name: '关闭 终端 1', exact: true }).click()
     await expect(page.locator('.terminal-view [role="status"]')).toContainText('等待远端引擎连接')
     const snapshot = await page.evaluate(() => window.aether.engine.start())

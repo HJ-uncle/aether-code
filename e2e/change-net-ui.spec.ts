@@ -113,7 +113,7 @@ test.describe.serial('净文件改动真机闭环', () => {
     expect(new Set(displayedNames).size).toBe(displayedNames.length)
     for (const name of ['different.txt', 'revert.txt', 'keep.txt', 'stage[1].txt', 'delete.txt', 'manual.txt']) {
       await expect(row(name)).toHaveCount(1)
-      await expect(row(name).getByRole('button', { name: '保留', exact: true })).toHaveCount(1)
+      await expect(row(name).getByRole('button', { name: '确定', exact: true })).toHaveCount(1)
       await expect(row(name).getByRole('button', { name: `${name} 的更多操作`, exact: true })).toHaveCount(1)
     }
     const keyboardMenu = row('manual.txt').getByRole('button', { name: 'manual.txt 的更多操作', exact: true })
@@ -132,13 +132,18 @@ test.describe.serial('净文件改动真机闭环', () => {
     expect(await ledger()).toHaveLength(17)
   })
 
+  test('点击改动行在编辑区打开对应文件', async () => {
+    await row('keep.txt').locator('.changes-panel__identity').click()
+    await expect(page.locator('.editor-tab.is-active')).toContainText('keep.txt')
+  })
+
   test('单行撤回整组恢复初始内容，单行保留确认整组', async () => {
     await rowMenuAction('revert.txt', '撤回改动')
     await page.getByRole('dialog', { name: '撤回改动' }).getByRole('button', { name: '撤回', exact: true }).click()
     await expect(row('revert.txt')).toHaveCount(0)
     expect(readFileSync(join(workspace, 'revert.txt'), 'utf8')).toBe('original\n')
     expect((await ledger()).filter(change => change.path.endsWith('revert.txt')).map(change => change.status)).toEqual(['reverted', 'reverted'])
-    await row('keep.txt').getByRole('button', { name: '保留', exact: true }).click()
+    await row('keep.txt').getByRole('button', { name: '确定', exact: true }).click()
     await expect(row('keep.txt')).toHaveCount(0)
     expect((await ledger()).filter(change => change.path.endsWith('keep.txt')).map(change => change.status)).toEqual(['kept', 'kept'])
     expect(readFileSync(join(workspace, 'keep.txt'), 'utf8')).toBe('final\n')

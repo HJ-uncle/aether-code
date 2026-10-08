@@ -61,11 +61,13 @@ import { AppSettingsView } from './settings/AppSettingsView'
 import { openAppSettings } from './settings/app-settings-navigation'
 import { createLocalSession } from './terminal/terminal-store'
 import { TerminalView } from './terminal/TerminalView'
+import { registerBrowserContribution } from './browser'
 
 export function registerContributions(): () => void {
   // 文件标签的渲染实现（workbench 只认识注册表，不认识具体组件）
   registerDocumentRenderer(DocumentView)
   const disposeEditorCommands = registerEditorCommands()
+  const disposeBrowser = registerBrowserContribution()
 
   const disposeViews = registerViews([
     {
@@ -504,6 +506,7 @@ export function registerContributions(): () => void {
   return () => {
     disposeViews()
     disposeEditorCommands()
+    disposeBrowser()
     disposeCommands()
     disposeKeybindings()
   }

@@ -216,7 +216,7 @@ test.describe.serial('终端真实剪贴板', () => {
   test('远端断开后粘贴禁用，关闭终端后不保留粘贴菜单或偷偷新建会话', async () => {
     await withClipboard('clipboard-must-not-reach-closed-terminal', async () => {
       await page.evaluate(() => window.aether.engine.stop())
-      await expect(page.locator('.terminal-view__item')).toContainText('已退出')
+      await expect(page.locator('.terminal-view__item')).toContainText('已断开')
       await expect(page.getByRole('button', { name: '新建终端', exact: true })).toBeDisabled()
       await terminalFocus()
       for (const key of ['Control+v', 'Control+Shift+v', 'Shift+Insert']) await page.keyboard.press(key)

@@ -14,9 +14,10 @@
 import { useSyncExternalStore } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import type { TerminalDataEvent, TerminalExitInfo } from '@shared/ipc'
 import { toast } from '@renderer/core/toast'
 import { getSettings, getSnapshot } from '@renderer/core/engine/client'
-import { engineConnectionKey, getEngineStorageKey, sessionStorageKey } from '@renderer/core/engine/source'
+import { engineConnectionKey, engineStorageKey, getEngineStorageKey, sessionStorageKey } from '@renderer/core/engine/source'
 import { ipcErrorMessage } from '@renderer/core/ipc-error'
 import { buildTerminalTheme } from './terminal-theme'
 import { getTerminalPreferences, onTerminalPreferencesChanged } from './terminal-preferences'
@@ -34,14 +35,20 @@ export interface TerminalSession {
   term: Terminal
   fit: FitAddon
   transport: TerminalTransport
+  /** Origin remains fixed when another workspace/account is selected. */
+  source: string
+  cwd?: string
+  sessionId?: string
 }
+
+export type TerminalStatus = 'running' | 'disconnected' | 'exited' | 'reconnecting'
 
 /** 会话运行态：与不可变会话对象分离 */
 interface SessionInternals {
   /** xterm 只能 open 一次：首次挂载容器后置真 */
   attached: boolean
   /** shell 已退出或连接已断：保留现场供查看，标签置灰，可手动关闭 */
-  dead: boolean
+  status: TerminalStatus
   /** 退订该会话的全部事件 / 释放传输层 */
   cleanup: () => void
 }
@@ -66,6 +73,7 @@ interface TerminalState {
 }
 
 const internals = new Map<string, SessionInternals>()
+let creationGeneration = 0
 
 function withInternals(id: string, patch: Partial<SessionInternals>): void {
   const current = internals.get(id)
@@ -116,7 +124,23 @@ export function useTerminalStore(): TerminalState {
 
 /** 标签置灰用：会话是否已退出/断开 */
 export function isSessionDead(id: string): boolean {
-  return internals.get(id)?.dead ?? false
+  return getSessionStatus(id) !== 'running'
+}
+
+export function getSessionStatus(id: string): TerminalStatus {
+  return internals.get(id)?.status ?? 'exited'
+}
+
+export function renameSession(id: string, title: string): void {
+  const name = title.trim()
+  if (!name || name.length > 80 || /[\u0000-\u001f\u007f]/.test(name)) throw new Error('请输入 1–80 个字符的终端名称，不含控制字符')
+  setState({ sessions: state.sessions.map(session => session.id === id ? { ...session, title: name } : session) })
+}
+
+export function clearSession(id: string): void {
+  const term = state.sessions.find(session => session.id === id)?.term
+  term?.clearSelection()
+  term?.clear()
 }
 
 /** 挂载点用：xterm 是否已 open 过 */
@@ -132,9 +156,9 @@ export function setActiveSession(id: string): void {
   if (state.activeId !== id) setState({ activeId: id })
 }
 
-/** 清空激活会话的屏幕（滚动缓冲保留在 shell 侧，这里只清视图） */
+/** 清除终端显示和滚动历史，不向 shell 发送命令。 */
 export function clearActiveSession(): void {
-  state.sessions.find((item) => item.id === state.activeId)?.term.clear()
+  if (state.activeId) clearSession(state.activeId)
 }
 
 /**
@@ -154,7 +178,7 @@ export async function copyTerminalSelection(selection: string): Promise<void> {
 export async function pasteTerminalClipboard(id: string): Promise<void> {
   const session = state.sessions.find(item => item.id === id)
   if (!session || isSessionDead(id)) {
-    toast.info('终端已退出，请新建终端后粘贴')
+    toast.info('终端未连接，请恢复连接或重新启动后粘贴')
     return
   }
   try {
@@ -223,11 +247,11 @@ function newTerminal(id: string): { term: Terminal; fit: FitAddon } {
 }
 
 /** 会话死亡时统一收尾：置灰标记 + 提示文案（只写一次）+ 触发重渲染 */
-function markDead(id: string, term: Terminal, message: string): void {
+function markDead(id: string, term: Terminal, message: string, status: 'disconnected' | 'exited' = 'exited'): void {
   // 会话已关闭（internals 已删）时 transport.dispose 会触发一次 onClose，
   // 此时 xterm 已 dispose，不能再写入
-  if (!internals.has(id) || isSessionDead(id)) return
-  withInternals(id, { dead: true })
+  if (!internals.has(id) || getSessionStatus(id) === 'exited' || getSessionStatus(id) === status) return
+  withInternals(id, { status })
   term.write(`\r\n\x1b[90m[${message}]\x1b[0m`)
   setState({ sessions: [...state.sessions] })
 }
@@ -245,16 +269,29 @@ function registerSession(session: TerminalSession): void {
 
 /** 新建终端；cwd 跟随工作区根目录（未打开文件夹时用主目录） */
 export async function createLocalSession(cwd?: string): Promise<void> {
+  await createSession(cwd)
+}
+
+async function createSession(cwd?: string, replacing?: TerminalSession): Promise<void> {
   if (state.creating) return
+  const generation = ++creationGeneration
   // 显式创建是一次新的尝试：清掉上次的失败标记，成功与否都重新如实记录
   setState({ creating: true, createFailed: null, closedAll: false })
+  let createdId: string | undefined
+  let pendingTerm: Terminal | undefined
+  let offEarlyData: (() => void) | undefined
+  let offEarlyExit: (() => void) | undefined
   try {
     const [settings, snapshot] = await Promise.all([getSettings(), getSnapshot()])
+    if (replacing && (replacing.source !== engineStorageKey(snapshot) || !state.sessions.some(session => session.id === replacing.id))) {
+      throw new Error('终端所属连接或账号已变化，请在当前工作区新建终端')
+    }
     // Command-palette actions bypass the view's disabled button. Check the
     // authoritative snapshot here too; waiting for a remote connection is not
     // a failed PTY launch, and must never fall back to creating a local shell.
     const remote = snapshot.mode === 'remote' || (snapshot.phase !== 'ready' && settings.engineMode === 'remote')
     if (remote && (snapshot.mode !== 'remote' || snapshot.phase !== 'ready')) {
+      if (replacing) throw new Error('请先连接远端引擎')
       setState({ creating: false })
       return
     }
@@ -266,31 +303,47 @@ export async function createLocalSession(cwd?: string): Promise<void> {
       if (source) {
         try { sessionId = localStorage.getItem(sessionStorageKey('aether:lastSessionId', source))?.trim() || sessionId } catch { /* optional persistence */ }
       }
+      if (replacing?.sessionId) sessionId = replacing.sessionId
     }
     const current = await getSnapshot()
-    if (current.mode !== snapshot.mode || (remote && (current.phase !== 'ready' || engineConnectionKey(current) !== engineConnectionKey(snapshot)))) {
+    if (generation !== creationGeneration || current.mode !== snapshot.mode || (remote && (current.phase !== 'ready' || engineConnectionKey(current) !== engineConnectionKey(snapshot)))) {
       setState({ creating: false })
       return
     }
+    // Shell banners can arrive during the IPC creation handshake. Listen before
+    // creating, then replay only the returned terminal's events in their order.
+    const early: ({ kind: 'data'; value: TerminalDataEvent } | { kind: 'exit'; value: TerminalExitInfo })[] = []
+    offEarlyData = window.aether.terminal.onData(value => { if (!internals.has(value.id)) early.push({ kind: 'data', value }) })
+    offEarlyExit = window.aether.terminal.onExit(value => { if (!internals.has(value.id)) early.push({ kind: 'exit', value }) })
     const { id } = await window.aether.terminal.create({ cwd, cols: 80, rows: 24, ...(sessionId ? { sessionId } : {}) })
+    createdId = id
+    const after = await getSnapshot()
+    if (generation !== creationGeneration || engineConnectionKey(after) !== engineConnectionKey(snapshot) || (remote && after.phase !== 'ready') ||
+        (replacing && !state.sessions.some(session => session.id === replacing.id))) {
+      throw new Error('连接或目标终端已变化，终端创建已取消')
+    }
     const { term, fit } = newTerminal(id)
+    pendingTerm = term
 
     const transport: TerminalTransport = {
-      write: (data) => void window.aether.terminal.write(id, data),
-      resize: (cols, rows) => void window.aether.terminal.resize(id, cols, rows),
-      dispose: () => void window.aether.terminal.dispose(id)
+      write: (data) => { if (!isSessionDead(id)) void window.aether.terminal.write(id, data).catch(error => markDead(id, term, ipcErrorMessage(error), id.startsWith('remote:') ? 'disconnected' : 'exited')) },
+      resize: (cols, rows) => { if (!isSessionDead(id)) void window.aether.terminal.resize(id, cols, rows).catch(error => markDead(id, term, ipcErrorMessage(error), id.startsWith('remote:') ? 'disconnected' : 'exited')) },
+      dispose: () => { void window.aether.terminal.dispose(id).catch(error => toast.error(`关闭终端失败：${ipcErrorMessage(error)}`)) }
     }
 
-    internals.set(id, { attached: false, dead: false, cleanup: () => {} })
+    internals.set(id, { attached: false, status: 'running', cleanup: () => {} })
 
     // 会话级数据路由：只把属于自己的数据写进自己的缓冲
-    const offData = window.aether.terminal.onData((event) => {
+    const receiveData = (event: TerminalDataEvent): void => {
       if (event.id === id) term.write(event.chunk)
-    })
-    const offExit = window.aether.terminal.onExit((info) => {
+    }
+    const receiveExit = (info: TerminalExitInfo): void => {
       if (info.id !== id) return
-      markDead(id, term, info.reason ?? `进程已退出，代码 ${info.exitCode}`)
-    })
+      markDead(id, term, info.reason ?? `进程已退出，代码 ${info.exitCode}`, info.status ?? 'exited')
+    }
+    const offData = window.aether.terminal.onData(receiveData)
+    const offExit = window.aether.terminal.onExit(receiveExit)
+    offEarlyData(); offEarlyExit()
     const offInput = term.onData((data) => transport.write(data))
     withInternals(id, {
       cleanup: () => {
@@ -303,18 +356,77 @@ export async function createLocalSession(cwd?: string): Promise<void> {
 
     registerSession({
       id,
-      title: `终端 ${state.counter + 1}`,
+      title: replacing?.title ?? `终端 ${state.counter + 1}`,
       term,
       fit,
-      transport
+      transport,
+      source: engineStorageKey(snapshot),
+      cwd,
+      sessionId
     })
+    createdId = undefined
+    pendingTerm = undefined
+    for (const event of early) {
+      if (event.kind === 'data') receiveData(event.value)
+      else receiveExit(event.value)
+    }
+    // Keep the previous output available until a replacement actually exists.
+    if (replacing) closeSession(replacing.id)
   } catch (error) {
+    if (createdId) {
+      const entry = internals.get(createdId)
+      internals.delete(createdId)
+      if (entry) entry.cleanup()
+      else void window.aether.terminal.dispose(createdId).catch(() => undefined)
+      pendingTerm?.dispose()
+    }
+    if (generation !== creationGeneration) { setState({ creating: false }); return }
     // 创建失败（如环境不支持 ConPTY）不能只把 creating 复位了事：
     // 视图层的「无会话则自动新建」effect 依赖 sessions.length/creating，
     // 复位后依赖变化会立刻再触发一次创建 —— 失败-复位-重试的无限循环。
     // 用 createFailed 顶住，让视图层知道"这次尝试明确失败了"，不再自动重试。
     setState({ creating: false, createFailed: ipcErrorMessage(error) })
+    if (state.sessions.length > 0) toast.error(`终端启动失败：${ipcErrorMessage(error)}`)
+  } finally {
+    offEarlyData?.()
+    offEarlyExit?.()
   }
+}
+
+export async function reconnectSession(id: string): Promise<void> {
+  const session = state.sessions.find(item => item.id === id)
+  if (!session || getSessionStatus(id) !== 'disconnected') return
+  withInternals(id, { status: 'reconnecting' })
+  setState({ sessions: [...state.sessions] })
+  try {
+    await window.aether.terminal.reconnect(id)
+    if (!internals.has(id) || getSessionStatus(id) !== 'reconnecting') return
+    withInternals(id, { status: 'running' })
+    session.transport.resize(session.term.cols, session.term.rows)
+    session.term.write('\r\n\x1b[90m[终端连接已恢复]\x1b[0m\r\n')
+    if (state.activeId === id) session.term.focus()
+  } catch (error) {
+    if (!internals.has(id)) return
+    if (getSessionStatus(id) === 'reconnecting') withInternals(id, { status: 'disconnected' })
+    toast.error(`恢复终端连接失败：${ipcErrorMessage(error)}`)
+  }
+  setState({ sessions: [...state.sessions] })
+}
+
+export async function restartSession(id: string): Promise<void> {
+  const session = state.sessions.find(item => item.id === id)
+  if (!session || getSessionStatus(id) === 'reconnecting') return
+  await createSession(session.cwd, session)
+}
+
+export function closeOtherSessions(id: string): void {
+  for (const session of [...state.sessions]) if (session.id !== id) closeSession(session.id)
+}
+
+export function closeAllSessions(): void {
+  creationGeneration++
+  for (const session of [...state.sessions]) closeSession(session.id)
+  setState({ closedAll: true })
 }
 
 /** 关闭会话：杀 shell、释放 xterm、激活标签落到右侧最后一个 */
@@ -322,11 +434,13 @@ export function closeSession(id: string): void {
   const session = state.sessions.find((item) => item.id === id)
   if (!session) return
 
-  internals.get(id)?.cleanup()
+  const entry = internals.get(id)
   internals.delete(id)
+  entry?.cleanup()
   session.term.dispose()
 
   const remaining = state.sessions.filter((item) => item.id !== id)
+  if (remaining.length === 0) creationGeneration++
   setState({
     sessions: remaining,
     activeId:

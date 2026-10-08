@@ -69,6 +69,8 @@ const MENUS: Menu[] = [
       { label: '搜索', command: 'aether.view.search' },
       { label: '版本控制', command: 'aether.view.git' },
       { label: '对话', command: 'aether.view.chat' },
+      { label: '内置浏览器', command: 'aether.browser.open' },
+      { label: '在右侧打开浏览器', command: 'aether.browser.openToSide' },
       { label: '设置', command: 'aether.view.appSettings' },
       { label: '代码图索引', command: 'aether.view.codegraph' },
       { label: '模型', command: 'aether.view.models' },

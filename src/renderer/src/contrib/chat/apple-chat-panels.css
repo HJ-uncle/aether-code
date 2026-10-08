@@ -45,6 +45,25 @@
   flex-direction: column;
   justify-content: center;
   gap: 0;
+  /* 行内文件名是一枚按钮：点击在编辑区打开该文件 */
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.changes-panel__identity:hover .changes-panel__name,
+.changes-panel__identity:focus-visible .changes-panel__name {
+  text-decoration: underline;
+}
+
+.changes-panel__identity:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
 }
 
 .changes-panel__name {
@@ -57,6 +76,23 @@
   max-width: 100%;
   font-size: 10px;
   line-height: 1.2;
+  /* 目录 + 修改时间同排展示，超出时优先省略目录 */
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.changes-panel__dir > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.changes-panel__time {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-faint);
 }
 
 .changes-panel__item > .changes-panel__spacer {

@@ -1,4 +1,4 @@
-/** D3 stable message ownership, durable request identity and honest root/tool outcomes. */
+/** D3 stable message ownership, durable request identity, honest outcomes and empty-output diagnostics. */
 import { expect, test } from '@playwright/test'
 import type { RootRun } from '../src/shared/root-run'
 import type { ChatMessage } from '../src/renderer/src/core/engine/useChat'
@@ -54,6 +54,38 @@ test('等待用户回答时不把问题文本误显示成红色错误', () => {
   const result = applyRootRun([message('server-assistant-2', 'assistant')], waiting)[0]
   expect(result.status).toBe('waiting')
   expect(result.error).toBeUndefined()
+})
+test('实时 EMPTY_OUTPUT 显示中文说明，保留失败与独立推理内容', () => {
+  const failed = run({ status: 'failed', error: { code: 'EMPTY_OUTPUT', message: 'Model returned no final answer' } })
+  const result = applyRootRun([message('server-assistant-2', 'assistant', { thinking: '尚未完成的推理' })], failed)[0]
+  expect(result).toMatchObject({
+    status: 'error', content: '', thinking: '尚未完成的推理',
+    error: '未收到模型的最终回答。模型服务可能返回了空内容，或响应未被正确解析；请重试，若仍失败请检查模型服务配置。'
+  })
+  expect(result.run?.error).toEqual(failed.error)
+})
+test('历史空回答缺少助手记录时仍显示中文失败说明', () => {
+  const failed = run({ status: 'failed', stopReason: 'empty_output', error: 'Model returned no final answer' })
+  const restored = applyRootRuns(replayMessages([{ id: failed.userMessageId, role: 'user', content: '继续', conversationId: failed.turnId }]), [failed])
+  expect(restored).toHaveLength(2)
+  expect(restored[1]).toMatchObject({
+    id: failed.assistantMessageId, status: 'error', content: '',
+    error: '未收到模型的最终回答。模型服务可能返回了空内容，或响应未被正确解析；请重试，若仍失败请检查模型服务配置。'
+  })
+})
+test('EMPTY_OUTPUT 的具体诊断及其他错误原样保留', () => {
+  const diagnostics: Partial<RootRun>[] = [
+    { stopReason: 'empty_output', error: { code: 'EMPTY_OUTPUT', message: '未收到最终回答：本次只有推理内容，请检查模型兼容性。' } },
+    { error: { code: 'EMPTY_OUTPUT', message: 'Model returned no final answer: provider trace available' } },
+    { error: { code: 'PROVIDER_ERROR', message: 'Model returned no final answer' } },
+    { error: '服务暂时不可用' }
+  ]
+  for (const diagnostic of diagnostics) {
+    const failed = run({ status: 'failed', ...diagnostic })
+    const result = applyRootRun([message('server-assistant-2', 'assistant')], failed)[0]
+    expect(result.status).toBe('error')
+    expect(result.error).toBe(typeof failed.error === 'string' ? failed.error : failed.error?.message)
+  }
 })
 test('不同请求ID即使同toolcall也保留审批记录，拒绝不可显示放行', () => {
   const item = { requestId: 'request', kind: 'permission' as const, toolCallId: 'call', toolName: 'write_file', args: { path: 'file' }, status: 'answered' as const, output: 'rejected' }

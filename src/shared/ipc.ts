@@ -143,6 +143,7 @@ export const IPC = {
     terminalCreate: 'terminal:create',
     terminalWrite: 'terminal:write',
     terminalResize: 'terminal:resize',
+    terminalReconnect: 'terminal:reconnect',
     terminalDispose: 'terminal:dispose',
     /** TS 语言服务（typescript-language-server，单实例；spawn 在主进程） */
     lspStart: 'lsp:start',
@@ -188,6 +189,8 @@ export interface TerminalCreateInput {
 export interface TerminalExitInfo {
   id: string
   exitCode: number
+  /** A transport interruption must not be confused with the PTY process exiting. */
+  status?: 'disconnected' | 'exited'
   /** Optional transport reason (remote disconnect/reconnect), not a PTY stderr line. */
   reason?: string
 }

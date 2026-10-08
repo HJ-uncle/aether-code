@@ -172,7 +172,11 @@ function EditorGroupView({ group, first, focused, split }: {
   )
 
   const tabs = useMemo<Tab[]>(() => {
-    const staticTabs: Tab[] = (first ? visibleViews : []).map((view) => ({
+    const staticTabs: Tab[] = visibleViews.filter((view) => {
+      const assigned = view.editorGroupId
+      const assignedExists = assigned && getEditorGroups().groups.some((item) => item.id === assigned)
+      return assignedExists ? assigned === group.id : first
+    }).map((view) => ({
       key: view.id,
       title: view.title,
       dirty: false,
@@ -194,7 +198,7 @@ function EditorGroupView({ group, first, focused, split }: {
       }
     })
     return [...staticTabs, ...docTabs]
-  }, [visibleViews, group.paths, editor.docs, first, workspace.root, git.files])
+  }, [visibleViews, group.id, group.paths, editor.docs, first, split, workspace.root, git.files])
 
   const [menu, setMenu] = useState<{ x: number; y: number; key: string; anchor: Element } | null>(null)
 

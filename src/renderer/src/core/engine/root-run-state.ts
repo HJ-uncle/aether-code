@@ -23,6 +23,16 @@ export function mergeRootRun(previous: RootRun | undefined, next: RootRun): Root
   return next
 }
 
+function rootRunErrorMessage(run: RootRun): string | undefined {
+  const error = typeof run.error === 'string' ? run.error : run.error?.message
+  const code = typeof run.error === 'object' ? run.error?.code : undefined
+  // 旧引擎和历史记录只有通用英文；更具体的服务端诊断应原样保留。
+  if (error === 'Model returned no final answer' && (code === 'EMPTY_OUTPUT' || run.stopReason === 'empty_output')) {
+    return '未收到模型的最终回答。模型服务可能返回了空内容，或响应未被正确解析；请重试，若仍失败请检查模型服务配置。'
+  }
+  return error
+}
+
 /** Bind only explicit engine identities; optimistic IDs may be supplied exactly once by the owning stream. */
 export function applyRootRun(
   messages: ChatMessage[], run: RootRun,
@@ -44,7 +54,7 @@ export function applyRootRun(
     // durable diagnostic for recovery. It is not a failure and must not render
     // the question again in the red message error strip below the card.
     const error = run.status === 'failed' || run.status === 'interrupted' || run.status === 'cancelled'
-      ? typeof run.error === 'string' ? run.error : run.error?.message
+      ? rootRunErrorMessage(run)
       : undefined
     return {
       ...base,

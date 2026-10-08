@@ -1,6 +1,6 @@
-/** Pure contracts: endpoint state isolation, stale in-flight model responses, and IPC identity. No Electron. */
+/** Pure contracts: endpoint state isolation, settings/session merges, stale in-flight responses, and IPC identity. No Electron. */
 import { expect, test } from '@playwright/test'
-import { selectSessionId, settingsPatchForSource } from '../src/renderer/src/core/engine/session-selection'
+import { selectSessionId, sessionIdAfterSettingsUpdate, settingsPatchForSource } from '../src/renderer/src/core/engine/session-selection'
 import {
   assertEngineSource, engineStorageKey, getEngineSource, getEngineStorageKey,
   getExpectedEngine, publishEngineSource, sessionStorageKey
@@ -104,4 +104,78 @@ test('远端选择仅留在endpoint映射，不持久化到embedded legacy字段
   Object.assign(main, settingsPatchForSource('remote:http://a:12323', patch))
   expect(main).toEqual({ lastSessionId: 'embedded-selected', lastModelId: 'chosen-model' })
   expect(selectSessionId('', main.lastSessionId, 'remote-session', () => 'unexpected')).toBe('embedded-selected')
+})
+
+test('远端修改模型或思考设置保留当前会话，显式新建和切换仍生效', () => {
+  publishEngineSource(readyRemote('settings-session'))
+  const source = getEngineSource()
+  const input = {
+    requestSource: source,
+    currentSource: source,
+    storageSource: getEngineStorageKey(),
+    currentSessionId: 'remote-selected',
+    persistedSessionId: 'embedded-selected'
+  }
+  expect(sessionIdAfterSettingsUpdate(input)).toBe('remote-selected')
+  expect(sessionIdAfterSettingsUpdate({ ...input, persistedSessionId: '' })).toBe('remote-selected')
+  expect(sessionIdAfterSettingsUpdate({ ...input, currentSessionId: 'remote-selected-after-request' }))
+    .toBe('remote-selected-after-request')
+  expect(sessionIdAfterSettingsUpdate({ ...input, requestedSessionId: 'remote-new' })).toBe('remote-new')
+  expect(sessionIdAfterSettingsUpdate({ ...input, requestedSessionId: 'remote-history' })).toBe('remote-history')
+})
+
+test('embedded普通设置保留主进程持久化选择，显式会话切换继续生效', () => {
+  const input = {
+    requestSource: 1,
+    currentSource: 1,
+    storageSource: '',
+    currentSessionId: 'previous-renderer-session',
+    persistedSessionId: 'main-process-selected'
+  }
+  expect(sessionIdAfterSettingsUpdate(input)).toBe('main-process-selected')
+  expect(sessionIdAfterSettingsUpdate({ ...input, requestedSessionId: 'explicit-new-session' }))
+    .toBe('explicit-new-session')
+})
+
+test('等待设置响应期间切换来源，旧请求不能覆盖新来源已选会话', async () => {
+  for (const requestedSessionId of [undefined, 'old-endpoint-explicit-session']) {
+    publishEngineSource(readyRemote('settings-old'))
+    const requestSource = getEngineSource()
+    const storageSource = getEngineStorageKey()
+    let selectedSessionId = 'old-endpoint-session'
+    let resolveResponse!: (sessionId: string) => void
+    const response = new Promise<string>(resolve => { resolveResponse = resolve })
+    const applyResponse = (async () => {
+      const persistedSessionId = await response
+      selectedSessionId = sessionIdAfterSettingsUpdate({
+        requestSource,
+        currentSource: getEngineSource(),
+        storageSource,
+        currentSessionId: selectedSessionId,
+        persistedSessionId,
+        requestedSessionId
+      })
+    })()
+    publishEngineSource(readyRemote('settings-new'))
+    selectedSessionId = 'new-endpoint-session'
+    resolveResponse('embedded-persisted-session')
+    await applyResponse
+    expect(selectedSessionId).toBe('new-endpoint-session')
+  }
+})
+
+test('同一远端引擎重连后，旧连接的显式选择不能覆盖当前会话', () => {
+  publishEngineSource(readyRemote('settings-restart', 'old-instance'))
+  const requestSource = getEngineSource()
+  const storageSource = getEngineStorageKey()
+  publishEngineSource(readyRemote('settings-restart', 'new-instance'))
+  expect(getEngineStorageKey()).toBe(storageSource)
+  expect(sessionIdAfterSettingsUpdate({
+    requestSource,
+    currentSource: getEngineSource(),
+    storageSource,
+    currentSessionId: 'session-selected-after-restart',
+    persistedSessionId: 'embedded-session',
+    requestedSessionId: 'old-request-session'
+  })).toBe('session-selected-after-restart')
 })

@@ -1,6 +1,8 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import { IPC } from '../shared/ipc'
+import { BROWSER_IPC, type BrowserApi, type BrowserConnectionState } from '../shared/browser-api'
+import type { BrowserEvent } from '../shared/browser'
 import type { AccountApi, AccountState } from '../shared/account'
 import type { EngineImportProgress, EngineRuntimeCatalog, EngineRuntimeInfo } from '../shared/engine-import'
 import type {
@@ -73,7 +75,44 @@ async function invokeAccount<T>(action: string, ...args: unknown[]): Promise<T> 
   return result.value
 }
 
+async function invokeBrowser<T>(method: string, ...args: unknown[]): Promise<T> {
+  const result: { ok: true; value: T } | { ok: false; message: string } = await ipcRenderer.invoke(BROWSER_IPC.invoke, method, ...args)
+  if (!result.ok) throw new Error(result.message)
+  return result.value
+}
+
+const browserApi: BrowserApi = {
+  getHostZoomFactor: () => webFrame.getZoomFactor(),
+  list: () => invokeBrowser('list'),
+  create: input => invokeBrowser('create', input),
+  action: input => invokeBrowser('action', input),
+  setBounds: input => invokeBrowser('setBounds', input),
+  close: tabId => invokeBrowser('close', tabId),
+  share: tabId => invokeBrowser('share', tabId),
+  getSettings: () => invokeBrowser('getSettings'),
+  updateSettings: patch => invokeBrowser('updateSettings', patch),
+  clearData: () => invokeBrowser('clearData'),
+  read: (tabId, kind) => invokeBrowser('read', tabId, kind),
+  network: (tabId, query) => invokeBrowser('network', tabId, query),
+  networkRequest: (tabId, requestId, options) => invokeBrowser('networkRequest', tabId, requestId, options),
+  openFile: (filePath, workspaceRoot) => invokeBrowser('openFile', filePath, workspaceRoot),
+  connect: input => invokeBrowser('connect', input),
+  disconnect: () => invokeBrowser('disconnect'),
+  getConnection: () => invokeBrowser('getConnection'),
+  onEvent: listener => {
+    const handler = (_event: unknown, value: BrowserEvent): void => listener(value)
+    ipcRenderer.on(BROWSER_IPC.event, handler)
+    return () => ipcRenderer.removeListener(BROWSER_IPC.event, handler)
+  },
+  onConnection: listener => {
+    const handler = (_event: unknown, value: BrowserConnectionState): void => listener(value)
+    ipcRenderer.on(BROWSER_IPC.connection, handler)
+    return () => ipcRenderer.removeListener(BROWSER_IPC.connection, handler)
+  }
+}
+
 const api = {
+  browser: browserApi,
   account: {
     getState: () => invokeAccount('getState'),
     setHttpTrust: (url, trusted) => invokeAccount('setHttpTrust', url, trusted),
@@ -396,6 +435,7 @@ const api = {
     resize: (id: string, cols: number, rows: number): Promise<void> =>
       ipcRenderer.invoke(IPC.invoke.terminalResize, id, cols, rows),
     dispose: (id: string): Promise<void> => ipcRenderer.invoke(IPC.invoke.terminalDispose, id),
+    reconnect: (id: string): Promise<void> => ipcRenderer.invoke(IPC.invoke.terminalReconnect, id),
     onData: (listener: (event: TerminalDataEvent) => void): (() => void) => {
       const handler = (_e: unknown, event: TerminalDataEvent): void => listener(event)
       ipcRenderer.on(IPC.event.terminalData, handler)

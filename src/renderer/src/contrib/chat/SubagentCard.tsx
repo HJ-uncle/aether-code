@@ -17,6 +17,7 @@ import {
 } from '@renderer/core/engine/subagent-store'
 import { Icon } from '@renderer/workbench/icons'
 import { Markdown } from './Markdown'
+import { getSessionMeta } from '../history/session-meta'
 import { toolDisplayName, toolParamSummary } from './tool-names'
 import { useCollapseMemory } from './useCollapseMemory'
 import { formatTokens } from './usage'
@@ -374,7 +375,7 @@ export function SubagentCard({
               </pre>
             ) : (
               <div className="subagent-card__result-markdown">
-                <Markdown text={result} />
+                <Markdown text={result} fileContext={{ sessionId, workspaceRoot: getSessionMeta(sessionId).workspacePath }} />
               </div>
             )}
           </div>

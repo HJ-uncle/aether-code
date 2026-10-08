@@ -23,6 +23,8 @@ export interface ViewRegistration {
   when?: string
   /** 主区固定标签是否允许用户关闭（仅 editor 位置有意义）；关闭后可通过 showEditorView 恢复 */
   closable?: boolean
+  /** A single native surface may be assigned to a split editor group. */
+  editorGroupId?: string
   component: ComponentType
 }
 

@@ -662,6 +662,11 @@ export function registerIpcHandlers(): void {
     if (remoteTerminalService.owns(id)) return remoteTerminalService.dispose(id)
     return disposeTerminal(id)
   })
+  ipcMain.handle(IPC.invoke.terminalReconnect, async (_event, id: string) => {
+    if (!remoteTerminalService.owns(id)) throw new Error('此终端无法恢复连接，请重新启动终端')
+    await engineHost.prepareRequestHeaders()
+    return remoteTerminalService.reconnect(id)
+  })
 
   // ── TS 语言服务（typescript-language-server，单实例）──
   // 与引擎 SSE 同款双向长连接：渲染进程发 JSON-RPC 经 lsp:send 进 stdin，

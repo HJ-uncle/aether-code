@@ -7,7 +7,9 @@ import { onSnapshot, onStreamEvent, requestOrThrow } from '@renderer/core/engine
 import { dismissRevertReport, getRevertReport, groupRevertResults, revertChanges, revertComplete, revertStatusLabel, revertSummary, subscribeReverts } from '@renderer/core/engine/change-revert'
 import { gitStageFiles } from '@renderer/core/git/git-client'
 import { changeIdsOf, keepChanges, stageAndKeepChanges } from '@renderer/core/engine/change-actions'
-import { assertEngineSource, getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
+import { assertEngineSource, getEngineSource, isRemoteEngine, subscribeEngineSource } from '@renderer/core/engine/source'
+import { activateDocument } from '@renderer/core/editor/editor-activation'
+import { openFile } from '@renderer/core/editor/editor-store'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { assertWorkspaceTarget } from '@renderer/core/workspace/connection'
 import { remoteWorkspaceContext, remoteWorkspaceRelativePath } from '@renderer/core/workspace/fs-client'
@@ -65,6 +67,21 @@ function splitPath(change: EngineFileChange): { name: string; dir: string } {
   const index = display.lastIndexOf('/')
   if (index === -1) return { name: display, dir: '' }
   return { name: display.slice(index + 1), dir: display.slice(0, index) }
+}
+
+/** 改动时间：当天只显示时分，跨天补上月日，便于追溯又不占宽度 */
+function timeOf(change: EngineFileChange): string {
+  if (!change.createdAt) return ''
+  const date = new Date(change.createdAt)
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  const today = new Date()
+  const sameDay =
+    date.getFullYear() === today.getFullYear() &&
+    date.getMonth() === today.getMonth() &&
+    date.getDate() === today.getDate()
+  const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}`
+  return sameDay ? clock : `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${clock}`
 }
 
 type ChangesPanelProps = {
@@ -186,6 +203,29 @@ function ChangesPanelContent({
     },
     [refresh, source]
   )
+
+  // 点击改动行 → 在编辑区打开对应文件。引擎记录的 path 可能是工作区临时
+  // 落点，而 displayPath 是工具入参里的原始路径（多为工作区相对路径），
+  // 用它拼回工作区真实位置，避免打开时找不到文件。
+  const openChangeFile = (change: EngineFileChange): void => {
+    if (change.kind === 'delete') {
+      toast.warning('该文件已被删除，无法在编辑区打开')
+      return
+    }
+    void (async () => {
+      try {
+        const root = isRemoteEngine() ? (await remoteWorkspaceContext()).root : workspace.root
+        const display = change.displayPath?.trim()
+        const relative = display && !/^([A-Za-z]:[\\/]|\/|\\)/.test(display) ? display : null
+        const target =
+          relative && root ? `${root.replace(/[/\\]+$/, '')}/${relative.replace(/^[/\\]+/, '')}` : change.path
+        await openFile(target)
+        activateDocument(target)
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : '无法打开该文件')
+      }
+    })()
+  }
 
   const keepOne = (change: EngineFileChange): Promise<void> =>
     act(() => keepChanges(requestOrThrow, sessionId, [change]))
@@ -310,12 +350,20 @@ function ChangesPanelContent({
           return (
             <li key={change.id} className="changes-panel__item">
               <Icon name="file" size={16} />
-              <span className="changes-panel__identity">
+              <button
+                type="button"
+                className="changes-panel__identity"
+                title={`打开 ${change.displayPath || change.path}`}
+                onClick={() => openChangeFile(change)}
+              >
                 <span className="changes-panel__name" title={change.displayPath || change.path}>
                   {name}
                 </span>
-                {dir ? <span className="changes-panel__dir" title={dir}>{dir}</span> : null}
-              </span>
+                <span className="changes-panel__dir" title={dir}>
+                  {dir ? <span>{dir}</span> : null}
+                  {timeOf(change) ? <span className="changes-panel__time">{timeOf(change)}</span> : null}
+                </span>
+              </button>
               {/* Keep the diagnostic column mounted even when a row has no issue;
                   otherwise CSS grid shifts every action column horizontally. */}
               <span
@@ -345,7 +393,7 @@ function ChangesPanelContent({
                 title="确认保留本组文件改动"
                 onClick={() => void keepOne(change)}
               >
-                保留
+                确定
               </button>
               <ActionMenu
                 label={`${name} 的更多操作`}

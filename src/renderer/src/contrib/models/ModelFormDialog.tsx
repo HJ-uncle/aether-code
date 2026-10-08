@@ -90,6 +90,9 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
     } else if (form.apiKey.trim() && form.apiKey.trim().length < 16) {
       return 'API Key 至少 16 个字符'
     }
+    if (form.contextWindow.trim() && !/^\d+$/.test(form.contextWindow.trim())) {
+      return '上下文窗口必须是正整数'
+    }
     return null
   }, [form, isEdit])
 
@@ -325,6 +328,19 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
               }
             />
           </div>
+        </SettingsRow>
+        <SettingsRow
+          label="上下文窗口"
+          description="该模型的最大 token 数，用于用量环的百分比；留空则跟随引擎识别结果"
+        >
+          <input
+            className="field__input sg__input sg__input--wide"
+            value={form.contextWindow}
+            placeholder="如 128000"
+            inputMode="numeric"
+            onChange={(event) => patch({ contextWindow: event.target.value })}
+            onKeyDown={submitOnEnter}
+          />
         </SettingsRow>
       </SettingsGroup>
 

@@ -1,8 +1,10 @@
 import { useEffect, useState, type JSX, type ReactNode } from 'react'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { fileIdentity } from '@renderer/core/editor/file-identity'
-import { useEditor } from '@renderer/core/editor/editor-store'
-import { useEditorGroups } from '@renderer/core/editor/editor-groups'
+import { getDocument, isDirty, saveDocument, useEditor } from '@renderer/core/editor/editor-store'
+import { openViewToRight, useEditorGroups } from '@renderer/core/editor/editor-groups'
+import { isRemoteEngine } from '@renderer/core/engine/source'
+import { browserAction, initializeBrowser } from '../browser/browser-store'
 import { watchDocumentSymbols, type DocumentSymbolsSnapshot } from '@renderer/core/editor/document-symbols'
 import { documentSymbolKey, documentSymbolKindLabel, findDocumentSymbolPath } from '@renderer/core/editor/document-symbol-utils'
 import { openWorkspaceResource } from '@renderer/core/editor/monaco-workspace'
@@ -67,6 +69,14 @@ export function EditorToolbar({ filePath, groupId, children }: {
       </nav>
       <div className="editor-toolbar__actions">
         {children}
+        {/\.html?$/i.test(filePath) && root && !isRemoteEngine() ? <button type="button" className="editor-toolbar__button" aria-label="保存并在浏览器中运行" title="保存并在右侧浏览器中运行 HTML"
+          onClick={() => browserAction(async () => {
+            const doc = getDocument(filePath)
+            if (doc && isDirty(doc)) await saveDocument(filePath)
+            await initializeBrowser()
+            openViewToRight('browser')
+            await window.aether.browser.openFile(filePath, root)
+          })}><Icon name="play" size={14} /><span>运行</span></button> : null}
         <button type="button" className="editor-toolbar__button editor-toolbar__button--accent" aria-label="将当前文件添加到对话"
           title="将当前文件添加到对话" onClick={() => addFilesToChat([{ path: filePath, kind: 'file' }])}>
           <Icon name="chat" size={14} />
