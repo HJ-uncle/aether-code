@@ -21,14 +21,14 @@ function choice(value: boolean | undefined): boolean | null {
   return typeof value === 'boolean' ? value : null
 }
 
-/** 文本框 → token 数；空串 / 非正整数返回 null（不覆盖），无法解析抛错留给表单校验 */
+/** 文本框 → token 数（表单以 K 为单位，1K = 1000 token）；空串返回 null（不覆盖） */
 function parseContextWindow(text: string): number | null {
   const trimmed = text.trim()
   if (!trimmed) return null
-  if (!/^\d+$/.test(trimmed)) throw new Error('上下文窗口必须是正整数')
+  if (!/^\d+$/.test(trimmed)) throw new Error('上下文窗口必须是正整数（单位 K）')
   const value = Number(trimmed)
-  if (value <= 0) throw new Error('上下文窗口必须是正整数')
-  return value
+  if (value <= 0) throw new Error('上下文窗口必须是正整数（单位 K）')
+  return value * 1000
 }
 
 /** Form choices describe manual overrides, never inferred/resolved defaults. */
@@ -42,7 +42,7 @@ export function initialModelForm(model?: EngineModel): ModelFormState {
     vision: choice(model?.capabilityOverrides?.vision),
     thinking: choice(model?.capabilityOverrides?.thinking),
     contextWindow: model?.capabilityOverrides?.contextWindow
-      ? String(model.capabilityOverrides.contextWindow)
+      ? String(model.capabilityOverrides.contextWindow / 1000)
       : ''
   }
 }

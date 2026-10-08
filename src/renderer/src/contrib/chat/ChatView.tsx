@@ -50,8 +50,8 @@ import { getKnowledgeBaseBindingIds, saveKnowledgeBinding } from '@renderer/core
 import { ResourcePicker, type ResourceItem } from './ResourcePicker'
 import './apple-chat-panels.css'
 
-/** 上下文窗口估算基数：引擎未下发各模型窗口上限，按常见的 200k 估算占比 */
-const CONTEXT_WINDOW_FALLBACK = 200_000
+/** 上下文窗口估算基数：引擎未下发各模型窗口上限，按常见的 128K 估算占比 */
+const CONTEXT_WINDOW_FALLBACK = 128_000
 
 /** 消息窗口分页：只渲染尾部约 300 条消息（按轮次对齐切割），滚顶自动加载更早的 */
 const MESSAGE_PAGE_SIZE = 300
@@ -391,7 +391,7 @@ export function ChatView(): JSX.Element {
     }
     return 0
   }, [messages])
-  // 用量环分母：usage 帧里引擎解析出的窗口 > 模型列表能力表 > 200k 兜底
+  // 用量环分母：usage 帧里引擎解析出的窗口 > 模型列表能力表 > 128K 兜底
   const contextLimit = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
       const frame = asUsageFrame(messages[i].usage)
