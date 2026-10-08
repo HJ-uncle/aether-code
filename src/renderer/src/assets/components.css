@@ -454,6 +454,13 @@
   color: var(--fg-faint);
 }
 
+/* 输入框嵌在 field 容器里：聚焦视觉由容器的 :focus-within 统一负责。
+   全局 input:focus-visible 的聚焦环 (0,1,1) 会压过本类 (0,1,0)，
+   在容器描边内侧再画一圈紫环，深色外观下尤其明显，必须显式关掉。 */
+.search-view__input:focus-visible {
+  box-shadow: none;
+}
+
 .search-view__btn {
   display: inline-flex;
   align-items: center;

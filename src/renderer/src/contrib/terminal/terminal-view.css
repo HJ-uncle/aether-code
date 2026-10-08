@@ -79,8 +79,11 @@
     color var(--duration-fast) var(--ease-out);
 }
 
+/* 激活标签用主题色描边：与同面板上层「问题/终端/输出」的激活项
+   (border-bottom-color: var(--accent)) 保持同一套「激活 = 强调色」语言，
+   原先的 --border-strong 是中性灰，看起来像未激活。 */
 .terminal-view.terminal-view--tabs .terminal-view__item.is-active {
-  box-shadow: inset 0 0 0 1px var(--border-strong);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 .terminal-view.terminal-view--tabs .terminal-view__item:focus-visible {
