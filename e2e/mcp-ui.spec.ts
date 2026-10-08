@@ -72,7 +72,8 @@ function launchEnvironment(): Record<string, string> {
   }
 }
 
-function projectConfig(): string { return join(workspace, '.aether', 'mcp.json') }
+function projectConfig(): string { return join(workspace, '.ae', 'mcp.json') }
+function legacyProjectConfig(): string { return join(workspace, '.aether', 'mcp.json') }
 function globalConfig(): string { return join(fixture, 'global', 'mcp.json') }
 
 function serverBlock(id: string) {
@@ -113,6 +114,10 @@ test.describe.serial('MCP 设置真实引擎闭环', () => {
     profile = join(fixture, 'profile')
     marker = join(fixture, 'stdio-env-marker.txt')
     mkdirSync(workspace, { recursive: true })
+    mkdirSync(dirname(legacyProjectConfig()), { recursive: true })
+    writeFileSync(legacyProjectConfig(), JSON.stringify({ mcpServers: {
+      'legacy-ui': { name: 'Legacy UI', transportType: 'stdio', command: process.execPath, args: ['-e', stdioServerScript()], enabled: false, description: 'legacy content', isBuiltIn: false }
+    } }))
     mkdirSync(profile, { recursive: true })
     mkdirSync(join(fixture, 'skills'), { recursive: true })
     writeFileSync(join(profile, 'settings.json'), JSON.stringify({
@@ -158,6 +163,26 @@ test.describe.serial('MCP 设置真实引擎闭环', () => {
     if (!fixture) return
     if (dirname(fixture) !== fixtureRoot || !basename(fixture).startsWith('mcp-ui-')) throw new Error('Unsafe MCP fixture cleanup')
     rmSync(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  })
+
+  test('旧项目配置首次修改写入 .ae，保留源文件并防止删除后复活', async () => {
+    const original = readFileSync(legacyProjectConfig(), 'utf8')
+    await expect(serverBlock('legacy-ui')).toBeVisible()
+    expect(existsSync(projectConfig())).toBe(false)
+    await serverBlock('legacy-ui').getByRole('button', { name: '编辑', exact: true }).click()
+    await page.getByLabel('MCP 描述', { exact: true }).fill('migrated by first edit')
+    await page.getByRole('button', { name: '保存', exact: true }).click()
+    await expect(page.locator('.mcp-form')).toHaveCount(0)
+    await expect.poll(() => existsSync(projectConfig())).toBe(true)
+    expect(JSON.parse(readFileSync(projectConfig(), 'utf8')).mcpServers['legacy-ui'].description).toBe('migrated by first edit')
+    expect(readFileSync(legacyProjectConfig(), 'utf8')).toBe(original)
+    await serverBlock('legacy-ui').getByRole('button', { name: '删除', exact: true }).click()
+    await confirmDelete()
+    await expect(serverBlock('legacy-ui')).toHaveCount(0)
+    await page.locator('.settings-view--mcp').getByRole('button', { name: '刷新', exact: true }).click()
+    await expect(serverBlock('legacy-ui')).toHaveCount(0)
+    expect(JSON.parse(readFileSync(projectConfig(), 'utf8')).mcpServers).toEqual({})
+    expect(readFileSync(legacyProjectConfig(), 'utf8')).toBe(original)
   })
 
   test('项目 stdio CRUD、环境变量、工具发现和启停均真实落盘', async () => {

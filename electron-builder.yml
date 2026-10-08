@@ -11,6 +11,7 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   - '!.codemaker/**'
   - '!.cowork-temp/**'
+  - '!.ae/**'
 asarUnpack:
   - resources/**
 win:

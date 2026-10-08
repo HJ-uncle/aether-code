@@ -3,6 +3,7 @@
  * No operation may silently cross an engine/session boundary.
  */
 import type { CopyIntoWorkspaceInput, CopyIntoWorkspaceResult, EngineRequestInput, FsEntry, FsFileContent, FsStat } from '@shared/ipc'
+import { ATTACHMENTS_DIRECTORY } from '@shared/attachments'
 import { requestOrThrow } from '../engine/client'
 import { isRemoteEngine } from '../engine/source'
 import { assertWorkspaceTarget, captureWorkspaceTarget, type WorkspaceTarget } from './connection'
@@ -233,7 +234,7 @@ async function remoteCopyIntoWorkspace(input: CopyIntoWorkspaceInput): Promise<C
   const safeName = sanitizeAttachmentName(input.fileName)
   const extension = safeName.includes('.') ? safeName.slice(safeName.lastIndexOf('.')) : ''
   const stem = extension ? safeName.slice(0, -extension.length) : safeName
-  let relative = `.aether/attachments/${safeName}`
+  let relative = `${ATTACHMENTS_DIRECTORY}/${safeName}`
 
   // Keep the same no-overwrite contract as the local attachment bridge. A
   // failed existence probe is only treated as "missing" for the server's
@@ -241,7 +242,7 @@ async function remoteCopyIntoWorkspace(input: CopyIntoWorkspaceInput): Promise<C
   for (let index = 1; index <= 1000; index += 1) {
     try {
       await remoteStat(context, paths.join(context.root, relative))
-      relative = `.aether/attachments/${stem}-${index}${extension}`
+      relative = `${ATTACHMENTS_DIRECTORY}/${stem}-${index}${extension}`
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       if (!/(?:40400|not found|不存在|no such file)/i.test(message)) throw error

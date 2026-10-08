@@ -78,6 +78,10 @@ export function uploadAttachment(input: Omit<RemoteAttachmentInput, 'expectedEng
   return bridge().engine.uploadAttachment({ ...input, expectedEngine: getExpectedEngine() })
 }
 
+export function cancelAttachmentUpload(requestId: string): Promise<void> {
+  return bridge().engine.cancelAttachmentUpload(requestId)
+}
+
 /** 发起请求并在业务失败时抛错，适合「失败即中断」的调用场景 */
 export async function requestOrThrow<T = unknown>(input: EngineRequestInput): Promise<T> {
   const result = await request<T>(input)

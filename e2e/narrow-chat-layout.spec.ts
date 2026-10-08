@@ -270,4 +270,31 @@ test('最小窗口打开设置时让正文获得可读宽度', async () => {
   expect(geometry.bodyWidth, '设置正文应保留可读宽度').toBeGreaterThan(360)
   expect(geometry.horizontalOverflow, '设置正文不应出现横向溢出').toBeLessThanOrEqual(1)
   await expect(page.getByRole('tab', { name: '引擎管理', exact: true })).toBeVisible()
+
+  const nav = page.locator('.app-settings__nav-list')
+  const navMetrics = await nav.evaluate(element => {
+    const parent = element.parentElement!
+    const style = getComputedStyle(element)
+    const scrollbar = getComputedStyle(element, '::-webkit-scrollbar')
+    return {
+      horizontalOverflow: element.scrollWidth - element.clientWidth,
+      parentOverflow: parent.scrollWidth - parent.clientWidth,
+      verticalOverflow: element.scrollHeight - element.clientHeight,
+      hiddenScrollbar: style.scrollbarWidth === 'none' || scrollbar.display === 'none' || Number.parseFloat(scrollbar.width) === 0
+    }
+  })
+  expect(navMetrics.horizontalOverflow, '图标导航不应生成底部横向滚动条').toBeLessThanOrEqual(1)
+  expect(navMetrics.parentOverflow, '导航外层不应生成第二层横向滚动条').toBeLessThanOrEqual(1)
+  expect(navMetrics.hiddenScrollbar, '紧凑图标栏应隐藏滚动条轨道').toBe(true)
+  expect(navMetrics.verticalOverflow, '最小窗口必须覆盖导航内容多于可视高度的情况').toBeGreaterThan(10)
+
+  // Hiding the chrome must not replace overflow:auto with overflow:hidden;
+  // a real wheel event verifies that the lower settings remain reachable.
+  await nav.evaluate(element => { element.scrollTop = 0 })
+  const navBox = await nav.boundingBox()
+  if (!navBox) throw new Error('设置图标栏没有可滚动区域')
+  await page.mouse.move(navBox.x + navBox.width / 2, navBox.y + navBox.height / 2)
+  await page.mouse.wheel(0, 500)
+  await expect.poll(() => nav.evaluate(element => element.scrollTop), { timeout: 5_000 }).toBeGreaterThan(0)
+  expect(await nav.evaluate(element => element.scrollWidth - element.clientWidth), '滚动后导航仍不应横向溢出').toBeLessThanOrEqual(1)
 })

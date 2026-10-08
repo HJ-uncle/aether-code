@@ -22,6 +22,7 @@ export const IPC = {
     engineRequest: 'engine:request',
     engineUpload: 'engine:upload',
     engineUploadAttachment: 'engine:upload-attachment',
+    engineCancelAttachmentUpload: 'engine:cancel-attachment-upload',
     engineStreamStart: 'engine:stream:start',
     engineStreamAbort: 'engine:stream:abort',
     settingsGet: 'settings:get',
@@ -493,6 +494,8 @@ export interface EngineRequestInput {
 }
 
 export interface RemoteAttachmentInput {
+  /** Cancels only this renderer's pending transfer, without affecting other requests. */
+  requestId: string
   expectedEngine: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>
   sessionId: string
   fileName: string
@@ -706,7 +709,7 @@ export interface FsStat {
  * 复制本地文件到工作区的入参。
  *
  * File 对象出于浏览器安全拿不到真实磁盘路径，因此只能把字节流传过来。
- * `fileName` 只用于命名；落盘位置固定在 `root/.aether/attachments/`，
+ * `fileName` 只用于命名；落盘位置固定在 `root/.ae/attachments/`，
  * 避免污染用户项目。
  */
 export interface CopyIntoWorkspaceInput {

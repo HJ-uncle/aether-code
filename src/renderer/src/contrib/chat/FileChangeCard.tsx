@@ -4,9 +4,15 @@ import type { EngineFileChange } from '@shared/ipc'
 import { getRevertOutcome, revertStatusLabel, subscribeReverts } from '@renderer/core/engine/change-revert'
 import { Icon } from '@renderer/workbench/icons'
 import { openFileFromChat } from './open-file'
+import { useCollapseMemory } from './useCollapseMemory'
+import {
+  FILE_CHANGE_PREVIEW_ROWS,
+  fileChangeInitiallyCollapsed,
+  fileChangeLanguage,
+  highlightFileChangeLine
+} from './file-change-preview'
 import {
   DIFF_APPROXIMATION_HINT,
-  MAX_RENDER_ROWS,
   computeLineDiff,
   diffForDeletedFile,
   diffForNewFile,
@@ -30,9 +36,10 @@ export function FileChangeCard({
   const { engine } = useApp()
   const remoteReadOnly = engine.snapshot.mode === 'remote'
   /** 「还有 N 行」展开更多：只影响 body 内的行数，不影响卡片折叠 */
-  const [visibleLimit, setVisibleLimit] = useState(MAX_RENDER_ROWS)
-  /** 卡片折叠：默认展开（内容量大、是主要阅读对象），用户可点标题收起 */
-  const [collapsed, setCollapsed] = useState(false)
+  const [visibleLimit, setVisibleLimit] = useState(FILE_CHANGE_PREVIEW_ROWS)
+  // 删除只保留摘要；用户主动选择优先于默认值，分页回收后也不重新展开。
+  const [manualCollapsed, setCollapsed] = useCollapseMemory(`file-change:${change.id}`)
+  const collapsed = manualCollapsed ?? fileChangeInitiallyCollapsed(change)
   const failed = state === 'error'
   const outcome = useSyncExternalStore(subscribeReverts, () => getRevertOutcome(change.id))
   const rollbackLabel = outcome ? revertStatusLabel[outcome.status] : change.status === 'reverted' ? '已撤回' : null
@@ -56,30 +63,36 @@ export function FileChangeCard({
     return segments.length > 2 ? `…/${segments.slice(-2).join('/')}` : displayPath
   }, [displayPath])
 
-  const visibleRows = rows?.slice(0, visibleLimit) ?? []
+  const visibleRows = useMemo(() => rows?.slice(0, visibleLimit) ?? [], [rows, visibleLimit])
+  const language = fileChangeLanguage(displayPath)
+  const highlightedRows = useMemo(
+    () => collapsed ? [] : visibleRows.map(row => highlightFileChangeLine(row.text || ' ', language)),
+    [collapsed, visibleRows, language]
+  )
   const hiddenCount = (rows?.length ?? 0) - visibleRows.length
+  const stateIcon = failed ? 'close' : state === 'running' ? 'restart' : state === 'done' ? 'check' : 'clock-outline'
 
   return (
-    <div className={`diff-card${failed ? ' diff-card--error' : ''}${collapsed ? ' is-collapsed' : ''}`}>
+    <div className={`diff-card${failed ? ' diff-card--error' : ''}${collapsed ? ' is-collapsed' : ''}`} data-change-kind={change.kind}>
       {/* 头部用 div[role=button] 而非 <button>：内部还有「路径」按钮，按钮不能嵌套按钮 */}
       <div
         className="diff-card__head"
         role="button"
         tabIndex={0}
         aria-expanded={!collapsed}
-        onClick={() => setCollapsed((value) => !value)}
+        aria-label={`${title} ${displayPath}`}
+        onClick={() => setCollapsed(!collapsed)}
         onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return
           if (event.key !== 'Enter' && event.key !== ' ') return
           event.preventDefault()
-          setCollapsed((value) => !value)
+          setCollapsed(!collapsed)
         }}
       >
-        <span className={`diff-card__icon${failed ? ' diff-card__icon--fail' : ''}`}>
-          <Icon name={failed ? 'close' : 'check'} size={16} />
+        <span className={`diff-card__icon diff-card__icon--${state}`}>
+          <Icon name={stateIcon} size={14} />
         </span>
         <span className="diff-card__title">{title}</span>
-        {remoteReadOnly ? <span className="diff-card__hint">远端快照</span> : null}
-        {rollbackLabel ? <span className="diff-card__hint" title={outcome?.message}>{rollbackLabel}</span> : null}
         <button
           type="button"
           className="diff-card__path diff-card__path--link"
@@ -95,7 +108,6 @@ export function FileChangeCard({
         >
           {shortPath}
         </button>
-        <span className="diff-card__spacer" />
         {stats === null ? (
           <span className="diff-card__hint">内容未存档</span>
         ) : (
@@ -107,6 +119,12 @@ export function FileChangeCard({
         )}
         <Icon name="chevron" size={16} className="diff-card__chevron" />
       </div>
+      {remoteReadOnly || rollbackLabel ? (
+        <div className="diff-card__metadata">
+          {remoteReadOnly ? <span className="diff-card__hint">远端快照</span> : null}
+          {rollbackLabel ? <span className="diff-card__hint" title={outcome?.message}>{rollbackLabel}</span> : null}
+        </div>
+      ) : null}
 
       {collapsed ? null : change.truncated ? (
         <div className="diff-card__body diff-card__body--empty">
@@ -119,26 +137,33 @@ export function FileChangeCard({
           {change.kind === 'delete' ? '（删除空文件）' : isNew ? '（新建空文件）' : '（无文本差异）'}
         </div>
       ) : (
-        <div className="diff-card__body">
-          {stats?.approximate ? <div className="diff-card__hint">{DIFF_APPROXIMATION_HINT}</div> : null}
-          {visibleRows.map((row, index) => (
-            <div key={index} className={`diff-row diff-row--${row.type}`}>
-              <span className="diff-row__no">{row.newNo ?? ''}</span>
-              <span className="diff-row__sign">
-                {row.type === 'add' ? '+' : row.type === 'del' ? '-' : ' '}
-              </span>
-              <span className="diff-row__text">
-                {row.text || ' '}
-                {row.noNewline ? <span className="diff-card__hint">（文件末尾无换行）</span> : null}
-              </span>
+        <>
+          {stats?.approximate ? <div className="diff-card__notice">{DIFF_APPROXIMATION_HINT}</div> : null}
+          <div className="diff-card__body" tabIndex={0} aria-label={`${displayPath} 文件差异`}>
+            <div className="diff-card__lines">
+              {visibleRows.map((row, index) => (
+                <div key={index} className={`diff-row diff-row--${row.type}`}>
+                  <span className="diff-row__gutter" aria-hidden="true">
+                    <span className="diff-row__no">{row.type === 'del' ? row.oldNo ?? '' : row.newNo ?? ''}</span>
+                    <span className="diff-row__sign">
+                      {row.type === 'add' ? '+' : row.type === 'del' ? '-' : ' '}
+                    </span>
+                  </span>
+                  <span className="diff-row__text">
+                    {/* highlight.js 对源文本转义后生成着色 span，不注入模型提供的 HTML。 */}
+                    <code dangerouslySetInnerHTML={{ __html: highlightedRows[index] }} />
+                    {row.noNewline ? <span className="diff-card__hint">（文件末尾无换行）</span> : null}
+                  </span>
+                </div>
+              ))}
             </div>
-          ))}
+          </div>
           {hiddenCount > 0 ? (
-            <button type="button" className="diff-card__more" onClick={() => setVisibleLimit(limit => limit + MAX_RENDER_ROWS)}>
-              还有 {hiddenCount} 行，继续展开 {Math.min(hiddenCount, MAX_RENDER_ROWS)} 行
+            <button type="button" className="diff-card__more" onClick={() => setVisibleLimit(limit => limit + FILE_CHANGE_PREVIEW_ROWS)}>
+              还有 {hiddenCount} 行，继续展开 {Math.min(hiddenCount, FILE_CHANGE_PREVIEW_ROWS)} 行
             </button>
           ) : null}
-        </div>
+        </>
       )}
     </div>
   )

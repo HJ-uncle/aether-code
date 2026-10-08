@@ -14,6 +14,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
 import { markGitignored } from './gitignore-matcher'
+import { ATTACHMENTS_DIRECTORY } from '../../shared/attachments'
 import type {
   CopyIntoWorkspaceInput,
   CopyIntoWorkspaceResult,
@@ -298,9 +299,6 @@ export async function writeFile(filePath: string, content: string): Promise<FsSt
   return statPath(safePath)
 }
 
-/** 附件在工作区内的落盘目录（相对根）；用点目录避免污染用户项目 */
-const ATTACHMENT_DIR = path.join('.aether', 'attachments')
-
 /** 文件名里不能出现的字符（Windows 限制 + 路径穿越） */
 function sanitizeFileName(name: string): string {
   const base = path.basename(name).replace(/[\\/:*?"<>|\p{Cc}]/gu, '_')
@@ -320,7 +318,7 @@ export async function copyIntoWorkspace(
   input: CopyIntoWorkspaceInput
 ): Promise<CopyIntoWorkspaceResult> {
   const safeRoot = assertAllowed(input.root)
-  const dir = assertAllowed(path.join(safeRoot, ATTACHMENT_DIR))
+  const dir = assertAllowed(path.join(safeRoot, ATTACHMENTS_DIRECTORY))
   await fsp.mkdir(dir, { recursive: true })
 
   const safeName = sanitizeFileName(input.fileName)

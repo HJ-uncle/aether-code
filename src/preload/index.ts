@@ -115,6 +115,8 @@ const api = {
       ipcRenderer.invoke(IPC.invoke.engineUpload, input),
     uploadAttachment: (input: RemoteAttachmentInput): Promise<RemoteAttachmentResult> =>
       ipcRenderer.invoke(IPC.invoke.engineUploadAttachment, input),
+    cancelAttachmentUpload: (requestId: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.invoke.engineCancelAttachmentUpload, requestId),
 
     stream: {
       start: (input: StreamStartInput): Promise<{ ok: boolean }> =>

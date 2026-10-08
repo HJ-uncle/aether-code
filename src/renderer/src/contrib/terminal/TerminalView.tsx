@@ -20,11 +20,13 @@ import {
   isSessionAttached,
   isSessionDead,
   markSessionAttached,
+  pasteTerminalClipboard,
   setActiveSession,
   useTerminalStore,
   type TerminalSession
 } from './terminal-store'
 import { buildTerminalTheme } from './terminal-theme'
+import { useTerminalFit } from './use-terminal-fit'
 import './terminal-view.css'
 
 /**
@@ -188,15 +190,14 @@ function SessionSlot({
       markSessionAttached(session.id)
     }
     if (active) {
-      // display:none 期间 fit 会得到 0，激活后重新测量
-      session.fit.fit()
-      session.transport.resize(session.term.cols, session.term.rows)
       session.term.focus()
     }
   }, [active, session])
 
+  useTerminalFit(ref, session, active)
+
   /**
-   * 选中文本「添加到对话」：把终端选区落盘成 .aether/attachments/ 下的
+   * 选中文本「添加到对话」：把终端选区落盘成 .ae/attachments/ 下的
    * 临时文本文件，再作为一个 terminal 引用入队给聊天输入框。
    * 对齐 wuzu-client：终端内容量大且可能含控制字符，不直接塞进 prompt，
    * 落成文件后让 AI 自己读。
@@ -227,7 +228,6 @@ function SessionSlot({
         style={{ display: active ? 'block' : 'none' }}
         onContextMenu={(event) => {
           const selection = session.term.getSelection()
-          if (!selection) return // 无选区走 xterm 默认行为（复制/系统菜单）
           event.preventDefault()
           setMenu({ x: event.clientX, y: event.clientY, selection })
         }}
@@ -241,17 +241,28 @@ function SessionSlot({
             {
               id: 'copy',
               label: '复制',
-              hint: 'Ctrl+C',
+              hint: navigator.platform.toLowerCase().includes('mac') ? 'Cmd+C' : 'Ctrl+C',
+              disabled: !menu.selection,
               onSelect: () => {
                 setMenu(null)
                 void copyTerminalSelection(menu.selection)
               }
             },
             {
+              id: 'paste',
+              label: '粘贴',
+              hint: navigator.platform.toLowerCase().includes('mac') ? 'Cmd+V' : 'Ctrl+V',
+              disabled: isSessionDead(session.id),
+              onSelect: () => {
+                setMenu(null)
+                void pasteTerminalClipboard(session.id)
+              }
+            },
+            {
               id: 'add-to-chat',
               label: '添加到对话',
               hint: `${menu.selection.length} 字符`,
-              disabled: !workspace.root,
+              disabled: !workspace.root || !menu.selection,
               onSelect: () => {
                 setMenu(null)
                 void addSelectionToChat(menu.selection)

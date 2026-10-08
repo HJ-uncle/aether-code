@@ -2503,48 +2503,48 @@
 }
 
 /* highlight.js 配色（基于 tokens 语义色，深浅主题通用） */
-.md-code .hljs-keyword,
-.md-code .hljs-selector-tag,
-.md-code .hljs-built_in {
+:is(.md-code, .diff-row__text) .hljs-keyword,
+:is(.md-code, .diff-row__text) .hljs-selector-tag,
+:is(.md-code, .diff-row__text) .hljs-built_in {
   color: var(--syntax-keyword);
 }
 
-.md-code .hljs-string,
-.md-code .hljs-attr,
-.md-code .hljs-template-string {
+:is(.md-code, .diff-row__text) .hljs-string,
+:is(.md-code, .diff-row__text) .hljs-attr,
+:is(.md-code, .diff-row__text) .hljs-template-string {
   color: var(--syntax-string);
 }
 
-.md-code .hljs-number,
-.md-code .hljs-literal {
+:is(.md-code, .diff-row__text) .hljs-number,
+:is(.md-code, .diff-row__text) .hljs-literal {
   color: var(--syntax-number);
 }
 
-.md-code .hljs-comment,
-.md-code .hljs-quote {
+:is(.md-code, .diff-row__text) .hljs-comment,
+:is(.md-code, .diff-row__text) .hljs-quote {
   color: var(--fg-faint);
   font-style: italic;
 }
 
-.md-code .hljs-title,
-.md-code .hljs-title.function_,
-.md-code .hljs-name {
+:is(.md-code, .diff-row__text) .hljs-title,
+:is(.md-code, .diff-row__text) .hljs-title.function_,
+:is(.md-code, .diff-row__text) .hljs-name {
   color: var(--syntax-title);
 }
 
-.md-code .hljs-title.class_,
-.md-code .hljs-type {
+:is(.md-code, .diff-row__text) .hljs-title.class_,
+:is(.md-code, .diff-row__text) .hljs-type {
   color: var(--syntax-type);
 }
 
-.md-code .hljs-variable,
-.md-code .hljs-template-variable {
+:is(.md-code, .diff-row__text) .hljs-variable,
+:is(.md-code, .diff-row__text) .hljs-template-variable {
   color: var(--syntax-variable);
 }
 
-.md-code .hljs-symbol,
-.md-code .hljs-regexp,
-.md-code .hljs-meta {
+:is(.md-code, .diff-row__text) .hljs-symbol,
+:is(.md-code, .diff-row__text) .hljs-regexp,
+:is(.md-code, .diff-row__text) .hljs-meta {
   color: var(--syntax-meta);
 }
 
@@ -2746,30 +2746,33 @@
 /* ── 文件改动卡片（git diff 风格）── */
 
 .diff-card {
+  min-width: 0;
+  width: 100%;
   border: 1px solid var(--border);
-  border-left: 2px solid var(--ok);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   background: var(--bg-surface);
   overflow: hidden;
 }
 
 .diff-card--error {
-  border-left-color: var(--danger);
+  border-color: var(--danger);
 }
 
 .diff-card__head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
-  padding: 5px 9px;
+  min-height: 32px;
+  padding: 6px 8px;
   border: none;
-  background: none;
+  background: var(--bg-elevated);
   color: inherit;
   cursor: pointer;
   font-size: 12px;
   text-align: left;
   user-select: none;
+  transition: background var(--duration-fast) var(--ease-out);
 }
 
 .diff-card__head:hover {
@@ -2777,7 +2780,9 @@
 }
 
 /* 头部是 div[role=button]（内部含可点路径），键盘聚焦时补可见焦点环 */
-.diff-card__head:focus-visible {
+.diff-card__head:focus-visible,
+.diff-card__body:focus-visible,
+.diff-card__path:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
@@ -2788,39 +2793,50 @@
 }
 
 .diff-card__chevron {
-  transition: transform 0.15s ease;
+  flex: none;
+  color: var(--fg-faint);
+  transition: transform var(--duration-fast) var(--ease-out);
 }
 
 .diff-card__icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 14px;
+  height: 14px;
   flex: none;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--ok) 16%, transparent);
+  color: var(--fg-muted);
+}
+
+.diff-card__icon--done {
   color: var(--ok);
 }
 
-.diff-card__icon--fail {
-  background: var(--danger-soft);
+.diff-card__icon--error {
   color: var(--danger);
+}
+
+.diff-card__icon--running {
+  color: var(--accent);
+  animation: message-spin 1s linear infinite;
 }
 
 .diff-card__title {
   flex: none;
   color: var(--fg-strong);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .diff-card__path {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* 可点击路径：重置 button 默认样式，hover 时高亮 + 下划线 */
@@ -2831,16 +2847,26 @@
   font: inherit;
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--accent-fg, var(--fg-faint));
+  color: var(--fg-muted);
   cursor: pointer;
 }
 .diff-card__path--link:hover {
   text-decoration: underline;
-  color: var(--accent-fg, var(--fg));
+  color: var(--fg-strong);
 }
 
-.diff-card__spacer {
-  flex: 1;
+.diff-card__path:disabled {
+  cursor: default;
+  opacity: 1;
+  text-decoration: none;
+}
+
+.diff-card__metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
 }
 
 .diff-card__hint {
@@ -2867,12 +2893,18 @@
 
 .diff-card__body {
   border-top: 1px solid var(--border);
-  max-height: 420px;
+  max-height: 260px;
   overflow: auto;
   font-family: var(--font-mono);
   font-size: 12px;
-  line-height: 1.55;
-  padding: 4px 0;
+  line-height: 1.6;
+  tab-size: 4;
+}
+
+/* 所有行共享最长代码行的宽度，横向滚动时短行的色带也完整覆盖。 */
+.diff-card__lines {
+  min-width: 100%;
+  width: max-content;
 }
 
 .diff-card__body--empty {
@@ -2884,14 +2916,25 @@
 .diff-row {
   display: flex;
   align-items: baseline;
-  min-width: max-content;
-  padding: 0 10px 0 0;
+  padding-right: 8px;
+  color: var(--fg);
+}
+
+/* 行号留在视野内，长行横滚不会把增删符号一并卷走。 */
+.diff-row__gutter {
+  position: sticky;
+  left: 0;
+  z-index: var(--z-content);
+  display: inline-flex;
+  flex: none;
+  padding-left: 8px;
+  background: var(--bg-surface);
 }
 
 .diff-row__no {
   flex: none;
-  width: 38px;
-  padding-right: 8px;
+  min-width: 32px;
+  padding-right: 4px;
   text-align: right;
   color: var(--fg-faint);
   font-size: 11px;
@@ -2900,7 +2943,7 @@
 
 .diff-row__sign {
   flex: none;
-  width: 14px;
+  width: 12px;
   user-select: none;
   color: var(--fg-faint);
 }
@@ -2909,12 +2952,22 @@
   white-space: pre;
 }
 
+.diff-row__text code {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
 .diff-row--add {
   background: color-mix(in srgb, var(--ok) 12%, transparent);
 }
 
-.diff-row--add .diff-row__sign,
-.diff-row--add .diff-row__text {
+.diff-row--add .diff-row__gutter {
+  background: color-mix(in srgb, var(--ok) 12%, var(--bg-surface));
+}
+
+.diff-row--add .diff-row__sign {
   color: var(--ok-fg);
 }
 
@@ -2922,19 +2975,21 @@
   background: var(--danger-soft);
 }
 
-.diff-row--del .diff-row__sign,
-.diff-row--del .diff-row__text {
+.diff-row--del .diff-row__gutter {
+  background: linear-gradient(var(--danger-soft), var(--danger-soft)), var(--bg-surface);
+}
+
+.diff-row--del .diff-row__sign {
   color: var(--danger-fg);
 }
 
 .diff-card__more {
   display: block;
   width: 100%;
-  margin-top: 4px;
-  padding: 6px 0;
+  padding: 6px 8px;
   border: none;
   border-top: 1px solid var(--border);
-  background: transparent;
+  background: var(--bg-elevated);
   color: var(--fg-muted);
   font-size: 11px;
   cursor: pointer;
@@ -2943,6 +2998,13 @@
 .diff-card__more:hover {
   color: var(--fg-strong);
   background: var(--bg-hover);
+}
+
+.diff-card__notice {
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  color: var(--fg-muted);
+  font-size: 11px;
 }
 
 /* ── 子代理卡片 ── */
@@ -4612,11 +4674,33 @@
 }
 
 .attach-chip--busy {
+  min-width: 0;
+  max-width: 100%;
   padding: 4px 10px;
   border-style: dashed;
   border-color: var(--border);
   background: transparent;
   color: var(--fg-faint);
+}
+
+.attach-chip__progress {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attach-chip__cancel {
+  flex: none;
+  min-height: 24px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+}
+
+.attach-chip__cancel:hover {
+  background: var(--bg-hover);
+  color: var(--fg-strong);
 }
 
 /* 图片附件 chip：只显示缩略图，整图点击放大 */
@@ -4702,11 +4786,37 @@
   padding: 24px;
 }
 
-/* 失败提示：附在输入框下方一行，短暂展示 */
+/* 失败原因保留到用户关闭或再次上传，避免异步失败来不及阅读。 */
 .chat__attach-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
   margin-top: 6px;
   font-size: 11px;
   color: var(--danger);
+}
+
+.chat__attach-hint > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.chat__attach-hint-close {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-top: -3px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+}
+
+.chat__attach-hint-close:hover {
+  background: var(--bg-hover);
+  color: var(--fg-strong);
 }
 
 /* 用户气泡里的附件条：只读（无移除按钮） */
@@ -6107,25 +6217,6 @@ select.field__input {
   /* 键盘操作（Ctrl+A / Esc）需要容器可聚焦；鼠标点击时不显示描边，
      否则每次点文件树都会冒出一圈焦点框 */
   outline: none;
-  /* 树区专属细滚动条：轨道透明、全圆滑块（对齐 wuzu-client） */
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb) transparent;
-}
-.explorer__tree::-webkit-scrollbar {
-  width: 12px;
-}
-.explorer__tree::-webkit-scrollbar-track {
-  background: transparent;
-}
-.explorer__tree::-webkit-scrollbar-thumb {
-  border: 3px solid transparent;
-  border-radius: 999px;
-  background: var(--scrollbar-thumb);
-  background-clip: padding-box;
-}
-.explorer__tree::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-thumb-hover);
-  background-clip: padding-box;
 }
 
 /* 虚拟滚动的定位容器：行由 JS 用 transform 摆放，高度只为撑出滚动条 */
@@ -10641,6 +10732,8 @@ select.field__input {
 .app-settings__nav {
   display: flex;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   flex-direction: column;
   gap: var(--space-4);
   padding: var(--space-5) var(--space-3) var(--space-6);
@@ -10692,11 +10785,21 @@ select.field__input {
 
 .app-settings__nav-list {
   display: flex;
+  flex: 1;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
   flex-direction: column;
   gap: var(--space-4);
+  overflow-x: hidden;
   overflow-y: auto;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+
+.app-settings__nav-list::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .app-settings__nav-group {
@@ -10916,7 +11019,7 @@ select.field__input {
 
   .app-settings__nav-item {
     justify-content: center;
-    width: 40px;
+    width: 100%;
     padding: 0;
   }
 
@@ -11097,7 +11200,7 @@ select.field__input {
 
   .app-settings__nav-item {
     justify-content: center;
-    width: 40px;
+    width: 100%;
     padding: 0;
   }
 
@@ -11116,7 +11219,7 @@ select.field__input {
   }
 
   .app-settings__nav-item {
-    width: 38px;
+    width: 100%;
   }
 }
 

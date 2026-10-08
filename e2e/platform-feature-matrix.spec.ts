@@ -77,13 +77,16 @@ test.describe.serial('平台 IPC 全功能矩阵', () => {
   })
 
   test('FS attachments sanitize names, preserve bytes and avoid collisions', async () => {
+    mkdirSync(join(workspace, 'uploads'), { recursive: true })
+    writeFileSync(join(workspace, 'uploads', 'project-file.txt'), 'project-owned uploads')
     const copies = await page.evaluate(async root => {
       const input = { root, fileName: '../bad:name.txt', data: new Uint8Array([0, 7, 255]) }
       return [await window.aether.fs.copyIntoWorkspace(input), await window.aether.fs.copyIntoWorkspace(input)]
     }, workspace)
-    expect(copies[0].relativePath).toBe('.aether/attachments/bad_name.txt')
-    expect(copies[1].relativePath).toBe('.aether/attachments/bad_name-1.txt')
+    expect(copies[0].relativePath).toBe('.ae/attachments/bad_name.txt')
+    expect(copies[1].relativePath).toBe('.ae/attachments/bad_name-1.txt')
     expect([...readFileSync(copies[0].path)]).toEqual([0, 7, 255]); expect(copies[0].size).toBe(3)
+    expect(readFileSync(join(workspace, 'uploads', 'project-file.txt'), 'utf8')).toBe('project-owned uploads')
   })
 
   test('FS outside roots and sibling-prefix paths are rejected for all access operations', async () => {

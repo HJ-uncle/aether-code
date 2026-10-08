@@ -23,7 +23,7 @@ import type {
   TerminalCreateInput
 } from '../shared/ipc'
 import { engineRequest, engineUpload } from './engine/client'
-import { uploadRemoteAttachment } from './engine/upload-remote-attachment'
+import { cancelRemoteAttachmentUpload, uploadRemoteAttachment } from './engine/upload-remote-attachment'
 import { engineHost } from './engine/host'
 import { onEngineLog } from './engine/logger'
 import * as fileService from './fs/file-service'
@@ -239,7 +239,10 @@ export function registerIpcHandlers(): void {
     engineRequest(input)
   )
   ipcMain.handle(IPC.invoke.engineUpload, (_event, input) => engineUpload(input))
-  ipcMain.handle(IPC.invoke.engineUploadAttachment, (_event, input) => uploadRemoteAttachment(input))
+  ipcMain.handle(IPC.invoke.engineUploadAttachment, (event, input) => uploadRemoteAttachment(input, event.sender.id))
+  ipcMain.handle(IPC.invoke.engineCancelAttachmentUpload, (event, requestId: unknown) =>
+    cancelRemoteAttachmentUpload(requestId, event.sender.id)
+  )
 
   // ── 流式请求 ──
   ipcMain.handle(IPC.invoke.engineStreamStart, async (_event, input: StreamStartInput) => {

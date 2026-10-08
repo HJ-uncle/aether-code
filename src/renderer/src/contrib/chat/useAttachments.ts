@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { getEngineSource, isRemoteEngine, subscribeEngineSource } from '@renderer/core/engine/source'
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
+import { ipcErrorMessage } from '@renderer/core/ipc-error'
 import { copyIntoWorkspace } from '@renderer/core/workspace/fs-client'
-import { uploadAttachment } from '@renderer/core/engine/client'
+import { cancelAttachmentUpload, uploadAttachment } from '@renderer/core/engine/client'
 
 /**
  * 聊天附件（图片 / 文本 / 文档）
  *
  * 上传链路：渲染层的 File / Blob 出于浏览器安全模型拿不到真实磁盘路径，
- * 因此把字节流经 IPC 落盘到工作区的 `.aether/attachments/`，再把**相对路径**
+ * 因此把字节流经 IPC 落盘到工作区的 `.ae/attachments/`，再把**相对路径**
  * 交给引擎 —— 引擎的 `/workspace` 白名单只认工作区内的路径，这样它才能读回。
  *
  * 支持三种入口：回形针按钮选文件、拖拽到输入框、直接粘贴（截图/复制的文件）。
@@ -16,6 +17,7 @@ import { uploadAttachment } from '@renderer/core/engine/client'
 
 /** 单文件上限：超大文件上传会长时间卡住，且几乎没有模型能消费 */
 const MAX_FILE_BYTES = 20 * 1024 * 1024
+const UPLOAD_TIMEOUT_MS = 120_000
 
 /** 粘贴长文本的附件化阈值（与 wuzu-client 对齐） */
 const PASTED_TEXT_MAX_CHARS = 2_000
@@ -126,11 +128,37 @@ async function readBytes(file: File): Promise<Uint8Array> {
   return new Uint8Array(await file.arrayBuffer())
 }
 
+/** File reads and local IPC have no abort contract; stop waiting and ignore their late results. */
+function waitForUpload<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = (): void => reject(signal.reason instanceof Error ? signal.reason : new Error('附件上传已取消'))
+    // Attach both handlers even if cancellation already won, so a late IPC
+    // rejection is consumed instead of becoming an unhandled rejection.
+    operation.then(
+      value => { signal.removeEventListener('abort', abort); resolve(value) },
+      error => { signal.removeEventListener('abort', abort); reject(error) }
+    )
+    if (signal.aborted) { abort(); return }
+    signal.addEventListener('abort', abort, { once: true })
+  })
+}
+
+interface PendingUpload {
+  id: string
+  file: File
+  controller: AbortController
+}
+
 export interface UseAttachmentsResult {
   /** 已上传、待随下一条消息发出的附件 */
   attachments: ChatAttachment[]
   /** 是否有文件正在上传 */
   uploading: boolean
+  /** 首个处理中或排队中的文件，用于定位等待项。 */
+  uploadingFileName: string | null
+  uploadingCount: number
+  /** 取消所有未完成上传，保留已经成功添加的附件。 */
+  cancelUpload: () => void
   /** 拖拽悬停在输入区（用于高亮） */
   dragging: boolean
   /** 隐藏的 <input type="file">，由 pick() 触发 */
@@ -145,35 +173,48 @@ export interface UseAttachmentsResult {
   accept: (files: File[]) => void
   /** 拖拽进入 / 离开输入区 */
   setDragging: (value: boolean) => void
-  /** 最近一次失败原因（供界面提示；读取后自动清空由调用方决定） */
+  /** 最近一次失败原因，保留到关闭、再次上传或切换会话。 */
   error: string | null
   clearError: () => void
 }
 
 export function useAttachments(root: string | null, sessionId = ''): UseAttachmentsResult {
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
-  const [uploading, setUploading] = useState(false)
+  const [pendingUploads, setPendingUploads] = useState<Array<{ id: string; fileName: string }>>([])
   const [dragging, setDragging] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const renderSource = getEngineSource()
   const generationRef = useRef(0)
-  const pendingBatchesRef = useRef(0)
+  const pendingUploadsRef = useRef(new Map<string, PendingUpload>())
+
+  const syncPendingUploads = useCallback(() => {
+    setPendingUploads([...pendingUploadsRef.current.values()].map(({ id, file }) => ({ id, fileName: file.name })))
+  }, [])
+
+  const abortUploads = useCallback((notify = true) => {
+    for (const task of pendingUploadsRef.current.values()) {
+      task.controller.abort(new DOMException('附件上传已取消', 'AbortError'))
+    }
+    pendingUploadsRef.current.clear()
+    if (notify) setPendingUploads([])
+  }, [])
+  const cancelUpload = useCallback(() => abortUploads(), [abortUploads])
 
   const clear = useCallback(() => {
     generationRef.current++
-    pendingBatchesRef.current = 0
+    abortUploads()
     setAttachments([])
-    setUploading(false)
     setDragging(false)
-  }, [])
+    setError(null)
+  }, [abortUploads])
 
   useEffect(() => {
     const generation = generationRef.current
     void Promise.resolve().then(() => { if (generation === generationRef.current) clear() })
     const off = subscribeEngineSource(clear)
-    return () => { generationRef.current++; pendingBatchesRef.current = 0; off() }
-  }, [root, sessionId, clear])
+    return () => { generationRef.current++; abortUploads(false); off() }
+  }, [root, sessionId, clear, abortUploads])
 
   const accept = useCallback(
     (files: File[]) => {
@@ -190,27 +231,46 @@ export function useAttachments(root: string | null, sessionId = ''): UseAttachme
 
       const generation = generationRef.current
       const isCurrent = (): boolean => generation === generationRef.current && renderSource === getEngineSource()
-      pendingBatchesRef.current++
+      const tasks: PendingUpload[] = []
+      setError(null)
+      for (const file of files) {
+        if (file.size > MAX_FILE_BYTES) {
+          setError(`「${file.name}」超过 20MB，已跳过`)
+          continue
+        }
+        if (!isSupportedFile(file)) {
+          setError(`「${file.name}」类型不支持，已跳过`)
+          continue
+        }
+        const task: PendingUpload = { id: crypto.randomUUID(), file, controller: new AbortController() }
+        pendingUploadsRef.current.set(task.id, task)
+        tasks.push(task)
+      }
+      syncPendingUploads()
       void (async () => {
-        setUploading(true)
-        setError(null)
-        for (const file of files) {
-          if (!isCurrent()) return
-          if (file.size > MAX_FILE_BYTES) {
-            setError(`「${file.name}」超过 20MB，已跳过`)
-            continue
+        // A batch remains sequential to avoid retaining many 20 MB buffers at once.
+        // Separate paste/drop batches are independent and share the same pending registry.
+        for (const task of tasks) {
+          const { file, controller, id } = task
+          const { signal } = controller
+          let remoteRequestStarted = false
+          let timer: number | undefined
+          const cancelRemote = (): void => {
+            if (!remoteRequestStarted) return
+            // Cancellation must never strand the renderer if the bridge is already gone.
+            try { void cancelAttachmentUpload(id).catch(() => undefined) } catch { /* transport closed */ }
           }
-          if (!isSupportedFile(file)) {
-            setError(`「${file.name}」类型不支持，已跳过`)
-            continue
-          }
+          signal.addEventListener('abort', cancelRemote, { once: true })
           try {
-            const data = await readBytes(file)
-            if (!isCurrent()) return
+            if (!isCurrent() || signal.aborted) continue
+            timer = window.setTimeout(() => controller.abort(new DOMException('附件上传超时，请重试', 'TimeoutError')), UPLOAD_TIMEOUT_MS)
+            const data = await waitForUpload(readBytes(file), signal)
+            if (!isCurrent() || signal.aborted) continue
+            remoteRequestStarted = remote
             const result = remote
-              ? await uploadAttachment({ sessionId, fileName: file.name, type: file.type || 'application/octet-stream', data })
-              : await copyIntoWorkspace({ root: root as string, fileName: file.name, data })
-            if (!isCurrent()) return
+              ? await waitForUpload(uploadAttachment({ requestId: id, sessionId, fileName: file.name, type: file.type || 'application/octet-stream', data }), signal)
+              : await waitForUpload(copyIntoWorkspace({ root: root as string, fileName: file.name, data }), signal)
+            if (!isCurrent() || signal.aborted) continue
             const attachmentPath = 'relativePath' in result ? result.relativePath : result.path
             setAttachments((prev) => [
               ...prev,
@@ -223,14 +283,24 @@ export function useAttachments(root: string | null, sessionId = ''): UseAttachme
               }
             ])
           } catch (e) {
-            if (!isCurrent()) return
-            setError(e instanceof Error ? e.message : `上传「${file.name}」失败`)
+            if (!isCurrent()) continue
+            const reason: unknown = signal.aborted ? signal.reason : e
+            if (reason instanceof Error && reason.name === 'AbortError') continue
+            setError(`上传「${file.name}」失败：${ipcErrorMessage(reason)}`)
+          } finally {
+            window.clearTimeout(timer)
+            signal.removeEventListener('abort', cancelRemote)
+            // A cancelled/cleared task can finish after a new batch has started.
+            // Only remove its own entry; never reset another batch's busy state.
+            if (pendingUploadsRef.current.get(id) === task) {
+              pendingUploadsRef.current.delete(id)
+              if (isCurrent()) syncPendingUploads()
+            }
           }
         }
-        if (isCurrent()) { pendingBatchesRef.current--; setUploading(pendingBatchesRef.current > 0) }
       })()
     },
-    [root, renderSource, sessionId]
+    [root, renderSource, sessionId, syncPendingUploads]
   )
 
   const pick = useCallback(() => {
@@ -249,11 +319,14 @@ export function useAttachments(root: string | null, sessionId = ''): UseAttachme
   const remove = useCallback((path: string) => {
     setAttachments((prev) => prev.filter((item) => item.path !== path))
   }, [])
-
+  const clearError = useCallback(() => setError(null), [])
 
   return {
     attachments,
-    uploading,
+    uploading: pendingUploads.length > 0,
+    uploadingFileName: pendingUploads[0]?.fileName ?? null,
+    uploadingCount: pendingUploads.length,
+    cancelUpload,
     dragging,
     fileInputRef: inputRef,
     pick,
@@ -262,6 +335,6 @@ export function useAttachments(root: string | null, sessionId = ''): UseAttachme
     accept,
     setDragging,
     error,
-    clearError: () => setError(null)
+    clearError
   }
 }

@@ -319,8 +319,6 @@ export function ChatView(): JSX.Element {
   const [attachMenu, setAttachMenu] = useState<{ x: number; y: number } | null>(null)
   // 附件：落盘到当前工作区，发送时把相对路径交给引擎（图片→视觉/OCR，文本→smart_read）
   const attach = useAttachments(workspace.root, sessionId)
-  // 附件进度提示只在出现后短暂停留，避免常驻噪音
-  const [attachHint, setAttachHint] = useState<string | null>(null)
   /** 附件点击预览（图片放大 / 文本查看，统一 AttachmentPreviewDialog） */
   const [previewImage, setPreviewImage] = useState<AttachmentPreview | null>(null)
 
@@ -761,18 +759,6 @@ export function ChatView(): JSX.Element {
     if (!modelsLoaded || models.length === 0 || modelExists) return
     selectModel(models[0].modelId)
   }, [modelsLoaded, models, modelExists, selectModel])
-
-  /** 附件失败提示：短暂展示后自动消失，不打扰后续输入 */
-  useEffect(() => {
-    if (!attach.error) {
-      setAttachHint(null)
-      return
-    }
-    setAttachHint(attach.error)
-    attach.clearError()
-    const timer = window.setTimeout(() => setAttachHint(null), 5000)
-    return () => window.clearTimeout(timer)
-  }, [attach])
 
   const buildSendOptions = useCallback(
     () => ({
@@ -1406,21 +1392,6 @@ export function ChatView(): JSX.Element {
           {visibleChildCommandJobs(messages, commandJobs, sessionId).map(job => <CommandJobCard key={job.jobId} job={job} sessionId={sessionId} />)}
         </section>
       ) : null}
-      <SessionTray
-        sessionId={sessionId}
-        streaming={streaming}
-        todos={todos}
-        queue={queue}
-        workspaceRoot={workspace.root}
-        queueSendMode={queueSendMode}
-        onSetQueueSendMode={setQueueSendMode}
-        onUpdateQueued={updateQueued}
-        onMoveQueued={moveQueued}
-        onRemoveQueued={removeQueued}
-        onClearQueue={clearQueue}
-        onMergeQueue={flushQueueFromTray}
-      />
-
       <div
         className={`chat__composer${attach.dragging ? ' is-dragover' : ''}`}
         onDragOver={(event) => {
@@ -1443,6 +1414,20 @@ export function ChatView(): JSX.Element {
           attach.accept([...event.dataTransfer.files])
         }}
       >
+        <SessionTray
+          sessionId={sessionId}
+          streaming={streaming}
+          todos={todos}
+          queue={queue}
+          workspaceRoot={workspace.root}
+          queueSendMode={queueSendMode}
+          onSetQueueSendMode={setQueueSendMode}
+          onUpdateQueued={updateQueued}
+          onMoveQueued={moveQueued}
+          onRemoveQueued={removeQueued}
+          onClearQueue={clearQueue}
+          onMergeQueue={flushQueueFromTray}
+        />
         <div className="chat__surface">
           {(attach.attachments.length > 0 || attach.uploading) ? (
             <div className="chat__attach-strip">
@@ -1456,7 +1441,14 @@ export function ChatView(): JSX.Element {
                 />
               ))}
               {attach.uploading ? (
-                <span className="attach-chip attach-chip--busy">上传中…</span>
+                <span className="attach-chip attach-chip--busy">
+                  <span className="attach-chip__progress" role="status" title={attach.uploadingFileName ?? undefined}>
+                    正在上传 {attach.uploadingFileName}{attach.uploadingCount > 1 ? `（${attach.uploadingCount} 个待完成）` : ''}
+                  </span>
+                  <button type="button" className="attach-chip__cancel" aria-label="取消上传" onClick={attach.cancelUpload}>
+                    取消
+                  </button>
+                </span>
               ) : null}
             </div>
           ) : null}
@@ -1521,7 +1513,14 @@ export function ChatView(): JSX.Element {
               onClose={() => { setResourceQuery(null); inputRef.current?.focus() }}
             />
           ) : null}
-          {attachHint ? <div className="chat__attach-hint">{attachHint}</div> : null}
+          {attach.error ? (
+            <div className="chat__attach-hint" role="alert">
+              <span>{attach.error}</span>
+              <button type="button" className="chat__attach-hint-close" aria-label="关闭附件错误" onClick={attach.clearError}>
+                <Icon name="close" size={14} />
+              </button>
+            </div>
+          ) : null}
           {previewImage ? (
             <AttachmentPreviewDialog
               root={workspace.root}

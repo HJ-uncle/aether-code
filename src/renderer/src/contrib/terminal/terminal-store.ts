@@ -150,7 +150,35 @@ export async function copyTerminalSelection(selection: string): Promise<void> {
   }
 }
 
-function newTerminal(): { term: Terminal; fit: FitAddon } {
+/** Paste through xterm so newline normalization and bracketed paste stay intact. */
+export async function pasteTerminalClipboard(id: string): Promise<void> {
+  const session = state.sessions.find(item => item.id === id)
+  if (!session || isSessionDead(id)) {
+    toast.info('终端已退出，请新建终端后粘贴')
+    return
+  }
+  try {
+    const text = await navigator.clipboard.readText()
+    // Reading the OS clipboard is asynchronous. Never redirect a pending paste
+    // into a newly selected tab, or write to a disposed terminal.
+    if (state.activeId !== id || !state.sessions.includes(session) || isSessionDead(id)) {
+      toast.info('目标终端已关闭或切换，请重新粘贴')
+      return
+    }
+    if (!text) {
+      toast.info('剪贴板中没有可粘贴的文本')
+      session.term.focus()
+      return
+    }
+    session.term.clearSelection()
+    session.term.focus()
+    session.term.paste(text)
+  } catch (error) {
+    toast.error(`粘贴失败：${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+function newTerminal(id: string): { term: Terminal; fit: FitAddon } {
   const preferences = getTerminalPreferences()
   const term = new Terminal({
     fontFamily: preferences.fontFamily,
@@ -165,18 +193,29 @@ function newTerminal(): { term: Terminal; fit: FitAddon } {
   const fit = new FitAddon()
   term.loadAddon(fit)
 
-  // Ctrl+C 语义按 Windows Terminal / VS Code 的约定分层：
-  // 有选区时复制并清掉选区，没选区时才把 ^C 交给 shell 当中断。
-  // 不接管的话 xterm 一律转发给 PTY，右键菜单里标着 Ctrl+C 却只发出一个 ^C。
+  const isMac = navigator.platform.toLowerCase().includes('mac')
+  // xterm maps Ctrl+V to ^V and cancels the browser's native paste event.
+  // Handle clipboard shortcuts before that mapping, using one paste path for
+  // both keyboard and context menu. Ctrl+C without a selection still interrupts.
   term.attachCustomKeyEventHandler((event) => {
     if (event.type !== 'keydown') return true
-    if (!event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) return true
-    if (event.key.toLowerCase() !== 'c') return true
+    const key = event.key.toLowerCase()
+    const primaryModifier = isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
+    const paste = !event.altKey && ((key === 'v' && primaryModifier) ||
+      (key === 'insert' && event.shiftKey && !event.ctrlKey && !event.metaKey))
+    if (paste) {
+      event.preventDefault()
+      event.stopPropagation()
+      void pasteTerminalClipboard(id)
+      return false
+    }
+    if (key !== 'c' || !primaryModifier || event.altKey) return true
     const selection = term.getSelection()
     if (!selection) return true
+    event.preventDefault()
+    event.stopPropagation()
     void copyTerminalSelection(selection)
     term.clearSelection()
-    // 返回 false 阻止 xterm 继续把该按键写进 PTY
     return false
   })
 
@@ -234,7 +273,7 @@ export async function createLocalSession(cwd?: string): Promise<void> {
       return
     }
     const { id } = await window.aether.terminal.create({ cwd, cols: 80, rows: 24, ...(sessionId ? { sessionId } : {}) })
-    const { term, fit } = newTerminal()
+    const { term, fit } = newTerminal(id)
 
     const transport: TerminalTransport = {
       write: (data) => void window.aether.terminal.write(id, data),

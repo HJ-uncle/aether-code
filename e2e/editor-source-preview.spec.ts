@@ -8,7 +8,7 @@ const FIXTURE_ROOT = join(APP_ROOT, '.e2e-tmp')
 const MARKDOWN = '# 磁盘标题\n\n![本地图片](../assets/pixel.svg)\n\n' +
   Array.from({ length: 90 }, (_, index) => `## 第 ${index + 1} 节\n\n这是一段用于滚动验证的说明。\n\n\`source_line_${index}\`\n\n`).join('')
 const HTML = '<!doctype html><html><head><link rel="stylesheet" href="../assets/preview.css"></head><body>' +
-  '<h1>HTML 原稿</h1><p class="local-style">本地样式</p><img alt="HTML 本地图片" src="../assets/pixel.svg">' +
+  '<h1>HTML 原稿</h1><p class="local-style">本地样式</p><p>五子棋：黑棋先行</p><img alt="HTML 本地图片" src="../assets/pixel.svg">' +
   '<script>parent.document.documentElement.dataset.previewUnsafe = "ran";</script></body></html>'
 let fixture = '', markdownFile = '', profile = ''
 let app: ElectronApplication | undefined
@@ -100,6 +100,7 @@ test.describe.serial('源码与实时预览', () => {
     await page.getByRole('button', { name: '分屏预览', exact: true }).click()
     const preview = page.frameLocator('iframe[title="HTML 预览内容"]')
     await expect(preview.getByRole('heading', { name: 'HTML 原稿', exact: true })).toBeVisible()
+    await expect(preview.getByText('五子棋：黑棋先行', { exact: true })).toBeVisible()
     await expect(preview.locator('.local-style')).toHaveCSS('color', 'rgb(13, 124, 55)')
     await expect.poll(() => preview.getByRole('img', { name: 'HTML 本地图片', exact: true }).evaluate((image) =>
       image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0)).toBe(true)

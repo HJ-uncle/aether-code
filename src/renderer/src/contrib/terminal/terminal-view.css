@@ -58,7 +58,12 @@
   padding: 2px 0;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+
+.terminal-view.terminal-view--tabs .terminal-view__list::-webkit-scrollbar {
+  display: none;
+  height: 0;
 }
 
 .terminal-view.terminal-view--tabs .terminal-view__item {

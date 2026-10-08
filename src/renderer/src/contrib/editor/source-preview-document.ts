@@ -98,6 +98,11 @@ export async function buildSourcePreviewDocument(input: PreviewDocumentInput): P
 
   // Preview is static: user scripts, nested browsing contexts and navigation cannot gain app privileges.
   document.querySelectorAll('script,iframe,frame,frameset,object,embed,base,meta[http-equiv],meta[charset],meta[name="aether-preview-channel"]').forEach((element) => element.remove())
+  // 原文 charset 先被移除以避免让宿主页面的元数据进入沙箱；预览文档自身
+  // 仍必须明确声明 UTF-8，否则 data URL 在 Chromium 中可能按单字节编码解码。
+  const charset = document.createElement('meta')
+  charset.setAttribute('charset', 'utf-8')
+  document.head.prepend(charset)
   for (const element of document.querySelectorAll('*')) {
     for (const attribute of [...element.attributes]) {
       if (/^on/i.test(attribute.name) || ['srcdoc', 'nonce', 'integrity', 'crossorigin', 'formaction', 'action', 'ping'].includes(attribute.name)) element.removeAttribute(attribute.name)

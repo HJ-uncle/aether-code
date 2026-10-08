@@ -16,7 +16,9 @@ function toDataUrl(html: string): string {
   for (let offset = 0; offset < bytes.length; offset += 8192) {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192))
   }
-  return `data:text/html;base64,${btoa(binary)}`
+  // 明确声明编码；否则 Chromium 可能按 Windows-1252/Latin-1 解码 UTF-8
+  // 字节，中文会显示成「å­」一类的乱码。
+  return `data:text/html;charset=utf-8;base64,${btoa(binary)}`
 }
 
 export interface SourcePreviewHandle {

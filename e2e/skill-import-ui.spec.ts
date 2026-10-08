@@ -176,9 +176,11 @@ test.describe.serial('技能导入管理真机闭环', () => {
   test('真实文件选择导入 SKILL.md，中文名称详情使用稳定管理 ID', async () => {
     await chooseFile(join(fixture, 'SKILL.md'))
     await waitImported(singleName)
-    const installed = join(workspace, '.aether', 'skills', 'imported-skill', 'SKILL.md')
+    const installed = join(workspace, '.ae', 'skills', 'imported-skill', 'SKILL.md')
     await expect.poll(() => existsSync(installed)).toBe(true)
     expect(readFileSync(installed, 'utf8')).toBe(markdown(singleName))
+    expect(existsSync(join(workspace, '.aether', 'skills'))).toBe(false)
+    expect(existsSync(join(workspace, 'SKILLs'))).toBe(false)
     const imported = (await listSkills()).find((skill) => skill.name === singleName)
     expect(imported?.id).toMatch(/^skill-[a-f0-9]{32}$/)
     expect(imported?.scope).toBe('project')
@@ -198,7 +200,7 @@ test.describe.serial('技能导入管理真机闭环', () => {
       .poll(
         () =>
           JSON.parse(
-            readFileSync(join(workspace, '.aether', 'skills', 'skills.config.json'), 'utf8')
+            readFileSync(join(workspace, '.ae', 'skills', 'skills.config.json'), 'utf8')
           ).defaults['imported-skill'].enabled
       )
       .toBe(false)
@@ -219,7 +221,7 @@ test.describe.serial('技能导入管理真机闭环', () => {
     await page.getByLabel('新技能正文', { exact: true }).fill('# Direct UI Skill\n\nDIRECT_CREATE_MARKER')
     await page.getByRole('button', { name: '创建技能', exact: true }).click()
     await expect(card('direct-ui-skill')).toBeVisible()
-    const installed = join(workspace, '.aether', 'skills', 'direct-ui-skill', 'SKILL.md')
+    const installed = join(workspace, '.ae', 'skills', 'direct-ui-skill', 'SKILL.md')
     await expect.poll(() => existsSync(installed)).toBe(true)
     expect(readFileSync(installed, 'utf8')).toContain('DIRECT_CREATE_MARKER')
     expect((await listSkills()).find((skill) => skill.name === 'direct-ui-skill')?.enabled).toBe(true)
@@ -249,7 +251,7 @@ test.describe.serial('技能导入管理真机闭环', () => {
     await expect.poll(() => existsSync(installed)).toBe(true)
     expect(readFileSync(installed, 'utf8')).toBe('ZIP_REFERENCE_BODY')
     expect((await listSkills()).find((skill) => skill.name === zipName)?.scope).toBe('global')
-    expect(existsSync(join(workspace, '.aether', 'skills', zipName))).toBe(false)
+    expect(existsSync(join(workspace, '.ae', 'skills', zipName))).toBe(false)
     await card(zipName).locator('.skills-card__main').click()
     await expect(page.locator('.skills-detail__meta')).toContainText('2 个文件')
     await expect(
@@ -264,7 +266,7 @@ test.describe.serial('技能导入管理真机闭环', () => {
     expect(statSync(archive).size).toBeGreaterThan(5 * 1024 * 1024)
     await chooseFile(archive)
     await waitImported(chunkName)
-    const reference = join(workspace, '.aether', 'skills', chunkName, 'reference.txt')
+    const reference = join(workspace, '.ae', 'skills', chunkName, 'reference.txt')
     await expect.poll(() => existsSync(reference)).toBe(true)
     expect(readFileSync(reference)).toEqual(Buffer.alloc(6 * 1024 * 1024, 65))
     const history = await page.evaluate(
@@ -291,10 +293,10 @@ test.describe.serial('技能导入管理真机闭环', () => {
 
   test('从界面删除项目与全局技能，同时清除实际技能目录', async () => {
     for (const [name, directory] of [
-      [singleName, join(workspace, '.aether', 'skills', 'imported-skill')],
+      [singleName, join(workspace, '.ae', 'skills', 'imported-skill')],
       [zipName, join(fixture, 'global', 'skills', zipName)],
-      [chunkName, join(workspace, '.aether', 'skills', chunkName)],
-      ['direct-ui-skill', join(workspace, '.aether', 'skills', 'direct-ui-skill')]
+      [chunkName, join(workspace, '.ae', 'skills', chunkName)],
+      ['direct-ui-skill', join(workspace, '.ae', 'skills', 'direct-ui-skill')]
     ]) {
       await card(name).getByRole('button', { name: '删除', exact: true }).click()
       const dialog = page.getByRole('dialog', { name: '删除技能？', exact: true })

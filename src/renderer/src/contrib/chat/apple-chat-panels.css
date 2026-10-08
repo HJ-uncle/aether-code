@@ -1,3 +1,25 @@
+.chat__messages {
+  padding: 12px 16px;
+}
+
+/* 托盘和输入框共用尺寸与间距，避免主题覆盖后两块表面错位。 */
+.chat__composer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 16px;
+  border-top: 0;
+}
+
+.chat__composer > .session-tray,
+.chat__composer > .chat__surface {
+  flex: none;
+  width: 100%;
+  min-width: 0;
+  max-width: 840px;
+  margin: 0 auto;
+}
+
 /* Compact Apple-style surfaces for the confirmation tray. The global rules
    remain the compatibility baseline; these local rules only refine hierarchy. */
 .changes-panel,
