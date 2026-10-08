@@ -80,6 +80,18 @@
   --z-popover: 100; /* 浮层：popover / 下拉菜单 / 选择器 */
   --z-overlay: 200; /* 遮罩：模态框、命令面板 */
 
+  /* 毛玻璃模糊半径 + 焦点环：都是「与明暗无关」的定义。
+     环的宽度/混合比、blur 半径在深浅两套外观里必须完全一致，所以只在这里定义一次；
+     --focus-ring-color 派生自 --accent，而 --accent 本身已按主题分别取值，
+     环因此会自然跟随主题色，无需在浅色块重复。
+     （踩过的坑：这四条原先只在深色块定义，浅色下它们未定义 →
+       :focus-visible 的 box-shadow / backdrop-filter 整条声明静默失效，
+       键盘焦点环和所有毛玻璃 blur 在浅色模式里一起消失。） */
+  --material-blur: 28px;
+  --focus-ring-w: 3px;
+  --focus-ring-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: 0 0 0 var(--focus-ring-w) var(--focus-ring-color);
+
   --activity-bar-w: 54px;
   --status-bar-h: 28px;
 }
@@ -185,7 +197,6 @@
   --material-bg-thick-solid: #262628;
   /* 更薄的材质：标题栏。透出身后灰阶是加分项 */
   --material-bg-thin: rgba(30, 30, 32, 0.78);
-  --material-blur: 28px;
   /* 顶部 1px 高光：macOS 面板受光后边缘那圈亮线，是"玻璃感"的关键一半；
      只靠投影会像一块不透明的塑料片 */
   --material-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.07);
@@ -203,11 +214,6 @@
   --overlay-bg: rgba(0, 0, 0, 0.36);
   --scrollbar-thumb: rgba(255, 255, 255, 0.16);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
-
-  /* 焦点环：颜色跟随强调色，由下方 --accent-* 派生 */
-  --focus-ring-w: 3px;
-  --focus-ring: 0 0 0 var(--focus-ring-w) var(--focus-ring-color);
-  --focus-ring-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 /* ==================== 浅色外观 ==================== */

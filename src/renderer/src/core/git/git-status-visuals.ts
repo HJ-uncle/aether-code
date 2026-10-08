@@ -1,9 +1,9 @@
 /**
  * Git 状态配色与角标（移植自 wuzu-client components/code/gitStatusVisuals.ts）
  *
- * 视觉值沿用 VSCode gitDecoration 系（dark_plus 取色），与布局无关的纯数据：
- * 与 wuzu 版唯一的差异是不再返回 Tailwind class（本项目不是 Tailwind 工程），
- * 只导出 hex 与字母，配色到 CSS class 的映射由 aether 的 git-format 消费。
+ * 视觉值沿用 VSCode gitDecoration 系（色值落在 --git-* 主题令牌里，深浅各一套），
+ * 与布局无关的纯数据：与 wuzu 版唯一的差异是不再返回 Tailwind class（本项目不是
+ * Tailwind 工程），只导出颜色引用与字母，配色到 CSS class 的映射由 git-format 消费。
  */
 import type { GitChangeType } from '@shared/git-types'
 
@@ -21,15 +21,18 @@ export const STATUS_LETTER: Record<GitVisualKey, string> = {
   conflict: 'C!'
 }
 
-/** 状态色（VSCode gitDecoration dark 系 hex） */
+/** 状态色：引用主题令牌，不写死 hex。
+ *  令牌在深浅两套外观各有取值（浅色版刻意压深，深色那套放在 #fafafa 上对比度不足），
+ *  写死 hex 会让 git 面板在浅色模式里沿用深色配色。
+ *  深色下的取值与原先的 hex 完全一致，此处只是改为随主题解析。 */
 export const STATUS_COLOR: Record<GitVisualKey, string> = {
-  modified: '#e2c08d',
-  deleted: '#f14c4c',
-  untracked: '#73c991',
-  added: '#73c991',
-  renamed: '#e2c08d',
-  copied: '#e2c08d',
-  conflict: '#f14c4c'
+  modified: 'var(--git-modified)',
+  deleted: 'var(--git-deleted)',
+  untracked: 'var(--git-added)',
+  added: 'var(--git-added)',
+  renamed: 'var(--git-modified)',
+  copied: 'var(--git-modified)',
+  conflict: 'var(--git-deleted)'
 }
 
 /** 状态排序权重（同列多个状态时优先级，便于排序） */
