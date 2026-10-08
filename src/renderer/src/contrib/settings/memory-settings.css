@@ -17,6 +17,6 @@
 .memory-settings__editor-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .memory-settings__detail { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg-muted); font-size: 12px; line-height: 1.5; margin: 10px 0; max-height: 220px; overflow: auto; }
 .memory-settings__pager { display: flex; justify-content: space-between; align-items: center; color: var(--fg-muted); font-size: 11px; padding-top: 10px; }
-.memory-settings__error { color: var(--danger, #ff453a); font-size: 12px; margin: 8px 4px; }
-.memory-settings__notice { color: var(--success, #30d158); font-size: 12px; margin: 8px 4px; }
+.memory-settings__error { color: var(--danger-fg); font-size: 12px; margin: 8px 4px; }
+.memory-settings__notice { color: var(--ok-fg); font-size: 12px; margin: 8px 4px; }
 @media (max-width: 640px) { .memory-settings__session, .memory-settings__editor-row { grid-template-columns: 1fr; } .memory-settings__item { grid-template-columns: 1fr; } }

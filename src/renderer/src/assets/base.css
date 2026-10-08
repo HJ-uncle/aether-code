@@ -73,10 +73,13 @@ textarea::placeholder {
   opacity: 1;
 }
 
-/* 统一原生控件的 macOS 基础形态；业务组件仍可通过自己的 class 调整布局。 */
+/* 统一原生控件的 macOS 基础形态；业务组件仍可通过自己的 class 调整布局。
+   排除链必须包在 :where() 里归零优先级：这条是「基线」不是「强制」，
+   否则排除链的 (0,5,1) 会压过所有业务类的 border:none/background:transparent，
+   把内嵌在装饰容器里的输入框（设置搜索、命令面板等）套成「框中框」。 */
 select,
-input:not([type='checkbox']):not([type='radio']):not([type='file']):not(.inputarea):not(.xterm-helper-textarea),
-textarea:not(.inputarea):not(.xterm-helper-textarea) {
+input:where(:not([type='checkbox'],[type='radio'],[type='file'],.inputarea,.xterm-helper-textarea)),
+textarea:where(:not(.inputarea,.xterm-helper-textarea)) {
   min-height: var(--control-h);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -89,8 +92,8 @@ textarea:not(.inputarea):not(.xterm-helper-textarea) {
 }
 
 select:hover,
-input:not([type='checkbox']):not([type='radio']):not([type='file']):not(.inputarea):not(.xterm-helper-textarea):hover,
-textarea:not(.inputarea):not(.xterm-helper-textarea):hover {
+input:where(:not([type='checkbox'],[type='radio'],[type='file'],.inputarea,.xterm-helper-textarea)):hover,
+textarea:where(:not(.inputarea,.xterm-helper-textarea)):hover {
   border-color: var(--border-strong);
 }
 
