@@ -81,9 +81,13 @@ export function registerIpcHandlers(): void {
       }
     }
   })
-  ipcMain.handle(IPC.invoke.accountAction, (_event, action: unknown, ...args: unknown[]) => {
+  ipcMain.handle(IPC.invoke.accountAction, async (_event, action: unknown, ...args: unknown[]) => {
+    // Expected account failures are data, so Electron does not log a stack or
+    // prepend its IPC implementation details to the user's error message.
+    const invoke = (): unknown => {
     switch (action) {
       case 'getState': return accountService.getState()
+      case 'setHttpTrust': return accountService.setHttpTrust(args[0] as string, args[1] as boolean)
       case 'register': return accountService.register()
       case 'login': return accountService.login(args[0] as string)
       case 'updateProfile': return accountService.updateProfile(args[0] as AccountProfileInput)
@@ -97,6 +101,9 @@ export function registerIpcHandlers(): void {
       case 'unlink': return accountService.unlink(args[0] as string)
       default: throw new Error('未知账号操作。')
     }
+    }
+    try { return { ok: true, value: await invoke() } }
+    catch (error) { return { ok: false, message: error instanceof Error ? error.message : '账号操作失败，请重试。' } }
   })
   // ── 引擎状态广播 ──
   engineHost.on('snapshot', (snapshot: EngineSnapshot) => {

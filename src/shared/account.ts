@@ -34,6 +34,7 @@ export interface AccountState {
   persistence: 'encrypted' | 'session' | 'none'
   message: string | null
   registrationEnabled: boolean
+  transport?: 'secure' | 'local' | 'http-trusted' | 'http-untrusted'
 }
 export interface AccountProfileInput {
   name?: string
@@ -51,6 +52,7 @@ export interface AccountSession {
 }
 export interface AccountApi {
   getState(): Promise<AccountState>
+  setHttpTrust(serviceUrl: string, trusted: boolean): Promise<AccountState>
   register(): Promise<AccountState>
   login(recoveryKey: string): Promise<AccountState>
   updateProfile(input: AccountProfileInput): Promise<AccountState>

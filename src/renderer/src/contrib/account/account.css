@@ -56,6 +56,12 @@
 .account-message--error { color: var(--danger-fg); background: var(--danger-soft); }
 .account-message--success { color: var(--ok-fg); background: var(--ok-soft); }
 .account-message--warning { color: var(--fg); background: var(--warn-soft); }
+.account-transport { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-4); margin-bottom: var(--space-5); padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-hover); }
+.account-transport__copy { flex: 1 1 230px; min-width: 0; display: grid; gap: var(--space-2); font-size: 12px; }
+.account-transport__copy strong { color: var(--fg-strong); font-size: 13px; font-weight: 500; }
+.account-transport__address { color: var(--fg); font-family: var(--font-mono); overflow-wrap: anywhere; }
+.account-transport__copy p { margin: 0; color: var(--fg-muted); line-height: 1.6; }
+.account-transport > .btn { flex: 0 0 auto; }
 .account-profile-form { display: grid; gap: var(--space-4); width: 100%; min-width: 0; }
 .account-field { display: grid; gap: var(--space-2); color: var(--fg); font-size: 13px; }
 .account-field > span { font-weight: 500; }

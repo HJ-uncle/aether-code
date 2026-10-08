@@ -7,6 +7,7 @@ import { SettingsContent, SettingsDisclosure, SettingsGroup, SettingsRow } from 
 import { openAppSettings } from '../settings/app-settings-navigation'
 import { ACCOUNT_STATUS_LABELS, dismissAccountOnboarding, publishAccountState, refreshAccount, requestAccountOnboarding, useAccount } from './account-store'
 import { isOnboardingAccount } from './account-onboarding'
+import { accountErrorMessage } from './account-errors'
 import { AccountAvatar } from './AccountAvatar'
 import './account.css'
 
@@ -14,8 +15,8 @@ function profileFields(user: AccountUser): AccountProfileInput {
   return { name: user.name, email: user.email ?? '', bio: user.bio ?? '' }
 }
 
-function ProfileForm({ user, busy, onSave, onboarding = false }: {
-  user: AccountUser; busy: boolean; onSave: (input: AccountProfileInput) => void; onboarding?: boolean
+function ProfileForm({ user, busy, onSave, onboarding = false, saving = false }: {
+  user: AccountUser; busy: boolean; onSave: (input: AccountProfileInput) => void; onboarding?: boolean; saving?: boolean
 }): JSX.Element {
   const [draft, setDraft] = useState<AccountProfileInput>(() => profileFields(user))
   const changed = JSON.stringify(draft) !== JSON.stringify(profileFields(user))
@@ -30,7 +31,7 @@ function ProfileForm({ user, busy, onSave, onboarding = false }: {
     <label className="account-field"><span>简介 <small>选填</small></span><textarea className="field__input" aria-label="简介" maxLength={1000} rows={3}
       value={draft.bio ?? ''} disabled={busy} placeholder="简单介绍一下自己"
       onChange={(event) => setDraft({ ...draft, bio: event.target.value })} /></label>
-    {!onboarding ? <div className="account-actions"><button className="btn btn--primary" type="submit" disabled={busy || !changed}>{busy ? '保存中…' : '保存资料'}</button></div> : null}
+    {!onboarding ? <div className="account-actions"><button className="btn btn--primary" type="submit" disabled={busy || !changed}>{saving ? '保存中…' : '保存资料'}</button></div> : null}
   </form>
 }
 
@@ -78,6 +79,11 @@ export function AccountSettingsView(): JSX.Element {
   const onboarding = isOnboardingAccount(onboardingRequest, account)
   const authenticated = account.status === 'authenticated'
   const blocked = !!busy || loading
+  const httpUntrusted = account.transport === 'http-untrusted'
+  const httpTrusted = account.transport === 'http-trusted'
+  const loginBlocked = blocked || account.status === 'offline' || account.status === 'unavailable' || httpUntrusted || !account.serviceUrl
+  const displayedError = error || loadError ? accountErrorMessage(error || loadError) : ''
+  const accountMessage = account.message ? accountErrorMessage(account.message) : ''
   const user = account.user
 
   const perform = async (label: string, task: () => Promise<AccountState | null>, message = ''): Promise<AccountState | null> => {
@@ -92,7 +98,7 @@ export function AccountSettingsView(): JSX.Element {
       if (mounted.current && message && state) setNotice(message)
       return state
     } catch (cause) {
-      if (mounted.current) setError(cause instanceof Error ? cause.message : '操作失败，请重试。')
+      if (mounted.current) setError(accountErrorMessage(cause))
       return null
     } finally {
       operation.current = false
@@ -105,11 +111,12 @@ export function AccountSettingsView(): JSX.Element {
     const identity = currentIdentity.current
     setSessionsLoading(true); setError('')
     try { const next = await window.aether.account.sessions(); if (mounted.current && identity === currentIdentity.current) setSessions(next) }
-    catch (cause) { if (mounted.current && identity === currentIdentity.current) setError(cause instanceof Error ? cause.message : '无法读取登录设备') }
+    catch (cause) { if (mounted.current && identity === currentIdentity.current) setError(accountErrorMessage(cause, '无法读取登录设备')) }
     finally { if (mounted.current && identity === currentIdentity.current) setSessionsLoading(false) }
   }
 
   const signInWith = async (provider: AccountProvider, credential?: string): Promise<void> => {
+    if (loginBlocked) return
     const hadUser = authenticated
     const next = await perform(`provider:${provider.id}`, () => window.aether.account.externalLogin(provider.id, hadUser ? 'link' : 'login', credential), hadUser ? '已绑定第三方账号，原账号资料和数据保持不变。' : '登录成功。')
     if (!hadUser && next?.status === 'authenticated' && next.user && !next.user.email && !next.user.bio) requestAccountOnboarding(next)
@@ -120,45 +127,55 @@ export function AccountSettingsView(): JSX.Element {
       <AccountAvatar name={user?.name} avatarUrl={user?.avatarUrl} large />
       <div className="account-summary__copy"><h2>{user?.name || '让工作跟随你的账号'}</h2>
         <p>{user?.email || (user ? '在下方完善你的个人资料' : '一键登录，或恢复已有账号继续工作。')}</p>
-        <span className={`account-status is-${account.status}`}>{loading ? '正在读取账号…' : ACCOUNT_STATUS_LABELS[account.status]}</span>
+        <span className={`account-status is-${account.status}`}>{loading ? '正在读取账号…' : httpUntrusted ? '等待确认内网连接' : ACCOUNT_STATUS_LABELS[account.status]}</span>
       </div>
       <button type="button" className="btn account-summary__refresh" aria-label="刷新账号状态" disabled={loading || !!busy} onClick={() => void refreshAccount()}><Icon name="restart" size={15} /></button>
     </section>
 
-    {(error || loadError) ? <p className="account-message account-message--error" role="alert">{error || loadError}</p> : null}
+    {displayedError ? <p className="account-message account-message--error" role="alert">{displayedError}</p> : null}
     {notice ? <p className="account-message account-message--success" role="status">{notice}</p> : null}
-    {account.message && !(account.persistence === 'session' && account.status === 'authenticated') ? <p className="account-message" role="status">{account.message}</p> : null}
+    {accountMessage && accountMessage !== displayedError && !httpUntrusted && !(account.persistence === 'session' && account.status === 'authenticated') ? <p className="account-message" role="status">{accountMessage}</p> : null}
     {account.persistence === 'session' && user ? <p className="account-message account-message--warning" role="status">此设备的系统密钥存储暂不可用，当前登录仅在本次应用运行期间有效。请备份恢复凭证，或绑定第三方账号以便再次登录。</p> : null}
+
+    {httpUntrusted || httpTrusted ? <section className="account-transport" aria-label="内网 HTTP 连接">
+      <div className="account-transport__copy"><strong>{httpTrusted ? '已信任此内网服务' : '确认内网连接'}</strong>
+        <span className="account-transport__address">{account.serviceUrl}</span>
+        <p>HTTP 会明文传输登录凭证，仅用于可信内网。授权只对以上服务地址生效。</p>
+      </div>
+      <button type="button" className={`btn${httpUntrusted ? ' btn--primary' : ''}`} disabled={blocked} onClick={() => {
+        void perform('http-trust', () => window.aether.account.setHttpTrust(account.serviceUrl, !httpTrusted))
+      }}>{busy === 'http-trust' ? '正在更新…' : httpTrusted ? '撤销信任' : '信任此内网服务'}</button>
+    </section> : null}
 
     {!authenticated ? <SettingsGroup title={account.status === 'expired' ? '重新登录' : '登录账号'}>
       {account.registrationEnabled ? <SettingsRow label="一键登录" description="自动创建账号，无需先填写个人资料。">
-        <button type="button" className="btn btn--primary" disabled={!!busy || loading || account.status === 'offline'} onClick={() => {
+        <button type="button" className="btn btn--primary" disabled={loginBlocked} onClick={() => {
           void perform('register', () => window.aether.account.register()).then((next) => {
             if (next?.status === 'authenticated') requestAccountOnboarding(next)
           })
         }}>{busy === 'register' ? '正在创建…' : '一键登录'}</button>
       </SettingsRow> : null}
       <SettingsRow label="已有账号" description="导入备份文件，恢复原账号及其数据。">
-        <button type="button" className="btn" disabled={blocked} onClick={() => void perform('import', () => window.aether.account.importRecovery(), '已恢复账号。')}>导入恢复凭证</button>
+        <button type="button" className="btn" disabled={loginBlocked} onClick={() => void perform('import', () => window.aether.account.importRecovery(), '已恢复账号。')}>导入恢复凭证</button>
       </SettingsRow>
       <SettingsDisclosure title="使用恢复码登录" description="已保存恢复码时，可以直接输入。">
         <form className="account-recovery-form" onSubmit={(event) => {
-          event.preventDefault(); const key = recoveryKey.trim(); if (!key) return
+          event.preventDefault(); const key = recoveryKey.trim(); if (!key || loginBlocked) return
           setRecoveryKey(''); void perform('login', () => window.aether.account.login(key), '已恢复账号。')
-        }}><input className="field__input" type="password" aria-label="恢复码" autoComplete="off" maxLength={16384} placeholder="输入恢复码" value={recoveryKey} disabled={blocked} onChange={(event) => setRecoveryKey(event.target.value)} />
-          <button className="btn" type="submit" disabled={blocked || !recoveryKey.trim()}>登录已有账号</button></form>
+        }}><input className="field__input" type="password" aria-label="恢复码" autoComplete="off" maxLength={16384} placeholder="输入恢复码" value={recoveryKey} disabled={loginBlocked} onChange={(event) => setRecoveryKey(event.target.value)} />
+          <button className="btn" type="submit" disabled={loginBlocked || !recoveryKey.trim()}>登录已有账号</button></form>
       </SettingsDisclosure>
       {!account.serviceUrl || account.status === 'unavailable' ? <SettingsRow label="连接账号服务" description="账号使用当前引擎服务。可检查服务地址后重试。"><button className="btn" onClick={() => openAppSettings('general')}>引擎设置</button></SettingsRow> : null}
     </SettingsGroup> : null}
 
     {user ? <SettingsGroup title="个人资料" footer="姓名留空时自动生成随机姓名；邮箱和简介均为选填。">
-      <SettingsContent><ProfileForm key={accountIdentity + ':' + user.name + ':' + user.email + ':' + user.bio} user={user} busy={blocked || !authenticated}
+      <SettingsContent><ProfileForm key={accountIdentity + ':' + user.name + ':' + user.email + ':' + user.bio} user={user} busy={blocked || !authenticated} saving={busy === 'profile'}
         onSave={(input) => void perform('profile', () => window.aether.account.updateProfile(input), '个人资料已保存。')} /></SettingsContent>
     </SettingsGroup> : null}
 
     {account.providers.length > 0 ? <SettingsGroup title={authenticated ? '绑定第三方账号' : '其他登录方式'} footer={authenticated ? '绑定会保留当前账号及其数据，之后可用第三方账号直接登录。' : '首次登录会自动创建账号，已有绑定会恢复原账号。'}>
       {account.providers.map(provider => <ProviderAction key={`${accountIdentity}:${provider.id}`} provider={provider}
-        linked={authenticated && !!user?.identities.some(identity => identity.providerId === provider.id)} disabled={!!busy || loading || account.status === 'offline'}
+        linked={authenticated && !!user?.identities.some(identity => identity.providerId === provider.id)} disabled={loginBlocked}
         onLogin={(credential) => void signInWith(provider, credential)}
         onUnlink={() => void (async () => {
           if (await confirmDialog({ title: '解除账号绑定', body: `解除 ${provider.name} 后，将不能通过它登录当前账号。请确认已备份恢复凭证或保留其他登录方式。`, confirmText: '解除绑定' })) {

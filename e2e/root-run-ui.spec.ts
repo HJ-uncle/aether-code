@@ -16,6 +16,7 @@ const model = 'd3-local-fixture', key = 'd'.repeat(64)
 let fixture = '', baseUrl = '', app: ElectronApplication | undefined, page: Page
 let requestCount = 0
 let remoteEngine: ChildProcess | undefined
+let remoteEngineClosed: Promise<void> | undefined
 const held = new Set<ServerResponse>()
 const heldBodies = new Map<ServerResponse, ProviderBody>()
 type ProviderBody = { stream?: boolean; messages: Array<{ role: string; content?: unknown; tool_call_id?: string }> }
@@ -201,20 +202,27 @@ async function duplicateAnswer(run:RootRun,output:string) {
 
 async function stopRemoteEngine(): Promise<void> {
   const child = remoteEngine
-  remoteEngine = undefined
-  if (!child || child.exitCode !== null || child.signalCode !== null) return
+  const closed = remoteEngineClosed
+  if (!child || !closed) return
   await new Promise<void>((resolve, reject) => {
-    const hardStop = setTimeout(() => { child.kill('SIGKILL') }, 8_000)
-    const deadline = setTimeout(() => { cleanup(); reject(new Error('Owned remote engine did not exit')) }, 15_000)
-    const cleanup = (): void => { clearTimeout(hardStop); clearTimeout(deadline); child.off('exit',done); child.off('error',failed) }
+    const hardStop = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+    }, 8_000)
+    const deadline = setTimeout(() => { cleanup(); reject(new Error('Owned remote engine did not close')) }, 15_000)
+    const cleanup = (): void => { clearTimeout(hardStop); clearTimeout(deadline); child.off('error',failed) }
     const done = (): void => { cleanup(); resolve() }
     const failed = (error: Error): void => { cleanup(); reject(error) }
-    child.once('exit',done)
+    // `exit` precedes stdio/native-handle cleanup. The fixture is the child's
+    // cwd on Windows, so deleting it must wait for `close`, even when exitCode
+    // is already set. The promise is registered at spawn to avoid missing it.
+    void closed.then(done,failed)
     child.once('error',failed)
     // Stop only the child handle created by this fixture; never enumerate or
     // terminate another developer engine, Electron instance, or process tree.
-    child.kill('SIGTERM')
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
   })
+  remoteEngine = undefined
+  remoteEngineClosed = undefined
 }
 test.describe.serial('D3 根运行与审批真机验收',()=>{
   test.beforeAll(async()=>{
@@ -466,6 +474,7 @@ test.describe.serial('D3 根运行与审批真机验收',()=>{
       stdio:['ignore','pipe','pipe'],
       env:{...env(),PORT:String(port),HOST:'127.0.0.1',DATA_DIR:join(fixture,'engine','state','agent.db'),ENCRYPTION_KEY:key,AETHER_INSTANCE_TOKEN:token}
     })
+    remoteEngineClosed = new Promise<void>(resolveClose => remoteEngine!.once('close',() => resolveClose()))
     remoteEngine.on('error',error => { remoteLaunchError = error })
     const rememberStartup = (chunk: Buffer): void => { remoteStartupLog = (remoteStartupLog + chunk.toString()).slice(-4000) }
     remoteEngine.stdout?.on('data',rememberStartup)

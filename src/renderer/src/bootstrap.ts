@@ -8,6 +8,7 @@ import { registerContributions } from './contrib'
 import { installKeybindingDispatcher } from './core/platform/keybindings'
 import { restoreLastFolder } from './core/workspace/workspace-store'
 import { wireWorkspaceLiveSync } from './core/workspace/live-sync'
+import { wireGitLiveSync } from './core/git/live-sync'
 import { wireTsLsp } from './core/lsp/lifecycle'
 
 /**
@@ -34,6 +35,7 @@ export function bootstrapRenderer(): () => void {
   // 后者是异步的，完成后才触发工作区变化回调，先注册就不会漏掉首次启动
   wireTsLsp()
   const disposeWorkspaceLiveSync = wireWorkspaceLiveSync()
+  const disposeGitLiveSync = wireGitLiveSync()
   void restoreLastFolder()
 
   return () => {
@@ -41,5 +43,6 @@ export function bootstrapRenderer(): () => void {
     disposeContributions()
     disposeKeybindings()
     disposeWorkspaceLiveSync()
+    disposeGitLiveSync()
   }
 }

@@ -7,6 +7,7 @@ import {
 } from '@renderer/core/workspace/workspace-store'
 import { copyIntoWorkspace } from '@renderer/core/workspace/fs-client'
 import { watchTheme } from '@renderer/core/theme/palette'
+import { useApp } from '@renderer/core/app-context'
 import { Icon } from '@renderer/workbench/icons'
 import { ContextMenu } from '@renderer/workbench/ContextMenu'
 import { pushPendingMention } from '@renderer/contrib/chat/pending-mentions'
@@ -34,9 +35,12 @@ import './terminal-view.css'
  * 后台会话的 shell 与滚动缓冲始终存活。
  */
 export function TerminalView(): JSX.Element {
+  const { engine, settings, settingsLoaded } = useApp()
   const workspace = useWorkspace()
   const root = workspace.root
   const state = useTerminalStore()
+  const waitingForRemote = engine.snapshot.phase !== 'ready' && (engine.snapshot.mode === 'remote' || settings.engineMode === 'remote')
+  const canCreate = settingsLoaded && !waitingForRemote
 
   // 面板打开时无会话则自动建一个；creating 守卫住 StrictMode/竞态。
   // createFailed 必须一并检查：创建失败（如环境不支持 ConPTY）后若还自动重试，
@@ -45,17 +49,18 @@ export function TerminalView(): JSX.Element {
   // 必须先等启动恢复跑完：它是异步的，首帧执行到这里时 root 还是 null，
   // 直接建出来的 shell 会落在主目录、而不是当前项目。
   useEffect(() => {
+    if (!canCreate) return
     let cancelled = false
     void workspaceRestoreSettled().then(() => {
       if (cancelled) return
       const current = getTerminalState()
-      if (current.sessions.length > 0 || current.creating || current.createFailed) return
+      if (current.sessions.length > 0 || current.creating || current.createFailed || current.closedAll) return
       void createLocalSession(getWorkspaceState().root ?? undefined)
     })
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [canCreate, state.sessions.length, state.creating, state.createFailed, state.closedAll])
 
   // 外观/强调色变化（含 'system' 模式的系统切换）→ 热更新全部存活会话的主题
   useEffect(
@@ -74,15 +79,22 @@ export function TerminalView(): JSX.Element {
         {state.sessions.map((session) => (
           <SessionSlot key={session.id} session={session} active={session.id === state.activeId} />
         ))}
+        {state.sessions.length === 0 && waitingForRemote ? (
+          <div className="terminal-view__error" role="status">
+            <p className="terminal-view__error-title">等待远端引擎连接</p>
+            <p className="terminal-view__error-detail">{engine.snapshot.error || state.createFailed || '连接成功后即可使用远程终端。'}</p>
+          </div>
+        ) : null}
         {/* 创建失败时不再静默留白：用户至少要知道"终端没起来，以及为什么"，
             并有一个显式的重试入口（自动重试会陷入无限循环，见上方 effect）。 */}
-        {state.sessions.length === 0 && state.createFailed ? (
+        {state.sessions.length === 0 && state.createFailed && !waitingForRemote ? (
           <div className="terminal-view__error" role="alert">
             <p className="terminal-view__error-title">终端启动失败</p>
             <p className="terminal-view__error-detail">{state.createFailed}</p>
             <button
               type="button"
               className="terminal-view__error-retry"
+              disabled={!canCreate || state.creating}
               onClick={() => void createLocalSession(root ?? undefined)}
             >
               重试
@@ -107,6 +119,7 @@ export function TerminalView(): JSX.Element {
             className="terminal-view__side-btn"
             title="新建终端"
             aria-label="新建终端"
+            disabled={!canCreate || state.creating}
             onClick={() => void createLocalSession(root ?? undefined)}
           >
             <Icon name="plus" size={16} />

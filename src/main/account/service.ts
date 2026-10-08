@@ -3,11 +3,13 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync, statSync, writeFileSync } from 'node:fs'
 import type { AccountProfileInput, AccountProvider, AccountSession, AccountState, AccountUser } from '../../shared/account'
 import { readAccountCredential, saveAccountCredential, validAccountUser, validCredential, type AccountCredential } from './credential-store'
+import { getAccountTransport, saveHttpTrust } from './transport-trust'
+import { remoteAuthTarget } from '../engine/remote-auth-contract'
 
 export interface AccountTarget { scope: string; url: string; headers: Record<string, string> }
 interface Dependencies { target(): AccountTarget; identityChanged(): Promise<void>; changed(state: AccountState): void }
 class AccountHttpError extends Error { constructor(readonly status: number, message: string) { super(message) } }
-const initial = (url = ''): AccountState => ({ status: 'signed-out', user: null, providers: [], serviceUrl: url, persistence: 'none', message: null, registrationEnabled: true })
+const initial = (url = ''): AccountState => ({ status: 'signed-out', user: null, providers: [], serviceUrl: url, persistence: 'none', message: null, registrationEnabled: false })
 let dependencies: Dependencies | null = null
 let state = initial()
 let stateScope = ''
@@ -35,14 +37,13 @@ function assertUser(t: AccountTarget, user: unknown): asserts user is AccountUse
   if (!validAccountUser(user) || !current || current.id !== user.id || current.tenantId !== user.tenantId) throw new Error('账号服务返回了不匹配的个人资料，已保留原登录信息。')
 }
 export function assertAccountTransport(value: string): void {
-  const url = new URL(value)
-  if (url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) return
-  throw new Error('账号登录需要 HTTPS 连接。请为远端服务配置 HTTPS 地址；HTTP 仅支持本机回环地址。')
+  if (getAccountTransport(value) !== 'http-untrusted') return
+  throw new Error('此服务使用 HTTP。请先确认它属于可信内网，或改用 HTTPS 地址。')
 }
 function publish(t: AccountTarget, next: Partial<AccountState>): AccountState {
   if (dep().target().scope !== t.scope) return state
   if (stateScope !== t.scope) { state = initial(t.url); stateScope = t.scope }
-  state = { ...state, ...next, serviceUrl: t.url }
+  state = { ...state, ...next, serviceUrl: t.url, transport: getAccountTransport(t.url) }
   dep().changed(state)
   return state
 }
@@ -132,6 +133,7 @@ export async function ensureAccountSession(t: AccountTarget): Promise<void> {
   if (running) return running
   const entry = readAccountCredential(t.scope)
   const credential = entry.credential
+  if (credential) assertAccountTransport(t.url)
   if (credential?.accessToken === 'expired_account_session') throw new AccountHttpError(401, '登录已过期，请重新登录。')
   if (!credential || Date.parse(credential.expiresAt) > Date.now() + 60000) return
   assertAccountTransport(t.url)
@@ -199,6 +201,26 @@ async function readState(): Promise<AccountState> {
   }
 }
 export const accountService = {
+  async setHttpTrust(serviceUrl: string, trusted: boolean): Promise<AccountState> {
+    if (typeof serviceUrl !== 'string' || typeof trusted !== 'boolean') throw new Error('服务信任设置无效。')
+    const t = target()
+    if (remoteAuthTarget(serviceUrl) !== remoteAuthTarget(t.url)) throw new Error('连接已切换，请在当前服务重新确认。')
+    if (trusted && getAccountTransport(t.url) === 'http-untrusted') {
+      const confirmed = await dialog.showMessageBox({
+        type: 'warning', title: '信任内网 HTTP 服务',
+        message: '仅在你信任此网络和服务器时继续',
+        detail: `${t.url}\n\nHTTP 会明文传输登录凭证及工作数据。此次确认只对这个服务地址生效。`,
+        buttons: ['取消', '信任此服务'], defaultId: 0, cancelId: 0, noLink: true
+      })
+      if (confirmed.response !== 1) return accountService.getState()
+    }
+    assertTarget(t)
+    saveHttpTrust(t.url, trusted)
+    generation++
+    stateFlight = null
+    if (!trusted) { externalAbort?.abort(); await dep().identityChanged() }
+    return accountService.getState()
+  },
   getState(): Promise<AccountState> {
     let scope = ''
     try { scope = target().scope } catch { /* readState supplies the actionable error */ }

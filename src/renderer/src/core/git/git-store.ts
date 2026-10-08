@@ -115,6 +115,9 @@ import {
   gitUnstageFiles
 } from './git-client'
 import { getGitAutoFetch, getGitAutoFetchIntervalMs, onGitPreferencesChanged } from './git-pref'
+import { getEngineSource, isRemoteEngine, sessionStorageKey } from '../engine/source'
+import { onWorkspaceConnectionChanged, workspaceConnectionKey } from '../workspace/connection'
+import { getWorkspaceState } from '../workspace/workspace-store'
 
 /** 可能长时间运行的写操作名：执行期间 UI 一律禁用其他 git 入口 */
 const LONG_OPS = new Set([
@@ -197,7 +200,7 @@ export interface GitStoreState {
   loaded: boolean
 }
 
-let state: GitStoreState = {
+function emptyState(): GitStoreState { return {
   cwd: '',
   isRepo: false,
   loading: false,
@@ -240,7 +243,8 @@ let state: GitStoreState = {
   status: null,
   legacyCommits: [],
   loaded: false
-}
+} }
+let state: GitStoreState = emptyState()
 
 const listeners = new Set<() => void>()
 
@@ -258,9 +262,9 @@ export function getGitState(): GitStoreState {
 const COMMIT_DRAFTS_KEY = 'aether:gitCommitDrafts'
 const MAX_DRAFT_SLOTS = 50
 
-function readCommitDrafts(): Record<string, string> {
+function readCommitDrafts(storageKey = sessionStorageKey(COMMIT_DRAFTS_KEY)): Record<string, string> {
   try {
-    const raw = localStorage.getItem(COMMIT_DRAFTS_KEY)
+    const raw = localStorage.getItem(storageKey)
     if (!raw) return {}
     const parsed = JSON.parse(raw) as unknown
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
@@ -283,9 +287,10 @@ let commitDraftTimer = 0
 /** 防抖落盘：提交信息是高频输入，每次按键都写 localStorage 不值 */
 function scheduleCommitDraftSave(cwd: string, text: string): void {
   if (!cwd) return
+  const storageKey = sessionStorageKey(COMMIT_DRAFTS_KEY)
   clearTimeout(commitDraftTimer)
   commitDraftTimer = window.setTimeout(() => {
-    const table = readCommitDrafts()
+    const table = readCommitDrafts(storageKey)
     if (!text.trim()) {
       delete table[cwd]
     } else {
@@ -295,7 +300,7 @@ function scheduleCommitDraftSave(cwd: string, text: string): void {
       while (keys.length > MAX_DRAFT_SLOTS) delete table[keys.shift() as string]
     }
     try {
-      localStorage.setItem(COMMIT_DRAFTS_KEY, JSON.stringify(table))
+      localStorage.setItem(storageKey, JSON.stringify(table))
     } catch {
       // 存储写失败不打断输入
     }
@@ -423,6 +428,58 @@ let mergeMsgApplied = false
 /** 远端领先提交的缓存 key / 加载时刻（10s 内同 key 跳过） */
 let incomingKey = ''
 let incomingLoadedAt = 0
+let selectionRevision = 0
+let selectedConnection = ''
+let connectionDispose: (() => void) | null = null
+
+function connectionIdentity(): string {
+  return JSON.stringify([workspaceConnectionKey(), isRemoteEngine() ? getEngineSource() : null])
+}
+
+interface GitTarget { cwd: string; revision: number; connection: string }
+function captureGitTarget(): GitTarget {
+  return { cwd: state.cwd, revision: selectionRevision, connection: connectionIdentity() }
+}
+function sameGitTarget(target: GitTarget): boolean {
+  return target.cwd === state.cwd && target.revision === selectionRevision &&
+    target.connection === connectionIdentity()
+}
+function assertGitTarget(target: GitTarget): void {
+  if (!sameGitTarget(target)) throw new Error('工作区连接或目录已经切换，已取消旧 Git 操作')
+}
+
+function resetSelection(cwd: string): void {
+  selectionRevision++
+  selectedConnection = connectionIdentity()
+  // A previous endpoint may use the exact same absolute path. None of its
+  // repository metadata or in-flight results belongs to this selection.
+  inflight = null
+  queued = null
+  operationCount = 0
+  mergeMsgApplied = false
+  incomingKey = ''
+  incomingLoadedAt = 0
+  lastAutoFetchOkAt = 0
+  autoFetchFailures = 0
+  if (fsRefreshTimer) clearTimeout(fsRefreshTimer)
+  fsRefreshTimer = null
+  clearBlame()
+  blameInflight.clear()
+  hunkInflight.clear()
+  hunksFingerprint.clear()
+  for (const key of Object.keys(headCache)) delete headCache[key]
+  setState({ ...emptyState(), cwd, commitMessage: loadCommitDraft(cwd), loading: Boolean(cwd) })
+}
+
+function wireConnection(): void {
+  connectionDispose ??= onWorkspaceConnectionChanged(() => {
+    if (selectedConnection === connectionIdentity()) return
+    resetSelection('')
+    // The workspace store clears its old mount synchronously on a connection
+    // change; an unchanged local path can still need a fresh Git snapshot.
+    void refreshGit(getWorkspaceState().root)
+  })
+}
 
 // ==================== 刷新 ====================
 
@@ -432,61 +489,35 @@ let incomingLoadedAt = 0
  * 并发时不直接复用在跑的那次，而是排队补刷一次：正在跑的那次可能是撤回**之前**
  * 发起的，读到的是旧状态；直接复用会让撤回完成后界面停在旧数据上。
  */
-export function refreshGit(root: string | null): Promise<void> {
+export function refreshGit(root: string | null, options: { background?: boolean } = {}): Promise<void> {
+  wireConnection()
   const nextCwd = root ?? ''
-  // 代际号在 aether 单项目视图下没有「等待期竞态」可防（wuzu 用它挡 load 期间的
-  // 工作区切换），回写统一靠 doRefresh 里的 cwd 比对，故此处不再取号
-  if (state.cwd !== nextCwd) {
-    // 换了仓库：旧数据一定不适用，先清空避免显示上一个项目的分支
-    setState({
-      files: [],
-      branch: '',
-      upstream: null,
-      ahead: null,
-      behind: null,
-      isRepo: false,
-      currentDiff: null,
-      hunksMap: {},
-      // 换仓库时恢复该仓库的提交草稿（没有则为空），而不是一律清空
-      commitMessage: loadCommitDraft(nextCwd),
-      selectedPath: '',
-      merging: false,
-      mergeMessage: '',
-      incomingCommits: [],
-      commits: [],
-      timelinePath: '',
-      timelineEntries: [],
-      timelineHasMore: false,
-      timelineLoading: false,
-      timelineError: '',
-      status: null,
-      legacyCommits: [],
-      loaded: false,
-      errorMessage: '',
-      loading: true
-    })
-    clearBlame()
-    clearIncoming()
-  }
-  setState({ cwd: nextCwd, loading: true })
+  if (state.cwd !== nextCwd || selectedConnection !== connectionIdentity()) resetSelection(nextCwd)
+  const background = options.background === true && state.loaded
+  if (!background) setState({ cwd: nextCwd, loading: true })
+  const target = captureGitTarget()
   if (inflight) {
+    if (background) return inflight
     if (!queued) {
       queued = inflight
         .catch(() => undefined)
         .then(() => {
+          if (!sameGitTarget(target)) return
           queued = null
           return refreshGit(state.cwd)
         })
     }
     return queued
   }
-  inflight = doRefresh(nextCwd).finally(() => {
-    inflight = null
+  const run = doRefresh(target, background).finally(() => {
+    if (inflight === run) inflight = null
   })
-  return inflight
+  inflight = run
+  return run
 }
 
-async function doRefresh(nextCwd: string): Promise<void> {
+async function doRefresh(target: GitTarget, background: boolean): Promise<void> {
+  const nextCwd = target.cwd
   if (!nextCwd) {
     setState({
       files: [],
@@ -498,11 +529,11 @@ async function doRefresh(nextCwd: string): Promise<void> {
     clearTimeline()
     return
   }
-  setState({ loading: true, errorMessage: '' })
+  if (!background) setState({ loading: true, errorMessage: '' })
   try {
     const [statusRes, branchRes] = await Promise.all([gitStatus(nextCwd), gitBranchInfo(nextCwd)])
     // 请求期间可能已切走仓库，迟到的结果不能覆盖新仓库
-    if (state.cwd !== nextCwd) return
+    if (!sameGitTarget(target)) return
     if (statusRes.success) {
       const merging = statusRes.merging ?? false
       const mergeMessage = statusRes.mergeMessage ?? ''
@@ -517,10 +548,11 @@ async function doRefresh(nextCwd: string): Promise<void> {
         commitMessage = mergeMessage
         mergeMsgApplied = true
       }
-      const branch = branchRes.success && branchRes.info ? branchRes.info.branch : state.branch
-      const upstream = branchRes.success && branchRes.info ? branchRes.info.upstream : state.upstream
-      const ahead = branchRes.success && branchRes.info ? branchRes.info.ahead : state.ahead
-      const behind = branchRes.success && branchRes.info ? branchRes.info.behind : state.behind
+      const isRepo = statusRes.isRepo ?? false
+      const branch = !isRepo ? '' : branchRes.success && branchRes.info ? branchRes.info.branch : state.branch
+      const upstream = !isRepo ? null : branchRes.success && branchRes.info ? branchRes.info.upstream : state.upstream
+      const ahead = !isRepo ? null : branchRes.success && branchRes.info ? branchRes.info.ahead : state.ahead
+      const behind = !isRepo ? null : branchRes.success && branchRes.info ? branchRes.info.behind : state.behind
       const status = {
         isRepo: statusRes.isRepo ?? false,
         branch,
@@ -528,7 +560,7 @@ async function doRefresh(nextCwd: string): Promise<void> {
         behind,
         changes: files
       }
-      setState({
+      const patch: Partial<GitStoreState> = {
         isRepo: statusRes.isRepo ?? false,
         files,
         merging,
@@ -539,13 +571,18 @@ async function doRefresh(nextCwd: string): Promise<void> {
         ahead,
         behind,
         status,
-        loaded: true
-      })
+        loaded: true,
+        errorMessage: ''
+      }
+      if (!background || Object.entries(patch).some(([key, value]) =>
+        JSON.stringify(state[key as keyof GitStoreState]) !== JSON.stringify(value))) setState(patch)
     } else {
       // 刷新失败（并发 git 命令占用 index.lock 等瞬态错误）时保留上一次的列表：
       // 清空会让「更改/暂存」各分组瞬间塌掉、内容高度骤减把滚动钳回顶部。
-      setState({ errorMessage: statusRes.error ?? '获取变更失败' })
+      const message = statusRes.error ?? '获取变更失败'
+      if (state.errorMessage !== message) setState({ errorMessage: message })
     }
+    if (background) return
     // 状态变化后重载 hunks，保证编辑器 gutter 与磁盘一致（aether 暂无 gutter 渲染层，按需接入）。
     // HEAD 可能已前进（commit / checkout / pull / merge）：行内 blame 缓存同步失效。
     clearBlame()
@@ -553,9 +590,10 @@ async function doRefresh(nextCwd: string): Promise<void> {
     // 只刷 status/branchInfo 会让历史区停在旧数据。从未加载过的保持懒加载。
     if (state.commits.length > 0) await loadLog(state.commits.length)
   } catch (error) {
-    setState({ errorMessage: error instanceof Error ? error.message : '获取变更失败' })
+    const message = error instanceof Error ? error.message : '获取变更失败'
+    if (sameGitTarget(target) && state.errorMessage !== message) setState({ errorMessage: message })
   } finally {
-    setState({ loading: false })
+    if (!background && sameGitTarget(target)) setState({ loading: false })
   }
 }
 
@@ -578,9 +616,11 @@ let fsLastRefreshAt = 0
  */
 export function scheduleFsRefresh(nextCwd: string): void {
   if (!nextCwd) return
+  const target = captureGitTarget()
   if (fsRefreshTimer) clearTimeout(fsRefreshTimer)
   fsRefreshTimer = setTimeout(() => {
     fsRefreshTimer = null
+    if (!sameGitTarget(target)) return
     const now = Date.now()
     if (now - fsLastRefreshAt < REFRESH_MIN_INTERVAL_MS) return
     fsLastRefreshAt = now
@@ -616,10 +656,11 @@ async function autoFetchRemote(): Promise<void> {
   if (autoFetchGateBlocked()) return
   if (!state.cwd) return
   const target = state.cwd
+  const selection = captureGitTarget()
   autoFetchBusy = true
   try {
     const fetched = await runDroppable(() => gitFetch(target))
-    if (!fetched) return
+    if (!fetched || !sameGitTarget(selection)) return
     const res = fetched
     if (!res.success) {
       autoFetchFailures++
@@ -632,6 +673,7 @@ async function autoFetchRemote(): Promise<void> {
     await refreshGit(target)
     await loadIncoming({ force: true })
   } catch (error) {
+    if (!sameGitTarget(selection)) return
     autoFetchFailures++
     console.debug('[git-store] 自动获取远端异常（已跳过）:', error)
   } finally {
@@ -691,6 +733,8 @@ export function disposeGitStore(): void {
   autoFetchPreferenceDispose?.()
   autoFetchPreferenceDispose = null
   autoFetchStarted = false
+  connectionDispose?.()
+  connectionDispose = null
 }
 
 // ==================== 写操作 ====================
@@ -702,13 +746,17 @@ async function mutate(
   opName = 'write'
 ): Promise<GitResult> {
   if (!state.cwd) return { success: false, error: 'Git 能力不可用' }
+  const target = captureGitTarget()
   setState({ operation: opName })
   operationCount++
   try {
     return await runQueued(async () => {
+      assertGitTarget(target)
       const res = await run()
+      assertGitTarget(target)
       if (res.success) {
-        await refreshGit(state.cwd)
+        await refreshGit(target.cwd)
+        assertGitTarget(target)
       } else {
         setState({ errorMessage: res.error ?? '操作失败' })
       }
@@ -716,12 +764,12 @@ async function mutate(
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : '操作失败'
-    setState({ errorMessage: message })
+    if (sameGitTarget(target)) setState({ errorMessage: message })
     return { success: false, error: message }
   } finally {
     // 并发写操作计数，最后一个结束时才清空 operation（对齐 wuzu）
-    operationCount--
-    if (operationCount <= 0) {
+    if (sameGitTarget(target)) operationCount--
+    if (sameGitTarget(target) && operationCount <= 0) {
       operationCount = 0
       setState({ operation: '' })
     }
@@ -781,6 +829,7 @@ export async function checkIgnored(paths: string[]): Promise<Set<string> | null>
 
 /** 提交：暂存区非空时只提交暂存区；暂存区为空时自动暂存全部改动后提交（smart commit） */
 export async function commit(): Promise<GitResult> {
+  const target = captureGitTarget()
   setState({ committing: true })
   try {
     const stagedCount = stagedFilesOf(state).length
@@ -794,12 +843,13 @@ export async function commit(): Promise<GitResult> {
     }
     return res
   } finally {
-    setState({ committing: false })
+    if (sameGitTarget(target)) setState({ committing: false })
   }
 }
 
 /** 只提交暂存区，暂存区为空时不回退到全量暂存（下拉「提交（暂存区）」用） */
 export async function commitStaged(): Promise<GitResult> {
+  const target = captureGitTarget()
   if (stagedFilesOf(state).length === 0) {
     return { success: false, error: '暂存区没有可提交的内容' }
   }
@@ -812,12 +862,13 @@ export async function commitStaged(): Promise<GitResult> {
     }
     return res
   } finally {
-    setState({ committing: false })
+    if (sameGitTarget(target)) setState({ committing: false })
   }
 }
 
 /** 暂存全部改动并提交 */
 export async function commitAll(): Promise<GitResult> {
+  const target = captureGitTarget()
   setState({ committing: true })
   try {
     const res = await mutate(() => gitStageAllAndCommit(state.cwd, state.commitMessage), 'commit')
@@ -827,7 +878,7 @@ export async function commitAll(): Promise<GitResult> {
     }
     return res
   } finally {
-    setState({ committing: false })
+    if (sameGitTarget(target)) setState({ committing: false })
   }
 }
 
@@ -912,13 +963,17 @@ export function deleteRemoteTag(name: string, remote?: string): Promise<GitResul
 
 export async function loadRemotes(): Promise<void> {
   if (!state.cwd) return
+  const target = captureGitTarget()
   const res = await gitListRemotes(state.cwd)
+  if (!sameGitTarget(target)) return
   if (res.success) setState({ remotes: res.remotes ?? [] })
 }
 
 export async function loadRemoteBranches(): Promise<void> {
   if (!state.cwd) return
+  const target = captureGitTarget()
   const res = await gitListRemoteBranches(state.cwd)
+  if (!sameGitTarget(target)) return
   if (res.success) {
     setState({
       remoteBranches: res.branches ?? [],
@@ -943,7 +998,9 @@ export async function removeRemote(name: string): Promise<GitResult> {
 
 export async function loadStashes(): Promise<void> {
   if (!state.cwd) return
+  const target = captureGitTarget()
   const res = await gitListStashes(state.cwd)
+  if (!sameGitTarget(target)) return
   if (res.success) setState({ stashes: res.stashes ?? [] })
 }
 
@@ -980,7 +1037,9 @@ export function stashClear(): Promise<GitResult> {
 
 export async function loadTags(): Promise<void> {
   if (!state.cwd) return
+  const target = captureGitTarget()
   const res = await gitListTags(state.cwd)
+  if (!sameGitTarget(target)) return
   if (res.success) setState({ tags: res.tags ?? [] })
 }
 
@@ -1000,6 +1059,7 @@ export async function deleteTag(name: string): Promise<GitResult> {
 
 export async function loadLog(limit = 50, append = false): Promise<void> {
   if (!state.cwd) return
+  const target = captureGitTarget()
   const search = state.historySearch.trim()
   const author = state.historyAuthor.trim()
   const ref = state.historyRef.trim()
@@ -1016,6 +1076,7 @@ export async function loadLog(limit = 50, append = false): Promise<void> {
     setState({ logLoadingMore: true })
     try {
       const res = await gitLog(state.cwd, limit, state.commits.length, query)
+      if (!sameGitTarget(target)) return
       if (res.success) {
         const next = res.commits ?? []
         setState({
@@ -1024,11 +1085,12 @@ export async function loadLog(limit = 50, append = false): Promise<void> {
         })
       }
     } finally {
-      setState({ logLoadingMore: false })
+      if (sameGitTarget(target)) setState({ logLoadingMore: false })
     }
     return
   }
   const res = await gitLog(state.cwd, limit, 0, query)
+  if (!sameGitTarget(target)) return
   if (res.success) {
     const commits = res.commits ?? []
     setState({
@@ -1079,21 +1141,18 @@ export async function loadIncoming({ force = false } = {}): Promise<void> {
   }
   const key = `${state.upstream}|${state.commits[0]?.hash ?? ''}`
   if (!force && key === incomingKey && Date.now() - incomingLoadedAt < 10000) return
-  const target = state.cwd
+  const target = captureGitTarget()
   setState({ incomingLoading: true })
   try {
     const res = await gitIncoming(state.cwd, 50)
-    if (normalizePath(state.cwd) !== normalizePath(target)) {
-      setState({ incomingCommits: [] })
-      return
-    }
+    if (!sameGitTarget(target)) return
     incomingKey = key
     incomingLoadedAt = Date.now()
     setState({ incomingCommits: res.success ? (res.commits ?? []) : [] })
   } catch {
-    setState({ incomingCommits: [] })
+    if (sameGitTarget(target)) setState({ incomingCommits: [] })
   } finally {
-    setState({ incomingLoading: false })
+    if (sameGitTarget(target)) setState({ incomingLoading: false })
   }
 }
 
@@ -1112,6 +1171,7 @@ export function clearIncoming(): void {
  * 用户快速切文件时，先发的那次回来若继续写回会覆盖成上一个文件的历史。
  */
 export async function loadTimeline(path: string, append = false): Promise<void> {
+  const target = captureGitTarget()
   const rel = (path || '').replace(/\\/g, '/')
   if (!state.cwd || !rel) {
     setState({
@@ -1130,7 +1190,7 @@ export async function loadTimeline(path: string, append = false): Promise<void> 
   const cursor = append ? state.timelineEntries[state.timelineEntries.length - 1]?.hash : undefined
   try {
     const res = await gitFileHistory(state.cwd, rel, TIMELINE_PAGE_SIZE, cursor)
-    if (state.timelinePath !== rel) return
+    if (!sameGitTarget(target) || state.timelinePath !== rel) return
     if (res.success) {
       const next = res.entries ?? []
       setState({
@@ -1142,7 +1202,7 @@ export async function loadTimeline(path: string, append = false): Promise<void> 
       if (!append) setState({ timelineEntries: [] })
     }
   } finally {
-    if (state.timelinePath === rel) setState({ timelineLoading: false })
+    if (sameGitTarget(target) && state.timelinePath === rel) setState({ timelineLoading: false })
   }
 }
 
@@ -1166,6 +1226,7 @@ const blameInflight = new Map<string, Promise<void>>()
 
 /** 加载指定文件的整文件行级 blame（结果按路径缓存，光标移动不再走 IPC） */
 export async function loadBlame(path: string): Promise<void> {
+  const target = captureGitTarget()
   const rel = (path || '').replace(/\\/g, '/')
   if (!state.cwd || !rel) return
   if (blameCache.has(rel)) return
@@ -1174,11 +1235,12 @@ export async function loadBlame(path: string): Promise<void> {
   const job = (async () => {
     try {
       const res = await gitBlame(state.cwd, rel)
+      if (!sameGitTarget(target)) return
       blameCache.set(rel, res.success ? (res.lines ?? []) : [])
     } catch {
-      blameCache.set(rel, [])
+      if (sameGitTarget(target)) blameCache.set(rel, [])
     } finally {
-      blameInflight.delete(rel)
+      if (sameGitTarget(target)) blameInflight.delete(rel)
     }
   })()
   blameInflight.set(rel, job)
@@ -1217,14 +1279,18 @@ export async function loadCommitShow(targetCwd: string, hash: string): Promise<G
 /** 加载当前 Git 用户身份 */
 export async function loadCurrentUser(): Promise<void> {
   if (!state.cwd) return
+  const target = captureGitTarget()
   const res = await gitGetUserName(state.cwd)
+  if (!sameGitTarget(target)) return
   if (res.success && res.name) setState({ currentUser: res.name })
 }
 
 /** 加载提交历史作者列表（去重） */
 export async function loadHistoryAuthors(): Promise<void> {
   if (!state.cwd) return
+  const target = captureGitTarget()
   const res = await gitListAuthors(state.cwd)
+  if (!sameGitTarget(target)) return
   if (res.success) setState({ historyAuthors: res.authors ?? [] })
 }
 
@@ -1233,7 +1299,9 @@ export async function loadHistoryAuthors(): Promise<void> {
 /** 加载本地分支列表（含各分支最新提交元信息） */
 export async function loadBranches(): Promise<void> {
   if (!state.cwd) return
+  const target = captureGitTarget()
   const res = await gitListBranches(state.cwd)
+  if (!sameGitTarget(target)) return
   if (res.success) {
     setState({
       branches: res.branches ?? [],
@@ -1316,8 +1384,10 @@ export async function loadDiff(
     return null
   }
   setState({ selectedPath: path })
+  const target = captureGitTarget()
   try {
     const res = await gitDiff(state.cwd, path, staged, base)
+    if (!sameGitTarget(target) || state.selectedPath !== path) return null
     if (!res.success || !res.diff) {
       setState({ errorMessage: res.error ?? '获取差异失败', currentDiff: null })
       return null
@@ -1325,7 +1395,9 @@ export async function loadDiff(
     setState({ currentDiff: res.diff })
     return res.diff
   } catch (error) {
-    setState({ errorMessage: error instanceof Error ? error.message : '获取差异失败', currentDiff: null })
+    if (sameGitTarget(target) && state.selectedPath === path) {
+      setState({ errorMessage: error instanceof Error ? error.message : '获取差异失败', currentDiff: null })
+    }
     return null
   }
 }
@@ -1363,6 +1435,7 @@ function isDirtyBuffer(relPath: string): boolean {
  * git 状态指纹未变时跳过（含「算过是空」的情况）；并发触发 in-flight 合并。
  */
 export async function loadHunksFor(path: string): Promise<void> {
+  const target = captureGitTarget()
   if (!state.cwd || !path) return
   if (isDirtyBuffer(path)) return
   const fp = statusFingerprint(path)
@@ -1373,6 +1446,7 @@ export async function loadHunksFor(path: string): Promise<void> {
     try {
       // gutter 是 dirty diff：体现全部未提交改动（含已暂存），基准用 HEAD
       const res = await gitDiff(state.cwd, path, false, 'head')
+      if (!sameGitTarget(target)) return
       if (res.success && res.diff && res.diff.hunks.length > 0) {
         setState({ hunksMap: { ...state.hunksMap, [path]: res.diff.hunks } })
       } else {
@@ -1382,12 +1456,13 @@ export async function loadHunksFor(path: string): Promise<void> {
       }
       hunksFingerprint.set(path, fp)
     } catch {
+      if (!sameGitTarget(target)) return
       const next = { ...state.hunksMap }
       delete next[path]
       setState({ hunksMap: next })
       hunksFingerprint.set(path, fp)
     } finally {
-      hunkInflight.delete(path)
+      if (sameGitTarget(target)) hunkInflight.delete(path)
     }
   })()
   hunkInflight.set(path, job)
@@ -1399,10 +1474,11 @@ export async function loadHunksFor(path: string): Promise<void> {
  * aether 暂无编辑器 gutter 渲染层，接口保留供后续接入。
  */
 export async function applyLiveHunks(path: string, content: string): Promise<void> {
+  const target = captureGitTarget()
   if (!state.cwd || !path) return
   if (!(path in headCache)) {
     const res = await gitHeadFile(state.cwd, path)
-    if (!res.success) return
+    if (!sameGitTarget(target) || !res.success) return
     headCache[path] = res.content ?? ''
   }
   const head = headCache[path]

@@ -15,8 +15,9 @@ import { useSyncExternalStore } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { toast } from '@renderer/core/toast'
-import { getSettings } from '@renderer/core/engine/client'
-import { getEngineStorageKey, isRemoteEngine, sessionStorageKey } from '@renderer/core/engine/source'
+import { getSettings, getSnapshot } from '@renderer/core/engine/client'
+import { engineConnectionKey, getEngineStorageKey, sessionStorageKey } from '@renderer/core/engine/source'
+import { ipcErrorMessage } from '@renderer/core/ipc-error'
 import { buildTerminalTheme } from './terminal-theme'
 import { getTerminalPreferences, onTerminalPreferencesChanged } from './terminal-preferences'
 
@@ -209,15 +210,28 @@ export async function createLocalSession(cwd?: string): Promise<void> {
   // 显式创建是一次新的尝试：清掉上次的失败标记，成功与否都重新如实记录
   setState({ creating: true, createFailed: null, closedAll: false })
   try {
+    const [settings, snapshot] = await Promise.all([getSettings(), getSnapshot()])
+    // Command-palette actions bypass the view's disabled button. Check the
+    // authoritative snapshot here too; waiting for a remote connection is not
+    // a failed PTY launch, and must never fall back to creating a local shell.
+    const remote = snapshot.mode === 'remote' || (snapshot.phase !== 'ready' && settings.engineMode === 'remote')
+    if (remote && (snapshot.mode !== 'remote' || snapshot.phase !== 'ready')) {
+      setState({ creating: false })
+      return
+    }
     // 后台创建用默认尺寸，首次挂载时由 fit 修正
     let sessionId: string | undefined
-    if (isRemoteEngine()) {
-      const settings = await getSettings()
+    if (remote) {
       sessionId = settings.lastSessionId.trim()
       const source = getEngineStorageKey()
       if (source) {
         try { sessionId = localStorage.getItem(sessionStorageKey('aether:lastSessionId', source))?.trim() || sessionId } catch { /* optional persistence */ }
       }
+    }
+    const current = await getSnapshot()
+    if (current.mode !== snapshot.mode || (remote && (current.phase !== 'ready' || engineConnectionKey(current) !== engineConnectionKey(snapshot)))) {
+      setState({ creating: false })
+      return
     }
     const { id } = await window.aether.terminal.create({ cwd, cols: 80, rows: 24, ...(sessionId ? { sessionId } : {}) })
     const { term, fit } = newTerminal()
@@ -260,7 +274,7 @@ export async function createLocalSession(cwd?: string): Promise<void> {
     // 视图层的「无会话则自动新建」effect 依赖 sessions.length/creating，
     // 复位后依赖变化会立刻再触发一次创建 —— 失败-复位-重试的无限循环。
     // 用 createFailed 顶住，让视图层知道"这次尝试明确失败了"，不再自动重试。
-    setState({ creating: false, createFailed: String(error) })
+    setState({ creating: false, createFailed: ipcErrorMessage(error) })
   }
 }
 

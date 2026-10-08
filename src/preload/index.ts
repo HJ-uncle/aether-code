@@ -67,20 +67,27 @@ import type {
  * 刻意不暴露通用的 ipcRenderer.send/invoke：渲染层只能调用下面这些具名方法，
  * 通道被写死在 preload 里，页面代码无法自行拼通道名。
  */
+async function invokeAccount<T>(action: string, ...args: unknown[]): Promise<T> {
+  const result: { ok: true; value: T } | { ok: false; message: string } = await ipcRenderer.invoke(IPC.invoke.accountAction, action, ...args)
+  if (!result.ok) throw new Error(result.message)
+  return result.value
+}
+
 const api = {
   account: {
-    getState: () => ipcRenderer.invoke(IPC.invoke.accountAction, 'getState'),
-    register: () => ipcRenderer.invoke(IPC.invoke.accountAction, 'register'),
-    login: (key: string) => ipcRenderer.invoke(IPC.invoke.accountAction, 'login', key),
-    updateProfile: (input) => ipcRenderer.invoke(IPC.invoke.accountAction, 'updateProfile', input),
-    logout: (all?: boolean) => ipcRenderer.invoke(IPC.invoke.accountAction, 'logout', all),
-    sessions: () => ipcRenderer.invoke(IPC.invoke.accountAction, 'sessions'),
-    revokeSession: (id: string) => ipcRenderer.invoke(IPC.invoke.accountAction, 'revokeSession', id),
-    exportRecovery: () => ipcRenderer.invoke(IPC.invoke.accountAction, 'exportRecovery'),
-    importRecovery: () => ipcRenderer.invoke(IPC.invoke.accountAction, 'importRecovery'),
-    externalLogin: (id, mode, credential) => ipcRenderer.invoke(IPC.invoke.accountAction, 'externalLogin', id, mode, credential),
-    cancelExternalLogin: () => ipcRenderer.invoke(IPC.invoke.accountAction, 'cancelExternalLogin'),
-    unlink: (id: string) => ipcRenderer.invoke(IPC.invoke.accountAction, 'unlink', id),
+    getState: () => invokeAccount('getState'),
+    setHttpTrust: (url, trusted) => invokeAccount('setHttpTrust', url, trusted),
+    register: () => invokeAccount('register'),
+    login: (key: string) => invokeAccount('login', key),
+    updateProfile: (input) => invokeAccount('updateProfile', input),
+    logout: (all?: boolean) => invokeAccount('logout', all),
+    sessions: () => invokeAccount('sessions'),
+    revokeSession: (id: string) => invokeAccount('revokeSession', id),
+    exportRecovery: () => invokeAccount('exportRecovery'),
+    importRecovery: () => invokeAccount('importRecovery'),
+    externalLogin: (id, mode, credential) => invokeAccount('externalLogin', id, mode, credential),
+    cancelExternalLogin: () => invokeAccount('cancelExternalLogin'),
+    unlink: (id: string) => invokeAccount('unlink', id),
     onChanged: (listener: (state: AccountState) => void) => {
       const handler = (_event: unknown, state: AccountState): void => listener(state)
       ipcRenderer.on(IPC.event.accountChanged, handler)
