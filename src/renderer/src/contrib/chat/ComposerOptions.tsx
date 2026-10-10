@@ -21,8 +21,8 @@ const THINKING_OPTIONS: Array<{
   summary: string
 }> = [
   { value: 'off', label: 'Off', summary: '请求关闭模型推理，下一次发送生效' },
-  { value: 'low', label: 'Low', summary: '几乎不思考，改小东西最快' },
-  { value: 'high', label: 'High', summary: '默认，由引擎按模型能力决定' },
+  { value: 'low', label: 'Low', summary: '默认，使用较低的推理强度' },
+  { value: 'high', label: 'High', summary: '由引擎按模型能力决定' },
   { value: 'max', label: 'Max', summary: '想到底，最慢最贵' }
 ]
 
@@ -96,7 +96,7 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
   const thinkDescriptor =
     THINKING_OPTIONS.find((item) => item.value === thinkingMode) ??
     (thinkingMode === 'medium' ? { label: 'Medium', summary: '本会话已请求中等推理强度' } :
-      thinkingMode === 'on' ? { label: 'On', summary: '本会话已明确请求开启推理' } : THINKING_OPTIONS[2])
+      thinkingMode === 'on' ? { label: 'On', summary: '本会话已明确请求开启推理' } : THINKING_OPTIONS[1])
   const secDescriptor = MODE_DESCRIPTORS.find((item) => item.value === mode)
   const thinkSummary =
     thinkingMode === 'off'

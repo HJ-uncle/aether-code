@@ -183,11 +183,11 @@ export const SETTINGS_DEFINITIONS: readonly SettingDefinition[] = [
   {
     key: 'aether.appearance.accent',
     label: '强调色',
-    description: '设置选中态、焦点环和交互控件使用的强调色。',
+    description: '选择预设或自定义颜色，设置选中态、焦点环和交互控件使用的强调色。',
     section: 'appearance',
     category: '外观',
     scope: 'user',
-    keywords: ['accent', 'color', '强调色']
+    keywords: ['accent', 'color', 'custom', 'hex', '强调色', '自定义颜色', '色值']
   },
   {
     key: 'aether.models.default',

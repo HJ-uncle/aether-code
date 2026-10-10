@@ -17,6 +17,7 @@
  */
 import type { ChatSsePayload } from '@shared/ipc'
 import type { RootPending } from '@shared/root-run'
+import { toolDisplayName } from './tool-labels'
 
 export interface PendingOption {
   /** 选项标题（选项卡第一行） */
@@ -124,7 +125,7 @@ export function normalizePending(payload: ChatSsePayload): PendingInteraction | 
     }
 
     const description = readString(permission, 'description', 'question', 'message')
-    const question = description || `安全策略拦截了 ${toolName}，是否允许执行？`
+    const question = description || `安全策略拦截了 ${toolDisplayName(toolName)}，是否允许执行？`
     return {
       kind: 'permission',
       question,

@@ -341,7 +341,7 @@ export interface EngineLogEntry {
 export type Appearance = 'system' | 'dark' | 'light'
 
 /** 强调色。取值对应 tokens.css 里的 [data-accent='*'] 覆盖块。 */
-export type AccentColor = 'blue' | 'purple' | 'pink' | 'orange' | 'green' | 'graphite'
+export type AccentColor = 'blue' | 'purple' | 'pink' | 'orange' | 'green' | 'graphite' | 'custom'
 
 /**
  * 文件排除表：glob 模式 → 是否隐藏。
@@ -412,8 +412,8 @@ export interface AppSettings {
    *
    * 档位映射到引擎 thinkingMode：
    *  - 'off'  → false：强制关闭思考
-   *  - 'low'  → 'low'：几乎不思考（最低 effort）
-   *  - 'high' → 不传：交给引擎按模型能力判断（默认档）
+   *  - 'low'  → 'low'：低推理强度（默认档）
+   *  - 'high' → 不传：交给引擎按模型能力判断
    *  - 'max'  → 'high'：强制开启并指定高 effort
    * 引擎侧已支持 thinkingMode 接收 'low' | 'medium' | 'high' 档位字符串。
    */
@@ -424,6 +424,8 @@ export interface AppSettings {
   appearance: Appearance
   /** 界面强调色 */
   accent: AccentColor
+  /** 自定义强调色；切回预设时仍保留，供下次选择使用。 */
+  customAccentColor: string
   /**
    * 资源管理器与搜索的文件排除规则（glob → 是否隐藏）。
    *
@@ -470,10 +472,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lastModelId: '',
   subagentModelId: '',
   utilityModelId: '',
-  thinkingMode: 'high',
+  thinkingMode: 'low',
   lastFolder: '',
   appearance: 'system',
   accent: 'blue',
+  customAccentColor: '#4b95f1',
   filesExclude: { ...DEFAULT_FILES_EXCLUDE },
   searchExclude: { ...DEFAULT_SEARCH_EXCLUDE }
 }

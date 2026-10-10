@@ -525,7 +525,7 @@ test.describe.serial('子代理：真实引擎 / HTTP / IPC 生命周期', () =>
     expect(markdown).toContain(probes.failureReason)
     expect(markdown).toContain(probes.successOutput)
     expect(markdown).toContain(probes.siblingOutput)
-    expect(markdown).toContain('read_file（成功）')
+    expect(markdown).toContain('读取文件（成功）')
     expect(markdown).toMatch(/子代理[^\n]*\[child:failure\][^\n]*（失败）/)
     expect(markdown).toMatch(/子代理[^\n]*\[child:cancel\][^\n]*（已取消）/)
     expect(markdown).not.toMatch(/子代理[^\n]*\[child:failure\][^\n]*（成功）/)

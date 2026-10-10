@@ -185,6 +185,11 @@
 }
 
 /* Appearance ----------------------------------------------------------- */
+.settings-view--appearance .accent-content {
+  flex-direction: column;
+  align-items: stretch;
+}
+
 .settings-view--appearance .sg-row-inline {
   align-items: center;
   min-height: 32px;
@@ -195,10 +200,11 @@
 }
 
 .settings-view--appearance .accent-grid {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
-  width: min(100%, 400px);
+  width: 100%;
 }
 
 .settings-view--appearance .accent-swatch {
@@ -231,6 +237,51 @@
   border-radius: 50%;
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 14%, transparent), 0 2px 5px color-mix(in srgb, var(--fg) 18%, transparent);
 }
+
+.settings-view--appearance .accent-swatch--custom {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-2);
+  width: auto;
+  padding: 0 var(--space-2);
+}
+
+.accent-swatch__label {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+.custom-accent-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+
+.custom-accent-summary__edit {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: var(--control-h);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.custom-accent-summary__edit:hover { background: var(--bg-hover); }
+.custom-accent-summary__edit code { font-family: var(--font-mono); font-size: 11px; }
+.custom-accent-summary__edit svg { color: var(--fg-muted); }
+.custom-accent-summary__dot { width: 12px; height: 12px; flex: none; border-radius: var(--radius-round); box-shadow: 0 0 0 1px var(--border-strong); }
+.custom-accent-error { margin: 0; color: var(--danger-fg); font-size: 11px; }
 
 .settings-view--appearance .theme-preview {
   display: flex;

@@ -7,6 +7,7 @@ import { replayMessages } from '../src/renderer/src/core/engine/chat-history'
 import { reducePayload } from '../src/renderer/src/core/engine/chat-payload'
 import { restoreChatSnapshot, type ChatRecoverySnapshot } from '../src/renderer/src/core/engine/chat-recovery'
 import { latestContextUsage, sumUsage } from '../src/renderer/src/contrib/chat/usage'
+import { createSessionUsageAnchor, sessionUsageTotal } from '../src/renderer/src/contrib/chat/session-usage'
 
 const modelId = 'actual-context-model'
 const window = 100_000
@@ -271,4 +272,168 @@ test('live and persisted recovery return the same occupancy despite different us
   expect(latestContextUsage(live)).toEqual({ used: 10_000, contextWindow: window, modelId })
   expect(latestContextUsage(persisted)).toEqual(latestContextUsage(live))
   expect(sumUsage(persisted).total).toBe(sumUsage(live).total)
+})
+
+test('raw dispatch and provisional provider snapshots preserve request estimates without billing until settlement', () => {
+  let message = assistant({ usage: { usageScope: 'turn', promptTokens: 139_000,
+    completionTokens: 400, totalTokens: 139_400, currentPromptTokens: 14_600, contextWindow: window } })
+  const anchor = createSessionUsageAnchor([message], { promptTokens: 139_000, completionTokens: 400, totalTokens: 139_400 })
+  expect(anchor).not.toBeNull()
+  message = reducePayload(message, { usage: { modelId, currentPromptTokens: 42_900,
+    contextWindow: window, contextUsageEstimated: true } })
+  expect(message.contextUsageEstimated).toBe(true)
+  expect(latestContextUsage([message])).toEqual({ used: 42_900, contextWindow: window, modelId, estimated: true, requestInputTokenEstimate: 42_900 })
+  expect(sumUsage([message])).toMatchObject({ input: 139_000, output: 400, total: 139_400 })
+  expect(sessionUsageTotal([message], anchor)).toMatchObject({ input: 139_000, output: 400, total: 139_400 })
+  message = reducePayload(message, { usage: { modelId, currentPromptTokens: 39_000,
+    contextWindow: window, contextUsageEstimated: false } })
+  expect(message.contextUsageEstimated).toBe(false)
+  expect(latestContextUsage([message])).toEqual({ used: 39_000, contextWindow: window, modelId, estimated: false, provisional: true, requestInputTokenEstimate: 42_900 })
+  expect(sumUsage([message])).toMatchObject({ input: 139_000, output: 400, total: 139_400 })
+  expect(sessionUsageTotal([message], anchor)).toMatchObject({ input: 139_000, output: 400, total: 139_400 })
+  message = reducePayload(message, { usage: { usageScope: 'turn', modelId,
+    promptTokens: 178_000, completionTokens: 900, totalTokens: 178_900,
+    currentPromptTokens: 39_000, contextWindow: window, contextUsageEstimated: false } })
+  expect(latestContextUsage([message])).toEqual({ used: 39_000, contextWindow: window, modelId, estimated: false })
+  expect(sumUsage([message])).toMatchObject({ input: 178_000, output: 900, total: 178_900 })
+  expect(sessionUsageTotal([message], anchor)).toMatchObject({ input: 178_000, output: 900, total: 178_900 })
+})
+
+test('a first estimated dispatch snapshot has no input or output charges', () => {
+  const message = reducePayload(assistant(), { usage: { modelId, currentPromptTokens: 42_900,
+    contextWindow: window, contextUsageEstimated: true } })
+  expect(latestContextUsage([message])).toEqual({ used: 42_900, contextWindow: window, modelId, estimated: true, requestInputTokenEstimate: 42_900 })
+  expect(sumUsage([message])).toMatchObject({ input: 0, output: 0, total: 0 })
+  expect(sessionUsageTotal([message])).toMatchObject({ input: 0, output: 0, total: 0 })
+})
+
+test('model-only live frames preserve the estimate source with its input model and window', () => {
+  for (const estimated of [true, false]) {
+    const previous = reducePayload(assistant(), { usage: { modelId, currentPromptTokens: 42_900,
+      contextWindow: window, contextUsageEstimated: estimated } })
+    const reported = reducePayload(previous, { usage: { modelId: 'later-reported-model' } })
+    expect(reported.modelId).toBe('later-reported-model')
+    expect(reported.contextUsageEstimated).toBe(estimated)
+    expect(latestContextUsage([reported])).toEqual({ used: 42_900, contextWindow: window, modelId, estimated, ...(estimated ? { requestInputTokenEstimate: 42_900 } : { provisional: true }) })
+    expect(sumUsage([reported]).total).toBe(0)
+  }
+})
+
+test('new explicit or legacy input without a source flag clears the preceding estimate source', () => {
+  const previous = reducePayload(assistant(), { usage: { modelId, currentPromptTokens: 42_900,
+    contextWindow: window, contextUsageEstimated: true } })
+  for (const input of [{ currentPromptTokens: 39_000 }, { promptTokens: 39_000 }]) {
+    const invoked = reducePayload(previous, { usage: { modelId: 'new-input-model', ...input } })
+    expect(invoked.contextUsageEstimated).toBeUndefined()
+    expect(latestContextUsage([invoked])).toEqual({ used: 39_000, modelId: 'new-input-model' })
+  }
+})
+
+test('history metadata estimate source is paired to each input and a later model-only row cannot relabel it', () => {
+  const estimated = historyRow('estimated-input', { promptTokens: 42_900, currentPromptTokens: 42_900, contextWindow: window },
+    { metadata: { contextUsageEstimated: true } })
+  expect(latestContextUsage(replayMessages([estimated])))
+    .toEqual({ used: 42_900, contextWindow: window, modelId, estimated: true })
+  const observed = historyRow('observed-input', { promptTokens: 39_000, currentPromptTokens: 39_000, contextWindow: 64_000 },
+    { modelId: 'observed-input-model', metadata: { contextUsageEstimated: false } })
+  const modelOnly = historyRow('later-model-only', {}, { modelId: 'later-reported-model', metadata: { contextUsageEstimated: true } })
+  const messages = replayMessages([estimated, observed, modelOnly])
+  expect(messages).toHaveLength(1)
+  expect(messages[0].modelId).toBe('later-reported-model')
+  expect(messages[0].contextUsageEstimated).toBe(false)
+  expect(latestContextUsage(messages)).toEqual({ used: 39_000, contextWindow: 64_000, modelId: 'observed-input-model', estimated: false })
+  expect(sumUsage(messages).input).toBe(81_900)
+})
+
+test('history new input without estimate metadata clears the earlier source including legacy prompt fallback', () => {
+  const estimated = historyRow('estimated-input', { promptTokens: 42_900, currentPromptTokens: 42_900, contextWindow: window },
+    { metadata: { contextUsageEstimated: true } })
+  for (const input of [{ currentPromptTokens: 39_000, promptTokens: 39_000 }, { promptTokens: 39_000 }]) {
+    const messages = replayMessages([estimated, historyRow('legacy-input', input, { modelId: 'legacy-input-model' })])
+    expect(messages[0].contextUsageEstimated).toBeUndefined()
+    expect(latestContextUsage(messages)).toEqual({ used: 39_000, modelId: 'legacy-input-model' })
+    expect(sumUsage(messages).input).toBe(81_900)
+  }
+})
+
+test('provider explicit zero preserves raw provisional live input and confirmed persisted zero', () => {
+  const previous = reducePayload(assistant({ usage: { promptTokens: 139_000, totalTokens: 139_000 } }),
+    { usage: { modelId, currentPromptTokens: 42_900, contextWindow: window, contextUsageEstimated: true } })
+  const live = reducePayload(previous, { usage: { modelId, currentPromptTokens: 0,
+    contextWindow: window, contextUsageEstimated: false } })
+  expect(live.contextUsageEstimated).toBe(false)
+  expect(latestContextUsage([live])).toEqual({ used: 0, contextWindow: window, modelId, estimated: false, provisional: true, requestInputTokenEstimate: 42_900 })
+  expect(sumUsage([live]).input).toBe(139_000)
+  const persisted = replayMessages([
+    historyRow('estimated-input', { promptTokens: 42_900, currentPromptTokens: 42_900, contextWindow: window },
+      { metadata: { contextUsageEstimated: true } }),
+    historyRow('zero-input', { promptTokens: 0, currentPromptTokens: 0, contextWindow: window },
+      { metadata: { contextUsageEstimated: false } })
+  ])
+  expect(persisted[0].contextUsageEstimated).toBe(false)
+  expect(latestContextUsage(persisted)).toEqual({ used: 0, contextWindow: window, modelId, estimated: false })
+  expect(sumUsage(persisted).input).toBe(42_900)
+})
+
+test('projection recovery retains dispatch estimate source and paired input identity through later model-only reports', () => {
+  const reportedModel = 'later-reported-model'
+  const projectedRun = { ...baseRun, actualModelId: reportedModel }
+  const restored = restoreChatSnapshot(snapshot({ run: projectedRun, runs: [projectedRun], projection: [
+    { usage: { modelId, currentPromptTokens: 42_900, contextWindow: window, contextUsageEstimated: true } },
+    { usage: { modelId: reportedModel } }
+  ] })).messages
+  expect(restored).toHaveLength(1)
+  expect(restored[0].modelId).toBe(reportedModel)
+  expect(restored[0].contextUsageEstimated).toBe(true)
+  expect(latestContextUsage(restored)).toEqual({ used: 42_900, contextWindow: window, modelId, estimated: true, requestInputTokenEstimate: 42_900 })
+  expect(sumUsage(restored).total).toBe(0)
+})
+
+test('live provider correction and persisted metadata recover the same observed context source', () => {
+  const completed = { ...baseRun, status: 'succeeded' as const, version: 2, finishedAt: 3 }
+  const usage = { promptTokens: 39_000, completionTokens: 500, totalTokens: 39_500,
+    currentPromptTokens: 39_000, contextWindow: window }
+  const live = restoreChatSnapshot(snapshot({ finished: true, run: completed, runs: [completed], projection: [
+    { usage: { modelId, currentPromptTokens: 42_900, contextWindow: window, contextUsageEstimated: true } },
+    { usage: { modelId, currentPromptTokens: 39_000, contextWindow: window, contextUsageEstimated: false } },
+    { usage: { ...usage, modelId, contextUsageEstimated: false } }
+  ] })).messages
+  const persisted = restoreChatSnapshot(snapshot({ source: 'persisted', eventId: null, finished: true,
+    run: completed, runs: [completed], history: [historyRow('observed-input', usage, { metadata: { contextUsageEstimated: false } })]
+  })).messages
+  expect(latestContextUsage(live)).toEqual({ used: 39_000, contextWindow: window, modelId, estimated: false })
+  expect(latestContextUsage(persisted)).toEqual(latestContextUsage(live))
+  expect(sumUsage(live).total).toBe(39_500)
+  expect(sumUsage(persisted).total).toBe(39_500)
+})
+
+test('observed 14577 to 14589 to 14605 context remains distinct while real cumulative charges grow to 242434', () => {
+  const actualModel = 'deepseek-v4.1-flash'
+  const samples = [
+    { input: 14_577, billed: 139_352 },
+    { input: 14_589, billed: 198_324 },
+    { input: 14_605, billed: 242_434 }
+  ]
+  let message = assistant({ modelId: actualModel })
+  const observed: number[] = []
+  const history: EngineHistoryRow[] = []
+  let previousBilling = 0
+  for (const [index, sample] of samples.entries()) {
+    message = reducePayload(message, { usage: { usageScope: 'turn', modelId: actualModel,
+      currentPromptTokens: sample.input, contextWindow: 1_000_000,
+      contextUsageEstimated: false, totalTokens: sample.billed } })
+    const context = latestContextUsage([message])
+    expect(context).toEqual({ used: sample.input, contextWindow: 1_000_000, modelId: actualModel, estimated: false })
+    expect(message.contextUsageEstimated).toBe(false)
+    expect(sumUsage([message]).total).toBe(sample.billed)
+    observed.push(context!.used)
+    history.push(historyRow('real-sample-' + index, { currentPromptTokens: sample.input,
+      contextWindow: 1_000_000, totalTokens: sample.billed - previousBilling },
+    { modelId: actualModel, metadata: { contextUsageEstimated: false } }))
+    const replayed = replayMessages(history)
+    expect(latestContextUsage(replayed)).toEqual(context)
+    expect(sumUsage(replayed).total).toBe(sample.billed)
+    previousBilling = sample.billed
+  }
+  expect(observed).toEqual([14_577, 14_589, 14_605])
 })

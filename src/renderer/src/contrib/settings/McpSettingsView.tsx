@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type JSX } from 'react'
 import { requestOrThrow } from '@renderer/core/engine/client'
+import { mcpToolDisplayName } from '@renderer/core/engine/tool-labels'
 import { useApp } from '@renderer/core/app-context'
 import { currentWorkspacePaths } from '@renderer/core/workspace/workspace-store'
 import { SettingsContent, SettingsGroup, SettingsRow, Toggle } from './SettingsGroup'
@@ -115,7 +116,12 @@ export function McpSettingsView(): JSX.Element {
     </SettingsGroup>
     <SettingsGroup title="MCP 服务器" footer={remote ? '当前管理远端引擎的 MCP 配置，保存位置由远端版本与配置决定。凭据只发送到该引擎。' : '配套引擎默认将项目配置保存到 .ae/mcp.json，并兼容读取旧配置；显式配置路径与全局配置保持独立。'}>
       <SettingsContent><div className="mcp-toolbar"><button type="button" className="btn" disabled={busy} onClick={() => void refresh()}>刷新</button><button type="button" className="btn btn--primary" disabled={busy} onClick={() => { setForm(blank); setEditing(null); setFormOpen(true) }}>新增服务器</button></div></SettingsContent>
-      {servers.length === 0 ? <SettingsContent><span className="mcp-empty">暂无 MCP 服务器</span></SettingsContent> : servers.map(server => <div key={server.id} className="mcp-server-block"><SettingsRow label={server.name || server.id} description={`${server.id} · ${server.transportType}${server.scope === 'global' ? ' · 全局' : ' · 项目'}`}><div className="mcp-actions"><Toggle checked={server.enabled !== false} onChange={value => void toggle(server, value)} label={`${server.name} 启用`} disabled={busy || server.isBuiltIn === true} /><button type="button" className="btn" disabled={busy} onClick={() => void test(server)}>测试</button><button type="button" className="btn" disabled={busy} onClick={() => { setEditing(server.id); edit(server) }}>编辑</button><button type="button" className="btn btn--danger-ghost" disabled={busy || server.isBuiltIn === true} onClick={() => void remove(server)}>删除</button></div></SettingsRow>{discoveredTools[server.id]?.map(tool => <SettingsRow key={tool.name} label={toolDefinitionName(server, tool)} description={tool.description}><Toggle checked={!server.disabledTools?.includes(toolDefinitionName(server, tool))} onChange={value => void toggleTool(server, tool, value)} label={`${toolDefinitionName(server, tool)} 启用`} disabled={busy} /></SettingsRow>)}</div>)}
+      {servers.length === 0 ? <SettingsContent><span className="mcp-empty">暂无 MCP 服务器</span></SettingsContent> : servers.map(server => <div key={server.id} className="mcp-server-block"><SettingsRow label={server.name || server.id} description={`${server.id} · ${server.transportType}${server.scope === 'global' ? ' · 全局' : ' · 项目'}`}><div className="mcp-actions"><Toggle checked={server.enabled !== false} onChange={value => void toggle(server, value)} label={`${server.name} 启用`} disabled={busy || server.isBuiltIn === true} /><button type="button" className="btn" disabled={busy} onClick={() => void test(server)}>测试</button><button type="button" className="btn" disabled={busy} onClick={() => { setEditing(server.id); edit(server) }}>编辑</button><button type="button" className="btn btn--danger-ghost" disabled={busy || server.isBuiltIn === true} onClick={() => void remove(server)}>删除</button></div></SettingsRow>{discoveredTools[server.id]?.map(tool => {
+        const definitionName = toolDefinitionName(server, tool)
+        const label = mcpToolDisplayName(server.id, tool.name)
+        const description = [label !== definitionName ? definitionName : '', tool.description].filter(Boolean).join(' · ')
+        return <SettingsRow key={tool.name} label={label} description={description}><Toggle checked={!server.disabledTools?.includes(definitionName)} onChange={value => void toggleTool(server, tool, value)} label={`${label} 启用`} disabled={busy} /></SettingsRow>
+      })}</div>)}
     </SettingsGroup>
     {formOpen ? <SettingsGroup title={editing ? `编辑 · ${editing}` : '新增 MCP 服务器'}><SettingsContent><div className="mcp-form">
       <input className="field__input" value={form.id} disabled={Boolean(editing) || busy} onChange={e => update('id', e.target.value)} placeholder="id（小写、数字、连字符）" aria-label="MCP id" />

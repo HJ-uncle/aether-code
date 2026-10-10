@@ -2920,6 +2920,22 @@
   font-size: 12px;
 }
 
+.diff-card__gap {
+  padding: 3px 0;
+  background: var(--bg-elevated);
+  color: var(--fg-muted);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  user-select: none;
+}
+
+/* 与代码列对齐，横向滚动时仍能读到省略提示。 */
+.diff-card__gap > span {
+  position: sticky;
+  left: 0;
+  padding: 0 12px 0 52px;
+}
+
 .diff-row {
   display: flex;
   align-items: baseline;
@@ -3810,11 +3826,13 @@
 }
 
 /* 上下文用量环（输入框旁） */
-.ctx-card {
+.git-stashcard.ctx-card {
   /* git-stashcard 提供 fixed 定位/背景/边框/投影，这里补布局差异（对齐 wuzu ContextUsageRing） */
   cursor: default;
-  min-width: 150px;
-  max-width: 200px;
+  width: min(280px, calc(100vw - 16px));
+  min-width: 0;
+  max-width: none;
+  box-sizing: border-box;
   padding: 8px 10px;
 }
 .ctx-card__header {
@@ -3857,6 +3875,7 @@
   color: var(--fg-faint);
 }
 .ctx-card__bar {
+  position: relative;
   margin-top: 6px;
   height: 3px;
   border-radius: 2px;
@@ -3867,7 +3886,77 @@
   height: 100%;
   border-radius: 2px;
   background: var(--accent);
-  transition: width 0.3s ease;
+  transition: none;
+}
+.ctx-card__bar-gain {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  opacity: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+  pointer-events: none;
+}
+.ctx-card__source-hint {
+  min-height: 56px;
+}
+.ctx-card__action-hint {
+  min-height: 28px;
+}
+.ctx-card__exact-tokens {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.ctx-number {
+  position: relative;
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ctx-number__readable {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.ctx-number__visual {
+  display: inline-flex;
+  height: 1em;
+  vertical-align: -0.08em;
+}
+.ctx-number__digit {
+  position: relative;
+  display: inline-block;
+  width: 1ch;
+  height: 1em;
+  overflow: hidden;
+}
+.ctx-number__reel {
+  display: flex;
+  flex-direction: column;
+  will-change: transform;
+}
+.ctx-number__glyph,
+.ctx-number__separator {
+  display: block;
+  flex: none;
+  height: 1em;
+  line-height: 1;
+}
+.ctx-number__glyph::before,
+.ctx-number__separator::before {
+  content: attr(data-character);
+}
+.ctx-number__separator {
+  width: 0.5ch;
+  text-align: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ctx-number__reel {
+    will-change: auto;
+  }
 }
 .ctx-card__bar-fill--warn {
   background: var(--danger-fg);
@@ -5028,6 +5117,13 @@
 
 .btn--primary:hover:not(:disabled) {
   filter: brightness(1.12);
+}
+
+/* 自定义色的悬停令牌已保证文字对比；再次 brightness 会破坏该保证。 */
+[data-accent='custom'] .btn--primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  filter: none;
 }
 
 .btn--danger {

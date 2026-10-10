@@ -8,6 +8,7 @@ import { app } from 'electron'
 import { join } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { DEFAULT_SETTINGS, type AppSettings } from '../shared/ipc'
+import { normalizeAccentHex } from '../shared/accent-color'
 import { validateRemoteWorkspaceRoot } from './engine/remote-workspace'
 
 let cache: AppSettings | null = null
@@ -29,6 +30,7 @@ export function getSettings(): AppSettings {
     const raw = JSON.parse(readFileSync(file, 'utf-8')) as Partial<AppSettings>
     // 与默认值合并，保证新增字段在老配置文件上也有值
     cache = { ...DEFAULT_SETTINGS, ...raw }
+    cache.customAccentColor = normalizeAccentHex(raw.customAccentColor) ?? DEFAULT_SETTINGS.customAccentColor
   } catch (err) {
     console.warn('[settings] 解析失败，回退默认设置:', err)
     cache = { ...DEFAULT_SETTINGS }
@@ -37,6 +39,11 @@ export function getSettings(): AppSettings {
 }
 
 export function updateSettings(patch: Partial<AppSettings>): AppSettings {
+  if (patch.customAccentColor !== undefined) {
+    const color = normalizeAccentHex(patch.customAccentColor)
+    if (!color) throw new Error('自定义强调色需要使用 #RGB 或 #RRGGBB 格式')
+    patch = { ...patch, customAccentColor: color }
+  }
   if (patch.remoteWorkspaceRoot !== undefined) {
     patch = { ...patch, remoteWorkspaceRoot: validateRemoteWorkspaceRoot(patch.remoteWorkspaceRoot) }
   }

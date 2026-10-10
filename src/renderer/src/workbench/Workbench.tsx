@@ -39,7 +39,7 @@ export function Workbench(): JSX.Element {
   const { settings } = useApp()
 
   // 把外观设置同步到 <html>，具体配色由 tokens.css 决定
-  useTheme(settings.appearance, settings.accent)
+  useTheme(settings.appearance, settings.accent, settings.customAccentColor)
 
   return (
     <div className="workbench">

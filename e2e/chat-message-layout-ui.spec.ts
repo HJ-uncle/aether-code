@@ -1,5 +1,5 @@
-/** Real Electron chat regression: file-card defaults and keyboard toggles, long diff
- * rows, and task-tray/composer geometry across light/dark and narrow/wide panels.
+/** Real Electron chat regression: compact change hunks and paging, file-card defaults
+ * and keyboard toggles, long rows, and tray/composer geometry across themes and widths.
  * History is served through the production remote snapshot API, not injected DOM. */
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { createServer, type Server } from 'node:http'
@@ -20,10 +20,20 @@ const token = 'chat-message-layout-fixture-token'
 const sessionId = 'chat-message-layout-session'
 const workspaceRoot = '/remote/chat-message-layout'
 const longLine = `export const veryLongLine = '${'a'.repeat(240)}'`
+const newFile = [longLine, ...Array.from({ length: 125 }, (_, index) => `export const added${index + 2} = ${index + 2}`)].join('\n') + '\n'
+const oldLines = Array.from({ length: 1800 }, (_, index) => `export const value${index + 1} = ${index + 1}`)
+const editedLines = [...oldLines]
+editedLines[1700] = 'export const value1701 = "changed near the end"'
+const separatedLines = oldLines.slice(0, 240)
+const separatedEdits = [...separatedLines]
+separatedEdits[80] = 'export const value81 = "first change"'
+separatedEdits[180] = 'export const value181 = "second change"'
 const changes: EngineFileChange[] = [
-  { id: 'new', path: `${workspaceRoot}/src/deeply/nested/new-file-with-a-long-name.ts`, displayPath: 'src/deeply/nested/new-file-with-a-long-name.ts', kind: 'write', oldContent: null, newContent: `${longLine}\nexport const second = 2\n`, isNew: true, truncated: false, status: 'kept', createdAt: 1 },
-  { id: 'edit', path: `${workspaceRoot}/src/edit.ts`, displayPath: 'src/edit.ts', kind: 'write', oldContent: 'export const value = 1\n', newContent: 'export const value = 2\n', isNew: false, truncated: false, status: 'kept', createdAt: 2 },
-  { id: 'delete', path: `${workspaceRoot}/src/deleted.ts`, displayPath: 'src/deleted.ts', kind: 'delete', oldContent: 'export const obsolete = true\n', newContent: null, isNew: false, truncated: false, status: 'kept', createdAt: 3 }
+  { id: 'new', path: `${workspaceRoot}/src/deeply/nested/new-file-with-a-long-name.ts`, displayPath: 'src/deeply/nested/new-file-with-a-long-name.ts', kind: 'write', oldContent: null, newContent: newFile, isNew: true, truncated: false, status: 'kept', createdAt: 1 },
+  { id: 'edit', path: `${workspaceRoot}/src/edit.ts`, displayPath: 'src/edit.ts', kind: 'write', oldContent: oldLines.join('\n') + '\n', newContent: editedLines.join('\n') + '\n', isNew: false, truncated: false, status: 'kept', createdAt: 2 },
+  { id: 'delete', path: `${workspaceRoot}/src/deleted.ts`, displayPath: 'src/deleted.ts', kind: 'delete', oldContent: 'export const obsolete = true\n', newContent: null, isNew: false, truncated: false, status: 'kept', createdAt: 3 },
+  { id: 'separated', path: `${workspaceRoot}/src/separated.ts`, displayPath: 'src/separated.ts', kind: 'write', oldContent: separatedLines.join('\n') + '\n', newContent: separatedEdits.join('\n') + '\n', isNew: false, truncated: false, status: 'kept', createdAt: 4 },
+  { id: 'unchanged', path: `${workspaceRoot}/src/unchanged.ts`, displayPath: 'src/unchanged.ts', kind: 'write', oldContent: 'export const unchanged = true\n', newContent: 'export const unchanged = true\n', isNew: false, truncated: false, status: 'kept', createdAt: 5 }
 ]
 const todos: EngineTodo[] = [
   { id: 'todo-1', title: '完成消息列表样式', status: 'done', priority: 'medium' },
@@ -49,8 +59,8 @@ function envelope(data: unknown): string { return JSON.stringify({ code: 200, me
 function card(name: string) { return page.locator('.diff-card').filter({ has: page.locator('.diff-card__path', { hasText: name }) }) }
 
 async function expectDefaultCards(): Promise<void> {
-  await expect(page.locator('.diff-card')).toHaveCount(3)
-  for (const name of ['new-file-with-a-long-name.ts', 'edit.ts']) {
+  await expect(page.locator('.diff-card')).toHaveCount(changes.length)
+  for (const name of ['new-file-with-a-long-name.ts', 'edit.ts', 'separated.ts', 'unchanged.ts']) {
     await expect(card(name).locator('.diff-card__head')).toHaveAttribute('aria-expanded', 'true')
     await expect(card(name).locator('.diff-card__body')).toBeVisible()
   }
@@ -213,7 +223,8 @@ test.describe.serial('消息文件卡片与任务托盘布局', () => {
       const edge = await body.evaluate(element => {
         const row = element.querySelector('.diff-row--add')
         if (!row) throw new Error('Missing added row')
-        return { left: element.scrollLeft, right: row.getBoundingClientRect().right, viewportRight: element.getBoundingClientRect().right }
+        // 长 diff 的纵向滚动条占据独立轨道，背景只需覆盖实际内容视口。
+        return { left: element.scrollLeft, right: row.getBoundingClientRect().right, viewportRight: element.getBoundingClientRect().left + element.clientLeft + element.clientWidth }
       })
       expect(edge.left, '长行必须在差异区域内部横向滚动').toBeGreaterThan(0)
       expect(edge.right, '滚动到长行末尾后差异背景仍覆盖可视区域').toBeGreaterThanOrEqual(edge.viewportRight - 2)
@@ -222,5 +233,56 @@ test.describe.serial('消息文件卡片与任务托盘布局', () => {
       await page.screenshot({ path: screenshot, fullPage: true })
       await testInfo.attach(`${width}px ${appearance}`, { path: screenshot, contentType: 'image/png' })
     }
+  })
+
+  test('尾部小改动直接显示真实行号与红绿差异，多处改动省略中间正文，刷新仍为精简预览', async ({}, testInfo) => {
+    await reloadPanel(380)
+    for (let round = 0; round < 2; round++) {
+      const edited = card('edit.ts')
+      await expect(edited.locator('.diff-row')).toHaveCount(8)
+      await expect(edited.locator('.diff-row--del')).toContainText('export const value1701 = 1701')
+      await expect(edited.locator('.diff-row--add')).toContainText('changed near the end')
+      await expect(edited.locator('.diff-row--add .diff-row__no')).toHaveText('1701')
+      await expect(edited.locator('.diff-row--del .diff-row__no')).toHaveText('1701')
+      await expect(edited.locator('.diff-row').first()).toContainText('value1698')
+      await expect(edited.locator('.diff-row').last()).toContainText('value1704')
+      await expect(edited.locator('.diff-card__body')).not.toContainText('value1 = 1')
+      await expect(edited.locator('.diff-card__gap')).toHaveText(['已省略 1697 行未修改内容', '已省略 96 行未修改内容'])
+      await expect(edited.locator('.diff-card__more')).toHaveCount(0)
+      await expect(edited.locator('.diff-card__add')).toHaveText('+1')
+      await expect(edited.locator('.diff-card__del')).toHaveText('-1')
+      await expect(edited.locator('.diff-row--add .hljs-keyword').first()).toHaveText('export')
+      const scroll = await edited.locator('.diff-card__body').evaluate(element => ({ top: element.scrollTop, height: element.clientHeight, content: element.scrollHeight }))
+      expect(scroll.top).toBe(0)
+      expect(scroll.content - scroll.height, '小改动应直接完整可见，不必滚过整份文件').toBeLessThanOrEqual(1)
+
+      const separated = card('separated.ts')
+      await expect(separated.locator('.diff-row')).toHaveCount(16)
+      await expect(separated.locator('.diff-row--add')).toContainText(['first change', 'second change'])
+      await expect(separated.locator('.diff-row--add .diff-row__no')).toHaveText(['81', '181'])
+      await expect(separated.locator('.diff-card__gap')).toHaveText(['已省略 77 行未修改内容', '已省略 93 行未修改内容', '已省略 56 行未修改内容'])
+      await expect(separated.locator('.diff-card__more')).toHaveCount(0)
+      await expect(separated.locator('.diff-card__add')).toHaveText('+2')
+      await expect(separated.locator('.diff-card__del')).toHaveText('-2')
+      await expect(card('unchanged.ts').locator('.diff-card__body')).toHaveText('（无文本差异）')
+      if (round === 0) await page.reload()
+    }
+    await card('edit.ts').scrollIntoViewIfNeeded()
+    await testInfo.attach('尾部小改动预览', { body: await card('edit.ts').screenshot(), contentType: 'image/png' })
+  })
+
+  test('大量真实新增仍可逐步展开，分页不影响总增删统计', async () => {
+    const created = card('new-file-with-a-long-name.ts')
+    await expect(created.locator('.diff-row')).toHaveCount(60)
+    await expect(created.locator('.diff-card__add')).toHaveText('+126')
+    await expect(created.locator('.diff-card__del')).toHaveText('-0')
+    await created.getByRole('button', { name: '展开更多差异', exact: true }).click()
+    await expect(created.locator('.diff-row')).toHaveCount(120)
+    await created.getByRole('button', { name: '展开更多差异', exact: true }).click()
+    await expect(created.locator('.diff-row')).toHaveCount(126)
+    await expect(created.locator('.diff-row').last()).toContainText('export const added126 = 126')
+    await expect(created.locator('.diff-card__gap')).toHaveCount(0)
+    await expect(created.locator('.diff-card__more')).toHaveCount(0)
+    await expect(created.locator('.diff-card__add')).toHaveText('+126')
   })
 })

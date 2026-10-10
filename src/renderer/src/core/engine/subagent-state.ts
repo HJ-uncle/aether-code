@@ -1,5 +1,6 @@
 import { commandJobDisplayLabel } from './command-job-state'
 import { commandFailureLabel } from './tool-feedback'
+import { toolDisplayName } from './tool-labels'
 import type {
   SubagentError,
   SubagentEvent,
@@ -376,7 +377,7 @@ export function exportSubagentDetails(tool: ToolActivity): string {
     if (run.externalEffectStatus === 'unknown') lines.push('已停止本地执行；外部操作结果可能未知')
     for (const call of run.toolCalls) {
       lines.push(
-        `  - ${call.name}（${call.status === 'succeeded' ? '成功' : call.status === 'failed' ? '失败' : call.status === 'cancelled' ? '已取消' : '运行中'}）${call.error?.message ? `：${call.error.message}` : ''}`
+        `  - ${toolDisplayName(call.name)}（${call.status === 'succeeded' ? '成功' : call.status === 'failed' ? '失败' : call.status === 'cancelled' ? '已取消' : '运行中'}）${call.error?.message ? `：${call.error.message}` : ''}`
       )
       if (call.args !== undefined)
         lines.push(

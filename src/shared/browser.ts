@@ -125,6 +125,34 @@ export interface BrowserElement {
   role: string
   name: string
   value?: string
+  /** Main-page viewport CSS pixels; null means no layout position was available, omitted for old records. */
+  bounds?: { x: number; y: number; width: number; height: number } | null
+}
+
+/** The whole visible CSS viewport, stored as PNG; dimensions describe actual image pixels. */
+export interface BrowserViewportScreenshot {
+  dataUrl: string
+  width: number
+  height: number
+}
+
+/** CSS coordinates and page state captured before dispatch, even if the click navigates. */
+export interface BrowserClickInteraction {
+  type: 'click'
+  x: number
+  y: number
+  navigationId: number
+  pageUrl: string
+  viewport: { width: number; height: number; deviceScaleFactor: number; scrollX: number; scrollY: number }
+  /** Captured before mouse dispatch; never replaced with a post-navigation image. */
+  screenshot?: BrowserViewportScreenshot
+  target?: {
+    name?: string
+    role?: string
+    ref?: string
+    selector?: string
+    bounds?: { x: number; y: number; width: number; height: number }
+  }
 }
 
 export interface BrowserSnapshot {
@@ -133,6 +161,18 @@ export interface BrowserSnapshot {
   elements: BrowserElement[]
   truncated: boolean
   viewport: { width: number; height: number; deviceScaleFactor: number; scrollX: number; scrollY: number }
+  screenshot?: BrowserViewportScreenshot
+  interaction?: BrowserClickInteraction
+}
+
+/** The action was dispatched successfully, but a following page could not be read yet. */
+export interface BrowserUnavailableSnapshot {
+  tab: BrowserTabState
+  text: string
+  elements: BrowserElement[]
+  truncated: false
+  snapshotUnavailable: string
+  interaction?: BrowserClickInteraction
 }
 
 export interface BrowserScreenshot {

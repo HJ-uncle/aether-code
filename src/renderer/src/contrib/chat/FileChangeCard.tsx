@@ -7,9 +7,11 @@ import { openFileFromChat } from './open-file'
 import { useCollapseMemory } from './useCollapseMemory'
 import {
   FILE_CHANGE_PREVIEW_ROWS,
+  compactFileChangeRows,
   fileChangeInitiallyCollapsed,
   fileChangeLanguage,
-  highlightFileChangeLine
+  highlightFileChangeLine,
+  takeFileChangePreviewRows
 } from './file-change-preview'
 import {
   DIFF_APPROXIMATION_HINT,
@@ -35,7 +37,7 @@ export function FileChangeCard({
 }): JSX.Element {
   const { engine } = useApp()
   const remoteReadOnly = engine.snapshot.mode === 'remote'
-  /** 「还有 N 行」展开更多：只影响 body 内的行数，不影响卡片折叠 */
+  /** 分批渲染差异片段，不把省略的未修改内容计入预览。 */
   const [visibleLimit, setVisibleLimit] = useState(FILE_CHANGE_PREVIEW_ROWS)
   // 删除只保留摘要；用户主动选择优先于默认值，分页回收后也不重新展开。
   const [manualCollapsed, setCollapsed] = useCollapseMemory(`file-change:${change.id}`)
@@ -63,13 +65,14 @@ export function FileChangeCard({
     return segments.length > 2 ? `…/${segments.slice(-2).join('/')}` : displayPath
   }, [displayPath])
 
-  const visibleRows = useMemo(() => rows?.slice(0, visibleLimit) ?? [], [rows, visibleLimit])
+  const previewRows = useMemo(() => compactFileChangeRows(rows ?? []), [rows])
+  const visibleRows = useMemo(() => takeFileChangePreviewRows(previewRows, visibleLimit), [previewRows, visibleLimit])
   const language = fileChangeLanguage(displayPath)
   const highlightedRows = useMemo(
-    () => collapsed ? [] : visibleRows.map(row => highlightFileChangeLine(row.text || ' ', language)),
+    () => collapsed ? [] : visibleRows.map(row => row.type === 'gap' ? '' : highlightFileChangeLine(row.text || ' ', language)),
     [collapsed, visibleRows, language]
   )
-  const hiddenCount = (rows?.length ?? 0) - visibleRows.length
+  const hasMore = previewRows.length > visibleRows.length
   const stateIcon = failed ? 'close' : state === 'running' ? 'restart' : state === 'done' ? 'check' : 'clock-outline'
 
   return (
@@ -132,7 +135,7 @@ export function FileChangeCard({
         </div>
       ) : rows === null ? (
         <div className="diff-card__body diff-card__body--empty">缺少完整内容快照，无法计算差异。</div>
-      ) : rows.length === 0 ? (
+      ) : previewRows.length === 0 ? (
         <div className="diff-card__body diff-card__body--empty">
           {change.kind === 'delete' ? '（删除空文件）' : isNew ? '（新建空文件）' : '（无文本差异）'}
         </div>
@@ -141,7 +144,11 @@ export function FileChangeCard({
           {stats?.approximate ? <div className="diff-card__notice">{DIFF_APPROXIMATION_HINT}</div> : null}
           <div className="diff-card__body" tabIndex={0} aria-label={`${displayPath} 文件差异`}>
             <div className="diff-card__lines">
-              {visibleRows.map((row, index) => (
+              {visibleRows.map((row, index) => row.type === 'gap' ? (
+                <div key={index} className="diff-card__gap">
+                  <span>已省略 {row.count} 行未修改内容</span>
+                </div>
+              ) : (
                 <div key={index} className={`diff-row diff-row--${row.type}`}>
                   <span className="diff-row__gutter" aria-hidden="true">
                     <span className="diff-row__no">{row.type === 'del' ? row.oldNo ?? '' : row.newNo ?? ''}</span>
@@ -158,9 +165,9 @@ export function FileChangeCard({
               ))}
             </div>
           </div>
-          {hiddenCount > 0 ? (
+          {hasMore ? (
             <button type="button" className="diff-card__more" onClick={() => setVisibleLimit(limit => limit + FILE_CHANGE_PREVIEW_ROWS)}>
-              还有 {hiddenCount} 行，继续展开 {Math.min(hiddenCount, FILE_CHANGE_PREVIEW_ROWS)} 行
+              展开更多差异
             </button>
           ) : null}
         </>

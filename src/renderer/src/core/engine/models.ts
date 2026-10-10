@@ -11,6 +11,7 @@
  *    本地模型请走引擎的 OLLAMA_BASE_URL 等配置，不能在此添加。
  */
 import { request } from './client'
+import { assertEngineSource, getEngineSource, getExpectedEngine } from './source'
 
 export interface ModelCapabilities {
   vision?: boolean
@@ -122,7 +123,9 @@ export async function listModels(): Promise<EngineModel[]> {
 }
 
 export async function createModel(input: CreateModelInput): Promise<EngineModel> {
-  const result = await request<EngineModel>({ method: 'POST', path: '/models', body: input })
+  const source = getEngineSource()
+  const expectedEngine = getExpectedEngine()
+  const result = await request<EngineModel>({ method: 'POST', path: '/models', body: input, expectedEngine })
   if (!result.ok) throw new Error(result.message || '添加模型失败')
 
   const created = result.data as EngineModel
@@ -131,7 +134,8 @@ export async function createModel(input: CreateModelInput): Promise<EngineModel>
   // （chat 仅按 modelId 匹配，从不检查它）。若不纠正，库里会留一条
   // 显示为"未启用"、实际却能正常使用的记录，属于误导性数据。
   if (created && !created.isEnabled) {
-    await request({ method: 'PUT', path: `/models/${created.id}`, body: { isEnabled: true } })
+    assertEngineSource(source)
+    await request({ method: 'PUT', path: `/models/${created.id}`, body: { isEnabled: true }, expectedEngine })
     return { ...created, isEnabled: true }
   }
 

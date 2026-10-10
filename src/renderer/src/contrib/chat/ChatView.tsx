@@ -1,4 +1,5 @@
 import { CommandJobCard } from './CommandJobCard'
+import { ContextUsageBar, RollingContextNumber, useReducedContextMotion } from './ContextUsageMotion'
 import { exportCommandJob, visibleChildCommandJobs } from '@renderer/core/engine/command-job-state'
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { createPortal } from 'react-dom'
@@ -15,10 +16,13 @@ import { exportToolDiagnostics, toolFailureMessage } from '@renderer/core/engine
 import { Markdown } from './Markdown'
 import { getSessionMeta } from '../history/session-meta'
 import { toolDisplayName, toolParamSummary, toolPathArg } from './tool-names'
+import { ToolResult } from './ToolResult'
+import { parseToolResult, type ParsedToolResult } from './tool-result'
 import { useCollapseMemory } from './useCollapseMemory'
 import { registerPendingSession, requestSessionListRefresh, touchPendingSession } from '../history/pending-sessions'
 import { openFileFromChat } from './open-file'
 import { useModels } from '@renderer/core/engine/model-store'
+import { contextPresentation, contextPresentationLimit } from './context-presentation'
 import { changeSecurityMode } from '@renderer/core/engine/security-store'
 import { useMemoryScope } from '@renderer/core/engine/memory-store'
 import { requestOrThrow } from '@renderer/core/engine/client'
@@ -38,7 +42,6 @@ import { composerThinkingMode, requestedThinkingMode, resolveSessionRequestConfi
 import { normalizeRootRunRequestConfig, type RootRunRequestConfig } from '@shared/root-run'
 import { MessageNavRail, type NavTurn } from './MessageNavRail'
 import {
-  latestContextUsage,
   formatDuration,
   formatTimestamp,
   formatTokens,
@@ -446,13 +449,12 @@ export function ChatView(): JSX.Element {
   const usageTotal = sessionUsage
   // Input occupancy is an invocation snapshot; request billing stays cumulative
   // in usageTotal. A later invocation may legitimately use less context.
-  const contextUsage = useMemo(() => latestContextUsage(messages), [messages])
+  const contextDisplay = useMemo(() => contextPresentation(messages), [messages])
+  const contextUsage = contextDisplay.primary
   const contextUsed = contextUsage?.used ?? 0
   // Pair the input with its own model/window. A pending model-only frame or a
   // composer selection must not redivide old input by another model's window.
-  const contextLimit = contextUsage?.contextWindow ??
-    models.find(model => model.modelId === (contextUsage?.modelId ?? modelId))?.capabilities?.contextWindow ??
-    CONTEXT_WINDOW_FALLBACK
+  const contextLimit = contextPresentationLimit(contextUsage, models, modelId, CONTEXT_WINDOW_FALLBACK)
   // 按用户提问切分轮次：每轮末尾展示「一问一答」的累计 token
   const turns = useMemo(() => groupIntoTurns(messages), [messages])
 
@@ -1668,11 +1670,14 @@ export function ChatView(): JSX.Element {
               <Icon name={polishing ? 'sync' : 'sparkles'} size={16} />
             </button>
 
-            {contextUsed > 0 ? (
+            {contextUsage !== null ? (
               <ContextRing
+                requestEstimate={contextDisplay.requestEstimate}
                 key={`${sourceEpoch}:${sessionId}`}
                 used={contextUsed}
                 limit={contextLimit}
+                estimated={contextUsage.estimated}
+                provisional={contextUsage.provisional}
                 sessionId={sessionId}
                 streaming={streaming}
                 onCompacted={() => {
@@ -1736,14 +1741,20 @@ export function ChatView(): JSX.Element {
  * 过程中环内显示转圈；完成后短暂显示压缩前后 token 对比，再回落为百分比。
  */
 function ContextRing({
+  requestEstimate,
   used,
   limit,
+  estimated,
+  provisional,
   sessionId,
   streaming,
   onCompacted
 }: {
   used: number
   limit: number
+  estimated?: boolean
+  provisional?: boolean
+  requestEstimate?: number
   sessionId: string
   streaming: boolean
   onCompacted: () => void
@@ -1754,6 +1765,7 @@ function ContextRing({
   const [compactInfo, setCompactInfo] = useState<{ before: number; after: number } | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
   const [hoverAnchor, setHoverAnchor] = useState<DOMRect | null>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
   const closeTimerRef = useRef(0)
   const phaseTimerRef = useRef(0)
   const mountedRef = useRef(true)
@@ -1777,6 +1789,7 @@ function ContextRing({
 
   const ratio = Math.min(1, used / limit)
   const percent = Math.round(ratio * 100)
+  const precisePercent = (Math.round(Math.min(used, limit) * 100_000 / limit) / 1000).toFixed(3)
   const radius = 10
   const circumference = 2 * Math.PI * radius
   const offset = circumference * (1 - ratio)
@@ -1820,14 +1833,17 @@ function ContextRing({
         ? `已压缩 ${formatTokens(compactInfo.before)} → ${formatTokens(compactInfo.after)}`
         : phase === 'failed'
           ? `压缩失败：${errorMsg}`
-          : `上下文用量约 ${percent}%（最近一次模型请求 ${formatTokens(used)} / ${formatTokens(limit)}），点击压缩上下文`
+          : `上下文用量 ${precisePercent}%（最近一次模型请求 ${formatTokens(used)} / ${formatTokens(limit)}；${used.toLocaleString('en-US')} / ${limit.toLocaleString('en-US')} tokens），点击压缩上下文`
 
   return (
     <>
       <button
+        ref={buttonRef}
         type="button"
         className={`context-ring${warn ? ' context-ring--warn' : ''}${phase === 'compacting' ? ' context-ring--busy' : ''}`}
         aria-label={title}
+        data-context-source={provisional === true ? 'provisional' : estimated === true ? 'estimated' : estimated === false ? 'reported' : 'unknown'}
+        data-context-pending={requestEstimate !== undefined || estimated === true || provisional === true ? 'true' : 'false'}
         aria-disabled={!ready || phase === 'compacting' || streaming || !sessionId}
         onClick={() => void compact()}
         onMouseEnter={(event) => openHover(event.currentTarget.getBoundingClientRect())}
@@ -1853,10 +1869,13 @@ function ContextRing({
       </button>
       {hoverAnchor ? (
         <ContextRingCard
+          requestEstimate={requestEstimate}
           anchor={hoverAnchor}
+          anchorElement={buttonRef.current}
           used={used}
           limit={limit}
-          percent={percent}
+          estimated={estimated}
+          provisional={provisional}
           phase={phase}
           compactInfo={compactInfo}
           errorMsg={errorMsg}
@@ -1871,24 +1890,30 @@ function ContextRing({
 /**
  * 上下文用量环的 hover 卡片（布局对齐 wuzu ContextUsageRing 的 tooltip）。
  * 结构：标题行（上下文窗口）→ 大号百分比 + 右侧「已用 / 上限」→ 底部状态提示；
- * 压缩中 / 失败时正文整块替换为对应状态。
+ * 压缩状态留在末行，数值与进度保持挂载以显示压缩后的下降。
  * 信息卡不包含操作，鼠标可以穿过卡片继续点击输入框；定位在环的上方并贴边钳制。
  */
 function ContextRingCard({
+  requestEstimate,
   anchor,
+  anchorElement,
   used,
   limit,
-  percent,
+  estimated,
+  provisional,
   phase,
   compactInfo,
   errorMsg,
   streaming,
   readOnly
 }: {
+  requestEstimate?: number
   anchor: DOMRect
+  anchorElement: HTMLButtonElement | null
   used: number
   limit: number
-  percent: number
+  estimated?: boolean
+  provisional?: boolean
   phase: 'idle' | 'compacting' | 'done' | 'failed'
   compactInfo: { before: number; after: number } | null
   errorMsg: string
@@ -1896,20 +1921,58 @@ function ContextRingCard({
   readOnly: boolean
 }): JSX.Element {
   const cardRef = useRef<HTMLDivElement>(null)
+  const precisePercent = (Math.round(Math.min(used, limit) * 100_000 / limit) / 1000).toFixed(3)
 
-  useEffect(() => {
+  const reducedMotion = useReducedContextMotion()
+  const positionCard = (): void => {
     const el = cardRef.current
     if (!el) return
     const margin = 8
     const rect = el.getBoundingClientRect()
-    // 优先放在环的正上方居中；上方放不下翻到底部，水平贴边钳制
-    let x = anchor.left + (anchor.width - rect.width) / 2
-    x = Math.min(Math.max(margin, x), window.innerWidth - rect.width - margin)
-    let y = anchor.top - rect.height - 8
-    if (y < margin) y = anchor.bottom + 8
-    el.style.left = `${x}px`
-    el.style.top = `${y}px`
-  }, [anchor, phase])
+    const currentAnchor = anchorElement?.getBoundingClientRect() ?? anchor
+    const maxX = Math.max(margin, window.innerWidth - rect.width - margin)
+    const x = Math.min(Math.max(margin, currentAnchor.left + (currentAnchor.width - rect.width) / 2), maxX)
+    let y = currentAnchor.top - rect.height - margin
+    if (y < margin) y = currentAnchor.bottom + margin
+    y = Math.min(Math.max(margin, y), Math.max(margin, window.innerHeight - rect.height - margin))
+    el.style.left = x + 'px'
+    el.style.top = y + 'px'
+    el.style.visibility = 'visible'
+    el.dataset.positioned = 'true'
+  }
+
+  // Position before every paint; changing source/status text must not leave one frame
+  // at an old location. The observer also covers font and viewport size changes.
+  useLayoutEffect(positionCard)
+  useLayoutEffect(() => {
+    const el = cardRef.current
+    if (!el) return
+    const observer = new ResizeObserver(positionCard)
+    const targets = [el, anchorElement, anchorElement?.closest('.chat__toolbar'), anchorElement?.closest('.chat__surface')]
+    for (const target of targets) if (target) observer.observe(target)
+    window.addEventListener('resize', positionCard)
+    window.addEventListener('scroll', positionCard, true)
+    // ResizeObserver cannot see an equal-sized toolbar move after its sibling changes.
+    // Track only the anchor bounds while open, and reposition only when they change.
+    let frame = 0
+    let previousBounds = ''
+    const trackAnchor = (): void => {
+      const rect = anchorElement?.getBoundingClientRect() ?? anchor
+      const bounds = [rect.left, rect.top, rect.width, rect.height].join(',')
+      if (bounds !== previousBounds) {
+        previousBounds = bounds
+        positionCard()
+      }
+      frame = window.requestAnimationFrame(trackAnchor)
+    }
+    frame = window.requestAnimationFrame(trackAnchor)
+    return () => {
+      observer.disconnect()
+      window.cancelAnimationFrame(frame)
+      window.removeEventListener('resize', positionCard)
+      window.removeEventListener('scroll', positionCard, true)
+    }
+  }, [anchor, anchorElement])
 
   const hint =
     readOnly
@@ -1921,45 +1984,44 @@ function ContextRingCard({
         : '使用接近上限时，可点击立即压缩上下文'
 
   return createPortal(
-    <div ref={cardRef} className="git-stashcard ctx-card" role="tooltip" style={{ pointerEvents: 'none' }}>
+    <div ref={cardRef} className="git-stashcard ctx-card" role="tooltip" data-testid="context-usage-card" data-reduced-motion={reducedMotion} style={{ pointerEvents: 'none', visibility: 'hidden' }}>
       <div className="ctx-card__header">
         <span>当前上下文</span>
-        {phase === 'failed' ? (
-          <Icon name="close" size={16} className="ctx-card__warn-icon" />
-        ) : phase === 'idle' || phase === 'done' ? (
-          <span className="ctx-card__percent">
-            {percent}
-            <span className="ctx-card__percent-sign">%</span>
-          </span>
-        ) : null}
+        <span className="ctx-card__percent">
+          <RollingContextNumber value={Number(precisePercent)} formatted={precisePercent} reduced={reducedMotion} testId="context-percent-number" />
+          <span className="ctx-card__percent-sign">%</span>
+        </span>
       </div>
-      {phase === 'compacting' ? (
-        <div className="ctx-card__status">正在压缩上下文…</div>
-      ) : phase === 'failed' ? (
-        <div className="ctx-card__status">
-          上下文压缩失败
-          {errorMsg ? <div className="ctx-card__error">{errorMsg}</div> : null}
-        </div>
-      ) : (
-        <>
-          <div className="ctx-card__tokens">
-            <span className="ctx-card__tokens-value">
-              {formatTokens(used)} / {formatTokens(limit)}
-            </span>
-            <span className="ctx-card__tokens-label">使用 / 上限</span>
-          </div>
-          <div className="ctx-card__bar">
-            <div
-              className={`ctx-card__bar-fill${percent >= 90 ? ' ctx-card__bar-fill--warn' : ''}`}
-              style={{ width: `${Math.min(percent, 100)}%` }}
-            />
-          </div>
-        </>
-      )}
-      <div className="ctx-card__hint">最近一次模型请求的输入（模型统计或估算）；压缩或清理工具结果后可减少。</div>
-      {phase !== 'failed' && phase !== 'compacting' ? (
-        <div className="ctx-card__hint">{hint}</div>
-      ) : null}
+      <div className="ctx-card__tokens">
+        <span className="ctx-card__tokens-value">
+          <RollingContextNumber value={used} formatted={used.toLocaleString('en-US')} reduced={reducedMotion} testId="context-used-number" /> / {formatTokens(limit)}
+        </span>
+        <span className="ctx-card__tokens-label">使用 / 上限</span>
+      </div>
+      <div className="ctx-card__hint ctx-card__exact-tokens">
+        {used.toLocaleString('en-US')} / {limit.toLocaleString('en-US')} tokens
+      </div>
+      <ContextUsageBar ratio={used / limit} reduced={reducedMotion} />
+      <div className="ctx-card__hint ctx-card__source-hint">
+        {provisional === true ? '当前模型请求' : estimated === false ? '最近确认的模型请求' : streaming ? '当前请求' : '最近一次模型请求'}的输入
+        {provisional === true
+          ? '（模型初步统计）；等待最终确认。上方累计按已记录的调用用量更新。'
+          : estimated === true
+          ? '估算（本地预估）；不计入上方累计，收到模型最终统计后更新。'
+          : estimated === false
+            ? requestEstimate !== undefined
+              ? '（模型统计）；最新请求输入尚未确认，确认后更新。'
+              : '（模型统计）；上方累计汇总本轮各次调用的输入与输出。'
+            : '（模型统计或估算）。'}
+        <div>压缩或清理工具结果后可减少占用。</div>
+      </div>
+      <div className="ctx-card__hint ctx-card__action-hint">
+        {phase === 'compacting' ? '正在压缩上下文…' : phase === 'failed' ? (
+          <span className="ctx-card__error">
+            上下文压缩失败{errorMsg ? '：' + errorMsg : ''}
+          </span>
+        ) : hint}
+      </div>
     </div>,
     document.body
   )
@@ -2270,9 +2332,22 @@ const MessageItem = memo(function MessageItem({
   )
 })
 
-/** 全尺寸卡片工具（diff / 子代理）：不进折叠过程块，永远在原位全显 */
+// Tool objects are immutable. Cache decoded presentation without retaining old
+// sessions, so streaming text does not repeatedly parse a large screenshot.
+const toolPresentations = new WeakMap<ToolActivity, ParsedToolResult>()
+function toolPresentation(tool: ToolActivity): ParsedToolResult {
+  let result = toolPresentations.get(tool)
+  if (!result) {
+    result = parseToolResult(tool.result)
+    toolPresentations.set(tool, result)
+  }
+  return result
+}
+
+/** 图片与全尺寸卡片保留在时间线中，过程块收起也能看到工具产出的图片。 */
 function isFullSizeTool(tool: ToolActivity): boolean {
   return (
+    toolPresentation(tool).images.length > 0 ||
     tool.name === 'subagent' ||
     (tool.name === 'execute_cmd' && Boolean(tool.commandJob)) ||
     ((tool.name === 'write_file' || tool.name === 'edit_file' || tool.name === 'delete_file') &&
@@ -2651,16 +2726,18 @@ function ThinkingRow({
   )
 }
 
-/** 紧凑工具行：7px 状态圆点 + 中文工具名 + 参数摘要，展开看原始参数与结果 */
+/** 含图片的工具结果默认展示，其它工具保留按需展开的紧凑日志。 */
 function CompactToolRow({ tool }: { tool: ToolActivity }): JSX.Element {
   const { engine } = useApp()
   const remoteReadOnly = engine.snapshot.mode === 'remote'
   // key 用 toolUseId：分页回收/切换会话后恢复用户手动的展开选择
   const [memory, setMemory] = useCollapseMemory(`tool:${tool.id}`)
-  const open = memory ?? false
+  const result = toolPresentation(tool)
+  const open = memory ?? result.images.length > 0
   const label = toolDisplayName(tool.name)
   const summary = toolParamSummary(tool.args)
-  const hasDetail = Boolean(tool.args || tool.result || tool.error)
+  const failure = toolFailureMessage(tool)
+  const hasDetail = Boolean(tool.result || failure)
   // 摘要恰是文件路径时（读取/写入文件等），点摘要直接在编辑器里打开该文件
   const pathArg = toolPathArg(tool.args)
   const openablePath = !remoteReadOnly && pathArg && summary === pathArg ? pathArg : null
@@ -2713,9 +2790,8 @@ function CompactToolRow({ tool }: { tool: ToolActivity }): JSX.Element {
       </button>
       {open && hasDetail ? (
         <div className="logline__detail">
-          {tool.args ? <pre>{tool.args}</pre> : null}
-          {toolFailureMessage(tool) ? <div className="message__error">{toolFailureMessage(tool)}</div> : null}
-          {tool.result ? <pre>{tool.result}</pre> : null}
+          {failure ? <div className="message__error">{failure}</div> : null}
+          {tool.result ? <ToolResult parsed={result} toolName={tool.name} /> : null}
         </div>
       ) : null}
     </div>
@@ -3135,6 +3211,17 @@ function InteractionHistory({ interactions }: { interactions: PendingInteraction
     return pending.output
   }
 
+  const historyQuestion = (pending: PendingInteraction): string => {
+    const question = pending.kind === 'ask' && pending.groups.length > 1
+      ? pending.groups.map((group, index) => `${index + 1}. ${group.question}`).join('\n')
+      : pending.question
+    if (pending.kind === 'permission' && pending.status === 'answered') {
+      const reason = question.replace(/^安全策略拦截了此操作，是否允许执行？/, '安全策略原因：')
+      return `当时请求确认（已处理）：\n${reason}`
+    }
+    return question
+  }
+
   const statusText = (pending: PendingInteraction): string => {
     if (pending.status === 'answered') {
       if (pending.kind === 'permission') {
@@ -3172,11 +3259,7 @@ function InteractionHistory({ interactions }: { interactions: PendingInteraction
                 <span className="pending-card__summary-choice">{choiceText(pending)}</span>
               ) : null}
             </div>
-            <div className="pending-card__history-question">{
-              pending.kind === 'ask' && pending.groups.length > 1
-                ? pending.groups.map((group, index) => `${index + 1}. ${group.question}`).join('\n')
-                : pending.question
-            }</div>
+            <div className="pending-card__history-question">{historyQuestion(pending)}</div>
           </div>
         ))}
       </div>

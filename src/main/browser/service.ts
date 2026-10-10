@@ -1,11 +1,11 @@
-import { app, BrowserWindow, session, WebContentsView } from 'electron'
+import { app, BrowserWindow, nativeImage, session, WebContentsView } from 'electron'
 import type { Session } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import type {
-  BrowserAction, BrowserBoundsInput, BrowserConsoleEntry, BrowserContext, BrowserCreateInput,
+  BrowserAction, BrowserBoundsInput, BrowserClickInteraction, BrowserConsoleEntry, BrowserContext, BrowserCreateInput,
   BrowserElement, BrowserEvent, BrowserReadKind, BrowserScreenshot,
-  BrowserSettings, BrowserSnapshot, BrowserTabState, BrowserToolRequest, BrowserToolResult
+  BrowserSettings, BrowserSnapshot, BrowserTabState, BrowserToolRequest, BrowserToolResult, BrowserUnavailableSnapshot, BrowserViewportScreenshot
 } from '../../shared/browser'
 import { BrowserSettingsStore } from './settings'
 import { BrowserNetworkCollector } from './network-collector'
@@ -18,6 +18,7 @@ interface BrowserEntry {
   state: BrowserTabState
   visible: boolean
   bounds: { x: number; y: number; width: number; height: number }
+  emulationScale: number
   console: BrowserConsoleEntry[]
   network: BrowserNetworkCollector
   networkInterrupted: boolean
@@ -46,9 +47,77 @@ interface RuntimeResult<T> {
   exceptionDetails?: { text?: string; exception?: { description?: string } }
 }
 
+/** Only layout fields may enter the public snapshot; CDP string-table/input-value data stays private. */
+interface DOMLayoutSnapshot {
+  documents: {
+    scrollOffsetX?: number
+    scrollOffsetY?: number
+    nodes: { backendNodeId?: number[] }
+    layout: { nodeIndex: number[]; bounds: number[][] }
+  }[]
+}
+
+interface PageLayoutMetrics {
+  visualViewport: { clientWidth: number; clientHeight: number }
+  cssVisualViewport: { clientWidth: number; clientHeight: number }
+}
+
 const MAX_LOGS = 300
 const MAX_ELEMENTS = 500
 const MAX_TEXT = 24000
+const MAX_PREVIEW_EDGE = 1600
+const MAX_PREVIEW_BYTES = 1024 * 1024
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
+
+interface BrowserPageFrame {
+  pageUrl: string
+  viewport: BrowserSnapshot['viewport']
+}
+
+interface BrowserReadBudget {
+  deadline: number
+  assertActive: () => void
+  signal?: AbortSignal
+}
+
+const PAGE_FRAME_EXPRESSION = `({pageUrl:location.href,viewport:{width:innerWidth,height:innerHeight,deviceScaleFactor:devicePixelRatio,scrollX,scrollY}})`
+
+// Both target modes capture geometry, URL and a bounded label in the same page evaluation.
+// Text extraction excludes form/editable contents so click diagnostics never read input values.
+const CLICK_CONTEXT_FUNCTION = `function(element,x,y){
+  const viewport={width:innerWidth,height:innerHeight,deviceScaleFactor:devicePixelRatio,scrollX,scrollY};
+  const result={x,y,pageUrl:location.href,viewport};
+  if(!(element instanceof Element)) return result;
+  const clean=value=>String(value||'').replace(/\\s+/g,' ').trim().slice(0,500);
+  const readableText=root=>{
+    if(!(root instanceof Element)) return '';
+    const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);
+    let node,output='',count=0;
+    while((node=walker.nextNode())&&count++<256&&output.length<500){
+      const parent=node.parentElement;
+      if(!parent||parent.closest('input,textarea,select,script,style')||parent.isContentEditable) continue;
+      output+=' '+(node.nodeValue||'').slice(0,500-output.length);
+    }
+    return clean(output);
+  };
+  const labelledBy=(element.getAttribute('aria-labelledby')||'').trim().split(/\\s+/).slice(0,8)
+    .map(id=>readableText(document.getElementById(id))).filter(Boolean).join(' ');
+  const labels=element.labels?Array.from(element.labels).slice(0,8).map(readableText).join(' '):'';
+  const name=clean(element.getAttribute('aria-label')||labelledBy||labels||element.getAttribute('alt')||
+    element.getAttribute('title')||readableText(element)||element.getAttribute('placeholder'));
+  const tag=element.tagName.toLowerCase(),inputType=(element.getAttribute('type')||'text').toLowerCase();
+  let role=clean(element.getAttribute('role')).split(' ')[0];
+  if(!role){
+    const inputRoles={checkbox:'checkbox',radio:'radio',button:'button',submit:'button',reset:'button',range:'slider',number:'spinbutton',search:'searchbox'};
+    const tagRoles={button:'button',textarea:'textbox',select:element.hasAttribute('multiple')?'listbox':'combobox',img:'img',canvas:'canvas',summary:'button'};
+    if(tag==='a'&&element.hasAttribute('href')) role='link';
+    else if(tag==='input') role=Object.hasOwn(inputRoles,inputType)?inputRoles[inputType]:'textbox';
+    else role=Object.hasOwn(tagRoles,tag)?tagRoles[tag]:(/^h[1-6]$/.test(tag)?'heading':'generic');
+  }
+  const bounds=element.getBoundingClientRect();
+  result.target={name,role,bounds:{x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height}};
+  return result;
+}`
 
 function boundedPush<T>(entries: T[], value: T): void {
   entries.push(value)
@@ -96,7 +165,7 @@ export class BrowserService {
       spellcheck: false, backgroundThrottling: false, safeDialogs: true
     } })
     const entry: BrowserEntry = {
-      owner, view, visible: false, bounds: { x: 0, y: 0, width: 800, height: 600 }, console: [],
+      owner, view, visible: false, bounds: { x: 0, y: 0, width: 800, height: 600 }, emulationScale: 1, console: [],
       network: new BrowserNetworkCollector(async (method, params) => { await this.ensureInitialized(entry); await this.debugger(entry); return this.command(entry, method, params) }),
       networkInterrupted: false, initialization: Promise.resolve(), initializationState: 'starting', navigationVersion: 0, closed: new AbortController(), refs: new Map(),
       queue: Promise.resolve(), logId: 0, visibilityWaiters: new Set(),
@@ -467,13 +536,22 @@ export class BrowserService {
     return entry.ready
   }
 
-  private async command<T = Record<string, unknown>>(entry: BrowserEntry, method: string, params?: Record<string, unknown>): Promise<T> {
-    return this.withLifetime(entry, entry.view.webContents.debugger.sendCommand(method, params) as Promise<T>, method, 12000)
+  private readTimeout(budget?: BrowserReadBudget, maximum = 12000): number {
+    budget?.assertActive()
+    const timeout = Math.min(maximum, budget ? budget.deadline - Date.now() : maximum)
+    if (timeout <= 0) throw new Error('页面快照等待超时，请稍后重新读取快照')
+    return timeout
   }
 
-  private async withLifetime<T>(entry: BrowserEntry, operation: Promise<T>, label: string, timeout: number): Promise<T> {
+  private async command<T = Record<string, unknown>>(entry: BrowserEntry, method: string, params?: Record<string, unknown>, budget?: BrowserReadBudget): Promise<T> {
+    const timeout = this.readTimeout(budget)
+    return this.withLifetime(entry, entry.view.webContents.debugger.sendCommand(method, params) as Promise<T>, method, timeout, budget?.signal)
+  }
+
+  private async withLifetime<T>(entry: BrowserEntry, operation: Promise<T>, label: string, timeout: number, signal?: AbortSignal): Promise<T> {
     let timer: NodeJS.Timeout | undefined
     let abort: (() => void) | undefined
+    let disconnect: (() => void) | undefined
     try {
       return await Promise.race([
         operation,
@@ -481,18 +559,22 @@ export class BrowserService {
           abort = () => reject(new Error('浏览器标签已关闭，操作已取消'))
           if (entry.closed.signal.aborted) { abort(); return }
           entry.closed.signal.addEventListener('abort', abort, { once: true })
+          disconnect = () => reject(new Error('浏览器工具连接已切换，当前操作已取消'))
+          if (signal?.aborted) { disconnect(); return }
+          signal?.addEventListener('abort', disconnect, { once: true })
           timer = setTimeout(() => reject(new Error(`浏览器操作超时：${label}`)), timeout)
         })
       ])
     } finally {
       if (timer) clearTimeout(timer)
       if (abort) entry.closed.signal.removeEventListener('abort', abort)
+      if (disconnect) signal?.removeEventListener('abort', disconnect)
     }
   }
 
-  private async evaluate<T>(entry: BrowserEntry, expression: string): Promise<T> {
+  private async evaluate<T>(entry: BrowserEntry, expression: string, budget?: BrowserReadBudget): Promise<T> {
     await this.debugger(entry)
-    const result = await this.command<RuntimeResult<T>>(entry, 'Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })
+    const result = await this.command<RuntimeResult<T>>(entry, 'Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }, budget)
     if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text ?? '网页状态读取失败')
     return result.result?.value as T
   }
@@ -529,9 +611,11 @@ export class BrowserService {
         deviceScaleFactor: viewport.deviceScaleFactor,
         scale
       })
+      entry.emulationScale = scale
     } else {
       if (entry.bounds.width > 0 && entry.bounds.height > 0) entry.view.setBounds(entry.bounds)
       wc.disableDeviceEmulation()
+      entry.emulationScale = 1
     }
     if (wc.debugger.isAttached()) await this.command(entry, 'Emulation.setTouchEmulationEnabled', { enabled: !!viewport?.mobile, maxTouchPoints: 1 })
   }
@@ -546,14 +630,61 @@ export class BrowserService {
     }
   }
 
-  private async snapshot(entry: BrowserEntry): Promise<BrowserSnapshot> {
+  private async snapshot(entry: BrowserEntry, budget?: BrowserReadBudget): Promise<BrowserSnapshot> {
+    this.readTimeout(budget)
     await this.ensureInitialized(entry)
     await this.debugger(entry)
     const navigationId = entry.state.navigationId
-    const tree = await this.command<{ nodes: AXNode[] }>(entry, 'Accessibility.getFullAXTree')
-    const page = await this.evaluate<{ text: string; viewport: BrowserSnapshot['viewport'] }>(entry,
-      `({text:(document.body?.innerText||'').slice(0,${MAX_TEXT + 1}),viewport:{width:innerWidth,height:innerHeight,deviceScaleFactor:devicePixelRatio,scrollX,scrollY}})`)
-    if (entry.state.navigationId !== navigationId) throw new Error('页面正在导航，请重新读取快照')
+    const tree = await this.command<{ nodes: AXNode[] }>(entry, 'Accessibility.getFullAXTree', undefined, budget)
+    // A single layout capture also covers text nodes; resolving every AX node separately
+    // would add hundreds of round trips and collect geometry from different page states.
+    const layout = await this.command<DOMLayoutSnapshot>(entry, 'DOMSnapshot.captureSnapshot', { computedStyles: [] }, budget)
+    const metrics = await this.command<PageLayoutMetrics>(entry, 'Page.getLayoutMetrics', undefined, budget)
+    const page = await this.evaluate<BrowserPageFrame & { text: string }>(entry,
+      `({...${PAGE_FRAME_EXPRESSION},text:(document.body?.innerText||'').slice(0,${MAX_TEXT + 1})})`, budget)
+    if (entry.state.navigationId !== navigationId || entry.state.url !== page.pageUrl) throw new Error('页面正在导航，请重新读取快照')
+    // DOMSnapshot exposes physical layout units. Device emulation can override the
+    // page's DPR without changing these units, so derive the conversion from CDP's
+    // paired physical/CSS visual viewport sizes (layout viewport sizes are rounded).
+    const layoutScale = (['clientWidth', 'clientHeight'] as const).map(dimension => {
+      const physical = metrics.visualViewport?.[dimension]
+      const css = metrics.cssVisualViewport?.[dimension]
+      return Number.isFinite(physical) && physical > 0 && Number.isFinite(css) && css > 0 ? physical / css : NaN
+    }).find(scale => Number.isFinite(scale) && scale > 0)
+    if (layoutScale === undefined) throw new Error('无法读取页面布局比例，请重新读取快照')
+    const boundsByNode = new Map<number, NonNullable<BrowserElement['bounds']>>()
+    // CDP guarantees documents[0] is the root document. Child-frame bounds use a
+    // different coordinate space, so never label them as main-page viewport positions.
+    const document = layout.documents[0]
+    if (document && Number.isFinite(document.scrollOffsetX) && Number.isFinite(document.scrollOffsetY)) {
+      const scrollX = document.scrollOffsetX! / layoutScale, scrollY = document.scrollOffsetY! / layoutScale
+      // Blink's layout scale passes through float32; large offsets need a relative
+      // tolerance so harmless conversion precision does not masquerade as scrolling.
+      const scrollChanged = (captured: number, current: number): boolean =>
+        Math.abs(captured - current) > Math.max(0.01, Math.abs(captured) * 2e-7, Math.abs(current) * 2e-7)
+      if (scrollChanged(scrollX, page.viewport.scrollX) || scrollChanged(scrollY, page.viewport.scrollY)) {
+        throw new Error('页面正在滚动，请重新读取快照')
+      }
+      for (let index = 0; index < document.layout.nodeIndex.length; index += 1) {
+        const nodeIndex = document.layout.nodeIndex[index]
+        const backendNodeId = document.nodes.backendNodeId?.[nodeIndex]
+        const rect = document.layout.bounds[index]
+        if (!backendNodeId || !rect || rect.length !== 4 || !rect.every(Number.isFinite) || rect[2] < 0 || rect[3] < 0) continue
+        const bounds = {
+          x: (rect[0] - document.scrollOffsetX!) / layoutScale,
+          y: (rect[1] - document.scrollOffsetY!) / layoutScale,
+          width: rect[2] / layoutScale,
+          height: rect[3] / layoutScale
+        }
+        const previous = boundsByNode.get(backendNodeId)
+        if (previous) {
+          const x = Math.min(previous.x, bounds.x), y = Math.min(previous.y, bounds.y)
+          boundsByNode.set(backendNodeId, { x, y,
+            width: Math.max(previous.x + previous.width, bounds.x + bounds.width) - x,
+            height: Math.max(previous.y + previous.height, bounds.y + bounds.height) - y })
+        } else boundsByNode.set(backendNodeId, bounds)
+      }
+    }
     entry.refs.clear()
     const elements: BrowserElement[] = []
     for (const node of tree.nodes) {
@@ -561,7 +692,7 @@ export class BrowserService {
       const role = node.role?.value ?? ''
       const name = text(node.name?.value, 1000)
       if (!role || (['generic', 'none', 'InlineTextBox'].includes(role) && !name)) continue
-      const element: BrowserElement = { role, name }
+      const element: BrowserElement = { role, name, bounds: node.backendDOMNodeId ? boundsByNode.get(node.backendDOMNodeId) ?? null : null }
       if (node.backendDOMNodeId) {
         element.ref = `${navigationId}:${node.backendDOMNodeId}`
         entry.refs.set(element.ref, node.backendDOMNodeId)
@@ -570,20 +701,59 @@ export class BrowserService {
       if (node.value?.value !== undefined && ['textbox', 'textField', 'searchbox'].includes(role)) {
         // AX does not consistently expose the password protection property. Inspect
         // only attributes so ordinary form values remain testable without reading secrets.
-        protectedValue ||= await this.isProtectedInput(entry, node.backendDOMNodeId)
+        protectedValue ||= await this.isProtectedInput(entry, node.backendDOMNodeId, budget)
       }
       if (node.value?.value !== undefined && !protectedValue) element.value = text(node.value.value, 1000)
       elements.push(element)
       if (elements.length >= MAX_ELEMENTS) break
     }
-    if (entry.state.navigationId !== navigationId) throw new Error('页面正在导航，请重新读取快照')
-    return { tab: this.state(entry), text: page.text.slice(0, MAX_TEXT), viewport: page.viewport, elements, truncated: page.text.length > MAX_TEXT || elements.length >= MAX_ELEMENTS }
+    const screenshot = await this.viewportScreenshot(entry, navigationId, page, budget)
+    if (entry.state.navigationId !== navigationId || entry.state.url !== page.pageUrl) throw new Error('页面正在导航，请重新读取快照')
+    return { tab: this.state(entry), text: page.text.slice(0, MAX_TEXT), viewport: page.viewport, elements,
+      ...(screenshot ? { screenshot } : {}), truncated: page.text.length > MAX_TEXT || elements.length >= MAX_ELEMENTS }
   }
 
-  private async isProtectedInput(entry: BrowserEntry, backendNodeId: number | undefined): Promise<boolean> {
+  private async viewportScreenshot(entry: BrowserEntry, navigationId: number, expected: BrowserPageFrame, budget?: BrowserReadBudget): Promise<BrowserViewportScreenshot | undefined> {
+    try {
+      const wc = entry.view.webContents
+      const zoom = wc.getZoomFactor(), emulationScale = entry.emulationScale
+      const viewBounds = entry.view.getBounds()
+      const isCurrent = (frame: BrowserPageFrame): boolean => entry.state.navigationId === navigationId
+        && frame.pageUrl === expected.pageUrl && wc.getZoomFactor() === zoom && entry.emulationScale === emulationScale
+        && (['x', 'y', 'width', 'height'] as const).every(key => entry.view.getBounds()[key] === viewBounds[key])
+        && (['width', 'height', 'deviceScaleFactor', 'scrollX', 'scrollY'] as const).every(key => frame.viewport[key] === expected.viewport[key])
+      if (!isCurrent(await this.evaluate<BrowserPageFrame>(entry, PAGE_FRAME_EXPRESSION, budget))) return undefined
+      // Capture the whole guest surface: Electron already applies native density,
+      // page zoom and device fit scaling. Multiplying these again would crop the view.
+      const timeout = this.readTimeout(budget, 3000)
+      const image = await this.withLifetime(entry, wc.capturePage(undefined, { stayHidden: true, stayAwake: true }), '页面位置图', timeout, budget?.signal)
+      if (image.isEmpty() || !isCurrent(await this.evaluate<BrowserPageFrame>(entry, PAGE_FRAME_EXPRESSION, budget))) return undefined
+      let png = image.toPNG()
+      if (png.length < 24 || !png.subarray(0, 8).equals(PNG_SIGNATURE)) return undefined
+      let width = png.readUInt32BE(16), height = png.readUInt32BE(20)
+      if (!width || !height) return undefined
+      // NativeImage.getSize() may be in DIP. Rehydrate at scale 1 before resizing,
+      // then record IHDR pixel sizes so the renderer never guesses a DPR conversion.
+      let preview = nativeImage.createFromBuffer(png, { scaleFactor: 1 })
+      for (let attempt = 0; attempt < 5 && (Math.max(width, height) > MAX_PREVIEW_EDGE || png.length > MAX_PREVIEW_BYTES); attempt += 1) {
+        const scale = Math.min(MAX_PREVIEW_EDGE / Math.max(width, height), png.length > MAX_PREVIEW_BYTES ? 0.7 : 1)
+        preview = preview.resize({ width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale)), quality: 'best' })
+        png = preview.toPNG()
+        if (png.length < 24) return undefined
+        width = png.readUInt32BE(16); height = png.readUInt32BE(20)
+      }
+      if (!width || !height || Math.max(width, height) > MAX_PREVIEW_EDGE || png.length > MAX_PREVIEW_BYTES) return undefined
+      return { dataUrl: `data:image/png;base64,${png.toString('base64')}`, width, height }
+    } catch {
+      // A missing preview must not turn a successful browser action into a failure.
+      return undefined
+    }
+  }
+
+  private async isProtectedInput(entry: BrowserEntry, backendNodeId: number | undefined, budget?: BrowserReadBudget): Promise<boolean> {
     if (!backendNodeId) return true
     try {
-      const result = await this.command<{ node?: { attributes?: string[] } }>(entry, 'DOM.describeNode', { backendNodeId, depth: 0 })
+      const result = await this.command<{ node?: { attributes?: string[] } }>(entry, 'DOM.describeNode', { backendNodeId, depth: 0 }, budget)
       if (!result.node) return true
       const attributes = result.node.attributes ?? []
       for (let index = 0; index < attributes.length; index += 2) {
@@ -618,12 +788,59 @@ export class BrowserService {
       case 'close': this.close(entry.state.tabId); return { tabId: entry.state.tabId, closed: true }
       case 'navigate': if (!request.url) throw new Error('请提供网页地址'); await this.navigate(entry, request.url); return this.snapshot(entry)
       case 'viewport': entry.state.viewport = validateViewport(request.viewport ?? null); await this.applyViewport(entry); this.changed(entry); return this.snapshot(entry)
-      case 'click': await this.click(entry, request, assertActive, signal); return this.snapshot(entry)
-      case 'fill': await this.fill(entry, request, assertActive, signal); return this.snapshot(entry)
-      case 'press_key': await this.pressKey(entry, request.key, assertActive, signal); return this.snapshot(entry)
+      case 'click': {
+        const interaction = await this.click(entry, request, assertActive, signal)
+        return { ...await this.postActionSnapshot(entry, assertActive, signal), interaction }
+      }
+      case 'fill': await this.fill(entry, request, assertActive, signal); return this.postActionSnapshot(entry, assertActive, signal)
+      case 'press_key': await this.pressKey(entry, request.key, assertActive, signal); return this.postActionSnapshot(entry, assertActive, signal)
       case 'scroll': await this.scroll(entry, request, assertActive, signal); return this.snapshot(entry)
       case 'wait': return this.waitFor(entry, request, assertActive)
       default: throw new Error('未知浏览器工具操作')
+    }
+  }
+
+  private async postActionSnapshot(entry: BrowserEntry, assertActive: () => void, signal?: AbortSignal): Promise<BrowserSnapshot | BrowserUnavailableSnapshot> {
+    const budget: BrowserReadBudget = { deadline: Date.now() + 8000, assertActive, signal }
+    let reason = '页面仍在导航，请稍后重新读取快照'
+    // Only the observation is retried. Replaying the input here could submit a form
+    // or purchase twice after its successful click had already navigated the page.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      assertActive()
+      const navigationId = entry.state.navigationId
+      try {
+        await this.waitForDocument(entry, budget)
+        return await this.snapshot(entry, budget)
+      } catch (error) {
+        assertActive()
+        reason = browserError(error)
+        if (entry.closed.signal.aborted || Date.now() >= budget.deadline || entry.view.webContents.isDestroyed()) break
+        const navigating = navigationId !== entry.state.navigationId || entry.view.webContents.isLoadingMainFrame()
+          || /页面正在导航|Cannot find (?:default execution )?context|Execution context was destroyed|Inspected target navigated/i.test(reason)
+        if (!navigating) break
+      }
+    }
+    return { tab: this.state(entry), text: '', elements: [], truncated: false,
+      snapshotUnavailable: `请读取新快照，不要重复已完成的操作。${reason}` }
+  }
+
+  private async waitForDocument(entry: BrowserEntry, budget: BrowserReadBudget): Promise<void> {
+    const timeout = this.readTimeout(budget)
+    const wc = entry.view.webContents
+    if (wc.isDestroyed()) throw new Error('浏览器标签已关闭，页面快照不可用')
+    if (!wc.isLoadingMainFrame()) return
+    let ready: (() => void) | undefined
+    try {
+      const operation = new Promise<void>(resolve => {
+        ready = resolve
+        wc.once('dom-ready', ready)
+        wc.once('did-stop-loading', ready)
+        // Covers a load that ended just before listeners were installed.
+        if (!wc.isLoadingMainFrame()) resolve()
+      })
+      await this.withLifetime(entry, operation, '等待导航后的页面', timeout, budget.signal)
+    } finally {
+      if (ready) { wc.removeListener('dom-ready', ready); wc.removeListener('did-stop-loading', ready) }
     }
   }
 
@@ -685,31 +902,74 @@ export class BrowserService {
     } finally { this.command(entry, 'Runtime.releaseObject', { objectId }).catch(() => undefined) }
   }
 
-  private async click(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal): Promise<void> {
+  private async click(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal): Promise<BrowserClickInteraction> {
     const navigationId = entry.state.navigationId
     await this.focus(entry, signal)
     assertActive()
-    let point: { x: number; y: number }
+    let capture: RuntimeResult<unknown>
     if (request.ref || request.selector) {
-      point = await this.withElement(entry, request, `function(){
-        if (!(this instanceof Element) || !this.isConnected) throw new Error('元素已离开页面');
-        if (this.matches(':disabled,[aria-disabled="true"]')) throw new Error('元素已禁用');
-        this.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
-        const r=this.getBoundingClientRect(); if(!r.width||!r.height) throw new Error('元素不可见');
-        const x=Math.max(0,Math.min(innerWidth-1,r.x+r.width/2)),y=Math.max(0,Math.min(innerHeight-1,r.y+r.height/2));
-        const top=document.elementFromPoint(x,y); if(top!==this&&!this.contains(top)) throw new Error('元素被其他内容遮挡');
-        return {x,y};
-      }`, assertActive)
+      const objectId = await this.elementObject(entry, request)
+      try {
+        assertActive()
+        capture = await this.command<RuntimeResult<unknown>>(entry, 'Runtime.callFunctionOn', { objectId, returnByValue: false, functionDeclaration: `function(){
+          if (!(this instanceof Element) || !this.isConnected) throw new Error('元素已离开页面');
+          if (this.matches(':disabled,[aria-disabled="true"]')) throw new Error('元素已禁用');
+          this.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
+          const r=this.getBoundingClientRect(); if(!r.width||!r.height) throw new Error('元素不可见');
+          const x=Math.max(0,Math.min(innerWidth-1,r.x+r.width/2)),y=Math.max(0,Math.min(innerHeight-1,r.y+r.height/2));
+          const top=document.elementFromPoint(x,y); if(top!==this&&!this.contains(top)) throw new Error('元素被其他内容遮挡');
+          return {element:this,context:(${CLICK_CONTEXT_FUNCTION})(this,x,y)};
+        }` })
+      } finally { this.command(entry, 'Runtime.releaseObject', { objectId }).catch(() => undefined) }
     } else {
       if (!Number.isFinite(request.x) || !Number.isFinite(request.y) || request.x! < 0 || request.y! < 0) throw new Error('点击坐标无效')
-      point = { x: request.x!, y: request.y! }
-      const viewport = await this.evaluate<{ width: number; height: number }>(entry, '({width:innerWidth,height:innerHeight})')
-      if (point.x >= viewport.width || point.y >= viewport.height) throw new Error('点击坐标超出页面视口')
+      capture = await this.command<RuntimeResult<unknown>>(entry, 'Runtime.evaluate', { returnByValue: false, expression: `(()=>{
+        const x=${request.x!},y=${request.y!};
+        if(x>=innerWidth||y>=innerHeight) throw new Error('点击坐标超出页面视口');
+        const element=document.elementFromPoint(x,y);
+        return {element,context:(${CLICK_CONTEXT_FUNCTION})(element,x,y)};
+      })()` })
     }
-    this.assertNavigation(entry, navigationId)
-    assertActive()
-    await this.command(entry, 'Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 })
-    await this.command(entry, 'Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 })
+    if (capture.exceptionDetails) throw new Error(capture.exceptionDetails.exception?.description ?? capture.exceptionDetails.text ?? '无法读取点击目标')
+    const objectId = capture.result?.objectId
+    if (!objectId) throw new Error('无法读取点击目标')
+    try {
+      const result = await this.command<RuntimeResult<Omit<BrowserClickInteraction, 'type' | 'navigationId'>>>(entry, 'Runtime.callFunctionOn', {
+        objectId, returnByValue: true, functionDeclaration: 'function(){return this.context}'
+      })
+      if (result.exceptionDetails || !result.result?.value) throw new Error('无法读取点击目标')
+      const captured = result.result.value
+      this.assertNavigation(entry, navigationId)
+      assertActive()
+      const interaction: BrowserClickInteraction = { ...captured, type: 'click', navigationId,
+        ...(captured.target ? { target: { ...captured.target, ...(request.ref ? { ref: request.ref } : {}), ...(request.selector ? { selector: request.selector } : {}) } } : {}) }
+      const screenshot = await this.viewportScreenshot(entry, navigationId, captured)
+      if (screenshot) interaction.screenshot = screenshot
+      // Keep the original node alive while capturing. Re-resolving a selector could
+      // silently click a replacement; scrolling it again would invalidate the image.
+      const validation = await this.command<RuntimeResult<boolean>>(entry, 'Runtime.callFunctionOn', { objectId, returnByValue: true, functionDeclaration: `function(){
+        const {element,context}=this,frame=${PAGE_FRAME_EXPRESSION};
+        if(frame.pageUrl!==context.pageUrl||Object.keys(context.viewport).some(key=>frame.viewport[key]!==context.viewport[key]))
+          throw new Error('页面视口已变化，请重新读取快照后点击');
+        const top=document.elementFromPoint(context.x,context.y);
+        if(!element){if(top) throw new Error('点击目标已变化，请重新读取快照后点击');return true;}
+        if(!element.isConnected||top!==element&&!element.contains(top)) throw new Error('点击目标已变化，请重新读取快照后点击');
+        const bounds=element.getBoundingClientRect();
+        if(context.target?.bounds&&Object.keys(context.target.bounds).some(key=>bounds[key]!==context.target.bounds[key]))
+          throw new Error('点击目标位置已变化，请重新读取快照后点击');
+        return true;
+      }` })
+      if (validation.exceptionDetails) throw new Error(validation.exceptionDetails.exception?.description ?? validation.exceptionDetails.text ?? '点击目标已变化')
+      if (validation.result?.value !== true) throw new Error('无法校验点击目标')
+      this.assertNavigation(entry, navigationId)
+      assertActive()
+      // Electron's device-emulation fit scale is outside CDP's CSS coordinate conversion.
+      // Apply it only to dispatch; saved evidence stays in the page's CSS coordinate space.
+      const x = interaction.x * entry.emulationScale, y = interaction.y * entry.emulationScale
+      await this.command(entry, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 })
+      await this.command(entry, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 })
+      return interaction
+    } finally { this.command(entry, 'Runtime.releaseObject', { objectId }).catch(() => undefined) }
   }
 
   private async fill(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal): Promise<void> {

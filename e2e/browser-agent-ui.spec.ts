@@ -4,6 +4,7 @@ import {
   expect,
   test,
   type ElectronApplication,
+  type Locator,
   type Page
 } from '@playwright/test'
 import { createServer, type ServerResponse } from 'node:http'
@@ -70,7 +71,12 @@ const outputs = new Map<Step, unknown>()
 const requestedTools: string[] = []
 const providerErrors: string[] = []
 const rendererErrors: string[] = []
-const pageHtml = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI 浏览器闭环夹具</title><style>body{font:18px sans-serif;margin:24px}input,button{font:inherit;padding:8px}canvas{display:block;background:#edd7a7;margin-top:16px}</style></head><body><h1>AI 可视化测试页面</h1><label for="name">名称</label><input id="name" value="初始值"><button id="confirm">确认</button><p id="result">等待输入</p><p id="network">网络未请求</p><canvas width="220" height="180"></canvas><script>document.querySelector('#confirm').onclick=async()=>{document.querySelector('#result').textContent='完成：'+document.querySelector('#name').value;console.log('AI_BROWSER_CONFIRMED');await fetch('/ping');document.querySelector('#network').textContent='网络完成'};const c=document.querySelector('canvas').getContext('2d');c.beginPath();c.arc(90,90,24,0,Math.PI*2);c.fill();</script></body></html>`
+const pageHtml = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI 浏览器闭环夹具</title><style>body{font:18px sans-serif;margin:24px}input,button{font:inherit;padding:8px}canvas{display:block;background:#edd7a7;margin-top:16px}#visual-marker{position:fixed;right:14px;top:12px;width:36px;height:28px;background:rgb(220,30,70);z-index:9999;pointer-events:none}</style></head><body><div id="visual-marker" aria-hidden="true"></div><h1>AI 可视化测试页面</h1><label for="name">名称</label><input id="name" value="初始值"><button id="confirm">确认</button><p id="result">等待输入</p><p id="network">网络未请求</p><canvas width="220" height="180"></canvas><script>
+document.querySelector('#confirm').onclick=async(event)=>{
+  const bounds=event.currentTarget.getBoundingClientRect();
+  window.__fixtureClick={x:event.clientX,y:event.clientY,trusted:event.isTrusted,bounds:{x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height},viewport:{width:innerWidth,height:innerHeight,deviceScaleFactor:devicePixelRatio,scrollX,scrollY}};
+  document.querySelector('#result').textContent='完成：'+document.querySelector('#name').value;console.log('AI_BROWSER_CONFIRMED');await fetch('/ping');document.querySelector('#network').textContent='网络完成'
+};const c=document.querySelector('canvas').getContext('2d');c.beginPath();c.arc(90,90,24,0,Math.PI*2);c.fill();</script></body></html>`
 
 function stream(response: ServerResponse, block: Block, reason = 'end_turn'): void {
   const frames: Frame[] = [
@@ -292,6 +298,192 @@ async function recovery(): Promise<ChatRecoverySnapshot> {
   return response.data!
 }
 
+/** Display evidence is persisted separately from the compact model input. */
+function historySnapshot(history: ChatRecoverySnapshot['history'], step: Step): BrowserSnapshot {
+  const rows = history.filter(row => row.role === 'tool' && row.toolCallId === `browser-agent-${step}`)
+  expect(rows, `${step} 必须有唯一的持久化工具结果`).toHaveLength(1)
+  const content = rows[0]?.content
+  expect(typeof content, `${step} 持久化工具结果应为结构化 JSON 文本`).toBe('string')
+  if (typeof content !== 'string') throw new Error(`Missing persisted ${step} result`)
+  return JSON.parse(content) as BrowserSnapshot
+}
+
+function expectModelImageMetadata(modelResult: BrowserSnapshot, displayResult: BrowserSnapshot): void {
+  const expectMarker = (marker: unknown, saved: BrowserSnapshot['screenshot']): void => {
+    if (!saved) return
+    expect(saved.dataUrl).toMatch(/^data:image\/png;base64,iVBOR/)
+    expect(marker).toEqual({ width: saved.width, height: saved.height, retainedForDisplay: true })
+  }
+  expectMarker(modelResult.screenshot, displayResult.screenshot)
+  expectMarker(modelResult.interaction?.screenshot, displayResult.interaction?.screenshot)
+  expect(JSON.stringify(modelResult), '页面快照送给模型时只保留图片元数据').not.toContain('data:image/')
+  expect(JSON.stringify(modelResult)).not.toContain('"dataUrl"')
+  expect(displayResult.elements, '隐藏元素展示不能删除模型或历史中的元素数据').toEqual(modelResult.elements)
+  expect(displayResult.viewport).toEqual(modelResult.viewport)
+}
+
+async function sampleSavedPng(dataUrl: string, coordinate: { x: number; y: number; width: number; height: number }): Promise<{ width: number; height: number; color: number[] }> {
+  return page.evaluate(async ({ dataUrl, coordinate }) => {
+    const image = new Image()
+    await new Promise<void>((done, reject) => { image.onload = () => done(); image.onerror = () => reject(new Error('Saved browser image did not decode')); image.src = dataUrl })
+    const canvas = document.createElement('canvas'); canvas.width = image.naturalWidth; canvas.height = image.naturalHeight
+    const context = canvas.getContext('2d'); if (!context) throw new Error('Missing PNG decoder')
+    context.drawImage(image, 0, 0)
+    const x = Math.floor(coordinate.x * image.naturalWidth / coordinate.width)
+    const y = Math.floor(coordinate.y * image.naturalHeight / coordinate.height)
+    return { width: image.naturalWidth, height: image.naturalHeight, color: [...context.getImageData(x, y, 1, 1).data] }
+  }, { dataUrl, coordinate })
+}
+
+/** Check both the saved PNG and actual rendered SVG pixels. Merely exposing a
+ * data URL, or painting the screenshot against the wrong viewport, must fail. */
+async function expectMapScreenshot(map: Locator, capture: {
+  viewport: { width: number; height: number }
+  screenshot?: { dataUrl: string; width: number; height: number }
+}): Promise<void> {
+  const saved = capture.screenshot
+  expect(saved, '位置图必须使用这次工具实际保存的截图').toBeDefined()
+  if (!saved) throw new Error('Missing screenshot in browser tool result')
+  expect(saved.dataUrl).toMatch(/^data:image\/png;base64,iVBOR/)
+  const embedded = map.locator('.tool-browser-position__image')
+  await expect(embedded).toBeVisible()
+  expect(await embedded.getAttribute('href') === saved.dataUrl).toBe(true)
+  expect(Number(await embedded.getAttribute('width'))).toBe(capture.viewport.width)
+  expect(Number(await embedded.getAttribute('height'))).toBe(capture.viewport.height)
+  const pixels = await sampleSavedPng(saved.dataUrl, { x: capture.viewport.width - 32, y: 26, ...capture.viewport })
+  expect(pixels.width).toBe(saved.width)
+  expect(pixels.height).toBe(saved.height)
+  expect(pixels.width).toBeGreaterThan(100)
+  expect(pixels.height).toBeGreaterThan(100)
+  expect(pixels.color).toEqual([220, 30, 70, 255])
+  await map.scrollIntoViewIfNeeded()
+  const renderedCoordinate = await map.evaluate((node, viewport) => {
+    const svg = node as SVGSVGElement, matrix = svg.getScreenCTM(), box = svg.getBoundingClientRect()
+    if (!matrix) throw new Error('Position map has no screen transform')
+    const point = new DOMPoint(viewport.width - 32, 26).matrixTransform(matrix)
+    return { x: point.x - box.left, y: point.y - box.top, width: box.width, height: box.height }
+  }, capture.viewport)
+  await expect.poll(async () => {
+    const rendered = await map.screenshot()
+    return (await sampleSavedPng('data:image/png;base64,' + rendered.toString('base64'), renderedCoordinate)).color
+  }).toEqual([220, 30, 70, 255])
+}
+
+async function expectNoElementPresentation(card: Locator): Promise<void> {
+  await expect(card.locator('.tool-browser-snapshot__elements, .tool-browser-snapshot__element, .tool-browser-snapshot__list-heading, .tool-browser-snapshot__content')).toHaveCount(0)
+  await expect(card.locator('.tool-browser-elements-map, .tool-browser-snapshot__geometry')).toHaveCount(0)
+  await expect(card.getByRole('region', { name: '页面元素', exact: true })).toHaveCount(0)
+  await expect(card).not.toContainText('页面元素')
+  await expect(card).not.toContainText('元素位置')
+  await expect(card.locator('.tool-browser-snapshot__facts')).not.toContainText('个元素')
+}
+
+/** Each browser action returns its own snapshot. Probe the click result so a
+ * screenshot card or a later wait result cannot accidentally satisfy this check. */
+async function expectClickSnapshotCard(): Promise<Locator> {
+  for (const summary of await page.locator('.process__summary').all()) {
+    if (await summary.getAttribute('aria-expanded') !== 'true') await summary.click()
+  }
+  const row = page.locator('.logline-wrap').filter({
+    has: page.locator('.logline__name', { hasText: /^点击浏览器元素$/ })
+  })
+  await expect(row).toHaveCount(1)
+  const toggle = row.locator('button.logline')
+  if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click()
+  const card = row.locator('.tool-browser-snapshot')
+  await expect(card).toBeVisible()
+  await expect(card).toContainText('AI 浏览器闭环夹具')
+  await expect(card).toContainText(`${origin}/page`)
+  await expect(card.getByRole('button', { name: '页面文字', exact: true })).toHaveCount(0)
+  await expect(card.locator('.tool-browser-snapshot__views')).toHaveCount(0)
+  await expectNoElementPresentation(card)
+  await expect(card.locator('.tool-browser-page')).toHaveCount(0)
+  await expect(card.locator('.tool-browser-position__map')).toHaveCount(1)
+  const clicked = outputs.get('click') as BrowserSnapshot
+  const interaction = clicked.interaction
+  const displayClicked = historySnapshot((await recovery()).history, 'click')
+  const displayInteraction = displayClicked.interaction
+  expect(interaction, '点击工具必须保留实际派发时的位置证据').toBeDefined()
+  if (!interaction) throw new Error('Missing click evidence from the real browser result')
+  expect(displayInteraction, '历史工具结果必须保留点击前的展示截图').toBeDefined()
+  if (!displayInteraction) throw new Error('Missing persisted click evidence')
+  expectModelImageMetadata(clicked, displayClicked)
+  const location = card.locator('.tool-browser-click')
+  await expect(location).toBeVisible()
+  await expect(location).toContainText('点击位置')
+  await expect(location).toContainText('点击前画面')
+  await expect(location).toContainText('确认')
+  await expect(location).toContainText('#confirm')
+  const map = location.locator('.tool-browser-click__map')
+  const viewBox = (await map.getAttribute('viewBox'))?.trim().split(/\s+/).map(Number)
+  expect(viewBox).toEqual([0, 0, interaction.viewport.width, interaction.viewport.height])
+  const point = map.locator('.tool-browser-click__point')
+  await expect(point).toHaveCount(1)
+  expect(Number(await point.getAttribute('cx'))).toBeCloseTo(interaction.x, 6)
+  expect(Number(await point.getAttribute('cy'))).toBeCloseTo(interaction.y, 6)
+  await expectMapScreenshot(map, displayInteraction)
+  await location.getByRole('button', { name: '放大查看 点击前页面截图', exact: true }).click()
+  const clickDialog = page.getByRole('dialog', { name: '点击前页面截图', exact: true })
+  await expect(clickDialog).toBeVisible()
+  await expectMapScreenshot(clickDialog.locator('.tool-browser-click__map'), displayInteraction)
+  expect(Number(await clickDialog.locator('.tool-browser-click__point').getAttribute('cx'))).toBeCloseTo(interaction.x, 6)
+  expect(Number(await clickDialog.locator('.tool-browser-click__point').getAttribute('cy'))).toBeCloseTo(interaction.y, 6)
+  await page.keyboard.press('Escape')
+  await expect(clickDialog).toBeHidden()
+
+  // Technical evidence remains available, but does not replace the visual card.
+  const raw = row.locator('.tool-result__metadata').filter({
+    has: page.locator('summary', { hasText: /^原始数据$/ })
+  })
+  await expect(raw).toHaveJSProperty('open', false)
+  await raw.locator('summary').click()
+  await expect(raw.locator('pre')).toBeVisible()
+  await expect(raw.locator('pre')).toContainText('"navigationId"')
+  await raw.locator('summary').click()
+  await expect(raw).toHaveJSProperty('open', false)
+
+  return card
+}
+
+async function expectPageSnapshotCard(): Promise<Locator> {
+  const row = page.locator('.logline-wrap').filter({
+    has: page.locator('.logline__name', { hasText: /^调整浏览器视口$/ })
+  })
+  await expect(row).toHaveCount(1)
+  const toggle = row.locator('button.logline')
+  if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click()
+  const card = row.locator('.tool-browser-snapshot')
+  await expect(card).toBeVisible()
+  await expectNoElementPresentation(card)
+  await expect(card.getByRole('button', { name: '页面文字', exact: true })).toHaveCount(0)
+  await expect(card.locator('.tool-browser-snapshot__views, .tool-browser-click')).toHaveCount(0)
+  await expect(card.locator('.tool-browser-page')).toBeVisible()
+  await expect(card.locator('.tool-browser-position__map')).toHaveCount(1)
+  const resized = outputs.get('set_viewport') as BrowserSnapshot
+  const displayResized = historySnapshot((await recovery()).history, 'set_viewport')
+  expectModelImageMetadata(resized, displayResized)
+  const map = card.locator('.tool-browser-page__map')
+  await expect(map).toBeVisible()
+  expect((await map.getAttribute('viewBox'))?.trim().split(/\s+/).map(Number))
+    .toEqual([0, 0, resized.viewport.width, resized.viewport.height])
+  // Non-click results show the saved page without selected element rectangles
+  // or click crosshairs; the SVG keeps only its viewport background rectangle.
+  await expect(map.locator('path, circle, .tool-browser-elements-map__selected, .tool-browser-click__bounds')).toHaveCount(0)
+  await expect(map.locator('rect')).toHaveCount(1)
+  await expectMapScreenshot(map, displayResized)
+  const raw = row.locator('.tool-result__metadata').filter({ has: page.locator('summary', { hasText: /^原始数据$/ }) })
+  await expect(raw).toHaveJSProperty('open', false)
+  await card.getByRole('button', { name: '放大查看 页面截图', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '页面截图', exact: true })
+  await expect(dialog).toBeVisible()
+  const expanded = dialog.locator('.tool-browser-page__map')
+  await expect(expanded.locator('path, circle, .tool-browser-elements-map__selected, .tool-browser-click__bounds')).toHaveCount(0)
+  await expectMapScreenshot(expanded, displayResized)
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  return card
+}
+
 test.describe.serial('AI 模型到内置浏览器完整闭环', () => {
   test.beforeAll(async () => {
     await new Promise<void>((done, reject) => {
@@ -457,28 +649,88 @@ test.describe.serial('AI 模型到内置浏览器完整闭环', () => {
       const guest = webContents.getAllWebContents().find((wc) => wc.getURL() === url)
       if (!guest) throw new Error('Visible browser page missing')
       return guest.executeJavaScript(
-        `({value:document.querySelector('#name').value,result:document.querySelector('#result').textContent,width:innerWidth,node:typeof require,bridge:typeof window.aether})`
+        `({value:document.querySelector('#name').value,result:document.querySelector('#result').textContent,width:innerWidth,node:typeof require,bridge:typeof window.aether,click:window.__fixtureClick,currentBounds:document.querySelector('#confirm').getBoundingClientRect().toJSON()})`
       )
     }, `${origin}/page`)
-    expect(actual).toEqual({
+    expect(actual).toMatchObject({
       value: 'AI闭环中文',
       result: '完成：AI闭环中文',
       width: 390,
       node: 'undefined',
       bridge: 'undefined'
     })
+    const clicked = outputs.get('click') as BrowserSnapshot
+    const interaction = clicked.interaction
+    expect(interaction, '真实 click 工具返回点击前的坐标、目标及视口').toBeDefined()
+    if (!interaction) throw new Error('Missing click evidence in the provider result')
+    expect(interaction).toMatchObject({ type: 'click', navigationId: opened.navigationId, pageUrl: `${origin}/page`, target: { name: '确认', role: 'button', selector: '#confirm' } })
+    expect(actual.click).toMatchObject({ trusted: true, viewport: interaction.viewport })
+    // Chromium may round MouseEvent CSS coordinates at fractional display scale.
+    expect(Math.abs(actual.click.x - interaction.x)).toBeLessThanOrEqual(1)
+    expect(Math.abs(actual.click.y - interaction.y)).toBeLessThanOrEqual(1)
+    const bounds = interaction.target?.bounds
+    expect(bounds, 'selector 点击结果必须包含实际目标边界').toBeDefined()
+    if (!bounds) throw new Error('Missing click target bounds')
+    for (const key of ['x', 'y', 'width', 'height'] as const) expect(Math.abs(actual.click.bounds[key] - bounds[key])).toBeLessThanOrEqual(1)
+    expect(interaction.x).toBeGreaterThanOrEqual(bounds.x)
+    expect(interaction.x).toBeLessThanOrEqual(bounds.x + bounds.width)
+    expect(interaction.y).toBeGreaterThanOrEqual(bounds.y)
+    expect(interaction.y).toBeLessThanOrEqual(bounds.y + bounds.height)
+    const clickedButton = clicked.elements.find(element => element.role === 'button' && element.name === '确认')
+    expect(clickedButton?.bounds, '普通元素列表应包含按钮真实边界，不能只把坐标保存在interaction里').toBeDefined()
+    if (!clickedButton?.bounds) throw new Error('Missing clicked snapshot element bounds')
+    for (const key of ['x', 'y', 'width', 'height'] as const) expect(Math.abs(actual.click.bounds[key] - clickedButton.bounds[key])).toBeLessThanOrEqual(1)
+    const resized = outputs.get('set_viewport') as BrowserSnapshot
+    const resizedButton = resized.elements.find(element => element.role === 'button' && element.name === '确认')
+    expect(resizedButton?.bounds, '非点击的视口快照也必须提供真实元素位置').toBeDefined()
+    if (!resizedButton?.bounds) throw new Error('Missing viewport snapshot element bounds')
+    for (const key of ['x', 'y', 'width', 'height'] as const) expect(Math.abs(actual.currentBounds[key] - resizedButton.bounds[key])).toBeLessThanOrEqual(1)
     expect(rendererErrors).toEqual([])
     const history = (await recovery()).history
     for (const step of steps)
       expect(
         history.filter((row) => row.role === 'tool' && row.toolCallId === `browser-agent-${step}`)
       ).toHaveLength(1)
+    for (const step of ['snapshot', 'fill', 'click', 'wait', 'set_viewport'] as const) {
+      expectModelImageMetadata(outputs.get(step) as BrowserSnapshot, historySnapshot(history, step))
+    }
+    const screenshotRow = page.locator('.logline-wrap').filter({ has: page.locator('.logline__name', { hasText: /^浏览器截图$/ }) })
+    const resultImage = screenshotRow.locator('.tool-result__preview img')
+    await expect(resultImage).toBeVisible()
+    await expect(screenshotRow.locator('.tool-result__image figcaption')).toHaveCount(0)
+    await expect.poll(() => resultImage.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0)
+    await screenshotRow.locator('.tool-result__preview').click()
+    await expect(page.locator('.modal--tool-result-image img')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.locator('.modal--tool-result-image')).toHaveCount(0)
+    await screenshotRow.locator('.tool-result__metadata summary').click()
+    await expect(screenshotRow.locator('.tool-result__metadata')).not.toContainText('data:image/png;base64,')
+    const snapshotCard = await expectClickSnapshotCard()
+    const snapshotPath = testInfo.outputPath('agent-browser-click-snapshot-card.png')
+    await snapshotCard.locator('.tool-browser-click').screenshot({ path: snapshotPath })
+    await testInfo.attach('browser-click-snapshot-card', { path: snapshotPath, contentType: 'image/png' })
+    const viewportCard = await expectPageSnapshotCard()
+    const viewportPath = testInfo.outputPath('agent-browser-page-snapshot.png')
+    await viewportCard.screenshot({ path: viewportPath })
+    await testInfo.attach('browser-page-snapshot', { path: viewportPath, contentType: 'image/png' })
     await testInfo.attach('agent-browser-mobile.png', { body: png, contentType: 'image/png' })
     writeFileSync(testInfo.outputPath('agent-browser-mobile.png'), png)
     await page.screenshot({
       path: testInfo.outputPath('agent-browser-conversation.png'),
       fullPage: true
     })
+  })
+
+  test('刷新后纯页面截图和点击图保持可视化，不恢复元素列表且工具名称保持中文', async () => {
+    await page.reload()
+    const screenshotRow = page.locator('.logline-wrap').filter({ has: page.locator('.logline__name', { hasText: /^浏览器截图$/ }) })
+    await expect(screenshotRow.locator('.tool-result__preview img')).toBeVisible()
+    await expect.poll(() => screenshotRow.locator('.tool-result__preview img').evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0)
+    await expectClickSnapshotCard()
+    await expectPageSnapshotCard()
+    expect(requestedTools).toEqual(steps.map(toolName))
+    expect(streamCount).toBe(steps.length + 1)
+    expect(rendererErrors).toEqual([])
   })
 
   test('查看对话用量浮层时，不会隐藏旁边正在显示的网页', async ({}, testInfo) => {

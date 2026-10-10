@@ -1,4 +1,5 @@
 import { normalizeCommandJob, mergeCommandJob, commandToolState } from './command-job-state'
+import { retainConfirmedContext } from './context-input'
 import type { ChatMessage, TimelineItem, ToolActivity } from './useChat'
 import {
   errorText,
@@ -25,7 +26,7 @@ function newId(): string {
  * 累加会膨胀失真，应取**最后一行的值**（覆盖而非相加）。
  */
 /** 快照字段：取最后一行的值，不累加（语义是「当前/最后一次调用」的状态） */
-const USAGE_SNAPSHOT_KEYS = new Set(['currentPromptTokens', 'contextWindow'])
+const USAGE_SNAPSHOT_KEYS = new Set(['currentPromptTokens', 'contextWindow', 'requestInputTokenEstimate'])
 
 function mergeUsageFrame(previous: unknown, next: unknown): Record<string, number> {
   const base = asNumberRecord(previous)
@@ -70,7 +71,7 @@ export interface EngineHistoryRow {
   toolCall?: { id?: string; name?: string; args?: unknown } | null
   success?: boolean
   error?: unknown
-  metadata?: { outputContinuation?: boolean; commandJob?: unknown; commandJobs?: unknown[]; subagent?: unknown; success?: boolean; error?: unknown; status?: string; outputPreview?: string; durationMs?: number; startedAt?: number; finishedAt?: number; runId?: string; turnId?: string; attachments?: Array<{ name: string; type?: string; size?: number }>; change?: import('@shared/ipc').EngineFileChange; isCompactSummary?: boolean }
+  metadata?: { contextUsageEstimated?: boolean; contextUsageProvisional?: boolean; requestInputTokenEstimate?: number; outputContinuation?: boolean; commandJob?: unknown; commandJobs?: unknown[]; subagent?: unknown; success?: boolean; error?: unknown; status?: string; outputPreview?: string; durationMs?: number; startedAt?: number; finishedAt?: number; runId?: string; turnId?: string; attachments?: Array<{ name: string; type?: string; size?: number }>; change?: import('@shared/ipc').EngineFileChange; isCompactSummary?: boolean }
   isSidechain?: boolean
 }
 
@@ -216,15 +217,45 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
     }
     if (row.modelId) message.modelId = row.modelId
     if (row.usage) {
-      message.usage = mergeUsageFrame(message.usage, row.usage)
-      // Prefer the engine's explicit input snapshot. Older stored rows only
-      // have per-invocation promptTokens, which can supply the same snapshot
-      // without replacing an authoritative currentPromptTokens (including 0).
+      const precedingUsage = message.usage && typeof message.usage === 'object'
+        ? message.usage as Record<string, unknown> : {}
+      const rawUsage = typeof row.usage === 'object' ? row.usage as Record<string, unknown> : {}
+      // Billing counters remain numeric and additive. Context phases and the
+      // confirmed observation must survive without becoming billing increments.
+      const usage: Record<string, unknown> = mergeUsageFrame(precedingUsage, row.usage)
+      message.usage = usage
       const rowUsage = asNumberRecord(row.usage)
       const rowPrompt = rowUsage.currentPromptTokens ?? rowUsage.promptTokens
       if (rowPrompt !== undefined) {
-        ;(message.usage as Record<string, number>).currentPromptTokens = rowPrompt
-        message.contextModelId = row.modelId ?? message.modelId
+        usage.currentPromptTokens = rowPrompt
+        message.contextModelId = typeof rawUsage.contextModelId === 'string' && rawUsage.contextModelId
+          ? rawUsage.contextModelId : row.modelId ??
+            (typeof rawUsage.modelId === 'string' && rawUsage.modelId ? rawUsage.modelId : message.modelId)
+        message.contextUsageEstimated = typeof row.metadata?.contextUsageEstimated === 'boolean'
+          ? row.metadata.contextUsageEstimated
+          : typeof rawUsage.contextUsageEstimated === 'boolean' ? rawUsage.contextUsageEstimated : undefined
+        if (message.contextUsageEstimated !== undefined) usage.contextUsageEstimated = message.contextUsageEstimated
+        const provisional = typeof row.metadata?.contextUsageProvisional === 'boolean'
+          ? row.metadata.contextUsageProvisional
+          : typeof rawUsage.contextUsageProvisional === 'boolean' ? rawUsage.contextUsageProvisional : undefined
+        if (provisional !== undefined) usage.contextUsageProvisional = provisional
+        const metadataEstimate = row.metadata?.requestInputTokenEstimate
+        const rawEstimate = rawUsage.requestInputTokenEstimate
+        const estimate = typeof metadataEstimate === 'number' && Number.isFinite(metadataEstimate) && metadataEstimate >= 0
+          ? metadataEstimate : typeof rawEstimate === 'number' && Number.isFinite(rawEstimate) && rawEstimate >= 0 ? rawEstimate : undefined
+        if (estimate !== undefined) usage.requestInputTokenEstimate = estimate
+        else delete usage.requestInputTokenEstimate
+        const confirmed = retainConfirmedContext(precedingUsage,
+          { ...rawUsage, currentPromptTokens: rowPrompt, contextUsageProvisional: provisional },
+          { modelId: message.contextModelId, estimated: message.contextUsageEstimated })
+        if (confirmed) usage.confirmedContext = confirmed
+      } else {
+        // A later model/metadata announcement carries no new input sample.
+        // Preserve its original model, phase, estimate and effective window.
+        for (const key of [...USAGE_SNAPSHOT_KEYS, 'contextUsageEstimated', 'contextUsageProvisional', 'confirmedContext']) {
+          if (Object.hasOwn(precedingUsage, key)) usage[key] = precedingUsage[key]
+          else delete usage[key]
+        }
       }
     }
     message.thinking += typeof row.reasoningContent === 'string' ? row.reasoningContent : ''

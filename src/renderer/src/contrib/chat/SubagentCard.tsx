@@ -19,6 +19,8 @@ import { Icon } from '@renderer/workbench/icons'
 import { Markdown } from './Markdown'
 import { getSessionMeta } from '../history/session-meta'
 import { toolDisplayName, toolParamSummary } from './tool-names'
+import { ToolResult } from './ToolResult'
+import { parseToolResult } from './tool-result'
 import { useCollapseMemory } from './useCollapseMemory'
 import { formatTokens } from './usage'
 
@@ -64,11 +66,6 @@ function parseLegacy(result: string): {
   }
 }
 
-function readable(value: unknown): string {
-  if (typeof value === 'string') return value
-  return value == null ? '' : JSON.stringify(value, null, 2)
-}
-
 /** 行内参数摘要：args 是对象时先序列化再交给 toolParamSummary 提关键参数（避免 String(obj) → [object Object]） */
 function argsSummary(args: unknown): string {
   if (args == null) return ''
@@ -82,10 +79,13 @@ function duration(ms: number): string {
 
 /**
  * 紧凑工具调用行（对齐 wuzu-client 的 CliCompactToolRow）：
- * 圆点 + 名称 · 状态 + 摘要，一行 24px；点击展开看入参与输出。
+ * 圆点 + 名称 · 状态 + 摘要，一行 24px；点击展开查看输出。
  */
 function CompactToolRow({ call }: { call: SubagentToolCall }): JSX.Element {
-  const [open, setOpen] = useState(false)
+  const parsed = useMemo(() => parseToolResult(call.output), [call.output])
+  const [manualOpen, setOpen] = useState<boolean | null>(null)
+  const hasDetail = Boolean(call.output || call.error)
+  const open = hasDetail && (manualOpen ?? parsed.images.length > 0)
   const statusText =
     call.status === 'failed'
       ? '失败'
@@ -102,6 +102,8 @@ function CompactToolRow({ call }: { call: SubagentToolCall }): JSX.Element {
       <button
         type="button"
         className="subagent-card__call-toggle"
+        aria-expanded={open}
+        disabled={!hasDetail}
         onClick={() => setOpen(!open)}
       >
         <span className="subagent-card__call-name">{toolDisplayName(call.name)}</span>
@@ -112,17 +114,11 @@ function CompactToolRow({ call }: { call: SubagentToolCall }): JSX.Element {
       </button>
       {open ? (
         <div className="subagent-card__call-detail">
-          {call.args != null && call.args !== '' ? (
-            <>
-              <div className="subagent-card__call-section">参数</div>
-              <pre className="subagent-card__call-pre">{readable(call.args)}</pre>
-            </>
-          ) : null}
           {call.error ? <div className="message__error">{call.error.message}</div> : null}
           {call.output ? (
             <>
               <div className="subagent-card__call-section">输出</div>
-              <pre className="subagent-card__call-pre">{call.output}</pre>
+              <ToolResult parsed={parsed} toolName={call.name} textClassName="subagent-card__call-pre" />
             </>
           ) : null}
         </div>

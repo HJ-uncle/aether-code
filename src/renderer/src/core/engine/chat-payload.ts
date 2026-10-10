@@ -2,6 +2,7 @@ import type { ChatSsePayload } from '@shared/ipc'
 import type { ChatMessage, TimelineItem } from './useChat'
 import { finishTool, normalizeTool } from './chat-history'
 import { mergePending, normalizePending } from './pending'
+import { retainConfirmedContext } from './context-input'
 function newId(): string { return globalThis.crypto.randomUUID() }
 
 function appendTimeline(items: TimelineItem[], kind: 'thinking' | 'content', text: string): void {
@@ -48,13 +49,37 @@ export function reducePayload(message: ChatMessage, payload: ChatSsePayload): Ch
     const contextModelId = typeof next.contextModelId === 'string' && next.contextModelId ? next.contextModelId
       : hasInput ? (typeof next.modelId === 'string' && next.modelId ? next.modelId : message.modelId)
         : message.contextModelId ?? (previousInput ? message.modelId : undefined)
+    const contextUsageEstimated = hasInput
+      ? (typeof next.contextUsageEstimated === 'boolean' ? next.contextUsageEstimated : undefined)
+      : message.contextUsageEstimated ?? (typeof (previous as Record<string, unknown>).contextUsageEstimated === 'boolean'
+        ? (previous as Record<string, unknown>).contextUsageEstimated as boolean : undefined)
     // A new input snapshot must not borrow another invocation's window. A
     // model-only frame carries no new input and leaves the last snapshot intact.
     if (hasInput) {
       if (typeof next.currentPromptTokens !== 'number') delete usage.currentPromptTokens
       if (typeof next.contextWindow !== 'number') delete usage.contextWindow
     }
-    return { ...message, usage, contextModelId,
+    // Source belongs to the same input sample. Missing source on a new
+    // invocation is unknown, and model-only announcements cannot relabel it.
+    if (contextUsageEstimated === undefined) delete usage.contextUsageEstimated
+    else usage.contextUsageEstimated = contextUsageEstimated
+    if (hasInput) {
+      // Older engines publish a start-frame input before their final billing frame.
+      // An explicit new protocol flag wins; absence alone is never confirmation.
+      const provisional = typeof next.contextUsageProvisional === 'boolean' ? next.contextUsageProvisional
+        : contextUsageEstimated === false && next.currentPromptTokens !== undefined && next.promptTokens === undefined && next.totalTokens === undefined
+      if (typeof next.contextUsageProvisional === 'boolean' || provisional) usage.contextUsageProvisional = provisional
+      else delete usage.contextUsageProvisional
+      if (typeof next.requestInputTokenEstimate === 'number' && Number.isFinite(next.requestInputTokenEstimate) && next.requestInputTokenEstimate >= 0) {
+        usage.requestInputTokenEstimate = next.requestInputTokenEstimate
+      } else if (contextUsageEstimated === true) {
+        usage.requestInputTokenEstimate = next.currentPromptTokens
+      } else if (!provisional) delete usage.requestInputTokenEstimate
+      const confirmed = retainConfirmedContext(previous, { ...next, contextUsageProvisional: provisional }, { modelId: contextModelId, estimated: contextUsageEstimated })
+      if (confirmed) usage.confirmedContext = confirmed
+      else delete usage.confirmedContext
+    }
+    return { ...message, usage, contextModelId, contextUsageEstimated,
       modelId: typeof next.modelId === 'string' && next.modelId ? next.modelId : message.modelId }
   }
 

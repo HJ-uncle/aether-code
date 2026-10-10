@@ -311,6 +311,7 @@ test('主历史跳过 sidechain 消息，内部工具只存在子 snapshot', () 
   expect(rows[1].tools).toHaveLength(1)
   expect(rows[1].tools[0].subagent?.toolCalls[0].output).toBe('project overview')
   expect(exportSubagentDetails(rows[1].tools[0])).toContain('结果：project overview')
+  expect(exportSubagentDetails(rows[1].tools[0])).toContain('读取文件（成功）')
   expect(exportSubagentDetails(rows[1].tools[0])).toContain('README.md')
 })
 

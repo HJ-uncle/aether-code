@@ -52,17 +52,14 @@ export function Dialog({
   useEffect(() => {
     const panel = panelRef.current
     if (!panel) return
+    // 在移入焦点前记录触发元素，否则关闭时会尝试聚焦已卸载的关闭按钮。
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
     // 优先聚焦首个可交互控件（输入框），没有则聚焦面板本身
     const focusable = panel.querySelector<HTMLElement>(
       'input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])'
     )
     if (focusable) focusable.focus()
     else panel.focus()
-  }, [])
-
-  // 焦点归还：记录打开前的焦点，卸载时还原。元素可能已不在 DOM，判 connected 兜底
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null
     return () => {
       if (previous && previous.isConnected) {
         try {

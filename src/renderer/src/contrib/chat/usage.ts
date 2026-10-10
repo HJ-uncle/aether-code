@@ -80,6 +80,9 @@ export function asUsageFrame(raw: unknown): UsageFrame | null {
 
 export interface ContextUsageSnapshot {
   used: number
+  estimated?: boolean
+  provisional?: boolean
+  requestInputTokenEstimate?: number
   contextWindow?: number
   modelId?: string
 }
@@ -96,8 +99,15 @@ export function latestContextUsage(messages: ChatMessage[]): ContextUsageSnapsho
     if ((message.usage as Record<string, unknown>).usageScope === 'turn' && frame.currentPromptTokens === undefined) continue
     const used = frame.currentPromptTokens ?? frame.promptTokens
     if (used === undefined || used < 0) continue
+    const raw = message.usage as Record<string, unknown>
+    const estimated = message.contextUsageEstimated ??
+      (typeof raw.contextUsageEstimated === 'boolean' ? raw.contextUsageEstimated : undefined)
     return {
       used,
+      ...(estimated === undefined ? {} : { estimated }),
+      ...(typeof raw.contextUsageProvisional === 'boolean' ? { provisional: raw.contextUsageProvisional } : {}),
+      ...(typeof raw.requestInputTokenEstimate === 'number' && Number.isFinite(raw.requestInputTokenEstimate) && raw.requestInputTokenEstimate >= 0
+        ? { requestInputTokenEstimate: raw.requestInputTokenEstimate } : {}),
       ...(frame.contextWindow && frame.contextWindow > 0 ? { contextWindow: frame.contextWindow } : {}),
       ...((message.contextModelId ?? message.modelId) ? { modelId: message.contextModelId ?? message.modelId } : {})
     }

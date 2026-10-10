@@ -59,7 +59,7 @@ for (const mode of ['embedded', 'remote'] as const) {
         : (await window.aether.settings.get()).lastSessionId, storageSuffix)
     }
 
-    async function expectLabels(memory: string, security: string, thinking = 'High'): Promise<void> {
+    async function expectLabels(memory: string, security: string, thinking = 'Low'): Promise<void> {
       await openPreferences()
       await expect(page.getByTitle('选择长期记忆范围', { exact: true })).toContainText(memory)
       await expect(page.getByTitle('选择安全模式', { exact: true })).toContainText(security)
@@ -181,13 +181,13 @@ for (const mode of ['embedded', 'remote'] as const) {
       rmSync(absolute, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     })
 
-    test('未保存偏好时显示仅本会话 / High / 标准模式，且与真实引擎一致', async () => {
+    test('未保存偏好时显示仅本会话 / Low / 标准模式，且与真实引擎一致', async () => {
       await expectLabels('仅本会话', '标准模式')
       expect(await readPreferences(firstSession)).toEqual({
         memory: { sessionId: firstSession, memoryScope: 'session', effectiveScope: 'session', enabled: true },
         security: 'standard'
       })
-      expect((await page.evaluate(() => window.aether.settings.get())).thinkingMode).toBe('high')
+      expect((await page.evaluate(() => window.aether.settings.get())).thinkingMode).toBe('low')
       await expect(page.locator('.composer-options__popup')).toContainText('只在当前会话中读取和写入')
     })
 
@@ -207,16 +207,16 @@ for (const mode of ['embedded', 'remote'] as const) {
       await expectLabels('关闭记忆', '安全模式')
       await selectSession('Defaults session B', secondSession)
       await expectLabels('全局记忆', '完全访问')
-      await choose('选择思考档位', 'Low')
-      await expectLabels('全局记忆', '完全访问', 'Low')
-      expect((await page.evaluate(() => window.aether.settings.get())).thinkingMode).toBe('high')
+      await choose('选择思考档位', 'High')
+      await expectLabels('全局记忆', '完全访问', 'High')
+      expect((await page.evaluate(() => window.aether.settings.get())).thinkingMode).toBe('low')
       await page.reload()
-      await expectLabels('全局记忆', '完全访问', 'Low')
+      await expectLabels('全局记忆', '完全访问', 'High')
       await selectSession('Defaults session A', firstSession)
-      await expectLabels('关闭记忆', '安全模式', 'High')
+      await expectLabels('关闭记忆', '安全模式', 'Low')
       await selectSession('Defaults session B', secondSession)
-      await expectLabels('全局记忆', '完全访问', 'Low')
-      expect((await page.evaluate(() => window.aether.settings.get())).thinkingMode).toBe('high')
+      await expectLabels('全局记忆', '完全访问', 'High')
+      expect((await page.evaluate(() => window.aether.settings.get())).thinkingMode).toBe('low')
     })
 
     test('新建会话采用记忆、安全和全局思考默认值，不继承其他会话的手选档位', async () => {
@@ -226,8 +226,8 @@ for (const mode of ['embedded', 'remote'] as const) {
       const created = await currentSession()
       expect(created).not.toBe('')
       expect(created).not.toBe(firstSession)
-      await expectLabels('仅本会话', '标准模式', 'High')
-      expect((await page.evaluate(() => window.aether.settings.get())).thinkingMode).toBe('high')
+      await expectLabels('仅本会话', '标准模式', 'Low')
+      expect((await page.evaluate(() => window.aether.settings.get())).thinkingMode).toBe('low')
       expect(await readPreferences(created)).toEqual({
         memory: { sessionId: created, memoryScope: 'session', effectiveScope: 'session', enabled: true },
         security: 'standard'

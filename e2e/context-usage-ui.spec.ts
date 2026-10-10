@@ -103,7 +103,7 @@ test.describe.serial('上下文用量环与会话压缩隔离', () => {
     frame({ usage: { promptTokens: 12000, totalTokens: 12001, currentPromptTokens: 12000, contextWindow: 100000 } }, 3)
     frame({ usage: { modelId: modelA, promptTokens: 44000, completionTokens: 3, totalTokens: 44003, currentPromptTokens: 10000, contextWindow: 100000 } }, 6)
     await expect(ring()).toHaveAttribute('aria-label', /10k \/ 100k/); await expect(page.locator('.turn-usage__value').last()).toHaveText('44k')
-    await ring().hover(); await expect(page.locator('.ctx-card__tokens-value')).toHaveText('10k / 100k')
+    await ring().hover(); await expect(page.locator('.ctx-card__tokens-value')).toHaveText('10,000 / 100k')
     await expect(page.locator('.ctx-card__header')).toContainText('当前上下文')
     await expect(page.locator('.ctx-card')).toContainText('模型统计或估算')
     await expect(page.locator('.ctx-card')).toContainText('可减少')

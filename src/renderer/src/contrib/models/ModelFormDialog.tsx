@@ -3,7 +3,6 @@ import {
   PROVIDERS,
   detectCapabilities,
   testModel,
-  updateModel,
   type EngineModel,
   type ModelCapabilities
 } from '@renderer/core/engine/models'
@@ -14,7 +13,7 @@ import {
   parseContextWindow,
   type ModelFormState
 } from '@renderer/core/engine/model-form'
-import { addModel, refreshModels } from '@renderer/core/engine/model-store'
+import { addModel, saveModel } from '@renderer/core/engine/model-store'
 import { Dialog } from '@renderer/workbench/Dialog'
 import { Select } from '@renderer/workbench/Select'
 import { Segmented, SettingsContent, SettingsGroup, SettingsRow } from '../settings/SettingsGroup'
@@ -177,8 +176,7 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
     setError(null)
     try {
       if (isEdit) {
-        const updated = await updateModel(model!.id, buildModelUpdate(model!, form))
-        await refreshModels()
+        const updated = await saveModel(model!.id, buildModelUpdate(model!, form))
         onSaved?.(updated)
       } else {
         const created = await addModel({

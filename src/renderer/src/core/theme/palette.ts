@@ -63,7 +63,8 @@ export function watchTheme(onChange: () => void): () => void {
   const observer = new MutationObserver(onChange)
   observer.observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ['data-appearance', 'data-accent']
+    // 自定义色变化不会改变 data-accent='custom'，仍需刷新 Monaco/xterm。
+    attributeFilter: ['data-appearance', 'data-accent', 'data-custom-accent']
   })
   return () => observer.disconnect()
 }

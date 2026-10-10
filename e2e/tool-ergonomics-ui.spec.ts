@@ -211,7 +211,7 @@ test.describe.serial('工具执行与诊断真实闭环', () => {
     expect(report).not.toContain('当前记录无法恢复')
     expect(sentSteps).toEqual(steps)
 
-    const ring = page.getByRole('button', { name: /上下文用量约/ })
+    const ring = page.getByRole('button', { name: /^上下文用量 / })
     await ring.click()
     await expect(page.getByRole('button', { name: /^已压缩 / })).toBeVisible({ timeout: 30000 })
     const label = await page.getByRole('button', { name: /^已压缩 / }).getAttribute('aria-label')

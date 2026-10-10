@@ -12,8 +12,8 @@
  * 两个维度正交，可以任意组合，因此这里拆成两组独立的覆盖块：
  *   [data-appearance='light'] 只覆盖灰阶/文字/材质
  *   [data-accent='purple']    只覆盖强调色相关的 4 个变量
- * 之所以不让 JS 计算颜色再内联到 <html>，是因为那样无法享受 CSS 的级联，
- * 也没法做「跟随系统」——跟随系统必须交给 prefers-color-scheme 媒体查询。
+ * 自定义颜色由 useTheme 注入基础色变量，并按当前背景保证对比；
+ * 仍由这些覆盖块统一派生交互令牌，系统明暗切换走同一入口。
  *
  * ── 视觉规范 ──
  * 对齐 Apple Human Interface Guidelines：
@@ -105,6 +105,12 @@
   --bg-surface: #232325;
   --bg-elevated: #2c2c2e;
   --bg-input: #3a3a3c;
+  /* 色谱呈现真实 sRGB；基础黑白与色相带不随界面明暗反转。 */
+  --picker-white: #ffffff;
+  --picker-black: #000000;
+  --picker-outline: rgba(0, 0, 0, 0.28);
+  --picker-hue-strip: linear-gradient(to right, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);
+  --picker-wheel: conic-gradient(#ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);
   /* Explicit workbench levels keep the three-column shell readable at a glance. */
   --bg-activity: #202023;
   --bg-sidebar: #262629;
@@ -231,6 +237,11 @@
   --bg-surface: #fafafa;
   --bg-elevated: #ffffff;
   --bg-input: #ffffff;
+  --picker-white: #ffffff;
+  --picker-black: #000000;
+  --picker-outline: rgba(0, 0, 0, 0.2);
+  --picker-hue-strip: linear-gradient(to right, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);
+  --picker-wheel: conic-gradient(#ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);
   --bg-activity: #e9e9ec;
   --bg-sidebar: #f7f7f9;
   --bg-editor: #ffffff;
@@ -432,6 +443,30 @@
   --accent: #6e6e73;
   --accent-hover: #838388;
   --accent-soft: rgba(110, 110, 115, 0.14);
+}
+
+/* 自定义基础色按当前背景统一校正明度；深浅外观调整软色的混合比例。
+   黑/白文字按基础色亮度选择，避免浅色或极深色填充导致按钮文字消失。 */
+[data-accent='custom'] {
+  --custom-accent: #4b95f1;
+  --custom-accent-hover: #6ba8f5;
+  --custom-accent-rgb: 75, 149, 241;
+  --custom-accent-light-fg: #ffffff;
+  --custom-accent-dark-fg: #000000;
+  --accent: var(--custom-accent);
+  --accent-hover: var(--custom-accent-hover);
+  --accent-fg: var(--custom-accent-light-fg);
+  --accent-soft: rgba(var(--custom-accent-rgb), 0.18);
+}
+
+[data-appearance='light'][data-accent='custom'] {
+  --custom-accent-light-fg: #ffffff;
+  --custom-accent-dark-fg: #000000;
+  --accent-soft: rgba(var(--custom-accent-rgb), 0.12);
+}
+
+[data-accent='custom'][data-custom-accent-foreground='dark'] {
+  --accent-fg: var(--custom-accent-dark-fg);
 }
 
 /* ==================== 材质工具类 ==================== */

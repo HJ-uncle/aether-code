@@ -101,6 +101,8 @@ export interface ChatMessage {
   modelId?: string
   /** Model owning the latest input snapshot; a model-only frame can announce the next model independently. */
   contextModelId?: string
+  /** Source of the latest input snapshot, independent of output usage estimates. */
+  contextUsageEstimated?: boolean
   /** 所属轮次 id（引擎 conversations 表的 conversation_id）；历史回放合并同轮 assistant 行用 */
   conversationId?: string
 }

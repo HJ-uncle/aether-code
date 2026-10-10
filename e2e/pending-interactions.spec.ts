@@ -43,7 +43,7 @@ test.describe('normalizePending', () => {
     const pending = normalizePending({
       permissionRequest: { requestId: 'r1', toolName: 'execute_cmd' }
     })
-    expect(pending!.question).toContain('execute_cmd')
+    expect(pending!.question).toContain('执行命令')
   })
 
   test('提问帧：对象数组选项取 label 作为显示与回传值', () => {

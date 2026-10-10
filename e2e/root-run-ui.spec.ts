@@ -333,6 +333,8 @@ test.describe.serial('D3 根运行与审批真机验收',()=>{
     await expect(rejectionHistory).toHaveJSProperty('open', false)
     await rejectionHistory.locator('summary').click()
     await expect(rejectionHistory.locator('.interaction-history__result')).toContainText('已拒绝')
+    await expect(rejectionHistory.locator('.pending-card__history-question')).toContainText('当时请求确认（已处理）')
+    await expect(rejectionHistory.locator('.pending-card__history-question')).not.toContainText('是否允许执行？')
     await page.reload()
     await expect(page.locator('.pending-card')).toHaveCount(0)
     const rejectionAfterReload = page.locator('details.interaction-history').first()
