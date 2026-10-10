@@ -1,6 +1,6 @@
 import type { ChatMessage } from '@renderer/core/engine/useChat'
 import type { SubagentRun } from '@shared/subagent'
-import { asUsageFrame, sumUsage, type UsageDetailRow, type UsageTotal } from './usage'
+import { asUsageFrame, hasCompleteUsageDetails, sumUsage, type UsageDetailRow, type UsageTotal } from './usage'
 
 export interface SessionSubagentUsage {
   totalTokens: number
@@ -70,16 +70,19 @@ export function sessionUsageTotal(messages: ChatMessage[], anchor?: SessionUsage
   const parentUsage = anchor.parent ? { ...anchor.parent } : currentParent
   if (anchor.parent) {
     for (const key of BILLING_KEYS) {
+      // Missing counters must stay missing: a fabricated zero input would erase observed cache usage.
+      if (anchor.parent[key] === undefined && currentParent[key] === undefined &&
+        anchor.visibleParent[key] === undefined) continue
       parentUsage[key] = (anchor.parent[key] ?? 0) + Math.max(0,
         (currentParent[key] ?? 0) - (anchor.visibleParent[key] ?? 0))
     }
   }
   // Reuse the ordinary parent billing breakdown instead of maintaining a second
   // set of summary labels or treating context snapshots as consumption.
-  const parent = sumUsage([{
+  const parent = sumUsage(anchor.parent ? [{
     id: 'session-usage-parent', role: 'assistant', content: '', thinking: '',
     tools: [], items: [], status: 'done', createdAt: 0, usage: parentUsage
-  }])
+  }] : messages.map(message => ({ ...message, tools: [], usage: billingUsage(message.usage) })))
   const alignedGrowth = anchor.alignedChildren === undefined ? undefined
     : childGrowth(messages, anchor.alignedChildren)
   const children = anchor.children && alignedGrowth
@@ -99,7 +102,11 @@ export function sessionUsageTotal(messages: ChatMessage[], anchor?: SessionUsage
     : { totalTokens: visible.subagentTotal, count: childCount(messages), unknown: visible.unknownSubagents }
   const summary: UsageDetailRow[] = [...parent.summary]
   if (children.count > 0 || children.totalTokens > 0 || children.unknown > 0) {
-    summary.unshift({ label: '主代理自身', group: 'input', tokens: parent.parentTotal })
+    if (!hasCompleteUsageDetails(parent) || parentUsage.promptTokens === undefined || parentUsage.completionTokens === undefined ||
+      (parentUsage.promptTokens + parentUsage.completionTokens) !== parent.parentTotal) {
+      summary.unshift({ label: '主代理自身', group: 'input', tokens: parent.parentTotal, subtotal: true,
+        title: '主代理用量小计，输入明细可能未完整报告，不重复计入总用量。' })
+    }
     summary.push({ label: '子代理（已知用量）', group: 'output', tokens: children.totalTokens })
     if (children.unknown > 0) {
       summary.push({ label: `子代理用量缺失（${children.unknown} 个）`, group: 'output', tokens: 0, unknown: true })

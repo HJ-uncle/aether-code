@@ -1,5 +1,6 @@
 /** Real Electron + authenticated remote HTTP: automatic compaction status, live status sweep,
- * reduced-motion readability, read-only meter, session isolation and archive recovery. */
+ * footer alignment at normal/narrow widths, reduced-motion readability, read-only meter,
+ * session isolation, nested cache rows and archive recovery. */
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { createServer, type ServerResponse } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -8,13 +9,13 @@ import type { RootRun } from '../src/shared/root-run'
 import type { EngineHistoryRow } from '../src/renderer/src/core/engine/chat-history'
 const root = resolve(__dirname, '..'), token = 'context-usage-fixture-token'
 const sessionA = 'context-session-A', sessionB = 'context-session-B'
-const modelA = 'context-model-A', modelB = 'context-model-B'
+const modelA = 'context-model-A-with-a-complete-provider-and-version-name-2026', modelB = 'context-model-B'
 let fixture = '', app: ElectronApplication | undefined, page: Page, heldStream: ServerResponse | undefined
 let aCompacted = false, aRun: RootRun | undefined
 let aHistory: EngineHistoryRow[] = [
   { id: 'seed-user', role: 'user', content: 'CONTEXT_HISTORY_A', conversationId: 'seed-turn', createdAt: 1 },
   { id: 'seed-assistant', role: 'assistant', content: 'INITIAL_A_REPLY', conversationId: 'seed-turn', modelId: modelA, createdAt: 2,
-    usage: { promptTokens: 8000, completionTokens: 2, totalTokens: 8002, currentPromptTokens: 12000, contextWindow: 100000 } }
+    usage: { promptTokens: 8000, completionTokens: 2, totalTokens: 8002, currentPromptTokens: 12000, contextWindow: 100000, cacheHitTokens: 6000, cacheMissTokens: 2000 } }
 ]
 const errors: string[] = [], snapshots: string[] = [], chats: Record<string, unknown>[] = []
 const compressions: string[] = [], archiveReads: string[] = []
@@ -72,6 +73,116 @@ const activeAssistant = () => page.locator('.message--assistant').last()
 const runStatus = () => activeAssistant().getByRole('status', { name: '运行状态', exact: true })
 const streamingHint = () => activeAssistant().locator('.message__streaming-hint')
 const streamingText = () => streamingHint().locator('.message__streaming-text')
+const turnUsageDialog = () => page.getByRole('dialog', { name: '本次问答用量', exact: true })
+const sessionUsageDialog = () => page.getByRole('dialog', { name: '会话用量明细', exact: true })
+async function expectCacheStatistics(dialog: ReturnType<typeof turnUsageDialog>, input: string, hit: string, miss: string, output: string, total: string) {
+  await expect(dialog.locator('.usage-detail--cache')).toHaveCount(0)
+  await expect(dialog.getByRole('region', { name: '缓存统计', exact: true })).toHaveCount(0)
+  const breakdown = dialog.locator('.usage-detail:not(.usage-detail--meta)')
+  await expect(breakdown).toHaveCount(1)
+  const peers = breakdown.locator('.usage-detail__row:not(.usage-detail__row--child) .usage-detail__label')
+  await expect(peers).toHaveText(['累计输入 Prompt', '输出 Completion'])
+  for (const [label, value] of [['累计输入 Prompt', input], ['缓存命中', hit], ['输出 Completion', output], ['缓存未命中', miss]]) {
+    const row = breakdown.locator('.usage-detail__row').filter({ has: page.getByText(label, { exact: true }) })
+    await expect(row).toHaveCount(1)
+    if (label === '缓存未命中' || label === '缓存命中') await expect(row).toHaveClass(/usage-detail__row--child/)
+    else await expect(row).not.toHaveClass(/usage-detail__row--child/)
+    await expect(row.locator('.usage-detail__value')).toHaveText(value)
+    await expect(dialog.getByText(label, { exact: true })).toHaveCount(1)
+  }
+  await expect(dialog.locator('.usage-popover__total-value')).toHaveText(total)
+  const exactAmounts = await dialog.evaluate(element => {
+    const exactTokens = (field: Element): number => {
+      const raw = field.getAttribute('title')?.split(' tokens')[0].replaceAll(',', '') ?? ''
+      if (!/^\d+$/.test(raw)) throw new Error('Missing exact token amount: ' + field.className)
+      return Number(raw)
+    }
+    const peers = Array.from(element.querySelectorAll('.usage-detail:not(.usage-detail--meta) .usage-detail__row:not(.usage-detail__row--child):not(.usage-detail__row--subtotal) .usage-detail__value'))
+    const total = element.querySelector('.usage-popover__total-value')
+    if (!total || peers.length !== 2) throw new Error('Missing exact primary usage rows or total')
+    return { parts: peers.map(exactTokens), total: exactTokens(total) }
+  })
+  expect(exactAmounts.parts.reduce((sum, amount) => sum + amount, 0), '完整累计输入和输出的精确数字应等于累计总用量，缓存子项不能再次相加').toBe(exactAmounts.total)
+  await expect.poll(() => dialog.evaluate(element => {
+    const rows = Array.from(element.querySelectorAll('.usage-detail__row'))
+    const input = rows.find(row => row.querySelector('.usage-detail__label')?.textContent === '累计输入 Prompt')
+    const hit = rows.find(row => row.querySelector('.usage-detail__label')?.textContent === '缓存命中')
+    const output = rows.find(row => row.querySelector('.usage-detail__label')?.textContent === '输出 Completion')
+    if (!input || !hit || !output) throw new Error('Missing input, cache or output peer rows')
+    const inputLabel = input.querySelector('.usage-detail__label'), cacheLabel = hit.querySelector('.usage-detail__label')
+    const inputValue = input.querySelector('.usage-detail__value'), cacheValue = hit.querySelector('.usage-detail__value')
+    if (!inputLabel || !cacheLabel || !inputValue || !cacheValue) throw new Error('Missing cache alignment slots')
+    const inputBar = input.querySelector('.usage-detail__bar'), cacheBar = hit.querySelector('.usage-detail__bar'), outputBar = output.querySelector('.usage-detail__bar')
+    if (!inputBar || !cacheBar || !outputBar) throw new Error('Missing peer row color bars')
+    const probe = document.createElement('span')
+    probe.style.color = 'var(--usage-cache)'; element.append(probe)
+    const expectedCacheColor = getComputedStyle(probe).color
+    probe.remove()
+    const cacheColor = getComputedStyle(cacheBar).backgroundColor
+    if (cacheColor !== expectedCacheColor || getComputedStyle(cacheLabel).color !== expectedCacheColor || getComputedStyle(cacheValue).color !== expectedCacheColor ||
+      cacheColor === getComputedStyle(inputBar).backgroundColor || cacheColor === getComputedStyle(outputBar).backgroundColor) return Number.POSITIVE_INFINITY
+    const model = element.querySelector('.usage-detail__row--model .usage-detail__value')
+    if (model) {
+      const style = getComputedStyle(model)
+      if (style.whiteSpace === 'nowrap' || style.textOverflow === 'ellipsis' || model.scrollWidth - model.clientWidth > 1) return Number.POSITIVE_INFINITY
+    }
+    const breakdown = element.querySelector('.usage-detail:not(.usage-detail--meta)')
+    if (!breakdown) throw new Error('Missing usage breakdown')
+    const dialogBox = element.getBoundingClientRect()
+    return Math.max(
+      Math.max(0, inputLabel.getBoundingClientRect().left + 2 - cacheLabel.getBoundingClientRect().left),
+      Math.abs(inputValue.getBoundingClientRect().right - cacheValue.getBoundingClientRect().right),
+      Math.max(0, breakdown.scrollWidth - breakdown.clientWidth),
+      Math.max(0, -dialogBox.left), Math.max(0, dialogBox.right - innerWidth),
+      Math.max(0, -dialogBox.top), Math.max(0, dialogBox.bottom - innerHeight)
+    )
+  }), { message: '累计输入显示完整值，缓存命中缩进为淡绿色子项并与输入共享数值轴；长模型名完整换行，popover 不溢窗（允许 1px DPR 取整）' }).toBeLessThanOrEqual(1)
+}
+async function expectContextCardReadable(used: string, limit: string, percent: string) {
+  const card = page.locator('.ctx-card')
+  await expect(card).toBeVisible()
+  await expect(card.locator('.ctx-card__tokens-value')).toHaveCount(1)
+  await expect(card.locator('.ctx-card__exact-tokens')).toHaveCount(1)
+  const compactUsed = compactContextValue(used), compactLimit = compactContextValue(limit)
+  await expect(card.locator('.ctx-card__tokens-value')).toHaveText(`${compactUsed} / ${compactLimit}`)
+  await expect(card.locator('.ctx-card__tokens-label')).toHaveText('使用 / 上限')
+  await expect(card.locator('.ctx-card__exact-tokens')).toHaveText(`${used} / ${limit} tokens`)
+  await expect(card.locator('.ctx-card__percent')).toContainText(percent)
+  await expect(card).toContainText('单次请求占用')
+  await expect(card).toContainText('累计计费用量')
+  await expect.poll(() => card.evaluate(element => {
+    const required = [['.ctx-card__header', 13], ['.ctx-card__percent', 18], ['.ctx-card__tokens-value', 14], ['.ctx-card__exact-tokens', 12]] as const
+    for (const [selector, minimum] of required) {
+      const field = element.querySelector(selector)
+      if (!field || parseFloat(getComputedStyle(field).fontSize) < minimum) return Number.POSITIVE_INFINITY
+    }
+    const notes = Array.from(element.querySelectorAll('.ctx-card__hint, .ctx-card__billing-hint'))
+    if (!notes.length || notes.some(note => {
+      const style = getComputedStyle(note), font = parseFloat(style.fontSize)
+      return font < 12 || parseFloat(style.lineHeight) < font * 1.45
+    })) return Number.POSITIVE_INFINITY
+    const tokens = element.querySelector('.ctx-card__tokens'), exact = element.querySelector('.ctx-card__exact-tokens'), label = element.querySelector('.ctx-card__tokens-label'), bar = element.querySelector('.ctx-card__bar')
+    if (!tokens || !exact || !label || !bar) throw new Error('Missing compact/exact context usage or progress bar')
+    if (parseFloat(getComputedStyle(tokens).marginTop) < 10 || parseFloat(getComputedStyle(bar).marginTop) < 10) return Number.POSITIVE_INFINITY
+    const compactBox = tokens.querySelector('.ctx-card__tokens-value')!.getBoundingClientRect(), exactBox = exact.getBoundingClientRect(), labelBox = label.getBoundingClientRect()
+    if (exactBox.top - compactBox.bottom < 3) return Number.POSITIVE_INFINITY
+    if (Math.abs(compactBox.top + compactBox.height / 2 - labelBox.top - labelBox.height / 2) > 1) return Number.POSITIVE_INFINITY
+    const style = getComputedStyle(element), box = element.getBoundingClientRect()
+    return Math.max(
+      Math.max(0, 16 - parseFloat(style.paddingLeft)), Math.max(0, 16 - parseFloat(style.paddingRight)),
+      Math.max(0, element.scrollWidth - element.clientWidth),
+      Math.max(0, -box.left), Math.max(0, box.right - innerWidth),
+      Math.max(0, -box.top), Math.max(0, box.bottom - innerHeight)
+    )
+  }), { message: '上下文卡应同时展示紧凑与精确用量，首行使用/上限同基线；辅助文字至少 12px/舒适行距，分区留白足够且不溢出窗口' }).toBeLessThanOrEqual(1)
+}
+function compactContextValue(value: string): string {
+  const numeric = Number(value.replaceAll(',', ''))
+  if (!Number.isFinite(numeric)) return value
+  if (numeric >= 1_000_000) return `${(numeric / 1_000_000).toFixed(numeric % 1_000_000 ? 1 : 0).replace(/\.0$/, '')}M`
+  if (numeric >= 1_000) return `${(numeric / 1_000).toFixed(numeric % 1_000 ? 1 : 0).replace(/\.0$/, '')}k`
+  return String(numeric)
+}
 async function expectSingleRunStatusBelowFooter(text: string) {
   await expect(runStatus()).toHaveCount(1)
   await expect(runStatus()).toHaveText(text)
@@ -82,6 +193,74 @@ async function expectSingleRunStatusBelowFooter(text: string) {
     if (!footer || !status) throw new Error('Missing assistant footer or run status')
     return status.getBoundingClientRect().top - footer.getBoundingClientRect().bottom
   }), { message: '唯一运行状态必须显示在用量与操作 footer 的下方' }).toBeGreaterThanOrEqual(-1)
+  await expect.poll(() => activeAssistant().evaluate(element => {
+    const status = element.querySelector('.message__run-status')
+    const slot = status?.querySelector('.message__run-status-icon')
+    const label = status?.querySelector('.message__run-status-text')
+    if (!status || !slot || !label) throw new Error('Missing run status alignment slots')
+    const footer = element.querySelector('.message__footer')
+    if (!footer) throw new Error('Missing assistant footer')
+    const messageBox = element.getBoundingClientRect(), statusBox = status.getBoundingClientRect()
+    const footerBox = footer.getBoundingClientRect()
+    const iconBox = slot.getBoundingClientRect(), labelBox = label.getBoundingClientRect()
+    const usageIcon = element.querySelector('.turn-usage__trigger svg')
+    const usageValue = element.querySelector('.turn-usage__value')
+    const fallback = element.querySelector('.message__footer > .turn-usage__model')
+    const deltas = [
+      Math.abs(iconBox.width - 16),
+      Math.max(0, 26 - statusBox.height),
+      Math.abs(statusBox.top - footerBox.bottom - 4),
+      Math.max(0, statusBox.right - messageBox.right),
+      Math.max(0, labelBox.right - statusBox.right),
+      Math.max(0, status.scrollWidth - status.clientWidth)
+    ]
+    if (usageIcon && usageValue) {
+      const usageIconBox = usageIcon.getBoundingClientRect()
+      const usage = element.querySelector('.turn-usage')
+      const trigger = element.querySelector('.turn-usage__trigger')
+      const model = trigger?.querySelector('.turn-usage__model')
+      if (!usage || !trigger || !model) throw new Error('Missing assistant usage, trigger or complete model name')
+      const usageStyle = getComputedStyle(usage), usageBox = usage.getBoundingClientRect()
+      const usageContentWidth = usageBox.width - parseFloat(usageStyle.paddingLeft) - parseFloat(usageStyle.paddingRight)
+        - parseFloat(usageStyle.borderLeftWidth) - parseFloat(usageStyle.borderRightWidth)
+      const modelStyle = getComputedStyle(model), modelBox = model.getBoundingClientRect()
+      const valueBox = usageValue.getBoundingClientRect()
+      if (modelStyle.whiteSpace === 'nowrap' || modelStyle.textOverflow === 'ellipsis' || modelStyle.textAlign !== 'left') return Number.POSITIVE_INFINITY
+      deltas.push(
+        Math.abs(usageIconBox.left - iconBox.left),
+        Math.abs(usageIconBox.width - iconBox.width),
+        Math.abs(trigger.getBoundingClientRect().width - usageContentWidth),
+        Math.abs(valueBox.left - labelBox.left),
+        Math.max(0, 26 - trigger.getBoundingClientRect().height),
+        Math.max(0, model.scrollWidth - model.clientWidth),
+        Math.max(0, modelBox.right - messageBox.right)
+      )
+      if (modelBox.top > valueBox.top + 2) deltas.push(Math.abs(modelBox.left - valueBox.left))
+      const spinner = slot.querySelector('.message__spinner')
+      if (spinner) {
+        const spinnerBox = spinner.getBoundingClientRect()
+        deltas.push(Math.abs(spinnerBox.left + spinnerBox.width / 2 - usageIconBox.left - usageIconBox.width / 2))
+      }
+    } else if (fallback) {
+      deltas.push(Math.abs(fallback.getBoundingClientRect().left - labelBox.left))
+      const separator = getComputedStyle(fallback, '::before').content
+      if (separator !== 'none' && separator !== 'normal' && separator !== '""') return Number.POSITIVE_INFINITY
+    } else throw new Error('Missing assistant usage or model fallback')
+    const historySummary = element.querySelector('.interaction-history > summary')
+    if (historySummary) {
+      const historyBox = historySummary.getBoundingClientRect()
+      const historyIcon = historySummary.querySelector('svg:not(.interaction-history__chevron)')
+      const historyText = historySummary.querySelector('.pending-card__summary-text')
+      if (!historyIcon || !historyText) throw new Error('Missing confirmation record icon or label')
+      deltas.push(
+        Math.abs(historyBox.top - statusBox.bottom - 4),
+        Math.max(0, 26 - historyBox.height),
+        Math.abs(historyIcon.getBoundingClientRect().left - iconBox.left),
+        Math.abs(historyText.getBoundingClientRect().left - labelBox.left)
+      )
+    }
+    return Math.max(...deltas)
+  }), { message: '用量、运行状态、确认记录应共用图标/文字轴与 4px 行间距；每行至少 26px，模型完整显示且不横向溢出（允许 1px DPR 取整）' }).toBeLessThanOrEqual(1)
 }
 async function expectRunningSweep(text: string) {
   await expectSingleRunStatusBelowFooter(text)
@@ -138,7 +317,18 @@ test.describe.serial('上下文用量环与会话压缩隔离', () => {
     await page.locator('.chat__input').fill('EXERCISE_CONTEXT_COMPRESSION'); await page.getByRole('button', { name: '发送', exact: true }).click()
     await expect.poll(() => chats.length).toBe(1); expect(chats[0]).toMatchObject({ sessionId: sessionA, model: modelA })
     await page.emulateMedia({ reducedMotion: 'no-preference' })
+    await expect(activeAssistant().locator('.message__footer > .turn-usage__model')).toHaveText(modelA)
     await expectRunningSweep('正在生成回复…')
+    // The initial model-only row must remain on the same text axis when usage first arrives.
+    const initialStatusLeft = await runStatus().locator('.message__run-status-text').evaluate(element => element.getBoundingClientRect().left)
+    // The input lacks a window, so its own model capability is the fallback.
+    frame({ usage: { modelId: modelA, promptTokens: 12000, completionTokens: 1, totalTokens: 12001, currentPromptTokens: 12000, cacheHitTokens: 9000, cacheMissTokens: 3000 } }, 3)
+    await expect(ring()).toHaveAttribute('aria-label', /12k \/ 100k/); await expect(page.locator('.turn-usage__value').last()).toHaveText('12k')
+    await expectSingleRunStatusBelowFooter('正在生成回复…')
+    expect(Math.abs(await runStatus().locator('.message__run-status-text').evaluate(element => element.getBoundingClientRect().left) - initialStatusLeft), '首个用量帧到来不能移动状态文字左边线').toBeLessThanOrEqual(1)
+    await activeAssistant().locator('.turn-usage__trigger').click()
+    await expectCacheStatistics(turnUsageDialog(), '12k', '9k', '3k', '1', '12k')
+    await page.locator('.chat__input').click()
     const originalAppearance = await page.locator('html').getAttribute('data-appearance')
     const appearances: { color: string; gradient: string }[] = []
     try {
@@ -185,6 +375,39 @@ test.describe.serial('上下文用量环与会话压缩隔离', () => {
         expect(staticPaint.animations).toBe(0)
         await expect(streamingHint()).toHaveText('正在生成回复…')
         await page.emulateMedia({ reducedMotion: 'no-preference' })
+
+        const originalSize = await app!.evaluate(({ BrowserWindow }) => {
+          const [width, height] = BrowserWindow.getAllWindows()[0].getSize()
+          return { width, height }
+        })
+        try {
+          // Resize the real Electron window; 940px is the application's supported minimum.
+          await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(940, 720))
+          await expect.poll(() => page.evaluate(() => innerWidth), { message: '应实际进入应用最小窗口宽度' }).toBeLessThanOrEqual(940)
+          await expectSingleRunStatusBelowFooter('正在生成回复…')
+          await activeAssistant().locator('.turn-usage__trigger').hover()
+          await expectSingleRunStatusBelowFooter('正在生成回复…')
+          await activeAssistant().locator('.turn-usage__trigger').click()
+          await expect(page.getByText('累计输入 Prompt', { exact: true })).toBeVisible()
+          await expectCacheStatistics(turnUsageDialog(), '12k', '9k', '3k', '1', '12k')
+          await expect(turnUsageDialog().locator('.usage-detail__row--model .usage-detail__value')).toHaveText(modelA)
+          await expectSingleRunStatusBelowFooter('正在生成回复…')
+          const cacheScreenshot = testInfo.outputPath(`cache-statistics-narrow-${appearance}.png`)
+          await turnUsageDialog().screenshot({ path: cacheScreenshot })
+          await testInfo.attach(`窄窗口缓存嵌套展示 ${appearance}`, { path: cacheScreenshot, contentType: 'image/png' })
+          await page.locator('.chat__input').click()
+          const narrowScreenshot = testInfo.outputPath(`running-status-alignment-narrow-${appearance}.png`)
+          await activeAssistant().screenshot({ path: narrowScreenshot })
+          await testInfo.attach(`窄窗口运行提示对齐 ${appearance}`, { path: narrowScreenshot, contentType: 'image/png' })
+          await ring().hover()
+          await expectContextCardReadable('12,000', '100,000', '12.0')
+          const contextScreenshot = testInfo.outputPath(`context-card-narrow-${appearance}.png`)
+          await page.locator('.ctx-card').screenshot({ path: contextScreenshot })
+          await testInfo.attach(`窄窗口上下文卡可读性 ${appearance}`, { path: contextScreenshot, contentType: 'image/png' })
+          await page.locator('.chat__input').click()
+        } finally {
+          await app!.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setSize(size.width, size.height), originalSize)
+        }
       }
       expect(appearances[0].color, '深浅主题应分别使用可读的文字颜色').not.toBe(appearances[1].color)
       expect(appearances[0].gradient, '深浅主题的扫光应跟随各自主题令牌').not.toBe(appearances[1].gradient)
@@ -195,14 +418,17 @@ test.describe.serial('上下文用量环与会话压缩隔离', () => {
         else document.documentElement.dataset.appearance = value
       }, originalAppearance)
     }
-    // The input lacks a window, so its own model capability is the fallback.
-    frame({ usage: { modelId: modelA, promptTokens: 12000, completionTokens: 1, totalTokens: 12001, currentPromptTokens: 12000 } }, 3)
-    await expect(ring()).toHaveAttribute('aria-label', /12k \/ 100k/); await expect(page.locator('.turn-usage__value').last()).toHaveText('12k')
     frame({ usage: { modelId: modelB } }, 4)
     await expect(page.locator('.turn-usage__model').last()).toHaveText(modelB)
+    await expectSingleRunStatusBelowFooter('正在生成回复…')
     await expect(ring()).toHaveAttribute('aria-label', /12k \/ 100k/)
-    frame({ usage: { modelId: modelA, promptTokens: 34000, completionTokens: 2, totalTokens: 34002, currentPromptTokens: 22000, contextWindow: 100000 } }, 5)
+    await activeAssistant().locator('.turn-usage__trigger').click()
+    await expectCacheStatistics(turnUsageDialog(), '12k', '9k', '3k', '1', '12k')
+    frame({ usage: { modelId: modelA, promptTokens: 34000, completionTokens: 2, totalTokens: 34002, currentPromptTokens: 22000, contextWindow: 100000, cacheHitTokens: 28000, cacheMissTokens: 6000 } }, 5)
     await expect(ring()).toHaveAttribute('aria-label', /22k \/ 100k/); await expect(page.locator('.turn-usage__value').last()).toHaveText('34k')
+    // Live provider cache counters must update in the open panel without changing the billing total.
+    await expectCacheStatistics(turnUsageDialog(), '34k', '28k', '6k', '2', '34k')
+    await page.locator('.chat__input').click()
     const firstCompactionAt = Date.now()
     aRun = { ...aRun!, version: 2, seq: 6, updatedAt: Date.now(), compaction: { phase: 'running', startedAt: firstCompactionAt, beforeTokens: 22000 } }
     frame({ run: aRun }, 6)
@@ -231,28 +457,53 @@ test.describe.serial('上下文用量环与会话压缩隔离', () => {
     await expectRunningSweep('正在生成回复…')
     // Repeated old sequence must not regress the UI even if its snapshot differs.
     frame({ usage: { promptTokens: 12000, totalTokens: 12001, currentPromptTokens: 12000, contextWindow: 100000 } }, 3)
-    frame({ usage: { modelId: modelA, promptTokens: 44000, completionTokens: 3, totalTokens: 44003, currentPromptTokens: 10000, contextWindow: 100000 } }, 10)
+    frame({ usage: { modelId: modelA, promptTokens: 44000, completionTokens: 3, totalTokens: 44003, currentPromptTokens: 10000, contextWindow: 100000, cacheHitTokens: 38000, cacheMissTokens: 6000 } }, 10)
     await expect(ring()).toHaveAttribute('aria-label', /10k \/ 100k/, { timeout: 10000 }); await expect(page.locator('.turn-usage__value').last()).toHaveText('44k')
-    await ring().hover(); await expect(page.locator('.ctx-card__tokens-value')).toHaveText('10,000 / 100k')
+    await ring().hover(); await expectContextCardReadable('10,000', '100,000', '10.0')
     await expect(page.locator('.ctx-card__header')).toContainText('当前上下文')
     await expect(page.locator('.ctx-card')).toContainText('模型统计或估算')
-    await expect(page.locator('.ctx-card')).toContainText('可减少')
+    await expect(page.locator('.ctx-card')).toContainText('单次请求占用')
+    await expect(page.locator('.ctx-card')).toContainText('累计计费用量')
     await expect(page.locator('.ctx-card')).toContainText('生成中')
     await page.screenshot({ path: testInfo.outputPath('context-ring-hover.png') })
     await page.locator('.chat__input').click(); await expect(page.locator('.chat__input')).toBeFocused()
     await expect(page.locator('.ctx-card')).toHaveCount(0)
-    aRun = { ...aRun!, status: 'succeeded', version: 6, seq: 11, actualModelId: modelA, updatedAt: Date.now(), finishedAt: Date.now() }
+    aRun = { ...aRun!, status: 'succeeded', version: 6, seq: 11, actualModelId: modelA, updatedAt: Date.now(), finishedAt: Date.now(), pending: [
+      { requestId: 'context-answer', kind: 'permission', toolCallId: 'context-tool', toolName: 'write_file', args: { path: 'example.txt' }, description: '确认写入例子文件', status: 'answered', output: 'approved' }
+    ] }
     aHistory = [...aHistory, { id: 'context-user', role: 'user', content: 'EXERCISE_CONTEXT_COMPRESSION', conversationId: 'context-turn', createdAt: 10 },
-      ...[12000, 22000, 10000].map((promptTokens, index) => ({ id: 'context-segment-' + index, role: 'assistant', content: index === 2 ? 'CONTEXT_LIVE_REPLY' : '', conversationId: 'context-turn', modelId: modelA, createdAt: 11 + index, usage: { promptTokens, completionTokens: 1, totalTokens: promptTokens + 1, currentPromptTokens: promptTokens, contextWindow: 100000 } }))]
+      ...[12000, 22000, 10000].map((promptTokens, index) => ({ id: 'context-segment-' + index, role: 'assistant', content: index === 2 ? 'CONTEXT_LIVE_REPLY' : '', conversationId: 'context-turn', modelId: modelA, createdAt: 11 + index, usage: { promptTokens, completionTokens: 1, totalTokens: promptTokens + 1, currentPromptTokens: promptTokens, contextWindow: 100000, cacheHitTokens: [9000, 19000, 10000][index], cacheMissTokens: [3000, 3000, 0][index] } }))]
     frame({ run: aRun }, 11); heldStream!.end('data: [DONE]\n\n')
     await expect(page.getByRole('button', { name: '停止生成', exact: true })).toHaveCount(0)
     await expect(page.locator('.message__streaming-hint')).toHaveCount(0)
     await expect(page.locator('.message__streaming-text')).toHaveCount(0)
     await expectSingleRunStatusBelowFooter('已完成')
+    const confirmation = activeAssistant().locator('.interaction-history')
+    const confirmationSummary = confirmation.locator('summary')
+    await expect(confirmationSummary).toContainText('确认记录')
+    await expect(confirmation).not.toHaveAttribute('open', '')
+    await confirmationSummary.focus(); await confirmationSummary.press('Enter')
+    await expect(confirmation).toHaveAttribute('open', '')
+    await expect(confirmation.locator('.interaction-history__result')).toHaveText('已允许这次操作')
+    await expect(confirmation.locator('.pending-card__history-question')).toContainText('确认写入例子文件')
+    await expectSingleRunStatusBelowFooter('已完成')
+    await confirmationSummary.press('Space')
+    await expect(confirmation).not.toHaveAttribute('open', '')
+    await expectSingleRunStatusBelowFooter('已完成')
+    await page.locator('.chat__input').click()
+    const completedScreenshot = testInfo.outputPath('completed-metadata-alignment.png')
+    await activeAssistant().locator('.message__meta').screenshot({ path: completedScreenshot })
+    await testInfo.attach('完成后的用量、状态与确认记录对齐', { path: completedScreenshot, contentType: 'image/png' })
     await expect(runStatus()).toHaveCSS('animation-name', 'none')
     expect(await runStatus().evaluate(element => element.getAnimations({ subtree: true }).length)).toBe(0)
     await page.reload(); await expect(ring()).toHaveAttribute('aria-label', /10k \/ 100k/); await expect(page.locator('.turn-usage__value').last()).toHaveText('44k')
-    await page.locator('.turn-usage__trigger').last().click(); await expect(page.getByText('累计输入 Prompt', { exact: true })).toBeVisible(); await page.locator('.chat__input').click()
+    await page.locator('.turn-usage__trigger').last().click(); await expect(page.getByText('累计输入 Prompt', { exact: true })).toBeVisible()
+    await expectCacheStatistics(turnUsageDialog(), '44k', '38k', '6k', '3', '44k')
+    await expectSingleRunStatusBelowFooter('已完成'); await page.locator('.chat__input').click()
+    await expect(page.locator('.usage-meter__tokens')).toHaveText('52k')
+    await page.locator('.usage-meter__trigger').click()
+    await expectCacheStatistics(sessionUsageDialog(), '52k', '44k', '8k', '5', '52k')
+    await page.locator('.chat__input').click()
     expect(errors).toEqual([])
   })
   test('用量环只展示自动压缩，鼠标和键盘操作无手动请求，切会话及重载恢复状态', async () => {
@@ -268,6 +519,18 @@ test.describe.serial('上下文用量环与会话压缩隔离', () => {
     await selectSession(sessionB); await expect(ring()).toHaveAttribute('aria-label', /16k \/ 64k/)
     await expect(ring()).toHaveAttribute('data-compaction-phase', 'idle')
     await expect(page.locator('.message--assistant')).not.toContainText('正在自动压缩上下文')
+    await page.locator('.turn-usage__trigger').last().click()
+    await expect(turnUsageDialog()).toBeVisible()
+    await expect(turnUsageDialog().locator('.usage-detail--cache')).toHaveCount(0)
+    await expect(turnUsageDialog().getByText('缓存命中', { exact: true })).toHaveCount(0)
+    await expect(turnUsageDialog().getByText('缓存未命中', { exact: true })).toHaveCount(0)
+    await expect(turnUsageDialog().locator('.usage-detail__row').filter({ has: page.getByText('累计输入 Prompt', { exact: true }) }).locator('.usage-detail__value')).toHaveText('16k')
+    await expect(turnUsageDialog().locator('.usage-popover__total-value')).toHaveText('16k')
+    await page.locator('.chat__input').click()
+    await page.locator('.usage-meter__trigger').click()
+    await expect(sessionUsageDialog()).toBeVisible()
+    await expect(sessionUsageDialog().locator('.usage-detail--cache')).toHaveCount(0)
+    await page.locator('.chat__input').click()
     const oldSessionReads = snapshots.filter(id => id === sessionA).length
     aRun = { ...aRun!, status: 'succeeded', version: 8, finishedAt: Date.now(), compaction: { phase: 'succeeded', startedAt: Date.now() - 9000, finishedAt: Date.now() - 7000, beforeTokens: 40000, afterTokens: 8000 } }
     await expect(ring()).toHaveAttribute('aria-label', /16k \/ 64k/); expect(snapshots.filter(id => id === sessionA)).toHaveLength(oldSessionReads)

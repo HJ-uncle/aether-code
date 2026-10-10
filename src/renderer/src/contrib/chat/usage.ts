@@ -30,6 +30,7 @@ export interface UsageFrame {
   builtinToolsTokens?: number
   mcpToolsTokens?: number
   toolResultsTokens?: number
+  /** 缓存是输入的复用情况，与提示词构成是不同维度，不额外计入总用量。 */
   cacheHitTokens?: number
   cacheMissTokens?: number
   /** 输出细分（属于「输出」组） */
@@ -38,12 +39,15 @@ export interface UsageFrame {
 
 export interface UsageDetailRow {
   label: string
-  /** 该字段是否属于输入组（用于染色） */
-  group: 'input' | 'output'
+  /** 输入与输出是同级主项；缓存命中属于输入下的构成明细，不单独参与加总。 */
+  group: 'input' | 'output' | 'cache'
   tokens: number
   /** 缩进的子项（输入的二级构成） */
   child?: boolean
   unknown?: boolean
+  title?: string
+  /** 小计说明，不再作为另一项消耗加入总量。 */
+  subtotal?: boolean
 }
 
 export interface UsageTotal {
@@ -119,7 +123,7 @@ export function latestContextUsage(messages: ChatMessage[]): ContextUsageSnapsho
 const DETAIL_ROWS: ReadonlyArray<{
   key: keyof UsageFrame
   label: string
-  group: 'input' | 'output'
+  group: UsageDetailRow['group']
   child?: boolean
 }> = [
   { key: 'promptTokens', label: '累计输入 Prompt', group: 'input' },
@@ -130,11 +134,61 @@ const DETAIL_ROWS: ReadonlyArray<{
   { key: 'mcpToolsTokens', label: 'MCP 工具说明', group: 'input', child: true },
   { key: 'skillTokens', label: '技能 Prompt', group: 'input', child: true },
   { key: 'ragTokens', label: '知识库 RAG', group: 'input', child: true },
-  { key: 'cacheHitTokens', label: '命中缓存', group: 'input', child: true },
-  { key: 'cacheMissTokens', label: '未命中缓存', group: 'input', child: true },
+  { key: 'cacheMissTokens', label: '缓存未命中', group: 'input', child: true },
+  { key: 'cacheHitTokens', label: '缓存命中', group: 'cache', child: true },
   { key: 'completionTokens', label: '输出 Completion', group: 'output' },
   { key: 'reasoningTokens', label: '其中推理', group: 'output', child: true }
 ]
+
+interface DisplayInputUsage {
+  hit: number
+  reportedHit: number
+  inputKnown: boolean
+  inputMissing: boolean
+  capped: boolean
+  frames: number
+}
+
+// Keep display completeness out of billing snapshots and IPC structures.
+const detailCompleteness = new WeakMap<UsageTotal, boolean>()
+
+/** A subtotal is redundant only when every contributing frame reported both billing counters. */
+export function hasCompleteUsageDetails(total: UsageTotal): boolean {
+  return detailCompleteness.get(total) === true
+}
+
+/** The breakdown keeps the provider's complete prompt total and nests cache details beneath it. */
+function usageDetails(acc: Record<string, number>, display: DisplayInputUsage): UsageDetailRow[] {
+  const { reportedHit, inputKnown, inputMissing, capped, frames } = display
+
+  return DETAIL_ROWS.map((row): UsageDetailRow => {
+    const detail: UsageDetailRow = {
+      label: row.label,
+      group: row.group,
+      child: row.child,
+      tokens: acc[row.key] ?? 0
+    }
+    if (row.key === 'promptTokens') {
+      detail.tokens = acc.promptTokens ?? 0
+      if (inputMissing && inputKnown) detail.title = '部分调用未报告输入总量；此处汇总已报告的完整输入，缺失部分未估算。'
+      else if (reportedHit > 0) detail.title = '包含缓存命中；缓存明细作为输入构成展示，不重复计入合计。'
+    } else if (row.key === 'cacheHitTokens') {
+      detail.tokens = display.hit
+      detail.title = !inputKnown ? '输入总量未报告，无法确认缓存占比。'
+        : inputMissing ? `部分调用未报告输入总量；保留已知缓存命中，无法确认全部输入的缓存占比。${capped ? ` 已报告调用的缓存命中已按各次输入上限展示（供应商累计报告 ${reportedHit.toLocaleString('en-US')} tokens）。` : ''}`
+        : capped && frames === 1 ? `供应商报告缓存命中 ${reportedHit.toLocaleString('en-US')} tokens，超过输入总量；按输入上限展示。`
+        : capped ? `部分调用的缓存命中超过其输入总量；按各次输入上限展示（供应商累计报告 ${reportedHit.toLocaleString('en-US')} tokens）。`
+        : '已复用的输入，归入累计输入 Prompt；此处作为输入构成明细展示。'
+    } else if (row.key === 'cacheMissTokens') {
+      // Some providers report cache creation here, not all uncached prompt tokens.
+      detail.title = '供应商报告的缓存未命中或缓存写入统计，不重复计入总用量。'
+    } else if (row.group === 'input' && row.child && reportedHit > 0) {
+      detail.title = '全部输入的构成（含缓存），不重复计入合计。'
+    }
+    return detail
+  }).filter(row => row.tokens > 0 || (reportedHit > 0 &&
+    (row.label === '缓存命中' || (inputKnown && row.label === '累计输入 Prompt'))))
+}
 
 /**
  * 汇总整条会话的用量。
@@ -144,6 +198,11 @@ const DETAIL_ROWS: ReadonlyArray<{
  */
 export function sumUsage(messages: ChatMessage[]): UsageTotal {
   const acc: Record<string, number> = {}
+  const display: DisplayInputUsage = {
+    hit: 0, reportedHit: 0, inputKnown: false, inputMissing: false,
+    capped: false, frames: 0
+  }
+  let completeDetails = true
   let total = 0
   let rounds = 0
   let startedAt: number | undefined
@@ -163,29 +222,43 @@ export function sumUsage(messages: ChatMessage[]): UsageTotal {
     if (!frame) continue
 
     rounds += 1
+    display.frames += 1
+    const reportedHit = Math.max(0, frame.cacheHitTokens ?? 0)
+    display.reportedHit += reportedHit
+    if (frame.promptTokens !== undefined) {
+      const input = Math.max(0, frame.promptTokens)
+      const hit = Math.min(input, reportedHit)
+      display.inputKnown = true
+      display.hit += hit
+      display.capped ||= reportedHit > input
+    } else {
+      // One invocation's known input cannot cap cache reported by a different invocation.
+      display.inputMissing = true
+      display.hit += reportedHit
+    }
+    completeDetails &&= frame.promptTokens !== undefined && frame.completionTokens !== undefined
     for (const [key, value] of Object.entries(frame)) {
       acc[key] = (acc[key] ?? 0) + (value as number)
     }
     total += frame.totalTokens ?? (frame.promptTokens ?? 0) + (frame.completionTokens ?? 0)
   }
 
-  const summary = DETAIL_ROWS.map((row) => ({
-    label: row.label,
-    group: row.group,
-    child: row.child,
-    tokens: acc[row.key] ?? 0
-  })).filter((row) => row.tokens > 0)
+  const summary = usageDetails(acc, display)
 
   const children = subagentUsage(messages)
   const detail: UsageDetailRow[] = [...summary]
   if (children.count > 0) {
-    detail.unshift({ label: '主代理自身', group: 'input', tokens: total })
+    if (!completeDetails || acc.promptTokens === undefined || acc.completionTokens === undefined ||
+      (acc.promptTokens + acc.completionTokens) !== total) {
+      detail.unshift({ label: '主代理自身', group: 'input', tokens: total, subtotal: true,
+        title: '主代理用量小计，输入明细可能未完整报告，不重复计入总用量。' })
+    }
     detail.push({ label: '子代理（已知用量）', group: 'output', tokens: children.total })
     if (children.unknown > 0) detail.push({ label: `子代理用量缺失（${children.unknown} 个）`, group: 'output', tokens: 0, unknown: true })
     if (children.finishedAt && (endedAt === undefined || children.finishedAt > endedAt)) endedAt = children.finishedAt
   }
 
-  return {
+  const result: UsageTotal = {
     total: total + children.total,
     parentTotal: total,
     subagentTotal: children.total,
@@ -197,6 +270,8 @@ export function sumUsage(messages: ChatMessage[]): UsageTotal {
     ...(startedAt !== undefined ? { startedAt } : {}),
     ...(endedAt !== undefined ? { endedAt } : {})
   }
+  detailCompleteness.set(result, rounds > 0 && completeDetails)
+  return result
 }
 
 /** Snapshots can appear in both replay and live data; count each run only once, never as context occupancy. */
@@ -271,20 +346,6 @@ export function groupIntoTurns(messages: ChatMessage[]): ChatTurn[] {
 
   // 组内逐条累计明细：明细行依赖全组求和，分组完成后才能算
   for (const turn of turns) {
-    const acc: Record<string, number> = {}
-    for (const message of turn.messages) {
-      const frame = asUsageFrame(message.usage)
-      if (!frame) continue
-      for (const [key, value] of Object.entries(frame)) {
-        acc[key] = (acc[key] ?? 0) + (value as number)
-      }
-    }
-    turn.summary = DETAIL_ROWS.map((row) => ({
-      label: row.label,
-      group: row.group,
-      child: row.child,
-      tokens: acc[row.key] ?? 0
-    })).filter((row) => row.tokens > 0)
     const total = sumUsage(turn.messages)
     turn.tokens = total.total
     turn.summary = total.summary

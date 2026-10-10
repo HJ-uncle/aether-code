@@ -57,9 +57,20 @@ const server = createServer((request, response) => {
 })
 const ring = () => page.locator('.context-ring')
 const exact = () => page.locator('.ctx-card__exact-tokens')
+const compact = () => page.locator('.ctx-card__tokens-value')
 const billed = () => page.locator('.turn-usage__value').last()
 const lifetime = () => page.locator('.usage-meter__tokens')
 async function showCard() { await ring().hover(); await expect(page.locator('.ctx-card')).toHaveCount(1) }
+function compactContextValue(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value % 1_000_000 ? 1 : 0).replace(/\.0$/, '')}M`
+  if (value >= 1_000) return `${(value / 1_000).toFixed(value % 1_000 ? 1 : 0).replace(/\.0$/, '')}k`
+  return String(value)
+}
+async function expectCardValues(used: number, limit: number) {
+  await expect(compact()).toHaveText(`${compactContextValue(used)} / ${compactContextValue(limit)}`)
+  await expect(exact()).toHaveText(`${used.toLocaleString('en-US')} / ${limit.toLocaleString('en-US')} tokens`)
+  await expect(page.locator('.ctx-card__tokens-label')).toHaveText('使用 / 上限')
+}
 
 test.beforeAll(async () => {
   await new Promise<void>(done => server.listen(0, '127.0.0.1', done))
@@ -83,24 +94,28 @@ test.afterAll(async () => {
 test('真实14,577→14,589→14,605逐值显示；确认后预估只呈现待确认状态，账单只随计费帧增长', async ({}, testInfo) => {
   await expect(ring()).toHaveAttribute('data-context-source', 'estimated'); await expect(ring()).toHaveAttribute('data-context-pending', 'true'); await showCard()
   await expect(page.getByTestId('context-request-estimate')).toHaveCount(0)
-  await expect(exact()).toHaveText('14,577 / 1,000,000 tokens'); await expect(page.locator('.ctx-card')).toContainText('输入估算')
+  await expectCardValues(14577, 1000000); await expect(page.locator('.ctx-card')).toContainText('输入估算')
   await page.locator('.chat__input').fill('EXERCISE_SLOW_PROVIDER_INPUT'); await page.getByRole('button', { name: '发送', exact: true }).click()
   await expect.poll(() => Boolean(heldStream)).toBe(true)
   // The provider response stays open. Dispatch and observed input carry no billing counters.
   frame({ usage: { usageScope: 'turn', modelId, currentPromptTokens: 42900, contextWindow: 100000, contextUsageEstimated: true } })
   await expect(ring()).toHaveAttribute('aria-label', /42.9k \/ 100k/); await expect(ring()).toHaveAttribute('data-context-pending', 'true'); await expect(lifetime()).toHaveText('1k')
-  await showCard(); await expect(exact()).toHaveText('42,900 / 100,000 tokens'); await expect(page.locator('.ctx-card')).toContainText('当前请求的输入估算')
+  await showCard(); await expectCardValues(42900, 100000); await expect(page.locator('.ctx-card')).toContainText('当前请求的输入估算')
   frame({ usage: { modelId, currentPromptTokens: 39000, contextWindow: 100000, contextUsageEstimated: false, contextUsageProvisional: false } })
-  await expect(exact()).toHaveText('39,000 / 100,000 tokens'); await expect(ring()).toHaveAttribute('data-context-source', 'reported')
+  await expectCardValues(39000, 100000); await expect(ring()).toHaveAttribute('data-context-source', 'reported')
   await expect(page.locator('.ctx-card')).toContainText('最近确认的模型请求的输入（模型统计）'); await expect(ring()).toHaveAttribute('data-context-pending', 'false'); await expect(lifetime()).toHaveText('1k')
-  const production = [[14577, 139352, '139.4k', '1.458%'], [14589, 198324, '198.3k', '1.459%'], [14605, 242434, '242.4k', '1.461%']] as const
-  for (const [currentPromptTokens, totalTokens, compactBilling, precisePercent] of production) {
+  const production = [[14577, 139352, '139.4k', '1.5%'], [14589, 198324, '198.3k', '1.5%'], [14605, 242434, '242.4k', '1.5%']] as const
+  for (const [currentPromptTokens, totalTokens, compactBilling, displayPercent] of production) {
     frame({ usage: { usageScope: 'turn', modelId, currentPromptTokens, contextWindow: 1000000, contextUsageEstimated: false,
       promptTokens: totalTokens - 1, completionTokens: 1, totalTokens } })
-    await expect(exact()).toHaveText(currentPromptTokens.toLocaleString('en-US') + ' / 1,000,000 tokens')
-    await expect(page.locator('.ctx-card__percent')).toHaveText(precisePercent); await expect(page.locator('.ctx-card__tokens-value')).toHaveText(currentPromptTokens.toLocaleString('en-US') + ' / 1M')
+    await expectCardValues(currentPromptTokens, 1000000)
+    await expect(page.locator('.ctx-card__percent')).toHaveText(displayPercent)
     await expect(billed()).toHaveText(compactBilling); await expect(ring()).toHaveAttribute('data-context-pending', 'false')
   }
+  // Keep the compact line useful at million-token windows while the exact line remains audit-friendly.
+  frame({ usage: { usageScope: 'turn', modelId, currentPromptTokens: 1_200_000, contextWindow: 2_000_000,
+    contextUsageEstimated: false, promptTokens: 250_000, completionTokens: 1, totalTokens: 250_001 } })
+  await expectCardValues(1_200_000, 2_000_000); await expect(page.locator('.ctx-card__percent')).toHaveText('60.0%')
   await page.screenshot({ path: testInfo.outputPath('real-context-precision.png') })
   const billingBefore = await billed().textContent(), lifetimeBefore = await lifetime().textContent()
   frame({ usage: { modelId, currentPromptTokens: 17100, contextWindow: 100000, contextUsageEstimated: true } })
@@ -110,17 +125,17 @@ test('真实14,577→14,589→14,605逐值显示；确认后预估只呈现待�
   await expect(page.locator('.ctx-card__source-hint')).toContainText('最新请求输入尚未确认')
   await expect(page.getByTestId('context-request-estimate')).toHaveCount(0)
   await expect(page.locator('.ctx-card')).not.toContainText('17,100')
-  await expect(exact()).toHaveText('14,605 / 1,000,000 tokens'); await expect(ring()).toHaveAttribute('data-context-source', 'reported')
+  await expectCardValues(1_200_000, 2_000_000); await expect(ring()).toHaveAttribute('data-context-source', 'reported')
   await expect(billed()).toHaveText(billingBefore!); await expect(lifetime()).toHaveText(lifetimeBefore!)
   // An explicitly reported zero remains visible and is distinct from absent usage.
   frame({ usage: { modelId, currentPromptTokens: 0, contextWindow: 100000, contextUsageEstimated: false, contextUsageProvisional: false } })
-  await expect(exact()).toHaveText('0 / 100,000 tokens'); await expect(ring()).toHaveAttribute('data-context-source', 'reported'); await expect(ring()).toHaveAttribute('data-context-pending', 'false')
+  await expectCardValues(0, 100000); await expect(ring()).toHaveAttribute('data-context-source', 'reported'); await expect(ring()).toHaveAttribute('data-context-pending', 'false')
   await expect(page.locator('.ctx-card__source-hint')).not.toContainText('最新请求输入尚未确认')
-  await expect(page.locator('.ctx-card__percent')).toHaveText('0.000%'); await expect(billed()).toHaveText(billingBefore!)
+  await expect(page.locator('.ctx-card__percent')).toHaveText('0.0%'); await expect(billed()).toHaveText(billingBefore!)
   await page.reload(); await expect.poll(() => requests.includes('GET /api/v1/chat/stream')).toBe(true)
   await expect(ring()).toHaveAttribute('aria-label', /最近一次模型请求 0 \/ 100k/); await expect(ring()).toHaveAttribute('data-context-source', 'reported'); await expect(ring()).toHaveAttribute('data-context-pending', 'false')
   await expect(billed()).toHaveText(billingBefore!); await expect(lifetime()).toHaveText(lifetimeBefore!)
-  await showCard(); await expect(exact()).toHaveText('0 / 100,000 tokens'); await expect(page.locator('.ctx-card')).toContainText('模型统计')
+  await showCard(); await expectCardValues(0, 100000); await expect(page.locator('.ctx-card')).toContainText('模型统计')
   run = { ...run!, status: 'succeeded', version: 2, updatedAt: Date.now(), finishedAt: Date.now() }; frame({ run }); heldStream!.end('data: [DONE]\n\n')
   await expect(page.getByRole('button', { name: '停止生成', exact: true })).toHaveCount(0); expect(errors).toEqual([])
 })

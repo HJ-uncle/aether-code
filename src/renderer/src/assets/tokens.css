@@ -32,10 +32,15 @@
 /* ==================== 尺寸与节奏（与主题无关，不随明暗变化） ==================== */
 
 :root {
+  /* 字体栈顺序即优先级：
+     - macOS 首选系统 San Francisco（-apple-system / BlinkMacSystemFont）；
+     - 其余平台用打包内置的 Inter Variable（度量与 SF 接近，解决 Windows 无 SF 时
+       自绘数字的宽度/基线错位）；
+     - 中文回退 PingFang / 雅黑，最后兜底 Helvetica Neue / Arial。 */
   --font-ui:
-    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei',
-    sans-serif;
-  --font-mono: 'SF Mono', 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
+    -apple-system, BlinkMacSystemFont, 'Inter Variable', system-ui, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
 
   /* 圆角分级（HIG：控件小而圆、容器大而圆） */
   --radius-sm: 4px;
@@ -94,6 +99,18 @@
 
   --activity-bar-w: 54px;
   --status-bar-h: 28px;
+
+  /* 自绘滚动数字（.ctx-number）的基线校准值。
+     数字被逐位塞进定宽定高的字格再整体平移，inline-flex 盒子的基线是「盒子底边」，
+     需靠 vertical-align 把数字基线拉回文字基线；该偏移量随字体基线/行高变化，故按平台取值：
+       - 默认（Windows/Linux）：走内置 Inter，实测 +0.025em（13/14/18px 下最坏误差 0.16px）；
+       - macOS：走系统 SF，沿用原有 -0.08em。
+     html 上的 data-platform 由 main.tsx 在渲染前写入。 */
+  --ctx-baseline: 0.025em;
+}
+
+[data-platform='darwin'] {
+  --ctx-baseline: -0.08em;
 }
 
 /* ==================== 深色外观（默认） ==================== */
@@ -154,6 +171,8 @@
      单独给一个提亮版本，避免每个组件各自 rgba() 调 */
   --danger-fg: #f19c9c;
   --ok-fg: #7ee08b;
+  /* 缓存复用使用柔和绿色，与输出的鲜绿色区分。 */
+  --usage-cache: #86caa3;
   /* 语义色的低饱和大面积底：错误提示条、失败徽章等 */
   --danger-soft: rgba(241, 76, 76, 0.14);
   --ok-soft: rgba(50, 215, 75, 0.14);
@@ -269,6 +288,7 @@
   --ok: #1a7f37;
   --danger-fg: #b3261e;
   --ok-fg: #1a7f37;
+  --usage-cache: #4f8967;
   /* 浅色下软底的透明度要更低：同样的 alpha 在亮底上会显得脏 */
   --danger-soft: rgba(215, 0, 21, 0.08);
   --ok-soft: rgba(26, 127, 55, 0.1);

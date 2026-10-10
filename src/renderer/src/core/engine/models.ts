@@ -13,6 +13,14 @@
 import { request } from './client'
 import { assertEngineSource, getEngineSource, getExpectedEngine } from './source'
 
+/**
+ * Newly initialized models start with a predictable 200K context budget.
+ * Provider-reported capabilities still take precedence once a model has been
+ * saved and the engine has resolved its actual window.
+ */
+export const DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
+export const DEFAULT_CONTEXT_WINDOW_K = '200'
+
 export interface ModelCapabilities {
   vision?: boolean
   video?: boolean

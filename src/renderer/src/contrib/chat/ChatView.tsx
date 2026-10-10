@@ -22,6 +22,7 @@ import { useCollapseMemory } from './useCollapseMemory'
 import { registerPendingSession, requestSessionListRefresh, touchPendingSession } from '../history/pending-sessions'
 import { openFileFromChat } from './open-file'
 import { useModels } from '@renderer/core/engine/model-store'
+import { DEFAULT_CONTEXT_WINDOW_TOKENS } from '@renderer/core/engine/models'
 import { contextPresentation, contextPresentationLimit } from './context-presentation'
 import { changeSecurityMode } from '@renderer/core/engine/security-store'
 import { useMemoryScope } from '@renderer/core/engine/memory-store'
@@ -56,8 +57,8 @@ import { knowledgeBindingKey, saveKnowledgeBinding } from '@renderer/core/engine
 import { ResourcePicker, type ResourceItem } from './ResourcePicker'
 import './apple-chat-panels.css'
 
-/** Older engines/models can omit the window; use 128K only when no authoritative value exists. */
-const CONTEXT_WINDOW_FALLBACK = 128_000
+/** Older engines/models can omit the window; use the model initialization default. */
+const CONTEXT_WINDOW_FALLBACK = DEFAULT_CONTEXT_WINDOW_TOKENS
 
 /** 消息窗口分页：只渲染尾部约 300 条消息（按轮次对齐切割），滚顶自动加载更早的 */
 const MESSAGE_PAGE_SIZE = 300
@@ -1856,7 +1857,7 @@ function ContextRingCard({
   streaming: boolean
 }): JSX.Element {
   const cardRef = useRef<HTMLDivElement>(null)
-  const precisePercent = (Math.round(Math.min(used, limit) * 100_000 / limit) / 1000).toFixed(3)
+  const percent = (Math.min(used, limit) * 100 / limit).toFixed(1)
 
   const reducedMotion = useReducedContextMotion()
   const positionCard = (): void => {
@@ -1915,19 +1916,19 @@ function ContextRingCard({
         <span>当前上下文</span>
         <span className="ctx-card__percent">
           {compactionPhase === 'running' ? '压缩中…' : usageKnown ? <>
-            <RollingContextNumber value={Number(precisePercent)} formatted={precisePercent} reduced={reducedMotion} testId="context-percent-number" />
+            <RollingContextNumber value={Number(percent)} formatted={percent} reduced={reducedMotion} testId="context-percent-number" />
             <span className="ctx-card__percent-sign">%</span>
           </> : '—'}
         </span>
       </div>
       <div className="ctx-card__tokens">
         <span className="ctx-card__tokens-value">
-          {usageKnown ? <RollingContextNumber value={used} formatted={used.toLocaleString('en-US')} reduced={reducedMotion} testId="context-used-number" /> : '—'} / {formatTokens(limit)}
+          {usageKnown ? <RollingContextNumber value={used} formatted={formatTokens(used)} reduced={reducedMotion} testId="context-used-compact-number" /> : '尚未确认'} / {formatTokens(limit)}
         </span>
         <span className="ctx-card__tokens-label">使用 / 上限</span>
       </div>
-      <div className="ctx-card__hint ctx-card__exact-tokens">
-        {usageKnown ? used.toLocaleString('en-US') : '尚未确认'} / {limit.toLocaleString('en-US')} tokens
+      <div className="ctx-card__exact-tokens">
+        {usageKnown ? <RollingContextNumber value={used} formatted={used.toLocaleString('en-US')} reduced={reducedMotion} testId="context-used-number" /> : '尚未确认'} / {limit.toLocaleString('en-US')} tokens
       </div>
       {compactionPhase === 'running' ? (
         <div className="ctx-card__bar ctx-card__bar--compacting" role="progressbar" aria-label="自动压缩上下文" aria-valuetext="正在自动压缩" data-reduced-motion={reducedMotion} />
@@ -1935,20 +1936,20 @@ function ContextRingCard({
       <div className="ctx-card__hint ctx-card__source-hint">
         {provisional === true ? '当前模型请求' : estimated === false ? '最近确认的模型请求' : streaming ? '当前请求' : '最近一次模型请求'}的输入
         {provisional === true
-          ? '（模型初步统计）；等待最终确认。上方累计按已记录的调用用量更新。'
+          ? '（模型初步统计）；等待最终确认。'
           : estimated === true
-          ? '估算（本地预估）；不计入上方累计，收到模型最终统计后更新。'
+          ? '估算（本地预估）；等待模型确认。'
           : estimated === false
             ? requestEstimate !== undefined
-              ? '（模型统计）；最新请求输入尚未确认，确认后更新。'
-              : '（模型统计）；上方累计汇总本轮各次调用的输入与输出。'
+              ? '（模型统计）；最新请求输入尚未确认。'
+              : '（模型统计）。'
             : '（模型统计或估算）。'}
-        <div>压缩或清理工具结果后可减少占用。</div>
       </div>
       <div className="ctx-card__hint ctx-card__status-hint" role="status">
         {status ? <span className={compactionPhase === 'failed' ? 'ctx-card__error' : undefined}>{status}</span>
           : streaming ? '生成中；引擎会在需要时自动压缩上下文。' : '引擎会在需要时自动压缩上下文。'}
       </div>
+      <div className="ctx-card__hint ctx-card__billing-hint">此处是单次请求占用，不等于累计计费用量。</div>
     </div>,
     document.body
   )
@@ -2253,48 +2254,50 @@ const MessageItem = memo(function MessageItem({
 
       <MessageTimeline message={message} sessionId={sessionId} streaming={streaming} />
 
-      {/* 该轮累计用量常显；操作图标随悬停出现，两者同行（用量在左） */}
-      <div className="message__footer">
-        {usage ? (
-          <TurnUsage
-            tokens={usage.tokens}
-            summary={usage.summary}
-            askedAt={usage.askedAt}
-            startedAt={usage.startedAt}
-            endedAt={usage.endedAt}
-            model={usage.model}
-            streaming={usage.streaming}
-          />
-        ) : message.modelId ? <span className="turn-usage__model">{message.modelId}</span> : null}
-        {actions}
-      </div>
+      <div className="message__meta">
+        {/* 该轮累计用量常显；操作图标随悬停出现，两者同行（用量在左） */}
+        <div className="message__footer">
+          {usage ? (
+            <TurnUsage
+              tokens={usage.tokens}
+              summary={usage.summary}
+              askedAt={usage.askedAt}
+              startedAt={usage.startedAt}
+              endedAt={usage.endedAt}
+              model={usage.model}
+              streaming={usage.streaming}
+            />
+          ) : message.modelId ? <span className="turn-usage__model">{message.modelId}</span> : null}
+          {actions}
+        </div>
 
-      <MessageRunStatus message={message} />
-      {(() => {
-        const interactions = message.interactions ?? (message.pending ? [message.pending] : [])
-        // 只有仍处于 waiting 的请求才是可操作的待办。已回答项以及终态运行
-        // 中遗留的 pending 记录属于审计历史，折叠展示，避免对话区不断堆积
-        // 已完成的警示卡片，也避免让用户误以为它们仍在等待选择。
-        // 无 durable requestId 的旧交互无法走当前应答协议，不能显示永久禁用
-        // 的操作按钮。保留为历史记录，等待新的运行快照提供可应答请求。
-        const active = interactions.filter(item => item.status === 'pending' &&
-          Boolean(item.requestId) && item.runId === message.run?.runId && message.run?.status === 'waiting')
-        const history = interactions.filter(item => !active.includes(item))
-        return (
-          <>
-            {history.length > 0 ? <InteractionHistory interactions={history} /> : null}
-            {active.map((pending) => (
-              <PendingCard
-                key={pending.requestId ?? pending.toolCallId}
-                pending={pending}
-                disabled={disabled || !pending.requestId || message.run?.status !== 'waiting'}
-                onAllowAll={onAllowAll}
-                onRespond={(values) => { if (pending.requestId) onRespond(pending.requestId, values) }}
-              />
-            ))}
-          </>
-        )
-      })()}
+        <MessageRunStatus message={message} />
+        {(() => {
+          const interactions = message.interactions ?? (message.pending ? [message.pending] : [])
+          // 只有仍处于 waiting 的请求才是可操作的待办。已回答项以及终态运行
+          // 中遗留的 pending 记录属于审计历史，折叠展示，避免对话区不断堆积
+          // 已完成的警示卡片，也避免让用户误以为它们仍在等待选择。
+          // 无 durable requestId 的旧交互无法走当前应答协议，不能显示永久禁用
+          // 的操作按钮。保留为历史记录，等待新的运行快照提供可应答请求。
+          const active = interactions.filter(item => item.status === 'pending' &&
+            Boolean(item.requestId) && item.runId === message.run?.runId && message.run?.status === 'waiting')
+          const history = interactions.filter(item => !active.includes(item))
+          return (
+            <>
+              {history.length > 0 ? <InteractionHistory interactions={history} /> : null}
+              {active.map((pending) => (
+                <PendingCard
+                  key={pending.requestId ?? pending.toolCallId}
+                  pending={pending}
+                  disabled={disabled || !pending.requestId || message.run?.status !== 'waiting'}
+                  onAllowAll={onAllowAll}
+                  onRespond={(values) => { if (pending.requestId) onRespond(pending.requestId, values) }}
+                />
+              ))}
+            </>
+          )
+        })()}
+      </div>
 
       {message.error ? <div className="message__error">{message.error}</div> : null}
     </article>
@@ -2391,12 +2394,11 @@ function MessageRunStatus({ message }: { message: ChatMessage }): JSX.Element | 
       aria-live="polite"
       aria-label="运行状态"
     >
-      {active ? (
-        <>
-          <span className="message__spinner" aria-hidden="true" />
-          <span className="message__streaming-text">{text}</span>
-        </>
-      ) : text}
+      {/* Reserve the same icon column in every state, so completion never shifts the label. */}
+      <span className="message__run-status-icon" aria-hidden="true">
+        {active ? <span className="message__spinner" /> : null}
+      </span>
+      <span className={`message__run-status-text${active ? ' message__streaming-text' : ''}`}>{text}</span>
     </div>
   )
 }
@@ -2509,7 +2511,7 @@ function MessageTimeline({
             </div>
           ) : (
             <div key={`c-${index}`} className="message__content">
-              <Markdown text={segment.text} fileContext={{ sessionId: message.run?.sessionId ?? sessionId,
+              <Markdown text={segment.text} streaming={streaming} fileContext={{ sessionId: message.run?.sessionId ?? sessionId,
                 workspaceRoot: message.run?.workspacePaths?.[0] ?? getSessionMeta(message.run?.sessionId ?? sessionId).workspacePath }} />
             </div>
           )
@@ -2799,6 +2801,23 @@ function CompactToolRow({ tool }: { tool: ToolActivity }): JSX.Element {
  * 外观与顶部会话用量一致，那它就也得能点开 —— 长得一样却有的能点有的不能点，
  * 比不能点本身更让人困惑。明细由调用方传入本轮的汇总行。
  */
+function UsageBreakdown({ summary }: { summary: UsageDetailRow[] }): JSX.Element {
+  return (
+    <div className="usage-detail">
+      {summary.map(row => (
+        <div key={row.label} title={row.title}
+          className={`usage-detail__row${row.child ? ' usage-detail__row--child' : ''}${row.group === 'cache' ? ' usage-detail__row--cache' : ''}${row.subtotal ? ' usage-detail__row--subtotal' : ''}`}>
+          {row.subtotal ? null : <span className={`usage-detail__bar usage-detail__bar--${row.group}`} />}
+          <span className="usage-detail__label">{row.label}</span>
+          <span className="usage-detail__value" title={row.unknown ? undefined : `${row.tokens.toLocaleString('en-US')} tokens${row.title ? `；${row.title}` : ''}`}>
+            {row.unknown ? '未知' : formatTokens(row.tokens)}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function TurnUsage({
   tokens,
   summary,
@@ -2848,10 +2867,12 @@ function TurnUsage({
           title="查看本次问答的时间、耗时与 Token 明细"
         >
           <Icon name="model" size={16} />
-          <span className="turn-usage__value">{formatTokens(tokens)}</span>
-          <span className="turn-usage__unit">tokens{summary.some((row) => row.unknown) ? '（已知）' : ''}</span>
-          {duration ? <span className="turn-usage__time">{duration}</span> : null}
-          {model ? <span className="turn-usage__model">{model}</span> : null}
+          <span className="turn-usage__text">
+            <span className="turn-usage__value">{formatTokens(tokens)}</span>
+            <span className="turn-usage__unit">tokens{summary.some((row) => row.unknown) ? '（已知）' : ''}</span>
+            {duration ? <span className="turn-usage__time">{duration}</span> : null}
+            {model ? <span className="turn-usage__model">{model}</span> : null}
+          </span>
         </button>
       )}
     >
@@ -2860,13 +2881,13 @@ function TurnUsage({
         {stamp ? <span className="usage-popover__meta">{stamp}</span> : null}
       </div>
       <div className="usage-popover__total">
-        <span className="usage-popover__total-value">{formatTokens(tokens)}</span>
+        <span className="usage-popover__total-value" title={`${tokens.toLocaleString('en-US')} tokens`}>{formatTokens(tokens)}</span>
         <span className="usage-popover__total-unit">tokens{summary.some((row) => row.unknown) ? '（已知部分）' : ''}</span>
         {duration ? <span className="usage-popover__meta">耗时 {duration}</span> : null}
       </div>
       {model ? (
         <div className="usage-detail usage-detail--meta">
-          <div className="usage-detail__row">
+          <div className="usage-detail__row usage-detail__row--model">
             <Icon name="model" size={16} className="usage-detail__icon" />
             <span className="usage-detail__label">模型</span>
             <span className="usage-detail__value">{model}</span>
@@ -2887,18 +2908,7 @@ function TurnUsage({
           ) : null}
         </div>
       ) : null}
-      <div className="usage-detail">
-        {summary.map((row) => (
-          <div
-            key={row.label}
-            className={`usage-detail__row${row.child ? ' usage-detail__row--child' : ''}`}
-          >
-            <span className={`usage-detail__bar usage-detail__bar--${row.group}`} />
-            <span className="usage-detail__label">{row.label}</span>
-            <span className="usage-detail__value">{row.unknown ? '未知' : formatTokens(row.tokens)}</span>
-          </div>
-        ))}
-      </div>
+      <UsageBreakdown summary={summary} />
     </Popover>
   )
 }
@@ -2963,21 +2973,10 @@ function UsageMeter({
         </span>
       </div>
       <div className="usage-popover__total">
-        <span className="usage-popover__total-value">{formatTokens(total)}</span>
+        <span className="usage-popover__total-value" title={`${total.toLocaleString('en-US')} tokens`}>{formatTokens(total)}</span>
         <span className="usage-popover__total-unit">tokens{summary.some((row) => row.unknown) ? '（已知部分）' : ''}</span>
       </div>
-      <div className="usage-detail">
-        {summary.map((row) => (
-          <div
-            key={row.label}
-            className={`usage-detail__row${row.child ? ' usage-detail__row--child' : ''}`}
-          >
-            <span className={`usage-detail__bar usage-detail__bar--${row.group}`} />
-            <span className="usage-detail__label">{row.label}</span>
-            <span className="usage-detail__value">{row.unknown ? '未知' : formatTokens(row.tokens)}</span>
-          </div>
-        ))}
-      </div>
+      <UsageBreakdown summary={summary} />
     </Popover>
   )
 }

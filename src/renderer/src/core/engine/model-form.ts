@@ -4,6 +4,9 @@ import type {
   CapabilityOverridePatch,
   UpdateModelInput
 } from './models'
+import { DEFAULT_CONTEXT_WINDOW_K } from './models'
+
+export { DEFAULT_CONTEXT_WINDOW_K, DEFAULT_CONTEXT_WINDOW_TOKENS } from './models'
 
 export interface ModelFormState {
   provider: string
@@ -50,9 +53,13 @@ export function initialModelForm(model?: EngineModel): ModelFormState {
     apiKey: '',
     vision: choice(model?.capabilityOverrides?.vision),
     thinking: choice(model?.capabilityOverrides?.thinking),
-    contextWindow: model?.capabilityOverrides?.contextWindow
-      ? contextWindowText(model.capabilityOverrides.contextWindow)
-      : ''
+    // New models get an explicit, stable 200K budget. Existing models retain
+    // their manual override (or an empty field so the engine can resolve it).
+    contextWindow: model
+      ? model.capabilityOverrides?.contextWindow
+        ? contextWindowText(model.capabilityOverrides.contextWindow)
+        : ''
+      : DEFAULT_CONTEXT_WINDOW_K
   }
 }
 

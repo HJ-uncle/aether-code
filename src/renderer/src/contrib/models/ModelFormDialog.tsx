@@ -332,12 +332,16 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
         </SettingsRow>
         <SettingsRow
           label="上下文窗口"
-          description="单位 K（1K = 1000 token），可保留三位小数；留空则跟随引擎识别结果"
+          description={
+            isEdit
+              ? '单位 K（1K = 1000 token），可保留三位小数；留空则跟随引擎识别结果'
+              : '新模型默认 200K（200,000 token），可按需调整；单位 K，最多三位小数'
+          }
         >
           <input
             className="field__input sg__input sg__input--wide"
             value={form.contextWindow}
-            placeholder="如 128"
+            placeholder={isEdit ? '如 128' : '200'}
             inputMode="decimal"
             onChange={(event) => patch({ contextWindow: event.target.value })}
             onKeyDown={submitOnEnter}

@@ -294,7 +294,7 @@ test.describe.serial('上下文 tooltip 连续动效与生命周期', () => {
       expect(Math.abs(result.frames[first].fillWidth - result.frames[first - 1].fillWidth)).toBeLessThanOrEqual(2)
     }
     await expect(number()).toHaveAttribute('aria-label', '47,001')
-    await expect(page.getByTestId('context-percent-number')).toHaveAttribute('data-value', '47.001')
+    await expect(page.getByTestId('context-percent-number')).toHaveAttribute('data-value', '47')
     await expect(billed()).toHaveText('42.1k'); await expect(lifetime()).toHaveText('43.1k')
     await page.locator('.chat__input').click(); await expect(page.locator('.chat__input')).toBeFocused(); await expect(card()).toHaveCount(0)
     expect(errors).toEqual([])
@@ -330,7 +330,7 @@ test.describe.serial('上下文 tooltip 连续动效与生命周期', () => {
     input(14577, 1000000)
     await expect(page.locator('.context-ring')).toHaveAttribute('aria-label', /14,577 \/ 1,000,000 tokens/)
     await startProbe(); await showCard(); await settled(14577, 1000000)
-    await expect(page.getByTestId('context-percent-number')).toHaveAttribute('data-value', '1.458')
+    await expect(page.getByTestId('context-percent-number')).toHaveAttribute('data-value', '1.5')
     const colors: string[] = []
     for (const appearance of ['light', 'dark'] as const) {
       // Exercise useTheme's live system preference listener while hover remains on the same DOM node.

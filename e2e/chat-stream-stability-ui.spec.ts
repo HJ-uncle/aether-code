@@ -1,6 +1,7 @@
 /** Real Electron + authenticated held remote SSE: painted streaming frames stay at
  * the bottom, sealed Markdown nodes survive appends, user history reading is not
- * pulled away, and late image layout is followed without another engine frame. */
+ * pulled away, late image layout is followed without another engine frame, and
+ * new streamed text fades without replaying old text or accumulating wrappers. */
 import { _electron as electron, expect, test, type ElectronApplication, type Page, type TestInfo } from '@playwright/test'
 import { createServer, type ServerResponse } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -61,9 +62,16 @@ const server = createServer((request, response) => {
   })().catch(error => { errors.push(String(error)); if (!response.headersSent) response.writeHead(500); response.end(String(error)) })
 })
 
-type Sample = { time: number; top: number; height: number; gap: number; statusTop: number; statusBottom: number; anchorTop: number; anchorConnected: boolean; width: number }
-type Probe = { samples: Sample[]; frame: number; observer: MutationObserver; removed: number; stop: () => void }
+type Sample = { time: number; phase: 'animation-frame' | 'resize'; top: number; height: number; gap: number; statusTop: number; statusBottom: number; anchorTop: number; anchorConnected: boolean; width: number }
+type Probe = { samples: Sample[]; frame: number; observer: MutationObserver; resizeObserver: ResizeObserver; removed: number; stop: () => void }
 type ProbeWindow = Window & { __streamStabilityProbe?: Probe }
+type FadeEvent = { kind: 'start' | 'end'; time: number; text: string; opacity: number; duration: string; appearance: string; protected: string[] }
+type FadeSample = { text: string; opacity: number; animation: string; appearance: string }
+type GraphemeSample = { time: number; cluster: string; parts: { text: string; animated: boolean }[] }
+type FadeProbe = { events: FadeEvent[]; samples: FadeSample[]; protectedSamples: { marker: string; opacity: number }[];
+  protectedMarkers: string[]; graphemeClusters: string[]; graphemeSamples: GraphemeSample[];
+  observer: MutationObserver; frame: number; stop: () => void }
+type FadeWindow = Window & { __streamFadeProbe?: FadeProbe; __historyFadeStarts?: string[] }
 const assistant = () => page.locator('.message--assistant').last()
 const region = () => page.locator('.chat__messages')
 async function bottomGap(): Promise<number> {
@@ -101,22 +109,39 @@ async function startProbe(anchorText = sealedText): Promise<void> {
     const status = message?.querySelector('[role="status"][aria-label="运行状态"]')
     if (!status) throw new Error('Missing running status')
     const probe: Probe = { samples: [], frame: 0, removed: 0, observer: new MutationObserver(records => {
-      for (const record of records) for (const removed of record.removedNodes) {
-        if (removed === anchor || removed.contains(anchor)) probe.removed += 1
+      for (const record of records) {
+        for (const removed of record.removedNodes) {
+          if (removed === anchor || removed.contains(anchor)) probe.removed += 1
+          if (record.target === scroll && removed instanceof Element) probe.resizeObserver.unobserve(removed)
+        }
+        if (record.target === scroll) for (const added of record.addedNodes) {
+          if (added instanceof Element) probe.resizeObserver.observe(added)
+        }
       }
-    }), stop: () => { cancelAnimationFrame(probe.frame); probe.observer.disconnect() } }
+    }), resizeObserver: new ResizeObserver(() => record(performance.now(), 'resize')),
+    stop: () => { cancelAnimationFrame(probe.frame); probe.observer.disconnect(); probe.resizeObserver.disconnect() } }
     probe.observer.observe(scroll, { childList: true, subtree: true })
-    const sample = (time: number): void => {
+    const record = (time: number, phase: Sample['phase']): void => {
       const box = status.getBoundingClientRect()
-      probe.samples.push({ time, top: scroll.scrollTop, height: scroll.scrollHeight,
+      probe.samples.push({ time, phase, top: scroll.scrollTop, height: scroll.scrollHeight,
         gap: scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight,
         statusTop: box.top, statusBottom: box.bottom, anchorTop: anchor.getBoundingClientRect().top,
         anchorConnected: anchor.isConnected, width: scroll.clientWidth })
+    }
+    const sample = (time: number): void => {
+      record(time, 'animation-frame')
       probe.frame = requestAnimationFrame(sample)
     }
+    // A rendering cycle delivers rAF, then layout/ResizeObserver, then paint.
+    // Image decode can therefore expose its new height to rAF before the app's
+    // observer pins it in that same cycle. This later-created observer records
+    // the layout phase after the app's observer, retaining the raw rAF samples.
+    // Without the app's observer, resize samples still expose the persistent gap.
+    probe.resizeObserver.observe(scroll)
+    for (const child of scroll.children) probe.resizeObserver.observe(child)
     target.__streamStabilityProbe = probe; probe.frame = requestAnimationFrame(sample)
   }, anchorText)
-  await expect.poll(() => page.evaluate(() => (window as ProbeWindow).__streamStabilityProbe?.samples.length ?? 0),
+  await expect.poll(() => page.evaluate(() => (window as ProbeWindow).__streamStabilityProbe?.samples.filter(sample => sample.phase === 'animation-frame').length ?? 0),
     { message: '布局变化前先采集正常绘制帧，确保诊断不会是空集合' }).toBeGreaterThanOrEqual(2)
 }
 async function stopProbe(testInfo: TestInfo, name: string): Promise<{ samples: Sample[]; removed: number }> {
@@ -126,8 +151,12 @@ async function stopProbe(testInfo: TestInfo, name: string): Promise<{ samples: S
     probe.stop(); delete target.__streamStabilityProbe; return { samples: probe.samples, removed: probe.removed }
   })
   const range = (values: number[]) => Math.max(...values) - Math.min(...values)
-  const summary = { frames: data.samples.length, removed: data.removed,
+  const animationFrames = data.samples.filter(sample => sample.phase === 'animation-frame')
+  const resizeFrames = data.samples.filter(sample => sample.phase === 'resize')
+  const summary = { frames: animationFrames.length, resizeSamples: resizeFrames.length, removed: data.removed,
     maxBottomGap: Math.max(...data.samples.map(sample => sample.gap)),
+    maxAnimationFrameBottomGap: Math.max(...animationFrames.map(sample => sample.gap)),
+    maxResizeBottomGap: resizeFrames.length ? Math.max(...resizeFrames.map(sample => sample.gap)) : null,
     statusBottomRange: range(data.samples.map(sample => sample.statusBottom)),
     anchorTopRange: range(data.samples.map(sample => sample.anchorTop)),
     scrollTopRange: range(data.samples.map(sample => sample.top)),
@@ -140,7 +169,8 @@ async function stopProbe(testInfo: TestInfo, name: string): Promise<{ samples: S
 async function append(content: string, marker: string): Promise<void> {
   frame({ content }); await expect(assistant()).toContainText(marker)
 }
-function expectFollowing(samples: Sample[]): void {
+function expectFollowing(allSamples: Sample[]): void {
+  const samples = allSamples.filter(sample => sample.phase === 'animation-frame')
   expect(samples.length, '必须覆盖多个实际绘制帧，而不是只检查最终状态').toBeGreaterThan(15)
   expect(Math.max(...samples.map(sample => sample.gap)), '持续流式输出的任何绘制帧都不能留下底部空隙').toBeLessThanOrEqual(2)
   const bottoms = samples.map(sample => sample.statusBottom)
@@ -163,6 +193,134 @@ async function releaseImage(alt: string): Promise<void> {
   const image = assistant().getByAltText(alt, { exact: true })
   await image.evaluate((element, source) => { (element as HTMLImageElement).src = source }, decodedImage)
   await expect.poll(() => image.evaluate(element => (element as HTMLImageElement).naturalHeight)).toBe(360)
+}
+
+async function startFadeProbe(protectedMarkers: string[]): Promise<void> {
+  await page.evaluate(protectedMarkers => {
+    const target = window as FadeWindow; target.__streamFadeProbe?.stop()
+    const scroll = document.querySelector('.chat__messages')
+    if (!scroll) throw new Error('Missing streaming fade region')
+    const onAnimation = (event: Event): void => {
+      const element = event.target
+      if (!(element instanceof Element) || !element.classList.contains('md-stream-chunk')) return
+      const style = getComputedStyle(element)
+      const text = element.textContent ?? ''
+      probe.events.push({ kind: event.type === 'animationstart' ? 'start' : 'end', time: performance.now(), text,
+        opacity: Number(style.opacity), duration: style.animationDuration, appearance: document.documentElement.dataset.appearance ?? '',
+        protected: probe.protectedMarkers.filter(marker => text.includes(marker)) })
+    }
+    const probe: FadeProbe = { events: [], samples: [], protectedSamples: [], protectedMarkers,
+      graphemeClusters: [], graphemeSamples: [], observer: new MutationObserver(() => {
+        const messages = scroll.querySelectorAll('.message--assistant'), current = messages[messages.length - 1]
+        if (!current || !probe.graphemeClusters.length) return
+        const textNodes: { node: Node; start: number; end: number }[] = []
+        const walker = document.createTreeWalker(current, NodeFilter.SHOW_TEXT)
+        let text = ''
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const start = text.length; text += node.textContent ?? ''; textNodes.push({ node, start, end: text.length })
+        }
+        for (const cluster of probe.graphemeClusters) {
+          const start = text.indexOf(cluster); if (start < 0) continue
+          const end = start + cluster.length
+          const parts = textNodes.filter(part => part.start < end && part.end > start).map(part => ({
+            text: (part.node.textContent ?? '').slice(Math.max(0, start - part.start), Math.min(end, part.end) - part.start),
+            animated: !!part.node.parentElement?.closest('.md-stream-chunk')
+          }))
+          probe.graphemeSamples.push({ time: performance.now(), cluster, parts })
+        }
+      }), frame: 0,
+      stop: () => { cancelAnimationFrame(probe.frame); probe.observer.disconnect(); scroll.removeEventListener('animationstart', onAnimation, true); scroll.removeEventListener('animationend', onAnimation, true) } }
+    // Collect from animation events and every actual browser frame. Polling an
+    // element after IPC/locator waits can miss the entire 250ms transition.
+    const sample = (): void => {
+      for (const element of scroll.querySelectorAll('.md-stream-chunk')) {
+        const style = getComputedStyle(element)
+        probe.samples.push({ text: element.textContent ?? '', opacity: Number(style.opacity),
+          animation: style.animationName, appearance: document.documentElement.dataset.appearance ?? '' })
+      }
+      const nodes = document.createTreeWalker(scroll, NodeFilter.SHOW_TEXT)
+      for (let node = nodes.nextNode(); node; node = nodes.nextNode()) {
+        if (!node.parentElement?.closest('.md')) continue
+        for (const marker of probe.protectedMarkers) {
+          if (!node.textContent?.includes(marker)) continue
+          let opacity = 1
+          for (let element: Element | null = node.parentElement; element && element !== scroll; element = element.parentElement) opacity *= Number(getComputedStyle(element).opacity)
+          probe.protectedSamples.push({ marker, opacity })
+        }
+      }
+      probe.frame = requestAnimationFrame(sample)
+    }
+    scroll.addEventListener('animationstart', onAnimation, true); scroll.addEventListener('animationend', onAnimation, true)
+    probe.observer.observe(scroll, { childList: true, characterData: true, subtree: true })
+    target.__streamFadeProbe = probe; probe.frame = requestAnimationFrame(sample)
+  }, protectedMarkers)
+}
+async function protectFadeText(marker: string): Promise<void> {
+  await page.evaluate(marker => {
+    const probe = (window as FadeWindow).__streamFadeProbe
+    if (!probe) throw new Error('Missing streaming fade probe')
+    probe.protectedMarkers.push(marker)
+  }, marker)
+}
+async function expectFade(marker: string, appearance: 'light' | 'dark'): Promise<void> {
+  await expect.poll(() => page.evaluate(({ marker, appearance }) => {
+    const probe = (window as FadeWindow).__streamFadeProbe
+    return probe?.events.some(event => event.kind === 'start' && event.text.includes(marker) && event.appearance === appearance) ?? false
+  }, { marker, appearance }), { message: '真实 animationstart 必须覆盖新流式文本' }).toBe(true)
+  await expect.poll(() => page.evaluate(({ marker, appearance }) => {
+    const probe = (window as FadeWindow).__streamFadeProbe
+    return probe?.samples.some(sample => sample.text.includes(marker) && sample.appearance === appearance && sample.opacity > 0 && sample.opacity < 0.98) ?? false
+  }, { marker, appearance }), { message: '新增文字必须实际经过中间透明度，不能只检查动画名称' }).toBe(true)
+  await expect(assistant().locator('.md-stream-chunk'), '动画完成后临时片段必须回收').toHaveCount(0)
+}
+async function expectOldTextStayedVisible(markers: string[]): Promise<void> {
+  const data = await page.evaluate(() => {
+    const probe = (window as FadeWindow).__streamFadeProbe
+    if (!probe) throw new Error('Missing streaming fade probe')
+    return { events: probe.events, protectedSamples: probe.protectedSamples }
+  })
+  for (const marker of markers) {
+    const samples = data.protectedSamples.filter(sample => sample.marker === marker)
+    expect(samples.length, `必须采集旧文字 ${marker} 的真实绘制帧`).toBeGreaterThan(0)
+    expect(Math.min(...samples.map(sample => sample.opacity)), `旧文字 ${marker} 不能重新变透明`).toBe(1)
+    expect(data.events.filter(event => event.kind === 'start' && event.protected.includes(marker)), `旧文字 ${marker} 不能重播淡入`).toEqual([])
+  }
+}
+async function appendSplitGrapheme(first: string, continuation: string, cluster: string, marker: string): Promise<void> {
+  await page.evaluate(cluster => {
+    const probe = (window as FadeWindow).__streamFadeProbe
+    if (!probe) throw new Error('Missing streaming fade probe')
+    probe.graphemeClusters.push(cluster)
+  }, cluster)
+  frame({ content: ` ${marker}:${first}` })
+  // Wait for the live initial fragment, rather than waiting for its animation
+  // to finish. The following SSE must close the cluster during its 250ms fade.
+  await page.waitForFunction(marker => [...document.querySelectorAll('.message--assistant .md-stream-chunk')].some(element =>
+    element.textContent?.includes(marker) && element.getAnimations().some(animation => animation.playState === 'running')), marker)
+  frame({ content: `${continuation} ${marker}_ADJACENT_NEW` })
+  await expect(assistant()).toContainText(cluster)
+  await expectFade(`${marker}_ADJACENT_NEW`, 'light')
+  const data = await page.evaluate(({ cluster, marker }) => {
+    const probe = (window as FadeWindow).__streamFadeProbe
+    if (!probe) throw new Error('Missing streaming fade probe')
+    return { birth: probe.events.find(event => event.kind === 'start' && event.text.includes(`${marker}:`))?.time,
+      samples: probe.graphemeSamples.filter(sample => sample.cluster === cluster) }
+  }, { cluster, marker })
+  expect(data.birth, '必须捕获初始碎片的真实动画开始时间').toBeDefined()
+  expect(data.samples.length, '必须在组合字符真正形成时采集DOM').toBeGreaterThan(0)
+  expect(data.samples[0].time - data.birth!, '跨SSE字符必须在首批淡入完成前组合，不能只检查动画结束后的裸文本').toBeLessThan(250)
+  for (const sample of data.samples) {
+    expect(sample.parts, '跨新增批次的整个grapheme应保留为单个裸文本，不能拆成不同透明度的片段').toEqual([{ text: cluster, animated: false }])
+  }
+}
+async function stopFadeProbe(testInfo: TestInfo, name: string): Promise<void> {
+  const data = await page.evaluate(() => {
+    const target = window as FadeWindow, probe = target.__streamFadeProbe
+    if (!probe) throw new Error('Missing streaming fade probe')
+    probe.stop(); delete target.__streamFadeProbe
+    return { events: probe.events, samples: probe.samples, protectedSamples: probe.protectedSamples, graphemeSamples: probe.graphemeSamples }
+  })
+  await testInfo.attach(name, { body: JSON.stringify(data, null, 2), contentType: 'application/json' })
 }
 
 test.describe.serial('聊天流式输出的绘制稳定性', () => {
@@ -227,7 +385,8 @@ test.describe.serial('聊天流式输出的绘制稳定性', () => {
       for (let index = 1; index <= 6; index++) await append(`\n\nUNFOLLOWED_TAIL_${index}：用户正在阅读历史时收到的正文。`, `UNFOLLOWED_TAIL_${index}：`)
       await expect(page.locator('.chat__back-to-bottom')).toBeVisible()
     } finally {
-      const { samples, removed } = await stopProbe(testInfo, 'history-reading-diagnostics')
+      const result = await stopProbe(testInfo, 'history-reading-diagnostics')
+      const samples = result.samples.filter(sample => sample.phase === 'animation-frame'), removed = result.removed
       expect(removed).toBe(0)
       const positions = samples.map(sample => sample.anchorTop), tops = samples.map(sample => sample.top)
       expect(Math.max(...positions) - Math.min(...positions), '用户正在阅读的历史段落不能被新回复推走').toBeLessThanOrEqual(2)
@@ -255,19 +414,21 @@ test.describe.serial('聊天流式输出的绘制稳定性', () => {
     try {
       await releaseImage(first)
       await expect.poll(() => region().evaluate(element => element.scrollHeight)).toBeGreaterThan(heightBefore + 100)
-      await expect.poll(() => page.evaluate(previous => (window as ProbeWindow).__streamStabilityProbe?.samples.some(sample => sample.height > previous + 100) ?? false, heightBefore),
-        { message: '必须采集到图片解码后的真实布局绘制帧' }).toBe(true)
+      await expect.poll(() => page.evaluate(previous => (window as ProbeWindow).__streamStabilityProbe?.samples.some(sample => sample.phase === 'resize' && sample.height > previous + 100) ?? false, heightBefore),
+        { message: '必须采集到图片解码后、ResizeObserver交付后的真实布局帧' }).toBe(true)
       // No frame is sent here: real image decode/layout alone must keep the viewport following.
       await expect.poll(bottomGap, { message: '迟到图片改变布局后也应继续吸底，无需下一帧正文补救' }).toBeLessThanOrEqual(2)
     } finally {
-      const { samples } = await stopProbe(testInfo, 'late-image-follow-diagnostics')
-      expect(Math.max(...samples.map(sample => sample.gap)), '图片加载不能造成可见的瞬时底部跳动').toBeLessThanOrEqual(2)
+      const result = await stopProbe(testInfo, 'late-image-follow-diagnostics')
+      const samples = result.samples.filter(sample => sample.phase === 'resize')
+      expect(samples.some(sample => sample.height > heightBefore + 100), '必须检查图片高度实际增长后的布局阶段').toBe(true)
+      expect(Math.max(...samples.map(sample => sample.gap)), '图片加载后绘制前的布局阶段不能留下底部跳动').toBeLessThanOrEqual(2)
     }
     await scrollToHistory(); await startProbe('HISTORY_ANCHOR_12：')
     const secondHeightBefore = await region().evaluate(element => element.scrollHeight)
     try {
       await releaseImage(second)
-      await expect.poll(() => page.evaluate(previous => (window as ProbeWindow).__streamStabilityProbe?.samples.some(sample => sample.height > previous + 100) ?? false, secondHeightBefore),
+      await expect.poll(() => page.evaluate(previous => (window as ProbeWindow).__streamStabilityProbe?.samples.some(sample => sample.phase === 'resize' && sample.height > previous + 100) ?? false, secondHeightBefore),
         { message: '暂停跟随后也必须采集到图片加载完成的绘制帧' }).toBe(true)
     } finally {
       const { samples } = await stopProbe(testInfo, 'late-image-unfollow-diagnostics')
@@ -276,6 +437,140 @@ test.describe.serial('聊天流式输出的绘制稳定性', () => {
       expect(Math.min(...samples.map(sample => sample.gap))).toBeGreaterThan(300)
     }
     await page.locator('.chat__back-to-bottom').click(); await expect.poll(bottomGap).toBeLessThanOrEqual(2)
+    expect(errors).toEqual([])
+  })
+
+  test('新文字在同一段落中淡入，Markdown闭合与代码高亮不会重播已显示文字', async ({}, testInfo) => {
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    await expect(page.locator('html')).toHaveAttribute('data-appearance', 'dark')
+    await expect(page.locator('.message--assistant .md-stream-chunk'), '已完成的历史消息不应带入场动画').toHaveCount(0)
+    await startRun('STREAM_TEXT_FADE_MARKDOWN', `${sealedText}\n\nFADE_OLD_PREFIX：已经阅读的同段文字。`)
+    await expect(assistant().locator('.md-stream-chunk')).toHaveCount(0)
+    const oldMarkers = [sealedText, 'FADE_OLD_PREFIX', 'BOLD_OLD', 'LINK_OLD', 'INLINE_CODE_OLD', 'FADE_CODE_OLD']
+    await startFadeProbe(oldMarkers.slice(0, 2))
+    try {
+      await append(' FADE_NEW_SUFFIX：同段新增文字应平滑显现。', 'FADE_NEW_SUFFIX')
+      await expectFade('FADE_NEW_SUFFIX', 'dark')
+      await expect(assistant().locator('.md p').filter({ hasText: 'FADE_OLD_PREFIX' })).toContainText('FADE_NEW_SUFFIX')
+
+      await append('\n\n**BOLD_OLD', 'BOLD_OLD')
+      await expect(assistant().locator('.md-stream-chunk')).toHaveCount(0)
+      await protectFadeText('BOLD_OLD')
+      await append('** BOLD_NEW', 'BOLD_NEW')
+      await expect(assistant().locator('strong').filter({ hasText: 'BOLD_OLD' })).toHaveText('BOLD_OLD')
+      await expectFade('BOLD_NEW', 'dark')
+
+      await append('\n\n[LINK_OLD', 'LINK_OLD')
+      await expect(assistant().locator('.md-stream-chunk')).toHaveCount(0)
+      await protectFadeText('LINK_OLD')
+      await append('](https://example.com) LINK_NEW', 'LINK_NEW')
+      await expect(assistant().getByRole('link', { name: 'LINK_OLD', exact: true })).toHaveAttribute('href', 'https://example.com')
+      await expectFade('LINK_NEW', 'dark')
+
+      await append('\n\n`INLINE_CODE_OLD', 'INLINE_CODE_OLD')
+      await expect(assistant().locator('.md-stream-chunk')).toHaveCount(0)
+      await protectFadeText('INLINE_CODE_OLD')
+      await append('` INLINE_CODE_NEW', 'INLINE_CODE_NEW')
+      await expect(assistant().locator('.md-inline-code').filter({ hasText: 'INLINE_CODE_OLD' })).toHaveText('INLINE_CODE_OLD')
+      await expectFade('INLINE_CODE_NEW', 'dark')
+
+      await append('\n\n```javascript\nconst FADE_CODE_OLD = 1\n', 'const FADE_CODE_OLD')
+      await expect(assistant().locator('.md-stream-chunk')).toHaveCount(0)
+      await protectFadeText('FADE_CODE_OLD')
+      await append('const FADE_CODE_NEW = 2\n```\n\nFADE_AFTER_CODE', 'FADE_AFTER_CODE')
+      await expectFade('FADE_CODE_NEW', 'dark')
+      await expectFade('FADE_AFTER_CODE', 'dark')
+      const code = assistant().locator('.md-code pre code')
+      await expect(code.locator('.hljs-keyword')).toHaveCount(2)
+      const expectedCode = 'const FADE_CODE_OLD = 1\nconst FADE_CODE_NEW = 2'
+      expect((await code.textContent())?.trimEnd(), '淡入不能改变高亮代码的原始文本').toBe(expectedCode)
+      await assistant().getByRole('button', { name: '复制代码', exact: true }).click()
+      await expect.poll(async () => (await app!.evaluate(({ clipboard }) => clipboard.readText())).replace(/\r\n/g, '\n').trimEnd(),
+        { message: '复制必须保留真实代码，不带动画包装或丢失字符' }).toBe(expectedCode)
+
+      await expectOldTextStayedVisible(oldMarkers)
+      await completeRun()
+      await expect(assistant().locator('.md-stream-chunk')).toHaveCount(0)
+      await expect(assistant()).toContainText('FADE_AFTER_CODE')
+      expect(errors).toEqual([])
+    } finally { await stopFadeProbe(testInfo, 'streaming-text-fade-markdown-diagnostics') }
+  })
+
+  test('浅色主题淡入、减少动态效果即时可读，长回复和历史回放不保留动画片段', async ({}, testInfo) => {
+    const appearance = await page.locator('html').getAttribute('data-appearance')
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    // Use the production light tokens while keeping the real held SSE alive.
+    await page.evaluate(() => { document.documentElement.dataset.appearance = 'light' })
+    await startRun('STREAM_TEXT_FADE_ACCESSIBILITY', `${sealedText}\n\nLIGHT_OLD_PREFIX：浅色主题下已经显示的文字。`)
+    await expect(assistant().locator('.md-stream-chunk')).toHaveCount(0)
+    await startFadeProbe([sealedText, 'LIGHT_OLD_PREFIX'])
+    try {
+      await append(' LIGHT_NEW_SUFFIX：浅色下同样平滑显现。', 'LIGHT_NEW_SUFFIX')
+      await expectFade('LIGHT_NEW_SUFFIX', 'light')
+      await expectOldTextStayedVisible([sealedText, 'LIGHT_OLD_PREFIX'])
+
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      await append(' REDUCED_MOTION_NEW：减少动态效果时立即可读。', 'REDUCED_MOTION_NEW')
+      const reduced = await assistant().locator('.md p').filter({ hasText: 'REDUCED_MOTION_NEW' }).evaluate(element => {
+        const nodes = [element, ...element.querySelectorAll('.md-stream-chunk')]
+        return nodes.map(node => ({ opacity: getComputedStyle(node).opacity,
+          animation: getComputedStyle(node).animationName, animations: node.getAnimations().length }))
+      })
+      expect(reduced.length).toBeGreaterThan(0)
+      expect(reduced.every(node => node.opacity === '1' && node.animation === 'none' && node.animations === 0),
+        '减少动态效果不能残留透明内容或短暂执行装饰动画').toBe(true)
+      const reducedEvents = await page.evaluate(() => (window as FadeWindow).__streamFadeProbe?.events.filter(event => event.kind === 'start' && event.text.includes('REDUCED_MOTION_NEW')) ?? [])
+      expect(reducedEvents).toEqual([])
+
+      await page.emulateMedia({ reducedMotion: 'no-preference' })
+      await appendSplitGrapheme('👩', '\u200d💻', '👩\u200d💻', 'SPLIT_EMOJI')
+      await appendSplitGrapheme('e', '\u0301', 'e\u0301', 'SPLIT_COMBINING')
+
+      await page.emulateMedia({ forcedColors: 'active' })
+      await append(' FORCED_COLORS_NEW：高对比模式立即可读。', 'FORCED_COLORS_NEW')
+      const forced = await assistant().locator('.md p').filter({ hasText: 'FORCED_COLORS_NEW' }).evaluate(element =>
+        [element, ...element.querySelectorAll('.md-stream-chunk')].map(node => ({ opacity: getComputedStyle(node).opacity,
+          animation: getComputedStyle(node).animationName, animations: node.getAnimations().length })))
+      expect(forced.length).toBeGreaterThan(0)
+      expect(forced.every(node => node.opacity === '1' && node.animation === 'none' && node.animations === 0),
+        '系统高对比模式不能暂时隐藏新文字或执行装饰动画').toBe(true)
+      expect(await page.evaluate(() => (window as FadeWindow).__streamFadeProbe?.events.filter(event =>
+        event.kind === 'start' && event.text.includes('FORCED_COLORS_NEW')) ?? [])).toEqual([])
+      await page.emulateMedia({ forcedColors: 'none' })
+
+      for (let index = 1; index <= 40; index++) await append(` LONG_FADE_PART_${index}：持续追加。`, `LONG_FADE_PART_${index}：`)
+      await expectFade('LONG_FADE_PART_40', 'light')
+      await expect(assistant().locator('.md-stream-chunk'), '长回复不能永久积累批次动画节点').toHaveCount(0)
+      const paragraph = assistant().locator('.md p').filter({ hasText: 'LIGHT_OLD_PREFIX' })
+      expect(await paragraph.locator('span').count(), '普通长段落在淡入结束后应回到普通文本节点').toBe(0)
+      await append(' FADE_FINAL_MARKER：完成后全部文字可见。', 'FADE_FINAL_MARKER')
+      await completeRun()
+      await expect(assistant().locator('.md-stream-chunk')).toHaveCount(0)
+      await expect(paragraph).toHaveCSS('opacity', '1')
+      await expect(paragraph).toContainText('FADE_FINAL_MARKER')
+      expect(errors).toEqual([])
+    } finally {
+      await stopFadeProbe(testInfo, 'streaming-text-fade-accessibility-diagnostics')
+      await page.emulateMedia({ reducedMotion: 'no-preference', forcedColors: 'none' })
+      await page.evaluate(appearance => {
+        if (appearance === null) delete document.documentElement.dataset.appearance
+        else document.documentElement.dataset.appearance = appearance
+      }, appearance)
+    }
+
+    // Capture before React mounts so a historical entry animation cannot finish
+    // before a locator wait and produce a falsely green history assertion.
+    await page.addInitScript(() => {
+      const target = window as FadeWindow; target.__historyFadeStarts = []
+      document.addEventListener('animationstart', event => {
+        if (event.target instanceof Element && event.target.classList.contains('md-stream-chunk')) target.__historyFadeStarts!.push(event.target.textContent ?? '')
+      }, true)
+    })
+    await page.reload()
+    await expect(page.locator('.message--user').first()).toContainText('STREAM_HISTORY_START')
+    await expect(assistant()).toContainText('FADE_FINAL_MARKER')
+    await expect(page.locator('.message--assistant .md-stream-chunk')).toHaveCount(0)
+    expect(await page.evaluate(() => (window as FadeWindow).__historyFadeStarts), '回放已有回复不能重播流式淡入').toEqual([])
     expect(errors).toEqual([])
   })
 })

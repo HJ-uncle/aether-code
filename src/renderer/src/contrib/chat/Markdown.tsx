@@ -6,6 +6,7 @@ import { openArtifactFromChat, openFileFromChat } from './open-file'
 import { useApp } from '@renderer/core/app-context'
 import { toast } from '@renderer/core/toast'
 import { classifyChatLink, type ChatFileContext } from './chat-link'
+import { revealText, tokenSources, useStreamReveal, type SourceRange, type StreamReveal } from './stream-reveal'
 
 /** Nested Markdown links inherit their message's workspace instead of the active editor's. */
 const FileContext = createContext<ChatFileContext | undefined>(undefined)
@@ -78,7 +79,7 @@ function copyCode(event: React.MouseEvent<HTMLButtonElement>): void {
   })
 }
 
-function ChatLink({ token, prefix }: { token: Tokens.Link; prefix: string }): JSX.Element {
+function ChatLink({ token, prefix, source, reveal }: { token: Tokens.Link; prefix: string; source?: SourceRange; reveal: StreamReveal }): JSX.Element {
   const { engine } = useApp()
   const context = useContext(FileContext)
   const href = token.href ?? ''
@@ -88,19 +89,19 @@ function ChatLink({ token, prefix }: { token: Tokens.Link; prefix: string }): JS
       event.preventDefault()
       if (target.kind === 'invalid' || !context) { toast.error(target.kind === 'invalid' ? target.message : '文件链接缺少会话信息。'); return }
       void openArtifactFromChat(target, context).catch(error => toast.error(`打开文件失败：${error instanceof Error ? error.message : String(error)}`))
-    }}>{renderInline(token.tokens, prefix)}</a>
+    }}>{renderInline(token.tokens, prefix, source, reveal)}</a>
   }
   const remoteFile = !href.startsWith('#') && !/^(?:https?:|mailto:|tel:)/i.test(href)
   if (engine.snapshot.mode === 'remote' && remoteFile) {
-    return <span title={`远端路径（尚未映射）：${href}`}>{renderInline(token.tokens, prefix)}</span>
+    return <span title={`远端路径（尚未映射）：${href}`}>{renderInline(token.tokens, prefix, source, reveal)}</span>
   }
   if (target.kind === 'file') {
     return <a href={href} title={`在编辑器中打开 ${href}`} onClick={(event) => {
       event.preventDefault()
       void openFileFromChat(href, context).catch(error => toast.error(`打开文件失败：${error instanceof Error ? error.message : String(error)}`))
-    }}>{renderInline(token.tokens, prefix)}</a>
+    }}>{renderInline(token.tokens, prefix, source, reveal)}</a>
   }
-  return <a href={href} title={token.title ?? undefined} target="_blank" rel="noreferrer noopener">{renderInline(token.tokens, prefix)}</a>
+  return <a href={href} title={token.title ?? undefined} target="_blank" rel="noreferrer noopener">{renderInline(token.tokens, prefix, source, reveal)}</a>
 }
 
 function ChatImage({ token }: { token: Tokens.Image }): JSX.Element {
@@ -111,76 +112,80 @@ function ChatImage({ token }: { token: Tokens.Image }): JSX.Element {
   return <img src={token.href} alt={token.text} title={token.title ?? undefined} />
 }
 
-function renderInline(tokens: Token[] | undefined, keyPrefix: string): React.ReactNode {
+function renderInline(tokens: Token[] | undefined, keyPrefix: string, parent: SourceRange | undefined, reveal: StreamReveal): React.ReactNode {
   if (!tokens) return null
+  const sources = tokenSources(tokens.map(token => token.raw), parent, reveal)
   return tokens.map((token, index) => {
     const key = `${keyPrefix}-${index}`
+    const source = sources[index]
     switch (token.type) {
       case 'text':
-        return token.tokens ? renderInline(token.tokens, key) : token.text
+        return token.tokens ? renderInline(token.tokens, key, source, reveal) : revealText(token.text, key, source, reveal)
       case 'strong':
-        return <strong key={key}>{renderInline(token.tokens, key)}</strong>
+        return <strong key={key}>{renderInline(token.tokens, key, source, reveal)}</strong>
       case 'em':
-        return <em key={key}>{renderInline(token.tokens, key)}</em>
+        return <em key={key}>{renderInline(token.tokens, key, source, reveal)}</em>
       case 'del':
-        return <del key={key}>{renderInline(token.tokens, key)}</del>
+        return <del key={key}>{renderInline(token.tokens, key, source, reveal)}</del>
       case 'codespan':
         return (
           <code key={key} className="md-inline-code">
-            {token.text}
+            {revealText(token.text, key, source, reveal)}
           </code>
         )
       case 'link':
-        return <ChatLink key={key} token={token as Tokens.Link} prefix={key} />
+        return <ChatLink key={key} token={token as Tokens.Link} prefix={key} source={source} reveal={reveal} />
       case 'image':
         return <ChatImage key={key} token={token as Tokens.Image} />
       case 'br':
         return <br key={key} />
       case 'escape':
-        return token.text
+        return revealText(token.text, key, source, reveal)
       default:
-        return 'raw' in token ? (token as { raw: string }).raw : null
+        return 'raw' in token ? revealText((token as { raw: string }).raw, key, source, reveal) : null
     }
   })
 }
 
-function renderBlock(tokens: Token[], keyPrefix: string): React.ReactNode {
+function renderBlock(tokens: Token[], keyPrefix: string, parent: SourceRange | undefined, reveal: StreamReveal): React.ReactNode {
+  const sources = tokenSources(tokens.map(token => token.raw), parent, reveal)
   return tokens.map((token, index) => {
     const key = `${keyPrefix}-${index}`
+    const source = sources[index]
     switch (token.type) {
       case 'space':
         return null
       case 'heading':
         return (
           <HeadingBlock key={key} depth={token.depth}>
-            {renderInline(token.tokens, key)}
+            {renderInline(token.tokens, key, source, reveal)}
           </HeadingBlock>
         )
       case 'paragraph':
-        return <p key={key}>{renderInline(token.tokens, key)}</p>
+        return <p key={key}>{renderInline(token.tokens, key, source, reveal)}</p>
       case 'code':
-        return <CodeBlock key={key} token={token as Tokens.Code} />
+        return <CodeBlock key={key} token={token as Tokens.Code} source={source} reveal={reveal} />
       case 'blockquote':
         return (
           <blockquote key={key}>
-            {renderBlock((token as Tokens.Blockquote).tokens ?? [], key)}
+            {renderBlock((token as Tokens.Blockquote).tokens ?? [], key, source, reveal)}
           </blockquote>
         )
       case 'list':
-        return <ListBlock key={key} token={token as Tokens.List} prefix={key} />
+        return <ListBlock key={key} token={token as Tokens.List} prefix={key} source={source} reveal={reveal} />
       case 'hr':
         return <hr key={key} />
       case 'table':
-        return <TableBlock key={key} token={token as Tokens.Table} prefix={key} />
+        return <TableBlock key={key} token={token as Tokens.Table} prefix={key} source={source} reveal={reveal} />
       case 'html':
         // 原始 HTML 不注入（XSS 风险），原样当文本展示
         return (
           <p key={key}>
-            <code className="md-inline-code">{token.text}</code>
+            <code className="md-inline-code">{revealText(token.text, key, source, reveal)}</code>
           </p>
         )
       default:
-        return 'raw' in token ? <p key={key}>{(token as { raw: string }).raw}</p> : null
+        return 'raw' in token ? <p key={key}>{revealText((token as { raw: string }).raw, key, source, reveal)}</p> : null
     }
   })
 }
@@ -208,9 +213,40 @@ function HeadingBlock({
   }
 }
 
-function CodeBlock({ token }: { token: Tokens.Code }): JSX.Element {
+type HighlightPart = { text: string; offset: number } | { className: string; children: HighlightPart[] }
+
+function highlightedParts(html: string): HighlightPart[] {
+  const template = document.createElement('template')
+  template.innerHTML = html
+  let offset = 0
+  const walk = (nodes: NodeListOf<ChildNode>): HighlightPart[] => Array.from(nodes, node => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent ?? '', part = { text, offset }
+      offset += text.length
+      return part
+    }
+    return { className: node instanceof Element ? node.className : '', children: walk(node.childNodes) }
+  })
+  return walk(template.content.childNodes)
+}
+
+function renderHighlight(parts: HighlightPart[], prefix: string, source: SourceRange | undefined, reveal: StreamReveal): React.ReactNode {
+  return parts.map((part, index) => {
+    const key = `${prefix}-${index}`
+    return 'text' in part
+      ? revealText(part.text, key, source ? { start: source.start + part.offset, end: source.start + part.offset + part.text.length } : undefined, reveal)
+      : <span key={key} className={part.className}>{renderHighlight(part.children, key, source, reveal)}</span>
+  })
+}
+
+function CodeBlock({ token, source, reveal }: { token: Tokens.Code; source?: SourceRange; reveal: StreamReveal }): JSX.Element {
   const lang = normalizeLang(token.lang)
-  const html = useMemo(() => highlight(token.text, token.lang ?? ''), [token.text, token.lang])
+  const parts = useMemo(() => highlightedParts(highlight(token.text, token.lang ?? '')), [token.text, token.lang])
+  // A fenced code body's first word can also occur in its language label.
+  const header = /^ {0,3}(?:`{3,}|~{3,})[^\n]*\n/.exec(token.raw)?.[0].length ?? 0
+  const start = source ? reveal.source.indexOf(token.text, source.start + header) : -1
+  const body = source && start >= source.start && start + token.text.length <= source.end
+    ? { start, end: start + token.text.length } : undefined
   return (
     <div className="md-code">
       <div className="md-code__header">
@@ -225,15 +261,16 @@ function CodeBlock({ token }: { token: Tokens.Code }): JSX.Element {
           <Icon name="copy" size={16} />
         </button>
       </div>
-      {/* 高亮 HTML 来自 highlight.js（纯文本着色，不含脚本），可以安全注入 */}
+      {/* Keep highlight spans while revealing only new text, including code appends. */}
       <pre>
-        <code dangerouslySetInnerHTML={{ __html: html }} />
+        <code>{renderHighlight(parts, 'code', body, reveal)}</code>
       </pre>
     </div>
   )
 }
 
-function ListBlock({ token, prefix }: { token: Tokens.List; prefix: string }): JSX.Element {
+function ListBlock({ token, prefix, source, reveal }: { token: Tokens.List; prefix: string; source?: SourceRange; reveal: StreamReveal }): JSX.Element {
+  const sources = tokenSources(token.items.map(item => item.raw), source, reveal)
   const items = token.items.map((item, index) => (
     <li key={`${prefix}-${index}`} className={item.task ? 'md-task' : undefined}>
       {item.task ? (
@@ -241,8 +278,8 @@ function ListBlock({ token, prefix }: { token: Tokens.List; prefix: string }): J
       ) : null}
       {item.tokens.length > 0 && item.tokens[0].type === 'text'
         ? // 松散列表项的段落会拆成多段；首段若是纯文本就内联渲染，避免多一层 <p> 的上下边距
-          renderInline((item.tokens[0] as Tokens.Text).tokens, `${prefix}-${index}`)
-        : renderBlock(item.tokens, `${prefix}-${index}`)}
+          renderInline((item.tokens[0] as Tokens.Text).tokens, `${prefix}-${index}`, sources[index], reveal)
+        : renderBlock(item.tokens, `${prefix}-${index}`, sources[index], reveal)}
     </li>
   ))
   return token.ordered ? (
@@ -254,7 +291,8 @@ function ListBlock({ token, prefix }: { token: Tokens.List; prefix: string }): J
   )
 }
 
-function TableBlock({ token, prefix }: { token: Tokens.Table; prefix: string }): JSX.Element {
+function TableBlock({ token, prefix, source, reveal }: { token: Tokens.Table; prefix: string; source?: SourceRange; reveal: StreamReveal }): JSX.Element {
+  const sources = tokenSources([...token.header, ...token.rows.flat()].map(cell => cell.text), source, reveal)
   return (
     <div className="md-table-wrap">
       <table>
@@ -262,7 +300,7 @@ function TableBlock({ token, prefix }: { token: Tokens.Table; prefix: string }):
           <tr>
             {token.header.map((cell, index) => (
               <th key={`${prefix}-h-${index}`} style={{ textAlign: token.align?.[index] ?? 'left' }}>
-                {renderInline(cell.tokens, `${prefix}-h-${index}`)}
+                {renderInline(cell.tokens, `${prefix}-h-${index}`, sources[index], reveal)}
               </th>
             ))}
           </tr>
@@ -272,7 +310,7 @@ function TableBlock({ token, prefix }: { token: Tokens.Table; prefix: string }):
             <tr key={`${prefix}-r-${rowIndex}`}>
               {row.map((cell, cellIndex) => (
                 <td key={`${prefix}-r-${rowIndex}-c-${cellIndex}`} style={{ textAlign: token.align?.[cellIndex] ?? 'left' }}>
-                  {renderInline(cell.tokens, `${prefix}-r-${rowIndex}-c-${cellIndex}`)}
+                  {renderInline(cell.tokens, `${prefix}-r-${rowIndex}-c-${cellIndex}`, sources[token.header.length + rowIndex * token.header.length + cellIndex], reveal)}
                 </td>
               ))}
             </tr>
@@ -364,7 +402,8 @@ function tokenizeIncremental(text: string): Token[] {
   return [...head, ...tailTokens]
 }
 
-export const Markdown = memo(function Markdown({ text, fileContext }: { text: string; fileContext?: ChatFileContext }): JSX.Element {
+export const Markdown = memo(function Markdown({ text, fileContext, streaming = false }: { text: string; fileContext?: ChatFileContext; streaming?: boolean }): JSX.Element {
   const tokens = useMemo(() => tokenizeIncremental(text), [text])
-  return <FileContext.Provider value={fileContext}><div className="md">{renderBlock(tokens, 'md')}</div></FileContext.Provider>
+  const reveal = useStreamReveal(text, streaming)
+  return <FileContext.Provider value={fileContext}><div className="md">{renderBlock(tokens, 'md', { start: 0, end: text.length }, reveal)}</div></FileContext.Provider>
 })

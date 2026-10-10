@@ -1,12 +1,13 @@
-/** Context occupancy is the latest invocation snapshot; cumulative billing and recovery stay separate. No Electron. */
+/** Context occupancy is the latest invocation snapshot; cumulative billing, cache split and recovery stay separate. No Electron. */
 import { expect, test } from '@playwright/test'
 import type { ChatMessage } from '../src/renderer/src/core/engine/useChat'
 import type { RootRun } from '../src/shared/root-run'
+import type { SubagentRun } from '../src/shared/subagent'
 import type { EngineHistoryRow } from '../src/renderer/src/core/engine/chat-history'
 import { replayMessages } from '../src/renderer/src/core/engine/chat-history'
 import { reducePayload } from '../src/renderer/src/core/engine/chat-payload'
 import { restoreChatSnapshot, type ChatRecoverySnapshot } from '../src/renderer/src/core/engine/chat-recovery'
-import { latestContextUsage, sumUsage } from '../src/renderer/src/contrib/chat/usage'
+import { groupIntoTurns, latestContextUsage, sumUsage } from '../src/renderer/src/contrib/chat/usage'
 import { createSessionUsageAnchor, sessionUsageTotal } from '../src/renderer/src/contrib/chat/session-usage'
 
 const modelId = 'actual-context-model'
@@ -436,4 +437,146 @@ test('observed 14577 to 14589 to 14605 context remains distinct while real cumul
     previousBilling = sample.billed
   }
   expect(observed).toEqual([14_577, 14_589, 14_605])
+})
+
+test('cached input is nested under the full prompt total while billing and context retain provider input', () => {
+  const message = assistant({ usage: { promptTokens: 3200, cacheHitTokens: 2800, cacheMissTokens: 400,
+    completionTokens: 400, totalTokens: 3600, currentPromptTokens: 3200 } })
+  const total = sumUsage([message])
+  expect(total).toMatchObject({ input: 3200, output: 400, parentTotal: 3600, total: 3600 })
+  expect(total.summary.filter(row => !row.child).map(row => [row.label, row.tokens, row.group]))
+    .toEqual([['累计输入 Prompt', 3200, 'input'], ['输出 Completion', 400, 'output']])
+  expect(total.summary.find(row => row.label === '缓存未命中')).toMatchObject({ tokens: 400, group: 'input', child: true })
+  expect(total.summary.find(row => row.label === '缓存命中')).toMatchObject({ tokens: 2800, group: 'cache', child: true })
+  expect(latestContextUsage([message])?.used).toBe(3200)
+  expect(groupIntoTurns([message])[0]).toMatchObject({ tokens: 3600, summary: total.summary })
+  const anchored = sessionUsageTotal([message], createSessionUsageAnchor([message],
+    { promptTokens: 3200, cacheHitTokens: 2800, cacheMissTokens: 400, completionTokens: 400, totalTokens: 3600 }))
+  expect(anchored).toMatchObject({ input: 3200, output: 400, total: 3600, summary: total.summary })
+})
+
+test('a fully cached request keeps an explicit zero uncached-input row without adding cache to the bill', () => {
+  const total = sumUsage([assistant({ usage: { promptTokens: 100, cacheHitTokens: 100,
+    completionTokens: 20, totalTokens: 120 } })])
+  expect(total).toMatchObject({ input: 100, output: 20, parentTotal: 120, total: 120 })
+  expect(total.summary.filter(row => !row.child).map(row => [row.label, row.tokens]))
+    .toEqual([['累计输入 Prompt', 100], ['输出 Completion', 20]])
+  expect(total.summary.find(row => row.label === '缓存命中')).toMatchObject({ tokens: 100, child: true, group: 'cache' })
+  expect(total.summary.some(row => row.label === '缓存未命中')).toBe(false)
+})
+
+test('cache reported above the input is capped for display with the original provider amount preserved in its title', () => {
+  const message = assistant({ usage: { promptTokens: 100, cacheHitTokens: 250, completionTokens: 2, totalTokens: 102 } })
+  const total = sumUsage([message])
+  expect(total).toMatchObject({ input: 100, output: 2, parentTotal: 102, total: 102 })
+  expect(total.summary.find(row => row.label === '累计输入 Prompt')?.tokens).toBe(100)
+  expect(total.summary.find(row => row.label === '缓存命中')).toMatchObject({ tokens: 100,
+    title: '供应商报告缓存命中 250 tokens，超过输入总量；按输入上限展示。' })
+  expect(message.usage).toMatchObject({ cacheHitTokens: 250 })
+})
+
+test('missing input keeps observed cache usage without inventing an uncached input amount or cache miss', () => {
+  const total = sumUsage([assistant({ usage: { cacheHitTokens: 90, completionTokens: 20, totalTokens: 110 } })])
+  expect(total).toMatchObject({ input: 0, output: 20, parentTotal: 110, total: 110 })
+  expect(total.summary.find(row => row.label === '缓存命中')).toMatchObject({ tokens: 90,
+    title: '输入总量未报告，无法确认缓存占比。' })
+  expect(total.summary.some(row => row.label === '累计输入 Prompt')).toBe(false)
+  expect(total.summary.some(row => row.label === '缓存未命中')).toBe(false)
+})
+
+test('an inconsistent provider total remains authoritative and missing totals fall back to full input plus output', () => {
+  for (const usage of [
+    { promptTokens: 100, cacheHitTokens: 80, completionTokens: 10, totalTokens: 65 },
+    { promptTokens: 100, cacheHitTokens: 80, completionTokens: 10 }
+  ]) {
+    const total = sumUsage([assistant({ usage })])
+    expect(total.input).toBe(100)
+    expect(total.output).toBe(10)
+    expect(total.total).toBe(usage.totalTokens ?? 110)
+    expect(total.summary.filter(row => !row.child).map(row => [row.label, row.tokens]))
+      .toEqual([['累计输入 Prompt', 100], ['输出 Completion', 10]])
+  }
+})
+
+test('cache splitting preserves deduplicated child billing and omits a redundant complete parent subtotal', () => {
+  const child: SubagentRun = {
+    schemaVersion: 1, runId: 'cache-child', tenantId: 'tenant', rootSessionId: 'session', parentSessionId: 'session',
+    parentConversationId: 'turn', parentMessageId: baseRun.assistantMessageId, parentToolCallId: 'dispatch-child',
+    childSessionId: 'child-session', task: 'review', description: 'review', modelId, status: 'succeeded',
+    lastSeq: 2, createdAt: 1, updatedAt: 2, usage: { inputTokens: 40, outputTokens: 10, totalTokens: 50, cacheReadTokens: 30 },
+    toolCalls: []
+  }
+  const message = assistant({ usage: { promptTokens: 100, cacheHitTokens: 75, completionTokens: 10, totalTokens: 110 },
+    tools: ['dispatch-child', 'duplicate-child'].map(id => ({ id, name: 'subagent', args: '', result: '', state: 'done', subagent: child })) })
+  const total = sumUsage([message])
+  expect(total).toMatchObject({ input: 100, output: 10, parentTotal: 110, subagentTotal: 50, total: 160 })
+  expect(total.summary.some(row => row.label === '主代理自身')).toBe(false)
+  expect(total.summary.filter(row => !row.child).map(row => [row.label, row.tokens]))
+    .toEqual([['累计输入 Prompt', 100], ['输出 Completion', 10], ['子代理（已知用量）', 50]])
+  expect(groupIntoTurns([message])[0].tokens).toBe(160)
+  const unmatched = sumUsage([assistant({ ...message, usage: { promptTokens: 100, cacheHitTokens: 75,
+    completionTokens: 10, totalTokens: 115 } })])
+  expect(unmatched.total).toBe(165)
+  expect(unmatched.summary.find(row => row.label === '主代理自身')).toMatchObject({ tokens: 115, subtotal: true })
+})
+
+test('cache from calls without a reported input stays visible alongside input from complete calls', () => {
+  const messages = [
+    assistant({ id: 'complete-cache-call', usage: { promptTokens: 100, cacheHitTokens: 50, completionTokens: 10, totalTokens: 110 } }),
+    assistant({ id: 'partial-cache-call', usage: { cacheHitTokens: 90, completionTokens: 20, totalTokens: 110 } })
+  ]
+  const total = sumUsage(messages)
+  expect(total).toMatchObject({ input: 100, output: 30, total: 220 })
+  expect(total.summary.filter(row => !row.child).map(row => [row.label, row.tokens]))
+    .toEqual([['累计输入 Prompt', 100], ['输出 Completion', 30]])
+  const cache = total.summary.find(row => row.label === '缓存命中')
+  expect(cache?.title).toContain('部分调用未报告输入总量')
+  expect(cache?.title).not.toContain('超过输入总量')
+})
+
+test('session authority with an unreported input preserves cache through increments and refreshed anchors without synthesizing zero input', () => {
+  const initial = assistant({ usage: { cacheHitTokens: 90, completionTokens: 20, totalTokens: 110 } })
+  const authority = { cacheHitTokens: 90, completionTokens: 20, totalTokens: 110 }
+  const anchor = createSessionUsageAnchor([initial], authority)
+  expect(anchor?.parent).toEqual(authority)
+  const anchored = sessionUsageTotal([initial], anchor)
+  expect(anchored).toMatchObject({ input: 0, output: 20, total: 110 })
+  expect(anchored.summary.find(row => row.label === '缓存命中')).toMatchObject({ tokens: 90 })
+  expect(anchored.summary.some(row => row.label === '累计输入 Prompt')).toBe(false)
+  const increment = { cacheHitTokens: 100, completionTokens: 25, totalTokens: 125 }
+  const live = reducePayload(initial, { usage: increment })
+  const current = sessionUsageTotal([live], anchor)
+  expect(current).toMatchObject({ input: 0, output: 25, total: 125 })
+  expect(current.summary.find(row => row.label === '缓存命中')).toMatchObject({ tokens: 100 })
+  expect(current.summary.some(row => row.label === '累计输入 Prompt')).toBe(false)
+  const refreshed = createSessionUsageAnchor([live], increment)
+  expect(refreshed?.parent).toEqual(increment)
+  expect(sessionUsageTotal([live], refreshed)).toEqual(current)
+  expect(authority).toEqual({ cacheHitTokens: 90, completionTokens: 20, totalTokens: 110 })
+  expect(anchor?.parent).toEqual(authority)
+})
+
+test('explicit zero input remains distinct from an unreported input and caps a contradictory cache count to zero', () => {
+  const total = sumUsage([assistant({ usage: { promptTokens: 0, cacheHitTokens: 90, completionTokens: 20, totalTokens: 20 } })])
+  expect(total).toMatchObject({ input: 0, output: 20, total: 20 })
+  expect(total.summary.filter(row => !row.child).map(row => [row.label, row.tokens]))
+    .toEqual([['累计输入 Prompt', 0], ['输出 Completion', 20]])
+  expect(total.summary.find(row => row.label === '缓存命中')?.title).toBe('供应商报告缓存命中 90 tokens，超过输入总量；按输入上限展示。')
+})
+
+test('a missing input field keeps the parent subtotal even when aggregate prompt plus completion coincidentally equals provider total', () => {
+  const child: SubagentRun = {
+    schemaVersion: 1, runId: 'subtotal-child', tenantId: 'tenant', rootSessionId: 'session', parentSessionId: 'session',
+    parentConversationId: 'turn', parentMessageId: baseRun.assistantMessageId, parentToolCallId: 'dispatch-subtotal',
+    childSessionId: 'child-subtotal', task: 'review', description: 'review', modelId, status: 'succeeded',
+    lastSeq: 1, createdAt: 1, updatedAt: 2, usage: { totalTokens: 50 }, toolCalls: []
+  }
+  const messages = [
+    assistant({ id: 'subtotal-complete', usage: { promptTokens: 100, cacheHitTokens: 50, completionTokens: 10, totalTokens: 90 } }),
+    assistant({ id: 'subtotal-partial', usage: { cacheHitTokens: 20, completionTokens: 10, totalTokens: 30 },
+      tools: [{ id: 'dispatch-subtotal', name: 'subagent', args: '', result: '', state: 'done', subagent: child }] })
+  ]
+  const total = sumUsage(messages)
+  expect(total).toMatchObject({ parentTotal: 120, subagentTotal: 50, total: 170 })
+  expect(total.summary.find(row => row.label === '主代理自身')).toMatchObject({ tokens: 120, subtotal: true })
 })
