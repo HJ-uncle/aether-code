@@ -23,6 +23,11 @@ export interface ChatRecoverySnapshot {
   todos: EngineTodo[]
   changes: EngineFileChange[]
   commandJobs?: CommandJobSnapshot[]
+  /** Full-session billing paired with the snapshot event watermark, independent of visible history. */
+  sessionUsage?: Record<string, number>
+  sessionSubagentUsage?: import('@renderer/contrib/chat/session-usage').SessionSubagentUsage
+  /** Child runs sampled with sessionSubagentUsage, before independent live refreshes. */
+  subagentRuns?: import('@shared/subagent').SubagentRun[]
 }
 
 /** Same-stream repeated or older delivery must never append text or tool arguments twice. */

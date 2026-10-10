@@ -8,7 +8,9 @@ import { applyToolResult, normalizeTool, type EngineHistoryRow } from './chat-hi
 export { extractText } from './chat-history'
 import { attachSubagentRuns } from './subagent-state'
 import { ingestSubagentEvent, ingestSubagentRun, getSubagentRuns, refreshSubagentRuns, subscribeSubagents, forgetSubagentSession, hasActiveSubagents } from './subagent-store'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createSessionUsageAnchor, sessionUsageTotal, type SessionUsageAnchor } from '@renderer/contrib/chat/session-usage'
+import type { UsageTotal } from '@renderer/contrib/chat/usage'
 import { reducePayload } from './chat-payload'
 import { acceptEventId, restoreChatSnapshot, type ChatRecoverySnapshot } from './chat-recovery'
 import type { EngineFileChange, EngineTodo, StreamEvent } from '@shared/ipc'
@@ -97,6 +99,8 @@ export interface ChatMessage {
   attachments?: ChatAttachment[]
   /** 产生该条消息的模型 id（仅 assistant）；回放历史时由引擎给出 */
   modelId?: string
+  /** Model owning the latest input snapshot; a model-only frame can announce the next model independently. */
+  contextModelId?: string
   /** 所属轮次 id（引擎 conversations 表的 conversation_id）；历史回放合并同轮 assistant 行用 */
   conversationId?: string
 }
@@ -194,6 +198,8 @@ export interface ChatSessionModelContext {
 
 export function useChat(): {
   messages: ChatMessage[]
+  /** Authoritative lifetime billing plus only usage added after the current snapshot. */
+  sessionUsage: UsageTotal
   commandJobs: CommandJobSnapshot[]
   sessionModel: ChatSessionModelContext | null
   streaming: boolean
@@ -261,6 +267,8 @@ export function useChat(): {
   const renderSource = getEngineSource()
   const sourceRef = useRef(renderSource)
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [sessionUsageAnchor, setSessionUsageAnchor] = useState<SessionUsageAnchor | null>(null)
+  const sessionUsage = useMemo(() => sessionUsageTotal(messages, sessionUsageAnchor), [messages, sessionUsageAnchor])
   const [commandJobs, setCommandJobs] = useState<CommandJobSnapshot[]>([])
   const [sessionModel, setSessionModel] = useState<ChatSessionModelContext | null>(null)
   const [streaming, setStreaming] = useState(false)
@@ -360,6 +368,7 @@ export function useChat(): {
     throttleTimerRef.current = null
     setStreaming(false)
     setMessages([])
+    setSessionUsageAnchor(null)
     setSessionModel(null)
     setCommandJobs([])
     setTodos([])
@@ -467,6 +476,7 @@ export function useChat(): {
     syncQueue([])
     setStreaming(false)
     setMessages([])
+    setSessionUsageAnchor(null)
     setSessionModel(null)
     setCommandJobs([])
     setTodos([])
@@ -901,6 +911,7 @@ export function useChat(): {
       setArchiveLoading(false)
       setArchiveError(null)
       for (const job of snapshot.commandJobs ?? []) ingestCommandJob(job)
+      for (const run of snapshot.subagentRuns ?? []) ingestSubagentRun(run)
       rootRunsRef.current.clear()
       for (const run of snapshot.runs) rootRunsRef.current.set(run.runId, run)
       if (snapshot.run) rootRunsRef.current.set(snapshot.run.runId, snapshot.run)
@@ -913,7 +924,9 @@ export function useChat(): {
         if (tool.subagent) ingestSubagentRun(tool.subagent)
         if (tool.commandJob) ingestCommandJob(tool.commandJob)
       }
-      setMessages(attachCommandJobs(attachSubagentRuns(restored.messages, getSubagentRuns(sessionId), true), getCommandJobs(sessionId), sessionId))
+      const restoredMessages = attachCommandJobs(attachSubagentRuns(restored.messages, getSubagentRuns(sessionId), true), getCommandJobs(sessionId), sessionId)
+      setSessionUsageAnchor(createSessionUsageAnchor(restoredMessages, snapshot.sessionUsage, snapshot.sessionSubagentUsage, snapshot.subagentRuns))
+      setMessages(restoredMessages)
       setCommandJobs(getCommandJobs(sessionId))
       setTodos(restored.todos)
       return snapshot
@@ -946,6 +959,7 @@ export function useChat(): {
       const snapshot = result.data
       const restored = restoreChatSnapshot({ ...snapshot, history: mergeArchiveProjection(window.rows, snapshot.history), historyCompacted: false })
       for (const job of snapshot.commandJobs ?? []) ingestCommandJob(job)
+      for (const run of snapshot.subagentRuns ?? []) ingestSubagentRun(run)
       for (const message of restored.messages) for (const tool of message.tools) {
         if (tool.subagent) ingestSubagentRun(tool.subagent)
         if (tool.commandJob) ingestCommandJob(tool.commandJob)
@@ -955,7 +969,9 @@ export function useChat(): {
       if (snapshot.run) rootRunsRef.current.set(snapshot.run.runId, snapshot.run)
       const configuredRun = snapshot.run ?? [...snapshot.runs].filter(run => run.sessionId === sessionId).sort((a, b) => b.createdAt - a.createdAt || b.updatedAt - a.updatedAt)[0]
       setSessionModel({ source, sessionId, modelId: configuredRun?.modelId, runId: configuredRun?.runId, requestConfig: normalizeRootRunRequestConfig(configuredRun?.requestConfig) })
-      setMessages(attachCommandJobs(attachSubagentRuns(restored.messages, getSubagentRuns(sessionId), true), getCommandJobs(sessionId), sessionId))
+      const restoredMessages = attachCommandJobs(attachSubagentRuns(restored.messages, getSubagentRuns(sessionId), true), getCommandJobs(sessionId), sessionId)
+      setSessionUsageAnchor(createSessionUsageAnchor(restoredMessages, snapshot.sessionUsage, snapshot.sessionSubagentUsage, snapshot.subagentRuns))
+      setMessages(restoredMessages)
       setCommandJobs(getCommandJobs(sessionId))
       setTodos(restored.todos)
       archiveWindowRef.current = window
@@ -1086,6 +1102,7 @@ export function useChat(): {
         forgetCommandSession(sessionId)
       }
       setMessages([])
+      setSessionUsageAnchor(null)
       setCommandJobs([])
       setTodos([])
     },
@@ -1129,9 +1146,12 @@ export function useChat(): {
       })
       assertEngineSource(source)
       if (!result.ok) throw new Error(result.message || '引擎侧删除失败')
-      await loadHistory(sessionId)
+      if (viewSessionRef.current !== sessionId) return
+      const refreshed = await restoreSession(sessionId)
+      if (viewSessionRef.current !== sessionId || source !== getEngineSource()) return
+      if (!refreshed) throw new Error('本轮已删除，但未能重新加载会话，请刷新后查看')
     },
-    [loadHistory, resolveEngineRow, renderSource]
+    [restoreSession, resolveEngineRow, renderSource]
   )
 
   /**
@@ -1157,16 +1177,17 @@ export function useChat(): {
         if (!result.ok) throw new Error(result.message || '引擎侧截断失败')
       }
       if (viewSessionRef.current !== options.sessionId) return
-      setMessages((prev) => {
-        const index = prev.findIndex((m) => m.id === userMessage.id)
-        return index >= 0 ? prev.slice(0, index) : prev
-      })
+      // Truncation changes authoritative lifetime billing. Re-anchor before the
+      // retry stream instead of subtracting only the visible portion locally.
+      const refreshed = await restoreSession(options.sessionId)
+      if (viewSessionRef.current !== options.sessionId || source !== getEngineSource()) return
+      if (!refreshed) throw new Error('历史已截断，但未能重新加载会话，请刷新后重试')
       await send(userMessage.content, {
         ...options,
         attachments: userMessage.attachments
       })
     },
-    [resolveEngineRow, send, renderSource]
+    [resolveEngineRow, restoreSession, send, renderSource]
   )
 
   /**
@@ -1188,16 +1209,16 @@ export function useChat(): {
       assertEngineSource(source)
       // A slow rollback may finish after navigation. Do not remove another session's messages.
       if (viewSessionRef.current !== sessionId) return
-      setMessages((prev) => {
-        const i = prev.findIndex((m) => m.id === userMessage.id)
-        return i >= 0 ? prev.slice(0, i) : prev
-      })
+      const refreshed = await restoreSession(sessionId)
+      if (viewSessionRef.current !== sessionId || source !== getEngineSource()) return
+      if (!refreshed) throw new Error('回退已完成，但未能重新加载会话，请刷新后查看')
     },
-    [renderSource]
+    [restoreSession, renderSource]
   )
 
   return {
     messages,
+    sessionUsage,
     commandJobs,
     sessionModel,
     streaming,

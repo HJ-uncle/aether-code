@@ -10,7 +10,7 @@ test('three length fragments reconstruct byte-exact JSON and preserve final mode
  expect(messages[1].content).toBe(fragments.join(''))
  expect(JSON.parse(messages[1].content)).toEqual({items:[{id:1,name:'中文'},{id:2}]})
  expect(messages[1].items).toEqual([{kind:'content',text:fragments.join('')}])
- expect(messages[1]).toMatchObject({modelId:'actual-fallback',runId:'run',conversationId:'turn',startedAt:100,endedAt:102,usage:{promptTokens:33,completionTokens:18,currentPromptTokens:12,contextWindow:100000}})
+ expect(messages[1]).toMatchObject({modelId:'actual-fallback',runId:'run',conversationId:'turn',startedAt:100,endedAt:102,usage:{promptTokens:33,completionTokens:18,currentPromptTokens:52,contextWindow:100000}})
  const bound=applyRootRun(messages,{schemaVersion:1,runId:'run',sessionId:'session',turnId:'turn',userMessageId:'user',assistantMessageId:'final-id',version:2,seq:1,status:'succeeded',modelId:'requested-model',actualModelId:'actual-fallback',createdAt:100,updatedAt:103,finishedAt:103,pending:[]})
  expect(bound[1]).toMatchObject({id:'final-id',content:fragments.join(''),status:'done',modelId:'actual-fallback'})
 })

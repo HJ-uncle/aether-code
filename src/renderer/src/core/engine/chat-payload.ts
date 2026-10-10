@@ -41,7 +41,20 @@ export function reducePayload(message: ChatMessage, payload: ChatSsePayload): Ch
     // Live usage is cumulative. A model-only frame must neither clear counters nor charge them again.
     const previous = message.usage && typeof message.usage === 'object' ? message.usage : {}
     const next = payload.usage as Record<string, unknown>
-    return { ...message, usage: { ...previous, ...next },
+    const usage = { ...previous, ...next }
+    const hasInput = typeof next.currentPromptTokens === 'number' || typeof next.promptTokens === 'number'
+    const previousInput = typeof (previous as Record<string, unknown>).currentPromptTokens === 'number' ||
+      typeof (previous as Record<string, unknown>).promptTokens === 'number'
+    const contextModelId = typeof next.contextModelId === 'string' && next.contextModelId ? next.contextModelId
+      : hasInput ? (typeof next.modelId === 'string' && next.modelId ? next.modelId : message.modelId)
+        : message.contextModelId ?? (previousInput ? message.modelId : undefined)
+    // A new input snapshot must not borrow another invocation's window. A
+    // model-only frame carries no new input and leaves the last snapshot intact.
+    if (hasInput) {
+      if (typeof next.currentPromptTokens !== 'number') delete usage.currentPromptTokens
+      if (typeof next.contextWindow !== 'number') delete usage.contextWindow
+    }
+    return { ...message, usage, contextModelId,
       modelId: typeof next.modelId === 'string' && next.modelId ? next.modelId : message.modelId }
   }
 

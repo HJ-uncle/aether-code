@@ -38,6 +38,9 @@ export function ModelPicker({ value, disabled = false, onChange, onManage }: Mod
       <Popover
         className="model-picker"
         label="选择模型"
+        open={open}
+        onOpenChange={setOpen}
+        disabled={disabled}
         placement="up"
         align="start"
         width={300}
@@ -48,7 +51,6 @@ export function ModelPicker({ value, disabled = false, onChange, onManage }: Mod
             disabled={disabled}
             className={`model-picker__trigger${isOpen ? ' is-open' : ''}`}
             title={value ? `当前模型：${value}` : '未指定模型，将使用引擎默认配置'}
-            onClick={() => setOpen((prev) => !prev)}
           >
             <span className="picker__label">{label}</span>
             <span className="model-picker__caret">⌃</span>

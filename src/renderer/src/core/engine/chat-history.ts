@@ -29,7 +29,11 @@ const USAGE_SNAPSHOT_KEYS = new Set(['currentPromptTokens', 'contextWindow'])
 
 function mergeUsageFrame(previous: unknown, next: unknown): Record<string, number> {
   const base = asNumberRecord(previous)
-  for (const [key, value] of Object.entries(asNumberRecord(next))) {
+  const incoming = asNumberRecord(next)
+  if ((incoming.currentPromptTokens !== undefined || incoming.promptTokens !== undefined) && incoming.contextWindow === undefined) {
+    delete base.contextWindow
+  }
+  for (const [key, value] of Object.entries(incoming)) {
     if (USAGE_SNAPSHOT_KEYS.has(key)) base[key] = value
     else base[key] = (base[key] ?? 0) + value
   }
@@ -213,12 +217,14 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
     if (row.modelId) message.modelId = row.modelId
     if (row.usage) {
       message.usage = mergeUsageFrame(message.usage, row.usage)
-      // promptTokens 在同轮多行间被按增量累加（供底部「会话总输入」统计），
-      // 但「上下文占用」要的是本轮最后一次调用的输入快照——单独记到 currentPromptTokens，
-      // 取最后一行的值，避免被累加膨胀（这正是「上下文数值停在首次请求」的根源）。
-      const rowPrompt = asNumberRecord(row.usage).promptTokens
+      // Prefer the engine's explicit input snapshot. Older stored rows only
+      // have per-invocation promptTokens, which can supply the same snapshot
+      // without replacing an authoritative currentPromptTokens (including 0).
+      const rowUsage = asNumberRecord(row.usage)
+      const rowPrompt = rowUsage.currentPromptTokens ?? rowUsage.promptTokens
       if (rowPrompt !== undefined) {
         ;(message.usage as Record<string, number>).currentPromptTokens = rowPrompt
+        message.contextModelId = row.modelId ?? message.modelId
       }
     }
     message.thinking += typeof row.reasoningContent === 'string' ? row.reasoningContent : ''

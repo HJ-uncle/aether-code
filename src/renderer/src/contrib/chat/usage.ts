@@ -78,6 +78,33 @@ export function asUsageFrame(raw: unknown): UsageFrame | null {
   return Object.keys(frame).length > 0 ? frame : null
 }
 
+export interface ContextUsageSnapshot {
+  used: number
+  contextWindow?: number
+  modelId?: string
+}
+
+/** Latest model input and its window belong to the same invocation, never billing totals or a future composer model. */
+export function latestContextUsage(messages: ChatMessage[]): ContextUsageSnapshot | null {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message.role !== 'assistant') continue
+    const frame = asUsageFrame(message.usage)
+    if (!frame) continue
+    // Explicit turn billing is cumulative and cannot stand in for an unknown
+    // invocation input (for example an approval seed after compaction).
+    if ((message.usage as Record<string, unknown>).usageScope === 'turn' && frame.currentPromptTokens === undefined) continue
+    const used = frame.currentPromptTokens ?? frame.promptTokens
+    if (used === undefined || used < 0) continue
+    return {
+      used,
+      ...(frame.contextWindow && frame.contextWindow > 0 ? { contextWindow: frame.contextWindow } : {}),
+      ...((message.contextModelId ?? message.modelId) ? { modelId: message.contextModelId ?? message.modelId } : {})
+    }
+  }
+  return null
+}
+
 /** 明细行的展示顺序与标签（对齐引擎 QA 日志描述，便于两边对照排查） */
 const DETAIL_ROWS: ReadonlyArray<{
   key: keyof UsageFrame
@@ -85,7 +112,7 @@ const DETAIL_ROWS: ReadonlyArray<{
   group: 'input' | 'output'
   child?: boolean
 }> = [
-  { key: 'promptTokens', label: '输入 Prompt', group: 'input' },
+  { key: 'promptTokens', label: '累计输入 Prompt', group: 'input' },
   { key: 'systemPromptTokens', label: '系统提示词', group: 'input', child: true },
   { key: 'messagesTokens', label: '对话历史', group: 'input', child: true },
   { key: 'toolResultsTokens', label: '工具结果', group: 'input', child: true },

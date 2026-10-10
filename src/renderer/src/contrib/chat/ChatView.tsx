@@ -38,12 +38,11 @@ import { composerThinkingMode, requestedThinkingMode, resolveSessionRequestConfi
 import { normalizeRootRunRequestConfig, type RootRunRequestConfig } from '@shared/root-run'
 import { MessageNavRail, type NavTurn } from './MessageNavRail'
 import {
-  asUsageFrame,
+  latestContextUsage,
   formatDuration,
   formatTimestamp,
   formatTokens,
   groupIntoTurns,
-  sumUsage,
   type UsageDetailRow
 } from './usage'
 import { useAttachments, shouldAttachPastedText, createPastedTextFile } from './useAttachments'
@@ -54,7 +53,7 @@ import { knowledgeBindingKey, saveKnowledgeBinding } from '@renderer/core/engine
 import { ResourcePicker, type ResourceItem } from './ResourcePicker'
 import './apple-chat-panels.css'
 
-/** 上下文窗口估算基数：引擎未下发各模型窗口上限，按常见的 128K 估算占比 */
+/** Older engines/models can omit the window; use 128K only when no authoritative value exists. */
 const CONTEXT_WINDOW_FALLBACK = 128_000
 
 /** 消息窗口分页：只渲染尾部约 300 条消息（按轮次对齐切割），滚顶自动加载更早的 */
@@ -256,7 +255,7 @@ export function ChatView(): JSX.Element {
   const connectionKey = engineConnectionKey(engine.snapshot)
   const storageSource = engineStorageKey(engine.snapshot)
   const sourceEpoch = getEngineSource()
-  const { messages, commandJobs, sessionModel, streaming, historyCompacted, archiveRemaining, archiveLoading, archiveError, loadArchive, todos, send, respond, abort, loadHistory, resumeStream, deleteTurn, retryFrom, revertFrom, queue, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, queueSendMode, setQueueSendMode, retargetQueuedModel } = useChat()
+  const { messages, sessionUsage, commandJobs, sessionModel, streaming, historyCompacted, archiveRemaining, archiveLoading, archiveError, loadArchive, todos, send, respond, abort, loadHistory, resumeStream, deleteTurn, retryFrom, revertFrom, queue, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, queueSendMode, setQueueSendMode, retargetQueuedModel } = useChat()
   const { models, loaded: modelsLoaded } = useModels()
   const workspace = useWorkspace()
   // AppProvider 按引擎来源统一恢复或创建会话。这里提前创建会与远端选择
@@ -442,29 +441,18 @@ export function ChatView(): JSX.Element {
     setPolishing(false)
   }, [connectionKey, sourceEpoch, clearAttachments, setAttachmentDragging])
 
-  // 会话累计用量：按消息里的 usage 帧汇总，作为工具栏「模型 / Token / 使用时间」的数据源
-  const usageTotal = useMemo(() => sumUsage(messages), [messages])
-  // 上下文占用：最近一轮 usage 的 currentPromptTokens（最后一次模型调用的真实输入，
-  // 压缩后下一轮自然回落）。老引擎没有该字段时回退 promptTokens（跨迭代累加值，仅兜底）。
-  const contextUsed = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const frame = asUsageFrame(messages[i].usage)
-      if (frame?.currentPromptTokens) return frame.currentPromptTokens
-      if (frame?.promptTokens) return frame.promptTokens
-    }
-    return 0
-  }, [messages])
-  // 用量环分母：usage 帧里引擎解析出的窗口 > 模型列表能力表 > 128K 兜底
-  const contextLimit = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const frame = asUsageFrame(messages[i].usage)
-      if (frame?.contextWindow) return frame.contextWindow
-    }
-    return (
-      models.find((model) => model.modelId === ([...messages].reverse().find(message => message.modelId)?.modelId ?? modelId))?.capabilities?.contextWindow ??
-      CONTEXT_WINDOW_FALLBACK
-    )
-  }, [messages, models, modelId])
+  // Lifetime billing is anchored to the authoritative server snapshot. Loading
+  // archived transcript pages must not make previously billed tokens new spend.
+  const usageTotal = sessionUsage
+  // Input occupancy is an invocation snapshot; request billing stays cumulative
+  // in usageTotal. A later invocation may legitimately use less context.
+  const contextUsage = useMemo(() => latestContextUsage(messages), [messages])
+  const contextUsed = contextUsage?.used ?? 0
+  // Pair the input with its own model/window. A pending model-only frame or a
+  // composer selection must not redivide old input by another model's window.
+  const contextLimit = contextUsage?.contextWindow ??
+    models.find(model => model.modelId === (contextUsage?.modelId ?? modelId))?.capabilities?.contextWindow ??
+    CONTEXT_WINDOW_FALLBACK
   // 按用户提问切分轮次：每轮末尾展示「一问一答」的累计 token
   const turns = useMemo(() => groupIntoTurns(messages), [messages])
 
@@ -1682,11 +1670,14 @@ export function ChatView(): JSX.Element {
 
             {contextUsed > 0 ? (
               <ContextRing
+                key={`${sourceEpoch}:${sessionId}`}
                 used={contextUsed}
                 limit={contextLimit}
                 sessionId={sessionId}
                 streaming={streaming}
-                onCompacted={() => void loadHistory(sessionId)}
+                onCompacted={() => {
+                  if (displayedSessionRef.current === sourceSessionKey) void loadHistory(sessionId)
+                }}
               />
             ) : null}
 
@@ -1738,8 +1729,8 @@ export function ChatView(): JSX.Element {
 // ==================== 消息渲染 ====================
 
 /**
- * 上下文用量环：显示当前上下文占用占估算窗口的百分比。
- * 数据来自最近一轮 usage 的 promptTokens；分母为估算值（引擎未下发各模型窗口上限）。
+ * 上下文用量环：最近一次模型请求的输入占该次上下文窗口的百分比。
+ * 占用快照可以随压缩/工具结果清理下降；每轮计费用量另行累计。
  *
  * 点击触发压缩：调引擎 POST /conversation/compress（LLM 摘要 + 历史重建），
  * 过程中环内显示转圈；完成后短暂显示压缩前后 token 对比，再回落为百分比。
@@ -1764,6 +1755,8 @@ function ContextRing({
   const [errorMsg, setErrorMsg] = useState('')
   const [hoverAnchor, setHoverAnchor] = useState<DOMRect | null>(null)
   const closeTimerRef = useRef(0)
+  const phaseTimerRef = useRef(0)
+  const mountedRef = useRef(true)
 
   const openHover = (rect: DOMRect): void => {
     window.clearTimeout(closeTimerRef.current)
@@ -1773,7 +1766,14 @@ function ContextRing({
     window.clearTimeout(closeTimerRef.current)
     closeTimerRef.current = window.setTimeout(() => setHoverAnchor(null), 200)
   }
-  useEffect(() => () => window.clearTimeout(closeTimerRef.current), [])
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      window.clearTimeout(closeTimerRef.current)
+      window.clearTimeout(phaseTimerRef.current)
+    }
+  }, [])
 
   const ratio = Math.min(1, used / limit)
   const percent = Math.round(ratio * 100)
@@ -1786,13 +1786,12 @@ function ContextRing({
     if (!ready || sourceEpoch !== getEngineSource() || phase === 'compacting' || streaming || !sessionId) return
     setPhase('compacting')
     setErrorMsg('')
-    const startedAt = Date.now()
     try {
       const response = await requestOrThrow<{
         message?: string
         stats?: { originalTokens: number; compressedTokens: number }
       }>({ method: 'POST', path: '/conversation/compress', query: { sessionId } })
-      if (sourceEpoch !== getEngineSource()) return
+      if (!mountedRef.current || sourceEpoch !== getEngineSource()) return
       setCompactInfo({
         before: response.stats?.originalTokens ?? used,
         after: response.stats?.compressedTokens ?? used
@@ -1800,14 +1799,17 @@ function ContextRing({
       setPhase('done')
       onCompacted()
       // 6 秒后回落到百分比（对齐竞品行为）
-      window.setTimeout(() => { if (sourceEpoch === getEngineSource()) setPhase('idle') }, 6000)
+      phaseTimerRef.current = window.setTimeout(() => {
+        if (mountedRef.current && sourceEpoch === getEngineSource()) setPhase('idle')
+      }, 6000)
     } catch (e) {
-      if (sourceEpoch !== getEngineSource()) return
+      if (!mountedRef.current || sourceEpoch !== getEngineSource()) return
       setErrorMsg(e instanceof Error ? e.message : '压缩失败')
       setPhase('failed')
-      window.setTimeout(() => { if (sourceEpoch === getEngineSource()) setPhase('idle') }, 6000)
+      phaseTimerRef.current = window.setTimeout(() => {
+        if (mountedRef.current && sourceEpoch === getEngineSource()) setPhase('idle')
+      }, 6000)
     }
-    void startedAt
   }
 
   // 悬停详情由 ContextRingCard 弹窗卡片承载，这里只保留无障碍标签（原生 title 会与卡片重复弹出）
@@ -1818,7 +1820,7 @@ function ContextRing({
         ? `已压缩 ${formatTokens(compactInfo.before)} → ${formatTokens(compactInfo.after)}`
         : phase === 'failed'
           ? `压缩失败：${errorMsg}`
-          : `上下文用量约 ${percent}%（${formatTokens(used)} / 估算 ${formatTokens(limit)}），点击压缩上下文`
+          : `上下文用量约 ${percent}%（最近一次模型请求 ${formatTokens(used)} / ${formatTokens(limit)}），点击压缩上下文`
 
   return (
     <>
@@ -1860,8 +1862,6 @@ function ContextRing({
           errorMsg={errorMsg}
           streaming={streaming}
           readOnly={!ready}
-          onKeep={() => window.clearTimeout(closeTimerRef.current)}
-          onLeave={scheduleCloseHover}
         />
       ) : null}
     </>
@@ -1872,7 +1872,7 @@ function ContextRing({
  * 上下文用量环的 hover 卡片（布局对齐 wuzu ContextUsageRing 的 tooltip）。
  * 结构：标题行（上下文窗口）→ 大号百分比 + 右侧「已用 / 上限」→ 底部状态提示；
  * 压缩中 / 失败时正文整块替换为对应状态。
- * 定位与 GitStashHoverCard 同模式：卡片上方居中、贴边钳制，鼠标在「环 → 卡片」间移动不消失。
+ * 信息卡不包含操作，鼠标可以穿过卡片继续点击输入框；定位在环的上方并贴边钳制。
  */
 function ContextRingCard({
   anchor,
@@ -1883,9 +1883,7 @@ function ContextRingCard({
   compactInfo,
   errorMsg,
   streaming,
-  readOnly,
-  onKeep,
-  onLeave
+  readOnly
 }: {
   anchor: DOMRect
   used: number
@@ -1896,8 +1894,6 @@ function ContextRingCard({
   errorMsg: string
   streaming: boolean
   readOnly: boolean
-  onKeep: () => void
-  onLeave: () => void
 }): JSX.Element {
   const cardRef = useRef<HTMLDivElement>(null)
 
@@ -1925,9 +1921,9 @@ function ContextRingCard({
         : '使用接近上限时，可点击立即压缩上下文'
 
   return createPortal(
-    <div ref={cardRef} className="git-stashcard ctx-card" onMouseEnter={onKeep} onMouseLeave={onLeave}>
+    <div ref={cardRef} className="git-stashcard ctx-card" role="tooltip" style={{ pointerEvents: 'none' }}>
       <div className="ctx-card__header">
-        <span>上下文窗口</span>
+        <span>当前上下文</span>
         {phase === 'failed' ? (
           <Icon name="close" size={16} className="ctx-card__warn-icon" />
         ) : phase === 'idle' || phase === 'done' ? (
@@ -1960,6 +1956,7 @@ function ContextRingCard({
           </div>
         </>
       )}
+      <div className="ctx-card__hint">最近一次模型请求的输入（模型统计或估算）；压缩或清理工具结果后可减少。</div>
       {phase !== 'failed' && phase !== 'compacting' ? (
         <div className="ctx-card__hint">{hint}</div>
       ) : null}
@@ -2897,7 +2894,7 @@ function UsageMeter({
       <div className="usage-popover__head">
         <span className="usage-popover__title">本会话用量</span>
         <span className="usage-popover__meta">
-          {rounds} 轮{duration ? ` · ${duration}` : ''}
+          已加载 {rounds} 轮{duration ? ` · ${duration}` : ''}
         </span>
       </div>
       <div className="usage-popover__total">
