@@ -16,6 +16,7 @@ const root = resolve(__dirname, '..')
 const fixtureRoot = join(root, '.e2e-tmp')
 const resizeFrames: ResizeFrame[] = []
 const pageErrors: string[] = []
+const geometrySamples: unknown[] = []
 let fixture = ''
 let app: ElectronApplication | undefined
 let page: Page
@@ -52,6 +53,31 @@ async function dragPanel(deltaY: number): Promise<void> {
   await page.mouse.down()
   await page.mouse.move(x, y + deltaY, { steps: 12 })
   await page.mouse.up()
+}
+
+async function recordGeometry(label: string): Promise<void> {
+  const geometry = await page.locator('.terminal-view__session:visible').evaluate(container => {
+    const screen = container.querySelector('.xterm-screen')
+    const term = container.querySelector('.xterm')
+    const rows = container.querySelector('.xterm-rows')
+    const rect = (element: Element | null) => {
+      if (!element) return null
+      const bounds = element.getBoundingClientRect()
+      const css = getComputedStyle(element)
+      return { width: bounds.width, height: bounds.height, top: bounds.top, bottom: bounds.bottom,
+        fontFamily: css.fontFamily, fontSize: css.fontSize, lineHeight: css.lineHeight,
+        paddingTop: css.paddingTop, paddingBottom: css.paddingBottom, computedHeight: css.height,
+        clientHeight: element.clientHeight, clientWidth: element.clientWidth, scrollTop: element.scrollTop }
+    }
+    const ancestors: unknown[] = []
+    for (let node: Element | null = container.parentElement; node; node = node.parentElement) {
+      const geometry = rect(node)
+      if (geometry) ancestors.push({ className: node.className, ...geometry })
+    }
+    return { dpr: window.devicePixelRatio, fonts: document.fonts.status, ancestors, host: rect(container), term: rect(term),
+      screen: rect(screen), firstRow: rect(rows?.firstElementChild ?? null), rowCount: rows?.childElementCount }
+  })
+  geometrySamples.push({ label, geometry, resizeFrames: [...resizeFrames] })
 }
 
 async function expectScreenFits(terminalId: string): Promise<void> {
@@ -138,6 +164,15 @@ test.describe.serial('终端尺寸跟随面板与窗口', () => {
     await expect(page.locator('.terminal-view__item')).toHaveCount(1)
     await expect.poll(() => latestResize('fixture-1')?.rows ?? 0).toBeGreaterThan(0)
     await expect(page.locator('.terminal-view__session:visible')).toContainText('~ $')
+  })
+
+  test.afterEach(async ({}, testInfo) => {
+    if (testInfo.status !== testInfo.expectedStatus && page && !page.isClosed()) {
+      await recordGeometry('failure')
+    }
+    if (geometrySamples.length > 0) await testInfo.attach('terminal-geometry-diagnostics', {
+      body: JSON.stringify({ geometrySamples, resizeFrames, pageErrors }, null, 2), contentType: 'application/json'
+    })
   })
 
   test.afterAll(async () => {
@@ -228,15 +263,18 @@ test.describe.serial('终端尺寸跟随面板与窗口', () => {
     await page.locator('.app-settings__nav').getByRole('tab', { name: '终端', exact: true }).click()
     await expect(page.getByLabel('终端字号', { exact: true })).toBeVisible()
     await expectScreenFits('fixture-1')
+    await recordGeometry('before-font-change')
     const before = latestResize('fixture-1')!
     const originalFontSize = await page.getByLabel('终端字号', { exact: true }).inputValue()
     await page.getByLabel('终端字号', { exact: true }).fill('20')
     await expect.poll(() => latestResize('fixture-1')?.rows ?? Infinity).toBeLessThan(before.rows)
     await expect.poll(() => latestResize('fixture-1')?.cols ?? Infinity).toBeLessThan(before.cols)
     await expectScreenFits('fixture-1')
+    await recordGeometry('large-font')
     await page.getByLabel('终端字号', { exact: true }).fill(originalFontSize)
     await expect.poll(() => latestResize('fixture-1')?.rows).toBe(before.rows)
     await expectScreenFits('fixture-1')
+    await recordGeometry('restored-font')
     expect(pageErrors).toEqual([])
   })
 })

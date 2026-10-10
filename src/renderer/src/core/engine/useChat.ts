@@ -2,7 +2,7 @@ import type { CommandJobSnapshot } from '@shared/command-job'
 import { attachCommandJobs } from './command-job-state'
 import { subscribeCommandJobs, getCommandJobs, ingestCommandJob, forgetCommandSession, refreshCommandJobs, activateCommandSession } from './command-job-store'
 import type { SubagentRun } from '@shared/subagent'
-import type { RootRun } from '@shared/root-run'
+import { normalizeRootRunRequestConfig, type RootRun, type RootRunRequestConfig } from '@shared/root-run'
 import { applyRootRun, finishTransport, mergeRootRun, normalizeRootRun } from './root-run-state'
 import { applyToolResult, normalizeTool, type EngineHistoryRow } from './chat-history'
 export { extractText } from './chat-history'
@@ -22,6 +22,7 @@ import {
 } from './pending'
 import { patchSessionMeta } from '@renderer/contrib/history/session-meta'
 import type { MemoryScope } from './memory'
+import { ARCHIVE_PAGE_SIZE, loadArchiveWindow, mergeArchiveProjection, type ArchiveWindow } from './archive-pages'
 
 // ==================== 模型 ====================
 
@@ -165,7 +166,7 @@ export interface SendOptions {
    * 引擎侧语义（见 chat 路由）：不传时看 capabilities.thinking 是否为真；
    * 字符串档位表示「强制开启并指定推理 effort」，false 是显式关闭。
    */
-  thinkingMode?: 'low' | 'medium' | 'high' | false
+  thinkingMode?: 'low' | 'medium' | 'high' | boolean
   /** 子代理专用模型（空/undefined = 跟随主模型）；来自设置「按用途指派」 */
   subagentModel?: string
   /** 轻任务专用模型（图片理解等旁路调用）；来自设置「按用途指派」 */
@@ -183,12 +184,24 @@ function newId(): string {
 
 // ==================== Hook ====================
 
+export interface ChatSessionModelContext {
+  source: number
+  sessionId: string
+  modelId?: string
+  runId?: string
+  requestConfig?: RootRunRequestConfig
+}
+
 export function useChat(): {
   messages: ChatMessage[]
   commandJobs: CommandJobSnapshot[]
+  sessionModel: ChatSessionModelContext | null
   streaming: boolean
   /** The compact snapshot omitted older JSONL rows that can be loaded on demand. */
   historyCompacted: boolean
+  archiveRemaining: number | null
+  archiveLoading: boolean
+  archiveError: string | null
   /** Expand the explicit transcript archive into the visible chat timeline. */
   loadArchive: (sessionId: string) => Promise<void>
   /** 会话待办清单（引擎 todo 工具维护，随 \x00__todo__ 帧整表下发） */
@@ -238,7 +251,7 @@ export function useChat(): {
    * 运行中切换模型时，把队列里所有待发消息的模型改写为新模型
    * （已发出的回合不受影响，避免出现「正在运行的模型显示成后选的模型」）
    */
-  retargetQueuedModel: (model: string) => void
+  retargetQueuedModel: (model: string, sessionId: string) => void
   /**
    * 恢复断开的流（刷新页面 / 切回会话后调用）。
    * 返回 true 表示该会话确有进行中的流且已成功挂接；false 表示无需恢复。
@@ -249,10 +262,16 @@ export function useChat(): {
   const sourceRef = useRef(renderSource)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [commandJobs, setCommandJobs] = useState<CommandJobSnapshot[]>([])
+  const [sessionModel, setSessionModel] = useState<ChatSessionModelContext | null>(null)
   const [streaming, setStreaming] = useState(false)
   const [todos, setTodos] = useState<EngineTodo[]>([])
   const [historyCompacted, setHistoryCompacted] = useState(false)
   const [archiveExpanded, setArchiveExpanded] = useState(false)
+  const [archiveRemaining, setArchiveRemaining] = useState<number | null>(null)
+  const [archiveLoading, setArchiveLoading] = useState(false)
+  const [archiveError, setArchiveError] = useState<string | null>(null)
+  const archiveWindowRef = useRef<ArchiveWindow | undefined>(undefined)
+  const archiveLoadingRef = useRef<object | null>(null)
 
   /**
    * 流式帧节流（对齐 wuzu-client 的 80ms 快照方案）：
@@ -341,10 +360,16 @@ export function useChat(): {
     throttleTimerRef.current = null
     setStreaming(false)
     setMessages([])
+    setSessionModel(null)
     setCommandJobs([])
     setTodos([])
     setHistoryCompacted(false)
     setArchiveExpanded(false)
+    archiveWindowRef.current = undefined
+    archiveLoadingRef.current = null
+    setArchiveRemaining(null)
+    setArchiveLoading(false)
+    setArchiveError(null)
     // Detach only this client. The server owns the old run's eventual outcome.
     if (oldStream) void engine.abortStream(oldStream)
   }, [])
@@ -442,6 +467,7 @@ export function useChat(): {
     syncQueue([])
     setStreaming(false)
     setMessages([])
+    setSessionModel(null)
     setCommandJobs([])
     setTodos([])
     // Detach only: POST cancel would target the new server.
@@ -588,6 +614,7 @@ export function useChat(): {
         const merged = mergeRootRun(rootRunsRef.current.get(run.runId), run)
         rootRunsRef.current.set(run.runId, merged)
         activeRunIdRef.current = run.runId
+        setSessionModel({ source: sourceRef.current, sessionId: merged.sessionId, runId: merged.runId, modelId: merged.modelId, requestConfig: merged.requestConfig })
         const optimistic = { ...optimisticIdsRef.current }
         setMessages((prev) => applyRootRun(prev, merged, optimistic))
         return
@@ -757,10 +784,10 @@ export function useChat(): {
    * 避免出现「正在运行的回合显示成输入框后选的模型」这类错标。
    */
   const retargetQueuedModel = useCallback(
-    (model: string): void => {
+    (model: string, sessionId: string): void => {
       const list = queueRef.current
-      if (list.length === 0) return
-      syncQueue(list.map((item) => ({ ...item, options: { ...item.options, model } })))
+      if (!sessionId || list.length === 0) return
+      syncQueue(list.map((item) => item.options.sessionId === sessionId ? { ...item, options: { ...item.options, model } } : item))
     },
     [syncQueue]
   )
@@ -814,8 +841,8 @@ export function useChat(): {
         workspacePaths: !isRemoteEngine() && options.workspacePaths?.length ? options.workspacePaths : undefined,
         // undefined 不参与 JSON 序列化 → 引擎收到「未指定」，按其能力判断
         thinkingMode: options.thinkingMode,
-        subagentModel: options.subagentModel || undefined,
-        utilityModel: options.utilityModel || undefined,
+        subagentModel: options.subagentModel,
+        utilityModel: options.utilityModel,
         memoryScope: options.memoryScope,
         // Local attachments use a relative name. Remote uploads are referenced
         // by the opaque ID recorded by the main process so arbitrary paths can
@@ -868,10 +895,17 @@ export function useChat(): {
       setHistoryCompacted(Boolean(snapshot.historyCompacted) || snapshot.history.some(row =>
         row.role === 'system' && row.metadata?.isCompactSummary === true))
       setArchiveExpanded(false)
+      archiveWindowRef.current = undefined
+      archiveLoadingRef.current = null
+      setArchiveRemaining(null)
+      setArchiveLoading(false)
+      setArchiveError(null)
       for (const job of snapshot.commandJobs ?? []) ingestCommandJob(job)
       rootRunsRef.current.clear()
       for (const run of snapshot.runs) rootRunsRef.current.set(run.runId, run)
       if (snapshot.run) rootRunsRef.current.set(snapshot.run.runId, snapshot.run)
+      const configuredRun = snapshot.run ?? [...snapshot.runs].filter(run => run.sessionId === sessionId).sort((a, b) => b.createdAt - a.createdAt || b.updatedAt - a.updatedAt)[0]
+      setSessionModel({ source, sessionId, modelId: configuredRun?.modelId, runId: configuredRun?.runId, requestConfig: normalizeRootRunRequestConfig(configuredRun?.requestConfig) })
       activeRunIdRef.current = snapshot.run?.runId ?? null
       consumedEventIdRef.current = snapshot.eventId
       optimisticIdsRef.current = {}
@@ -891,28 +925,48 @@ export function useChat(): {
   }, [restoreSession])
 
   const loadArchive = useCallback(async (sessionId: string): Promise<void> => {
-    if (!sessionId || !isEngineReady() || renderSource !== getEngineSource() || activeStreamRef.current) return
+    if (!sessionId || !isEngineReady() || renderSource !== getEngineSource() || activeStreamRef.current || archiveLoadingRef.current) return
     const source = getEngineSource()
     const generation = ++historyRequestRef.current
+    const loading = {}
+    archiveLoadingRef.current = loading
+    setArchiveLoading(true)
+    setArchiveError(null)
+    const current = () => source === getEngineSource() && generation === historyRequestRef.current && viewSessionRef.current === sessionId && !activeStreamRef.current
     try {
-      const result = await engine.request<EngineHistoryRow[]>({
-        method: 'GET',
-        path: '/conversation/archive',
-        query: { sessionId }
-      })
-      if (source !== getEngineSource() || generation !== historyRequestRef.current || viewSessionRef.current !== sessionId ||
-        !result.ok || !Array.isArray(result.data)) return
-      const snapshot = await restoreSession(sessionId)
-      if (!snapshot || source !== getEngineSource() || viewSessionRef.current !== sessionId) return
-      const restored = restoreChatSnapshot({ ...snapshot, history: result.data, historyCompacted: false })
+      const window = await loadArchiveWindow(async (page, pageSize) => {
+        if (!current()) throw new Error('会话或连接已切换')
+        const result = await engine.request<EngineHistoryRow[]>({ method: 'GET', path: '/conversation/archive', query: { sessionId, current: String(page), pageSize: String(pageSize) } })
+        if (!current()) throw new Error('会话或连接已切换')
+        return result
+      }, sessionId, archiveWindowRef.current)
+      const result = await engine.request<ChatRecoverySnapshot>({ method: 'GET', path: '/chat/snapshot', query: { sessionId } })
+      if (!current()) return
+      if (!result.ok || !result.data || result.data.schemaVersion !== 1 || result.data.sessionId !== sessionId) throw new Error(result.message || '读取会话快照失败，请重试')
+      const snapshot = result.data
+      const restored = restoreChatSnapshot({ ...snapshot, history: mergeArchiveProjection(window.rows, snapshot.history), historyCompacted: false })
+      for (const job of snapshot.commandJobs ?? []) ingestCommandJob(job)
+      for (const message of restored.messages) for (const tool of message.tools) {
+        if (tool.subagent) ingestSubagentRun(tool.subagent)
+        if (tool.commandJob) ingestCommandJob(tool.commandJob)
+      }
+      rootRunsRef.current.clear()
+      for (const run of snapshot.runs) rootRunsRef.current.set(run.runId, run)
+      if (snapshot.run) rootRunsRef.current.set(snapshot.run.runId, snapshot.run)
+      const configuredRun = snapshot.run ?? [...snapshot.runs].filter(run => run.sessionId === sessionId).sort((a, b) => b.createdAt - a.createdAt || b.updatedAt - a.updatedAt)[0]
+      setSessionModel({ source, sessionId, modelId: configuredRun?.modelId, runId: configuredRun?.runId, requestConfig: normalizeRootRunRequestConfig(configuredRun?.requestConfig) })
       setMessages(attachCommandJobs(attachSubagentRuns(restored.messages, getSubagentRuns(sessionId), true), getCommandJobs(sessionId), sessionId))
+      setCommandJobs(getCommandJobs(sessionId))
       setTodos(restored.todos)
-      setHistoryCompacted(false)
+      archiveWindowRef.current = window
+      setArchiveRemaining((window.firstPage - 1) * ARCHIVE_PAGE_SIZE)
       setArchiveExpanded(true)
-    } catch {
-      // Keep the compact projection visible when an archive read is unavailable.
+    } catch (error) {
+      if (current()) setArchiveError(error instanceof Error ? error.message : '加载历史归档失败，请重试')
+    } finally {
+      if (archiveLoadingRef.current === loading) { archiveLoadingRef.current = null; setArchiveLoading(false) }
     }
-  }, [renderSource, restoreSession])
+  }, [renderSource])
 
   /** Snapshot and watermark describe the same state; subscribe only after replacing the current turn. */
   const resumeStream = useCallback(async (sessionId: string): Promise<boolean> => {
@@ -1145,8 +1199,12 @@ export function useChat(): {
   return {
     messages,
     commandJobs,
+    sessionModel,
     streaming,
-    historyCompacted: historyCompacted && !archiveExpanded,
+    historyCompacted: historyCompacted && (!archiveExpanded || (archiveRemaining ?? 0) > 0),
+    archiveRemaining,
+    archiveLoading,
+    archiveError,
     loadArchive,
     todos,
     send,

@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test'
 import type { CommandJobOutput, CommandJobSnapshot } from '../src/shared/command-job'
 import type { ChatMessage, ToolActivity } from '../src/renderer/src/core/engine/useChat'
 import type { RootRun } from '../src/shared/root-run'
-import { attachCommandJobs, visibleChildCommandJobs, commandStatusLabels, emptyCommandOutput, exportCommandJob, mergeCommandJob, mergeCommandOutput, normalizeCommandJob } from '../src/renderer/src/core/engine/command-job-state'
+import { attachCommandJobs, visibleChildCommandJobs, commandStatusLabels, commandJobDisplayLabel, commandJobStopMessage, emptyCommandOutput, exportCommandJob, mergeCommandJob, mergeCommandOutput, normalizeCommandJob } from '../src/renderer/src/core/engine/command-job-state'
 import { finishTool, replayMessages } from '../src/renderer/src/core/engine/chat-history'
 import { applyRootRun } from '../src/renderer/src/core/engine/root-run-state'
 import { restoreChatSnapshot } from '../src/renderer/src/core/engine/chat-recovery'
@@ -80,4 +80,16 @@ test('malformed or backwards output pages are refused and every terminal reason 
   expect(() => mergeCommandOutput({ ...emptyCommandOutput, cursor: 4 }, page([], { nextCursor: 3 }))).toThrow()
   expect(() => mergeCommandOutput(emptyCommandOutput, page([{ seq: 2, stream: 'stdout', text: 'b' }, { seq: 1, stream: 'stdout', text: 'a' }], { nextCursor: 2 }))).toThrow()
   expect(commandStatusLabels).toMatchObject({ cancelled: '已取消', timed_out: '已超时', interrupted: '已中断', failed: '失败', cancelling: '正在停止' })
+})
+
+test('deliberate background stop is neutral while copied diagnostics retain its real exit code and reason', () => {
+  const stopped = { ...job, status: 'cancelled' as const, exitCode: 1, error: { code: 'COMMAND_CANCELLED', message: 'Stopped by cancel_command' } }
+  expect(commandJobDisplayLabel(stopped)).toBe('已停止')
+  expect(commandJobStopMessage(stopped)).toBe('Agent 已停止此命令。')
+  expect(exportCommandJob(stopped)).toContain('状态：已停止')
+  expect(exportCommandJob(stopped)).toContain('退出码：1')
+  expect(exportCommandJob(stopped)).toContain('COMMAND_CANCELLED Stopped by cancel_command')
+  expect(stopped.status).toBe('cancelled')
+  for (const status of ['failed', 'timed_out'] as const) expect(commandJobStopMessage({ ...stopped, status })).toBeUndefined()
+  expect(commandJobStopMessage({ ...stopped, error: { code: 'COMMAND_PERSIST_FAILED', message: 'state save failed' } })).toBeUndefined()
 })

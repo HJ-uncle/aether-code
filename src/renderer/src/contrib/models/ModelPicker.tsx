@@ -8,6 +8,7 @@ import { ModelFormDialog } from './ModelFormDialog'
 interface ModelPickerProps {
   /** 当前选中的 modelId；空串表示使用引擎默认 */
   value: string
+  disabled?: boolean
   onChange: (modelId: string) => void
   /** 打开完整管理页 */
   onManage: () => void
@@ -19,7 +20,7 @@ interface ModelPickerProps {
  * 点开列出已配置模型，可直接切换；底部提供「添加模型」，避免为了加一个模型
  * 必须先跳转到设置页。列表为空时会把「添加模型」作为主行动突出显示。
  */
-export function ModelPicker({ value, onChange, onManage }: ModelPickerProps): JSX.Element {
+export function ModelPicker({ value, disabled = false, onChange, onManage }: ModelPickerProps): JSX.Element {
   const { models, loading, error, loaded, refresh } = useModels()
   const [open, setOpen] = useState(false)
   const [adding, setAdding] = useState(false)
@@ -44,6 +45,7 @@ export function ModelPicker({ value, onChange, onManage }: ModelPickerProps): JS
         trigger={({ open: isOpen }) => (
           <button
             type="button"
+            disabled={disabled}
             className={`model-picker__trigger${isOpen ? ' is-open' : ''}`}
             title={value ? `当前模型：${value}` : '未指定模型，将使用引擎默认配置'}
             onClick={() => setOpen((prev) => !prev)}

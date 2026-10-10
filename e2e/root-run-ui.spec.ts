@@ -86,7 +86,10 @@ function env(): NodeJS.ProcessEnv {
 async function launch(overrides: NodeJS.ProcessEnv = {}) {
   app=await electron.launch({args:['.',`--user-data-dir=${fixture}`],cwd:root,env:{...env(),...overrides}})
   page=await app.firstWindow()
-  await expect(page.locator('.status-bar')).toContainText('引擎：就绪',{timeout:90_000})
+  await expect(page.locator('.status-bar')).toContainText('引擎：就绪',{timeout:90_000}).catch(async error => {
+    console.error('D3_ENGINE_STARTUP_FAILURE', JSON.stringify(await page.evaluate(() => window.aether.engine.getSnapshot())))
+    throw error
+  })
 }
 async function select(sessionId: string) {
   await page.evaluate(sessionId=>window.aether.settings.update({lastSessionId:sessionId}),sessionId)

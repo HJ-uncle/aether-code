@@ -281,6 +281,12 @@ async function createSession(cwd?: string, replacing?: TerminalSession): Promise
   let pendingTerm: Terminal | undefined
   let offEarlyData: (() => void) | undefined
   let offEarlyExit: (() => void) | undefined
+  // Keep the creation listeners alive until the per-session listeners are
+  // installed. IPC can deliver the shell banner in the small window between
+  // `internals.set` and `window.aether.terminal.onData`; using `internals.has`
+  // as the filter here would silently drop that output.
+  let createdEventId: string | undefined
+  let routeLive = false
   try {
     const [settings, snapshot] = await Promise.all([getSettings(), getSnapshot()])
     if (replacing && (replacing.source !== engineStorageKey(snapshot) || !state.sessions.some(session => session.id === replacing.id))) {
@@ -313,10 +319,19 @@ async function createSession(cwd?: string, replacing?: TerminalSession): Promise
     // Shell banners can arrive during the IPC creation handshake. Listen before
     // creating, then replay only the returned terminal's events in their order.
     const early: ({ kind: 'data'; value: TerminalDataEvent } | { kind: 'exit'; value: TerminalExitInfo })[] = []
-    offEarlyData = window.aether.terminal.onData(value => { if (!internals.has(value.id)) early.push({ kind: 'data', value }) })
-    offEarlyExit = window.aether.terminal.onExit(value => { if (!internals.has(value.id)) early.push({ kind: 'exit', value }) })
+    offEarlyData = window.aether.terminal.onData(value => {
+      // Before create() resolves we do not know the id, so retain all events
+      // and filter them during replay. Once it resolves, retain only the new
+      // session. Do not consult internals here: that entry is created before
+      // the live event listeners below and would otherwise create a race.
+      if (!routeLive && (!createdEventId || value.id === createdEventId)) early.push({ kind: 'data', value })
+    })
+    offEarlyExit = window.aether.terminal.onExit(value => {
+      if (!routeLive && (!createdEventId || value.id === createdEventId)) early.push({ kind: 'exit', value })
+    })
     const { id } = await window.aether.terminal.create({ cwd, cols: 80, rows: 24, ...(sessionId ? { sessionId } : {}) })
     createdId = id
+    createdEventId = id
     const after = await getSnapshot()
     if (generation !== creationGeneration || engineConnectionKey(after) !== engineConnectionKey(snapshot) || (remote && after.phase !== 'ready') ||
         (replacing && !state.sessions.some(session => session.id === replacing.id))) {
@@ -335,15 +350,19 @@ async function createSession(cwd?: string, replacing?: TerminalSession): Promise
 
     // 会话级数据路由：只把属于自己的数据写进自己的缓冲
     const receiveData = (event: TerminalDataEvent): void => {
-      if (event.id === id) term.write(event.chunk)
+      if (event.id === id && routeLive) term.write(event.chunk)
     }
     const receiveExit = (info: TerminalExitInfo): void => {
-      if (info.id !== id) return
-      markDead(id, term, info.reason ?? `进程已退出，代码 ${info.exitCode}`, info.status ?? 'exited')
+      if (info.id !== id || !routeLive) return
+      const cleanupMessage = info.cleanupError
+        ? `${info.cleanupError.code}: ${info.cleanupError.message}`
+        : undefined
+      markDead(id, term, cleanupMessage ?? info.reason ?? `进程已退出，代码 ${info.exitCode}`, info.status ?? 'exited')
     }
     const offData = window.aether.terminal.onData(receiveData)
     const offExit = window.aether.terminal.onExit(receiveExit)
     offEarlyData(); offEarlyExit()
+    routeLive = true
     const offInput = term.onData((data) => transport.write(data))
     withInternals(id, {
       cleanup: () => {

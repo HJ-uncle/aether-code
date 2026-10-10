@@ -44,6 +44,8 @@ export class BrowserEngineBridge {
   private connecting: AbortController | null = null
   private generation = 0
   private releasing: Promise<void> = Promise.resolve()
+  private releaseFailure: string | null = null
+  private pendingRelease: Connection | null = null
   private retry: ReturnType<typeof setTimeout> | undefined
   private disposed = false
   private readonly onSnapshot = (snapshot: EngineSnapshot): void => {
@@ -143,6 +145,13 @@ export class BrowserEngineBridge {
     this.publish({ status: 'disconnected', message: 'AI 浏览器连接已断开' })
   }
 
+  async disconnectAndWait(): Promise<string | null> {
+    this.disconnect()
+    await this.releasing
+    if (this.pendingRelease) await this.unregister(this.pendingRelease)
+    return this.releaseFailure
+  }
+
   private stop(): void {
     this.generation++
     clearTimeout(this.retry)
@@ -151,14 +160,20 @@ export class BrowserEngineBridge {
     this.connecting = null
     const old = this.active
     this.active = null
-    if (old) { old.controller.abort(); this.releasing = this.unregister(old) }
+    if (old) { old.controller.abort(); this.pendingRelease = old; this.releasing = this.unregister(old) }
   }
 
   private async unregister(connection: Connection): Promise<void> {
     try {
       await this.request(connection.baseUrl, this.clientHeaders(connection), AbortSignal.timeout(3000), 'DELETE',
         `/browser/clients/${encodeURIComponent(connection.registration.clientId)}`)
-    } catch { /* The engine lease also expires when a client cannot disconnect cleanly. */ }
+      if (this.pendingRelease === connection) this.pendingRelease = null
+      this.releaseFailure = null
+    } catch (error) {
+      // Retain this registration's original headers for a best-effort retry.
+      // Its server lease still expires if the account has already been revoked.
+      this.releaseFailure = error instanceof Error ? error.message : String(error)
+    }
   }
 
   private clientHeaders(connection: Connection): Record<string, string> {

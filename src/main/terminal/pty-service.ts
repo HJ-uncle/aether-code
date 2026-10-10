@@ -11,10 +11,11 @@ import { randomUUID } from 'node:crypto'
 import { dirname, delimiter, join, normalize, resolve } from 'node:path'
 import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import type { TerminalCreateInput, TerminalExitInfo } from '@shared/ipc'
+import type { TerminalCleanupError, TerminalCreateInput, TerminalExitInfo } from '@shared/ipc'
+import { PtyLifecycle } from './pty-lifecycle'
 
-const terminals = new Map<string, IPty>()
-const temporaryHomes = new Map<string, string>()
+interface TerminalSession { pty: IPty; lifecycle: PtyLifecycle; closing?: Promise<void> }
+const terminals = new Map<string, TerminalSession>()
 
 interface ShellSpec {
   file: string
@@ -98,7 +99,11 @@ function ensurePowerShellProfile(env: Record<string, string>): { env: Record<str
 
 function cleanupTemporaryHome(homeDir: string | undefined): void {
   if (!homeDir) return
-  try { rmSync(homeDir, { recursive: true, force: true }) } catch { /* cleanup is best effort */ }
+  const expectedRoot = resolve(tmpdir())
+  if (dirname(resolve(homeDir)) !== expectedRoot || !homeDir.split(/[\\/]/).at(-1)?.startsWith('aether-terminal-home-')) {
+    throw new Error('Refusing terminal profile cleanup outside its temporary root')
+  }
+  rmSync(homeDir, { recursive: true, force: true })
 }
 
 function pickShell(): ShellSpec {
@@ -139,47 +144,51 @@ export function createTerminal(
     throw error
   }
 
-  pty.onData((chunk) => onData(id, chunk))
-  pty.onExit(({ exitCode }) => {
-    // 已被 dispose 的会话不再上报退出，避免渲染层误标「已退出」
-    if (terminals.get(id) !== pty) return
-    terminals.delete(id)
-    const temporaryHome = temporaryHomes.get(id)
-    temporaryHomes.delete(id)
-    cleanupTemporaryHome(temporaryHome)
-    onExit({ id, exitCode })
+  const lifecyclePty: IPty & { onCleanup?: (listener: (event: { cleanupError?: TerminalCleanupError }) => void) => { dispose: () => void } } = pty
+  const lifecycle = new PtyLifecycle(lifecyclePty, () => cleanupTemporaryHome(homeDir), event => {
+    void disposeTerminal(id).then(() => onExit({ id, exitCode: event.exitCode }), error => {
+      console.error(`[terminal] ${id} cleanup failed:`, error)
+      const cleanupError = lifecycle.cleanupFailure ?? event.cleanupError ?? {
+        code: 'PTY_CLEANUP_FAILED' as const,
+        message: error instanceof Error ? error.message : String(error),
+        errors: [{ phase: 'client-cleanup', code: 'PTY_CLEANUP_FAILED', name: error instanceof Error ? error.name : 'Error', message: error instanceof Error ? error.message : String(error) }]
+      }
+      onExit({ id, exitCode: event.exitCode, reason: error instanceof Error ? error.message : String(error), cleanupError })
+    })
   })
-  terminals.set(id, pty)
-  if (homeDir) temporaryHomes.set(id, homeDir)
+  terminals.set(id, { pty, lifecycle })
+  pty.onData((chunk) => onData(id, chunk))
   return { id }
 }
 
 export function writeTerminal(id: string, data: string): void {
-  terminals.get(id)?.write(data)
+  const session = terminals.get(id)
+  if (session?.lifecycle.stopped) throw new Error('终端正在关闭或已经退出')
+  session?.pty.write(data)
 }
 
 export function resizeTerminal(id: string, cols: number, rows: number): void {
   // 尺寸过小（如隐藏后再显示的瞬间）不转发，ConPTY 有最小尺寸限制
   if (cols <= 0 || rows <= 0) return
-  terminals.get(id)?.resize(cols, rows)
+  const session = terminals.get(id)
+  if (session?.lifecycle.stopped) throw new Error('终端正在关闭或已经退出')
+  session?.pty.resize(cols, rows)
 }
 
-export function disposeTerminal(id: string): void {
-  const pty = terminals.get(id)
-  if (!pty) return
-  terminals.delete(id)
-  // kill 可能抛异常（进程已退出），不影响主流程
-  try {
-    pty.kill()
-  } catch {
-    // 忽略
-  }
-  const temporaryHome = temporaryHomes.get(id)
-  temporaryHomes.delete(id)
-  cleanupTemporaryHome(temporaryHome)
+export function disposeTerminal(id: string): Promise<void> {
+  const session = terminals.get(id)
+  if (!session) return Promise.resolve()
+  if (session.closing) return session.closing
+  const closing = session.lifecycle.close().then(() => {
+    if (terminals.get(id) === session) terminals.delete(id)
+  }).finally(() => { if (session.closing === closing) session.closing = undefined })
+  session.closing = closing
+  return closing
 }
 
 /** 应用退出时回收全部 shell，不留孤儿进程 */
-export function disposeAllTerminals(): void {
-  for (const id of [...terminals.keys()]) disposeTerminal(id)
+export async function disposeAllTerminals(): Promise<void> {
+  const results = await Promise.allSettled([...terminals.keys()].map(disposeTerminal))
+  const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+  if (failures.length) throw new AggregateError(failures.map(result => result.reason), '本地终端清理失败')
 }

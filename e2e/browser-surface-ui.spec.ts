@@ -64,14 +64,17 @@ async function capture(testInfo: TestInfo, name: string) {
         (view) => view instanceof WebContentsView && view.webContents.getURL().startsWith(origin)
       )
       if (!guest) throw new Error('Missing native guest')
-      const bounds = guest.getBounds(),
-        hostBounds = host.getBounds()
+      const beforeBounds = guest.getBounds(),
+        beforeHostBounds = host.getBounds()
       const sources = await desktopCapturer.getSources({
         types: ['window'],
-        thumbnailSize: { width: hostBounds.width * 2, height: hostBounds.height * 2 }
+        thumbnailSize: { width: beforeHostBounds.width * 2, height: beforeHostBounds.height * 2 }
       })
       const source = sources.find((source) => source.id === host.getMediaSourceId())
       if (!source || source.thumbnail.isEmpty()) return null
+      const bounds = guest.getBounds(), hostBounds = host.getBounds()
+      const stable = JSON.stringify(bounds) === JSON.stringify(beforeBounds) &&
+        JSON.stringify(hostBounds) === JSON.stringify(beforeHostBounds)
       const size = source.thumbnail.getSize(),
         bitmap = source.thumbnail.toBitmap()
       const samples = [0.55, 0.72, 0.87].flatMap((y) =>
@@ -86,6 +89,10 @@ async function capture(testInfo: TestInfo, name: string) {
         png: source.thumbnail.toPNG().toString('base64'),
         size,
         bounds,
+        beforeBounds,
+        hostBounds,
+        beforeHostBounds,
+        stable,
         visible: guest.getVisible(),
         samples
       }
@@ -118,8 +125,16 @@ async function verifySurface(testInfo: TestInfo, name: string, expected = [22, 1
       throw error
     })
   expect((await geometry()).dom.placeholders).toBeLessThanOrEqual(1)
-  const actual = await capture(testInfo, name)
+  let actual = await capture(testInfo, name)
   test.skip(!actual, '当前桌面环境未提供原生窗口截图；DOM 和原生区域几何已验证')
+  // Desktop capture can span a React/native resize. Sample only a stable frame,
+  // and wait for actual guest paint; unchanged placeholder pixels still fail.
+  const painted = () => Boolean(actual?.stable && actual.visible && actual.samples.every(sample =>
+    Math.max(...sample.map((value, index) => Math.abs(value - expected[index]))) <= 4))
+  if (!painted()) {
+    await expect.poll(async () => { actual = await capture(testInfo, name); return painted() }, { timeout: 20_000 }).toBe(true)
+  }
+  if (actual) { const { png: _png, ...state } = actual; writeFileSync(testInfo.outputPath(name + '.json'), JSON.stringify(state, null, 2)) }
   // Desktop thumbnails are resampled at the display scale; tolerate rounding,
   // while a stale dark placeholder or missing page remains far outside this range.
   expect(actual!.samples).toHaveLength(6)

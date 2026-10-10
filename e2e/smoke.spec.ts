@@ -5,8 +5,8 @@ import {
   type ElectronApplication,
   type Page
 } from '@playwright/test'
-import { mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync } from 'node:fs'
+import { basename, dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 
 /**
@@ -36,7 +36,7 @@ const WORKSPACE_DIR = APP_ROOT
  * 0x00..0x13，含 NUL 因而必然被判为二进制。用例结束后删除。
  */
 const FIXTURE_DIR = join(APP_ROOT, '.e2e-tmp', 'smoke-fixtures')
-const USER_DATA_DIR = join(tmpdir(), 'aether-ide-e2e-smoke-userdata')
+let USER_DATA_DIR = ''
 
 /**
  * 生成「按绝对路径精确匹配某一行」的 CSS 选择器。
@@ -264,9 +264,10 @@ async function restoreFixtureViaApp(opts: {
 }
 
 function prepareUserData(): string {
-  const dir = USER_DATA_DIR
-  rmSync(dir, { recursive: true, force: true })
-  mkdirSync(dir, { recursive: true })
+  // A previous interrupted worker may still own Chromium's lock. Each run
+  // owns a fresh profile rather than deleting or sharing another run's files.
+  const dir = mkdtempSync(join(tmpdir(), 'aether-ide-e2e-smoke-userdata-'))
+  USER_DATA_DIR = dir
 
   // 预置 lastFolder：应用启动时会自动恢复并授权该目录。
   // 不能靠测试点击「打开文件夹」——那会弹出系统对话框，测试环境下无法交互。
@@ -331,7 +332,13 @@ test.afterAll(async () => {
   // 用例会经 settings:update 写盘（文件排除规则必然要落盘才谈得上"生效"），
   // 关掉应用后再清掉这份配置，否则下一次运行会带着上一次的规则启动。
   // 不放在用例内部兜底：规则要留到「关窗 → 重开」的用例里验证真的持久化了。
-  rmSync(USER_DATA_DIR, { recursive: true, force: true })
+  if (USER_DATA_DIR) {
+    const absolute = resolve(USER_DATA_DIR)
+    if (dirname(absolute) !== resolve(tmpdir()) || !basename(absolute).startsWith('aether-ide-e2e-smoke-userdata-')) {
+      throw new Error('Unsafe owned smoke profile cleanup')
+    }
+    rmSync(absolute, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  }
 })
 
 test('工作台骨架渲染：菜单栏、活动栏、侧边栏、主区、对话面板、状态栏均存在', async () => {
@@ -1014,7 +1021,14 @@ test('版本控制：状态栏入口打开侧边栏视图并给出仓库信息',
   if (label.includes('非 Git 仓库')) {
     await expect(gitPanel).toContainText(/不是\s+git\s+仓库/i)
   } else {
-    await expect(gitPanel).toContainText('变更')
+    // A clean repository is a valid state. The isolated client candidate can
+    // be nested inside another repository; the Git service deliberately
+    // filters parent-repository paths, so the panel may truthfully show zero
+    // changes instead of inventing a dirty entry.
+    const status = await page.evaluate((cwd) => window.aether.git.status(cwd), WORKSPACE_DIR)
+    expect(status.success).toBe(true)
+    if ((status.files ?? []).length > 0) await expect(gitPanel).toContainText('变更')
+    else await expect(gitPanel).toContainText('工作空间干净')
     await expect(gitPanel).toContainText('提交历史')
   }
 })

@@ -149,7 +149,7 @@
 
 /* 长改动列表只占有限高度，滚动留在列表内部，底部操作栏与说明始终可见。 */
 .changes-panel__list {
-  max-height: min(320px, 36vh);
+  max-height: min(320px, 22vh);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
@@ -157,9 +157,12 @@
 
 .changes-panel__footer {
   gap: 6px;
-  min-height: 34px;
+  /* 与 todo-tray__footer 同高同 padding：两个 tab 的底部操作栏视觉一致 */
+  height: 32px;
   padding: 4px 10px;
-  background: var(--bg-inset);
+  /* 不加底色：深色下 hover/active 这类叠加色都会显得突兀，浅色下任何黑色
+     叠加都会让操作栏"凹进去"。与面板同底、只用一条描边分区，两种主题一致。 */
+  border-top: 1px solid var(--border);
 }
 
 .changes-panel__footer-btn {
@@ -180,7 +183,6 @@
   gap: 6px;
   padding: 7px 10px;
   border-top: 1px solid var(--border);
-  background: var(--bg-inset);
   color: var(--fg-muted);
   font-size: 11px;
   line-height: 1.45;

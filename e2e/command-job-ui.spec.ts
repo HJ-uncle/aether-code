@@ -27,7 +27,8 @@ function respond(response: ServerResponse, body: Body, content: string, calls: A
     response.end('data: [DONE]\n\n')
   } else response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ id: 'd7', model, choices: [{ index: 0, message: { role: 'assistant', content, ...(calls.length ? { tool_calls } : {}) }, finish_reason: finish }], usage: { prompt_tokens: 20, completion_tokens: 5, total_tokens: 25 } }))
 }
-function command(scenario: string, timeoutMs = 60000, background = true) { return { name: 'execute_cmd', args: { command: process.execPath, args: ['d7-worker.cjs', scenario], timeoutMs, background } } }
+const longArgument = 'const http=require("http"); '.repeat(16) + 'D7_LONG_COMMAND_END'
+function command(scenario: string, timeoutMs = 60000, background = true) { return { name: 'execute_cmd', args: { command: process.execPath, args: ['d7-worker.cjs', scenario, ...(scenario === 'cancel' ? [longArgument] : [])], timeoutMs, background } } }
 const provider = createServer((incoming, response) => {
   void (async () => {
     let raw = ''; for await (const chunk of incoming) raw += chunk.toString()
@@ -91,7 +92,10 @@ async function finished(scenario: string) {
       if ((await snapshot(scenario)).run?.status === 'succeeded') break
     }
     const allow = page.getByRole('button', { name: '允许执行', exact: true }).last()
-    await expect(allow).toBeVisible({ timeout: 10_000 })
+    // A full 789-case Electron suite can briefly starve the renderer while
+    // the real approval frame is being projected. Keep the assertion strict
+    // but allow the durable waiting state time to surface its button.
+    await expect(allow).toBeVisible({ timeout: 30_000 })
     await allow.click()
   }
   await expect.poll(async () => (await snapshot(scenario)).run?.status).toBe('succeeded')
@@ -99,6 +103,12 @@ async function finished(scenario: string) {
 }
 async function jobs(scenario: string): Promise<CommandJobSnapshot[]> { const response = await page.evaluate(sessionId => window.aether.engine.request<{ jobs: CommandJobSnapshot[] }>({ method: 'GET', path: '/command-jobs', query: { sessionId } }), `d7-${scenario}`); expect(response.ok, response.message).toBe(true); return response.data!.jobs }
 function card(id: string): Locator { return page.locator(`.command-job-card[data-job-id="${id}"]`) }
+async function openOutput(id: string): Promise<void> {
+  const toggle = card(id).locator('.command-job-card__toggle')
+  await expect(toggle).toBeVisible()
+  if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click()
+  await expect(card(id).getByLabel('命令输出')).toBeVisible()
+}
 function marker(name: string) { return join(fixture, 'workspace', name) }
 function callCount(scenario: string) { return requests.filter(request => request.scenario === scenario).length }
 function once(text: string | null, value: string) { expect((text ?? '').split(value)).toHaveLength(2) }
@@ -133,20 +143,46 @@ const {rootRunStore}=await import(${JSON.stringify(url('storage/root-runs/index.
     await select('other'); await expect(page.locator('.command-job-card')).toHaveCount(0)
     const wrong = await page.evaluate(jobId => window.aether.engine.request({ method: 'GET', path: `/command-jobs/${jobId}`, query: { sessionId: 'd7-other' } }), job.jobId); expect(wrong.ok).toBe(false); expect(wrong.code).toBe(404)
     writeFileSync(marker('release-success'), ''); await expect.poll(() => existsSync(marker('finished-success'))).toBe(true)
-    await select('success'); await expect(card(job.jobId)).toHaveAttribute('data-status', 'succeeded'); await expect(card(job.jobId)).toContainText('退出码 0'); await expect(card(job.jobId).getByLabel('命令输出')).toContainText('D7_END_success')
+    await select('success'); await expect(card(job.jobId)).toHaveAttribute('data-status', 'succeeded'); await expect(card(job.jobId)).toContainText('退出码 0'); await openOutput(job.jobId); await expect(card(job.jobId).getByLabel('命令输出')).toContainText('D7_END_success')
     once(await card(job.jobId).getByLabel('命令输出').textContent(), 'D7_PROGRESS_success'); expect(readFileSync(marker('launch-success.txt'), 'utf8')).toBe('launch\n'); expect(callCount('success')).toBe(2)
   })
-  test('停止命令等待真实退出，刷新保留已取消且不执行后续文件副作用', async () => {
+  test('停止命令等待真实退出，刷新保留已取消且不执行后续文件副作用', async ({}, testInfo) => {
     await select('cancel'); await send('cancel'); await finished('cancel'); const job = (await jobs('cancel'))[0]
+    const commandToggle = card(job.jobId).getByRole('button', { name: '展开完整命令', exact: true })
+    await expect(commandToggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(card(job.jobId).locator('.command-job-card__command')).not.toContainText('D7_LONG_COMMAND_END')
+    await commandToggle.click()
+    await expect(card(job.jobId).locator('.command-job-card__command')).toContainText('D7_LONG_COMMAND_END')
+    const commandBox = card(job.jobId).locator('.command-job-card__command code')
+    expect(await commandBox.evaluate(element => element.scrollHeight - element.clientHeight)).toBeLessThanOrEqual(1)
+    await card(job.jobId).getByRole('button', { name: '收起命令详情', exact: true }).click()
     await expect(card(job.jobId).getByLabel('命令输出')).toContainText('D7_START_cancel'); await card(job.jobId).getByRole('button', { name: '停止命令', exact: true }).click()
     await expect(card(job.jobId)).toHaveAttribute('data-status', 'cancelled'); expect((await jobs('cancel'))[0].status).toBe('cancelled')
+    await expect(card(job.jobId).getByRole('status', { name: '命令状态' })).toHaveText('已停止')
+    await expect(card(job.jobId).locator('.command-job-card__stop-reason')).toHaveText('已按你的请求停止命令。')
+    await expect(card(job.jobId).getByRole('alert')).toHaveCount(0)
+    await card(job.jobId).getByText('停止详情', { exact: true }).click()
+    await expect(card(job.jobId).locator('.command-job-card__diagnostics')).toContainText('COMMAND_CANCELLED')
+    const stopped = (await jobs('cancel'))[0]
+    await expect(card(job.jobId).locator('.command-job-card__diagnostics')).toContainText(`退出码：${stopped.exitCode ?? '未提供'}`)
     writeFileSync(marker('release-cancel'), ''); await page.reload(); await expect(card(job.jobId)).toHaveAttribute('data-status', 'cancelled'); await expect(card(job.jobId).getByRole('button', { name: '停止命令', exact: true })).toBeHidden()
+    await expect(card(job.jobId).locator('.command-job-card__toggle')).toHaveAttribute('aria-expanded', 'false')
+    await expect(card(job.jobId).getByRole('status', { name: '命令状态' })).toHaveText('已停止')
+    for (const appearance of ['light', 'dark'] as const) {
+      await page.evaluate(appearance => window.aether.settings.update({ appearance }), appearance)
+      // The low-level settings IPC persists values; React's settings state is
+      // refreshed by its own update action or by loading the saved settings.
+      await page.reload()
+      await expect(page.locator('html')).toHaveAttribute('data-appearance', appearance)
+      expect(await card(job.jobId).evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+      await card(job.jobId).screenshot({ path: testInfo.outputPath(`stopped-command-card-${appearance}.png`) })
+    }
     expect(existsSync(marker('finished-cancel'))).toBe(false); expect(callCount('cancel')).toBe(2)
   })
   test('非零退出和超时保留各自终态/退出码/stderr，前台命令维持普通工具展示', async () => {
     await select('failures'); await send('failures'); await finished('failures')
     const all = await jobs('failures'), failed = all.find(job => job.args.includes('failure'))!, timed = all.find(job => job.args.includes('timeout'))!, foreground = all.find(job => job.args.includes('foreground'))!
-    await expect(page.locator('.command-job-card')).toHaveCount(2); await expect(card(failed.jobId)).toHaveAttribute('data-status', 'failed'); await expect(card(failed.jobId)).toContainText('退出码 7'); await expect(card(failed.jobId).getByLabel('命令输出')).toContainText('D7_FAILURE_REASON')
+    await expect(page.locator('.command-job-card')).toHaveCount(2); await expect(card(failed.jobId)).toHaveAttribute('data-status', 'failed'); await expect(card(failed.jobId)).toContainText('退出码 7'); await openOutput(failed.jobId); await expect(card(failed.jobId).getByLabel('命令输出')).toContainText('D7_FAILURE_REASON')
     await expect(card(timed.jobId)).toHaveAttribute('data-status', 'timed_out'); await expect(card(timed.jobId)).toContainText('COMMAND_TIMEOUT')
     expect(foreground).toMatchObject({ background: false, status: 'succeeded', exitCode: 0 }); await page.reload(); await expect(card(failed.jobId)).toHaveAttribute('data-status', 'failed'); await expect(card(timed.jobId)).toHaveAttribute('data-status', 'timed_out'); expect(callCount('failures')).toBe(4)
   })

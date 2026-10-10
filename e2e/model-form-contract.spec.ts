@@ -76,3 +76,20 @@ test('新增默认状态不固化推断值，显式关闭仍写false', () => {
   expect(newModelOverrides(form)).toBeUndefined()
   expect(newModelOverrides({ ...form, vision: false })).toEqual({ vision: false })
 })
+
+test('小数 K 无损换算为整数 token，并保留最大安全整数配置', () => {
+  const form = initialModelForm()
+  expect(newModelOverrides({ ...form, contextWindow: '123.456' })).toEqual({ contextWindow: 123456 })
+  expect(newModelOverrides({ ...form, contextWindow: '0.001' })).toEqual({ contextWindow: 1 })
+  expect(newModelOverrides({ ...form, contextWindow: '128.000' })).toEqual({ contextWindow: 128000 })
+  const largest = model({ contextWindow: Number.MAX_SAFE_INTEGER })
+  expect(buildModelUpdate(largest, initialModelForm(largest))).toEqual({})
+})
+
+test('无效 K 不可发出 fractional、零或不安全 token，留空仍恢复默认', () => {
+  const form = initialModelForm()
+  for (const contextWindow of ['0', '-1', '0.0001', '128.1234', 'Infinity', '1e3', '9007199254741']) {
+    expect(() => newModelOverrides({ ...form, contextWindow })).toThrow('上下文窗口')
+  }
+  expect(buildModelUpdate(model(), { ...initialModelForm(model()), contextWindow: '' })).toEqual({ capabilityOverrides: { contextWindow: null } })
+})

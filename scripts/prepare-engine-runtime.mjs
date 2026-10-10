@@ -101,7 +101,13 @@ function copyPackage(sourceRoot, packagePath, locked) {
   const installed = json(join(source, 'package.json'))
   if (installed.version !== locked.version) fail(`installed version differs from lock: ${packagePath}`)
   const destination = join(target, packagePath)
-  copyTree(source, destination, (_file, rel) => !rel.split(sep).includes('node_modules'))
+  if (packagePath === 'node_modules/node-pty') {
+    // node-pty's guarded receipt, typings and native assets must remain byte
+    // complete; the generic runtime filter intentionally drops declarations.
+    cpSync(source, destination, { recursive: true, dereference: false })
+  } else {
+    copyTree(source, destination, (_file, rel) => !rel.split(sep).includes('node_modules'))
+  }
   dependencies.push({ path: packagePath.replaceAll('\\', '/'), name: installed.name, version: installed.version,
     integrity: locked.integrity, license: installed.license })
 }
@@ -130,6 +136,16 @@ const runtimeDependencies = Object.fromEntries(Object.keys(pkg.dependencies ?? {
 runtimeDependencies.typescript = json(join(target, 'node_modules/typescript/package.json')).version
 runtimeDependencies['typescript-language-server'] = json(join(target, 'node_modules/typescript-language-server/package.json')).version
 writeFileSync(join(target, 'package.json'), JSON.stringify({ name: pkg.name, version: pkg.version, type: 'module', private: true, dependencies: runtimeDependencies }, null, 2) + '\n')
+
+// node-pty is a native lifecycle dependency. The engine build carries an exact
+// guarded patch receipt; staging must verify the copied files and may not mutate
+// an immutable TGZ during import.
+const patchScript = join(engineRoot, 'scripts', 'apply-node-pty-patch.mjs')
+if (!existsSync(patchScript)) fail('引擎制品缺少 node-pty patch guard')
+const stagedPty = join(target, 'node_modules/node-pty')
+if (!existsSync(join(stagedPty, 'package.json'))) fail('引擎制品缺少 node-pty')
+const patchCheck = run(nodeSource, [patchScript, '--package-dir', stagedPty, '--check'], { cwd: target })
+console.log(`[engine-runtime] node-pty patch verified: ${patchCheck}`)
 
 const trackedSkills = artifactPath
   ? readdirSync(join(engineRoot, 'SKILLs'), { recursive: true, withFileTypes: true })

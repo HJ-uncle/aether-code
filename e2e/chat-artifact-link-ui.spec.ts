@@ -110,6 +110,7 @@ test.describe.serial('远端会话交付链接', () => {
   const token = 'artifact-link-fixture-instance-token'
   const reads: Array<{ path: string | null; sessionId: string | null }> = []
   const snapshotSessions: Array<string | null> = []
+  const rendererErrors: string[] = []
   const workspace = '/remote/artifact-project'
   const run: RootRun = { schemaVersion: 1, runId: 'artifact-run', sessionId, turnId: 'artifact-turn', userMessageId: 'artifact-user',
     assistantMessageId: 'artifact-assistant', seq: 1, version: 1, status: 'succeeded', modelId: 'fixture-model',
@@ -162,6 +163,7 @@ test.describe.serial('远端会话交付链接', () => {
       ...process.env, AETHER_IDE_REMOTE_INSTANCE_TOKEN: token, AETHER_GLOBAL_DIR: join(fixture, 'global'), ENABLE_LONG_TERM_MEMORY: 'false'
     } })
     page = await app.firstWindow()
+    page.on('pageerror', error => rendererErrors.push(error.message))
     await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90000 })
     // Remote selection belongs to the endpoint's localStorage, not the embedded
     // engine's settings.lastSessionId. Seed that real persistence contract, then
@@ -174,12 +176,14 @@ test.describe.serial('远端会话交付链接', () => {
     await expect(page.locator('.message--assistant .md').getByRole('link', { name: 'index.html', exact: true })).toBeVisible()
     expect(await page.evaluate(key => localStorage.getItem(key), selectedSessionKey)).toBe(sessionId)
     expect(await page.evaluate(async () => (await window.aether.settings.get()).lastSessionId)).toBe('')
-    await expect.poll(() => page.evaluate(async () => (await window.aether.settings.get()).lastModelId)).toBe('fixture-model')
+    await expect(page.locator('.model-picker__trigger')).toHaveAttribute('title', '当前模型：fixture-model')
+    expect(await page.evaluate(async () => (await window.aether.settings.get()).lastModelId)).toBe('')
   })
   test.afterAll(async () => {
     await app?.close(); server?.closeAllConnections()
     if (server) await new Promise<void>(done => server!.close(() => done()))
     cleanup(fixture)
+    expect(rendererErrors).toEqual([])
   })
   test('远端交付文件通过绑定会话的认证 content 接口读取，未降级本机文件服务', async () => {
     await page.locator('.message--assistant .md').getByRole('link', { name: 'index.html', exact: true }).click()
@@ -196,7 +200,10 @@ test.describe.serial('远端会话交付链接', () => {
     await page.getByRole('button', { name: '对话偏好', exact: true }).click()
     await page.getByTitle('选择思考档位', { exact: true }).click()
     await page.getByRole('menuitem', { name: /^Off / }).click()
-    await expect.poll(() => page.evaluate(async () => (await window.aether.settings.get()).thinkingMode)).toBe('off')
+    await expect(page.getByTitle('选择思考档位', { exact: true })).toContainText('Off')
+    const thinkingKey = selectedSessionKey.replace(/^aether:lastSessionId/, 'aether:sessionThinkingModes')
+    await expect.poll(() => page.evaluate(({ key, id }) => JSON.parse(localStorage.getItem(key) ?? '{}')[id], { key: thinkingKey, id: sessionId })).toBe('off')
+    expect(await page.evaluate(async () => (await window.aether.settings.get()).thinkingMode)).toBe('high')
     await page.getByRole('button', { name: '对话偏好', exact: true }).click()
     await expect(page.locator('.message--assistant .md').getByRole('link', { name: 'index.html', exact: true })).toBeVisible()
     expect(await page.evaluate(key => localStorage.getItem(key), selectedSessionKey)).toBe(sessionId)
@@ -204,5 +211,11 @@ test.describe.serial('远端会话交付链接', () => {
     await page.reload()
     await expect(page.locator('.message--assistant .md').getByRole('link', { name: 'index.html', exact: true })).toBeVisible()
     expect(await page.evaluate(key => localStorage.getItem(key), selectedSessionKey)).toBe(sessionId)
+    await expect(page.locator('.model-picker__trigger')).toHaveAttribute('title', '当前模型：fixture-model')
+    await page.getByRole('button', { name: '对话偏好', exact: true }).click()
+    await expect(page.getByTitle('选择思考档位', { exact: true })).toContainText('Off')
+    expect(await page.evaluate(({ key, id }) => JSON.parse(localStorage.getItem(key) ?? '{}')[id], { key: thinkingKey, id: sessionId })).toBe('off')
+    expect(await page.evaluate(async () => (await window.aether.settings.get()).thinkingMode)).toBe('high')
+    await page.getByRole('button', { name: '对话偏好', exact: true }).click()
   })
 })

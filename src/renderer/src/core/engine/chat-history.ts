@@ -66,7 +66,7 @@ export interface EngineHistoryRow {
   toolCall?: { id?: string; name?: string; args?: unknown } | null
   success?: boolean
   error?: unknown
-  metadata?: { commandJob?: unknown; commandJobs?: unknown[]; subagent?: unknown; success?: boolean; error?: unknown; status?: string; outputPreview?: string; durationMs?: number; startedAt?: number; finishedAt?: number; runId?: string; turnId?: string; attachments?: Array<{ name: string; type?: string; size?: number }>; change?: import('@shared/ipc').EngineFileChange; isCompactSummary?: boolean }
+  metadata?: { outputContinuation?: boolean; commandJob?: unknown; commandJobs?: unknown[]; subagent?: unknown; success?: boolean; error?: unknown; status?: string; outputPreview?: string; durationMs?: number; startedAt?: number; finishedAt?: number; runId?: string; turnId?: string; attachments?: Array<{ name: string; type?: string; size?: number }>; change?: import('@shared/ipc').EngineFileChange; isCompactSummary?: boolean }
   isSidechain?: boolean
 }
 
@@ -139,6 +139,7 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
   const result: ChatMessage[] = []
   /** 尚未收到结果的工具调用，按 toolCallId 索引，用于回填 tool 结果行 */
   const openTools = new Map<string, { message: ChatMessage; index: number }>()
+  const outputContinuations = new WeakSet<ChatMessage>()
 
   for (const row of rows) {
     if (row.role === 'system' || row.isSidechain === true) continue
@@ -180,10 +181,12 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
     // 对齐 wuzu-client：同一轮（conversationId 相同或紧邻）的 assistant 行
     // 合并回一条消息，过程块收成同一个折叠块，正文只在轮末出现一次。
     const prev = result[result.length - 1]
+    const turnId = row.conversationId ?? row.metadata?.turnId
     const sameTurn =
-      prev &&
-      prev.role === 'assistant' &&
-      (!row.conversationId || !prev.conversationId || row.conversationId === prev.conversationId)
+      prev && prev.role === 'assistant' &&
+      (!turnId || !prev.conversationId || turnId === prev.conversationId) &&
+      (!row.metadata?.runId || !prev.runId || row.metadata.runId === prev.runId)
+    const continueOutput = Boolean(sameTurn && outputContinuations.has(prev))
     let message: ChatMessage
     if (sameTurn) {
       message = prev
@@ -203,7 +206,7 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
         createdAt,
         // 回放场景没有真实的流式起止点，用首行/末行 createdAt 兜底
         startedAt: createdAt,
-        ...(row.conversationId ? { conversationId: row.conversationId } : {})
+        ...(turnId ? { conversationId: turnId } : {})
       }
       result.push(message)
     }
@@ -227,7 +230,8 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
     if (rowThinking.trim()) rowItems.push({ kind: 'thinking', text: rowThinking })
     const rowContent = extractText(row.content)
     if (rowContent) {
-      message.content += (message.content ? '\n\n' : '') + rowContent
+      // Provider length continuations are one uninterrupted response, including inside code/JSON.
+      message.content += (message.content && !continueOutput ? '\n\n' : '') + rowContent
       rowItems.push({ kind: 'content', text: rowContent })
     }
     if (row.toolCall && typeof row.toolCall === 'object' && row.toolCall.name) {
@@ -252,11 +256,13 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
         last.kind === item.kind &&
         (item.kind === 'thinking' || item.kind === 'content')
       ) {
-        last.text += item.kind === 'thinking' ? item.text : `\n\n${item.text}`
+        last.text += item.kind === 'thinking' || continueOutput ? item.text : `\n\n${item.text}`
       } else {
         message.items.push(item)
       }
     }
+    if (row.metadata?.outputContinuation === true) outputContinuations.add(message)
+    else outputContinuations.delete(message)
   }
 
   return result
@@ -287,15 +293,24 @@ export function normalizeTool(raw: unknown): Partial<ToolActivity> {
     return ''
   }
 
+  const metadata = record.metadata && typeof record.metadata === 'object' ? record.metadata as Record<string, unknown> : undefined
+  const output = readString('output', 'result', 'content', 'text', 'outputPreview')
+  const preview = typeof metadata?.outputPreview === 'string' ? metadata.outputPreview : ''
+  // Context compaction changes what the model reads, not the user's evidence.
+  // Older SQLite records may have lost the original bytes; disclose that loss.
+  const result = output.trim() === '[tool result cleared]'
+    ? preview && preview.trim() !== '[tool result cleared]' ? preview : '原工具输出已被旧版上下文压缩清除，当前记录无法恢复。'
+    : output || preview
+
   return {
     id: readString('id', 'toolCallId', 'tool_call_id', 'callId', 'call_id'),
     name: readString('name', 'toolName', 'tool'),
     args: readString('args', 'arguments', 'input', 'params'),
-    result: readString('output', 'result', 'content', 'text', 'outputPreview') || String((record.metadata as Record<string, unknown> | undefined)?.outputPreview ?? ''),
+    result,
     durationMs: numericField(record, 'durationMs'),
     startedAt: numericField(record, 'startedAt'),
     finishedAt: numericField(record, 'finishedAt'),
-    metadata: record.metadata && typeof record.metadata === 'object' ? record.metadata as Record<string, unknown> : undefined,
+    metadata,
     error: errorText(
       record.error ??
         (record.metadata && typeof record.metadata === 'object'

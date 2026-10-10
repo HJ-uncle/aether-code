@@ -1,0 +1,6662 @@
+{
+  "totals": {
+    "files": 118,
+    "total": 764,
+    "passed": 762,
+    "failed": 1,
+    "skipped": 0,
+    "notRun": 1
+  },
+  "rows": [
+    {
+      "file": "account-boundary.spec.ts",
+      "feature": "账号与认证",
+      "kind": "纯函数或文件契约",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 1
+    },
+    {
+      "file": "account-engine-integration.spec.ts",
+      "feature": "账号与认证",
+      "kind": "真实 Electron UI",
+      "total": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "account-http-trust.spec.ts",
+      "feature": "账号与认证",
+      "kind": "真实 Electron UI",
+      "total": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "account-onboarding-contract.spec.ts",
+      "feature": "账号与认证",
+      "kind": "纯函数或文件契约",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "account-settings-ui.spec.ts",
+      "feature": "账号与认证",
+      "kind": "真实 Electron UI",
+      "total": 15,
+      "passed": 15,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "agent-resource-dialogue.spec.ts",
+      "feature": "MCP、Skill、知识库与记忆",
+      "kind": "真实 Electron UI",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "anthropic-stream-ui.spec.ts",
+      "feature": "对话、历史、审批、恢复与安全",
+      "kind": "真实 Electron UI",
+      "total": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "feature": "对话、历史、审批、恢复与安全",
+      "kind": "纯函数或文件契约",
+      "total": 22,
+      "passed": 22,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "attachments-upload-ui.spec.ts",
+      "feature": "远端连接与项目、文件、上传同步",
+      "kind": "真实 Electron UI",
+      "total": 7,
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 1
+    },
+    {
+      "file": "browser-agent-ui.spec.ts",
+      "feature": "浏览器与网络调试",
+      "kind": "真实 Electron UI",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "browser-local-ui.spec.ts",
+      "feature": "浏览器与网络调试",
+      "kind": "真实 Electron UI",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "browser-native-validation.spec.ts",
+      "feature": "浏览器与网络调试",
+      "kind": "纯函数或文件契约",
+      "total": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "browser-navigation-ui.spec.ts",
+      "feature": "浏览器与网络调试",
+      "kind": "真实 Electron UI",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "browser-network-collector.spec.ts",
+      "feature": "浏览器与网络调试",
+      "kind": "纯函数或文件契约",
+      "total": 11,
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "browser-network-ui.spec.ts",
+      "feature": "浏览器与网络调试",
+      "kind": "真实 Electron UI",
+      "total": 5,
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "browser-occlusion.spec.ts",
+      "feature": "浏览器与网络调试",
+      "kind": "纯函数或文件契约",
+      "total": 7,
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "browser-surface-ui.spec.ts",
+      "feature": "浏览器与网络调试",
+      "kind": "真实 Electron UI",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "browser-ui.spec.ts",
+      "feature": "浏览器与网络调试",
+      "kind": "真实 Electron UI",
+      "total": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "change-actions.spec.ts",
+      "feature": "文件改动、差异与撤回",
+      "kind": "纯函数或文件契约",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "change-diff.spec.ts",
+      "feature": "文件改动、差异与撤回",
+      "kind": "纯函数或文件契约",
+      "total": 11,
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "change-net-ui.spec.ts",
+      "feature": "文件改动、差异与撤回",
+      "kind": "真实 Electron UI",
+      "total": 7,
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "change-revert-contract.spec.ts",
+      "feature": "文件改动、差异与撤回",
+      "kind": "纯函数或文件契约",
+      "total": 17,
+      "passed": 17,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "change-revert-ui.spec.ts",
+      "feature": "文件改动、差异与撤回",
+      "kind": "真实 Electron UI",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "changes-panel-scroll-ui.spec.ts",
+      "feature": "文件改动、差异与撤回",
+      "kind": "真实 Electron UI",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "chat-artifact-link-ui.spec.ts",
+      "feature": "对话、历史、审批、恢复与安全",
+      "kind": "真实 Electron UI",
+      "total": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 2
+    },
+    {
+      "file": "chat-artifact-link.spec.ts",
+      "feature": "对话、历史、审批、恢复与安全",
+      "kind": "纯函数或文件契约",
+      "total": 14,
+      "passed": 14,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "chat-file-path.spec.ts",
+      "feature": "对话、历史、审批、恢复与安全",
+      "kind": "纯函数或文件契约",
+      "total": 9,
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "chat-message-layout-ui.spec.ts",
+      "feature": "对话、历史、审批、恢复与安全",
+      "kind": "真实 Electron UI",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "chat-recovery-contract.spec.ts",
+      "feature": "对话、历史、审批、恢复与安全",
+      "kind": "纯函数或文件契约",
+      "total": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "chat-recovery-ui.spec.ts",
+      "feature": "对话、历史、审批、恢复与安全",
+      "kind": "真实 Electron UI",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "command-job-contract.spec.ts",
+      "feature": "命令任务与进程状态",
+      "kind": "纯函数或文件契约",
+      "total": 11,
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "command-job-store.spec.ts",
+      "feature": "命令任务与进程状态",
+      "kind": "纯函数或文件契约",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "command-job-ui.spec.ts",
+      "feature": "命令任务与进程状态",
+      "kind": "真实 Electron UI",
+      "total": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "compact-panel-layout.spec.ts",
+      "feature": "工作台、布局与综合功能",
+      "kind": "真实 Electron UI",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "composer-defaults-ui.spec.ts",
+      "feature": "模型、输入配置与辅助操作",
+      "kind": "真实 Electron UI",
+      "total": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "diagnostics-state.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "纯函数或文件契约",
+      "total": 5,
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "edit-file-ui.spec.ts",
+      "feature": "文件改动、差异与撤回",
+      "kind": "真实 Electron UI",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "editor-chat-context.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "真实 Electron UI",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "editor-close-confirmation.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "纯函数或文件契约",
+      "total": 9,
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "editor-code-actions.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "真实 Electron UI",
+      "total": 5,
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "editor-commands.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "真实 Electron UI",
+      "total": 8,
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "editor-context-data.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "纯函数或文件契约",
+      "total": 12,
+      "passed": 12,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "editor-diagnostic-policy.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "纯函数或文件契约",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "editor-display-settings.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "纯函数或文件契约",
+      "total": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "editor-document-races.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "纯函数或文件契约",
+      "total": 9,
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 1
+    },
+    {
+      "file": "editor-document-sync.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "真实 Electron UI",
+      "total": 5,
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "editor-document-watch.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "纯函数或文件契约",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "editor-file-identity.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "纯函数或文件契约",
+      "total": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "editor-git-diff.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "真实 Electron UI",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "editor-groups.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "真实 Electron UI",
+      "total": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "editor-language-actions.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "真实 Electron UI",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "editor-language-protocol.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "纯函数或文件契约",
+      "total": 7,
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "editor-project-language.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "真实 Electron UI",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "editor-source-git-utils.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "纯函数或文件契约",
+      "total": 8,
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "editor-source-git.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "真实 Electron UI",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "editor-source-preview.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "真实 Electron UI",
+      "total": 5,
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "engine-host-contract.spec.ts",
+      "feature": "引擎打包、安装与通信",
+      "kind": "真实 Electron UI",
+      "total": 10,
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 6
+    },
+    {
+      "file": "engine-import-ui.spec.ts",
+      "feature": "引擎打包、安装与通信",
+      "kind": "真实 Electron UI",
+      "total": 9,
+      "passed": 7,
+      "failed": 1,
+      "skipped": 0,
+      "notRun": 1,
+      "remoteTitles": 1
+    },
+    {
+      "file": "engine-runtime-store.spec.ts",
+      "feature": "引擎打包、安装与通信",
+      "kind": "纯函数或文件契约",
+      "total": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "engine-source-isolation.spec.ts",
+      "feature": "引擎打包、安装与通信",
+      "kind": "纯函数或文件契约",
+      "total": 9,
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 4
+    },
+    {
+      "file": "engine-storage-contract.spec.ts",
+      "feature": "引擎打包、安装与通信",
+      "kind": "纯函数或文件契约",
+      "total": 8,
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 1
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "feature": "引擎打包、安装与通信",
+      "kind": "纯函数或文件契约",
+      "total": 10,
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "file-change-preview.spec.ts",
+      "feature": "文件改动、差异与撤回",
+      "kind": "纯函数或文件契约",
+      "total": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "git-live-sync.spec.ts",
+      "feature": "Git 与项目隔离",
+      "kind": "纯函数或文件契约",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 1
+    },
+    {
+      "file": "git-parsers.spec.ts",
+      "feature": "Git 与项目隔离",
+      "kind": "纯函数或文件契约",
+      "total": 14,
+      "passed": 14,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "git-service-matrix.spec.ts",
+      "feature": "Git 与项目隔离",
+      "kind": "真实 Electron UI",
+      "total": 8,
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 1
+    },
+    {
+      "file": "git-store-scope.spec.ts",
+      "feature": "Git 与项目隔离",
+      "kind": "纯函数或文件契约",
+      "total": 8,
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 1
+    },
+    {
+      "file": "git-workspace-scope-ui.spec.ts",
+      "feature": "Git 与项目隔离",
+      "kind": "真实 Electron UI",
+      "total": 5,
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 2
+    },
+    {
+      "file": "history-replay.spec.ts",
+      "feature": "对话、历史、审批、恢复与安全",
+      "kind": "真实 Electron UI",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "image-preview-interaction.spec.ts",
+      "feature": "工作台、布局与综合功能",
+      "kind": "真实 Electron UI",
+      "total": 5,
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "knowledge-binding.spec.ts",
+      "feature": "MCP、Skill、知识库与记忆",
+      "kind": "纯函数或文件契约",
+      "total": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "knowledge-ui.spec.ts",
+      "feature": "MCP、Skill、知识库与记忆",
+      "kind": "真实 Electron UI",
+      "total": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "lsp-diagnostics.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "真实 Electron UI",
+      "total": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "lsp-session-contract.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "纯函数或文件契约",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 1
+    },
+    {
+      "file": "mcp-ui.spec.ts",
+      "feature": "MCP、Skill、知识库与记忆",
+      "kind": "真实 Electron UI",
+      "total": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "memory-scope-state.spec.ts",
+      "feature": "MCP、Skill、知识库与记忆",
+      "kind": "纯函数或文件契约",
+      "total": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 1
+    },
+    {
+      "file": "memory-settings-crud.spec.ts",
+      "feature": "MCP、Skill、知识库与记忆",
+      "kind": "真实 Electron UI",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "model-config-ui.spec.ts",
+      "feature": "模型、输入配置与辅助操作",
+      "kind": "真实 Electron UI",
+      "total": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "model-form-contract.spec.ts",
+      "feature": "模型、输入配置与辅助操作",
+      "kind": "纯函数或文件契约",
+      "total": 8,
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "monaco-localization.spec.ts",
+      "feature": "编辑器、Monaco 与 LSP",
+      "kind": "真实 Electron UI",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "narrow-chat-layout.spec.ts",
+      "feature": "工作台、布局与综合功能",
+      "kind": "真实 Electron UI",
+      "total": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "pending-interactions.spec.ts",
+      "feature": "对话、历史、审批、恢复与安全",
+      "kind": "纯函数或文件契约",
+      "total": 12,
+      "passed": 12,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "platform-feature-matrix.spec.ts",
+      "feature": "工作台、布局与综合功能",
+      "kind": "真实 Electron UI",
+      "total": 11,
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "preview-resource-path.spec.ts",
+      "feature": "远端连接与项目、文件、上传同步",
+      "kind": "纯函数或文件契约",
+      "total": 5,
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "pty-lifecycle-contract.spec.ts",
+      "feature": "工作台、布局与综合功能",
+      "kind": "纯函数或文件契约",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "feature": "工作台、布局与综合功能",
+      "kind": "纯函数或文件契约",
+      "total": 38,
+      "passed": 38,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "remote-auth-contract.spec.ts",
+      "feature": "远端连接与项目、文件、上传同步",
+      "kind": "纯函数或文件契约",
+      "total": 8,
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "remote-connection-contract.spec.ts",
+      "feature": "远端连接与项目、文件、上传同步",
+      "kind": "本机进程、API 或文件集成",
+      "total": 11,
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 10
+    },
+    {
+      "file": "remote-explorer-refresh-ui.spec.ts",
+      "feature": "远端连接与项目、文件、上传同步",
+      "kind": "真实 Electron UI",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 2
+    },
+    {
+      "file": "remote-search-contract.spec.ts",
+      "feature": "远端连接与项目、文件、上传同步",
+      "kind": "纯函数或文件契约",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "remote-terminal-contract.spec.ts",
+      "feature": "远端连接与项目、文件、上传同步",
+      "kind": "本机进程、API 或文件集成",
+      "total": 13,
+      "passed": 13,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 2
+    },
+    {
+      "file": "remote-token-settings-ui.spec.ts",
+      "feature": "远端连接与项目、文件、上传同步",
+      "kind": "真实 Electron UI",
+      "total": 9,
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 2
+    },
+    {
+      "file": "remote-workspace-list-contract.spec.ts",
+      "feature": "远端连接与项目、文件、上传同步",
+      "kind": "纯函数或文件契约",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 1
+    },
+    {
+      "file": "root-run-contract.spec.ts",
+      "feature": "对话、历史、审批、恢复与安全",
+      "kind": "纯函数或文件契约",
+      "total": 11,
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "root-run-ui.spec.ts",
+      "feature": "对话、历史、审批、恢复与安全",
+      "kind": "真实 Electron UI",
+      "total": 9,
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 1
+    },
+    {
+      "file": "security-client.spec.ts",
+      "feature": "对话、历史、审批、恢复与安全",
+      "kind": "纯函数或文件契约",
+      "total": 11,
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "security-mode-lifecycle.spec.ts",
+      "feature": "对话、历史、审批、恢复与安全",
+      "kind": "真实 Electron UI",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "security-state.spec.ts",
+      "feature": "对话、历史、审批、恢复与安全",
+      "kind": "纯函数或文件契约",
+      "total": 8,
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "settings-registry.spec.ts",
+      "feature": "工作台、布局与综合功能",
+      "kind": "纯函数或文件契约",
+      "total": 5,
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "skill-import-ui.spec.ts",
+      "feature": "MCP、Skill、知识库与记忆",
+      "kind": "真实 Electron UI",
+      "total": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "smoke.spec.ts",
+      "feature": "工作台、布局与综合功能",
+      "kind": "真实 Electron UI",
+      "total": 40,
+      "passed": 40,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "streaming-model-contract.spec.ts",
+      "feature": "对话、历史、审批、恢复与安全",
+      "kind": "纯函数或文件契约",
+      "total": 5,
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "streaming-model-ui.spec.ts",
+      "feature": "对话、历史、审批、恢复与安全",
+      "kind": "真实 Electron UI",
+      "total": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "subagent-lifecycle.spec.ts",
+      "feature": "子 Agent 生命周期与状态",
+      "kind": "真实 Electron UI",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "subagent-state.spec.ts",
+      "feature": "子 Agent 生命周期与状态",
+      "kind": "纯函数或文件契约",
+      "total": 15,
+      "passed": 15,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "terminal-actions-ui.spec.ts",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "kind": "真实 Electron UI",
+      "total": 8,
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 3
+    },
+    {
+      "file": "terminal-clipboard.spec.ts",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "kind": "真实 Electron UI",
+      "total": 5,
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 1
+    },
+    {
+      "file": "terminal-connection-ui.spec.ts",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "kind": "真实 Electron UI",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 1
+    },
+    {
+      "file": "terminal-output.spec.ts",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "kind": "纯函数或文件契约",
+      "total": 10,
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "terminal-resize.spec.ts",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "kind": "真实 Electron UI",
+      "total": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 1
+    },
+    {
+      "file": "terminal-shell-input.spec.ts",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "kind": "真实 Electron UI",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "thinking-mode-ui.spec.ts",
+      "feature": "对话、历史、审批、恢复与安全",
+      "kind": "真实 Electron UI",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "thinking-scroll-ui.spec.ts",
+      "feature": "对话、历史、审批、恢复与安全",
+      "kind": "真实 Electron UI",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "tool-ergonomics-ui.spec.ts",
+      "feature": "工具反馈与开发操作",
+      "kind": "真实 Electron UI",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "tool-feedback.spec.ts",
+      "feature": "工具反馈与开发操作",
+      "kind": "本机进程、API 或文件集成",
+      "total": 9,
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "utility-actions-ui.spec.ts",
+      "feature": "模型、输入配置与辅助操作",
+      "kind": "真实 Electron UI",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "workspace-live-sync-local.spec.ts",
+      "feature": "远端连接与项目、文件、上传同步",
+      "kind": "真实 Electron UI",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    },
+    {
+      "file": "workspace-live-sync.spec.ts",
+      "feature": "远端连接与项目、文件、上传同步",
+      "kind": "纯函数或文件契约",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 1
+    }
+  ],
+  "details": [
+    {
+      "file": "account-boundary.spec.ts",
+      "title": "账号身份参与连接与本地/远端会话持久化隔离",
+      "kind": "纯函数或文件契约",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-boundary.spec.ts",
+      "title": "通用业务桥不能经点路径绕过专用账号凭证边界",
+      "kind": "纯函数或文件契约",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-boundary.spec.ts",
+      "title": "内网 HTTP 信任只适用于确认的协议、主机、端口和服务路径",
+      "kind": "纯函数或文件契约",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-engine-integration.spec.ts",
+      "title": "一键登录通过真实实例与用户双重认证，恢复凭证仅由原生备份导出",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-engine-integration.spec.ts",
+      "title": "绑定第三方保持原账号和实际业务数据，扩展资料不会授予服务器权限",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-engine-integration.spec.ts",
+      "title": "账号切换拒绝旧请求；第三方重新登录恢复同一份数据库记录",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-engine-integration.spec.ts",
+      "title": "主进程会话自动刷新后持续访问，服务端撤销后不能继续认证",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-http-trust.spec.ts",
+      "title": "未确认地址时禁止账号请求，界面提供准确地址和信任入口",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-http-trust.spec.ts",
+      "title": "取消原生信任确认不会保存信任或发送账号请求",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-http-trust.spec.ts",
+      "title": "明确确认后只持久化当前服务并放行账号发现",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-http-trust.spec.ts",
+      "title": "重启保留服务信任，同一地址的其他端口仍需单独确认",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-http-trust.spec.ts",
+      "title": "可信内网一键登录实际创建账号并弹出选填资料，凭证不进入界面",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-http-trust.spec.ts",
+      "title": "撤销信任持久生效，已有会话也不能继续发送账号凭证",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-onboarding-contract.spec.ts",
+      "title": "首登请求跨暂时空资料和同服务重连保留，恢复资料后继续显示",
+      "kind": "纯函数或文件契约",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-onboarding-contract.spec.ts",
+      "title": "切换账号、租户、服务或确认退出时不能把首登弹窗移给别人",
+      "kind": "纯函数或文件契约",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-settings-ui.spec.ts",
+      "title": "设置旁登录入口支持键盘资料提示并进入个人账号分区",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-settings-ui.spec.ts",
+      "title": "一键登录真实创建账号，资料弹窗可跳过且键盘焦点不会逃出",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-settings-ui.spec.ts",
+      "title": "资料修改落到服务端，头像悬停同步显示基础资料",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-settings-ui.spec.ts",
+      "title": "第三方凭证绑定保留账号，扩展资料只渲染文本",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-settings-ui.spec.ts",
+      "title": "登录设备撤销调用真实接口并刷新列表",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-settings-ui.spec.ts",
+      "title": "浏览器第三方授权可以取消，未完成不会绑定新身份",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-settings-ui.spec.ts",
+      "title": "备份和导入经过主进程文件选择，退出后可恢复原账号",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-settings-ui.spec.ts",
+      "title": "姓名留空交给服务端生成，页面重载后保持账号状态",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-settings-ui.spec.ts",
+      "title": "账号接口缺少资料字段时保留原资料并显示离线，不造成渲染异常",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-settings-ui.spec.ts",
+      "title": "旧资料读取的401在重新登录之后到达，不能覆盖新登录状态",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-settings-ui.spec.ts",
+      "title": "引擎仍连接A时保存B地址不转移账号操作，资料继续写到A",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-settings-ui.spec.ts",
+      "title": "旧资料读取成功在保存新资料后到达，不能覆盖已确认的新姓名",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-settings-ui.spec.ts",
+      "title": "A刷新在切B登录后完成仍保存A轮换凭证，返回A使用新令牌",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-settings-ui.spec.ts",
+      "title": "A排队的恢复码、第三方凭证和备份导入在切到B后全部取消，不向B发送凭证",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "account-settings-ui.spec.ts",
+      "title": "恢复时钟时仍等待已提交的凭证轮换，登录设备请求只携带新令牌",
+      "kind": "真实 Electron UI",
+      "feature": "账号与认证",
+      "status": "passed"
+    },
+    {
+      "file": "agent-resource-dialogue.spec.ts",
+      "title": "skills + stdio MCP + KB/RAG + transient retry + reload/history",
+      "kind": "真实 Electron UI",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "anthropic-stream-ui.spec.ts",
+      "title": "block 起始帧完整中文正文成功且只显示一次，刷新保留",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "anthropic-stream-ui.spec.ts",
+      "title": "message 起始帧完整中文正文成功且只显示一次，刷新保留",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "anthropic-stream-ui.spec.ts",
+      "title": "真正空响应仍标记 EMPTY_OUTPUT 中文失败且刷新不自动重试",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "anthropic-stream-ui.spec.ts",
+      "title": "起始 tool_use.input 保留文件参数并真实读取一次，刷新不重复执行",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "安全模式请求晚返回：切换到B后旧A审批闭包不得起流或覆盖B",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "同会话旧waiting闭包不能应答最新succeeded运行",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "同会话旧waiting闭包不能应答最新failed运行",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "同会话旧waiting闭包不能应答最新cancelled运行",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "同会话旧waiting闭包不能应答最新interrupted运行",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "同会话旧waiting闭包不能应答最新running运行",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "最新请求已回答、被替换或工具身份变化时不得使用旧审批",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "当前durable请求正常提交准确身份，重复点击不重复起流",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "IPC启动拒绝释放本次流锁，原审批可以重试",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "A的启动拒绝晚于切换到B，不清理B的新流和加载状态",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "同会话已经启动的新流不会被旧提交的失败清理",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "引擎切换后的旧审批闭包不向新引擎发送请求",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "应答HTTP404冲突拉取最新快照，恢复期间禁止重复提交",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "应答HTTP409冲突拉取最新快照，恢复期间禁止重复提交",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "审批失效兼容http-200-json信封并用取消快照清理旧卡片",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "审批失效兼容sse-message信封并用取消快照清理旧卡片",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "审批失效兼容sse-code信封并用取消快照清理旧卡片",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "冲突快照仍是waiting/pending时保留审批并允许重试",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "冲突快照已由另一端批准并继续运行时保持恢复后的流",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "普通暂时网络错误不把真实pending请求归档，原请求可重试",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "冲突后快照暂时获取失败不伪造终态，解除刷新锁以便重试",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "approval-session-race.spec.ts",
+      "title": "旧会话审批刷新结束不解锁新会话的流",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "attachments-upload-ui.spec.ts",
+      "title": "选择文件直接上传真实字节，核验远端路径和大小后恢复发送",
+      "kind": "真实 Electron UI",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "attachments-upload-ui.spec.ts",
+      "title": "HTTP 失败退出上传状态，错误持续可见且同一文件可重试",
+      "kind": "真实 Electron UI",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "attachments-upload-ui.spec.ts",
+      "title": "上传响应成功但文件信息大小不符时拒绝附加并恢复输入",
+      "kind": "真实 Electron UI",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "attachments-upload-ui.spec.ts",
+      "title": "挂起上传可取消，实际 HTTP 连接中止且可立即重新上传",
+      "kind": "真实 Electron UI",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "attachments-upload-ui.spec.ts",
+      "title": "切换会话取消在途上传，旧会话迟到结果不能进入新会话",
+      "kind": "真实 Electron UI",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "attachments-upload-ui.spec.ts",
+      "title": "两批并发上传中第一批完成不会提前解除第二批忙碌状态",
+      "kind": "真实 Electron UI",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "attachments-upload-ui.spec.ts",
+      "title": "120 秒无响应显示持久超时错误，取消实际请求且恢复后能再传",
+      "kind": "真实 Electron UI",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "browser-agent-ui.spec.ts",
+      "title": "真实工具调用操作同一可见网页，并将截图像素与导航信息送回模型",
+      "kind": "真实 Electron UI",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-agent-ui.spec.ts",
+      "title": "查看对话用量浮层时，不会隐藏旁边正在显示的网页",
+      "kind": "真实 Electron UI",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-local-ui.spec.ts",
+      "title": "编辑器运行先保存修改，真实执行中文与相对模块并限制文件范围",
+      "kind": "真实 Electron UI",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-local-ui.spec.ts",
+      "title": "原生网页焦点支持地址快捷键，分栏缩放后页面边界仍对齐",
+      "kind": "真实 Electron UI",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-local-ui.spec.ts",
+      "title": "浏览器默认设置在应用重启后保留",
+      "kind": "真实 Electron UI",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-native-validation.spec.ts",
+      "title": "browser address accepts development servers and normalizes ordinary hosts",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-native-validation.spec.ts",
+      "title": "browser address cannot execute code, read local files or smuggle credentials",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-native-validation.spec.ts",
+      "title": "tab ownership requires both engine and conversation identity",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-native-validation.spec.ts",
+      "title": "viewport validation rejects invalid and excessive native allocations",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-native-validation.spec.ts",
+      "title": "settings updates preserve unrelated fields and cannot save malformed data",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-native-validation.spec.ts",
+      "title": "native page bounds remain within the owned editor window",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-navigation-ui.spec.ts",
+      "title": "刷新按钮重新加载主文档，控制台与网络记录只保留新加载",
+      "kind": "真实 Electron UI",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-navigation-ui.spec.ts",
+      "title": "同文档 hash/history 与 iframe 导航不清空主文档记录，跨文档重定向会清理",
+      "kind": "真实 Electron UI",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-navigation-ui.spec.ts",
+      "title": "跨文档失败连接不会残留旧日志，恢复成功后网络面板保留筛选但回到第一页并取消详情",
+      "kind": "真实 Electron UI",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-network-collector.spec.ts",
+      "title": "filters precede stable forward pagination and pending/failed are explicit",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-network-collector.spec.ts",
+      "title": "request/response/query/header/cookie secrets are removed before body pagination",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-network-collector.spec.ts",
+      "title": "ExtraInfo arriving before request and after redirects remains bound to the correct hop",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-network-collector.spec.ts",
+      "title": "a redirect without ExtraInfo does not steal the following hop headers",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-network-collector.spec.ts",
+      "title": "base64 UTF-8 text, binary, empty, pending and failures have distinct body states",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-network-collector.spec.ts",
+      "title": "an aborted no-body response stays empty without concealing its transport error",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-network-collector.spec.ts",
+      "title": "bounded record/body retention reports evictions and cross-tab IDs never collide",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-network-collector.spec.ts",
+      "title": "oversized body is explicit and cached request payload is independently pageable",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-network-collector.spec.ts",
+      "title": "redaction preserves ordinary values and handles forms and secret-bearing URLs",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-network-collector.spec.ts",
+      "title": "top-level reset fences late old-loader events while retaining the new document redirect chain",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-network-collector.spec.ts",
+      "title": "an in-flight body read from the previous page cannot write into the new capture",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-network-ui.spec.ts",
+      "title": "筛选在分页之前执行，列表仅返回摘要且每条请求有稳定ID",
+      "kind": "真实 Electron UI",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-network-ui.spec.ts",
+      "title": "根据ID取得真实头、查询、载荷、响应和时序，敏感值不会混入输出",
+      "kind": "真实 Electron UI",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-network-ui.spec.ts",
+      "title": "正文可连续读取，二进制、空响应、未完成和跨标签ID均有准确结果",
+      "kind": "真实 Electron UI",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-network-ui.spec.ts",
+      "title": "网络面板筛选分页与请求详情真实可用，长响应可继续加载",
+      "kind": "真实 Electron UI",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-network-ui.spec.ts",
+      "title": "开发者工具占用时保留已捕获详情并说明暂停，关闭后继续捕获",
+      "kind": "真实 Electron UI",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-occlusion.spec.ts",
+      "title": "左栏用量浮层不应隐藏右栏网页，跨入网页的浮层必须让出原生视图",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-occlusion.spec.ts",
+      "title": "只接触边缘、位于页面下方或隐藏的下拉菜单不遮挡网页",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-occlusion.spec.ts",
+      "title": "全屏背景和真正模态对话框仍阻止原生网页越过遮罩接收交互",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-occlusion.spec.ts",
+      "title": "关闭或尚未分配尺寸的页面不因浮层产生遮挡状态",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-occlusion.spec.ts",
+      "title": "自适应网页覆盖整个区域，手机投影留白上的浮层不应隐藏页面",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-occlusion.spec.ts",
+      "title": "小视口不向上放大，下方留白不属于原生绘制区域",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-occlusion.spec.ts",
+      "title": "宿主缩放与设备 DPR 分开：投影先转 DIP 再还原 CSS 坐标",
+      "kind": "纯函数或文件契约",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-surface-ui.spec.ts",
+      "title": "打开网络面板并反复拖动后，原生网页完整显示且没有占位残影",
+      "kind": "真实 Electron UI",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-surface-ui.spec.ts",
+      "title": "带滚动条网页在深色主题、工作台缩放和窗口连续缩放后没有原生绘制残留",
+      "kind": "真实 Electron UI",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-ui.spec.ts",
+      "title": "快捷入口打开分栏浏览器，真实网页加载且与IDE能力隔离",
+      "kind": "真实 Electron UI",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-ui.spec.ts",
+      "title": "认证工具队列操作可见页面，中文输入点击产生真实DOM与网络副作用",
+      "kind": "真实 Electron UI",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-ui.spec.ts",
+      "title": "手机视口与截图反映真实网页尺寸，导航后拒绝旧元素引用",
+      "kind": "真实 Electron UI",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-ui.spec.ts",
+      "title": "设置入口真实落盘，命令面板不会被原生网页遮挡",
+      "kind": "真实 Electron UI",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-ui.spec.ts",
+      "title": "关闭 AI 时取消等待显示的操作，重新显示网页不会继续旧点击",
+      "kind": "真实 Electron UI",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "browser-ui.spec.ts",
+      "title": "关闭网页销毁WebContents，错误协议不创建页面",
+      "kind": "真实 Electron UI",
+      "feature": "浏览器与网络调试",
+      "status": "passed"
+    },
+    {
+      "file": "change-actions.spec.ts",
+      "title": "保留和暂存提交整行全部操作，路径和IDs去重",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-actions.spec.ts",
+      "title": "暂存成功后保留失败，明确保留暂存结果且不重试或取消暂存",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-actions.spec.ts",
+      "title": "部分保留不可冒充成功；Git失败或全忽略不确认记录",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-diff.spec.ts",
+      "title": "empty files and terminal newlines count physical text lines without phantom rows",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-diff.spec.ts",
+      "title": "equal files retain content without claiming an addition or deletion",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-diff.spec.ts",
+      "title": "a terminal newline edit changes the last real line and exposes the missing newline",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-diff.spec.ts",
+      "title": "CRLF, true blank lines and EOF content survive row reconstruction",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-diff.spec.ts",
+      "title": "edits beyond line 800 keep exact counts, tail content and original line numbers",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-diff.spec.ts",
+      "title": "render folding at 400 rows never limits full-file statistics",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-diff.spec.ts",
+      "title": "different content with the same line count reports replacements, not zero",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-diff.spec.ts",
+      "title": "large disjoint blocks can be counted exactly without a quadratic table",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-diff.spec.ts",
+      "title": "over-budget overlapping blocks are complete and explicitly estimated while equal edges remain exact",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-diff.spec.ts",
+      "title": "long narrow comparisons remain exact without creating one DP allocation per input row",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-diff.spec.ts",
+      "title": "repeated lines align as a minimal edit script rather than positional replacements",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-net-ui.spec.ts",
+      "title": "17条流水按净变化显示6行，新增删除/恢复原内容消失，人工编辑不隐藏；重启一致",
+      "kind": "真实 Electron UI",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-net-ui.spec.ts",
+      "title": "点击改动行在编辑区打开对应文件",
+      "kind": "真实 Electron UI",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-net-ui.spec.ts",
+      "title": "单行撤回整组恢复初始内容，单行保留确认整组",
+      "kind": "真实 Electron UI",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-net-ui.spec.ts",
+      "title": "绝对路径含方括号及已删除文件都可真实暂存，整组标记保留",
+      "kind": "真实 Electron UI",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-net-ui.spec.ts",
+      "title": "非仓库错误如实返回；全忽略不暂存；其它文件的原暂存保留",
+      "kind": "真实 Electron UI",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-net-ui.spec.ts",
+      "title": "全部保留包括已抵消记录，计数归零，刷新后不复现旧行",
+      "kind": "真实 Electron UI",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-net-ui.spec.ts",
+      "title": "仅创建然后删除的会话不显示待确认托盘，原始历史仍存在",
+      "kind": "真实 Electron UI",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-revert-contract.spec.ts",
+      "title": "全部撤回由服务端选择完整session范围，不从可见列表生成ids",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-revert-contract.spec.ts",
+      "title": "单条撤回仍走同一batch且明确限定id",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-revert-contract.spec.ts",
+      "title": "conflict部分结果保留全部历史，且发布可审查结果",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-revert-contract.spec.ts",
+      "title": "unavailable部分结果保留全部历史，且发布可审查结果",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-revert-contract.spec.ts",
+      "title": "failed部分结果保留全部历史，且发布可审查结果",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-revert-contract.spec.ts",
+      "title": "完全成功及重复已撤回后，才按精确引擎messageId截断",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-revert-contract.spec.ts",
+      "title": "前端临时ID遇到重复正文时拒绝写入，不选第一条继续",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-revert-contract.spec.ts",
+      "title": "缺失轮次不能猜测边界；时间戳不再参与选择",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-revert-contract.spec.ts",
+      "title": "API失败及不完整响应不得截断历史",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-revert-contract.spec.ts",
+      "title": "相同路径的多个操作按文件分组，汇总不把操作数说成文件数",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-revert-contract.spec.ts",
+      "title": "引擎代次变化清空报告和卡片结果，并通知订阅者",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-revert-contract.spec.ts",
+      "title": "旧引擎晚到的batch结果不能覆盖新引擎同名会话或卡片",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-revert-contract.spec.ts",
+      "title": "请求已返回但发布报告前的微任务切源不能留下旧缓存",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-revert-contract.spec.ts",
+      "title": "读取历史期间切换引擎，旧历史不得向新引擎发起文件回退",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-revert-contract.spec.ts",
+      "title": "文件回退期间切换引擎，不得发布旧报告或截断新引擎历史",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-revert-contract.spec.ts",
+      "title": "报告通知期间切换引擎也会阻止后续历史截断",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-revert-contract.spec.ts",
+      "title": "旧引擎截断响应晚到不能向当前引擎报告整条操作成功",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-revert-ui.spec.ts",
+      "title": "205条操作汇总为4个文件；一次撤回仍覆盖全部操作并保护人工修改",
+      "kind": "真实 Electron UI",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-revert-ui.spec.ts",
+      "title": "消息回退有冲突或缺失快照时，真实历史及消息仍保留",
+      "kind": "真实 Electron UI",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "change-revert-ui.spec.ts",
+      "title": "消息回退包含已保留改动；完全成功才删历史；零待确认仍能查看结果",
+      "kind": "真实 Electron UI",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "changes-panel-scroll-ui.spec.ts",
+      "title": "默认窗口和最小窗口中，长列表只在列表内部滚动",
+      "kind": "真实 Electron UI",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "changes-panel-scroll-ui.spec.ts",
+      "title": "少量改动按内容收缩，不保留最大高度空白",
+      "kind": "真实 Electron UI",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "chat-artifact-link-ui.spec.ts",
+      "title": "真实下载协议链接打开 index.html 并预览，历史重载后仍可打开",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-artifact-link-ui.spec.ts",
+      "title": "嵌套中文和特殊字符文件名仅解码一次，跨会话与越界不创建标签",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-artifact-link-ui.spec.ts",
+      "title": "远端交付文件通过绑定会话的认证 content 接口读取，未降级本机文件服务",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-artifact-link-ui.spec.ts",
+      "title": "修改普通对话设置仍保留远端选中会话与交付历史",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-artifact-link.spec.ts",
+      "title": "engine delivery URL becomes its file path, never download query as a disk filename",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-artifact-link.spec.ts",
+      "title": "query decoding preserves nested Chinese, spaces, percent, hash and plus exactly once",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-artifact-link.spec.ts",
+      "title": "rejects invalid or escaping artifact path \"\"",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-artifact-link.spec.ts",
+      "title": "rejects invalid or escaping artifact path \"../index.html\"",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-artifact-link.spec.ts",
+      "title": "rejects invalid or escaping artifact path \"src/../../index.html\"",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-artifact-link.spec.ts",
+      "title": "rejects invalid or escaping artifact path \"..\\\\index.html\"",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-artifact-link.spec.ts",
+      "title": "rejects invalid or escaping artifact path \"/index.html\"",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-artifact-link.spec.ts",
+      "title": "rejects invalid or escaping artifact path \"C:\\\\index.html\"",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-artifact-link.spec.ts",
+      "title": "rejects invalid or escaping artifact path \"//server/share/index.html\"",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-artifact-link.spec.ts",
+      "title": "rejects invalid or escaping artifact path \"src/./index.html\"",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-artifact-link.spec.ts",
+      "title": "rejects invalid or escaping artifact path \"a\\u0000.html\"",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-artifact-link.spec.ts",
+      "title": "rejects missing/duplicate parameters, malformed encoding and foreign session",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-artifact-link.spec.ts",
+      "title": "only exact current engine endpoint is an artifact; foreign origins and unrelated APIs stay external",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-artifact-link.spec.ts",
+      "title": "normal chat filenames preserve literal percent/hash and line/column semantics",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-file-path.spec.ts",
+      "title": "absolute reference preserves its path and extracts line/column: C:\\project\\file.ts",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-file-path.spec.ts",
+      "title": "absolute reference preserves its path and extracts line/column: D:/project/file.ts",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-file-path.spec.ts",
+      "title": "absolute reference preserves its path and extracts line/column: \\\\server\\share\\file.ts",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-file-path.spec.ts",
+      "title": "absolute reference preserves its path and extracts line/column: //server/share/file.ts",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-file-path.spec.ts",
+      "title": "absolute reference preserves its path and extracts line/column: /project/file.ts",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-file-path.spec.ts",
+      "title": "relative references use the explicit workspace and preserve separator semantics",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-file-path.spec.ts",
+      "title": "quotes, spaces, Chinese, percent escapes and hashes stay literal filename characters",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-file-path.spec.ts",
+      "title": "relative references need an absolute workspace root",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-file-path.spec.ts",
+      "title": "bare drive letters and drive-relative paths cannot become workspace-relative filenames",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-message-layout-ui.spec.ts",
+      "title": "新建和修改默认展开，删除默认收起且支持鼠标与键盘，刷新保留手动选择",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-message-layout-ui.spec.ts",
+      "title": "窄屏和宽屏下任务栏与输入框对齐，展开任务保持间距，标题和差异背景不越界",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-recovery-contract.spec.ts",
+      "title": "SSE parser keeps id for JSON and terminal frames, CRLF/multiline/comments are valid",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-recovery-contract.spec.ts",
+      "title": "duplicate and older consumed IDs do not append text or args a second time",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-recovery-contract.spec.ts",
+      "title": "atomic projection replaces current partial turn and root terminal applies after tools",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-recovery-contract.spec.ts",
+      "title": "persisted snapshot restores attachments, todos, pending and current file change status",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-recovery-contract.spec.ts",
+      "title": "projected stable user survives snapshot/history first append race",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-recovery-contract.spec.ts",
+      "title": "same provider toolCallId in two root runs cannot overwrite the older owner",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-recovery-ui.spec.ts",
+      "title": "部分思考和工具参数刷新恢复，工具执行后再刷新不会重发或重复写入",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-recovery-ui.spec.ts",
+      "title": "结束后重启从持久化快照恢复附件待办和改动，过期游标透传恢复信号",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "chat-recovery-ui.spec.ts",
+      "title": "停止先取消引擎运行，重开保持cancelled且不创建新请求",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "command-job-contract.spec.ts",
+      "title": "job schema rejects wrong versions, corrupt identity, statuses and cursors",
+      "kind": "纯函数或文件契约",
+      "feature": "命令任务与进程状态",
+      "status": "passed"
+    },
+    {
+      "file": "command-job-contract.spec.ts",
+      "title": "dispatch success preserves running background state, late dispatch cannot overwrite terminal status",
+      "kind": "纯函数或文件契约",
+      "feature": "命令任务与进程状态",
+      "status": "passed"
+    },
+    {
+      "file": "command-job-contract.spec.ts",
+      "title": "foreground calls keep ordinary tool behavior and do not create background cards",
+      "kind": "纯函数或文件契约",
+      "feature": "命令任务与进程状态",
+      "status": "passed"
+    },
+    {
+      "file": "command-job-contract.spec.ts",
+      "title": "job versions cannot rewrite ownership or revive cancelled/interrupted completion",
+      "kind": "纯函数或文件契约",
+      "feature": "命令任务与进程状态",
+      "status": "passed"
+    },
+    {
+      "file": "command-job-contract.spec.ts",
+      "title": "root completion does not turn a running background job into interruption",
+      "kind": "纯函数或文件契约",
+      "feature": "命令任务与进程状态",
+      "status": "passed"
+    },
+    {
+      "file": "command-job-contract.spec.ts",
+      "title": "root session matching also requires original turn/run and never attaches child jobs to reused tool IDs",
+      "kind": "纯函数或文件契约",
+      "feature": "命令任务与进程状态",
+      "status": "passed"
+    },
+    {
+      "file": "command-job-contract.spec.ts",
+      "title": "history and fresh recovery snapshot override old dispatch with cancelled job and reason",
+      "kind": "纯函数或文件契约",
+      "feature": "命令任务与进程状态",
+      "status": "passed"
+    },
+    {
+      "file": "command-job-contract.spec.ts",
+      "title": "stdout/stderr sequence cursors append once across repeated pages and never use latest snapshot cursor",
+      "kind": "纯函数或文件契约",
+      "feature": "命令任务与进程状态",
+      "status": "passed"
+    },
+    {
+      "file": "command-job-contract.spec.ts",
+      "title": "expired output cursors preserve explicit gap warning and renderer output stays bounded",
+      "kind": "纯函数或文件契约",
+      "feature": "命令任务与进程状态",
+      "status": "passed"
+    },
+    {
+      "file": "command-job-contract.spec.ts",
+      "title": "malformed or backwards output pages are refused and every terminal reason remains distinct",
+      "kind": "纯函数或文件契约",
+      "feature": "命令任务与进程状态",
+      "status": "passed"
+    },
+    {
+      "file": "command-job-contract.spec.ts",
+      "title": "deliberate background stop is neutral while copied diagnostics retain its real exit code and reason",
+      "kind": "纯函数或文件契约",
+      "feature": "命令任务与进程状态",
+      "status": "passed"
+    },
+    {
+      "file": "command-job-store.spec.ts",
+      "title": "switching sessions releases previous buffers and ignores an in-flight output response",
+      "kind": "纯函数或文件契约",
+      "feature": "命令任务与进程状态",
+      "status": "passed"
+    },
+    {
+      "file": "command-job-store.spec.ts",
+      "title": "clear invalidates pending list/cancel results and cannot resurrect the old job",
+      "kind": "纯函数或文件契约",
+      "feature": "命令任务与进程状态",
+      "status": "passed"
+    },
+    {
+      "file": "command-job-store.spec.ts",
+      "title": "cancel failure retains running state; expired output is classified without faking a terminal state",
+      "kind": "纯函数或文件契约",
+      "feature": "命令任务与进程状态",
+      "status": "passed"
+    },
+    {
+      "file": "command-job-ui.spec.ts",
+      "title": "父回复结束后stdout/stderr持续增量，刷新与切换会话保持同一任务且完成不重跑",
+      "kind": "真实 Electron UI",
+      "feature": "命令任务与进程状态",
+      "status": "passed"
+    },
+    {
+      "file": "command-job-ui.spec.ts",
+      "title": "停止命令等待真实退出，刷新保留已取消且不执行后续文件副作用",
+      "kind": "真实 Electron UI",
+      "feature": "命令任务与进程状态",
+      "status": "passed"
+    },
+    {
+      "file": "command-job-ui.spec.ts",
+      "title": "非零退出和超时保留各自终态/退出码/stderr，前台命令维持普通工具展示",
+      "kind": "真实 Electron UI",
+      "feature": "命令任务与进程状态",
+      "status": "passed"
+    },
+    {
+      "file": "command-job-ui.spec.ts",
+      "title": "子代理派发后父/子结束仍能发现后台命令，归属恢复且可单独停止",
+      "kind": "真实 Electron UI",
+      "feature": "命令任务与进程状态",
+      "status": "passed"
+    },
+    {
+      "file": "command-job-ui.spec.ts",
+      "title": "引擎进程意外退出后任务恢复为中断且不自动重新执行",
+      "kind": "真实 Electron UI",
+      "feature": "命令任务与进程状态",
+      "status": "passed"
+    },
+    {
+      "file": "command-job-ui.spec.ts",
+      "title": "过期历史任务真实404显示输出和停止失败，不能伪装为已取消或重新派发",
+      "kind": "真实 Electron UI",
+      "feature": "命令任务与进程状态",
+      "status": "passed"
+    },
+    {
+      "file": "compact-panel-layout.spec.ts",
+      "title": "窄窗口下文件和搜索排除规则保持单行对齐，并正确增删写盘",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "compact-panel-layout.spec.ts",
+      "title": "窄窗口终端标签栏保持紧凑，PTY 不可用时明确提示原因",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "composer-defaults-ui.spec.ts",
+      "title": "未保存偏好时显示仅本会话 / High / 标准模式，且与真实引擎一致",
+      "kind": "真实 Electron UI",
+      "feature": "模型、输入配置与辅助操作",
+      "status": "passed"
+    },
+    {
+      "file": "composer-defaults-ui.spec.ts",
+      "title": "显式关闭/全局记忆和安全/完全访问模式在刷新、切会话后不被默认值覆盖",
+      "kind": "真实 Electron UI",
+      "feature": "模型、输入配置与辅助操作",
+      "status": "passed"
+    },
+    {
+      "file": "composer-defaults-ui.spec.ts",
+      "title": "新建会话重新采用记忆和安全默认值，同时保留用户明确选择的思考档位",
+      "kind": "真实 Electron UI",
+      "feature": "模型、输入配置与辅助操作",
+      "status": "passed"
+    },
+    {
+      "file": "composer-defaults-ui.spec.ts",
+      "title": "未保存偏好时显示仅本会话 / High / 标准模式，且与真实引擎一致",
+      "kind": "真实 Electron UI",
+      "feature": "模型、输入配置与辅助操作",
+      "status": "passed"
+    },
+    {
+      "file": "composer-defaults-ui.spec.ts",
+      "title": "显式关闭/全局记忆和安全/完全访问模式在刷新、切会话后不被默认值覆盖",
+      "kind": "真实 Electron UI",
+      "feature": "模型、输入配置与辅助操作",
+      "status": "passed"
+    },
+    {
+      "file": "composer-defaults-ui.spec.ts",
+      "title": "新建会话重新采用记忆和安全默认值，同时保留用户明确选择的思考档位",
+      "kind": "真实 Electron UI",
+      "feature": "模型、输入配置与辅助操作",
+      "status": "passed"
+    },
+    {
+      "file": "diagnostics-state.spec.ts",
+      "title": "diagnostic errors remain distinct from completed empty results, cancellation clears pending state",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "diagnostics-state.spec.ts",
+      "title": "Windows path aliases and TypeScript code formats produce one file and one complete diagnostic",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "diagnostics-state.spec.ts",
+      "title": "engine diagnosis adopts the editor path even when tsserver arrives first and owners clear independently",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "diagnostics-state.spec.ts",
+      "title": "diagnostic merging preserves different sources, severities, codes and complete ranges",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "diagnostics-state.spec.ts",
+      "title": "Windows UNC aliases share identity while POSIX file names remain case sensitive",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "edit-file-ui.spec.ts",
+      "title": "实际工具schema与精确读取版本驱动两文件编辑，live/刷新/重启diff和路径跳转一致，UI撤回恢复字节",
+      "kind": "真实 Electron UI",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "edit-file-ui.spec.ts",
+      "title": "读取后人工修改导致版本冲突，拒绝写入且刷新保持失败和人工内容",
+      "kind": "真实 Electron UI",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "edit-file-ui.spec.ts",
+      "title": "同一原文重复匹配拒绝整批编辑，之前的唯一匹配也不写入或生成改动",
+      "kind": "真实 Electron UI",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "editor-chat-context.spec.ts",
+      "title": "选区快捷键展开隐藏对话并保留实际未保存文本及排他结束行",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-chat-context.spec.ts",
+      "title": "文件工具栏添加未保存全文；关闭重开对话仍恢复快照 chip",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-chat-context.spec.ts",
+      "title": "文件标签右键可添加到对话，目录也提供同样入口",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-close-confirmation.spec.ts",
+      "title": "批量关闭只确认一次，取消保留所有未保存文档且不写盘",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-close-confirmation.spec.ts",
+      "title": "明确丢弃批准整批关闭，不隐式写盘",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-close-confirmation.spec.ts",
+      "title": "保存全部之后才批准关闭，重复路径只保存一次",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-close-confirmation.spec.ts",
+      "title": "任何文件保存失败均拒绝整批关闭",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-close-confirmation.spec.ts",
+      "title": "保存等待期间的新输入不能被保存并关闭顺带丢弃",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-close-confirmation.spec.ts",
+      "title": "丢弃确认期间集合中的干净文件又被修改，拒绝关闭",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-close-confirmation.spec.ts",
+      "title": "仅干净文件和已关闭文件不弹确认，也不发保存请求",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-close-confirmation.spec.ts",
+      "title": "相对路径复制兼容Windows大小写、盘符根目录和UNC",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-close-confirmation.spec.ts",
+      "title": "相对路径复制保持POSIX大小写，根自身为点，工作区外保留绝对路径",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-code-actions.spec.ts",
+      "title": "自动导入补全将 resolve 的 import 编辑保留到显式保存",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-code-actions.spec.ts",
+      "title": "快速修复通过真实 TS codeAction 添加缺失导入",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-code-actions.spec.ts",
+      "title": "整理导入接受标准 documentChanges 并可撤销",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-code-actions.spec.ts",
+      "title": "提取常量走 executeCommand 和反向 applyEdit，保存前磁盘不变",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-code-actions.spec.ts",
+      "title": "引用预览读取未打开的定义文件且不为每个结果创建标签",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-commands.spec.ts",
+      "title": "命令面板获得焦点后，替换仍作用于上一个编辑器并保存到磁盘",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-commands.spec.ts",
+      "title": "中文自动换行命令改变长行的实际排版并可恢复",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-commands.spec.ts",
+      "title": "中文小地图命令隐藏并恢复实际小地图区域",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-commands.spec.ts",
+      "title": "自动换行和小地图选择在打开另一文件并切回后仍保持",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-commands.spec.ts",
+      "title": "从命令面板转到行后，原生跳转输入框定位原文件光标",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-commands.spec.ts",
+      "title": "JSON 文档格式化实际修改缓冲并可保存，符号快捷键不打开安全设置",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-commands.spec.ts",
+      "title": "纯文本没有格式化服务时提供中文反馈且不改变文件",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-commands.spec.ts",
+      "title": "关闭文本编辑器后执行命令给出中文提示且不访问已释放实例",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-context-data.spec.ts",
+      "title": "发送包含精确选区快照，而不是只发送磁盘路径",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-context-data.spec.ts",
+      "title": "代码中有 Markdown 围栏时快照仍完整；同一内容不重复附加",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-context-data.spec.ts",
+      "title": "普通文件/目录引用不额外读取或伪造快照；空文件快照仍发送",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-context-data.spec.ts",
+      "title": "未保存文件全文与终端快照逐字往返，包含 CRLF 和末尾空白",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-context-data.spec.ts",
+      "title": "快照内部的 reference、机器注释和旧协议标记不能截断正文或快照",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-context-data.spec.ts",
+      "title": "特殊路径和显示文字不破坏属性或机器数据注释",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-context-data.spec.ts",
+      "title": "重复引用按实际 token 位置保存，各自快照和手写同名文本不会串位",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-context-data.spec.ts",
+      "title": "引用两侧缺空白时只补边界空格，不把空格移到整句话之前",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-context-data.spec.ts",
+      "title": "机器区间偏移或部分损坏时逐块恢复，不能把普通正文误收成引用",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-context-data.spec.ts",
+      "title": "旧 reference 历史不带列号仍恢复快照，旧尾部说明仍隐藏",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-context-data.spec.ts",
+      "title": "跨行选区允许终止列小于起始列并可回放",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-context-data.spec.ts",
+      "title": "草稿保留引用文本、位置与未保存快照，兼容旧纯文本存储",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-diagnostic-policy.spec.ts",
+      "title": "project TS diagnostics take precedence while ESLint stays visible",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-diagnostic-policy.spec.ts",
+      "title": "engine TS diagnostics remain available when project language server is unavailable",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-display-settings.spec.ts",
+      "title": "损坏的设置存储不影响默认编辑器启动",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-display-settings.spec.ts",
+      "title": "恢复旧版仅换行和小地图的偏好时补齐新增字段",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-display-settings.spec.ts",
+      "title": "外部无效值不能生成重叠行高或不可用的 Monaco 参数",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-display-settings.spec.ts",
+      "title": "用户偏好经过 JSON 落盘恢复后所有字段都映射到 Monaco",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-document-races.spec.ts",
+      "title": "保存预读等待期间重命名，取消旧路径写盘并保留新路径草稿",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-document-races.spec.ts",
+      "title": "远程连接或会话切换后旧文档禁止写入新工作区",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-document-races.spec.ts",
+      "title": "保存期间继续输入合法，已落盘快照之外的新输入保持dirty",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-document-races.spec.ts",
+      "title": "旧保存回包不能更新重新打开的新文档基线，旧队列也不能保存新实例",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-document-races.spec.ts",
+      "title": "监听重读的旧回包不能覆盖内容相同的新文档实例",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-document-races.spec.ts",
+      "title": "显式重载期间输入后撤销至原文，仍拒绝迟到回包",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-document-races.spec.ts",
+      "title": "启动恢复旧读取期间关闭并重开输入，新输入不能被旧草稿覆盖",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-document-races.spec.ts",
+      "title": "没有并发操作时正常恢复草稿，保留基线与磁盘冲突",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-document-races.spec.ts",
+      "title": "StrictMode同步初始化清理再初始化，只恢复一次且不覆盖原草稿快照",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-document-sync.spec.ts",
+      "title": "未修改的打开文件自动反映外部改盘",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-document-sync.spec.ts",
+      "title": "dirty文件保留用户输入并报告外部冲突，保存不覆盖新磁盘内容",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-document-sync.spec.ts",
+      "title": "重启恢复打开标签及未保存草稿，同时保留真实磁盘基线",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-document-sync.spec.ts",
+      "title": "关闭动画尚未结束时重新打开 Ctrl+P，新的文件选择保持可用",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-document-sync.spec.ts",
+      "title": "截断预览只读，键盘输入和保存不会丢掉文件尾部",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-document-watch.spec.ts",
+      "title": "连续安装、卸载、重装后保留新实例监听，最后卸载才清空",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-file-identity.spec.ts",
+      "title": "Windows drive and directory casing identify the same file",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-file-identity.spec.ts",
+      "title": "Windows separator aliases identify the same file",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-file-identity.spec.ts",
+      "title": "Windows UNC authority and share casing identify the same file",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-file-identity.spec.ts",
+      "title": "POSIX file and directory casing remains distinct",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-git-diff.spec.ts",
+      "title": "点Git文件进入真正差异视图，修改侧编辑保存到目标文件",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-git-diff.spec.ts",
+      "title": "暂存比较展示index快照且不能编辑或误保存其它文件",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-git-diff.spec.ts",
+      "title": "关闭共享的未保存源文件先确认，再释放差异模型且可刷新重开",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-groups.spec.ts",
+      "title": "拆分共享未保存模型，关闭一侧不丢稿，最后一个视图仍确认",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-groups.spec.ts",
+      "title": "两组标签独立，右组保存和命令面板格式化不作用到左组",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-groups.spec.ts",
+      "title": "同一文件的左右光标和切标签视图记忆独立",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-groups.spec.ts",
+      "title": "批量关闭取消不丢稿，任意保存冲突时整批标签保留",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-groups.spec.ts",
+      "title": "重启恢复两个组的独立标签、活动项、焦点与未保存草稿",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-groups.spec.ts",
+      "title": "重命名共享文档后两个组仍保留各自标签和未保存内容",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-language-actions.spec.ts",
+      "title": "F12 打开未打开的定义文件并定位到定义符号",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-language-actions.spec.ts",
+      "title": "F2 同时重命名当前文件、后台脏文件和未打开文件，全部保存后才写盘",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-language-actions.spec.ts",
+      "title": "Shift+Alt+F 格式化 TypeScript 内容并在显式保存后写盘",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-language-protocol.spec.ts",
+      "title": "standard TextDocumentEdit has no kind and preserves its version",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-language-protocol.spec.ts",
+      "title": "documentChanges take precedence over fallback changes instead of applying edits twice",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-language-protocol.spec.ts",
+      "title": "resource operations reject the entire edit before any partial text mutation",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-language-protocol.spec.ts",
+      "title": "malformed and reversed ranges are rejected instead of silently clamped",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-language-protocol.spec.ts",
+      "title": "bare commands and lazy CodeActions retain the correct execution payload",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-language-protocol.spec.ts",
+      "title": "outline matching keeps ancestors without mutating the shared symbol tree",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-language-protocol.spec.ts",
+      "title": "cursor navigation returns the nested symbol chain and excludes positions outside ranges",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-project-language.spec.ts",
+      "title": "TSX uses project JSX, React, relative imports and paths while retaining real type diagnostics",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-project-language.spec.ts",
+      "title": "JSX retains project checking and clears diagnostics after an unsaved correction",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-source-git-utils.spec.ts",
+      "title": "源Git单块撤销只恢复所选更改并保留其它修改",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-source-git-utils.spec.ts",
+      "title": "源Git单块撤销处理文件开头、末尾与末尾换行",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-source-git-utils.spec.ts",
+      "title": "blame把未改行映射回HEAD，新增和修改行无提交归属",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-source-git-utils.spec.ts",
+      "title": "冲突解析拒绝缺少分隔符、嵌套和未闭合标记",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-source-git-utils.spec.ts",
+      "title": "diff3祖先区不混入当前内容，采用双方移除所有标记",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-source-git-utils.spec.ts",
+      "title": "空侧冲突删除整块，保留文件其它内容",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-source-git-utils.spec.ts",
+      "title": "CRLF末尾冲突解决不添加换行或留下孤立回车",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-source-git-utils.spec.ts",
+      "title": "只有一个空白行的冲突侧保留该空行，与空侧删除不同",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-source-git.spec.ts",
+      "title": "源码gutter通过F7打开双版本块，回滚只改buffer且Ctrl+Z恢复",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-source-git.spec.ts",
+      "title": "未保存新增行即时出现gutter，blame保持正确HEAD行归属",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-source-git.spec.ts",
+      "title": "合并冲突接受传入内容可撤销，保存才改变磁盘",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-source-preview.spec.ts",
+      "title": "Markdown 分屏使用未保存文本并加载工作区相对图片",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-source-preview.spec.ts",
+      "title": "源码和预览双向滚动，预览模式切换保留缓冲区",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-source-preview.spec.ts",
+      "title": "HTML 本地 CSS 与图片可用，预览不能访问宿主或执行文件脚本",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-source-preview.spec.ts",
+      "title": "路径面包屑显示同级文件并实际打开所选文件",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "editor-source-preview.spec.ts",
+      "title": "编辑设置改变实际排版，切文件和重启后保留",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "engine-host-contract.spec.ts",
+      "title": "端口被占用也启动指定产物，所有业务接口要求实例身份",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-host-contract.spec.ts",
+      "title": "取消正在启动的引擎后不再出现迟到 ready，随后可重新启动",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-host-contract.spec.ts",
+      "title": "remote 的 HTTP200 不足以就绪，协议不匹配会清楚失败",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-host-contract.spec.ts",
+      "title": "本机手动连接不强制预设token，但仍验证业务认证与协议",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-host-contract.spec.ts",
+      "title": "远端用户认证失败不会误导为实例令牌问题",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-host-contract.spec.ts",
+      "title": "本机引擎启用token时不绕过认证，配置匹配凭据后才就绪",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-host-contract.spec.ts",
+      "title": "远端令牌可从设置加密保存，且不进入普通设置、快照或页面文本",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-host-contract.spec.ts",
+      "title": "remote 会话经过真实 SSE 返回，主进程隔离本地路径并拒绝文件接口",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-host-contract.spec.ts",
+      "title": "连接身份已经变化时普通请求与 SSE 都在主进程拒绝，不发送远端 HTTP",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-host-contract.spec.ts",
+      "title": "远端目录与连接一起固定：保存B不改变A，重连和自动启动才使用B目录",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-import-ui.spec.ts",
+      "title": "本地内置显示导入入口、包版本及中文状态，远端模式隐藏入口",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-import-ui.spec.ts",
+      "title": "版本选择展示包内名称与详情，统一下拉支持键盘切换",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-import-ui.spec.ts",
+      "title": "设置页暴露 MCP、技能和知识库完整入口",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-import-ui.spec.ts",
+      "title": "取消原生文件选择保持引擎与已导入列表不变，不显示错误",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-import-ui.spec.ts",
+      "title": "不合法引擎包真实校验失败，当前引擎和目录指针不受影响",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-import-ui.spec.ts",
+      "title": "未保存设置阻止切换；确认取消不会重启或修改生效指针",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-import-ui.spec.ts",
+      "title": "可删除未启用的本地引擎版本",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-import-ui.spec.ts",
+      "title": "导入用户提供的 tgz、确认激活后引擎就绪且指针持久化",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "failed",
+      "error": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoContainText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('status')\nExpected substring: \u001b[32m\"已导入\"\u001b[39m\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toContainText\" getByRole('status') with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('status')\u001b[22m\n"
+    },
+    {
+      "file": "engine-import-ui.spec.ts",
+      "title": "恢复默认引擎清除活动指针并重新要求确认",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "notRun"
+    },
+    {
+      "file": "engine-runtime-store.spec.ts",
+      "title": "选择持久化，恢复默认保留已导入包和用户数据",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-runtime-store.spec.ts",
+      "title": "失败的切换与越界标识不能覆盖原选择",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-runtime-store.spec.ts",
+      "title": "只允许删除未启用版本，当前版本必须先恢复默认",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-runtime-store.spec.ts",
+      "title": "旧版元数据缺少名称时从已安装 package.json 恢复配置名称",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-runtime-store.spec.ts",
+      "title": "临时目录、损坏清单和与目录不符的清单不会成为候选引擎",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-runtime-store.spec.ts",
+      "title": "用户选择的导入引擎在安装和开发模式中均实际生效，恢复默认回到原来源",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-source-isolation.spec.ts",
+      "title": "相同会话ID的草稿、名称与占位会话按远端服务隔离",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-source-isolation.spec.ts",
+      "title": "断开使旧操作失效，进程重启保留endpoint偏好，空连接不覆盖存储来源",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-source-isolation.spec.ts",
+      "title": "旧模型请求完成后不能覆盖新源列表或清除新请求",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-source-isolation.spec.ts",
+      "title": "embedded显式主进程会话选择优先，旧localStorage会话不能覆盖它",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-source-isolation.spec.ts",
+      "title": "远端选择仅留在endpoint映射，不持久化到embedded legacy字段",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-source-isolation.spec.ts",
+      "title": "远端修改模型或思考设置保留当前会话，显式新建和切换仍生效",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-source-isolation.spec.ts",
+      "title": "embedded普通设置保留主进程持久化选择，显式会话切换继续生效",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-source-isolation.spec.ts",
+      "title": "等待设置响应期间切换来源，旧请求不能覆盖新来源已选会话",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-source-isolation.spec.ts",
+      "title": "同一远端引擎重连后，旧连接的显式选择不能覆盖当前会话",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-storage-contract.spec.ts",
+      "title": "旧加密密钥暂不可读时保留字节且不创建替代密钥",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-storage-contract.spec.ts",
+      "title": "旧密钥只复制一次，后续读取目标且不修改源文件",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-storage-contract.spec.ts",
+      "title": "损坏的当前密钥不能回退旧文件或被自动覆盖",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-storage-contract.spec.ts",
+      "title": "首次密钥保存后保持稳定，加密能力消失也不覆盖",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-storage-contract.spec.ts",
+      "title": "开发态只选择显式入口或同级dist，打包态忽略开发覆盖",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-storage-contract.spec.ts",
+      "title": "握手拒绝错误构建、旧协议、缺少code范围和伪健康信封",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-storage-contract.spec.ts",
+      "title": "普通HTTP与恢复SSE共用实例头和根路径规则",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-storage-contract.spec.ts",
+      "title": "remote 放行服务端会话、工作区与历史管理，仍阻止未接入的改动操作",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "title": "streams regular files and supports GNU long names and pax paths",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "title": "rejects traversal, Windows ADS/device paths and links",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "title": "rejects checksum errors, truncation and resource limits",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "title": "rejects invalid gzip trailers and missing source files",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "title": "rejects malformed pax, sparse metadata, pax traversal and dangling names",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "title": "supports ustar prefix, multi-record pax byte lengths and pax size overrides",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "title": "enforces entry and expanded-byte limits before writing excess files",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "title": "streams many chunks accurately and reports completed file progress",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "title": "refuses preexisting directory links and duplicate files",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "title": "extracts the selected real engine archive",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "file-change-preview.spec.ts",
+      "title": "删除默认收起，写入类新建和修改默认展开",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "file-change-preview.spec.ts",
+      "title": "按文件路径选择已知语法，不猜测普通文本",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "file-change-preview.spec.ts",
+      "title": "高亮保留原文并转义源文件中的 HTML",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "file-change-preview.spec.ts",
+      "title": "极长行与未知语法安全回退为原始文本",
+      "kind": "纯函数或文件契约",
+      "feature": "文件改动、差异与撤回",
+      "status": "passed"
+    },
+    {
+      "file": "git-live-sync.spec.ts",
+      "title": "可见 Git/资源树检测外部变化，隐藏窗口或离开侧栏停止轮询，重新显示立即更新",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-live-sync.spec.ts",
+      "title": "Git 写操作期间不并发查询，结束后恢复同步；远端断开期间不请求",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-live-sync.spec.ts",
+      "title": "聚焦和工具结束事件在慢请求期间不重叠；释放连接后补刷且销毁不残留轮询",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-parsers.spec.ts",
+      "title": "真实输出：分支、改动条目、暂存标记都解析正确",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-parsers.spec.ts",
+      "title": "有上游时解析 ahead / behind",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-parsers.spec.ts",
+      "title": "只领先不落后时 behind 为 null",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-parsers.spec.ts",
+      "title": "无上游的分支名不带 ... 后缀",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-parsers.spec.ts",
+      "title": "分离头指针归一为 HEAD",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-parsers.spec.ts",
+      "title": "空仓库的分支行也能解析出分支名",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-parsers.spec.ts",
+      "title": "重命名条目会消费掉紧跟的原始路径，不产生多余条目",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-parsers.spec.ts",
+      "title": "已暂存的修改计入 staged",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-parsers.spec.ts",
+      "title": "没有分支行时（异常输出）不猜分支，仍解析条目",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-parsers.spec.ts",
+      "title": "真实输出：提交标题里的特殊字符不会破坏字段切分",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-parsers.spec.ts",
+      "title": "空输出返回空数组（空仓库）",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-parsers.spec.ts",
+      "title": "字段数不足的行被跳过，不会产出半截提交",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-parsers.spec.ts",
+      "title": "识别\"不是仓库\"",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-parsers.spec.ts",
+      "title": "识别\"仓库还没有提交\"",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-service-matrix.spec.ts",
+      "title": "repository initialization, unborn HEAD and workspace access boundary",
+      "kind": "真实 Electron UI",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-service-matrix.spec.ts",
+      "title": "status, index/worktree separation, batch operations, ignore, diff and hunk rollback",
+      "kind": "真实 Electron UI",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-service-matrix.spec.ts",
+      "title": "commit variants, local suggestion, immutable history, blame and file timeline",
+      "kind": "真实 Electron UI",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-service-matrix.spec.ts",
+      "title": "branch create/checkout/rename/delete and lightweight/annotated tags",
+      "kind": "真实 Electron UI",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-service-matrix.spec.ts",
+      "title": "stash push/pop/apply/drop/batch/clear and staged-only preservation",
+      "kind": "真实 Electron UI",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-service-matrix.spec.ts",
+      "title": "merge/rebase/cherry-pick/revert success and each conflict abort preserves original HEAD",
+      "kind": "真实 Electron UI",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-service-matrix.spec.ts",
+      "title": "local bare remote fetch/pull strategies/push/publish/sync/force/tags and clone progress",
+      "kind": "真实 Electron UI",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-service-matrix.spec.ts",
+      "title": "coverage inventory includes every Git invoke method through the preload bridge",
+      "kind": "真实 Electron UI",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-store-scope.spec.ts",
+      "title": "Git A→B→A 时旧请求不能覆盖重新打开的同一路径",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-store-scope.spec.ts",
+      "title": "Git 旧请求失败不能清除新请求的 loading 或覆盖新错误状态",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-store-scope.spec.ts",
+      "title": "Git 排队暂存不得在切换后的工作区执行",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-store-scope.spec.ts",
+      "title": "同路径切换远端账号立即清空 Git，旧响应不能回写",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-store-scope.spec.ts",
+      "title": "Git 后台快照不变时不触发渲染，变化时无 loading 闪烁",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-store-scope.spec.ts",
+      "title": "本地引擎生命周期变化不清空本地 Git 快照",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-store-scope.spec.ts",
+      "title": "Git 后台刷新恢复后清除错误，仓库删除后清除旧分支",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-store-scope.spec.ts",
+      "title": "Git 旧分支列表不能写入新仓库缓存",
+      "kind": "纯函数或文件契约",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-workspace-scope-ui.spec.ts",
+      "title": "一键登录的空资源树不会展示外层宿主仓库的变更",
+      "kind": "真实 Electron UI",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-workspace-scope-ui.spec.ts",
+      "title": "初始化当前租户仓库后，远端新增文件在资源树和 Git 中一致",
+      "kind": "真实 Electron UI",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-workspace-scope-ui.spec.ts",
+      "title": "暂存只修改租户 index，未跟踪文件不会同时重复进入暂存分组",
+      "kind": "真实 Electron UI",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-workspace-scope-ui.spec.ts",
+      "title": "停留 Git 面板时外部新增和修改自动刷新，已有暂存状态保留",
+      "kind": "真实 Electron UI",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "git-workspace-scope-ui.spec.ts",
+      "title": "同一远端切换账号后，Git 和资源树清空旧账号文件并挂载新工作区",
+      "kind": "真实 Electron UI",
+      "feature": "Git 与项目隔离",
+      "status": "passed"
+    },
+    {
+      "file": "history-replay.spec.ts",
+      "title": "首次启动：引擎就绪并完成数据库初始化",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "history-replay.spec.ts",
+      "title": "重启后回放引擎历史：消息、思考、工具调用逐项还原",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "history-replay.spec.ts",
+      "title": "从会话历史删除后引擎侧历史一并删除：重启不会复活",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "image-preview-interaction.spec.ts",
+      "title": "打开图片后按适应窗口展示，缩放值为当前比例",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "image-preview-interaction.spec.ts",
+      "title": "滚轮可放大与缩小，缩放幅度为固定步进",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "image-preview-interaction.spec.ts",
+      "title": "放大 / 缩小按钮与滚轮共用同一套步进",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "image-preview-interaction.spec.ts",
+      "title": "左键拖拽平移，位移进入 transform 可不越界拖回",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "image-preview-interaction.spec.ts",
+      "title": "双击复位：回到 1:1 且位移清零",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "knowledge-binding.spec.ts",
+      "title": "knowledge bindings are deduplicated and isolated by source and session",
+      "kind": "纯函数或文件契约",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "knowledge-binding.spec.ts",
+      "title": "clearing one session source does not alter another binding",
+      "kind": "纯函数或文件契约",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "knowledge-binding.spec.ts",
+      "title": "knowledge document validation rejects empty and oversized text",
+      "kind": "纯函数或文件契约",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "knowledge-binding.spec.ts",
+      "title": "late knowledge responses are invalid after an engine source switch",
+      "kind": "纯函数或文件契约",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "knowledge-ui.spec.ts",
+      "title": "知识库创建栏在窄设置面板保持紧凑控件高度",
+      "kind": "真实 Electron UI",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "knowledge-ui.spec.ts",
+      "title": "创建并编辑知识库，保存后的名称和描述可重新读取",
+      "kind": "真实 Electron UI",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "knowledge-ui.spec.ts",
+      "title": "上传文本文档，详情编辑、检索和删除均更新真实引擎夹具",
+      "kind": "真实 Electron UI",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "knowledge-ui.spec.ts",
+      "title": "格式说明与当前知识库作用域保持同步",
+      "kind": "真实 Electron UI",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "knowledge-ui.spec.ts",
+      "title": "超过文档大小限制时 UI 阻止上传且不创建文档",
+      "kind": "真实 Electron UI",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "knowledge-ui.spec.ts",
+      "title": "聊天资源选择器可绑定当前会话，关闭后重开会刷新知识库列表",
+      "kind": "真实 Electron UI",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "lsp-diagnostics.spec.ts",
+      "title": "引擎：自动启动并进入就绪状态",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "lsp-diagnostics.spec.ts",
+      "title": "LSP 诊断：保存触发引擎诊断，问题面板可见且点击可跳转",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "lsp-diagnostics.spec.ts",
+      "title": "不支持的文件不会被显示为诊断通过，关闭后清除状态",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "lsp-diagnostics.spec.ts",
+      "title": "渲染进程无未捕获错误",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "lsp-session-contract.spec.ts",
+      "title": "same-root local session is reusable",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "lsp-session-contract.spec.ts",
+      "title": "same-root local and remote sessions are never treated as interchangeable",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "lsp-session-contract.spec.ts",
+      "title": "a root change or stopped session always requires a new language service",
+      "kind": "纯函数或文件契约",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "mcp-ui.spec.ts",
+      "title": "旧项目配置首次修改写入 .ae，保留源文件并防止删除后复活",
+      "kind": "真实 Electron UI",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "mcp-ui.spec.ts",
+      "title": "项目 stdio CRUD、环境变量、工具发现和启停均真实落盘",
+      "kind": "真实 Electron UI",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "mcp-ui.spec.ts",
+      "title": "全局服务器编辑与停用只改全局文件，不创建项目覆盖",
+      "kind": "真实 Electron UI",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "mcp-ui.spec.ts",
+      "title": "HTTP MCP 输入请求头并完成真实工具发现",
+      "kind": "真实 Electron UI",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "mcp-ui.spec.ts",
+      "title": "JSON 编辑器可批量导入、读取并保留标准 type 配置",
+      "kind": "真实 Electron UI",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "mcp-ui.spec.ts",
+      "title": "错误配置可恢复，删除项目和全局记录并验证磁盘清理",
+      "kind": "真实 Electron UI",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "memory-scope-state.spec.ts",
+      "title": "记忆设置解析只接受合法范围并阻止会话错配",
+      "kind": "纯函数或文件契约",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "memory-scope-state.spec.ts",
+      "title": "切换会话时迟到的读取结果不能污染当前记忆范围",
+      "kind": "纯函数或文件契约",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "memory-scope-state.spec.ts",
+      "title": "待写入时刷新不会用旧 GET 覆盖已确认范围，写入失败时保持未知",
+      "kind": "纯函数或文件契约",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "memory-scope-state.spec.ts",
+      "title": "切换本地/远端引擎会清空旧会话的记忆设置快照",
+      "kind": "纯函数或文件契约",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "memory-settings-crud.spec.ts",
+      "title": "全局记忆创建、编辑、搜索筛选、详情和删除",
+      "kind": "真实 Electron UI",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "memory-settings-crud.spec.ts",
+      "title": "会话记忆选择会话后创建，并且全局列表不受影响",
+      "kind": "真实 Electron UI",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "model-config-ui.spec.ts",
+      "title": "实际表单改名不覆盖隐藏能力和密钥",
+      "kind": "真实 Electron UI",
+      "feature": "模型、输入配置与辅助操作",
+      "status": "passed"
+    },
+    {
+      "file": "model-config-ui.spec.ts",
+      "title": "改单项false保留上下文和其他override",
+      "kind": "真实 Electron UI",
+      "feature": "模型、输入配置与辅助操作",
+      "status": "passed"
+    },
+    {
+      "file": "model-config-ui.spec.ts",
+      "title": "单项默认发送null恢复推断，不清除其他人工设置",
+      "kind": "真实 Electron UI",
+      "feature": "模型、输入配置与辅助操作",
+      "status": "passed"
+    },
+    {
+      "file": "model-config-ui.spec.ts",
+      "title": "小数 K 编辑精确保存整数 token，并在重新打开时保留值",
+      "kind": "真实 Electron UI",
+      "feature": "模型、输入配置与辅助操作",
+      "status": "passed"
+    },
+    {
+      "file": "model-form-contract.spec.ts",
+      "title": "改名只发送名称，不发送resolved能力或未改动的连接配置",
+      "kind": "纯函数或文件契约",
+      "feature": "模型、输入配置与辅助操作",
+      "status": "passed"
+    },
+    {
+      "file": "model-form-contract.spec.ts",
+      "title": "初始开关反映人工覆盖，不把自动能力当成人工设置",
+      "kind": "纯函数或文件契约",
+      "feature": "模型、输入配置与辅助操作",
+      "status": "passed"
+    },
+    {
+      "file": "model-form-contract.spec.ts",
+      "title": "只改单项时保留其他覆盖；显式false不变成null或省略",
+      "kind": "纯函数或文件契约",
+      "feature": "模型、输入配置与辅助操作",
+      "status": "passed"
+    },
+    {
+      "file": "model-form-contract.spec.ts",
+      "title": "恢复默认发送单项null；没有变动时完全不写capabilityOverrides",
+      "kind": "纯函数或文件契约",
+      "feature": "模型、输入配置与辅助操作",
+      "status": "passed"
+    },
+    {
+      "file": "model-form-contract.spec.ts",
+      "title": "清空显示名称仍发送空串；空密钥和脱敏串不从模型拷回",
+      "kind": "纯函数或文件契约",
+      "feature": "模型、输入配置与辅助操作",
+      "status": "passed"
+    },
+    {
+      "file": "model-form-contract.spec.ts",
+      "title": "新增默认状态不固化推断值，显式关闭仍写false",
+      "kind": "纯函数或文件契约",
+      "feature": "模型、输入配置与辅助操作",
+      "status": "passed"
+    },
+    {
+      "file": "model-form-contract.spec.ts",
+      "title": "小数 K 无损换算为整数 token，并保留最大安全整数配置",
+      "kind": "纯函数或文件契约",
+      "feature": "模型、输入配置与辅助操作",
+      "status": "passed"
+    },
+    {
+      "file": "model-form-contract.spec.ts",
+      "title": "无效 K 不可发出 fractional、零或不安全 token，留空仍恢复默认",
+      "kind": "纯函数或文件契约",
+      "feature": "模型、输入配置与辅助操作",
+      "status": "passed"
+    },
+    {
+      "file": "monaco-localization.spec.ts",
+      "title": "首次右键菜单和 Monaco 命令面板使用官方中文标签",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "monaco-localization.spec.ts",
+      "title": "中文查找替换控件执行全部替换并保存真实文件",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "monaco-localization.spec.ts",
+      "title": "磁盘被其他工具更新时保留原生编辑器的未保存内容",
+      "kind": "真实 Electron UI",
+      "feature": "编辑器、Monaco 与 LSP",
+      "status": "passed"
+    },
+    {
+      "file": "narrow-chat-layout.spec.ts",
+      "title": "默认宽度下顶栏按钮完整可见",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "narrow-chat-layout.spec.ts",
+      "title": "面板压到最小宽度（280）后顶栏按钮不被裁掉",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "narrow-chat-layout.spec.ts",
+      "title": "窗口缩到最小尺寸时顶栏按钮依然完整",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "narrow-chat-layout.spec.ts",
+      "title": "最小窗口打开设置时让正文获得可读宽度",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pending-interactions.spec.ts",
+      "title": "安全拦截帧：工具名取真实工具、选项固定为 approved/rejected",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "pending-interactions.spec.ts",
+      "title": "安全拦截帧：缺少 description 时自行生成可读问题",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "pending-interactions.spec.ts",
+      "title": "提问帧：对象数组选项取 label 作为显示与回传值",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "pending-interactions.spec.ts",
+      "title": "提问帧：字符串数组选项（引擎的另一种形状）也能处理",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "pending-interactions.spec.ts",
+      "title": "提问帧：无选项时保留自由输入，不合成批准或拒绝按钮",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "pending-interactions.spec.ts",
+      "title": "非交互帧返回 null",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "pending-interactions.spec.ts",
+      "title": "缺少 toolCallId 时返回 null（无法应答，不应产生死卡片）",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "pending-interactions.spec.ts",
+      "title": "同一 toolCallId 时以 permission 帧为准（它带真实工具名）",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "pending-interactions.spec.ts",
+      "title": "permission 先到、ask 别名后到时不会被覆盖回 ask_user",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "pending-interactions.spec.ts",
+      "title": "不同 toolCallId 时替换为新交互",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "pending-interactions.spec.ts",
+      "title": "授权场景回传 value（approved）而非中文 label",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "pending-interactions.spec.ts",
+      "title": "多选时用逗号连接",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "platform-feature-matrix.spec.ts",
+      "title": "FS create/read/write/stat/list/copy/rename preserve disk content and reject overwrite",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "platform-feature-matrix.spec.ts",
+      "title": "FS binary/base64, oversize preview, text truncation and missing-file errors",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "platform-feature-matrix.spec.ts",
+      "title": "FS attachments sanitize names, preserve bytes and avoid collisions",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "platform-feature-matrix.spec.ts",
+      "title": "FS outside roots and sibling-prefix paths are rejected for all access operations",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "platform-feature-matrix.spec.ts",
+      "title": "FS junction cannot escape the authorized workspace",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "platform-feature-matrix.spec.ts",
+      "title": "search scan include/exclude/case/whole-word/regex and replacement",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "platform-feature-matrix.spec.ts",
+      "title": "search git include/exclude/case/whole-word/regex and replacement",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "platform-feature-matrix.spec.ts",
+      "title": "search query/preview/replace reject unauthorized roots without modifying outside data",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "platform-feature-matrix.spec.ts",
+      "title": "settings update persists, preserves defaults and survives a full application restart",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "platform-feature-matrix.spec.ts",
+      "title": "window maximize/restore/minimize IPC changes the actual BrowserWindow",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "platform-feature-matrix.spec.ts",
+      "title": "PTY create/data/resize/exit/dispose or explicit environment capability failure",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "preview-resource-path.spec.ts",
+      "title": "宿主 CSP 仅放行源码内固定的预览滚动桥脚本",
+      "kind": "纯函数或文件契约",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "preview-resource-path.spec.ts",
+      "title": "预览资源相对当前文件解析，保留中文空格并忽略版本参数",
+      "kind": "纯函数或文件契约",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "preview-resource-path.spec.ts",
+      "title": "Windows 路径大小写不同仍可读取同一工作区",
+      "kind": "纯函数或文件契约",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "preview-resource-path.spec.ts",
+      "title": "预览不能读取其他工作区、编码越界路径或网络地址",
+      "kind": "纯函数或文件契约",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "preview-resource-path.spec.ts",
+      "title": "UNC 工作区路径能解析相邻文件但不能跳到另一共享目录",
+      "kind": "纯函数或文件契约",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "pty-lifecycle-contract.spec.ts",
+      "title": "concurrent close shares one kill and waits for exit before cleanup",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pty-lifecycle-contract.spec.ts",
+      "title": "cleanup failure remains observable and allows a bounded retry",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pty-lifecycle-contract.spec.ts",
+      "title": "exit timeout does not clean profile or pretend success",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "取扩展名",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "MIME 只对已知类型给出值",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "预览方式分流：图片 / 视频 / 其余一律十六进制",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "SVG 不在图片映射里（它是文本，应走编辑器而不是图片预览）",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "data URL 带正确 MIME；未知类型回退 octet-stream",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "只按外层轮次锚点确定当前高亮，嵌套消息不会覆盖轮次 ID",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "完整解码",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "只解码前 N 字节，用于只取文件头",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "切片不会切断 base64 组（不被 3 整除的长度同样正确）",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "满行格式与 xxd 习惯一致（偏移、双列、ASCII 列）",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "不可打印字节显示为点；跨列时保留双空格分栏",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "超过 maxBytes 时只输出前一段，并说明截断",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "空文件返回空串而不是抛错",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "默认上限是 16 KB（避免把大文件全量转成文本）",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "按量级选择单位",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "未跟踪显示 U，其余优先显示暂存列",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "角标提示把 XY 两位的含义写清楚",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "路径分隔符统一为正斜杠（git 输出本就是 /）",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "提交时间格式化到分钟；无法解析时原样返回而不是清空",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "引用装饰拆成列表并去掉 HEAD -> 前缀",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "改动汇总文案",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "带双星前缀的规则命中任意层级的同名项",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "裸写的模式按前缀补双星，放宽为「任意层级」",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "单星不跨分隔符，只匹配一段路径",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "路径型规则按相对根的路径匹配，不会误伤别处同名目录",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "问号匹配单个字符且不跨分隔符",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "值为 false 的规则不隐藏任何东西",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "父级被隐藏时子树一律隐藏",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "空表或残缺表不隐藏任何东西",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "末尾的斜杠与斜杠加双星都只表示「目录及其内容」",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "正则元字符按字面匹配，不会被当成语法",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "反斜杠路径在匹配前统一成正斜杠",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "默认三条规则挡住依赖与索引目录",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "目录命中即剪枝，因此规则不必吃掉目录内部路径",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "值为 false 时不排除，用来把继承来的规则放回来",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "并集：search 侧同名键覆盖 files 侧",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "pathspec：裸写放宽为任意层级，并额外补一条排除目录内容",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "pure-functions.spec.ts",
+      "title": "pathspec：空模式与根锚定模式跳过（交给 git 会语义不同）",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "remote-auth-contract.spec.ts",
+      "title": "只规范化末尾斜杠，保留 origin 与路径作为凭据作用域",
+      "kind": "纯函数或文件契约",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-auth-contract.spec.ts",
+      "title": "拒绝查询、片段、内嵌凭据和非 HTTP(S) 地址",
+      "kind": "纯函数或文件契约",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-auth-contract.spec.ts",
+      "title": "API Key 使用 X-API-Key 且不生成 Bearer 头",
+      "kind": "纯函数或文件契约",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-auth-contract.spec.ts",
+      "title": "JWT 使用标准 Bearer Authorization 头",
+      "kind": "纯函数或文件契约",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-auth-contract.spec.ts",
+      "title": "没有用户凭据时不附加认证头",
+      "kind": "纯函数或文件契约",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-auth-contract.spec.ts",
+      "title": "只接受 api-key / bearer 且必须有可打印内容",
+      "kind": "纯函数或文件契约",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-auth-contract.spec.ts",
+      "title": "将用户认证失败与实例令牌失败分开",
+      "kind": "纯函数或文件契约",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-auth-contract.spec.ts",
+      "title": "未知错误保持保守分类，不泄露或猜测凭据类型",
+      "kind": "纯函数或文件契约",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-connection-contract.spec.ts",
+      "title": "手动本机开发地址可无token，非本机仍需明确凭据",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-connection-contract.spec.ts",
+      "title": "远端令牌在保存和环境变量入口使用同一请求头边界",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-connection-contract.spec.ts",
+      "title": "远端开放已接入的管理与会话接口，仍拒绝未接入路径",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-connection-contract.spec.ts",
+      "title": "远端扩展资源管理全部开放到对应引擎",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-connection-contract.spec.ts",
+      "title": "远端目录按服务端语义校验，既有会话目录与空沙箱优先且损坏记录拒绝",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-connection-contract.spec.ts",
+      "title": "远端文件请求只携带会话内相对路径，不泄漏客户端绝对路径",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-connection-contract.spec.ts",
+      "title": "远端审批只携带关联标识与回答，原始工作区交给服务端恢复",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-connection-contract.spec.ts",
+      "title": "远端聊天保留服务端资源选择器，但不泄漏本地内联资源",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-connection-contract.spec.ts",
+      "title": "远端附件只接受真实上传登记，路径和类型取主进程登记值且拒绝跨源跨会话",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-connection-contract.spec.ts",
+      "title": "远端目录查询拒绝跨服务重定向，实例令牌不会送到第二台服务",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-connection-contract.spec.ts",
+      "title": "非文本远端消息在联网前被拒绝，结构化文件不能绕过附件登记",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-explorer-refresh-ui.spec.ts",
+      "title": "远端根目录新增、展开目录新增重命名删除均自动同步且保持展开",
+      "kind": "真实 Electron UI",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-explorer-refresh-ui.spec.ts",
+      "title": "远端改动提示使用紧凑提示样式，不渲染旧裸文本块",
+      "kind": "真实 Electron UI",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-search-contract.spec.ts",
+      "title": "展平目录保留每一层相对路径并忽略会话根标签",
+      "kind": "纯函数或文件契约",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-search-contract.spec.ts",
+      "title": "按真实换行搜索，文件筛选和美元替换保持字面量",
+      "kind": "纯函数或文件契约",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-search-contract.spec.ts",
+      "title": "连接切换会中止后续文件请求而不是静默混合结果",
+      "kind": "纯函数或文件契约",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-terminal-contract.spec.ts",
+      "title": "远程终端在主进程携带令牌建立 WS，并隔离输入、输出和销毁",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-terminal-contract.spec.ts",
+      "title": "断线保留 PTY，重连复用原 ID、更新凭据且并发重连只建立一个连接",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-terminal-contract.spec.ts",
+      "title": "并发关闭共享一次 HTTP 确认，不发送 WS kill，确认完成前保留归属",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-terminal-contract.spec.ts",
+      "title": "HTTP 或业务清理失败保留原目标，404和缺少确认均不可冒充成功",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-terminal-contract.spec.ts",
+      "title": "引擎临时掉线后可重连同一实例，尚未就绪时给出可重试错误",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-terminal-contract.spec.ts",
+      "title": "重连拒绝切换账号，不会把旧终端请求发到新身份",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-terminal-contract.spec.ts",
+      "title": "重连拒绝切换实例，不会把旧终端请求发到新身份",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-terminal-contract.spec.ts",
+      "title": "重连拒绝切换服务地址，不会把旧终端请求发到新身份",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-terminal-contract.spec.ts",
+      "title": "进程退出与网络断线不同，退出后不能伪装成重连成功",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-terminal-contract.spec.ts",
+      "title": "断线期间进程已消失时重连如实失败，不偷偷创建替代进程",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-terminal-contract.spec.ts",
+      "title": "关闭正在重连的终端会取消等待，并显式清理远端 PTY",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-terminal-contract.spec.ts",
+      "title": "重连被服务暂时拒绝后可再次重试，不删除仍运行的进程",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-terminal-contract.spec.ts",
+      "title": "账号切换清理保留旧凭据，失败不会抛出且留有可见诊断与重试归属",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-token-settings-ui.spec.ts",
+      "title": "通过设置输入令牌并保存重启，真实鉴权后才进入就绪",
+      "kind": "真实 Electron UI",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-token-settings-ui.spec.ts",
+      "title": "远端会话、历史和变更可真实加载，输入框可用且无映射拦截红错",
+      "kind": "真实 Electron UI",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-token-settings-ui.spec.ts",
+      "title": "真实界面发送远端消息并显示 SSE 回答，继续会话保留服务端目录",
+      "kind": "真实 Electron UI",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-token-settings-ui.spec.ts",
+      "title": "普通与流式 IPC 都净化本地上下文，新会话目录显式配置且旧沙箱不被覆盖",
+      "kind": "真实 Electron UI",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-token-settings-ui.spec.ts",
+      "title": "页面 reload 后保持已配置且输入为空，重新握手仍能读取密文",
+      "kind": "真实 Electron UI",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-token-settings-ui.spec.ts",
+      "title": "完整应用重启后自动连接，令牌仍已配置且不回显",
+      "kind": "真实 Electron UI",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-token-settings-ui.spec.ts",
+      "title": "普通设置落盘失败时回滚密文和连接配置，不重启现有连接",
+      "kind": "真实 Electron UI",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-token-settings-ui.spec.ts",
+      "title": "替换为错误令牌时认证失败，恢复正确令牌后重新就绪",
+      "kind": "真实 Electron UI",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-token-settings-ui.spec.ts",
+      "title": "清除并重启后不发送旧令牌，完整应用重启也不会复活凭据",
+      "kind": "真实 Electron UI",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "remote-workspace-list-contract.spec.ts",
+      "title": "远端工作区文件列表供快速打开与 @ 引用使用会话相对路径",
+      "kind": "纯函数或文件契约",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "root-run-contract.spec.ts",
+      "title": "同正文只回填明确optimistic IDs，后续assistant ID变化仍归原run",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "root-run-contract.spec.ts",
+      "title": "旧version不能将已完成轮次复活",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "root-run-contract.spec.ts",
+      "title": "传输done或失败不伪造业务成功，等待状态与最终失败保留",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "root-run-contract.spec.ts",
+      "title": "历史恢复缺少assistant行时仍根据run重建等待卡并保留request ID",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "root-run-contract.spec.ts",
+      "title": "等待用户回答时不把问题文本误显示成红色错误",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "root-run-contract.spec.ts",
+      "title": "实时 EMPTY_OUTPUT 显示中文说明，保留失败与独立推理内容",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "root-run-contract.spec.ts",
+      "title": "历史空回答缺少助手记录时仍显示中文失败说明",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "root-run-contract.spec.ts",
+      "title": "EMPTY_OUTPUT 的具体诊断及其他错误原样保留",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "root-run-contract.spec.ts",
+      "title": "不同请求ID即使同toolcall也保留审批记录，拒绝不可显示放行",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "root-run-contract.spec.ts",
+      "title": "工具waiting/interrupted/cancelled及预览、耗时、metadata同形回放",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "root-run-contract.spec.ts",
+      "title": "批准应答仅代表已批准，工具收到结果前不能显示成功；取消等待不留运行占位",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "root-run-ui.spec.ts",
+      "title": "两条继续使用不同稳定ID，实时删除第二轮只删除指定轮次",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "root-run-ui.spec.ts",
+      "title": "待提问刷新及引擎重启后仍可按requestId应答，相同回答不重复执行",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "root-run-ui.spec.ts",
+      "title": "多问题应答历史保留完整问题与用户原文，刷新后仍然可读",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "root-run-ui.spec.ts",
+      "title": "safe命令批准前无副作用、批准后写入；拒绝保留磁盘",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "root-run-ui.spec.ts",
+      "title": "同一运行连续两次批准后只保留折叠记录，刷新后不再出现可操作卡片",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "root-run-ui.spec.ts",
+      "title": "A运行时切到B，A迟到的正文和终态不写入B界面",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "root-run-ui.spec.ts",
+      "title": "provider失败、用户取消和运行中引擎重启保留真实终态，不因done显示成功或自动重试",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "root-run-ui.spec.ts",
+      "title": "待审批被外部取消后旧按钮应答冲突自动同步，刷新保留未执行历史",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "root-run-ui.spec.ts",
+      "title": "远端独立引擎连续审批、未决刷新与客户端重开保留真实状态和折叠记录",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-client.spec.ts",
+      "title": "只接受三种合法取值",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-client.spec.ts",
+      "title": "非法取值一律拒绝",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-client.spec.ts",
+      "title": "兼容引擎的对象形状 { sessionId, mode }",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-client.spec.ts",
+      "title": "兼容裸字符串（引擎若将来简化返回也不会崩）",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-client.spec.ts",
+      "title": "无法识别时返回 null，调用方必须保留未知状态",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-client.spec.ts",
+      "title": "合法入参原样带出 sessionId 与 mode",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-client.spec.ts",
+      "title": "缺少 sessionId 时抛错（模式是会话级的，缺了就必然设错）",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-client.spec.ts",
+      "title": "非法 mode 抛错而不是静默发出",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-client.spec.ts",
+      "title": "三种模式都有描述，standard 与 full-access 都提示工作区外权限",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-client.spec.ts",
+      "title": "standard 与 full-access 都需要风险提示，未知状态不能被当成 safe",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-client.spec.ts",
+      "title": "三种动作都有中文标签（下拉框依赖它渲染）",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-mode-lifecycle.spec.ts",
+      "title": "实际切换 A/B 会话读取各自模式，标准模式明确显示工作区外权限",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-mode-lifecycle.spec.ts",
+      "title": "对话偏好与设置页的切换真实写入同一会话的引擎状态",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-mode-lifecycle.spec.ts",
+      "title": "自有引擎异常退出后显示状态未知，重启后重新确认真实默认模式",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-state.spec.ts",
+      "title": "A 未返回就切 B：B 发独立请求，迟到 A 不能改变 B 的已确认模式",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-state.spec.ts",
+      "title": "A→B→A 不复用上一代 A 请求，新 A 请求独立完成",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-state.spec.ts",
+      "title": "同会话同一代请求去重，错误保持未知并允许显式重试",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-state.spec.ts",
+      "title": "重置使在途请求失效，即使随后重新打开同一会话",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-state.spec.ts",
+      "title": "PUT 完成前不显示已切换，旧 GET 不能覆盖成功的 PUT",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-state.spec.ts",
+      "title": "切 B 后 A 的失败 PUT 不回滚 B；当前 PUT 失败也不猜测旧模式仍有效",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-state.spec.ts",
+      "title": "PUT 在途时刷新等待该请求，不能以旧服务端 GET 抹掉修改",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "security-state.spec.ts",
+      "title": "安全客户端拒绝未知值与会话错配，不把非法响应转换为 safe",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "settings-registry.spec.ts",
+      "title": "设置 ID 搜索只返回对应注册项",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "settings-registry.spec.ts",
+      "title": "设置标签搜索支持终端相关项",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "settings-registry.spec.ts",
+      "title": "已修改筛选可以和普通文本组合",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "settings-registry.spec.ts",
+      "title": "工作区作用域只暴露真正支持工作区存储的排除规则",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "settings-registry.spec.ts",
+      "title": "扩展可以动态注册并移除设置元数据",
+      "kind": "纯函数或文件契约",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "skill-import-ui.spec.ts",
+      "title": "真实文件选择导入 SKILL.md，中文名称详情使用稳定管理 ID",
+      "kind": "真实 Electron UI",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "skill-import-ui.spec.ts",
+      "title": "停用和重新启用真实落盘，刷新后管理列表保留停用项",
+      "kind": "真实 Electron UI",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "skill-import-ui.spec.ts",
+      "title": "可以直接创建普通 Markdown 技能，不要求先准备 frontmatter 压缩包",
+      "kind": "真实 Electron UI",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "skill-import-ui.spec.ts",
+      "title": "拖拽 ZIP 导入全局层并校验附带文件",
+      "kind": "真实 Electron UI",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "skill-import-ui.spec.ts",
+      "title": "大于 5 MiB 的 ZIP 自动分片、合并并完整落盘",
+      "kind": "真实 Electron UI",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "skill-import-ui.spec.ts",
+      "title": "从界面删除项目与全局技能，同时清除实际技能目录",
+      "kind": "真实 Electron UI",
+      "feature": "MCP、Skill、知识库与记忆",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "工作台骨架渲染：菜单栏、活动栏、侧边栏、主区、对话面板、状态栏均存在",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "资源管理器：恢复上次打开的文件夹并列出文件",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "资源管理器：点击目录可展开",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "编辑器：打开文件后 Monaco 挂载并显示内容",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "引擎：自动启动并进入就绪状态",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "安全视图：渲染三种会话模式与引擎侧策略规则",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "输出面板：中文经 IPC 保持完整（终端乱码并非数据损坏）",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "资源管理器右键菜单：列出可用操作，Esc 可关闭",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "文件排除：设置里的规则即时生效，且重开窗口后仍然生效",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "资源管理器：右键新建文件后出现在树中",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "资源管理器：多选（Ctrl 加选、Shift 连选、Ctrl+A 全选、Esc 清除）",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "资源管理器：选中行按焦点降级，树持有焦点时当前行有描边",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "资源管理器：缩进参考线与排序/收起全部入口可用",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "资源管理器：拖拽把多选项移入目标目录，Ctrl+Z 撤销回滚",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "资源管理器：紧凑目录通过点击、方向键和拖拽悬停一次展开",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "资源管理器：虚拟滚动只挂载可见行",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "预览：PNG 走图片预览，未知二进制走十六进制",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "版本控制：状态栏入口打开侧边栏视图并给出仓库信息",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "命令面板：Ctrl+Shift+P 唤出、中文过滤、回车执行、Esc 关闭",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "快速打开：Ctrl+P 唤出、文件名过滤、回车打开文件",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "内置终端：Ctrl+` 打开面板、执行命令并回显",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "内置终端多标签：新建、切换后会话与回显互不串扰",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "全局搜索：命中分组展示，点击结果打开文件",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "全局搜索：自动聚焦、定位高亮、状态保留与大小写开关",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "全局替换：include 过滤后批量替换并写盘",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "搜索排除：设置里的规则减少搜索结果，取消勾选后放回",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "键盘快捷方式：编辑器入口、录制生效、冲突提示、清除与重置",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "资源管理器：剪切/复制/粘贴（Ctrl+X/C/V 与右键菜单）",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "资源管理器：拖拽悬停在收起目录上会自动展开",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "资源管理器：git 徽章只在仓库内出现且与仓库信息一致",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "编辑器标签：多标签打开、切换与激活态",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "编辑器标签：右键菜单「关闭其他 / 关闭右侧 / 全部关闭」",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "编辑器标签：中键关闭与 Ctrl+W 关闭当前",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "编辑器标签：Ctrl+W 关闭当前标签",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "编辑器标签：Ctrl+Shift+T 重开刚关闭的标签",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "编辑器标签：Ctrl+Shift+S 保存全部脏文档",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "编辑器标签：Ctrl+Tab / Ctrl+PageUp/Down 切换激活标签",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "编辑器标签：光标位置读数与跨标签恢复",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "编辑器标签：Ctrl+B 切换侧边栏可见性",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "smoke.spec.ts",
+      "title": "渲染进程无未捕获错误",
+      "kind": "真实 Electron UI",
+      "feature": "工作台、布局与综合功能",
+      "status": "passed"
+    },
+    {
+      "file": "streaming-model-contract.spec.ts",
+      "title": "model-only frame preserves accumulated counters and repeated cumulative usage never double charges",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "streaming-model-contract.spec.ts",
+      "title": "requested root model cannot overwrite actual usage model, authoritative actualModelId remains visible",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "streaming-model-contract.spec.ts",
+      "title": "body before tool remains body in live timeline, final body appends exactly once",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "streaming-model-contract.spec.ts",
+      "title": "history parallel-tool rows do not repeat body or usage; latest actual model/context win",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "streaming-model-contract.spec.ts",
+      "title": "provider failure preserves emitted body and actual model while reporting failure",
+      "kind": "纯函数或文件契约",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "streaming-model-ui.spec.ts",
+      "title": "首段正文在provider结束前显示，刷新接续不重复且用量live/history一致",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "streaming-model-ui.spec.ts",
+      "title": "工具前正文保持原位且只出现一次，后续正文与调用用量正确累计",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "streaming-model-ui.spec.ts",
+      "title": "交付前503允许fallback，实际模型在正文结束前和重启历史中一致",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "streaming-model-ui.spec.ts",
+      "title": "已有正文后断开不切备用模型，保留部分输出和实际模型并标失败",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "subagent-lifecycle.spec.ts",
+      "title": "同轮成功与首请求400：即时独立终态、真实工具详情、失败不显示成功",
+      "kind": "真实 Electron UI",
+      "feature": "子 Agent 生命周期与状态",
+      "status": "passed"
+    },
+    {
+      "file": "subagent-lifecycle.spec.ts",
+      "title": "只取消一个子任务：上游连接断开，兄弟保持运行并可独立完成",
+      "kind": "真实 Electron UI",
+      "feature": "子 Agent 生命周期与状态",
+      "status": "passed"
+    },
+    {
+      "file": "subagent-lifecycle.spec.ts",
+      "title": "切换历史并重启：归属、失败原因、步骤与导出保持一致",
+      "kind": "真实 Electron UI",
+      "feature": "子 Agent 生命周期与状态",
+      "status": "passed"
+    },
+    {
+      "file": "subagent-state.spec.ts",
+      "title": "subagent 协议拒绝错版、损坏身份和 seq 不一致的事件",
+      "kind": "纯函数或文件契约",
+      "feature": "子 Agent 生命周期与状态",
+      "status": "passed"
+    },
+    {
+      "file": "subagent-state.spec.ts",
+      "title": "首次 LLM 400 零工具失败在 live、replay 和导出里有相同原因",
+      "kind": "纯函数或文件契约",
+      "feature": "子 Agent 生命周期与状态",
+      "status": "passed"
+    },
+    {
+      "file": "subagent-state.spec.ts",
+      "title": "历史无结构化证据的子任务保持 unknown，普通旧工具兼容成功",
+      "kind": "纯函数或文件契约",
+      "feature": "子 Agent 生命周期与状态",
+      "status": "passed"
+    },
+    {
+      "file": "subagent-state.spec.ts",
+      "title": "实时和历史的一般工具显式失败不再被 end 染成成功",
+      "kind": "纯函数或文件契约",
+      "feature": "子 Agent 生命周期与状态",
+      "status": "passed"
+    },
+    {
+      "file": "subagent-state.spec.ts",
+      "title": "重复和旧 seq 不覆盖终态，较新进度只补齐统计和输出",
+      "kind": "纯函数或文件契约",
+      "feature": "子 Agent 生命周期与状态",
+      "status": "passed"
+    },
+    {
+      "file": "subagent-state.spec.ts",
+      "title": "取消后的外部结果未知保留于协议与导出，不能表示已经回滚",
+      "kind": "纯函数或文件契约",
+      "feature": "子 Agent 生命周期与状态",
+      "status": "passed"
+    },
+    {
+      "file": "subagent-state.spec.ts",
+      "title": "取消中任务不能被 running 复活，失败与兄弟运行状态独立",
+      "kind": "纯函数或文件契约",
+      "feature": "子 Agent 生命周期与状态",
+      "status": "passed"
+    },
+    {
+      "file": "subagent-state.spec.ts",
+      "title": "不同 run 或被改写归属的 snapshot 不能覆盖已有任务",
+      "kind": "纯函数或文件契约",
+      "feature": "子 Agent 生命周期与状态",
+      "status": "passed"
+    },
+    {
+      "file": "subagent-state.spec.ts",
+      "title": "父回合结束且新轮已开始，迟到任务事件仍归原工具且不新建气泡",
+      "kind": "纯函数或文件契约",
+      "feature": "子 Agent 生命周期与状态",
+      "status": "passed"
+    },
+    {
+      "file": "subagent-state.spec.ts",
+      "title": "迟到 tool result 按调用 ID 回填旧消息，不依赖最后一个 streaming 消息",
+      "kind": "纯函数或文件契约",
+      "feature": "子 Agent 生命周期与状态",
+      "status": "passed"
+    },
+    {
+      "file": "subagent-state.spec.ts",
+      "title": "父工具旧 end 帧不能抹掉权威 child failed 状态",
+      "kind": "纯函数或文件契约",
+      "feature": "子 Agent 生命周期与状态",
+      "status": "passed"
+    },
+    {
+      "file": "subagent-state.spec.ts",
+      "title": "恢复已持久化派发但缺父投影时，使用稳定身份并按轮次顺序放回",
+      "kind": "纯函数或文件契约",
+      "feature": "子 Agent 生命周期与状态",
+      "status": "passed"
+    },
+    {
+      "file": "subagent-state.spec.ts",
+      "title": "没有匹配 owner 的实时旧事件不制造新气泡",
+      "kind": "纯函数或文件契约",
+      "feature": "子 Agent 生命周期与状态",
+      "status": "passed"
+    },
+    {
+      "file": "subagent-state.spec.ts",
+      "title": "主历史跳过 sidechain 消息，内部工具只存在子 snapshot",
+      "kind": "纯函数或文件契约",
+      "feature": "子 Agent 生命周期与状态",
+      "status": "passed"
+    },
+    {
+      "file": "subagent-state.spec.ts",
+      "title": "父自身与 child 用量分开，重复 snapshot 不双算且未知不是零",
+      "kind": "纯函数或文件契约",
+      "feature": "子 Agent 生命周期与状态",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-actions-ui.spec.ts",
+      "title": "标签右键创建终端，对非活动标签重命名仅修改目标",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-actions-ui.spec.ts",
+      "title": "无选区添加完整输出，保留启动欢迎语与折行并展开对话但不自动发送",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-actions-ui.spec.ts",
+      "title": "内容区全选后可添加选区，再清屏不会保留旧输出",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-actions-ui.spec.ts",
+      "title": "连接中断后恢复同一远端进程，不创建替代终端且保留原输出",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-actions-ui.spec.ts",
+      "title": "进程退出后重启失败保留原标签，重试成功替换进程且保留名称",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-actions-ui.spec.ts",
+      "title": "附件写入途中切换会话，旧结果不会插入新会话并明确提示失败",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-actions-ui.spec.ts",
+      "title": "关闭其他终端保留右键目标，关闭全部销毁远端进程且重开面板不自动新建",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-actions-ui.spec.ts",
+      "title": "新建请求尚未返回时关闭全部，延迟创建的远端进程会被清理且不复活标签",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-clipboard.spec.ts",
+      "title": "Ctrl+V、Ctrl+Shift+V、Shift+Insert 各粘贴一次，不把 Ctrl+V 字符发送给终端",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-clipboard.spec.ts",
+      "title": "无选区右键仍可粘贴，中文与 CRLF/LF 交给 xterm 统一规范化",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-clipboard.spec.ts",
+      "title": "实际终端选区的 Ctrl+C 与右键复制仍写入系统剪贴板",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-clipboard.spec.ts",
+      "title": "空剪贴板给出明确提示且不向终端发送输入",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-clipboard.spec.ts",
+      "title": "远端断开后粘贴禁用，关闭终端后不保留粘贴菜单或偷偷新建会话",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-connection-ui.spec.ts",
+      "title": "未连接时自动创建和命令入口均等待远端，不创建本地终端",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-connection-ui.spec.ts",
+      "title": "连接成功后自动创建，真实启动失败保留原因且可显式重试",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-connection-ui.spec.ts",
+      "title": "断开后禁止新建，主动关闭全部后重连不擅自新开终端",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-output.spec.ts",
+      "title": "empty terminal and unused trailing viewport rows do not add blank output",
+      "kind": "纯函数或文件契约",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-output.spec.ts",
+      "title": "hard line breaks, indentation and internal empty rows are retained",
+      "kind": "纯函数或文件契约",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-output.spec.ts",
+      "title": "soft wraps join physical rows without newlines or losing printed boundary spaces",
+      "kind": "纯函数或文件契约",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-output.spec.ts",
+      "title": "cursor-created spacing at a soft wrap remains significant",
+      "kind": "纯函数或文件契约",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-output.spec.ts",
+      "title": "wide glyph wrapping omits the extra null cell but preserves adjacent spaces",
+      "kind": "纯函数或文件契约",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-output.spec.ts",
+      "title": "Unicode surrogate pairs, CJK and combining characters remain intact",
+      "kind": "纯函数或文件契约",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-output.spec.ts",
+      "title": "copies rendered content after color and overwrite sequences, without raw ANSI",
+      "kind": "纯函数或文件契约",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-output.spec.ts",
+      "title": "retains scrollback beyond the viewport and tolerates a wrapped first retained row",
+      "kind": "纯函数或文件契约",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-output.spec.ts",
+      "title": "uses the active alternate screen without mixing normal screen history",
+      "kind": "纯函数或文件契约",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-output.spec.ts",
+      "title": "keeps explicitly printed spaces at the end of a nonblank logical line",
+      "kind": "纯函数或文件契约",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-resize.spec.ts",
+      "title": "拖动面板放大和缩小后，画面填满容器且远端行数同步",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-resize.spec.ts",
+      "title": "窗口缩放、收起恢复和重复resize事件都保持正确尺寸",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-resize.spec.ts",
+      "title": "隐藏会话保持原尺寸，切回后补同步且没有零行零列",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-resize.spec.ts",
+      "title": "修改终端字号时无需调整面板即可重新计算行列",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-shell-input.spec.ts",
+      "title": "Ctrl+V 粘贴先出现在命令行，按 Enter 后才真正创建文件",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "terminal-shell-input.spec.ts",
+      "title": "无选区右键粘贴中文文件名，回车后由真实 Shell 落盘",
+      "kind": "真实 Electron UI",
+      "feature": "终端与粘贴、尺寸、Shell",
+      "status": "passed"
+    },
+    {
+      "file": "thinking-mode-ui.spec.ts",
+      "title": "运行中切 Off 如实提示下一次生效，后续 Off/High 透传到 provider",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "thinking-mode-ui.spec.ts",
+      "title": "运行中切 Off 如实提示下一次生效，后续 Off/High 透传到 provider",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "thinking-scroll-ui.spec.ts",
+      "title": "活跃末尾默认展开且详情贴底，上翻后追加内容不抢位置",
+      "kind": "真实 Electron UI",
+      "feature": "对话、历史、审批、恢复与安全",
+      "status": "passed"
+    },
+    {
+      "file": "tool-ergonomics-ui.spec.ts",
+      "title": "真实写改版本衔接、带引号命令执行、模型错误反馈、复制与重载均保留诊断",
+      "kind": "真实 Electron UI",
+      "feature": "工具反馈与开发操作",
+      "status": "passed"
+    },
+    {
+      "file": "tool-ergonomics-ui.spec.ts",
+      "title": "真实历史微压缩后重启仍可查看和复制原始诊断，手动压缩不伪造回复",
+      "kind": "真实 Electron UI",
+      "feature": "工具反馈与开发操作",
+      "status": "passed"
+    },
+    {
+      "file": "tool-feedback.spec.ts",
+      "title": "普通前台命令的真实断言失败保留 stdout、stderr、退出码和具体调用",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "工具反馈与开发操作",
+      "status": "passed"
+    },
+    {
+      "file": "tool-feedback.spec.ts",
+      "title": "历史回放导出保留启动失败原因而非只复制错误码",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "工具反馈与开发操作",
+      "status": "passed"
+    },
+    {
+      "file": "tool-feedback.spec.ts",
+      "title": "前台任务从保留元数据取得退出状态，未被误判成后台卡片",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "工具反馈与开发操作",
+      "status": "passed"
+    },
+    {
+      "file": "tool-feedback.spec.ts",
+      "title": "普通工具错误导出保留可恢复建议，成功读取不倾倒整份源码",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "工具反馈与开发操作",
+      "status": "passed"
+    },
+    {
+      "file": "tool-feedback.spec.ts",
+      "title": "命令摘要展示全部 argv，空参数及带空格路径保留边界",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "工具反馈与开发操作",
+      "status": "passed"
+    },
+    {
+      "file": "tool-feedback.spec.ts",
+      "title": "超长输出显式限长，首尾错误证据和内含 Markdown 围栏仍可阅读",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "工具反馈与开发操作",
+      "status": "passed"
+    },
+    {
+      "file": "tool-feedback.spec.ts",
+      "title": "退出、信号、取消及未知结果只根据返回证据显示，不推测成功",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "工具反馈与开发操作",
+      "status": "passed"
+    },
+    {
+      "file": "tool-feedback.spec.ts",
+      "title": "上下文微压缩后回放和复制保留真实工具结果，不把占位符当日志",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "工具反馈与开发操作",
+      "status": "passed"
+    },
+    {
+      "file": "tool-feedback.spec.ts",
+      "title": "旧记录原文已丢失时明确告知，不伪造结果或展示内部占位符",
+      "kind": "本机进程、API 或文件集成",
+      "feature": "工具反馈与开发操作",
+      "status": "passed"
+    },
+    {
+      "file": "utility-actions-ui.spec.ts",
+      "title": "AI 提交信息按钮调用已配置模型并回填提交信息",
+      "kind": "真实 Electron UI",
+      "feature": "模型、输入配置与辅助操作",
+      "status": "passed"
+    },
+    {
+      "file": "utility-actions-ui.spec.ts",
+      "title": "润色输入调用模型，且会话历史当前项保持高亮",
+      "kind": "真实 Electron UI",
+      "feature": "模型、输入配置与辅助操作",
+      "status": "passed"
+    },
+    {
+      "file": "workspace-live-sync-local.spec.ts",
+      "title": "空根目录在进程外真实写入后自动显示文件，无需刷新或引擎事件",
+      "kind": "真实 Electron UI",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "workspace-live-sync-local.spec.ts",
+      "title": "已展开的 Windows 子目录检测外部创建和删除，侧栏重新显示时立即同步",
+      "kind": "真实 Electron UI",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "workspace-live-sync.spec.ts",
+      "title": "本地空目录启用同步，Windows 已展开目录不因分隔符差异漏刷，隐藏与关闭停止轮询",
+      "kind": "纯函数或文件契约",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "workspace-live-sync.spec.ts",
+      "title": "慢请求期间切根不继续读取旧目录，销毁后异步完成不复活轮询",
+      "kind": "纯函数或文件契约",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    },
+    {
+      "file": "workspace-live-sync.spec.ts",
+      "title": "远端断开时无请求，连接恢复后仅同步当前工作区",
+      "kind": "纯函数或文件契约",
+      "feature": "远端连接与项目、文件、上传同步",
+      "status": "passed"
+    }
+  ],
+  "input": "D:\\dev\\aether-code\\.e2e-tmp\\client-identity-fixed-full-20261009.json"
+}

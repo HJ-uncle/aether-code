@@ -7,6 +7,12 @@ import { BrowserEngineBridge } from './browser-bridge'
 import { BrowserPreviewServer } from './browser-preview'
 import { engineHost } from './engine/host'
 
+const bridges = new Set<BrowserEngineBridge>()
+export async function disconnectBrowserClients(): Promise<string[]> {
+  const messages = await Promise.all([...bridges].map(bridge => bridge.disconnectAndWait()))
+  return messages.filter((message): message is string => message !== null)
+}
+
 /** The embedded website has no preload and never receives the IDE's IPC capabilities. */
 export function registerBrowserIpc(window: BrowserWindow): () => void {
   const send = (channel: string, value: unknown): void => {
@@ -14,6 +20,7 @@ export function registerBrowserIpc(window: BrowserWindow): () => void {
   }
   const service = new BrowserService(() => window.isDestroyed() ? undefined : window, event => send(BROWSER_IPC.event, event))
   const bridge = new BrowserEngineBridge(service, state => send(BROWSER_IPC.connection, state))
+  bridges.add(bridge)
   const preview = new BrowserPreviewServer()
   const handler = async (event: IpcMainInvokeEvent, method: string, ...args: unknown[]): Promise<unknown> => {
     try {
@@ -64,6 +71,7 @@ export function registerBrowserIpc(window: BrowserWindow): () => void {
     if (disposed) return
     disposed = true
     ipcMain.removeHandler(BROWSER_IPC.invoke)
+    bridges.delete(bridge)
     bridge.dispose()
     service.dispose()
     preview.dispose()

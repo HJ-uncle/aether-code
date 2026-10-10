@@ -5,14 +5,15 @@ import { currentWorkspacePaths } from '@renderer/core/workspace/workspace-store'
 import { SettingsContent, SettingsGroup, SettingsRow, Toggle } from './SettingsGroup'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
+import { parseMcpTimeout } from './mcp-config'
 import './mcp-settings.css'
 import './settings-pages.css'
 
 type Transport = 'stdio' | 'sse' | 'http' | 'streamableHttp'
-interface McpServer { id: string; name: string; description?: string; transportType: Transport; url?: string; command?: string; args?: string[]; env?: Record<string, string>; headers?: Record<string, string>; disabledTools?: string[]; enabled?: boolean; scope?: 'project' | 'global'; isBuiltIn?: boolean }
+interface McpServer { id: string; name: string; description?: string; transportType: Transport; url?: string; command?: string; args?: string[]; env?: Record<string, string>; headers?: Record<string, string>; disabledTools?: string[]; timeoutMs?: number; enabled?: boolean; scope?: 'project' | 'global'; isBuiltIn?: boolean }
 interface McpTool { name: string; description?: string }
-interface FormState { id: string; name: string; transportType: Transport; url: string; command: string; args: string; env: string; headers: string; disabledTools: string; description: string; scope: 'project' | 'global' }
-const blank: FormState = { id: '', name: '', transportType: 'stdio', url: '', command: '', args: '', env: '{}', headers: '{}', disabledTools: '', description: '', scope: 'project' }
+interface FormState { id: string; name: string; transportType: Transport; url: string; command: string; args: string; env: string; headers: string; disabledTools: string; description: string; scope: 'project' | 'global'; timeoutMs: string }
+const blank: FormState = { id: '', name: '', transportType: 'stdio', url: '', command: '', args: '', env: '{}', headers: '{}', disabledTools: '', description: '', scope: 'project', timeoutMs: '' }
 function parseJson(value: string, label: string): Record<string, string> { const parsed = JSON.parse(value || '{}'); if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error(`${label} 必须是 JSON 对象`); return Object.fromEntries(Object.entries(parsed).map(([k, v]) => [k, String(v)])) }
 function configQuery(remote: boolean, remoteRoot: string): Record<string, string> | undefined { const path = remote ? remoteRoot.trim() : currentWorkspacePaths()[0]; return path ? { path } : undefined }
 
@@ -50,6 +51,9 @@ export function McpSettingsView(): JSX.Element {
     setBusy(true); setError(''); setNotice('')
     try {
       const body: Record<string, unknown> = { name: form.name.trim(), description: form.description.trim(), transportType: form.transportType, scope: form.scope, disabledTools: form.disabledTools.split(/\r?\n|,/).map(s => s.trim()).filter(Boolean) }
+      const timeoutMs = parseMcpTimeout(form.timeoutMs)
+      if (timeoutMs !== undefined) body.timeoutMs = timeoutMs
+      else if (editing) body.timeoutMs = null
       if (!editing) body.enabled = true
       if (form.transportType === 'stdio') {
         const rawArgs = form.args.trim()
@@ -67,10 +71,10 @@ export function McpSettingsView(): JSX.Element {
       reset(); await refresh(); setNotice('MCP 配置已保存')
     } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setBusy(false) }
   }
-  const edit = (server: McpServer): void => { setEditing(server.id); setFormOpen(true); setForm({ id: server.id, name: server.name, description: server.description ?? '', transportType: server.transportType, url: server.url ?? '', command: server.command ?? '', args: (server.args ?? []).join('\n'), env: JSON.stringify(server.env ?? {}, null, 2), headers: JSON.stringify(server.headers ?? {}, null, 2), disabledTools: (server.disabledTools ?? []).join('\n'), scope: server.scope ?? 'project' }) }
+  const edit = (server: McpServer): void => { setEditing(server.id); setFormOpen(true); setForm({ id: server.id, name: server.name, description: server.description ?? '', transportType: server.transportType, url: server.url ?? '', command: server.command ?? '', args: (server.args ?? []).join('\n'), env: JSON.stringify(server.env ?? {}, null, 2), headers: JSON.stringify(server.headers ?? {}, null, 2), disabledTools: (server.disabledTools ?? []).join('\n'), scope: server.scope ?? 'project', timeoutMs: server.timeoutMs === undefined ? '' : String(server.timeoutMs) }) }
   const toggle = async (server: McpServer, enabled: boolean): Promise<void> => { setBusy(true); setError(''); try { await requestOrThrow({ method: 'POST', path: `/mcp/servers/${encodeURIComponent(server.id)}/${enabled ? 'enable' : 'disable'}`, query: { ...(query ?? {}), scope: server.scope ?? 'project' } }); await refresh() } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setBusy(false) } }
   const remove = async (server: McpServer): Promise<void> => { if (busy) return; const confirmed = await confirmDialog({ title: '删除 MCP 配置', body: `确定删除「${server.name || server.id}」吗？`, confirmText: '删除', danger: true }); if (!confirmed) return; setBusy(true); setError(''); try { await requestOrThrow({ method: 'DELETE', path: `/mcp/servers/${encodeURIComponent(server.id)}`, query: { ...(query ?? {}), scope: server.scope ?? 'project' } }); await refresh(); setNotice('MCP 配置已删除') } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setBusy(false) } }
-  const test = async (server: McpServer): Promise<void> => { setBusy(true); setError(''); setNotice(''); try { const result = await requestOrThrow<{ toolCount: number; tools?: McpTool[] }>({ method: 'POST', path: `/mcp/servers/${encodeURIComponent(server.id)}/test`, query: { ...(query ?? {}), scope: server.scope ?? 'project' } }); setDiscoveredTools(current => ({ ...current, [server.id]: result.tools ?? [] })); setNotice(`${server.name} 连接成功，发现 ${result.toolCount} 个工具`) } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setBusy(false) } }
+  const test = async (server: McpServer): Promise<void> => { setBusy(true); setError(''); setNotice(''); try { const result = await requestOrThrow<{ toolCount: number; tools?: McpTool[] }>({ method: 'POST', path: `/mcp/servers/${encodeURIComponent(server.id)}/test`, timeoutMs: server.timeoutMs, query: { ...(query ?? {}), scope: server.scope ?? 'project' } }); setDiscoveredTools(current => ({ ...current, [server.id]: result.tools ?? [] })); setNotice(`${server.name} 连接成功，发现 ${result.toolCount} 个工具`) } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setBusy(false) } }
   const toolDefinitionName = (server: McpServer, tool: McpTool): string => {
     const prefix = `mcp_${server.id}_`
     return tool.name.startsWith(prefix) ? tool.name.slice(prefix.length) : tool.name
@@ -122,6 +126,7 @@ export function McpSettingsView(): JSX.Element {
       <textarea className="field__input" value={form.transportType === 'stdio' ? form.env : form.headers} disabled={busy} onChange={e => update(form.transportType === 'stdio' ? 'env' : 'headers', e.target.value)} placeholder={form.transportType === 'stdio' ? '{ } 环境变量 JSON' : '{ } 请求头 JSON'} aria-label={form.transportType === 'stdio' ? 'MCP 环境变量' : 'MCP 请求头'} rows={3} />
       <input className="field__input" value={form.disabledTools} disabled={busy} onChange={e => update('disabledTools', e.target.value)} placeholder="禁用工具（每行一个或逗号分隔）" aria-label="MCP 禁用工具" />
       <input className="field__input" value={form.description} disabled={busy} onChange={e => update('description', e.target.value)} placeholder="描述（可选）" aria-label="MCP 描述" />
+      <label className="mcp-timeout"><span>请求超时 <small>留空使用默认；0 表示不限；停止引擎或切换连接会取消测试。</small></span><input className="field__input" type="text" inputMode="numeric" value={form.timeoutMs} disabled={busy} onChange={e => update('timeoutMs', e.target.value)} placeholder="默认（毫秒）" aria-label="MCP 请求超时" /></label>
       <label className="mcp-scope">保存层级 <select className="field__input" value={form.scope} disabled={Boolean(editing) || busy} onChange={e => update('scope', e.target.value)}><option value="project">项目</option><option value="global">全局</option></select></label>
       <div className="mcp-form__actions"><button type="button" className="btn btn--primary" disabled={busy || !form.id.trim() || !form.name.trim()} onClick={() => void save()}>{busy ? '保存中…' : '保存'}</button><button type="button" className="btn" disabled={busy} onClick={reset}>取消</button></div>
     </div></SettingsContent></SettingsGroup> : null}

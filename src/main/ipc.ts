@@ -9,6 +9,7 @@
 import { app, dialog, ipcMain, webContents, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { IPC } from '../shared/ipc'
 import { accountService, configureAccountService } from './account/service'
+import { disconnectBrowserClients } from './browser-ipc'
 import type { AccountProfileInput } from '../shared/account'
 import type {
   CopyIntoWorkspaceInput,
@@ -71,10 +72,19 @@ export function registerIpcHandlers(): void {
   configureAccountService({
     target: () => engineHost.accountTarget(),
     changed: state => broadcast(IPC.event.accountChanged, state),
+    beforeIdentityChange: async () => {
+      abortAllStreams()
+      const [terminalFailures, browserFailures] = await Promise.all([
+        remoteTerminalService.disposeForIdentityChange(), disconnectBrowserClients()
+      ])
+      const failures = [...terminalFailures, ...browserFailures]
+      return failures.length ? '旧账号资源清理未完成：' + failures.join('；') + '。连接恢复后可重试清理。' : null
+    },
     identityChanged: async () => {
       abortAllStreams()
       engineHost.accountIdentityChanged()
-      await remoteTerminalService.disposeAll()
+      // The account credential is committed; cleanup cannot reject this transition.
+      await remoteTerminalService.disposeForIdentityChange()
       if (engineHost.getSnapshot().phase !== 'ready') {
         const settings = getSettings()
         await engineHost.start(settings.engineMode, settings.remoteBaseUrl, settings.remoteWorkspaceRoot)

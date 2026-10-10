@@ -5,6 +5,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { AetherIdeApi } from '../src/preload'
+import type { EngineSnapshot } from '../src/shared/ipc'
 
 declare global { interface Window { aether: AetherIdeApi } }
 
@@ -227,6 +228,9 @@ test.describe.serial('真实本地引擎包导入与激活', () => {
   let realFixture = ''
   let realApp: ElectronApplication | undefined
   let realPage: Page
+  let originalRuntime: EngineSnapshot
+  const importProgress: string[] = []
+  const realRendererErrors: string[] = []
 
   test.beforeAll(async () => {
     const archive = process.env.AETHER_TEST_ENGINE_TGZ
@@ -248,6 +252,13 @@ test.describe.serial('真实本地引擎包导入与激活', () => {
     env.ENABLE_LONG_TERM_MEMORY = 'false'
     realApp = await electron.launch({ args: ['.', `--user-data-dir=${realFixture}`], cwd: root, env })
     realPage = await realApp.firstWindow()
+    realPage.on('pageerror', error => realRendererErrors.push(error.message))
+    realPage.on('console', message => {
+      if (message.text().startsWith('AETHER_IMPORT_PROGRESS ')) importProgress.push(message.text())
+    })
+    await realPage.evaluate(() => {
+      window.aether.engine.onImportProgress(progress => console.log('AETHER_IMPORT_PROGRESS', JSON.stringify(progress)))
+    })
     await expect(realPage.locator('.workbench')).toBeVisible()
     if (!(await realPage.locator('.app-settings').isVisible())) {
       await realPage.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+p' : 'Control+Shift+p')
@@ -257,6 +268,28 @@ test.describe.serial('真实本地引擎包导入与激活', () => {
     await expect(realPage.getByRole('tab', { name: '引擎管理', exact: true })).toBeVisible()
     await realPage.getByRole('tab', { name: '引擎管理', exact: true }).click()
     await expect(realPage.getByRole('button', { name: '导入引擎…', exact: true })).toBeVisible()
+    // Restore the installation's actual default: development uses its sibling
+    // runtime (or an explicit override), while packaged clients use bundled.
+    originalRuntime = await realPage.evaluate(() => window.aether.engine.start())
+    expect(originalRuntime.phase, originalRuntime.error ?? '').toBe('ready')
+    const expectedBuildId = process.env.AETHER_TEST_EXPECTED_ENGINE_BUILD_ID
+    if (expectedBuildId) expect(originalRuntime.buildId).toBe(expectedBuildId)
+  })
+
+  test.afterEach(async ({}, testInfo) => {
+    if (testInfo.status !== testInfo.expectedStatus && realPage && !realPage.isClosed()) {
+      const diagnostics = await realPage.evaluate(async () => ({
+        snapshot: await window.aether.engine.getSnapshot(),
+        catalog: await window.aether.engine.getLocalRuntimes(),
+        progress: document.querySelector('.engine-runtime__progress')?.textContent,
+        error: document.querySelector('.engine-runtime__error')?.textContent
+      }))
+      await testInfo.attach('engine-import-diagnostics', {
+        body: JSON.stringify({ ...diagnostics, importProgress, rendererErrors: realRendererErrors }, null, 2),
+        contentType: 'application/json'
+      })
+    }
+    expect(realRendererErrors).toEqual([])
   })
 
   test.afterAll(async () => {
@@ -274,6 +307,12 @@ test.describe.serial('真实本地引擎包导入与激活', () => {
     await realPage.getByRole('button', { name: '导入引擎…', exact: true }).click()
     await expect(realPage.getByRole('button', { name: '导入引擎…', exact: true })).toBeEnabled({ timeout: 120_000 })
     await expect(realPage.getByRole('status')).toContainText('已导入', { timeout: 10_000 })
+    await expect(realPage.locator('.engine-runtime__error')).toHaveCount(0)
+    const importedCatalog = await realPage.evaluate(() => window.aether.engine.getLocalRuntimes())
+    expect(importedCatalog.runtimes).toHaveLength(1)
+    const imported = importedCatalog.runtimes[0]
+    const expectedBuildId = process.env.AETHER_TEST_EXPECTED_ENGINE_BUILD_ID
+    if (expectedBuildId) expect(imported.buildId).toBe(expectedBuildId)
     const selector = realPage.getByRole('button', { name: '选择已导入的本地引擎', exact: true })
     await selector.click()
     const importedOption = realPage.getByRole('menuitem').filter({ hasText: '2.0.0' }).first()
@@ -285,9 +324,10 @@ test.describe.serial('真实本地引擎包导入与激活', () => {
     await expect.poll(async () => (await realPage.evaluate(() => window.aether.engine.getSnapshot())).phase, { timeout: 120_000 }).toBe('ready')
     const snapshot = await realPage.evaluate(() => window.aether.engine.getSnapshot())
     expect(snapshot.runtimeSource).toBe('imported')
+    expect(snapshot.buildId).toBe(imported.buildId)
     expect(snapshot.entryPath).toContain(join(realFixture, 'engine', 'runtimes'))
     const catalog = await realPage.evaluate(() => window.aether.engine.getLocalRuntimes())
-    expect(catalog.activeId).toBeTruthy()
+    expect(catalog.activeId).toBe(imported.id)
     expect(existsSync(join(realFixture, 'engine', 'runtimes', 'active-runtime.json'))).toBe(true)
     expect(JSON.parse(readFileSync(join(realFixture, 'engine', 'runtimes', 'active-runtime.json'), 'utf8')).id).toBe(catalog.activeId)
   })
@@ -297,6 +337,13 @@ test.describe.serial('真实本地引擎包导入与激活', () => {
     const dialog = realPage.getByRole('dialog', { name: '切换本地引擎并重启？', exact: true })
     await expect(dialog).toContainText('保留会话记录和模型配置')
     await dialog.getByRole('button', { name: '恢复默认引擎并重启', exact: true }).click()
+    await expect.poll(async () => (await realPage.evaluate(() => window.aether.engine.getSnapshot())).phase, { timeout: 120_000 }).toBe('ready')
+    const defaultSnapshot = await realPage.evaluate(() => window.aether.engine.getSnapshot())
+    expect(defaultSnapshot.runtimeSource).toBe(originalRuntime.runtimeSource)
+    expect(defaultSnapshot.entryPath).toBe(originalRuntime.entryPath)
+    expect(defaultSnapshot.buildId).toBe(originalRuntime.buildId)
+    const expectedBuildId = process.env.AETHER_TEST_EXPECTED_ENGINE_BUILD_ID
+    if (expectedBuildId) expect(defaultSnapshot.buildId).toBe(expectedBuildId)
     await expect.poll(async () => (await realPage.evaluate(() => window.aether.engine.getLocalRuntimes())).activeId, { timeout: 30_000 }).toBeNull()
     expect(existsSync(join(realFixture, 'engine', 'runtimes', 'active-runtime.json'))).toBe(true)
     expect(JSON.parse(readFileSync(join(realFixture, 'engine', 'runtimes', 'active-runtime.json'), 'utf8')).id).toBeNull()

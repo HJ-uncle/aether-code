@@ -153,3 +153,34 @@ test('redaction preserves ordinary values and handles forms and secret-bearing U
   expect(redactNetworkUrl('https://user:private@example.test/api?password=private&name=visible')).not.toContain('private')
   expect(redactNetworkUrl('https://example.test/api?name=visible')).toContain('name=visible')
 })
+
+test('top-level reset fences late old-loader events while retaining the new document redirect chain', () => {
+  const collector = new BrowserNetworkCollector(async () => ({ body: 'ok' }))
+  collector.beginNavigation(2, 'http://localhost/new')
+  // A response from the old document can race Electron's navigation event. It
+  // must not create a record while the collector waits for the new Document.
+  collector.event('Network.requestWillBeSent', { requestId: 'old', loaderId: 'loader-old', frameId: 'frame-main', type: 'Fetch', request: { url: 'http://localhost/old.js', method: 'GET', headers: {} } }, 2)
+  collector.event('Network.requestWillBeSent', { requestId: 'doc', loaderId: 'loader-new', frameId: 'frame-main', type: 'Document', request: { url: 'http://localhost/new', method: 'GET', headers: {} } }, 2)
+  collector.event('Network.requestWillBeSent', { requestId: 'doc', loaderId: 'loader-new', frameId: 'frame-main', type: 'Document', timestamp: 10.1, redirectResponse: { status: 302, headers: {}, mimeType: 'text/html' }, request: { url: 'http://localhost/final', method: 'GET', headers: {} } }, 2)
+  collector.event('Network.responseReceived', { requestId: 'doc', loaderId: 'loader-new', response: { status: 200, mimeType: 'text/html', headers: {} } }, 2)
+  collector.event('Network.loadingFinished', { requestId: 'doc', loaderId: 'loader-new', timestamp: 10.2 }, 2)
+  expect(collector.list(tab).entries.map(entry => entry.url)).toEqual(['http://localhost/new', 'http://localhost/final'])
+  expect(collector.list(tab).entries.every(entry => entry.navigationId === 2)).toBe(true)
+  // Late old-loader traffic remains fenced after the new document is active.
+  collector.event('Network.requestWillBeSent', { requestId: 'old-late', loaderId: 'loader-old', frameId: 'frame-main', type: 'Fetch', request: { url: 'http://localhost/old-late.js', method: 'GET', headers: {} } }, 2)
+  expect(collector.list(tab).total).toBe(2)
+})
+
+test('an in-flight body read from the previous page cannot write into the new capture', async () => {
+  let release!: () => void
+  const blocked = new Promise<void>(resolve => { release = resolve })
+  const collector = new BrowserNetworkCollector(async () => { await blocked; return { body: 'old-page-body' } })
+  request(collector, 'old-body', 'http://localhost/old-body')
+  response(collector, 'old-body', 200, 'text/plain')
+  finish(collector, 'old-body')
+  const detailPromise = collector.detail(tab, publicId(collector, '/old-body'))
+  collector.beginNavigation(2, 'http://localhost/new')
+  release()
+  await expect(detailPromise).rejects.toThrow('请求记录已回收')
+  expect(collector.list(tab).total).toBe(0)
+})

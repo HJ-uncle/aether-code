@@ -181,4 +181,42 @@ test.describe.serial('工具执行与诊断真实闭环', () => {
     await expect(page.locator('.logline__detail')).toContainText('winning line must contain five stones')
     expect(errors).toEqual([])
   })
+
+  test('真实历史微压缩后重启仍可查看和复制原始诊断，手动压缩不伪造回复', async () => {
+    await app!.close()
+    app = undefined
+    const moduleUrl = (name: string): string => pathToFileURL(join(engineRoot, 'dist', name)).href
+    // Compact the same persisted fixture through the production history API. The
+    // engine is stopped so another process cannot retain a stale JSONL cache.
+    const compact = `const {initDb,getDb}=await import(${JSON.stringify(moduleUrl('storage/sqlite/db.js'))});
+      const {createConversationHistory}=await import(${JSON.stringify(moduleUrl('storage/conversation/factory.js'))});
+      await initDb();const history=createConversationHistory();const ctx={tenantId:'default',sessionId:${JSON.stringify(sessionId)}};
+      const stats=await history.microCompactToolResults(ctx,{keepRecent:1});
+      const compacted=await history.getFullHistory(ctx);
+      if(stats.cleared<5||!compacted.some(message=>message.content==='[tool result cleared]'))throw Error('Fixture was not actually compacted');
+      getDb().close();`
+    execFileSync(process.execPath, ['--input-type=module', '-e', compact], { encoding: 'utf8', windowsHide: true, timeout: 30000,
+      env: { ...environment(), DATA_DIR: join(fixture, 'engine', 'state', 'agent.db'), ENCRYPTION_KEY: encryptionKey } })
+    app = await electron.launch({ args: ['.', `--user-data-dir=${fixture}`], cwd: root, env: environment() })
+    page = await app.firstWindow()
+    page.on('pageerror', error => errors.push(String(error)))
+    await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90000 })
+    await expect(page.locator('.message--assistant .md')).toContainText(finalText)
+    const report = await copyReport()
+    expect(report).toContain('AssertionError')
+    expect(report).toContain('winning line must contain five stones')
+    expect(report).toContain('DIAGNOSTIC_UNSUPPORTED')
+    expect(report).toContain('未执行静态诊断')
+    expect(report).not.toContain('[tool result cleared]')
+    expect(report).not.toContain('当前记录无法恢复')
+    expect(sentSteps).toEqual(steps)
+
+    const ring = page.getByRole('button', { name: /上下文用量约/ })
+    await ring.click()
+    await expect(page.getByRole('button', { name: /^已压缩 / })).toBeVisible({ timeout: 30000 })
+    const label = await page.getByRole('button', { name: /^已压缩 / }).getAttribute('aria-label')
+    expect(label).not.toMatch(/→ 0(?:\D|$)/)
+    await expect(page.locator('.message--assistant')).not.toContainText('我已经为您完成了上下文压缩')
+    expect(errors).toEqual([])
+  })
 })

@@ -94,6 +94,24 @@ test('repository initialization, unborn HEAD and workspace access boundary', asy
   expect((await call('commit', root, '')).success).toBe(false)
 })
 
+test('nested workspace status excludes changes outside the opened folder', async () => {
+  const root = await repo()
+  const nested = join(root, 'packages', 'client')
+  mkdirSync(nested, { recursive: true })
+  // The repository lives above the opened folder. Git would otherwise report
+  // this parent change as ../../../outside.txt, which must never escape the
+  // workspace-scoped status response.
+  write(root, 'outside.txt', 'parent change\n')
+  write(nested, 'inside.txt', 'nested change\n')
+
+  const status = await ok('status', nested)
+  expect(status.isRepo).toBe(true)
+  expect(status.files).toEqual([
+    expect.objectContaining({ path: 'inside.txt', changeType: 'untracked' })
+  ])
+  expect(status.files?.some(file => file.path.includes('..'))).toBe(false)
+})
+
 test('status, index/worktree separation, batch operations, ignore, diff and hunk rollback', async () => {
   const root = await repo()
   write(root, 'a.txt', 'staged\n'); await ok('stage', root, 'a.txt'); write(root, 'a.txt', 'working\n')

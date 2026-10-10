@@ -32,6 +32,10 @@ import { Popover } from '@renderer/workbench/Popover'
 import { ContextMenu } from '@renderer/workbench/ContextMenu'
 import { ModelPicker } from '../models/ModelPicker'
 import { ComposerOptions } from './ComposerOptions'
+import { loadSessionModelSelection, resolveSessionComposerModel, saveSessionModelSelection, type SessionModelSelection } from './session-model-store'
+import { loadSessionThinkingMode, saveSessionThinkingMode, type SessionThinkingMode } from './session-thinking-store'
+import { composerThinkingMode, requestedThinkingMode, resolveSessionRequestConfig, loadSessionRequestSelection, saveSessionRequestSelection, type SessionRequestSelection } from './session-request-config'
+import { normalizeRootRunRequestConfig, type RootRunRequestConfig } from '@shared/root-run'
 import { MessageNavRail, type NavTurn } from './MessageNavRail'
 import {
   asUsageFrame,
@@ -46,7 +50,7 @@ import { useAttachments, shouldAttachPastedText, createPastedTextFile } from './
 import { readFile } from '@renderer/core/workspace/fs-client'
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
 import { Dialog } from '@renderer/workbench/Dialog'
-import { getKnowledgeBaseBindingIds, saveKnowledgeBinding } from '@renderer/core/engine/knowledge'
+import { knowledgeBindingKey, saveKnowledgeBinding } from '@renderer/core/engine/knowledge'
 import { ResourcePicker, type ResourceItem } from './ResourcePicker'
 import './apple-chat-panels.css'
 
@@ -59,15 +63,13 @@ const MESSAGE_PAGE_SIZE = 300
 const LOAD_EARLIER_PX = 120
 
 type ComposerResources = { skills: string[]; mcpServers: string[]; knowledgeBases: string[] }
-function resourceBindingKey(sessionId: string, source: string): string { return `aether:composer-resources:${source || 'embedded'}:${sessionId}` }
-function loadComposerResources(sessionId: string, source: string): ComposerResources {
+function loadLegacyComposerResources(sessionId: string, source: string): RootRunRequestConfig {
   try {
-    const parsed = JSON.parse(localStorage.getItem(resourceBindingKey(sessionId, source)) || '{}') as Partial<ComposerResources>
-    return { skills: Array.isArray(parsed.skills) ? parsed.skills.filter(v => typeof v === 'string') : [], mcpServers: Array.isArray(parsed.mcpServers) ? parsed.mcpServers.filter(v => typeof v === 'string') : [], knowledgeBases: Array.isArray(parsed.knowledgeBases) ? parsed.knowledgeBases.filter(v => typeof v === 'string') : [] }
-  } catch { return { skills: [], mcpServers: [], knowledgeBases: [] } }
-}
-function saveComposerResources(sessionId: string, source: string, value: ComposerResources): void {
-  try { localStorage.setItem(resourceBindingKey(sessionId, source), JSON.stringify(value)) } catch { /* private browsing */ }
+    const raw = localStorage.getItem(`aether:composer-resources:${source || 'embedded'}:${sessionId}`)
+    const stored = raw ? normalizeRootRunRequestConfig(JSON.parse(raw)) ?? {} : {}
+    const knowledge = localStorage.getItem(knowledgeBindingKey(sessionId, source))
+    return knowledge === null ? stored : { ...stored, ...normalizeRootRunRequestConfig({ knowledgeBases: JSON.parse(knowledge) }) }
+  } catch { return {} }
 }
 
 /** 按工作区相对路径读 base64 data URL（图片缩略图 / 放大查看共用） */
@@ -235,18 +237,6 @@ function newSessionId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `session-${Date.now()}`
 }
 
-/**
- * 设置档位 → 引擎 thinkingMode 参数。
- *
- * 'off' 强制下发 false（显式关思考）；'high' 落成 undefined（引擎按模型
- * 能力判断）；'low' / 'max' 下发档位字符串（引擎强制开启并指定 effort）。
- */
-function resolveThinkingMode(mode: 'off' | 'low' | 'high' | 'max'): 'low' | 'high' | false | undefined {
-  if (mode === 'off') return false
-  if (mode === 'high') return undefined
-  return mode === 'max' ? 'high' : 'low'
-}
-
 /** 字节数 → 人类可读（附件条上展示大小） */
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -263,11 +253,10 @@ function formatBytes(bytes: number): string {
 export function ChatView(): JSX.Element {
   const { engine, ready, settings, updateSettings, settingsLoaded } = useApp()
   const remoteReadOnly = engine.snapshot.mode === 'remote'
-  const canExecute = ready
   const connectionKey = engineConnectionKey(engine.snapshot)
   const storageSource = engineStorageKey(engine.snapshot)
   const sourceEpoch = getEngineSource()
-  const { messages, commandJobs, streaming, historyCompacted, loadArchive, todos, send, respond, abort, loadHistory, resumeStream, deleteTurn, retryFrom, revertFrom, queue, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, queueSendMode, setQueueSendMode, retargetQueuedModel } = useChat()
+  const { messages, commandJobs, sessionModel, streaming, historyCompacted, archiveRemaining, archiveLoading, archiveError, loadArchive, todos, send, respond, abort, loadHistory, resumeStream, deleteTurn, retryFrom, revertFrom, queue, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, queueSendMode, setQueueSendMode, retargetQueuedModel } = useChat()
   const { models, loaded: modelsLoaded } = useModels()
   const workspace = useWorkspace()
   // AppProvider 按引擎来源统一恢复或创建会话。这里提前创建会与远端选择
@@ -294,8 +283,84 @@ export function ChatView(): JSX.Element {
   /** 轻提示（复制 / 导出等即时反馈），短暂展示后自动消失 */
   const [toast, setToast] = useState<string | null>(null)
   /** 用户手动选择的模型；null 表示未选择，跟随设置（设置异步加载后自动生效） */
-  const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
-  const modelId = selectedModelId ?? settings.lastModelId
+  const [selectedModel, setSelectedModel] = useState<{ source: string; sessionId: string; selection: SessionModelSelection } | null>(null)
+  const storedModelSelection = useMemo(() => loadSessionModelSelection(sessionId, storageSource), [sessionId, storageSource])
+  const modelSelection = selectedModel?.source === storageSource && selectedModel.sessionId === sessionId ? selectedModel.selection : storedModelSelection
+  const sessionModelReady = sessionModel?.source === sourceEpoch && sessionModel.sessionId === sessionId
+  const modelId = resolveSessionComposerModel({
+    configuredModelId: sessionModelReady ? sessionModel.modelId : undefined,
+    runId: sessionModelReady ? sessionModel.runId : undefined,
+    selection: modelSelection,
+    defaultModelId: settings.lastModelId
+  })
+  const canExecute = ready && sessionModelReady
+  const storedThinkingMode = useMemo(() => loadSessionThinkingMode(sessionId, storageSource), [sessionId, storageSource])
+  const storedRequestSelection = useMemo(() => loadSessionRequestSelection(sessionId, storageSource), [sessionId, storageSource])
+  const legacyResources = useMemo(() => loadLegacyComposerResources(sessionId, storageSource), [sessionId, storageSource])
+  const [selectedRequest, setSelectedRequest] = useState<{ source: string; sessionId: string; selection: SessionRequestSelection } | null>(null)
+  const requestSelection = selectedRequest?.source === storageSource && selectedRequest.sessionId === sessionId ? selectedRequest.selection : storedRequestSelection
+  /**
+   * Resource picking is available while a newly opened session is still
+   * hydrating its first model run. Keep an explicit selection made in that
+   * window instead of dropping it behind the sessionModelReady guard; the
+   * pending patch is anchored as soon as the run arrives.
+   */
+  const [pendingRequestPatch, setPendingRequestPatch] = useState<{
+    source: string
+    epoch: number
+    sessionId: string
+    patch: RootRunRequestConfig
+  } | null>(null)
+  const composerRequest = { ...resolveSessionRequestConfig({
+    serverConfig: sessionModelReady ? sessionModel.requestConfig : undefined,
+    runId: sessionModelReady ? sessionModel.runId : undefined,
+    selection: requestSelection,
+    fallbackConfig: { ...legacyResources, agentId: settings.lastAgentId || undefined,
+      subagentModel: settings.subagentModelId || undefined, utilityModel: settings.utilityModelId || undefined,
+      thinkingMode: requestedThinkingMode(storedThinkingMode ?? settings.thinkingMode) }
+  }), ...(pendingRequestPatch?.source === storageSource && pendingRequestPatch.epoch === sourceEpoch && pendingRequestPatch.sessionId === sessionId ? pendingRequestPatch.patch : {}) }
+  const composerResources: ComposerResources = { skills: composerRequest.skills ?? [], mcpServers: composerRequest.mcpServers ?? [], knowledgeBases: composerRequest.knowledgeBases ?? [] }
+  const thinkingMode = composerThinkingMode(composerRequest.thinkingMode)
+  const updateComposerRequest = useCallback((patch: RootRunRequestConfig): void => {
+    if (!sessionId || sourceEpoch !== getEngineSource()) return
+    if (!sessionModelReady) {
+      setPendingRequestPatch(previous => previous?.source === storageSource && previous.epoch === sourceEpoch && previous.sessionId === sessionId
+        ? { ...previous, patch: { ...previous.patch, ...patch } }
+        : { source: storageSource, epoch: sourceEpoch, sessionId, patch })
+      return
+    }
+    const selection: SessionRequestSelection = { anchorRunId: sessionModel.runId,
+      config: { ...(requestSelection?.anchorRunId === sessionModel.runId ? requestSelection?.config : {}), ...patch },
+      omitThinkingMode: Object.hasOwn(patch, 'thinkingMode') ? patch.thinkingMode === undefined :
+        requestSelection?.anchorRunId === sessionModel.runId && requestSelection?.omitThinkingMode }
+    setSelectedRequest({ source: storageSource, sessionId, selection })
+    saveSessionRequestSelection(sessionId, storageSource, selection)
+  }, [sessionId, sessionModelReady, sourceEpoch, sessionModel, requestSelection, storageSource])
+  useEffect(() => {
+    if (!sessionModelReady || !sessionId || pendingRequestPatch?.source !== storageSource || pendingRequestPatch.epoch !== sourceEpoch || pendingRequestPatch.sessionId !== sessionId) return
+    const patch = pendingRequestPatch.patch
+    setPendingRequestPatch(null)
+    updateComposerRequest(patch)
+  }, [sessionModelReady, sessionId, pendingRequestPatch, storageSource, sourceEpoch, updateComposerRequest])
+  const selectThinkingMode = useCallback((mode: SessionThinkingMode): void => {
+    updateComposerRequest({ thinkingMode: requestedThinkingMode(mode) })
+    saveSessionThinkingMode(sessionId, mode, storageSource)
+  }, [updateComposerRequest, sessionId, storageSource])
+  const assignedModelBaselineRef = useRef<{ source: string; epoch: number; sessionId: string; subagentModel: string; utilityModel: string } | null>(null)
+  useEffect(() => {
+    if (!sessionModelReady) { assignedModelBaselineRef.current = null; return }
+    const next = { source: storageSource, epoch: sourceEpoch, sessionId,
+      subagentModel: settings.subagentModelId, utilityModel: settings.utilityModelId }
+    const previous = assignedModelBaselineRef.current
+    assignedModelBaselineRef.current = next
+    // Initial global defaults and navigation never rewrite a restored run. A later
+    // explicit settings edit applies only to this source/session's next request.
+    if (!previous || previous.source !== next.source || previous.epoch !== next.epoch || previous.sessionId !== next.sessionId) return
+    const patch: RootRunRequestConfig = {}
+    if (previous.subagentModel !== next.subagentModel) patch.subagentModel = next.subagentModel
+    if (previous.utilityModel !== next.utilityModel) patch.utilityModel = next.utilityModel
+    if (Object.keys(patch).length) updateComposerRequest(patch)
+  }, [sessionModelReady, storageSource, sourceEpoch, sessionId, settings.subagentModelId, settings.utilityModelId, updateComposerRequest])
   const activeSessionIdRef = useRef('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<MentionInputHandle>(null)
@@ -303,7 +368,6 @@ export function ChatView(): JSX.Element {
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
   /** / 资源菜单触发的关键词；选择后绑定到本轮会话并显示为资源 chip。 */
   const [resourceQuery, setResourceQuery] = useState<string | null>(null)
-  const [composerResources, setComposerResources] = useState<ComposerResources>({ skills: [], mcpServers: [], knowledgeBases: [] })
   /** Last input snapshot used to detect a user deleting a /resource token manually. */
   const resourceTextRef = useRef('')
   /** Clearing the editor after send must not clear the session's resource bindings. */
@@ -327,7 +391,7 @@ export function ChatView(): JSX.Element {
     try {
       const res = await utilityChat({
         // 轻任务模型为空时跟随当前主对话模型。
-        model: settings.utilityModelId || modelId || undefined,
+        model: composerRequest.utilityModel || modelId || undefined,
         systemPrompt:
           '你是「发给 AI 编程助手的指令」的润色器。把用户的草稿改写得更清晰、具体、可执行：' +
           '补全主语和对象、拆开含糊的复合要求、修正错别字；保留原文中的 @路径 引用 token 原样不动；' +
@@ -371,7 +435,6 @@ export function ChatView(): JSX.Element {
     mentionsRef.current = []
     setMentionQuery(null)
     setResourceQuery(null)
-    setComposerResources({ skills: [], mcpServers: [], knowledgeBases: [] })
     resourceTextRef.current = ''
     setManualPalette(false)
     setAttachMenu(null)
@@ -467,24 +530,14 @@ export function ChatView(): JSX.Element {
 
   useEffect(() => {
     if (!sessionId) return
-    const stored = loadComposerResources(sessionId, storageSource)
-    // Restore knowledge-base bindings into the slash resource state so persisted
-    // session selections continue to be sent even though the composer stays compact.
-    const knowledgeBases = getKnowledgeBaseBindingIds(sessionId, storageSource)
-    setComposerResources({ ...stored, knowledgeBases: knowledgeBases.length ? knowledgeBases : stored.knowledgeBases })
     // The input draft is restored by the following effect. Reset this edge detector
     // here so a session/source switch cannot remove bindings from the new session.
     resourceTextRef.current = ''
   }, [sessionId, storageSource, sourceEpoch])
 
-  const updateComposerResources = useCallback((next: ComposerResources): void => {
-    setComposerResources(next)
-    if (sessionId) saveComposerResources(sessionId, storageSource, next)
-  }, [sessionId, storageSource])
-
   const chooseComposerResource = useCallback((item: ResourceItem): void => {
     const key = item.kind === 'skill' ? 'skills' : item.kind === 'mcp' ? 'mcpServers' : 'knowledgeBases'
-    const current = item.kind === 'kb' ? getKnowledgeBaseBindingIds(sessionId, storageSource) : composerResources[key]
+    const current = composerResources[key]
     // A binding is session-scoped. Selecting the same row again should focus the
     // existing chip instead of appending a second raw `/kind:id` token that cannot
     // be removed independently from the single binding entry.
@@ -499,13 +552,13 @@ export function ChatView(): JSX.Element {
       return
     }
     const next = current.includes(item.id) ? current : [...current, item.id]
-    updateComposerResources({ ...composerResources, [key]: next })
+    updateComposerRequest({ [key]: next })
     if (item.kind === 'kb' && sessionId) saveKnowledgeBinding(sessionId, next, storageSource)
     suppressResourceReconcileRef.current = true
     inputRef.current?.completeSlash(`/${item.kind}:${item.id}`)
     suppressResourceReconcileRef.current = false
     setResourceQuery(null)
-  }, [composerResources, sessionId, storageSource, updateComposerResources])
+  }, [composerResources, sessionId, storageSource, updateComposerRequest])
 
   /** Remove bindings whose slash token the user deleted from the draft. */
   const reconcileComposerResources = useCallback((text: string): void => {
@@ -523,44 +576,67 @@ export function ChatView(): JSX.Element {
     inspect('mcp', composerResources.mcpServers)
     inspect('kb', composerResources.knowledgeBases)
     if (!removed.length) return
-    setComposerResources(current => {
-      let next = current
-      for (const { kind, id } of removed) {
-        const key = kind === 'skill' ? 'skills' : kind === 'mcp' ? 'mcpServers' : 'knowledgeBases'
-        const values = next[key].filter(value => value !== id)
-        if (values !== next[key]) next = { ...next, [key]: values }
-        if (kind === 'kb') saveKnowledgeBinding(sessionId, values, storageSource)
-      }
-      saveComposerResources(sessionId, storageSource, next)
-      return next
-    })
-  }, [composerResources.knowledgeBases, composerResources.mcpServers, composerResources.skills, sessionId, storageSource])
+    const patch: RootRunRequestConfig = {}
+    for (const { kind, id } of removed) {
+      const key = kind === 'skill' ? 'skills' : kind === 'mcp' ? 'mcpServers' : 'knowledgeBases'
+      const values = (patch[key] ?? composerResources[key]).filter(value => value !== id)
+      patch[key] = values
+      if (kind === 'kb') saveKnowledgeBinding(sessionId, values, storageSource)
+    }
+    updateComposerRequest(patch)
+  }, [composerResources.knowledgeBases, composerResources.mcpServers, composerResources.skills, sessionId, storageSource, updateComposerRequest])
 
   const removeComposerResource = useCallback((kind: 'skill' | 'mcp' | 'kb', id: string): void => {
     const key = kind === 'skill' ? 'skills' : kind === 'mcp' ? 'mcpServers' : 'knowledgeBases'
     const next = composerResources[key].filter(item => item !== id)
-    updateComposerResources({ ...composerResources, [key]: next })
+    updateComposerRequest({ [key]: next })
     inputRef.current?.removeTextToken(`/${kind}:${id}`)
     if (kind === 'kb') saveKnowledgeBinding(sessionId, next, storageSource)
-  }, [composerResources, sessionId, storageSource, updateComposerResources])
+  }, [composerResources, sessionId, storageSource, updateComposerRequest])
 
   // 切换会话时重置分页窗口（sessionId 声明之后，依赖其值）
   useEffect(() => {
+    prependSnapshotRef.current = null
     setVisibleCount(MESSAGE_PAGE_SIZE)
-  }, [sessionId])
+  }, [sourceSessionKey])
 
   // 启动 / 会话切换时回放引擎侧历史：conversations 表本来是 AI 的上下文来源，
   // 把同一份数据还原到界面，解决「重启后界面空白但 AI 记得一切」的割裂感
   const historyLoadedRef = useRef('')
+  const historyRetryDelayRef = useRef(1000)
+  const [historyRetry, setHistoryRetry] = useState(0)
   useEffect(() => {
     if (!ready) { historyLoadedRef.current = ''; return }
     if (!sessionId) return
-    if (historyLoadedRef.current === sourceSessionKey) return
+    const previouslyRequested = historyLoadedRef.current === sourceSessionKey
+    if (previouslyRequested && sessionModelReady) return
+    if (!previouslyRequested) historyRetryDelayRef.current = 1000
     historyLoadedRef.current = sourceSessionKey
-    // 优先尝试恢复正在进行的流（刷新/切回会话后端仍在跑的场景）；
-    // resumeStream 内部会先做历史回放，无需恢复时返回 false，再退回纯历史回放
-    void resumeStream(sessionId)
-  }, [ready, sessionId, sourceSessionKey, loadHistory, resumeStream])
+    let cancelled = false
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
+    // A failed snapshot must stay retryable even while /health remains ready.
+    // Only one restore runs at a time; navigation cancels its scheduled retry.
+    void resumeStream(sessionId).catch(() => {}).finally(() => {
+      if (cancelled) return
+      const delay = historyRetryDelayRef.current
+      historyRetryDelayRef.current = Math.min(delay * 2, 10000)
+      retryTimer = setTimeout(() => setHistoryRetry(value => value + 1), delay)
+    })
+    return () => {
+      cancelled = true
+      if (retryTimer !== undefined) clearTimeout(retryTimer)
+    }
+  }, [ready, sessionId, sourceSessionKey, resumeStream, sessionModelReady, historyRetry])
+
+  const loadArchivedEarlier = useCallback((): void => {
+    if (archiveLoading) return
+    const requestedView = sourceSessionKey
+    const el = scrollRef.current
+    if (el) prependSnapshotRef.current = { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop }
+    void loadArchive(sessionId).then(() => {
+      if (displayedSessionRef.current === requestedView) setVisibleCount(count => count + MESSAGE_PAGE_SIZE)
+    })
+  }, [archiveLoading, sourceSessionKey, sessionId, loadArchive])
 
   // ── 每会话输入草稿（对齐 wuzu lobster-chat:draft）──
   // 切会话/重启时恢复该会话未发送的草稿；保存走防抖，不用 effect 持久化
@@ -739,41 +815,38 @@ export function ChatView(): JSX.Element {
 
   const selectModel = useCallback(
     (next: string) => {
-      setSelectedModelId(next)
+      if (!sessionId || !sessionModelReady || sourceEpoch !== getEngineSource()) return
+      const selection = { modelId: next, anchorRunId: sessionModel?.runId }
+      setSelectedModel({ source: storageSource, sessionId, selection })
+      saveSessionModelSelection(sessionId, selection, storageSource)
       void updateSettings({ lastModelId: next })
       // 运行中切换模型：把队列里待发消息的模型改写为新模型，
       // 避免出现「正在运行的回合显示成输入框后选的模型」这类错标
-      retargetQueuedModel(next)
+      retargetQueuedModel(next, sessionId)
     },
-    [updateSettings, retargetQueuedModel]
+    [updateSettings, retargetQueuedModel, sessionId, sessionModelReady, sessionModel, sourceEpoch, storageSource]
   )
 
   // 默认选中：列表就绪后，若当前模型未选中或已失效（被删/改名），自动落到第一个
   const modelExists = models.some((model) => model.modelId === modelId)
   useEffect(() => {
-    if (!modelsLoaded || models.length === 0 || modelExists) return
-    selectModel(models[0].modelId)
-  }, [modelsLoaded, models, modelExists, selectModel])
+    if (!sessionModelReady || !modelsLoaded || models.length === 0 || modelExists || sessionModel?.runId || modelSelection) return
+    // Recovery and catalog fallback must not rewrite another session's queued requests.
+    const selection = { modelId: models[0].modelId, anchorRunId: sessionModel?.runId }
+    setSelectedModel({ source: storageSource, sessionId, selection })
+    saveSessionModelSelection(sessionId, selection, storageSource)
+  }, [sessionModelReady, modelsLoaded, models, modelExists, sessionModel, modelSelection, sessionId, storageSource])
 
   const buildSendOptions = useCallback(
     () => ({
       sessionId,
-      agentId: settings.lastAgentId || undefined,
+      ...composerRequest,
       model: modelId || undefined,
-      knowledgeBases: getKnowledgeBaseBindingIds(sessionId, storageSource),
-      skills: composerResources.skills,
-      mcpServers: composerResources.mcpServers,
-      // 按用途指派：子代理 / 轻任务模型（空 = 跟随主模型，引擎侧回退）
-      subagentModel: settings.subagentModelId || undefined,
-      utilityModel: settings.utilityModelId || undefined,
-      // Do not guess global while the engine has not confirmed this session's
-      // setting. Sending off is the safe compatibility behavior for old sessions.
-      memoryScope: memorySettingsLoaded ? (memorySettingsScope ?? 'off') : 'off',
-      // 从 store 直接读取而非依赖闭包：发送瞬间的根目录才是准确的
-      workspacePaths: remoteReadOnly ? [] : currentWorkspacePaths(),
-      thinkingMode: resolveThinkingMode(settings.thinkingMode)
+      // A confirmed settings edit wins over the previous run; pending reads use its durable scope.
+      memoryScope: memorySettingsLoaded ? (memorySettingsScope ?? undefined) : composerRequest.memoryScope,
+      workspacePaths: remoteReadOnly ? [] : currentWorkspacePaths()
     }),
-    [modelId, remoteReadOnly, sessionId, storageSource, composerResources, memorySettingsLoaded, memorySettingsScope, settings.lastAgentId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode]
+    [sessionId, composerRequest, modelId, memorySettingsLoaded, memorySettingsScope, remoteReadOnly]
   )
 
   const submit = useCallback(() => {
@@ -943,22 +1016,10 @@ export function ChatView(): JSX.Element {
         danger: true
       }).then((confirmed) => {
         if (!confirmed || sourceEpoch !== getEngineSource()) return
-        void retryFrom(userMessage, {
-          sessionId,
-          agentId: settings.lastAgentId || undefined,
-          model: modelId || undefined,
-          knowledgeBases: getKnowledgeBaseBindingIds(sessionId, storageSource),
-          skills: composerResources.skills,
-          mcpServers: composerResources.mcpServers,
-          subagentModel: settings.subagentModelId || undefined,
-          utilityModel: settings.utilityModelId || undefined,
-          memoryScope: memorySettingsLoaded ? (memorySettingsScope ?? 'off') : 'off',
-          workspacePaths: remoteReadOnly ? [] : currentWorkspacePaths(),
-          thinkingMode: resolveThinkingMode(settings.thinkingMode)
-        }).catch(showError)
+        void retryFrom(userMessage, buildSendOptions()).catch(showError)
       })
     },
-    [canExecute, remoteReadOnly, sourceEpoch, messages, modelId, retryFrom, sessionId, storageSource, composerResources, memorySettingsLoaded, memorySettingsScope, settings.lastAgentId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode, showError]
+    [canExecute, sourceEpoch, messages, retryFrom, buildSendOptions, showError]
   )
 
   const deleteTurnById = useCallback(
@@ -1026,16 +1087,9 @@ export function ChatView(): JSX.Element {
   const respondToEngine = useCallback(
     (requestId: string, values: string[]) => {
       if (!canExecute || sourceEpoch !== getEngineSource()) return
-      void respond(requestId, values, {
-        sessionId,
-        model: modelId || undefined,
-        subagentModel: settings.subagentModelId || undefined,
-        utilityModel: settings.utilityModelId || undefined,
-        workspacePaths: remoteReadOnly ? [] : currentWorkspacePaths(),
-        thinkingMode: resolveThinkingMode(settings.thinkingMode)
-      }).catch(showError)
+      void respond(requestId, values, buildSendOptions()).catch(showError)
     },
-    [canExecute, remoteReadOnly, sourceEpoch, respond, sessionId, modelId, settings.subagentModelId, settings.utilityModelId, settings.thinkingMode, showError]
+    [canExecute, sourceEpoch, respond, buildSendOptions, showError]
   )
 
   const exportSelected = useCallback(() => {
@@ -1292,7 +1346,7 @@ export function ChatView(): JSX.Element {
             <Icon name="chevron-double-down" size={16} />
           </button>
         ) : null}
-        {messages.length === 0 ? (
+        {messages.length === 0 && !historyCompacted ? (
           <div className="chat__empty">
             <h2>Agent IDE</h2>
             <p>
@@ -1305,13 +1359,16 @@ export function ChatView(): JSX.Element {
           </div>
         ) : (
           <>
+            {archiveError ? <p className="chat__notice" role="alert">{archiveError}</p> : null}
             {historyCompacted ? (
               <button
                 type="button"
                 className="chat__load-earlier"
-                onClick={() => void loadArchive(sessionId)}
+                onClick={loadArchivedEarlier}
+                data-archive-page="true"
+                disabled={archiveLoading}
               >
-                当前上下文已压缩，点击加载仍保留在归档中的更早对话
+                {archiveLoading ? '正在加载历史归档…' : archiveRemaining === null ? '当前上下文已压缩，点击加载仍保留在归档中的更早对话' : `还有 ${archiveRemaining} 条更早的归档记录，点击继续加载`}
               </button>
             ) : null}
             {hiddenTurnCount > 0 ? (
@@ -1423,6 +1480,11 @@ export function ChatView(): JSX.Element {
           onClearQueue={clearQueue}
           onMergeQueue={flushQueueFromTray}
         />
+        {sessionModelReady && modelsLoaded && modelId && !modelExists ? (
+          <div className="chat__notice" role="status">
+            当前模型未在模型列表中。继续发送将使用会话原模型，也可在模型菜单中重新选择或配置。
+          </div>
+        ) : null}
         <div className="chat__surface">
           {(attach.attachments.length > 0 || attach.uploading) ? (
             <div className="chat__attach-strip">
@@ -1585,7 +1647,7 @@ export function ChatView(): JSX.Element {
               />
             ) : null}
 
-            <ComposerOptions sessionId={sessionId} />
+            <ComposerOptions sessionId={sessionId} modelId={modelId} thinkingMode={thinkingMode} onThinkingChange={selectThinkingMode} />
 
             {/* 仅当项目「尚未建索引」时才露出建索引入口；已建索引则不占位（重建走设置页 / 菜单） */}
             {cgIndex.known && !cgIndex.initialized ? (
@@ -1630,6 +1692,7 @@ export function ChatView(): JSX.Element {
 
             <ModelPicker
               value={modelId}
+              disabled={!sessionModelReady || !ready}
               onChange={selectModel}
               onManage={() => openAppSettings('models')}
             />
@@ -1725,14 +1788,14 @@ function ContextRing({
     setErrorMsg('')
     const startedAt = Date.now()
     try {
-      const stats = await requestOrThrow<{
-        originalTokens?: number
-        compressedTokens?: number
+      const response = await requestOrThrow<{
+        message?: string
+        stats?: { originalTokens: number; compressedTokens: number }
       }>({ method: 'POST', path: '/conversation/compress', query: { sessionId } })
       if (sourceEpoch !== getEngineSource()) return
       setCompactInfo({
-        before: stats.originalTokens ?? used,
-        after: stats.compressedTokens ?? 0
+        before: response.stats?.originalTokens ?? used,
+        after: response.stats?.compressedTokens ?? used
       })
       setPhase('done')
       onCompacted()

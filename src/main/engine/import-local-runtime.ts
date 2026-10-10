@@ -204,6 +204,25 @@ function cleanupStage(stage: string, userData: string): void {
   rmSync(stage, { recursive: true, force: true })
 }
 
+/** Windows may release a just-verified native module a few milliseconds late.
+ * Keep the atomic directory move, but tolerate only transient sharing errors;
+ * every other failure remains immediately visible to the caller. */
+async function renameRuntimeWithRetry(source: string, destination: string): Promise<void> {
+  let lastError: unknown
+  for (let attempt = 0; attempt < 20; attempt++) {
+    try {
+      renameSync(source, destination)
+      return
+    } catch (error) {
+      lastError = error
+      const code = (error as NodeJS.ErrnoException)?.code
+      if (!['EPERM', 'EACCES', 'EBUSY'].includes(code ?? '') || attempt === 19) throw error
+      await new Promise<void>((resolve) => setTimeout(resolve, 250))
+    }
+  }
+  throw lastError
+}
+
 function assertRequiredFiles(packageRoot: string): void {
   const required = [
     'dist/main.js',
@@ -312,7 +331,7 @@ export async function importLocalRuntime(
     }
     writeFileSync(join(readyRoot, 'runtime-info.json'), JSON.stringify(info, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 })
     if (existsSync(finalRoot)) throw new Error('同一引擎版本正在被占用，请稍后重试')
-    renameSync(readyRoot, finalRoot)
+    await renameRuntimeWithRetry(readyRoot, finalRoot)
     cleanupStage(stage, userData)
     stage = ''
     progress(onProgress, 'ready', files, bytes, '引擎已导入，可在运行方式中启用')

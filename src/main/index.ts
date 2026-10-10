@@ -200,20 +200,30 @@ if (!gotTheLock) {
     })
   })
 
-  // 引擎是主进程的子进程：必须在这里显式回收，否则退出后会留下孤儿进程占着端口
-  app.on('before-quit', () => {
-    abortAllStreams()
-    disposeAllTerminals()
-    void remoteTerminalService.disposeAll()
-    disposeLsp()
-  })
-
-  app.on('will-quit', (event) => {
-    if (engineHost.getSnapshot().phase === 'idle') return
-    // 异步关闭需要拦一次退出流程
+  let shutdown: Promise<void> | undefined
+  let shutdownComplete = false
+  app.on('before-quit', (event) => {
+    // The second quit must close windows normally: renderer beforeunload
+    // flushes the latest drafts that may still be inside the debounce window.
+    if (shutdownComplete) return
+    // Keep one shutdown operation across repeated quit requests. Remote PTY
+    // cleanup must finish while its endpoint credentials are still available.
     event.preventDefault()
-    void engineHost.stop().finally(() => {
-      app.exit(0)
+    if (shutdown) return
+    abortAllStreams()
+    shutdown = Promise.allSettled([disposeAllTerminals(), remoteTerminalService.disposeAll()]).then(async results => {
+      for (const result of results) if (result.status === 'rejected') console.error('[shutdown] terminal cleanup failed:', result.reason)
+      disposeLsp()
+      try { await engineHost.stop() }
+      catch (error) { console.error('[shutdown] engine cleanup failed:', error) }
+    })
+    let timer: ReturnType<typeof setTimeout> | undefined
+    void Promise.race([shutdown, new Promise<void>(resolve => {
+      timer = setTimeout(() => { console.error('[shutdown] cleanup deadline exceeded'); resolve() }, 25_000)
+    })]).finally(() => {
+      clearTimeout(timer)
+      shutdownComplete = true
+      app.quit()
     })
   })
 

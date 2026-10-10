@@ -62,6 +62,7 @@ function formatErrors(result: TestResult): string[] {
 export default class AgentDiagnosticsReporter implements Reporter {
   private failed: { test: TestCase; result: TestResult }[] = []
   private skipped: { test: TestCase; reason: string }[] = []
+  private notRun: TestCase[] = []
   private startedAt = 0
 
   onBegin(_config: FullConfig, suite: Suite): void {
@@ -73,7 +74,11 @@ export default class AgentDiagnosticsReporter implements Reporter {
     if (result.status === 'failed' || result.status === 'timedOut') {
       this.failed.push({ test, result })
     } else if (result.status === 'skipped') {
-      this.skipped.push({ test, reason: test.annotations[0]?.description ?? '未注明原因' })
+      // Serial siblings also end as skipped after an earlier failure; they were
+      // never executed and must not be explained as missing environment support.
+      const annotation = test.annotations.find(item => item.type === 'skip' || item.type === 'fixme')
+      if (annotation) this.skipped.push({ test, reason: annotation.description ?? '显式跳过，未注明原因' })
+      else this.notRun.push(test)
     }
   }
 
@@ -83,11 +88,17 @@ export default class AgentDiagnosticsReporter implements Reporter {
     // 环境能力缺失单独报：这不是回归，Agent 不应据此改代码
     if (this.skipped.length > 0) {
       console.log(`\n${DIVIDER}`)
-      console.log('ENV-CAPABILITY-SKIPS 以下用例因当前环境不具备所需能力而跳过，非代码缺陷：')
+      console.log('EXPLICIT-SKIPS 以下用例被显式跳过，原因如下：')
       for (const { test, reason } of this.skipped) {
         console.log(`  - ${test.title}`)
         console.log(`    原因: ${reason}`)
       }
+    }
+
+    if (this.notRun.length > 0) {
+      console.log(`\n${DIVIDER}`)
+      console.log('NOT-RUN 以下用例因先前失败或执行中断而未运行，需要补跑：')
+      for (const test of this.notRun) console.log(`  - ${test.title}`)
     }
 
     if (this.failed.length === 0) {

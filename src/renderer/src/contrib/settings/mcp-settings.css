@@ -139,3 +139,8 @@
     align-items: stretch;
   }
 }
+
+.settings-view--mcp .mcp-timeout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, 180px); align-items: center; gap: var(--space-3); grid-column: 1 / -1; }
+.settings-view--mcp .mcp-timeout small { display: block; color: var(--fg-muted); font-size: 12px; margin-top: var(--space-1); }
+@container settings-body (max-width: 560px) { .settings-view--mcp .mcp-timeout { grid-template-columns: 1fr; } }
+.settings-view--mcp .mcp-form > .mcp-scope { grid-column: 1 / -1; }

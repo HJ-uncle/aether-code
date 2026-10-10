@@ -2,6 +2,7 @@
 import { engineHost } from './host'
 import { engineTargetError, isAccountRequestPath, normalizeEnginePath, remoteRequestError, remoteWorkspacePathError } from './protocol'
 import { prepareRemoteChatBody } from './remote-workspace'
+import { managementRequestSignal } from './request-timeout'
 import type { EngineRequestInput, EngineRequestResult, EngineUploadInput } from '../../shared/ipc'
 
 function buildQuery(query: EngineRequestInput['query']): string {
@@ -32,7 +33,7 @@ export async function engineRequest<T = unknown>(
   if (!baseUrl) return { ok: false, code: -1, message: '引擎未就绪', data: null }
   const path = normalizeEnginePath(input.path)
   const url = `${baseUrl}${path}${buildQuery(input.query)}`
-  const signal = AbortSignal.any([engineHost.requestSignal, AbortSignal.timeout(120000)])
+  const signal = managementRequestSignal(input, engineHost.requestSignal)
   const headers: Record<string, string> = {
     Accept: 'application/json',
     ...await engineHost.prepareRequestHeaders(baseUrl)

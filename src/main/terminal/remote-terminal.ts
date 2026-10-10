@@ -18,6 +18,7 @@ interface Session extends Callbacks {
   abort: () => void
   connecting?: Promise<void>
   cancelConnection?: () => void
+  disposePromise?: Promise<void>
 }
 
 /** One service instance is shared by IPC handlers; sessions are endpoint-bound. */
@@ -152,16 +153,47 @@ export class RemoteTerminalService {
   }
   write(id: string, data: string): void { this.send(id, { type: 'input', data }) }
   resize(id: string, cols: number, rows: number): void { if (cols > 0 && rows > 0) this.send(id, { type: 'resize', cols, rows }) }
-  async dispose(id: string): Promise<void> {
-    const session = this.sessions.get(id); if (!session || session.disposed) return
-    session.disposed = true; this.sessions.delete(id); session.target.signal.removeEventListener('abort', session.abort)
-    session.cancelConnection?.()
-    if (session.socket?.readyState === WebSocket.OPEN) session.socket.send(JSON.stringify({ type: 'kill' }))
-    session.socket?.close(); await this.removeRemote(session.target, session.remoteId); session.socket?.terminate()
+  dispose(id: string): Promise<void> {
+    const session = this.sessions.get(id); if (!session) return Promise.resolve()
+    if (session.disposePromise) return session.disposePromise
+    session.disposed = true
+    const closing = Promise.resolve().then(async () => {
+      session.target.signal.removeEventListener('abort', session.abort)
+      session.cancelConnection?.()
+      session.socket?.close()
+      // Keep the local ownership record until the authenticated DELETE has
+      // completed. A failed cleanup must remain retryable and observable.
+      await this.removeRemote(session.target, session.remoteId)
+      session.disposed = true
+      this.sessions.delete(id)
+      session.socket?.terminate()
+    }).finally(() => { if (session.disposePromise === closing) session.disposePromise = undefined })
+    session.disposePromise = closing
+    return closing
   }
   async disposeAll(): Promise<void> { await Promise.all([...this.sessions.keys()].map(id => this.dispose(id))) }
+  async disposeForIdentityChange(): Promise<string[]> {
+    const failures: string[] = []
+    await Promise.all([...this.sessions.keys()].map(async id => {
+      const session = this.sessions.get(id)
+      try { await this.dispose(id) }
+      catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        failures.push(message)
+        // Keep the old endpoint/credential for a retry; never delete an old
+        // tenant's PTY using credentials from the newly selected account.
+        session?.onExit({ id, exitCode: 1, status: 'disconnected', reason: '远程终端清理未完成：' + message,
+          cleanupError: { code: 'PTY_CLEANUP_FAILED', message, errors: [{ phase: 'remote-delete', code: 'REMOTE_CLEANUP_FAILED', name: 'Error', message }] } })
+      }
+    }))
+    return failures
+  }
   private async removeRemote(target: Target, remoteId: string): Promise<void> {
-    await fetch(`${target.snapshot.baseUrl.replace(/\/+$/, '')}/api/v1/terminal/${encodeURIComponent(remoteId)}`, { method: 'DELETE', headers: target.headers, signal: AbortSignal.timeout(5_000), redirect: 'error' }).catch(() => undefined)
+    const response = await fetch(`${target.snapshot.baseUrl.replace(/\/+$/, '')}/api/v1/terminal/${encodeURIComponent(remoteId)}`, { method: 'DELETE', headers: target.headers, signal: AbortSignal.timeout(15_000), redirect: 'error' })
+    const envelope = await response.json().catch(() => ({})) as { code?: number; message?: string; data?: { success?: boolean } }
+    if (!response.ok || (envelope.code !== 200 && envelope.code !== 0) || envelope.data?.success !== true) {
+      throw new Error(envelope.message || `远程终端清理失败（HTTP ${response.status}）`)
+    }
   }
 }
 

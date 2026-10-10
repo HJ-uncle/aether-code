@@ -11,6 +11,7 @@ import {
   initialModelForm,
   buildModelUpdate,
   newModelOverrides,
+  parseContextWindow,
   type ModelFormState
 } from '@renderer/core/engine/model-form'
 import { addModel, refreshModels } from '@renderer/core/engine/model-store'
@@ -90,8 +91,10 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
     } else if (form.apiKey.trim() && form.apiKey.trim().length < 16) {
       return 'API Key 至少 16 个字符'
     }
-    if (form.contextWindow.trim() && !/^\d+$/.test(form.contextWindow.trim())) {
-      return '上下文窗口必须是正整数（单位 K，如 128）'
+    try {
+      parseContextWindow(form.contextWindow)
+    } catch (error) {
+      return error instanceof Error ? error.message : '上下文窗口无效'
     }
     return null
   }, [form, isEdit])
@@ -331,13 +334,13 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
         </SettingsRow>
         <SettingsRow
           label="上下文窗口"
-          description="单位 K（1K = 1000 token），用于用量环的百分比；留空则跟随引擎识别结果"
+          description="单位 K（1K = 1000 token），可保留三位小数；留空则跟随引擎识别结果"
         >
           <input
             className="field__input sg__input sg__input--wide"
             value={form.contextWindow}
             placeholder="如 128"
-            inputMode="numeric"
+            inputMode="decimal"
             onChange={(event) => patch({ contextWindow: event.target.value })}
             onKeyDown={submitOnEnter}
           />

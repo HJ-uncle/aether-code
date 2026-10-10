@@ -28,6 +28,7 @@ let app: ElectronApplication | undefined
 let page: Page
 let httpServer: Server | undefined
 let httpUrl = ''
+let slowHttpDiscovery = false
 const httpHeaders: Array<Record<string, string | string[] | undefined>> = []
 const rendererErrors: string[] = []
 
@@ -86,13 +87,14 @@ async function openMcp(): Promise<void> {
   await expect(page.locator('.settings-view--mcp')).toBeVisible()
 }
 
-async function addStdio(id: string, name: string, scope: 'project' | 'global' = 'project'): Promise<void> {
+async function addStdio(id: string, name: string, scope: 'project' | 'global' = 'project', timeoutMs = ''): Promise<void> {
   await page.getByRole('button', { name: '新增服务器', exact: true }).click()
   await page.getByLabel('MCP id', { exact: true }).fill(id)
   await page.getByLabel('MCP 名称', { exact: true }).fill(name)
   await page.getByLabel('MCP 命令', { exact: true }).fill(process.execPath)
   await page.getByLabel('MCP 参数', { exact: true }).fill(`-e\n${stdioServerScript()}`)
   await page.getByLabel('MCP 环境变量', { exact: true }).fill(JSON.stringify({ MCP_UI_SECRET: 'fixture-secret', MCP_UI_MARKER: marker }))
+  await page.getByLabel('MCP 请求超时', { exact: true }).fill(timeoutMs)
   await page.locator('.mcp-scope select').selectOption(scope)
   await page.getByRole('button', { name: '保存', exact: true }).click()
   await expect(page.locator('.mcp-form')).toHaveCount(0)
@@ -136,6 +138,9 @@ test.describe.serial('MCP 设置真实引擎闭环', () => {
         return
       }
       if (message.id === undefined) { response.statusCode = 202; response.end(); return }
+      // Each RPC stays within its configured 10s deadline, but the complete
+      // handshake exceeds a single request deadline plus a response envelope.
+      if (slowHttpDiscovery && ['initialize', 'tools/list'].includes(message.method)) await new Promise<void>(done => setTimeout(done, 8000))
       if (message.method === 'initialize') {
         jsonResponse(response, message.id, { protocolVersion: '2025-06-18', capabilities: {}, serverInfo: { name: 'http-ui-fixture', version: '1' } }, { 'mcp-session-id': 'mcp-ui-session' })
       } else if (message.method === 'tools/list') {
@@ -186,7 +191,8 @@ test.describe.serial('MCP 设置真实引擎闭环', () => {
   })
 
   test('项目 stdio CRUD、环境变量、工具发现和启停均真实落盘', async () => {
-    await addStdio('ui-stdio', 'UI stdio')
+    await addStdio('ui-stdio', 'UI stdio', 'project', '0')
+    expect(JSON.parse(readFileSync(projectConfig(), 'utf8')).mcpServers['ui-stdio'].timeoutMs).toBe(0)
     expect(existsSync(projectConfig())).toBe(true)
     const block = serverBlock('ui-stdio')
     await block.getByRole('button', { name: '测试', exact: true }).click()
@@ -218,6 +224,33 @@ test.describe.serial('MCP 设置真实引擎闭环', () => {
     await page.getByRole('button', { name: '保存', exact: true }).click()
     await expect(page.locator('.mcp-form')).toHaveCount(0)
     await expect.poll(() => JSON.parse(readFileSync(projectConfig(), 'utf8')).mcpServers['ui-stdio'].description).toBe('edited project server')
+  })
+
+  test('请求超时可保留零、修改、重开读取和清空恢复默认，非法值不落盘', async () => {
+    const record = () => JSON.parse(readFileSync(projectConfig(), 'utf8')).mcpServers['ui-stdio']
+    await serverBlock('ui-stdio').getByRole('button', { name: '编辑', exact: true }).click()
+    await expect(page.getByLabel('MCP 请求超时', { exact: true })).toHaveValue('0')
+    await page.getByLabel('MCP 请求超时', { exact: true }).fill('45000')
+    await page.getByRole('button', { name: '保存', exact: true }).click()
+    await expect(page.locator('.mcp-form')).toHaveCount(0)
+    await expect.poll(() => record().timeoutMs).toBe(45000)
+    await page.reload(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90000 }); await openMcp()
+    await serverBlock('ui-stdio').getByRole('button', { name: '编辑', exact: true }).click()
+    await expect(page.getByLabel('MCP 请求超时', { exact: true })).toHaveValue('45000')
+    await page.getByLabel('MCP 请求超时', { exact: true }).fill('')
+    await page.getByRole('button', { name: '保存', exact: true }).click()
+    await expect(page.locator('.mcp-form')).toHaveCount(0)
+    await expect.poll(() => Object.hasOwn(record(), 'timeoutMs')).toBe(false)
+    await serverBlock('ui-stdio').getByRole('button', { name: '编辑', exact: true }).click()
+    await expect(page.getByLabel('MCP 请求超时', { exact: true })).toHaveValue('')
+    await page.getByLabel('MCP 请求超时', { exact: true }).fill('-1')
+    await page.getByRole('button', { name: '保存', exact: true }).click()
+    await expect(page.locator('.settings-view--mcp [role="alert"]')).toContainText('请求超时必须是非负整数')
+    expect(Object.hasOwn(record(), 'timeoutMs')).toBe(false)
+    await page.getByLabel('MCP 请求超时', { exact: true }).fill('0')
+    await page.getByRole('button', { name: '保存', exact: true }).click()
+    await expect(page.locator('.mcp-form')).toHaveCount(0)
+    await expect.poll(() => record().timeoutMs).toBe(0)
   })
 
   test('全局服务器编辑与停用只改全局文件，不创建项目覆盖', async () => {
@@ -254,17 +287,21 @@ test.describe.serial('MCP 设置真实引擎闭环', () => {
   })
 
   test('HTTP MCP 输入请求头并完成真实工具发现', async () => {
+    slowHttpDiscovery = true
     await page.getByRole('button', { name: '新增服务器', exact: true }).click()
     await page.getByLabel('MCP id', { exact: true }).fill('ui-http')
     await page.getByLabel('MCP 名称', { exact: true }).fill('UI HTTP')
     await page.getByLabel('MCP 传输类型', { exact: true }).selectOption('streamableHttp')
     await page.getByLabel('MCP URL', { exact: true }).fill(httpUrl)
     await page.getByLabel('MCP 请求头', { exact: true }).fill(JSON.stringify({ 'X-MCP-UI': 'fixture-header' }))
+    await page.getByLabel('MCP 请求超时', { exact: true }).fill('10000')
     await page.getByRole('button', { name: '保存', exact: true }).click()
     await expect(page.locator('.mcp-form')).toHaveCount(0)
+    expect(JSON.parse(readFileSync(projectConfig(), 'utf8')).mcpServers['ui-http'].timeoutMs).toBe(10000)
     const block = serverBlock('ui-http')
     await block.getByRole('button', { name: '测试', exact: true }).click()
-    await expect(page.locator('.mcp-notice')).toContainText('连接成功')
+    await expect(page.locator('.mcp-notice')).toContainText('连接成功', { timeout: 30000 })
+    slowHttpDiscovery = false
     await expect(block.getByRole('switch', { name: 'http_echo 启用', exact: true })).toBeVisible()
     expect(httpHeaders.length).toBeGreaterThanOrEqual(2)
     expect(httpHeaders.every(headers => headers['x-mcp-ui'] === 'fixture-header')).toBe(true)
@@ -275,6 +312,7 @@ test.describe.serial('MCP 设置真实引擎闭环', () => {
     const jsonServer = {
       'json-ui': {
         type: 'stdio',
+        timeoutMs: 0,
         name: 'JSON UI',
         command: process.execPath,
         args: ['-e', stdioServerScript()],
@@ -287,6 +325,9 @@ test.describe.serial('MCP 设置真实引擎闭环', () => {
     await expect.poll(() => JSON.parse(readFileSync(projectConfig(), 'utf8')).mcpServers['json-ui'].transportType).toBe('stdio')
     await page.getByRole('button', { name: '读取当前配置', exact: true }).click()
     await expect(page.getByLabel('MCP JSON 配置', { exact: true })).toContainText('json-ui')
+    expect(JSON.parse(readFileSync(projectConfig(), 'utf8')).mcpServers['json-ui'].timeoutMs).toBe(0)
+    const exported = JSON.parse(await page.getByLabel('MCP JSON 配置', { exact: true }).inputValue())
+    expect(exported.mcpServers['json-ui'].timeoutMs).toBe(0)
   })
 
   test('错误配置可恢复，删除项目和全局记录并验证磁盘清理', async () => {

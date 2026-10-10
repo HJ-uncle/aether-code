@@ -273,6 +273,20 @@ function resolveCwd(cwd: string): string {
   return assertAllowed(cwd)
 }
 
+/**
+ * Git discovers a repository in a parent directory when the opened workspace
+ * is a nested folder.  Porcelain status then reports parent changes with
+ * `../` prefixes.  Those paths are outside the folder the user explicitly
+ * opened and must not leak into the workspace-scoped status contract (or be
+ * joined back into Explorer paths outside the root).
+ */
+function isWorkspacePath(root: string, relativePath: string | undefined): boolean {
+  if (!relativePath || path.isAbsolute(relativePath)) return false
+  const resolved = path.resolve(root, relativePath)
+  const relative = path.relative(root, resolved)
+  return relative === '' || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`))
+}
+
 // ==================== 状态与 diff ====================
 
 async function isGitRepo(cwd: string): Promise<boolean> {
@@ -339,11 +353,14 @@ export async function status(cwd: string): Promise<GitStatusResult> {
         const filePath = kind === '2' ? tabParts?.[0].split(' ').slice(9).join(' ') : parts.slice(8).join(' ')
         const oldPath = kind === '2' ? tabParts?.[1] : undefined
         if (!filePath) continue
+        // A nested workspace can receive parent-repository status entries
+        // such as `../../../package.json`; never expose those outside paths.
+        if (!isWorkspacePath(root, filePath)) continue
         const stagedChange = mapChangeType(xy[0])
         const unstagedChange = mapChangeType(xy[1])
         files.push({
           path: filePath,
-          oldPath,
+          oldPath: oldPath && isWorkspacePath(root, oldPath) ? oldPath : undefined,
           changeType: unstagedChange ?? stagedChange ?? 'modified',
           staged: stagedChange !== null,
           stagedChange,
@@ -358,6 +375,7 @@ export async function status(cwd: string): Promise<GitStatusResult> {
         const xy = parts[1] ?? '..'
         const filePath = parts.slice(10).join(' ')
         if (!filePath) continue
+        if (!isWorkspacePath(root, filePath)) continue
         const stagedChange = mapChangeType(xy[0])
         const unstagedChange = mapChangeType(xy[1])
         files.push({
@@ -374,6 +392,7 @@ export async function status(cwd: string): Promise<GitStatusResult> {
       } else if (kind === '?') {
         const filePath = line.slice(2)
         if (!filePath) continue
+        if (!isWorkspacePath(root, filePath)) continue
         files.push({
           path: filePath,
           changeType: 'untracked',

@@ -49,19 +49,14 @@ export function TodoTray({ todos }: { todos: EngineTodo[] }): JSX.Element | null
 
       {completed.length > 0 ? (
         <div className="todo-tray__done">
-          <div className="todo-tray__done-label">
-            <Icon name="check" size={15} />
-            已完成 {completed.length} 项
-          </div>
+          {/* 去掉「已完成 N 项」标签行：条目上的删除线 + ✓ 已表达状态，计数由底部
+              进度行的「N/M 个任务已完成」承担，标签行是纯占位 */}
           <ul className="todo-tray__list todo-tray__list--done">
             {completed.map((todo) => (
               <li key={todo.id} className="todo-tray__item todo-tray__item--done">
                 <Icon name="check" size={16} />
                 <span className="todo-tray__title" title={todo.description || todo.title}>
                   {todo.title}
-                </span>
-                <span className="todo-tray__status todo-tray__status--done">
-                  {STATUS_LABEL[todo.status]}
                 </span>
               </li>
             ))}

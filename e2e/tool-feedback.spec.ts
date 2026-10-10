@@ -2,7 +2,7 @@
 import { expect, test } from '@playwright/test'
 import { spawnSync } from 'node:child_process'
 import type { ToolActivity } from '../src/renderer/src/core/engine/useChat'
-import { finishTool, replayMessages } from '../src/renderer/src/core/engine/chat-history'
+import { finishTool, normalizeTool, replayMessages } from '../src/renderer/src/core/engine/chat-history'
 import { toolStatusLabel } from '../src/renderer/src/core/engine/subagent-state'
 import { boundToolOutput, commandInvocation, exportToolDiagnostics, toolFailureMessage } from '../src/renderer/src/core/engine/tool-feedback'
 
@@ -89,4 +89,23 @@ test('退出、信号、取消及未知结果只根据返回证据显示，不�
   expect(toolStatusLabel(tool({ state: 'unknown' }))).toBe('状态未知')
   expect(toolStatusLabel(tool({ state: 'done', result: '28 passed' }))).toBe('成功')
   expect(toolStatusLabel(tool({ name: 'code_diagnose', state: 'error', error: 'No adapter supports index.html' }))).toBe('失败')
+})
+
+test('上下文微压缩后回放和复制保留真实工具结果，不把占位符当日志', () => {
+  const messages = replayMessages([
+    { role: 'assistant', id: 'assistant', conversationId: 'turn', toolCall: { id: 'test', name: 'execute_cmd', args: { command: 'node', args: ['test.cjs'] } } },
+    { role: 'tool', toolCallId: 'test', content: '[tool result cleared]', metadata: {
+      success: false, error: 'COMMAND_EXIT_FAILED', outputPreview: 'AssertionError: expected five stones, got four' } }
+  ])
+  const restored = messages[0].tools[0]
+  expect(restored.result).toBe('AssertionError: expected five stones, got four')
+  expect(exportToolDiagnostics(restored)).toContain('expected five stones, got four')
+  expect(exportToolDiagnostics(restored)).not.toContain('[tool result cleared]')
+  expect(normalizeTool({ output: 'complete live result', metadata: { outputPreview: 'short preview' } }).result).toBe('complete live result')
+})
+
+test('旧记录原文已丢失时明确告知，不伪造结果或展示内部占位符', () => {
+  const lost = normalizeTool({ output: '[tool result cleared]' })
+  expect(lost.result).toContain('当前记录无法恢复')
+  expect(lost.result).not.toContain('[tool result cleared]')
 })

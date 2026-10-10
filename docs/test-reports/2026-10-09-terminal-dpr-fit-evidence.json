@@ -1,0 +1,377 @@
+{
+  "failure": {
+    "status": "failed",
+    "duration": 19598,
+    "geometry": [
+      {
+        "label": "before-font-change",
+        "dpr": 1.25,
+        "fonts": "loaded",
+        "host": {
+          "width": 830,
+          "height": 202.3874969482422,
+          "top": 565.6124877929688,
+          "bottom": 767.9999847412109,
+          "fontFamily": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
+          "fontSize": "13px",
+          "lineHeight": "19.5px",
+          "paddingTop": "0px",
+          "paddingBottom": "0px",
+          "computedHeight": "202.387px",
+          "clientHeight": 202,
+          "clientWidth": 830,
+          "scrollTop": 0
+        },
+        "screen": {
+          "width": 812,
+          "height": 202,
+          "top": 565.6124877929688,
+          "bottom": 767.6124877929688,
+          "fontFamily": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
+          "fontSize": "13px",
+          "lineHeight": "19.5px",
+          "paddingTop": "0px",
+          "paddingBottom": "0px",
+          "computedHeight": "202px",
+          "clientHeight": 202,
+          "clientWidth": 812,
+          "scrollTop": 0
+        },
+        "firstRow": {
+          "width": 812,
+          "height": 16.825000762939453,
+          "top": 565.6124877929688,
+          "bottom": 582.4374885559082,
+          "fontFamily": "Consolas, \"Cascadia Mono\", monospace",
+          "fontSize": "12px",
+          "lineHeight": "16.8333px",
+          "paddingTop": "0px",
+          "paddingBottom": "0px",
+          "computedHeight": "16.825px",
+          "clientHeight": 17,
+          "clientWidth": 812,
+          "scrollTop": 0
+        },
+        "rowCount": 12,
+        "lastResize": {
+          "terminalId": "fixture-1",
+          "cols": 123,
+          "rows": 12
+        }
+      },
+      {
+        "label": "large-font",
+        "dpr": 1.25,
+        "fonts": "loaded",
+        "host": {
+          "width": 830,
+          "height": 202.3874969482422,
+          "top": 565.6124877929688,
+          "bottom": 767.9999847412109,
+          "fontFamily": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
+          "fontSize": "13px",
+          "lineHeight": "19.5px",
+          "paddingTop": "0px",
+          "paddingBottom": "0px",
+          "computedHeight": "202.387px",
+          "clientHeight": 202,
+          "clientWidth": 830,
+          "scrollTop": 0
+        },
+        "screen": {
+          "width": 814,
+          "height": 190,
+          "top": 565.6124877929688,
+          "bottom": 755.6124877929688,
+          "fontFamily": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
+          "fontSize": "13px",
+          "lineHeight": "19.5px",
+          "paddingTop": "0px",
+          "paddingBottom": "0px",
+          "computedHeight": "190px",
+          "clientHeight": 190,
+          "clientWidth": 814,
+          "scrollTop": 0
+        },
+        "firstRow": {
+          "width": 814,
+          "height": 27.137500762939453,
+          "top": 565.6124877929688,
+          "bottom": 592.7499885559082,
+          "fontFamily": "Consolas, \"Cascadia Mono\", monospace",
+          "fontSize": "20px",
+          "lineHeight": "27.1429px",
+          "paddingTop": "0px",
+          "paddingBottom": "0px",
+          "computedHeight": "27.1375px",
+          "clientHeight": 27,
+          "clientWidth": 814,
+          "scrollTop": 0
+        },
+        "rowCount": 7,
+        "lastResize": {
+          "terminalId": "fixture-1",
+          "cols": 74,
+          "rows": 7
+        }
+      },
+      {
+        "label": "failure",
+        "dpr": 1.25,
+        "fonts": "loaded",
+        "host": {
+          "width": 830,
+          "height": 202.3874969482422,
+          "top": 565.6124877929688,
+          "bottom": 767.9999847412109,
+          "fontFamily": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
+          "fontSize": "13px",
+          "lineHeight": "19.5px",
+          "paddingTop": "0px",
+          "paddingBottom": "0px",
+          "computedHeight": "202.387px",
+          "clientHeight": 202,
+          "clientWidth": 830,
+          "scrollTop": 0
+        },
+        "screen": {
+          "width": 812,
+          "height": 185,
+          "top": 565.6124877929688,
+          "bottom": 750.6124877929688,
+          "fontFamily": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
+          "fontSize": "13px",
+          "lineHeight": "19.5px",
+          "paddingTop": "0px",
+          "paddingBottom": "0px",
+          "computedHeight": "185px",
+          "clientHeight": 185,
+          "clientWidth": 812,
+          "scrollTop": 0
+        },
+        "firstRow": {
+          "width": 812,
+          "height": 16.8125,
+          "top": 565.6124877929688,
+          "bottom": 582.4249877929688,
+          "fontFamily": "Consolas, \"Cascadia Mono\", monospace",
+          "fontSize": "12px",
+          "lineHeight": "16.8182px",
+          "paddingTop": "0px",
+          "paddingBottom": "0px",
+          "computedHeight": "16.8125px",
+          "clientHeight": 17,
+          "clientWidth": 812,
+          "scrollTop": 0
+        },
+        "rowCount": 11,
+        "lastResize": {
+          "terminalId": "fixture-1",
+          "cols": 123,
+          "rows": 11
+        }
+      }
+    ]
+  },
+  "fixed": {
+    "status": "passed",
+    "duration": 673,
+    "geometry": [
+      {
+        "label": "before-font-change",
+        "dpr": 1.25,
+        "fonts": "loaded",
+        "host": {
+          "width": 830,
+          "height": 202.3874969482422,
+          "top": 565.6124877929688,
+          "bottom": 767.9999847412109,
+          "fontFamily": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
+          "fontSize": "13px",
+          "lineHeight": "19.5px",
+          "paddingTop": "0px",
+          "paddingBottom": "0px",
+          "computedHeight": "202.387px",
+          "clientHeight": 202,
+          "clientWidth": 830,
+          "scrollTop": 0
+        },
+        "screen": {
+          "width": 812,
+          "height": 202,
+          "top": 565.6124877929688,
+          "bottom": 767.6124877929688,
+          "fontFamily": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
+          "fontSize": "13px",
+          "lineHeight": "19.5px",
+          "paddingTop": "0px",
+          "paddingBottom": "0px",
+          "computedHeight": "202px",
+          "clientHeight": 202,
+          "clientWidth": 812,
+          "scrollTop": 0
+        },
+        "firstRow": {
+          "width": 812,
+          "height": 16.825000762939453,
+          "top": 565.6124877929688,
+          "bottom": 582.4374885559082,
+          "fontFamily": "Consolas, \"Cascadia Mono\", monospace",
+          "fontSize": "12px",
+          "lineHeight": "16.8333px",
+          "paddingTop": "0px",
+          "paddingBottom": "0px",
+          "computedHeight": "16.825px",
+          "clientHeight": 17,
+          "clientWidth": 812,
+          "scrollTop": 0
+        },
+        "rowCount": 12,
+        "lastResize": {
+          "terminalId": "fixture-1",
+          "cols": 123,
+          "rows": 12
+        }
+      },
+      {
+        "label": "large-font",
+        "dpr": 1.25,
+        "fonts": "loaded",
+        "host": {
+          "width": 830,
+          "height": 202.3874969482422,
+          "top": 565.6124877929688,
+          "bottom": 767.9999847412109,
+          "fontFamily": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
+          "fontSize": "13px",
+          "lineHeight": "19.5px",
+          "paddingTop": "0px",
+          "paddingBottom": "0px",
+          "computedHeight": "202.387px",
+          "clientHeight": 202,
+          "clientWidth": 830,
+          "scrollTop": 0
+        },
+        "screen": {
+          "width": 814,
+          "height": 190,
+          "top": 565.6124877929688,
+          "bottom": 755.6124877929688,
+          "fontFamily": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
+          "fontSize": "13px",
+          "lineHeight": "19.5px",
+          "paddingTop": "0px",
+          "paddingBottom": "0px",
+          "computedHeight": "190px",
+          "clientHeight": 190,
+          "clientWidth": 814,
+          "scrollTop": 0
+        },
+        "firstRow": {
+          "width": 814,
+          "height": 27.137500762939453,
+          "top": 565.6124877929688,
+          "bottom": 592.7499885559082,
+          "fontFamily": "Consolas, \"Cascadia Mono\", monospace",
+          "fontSize": "20px",
+          "lineHeight": "27.1429px",
+          "paddingTop": "0px",
+          "paddingBottom": "0px",
+          "computedHeight": "27.1375px",
+          "clientHeight": 27,
+          "clientWidth": 814,
+          "scrollTop": 0
+        },
+        "rowCount": 7,
+        "lastResize": {
+          "terminalId": "fixture-1",
+          "cols": 74,
+          "rows": 7
+        }
+      },
+      {
+        "label": "restored-font",
+        "dpr": 1.25,
+        "fonts": "loaded",
+        "host": {
+          "width": 830,
+          "height": 202.3874969482422,
+          "top": 565.6124877929688,
+          "bottom": 767.9999847412109,
+          "fontFamily": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
+          "fontSize": "13px",
+          "lineHeight": "19.5px",
+          "paddingTop": "0px",
+          "paddingBottom": "0px",
+          "computedHeight": "202.387px",
+          "clientHeight": 202,
+          "clientWidth": 830,
+          "scrollTop": 0
+        },
+        "screen": {
+          "width": 812,
+          "height": 202,
+          "top": 565.6124877929688,
+          "bottom": 767.6124877929688,
+          "fontFamily": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
+          "fontSize": "13px",
+          "lineHeight": "19.5px",
+          "paddingTop": "0px",
+          "paddingBottom": "0px",
+          "computedHeight": "202px",
+          "clientHeight": 202,
+          "clientWidth": 812,
+          "scrollTop": 0
+        },
+        "firstRow": {
+          "width": 812,
+          "height": 16.825000762939453,
+          "top": 565.6124877929688,
+          "bottom": 582.4374885559082,
+          "fontFamily": "Consolas, \"Cascadia Mono\", monospace",
+          "fontSize": "12px",
+          "lineHeight": "16.8333px",
+          "paddingTop": "0px",
+          "paddingBottom": "0px",
+          "computedHeight": "16.825px",
+          "clientHeight": 17,
+          "clientWidth": 812,
+          "scrollTop": 0
+        },
+        "rowCount": 12,
+        "lastResize": {
+          "terminalId": "fixture-1",
+          "cols": 123,
+          "rows": 12
+        }
+      }
+    ]
+  },
+  "rounding": [
+    {
+      "rows": 7,
+      "deviceCell": 21,
+      "dpr": 1.25,
+      "availableHeight": 202,
+      "cellCSS": 16.857142857142858,
+      "nextRows": 11
+    },
+    {
+      "rows": 11,
+      "deviceCell": 21,
+      "dpr": 1.25,
+      "availableHeight": 202,
+      "cellCSS": 16.818181818181817,
+      "nextRows": 12
+    },
+    {
+      "rows": 12,
+      "deviceCell": 21,
+      "dpr": 1.25,
+      "availableHeight": 202,
+      "cellCSS": 16.833333333333332,
+      "nextRows": 12
+    }
+  ],
+  "scope": "Real Electron + xterm + IPC + authenticated WebSocket fixture; the remote PTY is controlled, UI and measurement are real"
+}

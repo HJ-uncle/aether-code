@@ -25,7 +25,15 @@ export function useTerminalFit(
         if (disposed || !container.isConnected || container.clientWidth <= 0 || container.clientHeight <= 0) return
         if (!session.term.element) return
 
-        session.fit.fit()
+        // DOM rendering rounds the canvas in device pixels, then derives cell
+        // height from the current row count. At fractional DPR a font change can
+        // therefore need another fit after resize updates those rounded metrics.
+        // Bound convergence and publish only the final geometry to the PTY.
+        for (let attempt = 0; attempt < 4; attempt++) {
+          session.fit.fit()
+          const proposed = session.fit.proposeDimensions()
+          if (!proposed || (proposed.cols === session.term.cols && proposed.rows === session.term.rows)) break
+        }
         const { cols, rows } = session.term
         if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols <= 0 || rows <= 0) return
         const previous = lastSent.current

@@ -86,7 +86,8 @@ function runtimeEnvironment(): NodeJS.ProcessEnv {
     HISTORY_MAX_TOKENS: '100000',
     AGENT_TOTAL_TOKEN_LIMIT: '',
     SUBAGENT_TOKEN_LIMIT: '',
-    MAX_ITERATIONS: '8'
+    MAX_ITERATIONS: '8',
+    ENABLE_LONG_TERM_MEMORY: 'false'
   }
 }
 
@@ -154,7 +155,8 @@ function prepareFixtures(): void {
             'MCP_CONFIG_PATH',
             'TOKEN_BUDGET',
             'HISTORY_MAX_TOKENS',
-            'MAX_ITERATIONS'
+            'MAX_ITERATIONS',
+            'ENABLE_LONG_TERM_MEMORY'
           ].includes(key)
         )
       )
@@ -267,6 +269,8 @@ function assertCodeProfile(names: string[]): void {
 
 function dispatchedToolNames(marker: string): string[] {
   const request = provider.requests.find(item => {
+    // Memory keyword extraction has only a user message and deliberately no tools.
+    if (!item.messages.some(message => message.role === 'system')) return false
     const user = [...item.messages].reverse().find(message => message.role === 'user')
     return typeof user?.content === 'string' && user.content.includes(marker)
   })

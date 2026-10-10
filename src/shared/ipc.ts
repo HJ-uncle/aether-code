@@ -193,6 +193,20 @@ export interface TerminalExitInfo {
   status?: 'disconnected' | 'exited'
   /** Optional transport reason (remote disconnect/reconnect), not a PTY stderr line. */
   reason?: string
+  /** Native PTY cleanup can fail after the shell has reported its exit. */
+  cleanupError?: TerminalCleanupError
+}
+
+export interface TerminalCleanupError {
+  code: 'PTY_CLEANUP_FAILED' | 'PTY_EXIT_TIMEOUT'
+  message: string
+  errors: Array<{
+    phase: string
+    code: string
+    name: string
+    message: string
+    stack?: string
+  }>
 }
 
 export interface TerminalDataEvent {
@@ -494,6 +508,8 @@ export interface EngineRequestInput {
   path: string
   query?: Record<string, string | number | boolean | undefined>
   body?: unknown
+  /** MCP connect/test only: absent keeps the management default; 0 disables its deadline. */
+  timeoutMs?: number
 }
 
 export interface RemoteAttachmentInput {

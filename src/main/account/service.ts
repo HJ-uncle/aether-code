@@ -7,7 +7,12 @@ import { getAccountTransport, saveHttpTrust } from './transport-trust'
 import { remoteAuthTarget } from '../engine/remote-auth-contract'
 
 export interface AccountTarget { scope: string; url: string; headers: Record<string, string> }
-interface Dependencies { target(): AccountTarget; identityChanged(): Promise<void>; changed(state: AccountState): void }
+interface Dependencies {
+  target(): AccountTarget
+  beforeIdentityChange?(): Promise<string | null>
+  identityChanged(): Promise<void>
+  changed(state: AccountState): void
+}
 class AccountHttpError extends Error { constructor(readonly status: number, message: string) { super(message) } }
 const initial = (url = ''): AccountState => ({ status: 'signed-out', user: null, providers: [], serviceUrl: url, persistence: 'none', message: null, registrationEnabled: false })
 let dependencies: Dependencies | null = null
@@ -99,15 +104,27 @@ function exclusive<T>(action: (t: AccountTarget) => Promise<T>): Promise<T> {
   mutation = next.catch(() => undefined)
   return next
 }
+async function identityCleanup(): Promise<string | null> {
+  try { return await dep().beforeIdentityChange?.() ?? null }
+  catch (error) { return '旧账号资源清理未完成：' + (error instanceof Error ? error.message : String(error)) + '。连接恢复后可重试清理。' }
+}
+async function committedIdentity(): Promise<string | null> {
+  // Credentials have already committed. A transport cleanup failure must not
+  // report login/logout as unsuccessful while leaving the identity changed.
+  try { await dep().identityChanged(); return null }
+  catch (error) { return '账号已更新，连接资源清理未完成：' + (error instanceof Error ? error.message : String(error)) }
+}
 async function accept(t: AccountTarget, result: AccountCredential): Promise<AccountState> {
   assertTarget(t)
   if (!validCredential(result)) throw new Error('登录服务返回的会话无效。')
+  const cleanupMessage = await identityCleanup()
+  assertTarget(t)
   generation++
   const previous = readAccountCredential(t.scope).credential
   const recoveryKey = result.recoveryKey || (previous?.user.id === result.user.id ? previous.recoveryKey : undefined)
   const entry = saveAccountCredential(t.scope, { ...result, recoveryKey })
-  await dep().identityChanged()
-  return publish(t, { status: 'authenticated', user: result.user, persistence: entry.persistence, message: entry.persistence === 'session' ? '系统安全存储不可用，当前登录仅在本次运行有效。请备份登录凭证。' : null })
+  const identityMessage = await committedIdentity()
+  return publish(t, { status: 'authenticated', user: result.user, persistence: entry.persistence, message: cleanupMessage ?? identityMessage ?? (entry.persistence === 'session' ? '系统安全存储不可用，当前登录仅在本次运行有效。请备份登录凭证。' : null) })
 }
 export function configureAccountService(value: Dependencies): void {
   dependencies = value
@@ -252,6 +269,8 @@ export const accountService = {
   logout(all = false): Promise<AccountState> {
     externalAbort?.abort()
     return exclusive(async t => {
+    // DELETE needs the old account token, before /logout revokes it.
+    const cleanupMessage = await identityCleanup()
     let message: string | null = null
     try { await request(t, '/logout', 'POST', { all: all === true }, true) } catch (error) {
       if (all && !(error instanceof AccountHttpError && error.status === 401)) throw error
@@ -261,8 +280,8 @@ export const accountService = {
     generation++
     externalAbort?.abort()
     saveAccountCredential(t.scope, null)
-    await dep().identityChanged()
-    return publish(t, { status: 'signed-out', user: null, persistence: 'none', message })
+    const identityMessage = await committedIdentity()
+    return publish(t, { status: 'signed-out', user: null, persistence: 'none', message: cleanupMessage ?? identityMessage ?? message })
   }) },
   sessions(): Promise<AccountSession[]> { return request(target(), '/sessions', 'GET', undefined, true) },
   async revokeSession(id: string): Promise<void> {

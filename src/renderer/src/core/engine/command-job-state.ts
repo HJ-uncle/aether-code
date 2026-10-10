@@ -1,9 +1,23 @@
 import type { CommandJobOutput, CommandJobSnapshot, CommandJobStatus, CommandOutputEntry } from '@shared/command-job'
 import type { ChatMessage, ToolActivity } from './useChat'
+import { commandInvocation } from './tool-feedback'
 
 const statuses: CommandJobStatus[] = ['running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'timed_out', 'interrupted']
 export const commandStatusLabels: Record<CommandJobStatus, string> = {
   running: '运行中', cancelling: '正在停止', succeeded: '已完成', failed: '失败', cancelled: '已取消', timed_out: '已超时', interrupted: '已中断'
+}
+/** A deliberate stop is a normal control action in the transcript, not an error. */
+export function commandJobDisplayLabel(job: CommandJobSnapshot): string {
+  return job.status === 'cancelled' ? '已停止' : commandStatusLabels[job.status]
+}
+export function commandJobStopMessage(job: CommandJobSnapshot): string | undefined {
+  if (job.status !== 'cancelled' || (job.error && job.error.code !== 'COMMAND_CANCELLED')) return undefined
+  if (job.error?.message === 'Stopped by cancel_command') return 'Agent 已停止此命令。'
+  if (job.error?.message === 'Cancelled by user') return '已按你的请求停止命令。'
+  return '命令已按请求停止。'
+}
+export function commandJobInvocation(job: CommandJobSnapshot): string {
+  return commandInvocation(JSON.stringify({ command: job.command, args: job.args })) ?? job.command
 }
 export function commandJobActive(job: CommandJobSnapshot): boolean { return job.status === 'running' || job.status === 'cancelling' }
 export function normalizeCommandJob(value: unknown): CommandJobSnapshot | undefined {
@@ -80,7 +94,7 @@ export function mergeCommandOutput(previous: CommandOutputState, page: CommandJo
   return { entries, bytes, cursor: page.nextCursor, truncated }
 }
 export function exportCommandJob(job: CommandJobSnapshot): string {
-  return [`状态：${commandStatusLabels[job.status]}`, `工作目录：${job.cwd}`, `命令：${[job.command, ...job.args].join(' ')}`,
+  return [`状态：${commandJobDisplayLabel(job)}`, commandJobStopMessage(job) ?? '', `工作目录：${job.cwd}`, `命令：${commandJobInvocation(job)}`,
     job.exitCode === null ? '' : `退出码：${job.exitCode}`, job.signal ? `信号：${job.signal}` : '',
     job.error ? `原因：${job.error.code} ${job.error.message}` : '', `任务：${job.jobId}`].filter(Boolean).join('\n')
 }

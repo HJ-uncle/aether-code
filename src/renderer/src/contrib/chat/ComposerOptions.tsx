@@ -7,6 +7,8 @@ import { changeMemoryScope, useMemoryScope } from '@renderer/core/engine/memory-
 import { MEMORY_SCOPE_DESCRIPTORS, type MemoryScope } from '@renderer/core/engine/memory'
 import { Icon } from '@renderer/workbench/icons'
 import { Popover } from '@renderer/workbench/Popover'
+import type { SessionThinkingMode } from './session-thinking-store'
+import type { ComposerThinkingMode } from './session-request-config'
 
 /**
  * 思考档位（对齐 wuzu-client 的 Low/High/Max，外加独立「关闭」档）。
@@ -64,8 +66,8 @@ function MenuOption({
  * 两行同款 UI：图标 + 名称 + 摘要 + 右侧「值 + 弹出菜单」。
  * 弹层与菜单统一走 Popover（portal 挂 body、防裁切、防出界）。
  */
-export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Element {
-  const { ready, settings, updateSettings } = useApp()
+export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingChange }: { sessionId: string; modelId: string; thinkingMode: ComposerThinkingMode; onThinkingChange: (mode: SessionThinkingMode) => void }): JSX.Element {
+  const { ready } = useApp()
   const { models } = useModels()
   const { mode: storedMode, loaded, loading, error, refresh } = useSecurityMode(sessionId)
   const {
@@ -90,12 +92,14 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
     if (ready && sessionId && !memoryLoaded && !memoryLoading && !memoryError) void refreshMemory(sessionId)
   }, [ready, sessionId, memoryLoaded, memoryLoading, memoryError, refreshMemory])
 
-  const currentModel = models.find((m) => m.modelId === settings.lastModelId)
+  const currentModel = models.find((m) => m.modelId === modelId)
   const thinkDescriptor =
-    THINKING_OPTIONS.find((item) => item.value === settings.thinkingMode) ?? THINKING_OPTIONS[2]
+    THINKING_OPTIONS.find((item) => item.value === thinkingMode) ??
+    (thinkingMode === 'medium' ? { label: 'Medium', summary: '本会话已请求中等推理强度' } :
+      thinkingMode === 'on' ? { label: 'On', summary: '本会话已明确请求开启推理' } : THINKING_OPTIONS[2])
   const secDescriptor = MODE_DESCRIPTORS.find((item) => item.value === mode)
   const thinkSummary =
-    settings.thinkingMode === 'off'
+    thinkingMode === 'off'
       ? '下一次发送请求关闭推理；当前运行沿用原设置'
       : currentModel?.capabilities?.thinking
         ? thinkDescriptor.summary
@@ -103,18 +107,18 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
   const secSummary = loading
     ? '正在读取安全模式…'
     : error ?? (secDescriptor ? [secDescriptor.summary, secDescriptor.warning].filter(Boolean).join(' ') : '尚未确认引擎当前权限')
-  const memoryDescriptor = MEMORY_SCOPE_DESCRIPTORS.find((item) => item.value === storedMemoryScope) ?? MEMORY_SCOPE_DESCRIPTORS[0]
+  const memoryDescriptor = MEMORY_SCOPE_DESCRIPTORS.find((item) => item.value === storedMemoryScope)
   const memorySummary = memoryLoading
     ? '正在读取记忆设置…'
     : memoryError
       ? memoryError
       : memoryEnabled === false
         ? '引擎未启用长期记忆；切换时会提示错误'
-        : memoryDescriptor.summary
+        : (memoryDescriptor?.summary ?? '尚未确认引擎当前记忆范围')
 
   const pickThinking = (next: string): void => {
     if (!ready) return
-    void updateSettings({ thinkingMode: next as 'off' | 'low' | 'high' | 'max' })
+    if (next === 'off' || next === 'low' || next === 'high' || next === 'max') onThinkingChange(next)
   }
 
   const pickSecurity = (next: string): void => {
@@ -168,7 +172,7 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
                 disabled={!ready || !sessionId || memoryLoading}
                 title={!sessionId ? '先发一条消息建立会话，之后才能设置长期记忆' : '选择长期记忆范围'}
               >
-                <span>{memoryLoading ? '读取中…' : memoryDescriptor.label}</span>
+                <span>{memoryLoading ? '读取中…' : (memoryDescriptor?.label ?? '状态未知')}</span>
                 <span className="composer-options__dd-caret">⌄</span>
               </button>
             )}
@@ -226,7 +230,7 @@ export function ComposerOptions({ sessionId }: { sessionId: string }): JSX.Eleme
                 <MenuOption
                   key={item.value}
                   value={item.value}
-                  current={settings.thinkingMode}
+                  current={thinkingMode}
                   label={item.label}
                   summary={item.summary}
                   disabled={!ready}

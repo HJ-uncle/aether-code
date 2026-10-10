@@ -155,4 +155,17 @@ test.describe.serial('D1 模型配置无损编辑', () => {
     ).toHaveAttribute('aria-checked', 'true')
     await reopened.getByRole('button', { name: '取消', exact: true }).click()
   })
+  test('小数 K 编辑精确保存整数 token，并在重新打开时保留值', async () => {
+    const dialog = await edit()
+    const context = dialog.getByPlaceholder('如 128', { exact: true })
+    await expect(context).toHaveValue('123.456')
+    await context.fill('123.789')
+    await save()
+    expect((await saved()).capabilityOverrides).toEqual({
+      contextWindow: 123789, parallelTools: false, toolCalling: false, thinking: false
+    })
+    const reopened = await edit()
+    await expect(reopened.getByPlaceholder('如 128', { exact: true })).toHaveValue('123.789')
+    await reopened.getByRole('button', { name: '取消', exact: true }).click()
+  })
 })

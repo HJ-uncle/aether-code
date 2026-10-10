@@ -182,6 +182,14 @@ test('远端聊天保留服务端资源选择器，但不泄漏本地内联资�
     expect(result).toEqual(expect.objectContaining({ workspacePaths: [] }))
     expect(result).not.toHaveProperty('inlineSkills')
     expect(result).not.toHaveProperty('inlineMcpServers')
+    for (const memoryScope of ['off', 'global', 'session']) {
+      const scoped = await prepareRemoteChatBody({ sessionId: 'selector-session', message: 'scope', memoryScope }, context)
+      expect(scoped).toHaveProperty('memoryScope', memoryScope)
+    }
+    expect(result).not.toHaveProperty('memoryScope')
+    for (const memoryScope of ['invalid', 0, {}, ['session']]) {
+      await expect(prepareRemoteChatBody({ sessionId: 'selector-session', message: 'scope', memoryScope }, context)).rejects.toThrow('memoryScope 无效')
+    }
   } finally {
     server.closeAllConnections()
     await new Promise<void>(resolve => server.close(() => resolve()))

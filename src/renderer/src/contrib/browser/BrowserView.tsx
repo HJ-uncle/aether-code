@@ -182,6 +182,13 @@ function InspectorDrawer({
   const [error, setError] = useState('')
   const [revision, setRevision] = useState(0)
   useEffect(() => {
+    // A document navigation starts a new console stream. Clear the previous
+    // snapshot immediately so the drawer never presents old-page messages while
+    // the first log from the new document is still arriving.
+    setOutput(null)
+    setError('')
+  }, [tab.tabId, tab.navigationId, kind])
+  useEffect(() => {
     let alive = true
     const read = (): void => {
       void window.aether.browser

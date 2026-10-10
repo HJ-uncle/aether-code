@@ -1,0 +1,170 @@
+{
+  "totals": {
+    "files": 2,
+    "total": 19,
+    "passed": 19,
+    "failed": 0,
+    "skipped": 0,
+    "notRun": 0
+  },
+  "rows": [
+    {
+      "file": "engine-import-ui.spec.ts",
+      "feature": "引擎打包、安装与通信",
+      "kind": "真实 Electron UI",
+      "total": 9,
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 1
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "feature": "引擎打包、安装与通信",
+      "kind": "纯函数或文件契约",
+      "total": 10,
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "notRun": 0,
+      "remoteTitles": 0
+    }
+  ],
+  "details": [
+    {
+      "file": "engine-import-ui.spec.ts",
+      "title": "本地内置显示导入入口、包版本及中文状态，远端模式隐藏入口",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-import-ui.spec.ts",
+      "title": "版本选择展示包内名称与详情，统一下拉支持键盘切换",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-import-ui.spec.ts",
+      "title": "设置页暴露 MCP、技能和知识库完整入口",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-import-ui.spec.ts",
+      "title": "取消原生文件选择保持引擎与已导入列表不变，不显示错误",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-import-ui.spec.ts",
+      "title": "不合法引擎包真实校验失败，当前引擎和目录指针不受影响",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-import-ui.spec.ts",
+      "title": "未保存设置阻止切换；确认取消不会重启或修改生效指针",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-import-ui.spec.ts",
+      "title": "可删除未启用的本地引擎版本",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-import-ui.spec.ts",
+      "title": "导入用户提供的 tgz、确认激活后引擎就绪且指针持久化",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-import-ui.spec.ts",
+      "title": "恢复默认引擎清除活动指针并重新要求确认",
+      "kind": "真实 Electron UI",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "title": "streams regular files and supports GNU long names and pax paths",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "title": "rejects traversal, Windows ADS/device paths and links",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "title": "rejects checksum errors, truncation and resource limits",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "title": "rejects invalid gzip trailers and missing source files",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "title": "rejects malformed pax, sparse metadata, pax traversal and dangling names",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "title": "supports ustar prefix, multi-record pax byte lengths and pax size overrides",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "title": "enforces entry and expanded-byte limits before writing excess files",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "title": "streams many chunks accurately and reports completed file progress",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "title": "refuses preexisting directory links and duplicate files",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    },
+    {
+      "file": "engine-tgz-extract.spec.ts",
+      "title": "extracts the selected real engine archive",
+      "kind": "纯函数或文件契约",
+      "feature": "引擎打包、安装与通信",
+      "status": "passed"
+    }
+  ],
+  "input": "D:\\dev\\aether-code\\.e2e-tmp\\client-e1214-engine-tgz-20261010-rerun.json"
+}

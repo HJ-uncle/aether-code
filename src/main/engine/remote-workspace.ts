@@ -52,7 +52,7 @@ export async function prepareRemoteChatBody(body: unknown, context: RemoteChatCo
   // credentials remain deliberately stripped from remote requests.
   const allowed = [
     'message', 'sessionId', 'agentId', 'model', 'subagentModel', 'utilityModel',
-    'thinkingMode', 'runId', 'skills', 'mcpServers', 'knowledgeBases',
+    'thinkingMode', 'memoryScope', 'runId', 'skills', 'mcpServers', 'knowledgeBases',
     'allowedTools', 'ragTopK'
   ]
   const clean = Object.fromEntries(allowed.filter(key => input[key] !== undefined).map(key => [key, input[key]]))
@@ -63,6 +63,9 @@ export async function prepareRemoteChatBody(body: unknown, context: RemoteChatCo
       }
       clean[key] = [...new Set(clean[key] as string[])]
     }
+  }
+  if (clean.memoryScope !== undefined && (typeof clean.memoryScope !== 'string' || !['off', 'global', 'session'].includes(clean.memoryScope))) {
+    throw new Error('远端聊天 memoryScope 无效')
   }
   if (clean.ragTopK !== undefined && (typeof clean.ragTopK !== 'number' || !Number.isInteger(clean.ragTopK) || clean.ragTopK < 0 || clean.ragTopK > 50)) {
     throw new Error('远端聊天 ragTopK 无效')

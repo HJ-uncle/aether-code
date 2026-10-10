@@ -41,6 +41,15 @@ export function NetworkInspector({
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const queryKey = JSON.stringify(query)
   useEffect(() => {
+    // Network records belong to one document load. Drop the rendered result
+    // as soon as navigation changes; the next query then fills this drawer
+    // with only the new document's capture stream.
+    setResult(null)
+    setSelectedId(null)
+    setQuery((previous) => (previous.offset === 0 ? previous : { ...previous, offset: 0 }))
+    setError('')
+  }, [tab.tabId, tab.navigationId])
+  useEffect(() => {
     const panel = root.current
     const parent = panel?.parentElement
     if (!parent || !panel) return

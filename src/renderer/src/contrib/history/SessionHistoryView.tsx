@@ -530,6 +530,7 @@ export function SessionHistoryView(): JSX.Element {
                 <button
                   type="button"
                   className={`history-view__item${active ? ' is-active' : ''}`}
+                  data-session-id={item.sessionId}
                   title={`${title}\n最后活跃：${formatAbsolute(item.lastAt)}`}
                   onClick={() => openSession(item.sessionId)}
                   onContextMenu={(event) => {

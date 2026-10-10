@@ -162,8 +162,13 @@ test('不支持的文件不会被显示为诊断通过，关闭后清除状态',
   const palette = page.locator('.palette[aria-label="快速打开文件"]')
   await expect(palette).toBeVisible()
   await page.locator('.palette__input').fill('diagnostic-unsupported')
-  await expect(palette.locator('.palette__item').first()).toContainText('diagnostic-unsupported.aetherunknown')
-  await page.keyboard.press('Enter')
+  const unsupportedItem = palette.locator('.palette__item').filter({ hasText: 'diagnostic-unsupported.aetherunknown' }).first()
+  await expect(unsupportedItem).toBeVisible()
+  // Click the resolved candidate instead of sending Enter to the global
+  // capture listener. Under a loaded renderer the listener can observe Enter
+  // during the same render that replaces the candidate list, leaving the
+  // previous editor tab active even though the picker showed the new file.
+  await unsupportedItem.click()
   await expect(page.locator('.editor-tab.is-active')).toContainText('diagnostic-unsupported.aetherunknown')
   await expect(palette).toBeHidden()
   await page.keyboard.press('Control+Shift+p')

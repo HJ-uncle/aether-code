@@ -12,6 +12,8 @@ export interface McpServer {
   url?: string
   headers?: Record<string, string>
   disabledTools?: string[]
+  /** Blank uses engine defaults; zero removes the server request deadline. */
+  timeoutMs?: number
   scope?: 'project' | 'global'
 }
 
@@ -31,6 +33,7 @@ export interface McpDraft {
   url: string
   headers: string
   scope: 'project' | 'global'
+  timeoutMs: string
 }
 
 export function mcpDraft(server?: McpServer): McpDraft {
@@ -38,7 +41,7 @@ export function mcpDraft(server?: McpServer): McpDraft {
     id: server?.id ?? '', name: server?.name ?? '', description: server?.description ?? '',
     transportType: server?.transportType ?? 'stdio', command: server?.command ?? '',
     args: JSON.stringify(server?.args ?? []), env: JSON.stringify(server?.env ?? {}, null, 2),
-    url: server?.url ?? '', headers: JSON.stringify(server?.headers ?? {}, null, 2), scope: server?.scope ?? 'project'
+    url: server?.url ?? '', headers: JSON.stringify(server?.headers ?? {}, null, 2), scope: server?.scope ?? 'project', timeoutMs: server?.timeoutMs === undefined ? '' : String(server.timeoutMs)
   }
 }
 
@@ -51,11 +54,21 @@ function stringRecord(value: string, label: string): Record<string, string> {
   return parsed as Record<string, string>
 }
 
+export function parseMcpTimeout(value: string): number | undefined {
+  const raw = value.trim()
+  if (!raw) return undefined
+  if (!/^\d+$/.test(raw)) throw new Error('请求超时必须是非负整数毫秒；留空使用默认，0 表示不限')
+  const timeout = Number(raw)
+  if (!Number.isInteger(timeout) || timeout > 2147483647) throw new Error('请求超时必须在 0 到 2147483647 毫秒之间')
+  return timeout
+}
+
 export function mcpPayload(draft: McpDraft): Omit<McpServer, 'enabled'> {
   const id = draft.id.trim()
   if (!/^[a-z0-9][a-z0-9_-]*$/.test(id)) throw new Error('标识只能使用小写字母、数字、下划线和连字符')
   if (!draft.name.trim()) throw new Error('请填写名称')
-  const common = { id, name: draft.name.trim(), description: draft.description.trim(), transportType: draft.transportType, scope: draft.scope }
+  const timeoutMs = parseMcpTimeout(draft.timeoutMs)
+  const common = { id, name: draft.name.trim(), description: draft.description.trim(), transportType: draft.transportType, scope: draft.scope, ...(timeoutMs === undefined ? {} : { timeoutMs }) }
   if (draft.transportType === 'stdio') {
     if (!draft.command.trim()) throw new Error('请填写启动命令')
     let args: unknown

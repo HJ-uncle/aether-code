@@ -45,6 +45,12 @@ function string(value: unknown, length = 8192): string { return typeof value ===
 function finite(value: unknown): number | undefined { return typeof value === 'number' && Number.isFinite(value) ? value : undefined }
 function secretName(name: string): boolean { return SECRET_NAME.test(name.replace(/[-_.\s]/g, '')) }
 function redactedHeader(name: string): BrowserNetworkHeader { return { name, value: REDACTED, redacted: true } }
+/** Fragments do not create a new Document capture and must not split records. */
+function documentUrl(raw: string): string {
+  if (!raw) return ''
+  try { const url = new URL(raw); url.hash = ''; return url.href }
+  catch { return raw.split('#', 1)[0] }
+}
 
 function redactCookieHeader(value: string, response: boolean): string {
   if (response) return value.split(/\r?\n|,(?=\s*[^=;,\s]+=)/).map((line) => {
@@ -221,22 +227,108 @@ export class BrowserNetworkCollector {
   private readonly bodyCache = new Map<string, BodyValue>()
   private readonly bodyPending = new Map<string, Promise<void>>()
   private sequence = 0
+  private captured = 0
   private dropped = 0
   private cachedChars = 0
   private disposed = false
+  /** The active document loader fence prevents late CDP events from the old page
+   * repopulating a list after a top-level navigation. */
+  private awaitingDocument = false
+  private expectedDocumentUrl = ''
+  private activeDocumentUrl = ''
+  private mainFrameId = ''
+  private mainLoaderId = ''
+  private readonly loaderIds = new Set<string>()
+  private navigationId = 0
+  private startedByDocument = false
 
   constructor(private readonly send: (method: string, params: Record<string, unknown>) => Promise<unknown>, private readonly options: { maxRecords?: number; maxBodyChars?: number; maxCacheChars?: number } = {}) {}
 
   clear(): void {
     this.disposed = true
+    this.clearState()
+  }
+
+  /**
+   * Starts a new top-level document capture. UI request IDs intentionally keep
+   * their monotonic sequence across pages, so a stale detail request can never
+   * resolve to a new page's request after this reset.
+   */
+  beginNavigation(navigationId: number, url: string): void {
+    if (this.disposed) return
+    const expected = documentUrl(url)
+    // CDP can deliver the new Document request just before Electron emits
+    // did-start-navigation. In that order event() already fenced and reset the
+    // collector; only relabel the records instead of clearing them a second time.
+    if (this.startedByDocument && this.activeDocumentUrl === expected) {
+      this.navigationId = navigationId
+      for (const capture of this.records.values()) capture.entry.navigationId = navigationId
+      this.startedByDocument = false
+      return
+    }
+    this.clearState()
+    this.navigationId = navigationId
+    this.expectedDocumentUrl = expected
+    this.activeDocumentUrl = ''
+    this.mainFrameId = ''
+    this.mainLoaderId = ''
+    this.loaderIds.clear()
+    this.awaitingDocument = true
+    this.startedByDocument = false
+  }
+
+  private clearState(): void {
     this.records.clear(); this.chains.clear(); this.bodyCache.clear(); this.bodyPending.clear(); this.cachedChars = 0
+    this.captured = 0
+    this.dropped = 0
+    this.awaitingDocument = false
+    this.expectedDocumentUrl = ''
+    this.activeDocumentUrl = ''
+    this.mainFrameId = ''
+    this.mainLoaderId = ''
+    this.loaderIds.clear()
   }
 
   event(method: string, params: ObjectValue, navigationId: number): void {
     if (this.disposed || !method.startsWith('Network.')) return
     const cdpId = string(params.requestId, 512)
     if (!cdpId) return
-    if (method === 'Network.requestWillBeSent') { this.request(cdpId, params, navigationId); return }
+    if (method === 'Network.requestWillBeSent') {
+      const request = object(params.request)
+      const type = string(params.type, 80)
+      const url = documentUrl(string(request.url, 65536))
+      const loaderId = string(params.loaderId, 512)
+      const frameId = string(params.frameId, 512)
+      if (type === 'Document') {
+        // A navigation can race did-start-navigation. Detect a new main-frame
+        // loader here so the old page is fenced before its late events arrive.
+        if (!this.awaitingDocument && this.mainLoaderId && loaderId && loaderId !== this.mainLoaderId && frameId === this.mainFrameId) {
+          this.clearState()
+          this.navigationId = navigationId
+          this.startedByDocument = true
+        }
+        if (this.awaitingDocument) {
+          if (this.expectedDocumentUrl && url && url !== this.expectedDocumentUrl) return
+          this.awaitingDocument = false
+        }
+        if (!this.mainFrameId && frameId) this.mainFrameId = frameId
+        if (frameId === this.mainFrameId || !this.mainLoaderId) {
+          if (!this.mainLoaderId) { this.mainLoaderId = loaderId; this.activeDocumentUrl = url }
+        }
+        if (loaderId) this.loaderIds.add(loaderId)
+      } else if (!this.acceptsLoader(loaderId)) return
+      this.request(cdpId, params, this.navigationId || navigationId); return
+    }
+    // loadingFinished/loadingFailed do not carry a loaderId in the CDP
+    // protocol. Their requestId is the only identity available, so let them
+    // complete a capture that was admitted in this document epoch.
+    if (
+      method !== 'Network.loadingFinished' &&
+      method !== 'Network.loadingFailed' &&
+      method !== 'Network.requestServedFromCache' &&
+      !this.acceptsLoader(string(params.loaderId, 512))
+    )
+      return
     if (method.endsWith('ExtraInfo')) {
       const chain = this.chain(cdpId)
       const events = method === 'Network.requestWillBeSentExtraInfo' ? chain.requestExtras : method === 'Network.responseReceivedExtraInfo' ? chain.responseExtras : undefined
@@ -278,12 +370,17 @@ export class BrowserNetworkCollector {
     }
   }
 
+  private acceptsLoader(loaderId: string): boolean {
+    if (this.awaitingDocument) return false
+    return !loaderId || !this.loaderIds.size || this.loaderIds.has(loaderId)
+  }
+
   list(tab: BrowserTabState, query: BrowserNetworkQuery = {}): BrowserNetworkList {
     const normalized = validateNetworkQuery(query)
     const matching = [...this.records.values()].map((capture) => capture.entry.finished ? capture.entry : { ...capture.entry, durationMs: Math.max(0, performance.now() - capture.observedAt) }).filter((entry) => matches(entry, normalized))
     const entries = matching.slice(normalized.offset, normalized.offset + normalized.limit).map((entry) => structuredClone(entry))
     const nextOffset = normalized.offset + entries.length
-    return { tab: { ...tab, url: redactNetworkUrl(tab.url) }, entries, total: matching.length, captured: this.sequence, dropped: this.dropped, offset: normalized.offset, limit: normalized.limit, hasMore: nextOffset < matching.length, ...(nextOffset < matching.length ? { nextOffset } : {}) }
+    return { tab: { ...tab, url: redactNetworkUrl(tab.url) }, entries, total: matching.length, captured: this.captured, dropped: this.dropped, offset: normalized.offset, limit: normalized.limit, hasMore: nextOffset < matching.length, ...(nextOffset < matching.length ? { nextOffset } : {}) }
   }
 
   async detail(tab: BrowserTabState, id: string, options: BrowserNetworkDetailOptions = {}): Promise<BrowserNetworkDetail> {
@@ -352,6 +449,7 @@ export class BrowserNetworkCollector {
     if (previous?.redirected && Object.keys(redirect).length) { capture.previousRequestId = previous.entry.id; previous.nextRequestId = capture.entry.id }
     chain.hops.push(capture)
     this.records.set(capture.entry.id, capture)
+    this.captured += 1
     if (typeof request.postData === 'string') this.cacheBody(capture, 'request', request.postData, requestMime)
     this.flushExtra(chain)
     while (this.records.size > (this.options.maxRecords ?? MAX_RECORDS)) {

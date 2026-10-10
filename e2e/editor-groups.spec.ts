@@ -177,13 +177,16 @@ test.describe.serial('独立左右编辑组', () => {
     await left().getByRole('button', { name: '向右拆分编辑器', exact: true }).click()
     await expect(groups()).toHaveCount(2)
     await openFile('left.txt')
+    await page.evaluate(() => {
+      localStorage.removeItem('aether.e2e.editor-beforeunload')
+      window.addEventListener('beforeunload', () => localStorage.setItem('aether.e2e.editor-beforeunload', '1'), { once: true })
+    })
     await replaceText(right(), 'recovered right draft\n')
-    await expect.poll(() => page.evaluate(() => {
-      const key = Object.keys(localStorage).find((item) => item.startsWith('aether.editor.recovery:'))
-      return key ? JSON.parse(localStorage.getItem(key)!).groups?.groups.length : 0
-    })).toBe(2)
+    // Quit immediately after editing. Waiting for the debounced backup would
+    // conceal the lost-draft bug in a quit path that skips window shutdown.
     await app!.close()
     await launch()
+    expect(await page.evaluate(() => localStorage.getItem('aether.e2e.editor-beforeunload'))).toBe('1')
     await expect(groups()).toHaveCount(2)
     await expect(left().locator('.editor-tab.is-active')).toContainText('spare.txt')
     await expect(right().locator('.editor-tab.is-active')).toContainText('left.txt')

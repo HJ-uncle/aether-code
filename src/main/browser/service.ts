@@ -144,7 +144,13 @@ export class BrowserService {
     switch (input.action) {
       case 'back': if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack(); break
       case 'forward': if (wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward(); break
-      case 'reload': entry.state.error = undefined; wc.reload(); break
+      case 'reload':
+        entry.state.error = undefined
+        // An explicit browser refresh starts a new document capture even when
+        // Chromium has a cached response for the same URL. Bypass that cache so
+        // the page, console, and network timeline are all actually reloaded.
+        wc.reloadIgnoringCache()
+        break
       case 'stop': wc.stop(); break
       case 'zoom': entry.state.zoomFactor = validateZoom(input.zoomFactor); wc.setZoomFactor(input.zoomFactor); break
       case 'viewport': entry.state.viewport = validateViewport(input.viewport); await this.applyViewport(entry); break
@@ -396,9 +402,15 @@ export class BrowserService {
       if (!mainFrame) return
       entry.state.url = url
       entry.state.error = undefined
-      entry.state.navigationId += 1
-      entry.refs.clear()
-      if (!inPlace) entry.state.title = '加载中…'
+      if (!inPlace) {
+        // A top-level document gets a fresh console/network timeline. Same-
+        // document hash/history changes keep the current page diagnostics.
+        entry.state.navigationId += 1
+        entry.refs.clear()
+        entry.console.length = 0
+        entry.network.beginNavigation(entry.state.navigationId, url)
+        entry.state.title = '加载中…'
+      }
       this.changed(entry)
     })
     wc.on('did-navigate', (_event, url) => { entry.state.url = url; this.changed(entry) })
