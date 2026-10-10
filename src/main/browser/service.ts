@@ -28,7 +28,7 @@ interface BrowserEntry {
   closed: AbortController
   refs: Map<string, number>
   ready?: Promise<void>
-  visibilityWaiters: Set<(error?: Error) => void>
+  visibilityWaiters: Map<string, (error?: Error) => void>
   queue: Promise<unknown>
   logId: number
 }
@@ -168,7 +168,7 @@ export class BrowserService {
       owner, view, visible: false, bounds: { x: 0, y: 0, width: 800, height: 600 }, emulationScale: 1, console: [],
       network: new BrowserNetworkCollector(async (method, params) => { await this.ensureInitialized(entry); await this.debugger(entry); return this.command(entry, method, params) }),
       networkInterrupted: false, initialization: Promise.resolve(), initializationState: 'starting', navigationVersion: 0, closed: new AbortController(), refs: new Map(),
-      queue: Promise.resolve(), logId: 0, visibilityWaiters: new Set(),
+      queue: Promise.resolve(), logId: 0, visibilityWaiters: new Map(),
       state: { tabId: randomUUID(), url, title: '浏览器', loading: true, canGoBack: false, canGoForward: false,
         zoomFactor: settings.zoomFactor, viewport: settings.defaultViewport, navigationId: 0, ...(context ? { context } : {}) }
     }
@@ -237,7 +237,7 @@ export class BrowserService {
     if (bounds.width > 0 && bounds.height > 0) entry.bounds = bounds
     entry.visible = input.visible === true && bounds.width > 0 && bounds.height > 0
     entry.view.setVisible(entry.visible)
-    if (entry.visible) for (const resolve of [...entry.visibilityWaiters]) resolve()
+    if (entry.visible && input.revealRequestId) entry.visibilityWaiters.get(input.revealRequestId)?.()
     if (bounds.width > 0 && bounds.height > 0) {
       this.applyViewport(entry).catch((error: unknown) => this.log(entry, 'error', browserError(error)))
     }
@@ -248,7 +248,7 @@ export class BrowserService {
     if (!entry) return
     this.tabs.delete(tabId)
     entry.closed.abort()
-    for (const resolve of [...entry.visibilityWaiters]) resolve(new Error('浏览器标签已关闭'))
+    for (const resolve of [...entry.visibilityWaiters.values()]) resolve(new Error('浏览器标签已关闭'))
     if (!entry.owner.isDestroyed()) entry.owner.contentView.removeChildView(entry.view)
     if (!entry.view.webContents.isDestroyed()) {
       if (entry.view.webContents.debugger.isAttached()) entry.view.webContents.debugger.detach()
@@ -336,7 +336,8 @@ export class BrowserService {
       const run = async (): Promise<unknown> => {
         this.entry(entry.state.tabId)
         assertActive()
-        if (request.navigationId !== undefined && request.navigationId !== entry.state.navigationId) throw new Error('页面已经变化，请重新读取快照后操作')
+        // Closing addresses the owned tab, not an element in its current document.
+        if (request.action !== 'close' && request.navigationId !== undefined && request.navigationId !== entry.state.navigationId) throw new Error('页面已经变化，请重新读取快照后操作')
         return this.executeEntry(entry, request, assertActive, signal)
       }
       const task = entry.queue.then(run, run)
@@ -844,25 +845,52 @@ export class BrowserService {
     }
   }
 
-  private async focus(entry: BrowserEntry, signal?: AbortSignal): Promise<void> {
-    if (signal?.aborted) throw new Error('浏览器工具连接已切换，当前操作已取消')
-    if (!entry.visible) await new Promise<void>((resolve, reject) => {
+  private assertInputWindow(entry: BrowserEntry, assertActive: () => void): void {
+    assertActive()
+    this.entry(entry.state.tabId)
+    if (entry.owner.isDestroyed()) throw new Error('编辑器窗口已关闭，尚未执行页面操作')
+    if (entry.owner.isMinimized()) throw new Error('编辑器窗口已最小化，尚未执行页面操作；请恢复窗口后重试')
+    if (!entry.owner.isVisible()) throw new Error('编辑器窗口当前不可见，尚未执行页面操作；请显示窗口后重试')
+  }
+
+  private assertInputVisible(entry: BrowserEntry, assertActive: () => void): void {
+    this.assertInputWindow(entry, assertActive)
+    if (!entry.visible || !entry.view.getVisible()) throw new Error('目标浏览器标签当前不可见，尚未执行页面操作；请重新显示目标页面后重试')
+  }
+
+  private async focus(entry: BrowserEntry, assertActive: () => void, signal?: AbortSignal): Promise<void> {
+    this.assertInputWindow(entry, assertActive)
+    const requestId = randomUUID()
+    // Even a currently visible native view can belong to the previous React frame.
+    // Require a fresh acknowledgement of this exact tab/request before dispatching.
+    await new Promise<void>((resolve, reject) => {
+      let settled = false
       const aborted = (): void => finished(new Error('浏览器工具连接已切换，当前操作已取消'))
+      const closed = (): void => finished(new Error('浏览器标签已关闭，尚未执行页面操作'))
       const finished = (error?: Error): void => {
+        if (settled) return
+        settled = true
         clearTimeout(timer)
-        entry.visibilityWaiters.delete(finished)
+        entry.visibilityWaiters.delete(requestId)
         signal?.removeEventListener('abort', aborted)
+        entry.closed.signal.removeEventListener('abort', closed)
         if (error) reject(error)
         else resolve()
       }
-      const timer = setTimeout(() => finished(new Error('请先打开并显示这个浏览器标签，再进行页面操作')), 5000)
-      entry.visibilityWaiters.add(finished)
+      const timer = setTimeout(() => finished(new Error('目标浏览器标签未能显示，尚未执行页面操作；请关闭遮挡窗口或恢复编辑器后重试')), 5000)
+      entry.visibilityWaiters.set(requestId, finished)
       signal?.addEventListener('abort', aborted, { once: true })
+      entry.closed.signal.addEventListener('abort', closed, { once: true })
+      if (signal?.aborted) { aborted(); return }
+      if (entry.closed.signal.aborted) { closed(); return }
+      try {
+        this.assertInputWindow(entry, assertActive)
+        this.emit({ type: 'reveal', tabId: entry.state.tabId, tab: this.state(entry), requestId })
+      } catch (error) { finished(error instanceof Error ? error : new Error(String(error))) }
     })
-    if (signal?.aborted) throw new Error('浏览器工具连接已切换，当前操作已取消')
-    if (entry.owner.isMinimized()) throw new Error('编辑器窗口已最小化，请恢复窗口后操作页面')
+    this.assertInputVisible(entry, assertActive)
     await this.debugger(entry)
-    if (signal?.aborted) throw new Error('浏览器工具连接已切换，当前操作已取消')
+    this.assertInputVisible(entry, assertActive)
     entry.view.webContents.focus()
   }
 
@@ -904,13 +932,13 @@ export class BrowserService {
 
   private async click(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal): Promise<BrowserClickInteraction> {
     const navigationId = entry.state.navigationId
-    await this.focus(entry, signal)
-    assertActive()
+    await this.focus(entry, assertActive, signal)
+    this.assertInputVisible(entry, assertActive)
     let capture: RuntimeResult<unknown>
     if (request.ref || request.selector) {
       const objectId = await this.elementObject(entry, request)
       try {
-        assertActive()
+        this.assertInputVisible(entry, assertActive)
         capture = await this.command<RuntimeResult<unknown>>(entry, 'Runtime.callFunctionOn', { objectId, returnByValue: false, functionDeclaration: `function(){
           if (!(this instanceof Element) || !this.isConnected) throw new Error('元素已离开页面');
           if (this.matches(':disabled,[aria-disabled="true"]')) throw new Error('元素已禁用');
@@ -940,7 +968,7 @@ export class BrowserService {
       if (result.exceptionDetails || !result.result?.value) throw new Error('无法读取点击目标')
       const captured = result.result.value
       this.assertNavigation(entry, navigationId)
-      assertActive()
+      this.assertInputVisible(entry, assertActive)
       const interaction: BrowserClickInteraction = { ...captured, type: 'click', navigationId,
         ...(captured.target ? { target: { ...captured.target, ...(request.ref ? { ref: request.ref } : {}), ...(request.selector ? { selector: request.selector } : {}) } } : {}) }
       const screenshot = await this.viewportScreenshot(entry, navigationId, captured)
@@ -962,7 +990,7 @@ export class BrowserService {
       if (validation.exceptionDetails) throw new Error(validation.exceptionDetails.exception?.description ?? validation.exceptionDetails.text ?? '点击目标已变化')
       if (validation.result?.value !== true) throw new Error('无法校验点击目标')
       this.assertNavigation(entry, navigationId)
-      assertActive()
+      this.assertInputVisible(entry, assertActive)
       // Electron's device-emulation fit scale is outside CDP's CSS coordinate conversion.
       // Apply it only to dispatch; saved evidence stays in the page's CSS coordinate space.
       const x = interaction.x * entry.emulationScale, y = interaction.y * entry.emulationScale
@@ -975,8 +1003,8 @@ export class BrowserService {
   private async fill(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal): Promise<void> {
     const navigationId = entry.state.navigationId
     if (typeof request.text !== 'string' || request.text.length > 100000) throw new Error('输入内容无效或过长')
-    await this.focus(entry, signal)
-    assertActive()
+    await this.focus(entry, assertActive, signal)
+    this.assertInputVisible(entry, assertActive)
     await this.withElement(entry, request, `function(){
       if (!(this instanceof HTMLElement) || !this.isConnected) throw new Error('元素已离开页面');
       if (this.matches(':disabled,[readonly],[aria-disabled="true"]')) throw new Error('输入框不可编辑');
@@ -986,17 +1014,17 @@ export class BrowserService {
       if(this.isContentEditable){const r=document.createRange();r.selectNodeContents(this);const s=getSelection();s.removeAllRanges();s.addRange(r)}
       else if(typeof this.select==='function') this.select();
       return true;
-    }`, assertActive)
+    }`, () => this.assertInputVisible(entry, assertActive))
     this.assertNavigation(entry, navigationId)
-    assertActive()
+    this.assertInputVisible(entry, assertActive)
     await this.command(entry, 'Input.insertText', { text: request.text })
   }
 
   private async pressKey(entry: BrowserEntry, key: string | undefined, assertActive: () => void, signal?: AbortSignal): Promise<void> {
     const navigationId = entry.state.navigationId
     if (!key || key.length > 80) throw new Error('按键无效')
-    await this.focus(entry, signal)
-    assertActive()
+    await this.focus(entry, assertActive, signal)
+    this.assertInputVisible(entry, assertActive)
     const parts = key.split('+')
     const raw = parts.pop()!
     let modifiers = 0
@@ -1016,24 +1044,24 @@ export class BrowserService {
     const [keyValue, code, windowsVirtualKeyCode] = definition
     const input = { key: keyValue, code, windowsVirtualKeyCode, modifiers }
     this.assertNavigation(entry, navigationId)
-    assertActive()
+    this.assertInputVisible(entry, assertActive)
     await this.command(entry, 'Input.dispatchKeyEvent', { type: 'keyDown', ...input, ...(raw === 'Enter' ? { text: '\r' } : !modifiers && keyValue.length === 1 ? { text: keyValue } : {}) })
     await this.command(entry, 'Input.dispatchKeyEvent', { type: 'keyUp', ...input })
   }
 
   private async scroll(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal): Promise<void> {
     const navigationId = entry.state.navigationId
-    await this.focus(entry, signal)
-    assertActive()
+    await this.focus(entry, assertActive, signal)
+    this.assertInputVisible(entry, assertActive)
     const deltaX = request.deltaX ?? 0
     const deltaY = request.deltaY ?? 600
     if (![deltaX, deltaY].every((value) => Number.isFinite(value) && Math.abs(value) <= 10000)) throw new Error('滚动距离无效')
     this.assertNavigation(entry, navigationId)
     if (request.ref || request.selector) {
-      await this.withElement(entry, request, `function(){this.scrollBy({left:${deltaX},top:${deltaY},behavior:'instant'});return true}`, assertActive)
+      await this.withElement(entry, request, `function(){this.scrollBy({left:${deltaX},top:${deltaY},behavior:'instant'});return true}`, () => this.assertInputVisible(entry, assertActive))
     } else {
       await this.debugger(entry)
-      assertActive()
+      this.assertInputVisible(entry, assertActive)
       await this.evaluate(entry, `window.scrollBy({left:${deltaX},top:${deltaY},behavior:'instant'})`)
     }
   }

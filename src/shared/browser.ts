@@ -50,6 +50,7 @@ export interface BrowserCreateInput {
 
 export type BrowserEvent =
   | { type: 'created' | 'changed'; tab: BrowserTabState; tabId: string }
+  | { type: 'reveal'; tab: BrowserTabState; tabId: string; requestId: string }
   | { type: 'closed'; tabId: string }
   | { type: 'focus-address'; tabId: string }
   | { type: 'focused'; tabId: string }
@@ -58,6 +59,8 @@ export interface BrowserBoundsInput {
   tabId: string
   bounds: { x: number; y: number; width: number; height: number }
   visible: boolean
+  /** A fresh layout acknowledgement for a requested AI-visible tab. */
+  revealRequestId?: string
 }
 
 export type BrowserAction =

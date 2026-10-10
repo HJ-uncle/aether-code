@@ -10,7 +10,12 @@ interface BrowserExecutor {
   execute(request: BrowserToolRequest, context: BrowserContext, signal?: AbortSignal): Promise<BrowserToolResult>
 }
 
-interface Registration { clientId: string; clientToken: string; sessionId: string }
+interface Registration {
+  clientId: string
+  clientToken: string
+  sessionId: string
+  capabilities?: { requestWatch?: boolean }
+}
 interface Connection {
   input: BrowserConnectInput
   context: BrowserContext
@@ -112,7 +117,7 @@ export class BrowserEngineBridge {
       if (generation !== this.generation) { void this.unregister(connection); return this.state }
       this.connecting = null
       this.active = connection
-      this.publish({ status: 'connected', sessionId: input.sessionId, message: 'AI 可使用当前会话的浏览器页面' })
+      this.publish({ status: 'connected', sessionId: input.sessionId, message: this.connectedMessage(connection) })
       void this.poll(connection)
     } catch (error) {
       if (generation === this.generation && !controller.signal.aborted) {
@@ -195,6 +200,60 @@ export class BrowserEngineBridge {
       !engineTargetError(engineHost.getSnapshot(), connection.input.expectedEngine)
   }
 
+  private connectedMessage(connection: Connection): string {
+    return connection.registration.capabilities?.requestWatch === true ? 'AI 可使用当前会话的浏览器页面'
+      : 'AI 浏览器已连接；此引擎不支持同步取消，请升级配套引擎'
+  }
+
+  private async requestState(connection: Connection, command: Command, wait: boolean, signal: AbortSignal): Promise<boolean> {
+    const state = await this.request<{ active: boolean }>(connection.baseUrl, await this.authorizedHeaders(connection), signal, 'GET',
+      `/browser/clients/${encodeURIComponent(connection.registration.clientId)}/requests/${encodeURIComponent(command.requestId)}/state?wait=${wait}`)
+    if (!state || typeof state.active !== 'boolean') throw new Error('浏览器取消监控返回无效状态')
+    return state.active
+  }
+
+  private async executeCommand(connection: Connection, command: Command): Promise<BrowserToolResult> {
+    const remaining = Math.max(1, Math.min(60000, command.expiresAt - Date.now()))
+    const lifetime = AbortSignal.any([connection.controller.signal, AbortSignal.timeout(remaining)])
+    if (connection.registration.capabilities?.requestWatch !== true) {
+      // Old engines retain their existing operations; the connection message
+      // makes their weaker stop behavior explicit until the engine is upgraded.
+      return this.service.execute({ ...command.args, action: command.action }, connection.context, lifetime)
+    }
+    if (!await this.requestState(connection, command, false, lifetime)) {
+      return { success: false, error: '浏览器操作已取消或结束，尚未执行页面操作' }
+    }
+    const operation = new AbortController()
+    const monitoring = new AbortController()
+    const signal = AbortSignal.any([lifetime, operation.signal])
+    const watchSignal = AbortSignal.any([lifetime, monitoring.signal])
+    let watchFailure: string | undefined
+    // Commands remain serial. Only the cancellation watch runs concurrently;
+    // otherwise a page waiting for visibility cannot receive the stop signal.
+    const watch = (async (): Promise<void> => {
+      try {
+        while (!watchSignal.aborted) {
+          if (!await this.requestState(connection, command, true, watchSignal)) {
+            watchFailure = '引擎已取消或结束本次浏览器操作；若输入可能已派发，请重新读取页面状态，勿重复提交'
+            operation.abort(new Error(watchFailure))
+            return
+          }
+        }
+      } catch (error) {
+        if (watchSignal.aborted) return
+        watchFailure = `浏览器取消监控中断，已中止本次操作：${error instanceof Error ? error.message : String(error)}`
+        operation.abort(new Error(watchFailure))
+      }
+    })()
+    try {
+      const result = await this.service.execute({ ...command.args, action: command.action }, connection.context, signal)
+      return watchFailure ? { success: false, error: watchFailure } : result
+    } finally {
+      monitoring.abort()
+      await watch
+    }
+  }
+
   private async poll(connection: Connection): Promise<void> {
     while (this.owns(connection)) {
       try {
@@ -202,7 +261,7 @@ export class BrowserEngineBridge {
           connection.controller.signal, 'GET', `/browser/clients/${encodeURIComponent(connection.registration.clientId)}/commands`)
         if (!this.owns(connection)) return
         if (!data || !Array.isArray(data.commands)) throw new Error('浏览器工具通道返回无效数据')
-        this.publish({ status: 'connected', sessionId: connection.input.sessionId, message: 'AI 可使用当前会话的浏览器页面' })
+        this.publish({ status: 'connected', sessionId: connection.input.sessionId, message: this.connectedMessage(connection) })
         for (const command of data.commands) {
           if (!this.owns(connection)) return
           let result: BrowserToolResult
@@ -210,9 +269,7 @@ export class BrowserEngineBridge {
             result = { success: false, error: '浏览器操作已过期或会话不匹配，未执行' }
           } else {
             try {
-              const remaining = Math.max(1, Math.min(60000, command.expiresAt - Date.now()))
-              result = await this.service.execute({ ...command.args, action: command.action }, connection.context,
-                AbortSignal.any([connection.controller.signal, AbortSignal.timeout(remaining)]))
+              result = await this.executeCommand(connection, command)
             }
             catch (error) { result = { success: false, error: error instanceof Error ? error.message : String(error) } }
           }
@@ -231,7 +288,9 @@ export class BrowserEngineBridge {
         // A lost HTTP response must not create a second client competing for the same session.
         try {
           const renewed = await this.request<Registration>(connection.baseUrl, await this.authorizedHeaders(connection), connection.controller.signal, 'POST', '/browser/clients', {
-            ...connection.registration
+            sessionId: connection.registration.sessionId,
+            clientId: connection.registration.clientId,
+            clientToken: connection.registration.clientToken
           })
           if (this.owns(connection)) connection.registration = renewed
         } catch (renewError) {

@@ -182,7 +182,7 @@ test.describe.serial('工具执行与诊断真实闭环', () => {
     expect(errors).toEqual([])
   })
 
-  test('真实历史微压缩后重启仍可查看和复制原始诊断，手动压缩不伪造回复', async () => {
+  test('真实历史微压缩后重启仍可查看和复制原始诊断，用量环只展示信息', async () => {
     await app!.close()
     app = undefined
     const moduleUrl = (name: string): string => pathToFileURL(join(engineRoot, 'dist', name)).href
@@ -211,12 +211,10 @@ test.describe.serial('工具执行与诊断真实闭环', () => {
     expect(report).not.toContain('当前记录无法恢复')
     expect(sentSteps).toEqual(steps)
 
-    const ring = page.getByRole('button', { name: /^上下文用量 / })
-    await ring.click()
-    await expect(page.getByRole('button', { name: /^已压缩 / })).toBeVisible({ timeout: 30000 })
-    const label = await page.getByRole('button', { name: /^已压缩 / }).getAttribute('aria-label')
-    expect(label).not.toMatch(/→ 0(?:\D|$)/)
-    await expect(page.locator('.message--assistant')).not.toContainText('我已经为您完成了上下文压缩')
+    const ring = page.getByRole('img', { name: /^上下文用量 / })
+    await expect(ring).toHaveAttribute('data-compaction-phase', 'idle')
+    await ring.hover(); await expect(page.locator('.ctx-card')).toContainText('引擎会在需要时自动压缩上下文。')
+    await expect(page.getByRole('button', { name: /压缩上下文/ })).toHaveCount(0)
     expect(errors).toEqual([])
   })
 })

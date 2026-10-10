@@ -37,7 +37,7 @@ test('远端开放已接入的管理与会话接口，仍拒绝未接入路径',
     '/models/capability-defs', '/sessions/test/binding'
   ]
   const actions = [
-    '/chat', '/chat/cancel', '/utility/chat', '/conversation/compress', '/conversation/truncate', '/changes/revert-batch',
+    '/chat', '/chat/cancel', '/utility/chat', '/conversation/truncate', '/changes/revert-batch',
     '/subagent/cancel', '/subagent/runs/run-1/cancel', '/command-jobs/job-1/cancel'
   ]
   for (const path of reads) {
@@ -64,7 +64,7 @@ test('远端开放已接入的管理与会话接口，仍拒绝未接入路径',
     }
   }
   for (const path of [
-    '/workspace/file/unknown', '/workspace/not-allowed', '/lsp/diagnostics',
+    '/conversation/compress', '/workspace/file/unknown', '/workspace/not-allowed', '/lsp/diagnostics',
     '/changes/change-1/keep',
     '/models/../workspace/file/content', '/conversation/history/extra',
     '/subagent/runs/../cancel', '/command-jobs/%2e%2e/workspace', '/changes/anything', '/unknown'

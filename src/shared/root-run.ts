@@ -43,6 +43,31 @@ export function normalizeRootRunRequestConfig(raw: unknown): RootRunRequestConfi
   return config
 }
 
+export interface RootRunCompaction {
+  phase: 'running' | 'succeeded' | 'failed'
+  startedAt: number
+  finishedAt?: number
+  beforeTokens?: number
+  afterTokens?: number
+  error?: string
+}
+
+/** Reject partial or malformed transport status instead of inventing progress. */
+export function normalizeRootRunCompaction(raw: unknown): RootRunCompaction | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const value = raw as Record<string, unknown>
+  const phase = value.phase
+  if ((phase !== 'running' && phase !== 'succeeded' && phase !== 'failed') ||
+    typeof value.startedAt !== 'number' || !Number.isFinite(value.startedAt) || value.startedAt < 0) return undefined
+  const state: RootRunCompaction = { phase, startedAt: value.startedAt }
+  for (const key of ['finishedAt', 'beforeTokens', 'afterTokens'] as const) {
+    const amount = value[key]
+    if (typeof amount === 'number' && Number.isFinite(amount) && amount >= 0) state[key] = amount
+  }
+  if (typeof value.error === 'string') state.error = value.error
+  return state
+}
+
 export interface RootRun {
   schemaVersion: 1
   runId: string
@@ -56,6 +81,7 @@ export interface RootRun {
   modelId?: string
   actualModelId?: string
   requestConfig?: RootRunRequestConfig
+  compaction?: RootRunCompaction
   workspacePaths?: string[]
   createdAt: number
   updatedAt: number

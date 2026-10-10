@@ -20,7 +20,7 @@ export interface StartProcessOptions {
   cwd?: string
   /** 引擎入口脚本绝对路径 */
   binPath: string
-  /** 监听端口，注入为 PORT */
+  /** 监听端口，注入为 AETHER_ENGINE_PORT */
   port: number
   /** SQLite 数据库文件路径，注入为 DATA_DIR */
   dataDir?: string
@@ -89,8 +89,9 @@ export function startProcess(opts: StartProcessOptions): ProcessHandle {
 
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
-    PORT: String(opts.port),
-    HOST: '127.0.0.1',
+    // Dedicated keys separate the listener from project server settings.
+    AETHER_ENGINE_PORT: String(opts.port),
+    AETHER_ENGINE_HOST: '127.0.0.1',
     // 关闭颜色，避免 ANSI 序列污染日志面板
     FORCE_COLOR: '0',
     NO_COLOR: '1',
@@ -98,6 +99,16 @@ export function startProcess(opts: StartProcessOptions): ProcessHandle {
     ...skillsRootEnv,
     ...callerEnv
   }
+
+  // Older imported runtimes still consume PORT/HOST. New runtimes consume this
+  // one-shot snapshot before loading project .env files or business modules.
+  env.AETHER_ENGINE_PROJECT_ENV = JSON.stringify({
+    version: 1,
+    PORT: env.PORT ?? null,
+    HOST: env.HOST ?? null
+  })
+  env.PORT = env.AETHER_ENGINE_PORT
+  env.HOST = env.AETHER_ENGINE_HOST
 
   const child = spawn(nodePath, [opts.binPath], {
     cwd: opts.cwd ?? binDir,

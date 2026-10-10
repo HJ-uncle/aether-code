@@ -53,7 +53,13 @@ function ToolButton({
   )
 }
 
-function BrowserSurface({ tab }: { tab: BrowserTabState }): JSX.Element {
+function BrowserSurface({
+  tab,
+  revealRequestId
+}: {
+  tab: BrowserTabState
+  revealRequestId?: string
+}): JSX.Element {
   const host = useRef<HTMLDivElement>(null)
   const viewportWidth = tab.viewport?.width ?? 0
   const viewportHeight = tab.viewport?.height ?? 0
@@ -87,6 +93,7 @@ function BrowserSurface({ tab }: { tab: BrowserTabState }): JSX.Element {
           : null
       const input: BrowserBoundsInput = {
         tabId: tab.tabId,
+        revealRequestId,
         bounds: { x, y, width, height },
         visible:
           !document.hidden &&
@@ -152,7 +159,7 @@ function BrowserSurface({ tab }: { tab: BrowserTabState }): JSX.Element {
         })
         .catch(() => undefined)
     }
-  }, [tab.tabId, viewportWidth, viewportHeight, viewportMobile, viewportScale])
+  }, [tab.tabId, viewportWidth, viewportHeight, viewportMobile, viewportScale, revealRequestId])
   return (
     <div ref={host} className="browser-surface" aria-label="网页内容区域">
       <div className="browser-surface__placeholder">
@@ -607,7 +614,13 @@ export function BrowserView(): JSX.Element {
       ) : null}
       {/* 同级网页和调试面板必须使用不同 key，避免更新时残留旧网页容器。 */}
       {tab ? (
-        <BrowserSurface key={`surface:${tab.tabId}`} tab={tab} />
+        <BrowserSurface
+          key={`surface:${tab.tabId}`}
+          tab={tab}
+          revealRequestId={
+            state.revealRequest?.tabId === tab.tabId ? state.revealRequest.requestId : undefined
+          }
+        />
       ) : (
         <div className="browser-empty">
           <Icon name="eye-outline" size={36} />

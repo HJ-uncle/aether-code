@@ -1,7 +1,7 @@
 import { CommandJobCard } from './CommandJobCard'
 import { ContextUsageBar, RollingContextNumber, useReducedContextMotion } from './ContextUsageMotion'
 import { exportCommandJob, visibleChildCommandJobs } from '@renderer/core/engine/command-job-state'
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { createPortal } from 'react-dom'
 import { useApp } from '@renderer/core/app-context'
 import { useChat, type ChatMessage, type ToolActivity } from '@renderer/core/engine/useChat'
@@ -39,7 +39,7 @@ import { ComposerOptions } from './ComposerOptions'
 import { loadSessionModelSelection, resolveSessionComposerModel, saveSessionModelSelection, type SessionModelSelection } from './session-model-store'
 import { loadSessionThinkingMode, saveSessionThinkingMode, type SessionThinkingMode } from './session-thinking-store'
 import { composerThinkingMode, requestedThinkingMode, resolveSessionRequestConfig, loadSessionRequestSelection, saveSessionRequestSelection, type SessionRequestSelection } from './session-request-config'
-import { normalizeRootRunRequestConfig, type RootRunRequestConfig } from '@shared/root-run'
+import { normalizeRootRunRequestConfig, type RootRunCompaction, type RootRunRequestConfig } from '@shared/root-run'
 import { MessageNavRail, type NavTurn } from './MessageNavRail'
 import {
   formatDuration,
@@ -258,7 +258,7 @@ export function ChatView(): JSX.Element {
   const connectionKey = engineConnectionKey(engine.snapshot)
   const storageSource = engineStorageKey(engine.snapshot)
   const sourceEpoch = getEngineSource()
-  const { messages, sessionUsage, commandJobs, sessionModel, streaming, historyCompacted, archiveRemaining, archiveLoading, archiveError, loadArchive, todos, send, respond, abort, loadHistory, resumeStream, deleteTurn, retryFrom, revertFrom, queue, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, queueSendMode, setQueueSendMode, retargetQueuedModel } = useChat()
+  const { messages, sessionUsage, commandJobs, sessionModel, streaming, historyCompacted, archiveRemaining, archiveLoading, archiveError, loadArchive, todos, send, respond, abort, resumeStream, deleteTurn, retryFrom, revertFrom, queue, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, queueSendMode, setQueueSendMode, retargetQueuedModel } = useChat()
   const { models, loaded: modelsLoaded } = useModels()
   const workspace = useWorkspace()
   // AppProvider 按引擎来源统一恢复或创建会话。这里提前创建会与远端选择
@@ -452,6 +452,7 @@ export function ChatView(): JSX.Element {
   const contextDisplay = useMemo(() => contextPresentation(messages), [messages])
   const contextUsage = contextDisplay.primary
   const contextUsed = contextUsage?.used ?? 0
+  const contextCompaction = sessionModelReady ? sessionModel.compaction : undefined
   // Pair the input with its own model/window. A pending model-only frame or a
   // composer selection must not redivide old input by another model's window.
   const contextLimit = contextPresentationLimit(contextUsage, models, modelId, CONTEXT_WINDOW_FALLBACK)
@@ -679,13 +680,11 @@ export function ChatView(): JSX.Element {
   )
 
   // ── 吸底跟随（对齐 wuzu-client CliChatView）──
-  // followBottom 只由真实用户手势切换，不听 scroll 事件：程序化滚动
-  // （scrollTop = scrollHeight）也触发 scroll，用它判定会在流式期间误关跟随。
+  // 内容增高不能改变用户的阅读选择；手势暂停后，回到底部才恢复跟随。
   const [followBottom, setFollowBottom] = useState(true)
+  const followBottomRef = useRef(true)
   // 非跟随期间来了新内容 → 显示「回到底部」按钮
   const [hasNewWhileUnfollowed, setHasNewWhileUnfollowed] = useState(false)
-  /** 使 pending 的 rAF 滚动回调作废的计数器：用户离开吸底后，旧滚动不再执行 */
-  const scrollGenerationRef = useRef(0)
   /** 对齐 Wuzu：距底 8px 内才恢复跟随；较大的距离只用于显示回到底部按钮。 */
   const RESUME_FOLLOW_PX = 8
   const SHOW_BACK_TO_BOTTOM_PX = 80
@@ -697,7 +696,7 @@ export function ChatView(): JSX.Element {
   }, [])
 
   const resumeFollowBottom = useCallback((): void => {
-    scrollGenerationRef.current += 1
+    followBottomRef.current = true
     setFollowBottom(true)
     setHasNewWhileUnfollowed(false)
   }, [])
@@ -706,24 +705,15 @@ export function ChatView(): JSX.Element {
     (force = false) => {
       const el = scrollRef.current
       if (!el) return
-      if (!force && !followBottom) {
+      if (!force && !followBottomRef.current) {
         // 非跟随时不滚动，按实际距离决定「回到底部」按钮浮不浮出
         setHasNewWhileUnfollowed(measureDistToBottom() > SHOW_BACK_TO_BOTTOM_PX)
         return
       }
-      const generation = scrollGenerationRef.current
-      // 先贴一次，再连续两帧贴底：覆盖「DOM 已插入但布局未撑开」的异步布局，
-      // 每一帧都检查 generation，防止用户上翻后被旧的自动滚动拉回。
-      requestAnimationFrame(() => {
-        if (scrollGenerationRef.current !== generation) return
-        el.scrollTop = el.scrollHeight
-        requestAnimationFrame(() => {
-          if (scrollGenerationRef.current === generation) el.scrollTop = el.scrollHeight
-        })
-      })
-      el.scrollTop = el.scrollHeight
+      const bottom = Math.max(0, el.scrollHeight - el.clientHeight)
+      if (Math.abs(el.scrollTop - bottom) > 1) el.scrollTop = bottom
     },
-    [followBottom, measureDistToBottom]
+    [measureDistToBottom]
   )
 
   // 用户手势离开吸底：只认「向上滚轮」与「按在滚动容器本身（滚动条）上」。
@@ -735,7 +725,7 @@ export function ChatView(): JSX.Element {
       if (event.deltaY >= 0) return
       const el = scrollRef.current
       if (!el || el.scrollHeight <= el.clientHeight) return
-      scrollGenerationRef.current += 1
+      followBottomRef.current = false
       setFollowBottom(false)
     },
     []
@@ -745,51 +735,61 @@ export function ChatView(): JSX.Element {
     if (event.target !== event.currentTarget) return
     const el = scrollRef.current
     if (!el || el.scrollHeight <= el.clientHeight) return
-    scrollGenerationRef.current += 1
+    followBottomRef.current = false
     setFollowBottom(false)
   }, [])
 
   // 滚回底部附近（含拖动滚动条）时恢复跟随；滚到顶部附近时加载更早的消息
   const handleListScroll = useCallback(() => {
-    if (measureDistToBottom() < RESUME_FOLLOW_PX) resumeFollowBottom()
+    if (!followBottomRef.current && measureDistToBottom() < RESUME_FOLLOW_PX) resumeFollowBottom()
     const el = scrollRef.current
     if (el && el.scrollTop < LOAD_EARLIER_PX) loadEarlier()
   }, [measureDistToBottom, resumeFollowBottom, loadEarlier])
 
-  // 新内容到达时：跟随态保持贴底；非跟随态只更新「回到底部」按钮显隐。
-  // followBottom 为 true 时传 force：80ms 节流攒批可能让首帧延迟，期间 scrollHeight 尚未撑开，
-  // 非 force 的 scrollToBottom 会量到旧高度提前 return；force 分支用 rAF 在下一帧再贴一次兜底。
-  useEffect(() => {
-    scrollToBottom(followBottom)
+  // 与正文提交一起在绘制前贴底，避免先露出新的一行、下一帧才滚动的闪跳。
+  useLayoutEffect(() => {
+    scrollToBottom()
   }, [messages, scrollToBottom, followBottom])
+
+  // 图片解码、过程展开与输入区变高不一定带来新消息；监听真实布局变化。
+  // 保留轮次为容器的直接子节点，导航与历史前插仍使用相同的锚点。
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const resize = new ResizeObserver(() => {
+      if (followBottomRef.current) scrollToBottom()
+    })
+    resize.observe(el)
+    for (const child of el.children) resize.observe(child)
+    const children = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.removedNodes) {
+          if (node instanceof Element) resize.unobserve(node)
+        }
+        for (const node of record.addedNodes) {
+          if (node instanceof Element) resize.observe(node)
+        }
+      }
+    })
+    children.observe(el, { childList: true })
+    return () => { children.disconnect(); resize.disconnect() }
+  }, [scrollToBottom])
 
   // 切换会话或引擎来源时恢复 Wuzu 的默认状态：新会话第一次渲染始终从底部开始，
   // 不继承上一个会话用户上翻后的暂停状态。
-  useEffect(() => {
-    scrollGenerationRef.current += 1
-    const generation = scrollGenerationRef.current
-    setFollowBottom(true)
-    setHasNewWhileUnfollowed(false)
-    const frame = requestAnimationFrame(() => {
-      const el = scrollRef.current
-      if (!el || scrollGenerationRef.current !== generation) return
-      el.scrollTop = el.scrollHeight
-      requestAnimationFrame(() => {
-        if (scrollGenerationRef.current === generation) el.scrollTop = el.scrollHeight
-      })
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [sessionId, sourceEpoch])
+  useLayoutEffect(() => {
+    prependSnapshotRef.current = null
+    resumeFollowBottom()
+    scrollToBottom(true)
+  }, [sourceSessionKey, resumeFollowBottom, scrollToBottom])
 
   // 回到底部按钮：立即贴底并恢复跟随
   const jumpToBottom = useCallback(() => {
     const el = scrollRef.current
     if (!el) return
-    scrollGenerationRef.current += 1
-    setHasNewWhileUnfollowed(false)
-    el.scrollTop = el.scrollHeight
     resumeFollowBottom()
-  }, [resumeFollowBottom])
+    scrollToBottom(true)
+  }, [resumeFollowBottom, scrollToBottom])
 
   const showBackToBottom = !followBottom && hasNewWhileUnfollowed
 
@@ -1325,6 +1325,7 @@ export function ChatView(): JSX.Element {
         <div
           className="chat__messages"
           data-chat-scroll-region="true"
+          data-follow-bottom={followBottom}
           ref={scrollRef}
           onWheel={handleListWheel}
           onPointerDown={handleListPointerDown}
@@ -1670,19 +1671,17 @@ export function ChatView(): JSX.Element {
               <Icon name={polishing ? 'sync' : 'sparkles'} size={16} />
             </button>
 
-            {contextUsage !== null ? (
+            {contextUsage !== null || contextCompaction ? (
               <ContextRing
                 requestEstimate={contextDisplay.requestEstimate}
                 key={`${sourceEpoch}:${sessionId}`}
                 used={contextUsed}
                 limit={contextLimit}
-                estimated={contextUsage.estimated}
-                provisional={contextUsage.provisional}
-                sessionId={sessionId}
+                estimated={contextUsage?.estimated}
+                provisional={contextUsage?.provisional}
+                usageKnown={contextUsage !== null}
+                compaction={contextCompaction}
                 streaming={streaming}
-                onCompacted={() => {
-                  if (displayedSessionRef.current === sourceSessionKey) void loadHistory(sessionId)
-                }}
               />
             ) : null}
 
@@ -1733,60 +1732,51 @@ export function ChatView(): JSX.Element {
 
 // ==================== 消息渲染 ====================
 
-/**
- * 上下文用量环：最近一次模型请求的输入占该次上下文窗口的百分比。
- * 占用快照可以随压缩/工具结果清理下降；每轮计费用量另行累计。
- *
- * 点击触发压缩：调引擎 POST /conversation/compress（LLM 摘要 + 历史重建），
- * 过程中环内显示转圈；完成后短暂显示压缩前后 token 对比，再回落为百分比。
- */
+/** The ring observes engine-owned automatic compaction; it never starts maintenance. */
 function ContextRing({
   requestEstimate,
   used,
   limit,
   estimated,
   provisional,
-  sessionId,
-  streaming,
-  onCompacted
+  usageKnown,
+  compaction,
+  streaming
 }: {
   used: number
   limit: number
   estimated?: boolean
   provisional?: boolean
   requestEstimate?: number
-  sessionId: string
+  usageKnown: boolean
+  compaction?: RootRunCompaction
   streaming: boolean
-  onCompacted: () => void
 }): JSX.Element {
-  const { ready } = useApp()
-  const sourceEpoch = getEngineSource()
-  const [phase, setPhase] = useState<'idle' | 'compacting' | 'done' | 'failed'>('idle')
-  const [compactInfo, setCompactInfo] = useState<{ before: number; after: number } | null>(null)
-  const [errorMsg, setErrorMsg] = useState('')
   const [hoverAnchor, setHoverAnchor] = useState<DOMRect | null>(null)
-  const buttonRef = useRef<HTMLButtonElement>(null)
+  const ringRef = useRef<HTMLDivElement>(null)
   const closeTimerRef = useRef(0)
-  const phaseTimerRef = useRef(0)
-  const mountedRef = useRef(true)
-
+  const [, refreshStatus] = useState(0)
   const openHover = (rect: DOMRect): void => {
     window.clearTimeout(closeTimerRef.current)
     setHoverAnchor(rect)
   }
   const scheduleCloseHover = (): void => {
     window.clearTimeout(closeTimerRef.current)
+    if (document.activeElement === ringRef.current) return
     closeTimerRef.current = window.setTimeout(() => setHoverAnchor(null), 200)
   }
+  useEffect(() => () => window.clearTimeout(closeTimerRef.current), [])
+  // Persisted completion time, rather than navigation time, owns this brief notice.
   useEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-      window.clearTimeout(closeTimerRef.current)
-      window.clearTimeout(phaseTimerRef.current)
-    }
-  }, [])
-
+    if (!compaction || compaction.phase === 'running' || compaction.finishedAt === undefined) return
+    const remaining = compaction.finishedAt + 6000 - Date.now()
+    if (remaining <= 0) return
+    const timer = window.setTimeout(() => refreshStatus(value => value + 1), remaining)
+    return () => window.clearTimeout(timer)
+  }, [compaction?.phase, compaction?.startedAt, compaction?.finishedAt])
+  const recent = compaction?.finishedAt !== undefined && Date.now() < compaction.finishedAt + 6000
+  const phase = compaction?.phase === 'running' ? 'running' : recent ? compaction?.phase : undefined
+  const busy = phase === 'running'
   const ratio = Math.min(1, used / limit)
   const percent = Math.round(ratio * 100)
   const precisePercent = (Math.round(Math.min(used, limit) * 100_000 / limit) / 1000).toFixed(3)
@@ -1794,94 +1784,41 @@ function ContextRing({
   const circumference = 2 * Math.PI * radius
   const offset = circumference * (1 - ratio)
   const warn = ratio >= 0.85
-
-  const compact = async (): Promise<void> => {
-    if (!ready || sourceEpoch !== getEngineSource() || phase === 'compacting' || streaming || !sessionId) return
-    setPhase('compacting')
-    setErrorMsg('')
-    try {
-      const response = await requestOrThrow<{
-        message?: string
-        stats?: { originalTokens: number; compressedTokens: number }
-      }>({ method: 'POST', path: '/conversation/compress', query: { sessionId } })
-      if (!mountedRef.current || sourceEpoch !== getEngineSource()) return
-      setCompactInfo({
-        before: response.stats?.originalTokens ?? used,
-        after: response.stats?.compressedTokens ?? used
-      })
-      setPhase('done')
-      onCompacted()
-      // 6 秒后回落到百分比（对齐竞品行为）
-      phaseTimerRef.current = window.setTimeout(() => {
-        if (mountedRef.current && sourceEpoch === getEngineSource()) setPhase('idle')
-      }, 6000)
-    } catch (e) {
-      if (!mountedRef.current || sourceEpoch !== getEngineSource()) return
-      setErrorMsg(e instanceof Error ? e.message : '压缩失败')
-      setPhase('failed')
-      phaseTimerRef.current = window.setTimeout(() => {
-        if (mountedRef.current && sourceEpoch === getEngineSource()) setPhase('idle')
-      }, 6000)
-    }
-  }
-
-  // 悬停详情由 ContextRingCard 弹窗卡片承载，这里只保留无障碍标签（原生 title 会与卡片重复弹出）
-  const title =
-    phase === 'compacting'
-      ? '正在压缩上下文…'
-      : phase === 'done' && compactInfo
-        ? `已压缩 ${formatTokens(compactInfo.before)} → ${formatTokens(compactInfo.after)}`
-        : phase === 'failed'
-          ? `压缩失败：${errorMsg}`
-          : `上下文用量 ${precisePercent}%（最近一次模型请求 ${formatTokens(used)} / ${formatTokens(limit)}；${used.toLocaleString('en-US')} / ${limit.toLocaleString('en-US')} tokens），点击压缩上下文`
-
+  const status = busy ? '正在自动压缩上下文' : phase === 'succeeded'
+    ? '自动压缩完成' + (compaction?.beforeTokens !== undefined && compaction.afterTokens !== undefined ? '（历史估算 ' + formatTokens(compaction.beforeTokens) + ' → ' + formatTokens(compaction.afterTokens) + '）' : '')
+    : phase === 'failed' ? '自动压缩失败' + (compaction?.error ? '：' + compaction.error : '') : undefined
+  const title = status ?? (usageKnown
+    ? '上下文用量 ' + precisePercent + '%（最近一次模型请求 ' + formatTokens(used) + ' / ' + formatTokens(limit) + '；' + used.toLocaleString('en-US') + ' / ' + limit.toLocaleString('en-US') + ' tokens）'
+    : '上下文用量尚未确认')
   return (
     <>
-      <button
-        ref={buttonRef}
-        type="button"
-        className={`context-ring${warn ? ' context-ring--warn' : ''}${phase === 'compacting' ? ' context-ring--busy' : ''}`}
+      <div
+        ref={ringRef}
+        role="img"
+        tabIndex={0}
+        className={'context-ring' + (warn ? ' context-ring--warn' : '') + (busy ? ' context-ring--busy' : '')}
         aria-label={title}
+        aria-busy={busy}
+        data-compaction-phase={phase ?? 'idle'}
         data-context-source={provisional === true ? 'provisional' : estimated === true ? 'estimated' : estimated === false ? 'reported' : 'unknown'}
         data-context-pending={requestEstimate !== undefined || estimated === true || provisional === true ? 'true' : 'false'}
-        aria-disabled={!ready || phase === 'compacting' || streaming || !sessionId}
-        onClick={() => void compact()}
         onMouseEnter={(event) => openHover(event.currentTarget.getBoundingClientRect())}
         onMouseLeave={scheduleCloseHover}
+        onFocus={(event) => openHover(event.currentTarget.getBoundingClientRect())}
+        onBlur={scheduleCloseHover}
+        onKeyDown={(event) => { if (event.key === 'Escape') setHoverAnchor(null) }}
       >
-        <svg width="26" height="26" viewBox="0 0 26 26">
+        <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
           <circle className="context-ring__track" cx="13" cy="13" r={radius} fill="none" strokeWidth="2.5" />
-          <circle
-            className="context-ring__bar"
-            cx="13"
-            cy="13"
-            r={radius}
-            fill="none"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeDasharray={circumference}
-            strokeDashoffset={phase === 'compacting' ? circumference * 0.25 : offset}
-          />
+          <circle className="context-ring__bar" cx="13" cy="13" r={radius} fill="none" strokeWidth="2.5"
+            strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={busy ? circumference * 0.25 : offset} />
         </svg>
-        <span className="context-ring__label">
-          {phase === 'compacting' ? '…' : phase === 'done' ? '✓' : phase === 'failed' ? '✕' : percent}
-        </span>
-      </button>
+        <span className="context-ring__label" aria-hidden="true">{busy ? '…' : phase === 'succeeded' ? '✓' : phase === 'failed' ? '✕' : usageKnown ? percent : '—'}</span>
+      </div>
       {hoverAnchor ? (
-        <ContextRingCard
-          requestEstimate={requestEstimate}
-          anchor={hoverAnchor}
-          anchorElement={buttonRef.current}
-          used={used}
-          limit={limit}
-          estimated={estimated}
-          provisional={provisional}
-          phase={phase}
-          compactInfo={compactInfo}
-          errorMsg={errorMsg}
-          streaming={streaming}
-          readOnly={!ready}
-        />
+        <ContextRingCard requestEstimate={requestEstimate} anchor={hoverAnchor} anchorElement={ringRef.current}
+          used={used} limit={limit} estimated={estimated} provisional={provisional} usageKnown={usageKnown}
+          compactionPhase={phase} status={status} streaming={streaming} />
       ) : null}
     </>
   )
@@ -1890,7 +1827,7 @@ function ContextRing({
 /**
  * 上下文用量环的 hover 卡片（布局对齐 wuzu ContextUsageRing 的 tooltip）。
  * 结构：标题行（上下文窗口）→ 大号百分比 + 右侧「已用 / 上限」→ 底部状态提示；
- * 压缩状态留在末行，数值与进度保持挂载以显示压缩后的下降。
+ * 自动压缩状态来自引擎；已确认的模型输入快照独立保留。
  * 信息卡不包含操作，鼠标可以穿过卡片继续点击输入框；定位在环的上方并贴边钳制。
  */
 function ContextRingCard({
@@ -1901,24 +1838,22 @@ function ContextRingCard({
   limit,
   estimated,
   provisional,
-  phase,
-  compactInfo,
-  errorMsg,
-  streaming,
-  readOnly
+  usageKnown,
+  compactionPhase,
+  status,
+  streaming
 }: {
   requestEstimate?: number
   anchor: DOMRect
-  anchorElement: HTMLButtonElement | null
+  anchorElement: HTMLDivElement | null
   used: number
   limit: number
   estimated?: boolean
   provisional?: boolean
-  phase: 'idle' | 'compacting' | 'done' | 'failed'
-  compactInfo: { before: number; after: number } | null
-  errorMsg: string
+  usageKnown: boolean
+  compactionPhase?: RootRunCompaction['phase']
+  status?: string
   streaming: boolean
-  readOnly: boolean
 }): JSX.Element {
   const cardRef = useRef<HTMLDivElement>(null)
   const precisePercent = (Math.round(Math.min(used, limit) * 100_000 / limit) / 1000).toFixed(3)
@@ -1974,34 +1909,29 @@ function ContextRingCard({
     }
   }, [anchor, anchorElement])
 
-  const hint =
-    readOnly
-      ? '引擎未就绪，连接恢复后可压缩上下文'
-      : phase === 'done' && compactInfo
-      ? `已压缩 ${formatTokens(compactInfo.before)} → ${formatTokens(compactInfo.after)}`
-      : streaming
-        ? '生成中，结束后可点击压缩'
-        : '使用接近上限时，可点击立即压缩上下文'
-
   return createPortal(
     <div ref={cardRef} className="git-stashcard ctx-card" role="tooltip" data-testid="context-usage-card" data-reduced-motion={reducedMotion} style={{ pointerEvents: 'none', visibility: 'hidden' }}>
       <div className="ctx-card__header">
         <span>当前上下文</span>
         <span className="ctx-card__percent">
-          <RollingContextNumber value={Number(precisePercent)} formatted={precisePercent} reduced={reducedMotion} testId="context-percent-number" />
-          <span className="ctx-card__percent-sign">%</span>
+          {compactionPhase === 'running' ? '压缩中…' : usageKnown ? <>
+            <RollingContextNumber value={Number(precisePercent)} formatted={precisePercent} reduced={reducedMotion} testId="context-percent-number" />
+            <span className="ctx-card__percent-sign">%</span>
+          </> : '—'}
         </span>
       </div>
       <div className="ctx-card__tokens">
         <span className="ctx-card__tokens-value">
-          <RollingContextNumber value={used} formatted={used.toLocaleString('en-US')} reduced={reducedMotion} testId="context-used-number" /> / {formatTokens(limit)}
+          {usageKnown ? <RollingContextNumber value={used} formatted={used.toLocaleString('en-US')} reduced={reducedMotion} testId="context-used-number" /> : '—'} / {formatTokens(limit)}
         </span>
         <span className="ctx-card__tokens-label">使用 / 上限</span>
       </div>
       <div className="ctx-card__hint ctx-card__exact-tokens">
-        {used.toLocaleString('en-US')} / {limit.toLocaleString('en-US')} tokens
+        {usageKnown ? used.toLocaleString('en-US') : '尚未确认'} / {limit.toLocaleString('en-US')} tokens
       </div>
-      <ContextUsageBar ratio={used / limit} reduced={reducedMotion} />
+      {compactionPhase === 'running' ? (
+        <div className="ctx-card__bar ctx-card__bar--compacting" role="progressbar" aria-label="自动压缩上下文" aria-valuetext="正在自动压缩" data-reduced-motion={reducedMotion} />
+      ) : <ContextUsageBar ratio={used / limit} reduced={reducedMotion} />}
       <div className="ctx-card__hint ctx-card__source-hint">
         {provisional === true ? '当前模型请求' : estimated === false ? '最近确认的模型请求' : streaming ? '当前请求' : '最近一次模型请求'}的输入
         {provisional === true
@@ -2015,12 +1945,9 @@ function ContextRingCard({
             : '（模型统计或估算）。'}
         <div>压缩或清理工具结果后可减少占用。</div>
       </div>
-      <div className="ctx-card__hint ctx-card__action-hint">
-        {phase === 'compacting' ? '正在压缩上下文…' : phase === 'failed' ? (
-          <span className="ctx-card__error">
-            上下文压缩失败{errorMsg ? '：' + errorMsg : ''}
-          </span>
-        ) : hint}
+      <div className="ctx-card__hint ctx-card__status-hint" role="status">
+        {status ? <span className={compactionPhase === 'failed' ? 'ctx-card__error' : undefined}>{status}</span>
+          : streaming ? '生成中；引擎会在需要时自动压缩上下文。' : '引擎会在需要时自动压缩上下文。'}
       </div>
     </div>,
     document.body
@@ -2072,6 +1999,8 @@ function serializeMessages(selected: ChatMessage[]): string {
  *
  * 按下标切、不做文本匹配：`@public` 后面紧跟用户打的内容时，文本匹配必然串位。
  */
+const USER_COLLAPSED_LINES = 8
+
 const UserBubbleContent = memo(function UserBubbleContent({ content }: { content: string }): JSX.Element {
   const segments = useMemo(() => {
     const { body, refs } = parseMentionContent(content)
@@ -2087,27 +2016,67 @@ const UserBubbleContent = memo(function UserBubbleContent({ content }: { content
     return out
   }, [content])
 
+  const contentRef = useRef<HTMLDivElement>(null)
+  const contentId = `user-message-content-${useId().replace(/:/g, '')}`
+  const [expanded, setExpanded] = useState(false)
+  const [overflowing, setOverflowing] = useState(false)
+
+  useLayoutEffect(() => {
+    setExpanded(false)
+    const element = contentRef.current
+    if (!element) return
+
+    const measure = (): void => {
+      const style = getComputedStyle(element)
+      const lineHeight = Number.parseFloat(style.lineHeight)
+      const maxHeight = Number.isFinite(lineHeight) ? lineHeight * USER_COLLAPSED_LINES : element.clientHeight
+      setOverflowing(element.scrollHeight > maxHeight + 1)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [content])
+
   return (
     <>
-      {segments.map((segment, index) =>
-        segment.ref ? (
-          <span
-            key={index}
-            className={`mention-chip mention-chip--${segment.ref.t}`}
-            style={{ color: MENTION_META[segment.ref.t].color }}
-            title={mentionTitle({
-              source: segment.ref.t,
-              path: segment.ref.p,
-              startLine: segment.ref.r?.[0],
-              endLine: segment.ref.r?.[1]
-            })}
-          >
-            {segment.ref.d}
-          </span>
-        ) : (
-          <span key={index}>{segment.text}</span>
-        )
-      )}
+      <div
+        id={contentId}
+        ref={contentRef}
+        className={`message__bubble-content${overflowing && !expanded ? ' is-collapsed' : ''}`}
+      >
+        {segments.map((segment, index) =>
+          segment.ref ? (
+            <span
+              key={index}
+              className={`mention-chip mention-chip--${segment.ref.t}`}
+              style={{ color: MENTION_META[segment.ref.t].color }}
+              title={mentionTitle({
+                source: segment.ref.t,
+                path: segment.ref.p,
+                startLine: segment.ref.r?.[0],
+                endLine: segment.ref.r?.[1]
+              })}
+            >
+              {segment.ref.d}
+            </span>
+          ) : (
+            <span key={index}>{segment.text}</span>
+          )
+        )}
+      </div>
+      {overflowing ? (
+        <button
+          type="button"
+          className="message__collapse-toggle"
+          aria-expanded={expanded}
+          aria-controls={contentId}
+          onClick={() => setExpanded(value => !value)}
+        >
+          <span>{expanded ? '收起' : '显示更多'}</span>
+          <Icon name={expanded ? 'chevron-up' : 'chevron-down'} size={14} />
+        </button>
+      ) : null}
     </>
   )
 })
@@ -2300,7 +2269,7 @@ const MessageItem = memo(function MessageItem({
         {actions}
       </div>
 
-      {message.run ? <div className="pending-card__hint" role="status" aria-label="运行状态">{message.status === 'interrupted' ? '已中断' : message.status === 'aborted' ? '已取消' : message.status === 'error' ? '失败' : rootStatusLabel(message.run.status)}</div> : null}
+      <MessageRunStatus message={message} />
       {(() => {
         const interactions = message.interactions ?? (message.pending ? [message.pending] : [])
         // 只有仍处于 waiting 的请求才是可操作的待办。已回答项以及终态运行
@@ -2389,14 +2358,47 @@ type InlineSegment =
   | { type: 'content'; text: string }
   | { type: 'subagent-group'; tools: ToolActivity[] }
 
-/** 流式状态文案分层：正在执行的工具名 > 「正在生成回复」> 兜底「处理中…」（对齐 wuzu streamStatusDisplay） */
+/** Each message observes its own root run before displaying the active tool. */
+function isMessageCompacting(message: ChatMessage): boolean {
+  return message.run?.compaction?.phase === 'running' && !['failed', 'cancelled', 'interrupted'].includes(message.run.status)
+}
+
 function streamStatusText(message: ChatMessage): string {
+  if (isMessageCompacting(message)) return '正在自动压缩上下文…'
   // 正在执行的工具优先：用户最关心的是「此刻在干什么」
   const running = [...message.tools].reverse().find((tool) => tool.state === 'running')
   if (running) return `${toolDisplayName(running.name)}…`
   // 已有正文流出说明在生成回复
   if (message.content) return '正在生成回复…'
   return '处理中…'
+}
+
+/** 用量下方只保留一个状态位置，运行提示与最终结果在这里切换。 */
+function MessageRunStatus({ message }: { message: ChatMessage }): JSX.Element | null {
+  const compacting = isMessageCompacting(message)
+  const active = (message.status === 'streaming' || compacting) && !message.pending
+  if (!active && !message.run) return null
+  const text = active ? streamStatusText(message)
+    : compacting ? '正在自动压缩上下文…'
+    : message.status === 'interrupted' ? '已中断'
+    : message.status === 'aborted' ? '已取消'
+    : message.status === 'error' ? '失败'
+    : rootStatusLabel(message.run!.status)
+  return (
+    <div
+      className={`message__run-status ${active ? 'message__streaming-hint' : 'pending-card__hint'}`}
+      role="status"
+      aria-live="polite"
+      aria-label="运行状态"
+    >
+      {active ? (
+        <>
+          <span className="message__spinner" aria-hidden="true" />
+          <span className="message__streaming-text">{text}</span>
+        </>
+      ) : text}
+    </div>
+  )
 }
 
 /**
@@ -2476,14 +2478,7 @@ function MessageTimeline({
     return { inline: grouped }
   }, [message.items, message.tools])
 
-  if (inline.length === 0) {
-    return streaming && !message.pending ? (
-      <div className="message__streaming-hint">
-        <span className="message__spinner" />
-        {streamStatusText(message)}
-      </div>
-    ) : null
-  }
+  if (inline.length === 0) return null
 
   // Wuzu Code 只自动展开当前时间线末尾的过程块；较早的过程块保留为摘要，
   // 否则一次包含多轮工具调用的回答会把正文推到很远的位置。
@@ -2520,12 +2515,6 @@ function MessageTimeline({
           )
         )
       })}
-      {streaming && !message.pending ? (
-        <div className="message__streaming-hint">
-          <span className="message__spinner" />
-          {streamStatusText(message)}
-        </div>
-      ) : null}
     </>
   )
 }

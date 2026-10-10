@@ -148,7 +148,6 @@ const REMOTE_CHAT_ROUTES = [
   /^\/api\/v1\/chat(?:\/cancel)?$/,
   /^\/api\/v1\/utility\/chat$/,
   /^\/api\/v1\/models(?:\/detect-capabilities|\/[a-zA-Z0-9_-]+\/test)?$/,
-  /^\/api\/v1\/conversation\/compress$/,
   /^\/api\/v1\/subagent\/cancel$/,
   /^\/api\/v1\/subagent\/runs\/[a-zA-Z0-9_-]+\/cancel$/,
   /^\/api\/v1\/command-jobs\/[a-zA-Z0-9_-]+\/cancel$/,

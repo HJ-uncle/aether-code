@@ -15,6 +15,7 @@ interface BrowserState {
   ready: boolean
   error: string
   addressFocusRequest: number
+  revealRequest: { tabId: string; requestId: string } | null
 }
 
 let state: BrowserState = {
@@ -23,7 +24,8 @@ let state: BrowserState = {
   settings: DEFAULT_BROWSER_SETTINGS,
   ready: false,
   error: '',
-  addressFocusRequest: 0
+  addressFocusRequest: 0,
+  revealRequest: null
 }
 const listeners = new Set<() => void>()
 let starting: Promise<void> | undefined
@@ -44,6 +46,19 @@ export function useBrowserState(): BrowserState {
 }
 
 function receive(event: BrowserEvent): void {
+  if (event.type === 'reveal') {
+    // Even an already selected tab must report fresh layout: an earlier native
+    // visibility flag may belong to the frame before a modal or tab switch.
+    publish({
+      activeTabId: event.tabId,
+      revealRequest: { tabId: event.tabId, requestId: event.requestId },
+      tabs: state.tabs.some((tab) => tab.tabId === event.tabId)
+        ? state.tabs.map((tab) => (tab.tabId === event.tabId ? event.tab : tab))
+        : [...state.tabs, event.tab]
+    })
+    showEditorView('browser')
+    return
+  }
   if (event.type === 'focused') {
     if (state.activeTabId !== event.tabId) publish({ activeTabId: event.tabId })
     // The native page cannot bubble pointer events into EditorGroupView. Route
@@ -61,6 +76,7 @@ function receive(event: BrowserEvent): void {
     const tabs = state.tabs.filter((tab) => tab.tabId !== event.tabId)
     publish({
       tabs,
+      ...(state.revealRequest?.tabId === event.tabId ? { revealRequest: null } : {}),
       activeTabId:
         state.activeTabId === event.tabId
           ? (tabs[Math.min(index, tabs.length - 1)]?.tabId ?? null)

@@ -28,7 +28,7 @@ const engineRoot = resolve(root, '..', 'ai-agent-engine')
 const model = 'browser-visual-anthropic-fixture'
 const sessionId = 'browser-agent-loop'
 const key = 'b'.repeat(64)
-const finalAnswer = '已完成真实浏览器验证：中文输入、按钮、手机视口、截图、控制台和网络均通过。'
+const finalAnswer = '已完成真实浏览器验证：中文输入、按钮、手机视口、截图、控制台、网络及失败后的恢复均通过。'
 const steps = [
   'open',
   'snapshot',
@@ -40,11 +40,18 @@ const steps = [
   'console',
   'network',
   'network_request',
-  'network_request_more'
+  'network_request_more',
+  'open_error_tab',
+  'close_error_tab',
+  'click_closed',
+  'recover_fill'
 ] as const
 type Step = (typeof steps)[number]
-const toolName = (step: Step): string =>
-  `browser_${step === 'network_request_more' ? 'network_request' : step}`
+const toolAliases: Partial<Record<Step, string>> = {
+  network_request_more: 'network_request', open_error_tab: 'open',
+  close_error_tab: 'close', click_closed: 'click', recover_fill: 'fill'
+}
+const toolName = (step: Step): string => `browser_${toolAliases[step] ?? step}`
 type Block = {
   type: string
   text?: string
@@ -59,6 +66,14 @@ type RequestBody = {
   tools?: Array<{ name: string }>
 }
 type Frame = { type: string; [key: string]: unknown }
+type StopScenario = {
+  mode: 'cancel' | 'recover'
+  target: { tabId: string; navigationId: number; selector: string }
+  issued: boolean
+  pendingResponse?: ServerResponse
+  recoveredResult?: Block
+}
+let stopScenario: StopScenario | undefined
 let fixture = '',
   origin = '',
   app: ElectronApplication | undefined,
@@ -68,11 +83,14 @@ let pingCount = 0,
   pixels = '',
   imageDescription = ''
 const outputs = new Map<Step, unknown>()
+const providerToolResults = new Map<Step, Block>()
 const requestedTools: string[] = []
 const providerErrors: string[] = []
 const rendererErrors: string[] = []
 const pageHtml = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI 浏览器闭环夹具</title><style>body{font:18px sans-serif;margin:24px}input,button{font:inherit;padding:8px}canvas{display:block;background:#edd7a7;margin-top:16px}#visual-marker{position:fixed;right:14px;top:12px;width:36px;height:28px;background:rgb(220,30,70);z-index:9999;pointer-events:none}</style></head><body><div id="visual-marker" aria-hidden="true"></div><h1>AI 可视化测试页面</h1><label for="name">名称</label><input id="name" value="初始值"><button id="confirm">确认</button><p id="result">等待输入</p><p id="network">网络未请求</p><canvas width="220" height="180"></canvas><script>
+window.__fixtureClickCount=0;window.__fixtureInputs=[];document.querySelector('#name').addEventListener('input',event=>window.__fixtureInputs.push({value:event.target.value,trusted:event.isTrusted}));
 document.querySelector('#confirm').onclick=async(event)=>{
+  window.__fixtureClickCount++;
   const bounds=event.currentTarget.getBoundingClientRect();
   window.__fixtureClick={x:event.clientX,y:event.clientY,trusted:event.isTrusted,bounds:{x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height},viewport:{width:innerWidth,height:innerHeight,deviceScaleFactor:devicePixelRatio,scrollX,scrollY}};
   document.querySelector('#result').textContent='完成：'+document.querySelector('#name').value;console.log('AI_BROWSER_CONFIRMED');await fetch('/ping');document.querySelector('#network').textContent='网络完成'
@@ -124,6 +142,7 @@ function captureResults(body: RequestBody): void {
     if (outputs.has(step)) continue
     const result = results.find((block) => block.tool_use_id === `browser-agent-${step}`)
     if (!result) continue
+    providerToolResults.set(step, result)
     if (step === 'screenshot') {
       if (!Array.isArray(result.content))
         throw new Error('Screenshot did not reach the model as multimodal content')
@@ -153,7 +172,13 @@ function captureResults(body: RequestBody): void {
   }
 }
 function argsFor(step: Step): Record<string, unknown> {
-  if (step === 'open') return { url: `${origin}/page` }
+  if (step === 'open' || step === 'open_error_tab') return { url: `${origin}/page` }
+  if (step === 'close_error_tab' || step === 'click_closed') {
+    const closed = outputs.get('open_error_tab') as BrowserTabState | undefined
+    if (!closed?.tabId) throw new Error('Missing error fixture tab')
+    return { tabId: closed.tabId, navigationId: closed.navigationId,
+      ...(step === 'click_closed' ? { selector: '#confirm' } : {}) }
+  }
   const tab = outputs.get('open') as BrowserTabState | undefined
   if (!tab?.tabId) throw new Error('browser_open did not return a tabId')
   if (step === 'snapshot') return { tabId: tab.tabId }
@@ -161,6 +186,7 @@ function argsFor(step: Step): Record<string, unknown> {
   if (!snapshot || !Number.isInteger(snapshot.tab?.navigationId))
     throw new Error('snapshot did not return navigation identity')
   const target = { tabId: tab.tabId, navigationId: snapshot.tab.navigationId }
+  if (step === 'recover_fill') return { ...target, selector: '#name', text: 'AI闭环中文' }
   if (step === 'fill') {
     const input = snapshot.elements.find((element) => element.role === 'textbox' && element.ref)
     if (!input?.ref) throw new Error('snapshot did not expose an actionable input ref')
@@ -240,6 +266,25 @@ const provider = createServer((request, response) => {
       return
     }
     streamCount++
+    if (stopScenario) {
+      if (stopScenario.mode === 'cancel') {
+        if (stopScenario.issued) throw new Error('Cancelled run unexpectedly requested another model response')
+        // The test opens a real modal before releasing this real tool request.
+        stopScenario.pendingResponse = response
+        return
+      }
+      const recoveredResult = body.messages.flatMap(message => Array.isArray(message.content) ? message.content : [])
+        .find(block => block.type === 'tool_result' && block.tool_use_id === 'browser-after-user-stop')
+      if (recoveredResult) {
+        stopScenario.recoveredResult = recoveredResult
+        stream(response, { type: 'text', text: '停止后已恢复，合法点击只执行一次。' })
+        return
+      }
+      if (stopScenario.issued) throw new Error('Recovery click was duplicated without a result')
+      stopScenario.issued = true
+      stream(response, { type: 'tool_use', id: 'browser-after-user-stop', name: 'browser_click', input: stopScenario.target }, 'tool_use')
+      return
+    }
     captureResults(body)
     const next = steps.find((step) => !outputs.has(step))
     if (!next) {
@@ -386,7 +431,7 @@ async function expectClickSnapshotCard(): Promise<Locator> {
   }
   const row = page.locator('.logline-wrap').filter({
     has: page.locator('.logline__name', { hasText: /^点击浏览器元素$/ })
-  })
+  }).filter({ hasNot: page.locator('.logline__name--error') })
   await expect(row).toHaveCount(1)
   const toggle = row.locator('button.logline')
   if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click()
@@ -649,7 +694,7 @@ test.describe.serial('AI 模型到内置浏览器完整闭环', () => {
       const guest = webContents.getAllWebContents().find((wc) => wc.getURL() === url)
       if (!guest) throw new Error('Visible browser page missing')
       return guest.executeJavaScript(
-        `({value:document.querySelector('#name').value,result:document.querySelector('#result').textContent,width:innerWidth,node:typeof require,bridge:typeof window.aether,click:window.__fixtureClick,currentBounds:document.querySelector('#confirm').getBoundingClientRect().toJSON()})`
+        `({value:document.querySelector('#name').value,result:document.querySelector('#result').textContent,width:innerWidth,node:typeof require,bridge:typeof window.aether,click:window.__fixtureClick,inputs:window.__fixtureInputs,currentBounds:document.querySelector('#confirm').getBoundingClientRect().toJSON()})`
       )
     }, `${origin}/page`)
     expect(actual).toMatchObject({
@@ -659,6 +704,21 @@ test.describe.serial('AI 模型到内置浏览器完整闭环', () => {
       node: 'undefined',
       bridge: 'undefined'
     })
+    expect(actual.inputs).toEqual([
+      { value: 'AI闭环中文', trusted: true },
+      { value: 'AI闭环中文', trusted: true }
+    ])
+    const failedProviderResult = providerToolResults.get('click_closed')
+    expect(failedProviderResult?.is_error, '模型必须明确知道操作失败，不能把 null 当成成功结果').toBe(true)
+    expect(failedProviderResult?.content).not.toBe('null')
+    const failure = outputs.get('click_closed') as { success: boolean; error: string; code: string; operationPerformed: boolean | 'unknown'; recovery: string }
+    expect(failure).toMatchObject({ success: false, error: expect.stringContaining('标签已关闭'), operationPerformed: false })
+    expect(failure.code).toMatch(/^BROWSER_/)
+    expect(failure.recovery.length).toBeGreaterThan(0)
+    expect(providerToolResults.get('recover_fill')?.is_error).not.toBe(true)
+    expect((outputs.get('recover_fill') as BrowserSnapshot).elements).toContainEqual(expect.objectContaining({ role: 'textbox', value: 'AI闭环中文' }))
+    const surviving = await page.evaluate(() => window.aether.browser.list())
+    expect(surviving.filter(tab => tab.url === `${origin}/page`).map(tab => tab.tabId)).toEqual([opened.tabId])
     const clicked = outputs.get('click') as BrowserSnapshot
     const interaction = clicked.interaction
     expect(interaction, '真实 click 工具返回点击前的坐标、目标及视口').toBeDefined()
@@ -694,6 +754,18 @@ test.describe.serial('AI 模型到内置浏览器完整闭环', () => {
     for (const step of ['snapshot', 'fill', 'click', 'wait', 'set_viewport'] as const) {
       expectModelImageMetadata(outputs.get(step) as BrowserSnapshot, historySnapshot(history, step))
     }
+    const failedHistory = history.find(row => row.role === 'tool' && row.toolCallId === 'browser-agent-click_closed')!
+    expect(failedHistory.success ?? failedHistory.metadata?.success).toBe(false)
+    expect(typeof failedHistory.content).toBe('string')
+    expect(JSON.parse(String(failedHistory.content))).toMatchObject({ success: false, error: failure.error, operationPerformed: false })
+    for (const summary of await page.locator('.process__summary').all()) {
+      if (await summary.getAttribute('aria-expanded') !== 'true') await summary.click()
+    }
+    const failedRow = page.locator('.logline-wrap').filter({ has: page.locator('.logline__name--error', { hasText: /^点击浏览器元素$/ }) })
+    await expect(failedRow).toHaveCount(1)
+    const failedToggle = failedRow.locator('button.logline')
+    if (await failedToggle.getAttribute('aria-expanded') !== 'true') await failedToggle.click()
+    await expect(failedRow.locator('.message__error')).toContainText(failure.error)
     const screenshotRow = page.locator('.logline-wrap').filter({ has: page.locator('.logline__name', { hasText: /^浏览器截图$/ }) })
     const resultImage = screenshotRow.locator('.tool-result__preview img')
     await expect(resultImage).toBeVisible()
@@ -781,5 +853,122 @@ test.describe.serial('AI 模型到内置浏览器完整闭环', () => {
       await expect.poll(visible).toBe(true)
     }
     expect(rendererErrors).toEqual([])
+  })
+
+  test('用户停止真实运行会取消已派发且等待显示的点击，恢复后不出现迟到点击', async ({}, testInfo) => {
+    const tab = (await page.evaluate(() => window.aether.browser.list())).find(item => item.tabId === (outputs.get('open') as BrowserTabState).tabId)!
+    expect(tab).toBeDefined()
+    const guestIds = await app!.evaluate(({ webContents }, url) => webContents.getAllWebContents().filter(wc => wc.getURL() === url).map(wc => wc.id), `${origin}/page`)
+    expect(guestIds).toHaveLength(1)
+    const guestId = guestIds[0]
+    const clickEvidence = () => app!.evaluate(({ webContents }, id) => webContents.fromId(id)!
+      .executeJavaScript('({count:window.__fixtureClickCount,event:window.__fixtureClick})'), guestId)
+    const nativeVisible = () => app!.evaluate(({ BrowserWindow, WebContentsView }, id) => BrowserWindow.getAllWindows()[0].contentView.children
+      .some(view => view instanceof WebContentsView && view.webContents.id === id && view.getVisible()), guestId)
+    const before = await clickEvidence()
+    const blocked: StopScenario = { mode: 'cancel', target: { tabId: tab.tabId, navigationId: tab.navigationId, selector: '#confirm' }, issued: false }
+    stopScenario = blocked
+    await app!.evaluate(() => {
+      const owned = globalThis as typeof globalThis & {
+        stopFixtureOriginalFetch?: typeof fetch
+        stopFixtureWatchRequests?: string[]
+        stopFixtureWatchReplies?: Array<{ url: string; active: boolean }>
+      }
+      if (owned.stopFixtureOriginalFetch) throw new Error('Previous request monitor was not restored')
+      const original = globalThis.fetch
+      owned.stopFixtureOriginalFetch = original
+      owned.stopFixtureWatchRequests = []
+      owned.stopFixtureWatchReplies = []
+      // Observe actual HTTP replies. The fixture never fabricates cancellation,
+      // replaces AbortSignals, or short-circuits the browser service.
+      globalThis.fetch = async (...args) => {
+        const input = args[0]
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+        const watching = /\/browser\/clients\/[^/]+\/requests\/[^/]+\/state\?wait=true(?:&|$)/.test(url)
+        if (watching) owned.stopFixtureWatchRequests!.push(url)
+        const response = await original.apply(globalThis, args)
+        if (watching) void response.clone().json().then((body: { data?: { active?: unknown } }) => {
+          if (typeof body.data?.active === 'boolean') owned.stopFixtureWatchReplies!.push({ url, active: body.data.active })
+        }).catch(() => {})
+        return response
+      }
+    })
+    await page.evaluate(() => {
+      const owned = window as typeof window & { stopFixtureReveals?: string[]; stopFixtureUnsubscribe?: () => void }
+      owned.stopFixtureReveals = []
+      owned.stopFixtureUnsubscribe = window.aether.browser.onEvent(event => { if (event.type === 'reveal') owned.stopFixtureReveals!.push(event.tabId) })
+    })
+    try {
+      await page.locator('.chat__input').fill('[browser-user-stop] 等待我的停止指令，测试取消浏览器点击。')
+      await page.getByRole('button', { name: '发送', exact: true }).click()
+      await expect.poll(() => !!blocked.pendingResponse).toBe(true)
+      await page.keyboard.press('Control+Shift+p')
+      await expect(page.locator('.palette')).toBeVisible()
+      await expect.poll(nativeVisible).toBe(false)
+      blocked.issued = true
+      stream(blocked.pendingResponse!, { type: 'tool_use', id: 'browser-user-stop', name: 'browser_click', input: blocked.target }, 'tool_use')
+      blocked.pendingResponse = undefined
+      await expect.poll(() => page.evaluate(() => (window as typeof window & { stopFixtureReveals?: string[] }).stopFixtureReveals))
+        .toEqual([tab.tabId])
+      const watchRequests = () => app!.evaluate(() => (globalThis as typeof globalThis & { stopFixtureWatchRequests?: string[] }).stopFixtureWatchRequests ?? [])
+      await expect.poll(async () => (await watchRequests()).length).toBeGreaterThan(0)
+      const watchedUrl = (await watchRequests())[0]
+      const activeRun = (await recovery()).run!
+      expect(activeRun.status).toBe('running')
+      expect(await clickEvidence()).toEqual(before)
+      // The command palette covers the Stop button. Use the very same endpoint
+      // as useChat.abort without dismissing the guard that is holding the click.
+      const cancelled = await page.evaluate(sessionId => window.aether.engine.request<{ cancelled: boolean }>({
+        method: 'POST', path: '/chat/cancel', body: { sessionId }
+      }), sessionId)
+      expect(cancelled.ok, cancelled.message).toBe(true)
+      expect(cancelled.data?.cancelled).toBe(true)
+      await expect.poll(async () => (await recovery()).run?.status).toBe('cancelled')
+      await expect.poll(() => app!.evaluate((_electron, url) => {
+        const replies = (globalThis as typeof globalThis & { stopFixtureWatchReplies?: Array<{ url: string; active: boolean }> }).stopFixtureWatchReplies ?? []
+        return replies.some(reply => reply.url === url && reply.active === false)
+      }, watchedUrl), { message: '真实独立控制通道必须把运行取消送达客户端' }).toBe(true)
+      expect(await clickEvidence()).toEqual(before)
+      await expect(page.locator('.palette')).toBeVisible()
+      expect((await page.evaluate(() => window.aether.browser.getConnection())).status).toBe('connected')
+      await page.keyboard.press('Escape')
+      await expect.poll(nativeVisible).toBe(true)
+      const resumed: StopScenario = { mode: 'recover', target: blocked.target, issued: false }
+      stopScenario = resumed
+      await page.locator('.chat__input').fill('[browser-after-stop] 现在执行一次合法浏览器点击，检查恢复。')
+      await page.getByRole('button', { name: '发送', exact: true }).click()
+      await expect.poll(async () => {
+        const run = (await recovery()).run
+        return run?.runId !== activeRun.runId && run?.status === 'succeeded'
+      }, { timeout: 30000 }).toBe(true)
+      expect(resumed.recoveredResult).toBeDefined()
+      expect(resumed.recoveredResult?.is_error).not.toBe(true)
+      expect(decode(resumed.recoveredResult!)).toMatchObject({ tab: { tabId: tab.tabId } })
+      const after = await clickEvidence()
+      expect(after.count, '新运行仅点击一次；已停止运行的点击不得在模态关闭后补发').toBe(before.count + 1)
+      expect(after.event.trusted).toBe(true)
+      expect((await recovery()).runs.find(run => run.runId === activeRun.runId)?.status).toBe('cancelled')
+      expect(providerErrors).toEqual([])
+      expect(rendererErrors).toEqual([])
+      await testInfo.attach('user-stop-browser-evidence', { body: JSON.stringify({ before, after, cancelledRunId: activeRun.runId, watchedUrl }), contentType: 'application/json' })
+    } finally {
+      blocked.pendingResponse?.destroy()
+      await page.evaluate(sessionId => window.aether.engine.request({ method: 'POST', path: '/chat/cancel', body: { sessionId } }), sessionId).catch(() => {})
+      stopScenario = undefined
+      await app!.evaluate(() => {
+        const owned = globalThis as typeof globalThis & {
+          stopFixtureOriginalFetch?: typeof fetch
+          stopFixtureWatchRequests?: string[]
+          stopFixtureWatchReplies?: Array<{ url: string; active: boolean }>
+        }
+        if (owned.stopFixtureOriginalFetch) globalThis.fetch = owned.stopFixtureOriginalFetch
+        delete owned.stopFixtureOriginalFetch; delete owned.stopFixtureWatchRequests; delete owned.stopFixtureWatchReplies
+      })
+      await page.evaluate(() => {
+        const owned = window as typeof window & { stopFixtureReveals?: string[]; stopFixtureUnsubscribe?: () => void }
+        owned.stopFixtureUnsubscribe?.(); delete owned.stopFixtureUnsubscribe; delete owned.stopFixtureReveals
+      })
+      if (await page.locator('.palette').isVisible()) await page.keyboard.press('Escape')
+    }
   })
 })

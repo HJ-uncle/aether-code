@@ -2,7 +2,7 @@ import type { CommandJobSnapshot } from '@shared/command-job'
 import { attachCommandJobs } from './command-job-state'
 import { subscribeCommandJobs, getCommandJobs, ingestCommandJob, forgetCommandSession, refreshCommandJobs, activateCommandSession } from './command-job-store'
 import type { SubagentRun } from '@shared/subagent'
-import { normalizeRootRunRequestConfig, type RootRun, type RootRunRequestConfig } from '@shared/root-run'
+import { normalizeRootRunCompaction, normalizeRootRunRequestConfig, type RootRun, type RootRunCompaction, type RootRunRequestConfig } from '@shared/root-run'
 import { applyRootRun, finishTransport, mergeRootRun, normalizeRootRun } from './root-run-state'
 import { applyToolResult, normalizeTool, type EngineHistoryRow } from './chat-history'
 export { extractText } from './chat-history'
@@ -196,6 +196,7 @@ export interface ChatSessionModelContext {
   modelId?: string
   runId?: string
   requestConfig?: RootRunRequestConfig
+  compaction?: RootRunCompaction
 }
 
 export function useChat(): {
@@ -626,7 +627,7 @@ export function useChat(): {
         const merged = mergeRootRun(rootRunsRef.current.get(run.runId), run)
         rootRunsRef.current.set(run.runId, merged)
         activeRunIdRef.current = run.runId
-        setSessionModel({ source: sourceRef.current, sessionId: merged.sessionId, runId: merged.runId, modelId: merged.modelId, requestConfig: merged.requestConfig })
+        setSessionModel({ source: sourceRef.current, sessionId: merged.sessionId, runId: merged.runId, modelId: merged.modelId, requestConfig: merged.requestConfig, compaction: merged.compaction })
         const optimistic = { ...optimisticIdsRef.current }
         setMessages((prev) => applyRootRun(prev, merged, optimistic))
         return
@@ -918,7 +919,7 @@ export function useChat(): {
       for (const run of snapshot.runs) rootRunsRef.current.set(run.runId, run)
       if (snapshot.run) rootRunsRef.current.set(snapshot.run.runId, snapshot.run)
       const configuredRun = snapshot.run ?? [...snapshot.runs].filter(run => run.sessionId === sessionId).sort((a, b) => b.createdAt - a.createdAt || b.updatedAt - a.updatedAt)[0]
-      setSessionModel({ source, sessionId, modelId: configuredRun?.modelId, runId: configuredRun?.runId, requestConfig: normalizeRootRunRequestConfig(configuredRun?.requestConfig) })
+      setSessionModel({ source, sessionId, modelId: configuredRun?.modelId, runId: configuredRun?.runId, requestConfig: normalizeRootRunRequestConfig(configuredRun?.requestConfig), compaction: normalizeRootRunCompaction(configuredRun?.compaction) })
       activeRunIdRef.current = snapshot.run?.runId ?? null
       consumedEventIdRef.current = snapshot.eventId
       optimisticIdsRef.current = {}
@@ -970,7 +971,7 @@ export function useChat(): {
       for (const run of snapshot.runs) rootRunsRef.current.set(run.runId, run)
       if (snapshot.run) rootRunsRef.current.set(snapshot.run.runId, snapshot.run)
       const configuredRun = snapshot.run ?? [...snapshot.runs].filter(run => run.sessionId === sessionId).sort((a, b) => b.createdAt - a.createdAt || b.updatedAt - a.updatedAt)[0]
-      setSessionModel({ source, sessionId, modelId: configuredRun?.modelId, runId: configuredRun?.runId, requestConfig: normalizeRootRunRequestConfig(configuredRun?.requestConfig) })
+      setSessionModel({ source, sessionId, modelId: configuredRun?.modelId, runId: configuredRun?.runId, requestConfig: normalizeRootRunRequestConfig(configuredRun?.requestConfig), compaction: normalizeRootRunCompaction(configuredRun?.compaction) })
       const restoredMessages = attachCommandJobs(attachSubagentRuns(restored.messages, getSubagentRuns(sessionId), true), getCommandJobs(sessionId), sessionId)
       setSessionUsageAnchor(createSessionUsageAnchor(restoredMessages, snapshot.sessionUsage, snapshot.sessionSubagentUsage, snapshot.subagentRuns))
       setMessages(restoredMessages)

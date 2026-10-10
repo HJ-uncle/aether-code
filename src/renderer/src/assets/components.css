@@ -1765,9 +1765,15 @@
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 16px 18px;
   /* 「回到底部」浮动按钮的定位上下文 */
   position: relative;
+}
+
+/* 跟随时由绘制前的贴底逻辑控制位置，避免浏览器锚定再次补偿；上翻时保留原生锚定。 */
+.chat__messages[data-follow-bottom='true'] {
+  overflow-anchor: none;
 }
 
 /* 消息区主体：左侧导航栏 + 消息流（导航栏仅在 ≥2 条用户消息时渲染） */
@@ -2086,6 +2092,43 @@
   overflow-wrap: anywhere;
 }
 
+/* 按实际排版高度收起正文，避免窄屏的换行或引用标签把长消息撑满对话区。 */
+.message__bubble-content {
+  max-width: 100%;
+}
+
+.message__bubble-content.is-collapsed {
+  max-height: 13.2em;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, var(--fg) calc(100% - 1.65em), transparent);
+}
+
+.message__collapse-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 2px 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.message__collapse-toggle:hover {
+  color: var(--fg-strong);
+}
+
+.message__collapse-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
 .message--user .message__pick {
   align-self: flex-end;
   margin: 0 0 4px;
@@ -2114,7 +2157,7 @@
   font-size: 12px;
 }
 
-/* 流式占位：等待首个正文片段时的一行呼吸提示 */
+/* 固定文字内扫光，让长时间无新正文的运行仍然有可见反馈。 */
 .message__streaming-hint {
   display: flex;
   align-items: center;
@@ -2122,16 +2165,56 @@
   margin: 2px 0;
   font-size: 11px;
   color: var(--fg-muted);
-  opacity: 0.7;
 }
 
 .message__spinner {
+  flex: none;
   width: 10px;
   height: 10px;
   border: 1.5px solid var(--fg-faint);
   border-top-color: transparent;
   border-radius: 50%;
   animation: message-spin 0.8s linear infinite;
+}
+
+.message__streaming-text {
+  display: inline-block;
+  min-width: 0;
+}
+
+@supports ((background-clip: text) or (-webkit-background-clip: text)) {
+  .message__streaming-text {
+    background-image: linear-gradient(
+      100deg,
+      var(--fg-muted) 40%,
+      var(--fg-strong) 50%,
+      var(--fg-muted) 60%
+    );
+    background-size: 240% 100%;
+    background-position: 100% 0;
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: message-status-shimmer 2.4s ease-in-out infinite;
+  }
+}
+
+@keyframes message-status-shimmer {
+  0%, 10% { background-position: 100% 0; }
+  90%, 100% { background-position: 0% 0; }
+}
+
+/* 关闭扫光时恢复普通文字，避免渐变停在低对比位置。 */
+@media (prefers-reduced-motion: reduce), (forced-colors: active) {
+  .message__streaming-text {
+    animation: none;
+    background-image: none;
+    -webkit-text-fill-color: currentColor;
+  }
+
+  .message__streaming-hint .message__spinner {
+    animation: none;
+  }
 }
 
 @keyframes message-spin {
@@ -3882,6 +3965,24 @@
   background: var(--bg-hover);
   overflow: hidden;
 }
+.ctx-card__bar--compacting::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 35%;
+  border-radius: inherit;
+  background: var(--accent);
+  animation: context-compaction-progress 1.2s ease-in-out infinite;
+}
+.ctx-card__bar--compacting[data-reduced-motion='true']::after {
+  animation: none;
+  left: 32.5%;
+}
+@keyframes context-compaction-progress {
+  from { left: -35%; }
+  to { left: 100%; }
+}
 .ctx-card__bar-fill {
   height: 100%;
   border-radius: 2px;
@@ -3900,7 +4001,7 @@
 .ctx-card__source-hint {
   min-height: 56px;
 }
-.ctx-card__action-hint {
+.ctx-card__status-hint {
   min-height: 28px;
 }
 .ctx-card__exact-tokens {
@@ -3990,11 +4091,12 @@
   background: none;
   border: none;
   padding: 0;
-  cursor: pointer;
-}
-.context-ring:disabled,
-.context-ring[aria-disabled='true'] {
   cursor: default;
+}
+.context-ring:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 .context-ring svg {
   transform: rotate(-90deg);
