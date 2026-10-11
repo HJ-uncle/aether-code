@@ -1751,9 +1751,20 @@
   background: var(--bg-hover);
 }
 
+.chat__index-cta > svg {
+  width: 17px;
+  height: 17px;
+  color: var(--fg);
+  flex: 0 0 auto;
+}
+
 .chat__index-cta.is-active {
   color: var(--accent);
   border-color: var(--accent);
+}
+
+.chat__index-cta.is-active > svg {
+  color: var(--accent);
 }
 
 .chat__index-cta:disabled {
@@ -4631,6 +4642,14 @@
     box-shadow 140ms ease;
 }
 
+/* AI 润色贴在输入内容右上角，和消息输入建立直接关联；底部工具条只保留发送相关控件。 */
+.chat__surface > .chat__polish-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+}
+
 /* 聚焦：容器只做轻微描边提亮，不画焦点环。
    环留给真正持有焦点的 <textarea>（见下方 :focus-visible），
    否则一整块输入区被 3px 光圈围住，视觉噪音太大 */
@@ -4646,7 +4665,7 @@
 
 .chat__input {
   width: 100%;
-  padding: 2px var(--space-1);
+  padding: 2px 38px 2px var(--space-1);
   background: transparent;
   color: var(--fg-strong);
   border: none;
@@ -4880,10 +4899,12 @@
   width: var(--control-h-compact);
   height: var(--control-h-compact);
   flex: 0 0 auto;
+  padding: 0;
   border: none;
   border-radius: var(--radius-round);
   background: transparent;
-  color: var(--fg-muted);
+  /* 工具栏图标是可操作控件，使用正文级对比度；说明文字继续使用 muted。 */
+  color: var(--fg);
   cursor: pointer;
   transition:
     background 120ms ease,
@@ -4895,12 +4916,27 @@
   color: var(--fg-strong);
 }
 
+.chat__icon-btn > svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* 润色动作采用独立的闪光色阶，默认就能从输入区工具栏中辨认出来。 */
+.chat__polish-btn {
+  color: var(--fg);
+}
+
+.chat__polish-btn:hover:not(:disabled) {
+  color: var(--accent);
+}
+
 .chat__icon-btn.is-active {
   color: var(--accent);
 }
 
 .chat__icon-btn:disabled {
-  opacity: 0.4;
+  /* 禁用仍需保留轮廓，让空输入时的润色入口不会像消失了一样。 */
+  opacity: 0.62;
   cursor: default;
 }
 
@@ -6007,22 +6043,24 @@ textarea.field__input {
 
 .model-picker {
   /* The toolbar also contains the KB picker, context ring and send button.
-     Give the model control a bounded flexible slot so a long model id cannot
-     overflow its flex item and intercept the adjacent send button. */
-  flex: 0 1 35%;
-  max-width: 260px;
+     Size the model control from its content, then cap long model ids so the
+     adjacent send button always keeps its own hit area. */
+  flex: 0 1 auto;
+  width: max-content;
+  max-width: 190px;
   min-width: 0;
   overflow: hidden;
 }
 
 .chat__toolbar > .model-picker > .popover__trigger {
-  width: 100%;
+  display: flex;
+  width: max-content;
   min-width: 0;
   max-width: 100%;
 }
 
 .model-picker__trigger {
-  width: 100%;
+  width: max-content;
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
@@ -7834,14 +7872,20 @@ select.field__input {
   justify-content: center;
   width: 26px;
   height: 26px;
+  padding: 0;
   border: none;
   border-radius: 50%;
   background: transparent;
-  color: var(--fg-muted);
+  color: var(--fg);
   cursor: pointer;
   transition:
     background 120ms ease,
     color 120ms ease;
+}
+
+.composer-options__trigger > svg {
+  width: 18px;
+  height: 18px;
 }
 
 .composer-options__trigger:hover:not(:disabled),
@@ -7851,7 +7895,7 @@ select.field__input {
 }
 
 .composer-options__trigger:disabled {
-  opacity: 0.4;
+  opacity: 0.62;
   cursor: default;
 }
 
@@ -9934,21 +9978,26 @@ select.field__input {
   bottom: 4px;
   width: 24px;
   height: 24px;
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--fg-muted);
+  color: var(--fg);
   cursor: pointer;
+}
+.git-commitbar__ai > svg {
+  width: 18px;
+  height: 18px;
 }
 .git-commitbar__ai:hover {
   background: var(--bg-hover);
   color: var(--accent);
 }
 .git-commitbar__ai:disabled {
-  opacity: 0.4;
+  opacity: 0.62;
   cursor: default;
 }
 .git-commitbar__actions {

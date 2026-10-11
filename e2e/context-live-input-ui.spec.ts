@@ -45,7 +45,7 @@ const server = createServer((request, response) => {
     response.setHeader('content-type', 'application/json')
     const data = path === '/health' ? { status: 'ok' }
       : path === '/meta' ? { version: '2.0.0', buildId: 'sha256:' + 'c'.repeat(64), protocolVersion: 1, toolProfiles: ['code'], subagentSchemaVersion: 1, instanceId: 'live-input-fixture' }
-      : path === '/api/v1/models' ? [{ id: modelId, modelId, provider: 'openai', isEnabled: true, capabilities: { toolCalling: true, contextWindow: 1000000 } }]
+      : path === '/api/v1/models' ? [{ id: modelId, modelId, provider: 'openai', isEnabled: true, capabilities: { toolCalling: true, contextWindow: 2_000_000 } }]
       : path === '/api/v1/conversation/sessions' ? [{ sessionId, title: 'EXACT_CONTEXT_HISTORY', lastAt: 2, messageCount: 2 }]
       : path === '/api/v1/chat/snapshot' ? { schemaVersion: 1, source: run ? 'live' : 'persisted', sessionId, eventId: run ? 'live-input-run:' + sequence : null,
         finished: !run || run.status !== 'running', run, runs: run ? [run] : [], history, projection, todos: [], changes: [], commandJobs: [] }

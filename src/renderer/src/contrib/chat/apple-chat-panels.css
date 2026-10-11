@@ -261,7 +261,8 @@
   }
 
   .chat__toolbar .model-picker {
-    flex: 1 1 96px;
+    flex: 0 1 auto;
+    width: max-content;
     max-width: 170px;
   }
 
@@ -277,7 +278,7 @@
 
 @container composer (max-width: 390px) {
   .chat__toolbar .model-picker {
-    flex-basis: 72px;
+    flex-basis: auto;
     max-width: 132px;
   }
 
@@ -310,7 +311,7 @@
   }
 
   .chat__toolbar .model-picker {
-    flex-basis: 58px;
+    flex-basis: auto;
     max-width: 108px;
   }
 

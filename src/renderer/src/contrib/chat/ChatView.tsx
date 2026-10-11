@@ -1535,6 +1535,16 @@ export function ChatView(): JSX.Element {
             onMentionQuery={(query) => { setMentionQuery(query); if (query !== null) setResourceQuery(null) }}
             onSlashQuery={(query) => { setResourceQuery(query); if (query !== null) setMentionQuery(null) }}
           />
+          <button
+            type="button"
+            className="chat__icon-btn chat__polish-btn"
+            disabled={!canExecute || polishing || !input.trim()}
+            title="AI 润色：让指令更清晰具体（使用轻任务模型）"
+            aria-label="AI 润色输入"
+            onClick={() => void handlePolish()}
+          >
+            <Icon name={polishing ? 'sync' : 'sparkles'} size={16} />
+          </button>
           {canExecute && workspace.root && (mentionQuery !== null || manualPalette) ? (
             <FileRefPalette
               root={workspace.root}
@@ -1660,17 +1670,6 @@ export function ChatView(): JSX.Element {
             ) : null}
 
             <div className="chat__toolbar-spacer" />
-
-            <button
-              type="button"
-              className="chat__icon-btn chat__polish-btn"
-              disabled={!canExecute || polishing || !input.trim()}
-              title="AI 润色：让指令更清晰具体（使用轻任务模型）"
-              aria-label="AI 润色输入"
-              onClick={() => void handlePolish()}
-            >
-              <Icon name={polishing ? 'sync' : 'sparkles'} size={16} />
-            </button>
 
             {contextUsage !== null || contextCompaction ? (
               <ContextRing
