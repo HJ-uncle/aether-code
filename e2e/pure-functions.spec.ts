@@ -17,6 +17,8 @@ import {
   splitRefs,
   summarizeChanges
 } from '../src/renderer/src/core/git/git-format'
+import { buildRemoteCommitAiContext } from '../src/renderer/src/core/git/git-client'
+import type { GitFileChange, GitFileDiff } from '../src/shared/git-types'
 import { compileExclude, isExcluded } from '../src/renderer/src/core/workspace/exclude'
 import { DEFAULT_SEARCH_EXCLUDE } from '../src/shared/ipc'
 import { resolveActiveNavId } from '../src/renderer/src/contrib/chat/message-nav'
@@ -216,6 +218,70 @@ test.describe('git 展示格式', () => {
         changes: [{ path: 'a', indexStatus: 'M', workTreeStatus: ' ', staged: true }]
       })
     ).toBe('1 处改动')
+  })
+})
+
+test.describe('远程提交信息 AI 上下文', () => {
+  const file = (overrides: Partial<GitFileChange> = {}): GitFileChange => ({
+    path: 'src/app.ts',
+    changeType: 'modified',
+    staged: true,
+    stagedChange: 'modified',
+    unstagedChange: null,
+    binary: false,
+    additions: 1,
+    deletions: 1,
+    ...overrides
+  })
+
+  const diff = (content = 'new line'): GitFileDiff => ({
+    path: 'src/app.ts',
+    changeType: 'modified',
+    binary: false,
+    oldContent: 'old line',
+    newContent: content,
+    hunks: [
+      {
+        id: 'hunk-0',
+        oldStart: 1,
+        oldLines: 1,
+        newStart: 1,
+        newLines: 1,
+        lines: [
+          { type: 'delete', oldLineNumber: 1, newLineNumber: null, content: 'old line' },
+          { type: 'add', oldLineNumber: null, newLineNumber: 1, content }
+        ]
+      }
+    ]
+  })
+
+  test('保留暂存文件、增删标记，并把未跟踪文件列入状态', () => {
+    const staged = file()
+    const untracked = file({
+      path: 'README.md',
+      changeType: 'untracked',
+      staged: false,
+      stagedChange: null,
+      unstagedChange: 'untracked'
+    })
+    const context = buildRemoteCommitAiContext(
+      [staged, untracked],
+      [{ change: staged, diff: diff() }],
+      true
+    )
+    expect(context).toContain('【暂存区文件状态】')
+    expect(context).toContain('modified\tsrc/app.ts')
+    expect(context).toContain('untracked\tREADME.md')
+    expect(context).toContain('-old line')
+    expect(context).toContain('+new line')
+  })
+
+  test('大范围 diff 严格限制在 12 KB，并保留截断标记', () => {
+    const files = Array.from({ length: 12 }, (_, index) => file({ path: `src/file-${index}.ts` }))
+    const diffs = files.map((change) => ({ change, diff: diff('x'.repeat(2_000)) }))
+    const context = buildRemoteCommitAiContext(files, diffs, true)
+    expect(context.length).toBeLessThanOrEqual(12_000)
+    expect(context).toContain('diff 中间片段已省略')
   })
 })
 

@@ -15,6 +15,8 @@ import type {
   GitCommitInfoResult,
   GitDiffResult,
   GitDivergenceResult,
+  GitFileChange,
+  GitFileDiff,
   GitFileHistoryResult,
   GitHeadFileResult,
   GitIgnoreCheckResult,
@@ -109,8 +111,106 @@ export const gitStageAllAndCommit = (cwd: string, message: string): Promise<GitR
   isRemoteEngine() ? remoteAction('stage-all-commit', cwd, { message }) : bridge().git.stageAllAndCommit(cwd, message)
 export const gitAppendGitignore = (cwd: string, path: string): Promise<GitResult> =>
   isRemoteEngine() ? remoteAction('append-gitignore', cwd, { path }) : bridge().git.appendGitignore(cwd, path)
-export const gitSuggestCommitMessage = (cwd: string): Promise<GitSuggestMessageResult> =>
-  isRemoteEngine() ? remoteAction<GitSuggestMessageResult>('suggest-message', cwd) : bridge().git.suggestCommitMessage(cwd)
+/**
+ * 远程引擎的旧版 suggest-message 只返回本地启发式文案，不带 diff 上下文。
+ *
+ * GitCommitBar 会在拿到 aiContext 后再调用 /utility/chat。为了让旧版或未升级的
+ * 远程引擎也能走这条 AI 路径，这里用已有的 status/diff 查询在渲染层补齐上下文。
+ * 上下文只保留文件清单和每个文件有限的 diff 片段，避免把大仓库整份搬进模型请求。
+ */
+const REMOTE_COMMIT_CONTEXT_LIMIT = 12_000
+const REMOTE_COMMIT_FILE_DIFF_LIMIT = 2_000
+const REMOTE_COMMIT_MAX_FILES = 80
+
+function changeLabel(change: GitFileChange): string {
+  if (change.stagedChange) return change.stagedChange
+  return change.unstagedChange ?? change.changeType
+}
+
+function formatRemoteDiff(change: GitFileChange, diff: GitFileDiff | undefined): string {
+  if (!diff) return ''
+  if (diff.binary || change.binary) return `diff --binary ${change.path}`
+
+  const lines: string[] = [`diff --git a/${change.path} b/${change.path}`]
+  for (const hunk of diff.hunks) {
+    const heading = hunk.heading ? ` ${hunk.heading}` : ''
+    lines.push(`@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@${heading}`)
+    for (const line of hunk.lines) {
+      const prefix = line.type === 'add' ? '+' : line.type === 'delete' ? '-' : ' '
+      lines.push(`${prefix}${line.content}`)
+    }
+  }
+
+  // An untracked file has no git hunk yet, but the remote endpoint still returns its
+  // current contents. Include a short addition preview so a single new file does not
+  // produce an empty-looking AI context.
+  if (diff.hunks.length === 0 && changeLabel(change) === 'untracked' && diff.newContent) {
+    lines.push(...diff.newContent.split(/\r?\n/).slice(0, 120).map((line) => `+${line}`))
+  }
+  return lines.join('\n').slice(0, REMOTE_COMMIT_FILE_DIFF_LIMIT)
+}
+
+/** Build a bounded, deterministic context for the commit-message utility model. */
+export function buildRemoteCommitAiContext(
+  files: GitFileChange[],
+  diffs: Array<{ change: GitFileChange; diff?: GitFileDiff }>,
+  staged: boolean
+): string {
+  const visibleFiles = files.slice(0, REMOTE_COMMIT_MAX_FILES)
+  const status = visibleFiles.map((file) => `${changeLabel(file)}\t${file.path}`).join('\n')
+  const stats = diffs
+    .map(({ change, diff }) => {
+      const additions = diff?.hunks.reduce((total, hunk) => total + hunk.lines.filter((line) => line.type === 'add').length, 0) ?? change.additions
+      const deletions = diff?.hunks.reduce((total, hunk) => total + hunk.lines.filter((line) => line.type === 'delete').length, 0) ?? change.deletions
+      return `${additions}\t${deletions}\t${change.path}`
+    })
+    .join('\n')
+  const diffText = diffs
+    .map(({ change, diff }) => formatRemoteDiff(change, diff))
+    .filter(Boolean)
+    .join('\n\n')
+
+  const sections = [`${staged ? '【暂存区文件状态】' : '【文件状态】'}\n${status}`]
+  if (stats) sections.push(`【逐文件行数】\n${stats}`)
+  if (diffText) sections.push(`【diff 片段】\n${diffText}`)
+  const context = sections.join('\n\n')
+  if (context.length <= REMOTE_COMMIT_CONTEXT_LIMIT) return context
+  const marker = '\n...（diff 中间片段已省略，完整范围见文件清单）...\n'
+  const available = Math.max(0, REMOTE_COMMIT_CONTEXT_LIMIT - marker.length)
+  const headLength = Math.ceil(available / 2)
+  const tailLength = Math.floor(available / 2)
+  return `${context.slice(0, headLength)}${marker}${context.slice(-tailLength)}`
+}
+
+async function collectRemoteCommitAiContext(cwd: string): Promise<string> {
+  const status = await gitStatus(cwd)
+  if (!status.success || !status.files?.length) return ''
+
+  // Match the local implementation: once anything is staged, describe the index only;
+  // otherwise describe worktree changes and untracked files.
+  const stagedFiles = status.files.filter((file) => Boolean(file.stagedChange))
+  const staged = stagedFiles.length > 0
+  const candidates = (staged ? stagedFiles : status.files).slice(0, REMOTE_COMMIT_MAX_FILES)
+  const diffs = await Promise.all(candidates.map(async (change) => {
+    const result = await gitDiff(cwd, change.path, staged).catch(() => ({ success: false as const }))
+    return { change, diff: result.success ? result.diff : undefined }
+  }))
+  return buildRemoteCommitAiContext(candidates, diffs, staged)
+}
+
+export const gitSuggestCommitMessage = async (cwd: string): Promise<GitSuggestMessageResult> => {
+  if (!isRemoteEngine()) return bridge().git.suggestCommitMessage(cwd)
+  const result = await remoteAction<GitSuggestMessageResult>('suggest-message', cwd)
+  if (!result.success || result.aiContext?.trim()) return result
+  try {
+    const aiContext = await collectRemoteCommitAiContext(cwd)
+    return aiContext ? { ...result, aiContext } : result
+  } catch {
+    // Keep the remote engine's local fallback message when status/diff enrichment is
+    // unavailable (for example while the workspace connection is being replaced).
+    return result
+  }
+}
 export const gitCommitAmend = (cwd: string): Promise<GitResult> => isRemoteEngine() ? remoteAction('commit-amend', cwd) : bridge().git.commitAmend(cwd)
 export const gitCommitAmendWithMessage = (cwd: string, message: string): Promise<GitResult> =>
   isRemoteEngine() ? remoteAction('commit-amend-message', cwd, { message }) : bridge().git.commitAmendWithMessage(cwd, message)
