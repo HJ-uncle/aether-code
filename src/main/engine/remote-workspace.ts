@@ -90,7 +90,9 @@ export async function prepareRemoteChatBody(body: unknown, context: RemoteChatCo
     throw new Error(`无法读取远端会话工作区：${result.message || `HTTP ${response.status}`}`)
   }
   context.signal.throwIfAborted()
-  clean.workspacePaths = selectRemoteWorkspacePaths(result.data?.runs, context.configuredRoot)
+  // Work starts in its own server sandbox; the configured root belongs to Code.
+  // Existing runs still retain the immutable directory recorded by the server.
+  clean.workspacePaths = selectRemoteWorkspacePaths(result.data?.runs, input.sessionId.startsWith('work-') ? '' : context.configuredRoot)
   const attachments = context.target ? remoteAttachmentsForRequest(input.attachments, context.target, input.sessionId) : []
   if (attachments.length) clean.attachments = attachments
   return clean

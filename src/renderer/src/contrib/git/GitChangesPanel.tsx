@@ -110,6 +110,7 @@ import { Dialog } from '@renderer/workbench/Dialog'
 import { PromptDialog } from '@renderer/workbench/PromptDialog'
 import { Select } from '@renderer/workbench/Select'
 import { Icon, type IconName } from '@renderer/workbench/icons'
+import { Spinner } from '@renderer/workbench/ui-primitives'
 import { GitBranchBar } from './GitBranchBar'
 import { GitChangeRow } from './GitChangeRow'
 import { GitChangeTreeNode, type GitChangeTreeNodeData } from './GitChangeTreeNode'
@@ -2118,13 +2119,10 @@ export function GitChangesPanel(): JSX.Element {
                   <div
                     ref={sentinelRef}
                     className="git-panel__load-more"
+                    aria-busy={git.logLoadingMore}
                     onClick={() => void loadLog(LOG_PAGE_SIZE, true)}
                   >
-                    <Icon
-                      name="chevron-double-down"
-                      size={16}
-                      className={git.logLoadingMore ? 'is-spinning' : undefined}
-                    />
+                    {git.logLoadingMore ? <Spinner size={14} /> : <Icon name="chevron-double-down" size={16} />}
                     {git.logLoadingMore ? '加载中…' : '加载更早的提交'}
                   </div>
                 ) : null}
@@ -2331,14 +2329,11 @@ export function GitChangesPanel(): JSX.Element {
               type="button"
               className="git-panel__tool-btn"
               title="拉取 (git pull)"
+              aria-busy={remoteBusy === 'pull'}
               disabled={gitBusy || remoteBusy !== ''}
               onClick={() => void handleRemote('pull')}
             >
-              <Icon
-                name="source-pull"
-                size={16}
-                className={remoteBusy === 'pull' ? 'is-spinning' : undefined}
-              />
+              {remoteBusy === 'pull' ? <Spinner size={14} /> : <Icon name="source-pull" size={16} />}
               {git.behind ? (
                 <span className="git-panel__badge git-panel__badge--behind">{git.behind}</span>
               ) : null}
@@ -2347,14 +2342,11 @@ export function GitChangesPanel(): JSX.Element {
               type="button"
               className="git-panel__tool-btn"
               title="推送 (git push)"
+              aria-busy={remoteBusy === 'push'}
               disabled={gitBusy || remoteBusy !== ''}
               onClick={() => void handleRemote('push')}
             >
-              <Icon
-                name="cloud-upload-outline"
-                size={16}
-                className={remoteBusy === 'push' ? 'is-spinning' : undefined}
-              />
+              {remoteBusy === 'push' ? <Spinner size={14} /> : <Icon name="cloud-upload-outline" size={16} />}
               {git.ahead ? (
                 <span className="git-panel__badge git-panel__badge--ahead">{git.ahead}</span>
               ) : null}
@@ -2363,14 +2355,11 @@ export function GitChangesPanel(): JSX.Element {
               type="button"
               className="git-panel__tool-btn"
               title="获取 (git fetch --all)"
+              aria-busy={remoteBusy === 'fetch'}
               disabled={gitBusy || remoteBusy !== ''}
               onClick={() => void handleRemote('fetch')}
             >
-              <Icon
-                name="cloud-download-outline"
-                size={16}
-                className={remoteBusy === 'fetch' ? 'is-spinning' : undefined}
-              />
+              {remoteBusy === 'fetch' ? <Spinner size={14} /> : <Icon name="cloud-download-outline" size={16} />}
             </button>
           </>
         ) : null}
@@ -2379,9 +2368,10 @@ export function GitChangesPanel(): JSX.Element {
           className="git-panel__tool-btn"
           title="刷新"
           disabled={git.loading}
+          aria-busy={git.loading}
           onClick={() => void refreshGit(git.cwd)}
         >
-          <Icon name="restart" size={16} className={git.loading ? 'is-spinning' : ''} />
+          {git.loading ? <Spinner size={14} /> : <Icon name="restart" size={16} />}
         </button>
         {git.isRepo ? (
           <button

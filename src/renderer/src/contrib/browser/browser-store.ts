@@ -126,9 +126,11 @@ export function selectBrowserTab(tabId: string): void {
   publish({ activeTabId: tabId })
 }
 
-export async function openBrowser(url?: string): Promise<void> {
+export async function openBrowser(url?: string, options: { reveal?: boolean } = {}): Promise<void> {
   await initializeBrowser()
-  showEditorView('browser')
+  // Work owns its browser surface inside WorkView. Revealing the editor view
+  // here would silently switch the hidden Code workbench and steal its layout.
+  if (options.reveal !== false) showEditorView('browser')
   if (url !== undefined || state.tabs.length === 0) {
     const tab = await window.aether.browser.create(url ? { url } : {})
     receive({ type: 'created', tabId: tab.tabId, tab })
@@ -148,6 +150,22 @@ export async function refreshBrowserSettings(): Promise<void> {
   } catch (reason: unknown) {
     publish({ error: reason instanceof Error ? reason.message : String(reason) })
   }
+}
+
+/** Release native pages when Work's browser workspace is closed or not selected. */
+export async function hideBrowserSurfaces(): Promise<void> {
+  await initializeBrowser()
+  await Promise.all(
+    state.tabs.map((tab) =>
+      window.aether.browser
+        .setBounds({
+          tabId: tab.tabId,
+          bounds: { x: 0, y: 0, width: 0, height: 0 },
+          visible: false
+        })
+        .catch(() => undefined)
+    )
+  )
 }
 
 export function browserAction(operation: () => Promise<unknown>): void {

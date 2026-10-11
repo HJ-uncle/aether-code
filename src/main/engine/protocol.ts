@@ -140,6 +140,8 @@ const REMOTE_READ_ROUTES = [
   /^\/api\/v1\/lsp\/adapters$/,
   /^\/api\/v1\/subagent\/runs(?:\/[a-zA-Z0-9_-]+(?:\/events)?)?$/,
   /^\/api\/v1\/command-jobs(?:\/[a-zA-Z0-9_-]+(?:\/output)?)?$/,
+  // Scheduled Work tasks are engine-owned and scoped by their stored session.
+  /^\/api\/v1\/cron$/,
   /^\/api\/v1\/sessions\/[a-zA-Z0-9_-]+\/binding$/,
   /^\/api\/v1\/memory\/(settings|recall\/[a-zA-Z0-9_.:-]+|list|graph|[a-zA-Z0-9_.:-]+)$/
 ]
@@ -151,6 +153,7 @@ const REMOTE_CHAT_ROUTES = [
   /^\/api\/v1\/subagent\/cancel$/,
   /^\/api\/v1\/subagent\/runs\/[a-zA-Z0-9_-]+\/cancel$/,
   /^\/api\/v1\/command-jobs\/[a-zA-Z0-9_-]+\/cancel$/,
+  /^\/api\/v1\/cron(?:\/[a-zA-Z0-9_-]+(?:\/(?:enable|disable))?)?$/,
   /^\/api\/v1\/mcp\/servers\/[a-zA-Z0-9_-]+\/test$/,
   /^\/api\/v1\/mcp\/servers(?:\/[a-zA-Z0-9_-]+)?\/(?:enable|disable)$/,
   /^\/api\/v1\/skills\/imports(?:\/chunks)?(?:\/[a-zA-Z0-9_-]+)?(?:\/merge)?$/,
@@ -171,12 +174,14 @@ export function remoteRequestError(mode: 'embedded' | 'remote', method: string, 
   if (method === 'POST' && pathname === '/api/v1/lsp/request') return null
   if (method === 'PUT' && /^\/api\/v1\/(knowledge\/(documents|bases)\/[a-zA-Z0-9_-]+|mcp\/servers\/[a-zA-Z0-9_-]+)$/.test(pathname)) return null
   if (method === 'PUT' && /^\/api\/v1\/memory\/(settings|[a-zA-Z0-9_.:-]+)$/.test(pathname)) return null
+  if (method === 'PUT' && /^\/api\/v1\/cron\/[a-zA-Z0-9_-]+$/.test(pathname)) return null
   if (method === 'PATCH' && /^\/api\/v1\/(mcp\/servers|skills)\/[a-zA-Z0-9_-]+$/.test(pathname)) return null
   if (method === 'PATCH' && /^\/api\/v1\/security\/policies\/[0-9]+$/.test(pathname)) return null
   if (method === 'PUT' && pathname === '/api/v1/security/mode') return null
   if (method === 'PUT' && /^\/api\/v1\/security\/policies\/[0-9]+$/.test(pathname)) return null
   if (method === 'DELETE' && /^\/api\/v1\/(knowledge\/(documents|bases)|mcp\/servers|skills)\/[a-zA-Z0-9_-]+$/.test(pathname)) return null
   if (method === 'DELETE' && /^\/api\/v1\/memory\/[a-zA-Z0-9_.:-]+$/.test(pathname)) return null
+  if (method === 'DELETE' && /^\/api\/v1\/cron\/[a-zA-Z0-9_-]+$/.test(pathname)) return null
   if (method === 'DELETE' && /^\/api\/v1\/(?:models\/(?!capability-defs$|detect-capabilities$)[a-zA-Z0-9_.-]+|skills\/imports\/[a-zA-Z0-9_.-]+|security\/policies\/[0-9]+)$/.test(pathname)) return null
   if (method === 'DELETE' && /^\/api\/v1\/terminal\/[a-zA-Z0-9_-]+$/.test(pathname)) return null
   if (method === 'DELETE' && pathname === '/api/v1/lsp/session') return null

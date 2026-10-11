@@ -1,4 +1,11 @@
-import { useEffect, type JSX } from 'react'
+import { useEffect, useState, type JSX } from 'react'
+import { getAppMode, useAppMode } from '@renderer/core/platform/app-mode'
+import { WorkView } from '@renderer/contrib/work/WorkView'
+import { AppSettingsView } from '@renderer/contrib/settings/AppSettingsView'
+import { subscribeSectionRequest } from '@renderer/contrib/settings/app-settings-navigation'
+import { ModeSurface } from './ModeSurface'
+import { Dialog } from './Dialog'
+import './app-mode.css'
 import { watchOpenDocuments } from '@renderer/core/editor/document-sync'
 import { startEditorRecovery } from '@renderer/core/editor/editor-recovery'
 import { useApp } from '@renderer/core/app-context'
@@ -37,6 +44,18 @@ export function Workbench(): JSX.Element {
   useEffect(startEditorRecovery, [])
   const layout = useLayout()
   const { settings } = useApp()
+  const mode = useAppMode()
+  const [workSettingsOpen, setWorkSettingsOpen] = useState(false)
+  useEffect(
+    () =>
+      subscribeSectionRequest(() => {
+        if (getAppMode() === 'work') setWorkSettingsOpen(true)
+      }),
+    []
+  )
+  useEffect(() => {
+    setWorkSettingsOpen(false)
+  }, [mode])
 
   // 把外观设置同步到 <html>，具体配色由 tokens.css 决定
   useTheme(settings.appearance, settings.accent, settings.customAccentColor)
@@ -44,80 +63,95 @@ export function Workbench(): JSX.Element {
   return (
     <div className="workbench">
       <MenuBar />
+      <div className="mode-deck">
+        <ModeSurface mode="code" active={mode === 'code'}>
+          <div className="workbench__body">
+            <ActivityBar />
 
-      <div className="workbench__body">
-        <ActivityBar />
+            {layout.sidebarVisible ? (
+              <>
+                <div className="workbench__sidebar" style={{ width: layout.sidebarWidth }}>
+                  <Sidebar />
+                </div>
+                <Resizer
+                  orientation="vertical"
+                  ariaLabel="调整侧边栏宽度"
+                  onDelta={(delta) => setLayout({ sidebarWidth: layout.sidebarWidth + delta })}
+                />
+              </>
+            ) : null}
 
-        {layout.sidebarVisible ? (
-          <>
-            <div className="workbench__sidebar" style={{ width: layout.sidebarWidth }}>
-              <Sidebar />
-            </div>
-            <Resizer
-              orientation="vertical"
-              ariaLabel="调整侧边栏宽度"
-              onDelta={(delta) => setLayout({ sidebarWidth: layout.sidebarWidth + delta })}
-            />
-          </>
-        ) : null}
+            {/* 对话面板换位：夹在侧边栏与主区之间（与 wuzu-client 的「交换对话区与源码区」一致） */}
+            {layout.chatPanelVisible && layout.chatOnLeft ? (
+              <>
+                <div
+                  className="workbench__chat workbench__chat--left"
+                  style={{ width: layout.chatPanelWidth }}
+                >
+                  <ChatPanel />
+                </div>
+                <Resizer
+                  orientation="vertical"
+                  ariaLabel="调整对话面板宽度"
+                  // 面板在左侧：向右拖（delta>0）变宽，与右侧的「向左拖变宽」相反
+                  onDelta={(delta) => setLayout({ chatPanelWidth: layout.chatPanelWidth + delta })}
+                />
+              </>
+            ) : null}
 
-        {/* 对话面板换位：夹在侧边栏与主区之间（与 wuzu-client 的「交换对话区与源码区」一致） */}
-        {layout.chatPanelVisible && layout.chatOnLeft ? (
-          <>
-            <div
-              className="workbench__chat workbench__chat--left"
-              style={{ width: layout.chatPanelWidth }}
-            >
-              <ChatPanel />
-            </div>
-            <Resizer
-              orientation="vertical"
-              ariaLabel="调整对话面板宽度"
-              // 面板在左侧：向右拖（delta>0）变宽，与右侧的「向左拖变宽」相反
-              onDelta={(delta) => setLayout({ chatPanelWidth: layout.chatPanelWidth + delta })}
-            />
-          </>
-        ) : null}
+            <div className="workbench__main">
+              <EditorArea />
 
-        <div className="workbench__main">
-          <EditorArea />
-
-          {layout.panelVisible ? (
-            <Resizer
-              orientation="horizontal"
-              ariaLabel="调整面板高度"
-              onDelta={(delta) => setLayout({ panelHeight: layout.panelHeight - delta })}
-            />
-          ) : null}
-          {/* 收起时仅隐藏不卸载（keep-alive）：面板内是终端这类有状态视图，
+              {layout.panelVisible ? (
+                <Resizer
+                  orientation="horizontal"
+                  ariaLabel="调整面板高度"
+                  onDelta={(delta) => setLayout({ panelHeight: layout.panelHeight - delta })}
+                />
+              ) : null}
+              {/* 收起时仅隐藏不卸载（keep-alive）：面板内是终端这类有状态视图，
               重建 DOM 会丢掉 xterm 的画面与会话绑定 */}
-          <div
-            className="workbench__panel"
-            style={{
-              height: layout.panelVisible ? layout.panelHeight : 0,
-              display: layout.panelVisible ? undefined : 'none'
-            }}
-          >
-            <PanelArea />
-          </div>
-        </div>
-
-        {layout.chatPanelVisible && !layout.chatOnLeft ? (
-          <>
-            <Resizer
-              orientation="vertical"
-              ariaLabel="调整对话面板宽度"
-              onDelta={(delta) => setLayout({ chatPanelWidth: layout.chatPanelWidth - delta })}
-            />
-            <div className="workbench__chat" style={{ width: layout.chatPanelWidth }}>
-              <ChatPanel />
+              <div
+                className="workbench__panel"
+                style={{
+                  height: layout.panelVisible ? layout.panelHeight : 0,
+                  display: layout.panelVisible ? undefined : 'none'
+                }}
+              >
+                <PanelArea />
+              </div>
             </div>
-          </>
-        ) : null}
+
+            {layout.chatPanelVisible && !layout.chatOnLeft ? (
+              <>
+                <Resizer
+                  orientation="vertical"
+                  ariaLabel="调整对话面板宽度"
+                  onDelta={(delta) => setLayout({ chatPanelWidth: layout.chatPanelWidth - delta })}
+                />
+                <div className="workbench__chat" style={{ width: layout.chatPanelWidth }}>
+                  <ChatPanel />
+                </div>
+              </>
+            ) : null}
+          </div>
+
+          <StatusBar />
+        </ModeSurface>
+        <ModeSurface mode="work" active={mode === 'work'}>
+          <WorkView />
+        </ModeSurface>
       </div>
-
-      <StatusBar />
-
+      {workSettingsOpen && mode === 'work' ? (
+        <Dialog
+          title="设置"
+          width={1000}
+          className="work-settings-dialog"
+          onClose={() => setWorkSettingsOpen(false)}
+        >
+          <AppSettingsView />
+        </Dialog>
+      ) : null}
       <CommandPalette />
       <QuickOpen />
     </div>

@@ -67,6 +67,7 @@ import {
 import { ContextMenu, type ContextMenuItem } from '@renderer/workbench/ContextMenu'
 import { PromptDialog } from '@renderer/workbench/PromptDialog'
 import { Icon } from '@renderer/workbench/icons'
+import { Spinner } from '@renderer/workbench/ui-primitives'
 import { FileGlyph } from './FileGlyph'
 
 /** 行高，必须与最终 .tree-row 的 CSS 高度一致（虚拟滚动按它换算偏移）。 */
@@ -1662,12 +1663,13 @@ export function ExplorerView(): JSX.Element {
         </button>
         <button
           type="button"
-          className={`explorer__btn${busy ? ' is-refreshing' : ''}`}
+          className="explorer__btn"
           title="刷新"
           disabled={busy}
+          aria-busy={busy}
           onClick={() => void handleRefresh()}
         >
-          <Icon name="restart" size={16} />
+          {busy ? <Spinner size={14} /> : <Icon name="restart" size={16} />}
         </button>
         <button type="button" className="explorer__btn" title="关闭文件夹" onClick={closeFolder}>
           <Icon name="close" size={16} />
@@ -2044,7 +2046,7 @@ function TreeRow({
           ●
         </span>
       ) : null}
-      {isLoading ? <span className="tree-row__loading" aria-label="加载中" /> : null}
+      {isLoading ? <span className="tree-row__loading" role="status" aria-label="加载中"><Spinner size={12} /></span> : null}
     </div>
   )
 }

@@ -1,6 +1,6 @@
 import type { CommandJobSnapshot } from '@shared/command-job'
 import { attachCommandJobs } from './command-job-state'
-import { subscribeCommandJobs, getCommandJobs, ingestCommandJob, forgetCommandSession, refreshCommandJobs, activateCommandSession } from './command-job-store'
+import { subscribeCommandJobs, getCommandJobs, ingestCommandJob, forgetCommandSession, refreshCommandJobs, activateCommandSession, deactivateCommandSession } from './command-job-store'
 import type { SubagentRun } from '@shared/subagent'
 import { normalizeRootRunCompaction, normalizeRootRunRequestConfig, type RootRun, type RootRunCompaction, type RootRunRequestConfig } from '@shared/root-run'
 import { applyRootRun, finishTransport, mergeRootRun, normalizeRootRun } from './root-run-state'
@@ -199,13 +199,15 @@ export interface ChatSessionModelContext {
   compaction?: RootRunCompaction
 }
 
-export function useChat(): {
+export function useChat(options: { commandOwner?: string } = {}): {
   messages: ChatMessage[]
   /** Authoritative lifetime billing plus only usage added after the current snapshot. */
   sessionUsage: UsageTotal
   commandJobs: CommandJobSnapshot[]
   sessionModel: ChatSessionModelContext | null
   streaming: boolean
+  historyError: string | null
+  isHistoryReady: (sessionId: string) => boolean
   /** The compact snapshot omitted older JSONL rows that can be loaded on demand. */
   historyCompacted: boolean
   archiveRemaining: number | null
@@ -267,6 +269,7 @@ export function useChat(): {
    */
   resumeStream: (sessionId: string) => Promise<boolean>
 } {
+  const commandOwner = options.commandOwner ?? 'code'
   const renderSource = getEngineSource()
   const sourceRef = useRef(renderSource)
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -275,6 +278,9 @@ export function useChat(): {
   const [commandJobs, setCommandJobs] = useState<CommandJobSnapshot[]>([])
   const [sessionModel, setSessionModel] = useState<ChatSessionModelContext | null>(null)
   const [streaming, setStreaming] = useState(false)
+  const [historyError, setHistoryError] = useState<string | null>(null)
+  const restoredSessionRef = useRef<string | null>(null)
+  const isHistoryReady = useCallback((sessionId: string): boolean => restoredSessionRef.current === sessionId && sourceRef.current === getEngineSource(), [])
   const [todos, setTodos] = useState<EngineTodo[]>([])
   const [historyCompacted, setHistoryCompacted] = useState(false)
   const [archiveExpanded, setArchiveExpanded] = useState(false)
@@ -352,10 +358,12 @@ export function useChat(): {
   const recoveryAttemptsRef = useRef(0)
   const recoverRef = useRef<(sessionId: string) => Promise<boolean>>(async () => false)
   const selectView = useCallback((sessionId: string): void => {
-    activateCommandSession(sessionId)
+    activateCommandSession(sessionId, commandOwner)
     if (viewSessionRef.current === sessionId) return
     const oldStream = activeStreamRef.current
     viewSessionRef.current = sessionId
+    restoredSessionRef.current = null
+    setHistoryError(null)
     historyRequestRef.current++
     consumedEventIdRef.current = null
     recoveryAttemptsRef.current = 0
@@ -384,7 +392,8 @@ export function useChat(): {
     setArchiveError(null)
     // Detach only this client. The server owns the old run's eventual outcome.
     if (oldStream) void engine.abortStream(oldStream)
-  }, [])
+  }, [commandOwner])
+  useEffect(() => () => deactivateCommandSession(commandOwner), [commandOwner])
 
   /**
    * 连续发送队列：流式进行中用户继续发的消息先进队列，
@@ -466,6 +475,8 @@ export function useChat(): {
     activeStreamRef.current = null
     activeSessionRef.current = null
     viewSessionRef.current = null
+    restoredSessionRef.current = null
+    setHistoryError(null)
     activeRunIdRef.current = null
     consumedEventIdRef.current = null
     recoveryAttemptsRef.current = 0
@@ -895,13 +906,19 @@ export function useChat(): {
     const source = getEngineSource()
     selectView(sessionId)
     if (activeStreamRef.current) return null
+    restoredSessionRef.current = null
+    setHistoryError(null)
     const generation = ++historyRequestRef.current
     try {
       const [result] = await Promise.all([
         engine.request<ChatRecoverySnapshot>({ method: 'GET', path: '/chat/snapshot', query: { sessionId } }),
         refreshSubagentRuns(sessionId).catch(() => {})
       ])
-      if (source !== getEngineSource() || !result.ok || !result.data || result.data.schemaVersion !== 1 || result.data.sessionId !== sessionId) return null
+      if (source !== getEngineSource()) return null
+      if (!result.ok || !result.data || result.data.schemaVersion !== 1 || result.data.sessionId !== sessionId) {
+        if (viewSessionRef.current === sessionId && generation === historyRequestRef.current) setHistoryError(!result.ok && result.message ? result.message : '无法读取任务历史，请重试')
+        return null
+      }
       if (activeStreamRef.current || viewSessionRef.current !== sessionId || generation !== historyRequestRef.current) return null
       const snapshot = result.data
       const restored = restoreChatSnapshot(snapshot)
@@ -932,8 +949,14 @@ export function useChat(): {
       setMessages(restoredMessages)
       setCommandJobs(getCommandJobs(sessionId))
       setTodos(restored.todos)
+      restoredSessionRef.current = sessionId
       return snapshot
-    } catch { return null }
+    } catch (cause) {
+      if (source === getEngineSource() && viewSessionRef.current === sessionId && generation === historyRequestRef.current) {
+        setHistoryError(cause instanceof Error ? cause.message : '无法读取任务历史，请重试')
+      }
+      return null
+    }
   }, [selectView, renderSource])
 
   const loadHistory = useCallback(async (sessionId: string): Promise<void> => {
@@ -997,8 +1020,21 @@ export function useChat(): {
     activeStreamRef.current = streamId
     activeSessionRef.current = sessionId
     setStreaming(true)
-    await engine.startStream({ streamId, path: '/chat/stream', method: 'GET',
-      query: { sessionId, lastEventId: snapshot.eventId }, body: undefined })
+    // A resumed stream is a long-lived subscription. Awaiting the IPC call
+    // here keeps Work's history gate closed until the server finishes, so
+    // switching to another running task would remain stuck on "读取任务".
+    // Stream frames still arrive through the shared event listener; only the
+    // short-lived admission result is needed by the caller.
+    void engine.startStream({ streamId, path: '/chat/stream', method: 'GET',
+      query: { sessionId, lastEventId: snapshot.eventId }, body: undefined }).catch(() => {
+        // IPC can fail before the stream reader is registered (for example
+        // when the engine switches during recovery). Do not leave the task
+        // permanently marked as streaming in that narrow window.
+        if (activeStreamRef.current !== streamId) return
+        activeStreamRef.current = null
+        activeSessionRef.current = null
+        setStreaming(false)
+      })
     return true
   }, [restoreSession])
   useEffect(() => { recoverRef.current = resumeStream }, [resumeStream])
@@ -1225,6 +1261,8 @@ export function useChat(): {
     commandJobs,
     sessionModel,
     streaming,
+    historyError,
+    isHistoryReady,
     historyCompacted: historyCompacted && (!archiveExpanded || (archiveRemaining ?? 0) > 0),
     archiveRemaining,
     archiveLoading,

@@ -80,11 +80,15 @@ export function Popover({
   disabled = false
 }: PopoverProps): JSX.Element {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
-  const open = controlledOpen ?? uncontrolledOpen
-  const setOpen = (next: boolean): void => {
-    if (controlledOpen === undefined) setUncontrolledOpen(next)
-    else onOpenChange?.(next)
-  }
+  const requestedOpen = controlledOpen ?? uncontrolledOpen
+  const open = requestedOpen && !disabled
+  const setOpen = useCallback(
+    (next: boolean): void => {
+      if (controlledOpen === undefined) setUncontrolledOpen(next)
+      else onOpenChange?.(next)
+    },
+    [controlledOpen, onOpenChange]
+  )
   const [pos, setPos] = useState<Position | null>(null)
   const triggerRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -104,7 +108,18 @@ export function Popover({
   const reposition = useCallback((): void => {
     const anchor = triggerRef.current
     const panel = panelRef.current
-    if (!anchor || !panel) return
+    if (!anchor) return
+    // keep-alive 工作台隐藏后 portal 仍挂在 body，需要跟随触发区退出。
+    if (
+      disabled ||
+      !anchor.isConnected ||
+      anchor.closest('[hidden], [inert]') ||
+      !anchor.getClientRects().length
+    ) {
+      setOpen(false)
+      return
+    }
+    if (!panel) return
 
     const rect = anchor.getBoundingClientRect()
     const panelRect = panel.getBoundingClientRect()
@@ -131,22 +146,41 @@ export function Popover({
     left = Math.max(MARGIN, Math.min(left, vw - panelRect.width - MARGIN))
 
     setPos({ left, top, placement: side })
-  }, [placement, align])
+  }, [placement, align, disabled, setOpen])
 
   // 打开后先量一次；面板尺寸可能因内容异步变化（列表加载完成），用 ResizeObserver 跟随
   useLayoutEffect(() => {
-    if (!open) return
+    if (!requestedOpen) return
     reposition()
     const panel = panelRef.current
     if (!panel) return
     const observer = new ResizeObserver(() => reposition())
     observer.observe(panel)
-    return () => observer.disconnect()
-  }, [open, reposition])
+    const anchor = triggerRef.current
+    if (anchor) observer.observe(anchor)
+    // 只监听当前锚点的祖先属性，避免观察整个消息流导致每个流式 token 都重算。
+    const visibilityObserver = new MutationObserver(() => reposition())
+    for (let ancestor: HTMLElement | null = anchor; ancestor; ancestor = ancestor.parentElement) {
+      visibilityObserver.observe(ancestor, {
+        attributes: true,
+        attributeFilter: ['hidden', 'inert', 'style', 'class']
+      })
+    }
+    return () => {
+      observer.disconnect()
+      visibilityObserver.disconnect()
+    }
+  }, [requestedOpen, reposition])
 
-  // 开合态变化时通知外层（Select 等依赖 open 同步高亮项的组件）
+  // 开合态变化时通知外层（Select 等依赖 open 同步高亮项的组件）。
+  // 外层常传入内联回调；只在开合值真正改变时通知，避免隐藏的 keep-alive
+  // 页面因回调身份变化反复 setState，最终触发最大更新深度错误。
+  const notifiedOpenRef = useRef<boolean | undefined>(undefined)
   useEffect(() => {
-    if (controlledOpen === undefined) onOpenChange?.(open)
+    if (controlledOpen !== undefined || !onOpenChange) return
+    if (notifiedOpenRef.current === open) return
+    notifiedOpenRef.current = open
+    onOpenChange(open)
   }, [controlledOpen, open, onOpenChange])
 
   useEffect(() => {
@@ -178,11 +212,16 @@ export function Popover({
       window.removeEventListener('resize', onReflow)
       document.removeEventListener('scroll', onReflow, true)
     }
-  }, [open, reposition])
+  }, [open, reposition, setOpen])
 
   return (
     <div className={`popover${className ? ` ${className}` : ''}`} ref={triggerRef}>
-      <div className={`popover__trigger${disabled ? ' is-disabled' : ''}`} onClick={() => { if (!disabled) setOpen(!open) }}>
+      <div
+        className={`popover__trigger${disabled ? ' is-disabled' : ''}`}
+        onClick={() => {
+          if (!disabled) setOpen(!open)
+        }}
+      >
         {trigger({ open })}
       </div>
 

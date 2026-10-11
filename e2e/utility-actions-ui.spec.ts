@@ -23,6 +23,8 @@ let baseUrl = ''
 let app: ElectronApplication | undefined
 let page: Page
 const providerRequests: Array<{ model: string; prompt: string }> = []
+let holdUtilityResponses = false
+let releaseUtilityResponse: (() => void) | null = null
 
 const provider = createServer(async (request, response) => {
   if (request.method !== 'POST' || !request.url?.endsWith('/chat/completions')) {
@@ -36,6 +38,9 @@ const provider = createServer(async (request, response) => {
   providerRequests.push({ model: body.model, prompt })
   let content = 'feat: update workspace changes\n\n1. 更新编辑器与设置界面\n2. 保留完整的变更摘要'
   if (/润色|改写|清晰|改一下代码/.test(prompt)) content = '请清晰说明需要完成的代码修改，并补充验收标准。'
+  if (holdUtilityResponses) {
+    await new Promise<void>((resolve) => { releaseUtilityResponse = resolve })
+  }
   response.writeHead(200, { 'Content-Type': 'application/json' })
   response.end(JSON.stringify({ id: 'e2e-utility', object: 'chat.completion', model: body.model, choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }], usage: { prompt_tokens: 8, completion_tokens: 8, total_tokens: 16 } }))
 })
@@ -126,11 +131,27 @@ test.describe.serial('utility actions and active session highlight', () => {
     await new Promise<void>((resolvePromise) => provider.close(() => resolvePromise()))
     if (fixture) cleanup()
   })
+  test.afterEach(() => {
+    // Always release a deliberately held provider response so a failed visual
+    // assertion cannot leave the shared server request open for teardown.
+    holdUtilityResponses = false
+    releaseUtilityResponse?.()
+    releaseUtilityResponse = null
+  })
 
   test('AI 提交信息按钮调用已配置模型并回填提交信息', async () => {
     await page.getByRole('button', { name: '版本控制' }).click()
     await expect(page.locator('.git-commitbar__ai')).toBeVisible({ timeout: 15_000 })
+    holdUtilityResponses = true
     await page.locator('.git-commitbar__ai').click()
+    await expect.poll(() => releaseUtilityResponse !== null).toBe(true)
+    await expect(page.locator('.git-commitbar__ai')).toHaveAttribute('aria-busy', 'true')
+    await expect(page.locator('.git-commitbar__ai .ui-spinner')).toBeVisible()
+    const aiButtonAnimation = await page.locator('.git-commitbar__ai').evaluate((node) => getComputedStyle(node).animationName)
+    expect(aiButtonAnimation).toBe('none')
+    holdUtilityResponses = false
+    releaseUtilityResponse?.()
+    releaseUtilityResponse = null
     await expect(page.locator('.git-commitbar__input')).toHaveValue(
       'feat: update workspace changes\n\n1. 更新编辑器与设置界面\n2. 保留完整的变更摘要',
       { timeout: 30_000 }
@@ -157,7 +178,15 @@ test.describe.serial('utility actions and active session highlight', () => {
     await page.keyboard.type('请帮我改一下代码')
     await expect(input).toContainText('请帮我改一下代码')
     await page.waitForTimeout(150)
+    holdUtilityResponses = true
     await page.getByRole('button', { name: 'AI 润色输入' }).click()
+    await expect.poll(() => releaseUtilityResponse !== null).toBe(true)
+    const polishButton = page.getByRole('button', { name: 'AI 润色输入' })
+    await expect(polishButton).toHaveAttribute('aria-busy', 'true')
+    await expect(polishButton.locator('.ui-spinner')).toBeVisible()
+    holdUtilityResponses = false
+    releaseUtilityResponse?.()
+    releaseUtilityResponse = null
     await expect(input).toContainText('请清晰说明需要完成的代码修改', { timeout: 30_000 })
     expect(providerRequests.some((item) => item.model === MODEL && /改一下代码/.test(item.prompt))).toBe(true)
   })

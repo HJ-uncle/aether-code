@@ -35,6 +35,7 @@ import { Icon } from '@renderer/workbench/icons'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { Popover } from '@renderer/workbench/Popover'
 import { ContextMenu } from '@renderer/workbench/ContextMenu'
+import { Spinner } from '@renderer/workbench/ui-primitives'
 import { ModelPicker } from '../models/ModelPicker'
 import { ComposerOptions } from './ComposerOptions'
 import { loadSessionModelSelection, resolveSessionComposerModel, saveSessionModelSelection, type SessionModelSelection } from './session-model-store'
@@ -1539,11 +1540,12 @@ export function ChatView(): JSX.Element {
             type="button"
             className="chat__icon-btn chat__polish-btn"
             disabled={!canExecute || polishing || !input.trim()}
+            aria-busy={polishing}
             title="AI 润色：让指令更清晰具体（使用轻任务模型）"
             aria-label="AI 润色输入"
             onClick={() => void handlePolish()}
           >
-            <Icon name={polishing ? 'sync' : 'sparkles'} size={16} />
+            {polishing ? <Spinner size={14} /> : <Icon name="sparkles" size={16} />}
           </button>
           {canExecute && workspace.root && (mentionQuery !== null || manualPalette) ? (
             <FileRefPalette
@@ -2395,7 +2397,7 @@ function MessageRunStatus({ message }: { message: ChatMessage }): JSX.Element | 
     >
       {/* Reserve the same icon column in every state, so completion never shifts the label. */}
       <span className="message__run-status-icon" aria-hidden="true">
-        {active ? <span className="message__spinner" /> : null}
+        {active ? <Spinner size={10} className="message__spinner" /> : null}
       </span>
       <span className={`message__run-status-text${active ? ' message__streaming-text' : ''}`}>{text}</span>
     </div>

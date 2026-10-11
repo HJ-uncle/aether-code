@@ -13,7 +13,7 @@
  * （showHunks 时展开 hunksMap 里的 hunk 列表，逐条支持 discardHunk）。
  */
 import { useMemo, useState, type JSX, type MouseEvent } from 'react'
-import type { GitFileChange } from '@shared/git-types'
+import type { GitFileChange, GitHunk } from '@shared/git-types'
 import { STATUS_COLOR, STATUS_LETTER, visualKeyOf } from '@renderer/core/git/git-status-visuals'
 import { discardHunk, hunksOf, loadHunksFor } from '@renderer/core/git/git-store'
 import { Icon, type IconName } from '@renderer/workbench/icons'
@@ -29,6 +29,8 @@ export interface GitChangeRowProps {
   onDiscard?: (file: GitFileChange) => void
   onToggleStage?: (file: GitFileChange) => void
   onContextMenu?: (file: GitFileChange, event: MouseEvent) => void
+  /** Work can provide session-scoped hunks; the Code fallback uses its store. */
+  onLoadHunks?: (file: GitFileChange) => Promise<GitHunk[]>
 }
 
 function statusIconName(file: GitFileChange): IconName {
@@ -47,9 +49,11 @@ export function GitChangeRow({
   onOpen,
   onDiscard,
   onToggleStage,
-  onContextMenu
+  onContextMenu,
+  onLoadHunks
 }: GitChangeRowProps): JSX.Element {
   const [hunksOpen, setHunksOpen] = useState(false)
+  const [externalHunks, setExternalHunks] = useState<GitHunk[]>([])
   const fileName = file.path.split('/').pop() ?? file.path
   const dirName = useMemo(() => {
     const parts = file.path.split('/')
@@ -64,7 +68,7 @@ export function GitChangeRow({
   /** 二进制没有行数概念，全 0 时也不占位，免得一排 +0 -0 干扰视线 */
   const showStats = !file.binary && (file.additions > 0 || file.deletions > 0)
 
-  const hunks = hunksOpen ? hunksOf(file.path) : []
+  const hunks = hunksOpen ? (onLoadHunks ? externalHunks : hunksOf(file.path)) : []
 
   const rowClass = ['git-row', 'group', selected ? 'is-selected' : active ? 'is-active' : '']
     .filter(Boolean)
@@ -142,7 +146,10 @@ export function GitChangeRow({
                   e.stopPropagation()
                   const next = !hunksOpen
                   setHunksOpen(next)
-                  if (next) void loadHunksFor(file.path)
+                  if (next) {
+                    if (onLoadHunks) void onLoadHunks(file).then(setExternalHunks)
+                    else void loadHunksFor(file.path)
+                  }
                 }}
               >
                 <Icon name={hunksOpen ? 'chevron' : 'chevron-right'} size={16} />

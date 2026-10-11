@@ -157,7 +157,7 @@
 
 .changes-panel__footer {
   gap: 6px;
-  /* 与 todo-tray__footer 同高同 padding：两个 tab 的底部操作栏视觉一致 */
+  /* 与任务标签所在的控制栏保持同一垂直节奏 */
   height: 32px;
   padding: 4px 10px;
   /* 不加底色：深色下 hover/active 这类叠加色都会显得突兀，浅色下任何黑色
@@ -210,6 +210,27 @@
 
 .session-tray__tab.is-active {
   background: var(--bg-active);
+}
+
+/* 进度是任务标签的一部分，不再在滚动列表底部另起一条固定色带。
+   展开任务时只有一个稳定的控制层，列表末行也不会被覆盖。 */
+.session-tray__tab-progress {
+  display: inline-flex;
+  width: 36px;
+  height: 3px;
+  flex: 0 0 36px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  vertical-align: middle;
+}
+
+.session-tray__tab-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 180ms ease-out;
 }
 
 .session-tray__summary {
@@ -319,6 +340,11 @@
     height: 24px;
     padding-inline: 5px;
     gap: 3px;
+  }
+
+  .session-tray__tab-progress {
+    width: 28px;
+    flex-basis: 28px;
   }
 }
 

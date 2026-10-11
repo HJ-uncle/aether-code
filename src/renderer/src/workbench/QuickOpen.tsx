@@ -10,6 +10,7 @@ import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { buildCommandItems, type CommandItem } from './command-filter'
 import { FuzzyText } from './FuzzyText'
 import { fuzzyMatch } from '@renderer/core/platform/fuzzy'
+import { useAppMode } from '@renderer/core/platform/app-mode'
 
 const TOGGLE_COMMAND = 'aether.quickOpen.toggle'
 const MAX_ITEMS = 50
@@ -78,11 +79,13 @@ function isOtherPaletteOpen(): boolean {
 }
 
 export function QuickOpen(): JSX.Element | null {
+  const appMode = useAppMode()
   const [open, setOpen] = useState(false)
   const [generation, setGeneration] = useState(0)
   const generationRef = useRef(0)
   // 主动让位（切去了命令面板）：这次关闭不当作"用户关掉了面板"
   const closedRef = useRef(false)
+  useEffect(() => { closedRef.current = true; setOpen(false) }, [appMode])
 
   useEffect(() => {
     const disposeCommand = registerCommand({

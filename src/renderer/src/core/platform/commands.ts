@@ -6,6 +6,7 @@
  * 能零成本覆盖全部功能的前提。
  */
 import { evaluateWhen } from './context-keys'
+import { isCommandAvailableInMode } from './app-mode'
 
 export interface CommandDefinition {
   id: string
@@ -57,7 +58,7 @@ export function getAllCommands(): CommandEntry[] {
 /** 命令当前是否可执行（when 条件满足） */
 export function isCommandEnabled(id: string): boolean {
   const entry = registry.get(id)
-  return !!entry && evaluateWhen(entry.when)
+  return !!entry && isCommandAvailableInMode(id) && evaluateWhen(entry.when)
 }
 
 /**
@@ -72,7 +73,7 @@ export async function executeCommand(id: string): Promise<void> {
     console.warn(`[commands] 未注册的命令: ${id}`)
     return
   }
-  if (!evaluateWhen(entry.when)) return
+  if (!isCommandAvailableInMode(id) || !evaluateWhen(entry.when)) return
 
   try {
     await entry.run()

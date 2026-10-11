@@ -13,10 +13,22 @@
  * 本地元数据（名称/置顶/收藏/颜色/工作区）存 session-meta.ts（localStorage 单 key），
  * 引擎不参与 —— 这些是纯界面偏好。
  */
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type JSX
+} from 'react'
 import { useApp } from '@renderer/core/app-context'
 import { requestOrThrow } from '@renderer/core/engine/client'
-import { getEngineSource, isRemoteEngine, subscribeEngineSource } from '@renderer/core/engine/source'
+import {
+  getEngineSource,
+  isRemoteEngine,
+  subscribeEngineSource
+} from '@renderer/core/engine/source'
 import { extractText } from '@renderer/core/engine/useChat'
 import { showChatPanel } from '@renderer/core/platform/layout-state'
 import { openFolderAt } from '@renderer/core/workspace/workspace-store'
@@ -69,14 +81,19 @@ const SORT_FIELD_LABELS: Record<SortField, string> = {
 /** 标题：自定义名 > 首条用户消息首行，纯文本化后截 50 字（对齐 wuzu displayTitle） */
 function sessionTitle(item: SessionSummary, customName?: string): string {
   if (customName?.trim()) return customName.trim()
-  const raw = extractText(item.title ?? item.lastMessage).split('\n')[0].replace(/\s+/g, ' ').trim()
+  const raw = extractText(item.title ?? item.lastMessage)
+    .split('\n')[0]
+    .replace(/\s+/g, ' ')
+    .trim()
   if (!raw) return '未命名会话'
   return raw.length > 50 ? `${raw.slice(0, 50)}…` : raw
 }
 
 /** 副标题：最后一条 AI 回复，纯文本化后截 60 字（对齐 wuzu displaySubtitle） */
 function sessionSubtitle(item: SessionSummary): string {
-  const raw = extractText(item.lastReply ?? '').replace(/\s+/g, ' ').trim()
+  const raw = extractText(item.lastReply ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
   if (!raw) return ''
   return raw.length > 60 ? `${raw.slice(0, 60)}…` : raw
 }
@@ -144,7 +161,9 @@ export function SessionHistoryView(): JSX.Element {
         path: '/conversation/sessions'
       })
       if (source !== getEngineSource() || generation !== refreshGeneration.current) return
-      const list = Array.isArray(rows) ? rows : []
+      const list = Array.isArray(rows)
+        ? rows.filter((row) => !row.sessionId.startsWith('work-'))
+        : []
       setSessions(list)
       // 引擎开始返回该会话后，对应的本地占位条目退场，避免同一条会话出现两行
       prunePendingSessions(new Set(list.map((item) => item.sessionId)))
@@ -152,19 +171,24 @@ export function SessionHistoryView(): JSX.Element {
       if (source !== getEngineSource() || generation !== refreshGeneration.current) return
       setError(err instanceof Error ? err.message : String(err))
     } finally {
-      if (source === getEngineSource() && generation === refreshGeneration.current) setLoading(false)
+      if (source === getEngineSource() && generation === refreshGeneration.current)
+        setLoading(false)
     }
   }, [ready, source])
 
-  useEffect(() => subscribeEngineSource(() => {
-    refreshGeneration.current++
-    setSessions([])
-    setLoading(false)
-    setError(null)
-    setMenu(null)
-    setTagPanel(null)
-    setRenaming(null)
-  }), [])
+  useEffect(
+    () =>
+      subscribeEngineSource(() => {
+        refreshGeneration.current++
+        setSessions([])
+        setLoading(false)
+        setError(null)
+        setMenu(null)
+        setTagPanel(null)
+        setRenaming(null)
+      }),
+    []
+  )
 
   // 引擎就绪 / 当前会话变化（新会话发出第一条消息后会出现在列表里）时刷新。
   // refresh 开头会同步 setState，挪进微任务避免 effect 执行期内联触发级联渲染
@@ -203,18 +227,30 @@ export function SessionHistoryView(): JSX.Element {
 
   // ── 右键菜单动作 ──────────────────────────────────────────────────────────
 
-  const togglePin = useCallback((sessionId: string) => {
-    patchSessionMeta(sessionId, { pinned: !metaTable[sessionId]?.pinned })
-  }, [metaTable])
+  const togglePin = useCallback(
+    (sessionId: string) => {
+      patchSessionMeta(sessionId, { pinned: !metaTable[sessionId]?.pinned })
+    },
+    [metaTable]
+  )
 
-  const toggleFavorite = useCallback((sessionId: string) => {
-    patchSessionMeta(sessionId, { favorite: !metaTable[sessionId]?.favorite })
-  }, [metaTable])
+  const toggleFavorite = useCallback(
+    (sessionId: string) => {
+      patchSessionMeta(sessionId, { favorite: !metaTable[sessionId]?.favorite })
+    },
+    [metaTable]
+  )
 
-  const startRename = useCallback((sessionId: string) => {
-    const item = sessions.find((s) => s.sessionId === sessionId)
-    setRenaming({ sessionId, value: sessionTitle(item ?? { sessionId }, metaTable[sessionId]?.name) })
-  }, [sessions, metaTable])
+  const startRename = useCallback(
+    (sessionId: string) => {
+      const item = sessions.find((s) => s.sessionId === sessionId)
+      setRenaming({
+        sessionId,
+        value: sessionTitle(item ?? { sessionId }, metaTable[sessionId]?.name)
+      })
+    },
+    [sessions, metaTable]
+  )
 
   const commitRename = useCallback(() => {
     if (!renaming) return
@@ -318,9 +354,7 @@ export function SessionHistoryView(): JSX.Element {
         title: '未命名会话'
       }))
     const merged = [...pending, ...sessions]
-    const filtered = favoritesOnly
-      ? merged.filter((s) => metaTable[s.sessionId]?.favorite)
-      : merged
+    const filtered = favoritesOnly ? merged.filter((s) => metaTable[s.sessionId]?.favorite) : merged
     const tagOrder = new Map(SESSION_TAG_COLORS.map((c, index) => [c.key, index]))
     const dir = sort.order === 'asc' ? 1 : -1
     return [...filtered].sort((a, b) => {
@@ -453,8 +487,7 @@ export function SessionHistoryView(): JSX.Element {
 
   return (
     <div className="history-view">
-      <div className="history-view__toolbar">
-        <span className="history-view__title">会话历史</span>
+      <div className="history-view__toolbar" aria-label="会话历史操作">
         <div className="history-view__toolbar-spacer" />
         <button
           type="button"
@@ -464,9 +497,7 @@ export function SessionHistoryView(): JSX.Element {
           onClick={() => setFavoritesOnly((v) => !v)}
         >
           <Icon name={favoritesOnly ? 'star' : 'star-outline'} size={16} />
-          {favoriteCount > 0 ? (
-            <span className="history-view__badge">{favoriteCount}</span>
-          ) : null}
+          {favoriteCount > 0 ? <span className="history-view__badge">{favoriteCount}</span> : null}
         </button>
         <button
           type="button"
@@ -524,7 +555,8 @@ export function SessionHistoryView(): JSX.Element {
             const dot = tagColorDot(meta?.color)
             return (
               <li key={item.sessionId}>
-                {item.sessionId === firstUnpinnedId && visibleSessions[0]?.sessionId !== firstUnpinnedId ? (
+                {item.sessionId === firstUnpinnedId &&
+                visibleSessions[0]?.sessionId !== firstUnpinnedId ? (
                   <div className="history-view__divider" />
                 ) : null}
                 <button
@@ -538,9 +570,7 @@ export function SessionHistoryView(): JSX.Element {
                     setMenu({ x: event.clientX, y: event.clientY, sessionId: item.sessionId })
                   }}
                 >
-                  {dot ? (
-                    <span className="history-view__tag" style={{ background: dot }} />
-                  ) : null}
+                  {dot ? <span className="history-view__tag" style={{ background: dot }} /> : null}
                   <span className="history-view__main">
                     <span className="history-view__row">
                       {meta?.pinned ? (
@@ -549,9 +579,7 @@ export function SessionHistoryView(): JSX.Element {
                       <span className="history-view__summary">{title}</span>
                       <span className="history-view__time">{formatRelative(item.lastAt)}</span>
                     </span>
-                    {subtitle ? (
-                      <span className="history-view__subtitle">{subtitle}</span>
-                    ) : null}
+                    {subtitle ? <span className="history-view__subtitle">{subtitle}</span> : null}
                   </span>
                 </button>
               </li>
@@ -565,7 +593,12 @@ export function SessionHistoryView(): JSX.Element {
       ) : null}
 
       {sortMenu ? (
-        <ContextMenu x={sortMenu.x} y={sortMenu.y} items={sortMenuItems} onClose={() => setSortMenu(null)} />
+        <ContextMenu
+          x={sortMenu.x}
+          y={sortMenu.y}
+          items={sortMenuItems}
+          onClose={() => setSortMenu(null)}
+        />
       ) : null}
 
       {tagPanel ? (

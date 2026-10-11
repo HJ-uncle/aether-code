@@ -183,6 +183,16 @@ test.describe.serial('消息文件卡片与任务托盘布局', () => {
       await page.getByRole('button', { name: '任务 2/2', exact: true }).click()
       await expect(page.locator('.todo-tray')).toBeVisible()
       await expectTrayAlignment()
+      const taskContent = page.locator('.todo-tray__content')
+      await expect(taskContent).toBeVisible()
+      await expect.poll(() => taskContent.evaluate(element => {
+        const style = getComputedStyle(element)
+        return { overflowY: style.overflowY, position: style.position }
+      })).toEqual({ overflowY: 'auto', position: 'static' })
+      await expect.poll(() => taskContent.evaluate(element => getComputedStyle(element).maxHeight)).not.toBe('none')
+      await expect(page.locator('.session-tray__tab-progress')).toHaveCount(1)
+      await expect(page.locator('.session-tray__tab-progress-fill')).toHaveCSS('width', /.+/)
+      await expect(page.locator('.todo-tray__footer')).toHaveCount(0)
       await page.getByRole('button', { name: '收起托盘', exact: true }).click()
 
       const overflow = await page.locator('.diff-card__head').evaluateAll(heads => heads.map(head => {

@@ -16,6 +16,7 @@ import {
   useSubagentRun
 } from '@renderer/core/engine/subagent-store'
 import { Icon } from '@renderer/workbench/icons'
+import { Spinner } from '@renderer/workbench/ui-primitives'
 import { Markdown } from './Markdown'
 import { getSessionMeta } from '../history/session-meta'
 import { toolDisplayName, toolParamSummary } from './tool-names'
@@ -251,7 +252,7 @@ export function SubagentCard({
         }}
       >
         <span className={`subagent-card__dot${failed ? ' subagent-card__dot--fail' : ''}`}>
-          {active ? <span className="subagent-card__spinner" /> : <Icon name="circle" size={16} />}
+          {active ? <Spinner size={12} className="subagent-card__spinner" /> : <Icon name="circle" size={16} />}
         </span>
         <span className="subagent-card__name">{remoteReadOnly ? '远端子代理' : '子代理'}</span>
         <span className="subagent-card__task" title={goal}>

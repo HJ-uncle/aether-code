@@ -1,6 +1,7 @@
 import { useSyncExternalStore, type JSX } from 'react'
 import { toggleSidebarView } from '@renderer/core/platform/layout-state'
-import { Icon, type IconName } from './icons'
+import { IconButton } from './ui-primitives'
+import type { IconName } from './icons'
 import { useLayout } from './useLayout'
 import { getViews, onViewsChanged } from './view-registry'
 
@@ -19,17 +20,16 @@ export function ActivityBar(): JSX.Element {
       {views.map((view) => {
         const active = layout.sidebarVisible && layout.activeView === view.id
         return (
-          <button
+          <IconButton
             key={view.id}
-            type="button"
             className={`activity-bar__item${active ? ' is-active' : ''}`}
             title={view.title}
-            aria-label={view.title}
             aria-pressed={active}
+            icon={view.icon as IconName}
+            label={view.title}
+            size={24}
             onClick={() => toggleSidebarView(view.id)}
-          >
-            <Icon name={view.icon as IconName} size={24} />
-          </button>
+          />
         )
       })}
     </nav>

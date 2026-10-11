@@ -1,0 +1,839 @@
+/**
+ * 页面级视觉收口
+ *
+ * 功能区只负责自己的语义和数据，页面的节奏、表面、空状态、焦点态和
+ * 小屏降级在这里统一。所有颜色都来自 tokens.css，避免每个页面继续
+ * 产生一套相近但不相同的 Apple 风格。
+ */
+
+/* 页面容器：所有工作台视图都允许内容收缩，避免长路径/模型名撑出横向滚动。 */
+.history-view,
+.search-view,
+.problems-view,
+.output,
+.terminal-view,
+.browser-view,
+.account-settings,
+.settings-view,
+.git-panel,
+.explorer,
+.editor-area,
+.welcome,
+.chat {
+  min-width: 0;
+  min-height: 0;
+  color: var(--fg);
+  font-family: var(--font-ui);
+}
+
+/* 工具栏统一为轻材质 chrome：标题、计数和操作在同一条 36px 基线。 */
+.history-view__toolbar,
+.search-view__widget,
+.problems-view__toolbar,
+.output__toolbar,
+.git-panel__toolbar,
+.explorer__toolbar,
+.editor-toolbar,
+.browser-navigation,
+.browser-options {
+  min-height: var(--chrome-h);
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
+}
+
+.history-view__toolbar,
+.output__toolbar,
+.git-panel__toolbar,
+.explorer__toolbar,
+.editor-toolbar {
+  padding-inline: var(--space-3);
+}
+
+.history-view__toolbar,
+.output__toolbar,
+.git-panel__toolbar,
+.explorer__toolbar,
+.editor-toolbar,
+.browser-navigation,
+.browser-options {
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+}
+
+/* 所有可选列表使用同一套三态：扫过、持久选中、键盘焦点。 */
+.history-view__item,
+.git-panel__commit-row,
+.git-panel__stash-row,
+.git-panel__recent-row,
+.search-view__file,
+.search-view__hit,
+.problems-view__file,
+.problems-view__item-row,
+.terminal-view__item,
+.tree-row,
+.editor-tab,
+.browser-tab {
+  border-radius: var(--radius-lg);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.history-view__item:focus-visible,
+.git-panel__commit-row:focus-visible,
+.git-panel__stash-row:focus-visible,
+.git-panel__recent-row:focus-within,
+.search-view__file:focus-visible,
+.search-view__hit:focus-visible,
+.problems-view__file:focus-visible,
+.problems-view__item-row:focus-within,
+.terminal-view__item:focus-visible,
+.tree-row:focus-visible,
+.editor-tab:focus-visible,
+.browser-tab:focus-within {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 1px var(--list-focus-outline),
+    var(--focus-ring);
+}
+
+/* 空、加载、错误状态有统一的阅读宽度和垂直节奏，避免某个页面把提示贴在角落。 */
+.history-view__empty,
+.git-panel__empty,
+.terminal-view__empty,
+.browser-empty,
+.browser-surface__placeholder,
+.problems-view__empty,
+.search-view__hint,
+.output__empty,
+.settings-view__saved,
+.welcome__empty {
+  display: grid;
+  place-items: center;
+  min-height: 96px;
+  padding: var(--space-6);
+  color: var(--fg-muted);
+  line-height: 1.6;
+  text-align: center;
+}
+
+.history-view__empty--error,
+.notice--error,
+.browser-error,
+.changes-panel__error {
+  color: var(--danger-fg);
+  background: var(--danger-soft);
+}
+
+/* 内容区不应该因为嵌套滚动条反复出现横向抖动。 */
+.history-view__list,
+.search-view__results,
+.problems-view__list,
+.git-panel__scroll,
+.explorer__body,
+.output__lines,
+.browser-surface,
+.browser-inspector,
+.settings-view {
+  overscroll-behavior: contain;
+}
+
+.history-view__list::-webkit-scrollbar,
+.search-view__results::-webkit-scrollbar,
+.problems-view__list::-webkit-scrollbar,
+.git-panel__scroll::-webkit-scrollbar,
+.explorer__body::-webkit-scrollbar,
+.output__lines::-webkit-scrollbar,
+.browser-surface::-webkit-scrollbar,
+.browser-inspector::-webkit-scrollbar,
+.settings-view::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+/* 账户页在设置正文中复用同一张卡片节奏，不让摘要和设置组互相抢层级。 */
+.account-settings {
+  container-type: inline-size;
+  padding-bottom: var(--space-7);
+}
+
+.account-summary,
+.account-transport {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: color-mix(in srgb, var(--bg-elevated) 82%, transparent);
+  box-shadow: var(--shadow-card);
+}
+
+.account-summary {
+  margin-bottom: var(--space-5);
+  padding: var(--space-5);
+}
+
+.account-summary__refresh {
+  min-width: var(--control-h-lg);
+  min-height: var(--control-h-lg);
+  padding: 0;
+}
+
+/* 历史会话是列表页，标题栏与行内容保持同一左右轨道。 */
+.history-view {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-surface);
+}
+
+.history-view__toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  padding-block: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.history-view__title {
+  color: var(--fg-strong);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.history-view__list {
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-2) var(--space-3) var(--space-4);
+}
+
+.history-view__item {
+  min-height: 52px;
+  margin-block: 2px;
+  padding: var(--space-2) var(--space-3);
+}
+
+/* 侧栏已有统一的「会话历史」标题，列表内部只保留操作栏，避免重复标题
+ * 占掉首屏空间；行高收紧后仍保留足够的鼠标与键盘命中区域。 */
+.history-view {
+  gap: 2px;
+  padding: 4px 8px 8px;
+}
+
+.history-view__toolbar {
+  min-height: 30px;
+  justify-content: flex-end;
+  padding: 0 2px;
+}
+
+.history-view__list {
+  gap: 1px;
+  padding: 2px 0 8px;
+}
+
+.history-view__item {
+  min-height: 48px;
+  margin-block: 0;
+  padding: 6px 10px;
+}
+
+.history-view__main {
+  gap: 2px;
+}
+
+/* Git 面板：把顶部摘要、内容和底部统计固定在清晰的三层结构。 */
+.git-panel {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-panel);
+}
+
+.git-panel__toolbar {
+  flex: 0 0 auto;
+  min-height: var(--chrome-h);
+  border-bottom: 1px solid var(--border);
+}
+
+.git-panel__scroll,
+.git-panel__content {
+  min-width: 0;
+}
+
+.git-panel__section {
+  margin: var(--space-2) var(--space-3) 0;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+}
+
+.git-panel__section:last-child {
+  border-bottom: 0;
+}
+
+.git-panel__group-head {
+  min-height: var(--control-h-lg);
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-lg);
+}
+
+.git-panel__commit-row,
+.git-panel__stash-row,
+.git-panel__recent-row {
+  min-height: 36px;
+  padding-inline: var(--space-2);
+}
+
+/* 编辑器与浏览器都遵循同一条 tab 基线，活动项用强调色而不是额外阴影堆叠。 */
+.editor-tabs,
+.browser-tabs {
+  min-height: var(--chrome-h);
+  background: var(--editor-chrome);
+  border-bottom: 1px solid var(--border);
+}
+
+.editor-tab.is-active,
+.browser-tab.is-active {
+  box-shadow:
+    inset 0 2px 0 var(--accent),
+    inset 0 0 0 1px var(--border);
+}
+
+.editor-area,
+.browser-view {
+  container-type: inline-size;
+  background: var(--editor-canvas);
+}
+
+.welcome {
+  container-type: inline-size;
+  min-width: 0;
+  min-height: 0;
+  background: var(--editor-canvas);
+}
+
+.welcome__action,
+.welcome__recent-open,
+.welcome__recent-remove,
+.welcome__link {
+  border-radius: var(--radius-lg);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.welcome__action:focus-visible,
+.welcome__recent-open:focus-visible,
+.welcome__recent-remove:focus-visible,
+.welcome__link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* 小屏优先把并排信息改为可收缩的纵向节奏，避免固定列把操作推到屏外。 */
+@container workbench (max-width: 720px) {
+  .git-panel__section {
+    margin-inline: var(--space-2);
+  }
+
+  .git-panel__history-filter,
+  .git-panel__merge-banner,
+  .account-transport {
+    flex-wrap: wrap;
+  }
+
+  .git-panel__history-filter > *,
+  .git-panel__merge-banner-actions {
+    min-width: 0;
+  }
+}
+
+@container settings-body (max-width: 680px) {
+  .account-summary {
+    align-items: flex-start;
+    padding: var(--space-4);
+  }
+
+  .account-summary__copy h2 {
+    font-size: 18px;
+  }
+
+  .account-summary__refresh {
+    align-self: flex-start;
+  }
+
+  .account-provider__controls,
+  .account-recovery-form,
+  .account-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .account-provider__controls .field__input,
+  .account-recovery-form .field__input {
+    flex: 1 1 180px;
+    width: auto;
+  }
+}
+
+@media (max-width: 680px) {
+  .account-summary {
+    align-items: flex-start;
+    padding: var(--space-4);
+  }
+
+  .account-summary__copy h2 {
+    font-size: 18px;
+  }
+
+  .account-summary__refresh {
+    align-self: flex-start;
+  }
+
+  .account-provider__controls,
+  .account-recovery-form,
+  .account-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .account-provider__controls .field__input,
+  .account-recovery-form .field__input {
+    flex: 1 1 180px;
+    width: auto;
+  }
+}
+
+@container workbench (max-width: 520px) {
+  .history-view__toolbar,
+  .output__toolbar,
+  .git-panel__toolbar,
+  .explorer__toolbar,
+  .browser-navigation,
+  .browser-options {
+    padding-inline: var(--space-2);
+  }
+
+  .history-view__item {
+    min-height: 48px;
+    padding-inline: var(--space-2);
+  }
+
+  .git-panel__commit-author,
+  .git-panel__commit-date,
+  .git-panel__stash-meta {
+    display: none;
+  }
+
+  .browser-options {
+    overflow-x: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .history-view__item,
+  .git-panel__commit-row,
+  .git-panel__stash-row,
+  .git-panel__recent-row,
+  .search-view__file,
+  .search-view__hit,
+  .problems-view__file,
+  .problems-view__item-row,
+  .terminal-view__item,
+  .tree-row,
+  .editor-tab,
+  .browser-tab {
+    transition: none;
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * Remaining workbench surfaces
+ *
+ * These views are rendered by a number of small feature modules, but they
+ * share the same macOS preferences/list language: one quiet chrome row,
+ * inset content, 8px rhythm and an explicit selected/focus state.  Keeping
+ * the final composition here prevents each module from growing another set
+ * of near-identical dimensions while leaving its data and interactions alone.
+ * ------------------------------------------------------------------------- */
+
+/* Search and Problems ---------------------------------------------------- */
+.search-view,
+.problems-view,
+.output {
+  container-type: inline-size;
+  background: var(--bg-surface);
+}
+
+.search-view__widget {
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.search-view__row {
+  gap: var(--space-2);
+  min-height: var(--control-h);
+}
+
+.search-view__field,
+.search-view__filter-input {
+  min-height: var(--control-h);
+  border-color: var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-input);
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.search-view__field:focus-within,
+.search-view__filter-input:focus-visible {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.search-view__results {
+  padding: var(--space-2) var(--space-3) var(--space-4);
+}
+
+.search-view__summary {
+  padding: var(--space-2) var(--space-3);
+}
+
+.search-view__file,
+.search-view__hit {
+  min-height: var(--control-h-lg);
+}
+
+.search-view__file {
+  padding-inline: var(--space-3);
+}
+
+.search-view__hit {
+  padding-block: var(--space-2);
+  padding-left: 36px;
+}
+
+.problems-view {
+  padding: var(--space-2) var(--space-3) var(--space-3);
+}
+
+.problems-view__toolbar {
+  gap: var(--space-2);
+  min-height: var(--chrome-h);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.problems-view__filter,
+.problems-view__chat-action {
+  min-height: var(--control-h);
+  border-radius: var(--radius-lg);
+}
+
+.problems-view__filter.is-active {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-surface));
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.problems-view__list {
+  padding-top: var(--space-2);
+}
+
+.problems-view__file {
+  min-height: var(--control-h-lg);
+  padding-inline: var(--space-2);
+}
+
+.problems-view__item-row {
+  min-height: var(--control-h-lg);
+}
+
+/* Output --------------------------------------------------------------- */
+.output__toolbar {
+  min-height: var(--chrome-h);
+  padding-block: var(--space-1);
+  border-bottom-color: var(--border);
+}
+
+.output__count {
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.output__btn {
+  min-height: var(--control-h);
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-lg);
+}
+
+.output__btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.output__lines {
+  padding: var(--space-3) var(--space-4) var(--space-5);
+  line-height: 1.55;
+}
+
+.output__line {
+  min-height: 20px;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+/* Session history ------------------------------------------------------- */
+.history-view__toolbar {
+  min-height: var(--chrome-h);
+  padding-block: var(--space-1);
+}
+
+.history-view__refresh {
+  width: var(--control-h);
+  height: var(--control-h);
+  border-radius: var(--radius-lg);
+}
+
+.history-view__refresh.is-active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.history-view__item {
+  min-height: 56px;
+  margin-block: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid transparent;
+}
+
+.history-view__item:hover {
+  background: var(--bg-hover);
+}
+
+.history-view__item.is-active {
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-selected));
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  /* 只用已有边框强调选中，避免内阴影叠加成粗线。 */
+  border-inline-start-color: var(--accent);
+}
+
+.history-view__summary {
+  line-height: 1.35;
+}
+
+/* Models and security settings ----------------------------------------- */
+.settings-view--models,
+.settings-view--security,
+.settings-view--knowledge,
+.settings-view--skills,
+.settings-view--mcp {
+  container-type: inline-size;
+}
+
+.settings-view--models .settings-view__actions,
+.settings-view--security .settings-view__actions {
+  justify-content: flex-end;
+  margin-inline: 4px;
+}
+
+.settings-view--models .sg__row-control,
+.settings-view--security .sg__row-control {
+  gap: var(--space-2);
+}
+
+.settings-view--models .sg__row-label,
+.settings-view--security .sg__row-label {
+  line-height: 1.4;
+}
+
+.settings-view--models .model-row__provider,
+.settings-view--security .chip--static {
+  vertical-align: middle;
+}
+
+.settings-view--security .policy-row__command {
+  max-width: min(56ch, 42vw);
+}
+
+/* A single inset card per advanced settings section makes long pages easier
+ * to scan while preserving SettingsGroup semantics and all existing actions. */
+.settings-view--knowledge .sg__card,
+.settings-view--skills .sg__card,
+.settings-view--mcp .sg__card {
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-card);
+}
+
+/* Account --------------------------------------------------------------- */
+.account-settings .sg__card {
+  border-radius: var(--radius-panel);
+}
+
+.account-settings .sg__row-control {
+  gap: var(--space-2);
+}
+
+.account-settings .account-session {
+  min-height: 56px;
+  padding-inline: var(--space-4);
+}
+
+/* Browser and picker surfaces ------------------------------------------ */
+.browser-tabs {
+  padding-inline: var(--space-2);
+  gap: var(--space-1);
+}
+
+.browser-tab {
+  min-height: 30px;
+  border-radius: var(--radius-lg);
+}
+
+.browser-tab.is-active {
+  background: var(--bg-selected);
+  color: var(--fg-strong);
+}
+
+.browser-tool:focus-visible,
+.browser-text-tool:focus-visible,
+.browser-tab__close:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Narrow account panes switch their session action below the summary instead
+ * of squeezing both into one line. Settings rows use the shared container
+ * breakpoint in settings-pages.css so text columns never collapse to zero. */
+@container settings-body (max-width: 560px) {
+  .settings-view--models .settings-view__actions,
+  .settings-view--security .settings-view__actions {
+    justify-content: flex-start;
+  }
+
+  .settings-view--security .policy-row__command {
+    max-width: 100%;
+  }
+
+  .account-settings .account-summary {
+    gap: var(--space-3);
+  }
+
+  .account-settings .account-session {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .account-settings .account-session .btn {
+    align-self: flex-start;
+  }
+}
+
+.todo-tray__content::-webkit-scrollbar {
+  width: 5px;
+}
+
+.todo-tray__content::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  background-clip: content-box;
+}
+
+@container workbench (max-width: 520px) {
+  .search-view__widget,
+  .search-view__results {
+    padding-inline: var(--space-2);
+  }
+
+  .search-view__row {
+    flex-wrap: wrap;
+  }
+
+  .search-view__row .search-view__field {
+    flex-basis: calc(100% - 24px);
+  }
+
+  .search-view__filters {
+    padding-left: var(--space-2);
+  }
+
+  .problems-view {
+    padding-inline: var(--space-2);
+  }
+
+  .problems-view__toolbar {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .problems-view__filters {
+    order: 2;
+    flex-basis: 100%;
+  }
+
+  .history-view__item {
+    min-height: 52px;
+    padding-inline: var(--space-2);
+  }
+
+  .output__lines {
+    padding-inline: var(--space-3);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .history-view__toolbar,
+  .output__toolbar,
+  .git-panel__toolbar,
+  .explorer__toolbar,
+  .editor-toolbar,
+  .browser-navigation,
+  .browser-options,
+  .account-summary,
+  .account-transport {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: var(--bg-surface);
+  }
+}
+
+/* Final history rhythm overrides.  The shared surface rules above are kept
+ * for the other list views, while these values make the history pane match
+ * the compact sidebar chrome and prevent the legacy 56px row rule from
+ * re-expanding the list after the pane-specific rules. */
+.history-view {
+  gap: 2px;
+  padding: 4px 8px 8px;
+}
+
+.history-view__toolbar {
+  min-height: 30px;
+  padding: 0 2px;
+  justify-content: flex-end;
+}
+
+.history-view__list {
+  gap: 1px;
+  padding: 2px 0 8px;
+}
+
+.history-view__item {
+  min-height: 48px;
+  margin-block: 0;
+  padding: 6px 10px;
+}
+
+.history-view__main {
+  gap: 2px;
+}
+
+@container workbench (max-width: 520px) {
+  .history-view__item {
+    min-height: 48px;
+    padding: 6px 8px;
+  }
+}

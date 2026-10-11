@@ -28,7 +28,7 @@
   color: var(--fg-muted);
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: .01em;
+  letter-spacing: 0.01em;
 }
 
 .settings-view .sg__card {
@@ -216,7 +216,10 @@
   border-radius: 9px;
   background: transparent;
   cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
 }
 
 .settings-view--appearance .accent-swatch:hover {
@@ -235,7 +238,9 @@
   height: 20px;
   border: 2px solid color-mix(in srgb, var(--bg-elevated) 80%, transparent);
   border-radius: 50%;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 14%, transparent), 0 2px 5px color-mix(in srgb, var(--fg) 18%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--fg) 14%, transparent),
+    0 2px 5px color-mix(in srgb, var(--fg) 18%, transparent);
 }
 
 .settings-view--appearance .accent-swatch--custom {
@@ -277,11 +282,28 @@
   cursor: pointer;
 }
 
-.custom-accent-summary__edit:hover { background: var(--bg-hover); }
-.custom-accent-summary__edit code { font-family: var(--font-mono); font-size: 11px; }
-.custom-accent-summary__edit svg { color: var(--fg-muted); }
-.custom-accent-summary__dot { width: 12px; height: 12px; flex: none; border-radius: var(--radius-round); box-shadow: 0 0 0 1px var(--border-strong); }
-.custom-accent-error { margin: 0; color: var(--danger-fg); font-size: 11px; }
+.custom-accent-summary__edit:hover {
+  background: var(--bg-hover);
+}
+.custom-accent-summary__edit code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.custom-accent-summary__edit svg {
+  color: var(--fg-muted);
+}
+.custom-accent-summary__dot {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: var(--radius-round);
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+.custom-accent-error {
+  margin: 0;
+  color: var(--danger-fg);
+  font-size: 11px;
+}
 
 .settings-view--appearance .theme-preview {
   display: flex;
@@ -366,7 +388,7 @@
 .settings-view--codegraph .kv,
 .settings-view--engine .kv {
   display: grid;
-  grid-template-columns: minmax(110px, .34fr) minmax(0, 1fr);
+  grid-template-columns: minmax(110px, 0.34fr) minmax(0, 1fr);
   gap: 0;
   margin: 0;
   width: 100%;
@@ -516,7 +538,7 @@
   color: var(--fg-faint);
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: .08em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -534,8 +556,12 @@
   border-bottom: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
 }
 
-.keybindings__row:last-child { border-bottom: 0; }
-.keybindings__row:hover { background: var(--bg-hover); }
+.keybindings__row:last-child {
+  border-bottom: 0;
+}
+.keybindings__row:hover {
+  background: var(--bg-hover);
+}
 
 .keybindings__key {
   min-height: 28px;
@@ -548,22 +574,50 @@
   font-size: 11px;
 }
 
-.keybindings__source { color: var(--fg-muted); font-size: 11px; }
-.keybindings__source.is-modified { color: var(--accent); }
-.keybindings__actions { display: flex; justify-content: flex-end; gap: 6px; }
-.keybindings__action { border-radius: 6px; }
-.keybindings__conflict { grid-column: 1 / -1; margin: -2px 0 2px; }
+.keybindings__source {
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+.keybindings__source.is-modified {
+  color: var(--accent);
+}
+.keybindings__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.keybindings__action {
+  border-radius: 6px;
+}
+.keybindings__conflict {
+  grid-column: 1 / -1;
+  margin: -2px 0 2px;
+}
 
 @media (max-width: 680px) {
   .settings-view,
-  .keybindings { width: 100%; }
-  .settings-view--appearance .accent-grid { grid-template-columns: repeat(3, 44px); }
-  .keybindings__head { display: none; }
-  .keybindings__row { grid-template-columns: minmax(0, 1fr) 120px; gap: 8px; }
-  .keybindings__source { grid-column: 1; }
-  .keybindings__actions { grid-column: 2; grid-row: 2; }
-  .settings-view--models .sg__row-control,
-  .settings-view--security .sg__row-control { width: 100%; justify-content: flex-start; }
+  .keybindings {
+    width: 100%;
+  }
+  .settings-view--appearance .accent-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 44px);
+    justify-content: start;
+  }
+  .keybindings__head {
+    display: none;
+  }
+  .keybindings__row {
+    grid-template-columns: minmax(0, 1fr) 120px;
+    gap: 8px;
+  }
+  .keybindings__source {
+    grid-column: 1;
+  }
+  .keybindings__actions {
+    grid-column: 2;
+    grid-row: 2;
+  }
 }
 
 /* Settings can be narrow inside a wide workbench. Keep this after the desktop
@@ -571,10 +625,18 @@
  * placement gives that cell zero width and pushes its right-aligned buttons
  * underneath the settings navigation. */
 @container settings-body (max-width: 620px) {
-  .keybindings__head { display: none; }
-  .keybindings__row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .keybindings__head {
+    display: none;
+  }
+  .keybindings__row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
   .keybindings__source,
-  .keybindings__actions { grid-column: 1; grid-row: auto; }
+  .keybindings__actions {
+    grid-column: 1;
+    grid-row: auto;
+  }
   .keybindings__actions {
     width: 100%;
     min-width: 0;
@@ -582,8 +644,41 @@
     flex-wrap: wrap;
   }
   .keybindings__key,
-  .keybindings__search { min-width: 0; max-width: 100%; }
-  .keybindings__key { overflow-wrap: anywhere; }
+  .keybindings__search {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .keybindings__key {
+    overflow-wrap: anywhere;
+  }
+}
+
+/* Model and security rows contain long descriptions and a control cluster.
+ * The control must move to its own flex line at the same breakpoint as the
+ * row wrap; otherwise a 100% control still shares the first line and leaves
+ * the text column with zero width, which makes URLs render one character per
+ * line. */
+@container settings-body (max-width: 620px) {
+  .settings-view--models .sg__row:not(.sg__row--content),
+  .settings-view--security .sg__row:not(.sg__row--content) {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .settings-view--models .sg__row:not(.sg__row--content) .sg__row-text,
+  .settings-view--security .sg__row:not(.sg__row--content) .sg__row-text {
+    flex: 1 1 240px;
+    min-width: 0;
+  }
+
+  .settings-view--models .sg__row:not(.sg__row--content) .sg__row-control,
+  .settings-view--security .sg__row:not(.sg__row--content) .sg__row-control {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: 100%;
+    min-width: 0;
+    justify-content: flex-end;
+  }
 }
 
 /* VS Code-style settings affordances: one searchable registry above the
@@ -605,6 +700,28 @@
   background: var(--material-bg-thin);
   backdrop-filter: blur(var(--material-blur)) saturate(180%);
   -webkit-backdrop-filter: blur(var(--material-blur)) saturate(180%);
+}
+
+/* Keep the search chrome compact so the navigation and the selected setting
+ * share the same vertical start line in a small desktop window. */
+.app-settings__toolbar {
+  min-height: 54px;
+  padding-block: 8px;
+}
+
+.app-settings__body {
+  padding-top: 28px;
+  padding-bottom: 48px;
+}
+
+.app-settings__header {
+  max-width: 820px;
+  margin-bottom: 20px;
+}
+
+.app-settings__body > .settings-view,
+.app-settings__body > .keybindings {
+  width: min(100%, 820px);
 }
 
 .app-settings__search-wrap {
@@ -640,7 +757,9 @@
   font-size: 12px;
 }
 
-.app-settings__search::placeholder { color: var(--fg-faint); }
+.app-settings__search::placeholder {
+  color: var(--fg-faint);
+}
 
 /* 同 .search-view__input：聚焦视觉由 search-wrap 的 :focus-within（边框+环）负责，
    全局 input:focus-visible 的环会叠在 wrap 内侧，深色下形成双环 */
@@ -691,7 +810,9 @@
   cursor: pointer;
 }
 
-.app-settings__scope button:hover { color: var(--fg-strong); }
+.app-settings__scope button:hover {
+  color: var(--fg-strong);
+}
 
 .app-settings__scope button.is-active {
   background: var(--bg-elevated);
@@ -730,7 +851,9 @@
 }
 
 .app-settings__search-result:hover,
-.app-settings__search-result[aria-selected='true'] { background: var(--bg-hover); }
+.app-settings__search-result[aria-selected='true'] {
+  background: var(--bg-hover);
+}
 
 .app-settings__search-result-copy {
   display: grid;
@@ -769,7 +892,9 @@
   text-align: center;
 }
 
-.app-settings__nav-empty { margin: 0; }
+.app-settings__nav-empty {
+  margin: 0;
+}
 
 @media (max-width: 720px) {
   .app-settings__toolbar {
@@ -777,8 +902,15 @@
     padding-inline: 12px;
   }
 
-  .app-settings__search-wrap { flex-basis: 100%; max-width: none; }
-  .app-settings__scope { margin-left: auto; }
-  .app-settings__search-results { right: 12px; left: 12px; }
+  .app-settings__search-wrap {
+    flex-basis: 100%;
+    max-width: none;
+  }
+  .app-settings__scope {
+    margin-left: auto;
+  }
+  .app-settings__search-results {
+    right: 12px;
+    left: 12px;
+  }
 }
-

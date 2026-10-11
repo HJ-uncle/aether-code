@@ -27,6 +27,7 @@ import { ContextMenu, type ContextMenuItem } from '../../workbench/ContextMenu'
 import { PromptDialog } from '../../workbench/PromptDialog'
 import { pickDivergedStrategy } from './DivergedStrategyDialog'
 import { Icon } from '../../workbench/icons'
+import { Spinner } from '../../workbench/ui-primitives'
 
 /** 远程操作的中文名（进度文案与失败提示共用） */
 const labels: Record<GitRemoteAction, string> = {
@@ -123,11 +124,7 @@ export function GitSyncButton(): JSX.Element {
         aria-busy={busy}
         onClick={() => void handleAction(s.upstream ? 'sync' : 'publish')}
       >
-        <Icon
-          name={s.upstream ? 'sync' : 'cloud-upload-outline'}
-          size={16}
-          className={busy ? 'is-spinning' : undefined}
-        />
+        {busy ? <Spinner size={14} /> : <Icon name={s.upstream ? 'sync' : 'cloud-upload-outline'} size={16} />}
         {!s.upstream && !busy ? (
           <span className="git-sync__label">发布</span>
         ) : s.upstream && (s.behind || s.ahead) ? (

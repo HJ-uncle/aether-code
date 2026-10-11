@@ -4,7 +4,7 @@ import { getWorkspaceState } from '@renderer/core/workspace/workspace-store'
 import { getSnapshot } from '@renderer/core/engine/client'
 import { resolveChatPath } from './chat-file-path'
 import { getEngineSource, isRemoteEngine } from '@renderer/core/engine/source'
-import { remoteWorkspaceContext } from '@renderer/core/workspace/fs-client'
+import { remoteWorkspaceContext, resolveSessionFilePath } from '@renderer/core/workspace/fs-client'
 import { assertWorkspaceTarget } from '@renderer/core/workspace/connection'
 import { resolveArtifactPath, type ChatFileContext, type ChatLinkTarget } from './chat-link'
 
@@ -31,6 +31,18 @@ export async function openFileFromChat(rawPath: string, context?: ChatFileContex
     const filePath = `${remote.root}/${pathText.replace(/^[/\\]+|[/\\]+$/g, '')}`
     await openFile(filePath, match ? Number(match[1]) : undefined, match?.[2] ? Number(match[2]) : undefined)
     activateDocument(filePath)
+    return
+  }
+  // Work's independent tasks are backed by an engine-managed workspace (often
+  // outside the Code project). Resolve and authorize that concrete session
+  // root before asking the local editor to read the file; otherwise the normal
+  // fs allow-list reports a misleading "请先打开文件夹" error.
+  if (context?.sessionId && !context.workspaceRoot) {
+    const match = /:(\d+)(?::(\d+))?$/.exec(rawPath.trim())
+    const pathText = (match ? rawPath.trim().slice(0, match.index) : rawPath).trim().replace(/^[`'"<]+|[`'">]+$/g, '')
+    const resolved = await resolveSessionFilePath(context.sessionId, pathText)
+    await openFile(resolved.path, match ? Number(match[1]) : undefined, match?.[2] ? Number(match[2]) : undefined)
+    activateDocument(resolved.path)
     return
   }
   const target = resolveChatPath(rawPath, context ? context.workspaceRoot ?? null : getWorkspaceState().root)

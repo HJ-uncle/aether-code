@@ -1,8 +1,13 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { createPortal } from 'react-dom'
-import { executeCommand } from '@renderer/core/platform/commands'
+import { executeCommand, registerCommands } from '@renderer/core/platform/commands'
+import { setAppMode, useAppMode, type AppMode } from '@renderer/core/platform/app-mode'
 import { getKeybindingHint } from '@renderer/core/platform/keybindings'
-import { setLayout, toggleChatPanel, toggleChatPosition } from '@renderer/core/platform/layout-state'
+import {
+  setLayout,
+  toggleChatPanel,
+  toggleChatPosition
+} from '@renderer/core/platform/layout-state'
 import { openAppSettings } from '@renderer/contrib/settings/app-settings-navigation'
 import { AccountMenu } from '@renderer/contrib/account/AccountMenu'
 import { Icon } from '@renderer/workbench/icons'
@@ -85,6 +90,72 @@ const MENUS: Menu[] = [
   }
 ]
 
+const WORK_MENUS: Menu[] = [
+  { label: '文件', items: [{ label: '新任务', command: 'aether.work.new' }] },
+  {
+    label: '查看',
+    items: [
+      { label: '命令面板', command: 'aether.commandPalette.toggle' },
+      { label: '设置', command: 'aether.view.appSettings' }
+    ]
+  },
+  { label: '帮助', items: [{ label: '重启引擎', command: 'aether.engine.restart' }] }
+]
+
+function ModeSwitch(): JSX.Element {
+  const mode = useAppMode()
+  useEffect(
+    () =>
+      registerCommands([
+        {
+          id: 'aether.mode.code',
+          title: '切换到 Code 开发',
+          category: '工作台',
+          run: () => setAppMode('code')
+        },
+        {
+          id: 'aether.mode.work',
+          title: '切换到 Work 办公',
+          category: '工作台',
+          run: () => setAppMode('work')
+        }
+      ]),
+    []
+  )
+  return (
+    <div className="app-mode-switch" role="tablist" aria-label="应用模式" data-mode={mode}>
+      {(['code', 'work'] as AppMode[]).map((item) => (
+        <button
+          key={item}
+          type="button"
+          role="tab"
+          id={`mode-tab-${item}`}
+          aria-controls={`mode-${item}`}
+          aria-selected={mode === item}
+          tabIndex={mode === item ? 0 : -1}
+          onClick={() => setAppMode(item)}
+          onKeyDown={(event) => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+            event.preventDefault()
+            const next =
+              event.key === 'Home'
+                ? 'code'
+                : event.key === 'End'
+                  ? 'work'
+                  : item === 'code'
+                    ? 'work'
+                    : 'code'
+            setAppMode(next)
+            document.getElementById(`mode-tab-${next}`)?.focus()
+          }}
+        >
+          {item === 'code' ? 'Code 开发' : 'Work 办公'}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 /**
  * 窗口控制按钮（最小化 / 最大化-还原 / 关闭）
  *
@@ -153,6 +224,11 @@ export function MenuBar(): JSX.Element {
   const ref = useRef<HTMLElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const layout = useLayout()
+  const mode = useAppMode()
+  const menus = mode === 'code' ? MENUS : WORK_MENUS
+  useEffect(() => {
+    setOpen(null)
+  }, [mode])
   // 订阅用户键位变化：自定义快捷键后菜单提示立即跟随
   useSyncExternalStore(onUserKeybindingsChanged, getUserKeybindingRules)
 
@@ -181,7 +257,8 @@ export function MenuBar(): JSX.Element {
         <img className="menu-bar__logo" src={brandIcon} alt="" draggable={false} />
         Aether
       </span>
-      {MENUS.map((menu) => (
+      <ModeSwitch />
+      {menus.map((menu) => (
         <div key={menu.label} className="menu-bar__menu">
           <button
             type="button"
@@ -220,7 +297,7 @@ export function MenuBar(): JSX.Element {
                 left: open.anchor.left
               }}
             >
-              {(MENUS.find((menu) => menu.label === open.label)?.items ?? []).map((item) => (
+              {(menus.find((menu) => menu.label === open.label)?.items ?? []).map((item) => (
                 <button
                   key={item.command}
                   type="button"
@@ -244,35 +321,39 @@ export function MenuBar(): JSX.Element {
       {/* 右侧动作区：布局按钮组 + 设置入口（后续用户头像 / 账号等也在此扩展） */}
       <div className="menu-bar__spacer" />
       <div className="menu-bar__actions">
-        <button
-          type="button"
-          className={`menu-bar__action${layout.sidebarVisible ? ' is-on' : ''}`}
-          title="切换侧边栏"
-          aria-label="切换侧边栏"
-          onClick={() => setLayout({ sidebarVisible: !layout.sidebarVisible })}
-        >
-          <Icon name="layout-sidebar" size={16} />
-        </button>
-        <button
-          type="button"
-          className={`menu-bar__action${layout.chatPanelVisible ? ' is-on' : ''}`}
-          title="切换对话面板"
-          aria-label="切换对话面板"
-          onClick={() => toggleChatPanel()}
-        >
-          {/* 图标随换位翻转：对话在右侧画右停靠、在左侧画左停靠，与实际位置对应 */}
-          <Icon name={layout.chatOnLeft ? 'layout-panel-left' : 'layout-panel'} size={16} />
-        </button>
-        <button
-          type="button"
-          className="menu-bar__action"
-          title="对话面板与主区换位"
-          aria-label="对话面板与主区换位"
-          disabled={!layout.chatPanelVisible}
-          onClick={() => toggleChatPosition()}
-        >
-          <Icon name="swap-horizontal" size={16} />
-        </button>
+        {mode === 'code' ? (
+          <>
+            <button
+              type="button"
+              className={`menu-bar__action${layout.sidebarVisible ? ' is-on' : ''}`}
+              title="切换侧边栏"
+              aria-label="切换侧边栏"
+              onClick={() => setLayout({ sidebarVisible: !layout.sidebarVisible })}
+            >
+              <Icon name="layout-sidebar" size={16} />
+            </button>
+            <button
+              type="button"
+              className={`menu-bar__action${layout.chatPanelVisible ? ' is-on' : ''}`}
+              title="切换对话面板"
+              aria-label="切换对话面板"
+              onClick={() => toggleChatPanel()}
+            >
+              {/* 图标随换位翻转：对话在右侧画右停靠、在左侧画左停靠，与实际位置对应 */}
+              <Icon name={layout.chatOnLeft ? 'layout-panel-left' : 'layout-panel'} size={16} />
+            </button>
+            <button
+              type="button"
+              className="menu-bar__action"
+              title="对话面板与主区换位"
+              aria-label="对话面板与主区换位"
+              disabled={!layout.chatPanelVisible}
+              onClick={() => toggleChatPosition()}
+            >
+              <Icon name="swap-horizontal" size={16} />
+            </button>
+          </>
+        ) : null}
         <button
           type="button"
           className="menu-bar__action"

@@ -11,6 +11,7 @@ import { recordCommandRun } from '@renderer/core/platform/commands-history'
 import { getKeybindingHint, registerKeybinding } from '@renderer/core/platform/keybindings'
 import { buildCommandItems } from './command-filter'
 import { FuzzyText } from './FuzzyText'
+import { useAppMode } from '@renderer/core/platform/app-mode'
 
 const TOGGLE_COMMAND = 'aether.commandPalette.toggle'
 
@@ -27,6 +28,8 @@ const TOGGLE_COMMAND = 'aether.commandPalette.toggle'
  */
 export function CommandPalette(): JSX.Element | null {
   const [open, setOpen] = useState(false)
+  const mode = useAppMode()
+  useEffect(() => { setOpen(false) }, [mode])
 
   useEffect(() => {
     const disposeCommand = registerCommand({

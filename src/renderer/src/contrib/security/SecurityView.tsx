@@ -1,5 +1,8 @@
-import { useCallback, useEffect, useState, type JSX } from 'react'
+import { useCallback, useEffect, useRef, useState, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
+import { useAppMode } from '@renderer/core/platform/app-mode'
+import { getEngineStorageKey } from '@renderer/core/engine/source'
+import { useWorkState } from '@renderer/contrib/work/work-state'
 import {
   ACTION_LABELS,
   MODE_DESCRIPTORS,
@@ -36,7 +39,15 @@ import '../settings/settings-pages.css'
  */
 export function SecurityView(): JSX.Element {
   const { ready, settings } = useApp()
-  const sessionId = settings.lastSessionId
+  const appMode = useAppMode()
+  const workState = useWorkState(getEngineStorageKey())
+  const workTask = workState.tasks.find((task) => task.id === workState.activeTaskId)
+  // Settings is also rendered inside Work's dialog. In that surface the active
+  // Work task owns the security policy; falling back to Code's last session
+  // would make a successful change appear to do nothing to the running task.
+  const sessionId = appMode === 'work'
+    ? (workTask?.id ?? workState.homeSessionId ?? '')
+    : settings.lastSessionId
   const { mode: storedMode, loading: modeLoading, error: modeError, refresh: refreshMode } = useSecurityMode(sessionId)
   const mode = ready ? storedMode : null
 
@@ -44,6 +55,7 @@ export function SecurityView(): JSX.Element {
   const [rulesLoading, setRulesLoading] = useState(false)
   const [rulesError, setRulesError] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<number | null>(null)
+  const loadedContextRef = useRef('')
 
   const loadRules = useCallback(async (): Promise<void> => {
     setRulesLoading(true)
@@ -59,6 +71,9 @@ export function SecurityView(): JSX.Element {
 
   useEffect(() => {
     if (!ready) return
+    const contextKey = `${sessionId}:${ready}`
+    if (loadedContextRef.current === contextKey) return
+    loadedContextRef.current = contextKey
     // 微任务触发拉取：避免 effect 同步 setState 造成级联渲染
     queueMicrotask(() => {
       void refreshMode(sessionId)
@@ -115,7 +130,7 @@ export function SecurityView(): JSX.Element {
         title="本会话安全模式"
         footer={
           sessionId
-            ? `当前会话 ${sessionId.slice(0, 8)}。模式是会话级的，且引擎重启后失效。`
+            ? `当前会话 ${sessionId.slice(0, 8)}。模式按会话记忆，引擎重启后会自动恢复。`
             : '尚未建立会话：先在对话视图发一条消息，这里才能设置模式。'
         }
       >

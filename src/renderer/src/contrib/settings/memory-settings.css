@@ -1,10 +1,13 @@
-.memory-settings__toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.memory-settings .sg__row--content { display: block; min-width: 0; }
+.memory-settings__toolbar { display: flex; gap: 8px; align-items: center; width: 100%; min-width: 0; flex-wrap: wrap; }
 .memory-settings__toolbar .field__input { flex: 1 1 180px; min-width: 120px; }
-.memory-settings__scope { display: flex; gap: 6px; }
-.memory-settings__scope button { border: 1px solid var(--border); border-radius: 7px; background: var(--bg-elevated); color: var(--fg-muted); padding: 6px 12px; cursor: pointer; }
+.memory-settings__scope { display: flex; gap: 6px; flex-wrap: wrap; }
+.memory-settings__scope button { min-height: 36px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-elevated); color: var(--fg-muted); padding: 6px 12px; cursor: pointer; }
 .memory-settings__scope button.is-active { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .memory-settings__session { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr); gap: 8px; align-items: center; }
-.memory-settings__list { display: grid; gap: 1px; }
+.memory-settings__session > * { min-width: 0; }
+.memory-settings__session small { grid-column: 1 / -1; color: var(--fg-muted); font-size: 11px; }
+.memory-settings__list, .memory-settings__editor { min-width: 0; }
 .memory-settings__item { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; padding: 12px 4px; border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent); }
 .memory-settings__item:last-child { border-bottom: 0; }
 .memory-settings__summary { color: var(--fg-strong); font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
@@ -19,4 +22,20 @@
 .memory-settings__pager { display: flex; justify-content: space-between; align-items: center; color: var(--fg-muted); font-size: 11px; padding-top: 10px; }
 .memory-settings__error { color: var(--danger-fg); font-size: 12px; margin: 8px 4px; }
 .memory-settings__notice { color: var(--ok-fg); font-size: 12px; margin: 8px 4px; }
-@media (max-width: 640px) { .memory-settings__session, .memory-settings__editor-row { grid-template-columns: 1fr; } .memory-settings__item { grid-template-columns: 1fr; } }
+@container settings-body (max-width: 560px) {
+  .memory-settings .sg__row--content { padding: 14px; }
+  .memory-settings__session, .memory-settings__editor-row { grid-template-columns: 1fr; }
+  .memory-settings__session small { grid-column: auto; }
+  .memory-settings__item { grid-template-columns: 1fr; gap: 8px; }
+  .memory-settings__actions { justify-content: flex-start; }
+  .memory-settings__toolbar { align-items: stretch; flex-direction: column; }
+  .memory-settings__toolbar .field__input,
+  .memory-settings__toolbar .btn { width: 100%; min-width: 0; }
+  /* The toolbar uses a row flex basis above. In a column, that basis becomes
+     the control's height and stretches the search/select fields into cards. */
+  .memory-settings__toolbar .field__input,
+  .memory-settings__toolbar .btn {
+    flex: 0 0 auto;
+    flex-basis: auto;
+  }
+}

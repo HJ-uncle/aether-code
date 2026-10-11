@@ -42,6 +42,7 @@ import { ContextMenu, type ContextMenuItem } from '../../workbench/ContextMenu'
 import { PromptDialog } from '../../workbench/PromptDialog'
 import { pickDivergedStrategy } from './DivergedStrategyDialog'
 import { Icon } from '../../workbench/icons'
+import { Spinner } from '../../workbench/ui-primitives'
 
 /**
  * 规整模型返回的提交信息，保留标题下面的正文。
@@ -358,12 +359,13 @@ export function GitCommitBar(): JSX.Element {
         />
         <button
           type="button"
-          className={`git-commitbar__ai${suggesting ? ' is-spinning' : ''}`}
+          className="git-commitbar__ai"
           disabled={suggesting}
+          aria-busy={suggesting}
           title="AI 帮我写提交信息"
           onClick={() => void handleSuggest()}
         >
-          <Icon name="sparkles" size={16} />
+          {suggesting ? <Spinner size={14} /> : <Icon name="sparkles" size={16} />}
         </button>
       </div>
 

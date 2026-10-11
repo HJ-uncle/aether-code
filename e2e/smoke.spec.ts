@@ -137,6 +137,10 @@ async function revealTreeRow(target: string, required = true): Promise<boolean> 
  * 这里按状态幂等，避免用例之间的执行顺序变成隐式依赖。
  */
 async function ensureDirExpanded(dir: string): Promise<void> {
+  // The workspace root is represented by the Explorer header in the current
+  // layout, so it has no tree row to expand. Descendant rows remain addressable
+  // by their absolute paths and can be revealed directly below it.
+  if (dir === APP_ROOT && await page.locator(rowSelector(APP_ROOT)).count() === 0) return
   // A collapsed single-child directory chain is one compact row whose path is
   // the final directory. Look for that row before requiring each ancestor:
   // after Collapse All, .e2e-tmp itself may not have a standalone row.
@@ -426,14 +430,9 @@ test('安全视图：渲染三种会话模式与引擎侧策略规则', async ()
   // 切一次并确认状态是一致的：若 PUT 被引擎拒绝，store 会回滚成原模式
   await page.locator('.composer-options__dd-item[role="menuitem"]', { hasText: '标准模式' }).click()
   await expect(modeTrigger).toContainText('标准模式')
-
-  // 选择后当前 Popover 仍保持打开；重复点击 trigger 会把菜单关掉，
-  // 无法验证选中项是否真的带上 active 状态。
-  await expect(
-    page.locator('.composer-options__dd-item[role="menuitem"]', { hasText: '标准模式' })
-  ).toHaveClass(/is-active/)
-  await page.keyboard.press('Escape')
+  // 选择后下拉菜单立即收起，避免二级面板遮挡输入区；外层偏好面板仍可继续操作。
   await expect(page.locator('.composer-options__dd-menu')).toHaveCount(0)
+  await page.keyboard.press('Escape')
 
   // 打开设置并定位到「安全」分区。
   // 「安全」不再是主区固定标签，而是设置视图内的 role=tab 分区，

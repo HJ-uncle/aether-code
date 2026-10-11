@@ -110,6 +110,8 @@ export function SessionTray({
   }, [queue.length])
 
   const todoActive = todos.filter((t) => t.status === 'pending' || t.status === 'in_progress')
+  const todoCompleted = todos.length - todoActive.length
+  const todoProgress = todos.length === 0 ? 0 : Math.round((todoCompleted / todos.length) * 100)
   const hasChanges = changeCount > 0 || hasChangeReport
   const visible = hasChanges || todos.length > 0 || queue.length > 0
 
@@ -200,7 +202,14 @@ export function SessionTray({
           >
             任务{' '}
             <span className="session-tray__count">
-              {todos.length - todoActive.length}/{todos.length}
+              {todoCompleted}/{todos.length}
+            </span>
+            <span
+              className="session-tray__tab-progress"
+              aria-hidden="true"
+              title={`${todoCompleted}/${todos.length} 个任务已完成`}
+            >
+              <span className="session-tray__tab-progress-fill" style={{ width: `${todoProgress}%` }} />
             </span>
           </button>
         ) : null}

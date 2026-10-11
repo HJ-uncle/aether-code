@@ -8,6 +8,7 @@ import type { CommandEntry } from '@renderer/core/platform/commands'
 import { getAllCommands } from '@renderer/core/platform/commands'
 import { getCommandMru } from '@renderer/core/platform/commands-history'
 import { fuzzyMatch } from '@renderer/core/platform/fuzzy'
+import { isCommandAvailableInMode } from '@renderer/core/platform/app-mode'
 
 export interface CommandItem {
   entry: CommandEntry
@@ -23,7 +24,7 @@ export interface CommandGroup {
 
 export function buildCommandItems(query: string): CommandGroup[] {
   const q = query.trim()
-  const commands = getAllCommands()
+  const commands = getAllCommands().filter(entry => isCommandAvailableInMode(entry.id))
 
   if (!q) {
     // 无输入：MRU 置顶，其余按 title 字母序（getAllCommands 已排好）

@@ -106,6 +106,7 @@ test.describe.serial('D1 安全模式真实界面状态', () => {
   test('对话偏好与设置页的切换真实写入同一会话的引擎状态', async () => {
     await page.getByTitle('选择安全模式').click()
     await page.getByRole('menuitem').filter({ hasText: '完全访问' }).click()
+    await expect(page.locator('.composer-options__dd-menu')).toHaveCount(0)
     await expect.poll(() => readMode(SECOND_SESSION)).toBe('full-access')
     await expect(page.getByTitle('选择安全模式')).toContainText('完全访问')
     expect(await readMode(FIRST_SESSION)).toBe('full-access')
@@ -121,7 +122,7 @@ test.describe.serial('D1 安全模式真实界面状态', () => {
     await expect(page.getByRole('radio', { name: '标准模式', exact: true })).toHaveAttribute('aria-checked', 'true')
   })
 
-  test('自有引擎异常退出后显示状态未知，重启后重新确认真实默认模式', async () => {
+  test('自有引擎异常退出后显示状态未知，重启后恢复此前确认的会话模式', async () => {
     const owned = await page.evaluate(() => window.aether.engine.getSnapshot())
     expect(owned.mode).toBe('embedded')
     expect(owned.adopted).toBe(false)
@@ -138,7 +139,7 @@ test.describe.serial('D1 安全模式真实界面状态', () => {
     await expect(page.getByRole('radio', { name: '完全访问', exact: true })).toHaveAttribute('aria-checked', 'false')
     const restarted = await page.evaluate(() => window.aether.engine.start())
     expect(restarted.phase, restarted.error ?? '').toBe('ready')
-    await expect(page.getByRole('radio', { name: '安全模式', exact: true })).toHaveAttribute('aria-checked', 'true')
-    expect(await readMode(SECOND_SESSION)).toBe('safe')
+    await expect(page.getByRole('radio', { name: '标准模式', exact: true })).toHaveAttribute('aria-checked', 'true')
+    expect(await readMode(SECOND_SESSION)).toBe('standard')
   })
 })

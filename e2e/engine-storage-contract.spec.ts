@@ -157,6 +157,10 @@ test('remote 放行服务端会话、工作区与历史管理，仍阻止未接�
   expect(remoteRequestError('remote', 'POST', '/chat')).toBeNull()
   expect(remoteRequestError('remote', 'POST', '/chat/cancel')).toBeNull()
   for (const [method, path] of [
+    ['GET', '/cron'], ['POST', '/cron'], ['POST', '/cron/job-1/enable'],
+    ['POST', '/cron/job-1/disable'], ['PUT', '/cron/job-1'], ['DELETE', '/cron/job-1']
+  ]) expect(remoteRequestError('remote', method, path), method + ' ' + path).toBeNull()
+  for (const [method, path] of [
     ['GET', '/api/v1/workspace/file/content'], ['POST', '/workspace/file']
   ]) expect(remoteRequestError('remote', method, path), method + ' ' + path).toBeNull()
   expect(remoteRequestError('remote', 'POST', '/changes/revert'), 'POST /changes/revert').toContain('尚未接入远端')

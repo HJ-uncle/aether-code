@@ -223,6 +223,34 @@
   .settings-view--skills .skills-card__main {
     flex-basis: calc(100% - 36px);
   }
+
+  /* Container queries also fire when the chat panel narrows the settings
+     column inside a wide window. Keep the import and create form usable in
+     that case instead of relying on the viewport-only rule above. */
+  .settings-view--skills .skills-import-drop {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-view--skills .skills-import-drop > span,
+  .settings-view--skills .skills-import-drop > button {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .settings-view--skills .skills-import-drop > button {
+    justify-self: start;
+    margin-top: 6px;
+  }
+
+  .settings-view--skills .skills-create-field {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+
+  .settings-view--skills .skills-create-overwrite,
+  .settings-view--skills .skills-create-actions {
+    margin-left: 0;
+  }
 }
 
 /* Keep the long skills page scannable: imports and history are inset cards,

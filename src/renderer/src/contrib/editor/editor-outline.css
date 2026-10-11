@@ -143,3 +143,54 @@
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
+
+/* 大纲与资源管理器共享侧栏材质、行高和选中语义，避免编辑器打开大纲后
+ * 右侧出现一套独立的视觉语言。 */
+.editor-outline {
+  background: color-mix(in srgb, var(--bg-sidebar) 94%, var(--bg-app));
+  border-top-color: var(--material-border);
+}
+
+.editor-outline__header {
+  min-height: var(--chrome-h);
+  padding-inline: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.editor-outline__actions {
+  gap: var(--space-1);
+}
+
+.editor-outline__actions button,
+.editor-outline__branch,
+.editor-outline__branch-spacer {
+  flex-basis: var(--control-h);
+  width: var(--control-h);
+  min-width: var(--control-h);
+  height: var(--control-h);
+  border-radius: var(--radius-lg);
+}
+
+.editor-outline__filter {
+  min-height: var(--control-h);
+  margin-inline: var(--space-3);
+  border-radius: var(--radius-lg);
+}
+
+.editor-outline__content {
+  padding-inline: var(--space-2);
+}
+
+.editor-outline__row {
+  min-height: var(--control-h-lg);
+}
+
+.editor-outline__symbol {
+  min-height: var(--control-h);
+  border-radius: var(--radius-lg);
+}
+
+.editor-outline__symbol[aria-current='location'] {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}

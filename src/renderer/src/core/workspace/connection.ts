@@ -3,7 +3,21 @@ import { getEngineSource, getEngineStorageKey, getExpectedEngine, isEngineReady,
 
 interface Selection { source: string; sessionId: string; workspaceRoot: string }
 let selection: Selection | null = null
+let sessionOverride: { sessionId: string; workspaceRoot?: string } | null = null
 const listeners = new Set<() => void>()
+
+/** A secondary surface (currently Work Git) may operate on its own session
+ * while Code remains mounted. The override is explicit and short lived; callers
+ * must clear it when the surface is hidden so ordinary Code file operations keep
+ * using the selected Code workspace. */
+export function setWorkspaceSessionOverride(value: { sessionId: string; workspaceRoot?: string } | null): void {
+  const next = value?.sessionId.trim()
+    ? { sessionId: value.sessionId.trim(), workspaceRoot: value.workspaceRoot?.trim() || undefined }
+    : null
+  if (JSON.stringify(sessionOverride) === JSON.stringify(next)) return
+  sessionOverride = next
+  for (const listener of listeners) listener()
+}
 
 /** Published only after AppProvider has selected the session for this endpoint. */
 export function publishWorkspaceSelection(settings: AppSettings, source: string): void {
@@ -16,8 +30,10 @@ export function publishWorkspaceSelection(settings: AppSettings, source: string)
 export function workspaceConnectionKey(): string {
   if (!isRemoteEngine()) return 'embedded'
   const source = getEngineStorageKey()
-  if (!isEngineReady() || !source || selection?.source !== source || !selection.sessionId) return 'remote:unavailable'
-  return JSON.stringify([source, selection.sessionId, selection.workspaceRoot])
+  const sessionId = sessionOverride?.sessionId ?? selection?.sessionId
+  const workspaceRoot = sessionOverride?.workspaceRoot ?? selection?.workspaceRoot ?? ''
+  if (!isEngineReady() || !source || !sessionId || (!sessionOverride && selection?.source !== source)) return 'remote:unavailable'
+  return JSON.stringify([source, sessionId, workspaceRoot])
 }
 
 export interface WorkspaceTarget {
@@ -33,8 +49,8 @@ export function captureWorkspaceTarget(): WorkspaceTarget {
   if (key === 'remote:unavailable') throw new Error('远端连接或会话尚未就绪')
   return {
     key, generation: getEngineSource(), expectedEngine: getExpectedEngine(),
-    sessionId: isRemoteEngine() ? selection!.sessionId : '',
-    workspaceRoot: isRemoteEngine() ? selection!.workspaceRoot : ''
+    sessionId: isRemoteEngine() ? (sessionOverride?.sessionId ?? selection!.sessionId) : '',
+    workspaceRoot: isRemoteEngine() ? (sessionOverride?.workspaceRoot ?? selection!.workspaceRoot) : ''
   }
 }
 

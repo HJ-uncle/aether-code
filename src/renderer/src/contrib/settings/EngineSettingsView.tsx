@@ -3,6 +3,7 @@ import { useApp } from '@renderer/core/app-context'
 import type { EngineMode, RemoteAuthCredential, RemoteAuthStatus } from '@shared/ipc'
 import type { EngineImportProgress, EngineRuntimeCatalog } from '@shared/engine-import'
 import { Icon } from '@renderer/workbench/icons'
+import { Spinner } from '@renderer/workbench/ui-primitives'
 import { Select } from '@renderer/workbench/Select'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { openAppSettings } from './app-settings-navigation'
@@ -398,12 +399,13 @@ export function EngineSettingsView(): JSX.Element {
               </div>
               <button
                 type="button"
-                className={`btn${runtimeBusy === 'import' ? ' is-loading' : ''}`}
+                className="btn"
                 disabled={!canImportRuntime}
+                aria-busy={runtimeBusy === 'import'}
                 title={!embeddedSaved ? '请先保存“本地内置”运行方式' : undefined}
                 onClick={() => void importRuntime()}
               >
-                {runtimeBusy === 'import' ? '导入中…' : '导入引擎…'}
+                {runtimeBusy === 'import' ? <><Spinner size={12} /> 导入中…</> : '导入引擎…'}
               </button>
             </div>
             {!embeddedSaved ? (

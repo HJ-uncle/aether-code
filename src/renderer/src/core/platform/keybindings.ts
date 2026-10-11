@@ -8,6 +8,7 @@
  * 永远优先；默认绑定里被用户负规则删除的不再响应。
  */
 import { evaluateWhen } from './context-keys'
+import { isCommandAvailableInMode } from './app-mode'
 import { executeCommand, getCommand } from './commands'
 import {
   getEffectiveUserBinding,
@@ -232,6 +233,7 @@ export function installKeybindingDispatcher(): () => void {
     for (let i = userBindings.length - 1; i >= 0; i--) {
       const binding = userBindings[i]
       if (binding.command.startsWith('-')) continue // 负规则只负责屏蔽默认绑定
+      if (!isCommandAvailableInMode(binding.command)) continue
       if (!matches(binding, event)) continue
       if (!evaluateWhen(binding.when)) continue
 
@@ -246,6 +248,7 @@ export function installKeybindingDispatcher(): () => void {
 
     // 2) 默认绑定：被用户负规则删除的不再响应
     for (const binding of bindings) {
+      if (!isCommandAvailableInMode(binding.command)) continue
       if (!matches(binding, event)) continue
       if (!evaluateWhen(binding.when)) continue
       if (isDefaultKeybindingRemoved(binding.key, binding.command)) continue

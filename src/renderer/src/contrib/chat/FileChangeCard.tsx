@@ -3,6 +3,7 @@ import { useApp } from '@renderer/core/app-context'
 import type { EngineFileChange } from '@shared/ipc'
 import { getRevertOutcome, revertStatusLabel, subscribeReverts } from '@renderer/core/engine/change-revert'
 import { Icon } from '@renderer/workbench/icons'
+import { Spinner } from '@renderer/workbench/ui-primitives'
 import { openFileFromChat } from './open-file'
 import { useCollapseMemory } from './useCollapseMemory'
 import {
@@ -93,7 +94,7 @@ export function FileChangeCard({
         }}
       >
         <span className={`diff-card__icon diff-card__icon--${state}`}>
-          <Icon name={stateIcon} size={14} />
+          {state === 'running' ? <Spinner size={12} /> : <Icon name={stateIcon} size={14} />}
         </span>
         <span className="diff-card__title">{title}</span>
         <button

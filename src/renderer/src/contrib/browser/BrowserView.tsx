@@ -2,11 +2,13 @@ import { useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react'
 import type { BrowserBoundsInput, BrowserTabState, BrowserViewport } from '@shared/browser'
 import type { BrowserConnectionState } from '@shared/browser-api'
 import { Icon, type IconName } from '@renderer/workbench/icons'
+import { Spinner } from '@renderer/workbench/ui-primitives'
 import { Select } from '@renderer/workbench/Select'
 import { ActionMenu } from '@renderer/workbench/ActionMenu'
 import { NetworkInspector } from './NetworkInspector'
 import { isBrowserSurfaceOccluded } from './browser-occlusion'
 import { openViewToRight } from '@renderer/core/editor/editor-groups'
+import { getAppMode, onAppModeChanged, type AppMode } from '@renderer/core/platform/app-mode'
 import { openAppSettings } from '../settings/app-settings-navigation'
 import {
   browserAction,
@@ -53,12 +55,15 @@ function ToolButton({
   )
 }
 
-function BrowserSurface({
+export function BrowserSurface({
   tab,
-  revealRequestId
+  revealRequestId,
+  surfaceMode = 'code'
 }: {
   tab: BrowserTabState
   revealRequestId?: string
+  /** The app mode that owns native WebContentsView bounds. */
+  surfaceMode?: AppMode
 }): JSX.Element {
   const host = useRef<HTMLDivElement>(null)
   const viewportWidth = tab.viewport?.width ?? 0
@@ -75,6 +80,10 @@ function BrowserSurface({
     const send = (): void => {
       frame = 0
       if (disposed) return
+      // Hidden mode surfaces stay mounted for instant switching. They must not
+      // submit a stale `visible: false` after another mode has taken ownership
+      // of the native WebContentsView.
+      if (getAppMode() !== surfaceMode) return
       const rect = element.getBoundingClientRect()
       const clip = element.closest('.browser-view')?.getBoundingClientRect() ?? rect
       const x = Math.max(0, rect.x, clip.x)
@@ -96,6 +105,7 @@ function BrowserSurface({
         revealRequestId,
         bounds: { x, y, width, height },
         visible:
+          getAppMode() === surfaceMode &&
           !document.hidden &&
           !resizing &&
           width > 0 &&
@@ -123,6 +133,7 @@ function BrowserSurface({
       schedule()
     }
     const resize = new ResizeObserver(schedule)
+    const disposeMode = onAppModeChanged(schedule)
     resize.observe(element)
     const mutation = new MutationObserver(schedule)
     mutation.observe(document.body, {
@@ -134,6 +145,7 @@ function BrowserSurface({
     window.addEventListener('resize', schedule)
     document.addEventListener('scroll', schedule, true)
     document.addEventListener('visibilitychange', schedule)
+    document.addEventListener('animationend', schedule)
     document.addEventListener('pointerdown', down, true)
     document.addEventListener('pointerup', up, true)
     document.addEventListener('pointercancel', up, true)
@@ -141,25 +153,38 @@ function BrowserSurface({
     send()
     return () => {
       disposed = true
+      disposeMode()
       cancelAnimationFrame(frame)
       resize.disconnect()
       mutation.disconnect()
       window.removeEventListener('resize', schedule)
       document.removeEventListener('scroll', schedule, true)
       document.removeEventListener('visibilitychange', schedule)
+      document.removeEventListener('animationend', schedule)
       document.removeEventListener('pointerdown', down, true)
       document.removeEventListener('pointerup', up, true)
       document.removeEventListener('pointercancel', up, true)
       document.removeEventListener('lostpointercapture', up, true)
-      void window.aether.browser
-        .setBounds({
-          tabId: tab.tabId,
-          bounds: { x: 0, y: 0, width: 0, height: 0 },
-          visible: false
-        })
-        .catch(() => undefined)
+      // Do not let an unmounted hidden mode hide the native view currently
+      // owned by the other mode. Its layout effect will submit fresh bounds.
+      if (getAppMode() === surfaceMode)
+        void window.aether.browser
+          .setBounds({
+            tabId: tab.tabId,
+            bounds: { x: 0, y: 0, width: 0, height: 0 },
+            visible: false
+          })
+          .catch(() => undefined)
     }
-  }, [tab.tabId, viewportWidth, viewportHeight, viewportMobile, viewportScale, revealRequestId])
+  }, [
+    tab.tabId,
+    viewportWidth,
+    viewportHeight,
+    viewportMobile,
+    viewportScale,
+    revealRequestId,
+    surfaceMode
+  ])
   return (
     <div ref={host} className="browser-surface" aria-label="网页内容区域">
       <div className="browser-surface__placeholder">
@@ -284,7 +309,7 @@ function LogRow({ entry, kind }: { entry: unknown; kind: Exclude<Inspector, null
   )
 }
 
-export function BrowserView(): JSX.Element {
+export function BrowserView({ surfaceMode = 'code' }: { surfaceMode?: AppMode } = {}): JSX.Element {
   const state = useBrowserState()
   const tab = state.tabs.find((item) => item.tabId === state.activeTabId) ?? state.tabs[0]
   const [address, setAddress] = useState('')
@@ -340,7 +365,7 @@ export function BrowserView(): JSX.Element {
       browserAction(() =>
         window.aether.browser.action({ tabId: tab.tabId, action: 'navigate', url: address.trim() })
       )
-    else browserAction(() => openBrowser(address.trim()))
+    else browserAction(() => openBrowser(address.trim(), { reveal: surfaceMode === 'code' }))
   }
   const mode = viewportPreset(tab?.viewport)
   const aiReady =
@@ -408,11 +433,7 @@ export function BrowserView(): JSX.Element {
                 target?.focus()
               }}
             >
-              <Icon
-                name={item.loading ? 'sync' : 'eye-outline'}
-                size={14}
-                className={item.loading ? 'browser-loading-icon' : undefined}
-              />
+              {item.loading ? <Spinner size={12} /> : <Icon name="eye-outline" size={14} />}
               <span>{item.title || (item.url === 'about:blank' ? '新标签页' : item.url)}</span>
             </button>
             <button
@@ -431,11 +452,13 @@ export function BrowserView(): JSX.Element {
           onClick={() => browserAction(() => window.aether.browser.create({}))}
         />
         <div className="browser-spacer" />
-        <ToolButton
-          label="在右侧分栏显示浏览器"
-          icon="layout-sidebar"
-          onClick={() => openViewToRight('browser')}
-        />
+        {surfaceMode === 'code' ? (
+          <ToolButton
+            label="在右侧分栏显示浏览器"
+            icon="layout-sidebar"
+            onClick={() => openViewToRight('browser')}
+          />
+        ) : null}
       </div>
       <form
         className="browser-navigation"
@@ -617,6 +640,7 @@ export function BrowserView(): JSX.Element {
         <BrowserSurface
           key={`surface:${tab.tabId}`}
           tab={tab}
+          surfaceMode={surfaceMode}
           revealRequestId={
             state.revealRequest?.tabId === tab.tabId ? state.revealRequest.requestId : undefined
           }
@@ -629,7 +653,9 @@ export function BrowserView(): JSX.Element {
           <button
             type="button"
             className="btn btn--primary"
-            onClick={() => browserAction(() => openBrowser())}
+            onClick={() =>
+              browserAction(() => openBrowser(undefined, { reveal: surfaceMode === 'code' }))
+            }
           >
             {state.ready ? '打开新标签页' : '正在准备…'}
           </button>

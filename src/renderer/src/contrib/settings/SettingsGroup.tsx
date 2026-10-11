@@ -1,4 +1,5 @@
 import { useEffect, useRef, type JSX, type ReactNode } from 'react'
+import { GlassSurface } from '@renderer/workbench/ui-primitives'
 
 /**
  * 设置页 UI 原语（macOS HIG 分组列表）
@@ -25,7 +26,7 @@ export function SettingsGroup({
   return (
     <section className={`sg${className ? ` ${className}` : ''}`}>
       <h3 className="sg__title">{title}</h3>
-      <div className="sg__card">{children}</div>
+      <GlassSurface className="sg__card">{children}</GlassSurface>
       {footer ? <p className="sg__footer">{footer}</p> : null}
     </section>
   )

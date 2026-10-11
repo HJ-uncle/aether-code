@@ -188,3 +188,40 @@
 .editor-path-picker__entry { width: 100%; min-height: 28px; text-align: left; }
 .editor-path-picker__entry > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .editor-path-picker__entry[aria-current='page'] { color: var(--accent); }
+
+/* 与工作台标题栏同源的编辑器路径工具条：轻玻璃只用于 chrome，路径正文
+ * 保持高对比以便在窄屏和长路径下仍能定位当前文件。 */
+.editor-toolbar {
+  background: color-mix(in srgb, var(--material-bg-thin) 88%, var(--editor-chrome));
+  border-color: var(--material-border);
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
+}
+
+.editor-toolbar__path ol {
+  gap: var(--space-1);
+}
+
+.editor-toolbar__symbol {
+  min-height: var(--control-h);
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-lg);
+}
+
+.editor-toolbar__button {
+  min-width: var(--control-h-lg);
+  min-height: var(--control-h-lg);
+  border-radius: var(--radius-lg);
+}
+
+.editor-toolbar__button.is-active,
+.editor-toolbar__button[aria-pressed='true'] {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .editor-toolbar {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}

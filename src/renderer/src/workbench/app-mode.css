@@ -1,0 +1,111 @@
+.mode-deck {
+  display: grid;
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.mode-surface {
+  grid-area: 1 / 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-app);
+}
+.mode-surface[hidden] {
+  display: none;
+}
+.mode-surface.is-active {
+  z-index: 1;
+  animation: mode-enter 220ms ease-out;
+}
+.mode-surface.is-exiting {
+  pointer-events: none;
+  animation: mode-exit 220ms ease-out forwards;
+}
+@keyframes mode-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes mode-exit {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.app-mode-switch {
+  display: inline-flex;
+  position: relative;
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 2px;
+  margin: 0 10px 0 4px;
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  box-shadow: inset 0 0 0 1px var(--border);
+  -webkit-app-region: no-drag;
+}
+.app-mode-switch::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / 2);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-control);
+  transition: transform 160ms ease-out;
+}
+.app-mode-switch[data-mode='work']::before {
+  transform: translateX(100%);
+}
+.app-mode-switch button {
+  z-index: 1;
+  width: 86px;
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 12px;
+  border-radius: var(--radius);
+}
+.app-mode-switch button[aria-selected='true'] {
+  color: var(--fg-strong);
+  font-weight: 600;
+}
+.work-settings-dialog {
+  height: min(780px, calc(100vh - 48px));
+  max-width: calc(100vw - 48px);
+}
+.work-settings-dialog > .modal__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.work-settings-dialog .app-settings {
+  flex: 1;
+  min-height: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mode-surface.is-active,
+  .mode-surface.is-exiting {
+    animation: none;
+  }
+  .app-mode-switch::before {
+    transition: none;
+  }
+}

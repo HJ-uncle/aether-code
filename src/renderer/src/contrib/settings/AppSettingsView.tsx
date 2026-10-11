@@ -36,6 +36,7 @@ import { getSettingsDefinitions, onSettingsRegistryChanged, searchSettings, type
 import type { IconName } from '@renderer/workbench/icons'
 import { Icon } from '@renderer/workbench/icons'
 import { SettingsScopeContext } from './settings-scope'
+import './settings-pages.css'
 
 /**
  * 统一设置（主区固定标签，可关闭）
@@ -324,6 +325,15 @@ export function AppSettingsView(): JSX.Element {
         ) : null}
       </div>
       <aside className="app-settings__nav" aria-label="设置分区">
+        <div className="app-settings__nav-header">
+          <span className="app-settings__nav-header-icon" aria-hidden="true">
+            <Icon name="settings" size={17} />
+          </span>
+          <div>
+            <strong>设置</strong>
+            <span>Aether Code</span>
+          </div>
+        </div>
         <div className="app-settings__nav-list" role="tablist" aria-label="设置分区">
           {visibleGroups.map((group) => (
             <div className="app-settings__nav-group" key={group.label} role="presentation">
@@ -333,7 +343,7 @@ export function AppSettingsView(): JSX.Element {
                   key={item.id}
                   type="button"
                   role="tab"
-                  aria-selected={item.id === selectedSectionId}
+                  aria-selected={item.id === active}
                   aria-label={item.label}
                   title={item.label}
                   className={`app-settings__nav-item${item.id === active ? ' is-active' : ''}`}

@@ -366,19 +366,138 @@
     gap: var(--space-1);
   }
 }
-.browser-loading-icon {
-  animation: browser-loading-spin 900ms linear infinite;
+/* ==================== 浏览器工作区统一材质层 ====================
+ * 浏览器的标签栏、导航栏与编辑器 chrome 共用同一条 4/8 间距节奏；网页
+ * 画布保持独立不透明，避免页面内容和工具栏文字互相透出。 */
+.browser-tabs,
+.browser-navigation,
+.browser-options,
+.browser-status {
+  background: color-mix(in srgb, var(--material-bg-thin) 88%, var(--bg-surface));
+  border-color: var(--material-border);
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
 }
-@keyframes browser-loading-spin {
-  to {
-    transform: rotate(360deg);
+
+.browser-tabs {
+  flex-basis: 40px;
+  gap: var(--space-1);
+  padding-inline: var(--space-3);
+}
+
+.browser-tab {
+  min-width: 104px;
+  height: 32px;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.browser-tab:hover {
+  color: var(--fg-strong);
+  background: var(--bg-hover);
+}
+
+.browser-tab.is-active {
+  color: var(--fg-strong);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-surface));
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.browser-tab > button[role='tab'],
+.browser-tab__close {
+  border-radius: var(--radius-lg);
+}
+
+.browser-tab > button[role='tab']:focus-visible,
+.browser-tab__close:focus-visible,
+.browser-tool:focus-visible,
+.browser-text-tool:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.browser-navigation {
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+}
+
+.browser-tool {
+  flex-basis: var(--control-h-lg);
+  width: var(--control-h-lg);
+  height: var(--control-h-lg);
+  border-radius: var(--radius-lg);
+}
+
+.browser-address {
+  height: var(--control-h-lg);
+  padding-inline: var(--space-3);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--bg-input) 88%, transparent);
+}
+
+.browser-options {
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-2);
+}
+
+.browser-options .select__trigger,
+.browser-text-tool {
+  min-height: var(--control-h);
+  border-radius: var(--radius-lg);
+}
+
+.browser-surface {
+  background: var(--bg-editor);
+}
+
+.browser-inspector {
+  background: color-mix(in srgb, var(--bg-panel) 94%, var(--bg-app));
+  border-top-color: var(--material-border);
+}
+
+.browser-inspector header {
+  min-height: var(--chrome-h);
+  height: var(--chrome-h);
+  padding-inline: var(--space-3);
+  background: color-mix(in srgb, var(--material-bg-thin) 72%, var(--bg-panel));
+}
+
+.browser-status {
+  min-height: var(--status-bar-h);
+  flex-basis: var(--status-bar-h);
+  padding-inline: var(--space-3);
+}
+
+@container (max-width: 520px) {
+  .browser-tabs {
+    padding-inline: var(--space-2);
+  }
+
+  .browser-tab {
+    min-width: 88px;
+    flex-basis: 120px;
+  }
+
+  .browser-navigation {
+    padding-inline: var(--space-2);
   }
 }
+
+@media (prefers-reduced-transparency: reduce) {
+  .browser-tabs,
+  .browser-navigation,
+  .browser-options,
+  .browser-status {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .browser-tool {
     transition: none;
-  }
-  .browser-loading-icon {
-    animation: none;
   }
 }

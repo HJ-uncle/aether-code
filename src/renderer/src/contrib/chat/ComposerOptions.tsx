@@ -1,4 +1,4 @@
-import { useEffect, type JSX } from 'react'
+import { useEffect, useState, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
 import { useModels } from '@renderer/core/engine/model-store'
 import { changeSecurityMode, useSecurityMode } from '@renderer/core/engine/security-store'
@@ -7,6 +7,7 @@ import { changeMemoryScope, useMemoryScope } from '@renderer/core/engine/memory-
 import { MEMORY_SCOPE_DESCRIPTORS, type MemoryScope } from '@renderer/core/engine/memory'
 import { Icon } from '@renderer/workbench/icons'
 import { Popover } from '@renderer/workbench/Popover'
+import { useAppMode } from '@renderer/core/platform/app-mode'
 import type { SessionThinkingMode } from './session-thinking-store'
 import type { ComposerThinkingMode } from './session-request-config'
 
@@ -68,7 +69,9 @@ function MenuOption({
  */
 export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingChange }: { sessionId: string; modelId: string; thinkingMode: ComposerThinkingMode; onThinkingChange: (mode: SessionThinkingMode) => void }): JSX.Element {
   const { ready } = useApp()
+  const appMode = useAppMode()
   const { models } = useModels()
+  const [openMenu, setOpenMenu] = useState<'memory' | 'thinking' | 'security' | null>(null)
   const { mode: storedMode, loaded, loading, error, refresh } = useSecurityMode(sessionId)
   const {
     scope: storedMemoryScope,
@@ -78,19 +81,19 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
     error: memoryError,
     refresh: refreshMemory
   } = useMemoryScope(sessionId)
-  const mode = ready ? storedMode : null
+  const mode = ready && appMode === 'code' ? storedMode : null
 
   // 引擎重启会把安全模式 store 清空：会话就绪后补拉一次（Popover 内部管理开关状态，
   // 这里拿不到 open，改为就绪即拉，代价很小）
   useEffect(() => {
-    if (ready && sessionId && !loaded && !loading && !error) void refresh(sessionId)
-  }, [ready, sessionId, loaded, loading, error, refresh])
+    if (appMode === 'code' && ready && sessionId && !loaded && !loading && !error) void refresh(sessionId)
+  }, [appMode, ready, sessionId, loaded, loading, error, refresh])
 
   // Memory scope is persisted by the engine (tenant + session), so refresh it
   // after a connection/session switch instead of copying it to localStorage.
   useEffect(() => {
-    if (ready && sessionId && !memoryLoaded && !memoryLoading && !memoryError) void refreshMemory(sessionId)
-  }, [ready, sessionId, memoryLoaded, memoryLoading, memoryError, refreshMemory])
+    if (appMode === 'code' && ready && sessionId && !memoryLoaded && !memoryLoading && !memoryError) void refreshMemory(sessionId)
+  }, [appMode, ready, sessionId, memoryLoaded, memoryLoading, memoryError, refreshMemory])
 
   const currentModel = models.find((m) => m.modelId === modelId)
   const thinkDescriptor =
@@ -139,6 +142,7 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
       align="start"
       width={360}
       flush
+      onOpenChange={(open) => { if (!open) setOpenMenu(null) }}
       trigger={({ open: isOpen }) => (
         <button
           type="button"
@@ -165,6 +169,8 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
             align="end"
             width={260}
             flush
+            open={openMenu === 'memory'}
+            onOpenChange={(open) => setOpenMenu(open ? 'memory' : null)}
             trigger={({ open: isOpen }) => (
               <button
                 type="button"
@@ -186,7 +192,7 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
                   label={item.label}
                   summary={item.summary}
                   disabled={!ready || !sessionId || memoryLoading}
-                  onSelect={pickMemory}
+                  onSelect={(next) => { pickMemory(next); setOpenMenu(null) }}
                 />
               ))}
             </div>
@@ -213,6 +219,8 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
             align="end"
             width={240}
             flush
+            open={openMenu === 'thinking'}
+            onOpenChange={(open) => setOpenMenu(open ? 'thinking' : null)}
             trigger={({ open: isOpen }) => (
               <button
                 type="button"
@@ -234,7 +242,7 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
                   label={item.label}
                   summary={item.summary}
                   disabled={!ready}
-                  onSelect={pickThinking}
+                  onSelect={(next) => { pickThinking(next); setOpenMenu(null) }}
                 />
               ))}
             </div>
@@ -257,6 +265,8 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
             align="end"
             width={240}
             flush
+            open={openMenu === 'security'}
+            onOpenChange={(open) => setOpenMenu(open ? 'security' : null)}
             trigger={({ open: isOpen }) => (
               <button
                 type="button"
@@ -282,7 +292,7 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
                   label={item.label}
                   summary={[item.summary, item.warning].filter(Boolean).join(' ')}
                   disabled={!ready || !sessionId || loading}
-                  onSelect={pickSecurity}
+                  onSelect={(next) => { pickSecurity(next); setOpenMenu(null) }}
                 />
               ))}
             </div>

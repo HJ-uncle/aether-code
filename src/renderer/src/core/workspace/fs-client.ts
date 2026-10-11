@@ -20,6 +20,80 @@ export interface RemoteWorkspaceContext {
   target: WorkspaceTarget
 }
 
+/**
+ * Resolve the server-side workspace owned by a chat session.
+ *
+ * Work tasks created by the embedded engine use a generated workspace under
+ * the engine data directory. That path is intentionally outside the IDE's
+ * local allow-list, so passing it to the normal `fs:read-file` bridge causes
+ * a misleading "打开文件夹" error. The workspace HTTP API is already
+ * session-scoped; use it to obtain the exact root before reading or opening a
+ * Work artifact.
+ */
+export interface SessionWorkspaceContext {
+  sessionId: string
+  root: string
+}
+
+export async function sessionWorkspaceContext(sessionId: string): Promise<SessionWorkspaceContext> {
+  const id = sessionId.trim()
+  if (!id) throw new Error('工作区会话无效')
+  const result = await requestOrThrow<DirectoryResponse>({
+    method: 'GET', path: '/workspace/directory', query: { sessionId: id, path: '.' }
+  })
+  const root = result?.root
+  const isAbsoluteRoot = typeof root === 'string' &&
+    (root.startsWith('/') || root.startsWith('\\\\') ||
+      (/^[A-Za-z]:/.test(root) && (root[2] === '/' || root[2] === '\\')))
+  if (!root || !isAbsoluteRoot) {
+    throw new Error('引擎未提供任务工作区，请重试')
+  }
+  return { sessionId: id, root }
+}
+
+function sessionRelativePath(root: string, candidate: string): string {
+  const normalizedRoot = root.replace(/\\/g, '/').replace(/\/+$/, '')
+  const normalized = candidate.replace(/\\/g, '/').replace(/^\/+/, '')
+  const rootForCompare = normalizedRoot.toLowerCase()
+  const candidateForCompare = candidate.replace(/\\/g, '/').toLowerCase()
+  if (candidateForCompare === rootForCompare || candidateForCompare.startsWith(`${rootForCompare}/`)) {
+    return candidate.replace(/\\/g, '/').slice(normalizedRoot.length).replace(/^\/+/, '')
+  }
+  if (/^(?:[A-Za-z]:\/|\/)/.test(candidate)) throw new Error('文件不属于当前任务工作区')
+  if (!normalized || normalized.split('/').some(part => part === '.' || part === '..' || /[\u0000-\u001f\u007f]/.test(part))) {
+    throw new Error('任务文件路径无效')
+  }
+  return normalized
+}
+
+/** Return the session file's absolute path and authorize that exact root locally. */
+export async function resolveSessionFilePath(sessionId: string, candidate: string): Promise<{ path: string; root: string }> {
+  const context = await sessionWorkspaceContext(sessionId)
+  const relative = sessionRelativePath(context.root, candidate)
+  // The embedded engine's generated workspace is trusted as the selected
+  // Work session, but still grant only that concrete directory to local fs.
+  if (!isRemoteEngine()) await bridge().fs.allowRoot(context.root)
+  return { path: paths.join(context.root, relative), root: context.root }
+}
+
+export async function readSessionFile(sessionId: string, candidate: string): Promise<FsFileContent> {
+  const context = await sessionWorkspaceContext(sessionId)
+  const relative = sessionRelativePath(context.root, candidate)
+  const result = await requestOrThrow<{ content: string; isBinary: boolean; totalSize: number; originalLength?: number; truncated?: boolean; tooLarge?: boolean }>({
+    method: 'GET', path: '/workspace/file/content',
+    query: { sessionId: context.sessionId, path: relative }
+  })
+  return {
+    path: paths.join(context.root, relative),
+    content: result.isBinary ? '' : result.content,
+    ...(result.isBinary ? { base64: result.content } : {}),
+    isBinary: result.isBinary,
+    size: result.totalSize,
+    tooLarge: result.tooLarge,
+    truncated: result.truncated ?? (typeof result.originalLength === 'number' && result.originalLength > 500 * 1024)
+  }
+}
+
 interface DirectoryResponse { root: string; entries: FsEntry[] }
 let remoteContextCache: { key: string; promise: Promise<RemoteWorkspaceContext> } | null = null
 
@@ -63,6 +137,7 @@ export async function remoteWorkspaceContext(): Promise<RemoteWorkspaceContext> 
 }
 
 export function remoteWorkspaceRelativePath(context: Pick<RemoteWorkspaceContext, 'root'>, path: string): string {
+  if (!path || path === '.') return ''
   const from = context.root.replace(/\\/g, '/').replace(/\/+$/, '')
   const to = path.replace(/\\/g, '/').replace(/\/+$/, '')
   const windows = /^(?:[A-Za-z]:\/|\/\/)/.test(from)

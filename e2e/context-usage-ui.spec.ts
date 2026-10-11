@@ -311,6 +311,7 @@ test.describe.serial('上下文用量环与会话压缩隔离', () => {
   })
   test('显式历史快照优先，12K→22K→10K按调用更新而本轮累计用量持续增长，刷新保持一致', async ({}, testInfo) => {
     await expect(ring()).toHaveAttribute('aria-label', /最近一次模型请求 12k \/ 100k/)
+    await expect(ring().locator('.context-ring__bar')).toHaveCSS('animation-name', 'none')
     await page.locator('.model-picker__trigger').click(); await page.locator('.model-picker__item').filter({ has: page.locator('.model-picker__name', { hasText: modelB }) }).click()
     await expect(ring()).toHaveAttribute('aria-label', /12k \/ 100k/)
     await page.locator('.model-picker__trigger').click(); await page.locator('.model-picker__item').filter({ has: page.locator('.model-picker__name', { hasText: modelA }) }).click()
@@ -433,6 +434,7 @@ test.describe.serial('上下文用量环与会话压缩隔离', () => {
     aRun = { ...aRun!, version: 2, seq: 6, updatedAt: Date.now(), compaction: { phase: 'running', startedAt: firstCompactionAt, beforeTokens: 22000 } }
     frame({ run: aRun }, 6)
     await expect(ring()).toHaveAttribute('role', 'img'); await expect(ring()).toHaveAttribute('aria-label', '正在自动压缩上下文')
+    await expect(ring().locator('.context-ring__bar')).toHaveCSS('animation-name', 'context-ring-spin')
     await ring().hover(); await expect(page.getByRole('progressbar', { name: '自动压缩上下文' })).toBeVisible()
     await expect(page.getByRole('progressbar', { name: '自动压缩上下文' })).not.toHaveAttribute('aria-valuenow')
     await expect(page.locator('.ctx-card__percent')).toHaveText('压缩中…'); await expect(page.locator('.ctx-card__exact-tokens')).toHaveText('22,000 / 100,000 tokens')

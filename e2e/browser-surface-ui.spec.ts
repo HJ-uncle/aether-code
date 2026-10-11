@@ -246,4 +246,30 @@ test.describe.serial('原生网页与调试面板绘制', () => {
       await verifySurface(testInfo, `fixed-resize-${index}`, [255, 255, 255])
     }
   })
+
+  test('切换 Work 后由 Work 浏览器继续显示同一原生网页实例', async () => {
+    const guestState = () => app!.evaluate(({ BrowserWindow, WebContentsView }, origin) => {
+      const guest = BrowserWindow.getAllWindows()[0].contentView.children.find(
+        view => view instanceof WebContentsView && view.webContents.getURL().startsWith(origin)
+      )
+      return guest instanceof WebContentsView ? { id: guest.webContents.id, visible: guest.getVisible(), bounds: guest.getBounds(), url: guest.webContents.getURL() } : null
+    }, origin)
+    await expect.poll(async () => (await guestState())?.visible).toBe(true)
+    const before = await guestState()
+    expect(before).not.toBeNull()
+    await page.getByRole('tab', { name: 'Work 办公', exact: true }).click()
+    await expect(page.locator('.mode-surface[data-mode="code"]')).toBeHidden()
+    await expect(page.locator('.mode-surface[data-mode="work"]')).toBeVisible()
+    await page.getByRole('tab', { name: '浏览器', exact: true }).click()
+    await expect.poll(async () => (await guestState())?.visible).toBe(true)
+    const work = await guestState()
+    expect(work?.id).toBe(before!.id)
+    expect(work?.url).toBe(before!.url)
+    await page.getByRole('tab', { name: 'Code 开发', exact: true }).click()
+    await expect(page.locator('.mode-surface[data-mode="code"]')).toBeVisible()
+    await expect.poll(async () => (await guestState())?.visible).toBe(true)
+    await expect.poll(async () => (await guestState())?.bounds).toEqual(before!.bounds)
+    expect((await guestState())?.id).toBe(before!.id)
+    expect((await guestState())?.url).toBe(before!.url)
+  })
 })

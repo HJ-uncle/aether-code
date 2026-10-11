@@ -12,6 +12,31 @@
   }
 }
 
+/* Shared indeterminate progress ring. Action icons remain static while the
+   dedicated ring communicates that work is still in progress. */
+.ui-spinner {
+  display: inline-block;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  border: 1.5px solid var(--border-strong);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  color: var(--accent);
+  animation: ui-spinner-rotate 0.8s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes ui-spinner-rotate {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-spinner,
+  .context-ring.context-ring--busy .context-ring__bar {
+    animation: none !important;
+  }
+}
+
 /* ==================== 全局 toast ==================== */
 
 .toast-host {
@@ -108,7 +133,6 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 12px 0 6px;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.2px;
@@ -2262,13 +2286,7 @@
 }
 
 .message__spinner {
-  flex: none;
-  width: 10px;
-  height: 10px;
-  border: 1.5px solid var(--fg-faint);
-  border-top-color: transparent;
-  border-radius: 50%;
-  animation: message-spin 0.8s linear infinite;
+  color: var(--fg-muted);
 }
 
 .message__streaming-text {
@@ -2308,12 +2326,6 @@
 
   .message__streaming-hint .message__spinner {
     animation: none;
-  }
-}
-
-@keyframes message-spin {
-  to {
-    transform: rotate(360deg);
   }
 }
 
@@ -3054,7 +3066,6 @@
 
 .diff-card__icon--running {
   color: var(--accent);
-  animation: message-spin 1s linear infinite;
 }
 
 .diff-card__title {
@@ -3356,21 +3367,9 @@
   color: var(--danger);
 }
 
-/* 运行中状态圈：旋转环（对齐 wuzu 子代理卡片的 running spinner） */
+/* Keep the existing semantic hook while sharing the standard progress ring. */
 .subagent-card__spinner {
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  border: 2px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: subagent-spin 0.8s linear infinite;
-}
-
-@keyframes subagent-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  color: var(--accent);
 }
 
 .subagent-card__stopped {
@@ -4493,8 +4492,8 @@
 
 .todo-tray {
   flex: 0 0 auto;
-  max-height: 220px;
-  overflow-y: auto;
+  max-height: none;
+  overflow: hidden;
   margin: 0 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -4502,9 +4501,17 @@
   font-size: 12px;
 }
 
-/* 托盘内浮在工具条上方：任务清单贴托盘上沿，末行与下方 tab 栏保持间距 */
+/* 托盘内浮在工具条上方：任务清单独立滚动，工具条保持稳定且不覆盖末行 */
 .session-tray .todo-tray {
   padding-bottom: 6px;
+}
+
+.todo-tray__content {
+  /* 任务是输入区的辅助信息，最多占一小段空间；更多任务在这里滚动查看。 */
+  max-height: min(220px, 30vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .todo-tray__list {
@@ -4573,38 +4580,6 @@
 
 .todo-tray__list--done .todo-tray__title {
   text-decoration: line-through;
-}
-
-.todo-tray__footer {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  /* 与 changes-panel__footer 同高同 padding：两个 tab 的底部栏视觉一致，
-     进度条（2px）与文字随 align-items:center 垂直居中 */
-  height: 32px;
-  padding: 4px 10px;
-  border-top: 1px solid var(--border);
-}
-
-.todo-tray__progress {
-  flex: 1;
-  /* 细一点，与 12px 文字行的视觉重量匹配 */
-  height: 2px;
-  border-radius: 1px;
-  background: var(--bg-elevated);
-  overflow: hidden;
-}
-
-.todo-tray__progress-bar {
-  height: 100%;
-  background: var(--accent);
-  transition: width 0.3s ease;
-}
-
-.todo-tray__progress-text {
-  flex: 0 0 auto;
-  font-size: 11px;
-  color: var(--fg-faint);
 }
 
 /* ── 输入区 ── */
@@ -6584,11 +6559,6 @@ select.field__input {
   background: var(--bg-hover);
 }
 
-/* 刷新进行中：图标旋转（对齐 wuzu-client 的 refresh 动画） */
-.explorer__btn.is-refreshing svg {
-  animation: explorer-spin 0.8s linear infinite;
-}
-
 /* 树内筛选命中片段的高亮（对齐 wuzu-client 的 tree-match） */
 .tree-match {
   padding: 0 1px;
@@ -6911,18 +6881,7 @@ select.field__input {
 .tree-row__loading {
   flex: 0 0 auto;
   margin-left: auto;
-  width: 12px;
-  height: 12px;
-  border: 1.5px solid var(--fg-faint);
-  border-top-color: transparent;
-  border-radius: 50%;
-  animation: explorer-spin 0.8s linear infinite;
-}
-
-@keyframes explorer-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  display: inline-flex;
 }
 
 /* git 状态角标。配色与版本控制视图的状态色同义：
@@ -10131,8 +10090,8 @@ select.field__input {
 
 .menu-bar__brand {
   gap: 8px;
-  min-width: 112px;
-  padding: 0 16px 0 4px;
+  min-width: 80px;
+  padding-left: 3px;
   color: var(--fg-strong);
   font-size: 13px;
   letter-spacing: -0.01em;
@@ -10792,19 +10751,6 @@ select.field__input {
   cursor: ns-resize;
 }
 
-/* 通用：加载旋转 */
-.is-spinning {
-  animation: git-spin 0.9s linear infinite;
-  display: inline-flex;
-}
-@keyframes git-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
 /* ── 替换预览（照搬 VS Code Replace Preview）── */
 
 .replace-preview-overlay {
@@ -11292,8 +11238,9 @@ select.field__input {
 }
 
 .app-settings__nav-item:focus-visible {
-  outline: var(--focus-ring);
+  outline: 2px solid var(--accent);
   outline-offset: -1px;
+  box-shadow: none;
 }
 
 .app-settings__nav-item svg {
@@ -11713,5 +11660,566 @@ select.field__input {
     max-width: 120px;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+}
+
+/* ==================== 共享视觉原语（统一收口） ====================
+ *
+ * 页面级样式只负责布局，材质、圆角、焦点和控件密度在这里收口。
+ * 这些类也被 React 的 GlassSurface 等原语复用，避免每个功能区各自
+ * 拼一套「背景 + 描边 + 阴影」而导致深浅主题和窄屏表现逐渐分叉。
+ */
+.ui-surface {
+  min-width: 0;
+  border: 1px solid var(--border);
+}
+
+.ui-surface--card {
+  border-radius: var(--radius-panel);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-card);
+}
+
+.ui-surface--inset {
+  border-radius: var(--radius-lg);
+  background: var(--bg-inset);
+  box-shadow: var(--shadow-inset);
+}
+
+.ui-surface--floating {
+  border-color: var(--material-border);
+  border-radius: var(--radius-panel);
+  background: var(--material-bg);
+  box-shadow: var(--material-shadow), var(--material-highlight);
+  backdrop-filter: blur(var(--material-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--material-blur)) saturate(180%);
+}
+
+.ui-section-heading {
+  min-width: 0;
+}
+
+.ui-section-heading__eyebrow {
+  margin-bottom: var(--space-2);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.ui-section-heading__title {
+  margin: 0;
+  color: var(--fg-strong);
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  line-height: 1.3;
+}
+
+.ui-section-heading__description {
+  max-width: 68ch;
+  margin: var(--space-2) 0 0;
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.ui-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--control-h-lg);
+  min-height: var(--control-h-lg);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  color: var(--fg-muted);
+}
+
+.ui-icon-button:hover:not(:disabled) {
+  color: var(--fg-strong);
+  background: var(--bg-hover);
+}
+
+/* ==================== 跨页面控件基线 ==================== */
+.btn {
+  min-height: var(--control-h-lg);
+  padding-inline: var(--space-3);
+  border-radius: var(--radius-lg);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+}
+
+.btn:active:not(:disabled),
+.panel__action:active:not(:disabled),
+.output__btn:active:not(:disabled),
+.chat__toolbar-btn:active:not(:disabled),
+.git-panel__tool-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.field__input,
+.settings-view .field__input,
+.settings-view .sg__input,
+.select__trigger {
+  min-height: var(--control-h-lg);
+  border-radius: var(--radius-lg);
+}
+
+.popover__panel,
+.modal,
+.file-palette,
+.palette,
+.menu-bar__dropdown {
+  border-color: var(--material-border);
+  box-shadow: var(--material-shadow), var(--material-highlight);
+  backdrop-filter: blur(var(--material-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--material-blur)) saturate(180%);
+}
+
+.popover__panel,
+.menu-bar__dropdown {
+  background: var(--material-bg);
+}
+
+.modal {
+  background: var(--material-bg-thick);
+}
+
+.panel__tabs,
+.output__toolbar,
+.git-panel__toolbar,
+.editor-toolbar {
+  min-height: var(--chrome-h);
+  border-bottom-color: var(--border);
+  background: color-mix(in srgb, var(--bg-surface) 86%, transparent);
+}
+
+.panel__tab,
+.panel__action,
+.output__btn,
+.git-panel__tool-btn,
+.chat__toolbar-btn {
+  min-height: var(--control-h);
+  border-radius: var(--radius-lg);
+}
+
+.panel__tab:focus-visible,
+.panel__action:focus-visible,
+.output__btn:focus-visible,
+.git-panel__tool-btn:focus-visible,
+.chat__toolbar-btn:focus-visible,
+.editor-toolbar__button:focus-visible,
+.editor-toolbar__symbol:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.status-bar {
+  gap: var(--space-1);
+  background: color-mix(in srgb, var(--bg-activity) 92%, transparent);
+}
+
+.status-bar__item {
+  min-height: var(--control-h-compact);
+  border-radius: var(--radius-lg);
+}
+
+/* 内容列始终允许子组件收缩，避免模型名称、路径或长消息撑出横向滚动。 */
+.workbench__main,
+.workbench__sidebar,
+.workbench__chat,
+.workbench__panel,
+.sidebar,
+.chat-panel,
+.editor-area,
+.panel,
+.chat,
+.git-panel,
+.settings-view {
+  min-width: 0;
+}
+
+.workbench__body {
+  container-type: inline-size;
+  container-name: workbench;
+}
+
+@container workbench (max-width: 900px) {
+  .chat__topbar,
+  .chat__composer {
+    padding-inline: var(--space-3);
+  }
+
+  .chat__messages {
+    padding-inline: var(--space-4);
+  }
+
+  .editor-tabs {
+    padding-inline: var(--space-2);
+  }
+}
+
+@container workbench (max-width: 620px) {
+  .chat__messages {
+    padding-inline: var(--space-3);
+  }
+
+  .chat__topbar {
+    min-height: var(--chrome-h);
+  }
+
+  .message {
+    max-width: none;
+  }
+}
+
+/* ==================== 键盘可达的 Git 行操作 ====================
+ *
+ * 改动、历史和存储行的操作原先只在 hover 时展开，键盘焦点落入隐藏列
+ * 后仍被 0 宽容器裁掉。保持同一套行视觉，同时为键盘和触控提供稳定的
+ * 28–32px 命中区；长路径继续由 flex 子项收缩，不制造横向滚动。
+ */
+.git-row,
+.git-panel__commit-row,
+.git-panel__stash-row,
+.git-panel__recent-row {
+  min-width: 0;
+  min-height: 30px;
+  max-width: 100%;
+}
+
+.git-row__actions {
+  width: 0;
+}
+
+.git-row:hover .git-row__actions,
+.git-row:focus-within .git-row__actions {
+  width: 100px;
+}
+
+.git-row:hover .git-row__actions--conflict,
+.git-row:focus-within .git-row__actions--conflict {
+  width: 30px;
+}
+
+.git-row__btn,
+.git-panel__group-btn,
+.git-panel__recent-del {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+}
+
+.git-panel__group-head:focus-within .git-panel__group-btn,
+.git-panel__stash-row:focus-within .git-panel__stash-actions,
+.git-panel__recent-row:focus-within .git-panel__recent-del {
+  opacity: 1;
+}
+
+.git-panel__commit-subject,
+.git-panel__commit-author,
+.git-panel__commit-date,
+.git-panel__ref-badge,
+.git-panel__stash-msg,
+.git-panel__stash-meta,
+.git-panel__stash-branch {
+  min-width: 0;
+}
+
+/* 消息动作支持键盘路径：焦点进入消息内任何交互控件时，操作条保持可见。 */
+.message:focus-within .message__actions,
+.message__actions:focus-within {
+  opacity: 1;
+}
+
+.message__action {
+  min-width: 30px;
+  min-height: 30px;
+}
+
+/* 设置顶部的清除、筛选和范围切换保持同一命中区，小窗口下仍易于点击。 */
+.app-settings__search-clear,
+.app-settings__filter {
+  width: var(--control-h-lg);
+  height: var(--control-h-lg);
+  border-radius: var(--radius-lg);
+}
+
+.app-settings__scope button {
+  min-height: var(--control-h-lg);
+  border-radius: var(--radius-lg);
+}
+
+/* ==================== 工作台统一组合层（Apple workspace pass） ====================
+ *
+ * 这一层只收口工作台的「材质、节奏、层级」：所有交互语义仍由各功能块原有
+ * 选择器负责。Chrome 使用一套轻薄玻璃，内容区域保持稳定不透明，避免代码、
+ * 文件名和消息在毛玻璃背后降低可读性。
+ */
+.menu-bar,
+.activity-bar,
+.sidebar__header,
+.chat-panel__header,
+.editor-tabs,
+.panel__tabs,
+.editor-toolbar,
+.status-bar {
+  background: color-mix(in srgb, var(--material-bg-thin) 88%, var(--bg-surface));
+  border-color: var(--material-border);
+}
+
+.menu-bar,
+.activity-bar,
+.sidebar__header,
+.chat-panel__header,
+.editor-tabs,
+.panel__tabs,
+.editor-toolbar {
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
+}
+
+.menu-bar {
+  padding-inline: var(--space-3);
+  gap: var(--space-1);
+  box-shadow: inset 0 -1px 0 var(--material-highlight);
+}
+
+.menu-bar__brand {
+  min-height: var(--control-h-lg);
+  border-radius: var(--radius-lg);
+}
+
+.menu-bar__brand:hover {
+  background: var(--bg-hover);
+}
+
+.menu-bar__trigger,
+.menu-bar__action,
+.menu-bar__win-btn {
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.menu-bar__trigger:focus-visible,
+.menu-bar__action:focus-visible,
+.menu-bar__win-btn:focus-visible,
+.activity-bar__item:focus-visible,
+.explorer__btn:focus-visible,
+.editor-tab:focus-visible,
+.editor-tab__close:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.activity-bar {
+  gap: var(--space-2);
+  padding-block: var(--space-3);
+  background: color-mix(in srgb, var(--bg-activity) 92%, var(--material-bg-thin));
+}
+
+.activity-bar__item {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-lg);
+}
+
+.activity-bar__item.is-active {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, transparent);
+}
+
+.activity-bar__item.is-active::before {
+  left: calc(-1 * var(--space-2));
+  width: 2px;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.sidebar__header,
+.chat-panel__header {
+  min-height: var(--chrome-h);
+  padding-inline: var(--space-4) var(--space-3);
+}
+
+.sidebar__body,
+.chat-panel__body {
+  background: color-mix(in srgb, var(--bg-sidebar) 96%, var(--bg-app));
+}
+
+.explorer__toolbar {
+  min-height: var(--chrome-h);
+  padding-inline: var(--space-4) var(--space-3);
+  background: color-mix(in srgb, var(--bg-sidebar) 88%, var(--material-bg-thin));
+}
+
+.explorer__root-label {
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+.explorer__root-name {
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.explorer__tree {
+  padding-block: var(--space-2) var(--space-4);
+}
+
+.tree-row {
+  min-width: 0;
+  /* ExplorerView 的虚拟滚动偏移以 ROW_HEIGHT=30 计算，视觉层必须保持同一行高。 */
+  height: 30px;
+  line-height: 30px;
+  margin-inline: var(--space-2);
+  padding-right: var(--space-3);
+  border-radius: var(--radius-lg);
+}
+
+.tree-row:hover {
+  background: color-mix(in srgb, var(--bg-hover) 88%, transparent);
+}
+
+.tree-row.is-active,
+.tree-row.is-selected {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.tree-row.is-active {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-surface));
+}
+
+.tree-row.is-selected {
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-surface));
+}
+
+.editor-tabs {
+  min-height: 40px;
+  height: 40px;
+  padding-inline: var(--space-3);
+  gap: var(--space-1);
+}
+
+.editor-tab {
+  min-width: 128px;
+  height: 32px;
+  margin-top: var(--space-2);
+  padding-inline: var(--space-3);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.editor-tab:hover {
+  background: color-mix(in srgb, var(--editor-tab-hover) 82%, var(--editor-chrome));
+}
+
+.editor-tab.is-active {
+  background: color-mix(in srgb, var(--accent) 12%, var(--editor-chrome));
+  border-color: transparent;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.editor-area__body,
+.monaco-host {
+  background: var(--editor-canvas);
+}
+
+.editor-toolbar {
+  min-height: var(--chrome-h);
+  padding-inline: var(--space-4) var(--space-3);
+}
+
+.editor-toolbar__path {
+  font-size: 12px;
+}
+
+.editor-toolbar__symbol,
+.editor-toolbar__button {
+  min-height: var(--control-h);
+  border-radius: var(--radius-lg);
+}
+
+.editor-outline {
+  background: color-mix(in srgb, var(--bg-sidebar) 94%, var(--bg-app));
+  border-top-color: var(--material-border);
+}
+
+.editor-outline__header {
+  min-height: var(--chrome-h);
+  padding-inline: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.editor-outline__content {
+  padding-inline: var(--space-2);
+}
+
+.editor-outline__symbol {
+  min-height: var(--control-h);
+  border-radius: var(--radius);
+}
+
+.editor-outline__symbol[aria-current='location'] {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.panel__tabs {
+  padding-inline: var(--space-3);
+  gap: var(--space-1);
+}
+
+.panel__tab {
+  min-height: var(--control-h);
+  border-radius: var(--radius-lg);
+}
+
+.panel__tab.is-active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-bottom-color: var(--accent);
+}
+
+.status-bar {
+  min-height: var(--status-bar-h);
+  padding-inline: var(--space-3);
+  backdrop-filter: blur(14px) saturate(135%);
+  -webkit-backdrop-filter: blur(14px) saturate(135%);
+}
+
+/* 内容列很窄时，标签只保留图标和短标题，避免工作台出现横向滚动。 */
+@container workbench (max-width: 520px) {
+  .editor-tab {
+    min-width: 92px;
+    max-width: 160px;
+    padding-inline: var(--space-2);
+  }
+
+  .editor-tab__status,
+  .editor-tab__dirty {
+    display: none;
+  }
+
+  .explorer__root-name {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .menu-bar,
+  .activity-bar,
+  .sidebar__header,
+  .chat-panel__header,
+  .editor-tabs,
+  .panel__tabs,
+  .editor-toolbar,
+  .status-bar {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 }

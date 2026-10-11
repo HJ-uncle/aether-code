@@ -1,4 +1,5 @@
 import { showEditorView } from '@renderer/core/platform/layout-state'
+import { getAppMode } from '@renderer/core/platform/app-mode'
 
 // ── 打开设置时定位到指定分区 ────────────────────────────────────────────────
 // 原先「模型」「安全」是主区独立标签，现已并入 AppSettingsView；命令/快捷键/对话页的
@@ -19,7 +20,7 @@ const sectionListeners = new Set<() => void>()
 /** 打开设置主区视图；传分区 id 时定位到该分区（默认引擎管理） */
 export function openAppSettings(section?: string): void {
   sectionRequest = { section: section ?? DEFAULT_SETTINGS_SECTION, nonce: ++nonceCounter }
-  showEditorView('app-settings')
+  if (getAppMode() === 'code') showEditorView('app-settings')
   for (const listener of sectionListeners) listener()
 }
 
