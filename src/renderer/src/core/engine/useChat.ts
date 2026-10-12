@@ -147,6 +147,7 @@ function loadQueueSendMode(): QueueSendMode {
 export interface SendOptions {
   sessionId: string
   agentId?: string
+  collaborators?: import('@shared/subagent').AgentCollaborator[]
   model?: string
   /** Knowledge-base IDs selected for this session; an empty array explicitly disables RAG. */
   knowledgeBases?: string[]
@@ -693,8 +694,16 @@ export function useChat(options: { commandOwner?: string } = {}): {
     recoveryAttemptsRef.current = 0
     activeSessionRef.current = typeof body.sessionId === 'string' ? body.sessionId : null
     viewSessionRef.current = activeSessionRef.current
-    await engine.startStream({ streamId, path: '/chat', body })
-  }, [renderSource])
+    await engine.startStream({
+      streamId,
+      path: '/chat',
+      body,
+      // A Work stream may be resumed while its surface is hidden behind Code;
+      // derive the profile from the hook owner so a mode switch cannot turn a
+      // general-profile run into a Code-profile resume.
+      toolProfile: commandOwner === 'work' ? 'general' : 'code'
+    })
+  }, [commandOwner, renderSource])
 
   const send = useCallback(
     async (text: string, options: SendOptions) => {
@@ -858,6 +867,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
         message: trimmed,
         sessionId: options.sessionId || undefined,
         agentId: options.agentId || undefined,
+        collaborators: options.collaborators,
         model: options.model || undefined,
         knowledgeBases: options.knowledgeBases,
         skills: options.skills,
@@ -1026,6 +1036,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
     // Stream frames still arrive through the shared event listener; only the
     // short-lived admission result is needed by the caller.
     void engine.startStream({ streamId, path: '/chat/stream', method: 'GET',
+      toolProfile: commandOwner === 'work' ? 'general' : 'code',
       query: { sessionId, lastEventId: snapshot.eventId }, body: undefined }).catch(() => {
         // IPC can fail before the stream reader is registered (for example
         // when the engine switches during recovery). Do not leave the task

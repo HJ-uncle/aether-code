@@ -2196,6 +2196,14 @@
   max-width: 100%;
 }
 
+.message__bubble-content .mention-chip {
+  display: inline-block;
+  max-width: calc(100% - 2px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
 .message__bubble-content.is-collapsed {
   max-height: 13.2em;
   overflow: hidden;
@@ -2444,6 +2452,16 @@
 
 .logline__dot--error {
   background: var(--danger);
+}
+
+.logline__dot--waiting { background: var(--accent); }
+.logline__dot--neutral { background: var(--fg-muted); }
+
+.compact-tool-row .pending-card__hint { flex-shrink: 0; white-space: nowrap; }
+.compact-tool-row .logline:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.compact-tool-row .logline__detail pre { overscroll-behavior: contain; }
+@media (prefers-reduced-motion: reduce) {
+  .compact-tool-row .logline__dot--running { animation: none; }
 }
 
 @keyframes logline-pulse {
@@ -9926,6 +9944,11 @@ select.field__input {
   font-size: 12px;
   line-height: 1.5;
   min-height: 30px;
+  /* 单行提交信息，内容超高时由 JS 撑高/内部滚动，不显示滚动条 */
+  scrollbar-width: none;
+}
+.git-commitbar__input::-webkit-scrollbar {
+  display: none;
 }
 .git-commitbar__input:focus {
   outline: none;
@@ -9934,7 +9957,7 @@ select.field__input {
 .git-commitbar__ai {
   position: absolute;
   right: 4px;
-  bottom: 4px;
+  bottom: 8px;
   width: 24px;
   height: 24px;
   padding: 0;

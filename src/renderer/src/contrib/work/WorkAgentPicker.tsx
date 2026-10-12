@@ -76,6 +76,6 @@ export function WorkAgentPicker({
     {loading ? <div className="work-agent-picker__empty">正在加载 Agent…</div> : error ? <div className="work-agent-picker__empty">{error}<button type="button" onClick={() => setReload((value) => value + 1)}>重试</button></div> : filtered.length ? filtered.map((agent, index) => <button key={agent.id} type="button" role="option" aria-selected={index === active} className={`work-agent-picker__item${index === active ? ' is-active' : ''}`} onMouseDown={(event) => event.preventDefault()} onClick={() => onSelect(agent)} onMouseEnter={() => setActive(index)}>
       <span className="work-agent-picker__badge">A</span><span><strong>{agent.name}</strong><small>{agent.description || agent.id}</small></span>
     </button>) : <div className="work-agent-picker__empty">没有可用的自定义 Agent</div>}
-    <div className="work-agent-picker__hint">↑↓ 选择 · Enter 确认 · Esc 关闭</div>
+    <div className="work-agent-picker__hint">作为子代理协作 · 保留上下文继续工作<br />↑↓ 选择 · Enter 确认 · Esc 关闭</div>
   </div>
 }

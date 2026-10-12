@@ -31,6 +31,7 @@ import {
   remoteInstanceToken,
   type EngineMeta
 } from './protocol'
+import type { ToolProfile } from './tool-profile'
 
 const PREFERRED_PORT = 12323
 const STARTUP_TIMEOUT_MS = 60_000
@@ -106,20 +107,20 @@ export class EngineHost extends EventEmitter {
   get requestSignal(): AbortSignal {
     return this.transportController.signal
   }
-  accountTarget(baseUrl?: string): AccountTarget {
+  accountTarget(baseUrl?: string, toolProfile: ToolProfile = 'code'): AccountTarget {
     const settings = getSettings()
     const active = !!baseUrl || this.snapshot.phase === 'ready'
     const remote = active ? this.snapshot.mode === 'remote' : settings.engineMode === 'remote'
     const url = remote ? remoteAuthTarget(baseUrl || (active ? this.snapshot.baseUrl : settings.remoteBaseUrl)) : (baseUrl || this.snapshot.baseUrl)
     const activeToken = remote && this.snapshot.mode === 'remote' && this.remoteTarget?.url === url ? this.instanceToken : ''
     const token = remote ? (activeToken || getRemoteInstanceToken() || process.env.AETHER_IDE_REMOTE_INSTANCE_TOKEN || '') : this.instanceToken
-    return { scope: remote ? url : 'embedded', url, headers: engineHeaders(token) }
+    return { scope: remote ? url : 'embedded', url, headers: engineHeaders(token, toolProfile) }
   }
 
-  async prepareRequestHeaders(baseUrl?: string): Promise<Record<string, string>> {
-    const target = this.accountTarget(baseUrl || this.baseUrl)
+  async prepareRequestHeaders(baseUrl?: string, toolProfile: ToolProfile = 'code'): Promise<Record<string, string>> {
+    const target = this.accountTarget(baseUrl || this.baseUrl, toolProfile)
     if (target.url) await ensureAccountSession(target)
-    return this.requestHeaders()
+    return this.requestHeaders(toolProfile)
   }
 
   /** Account changes invalidate in-flight requests before the UI can select new data. */
@@ -130,8 +131,8 @@ export class EngineHost extends EventEmitter {
     this.patch({ accountId: readAccountCredential(this.accountTarget().scope).credential?.user.id ?? null })
   }
 
-  requestHeaders(): Record<string, string> {
-    const headers = engineHeaders(this.instanceToken)
+  requestHeaders(toolProfile: ToolProfile = 'code'): Record<string, string> {
+    const headers = engineHeaders(this.instanceToken, toolProfile)
     // User credentials are scoped to the exact remote service URL and are kept
     // separate from the instance token. Use remoteTarget during the handshake
     // because the public snapshot has no baseUrl until authentication succeeds.
@@ -523,7 +524,8 @@ export class EngineHost extends EventEmitter {
     signal: AbortSignal,
     method: 'GET' | 'POST' = 'POST',
     query?: Record<string, string>,
-    expectedEngine?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>
+    expectedEngine?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>,
+    toolProfile: ToolProfile = 'code'
   ): Promise<void> {
     const snapshot = this.snapshot
     if (isAccountRequestPath(path)) {
@@ -544,7 +546,7 @@ export class EngineHost extends EventEmitter {
 
     try {
       const normalizedPath = normalizeEnginePath(path)
-      const headers = { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...await this.prepareRequestHeaders(baseUrl) }
+      const headers = { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...await this.prepareRequestHeaders(baseUrl, toolProfile) }
       const requestBody = snapshot.mode === 'remote' && method === 'POST' && normalizedPath.split('?')[0] === '/api/v1/chat'
         ? await prepareRemoteChatBody(body, { baseUrl, headers, signal: requestSignal, configuredRoot: this.remoteWorkspaceRoot, target: snapshot })
         : body

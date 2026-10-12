@@ -2,6 +2,23 @@ import type { SubagentRun } from '@shared/subagent'
 import type { ToolActivity } from '@renderer/core/engine/useChat'
 import { mergeSubagentRun, runToolState } from '@renderer/core/engine/subagent-state'
 
+export interface WorkSubagentGroup {
+  key: string
+  childSessionId: string
+  label: string
+  modelId: string
+  active: boolean
+  latest: ToolActivity
+  tools: ToolActivity[]
+}
+
+function workSubagentArgs(value: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
+  } catch { return {} }
+}
+
 /** Keep the original invocation metadata while reconciling independently running children. */
 export function workSubagentTools(sessionId: string, tools: ToolActivity[], runs: SubagentRun[]): ToolActivity[] {
   const result = new Map<string, ToolActivity>()
@@ -39,6 +56,63 @@ export function workSubagentTools(sessionId: string, tools: ToolActivity[], runs
     })
   }
   return [...result.values()]
+}
+
+/**
+ * A child session is the durable identity of an @Agent mention.  Every resume
+ * creates a new run, so the list must group runs by childSessionId instead of
+ * presenting each round as a new agent.
+ */
+export function workSubagentGroups(sessionId: string, tools: ToolActivity[], runs: SubagentRun[]): WorkSubagentGroup[] {
+  const grouped = new Map<string, ToolActivity[]>()
+  const reconciled = workSubagentTools(sessionId, tools, runs)
+  const knownRuns = new Map(reconciled.flatMap(tool => tool.subagent ? [[tool.subagent.runId, tool.subagent] as const] : []))
+  for (const tool of reconciled) {
+    const args = workSubagentArgs(tool.args)
+    const pendingResume = typeof args.resumeRunId === 'string' ? knownRuns.get(args.resumeRunId) : undefined
+    const childSessionId = tool.subagent?.childSessionId || pendingResume?.childSessionId
+    const key = childSessionId ? `child:${childSessionId}` : `legacy:${tool.id}`
+    const bucket = grouped.get(key)
+    if (bucket) bucket.push(tool)
+    else grouped.set(key, [tool])
+  }
+  return [...grouped.entries()]
+    .map(([key, entries]) => {
+      const ordered = [...entries].sort((a, b) =>
+        (b.subagent?.createdAt ?? b.startedAt ?? (b.state === 'running' ? Number.MAX_SAFE_INTEGER : 0)) -
+        (a.subagent?.createdAt ?? a.startedAt ?? (a.state === 'running' ? Number.MAX_SAFE_INTEGER : 0)) ||
+        (b.subagent?.updatedAt ?? b.finishedAt ?? 0) - (a.subagent?.updatedAt ?? a.finishedAt ?? 0))
+      const latest = ordered[0]
+      const run = ordered.find(tool => tool.subagent)?.subagent
+      return {
+        key,
+        childSessionId: run?.childSessionId || '',
+        label: run?.agentName?.trim() || workSubagentName(latest),
+        modelId: run?.modelId || '',
+        active: entries.some((tool) => tool.subagent ? ['queued', 'running', 'cancelling'].includes(tool.subagent.status) : tool.state === 'running'),
+        latest,
+        tools: ordered
+      }
+    })
+    .sort((a, b) => (b.latest.subagent?.updatedAt ?? 0) - (a.latest.subagent?.updatedAt ?? 0))
+}
+
+/** A preparation announcement receives its durable child identity asynchronously. */
+export function resolveWorkSubagentGroup(groups: WorkSubagentGroup[], selectedKey: string | null): WorkSubagentGroup | undefined {
+  if (!selectedKey) return undefined
+  const exact = groups.find(group => group.key === selectedKey)
+  if (exact || !selectedKey.startsWith('legacy:')) return exact
+  const parentToolCallId = selectedKey.slice('legacy:'.length)
+  return groups.find(group => group.tools.some(tool => tool.id === parentToolCallId || tool.subagent?.parentToolCallId === parentToolCallId))
+}
+
+export function workSubagentName(tool: ToolActivity): string {
+  const run = tool.subagent
+  const agentName = run?.agentName?.trim() || ''
+  if (agentName) return agentName
+  const role = run?.continuation?.role ? workSubagentRole(JSON.stringify({ role: run.continuation.role })) : workSubagentRole(tool.args)
+  const description = workSubagentArgs(tool.args).description
+  return role === '子代理' ? run?.description || (typeof description === 'string' ? description.trim() : '') || '协作代理' : role
 }
 
 export function buildWorkSubagentContinuation(run: SubagentRun, prompt: string): string {

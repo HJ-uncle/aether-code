@@ -131,10 +131,12 @@ function CompactToolRow({ call }: { call: SubagentToolCall }): JSX.Element {
 /** The run is the authority; a closed parent stream is not a child completion signal. */
 export function SubagentCard({
   tool,
-  sessionId
+  sessionId,
+  defaultOpen
 }: {
   tool: ToolActivity
   sessionId: string
+  defaultOpen?: boolean
 }): JSX.Element {
   const { engine, ready } = useApp()
   const remoteReadOnly = engine.snapshot.mode === 'remote'
@@ -156,7 +158,7 @@ export function SubagentCard({
   const failed = run
     ? ['failed', 'blocked', 'interrupted'].includes(run.status)
     : tool.state === 'error'
-  const open = manualOpen ?? (active || failed)
+  const open = manualOpen ?? defaultOpen ?? (active || failed)
   const status = toolStatusLabel(run ? { ...tool, subagent: run } : tool)
   const reason = run?.error?.message || tool.error || (failed && !run ? legacy.text : '')
   const goal = run?.task || (typeof args.task === 'string' ? args.task : '')

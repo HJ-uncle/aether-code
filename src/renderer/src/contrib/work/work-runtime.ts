@@ -16,14 +16,16 @@ import {
 } from '@renderer/core/engine/client'
 import { allowRoot, copyIntoWorkspace, pickFolder } from '@renderer/core/workspace/fs-client'
 import { isSupportedFile } from '@renderer/contrib/chat/useAttachments'
-import { buildMentionMessage, mentionToken, type Mention } from '@renderer/contrib/chat/mention-context'
+import { mentionToken, type Mention } from '@renderer/contrib/chat/mention-context'
+import { buildWorkAgentMessage } from './work-agent-collaboration'
 import { ATTACHMENTS_DIRECTORY } from '@shared/attachments'
 import { loadSessionThinkingMode, saveSessionThinkingMode, type SessionThinkingMode } from '../chat/session-thinking-store'
 import { requestedThinkingMode } from '../chat/session-request-config'
 import { getMemoryScopeState } from '@renderer/core/engine/memory-store'
-import type { SubagentRun } from '@shared/subagent'
+import type { AgentCollaborator, SubagentRun } from '@shared/subagent'
 import { pollWorkTaskStatuses } from './work-status-poller'
 import { getAppMode } from '@renderer/core/platform/app-mode'
+import { useWorkAgentIdentity } from './work-agent-identity'
 import {
   flushWorkDrafts,
   getWorkDraft,
@@ -62,7 +64,9 @@ function scratchAttachmentPath(name: string): string {
   return `${ATTACHMENTS_DIRECTORY}/${stem}-${crypto.randomUUID()}${extension}`
 }
 
-/** Work owns its session IDs and drafts. The existing transport still uses the Code tool profile. */
+/** Work owns its session IDs and drafts. Its transport selects the general
+ * profile so task automation, Agent management, memory, MCP and skills are
+ * available without widening Code's programming-only registry. */
 export function useWorkController() {
   const { settings, ready: engineReady } = useApp()
   const source = getEngineStorageKey()
@@ -72,6 +76,8 @@ export function useWorkController() {
   const { models } = useModels()
   const activeTask = state.tasks.find((task) => task.id === state.activeTaskId) ?? null
   const activeId = activeTask?.id ?? null
+  const agentId = activeTask ? activeTask.agentId ?? '' : state.homeAgentId
+  const agentIdentity = useWorkAgentIdentity(agentId, engineReady)
   const securitySessionId = activeId ?? state.homeSessionId ?? null
   const [thinkingSelection, setThinkingSelection] = useState<{ source: string; id: string; mode: SessionThinkingMode } | null>(null)
   const thinkingFor = (id: string): SessionThinkingMode =>
@@ -224,7 +230,7 @@ export function useWorkController() {
   )
 
   const sendTask = useCallback(
-    async (task: WorkTask, text: string, mentions: Mention[] = task.mentions ?? [], preserveDraft = false): Promise<void> => {
+    async (task: WorkTask, text: string, mentions: Mention[] = task.mentions ?? [], preserveDraft = false, collaborators?: AgentCollaborator[]): Promise<void> => {
       assertEngineSource(epoch)
       if (sendingTaskIdsRef.current.has(task.id)) return
       sendingTaskIdsRef.current.add(task.id)
@@ -240,7 +246,12 @@ export function useWorkController() {
         preserveDraft
       })
       try {
-        await chatSend(buildMentionMessage(text, mentions), optionsFor(preserveDraft ? { ...task, attachments: [] } : task))
+        const prepared = buildWorkAgentMessage(text, mentions)
+        const delegation = collaborators ?? prepared.collaborators
+        await chatSend(prepared.message, {
+          ...optionsFor(preserveDraft ? { ...task, attachments: [] } : task),
+          ...(delegation.length ? { collaborators: delegation } : {})
+        })
         if (epoch !== getEngineSource()) return
         // A follow-up from the Agent panel is independent of an unsent composer
         // draft. Its attachments and mention offsets must stay untouched.
@@ -319,6 +330,11 @@ export function useWorkController() {
 
   const restored = loaded?.source === source && loaded.epoch === epoch && loaded.id === activeId
   const messages = restored ? chat.messages : []
+  const preparing = Boolean(activeId && pendingStart.current?.source === source && pendingStart.current.id === activeId)
+  const agentLocked = Boolean(activeTask && (activeTask.agentLocked || activeTask.status !== 'draft' || messages.length > 0 || preparing))
+  const workspaceLocked = isRemoteEngine() || Boolean(activeTask
+    ? activeTask.status !== 'draft' || activeTask.attachments.length || preparing
+    : state.homeAttachments.length)
   const streaming = Boolean(restored && (chat.streaming || sending))
   const artifacts = useMemo(() => workArtifacts(messages), [messages])
   const pending = useMemo(
@@ -479,12 +495,12 @@ export function useWorkController() {
   )
   const setAgent = useCallback(
     (agentId: string): boolean => {
-      if (activeTask && (activeTask.agentLocked || activeTask.status !== 'draft' || messages.length > 0)) return false
+      if (agentLocked || (activeId && pendingStart.current?.source === source && pendingStart.current.id === activeId)) return false
       if (activeId) updateTask(activeId, { agentId: agentId || undefined })
       else updateWorkState(source, (previous) => ({ ...previous, homeAgentId: agentId }))
       return true
     },
-    [activeId, activeTask, messages.length, source, updateTask]
+    [activeId, agentLocked, source, updateTask]
   )
   const resources = activeTask ? activeTask.resources ?? { skills: [], mcpServers: [], knowledgeBases: [] } : state.homeResources
   const setResource = useCallback((kind: 'skill' | 'mcp' | 'kb', id: string): void => {
@@ -537,6 +553,13 @@ export function useWorkController() {
 
   const stop = useCallback(async (): Promise<void> => {
     if (!activeTask || !engineReady) return
+    // The user can stop before the first stream exists. Clearing the queued
+    // start prevents the history preflight from launching it after this click.
+    if (pendingStart.current?.source === source && pendingStart.current.id === activeTask.id) {
+      pendingStart.current = null
+      updateTask(activeTask.id, { status: 'stopped', updatedAt: Date.now() })
+      return
+    }
     invalidateStatusProbe(activeTask.id)
     stoppingTaskIdsRef.current.add(activeTask.id)
     setError(null)
@@ -557,7 +580,7 @@ export function useWorkController() {
       stoppingTaskIdsRef.current.delete(activeTask.id)
       invalidateStatusProbe(activeTask.id)
     }
-  }, [activeTask, engineReady, chat.streaming, abort, epoch, resumeStream])
+  }, [activeTask, engineReady, chat.streaming, abort, epoch, resumeStream, source, updateTask])
 
   const continueSubagent = useCallback(async (run: SubagentRun, instruction: string): Promise<void> => {
     if (!activeTask || !instruction.trim()) throw new Error('请输入继续交给子代理的工作')
@@ -573,8 +596,7 @@ export function useWorkController() {
       throw new Error('当前任务正在执行或等待确认，请完成后再继续子代理')
     if (['queued', 'running', 'cancelling'].includes(current.status)) throw new Error('这个子代理仍在运行，请等待本轮结束')
     if (sendingTaskIdsRef.current.has(activeTask.id)) throw new Error('当前任务已有请求正在发送')
-    const prompt = `请继续已有子代理的工作，保留它的上下文。调用 subagent 工具并使用以下参数，不要创建一个替代子代理：\n${JSON.stringify({ resumeRunId: current.runId, task: instruction.trim(), description: current.description }, null, 2)}\n完成后汇总结果。`
-    await sendTaskRef.current(task, prompt, [], true)
+    await sendTaskRef.current(task, instruction.trim(), [], true, [{ resumeRunId: current.runId }])
   }, [activeTask, engineReady, restored, isHistoryReady, streaming, pending.length, uploadCount, epoch, source, sendTask])
 
   const stopTask = useCallback(async (id: string): Promise<void> => {
@@ -685,7 +707,7 @@ export function useWorkController() {
       setError('远端任务使用独立沙箱，不能选择本机目录。')
       return
     }
-    if (activeTask && (activeTask.status !== 'draft' || activeTask.attachments.length)) {
+    if (activeTask && (workspaceLocked || (pendingStart.current?.source === source && pendingStart.current.id === activeTask.id))) {
       setError('任务开始或添加资料后，工作目录保持固定。请新建任务以使用另一个目录。')
       return
     }
@@ -696,12 +718,23 @@ export function useWorkController() {
     try {
       const root = await pickFolder()
       if (!root || epoch !== getEngineSource()) return
+      // Folder selection is asynchronous. A task may be sent while the native
+      // picker is open; recheck its current scope before applying the result.
+      const latest = getWorkState(source)
+      const latestTask = activeId ? latest.tasks.find(task => task.id === activeId) : null
+      if (latest.activeTaskId !== activeId || (latestTask
+        ? latestTask.status !== 'draft' || latestTask.attachments.length ||
+          (pendingStart.current?.source === source && pendingStart.current.id === activeId)
+        : latest.homeAttachments.length)) {
+        setError('任务或资料状态已变化，工作目录保持固定。请新建任务以使用另一个目录。')
+        return
+      }
       if (activeId) updateTask(activeId, { workspacePath: root })
       else updateWorkState(source, (previous) => ({ ...previous, homeWorkspacePath: root }))
     } catch (cause) {
       setError(messageOf(cause))
     }
-  }, [activeTask, activeId, state.homeAttachments.length, epoch, source, updateTask, uploadCount])
+  }, [activeTask, activeId, workspaceLocked, state.homeAttachments.length, epoch, source, updateTask, uploadCount])
 
   const addFiles = useCallback(
     async (files: File[]): Promise<void> => {
@@ -843,8 +876,10 @@ export function useWorkController() {
     attachments: activeTask?.attachments ?? state.homeAttachments,
     sources: activeTask?.sources ?? [],
     workspacePath: activeTask ? activeTask.workspacePath : state.homeWorkspacePath,
-    agentId: activeTask ? activeTask.agentId ?? '' : state.homeAgentId,
-    agentLocked: Boolean(activeTask && (activeTask.agentLocked || activeTask.status !== 'draft' || messages.length > 0)),
+    agentId,
+    agentIdentity,
+    agentLocked,
+    workspaceLocked,
     get mentions() { return getWorkDraft(source, activeId).mentions },
     utilityModel: settings.utilityModelId,
     resources,
@@ -858,6 +893,7 @@ export function useWorkController() {
     artifacts,
     pending,
     streaming,
+    launching: Boolean(engineReady && !error && !chat.historyError && activeId && pendingStart.current?.source === source && pendingStart.current.id === activeId),
     remote: isRemoteEngine(),
     ready: engineReady,
     loading: Boolean(activeId && engineReady && !restored),

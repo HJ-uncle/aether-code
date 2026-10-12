@@ -1,10 +1,12 @@
 import { useMemo, useState, useSyncExternalStore, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
+import { toast } from '@renderer/core/toast'
 import type { EngineFileChange } from '@shared/ipc'
 import { getRevertOutcome, revertStatusLabel, subscribeReverts } from '@renderer/core/engine/change-revert'
 import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { openFileFromChat } from './open-file'
+import type { ChatFileContext } from './chat-link'
 import { useCollapseMemory } from './useCollapseMemory'
 import {
   FILE_CHANGE_PREVIEW_ROWS,
@@ -31,10 +33,14 @@ import {
  */
 export function FileChangeCard({
   change,
-  state
+  state,
+  fileContext,
+  onOpenFile
 }: {
   change: EngineFileChange
   state: 'running' | 'done' | 'error' | 'unknown' | 'cancelled' | 'waiting' | 'interrupted'
+  fileContext?: ChatFileContext
+  onOpenFile?: (path: string) => void
 }): JSX.Element {
   const { engine } = useApp()
   const remoteReadOnly = engine.snapshot.mode === 'remote'
@@ -100,14 +106,18 @@ export function FileChangeCard({
         <button
           type="button"
           className="diff-card__path diff-card__path--link"
-          title={remoteReadOnly ? `远端路径（尚未映射）：${displayPath}` : `在编辑器中打开 ${displayPath}`}
-          disabled={remoteReadOnly}
+          title={onOpenFile ? `查看文件 ${displayPath}` : remoteReadOnly ? `远端路径（尚未映射）：${displayPath}` : `在编辑器中打开 ${displayPath}`}
+          disabled={remoteReadOnly && !onOpenFile}
           onClick={(event) => {
             // 阻止冒泡到头部：点路径是打开文件，不是折叠卡片
             event.preventDefault()
             event.stopPropagation()
+            const path = change.path || displayPath
+            if (onOpenFile) { onOpenFile(path); return }
             if (remoteReadOnly) return
-            void openFileFromChat(change.path || displayPath)
+            void openFileFromChat(path, fileContext).catch(error => {
+              toast.error(`打开文件失败：${error instanceof Error ? error.message : String(error)}`)
+            })
           }}
         >
           {shortPath}

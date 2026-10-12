@@ -1,5 +1,6 @@
-/** Real Electron chat regression: compact change hunks and paging, file-card defaults
- * and keyboard toggles, long rows, and tray/composer geometry across themes and widths.
+/** Real Electron chat regression: shared compact tool receipts, compact change
+ * hunks and paging, file-card defaults and keyboard toggles, long rows, and
+ * tray/composer geometry across themes and widths.
  * History is served through the production remote snapshot API, not injected DOM. */
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { createServer, type Server } from 'node:http'
@@ -39,12 +40,16 @@ const todos: EngineTodo[] = [
   { id: 'todo-1', title: '完成消息列表样式', status: 'done', priority: 'medium' },
   { id: 'todo-2', title: '检查文件卡片与输入区对齐', status: 'done', priority: 'medium' }
 ]
+const compactReadPath = 'src/compact-result-with-a-long-name.ts'
+const compactReadOutput = `WORK_CODE_COMPACT_BEGIN\n${'unaltered-long-result-'.repeat(130)}\n${Array.from({ length: 400 }, (_, index) => `line ${index}: export const original${index} = ${index};`).join('\n')}\nWORK_CODE_COMPACT_END`
 const history: EngineHistoryRow[] = [
   { id: 'user', role: 'user', content: '聊天消息布局回归', conversationId: 'layout-turn' },
   ...changes.flatMap((change): EngineHistoryRow[] => [
     { id: `assistant-${change.id}`, role: 'assistant', conversationId: 'layout-turn', toolCall: { id: `tool-${change.id}`, name: change.kind === 'delete' ? 'delete_file' : 'write_file', args: { path: change.displayPath } } },
     { role: 'tool', toolCallId: `tool-${change.id}`, content: 'ok', metadata: { success: true, change } }
-  ])
+  ]),
+  { id: 'assistant-read-compact', role: 'assistant', conversationId: 'layout-turn', toolCall: { id: 'tool-read-compact', name: 'read_file', args: { path: compactReadPath } } },
+  { role: 'tool', toolCallId: 'tool-read-compact', content: compactReadOutput, metadata: { success: true, durationMs: 51 } }
 ]
 const snapshot: ChatRecoverySnapshot = {
   schemaVersion: 1, source: 'persisted', sessionId, eventId: null, finished: true,
@@ -294,5 +299,67 @@ test.describe.serial('消息文件卡片与任务托盘布局', () => {
     await expect(created.locator('.diff-card__gap')).toHaveCount(0)
     await expect(created.locator('.diff-card__more')).toHaveCount(0)
     await expect(created.locator('.diff-card__add')).toHaveText('+126')
+  })
+
+  test('Code 使用共享紧凑工具行，原文按需展开且深浅主题窄窗无溢出', async ({}, testInfo) => {
+    await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(940, 800))
+    const backgrounds: string[] = []
+    for (const [width, appearance] of [[280, 'dark'], [380, 'light']] as const) {
+      // Apply through the real settings UI; writing settings IPC alone does
+      // not prove the renderer received and displayed the selected theme.
+      await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+      const codeSurface = page.locator('.mode-surface[data-mode="code"]')
+      const settings = codeSurface.locator('.app-settings')
+      await expect(settings).toBeVisible()
+      await settings.getByRole('tablist', { name: '设置分区', exact: true }).getByRole('tab', { name: '外观', exact: true }).click()
+      await settings.getByRole('radio', { name: appearance === 'dark' ? '深色' : '浅色', exact: true }).click()
+      await expect(page.locator('html')).toHaveAttribute('data-appearance', appearance)
+      await codeSurface.getByRole('button', { name: '关闭 设置', exact: true }).click()
+      await expect(settings).toBeHidden()
+      await reloadPanel(width)
+      await expect(page.locator('html')).toHaveAttribute('data-appearance', appearance)
+      const group = page.locator('.process').filter({ hasText: '工具调用 1' })
+      await expect(group).toHaveCount(1)
+      await expect(group.locator('.process__summary')).toHaveAttribute('aria-expanded', 'false')
+      await group.locator('.process__summary').click()
+      const row = group.locator('.compact-tool-row[data-tool-id="tool-read-compact"]')
+      const toggle = row.locator('button.logline')
+      await expect(row).toHaveAttribute('data-tool-state', 'done')
+      await expect(toggle).toContainText('读取文件')
+      await expect(toggle).toContainText('成功')
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+      await expect(row.locator('.logline__detail')).toHaveCount(0)
+      await toggle.focus()
+      await toggle.press('Enter')
+      await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+      const output = row.locator('.logline__detail > pre')
+      await expect(output).toHaveJSProperty('textContent', compactReadOutput)
+      await expect(row.locator('.md-code, .work-inline-activity__text')).toHaveCount(0)
+      await expect.poll(() => output.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
+      const metrics = await row.evaluate(element => {
+        const button = element.querySelector('button.logline')
+        const pre = element.querySelector('pre')
+        if (!button || !pre) throw new Error('Missing compact receipt layout')
+        return { rowOverflow: element.scrollWidth - element.clientWidth,
+          lineHeight: button.getBoundingClientRect().height,
+          outputHeight: pre.getBoundingClientRect().height,
+          background: getComputedStyle(pre).backgroundColor }
+      })
+      expect(metrics.lineHeight).toBeLessThanOrEqual(28)
+      expect(metrics.outputHeight).toBeLessThanOrEqual(260)
+      expect(metrics.rowOverflow, `${width}px 面板工具结果不能越出消息容器`).toBeLessThanOrEqual(2)
+      backgrounds.push(metrics.background)
+      await output.evaluate(element => { element.scrollTop = element.scrollHeight })
+      await expect.poll(() => output.evaluate(element => element.scrollTop + element.clientHeight >= element.scrollHeight - 2)).toBe(true)
+      const screenshot = testInfo.outputPath(`code-compact-tools-${width}-${appearance}.png`)
+      await page.screenshot({ path: screenshot, animations: 'disabled' })
+      await testInfo.attach(`Code 紧凑工具 ${width}px ${appearance}`, { path: screenshot, contentType: 'image/png' })
+      await toggle.press('Space')
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+      await expect(row.locator('.logline__detail')).toHaveCount(0)
+    }
+    expect(backgrounds[0], '深浅主题必须实际呈现不同的工具结果背景').not.toBe(backgrounds[1])
+    // Adding an ordinary read receipt must not alter file-card defaults/count.
+    await expectDefaultCards()
   })
 })

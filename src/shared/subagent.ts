@@ -48,6 +48,9 @@ export interface SubagentRun {
   parentToolCallId: string
   childSessionId: string
   resumeFromRunId?: string
+  /** Custom Agent identity; childSessionId remains the persistent context identity. */
+  agentId?: string
+  agentName?: string
   /** Display-only capability metadata; enforcement remains in the engine. */
   continuation?: { role?: string; readOnly: boolean }
   task: string
@@ -68,6 +71,12 @@ export interface SubagentRun {
   usage: SubagentUsage
   toolCalls: SubagentToolCall[]
   transcriptRef?: string
+}
+
+/** Explicit user delegation, separate from the immutable main Agent binding. */
+export interface AgentCollaborator {
+  agentId?: string
+  resumeRunId?: string
 }
 
 export interface SubagentEvent {

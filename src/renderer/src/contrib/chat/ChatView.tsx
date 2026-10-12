@@ -1,7 +1,7 @@
 import { CommandJobCard } from './CommandJobCard'
 import { ContextUsageBar, RollingContextNumber, useReducedContextMotion } from './ContextUsageMotion'
 import { exportCommandJob, visibleChildCommandJobs } from '@renderer/core/engine/command-job-state'
-import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { createPortal } from 'react-dom'
 import { useApp } from '@renderer/core/app-context'
 import { useChat, type ChatMessage, type ToolActivity } from '@renderer/core/engine/useChat'
@@ -12,16 +12,16 @@ import { SessionTray } from './SessionTray'
 import { FileChangeCard } from './FileChangeCard'
 import { SubagentCard } from './SubagentCard'
 import { exportSubagentDetails, toolStatusLabel } from '@renderer/core/engine/subagent-state'
-import { exportToolDiagnostics, toolFailureMessage } from '@renderer/core/engine/tool-feedback'
+import { exportToolDiagnostics } from '@renderer/core/engine/tool-feedback'
 import { Markdown } from './Markdown'
+import { UserMessageContent } from './UserMessageContent'
 import { getSessionMeta, subscribeSessionMeta } from '../history/session-meta'
 import type { ChatFileContext } from './chat-link'
-import { toolDisplayName, toolParamSummary, toolPathArg } from './tool-names'
-import { ToolResult } from './ToolResult'
-import { parseToolResult, type ParsedToolResult } from './tool-result'
+import { toolDisplayName, toolParamSummary } from './tool-names'
+import { CompactToolRow } from './CompactToolRow'
+import { toolPresentation } from './tool-presentation'
 import { useCollapseMemory } from './useCollapseMemory'
 import { registerPendingSession, requestSessionListRefresh, touchPendingSession } from '../history/pending-sessions'
-import { openFileFromChat } from './open-file'
 import { useModels } from '@renderer/core/engine/model-store'
 import { DEFAULT_CONTEXT_WINDOW_TOKENS } from '@renderer/core/engine/models'
 import { contextPresentation, contextPresentationLimit } from './context-presentation'
@@ -244,14 +244,10 @@ function AttachmentChip({
 import { MentionInput, type Mention, type MentionInputHandle } from './MentionInput'
 import { loadChatDraftState, saveChatDraft } from './draft-store'
 import {
-  MENTION_META,
   buildMentionMessage,
-  mentionTitle,
-  parseMentionContent,
   preserveMentions,
   userMessageDraft,
-  userMessageText,
-  type PromptRef
+  userMessageText
 } from './mention-context'
 import { FileRefPalette } from './FileRefPalette'
 import { consumePendingMentions, subscribePendingMentions } from './pending-mentions'
@@ -2013,98 +2009,6 @@ function serializeMessages(selected: ChatMessage[]): string {
     .join('\n\n---\n\n')
 }
 
-/**
- * 用户消息气泡正文。
- *
- * 落库的是「发给 AI 的原文」：引用标签已被替换成 `<reference>` 原数据块，末尾还挂着
- * 一行机器数据注释（下标）——这些都是给机器看的，不该糊到用户脸上。这里按注释里的
- * 下标把整段替换内容收成一枚行内标签，显示成与输入框同款样式的 chip；没有注释的
- * 历史消息（旧协议在文末追加说明块）退化成清洗后的纯文本。
- *
- * 按下标切、不做文本匹配：`@public` 后面紧跟用户打的内容时，文本匹配必然串位。
- */
-const USER_COLLAPSED_LINES = 8
-
-const UserBubbleContent = memo(function UserBubbleContent({ content }: { content: string }): JSX.Element {
-  const segments = useMemo(() => {
-    const { body, refs } = parseMentionContent(content)
-    if (!refs.length) return [{ text: userMessageText(content), ref: null }]
-    const out: { text: string; ref: PromptRef | null }[] = []
-    let cursor = 0
-    for (const ref of refs) {
-      if (ref.s > cursor) out.push({ text: body.slice(cursor, ref.s), ref: null })
-      out.push({ text: ref.d, ref })
-      cursor = ref.e
-    }
-    if (cursor < body.length) out.push({ text: body.slice(cursor), ref: null })
-    return out
-  }, [content])
-
-  const contentRef = useRef<HTMLDivElement>(null)
-  const contentId = `user-message-content-${useId().replace(/:/g, '')}`
-  const [expanded, setExpanded] = useState(false)
-  const [overflowing, setOverflowing] = useState(false)
-
-  useLayoutEffect(() => {
-    setExpanded(false)
-    const element = contentRef.current
-    if (!element) return
-
-    const measure = (): void => {
-      const style = getComputedStyle(element)
-      const lineHeight = Number.parseFloat(style.lineHeight)
-      const maxHeight = Number.isFinite(lineHeight) ? lineHeight * USER_COLLAPSED_LINES : element.clientHeight
-      setOverflowing(element.scrollHeight > maxHeight + 1)
-    }
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [content])
-
-  return (
-    <>
-      <div
-        id={contentId}
-        ref={contentRef}
-        className={`message__bubble-content${overflowing && !expanded ? ' is-collapsed' : ''}`}
-      >
-        {segments.map((segment, index) =>
-          segment.ref ? (
-            <span
-              key={index}
-              className={`mention-chip mention-chip--${segment.ref.t}`}
-              style={{ color: MENTION_META[segment.ref.t].color }}
-              title={mentionTitle({
-                source: segment.ref.t,
-                path: segment.ref.p,
-                startLine: segment.ref.r?.[0],
-                endLine: segment.ref.r?.[1]
-              })}
-            >
-              {segment.ref.d}
-            </span>
-          ) : (
-            <span key={index}>{segment.text}</span>
-          )
-        )}
-      </div>
-      {overflowing ? (
-        <button
-          type="button"
-          className="message__collapse-toggle"
-          aria-expanded={expanded}
-          aria-controls={contentId}
-          onClick={() => setExpanded(value => !value)}
-        >
-          <span>{expanded ? '收起' : '显示更多'}</span>
-          <Icon name={expanded ? 'chevron-up' : 'chevron-down'} size={14} />
-        </button>
-      ) : null}
-    </>
-  )
-})
-
 const MessageItem = memo(function MessageItem({
   message,
   sessionId,
@@ -2252,7 +2156,7 @@ const MessageItem = memo(function MessageItem({
         <div className="message__bubble-wrap">
           {actions}
           <div className="message__bubble">
-            <UserBubbleContent content={message.content} />
+            <UserMessageContent content={message.content} />
           </div>
           {message.attachments && message.attachments.length > 0 ? (
             <div className="message__attachments">
@@ -2326,18 +2230,6 @@ const MessageItem = memo(function MessageItem({
     </article>
   )
 })
-
-// Tool objects are immutable. Cache decoded presentation without retaining old
-// sessions, so streaming text does not repeatedly parse a large screenshot.
-const toolPresentations = new WeakMap<ToolActivity, ParsedToolResult>()
-function toolPresentation(tool: ToolActivity): ParsedToolResult {
-  let result = toolPresentations.get(tool)
-  if (!result) {
-    result = parseToolResult(tool.result)
-    toolPresentations.set(tool, result)
-  }
-  return result
-}
 
 /** 图片与全尺寸卡片保留在时间线中，过程块收起也能看到工具产出的图片。 */
 function isFullSizeTool(tool: ToolActivity): boolean {
@@ -2740,78 +2632,6 @@ function ThinkingRow({
             onScroll={syncDetailFollow}
             onWheel={(event) => event.stopPropagation()}
           >{text}</pre>
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-/** 含图片的工具结果默认展示，其它工具保留按需展开的紧凑日志。 */
-function CompactToolRow({ tool }: { tool: ToolActivity }): JSX.Element {
-  const { engine } = useApp()
-  const remoteReadOnly = engine.snapshot.mode === 'remote'
-  // key 用 toolUseId：分页回收/切换会话后恢复用户手动的展开选择
-  const [memory, setMemory] = useCollapseMemory(`tool:${tool.id}`)
-  const result = toolPresentation(tool)
-  const open = memory ?? result.images.length > 0
-  const label = toolDisplayName(tool.name)
-  const summary = toolParamSummary(tool.args)
-  const failure = toolFailureMessage(tool)
-  const hasDetail = Boolean(tool.result || failure)
-  // 摘要恰是文件路径时（读取/写入文件等），点摘要直接在编辑器里打开该文件
-  const pathArg = toolPathArg(tool.args)
-  const openablePath = !remoteReadOnly && pathArg && summary === pathArg ? pathArg : null
-
-  return (
-    <div className="logline-wrap">
-      <button
-        type="button"
-        className={`logline${hasDetail ? '' : ' logline--static'}`}
-        aria-expanded={open}
-        disabled={!hasDetail}
-        onClick={() => setMemory(!open)}
-      >
-        <span
-          className={`logline__dot logline__dot--${tool.state === 'running' ? 'running' : tool.state === 'done' ? 'done' : 'error'}`}
-          title={toolStatusLabel(tool)}
-        />
-        <span className={`logline__name${tool.state === 'error' ? ' logline__name--error' : ''}`}>
-          {label}
-        </span>
-        <span className="pending-card__hint">{toolStatusLabel(tool)}{tool.durationMs !== undefined ? ` · ${tool.durationMs} ms` : ''}</span>
-        {summary ? (
-          openablePath ? (
-            <span
-              role="button"
-              tabIndex={-1}
-              className="logline__summary logline__summary--link"
-              title={`在编辑器中打开 ${openablePath}`}
-              onClick={(event) => {
-                // 点摘要是打开文件，不触发展开/收起
-                event.stopPropagation()
-                void openFileFromChat(openablePath)
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.stopPropagation()
-                  void openFileFromChat(openablePath)
-                }
-              }}
-            >
-              {summary}
-            </span>
-          ) : (
-            <span className="logline__summary" title={summary}>
-              {summary}
-            </span>
-          )
-        ) : null}
-        {hasDetail ? <Icon name="chevron" size={16} className="logline__chevron" /> : null}
-      </button>
-      {open && hasDetail ? (
-        <div className="logline__detail">
-          {failure ? <div className="message__error">{failure}</div> : null}
-          {tool.result ? <ToolResult parsed={result} toolName={tool.name} /> : null}
         </div>
       ) : null}
     </div>

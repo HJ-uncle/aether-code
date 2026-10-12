@@ -26,6 +26,7 @@ import { IconButton, SectionHeading, Spinner } from '@renderer/workbench/ui-prim
 import { Select } from '@renderer/workbench/Select'
 import { openAppSettings } from '../settings/app-settings-navigation'
 import { Markdown } from '../chat/Markdown'
+import { UserMessageContent } from '../chat/UserMessageContent'
 import { FileChangeCard } from '../chat/FileChangeCard'
 import { computeLineDiff, diffForDeletedFile, diffForNewFile, diffStats } from '../chat/diff'
 import { FileGlyph } from '../explorer/FileGlyph'
@@ -39,6 +40,7 @@ import { WorkTaskActions } from './WorkTaskActions'
 import { WorkArtifactPanel } from './WorkArtifactPanel'
 import { WorkGitPanel } from './WorkGitPanel'
 import { WorkSubagentsPanel } from './WorkSubagentsPanel'
+import { WorkInlineActivity } from './WorkInlineActivity'
 import { WorkAgentManager } from './WorkAgentManager'
 import { workMessageTimeline, workToolTarget } from './work-message-timeline'
 import { WORK_ACTIVITY_PAGE_SIZE, WORK_MESSAGE_PAGE_SIZE, WORK_TASK_PAGE_SIZE, workMessageStart, workPageRange, workPaneRatio, workToolSnapshot, type WorkToolSnapshot } from './work-view-performance'
@@ -499,6 +501,18 @@ export function WorkView(): JSX.Element {
                 >
                   {task.workspacePath ? filename(task.workspacePath) : '独立任务'}
                 </span>
+                <button
+                  type="button"
+                  className="work-task-heading__agent"
+                  aria-label="查看 Agent 配置"
+                  title={controller.agentIdentity.error
+                    ? `${controller.agentIdentity.error} · Agent ID：${controller.agentId}`
+                    : `${controller.agentIdentity.name || '正在读取 Agent'}${controller.agentLocked ? ' · 当前任务使用的 Agent 已固定' : ''}`}
+                  onClick={() => navigate('agents')}
+                >
+                  <Icon name={controller.agentId ? 'account-outline' : 'sparkles'} size={14} />
+                  <span>{controller.agentIdentity.name || (controller.agentIdentity.loading ? '正在读取 Agent…' : 'Agent 配置不可用')}</span>
+                </button>
               </div>
               <div className="work-task-heading__actions">
                 <TaskStatus status={task.status} />
@@ -672,10 +686,12 @@ export function WorkView(): JSX.Element {
         ) : view.page === 'connections' ? (
           <Connections ready={controller.ready} />
         ) : view.page === 'agents' ? (
-          <div className="work-page"><div className="work-page__inner"><WorkAgentManager
+          <div className="work-page work-page--agents"><div className="work-page__inner work-page__inner--agents"><WorkAgentManager
             key={getEngineSource()}
             standalone
-            workspacePath={controller.activeTask?.workspacePath}
+            returnToTask={Boolean(task)}
+            onClose={() => set({ page: 'home' })}
+            workspacePath={controller.workspacePath}
             selectedId={controller.agentId}
             locked={controller.agentLocked}
             onSelect={agent => {
@@ -798,6 +814,11 @@ function Conversation({
   controllerRef.current = controller
   const fileContext = useMemo<ChatFileContext>(() => ({ sessionId: task.id, workspaceRoot: task.workspacePath }), [task.id, task.workspacePath])
   const onFileLink = useCallback((event: MouseEvent<HTMLElement>): void => openWorkFileLink(event, controllerRef.current, engine.snapshot.baseUrl, openArtifact), [engine.snapshot.baseUrl, openArtifact])
+  const openActivityFile = useCallback((path: string): void => {
+    const active = controllerRef.current
+    const artifact = findWorkArtifact(active.artifacts, path, active.activeTask?.workspacePath)
+    openArtifact(artifact?.id ?? `path:${path}`)
+  }, [openArtifact])
   const respond = useCallback<WorkController['respond']>((...args) => controllerRef.current.respond(...args), [])
   const [firstId, setFirstId] = useState<string | null>(() => conversationPositions.get(positionKey)?.firstId ?? null)
   const expandedHistory = useRef(conversationPositions.get(positionKey)?.expanded ?? false)
@@ -841,7 +862,7 @@ function Conversation({
     const element = scrollRef.current
     if (element && followRef.current && element.clientHeight)
       element.scrollTop = element.scrollHeight
-  }, [controller.messages, controller.loading, mode, firstId])
+  }, [controller.messages, controller.loading, controller.streaming, controller.launching, mode, firstId])
   useEffect(() => {
     const element = scrollRef.current
     if (!element) return
@@ -868,6 +889,14 @@ function Conversation({
     setFollowing(false)
     setFirstId(controller.messages[Math.max(0, start - WORK_MESSAGE_PAGE_SIZE)].id)
   }
+  const inspectActivity = (target: EventTarget | null): void => {
+    // Code's shared file cards activate with a role=button, including keyboard
+    // events. All disclosures represent reading intent, regardless of markup.
+    if (target instanceof Element && target.closest('.work-inline-activity button, .work-inline-activity [role="button"], .message__collapse-toggle')) {
+      followRef.current = false
+      setFollowing(false)
+    }
+  }
   return (
     <section className="work-conversation" aria-label="协作对话">
       <div className="work-conversation__toolbar">
@@ -890,6 +919,10 @@ function Conversation({
       <div
         className="work-conversation__scroll"
         ref={scrollRef}
+        onClickCapture={(event) => inspectActivity(event.target)}
+        onKeyDownCapture={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') inspectActivity(event.target)
+        }}
         onScroll={(event) => {
           const node = event.currentTarget
           if (!node.clientHeight) return
@@ -900,13 +933,13 @@ function Conversation({
       >
         <div className="work-conversation__content">
           {start > 0 && <button type="button" className="btn btn--sm work-history-load" onClick={loadEarlier}>查看更早消息（{start} 条）</button>}
-          {controller.loading && (
+          {controller.loading && !controller.launching && (
             <div className="work-loading">
               <Spinner />
               正在读取任务…
             </div>
           )}
-          {!controller.loading && !controller.messages.length && (
+          {!controller.loading && !controller.streaming && !controller.launching && !controller.messages.length && (
             <EmptyState
               icon="chat"
               title="一起完成这项工作"
@@ -919,10 +952,12 @@ function Conversation({
               message={message}
               fileContext={fileContext}
               onFileLink={onFileLink}
+              openFile={openActivityFile}
               respond={respond}
               openActivity={openActivity}
             />
           ))}
+          <WorkTurnFeedback controller={controller} openActivity={openActivity} />
         </div>
       </div>
       <div className="work-conversation__footer">
@@ -939,33 +974,36 @@ function Conversation({
   )
 }
 
-/** Keep execution feedback beside the composer even while the user reads older messages. */
-function WorkRunStatus({ controller }: { controller: WorkController }): JSX.Element | null {
+/** Only real engine events change the phase; elapsed time never invents progress. */
+function useWorkRunFeedback(controller: WorkController) {
   const mode = useAppMode()
   const [now, setNow] = useState(Date.now)
-  const [stopping, setStopping] = useState(false)
   const waiting = controller.pending.length > 0
-  const active = controller.streaming || waiting
+  const active = controller.streaming || controller.launching || waiting
   const message = controller.messages.findLast((item) => item.role === 'assistant')
   const current = message && ['streaming', 'waiting'].includes(message.status) ? message : null
   const startedAt = current?.run?.startedAt ?? current?.startedAt ?? current?.createdAt
+    ?? (controller.launching ? controller.activeTask?.createdAt : undefined)
   const running = current
     ? [...current.tools].reverse().find((tool) => tool.state === 'running' && !tool.hidden)
     : null
   const compacting = current?.run?.compaction?.phase === 'running'
-  const phase = stopping
-    ? 'stopping'
+  const thinking = current?.items?.at(-1)?.kind === 'thinking' || Boolean(current && !current.items?.length && current.thinking && !current.content && !running)
+  const phase = controller.launching
+    ? 'preparing'
     : waiting
       ? 'waiting'
       : compacting
         ? 'compacting'
         : running
           ? 'tool'
-          : current?.content
-            ? 'generating'
-            : 'processing'
-  const label = stopping
-    ? '正在停止…'
+          : thinking
+            ? 'thinking'
+            : current?.content
+              ? 'generating'
+              : 'processing'
+  const label = controller.launching
+    ? '正在准备任务…'
     : waiting
       ? controller.pending.some((item) => item.kind === 'permission')
         ? '等待确认'
@@ -974,9 +1012,11 @@ function WorkRunStatus({ controller }: { controller: WorkController }): JSX.Elem
         ? '正在自动压缩上下文…'
         : running
           ? `${toolDisplayName(running.name)}…`
-          : current?.content
-            ? '正在生成回复…'
-            : '正在处理任务…'
+          : thinking
+            ? '正在思考…'
+            : current?.content
+              ? '正在生成回复…'
+              : '等待 Agent 响应…'
 
   useEffect(() => {
     if (!active || mode !== 'work') return
@@ -984,15 +1024,68 @@ function WorkRunStatus({ controller }: { controller: WorkController }): JSX.Elem
     return () => window.clearInterval(timer)
   }, [active, mode])
 
-  if (!active) return null
   const seconds = Math.max(0, Math.floor((now - (startedAt ?? now)) / 1000))
   const elapsed =
     seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`
+  return { active, waiting, phase, label, elapsed, seconds, running }
+}
+
+/** The first response must be visible in the conversation, including the
+ * preflight before the engine has emitted any assistant text or tool frames. */
+function WorkTurnFeedback({ controller, openActivity }: {
+  controller: WorkController
+  openActivity: (toolId: string) => void
+}): JSX.Element | null {
+  const feedback = useWorkRunFeedback(controller)
+  if (!feedback.active) return null
+  const target = feedback.running ? workToolTarget(feedback.running, controller.workspacePath) : ''
+  const detail = feedback.phase === 'preparing'
+    ? '正在连接任务会话，准备开始执行。'
+    : feedback.phase === 'waiting'
+      ? '请回复上方的问题或确认请求，任务会继续执行。'
+      : feedback.phase === 'compacting'
+        ? '正在整理上下文，完成后继续当前任务。'
+        : feedback.phase === 'thinking'
+          ? 'Agent 已开始分析任务，结果会接着显示在这里。'
+          : feedback.phase === 'generating'
+            ? '回复正在生成，可以随时停止。'
+            : feedback.phase === 'tool'
+              ? target || '正在执行操作，点击可查看活动详情。'
+              : feedback.seconds >= 15
+                ? '暂未收到回复内容，可以继续等待或停止任务。'
+                : '任务已发送，正在等待首个响应。'
+  return (
+    <div className="work-turn-feedback" data-phase={feedback.phase} aria-label="Agent 执行反馈">
+      <span className="work-turn-feedback__indicator" aria-hidden="true">
+        {feedback.waiting ? <Icon name="chat" size={16} /> : <Spinner size={16} />}
+      </span>
+      <div className="work-turn-feedback__body">
+        <div className="work-turn-feedback__heading">
+          <strong title={controller.agentIdentity.name || undefined}>{controller.agentIdentity.name || 'Agent'}</strong>
+          <span>{feedback.label}</span>
+          <span className="work-turn-feedback__elapsed" title="本轮累计用时（含等待）">{feedback.elapsed}</span>
+        </div>
+        {feedback.running ? (
+          <button type="button" className="work-turn-feedback__activity" aria-label="查看正在执行的活动" onClick={() => openActivity(feedback.running!.id)}>
+            <span>{detail}</span><Icon name="chevron-right" size={12} />
+          </button>
+        ) : <p>{detail}</p>}
+      </div>
+    </div>
+  )
+}
+
+/** Keep execution feedback beside the composer even while the user reads older messages. */
+function WorkRunStatus({ controller }: { controller: WorkController }): JSX.Element | null {
+  const feedback = useWorkRunFeedback(controller)
+  const [stopping, setStopping] = useState(false)
+  if (!feedback.active) return null
+  const { waiting, elapsed } = feedback
   return (
     <div
       className="work-run-status"
       data-state={waiting ? 'waiting' : 'running'}
-      data-phase={phase}
+      data-phase={stopping ? 'stopping' : feedback.phase}
     >
       <div
         className="work-run-status__label"
@@ -1001,7 +1094,7 @@ function WorkRunStatus({ controller }: { controller: WorkController }): JSX.Elem
         aria-label="任务运行状态"
       >
         {waiting && !stopping ? <Icon name="chat" size={14} /> : <Spinner size={13} />}
-        <span>{label}</span>
+        <span>{stopping ? '正在停止…' : feedback.label}</span>
       </div>
       <span className="work-run-status__elapsed" title="本轮累计用时（含等待）">
         {elapsed}
@@ -1033,12 +1126,14 @@ const WorkMessage = memo(function WorkMessage({
   message,
   fileContext,
   onFileLink,
+  openFile,
   respond,
   openActivity
 }: {
   message: ChatMessage
   fileContext: ChatFileContext
   onFileLink: (event: MouseEvent<HTMLElement>) => void
+  openFile: (path: string) => void
   respond: WorkController['respond']
   openActivity: (toolId: string) => void
 }): JSX.Element {
@@ -1053,8 +1148,10 @@ const WorkMessage = memo(function WorkMessage({
       data-message-id={message.id}
       onClickCapture={onFileLink}
     >
-      {segments.map((segment, index) => segment.kind === 'tools' ? (
-        <WorkProcessSummary key={segment.key} tools={segment.tools} workspacePath={fileContext.workspaceRoot} onSelect={openActivity} />
+      {message.role === 'user' ? (
+        <div className="message__bubble"><UserMessageContent content={message.content} /></div>
+      ) : segments.map((segment, index) => segment.kind === 'tools' ? (
+        <WorkInlineActivity key={segment.key} tools={segment.tools} fileContext={fileContext} onOpenActivity={openActivity} onOpenFile={openFile} />
       ) : (
         <Markdown
           key={segment.key}
@@ -1079,38 +1176,6 @@ const WorkMessage = memo(function WorkMessage({
     </article>
   )
 })
-
-/** Details have a dedicated destination; the conversation only carries a timeline marker. */
-function WorkProcessSummary({ tools, workspacePath, onSelect }: {
-  tools: ToolActivity[]
-  workspacePath?: string | null
-  onSelect: (toolId: string) => void
-}): JSX.Element {
-  const tool = tools.findLast(item => item.state === 'running' || item.state === 'waiting')
-    ?? tools.findLast(item => item.state !== 'done')
-    ?? tools.at(-1)!
-  const running = tool.state === 'running'
-  const done = tools.filter((tool) => tool.state === 'done').length
-  const target = workToolTarget(tool, workspacePath)
-  const action = toolDisplayName(tool.name)
-  const label = tool.state === 'done' && done === tools.length
-    ? (tools.length === 1 ? `已完成 · ${action}` : `已完成 ${done} 项操作 · ${action}`)
-    : `${TOOL_STATUS[tool.state]} · ${action}`
-  return (
-    <button
-      type="button"
-      className={`work-process work-process--${tool.state}`}
-      title={`${label}${target ? ` · ${target}` : ''}，查看活动详情`}
-      aria-label={`${label}${target ? ` · ${target}` : ''}，查看活动详情`}
-      onClick={() => onSelect(tool.id)}
-    >
-      {running ? <Spinner size={14} /> : <Icon name={tool.state === 'done' ? 'check' : tool.state === 'error' || tool.state === 'interrupted' ? 'warning' : 'circle-dot'} size={14} />}
-      <span className="work-process__label">{label}</span>
-      {target && <span className="work-process__target">{target}</span>}
-      <Icon name="chevron-right" size={12} />
-    </button>
-  )
-}
 
 function WorkPending({
   pending,
@@ -1966,7 +2031,7 @@ function WorkChangesPanel({ controller, sectionRef, standalone = false, active =
         ) : changes.length ? (
           <div className="work-changes-panel__list">
             {changes.map((change) => (
-              <FileChangeCard key={change.id} change={change} state="done" />
+              <FileChangeCard key={change.id} change={change} state="done" fileContext={{ sessionId, workspaceRoot: controller.activeTask?.workspacePath }} />
             ))}
           </div>
         ) : standalone ? <EmptyState icon="file" title="还没有文件改动" description="任务创建或修改文件后，改动会显示在这里。" /> : null)}

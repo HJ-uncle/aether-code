@@ -520,6 +520,9 @@ export interface StandardResponse<T = unknown> {
 }
 
 export interface EngineRequestInput {
+  /** Product capability profile for this request. Code and Work share one
+   * engine process but must receive different tool registries. */
+  toolProfile?: 'code' | 'general'
   /** Reject delayed requests after the user changes the active engine. */
   expectedEngine?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
@@ -655,6 +658,8 @@ export type StreamEvent = { streamId: string; eventId?: string } & (
 )
 
 export interface StreamStartInput {
+  /** Product capability profile for this stream. */
+  toolProfile?: 'code' | 'general'
   expectedEngine?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>
   streamId: string
   path: string

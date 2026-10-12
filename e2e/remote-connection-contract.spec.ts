@@ -198,6 +198,13 @@ test('远端聊天保留服务端资源选择器，但不泄漏本地内联资�
     inlineMcpServers: [{ id: 'secret-mcp', name: 'secret', transportType: 'http', url: 'http://local' }]
   }, context)
     expect(result).toMatchObject({ sessionId: 'selector-session', message: '查知识库', skills: ['fixture-skill'], mcpServers: ['fixture-mcp'], knowledgeBases: ['kb-1'], allowedTools: ['read_file'], ragTopK: 8 })
+    const collaboration = await prepareRemoteChatBody({ sessionId: 'selector-session', message: '协作',
+      collaborators: [{ agentId: 'agent-front', systemPrompt: 'must not forward', credentials: 'not-a-real-secret' }, { resumeRunId: 'child-run-2' }]
+    }, context)
+    expect(collaboration.collaborators).toEqual([{ agentId: 'agent-front' }, { resumeRunId: 'child-run-2' }])
+    for (const collaborators of [[{}], [{ agentId: '' }], [{ agentId: 1 }], Array.from({ length: 9 }, () => ({ agentId: 'agent-front' }))]) {
+      await expect(prepareRemoteChatBody({ sessionId: 'selector-session', message: '协作', collaborators }, context)).rejects.toThrow()
+    }
     expect(result).toEqual(expect.objectContaining({ workspacePaths: [] }))
     expect(result).not.toHaveProperty('inlineSkills')
     expect(result).not.toHaveProperty('inlineMcpServers')

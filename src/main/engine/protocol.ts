@@ -1,4 +1,4 @@
-import { CODE_TOOL_PROFILE_HEADERS } from './tool-profile'
+import { toolProfileHeaders, type ToolProfile } from './tool-profile'
 import type { EngineSnapshot } from '../../shared/ipc'
 
 export function engineTargetError(snapshot: EngineSnapshot, expected?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>): string | null {
@@ -230,9 +230,9 @@ export function remoteWorkspacePathError(mode: 'embedded' | 'remote', method: st
 }
 
 /** Used by both ordinary requests and every SSE method, including resume. */
-export function engineHeaders(instanceToken: string): Record<string, string> {
+export function engineHeaders(instanceToken: string, toolProfile: ToolProfile = 'code'): Record<string, string> {
   return {
-    ...CODE_TOOL_PROFILE_HEADERS,
+    ...toolProfileHeaders(toolProfile),
     ...(instanceToken ? { 'X-Aether-Instance-Token': instanceToken } : {})
   }
 }

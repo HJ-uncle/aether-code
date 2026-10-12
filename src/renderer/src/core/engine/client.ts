@@ -20,6 +20,7 @@ import type {
 } from '@shared/ipc'
 import type { SubagentRun } from '@shared/subagent'
 import { getExpectedEngine } from './source'
+import { getAppMode } from '@renderer/core/platform/app-mode'
 
 function bridge(): Window['aether'] {
   const api = window.aether
@@ -66,7 +67,11 @@ export function onEngineLog(
  * 调用方需要显式判断 ok，避免把「模型未配置」这类可预期错误当成崩溃。
  */
 export function request<T = unknown>(input: EngineRequestInput): Promise<EngineRequestResult<T>> {
-  return bridge().engine.request<T>({ ...input, expectedEngine: input.expectedEngine ?? getExpectedEngine() })
+  return bridge().engine.request<T>({
+    ...input,
+    toolProfile: input.toolProfile ?? (getAppMode() === 'work' ? 'general' : 'code'),
+    expectedEngine: input.expectedEngine ?? getExpectedEngine()
+  })
 }
 
 export function upload<T = unknown>(input: Omit<EngineUploadInput, 'expectedEngine'>): Promise<EngineRequestResult<T>> {
@@ -114,7 +119,11 @@ export function cancelSubagentRun(runId: string): Promise<SubagentRun> {
 // ==================== 流式 ====================
 
 export function startStream(input: StreamStartInput): Promise<{ ok: boolean }> {
-  return bridge().engine.stream.start({ ...input, expectedEngine: input.expectedEngine ?? getExpectedEngine() })
+  return bridge().engine.stream.start({
+    ...input,
+    toolProfile: input.toolProfile ?? (getAppMode() === 'work' ? 'general' : 'code'),
+    expectedEngine: input.expectedEngine ?? getExpectedEngine()
+  })
 }
 
 export function abortStream(streamId: string): Promise<{ ok: boolean }> {

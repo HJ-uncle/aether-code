@@ -175,13 +175,15 @@ export function formatReferenceBlock(mention: Mention, content: string): string 
 /** 在正文里定位每枚引用的 token 区间；textOffset 对不上时从上一枚之后重新查找 */
 function locateMentions(
   text: string,
-  mentions: readonly Mention[]
+  mentions: readonly Mention[],
+  includeAgentRefs = false
 ): { mention: Mention; start: number; end: number }[] {
   const located: { mention: Mention; start: number; end: number }[] = []
   let cursor = 0
   for (const mention of mentions) {
-    // 协作 Agent 不进正文协议：它的配置走单独通道，标签保持原样即可
-    if (mention.source === 'agent') continue
+    // Work stores identity labels for replay; execution still uses the separate
+    // structured delegation channel rather than model-parsed mention text.
+    if (mention.source === 'agent' && !includeAgentRefs) continue
     const token = mentionToken(mention)
     if (!token) continue
     const anchored = mention.textOffset
@@ -208,14 +210,14 @@ function locateMentions(
  *   - **首尾空白**：引用下标基于未 trim 的文本，直接 trim 会让下标整体错位，所以按
  *     trim 掉的头部长度平移一次。
  */
-export function buildMentionMessage(text: string, mentions: readonly Mention[]): string {
+export function buildMentionMessage(text: string, mentions: readonly Mention[], options: { includeAgentRefs?: boolean } = {}): string {
   const lead = text.length - text.trimStart().length
   const body = text.trim()
   if (!mentions.length || !body) return body
   const shifted = mentions.map((mention) =>
     mention.textOffset === undefined ? mention : { ...mention, textOffset: mention.textOffset - lead }
   )
-  const located = locateMentions(body, shifted)
+  const located = locateMentions(body, shifted, options.includeAgentRefs)
   if (!located.length) return body
 
   const refs: PromptRef[] = []

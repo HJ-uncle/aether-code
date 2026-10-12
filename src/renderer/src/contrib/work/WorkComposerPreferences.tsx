@@ -1,24 +1,21 @@
 import type { JSX } from 'react'
-import { SecurityModePicker } from '@renderer/contrib/security/SecurityModePicker'
 import { useAppMode } from '@renderer/core/platform/app-mode'
 import { ComposerOptions } from '@renderer/contrib/chat/ComposerOptions'
 import type { SessionThinkingMode } from '@renderer/contrib/chat/session-thinking-store'
 
 /**
- * Work 输入区的轻量权限入口。
+ * Work 输入区的轻量偏好入口。
  *
- * Work 的安全选择与 Code 一样按「引擎端点 + 会话」保存；这里把入口放在
- * 输入区附近，用户第一次发送前就能看到并选择，而不必先找到设置页面。
+ * 长期记忆 / 思考档位 / 安全模式统一收进 ⚙ 弹层（ComposerOptions），
+ * 工具条上不再单独放安全模式入口，避免与弹层里的设置重复。
  */
 export function WorkComposerPreferences({
   sessionId,
-  onManage,
   modelId,
   thinkingMode,
   onThinkingChange
 }: {
   sessionId: string | null
-  onManage: () => void
   modelId: string
   thinkingMode: SessionThinkingMode
   onThinkingChange: (mode: SessionThinkingMode) => void
@@ -28,9 +25,7 @@ export function WorkComposerPreferences({
   // is session-scoped. Only the visible mode may refresh its session or the two
   // hidden composers would continuously overwrite each other's snapshot.
   if (!sessionId || mode !== 'work') return null
-  return <>
+  return (
     <ComposerOptions owner="work" sessionId={sessionId} modelId={modelId} thinkingMode={thinkingMode} onThinkingChange={onThinkingChange} />
-    <SecurityModePicker sessionId={sessionId} onManage={onManage} />
-  </>
+  )
 }
-

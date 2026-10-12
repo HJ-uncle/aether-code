@@ -27,3 +27,5 @@ out
 # Generated paired engine runtime staging
 resources/engine/
 test-results
+data/
+data/agent.db

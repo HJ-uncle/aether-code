@@ -291,6 +291,8 @@
   pointer-events: none;
 }
 .work-polish-button { color: var(--accent); }
+/* 添加资料：纯图标按钮，正方形命中区，与工具条其它图标对齐 */
+.work-attach-button { padding: 6px; }
 .work-agent-picker,
 .work-composer .file-palette,
 .work-composer .resource-picker {
@@ -400,6 +402,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.work-composer__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-width: 0;
 }
 .work-send {
   flex: 0 0 auto;
@@ -634,6 +643,7 @@
   align-items: center;
   gap: 10px;
   min-width: 0;
+  flex: 1;
 }
 .work-task-heading h1 {
   font-size: 14px;
@@ -673,6 +683,28 @@
   gap: 12px;
   flex-shrink: 0;
 }
+.work-view .work-task-heading__agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 200px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--fg);
+  background: var(--bg-elevated);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.work-task-heading__agent > svg { flex-shrink: 0; color: var(--accent); }
+.work-task-heading__agent > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-task-heading__agent:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+.work-task-heading__agent:active { background: var(--bg-active); }
+.work-task-heading__agent:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .work-task-body {
   display: flex;
   flex: 1;
@@ -779,17 +811,12 @@
   line-height: 1.8;
   overflow-wrap: anywhere;
 }
-.work-message--user .md {
+.work-message--user .message__bubble {
   color: var(--fg);
   padding: 10px 14px;
+  border: 0;
   background: var(--bg-hover);
-  border-radius: 9px;
-}
-.work-message--user .md > :first-child {
-  margin-top: 0;
-}
-.work-message--user .md > :last-child {
-  margin-bottom: 0;
+  border-radius: var(--radius-xl);
 }
 .work-message .md pre,
 .work-message .md-table-wrap {
@@ -812,6 +839,54 @@
   color: var(--fg-muted);
   font-size: 12px;
 }
+.work-turn-feedback {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: min(100%, 620px);
+  margin: 0 0 24px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-elevated) 92%, var(--accent) 8%);
+  color: var(--fg);
+}
+.work-turn-feedback__indicator {
+  display: grid;
+  place-items: center;
+  flex: 0 0 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.work-turn-feedback__body { min-width: 0; flex: 1; }
+.work-turn-feedback__heading { display: flex; align-items: center; flex-wrap: wrap; column-gap: 8px; row-gap: 4px; font-size: 12px; line-height: 1.5; }
+.work-turn-feedback__heading > strong { min-width: 0; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.work-turn-feedback__heading > span:not(.work-turn-feedback__elapsed) { color: var(--fg-muted); }
+.work-turn-feedback__elapsed { margin-left: auto; color: var(--fg-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.work-turn-feedback__body > p { margin: 5px 0 0; color: var(--fg-muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.work-view .work-turn-feedback__activity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  margin: 3px 0 0;
+  padding: 3px 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-muted);
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.6;
+  cursor: pointer;
+}
+.work-turn-feedback__activity > span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.work-turn-feedback__activity > svg { flex-shrink: 0; }
+.work-turn-feedback__activity:hover { color: var(--accent); }
+.work-turn-feedback__activity:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .work-conversation__footer {
   position: relative;
   flex-shrink: 0;
@@ -1947,6 +2022,9 @@
   .work-task-heading__title > span[aria-hidden] {
     display: none;
   }
+  .work-task-heading__title { flex-wrap: wrap; column-gap: 8px; row-gap: 4px; padding: 8px 0; }
+  .work-task-heading__title > h1 { flex-basis: 100%; }
+  .work-view .work-task-heading__agent { max-width: min(200px, 100%); min-height: 28px; }
 }
 @container work (max-width: 560px) {
   .work-page {

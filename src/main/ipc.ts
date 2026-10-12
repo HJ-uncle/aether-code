@@ -275,7 +275,7 @@ export function registerIpcHandlers(): void {
     activeStreams.set(input.streamId, controller)
 
     try {
-      await engineHost.stream(input.streamId, input.path, input.body, controller.signal, input.method, input.query, input.expectedEngine)
+      await engineHost.stream(input.streamId, input.path, input.body, controller.signal, input.method, input.query, input.expectedEngine, input.toolProfile)
     } finally {
       activeStreams.delete(input.streamId)
     }

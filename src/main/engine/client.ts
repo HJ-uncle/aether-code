@@ -36,7 +36,7 @@ export async function engineRequest<T = unknown>(
   const signal = managementRequestSignal(input, engineHost.requestSignal)
   const headers: Record<string, string> = {
     Accept: 'application/json',
-    ...await engineHost.prepareRequestHeaders(baseUrl)
+    ...await engineHost.prepareRequestHeaders(baseUrl, input.toolProfile)
   }
   const requestBody = snapshot.mode === 'remote' && input.method === 'POST' && path.split('?')[0] === '/api/v1/chat'
     ? await prepareRemoteChatBody(input.body, { baseUrl, headers, signal, configuredRoot: engineHost.remoteWorkspaceRoot, target: snapshot })

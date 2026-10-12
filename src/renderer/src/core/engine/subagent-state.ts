@@ -143,6 +143,8 @@ export function normalizeSubagentRun(raw: unknown): SubagentRun | undefined {
     parentMessageId: text('parentMessageId'),
     childSessionId: text('childSessionId'),
     resumeFromRunId: optionalText(r.resumeFromRunId),
+    agentId: optionalText(r.agentId),
+    agentName: optionalText(r.agentName),
     continuation: typeof record(r.continuation)?.readOnly === 'boolean'
       ? { role: optionalText(record(r.continuation)?.role), readOnly: record(r.continuation)!.readOnly as boolean }
       : undefined,

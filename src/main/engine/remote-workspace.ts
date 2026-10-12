@@ -53,9 +53,27 @@ export async function prepareRemoteChatBody(body: unknown, context: RemoteChatCo
   const allowed = [
     'message', 'sessionId', 'agentId', 'model', 'subagentModel', 'utilityModel',
     'thinkingMode', 'memoryScope', 'runId', 'skills', 'mcpServers', 'knowledgeBases',
-    'allowedTools', 'ragTopK'
+    'allowedTools', 'ragTopK', 'collaborators'
   ]
   const clean = Object.fromEntries(allowed.filter(key => input[key] !== undefined).map(key => [key, input[key]]))
+  if (input.collaborators !== undefined) {
+    if (!Array.isArray(input.collaborators) || input.collaborators.length > 8) throw new Error('一次最多选择 8 个协作 Agent')
+    clean.collaborators = input.collaborators.map(item => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('协作 Agent 选择器无效')
+      const selector = item as Record<string, unknown>
+      const value: { agentId?: string; resumeRunId?: string } = {}
+      for (const key of ['agentId', 'resumeRunId'] as const) {
+        if (selector[key] !== undefined) {
+          if (typeof selector[key] !== 'string' || !selector[key].trim() || selector[key].length > 256) throw new Error('协作 Agent ID 无效')
+          value[key] = selector[key].trim()
+        }
+      }
+      if (!value.agentId && !value.resumeRunId) throw new Error('请选择协作 Agent 或需要继续的子代理')
+      // Only server-owned identities cross this boundary; custom prompts,
+      // credentials and local resource configuration are resolved by the server.
+      return value
+    })
+  }
   for (const key of ['skills', 'mcpServers', 'knowledgeBases', 'allowedTools']) {
     if (clean[key] !== undefined) {
       if (!Array.isArray(clean[key]) || clean[key].some(item => typeof item !== 'string' || item.length > 256)) {
