@@ -142,6 +142,10 @@ export function normalizeSubagentRun(raw: unknown): SubagentRun | undefined {
     parentConversationId: text('parentConversationId'),
     parentMessageId: text('parentMessageId'),
     childSessionId: text('childSessionId'),
+    resumeFromRunId: optionalText(r.resumeFromRunId),
+    continuation: typeof record(r.continuation)?.readOnly === 'boolean'
+      ? { role: optionalText(record(r.continuation)?.role), readOnly: record(r.continuation)!.readOnly as boolean }
+      : undefined,
     task: text('task'),
     description: text('description'),
     modelId: text('modelId'),

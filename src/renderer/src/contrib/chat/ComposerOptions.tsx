@@ -67,7 +67,7 @@ function MenuOption({
  * 两行同款 UI：图标 + 名称 + 摘要 + 右侧「值 + 弹出菜单」。
  * 弹层与菜单统一走 Popover（portal 挂 body、防裁切、防出界）。
  */
-export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingChange }: { sessionId: string; modelId: string; thinkingMode: ComposerThinkingMode; onThinkingChange: (mode: SessionThinkingMode) => void }): JSX.Element {
+export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingChange, owner = 'code' }: { sessionId: string; modelId: string; thinkingMode: ComposerThinkingMode; onThinkingChange: (mode: SessionThinkingMode) => void; owner?: 'code' | 'work' }): JSX.Element {
   const { ready } = useApp()
   const appMode = useAppMode()
   const { models } = useModels()
@@ -81,21 +81,22 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
     error: memoryError,
     refresh: refreshMemory
   } = useMemoryScope(sessionId)
-  const mode = ready && appMode === 'code' ? storedMode : null
+  const active = appMode === owner
+  const mode = ready && active ? storedMode : null
 
   // 引擎重启会把安全模式 store 清空：会话就绪后补拉一次（Popover 内部管理开关状态，
   // 这里拿不到 open，改为就绪即拉，代价很小）
   useEffect(() => {
-    if (appMode === 'code' && ready && sessionId && !loaded && !loading && !error) void refresh(sessionId)
-  }, [appMode, ready, sessionId, loaded, loading, error, refresh])
+    if (active && ready && sessionId && !loaded && !loading && !error) void refresh(sessionId)
+  }, [active, ready, sessionId, loaded, loading, error, refresh])
 
   // Memory scope is persisted by the engine (tenant + session), so refresh it
   // after a connection/session switch instead of copying it to localStorage.
   useEffect(() => {
-    if (appMode === 'code' && ready && sessionId && !memoryLoaded && !memoryLoading && !memoryError) void refreshMemory(sessionId)
-  }, [appMode, ready, sessionId, memoryLoaded, memoryLoading, memoryError, refreshMemory])
+    if (active && ready && sessionId && !memoryLoaded && !memoryLoading && !memoryError) void refreshMemory(sessionId)
+  }, [active, ready, sessionId, memoryLoaded, memoryLoading, memoryError, refreshMemory])
 
-  const currentModel = models.find((m) => m.modelId === modelId)
+  const currentModel = models.find((m) => m.id === modelId || m.modelId === modelId)
   const thinkDescriptor =
     THINKING_OPTIONS.find((item) => item.value === thinkingMode) ??
     (thinkingMode === 'medium' ? { label: 'Medium', summary: '本会话已请求中等推理强度' } :

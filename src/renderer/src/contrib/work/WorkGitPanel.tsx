@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type JSX } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react'
 import type { GitFileChange, GitFileDiff } from '@shared/git-types'
 import {
   gitBranchInfo,
@@ -19,7 +19,7 @@ import {
 } from '@renderer/core/git/git-client'
 import { utilityChat } from '@renderer/core/engine/utility-chat'
 import { useApp } from '@renderer/core/app-context'
-import { isRemoteEngine } from '@renderer/core/engine/source'
+import { getEngineSource, isRemoteEngine } from '@renderer/core/engine/source'
 import { setWorkspaceSessionOverride } from '@renderer/core/workspace/connection'
 import { cleanAiCommitMessage } from '@renderer/contrib/git/GitCommitBar'
 import { Icon } from '@renderer/workbench/icons'
@@ -50,6 +50,35 @@ export function WorkGitPanel({ cwd, sessionId, active = true, onOpenFile, onOpen
   const [remoteAction, setRemoteAction] = useState<'fetch' | 'pull' | 'push' | 'publish' | ''>('')
   const [suggesting, setSuggesting] = useState(false)
   const [error, setError] = useState('')
+  const refreshGeneration = useRef(0)
+  const diffGeneration = useRef(0)
+  const scopeGeneration = useRef(0)
+  const mounted = useRef(false)
+  const operationInFlight = useRef(false)
+  const suggestionInFlight = useRef(false)
+  const source = getEngineSource()
+  useLayoutEffect(() => {
+    mounted.current = true
+    scopeGeneration.current += 1
+    return () => {
+      mounted.current = false
+      scopeGeneration.current += 1
+    }
+  }, [cwd, sessionId, active, source])
+  const captureScope = (): { generation: number; source: ReturnType<typeof getEngineSource>; cwd: string | null | undefined; sessionId?: string | null; active: boolean } => ({
+    generation: scopeGeneration.current,
+    source,
+    cwd,
+    sessionId,
+    active
+  })
+  const scopeCurrent = (scope: ReturnType<typeof captureScope>): boolean =>
+    mounted.current &&
+    scope.generation === scopeGeneration.current &&
+    scope.source === getEngineSource() &&
+    scope.cwd === cwd &&
+    scope.sessionId === sessionId &&
+    scope.active === active
 
   useEffect(() => {
     if (active && isRemoteEngine() && sessionId) {
@@ -60,6 +89,7 @@ export function WorkGitPanel({ cwd, sessionId, active = true, onOpenFile, onOpen
   }, [active, sessionId])
 
   useEffect(() => {
+    diffGeneration.current += 1
     setSelected('')
     setDiff(null)
     setMessage('')
@@ -67,10 +97,20 @@ export function WorkGitPanel({ cwd, sessionId, active = true, onOpenFile, onOpen
   }, [cwd])
 
   const refresh = useCallback(async (): Promise<void> => {
-    if (!active || !cwd) { setFiles([]); setIsRepo(null); return }
+    const generation = ++refreshGeneration.current
+    const scope = captureScope()
+    const targetCwd = scope.cwd
+    const isCurrent = (): boolean => generation === refreshGeneration.current && scopeCurrent(scope)
+    if (!scope.active || !targetCwd) {
+      if (isCurrent()) {
+        setFiles([]); setIsRepo(null); setBranch(''); setUpstream(''); setAhead(null); setBehind(null); setBusy(false)
+      }
+      return
+    }
     setBusy(true); setError('')
     try {
-      const result = await gitStatus(cwd)
+      const result = await gitStatus(targetCwd)
+      if (!isCurrent()) return
       if (!result.success) throw new Error(result.error ?? '读取 Git 状态失败')
       setIsRepo(result.isRepo === true)
       setFiles(result.files ?? [])
@@ -81,57 +121,95 @@ export function WorkGitPanel({ cwd, sessionId, active = true, onOpenFile, onOpen
         setBehind(null)
       }
       else {
-        const info = await gitBranchInfo(cwd)
+        const info = await gitBranchInfo(targetCwd)
+        if (!isCurrent()) return
         setBranch(info.info?.branch ?? '')
         setUpstream(info.info?.upstream ?? '')
         setAhead(info.info?.ahead ?? null)
         setBehind(info.info?.behind ?? null)
       }
-    } catch (reason: unknown) { setError(reason instanceof Error ? reason.message : String(reason)) }
-    finally { setBusy(false) }
-  }, [active, cwd])
+    } catch (reason: unknown) {
+      if (isCurrent()) setError(reason instanceof Error ? reason.message : String(reason))
+    }
+    finally { if (isCurrent()) setBusy(false) }
+  }, [active, cwd, sessionId, source])
   useEffect(() => { if (active) void refresh() }, [active, refresh])
 
   const selectedFile = useMemo(() => files.find((file) => file.path === selected), [files, selected])
   const run = async (action: () => Promise<{ success: boolean; error?: string }>, success: string): Promise<void> => {
+    const scope = captureScope()
+    if (!scopeCurrent(scope) || busy || operationInFlight.current || suggestionInFlight.current) return
+    operationInFlight.current = true
     setBusy(true)
-    try { const result = await action(); if (!result.success) throw new Error(result.error ?? 'Git 操作失败'); toast.success(success); await refresh() }
-    catch (reason: unknown) { toast.error(reason instanceof Error ? reason.message : String(reason)) }
-    finally { setBusy(false) }
+    try {
+      const result = await action()
+      if (!scopeCurrent(scope)) return
+      if (!result.success) throw new Error(result.error ?? 'Git 操作失败')
+      toast.success(success)
+      await refresh()
+    } catch (reason: unknown) {
+      if (scopeCurrent(scope)) toast.error(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      operationInFlight.current = false
+      if (scopeCurrent(scope)) setBusy(false)
+    }
   }
   const init = (): void => { if (cwd) void run(() => gitInit(cwd), '已初始化 Git 仓库') }
   const runRemote = async (action: 'fetch' | 'pull' | 'push' | 'publish'): Promise<void> => {
-    if (!cwd || busy || suggesting) return
+    const scope = captureScope()
+    if (!scopeCurrent(scope) || !scope.cwd || busy || suggesting || operationInFlight.current || suggestionInFlight.current) return
+    operationInFlight.current = true
+    const targetCwd = scope.cwd
     setBusy(true)
     setRemoteAction(action)
     setError('')
     try {
-      const result = action === 'fetch' ? await gitFetch(cwd) : action === 'pull' ? await gitPull(cwd) : action === 'publish' ? await gitPublishBranch(cwd) : await gitPush(cwd)
+      const result = action === 'fetch' ? await gitFetch(targetCwd) : action === 'pull' ? await gitPull(targetCwd) : action === 'publish' ? await gitPublishBranch(targetCwd) : await gitPush(targetCwd)
+      if (!scopeCurrent(scope)) return
       if (!result.success) throw new Error(result.error ?? 'Git 远程操作失败')
       toast.success(action === 'fetch' ? '已获取远程更新' : action === 'pull' ? '已拉取远程更新' : action === 'publish' ? '已发布当前分支' : '已推送本地提交')
       await refresh()
     } catch (reason: unknown) {
+      if (!scopeCurrent(scope)) return
       const text = reason instanceof Error ? reason.message : String(reason)
       setError(text)
       toast.error(text)
     } finally {
-      setRemoteAction('')
-      setBusy(false)
+      operationInFlight.current = false
+      if (scopeCurrent(scope)) {
+        setRemoteAction('')
+        setBusy(false)
+      }
     }
   }
   const open = (file: GitFileChange, staged = false): void => {
+    const scope = captureScope()
+    if (!scopeCurrent(scope)) return
+    const generation = ++diffGeneration.current
+    const targetCwd = scope.cwd
     setSelected(file.path)
     onOpenFile?.(file.path)
     onOpenDiff?.(file.path, staged)
-    void gitDiff(cwd!, file.path, staged).then((result) => setDiff(result.diff ?? null)).catch(() => setDiff(null))
+    if (!targetCwd) return
+    void gitDiff(targetCwd, file.path, staged)
+      .then((result) => {
+        if (generation === diffGeneration.current && scopeCurrent(scope)) setDiff(result.diff ?? null)
+      })
+      .catch(() => {
+        if (generation === diffGeneration.current && scopeCurrent(scope)) setDiff(null)
+      })
   }
 
   const suggestMessage = async (): Promise<void> => {
-    if (!cwd || suggesting || busy) return
+    const scope = captureScope()
+    if (!scopeCurrent(scope) || !scope.cwd || suggesting || busy || operationInFlight.current || suggestionInFlight.current) return
+    suggestionInFlight.current = true
+    const targetCwd = scope.cwd
     setSuggesting(true)
     setError('')
     try {
-      const result = await gitSuggestCommitMessage(cwd)
+      const result = await gitSuggestCommitMessage(targetCwd)
+      if (!scopeCurrent(scope)) return
       if (!result.success) throw new Error(result.error ?? '生成提交信息失败')
       if (result.aiContext?.trim()) {
         try {
@@ -142,6 +220,7 @@ export function WorkGitPanel({ cwd, sessionId, active = true, onOpenFile, onOpen
             temperature: 0.35,
             maxTokens: 2000
           })
+          if (!scopeCurrent(scope)) return
           const cleaned = cleanAiCommitMessage(ai.text)
           if (cleaned) {
             setMessage(cleaned)
@@ -151,12 +230,14 @@ export function WorkGitPanel({ cwd, sessionId, active = true, onOpenFile, onOpen
           // Keep the deterministic server-side suggestion when the utility model is unavailable.
         }
       }
+      if (!scopeCurrent(scope)) return
       if (result.message?.trim()) setMessage(result.message.trim())
       else throw new Error('AI 返回了空内容')
     } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : String(reason))
+      if (scopeCurrent(scope)) setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
-      setSuggesting(false)
+      suggestionInFlight.current = false
+      if (scopeCurrent(scope)) setSuggesting(false)
     }
   }
 

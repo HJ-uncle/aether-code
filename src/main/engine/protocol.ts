@@ -122,6 +122,7 @@ export function validateRemoteInstanceToken(value: string): string {
 const REMOTE_READ_ROUTES = [
   /^\/(health|meta|metrics)$/,
   /^\/api\/v1\/(models|models\/capability-defs|tools|system-tools|external-skills|changes|todos)$/,
+  /^\/api\/v1\/agents(?:\/[a-zA-Z0-9_-]+)?$/,
   /^\/api\/v1\/conversation\/(sessions|history|archive)$/,
   /^\/api\/v1\/(mcp\/servers(?:\/[a-zA-Z0-9_-]+)?|skills(?:\/[a-zA-Z0-9_.-]+)?|knowledge\/(?:formats|documents(?:\/[a-zA-Z0-9_-]+)?|bases(?:\/[a-zA-Z0-9_-]+)?|status))$/,
   /^\/api\/v1\/skills\/imports(?:\/[a-zA-Z0-9_-]+)?(?:\/chunks)?$/,
@@ -168,6 +169,9 @@ export function remoteRequestError(mode: 'embedded' | 'remote', method: string, 
   const pathname = normalizeEnginePath(path).split('?')[0]
   if (method === 'GET' && REMOTE_READ_ROUTES.some(route => route.test(pathname))) return null
   if (method === 'POST' && REMOTE_CHAT_ROUTES.some(route => route.test(pathname))) return null
+  // Custom agents are tenant-scoped engine records, with a narrow CRUD API.
+  if (method === 'POST' && pathname === '/api/v1/agents') return null
+  if ((method === 'PUT' || method === 'DELETE') && /^\/api\/v1\/agents\/[a-zA-Z0-9_-]+$/.test(pathname)) return null
   if (method === 'POST' && /^\/api\/v1\/(mcp\/servers|mcp\/config\/import|skills)$/.test(pathname)) return null
   if (method === 'POST' && pathname === '/api/v1/git/action') return null
   if (method === 'POST' && /^\/api\/v1\/(security\/policies(?:\/reset)?|changes\/(keep-all|keep-many)|codegraph\/index|lsp\/diagnose)$/.test(pathname)) return null

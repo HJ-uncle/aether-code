@@ -98,13 +98,20 @@ export function FileRefPalette({
   // 键盘导航：捕获阶段拦截，先于输入框的 Enter=发送 生效
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      if (event.isComposing) return
       if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
         onClose()
         return
       }
-      if (filtered.length === 0) return
+      if (filtered.length === 0) {
+        if (['Enter', 'Tab', 'ArrowDown', 'ArrowUp'].includes(event.key)) {
+          event.preventDefault()
+          event.stopPropagation()
+        }
+        return
+      }
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()
         event.stopPropagation()

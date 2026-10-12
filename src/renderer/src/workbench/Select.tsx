@@ -32,6 +32,8 @@ interface SelectProps {
   width?: number
   /** 触发区附加类名 */
   className?: string
+  /** 仅附加到 portal 菜单面板的类名；用于嵌套在模态框中的选择器。 */
+  panelClassName?: string
 }
 
 /**
@@ -51,7 +53,8 @@ export function Select({
   placement = 'down',
   align = 'start',
   width,
-  className
+  className,
+  panelClassName
 }: SelectProps): JSX.Element {
   const current = options.find((option) => option.value === value)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -157,6 +160,7 @@ export function Select({
       placement={placement}
       align={align}
       width={width ?? 220}
+      panelClassName={panelClassName}
       flush
       disabled={disabled}
       open={open}

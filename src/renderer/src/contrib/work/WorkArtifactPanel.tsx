@@ -17,7 +17,6 @@ export interface WorkArtifactPanelProps {
   sessionId?: string
   onAddToConversation?: (artifact: WorkArtifact, selection?: string) => void
   onOpenFile?: (artifact: WorkArtifact) => void
-  onOpenChanges?: () => void
   artifacts?: WorkArtifact[]
   onSelect?: (id: string) => void
 }
@@ -26,7 +25,7 @@ function isMarkdown(name: string): boolean {
   return /\.(md|markdown|mdx)$/i.test(name)
 }
 function isText(name: string): boolean {
-  return /\.(txt|json|ya?ml|xml|tsx?|jsx?|css|scss|less|html?|svg|py|go|rs|java|c|cpp|h|sh|sql|toml|ini|env)$/i.test(
+  return /\.(txt|json|ya?ml|xml|tsx?|jsx?|[cm][jt]s|css|scss|less|html?|svg|py|go|rs|java|c|cpp|h|sh|sql|toml|ini|env)$/i.test(
     name
   )
 }
@@ -55,7 +54,6 @@ export function WorkArtifactPanel({
   sessionId,
   onAddToConversation,
   onOpenFile,
-  onOpenChanges,
   artifacts = [],
   onSelect
 }: WorkArtifactPanelProps): JSX.Element {
@@ -108,9 +106,6 @@ export function WorkArtifactPanel({
     }
   }, [artifact?.id, artifact?.path, artifact?.content, workspaceRoot, sessionId, readVersion])
 
-  const canRender = Boolean(
-    artifact && content !== null && (isMarkdown(artifact.name) || isText(artifact.name))
-  )
   const language = useMemo(
     () => artifact?.name.split('.').pop()?.toUpperCase() ?? 'TEXT',
     [artifact?.name]
@@ -243,9 +238,9 @@ export function WorkArtifactPanel({
           <Icon name="cloud-download-outline" size={14} />
           下载
         </button>
-        {(canRender || onOpenChanges) && (
+        {isMarkdown(artifact.name) && (
           <div className="work-artifact-panel-v2__modes">
-            {canRender ? <>
+            {isMarkdown(artifact.name) ? <>
               <button
                 type="button"
                 aria-pressed={mode === 'preview'}
@@ -261,7 +256,6 @@ export function WorkArtifactPanel({
                 {language}
               </button>
             </> : null}
-            {onOpenChanges ? <button type="button" onClick={onOpenChanges}>文件改动</button> : null}
           </div>
         )}
       </div>

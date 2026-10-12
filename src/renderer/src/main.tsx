@@ -5,6 +5,7 @@ import 'monaco-editor/nls/lang/zh-cn'
 // 保证跨平台 UI 文字与自绘数字的宽度/基线一致（中文仍回退系统字体）。
 import '@fontsource-variable/inter/wght.css'
 import './assets/app.css'
+import './assets/visual-effects.css'
 
 // 平台标记：CSS 无法直接探测操作系统，而字体基线校准（--ctx-baseline）在
 // macOS(SF) 与其它平台(Inter) 上取值相反，故在渲染前把 platform 写到 <html> 上。

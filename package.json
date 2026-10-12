@@ -16,6 +16,8 @@
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:ui": "playwright test --ui",
+    "preperf:work": "npm run build",
+    "perf:work": "node scripts/work-performance-probe.mjs --verify --default-graphics",
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",

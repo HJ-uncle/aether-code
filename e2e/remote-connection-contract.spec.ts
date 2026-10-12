@@ -116,6 +116,25 @@ test('远端开放已接入的管理与会话接口，仍拒绝未接入路径',
   expect(remoteRequestError('embedded', 'POST', '/workspace/file')).toBeNull()
 })
 
+test('远端自定义 Agent 只开放引擎支持的单项增删改接口', () => {
+  for (const [method, path] of [
+    ['GET', '/agents'], ['GET', '/agents/agent-1'], ['POST', '/agents'],
+    ['PUT', '/agents/agent-1'], ['DELETE', '/agents/agent-1']
+  ]) {
+    expect(remoteRequestError('remote', method, path), `${method} ${path}`).toBeNull()
+    expect(remoteRequestError('remote', method, '/api/v1' + path + '?fixture=1'), `${method} prefixed ${path}`).toBeNull()
+  }
+  for (const [method, path] of [
+    ['PUT', '/agents'], ['DELETE', '/agents'], ['PATCH', '/agents/agent-1'],
+    ['POST', '/agents/agent-1'], ['POST', '/agents/agent-1/run'],
+    ['PUT', '/agents/agent-1/settings'], ['DELETE', '/agents/agent-1/children'],
+    ['PUT', '/agents/../models'], ['DELETE', '/agents/%2e%2e'], ['PUT', '/agents/'],
+    ['POST', '/agents/import'], ['DELETE', '/agents/agent.1']
+  ]) {
+    expect(remoteRequestError('remote', method, path), `${method} ${path}`).not.toBeNull()
+  }
+})
+
 test('远端扩展资源管理全部开放到对应引擎', () => {
   const routes: Array<[string, string]> = [
     ['GET', '/mcp/servers'], ['POST', '/mcp/servers'], ['GET', '/mcp/servers/fixture'], ['PUT', '/mcp/servers/fixture'], ['PATCH', '/mcp/servers/fixture'], ['DELETE', '/mcp/servers/fixture'], ['POST', '/mcp/servers/fixture/test'], ['POST', '/mcp/servers/fixture/enable'], ['POST', '/mcp/servers/fixture/disable'],

@@ -10,19 +10,10 @@ import { remoteTerminalService } from './terminal/remote-terminal'
 import { getSettings } from './settings-store'
 import { registerBrowserIpc } from './browser-ipc'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { initializeNativeDiagnostics } from './native-diagnostics'
+import { configureGraphics, confirmGraphicsStartup, initializeGraphicsRecovery } from './graphics'
 
-// Windows Electron builds on machines with Exploit Protection or older GPU
-// drivers can repeatedly crash their Chromium GPU child process with
-// STATUS_BREAKPOINT (0x80000003). Keep the IDE usable by running without GPU
-// acceleration by default on Windows; advanced users can opt back in for a
-// comparison run with AETHER_ENABLE_GPU=1.
-if (process.platform === 'win32' && process.env.AETHER_ENABLE_GPU !== '1') {
-  // Some corporate Exploit Protection policies still spawn a Chromium GPU
-  // child after disableHardwareAcceleration(). Keep GPU work in the main
-  // process so a blocked child cannot trigger Chromium's fatal retry loop.
-  app.commandLine.appendSwitch('in-process-gpu')
-  app.disableHardwareAcceleration()
-}
+configureGraphics()
 
 // ==================== 窗口尺寸/位置记忆 ====================
 
@@ -123,6 +114,7 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+    confirmGraphicsStartup()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -148,6 +140,8 @@ const gotTheLock = app.requestSingleInstanceLock()
 if (!gotTheLock) {
   app.quit()
 } else {
+  initializeNativeDiagnostics()
+  initializeGraphicsRecovery()
   app.on('second-instance', () => {
     const [win] = BrowserWindow.getAllWindows()
     if (win) {

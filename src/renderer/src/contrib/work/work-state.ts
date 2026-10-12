@@ -1,6 +1,7 @@
-import { useSyncExternalStore } from 'react'
+import { useCallback, useSyncExternalStore } from 'react'
 import type { ChatAttachment, ChatMessage } from '@renderer/core/engine/useChat'
-import type { Mention } from '@renderer/contrib/chat/MentionInput'
+import { isStoredMention, type Mention } from '@renderer/contrib/chat/mention-context'
+import { createDraftPersistenceScheduler } from './work-draft-persistence'
 
 export type WorkTaskStatus =
   'draft' | 'running' | 'waiting' | 'done' | 'error' | 'stopped' | 'interrupted'
@@ -16,6 +17,8 @@ export interface WorkTask {
   attachments: ChatAttachment[]
   sources: ChatAttachment[]
   agentId?: string
+  /** The engine fixes this binding at the first send, including the default Agent. */
+  agentLocked?: boolean
   mentions?: Mention[]
   resources?: { skills: string[]; mcpServers: string[]; knowledgeBases: string[] }
   /** 已归档任务仍保留在本地状态中，方便恢复历史与导出，不参与默认任务列表。 */
@@ -44,7 +47,88 @@ export interface WorkState {
 }
 
 const states = new Map<string, WorkState>()
-const listeners = new Set<() => void>()
+const listeners = new Map<string, Set<() => void>>()
+export interface WorkDraft { text: string; mentions: Mention[] }
+const drafts = new Map<string, Map<string | null, WorkDraft>>()
+const draftListeners = new Map<string, Map<string | null, Set<() => void>>>()
+const dirtyDrafts = new Map<string, Set<string | null>>()
+const draftSaves = new Map<string, ReturnType<typeof createDraftPersistenceScheduler>>()
+let watchingDraftLifecycle = false
+
+function sameFields<T extends object>(left: T, right: T): boolean {
+  const keys = Object.keys(left) as Array<keyof T>
+  return keys.length === Object.keys(right).length && keys.every(key => Object.is(left[key], right[key]))
+}
+function sameMentions(left: Mention[], right: Mention[]): boolean {
+  return left === right || (left.length === right.length && left.every((item, index) => sameFields(item, right[index])))
+}
+function sourceDrafts(source: string): Map<string | null, WorkDraft> {
+  let entries = drafts.get(source)
+  if (!entries) { entries = new Map(); drafts.set(source, entries) }
+  return entries
+}
+export function getWorkDraft(source: string, taskId: string | null): WorkDraft {
+  const entries = sourceDrafts(source)
+  const cached = entries.get(taskId)
+  if (cached) return cached
+  const state = getWorkState(source)
+  const task = taskId ? state.tasks.find(item => item.id === taskId) : null
+  const draft = { text: taskId ? task?.draft ?? '' : state.homeDraft, mentions: taskId ? task?.mentions ?? [] : state.homeMentions }
+  entries.set(taskId, draft)
+  return draft
+}
+function publishDraft(source: string, taskId: string | null, draft: WorkDraft): void {
+  const previous = getWorkDraft(source, taskId)
+  if (previous.text === draft.text && sameMentions(previous.mentions, draft.mentions)) return
+  sourceDrafts(source).set(taskId, draft)
+  for (const listener of draftListeners.get(source)?.get(taskId) ?? []) listener()
+}
+
+/** The input subscribes to its own draft; history and hidden panels do not render per character. */
+export function updateWorkDraft(source: string, taskId: string | null, text: string, mentions: Mention[]): void {
+  const previous = getWorkDraft(source, taskId)
+  if (previous.text === text && sameMentions(previous.mentions, mentions)) return
+  publishDraft(source, taskId, { text, mentions })
+  let dirty = dirtyDrafts.get(source)
+  if (!dirty) { dirty = new Set(); dirtyDrafts.set(source, dirty) }
+  dirty.add(taskId)
+  let save = draftSaves.get(source)
+  if (!save) {
+    save = createDraftPersistenceScheduler(() => updateWorkState(source, state => state))
+    draftSaves.set(source, save)
+  }
+  save.schedule()
+  if (!watchingDraftLifecycle && typeof window !== 'undefined') {
+    watchingDraftLifecycle = true
+    const flush = (): void => flushWorkDrafts()
+    window.addEventListener('pagehide', flush)
+    window.addEventListener('beforeunload', flush)
+    window.addEventListener('blur', flush)
+    document.addEventListener('visibilitychange', () => { if (document.hidden) flush() })
+  }
+}
+export function flushWorkDrafts(source?: string): void {
+  if (source !== undefined) draftSaves.get(source)?.flush()
+  else for (const save of draftSaves.values()) save.flush()
+}
+export function onWorkDraftChanged(source: string, taskId: string | null, listener: () => void): () => void {
+  let byTask = draftListeners.get(source)
+  if (!byTask) { byTask = new Map(); draftListeners.set(source, byTask) }
+  let subscribers = byTask.get(taskId)
+  if (!subscribers) { subscribers = new Set(); byTask.set(taskId, subscribers) }
+  subscribers.add(listener)
+  return () => {
+    subscribers.delete(listener)
+    if (!subscribers.size) byTask.delete(taskId)
+    if (!byTask.size) draftListeners.delete(source)
+  }
+}
+export function useWorkDraft(source: string, taskId: string | null): WorkDraft {
+  return useSyncExternalStore(
+    useCallback(listener => onWorkDraftChanged(source, taskId, listener), [source, taskId]),
+    useCallback(() => getWorkDraft(source, taskId), [source, taskId])
+  )
+}
 export function workStorageKey(source: string): string {
   return 'aether.work.state.v1' + (source ? ':' + encodeURIComponent(source) : '')
 }
@@ -72,7 +156,7 @@ function attachments(value: unknown): ChatAttachment[] {
           typeof item.path === 'string' &&
           typeof item.name === 'string' &&
           typeof item.type === 'string' &&
-          typeof item.size === 'number'
+          typeof item.size === 'number' && Number.isFinite(item.size) && item.size >= 0
         )
       )
       // Upload tokens live in the main process only. Persisted remote paths are already
@@ -101,28 +185,33 @@ export function normalizeWorkState(value: unknown): WorkState {
             typeof task.id === 'string' &&
             task.id.startsWith('work-') &&
             typeof task.title === 'string' &&
-            typeof task.createdAt === 'number'
+            typeof task.createdAt === 'number' && Number.isFinite(task.createdAt)
         )
         .map((task) => ({
-          ...task,
+          id: task.id,
+          title: task.title,
+          createdAt: task.createdAt,
           draft: typeof task.draft === 'string' ? task.draft : '',
-          updatedAt: typeof task.updatedAt === 'number' ? task.updatedAt : task.createdAt,
+          updatedAt: typeof task.updatedAt === 'number' && Number.isFinite(task.updatedAt) ? task.updatedAt : task.createdAt,
           status: statuses.includes(task.status) ? task.status : 'draft',
           workspacePath: typeof task.workspacePath === 'string' ? task.workspacePath : null,
           modelId: typeof task.modelId === 'string' ? task.modelId : '',
           attachments: attachments(task.attachments),
           sources: attachments(task.sources),
-          agentId: typeof task.agentId === 'string' ? task.agentId : undefined,
-          mentions: Array.isArray(task.mentions) ? (task.mentions as Mention[]) : [],
-          resources: task.resources && typeof task.resources === 'object' ? {
-            skills: Array.isArray(task.resources.skills) ? task.resources.skills.filter((v): v is string => typeof v === 'string') : [],
-            mcpServers: Array.isArray(task.resources.mcpServers) ? task.resources.mcpServers.filter((v): v is string => typeof v === 'string') : [],
-            knowledgeBases: Array.isArray(task.resources.knowledgeBases) ? task.resources.knowledgeBases.filter((v): v is string => typeof v === 'string') : []
-          } : { skills: [], mcpServers: [], knowledgeBases: [] },
+          ...(typeof task.agentId === 'string' && task.agentId.trim() ? { agentId: task.agentId } : {}),
+          ...(task.agentLocked === true ? { agentLocked: true } : {}),
+          ...(Array.isArray(task.mentions) ? { mentions: task.mentions.filter(isStoredMention) } : {}),
+          ...(task.resources && typeof task.resources === 'object' ? {
+            resources: {
+              skills: Array.isArray(task.resources.skills) ? task.resources.skills.filter((v): v is string => typeof v === 'string') : [],
+              mcpServers: Array.isArray(task.resources.mcpServers) ? task.resources.mcpServers.filter((v): v is string => typeof v === 'string') : [],
+              knowledgeBases: Array.isArray(task.resources.knowledgeBases) ? task.resources.knowledgeBases.filter((v): v is string => typeof v === 'string') : []
+            }
+          } : {}),
           ...(task.archived === true
             ? {
                 archived: true,
-                ...(typeof task.archivedAt === 'number' ? { archivedAt: task.archivedAt } : {})
+                ...(typeof task.archivedAt === 'number' && Number.isFinite(task.archivedAt) ? { archivedAt: task.archivedAt } : {})
               }
             : {})
         }))
@@ -139,7 +228,7 @@ export function normalizeWorkState(value: unknown): WorkState {
         ? data.homeSessionId
         : null,
     homeAgentId: typeof data.homeAgentId === 'string' ? data.homeAgentId : '',
-    homeMentions: Array.isArray(data.homeMentions) ? (data.homeMentions as Mention[]) : [],
+    homeMentions: Array.isArray(data.homeMentions) ? data.homeMentions.filter(isStoredMention) : [],
     homeResources: data.homeResources && typeof data.homeResources === 'object' ? {
       skills: Array.isArray(data.homeResources.skills) ? data.homeResources.skills.filter((v): v is string => typeof v === 'string') : [],
       mcpServers: Array.isArray(data.homeResources.mcpServers) ? data.homeResources.mcpServers.filter((v): v is string => typeof v === 'string') : [],
@@ -162,25 +251,53 @@ export function getWorkState(source: string): WorkState {
 }
 
 export function updateWorkState(source: string, update: (state: WorkState) => WorkState): void {
-  const next = update(getWorkState(source))
+  const original = getWorkState(source)
+  const dirty = dirtyDrafts.get(source)
+  // Structural writes include the latest draft, so sending/clearing a draft cannot
+  // race a delayed autosave and restore text that has already been submitted.
+  const previous = dirty?.size ? {
+    ...original,
+    ...(dirty.has(null) ? { homeDraft: getWorkDraft(source, null).text, homeMentions: getWorkDraft(source, null).mentions } : {}),
+    tasks: original.tasks.map(task => dirty.has(task.id)
+      ? { ...task, draft: getWorkDraft(source, task.id).text, mentions: getWorkDraft(source, task.id).mentions }
+      : task)
+  } : original
+  const next = update(previous)
+  dirtyDrafts.delete(source)
+  draftSaves.get(source)?.cancel()
+  if (sameFields(original, next) || (
+    sameFields({ ...original, tasks: next.tasks }, next) &&
+    original.tasks.length === next.tasks.length && original.tasks.every((task, index) => sameFields(task, next.tasks[index]))
+  )) return
   states.set(source, next)
+  publishDraft(source, null, { text: next.homeDraft, mentions: next.homeMentions })
+  const originalTasks = new Map(original.tasks.map(task => [task.id, task]))
+  for (const task of next.tasks) {
+    const oldTask = originalTasks.get(task.id)
+    if (!oldTask || oldTask.draft !== task.draft || oldTask.mentions !== task.mentions)
+      publishDraft(source, task.id, { text: task.draft, mentions: task.mentions ?? [] })
+  }
   try {
     localStorage.setItem(workStorageKey(source), JSON.stringify(next))
   } catch {
     /* In-memory tasks remain usable when storage is full. */
   }
-  for (const listener of listeners) listener()
+  for (const listener of listeners.get(source) ?? []) listener()
 }
 
+export function onWorkStateChanged(source: string, listener: () => void): () => void {
+  let subscribers = listeners.get(source)
+  if (!subscribers) { subscribers = new Set(); listeners.set(source, subscribers) }
+  subscribers.add(listener)
+  return () => {
+    subscribers.delete(listener)
+    if (!subscribers.size) listeners.delete(source)
+  }
+}
 export function useWorkState(source: string): WorkState {
   return useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener)
-      return () => {
-        listeners.delete(listener)
-      }
-    },
-    () => getWorkState(source)
+    useCallback(listener => onWorkStateChanged(source, listener), [source]),
+    useCallback(() => getWorkState(source), [source])
   )
 }
 

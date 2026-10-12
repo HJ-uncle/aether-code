@@ -78,14 +78,19 @@ export function ResourcePicker({ query, projectPath, source, onSelect, onClose }
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') { event.preventDefault(); onClose(); return }
+      if (event.isComposing) return
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return }
+      // Own the selection keys before the contenteditable handles Enter as send,
+      // including the loading/empty state where there is nothing to select yet.
+      if (!['ArrowDown', 'ArrowUp', 'Enter', 'Tab'].includes(event.key)) return
+      event.preventDefault(); event.stopPropagation()
       if (filtered.length === 0) return
-      if (event.key === 'ArrowDown') { event.preventDefault(); setActive(index => (index + 1) % filtered.length) }
-      else if (event.key === 'ArrowUp') { event.preventDefault(); setActive(index => (index - 1 + filtered.length) % filtered.length) }
-      else if (event.key === 'Enter') { event.preventDefault(); onSelect(filtered[active] ?? filtered[0]) }
+      if (event.key === 'ArrowDown') setActive(index => (index + 1) % filtered.length)
+      else if (event.key === 'ArrowUp') setActive(index => (index - 1 + filtered.length) % filtered.length)
+      else onSelect(filtered[active] ?? filtered[0])
     }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [active, filtered, onClose, onSelect])
 
   // Match the file palette / context menu behaviour: clicking elsewhere should
@@ -97,15 +102,21 @@ export function ResourcePicker({ query, projectPath, source, onSelect, onClose }
       onClose()
     }
     const onViewportChange = (): void => onClose()
+    const onScroll = (event: Event): void => {
+      // Scrolling the suggestions (including keyboard scrollIntoView) is part of
+      // selection, not a dismissal. Only a moving ancestor invalidates the anchor.
+      if (event.target instanceof Node && rootRef.current?.contains(event.target)) return
+      onClose()
+    }
     document.addEventListener('pointerdown', onPointerDown)
     window.addEventListener('resize', onViewportChange)
     window.addEventListener('blur', onViewportChange)
-    document.addEventListener('scroll', onViewportChange, true)
+    document.addEventListener('scroll', onScroll, true)
     return () => {
       document.removeEventListener('pointerdown', onPointerDown)
       window.removeEventListener('resize', onViewportChange)
       window.removeEventListener('blur', onViewportChange)
-      document.removeEventListener('scroll', onViewportChange, true)
+      document.removeEventListener('scroll', onScroll, true)
     }
   }, [onClose])
 

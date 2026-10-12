@@ -28,6 +28,8 @@ interface PopoverProps {
   width?: number
   /** 触发区外层类名 */
   className?: string
+  /** 仅附加到 portal 面板的类名；用于需要位于模态层之上的嵌套浮层。 */
+  panelClassName?: string
   /** 浮层的无障碍名称 */
   label?: string
   /** 去掉面板内边距（菜单/列表类内容自带内边距并需要裁切圆角） */
@@ -73,6 +75,7 @@ export function Popover({
   align = 'start',
   width,
   className,
+  panelClassName,
   label,
   flush,
   onOpenChange,
@@ -231,7 +234,7 @@ export function Popover({
               ref={panelRef}
               className={`popover__panel popover__panel--${pos?.placement ?? placement} popover__panel--${align}${
                 flush ? ' popover__panel--flush' : ''
-              }${pos ? ' is-positioned' : ''}`}
+              }${pos ? ' is-positioned' : ''}${panelClassName ? ` ${panelClassName}` : ''}`}
               role="dialog"
               aria-label={label}
               style={{

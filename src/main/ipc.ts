@@ -27,6 +27,7 @@ import { engineRequest, engineUpload } from './engine/client'
 import { cancelRemoteAttachmentUpload, uploadRemoteAttachment } from './engine/upload-remote-attachment'
 import { engineHost } from './engine/host'
 import { onEngineLog } from './engine/logger'
+import { createEngineLogBatcher } from './engine/log-batch'
 import * as fileService from './fs/file-service'
 import { watchDocuments } from './fs/document-watch'
 import * as gitService from './git/git-service'
@@ -40,6 +41,7 @@ import {
 import { remoteTerminalService } from './terminal/remote-terminal'
 import { replaceWorkspace, searchWorkspace, previewReplaceWorkspace } from './search/search-service'
 import { getSettings, updateSettings } from './settings-store'
+import { getGraphicsSnapshot, onGraphicsChanged, publishGraphicsSnapshot, resetGraphicsRecovery } from './graphics'
 import type { AppSettings, RemoteAuthCredential, RemoteAuthStatus, RemoteTokenStatus } from '../shared/ipc'
 import type { GitCloneOptions, GitLogQuery, GitResult } from '../shared/git-types'
 import { addSshKeyToAgent } from './git/ssh-agent'
@@ -69,6 +71,9 @@ function broadcast(channel: string, payload: unknown): void {
 }
 
 export function registerIpcHandlers(): void {
+  onGraphicsChanged(snapshot => broadcast(IPC.event.graphicsChanged, snapshot))
+  ipcMain.handle(IPC.invoke.graphicsGetSnapshot, getGraphicsSnapshot)
+  ipcMain.handle(IPC.invoke.graphicsResetRecovery, resetGraphicsRecovery)
   configureAccountService({
     target: () => engineHost.accountTarget(),
     changed: state => broadcast(IPC.event.accountChanged, state),
@@ -116,16 +121,23 @@ export function registerIpcHandlers(): void {
     catch (error) { return { ok: false, message: error instanceof Error ? error.message : '账号操作失败，请重试。' } }
   })
   // ── 引擎状态广播 ──
+  const logBatches = createEngineLogBatcher((batch) => broadcast(IPC.event.engineLogs, batch))
+  const unsubscribeLogs = onEngineLog(logBatches.append)
+  // before-quit can be prevented for asynchronous cleanup. Keep capturing until
+  // will-quit, and flush again on the eventual quit while windows still exist.
+  app.on('before-quit', logBatches.flush)
+  app.once('will-quit', () => {
+    app.removeListener('before-quit', logBatches.flush)
+    unsubscribeLogs()
+    logBatches.dispose()
+  })
   engineHost.on('snapshot', (snapshot: EngineSnapshot) => {
+    if (snapshot.phase === 'idle' || snapshot.phase === 'error') logBatches.flush()
     broadcast(IPC.event.engineSnapshot, snapshot)
   })
   engineHost.on('stream', (event: StreamEvent) => {
     broadcast(IPC.event.streamEvent, event)
   })
-  onEngineLog((entry) => {
-    broadcast(IPC.event.engineLog, entry)
-  })
-
   // ── 生命周期 ──
   ipcMain.handle(IPC.invoke.engineGetSnapshot, () => engineHost.getSnapshot())
 
@@ -303,7 +315,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.invoke.settingsUpdate, (_event, patch: Partial<AppSettings>) => {
     const connectionKeys: (keyof AppSettings)[] = ['engineMode', 'preferredPort', 'remoteBaseUrl', 'remoteWorkspaceRoot', 'autoStartEngine']
     if (connectionKeys.some((key) => Object.prototype.hasOwnProperty.call(patch, key))) ensureNotActivatingRuntime()
-    return updateSettings(patch)
+    const next = updateSettings(patch)
+    if (patch.graphicsMode !== undefined || patch.visualEffects !== undefined) publishGraphicsSnapshot()
+    return next
   })
   const remoteTokenStatus = (): RemoteTokenStatus => {
     const stored = remoteInstanceTokenConfigured()

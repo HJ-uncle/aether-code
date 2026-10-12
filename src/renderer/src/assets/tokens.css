@@ -92,7 +92,7 @@
      （踩过的坑：这四条原先只在深色块定义，浅色下它们未定义 →
        :focus-visible 的 box-shadow / backdrop-filter 整条声明静默失效，
        键盘焦点环和所有毛玻璃 blur 在浅色模式里一起消失。） */
-  --material-blur: 28px;
+  --material-blur: 12px;
   --focus-ring-w: 3px;
   --focus-ring-color: color-mix(in srgb, var(--accent) 45%, transparent);
   --focus-ring: 0 0 0 var(--focus-ring-w) var(--focus-ring-color);

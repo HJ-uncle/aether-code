@@ -47,6 +47,9 @@ export interface SubagentRun {
   parentMessageId: string
   parentToolCallId: string
   childSessionId: string
+  resumeFromRunId?: string
+  /** Display-only capability metadata; enforcement remains in the engine. */
+  continuation?: { role?: string; readOnly: boolean }
   task: string
   description: string
   modelId: string

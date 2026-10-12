@@ -1,7 +1,7 @@
 import { CommandJobCard } from './CommandJobCard'
 import { ContextUsageBar, RollingContextNumber, useReducedContextMotion } from './ContextUsageMotion'
 import { exportCommandJob, visibleChildCommandJobs } from '@renderer/core/engine/command-job-state'
-import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { createPortal } from 'react-dom'
 import { useApp } from '@renderer/core/app-context'
 import { useChat, type ChatMessage, type ToolActivity } from '@renderer/core/engine/useChat'
@@ -14,7 +14,8 @@ import { SubagentCard } from './SubagentCard'
 import { exportSubagentDetails, toolStatusLabel } from '@renderer/core/engine/subagent-state'
 import { exportToolDiagnostics, toolFailureMessage } from '@renderer/core/engine/tool-feedback'
 import { Markdown } from './Markdown'
-import { getSessionMeta } from '../history/session-meta'
+import { getSessionMeta, subscribeSessionMeta } from '../history/session-meta'
+import type { ChatFileContext } from './chat-link'
 import { toolDisplayName, toolParamSummary, toolPathArg } from './tool-names'
 import { ToolResult } from './ToolResult'
 import { parseToolResult, type ParsedToolResult } from './tool-result'
@@ -65,6 +66,24 @@ const CONTEXT_WINDOW_FALLBACK = DEFAULT_CONTEXT_WINDOW_TOKENS
 const MESSAGE_PAGE_SIZE = 300
 /** 距顶多少 px 内触发加载更早消息 */
 const LOAD_EARLIER_PX = 120
+
+/** 消息操作不随流式帧换引用，但点击时必须使用最新已提交的会话与权限。 */
+function useCommittedCallback<Args extends unknown[], Result>(callback: (...args: Args) => Result): (...args: Args) => Result {
+  const committed = useRef(callback)
+  useLayoutEffect(() => { committed.current = callback }, [callback])
+  return useCallback((...args: Args) => committed.current(...args), [])
+}
+
+function sameTurnUsage(previous: TurnUsageInfo | undefined, next: TurnUsageInfo): previous is TurnUsageInfo {
+  return Boolean(previous && previous.tokens === next.tokens && previous.askedAt === next.askedAt &&
+    previous.startedAt === next.startedAt && previous.endedAt === next.endedAt &&
+    previous.model === next.model && previous.streaming === next.streaming &&
+    previous.summary.length === next.summary.length && previous.summary.every((row, index) => {
+      const other = next.summary[index]
+      return row.label === other.label && row.group === other.group && row.tokens === other.tokens &&
+        row.child === other.child && row.unknown === other.unknown && row.title === other.title && row.subtotal === other.subtotal
+    }))
+}
 
 type ComposerResources = { skills: string[]; mcpServers: string[]; knowledgeBases: string[] }
 function loadLegacyComposerResources(sessionId: string, source: string): RootRunRequestConfig {
@@ -384,6 +403,9 @@ export function ChatView(): JSX.Element {
   const attach = useAttachments(workspace.root, sessionId)
   /** 附件点击预览（图片放大 / 文本查看，统一 AttachmentPreviewDialog） */
   const [previewImage, setPreviewImage] = useState<AttachmentPreview | null>(null)
+  const previewAttachment = useCallback((file: ChatAttachment, src: string | null) => {
+    setPreviewImage({ file, src })
+  }, [])
 
   /** AI 润色输入框内容：用轻任务模型改写得更清晰；chip 引用会随文本一起被序列化给模型 */
   const handlePolish = async (): Promise<void> => {
@@ -460,6 +482,28 @@ export function ChatView(): JSX.Element {
   const contextLimit = contextPresentationLimit(contextUsage, models, modelId, CONTEXT_WINDOW_FALLBACK)
   // 按用户提问切分轮次：每轮末尾展示「一问一答」的累计 token
   const turns = useMemo(() => groupIntoTurns(messages), [messages])
+  const committedTurnUsage = useRef<ReadonlyMap<string, TurnUsageInfo>>(new Map())
+  const usageByMessage = useMemo(() => {
+    const next = new Map<string, TurnUsageInfo>()
+    for (const turn of turns) {
+      if (turn.tokens <= 0) continue
+      let lastAssistant: ChatMessage | undefined
+      for (let index = turn.messages.length - 1; index >= 0; index--) {
+        if (turn.messages[index].role === 'assistant') { lastAssistant = turn.messages[index]; break }
+      }
+      if (!lastAssistant) continue
+      const usage: TurnUsageInfo = {
+        tokens: turn.tokens, summary: turn.summary, askedAt: turn.askedAt,
+        startedAt: turn.startedAt, endedAt: turn.endedAt, model: turn.modelId ?? modelId,
+        streaming: turn.messages.some(message => message.status === 'streaming')
+      }
+      const previous = committedTurnUsage.current.get(lastAssistant.id)
+      next.set(lastAssistant.id, sameTurnUsage(previous, usage) ? previous : usage)
+    }
+    return next
+  }, [turns, modelId])
+  // groupIntoTurns 重算历史明细时也保留相同用量的引用，避免历史消息全部穿透 memo。
+  useLayoutEffect(() => { committedTurnUsage.current = usageByMessage }, [usageByMessage])
 
   // ── 消息窗口分页 ────────────────────────────────────────────────────────────
   // 长会话（几百上千条消息）一次全量渲染会让 DOM 规模爆炸、切换会话卡顿。
@@ -994,7 +1038,7 @@ export function ChatView(): JSX.Element {
   }, [])
 
   /** 删除引擎侧该消息之后的历史并重新发送（重新发送 / 重新生成共用） */
-  const retryTurn = useCallback(
+  const retryTurn = useCommittedCallback(
     (message: ChatMessage) => {
       if (!canExecute || sourceEpoch !== getEngineSource()) return
       // 重新生成（助手消息）等价于从它前面的用户提问处重发
@@ -1010,11 +1054,10 @@ export function ChatView(): JSX.Element {
         if (!confirmed || sourceEpoch !== getEngineSource()) return
         void retryFrom(userMessage, buildSendOptions()).catch(showError)
       })
-    },
-    [canExecute, sourceEpoch, messages, retryFrom, buildSendOptions, showError]
+    }
   )
 
-  const deleteTurnById = useCallback(
+  const deleteTurnById = useCommittedCallback(
     (message: ChatMessage) => {
       if (!canExecute || sourceEpoch !== getEngineSource()) return
       void confirmDialog({
@@ -1026,8 +1069,7 @@ export function ChatView(): JSX.Element {
         if (!confirmed || sourceEpoch !== getEngineSource()) return
         void deleteTurn(sessionId, message).catch((err) => showError(err))
       })
-    },
-    [canExecute, sourceEpoch, deleteTurn, sessionId, showError]
+    }
   )
 
   /**
@@ -1047,7 +1089,7 @@ export function ChatView(): JSX.Element {
   }, [sessionId, storageSource])
 
   /** 消息级回退（对齐 wuzu revert-files）：恢复该消息后全部文件改动（含已保留）并截断对话，原文回填输入框 */
-  const revertToMessage = useCallback(
+  const revertToMessage = useCommittedCallback(
     (message: ChatMessage) => {
       if (!canExecute || sourceEpoch !== getEngineSource()) return
       void confirmDialog({
@@ -1071,17 +1113,15 @@ export function ChatView(): JSX.Element {
           })
           .catch(showError)
       })
-    },
-    [canExecute, sourceEpoch, sourceSessionKey, storageSource, revertFrom, sessionId, showError]
+    }
   )
 
   /** 挂起卡片的应答提交：引用稳定，保证 MessageItem memo 生效（流式时不让所有历史消息跟着重渲染） */
-  const respondToEngine = useCallback(
+  const respondToEngine = useCommittedCallback(
     (requestId: string, values: string[]) => {
       if (!canExecute || sourceEpoch !== getEngineSource()) return
       void respond(requestId, values, buildSendOptions()).catch(showError)
-    },
-    [canExecute, sourceEpoch, respond, buildSendOptions, showError]
+    }
   )
 
   const exportSelected = useCallback(() => {
@@ -1375,34 +1415,17 @@ export function ChatView(): JSX.Element {
             ) : null}
             {visibleTurns.map((turn) => (
             <div key={turn.id} className="chat__turn" data-turn-id={turn.id}>
-              {(() => {
-                // 本轮的累计用量并入最后一条 AI 消息底部的过程行，不再单独占一行
-                const lastAssistantId = [...turn.messages]
-                  .reverse()
-                  .find((m) => m.role === 'assistant')?.id
-                const usage =
-                  turn.tokens > 0 && lastAssistantId
-                    ? {
-                        tokens: turn.tokens,
-                        summary: turn.summary,
-                        askedAt: turn.askedAt,
-                        startedAt: turn.startedAt,
-                        endedAt: turn.endedAt,
-                        model: turn.modelId ?? modelId,
-                        streaming: turn.messages.some((m) => m.status === 'streaming')
-                      }
-                    : undefined
-                return turn.messages.map((message) => (
+              {turn.messages.map((message) => (
                   <MessageItem
                     key={message.id}
                     message={message}
                     sessionId={sessionId}
-                    usage={message.id === lastAssistantId ? usage : undefined}
+                    usage={usageByMessage.get(message.id)}
                     disabled={!canExecute || streaming}
                   onAllowAll={allowAllForSession}
                   selectionMode={selectMode}
                   selected={selectedIds.has(message.id)}
-                  onToggleSelect={() => toggleMessage(message.id)}
+                  onToggleSelect={toggleMessage}
                   onRespond={respondToEngine}
                   onCopy={copyMessage}
                   onRetryFrom={retryTurn}
@@ -1411,10 +1434,9 @@ export function ChatView(): JSX.Element {
                   onDeleteTurn={deleteTurnById}
                   canAct={canExecute && !streaming && !selectMode}
                   workspaceRoot={workspace.root}
-                  onPreviewImage={(f, src) => setPreviewImage({ file: f, src })}
+                  onPreviewImage={previewAttachment}
                 />
-                ))
-              })()}
+                ))}
             </div>
             ))}
           </>
@@ -1486,7 +1508,7 @@ export function ChatView(): JSX.Element {
                   key={file.path}
                   root={workspace.root}
                   file={file}
-                  onPreview={(f, src) => setPreviewImage({ file: f, src })}
+                  onPreview={previewAttachment}
                   onRemove={() => attach.remove(file.path)}
                 />
               ))}
@@ -2113,7 +2135,7 @@ const MessageItem = memo(function MessageItem({
   /** 多选模式：true 时消息头部显示复选框 */
   selectionMode?: boolean
   selected?: boolean
-  onToggleSelect?: () => void
+  onToggleSelect?: (id: string) => void
   onRespond: (requestId: string, values: string[]) => void
   /** 复制该消息文本 */
   onCopy: (message: ChatMessage) => void
@@ -2141,7 +2163,7 @@ const MessageItem = memo(function MessageItem({
       <input
         type="checkbox"
         checked={selected}
-        onChange={onToggleSelect}
+        onChange={() => onToggleSelect?.(message.id)}
         aria-label={isUser ? '选择这条用户消息' : '选择这条 Agent 消息'}
       />
     </label>
@@ -2418,7 +2440,14 @@ function MessageTimeline({
   message: ChatMessage
   sessionId: string
   streaming: boolean
-}): JSX.Element | null {  const { inline } = useMemo(() => {
+}): JSX.Element | null {
+  const fileSessionId = message.run?.sessionId ?? sessionId
+  const storedWorkspacePath = useSyncExternalStore(subscribeSessionMeta,
+    () => getSessionMeta(fileSessionId).workspacePath)
+  const fileWorkspaceRoot = message.run?.workspacePaths?.[0] ?? storedWorkspacePath
+  const fileContext = useMemo<ChatFileContext>(() => ({ sessionId: fileSessionId, workspaceRoot: fileWorkspaceRoot }),
+    [fileSessionId, fileWorkspaceRoot])
+  const { inline } = useMemo(() => {
     const toolById = new Map(
       message.tools
         .filter((tool) => !tool.hidden && !isTimelineHiddenTool(tool))
@@ -2512,8 +2541,7 @@ function MessageTimeline({
             </div>
           ) : (
             <div key={`c-${index}`} className="message__content">
-              <Markdown text={segment.text} streaming={streaming} fileContext={{ sessionId: message.run?.sessionId ?? sessionId,
-                workspaceRoot: message.run?.workspacePaths?.[0] ?? getSessionMeta(message.run?.sessionId ?? sessionId).workspacePath }} />
+              <Markdown text={segment.text} streaming={streaming} fileContext={fileContext} />
             </div>
           )
         )

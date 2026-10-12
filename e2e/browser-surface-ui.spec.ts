@@ -10,6 +10,9 @@ import {
 import { createServer } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
+import { monitorElectronHealth, type ElectronHealthMonitor } from './helpers/electron-health'
+
+let health: ElectronHealthMonitor | undefined
 
 const root = resolve(__dirname, '..')
 let fixture = '',
@@ -163,6 +166,7 @@ test.describe.serial('原生网页与调试面板绘制', () => {
       cwd: root,
       env: { ...process.env, AETHER_GLOBAL_DIR: join(fixture, 'global') }
     })
+    health = await monitorElectronHealth(app, 'browser-surface')
     page = await app.firstWindow()
     page.on('pageerror', (error) => errors.push(String(error)))
     await expect(page.locator('.status-bar')).toBeVisible()
@@ -174,17 +178,21 @@ test.describe.serial('原生网页与调试面板绘制', () => {
       .poll(() => page.evaluate(() => window.aether.browser.list()))
       .toContainEqual(expect.objectContaining({ title: '原生网页绘制验收', loading: false }))
   })
-  test.afterEach(() => expect(errors).toEqual([]))
-  test.afterAll(async () => {
-    await app?.close()
-    server.closeAllConnections()
-    await new Promise<void>((done) => server.close(() => done()))
-    if (
-      dirname(resolve(fixture)) !== join(root, '.e2e-tmp') ||
-      !basename(fixture).startsWith('browser-surface-')
-    )
-      throw new Error('Unsafe fixture cleanup')
-    rmSync(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+  test.afterEach(() => { expect(errors).toEqual([]); health?.assertHealthy() })
+  test.afterAll(async ({}, testInfo) => {
+    try {
+      if (health) await health.closeAndAssert(testInfo)
+      else await app?.close()
+    } finally {
+      server.closeAllConnections()
+      await new Promise<void>((done) => server.close(() => done()))
+      if (
+        dirname(resolve(fixture)) !== join(root, '.e2e-tmp') ||
+        !basename(fixture).startsWith('browser-surface-')
+      )
+        throw new Error('Unsafe fixture cleanup')
+      rmSync(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    }
   })
 
   test('打开网络面板并反复拖动后，原生网页完整显示且没有占位残影', async ({}, testInfo) => {
@@ -247,6 +255,37 @@ test.describe.serial('原生网页与调试面板绘制', () => {
     }
   })
 
+  test('Code工作台侧栏拖动及取消后，原生网页重新匹配最终区域', async () => {
+    // The previous zoom test intentionally hides the settings-page sidebar
+    // through the narrow-window media query. Restore a draggable viewport.
+    await app!.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0]
+      window.webContents.setZoomFactor(1)
+      window.setSize(1800, 1200)
+    })
+    const divider = page.getByRole('separator', { name: '调整侧边栏宽度', exact: true })
+    const sidebar = page.locator('#mode-code .workbench__sidebar')
+    await expect(divider).toBeVisible()
+    for (const cancel of [false, true]) {
+      const initial = await sidebar.evaluate(element => element.getBoundingClientRect().width)
+      const box = await divider.boundingBox()
+      expect(box).not.toBeNull()
+      const x = box!.x + box!.width / 2, y = box!.y + box!.height / 2
+      await page.mouse.move(x, y)
+      await page.mouse.down()
+      await page.mouse.move(x + 60, y, { steps: 30 })
+      await expect.poll(async () => (await geometry()).native.guest?.visible).toBe(false)
+      if (cancel) await page.keyboard.press('Escape')
+      await page.mouse.up()
+      await expect.poll(() => sidebar.evaluate(element => element.getBoundingClientRect().width)).toBeCloseTo(initial + (cancel ? 0 : 60), 0)
+      await expect.poll(async () => {
+        const state = await geometry()
+        return Boolean(state.native.guest?.visible && (['x', 'y', 'width', 'height'] as const)
+          .every(key => Math.abs(state.native.guest!.bounds[key] - state.dom[key] * state.native.zoom) <= 2))
+      }).toBe(true)
+    }
+  })
+
   test('切换 Work 后由 Work 浏览器继续显示同一原生网页实例', async () => {
     const guestState = () => app!.evaluate(({ BrowserWindow, WebContentsView }, origin) => {
       const guest = BrowserWindow.getAllWindows()[0].contentView.children.find(
@@ -260,7 +299,7 @@ test.describe.serial('原生网页与调试面板绘制', () => {
     await page.getByRole('tab', { name: 'Work 办公', exact: true }).click()
     await expect(page.locator('.mode-surface[data-mode="code"]')).toBeHidden()
     await expect(page.locator('.mode-surface[data-mode="work"]')).toBeVisible()
-    await page.getByRole('tab', { name: '浏览器', exact: true }).click()
+    await page.locator('.work-navigation').getByRole('button', { name: '浏览器', exact: true }).click()
     await expect.poll(async () => (await guestState())?.visible).toBe(true)
     const work = await guestState()
     expect(work?.id).toBe(before!.id)

@@ -1,0 +1,241 @@
+/* Full-screen sampling and nested settings filters were the dominant software
+ * compositing cost. Large surfaces have one opaque layer in every tier. */
+:root
+  :is(
+    .modal-overlay,
+    .palette-overlay,
+    .replace-preview-overlay,
+    .modal,
+    .app-settings__nav,
+    .app-settings__toolbar
+  ) {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+:root .modal {
+  background: var(--material-bg-thick-solid);
+}
+:root :is(.app-settings__nav, .app-settings__toolbar) {
+  background: var(--bg-surface);
+}
+:root[data-visual-effects='full']
+  :is(
+    .menu-bar,
+    .activity-bar,
+    .sidebar__header,
+    .chat-panel__header,
+    .editor-tabs,
+    .panel__tabs,
+    .editor-toolbar,
+    .history-view__toolbar,
+    .output__toolbar,
+    .git-panel__toolbar,
+    .explorer__toolbar,
+    .browser-navigation,
+    .browser-options,
+    .browser-tabs,
+    .browser-status,
+    .status-bar
+  ) {
+  backdrop-filter: blur(var(--material-blur)) saturate(145%);
+  -webkit-backdrop-filter: blur(var(--material-blur)) saturate(145%);
+}
+
+/* Small transient surfaces share a bounded blur radius. */
+:root
+  :is(
+    .material,
+    .material--thin,
+    .toast-host__item,
+    .menu-bar__dropdown,
+    .palette,
+    .popover__panel,
+    .context-menu,
+    .sec-picker__popup,
+    .think-picker__popup,
+    .replace-preview,
+    .git-hovercard,
+    .git-stashcard,
+    .git-clone__float,
+    .file-palette,
+    .chat__nav-list,
+    .tag-panel,
+    .resource-picker,
+    .editor-path-picker,
+    .ui-surface--floating
+  ) {
+  backdrop-filter: blur(var(--material-blur)) saturate(145%);
+  -webkit-backdrop-filter: blur(var(--material-blur)) saturate(145%);
+}
+
+/* Auto resolves to reduced on an accelerated compositor. Chrome does not need
+ * to resample the document on every scroll or keystroke. */
+:root[data-visual-effects='reduced']
+  :is(
+    .menu-bar,
+    .activity-bar,
+    .sidebar__header,
+    .chat-panel__header,
+    .editor-tabs,
+    .panel__tabs,
+    .editor-toolbar,
+    .history-view__toolbar,
+    .output__toolbar,
+    .git-panel__toolbar,
+    .explorer__toolbar,
+    .browser-navigation,
+    .browser-options,
+    .browser-tabs,
+    .browser-status,
+    .status-bar
+  ) {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: var(--bg-surface);
+}
+
+/* Scoped material policy, also used before capability detection resolves.
+ * Opaque token aliases prevent sharp background text showing through portals. */
+:root:not([data-visual-effects]),
+:root[data-visual-effects='solid'] {
+  --material-bg: var(--material-bg-solid);
+  --material-bg-thin: var(--bg-surface);
+  --material-bg-thick: var(--material-bg-thick-solid);
+}
+:root:not([data-visual-effects])
+  :is(
+    .material,
+    .material--thin,
+    .toast-host__item,
+    .menu-bar,
+    .activity-bar,
+    .sidebar__header,
+    .chat-panel__header,
+    .editor-tabs,
+    .panel__tabs,
+    .editor-toolbar,
+    .history-view__toolbar,
+    .output__toolbar,
+    .git-panel__toolbar,
+    .explorer__toolbar,
+    .browser-navigation,
+    .browser-options,
+    .browser-tabs,
+    .browser-status,
+    .status-bar,
+    .menu-bar__dropdown,
+    .palette,
+    .popover__panel,
+    .context-menu,
+    .sec-picker__popup,
+    .think-picker__popup,
+    .replace-preview,
+    .git-hovercard,
+    .git-stashcard,
+    .git-clone__float,
+    .file-palette,
+    .chat__nav-list,
+    .tag-panel,
+    .resource-picker,
+    .editor-path-picker,
+    .ui-surface--floating
+  ),
+:root[data-visual-effects='solid']
+  :is(
+    .material,
+    .material--thin,
+    .toast-host__item,
+    .menu-bar,
+    .activity-bar,
+    .sidebar__header,
+    .chat-panel__header,
+    .editor-tabs,
+    .panel__tabs,
+    .editor-toolbar,
+    .history-view__toolbar,
+    .output__toolbar,
+    .git-panel__toolbar,
+    .explorer__toolbar,
+    .browser-navigation,
+    .browser-options,
+    .browser-tabs,
+    .browser-status,
+    .status-bar,
+    .menu-bar__dropdown,
+    .palette,
+    .popover__panel,
+    .context-menu,
+    .sec-picker__popup,
+    .think-picker__popup,
+    .replace-preview,
+    .git-hovercard,
+    .git-stashcard,
+    .git-clone__float,
+    .file-palette,
+    .chat__nav-list,
+    .tag-panel,
+    .resource-picker,
+    .editor-path-picker,
+    .ui-surface--floating
+  ) {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --material-bg: var(--material-bg-solid);
+    --material-bg-thin: var(--bg-surface);
+    --material-bg-thick: var(--material-bg-thick-solid);
+  }
+  :root
+    :is(
+      .material,
+      .material--thin,
+      .toast-host__item,
+      .menu-bar,
+      .activity-bar,
+      .sidebar__header,
+      .chat-panel__header,
+      .editor-tabs,
+      .panel__tabs,
+      .editor-toolbar,
+      .history-view__toolbar,
+      .output__toolbar,
+      .git-panel__toolbar,
+      .explorer__toolbar,
+      .browser-navigation,
+      .browser-options,
+      .browser-tabs,
+      .browser-status,
+      .status-bar,
+      .menu-bar__dropdown,
+      .palette,
+      .popover__panel,
+      .context-menu,
+      .sec-picker__popup,
+      .think-picker__popup,
+      .replace-preview,
+      .git-hovercard,
+      .git-stashcard,
+      .git-clone__float,
+      .file-palette,
+      .chat__nav-list,
+      .tag-panel,
+      .resource-picker,
+      .editor-path-picker,
+      .ui-surface--floating
+    ) {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
+.work-list-pagination,
+.work-history-load {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  color: var(--fg-muted);
+}

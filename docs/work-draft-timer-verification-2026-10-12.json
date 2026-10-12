@@ -1,0 +1,97 @@
+{
+  "date": "2026-10-12",
+  "scope": "Follow-up default browser timer receiver regression; original performance evidence preserved",
+  "sourceThreadId": "01a10ab4-8e33-7e13-8d68-bc8a0172ad5a",
+  "fix": {
+    "path": "src/renderer/src/contrib/work/work-draft-persistence.ts",
+    "behavior": "Arrow wrappers call native setTimeout/clearTimeout without using the clock object as receiver",
+    "sourceSha256": "f2c22e8d332d85b8d8f3ad5fdaa71c2f808f1e9379ec4ad8a6963b4f3096706c",
+    "currentAndFrozenSourceMatch": true
+  },
+  "checksExecutedThisFollowUp": [
+    {
+      "command": "npm run typecheck",
+      "exitCode": 0
+    },
+    {
+      "command": "npx playwright test e2e/work-performance-state.spec.ts --workers=1 --output=.e2e-tmp/work-draft-state-correction-results-20261012",
+      "passed": 4,
+      "failed": 0,
+      "exitCode": 0
+    },
+    {
+      "command": "npx playwright test e2e/work-draft-timer-receiver.spec.ts --workers=1 --output=.e2e-tmp/work-timer-receiver-results-20261012",
+      "passed": 1,
+      "failed": 0,
+      "exitCode": 0,
+      "method": "Load real TypeScript scheduler in isolated VM, use default clock and receiver-checked global timer functions; no Node global timer patch"
+    },
+    {
+      "command": "npx eslint e2e/work-draft-timer-receiver.spec.ts --quiet",
+      "exitCode": 0
+    }
+  ],
+  "oneOffMutationControls": [
+    {
+      "changeInMemoryOnly": "Restore bare setTimeout reference",
+      "failureAt": "First schedule",
+      "error": "Illegal invocation",
+      "writes": 0,
+      "pendingTimers": 0
+    },
+    {
+      "changeInMemoryOnly": "Restore bare clearTimeout reference",
+      "failureAt": "Repeated schedule",
+      "error": "Illegal invocation",
+      "writes": 0,
+      "pendingTimers": 2
+    }
+  ],
+  "frozenBuildIndependentlyInspected": {
+    "root": ".ae/soak/real-20261012/frozen-app-20261012c",
+    "builtAt": "2026-10-12T04:54:45.460Z",
+    "sourceHash": "49c01c31175d0c2de3b5b7f0e5e92986df3201b75088c98eba35cfc4c5ffcf1c",
+    "outputHash": "12854ac626f5b0b0ba558565e53f851990668cb9bea00010f35d1043bb4f652f",
+    "sourceVerified": true,
+    "buildExitCode": 0,
+    "currentOutEntriesMatch": true,
+    "entries": {
+      "out/main/index.js": "9c232db7c07418be4ccd34d32ef0ba320a53028d4b811a3e9fecf2c4fe1b6d79",
+      "out/preload/index.js": "76d800def489ff8d4454cf3bff7d9cbdeb94a0de08a1d243bc34aa3d8c051341",
+      "out/renderer/assets/index-C3NRpL0o.js": "2f58d6e72a2045a92f4c95a551545a479a2ac6f86c5f0ccebf674ca490efffe1"
+    }
+  },
+  "realElectronResultsReused": {
+    "timeline": {
+      "passedReportedBySourceThread": 8,
+      "outputDirectory": "test-results",
+      "lastRunStatusIndependentlyRead": "passed",
+      "failedTestsIndependentlyRead": [],
+      "nativeHealthFailuresIndependentlyRead": [],
+      "exitCodeIndependentlyRead": 0,
+      "stderrNote": "Includes fixture terminal:create Error: ok and debugger/color notices; not an assertion of empty stderr",
+      "fullEightPassConsoleLogIndependentlyFound": false
+    },
+    "historicalUiReview": {
+      "path": ".ae/soak/real-20261012/workspaces/engineering-one-hour-20261012a/ui-history-review/result.json",
+      "status": "history-reviewed",
+      "elapsedSeconds": 61.898,
+      "actions": 1043,
+      "taskVisits": 76,
+      "failure": null,
+      "pageErrors": [],
+      "exitCode": 0,
+      "scope": "Historical real sessions UI preflight; not a live one-hour UI pressure-test pass"
+    },
+    "electronLaunchedThisFollowUp": false
+  },
+  "originalPerformanceEvidence": {
+    "remeasuredThisFollowUp": false,
+    "filesUnmodified": {
+      "docs/work-performance-evidence-2026-10-12.json": "2b186d818ed9a66173a7e5b3bc045bd83966bb085ab36d8eba17afbae31caa63",
+      "docs/work-performance-verification-evidence-2026-10-12.json": "d4d9c23a1406a718e4c1a08ae4f10fcb6be947e95e9cb5c565158327c8c9a194"
+    },
+    "priorVerificationRendererSha256": "3271f2957501e73823991b7e5da403305d71edda92cc6fb1433c6d7899826a82",
+    "note": "Previous click metrics remain attributed to their earlier build and are not relabeled as timer-fixed measurements"
+  }
+}

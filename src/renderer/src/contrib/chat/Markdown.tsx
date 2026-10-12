@@ -25,7 +25,11 @@ const FileContext = createContext<ChatFileContext | undefined>(undefined)
 /** 语言别名归一：模型常写 js/ts/shell 这类短名，highlight.js 需要规范名 */
 const LANG_ALIAS: Record<string, string> = {
   js: 'javascript',
+  mjs: 'javascript',
+  cjs: 'javascript',
   ts: 'typescript',
+  mts: 'typescript',
+  cts: 'typescript',
   jsx: 'javascript',
   tsx: 'typescript',
   sh: 'bash',

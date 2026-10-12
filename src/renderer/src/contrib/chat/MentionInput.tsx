@@ -115,6 +115,14 @@ interface MentionInputProps {
   value: string
   disabled?: boolean
   placeholder?: string
+  /** Accessible name for the contenteditable input (mirrors textarea labels). */
+  ariaLabel?: string
+  /** Optional root class for consumers that need to isolate the input styles. */
+  className?: string
+  /** Base class used by the input. Chat keeps `chat__input` by default. */
+  baseClassName?: string
+  /** Keep the generic selector opt-in so keep-alive surfaces cannot collide with Code selectors. */
+  includeMentionClass?: boolean
   onChange: (text: string, mentions: Mention[]) => void
   onSubmit: () => void
   /** 粘贴到剪贴板里的文件（截图/复制的文件），交给附件体系处理 */
@@ -132,7 +140,7 @@ interface MentionInputProps {
 
 export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
   function MentionInput(
-    { value, disabled, placeholder, onChange, onSubmit, onPasteFiles, onPasteText, onMentionQuery, onSlashQuery },
+    { value, disabled, placeholder, ariaLabel, className, baseClassName, includeMentionClass = true, onChange, onSubmit, onPasteFiles, onPasteText, onMentionQuery, onSlashQuery },
     ref
   ): JSX.Element {
     const boxRef = useRef<HTMLDivElement>(null)
@@ -556,8 +564,9 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
     return (
       <div
         ref={boxRef}
-        className="chat__input mention-input"
+        className={[baseClassName ?? 'chat__input', className, includeMentionClass ? 'mention-input' : undefined].filter(Boolean).join(' ')}
         role="textbox"
+        aria-label={ariaLabel}
         aria-multiline="true"
         contentEditable={disabled ? 'false' : 'true'}
         data-placeholder={placeholder ?? ''}

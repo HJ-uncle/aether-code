@@ -7,6 +7,8 @@
 
 // ==================== IPC 通道 ====================
 
+import type { GraphicsMode, VisualEffects } from './graphics'
+
 export const IPC = {
   /** 渲染进程 → 主进程（invoke） */
   invoke: {
@@ -27,6 +29,8 @@ export const IPC = {
     engineStreamAbort: 'engine:stream:abort',
     settingsGet: 'settings:get',
     settingsUpdate: 'settings:update',
+    graphicsGetSnapshot: 'graphics:get-snapshot',
+    graphicsResetRecovery: 'graphics:reset-recovery',
     settingsRemoteTokenStatus: 'settings:remote-token-status',
     settingsRemoteAuthStatus: 'settings:remote-auth-status',
     settingsSetRemoteToken: 'settings:set-remote-token',
@@ -162,6 +166,8 @@ export const IPC = {
     fsDocumentsChanged: 'fs:documents-changed',
     engineSnapshot: 'engine:snapshot',
     engineLog: 'engine:log',
+    engineLogs: 'engine:logs',
+    graphicsChanged: 'graphics:changed',
     engineImportProgress: 'engine:import-progress',
     streamEvent: 'engine:stream:event',
     terminalData: 'terminal:data',
@@ -327,7 +333,11 @@ export interface EngineLogEntry {
   level: 'info' | 'warn' | 'error'
   line: string
   ts: number
+  /** A transport limit shortened the original stdout/stderr line. */
+  truncated?: boolean
 }
+
+export type EngineLogBatch = readonly EngineLogEntry[]
 
 // ==================== 设置 ====================
 
@@ -426,6 +436,10 @@ export interface AppSettings {
   accent: AccentColor
   /** 自定义强调色；切回预设时仍保留，供下次选择使用。 */
   customAccentColor: string
+  /** GPU preference takes effect on the next application launch. */
+  graphicsMode: GraphicsMode
+  /** Material preference applies immediately, subject to software/OS capability. */
+  visualEffects: VisualEffects
   /**
    * 资源管理器与搜索的文件排除规则（glob → 是否隐藏）。
    *
@@ -477,6 +491,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   appearance: 'system',
   accent: 'blue',
   customAccentColor: '#4b95f1',
+  graphicsMode: 'auto',
+  visualEffects: 'auto',
   filesExclude: { ...DEFAULT_FILES_EXCLUDE },
   searchExclude: { ...DEFAULT_SEARCH_EXCLUDE }
 }

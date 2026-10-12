@@ -17,6 +17,9 @@ import type { RootRun } from '../src/shared/root-run'
 import type { ChatSsePayload, EngineFileChange } from '../src/shared/ipc'
 import type { EngineHistoryRow } from '../src/renderer/src/core/engine/chat-history'
 import type { AetherIdeApi } from '../src/preload'
+import { monitorElectronHealth, type ElectronHealthMonitor } from './helpers/electron-health'
+
+let health: ElectronHealthMonitor | undefined
 
 declare global {
   interface Window {
@@ -34,6 +37,13 @@ const chatRequests: Array<{
   sessionId: string
   message: string
   model?: string
+  agentId?: string
+  skills?: string[]
+  mcpServers?: string[]
+  knowledgeBases?: string[]
+  allowedTools?: string[]
+  thinkingMode?: unknown
+  memoryScope?: unknown
   workspacePaths?: string[]
 }> = []
 const toolResponses: Array<{
@@ -43,6 +53,26 @@ const toolResponses: Array<{
 }> = []
 const cancellations: string[] = [],
   errors: string[] = []
+const fixtureAgents = new Map<string, Record<string, unknown>>()
+const fixtureSkills = [
+  { id: 'skill-review', name: '代码审查技能', description: '检查实现与测试', enabled: true },
+  { id: 'skill-docs', name: '文档技能', description: '整理技术文档', enabled: true }
+]
+const fixtureMcpServers = [
+  { id: 'mcp-git', name: 'Git 服务', description: '访问 Git 仓库', enabled: true },
+  { id: 'mcp-search', name: '搜索服务', description: '查询外部资料', enabled: true }
+]
+const fixtureKnowledgeBases = [
+  { id: 'kb-product', name: '产品知识库', description: '产品规范与设计资料', documentCount: 4, createdAt: Date.now() }
+]
+const fixtureTools = [
+  { name: 'read_file', displayName: '读取文件', description: '读取工作区文件' },
+  { name: 'write_file', displayName: '写入文件', description: '写入工作区文件' },
+  { name: 'run_command', displayName: '运行命令', description: '执行受控命令' }
+]
+const memoryScopes = new Map<string, string>()
+const securityModes = new Map<string, string>()
+const utilityRequests: Array<{ body: Record<string, unknown>; response: ServerResponse }> = []
 let fixture = '',
   app: ElectronApplication | undefined,
   page: Page,
@@ -120,6 +150,55 @@ const server = createServer((request, response) => {
     let raw = ''
     for await (const chunk of request) raw += chunk.toString()
     const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {}
+    if (path === '/api/v1/utility/chat') { utilityRequests.push({ body, response }); return }
+    if (path === '/api/v1/memory/settings' || path === '/api/v1/security/mode') {
+      const id = String(body.sessionId ?? url.searchParams.get('sessionId') ?? '')
+      const memory = path.includes('/memory/')
+      if (request.method === 'PUT') (memory ? memoryScopes : securityModes).set(id, String(memory ? body.memoryScope : body.mode))
+      response.setHeader('content-type', 'application/json')
+      response.end(envelope(memory
+        ? { sessionId: id, memoryScope: memoryScopes.get(id) ?? 'session', effectiveScope: memoryScopes.get(id) ?? 'session', enabled: true }
+        : { sessionId: id, mode: securityModes.get(id) ?? 'safe' }))
+      return
+    }
+    if (path === '/api/v1/skills' && request.method === 'GET') {
+      response.setHeader('content-type', 'application/json')
+      response.end(envelope({ list: fixtureSkills }))
+      return
+    }
+    if (path === '/api/v1/mcp/servers' && request.method === 'GET') {
+      response.setHeader('content-type', 'application/json')
+      response.end(envelope(fixtureMcpServers))
+      return
+    }
+    if (path === '/api/v1/knowledge/bases' && request.method === 'GET') {
+      response.setHeader('content-type', 'application/json')
+      response.end(envelope(fixtureKnowledgeBases))
+      return
+    }
+    if (path === '/api/v1/system-tools' && request.method === 'GET') {
+      response.setHeader('content-type', 'application/json')
+      response.end(envelope({ list: fixtureTools }))
+      return
+    }
+    if (path === '/api/v1/agents' || path.startsWith('/api/v1/agents/')) {
+      response.setHeader('content-type', 'application/json')
+      const id = path === '/api/v1/agents' ? null : decodeURIComponent(path.slice('/api/v1/agents/'.length))
+      if (request.method === 'POST') {
+        const created = {
+          ...body,
+          id: `fixture-agent-${fixtureAgents.size + 1}`,
+          ...(body.allowedTools === undefined ? { allowedTools: ['read_file'] } : {}),
+          ...(body.skills === undefined ? { skills: ['keep-existing-skill'] } : {})
+        }
+        fixtureAgents.set(created.id, created); response.end(envelope(created))
+      } else if (request.method === 'PUT' && id) {
+        fixtureAgents.set(id, { ...fixtureAgents.get(id), ...body }); response.end(envelope(fixtureAgents.get(id)))
+      } else if (request.method === 'DELETE' && id) {
+        fixtureAgents.delete(id); response.end(envelope({ id }))
+      } else response.end(envelope(id ? fixtureAgents.get(id) : [...fixtureAgents.values()]))
+      return
+    }
     if (path === '/api/v1/chat' && request.method === 'POST') {
       const id = String(body.sessionId ?? ''),
         value = session(id)
@@ -149,6 +228,13 @@ const server = createServer((request, response) => {
         sessionId: id,
         message: String(body.message ?? ''),
         model: typeof body.model === 'string' ? body.model : undefined,
+        agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
+        skills: Array.isArray(body.skills) ? body.skills as string[] : undefined,
+        mcpServers: Array.isArray(body.mcpServers) ? body.mcpServers as string[] : undefined,
+        knowledgeBases: Array.isArray(body.knowledgeBases) ? body.knowledgeBases as string[] : undefined,
+        allowedTools: Array.isArray(body.allowedTools) ? body.allowedTools as string[] : undefined,
+        thinkingMode: body.thinkingMode,
+        memoryScope: body.memoryScope,
         workspacePaths: Array.isArray(body.workspacePaths)
           ? (body.workspacePaths as string[])
           : undefined
@@ -272,6 +358,13 @@ const server = createServer((request, response) => {
                     changes: [],
                     commandJobs: []
                   }
+                : path === '/api/v1/chat/status'
+                  ? {
+                      running: value.run?.status === 'running',
+                      finished: Boolean(value.run && value.run.status !== 'running'),
+                      run: value.run,
+                      lastEventId: value.run ? `${value.run.runId}:${value.sequence}` : null
+                    }
                 : path === '/api/v1/chat/runs'
                   ? { runs: value.run ? [value.run] : [] }
                   : path === '/api/v1/workspace/directory'
@@ -341,22 +434,29 @@ test.describe.serial('Work 模式', () => {
         AETHER_GLOBAL_DIR: join(fixture, 'global')
       }
     })
+    health = await monitorElectronHealth(app, 'work-mode', [token])
     page = await app.firstWindow()
     page.on('pageerror', (error) => errors.push(error.message))
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900))
     await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
     await expect(codeMode()).toHaveAttribute('aria-selected', 'true')
   })
-  test.afterAll(async () => {
+  test.afterEach(() => health?.assertHealthy())
+  test.afterAll(async ({}, testInfo) => {
     for (const value of sessions.values()) value.response?.destroy()
-    await app?.close()
-    server.closeAllConnections()
-    await new Promise<void>((done) => server.close(() => done()))
-    if (!fixture) return
-    const absolute = resolve(fixture)
-    if (dirname(absolute) !== fixtureRoot || !basename(absolute).startsWith('work-mode-'))
-      throw new Error(`Unsafe Work fixture cleanup: ${absolute}`)
-    rmSync(absolute, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    try {
+      if (health) await health.closeAndAssert(testInfo)
+      else await app?.close()
+    } finally {
+      server.closeAllConnections()
+      await new Promise<void>((done) => server.close(() => done()))
+      if (fixture) {
+        const absolute = resolve(fixture)
+        if (dirname(absolute) !== fixtureRoot || !basename(absolute).startsWith('work-mode-'))
+          throw new Error(`Unsafe Work fixture cleanup: ${absolute}`)
+        rmSync(absolute, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      }
+    }
   })
 
   test('左上切换保留 Code DOM、草稿和原有布局，隐藏层不能聚焦', async ({}, testInfo) => {
@@ -383,12 +483,12 @@ test.describe.serial('Work 模式', () => {
     ).toBe(true)
     expect(await page.evaluate(() => localStorage.getItem('aether.ide.layout'))).toBe(before)
     await switchTo('work')
-    await expect(work().getByRole('textbox', { name: '任务目标', exact: true })).toHaveValue(
+    await expect(work().getByRole('textbox', { name: '任务目标', exact: true })).toHaveText(
       'WORK_DRAFT_SHOULD_SURVIVE'
     )
     await page.reload()
     await expect(workMode()).toHaveAttribute('aria-selected', 'true')
-    await expect(work().getByRole('textbox', { name: '任务目标', exact: true })).toHaveValue(
+    await expect(work().getByRole('textbox', { name: '任务目标', exact: true })).toHaveText(
       'WORK_DRAFT_SHOULD_SURVIVE'
     )
     await page.screenshot({
@@ -512,7 +612,10 @@ test.describe.serial('Work 模式', () => {
     const scroll = work().locator('.work-conversation__scroll')
     await expect
       .poll(() => scroll.evaluate((element) => element.scrollHeight - element.clientHeight))
-      .toBeGreaterThan(400)
+      // The compact process row and activity disclosure no longer add the old
+      // full-width tool card height; assert real overflow without coupling the
+      // reading test to a particular viewport/font rasterization.
+      .toBeGreaterThan(200)
     await expect
       .poll(() =>
         scroll.evaluate(
@@ -520,13 +623,17 @@ test.describe.serial('Work 模式', () => {
         )
       )
       .toBeLessThanOrEqual(2)
+    await work().getByRole('button', { name: '打开工作区', exact: true }).click()
+    await work().getByRole('tab', { name: '活动', exact: true }).click()
     const steps = work().locator('.work-steps')
-    await expect(steps.getByRole('button')).toHaveCount(1)
+    await expect(steps.locator('summary')).toHaveCount(1)
+    await expect(steps).not.toHaveAttribute('open', '')
+    await steps.locator('summary').click()
     await expect(steps.locator('li')).toHaveCount(2)
-    await steps.getByRole('button', { name: /工作步骤/ }).click()
-    await expect(steps.locator('li')).toHaveCount(0)
-    await steps.getByRole('button', { name: /工作步骤/ }).click()
-    await expect(steps.locator('li')).toHaveCount(2)
+    await expect(steps.locator('li').first()).toBeVisible()
+    await steps.locator('summary').click()
+    await expect(steps.locator('li').first()).toBeHidden()
+    await steps.locator('summary').click()
     await scroll.evaluate((element) => {
       element.scrollTop = 0
     })
@@ -567,7 +674,7 @@ test.describe.serial('Work 模式', () => {
       toolEnd: { id: 'work-write-tool', name: 'write_file', output: '文件已写入', success: true }
     })
     await expect(runStatus()).toContainText('正在生成回复')
-    await work().getByRole('button', { name: '打开工作区', exact: true }).click()
+    await work().getByRole('tab', { name: /^成果(?: \d+)?$/, exact: true }).click()
     await expect(work().locator('.work-artifact-preview')).toContainText('WORK_ARTIFACT_CONTENT')
     await expect(work().locator('.work-artifact-select')).toContainText('草稿')
     await page.screenshot({
@@ -576,7 +683,7 @@ test.describe.serial('Work 模式', () => {
     })
     const sentBeforeReference = chatRequests.length
     await work().getByRole('button', { name: '添加到对话', exact: true }).click()
-    await expect(work().getByRole('textbox', { name: '继续对话', exact: true })).toHaveValue(
+    await expect(work().getByRole('textbox', { name: '继续对话', exact: true })).toHaveText(
       /report\.md.*work-report-receipt/
     )
     expect(chatRequests.length, '引用文件只补充草稿，不应直接发起模型请求').toBe(
@@ -614,6 +721,31 @@ test.describe.serial('Work 模式', () => {
     await expect(work().locator('.work-activities__list button')).toHaveCount(2)
     await work().locator('.work-activities__list button').first().click()
     await expect(work().locator('.work-activity-detail')).toContainText('report.md')
+    frame(id, {
+      toolStart: { id: 'work-module-tool', name: 'write_file', args: { path: 'module.mjs' } }
+    })
+    frame(id, {
+      fileChange: {
+        ...change,
+        id: 'work-module-receipt',
+        toolCallId: 'work-module-tool',
+        path: '/remote/work-mode-fixture/module.mjs',
+        displayPath: 'module.mjs',
+        newContent: 'export const WORK_MODULE_RESULT = 42;\n'
+      }
+    })
+    frame(id, {
+      toolEnd: { id: 'work-module-tool', name: 'write_file', output: '模块文件已写入', success: true }
+    })
+    await work().getByRole('tab', { name: /^成果(?: \d+)?$/, exact: true }).click()
+    await artifactSelect.click()
+    await page.getByRole('menuitem', { name: /^module\.mjs\s/ }).click()
+    const modulePreview = work().locator('.work-artifact-preview')
+    await expect(modulePreview).toContainText('export const WORK_MODULE_RESULT = 42;')
+    await expect(modulePreview.locator('code span.hljs-keyword', { hasText: /^export$/ })).toBeVisible()
+    await expect(modulePreview.locator('code span.hljs-keyword', { hasText: /^const$/ })).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('work-module-syntax-highlight.png'), animations: 'disabled' })
+    await work().getByRole('tab', { name: '活动', exact: true }).click()
     finish(id)
     await expect(work().locator('.work-task-heading')).toContainText('已完成')
     await expect(runStatus()).toHaveCount(0)
@@ -621,7 +753,7 @@ test.describe.serial('Work 模式', () => {
       'aria-selected',
       'true'
     )
-    await expect(work().getByRole('textbox', { name: '继续对话', exact: true })).toHaveValue(
+    await expect(work().getByRole('textbox', { name: '继续对话', exact: true })).toHaveText(
       /work-report-receipt/
     )
   })
@@ -689,7 +821,7 @@ test.describe.serial('Work 模式', () => {
     await expect(work().locator('.work-task-heading')).toContainText('已完成')
     await expect(runStatus()).toHaveCount(0)
     await expect(work().getByRole('button', { name: '提交回复', exact: true })).toHaveCount(0)
-    await expect(work().getByRole('textbox', { name: '继续对话', exact: true })).toHaveValue(
+    await expect(work().getByRole('textbox', { name: '继续对话', exact: true })).toHaveText(
       '等待时暂存的补充要求'
     )
   })
@@ -702,7 +834,7 @@ test.describe.serial('Work 模式', () => {
     failedWorkSnapshots = 1
     await work().getByRole('button', { name: '开始任务', exact: true }).click()
     await expect(work().getByRole('alert')).toContainText('WORK_HISTORY_UNAVAILABLE')
-    await expect(work().getByRole('textbox', { name: '继续对话', exact: true })).toHaveValue(prompt)
+    await expect(work().getByRole('textbox', { name: '继续对话', exact: true })).toHaveText(prompt)
     expect(chatRequests.length).toBe(before)
     await work().getByRole('button', { name: '重新加载', exact: true }).click()
     await expect.poll(() => chatRequests.length).toBe(before + 1)
@@ -951,6 +1083,209 @@ test.describe.serial('Work 模式', () => {
     await page.reload()
     await expect(work().locator('.work-conversation')).toContainText('WORK_STRESS_COMPLETED_2')
     expect(errors).toEqual([])
+  })
+
+  test('Work 复用对话偏好，记忆和思考选择进入真实请求且跨刷新保留', async () => {
+    await work().getByRole('button', { name: '新任务', exact: true }).click()
+    await work().getByRole('button', { name: '对话偏好', exact: true }).click()
+    await page.getByTitle('选择思考档位', { exact: true }).click()
+    await page.getByRole('menuitem', { name: /^Off/ }).click()
+    await expect(page.locator('.composer-options__dd-menu:visible')).toHaveCount(0)
+    await page.getByTitle('选择长期记忆范围', { exact: true }).click()
+    await page.getByRole('menuitem', { name: /^全局记忆/ }).click()
+    await expect.poll(() => [...memoryScopes.values()].includes('global')).toBe(true)
+    await expect(page.locator('.composer-options__dd-menu:visible')).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    await work().getByRole('textbox', { name: '任务目标', exact: true }).fill('WORK_PREFERENCES')
+    await work().getByRole('button', { name: '开始任务', exact: true }).click()
+    await expect.poll(() => chatRequests.at(-1)?.message).toBe('WORK_PREFERENCES')
+    const id = chatRequests.at(-1)!.sessionId
+    expect(chatRequests.at(-1)).toMatchObject({ thinkingMode: false, memoryScope: 'global' })
+    frame(id, { content: 'WORK_PREFERENCES_OK' }); finish(id)
+    await expect(runStatus()).toHaveCount(0)
+    await page.reload()
+    await expect(work().getByRole('textbox', { name: '继续对话', exact: true })).toBeVisible()
+    await work().getByRole('button', { name: '对话偏好', exact: true }).click()
+    await expect(page.getByTitle('选择思考档位', { exact: true })).toHaveText(/Off/)
+    await expect(page.getByTitle('选择长期记忆范围', { exact: true })).toHaveText(/全局记忆/)
+    await page.keyboard.press('Escape')
+  })
+
+  test('Agent 独立管理页支持模型、温度与技能/MCP/知识库/工具绑定，保存后可恢复并参与任务', async () => {
+    await switchTo('work')
+    await work().getByRole('button', { name: '新任务', exact: true }).click()
+    await work().getByRole('button', { name: 'Agent', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Agent', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: '新建 Agent', exact: true }).click()
+    await page.getByLabel('名称', { exact: true }).fill('独立配置 Agent')
+    await page.getByLabel('用途', { exact: true }).fill('验证完整资源绑定')
+    await page.getByLabel('工作指令', { exact: true }).fill('使用绑定的资源完成任务。')
+    await page.getByLabel('温度', { exact: true }).fill('0.7')
+    await page.getByRole('button', { name: 'Agent 默认模型', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Work fixture model', exact: true }).click()
+
+    const group = (title: string) => page.locator('fieldset.work-agent-manager__binding').filter({ has: page.locator('legend', { hasText: title }) })
+    await group('技能').getByRole('checkbox').first().check()
+    await group('MCP 服务').getByRole('checkbox').first().check()
+    await group('知识库').getByRole('checkbox').first().check()
+    await group('工具权限').getByRole('checkbox').nth(1).check()
+    await page.getByRole('button', { name: '保存 Agent', exact: true }).click()
+    await expect.poll(() => fixtureAgents.size).toBeGreaterThan(0)
+    const id = [...fixtureAgents.entries()].find(([, value]) => value.name === '独立配置 Agent')?.[0]
+    expect(id).toBeTruthy()
+    expect(fixtureAgents.get(id!) ).toMatchObject({
+      temperature: 0.7,
+      skills: ['skill-review'],
+      mcpServers: ['mcp-git'],
+      knowledgeBases: ['kb-product'],
+      allowedTools: ['write_file']
+    })
+
+    await page.getByRole('button', { name: '编辑 Agent 独立配置 Agent', exact: true }).click()
+    await expect(group('技能').getByRole('checkbox').first()).toBeChecked()
+    await expect(group('MCP 服务').getByRole('checkbox').first()).toBeChecked()
+    await expect(group('知识库').getByRole('checkbox').first()).toBeChecked()
+    await expect(group('工具权限').getByRole('checkbox').nth(1)).toBeChecked()
+    // Unbinding is explicit and survives a second save; it must not be hidden
+    // behind a failed resource catalogue request.
+    await group('技能').getByRole('checkbox').first().uncheck()
+    await page.getByRole('button', { name: '保存 Agent', exact: true }).click()
+    await expect.poll(() => fixtureAgents.get(id!)?.skills).toEqual([])
+
+    await page.getByRole('button', { name: '使用 Agent 独立配置 Agent', exact: true }).click()
+    await work().getByRole('textbox', { name: '任务目标', exact: true }).fill('AGENT_RESOURCE_REQUEST')
+    const previous = chatRequests.length
+    await work().getByRole('button', { name: '开始任务', exact: true }).click()
+    await expect.poll(() => chatRequests.length).toBe(previous + 1)
+    const request = chatRequests.at(-1)!
+    expect(request.agentId).toBe(id)
+    expect(request.skills).toBeUndefined()
+    // Agent bindings are resolved by the engine from agentId. Work must leave
+    // these request-level overrides undefined so an empty composer resource
+    // list cannot erase the persisted Agent configuration.
+    expect(request.mcpServers).toBeUndefined()
+    expect(request.knowledgeBases).toBeUndefined()
+    expect(request.allowedTools).toBeUndefined()
+    frame(request.sessionId, { content: 'AGENT_RESOURCE_REQUEST_OK' }); finish(request.sessionId)
+    await expect(runStatus()).toHaveCount(0)
+    await work().getByRole('button', { name: '新任务', exact: true }).click()
+    await page.getByRole('button', { name: 'Agent', exact: true }).click()
+    await page.getByRole('button', { name: '删除 Agent 独立配置 Agent', exact: true }).click()
+    await page.getByRole('button', { name: '确认删除', exact: true }).click()
+    await expect.poll(() => fixtureAgents.has(id!)).toBe(false)
+  })
+
+  test('Agent 可创建编辑选择和删除，首次发送后绑定固定且保留隐藏资源配置', async ({}, testInfo) => {
+    // Each serial test owns its starting surface; previous cases may end on Code
+    // after a reload or settings check.
+    await switchTo('work')
+    await work().getByRole('button', { name: '新任务', exact: true }).click()
+    await work().getByRole('button', { name: '管理与选择 Agent', exact: true }).click()
+    await page.getByRole('button', { name: '新建 Agent', exact: true }).click()
+    await page.getByLabel('名称', { exact: true }).fill('Work review agent')
+    await page.getByLabel('用途', { exact: true }).fill('审查实现与边界')
+    await page.getByLabel('工作指令', { exact: true }).fill('阅读文件并检查测试，给出具体反馈。')
+    // Agent 编辑弹窗中的 Select 也是 portal 浮层；它必须压在 modal-overlay
+    // 之上，否则菜单会被遮罩盖住，看起来像是"跑到后面"。
+    await page.getByRole('button', { name: 'Agent 默认模型', exact: true }).click()
+    const agentModelMenu = page.locator('.popover__panel.work-agent-manager__model-panel')
+    await expect(agentModelMenu).toBeVisible()
+    const layerOrder = await agentModelMenu.evaluate((menu) => {
+      const overlay = document.querySelector<HTMLElement>('.modal-overlay')
+      return {
+        menuZ: Number.parseInt(getComputedStyle(menu).zIndex || '0', 10),
+        overlayZ: Number.parseInt(overlay ? getComputedStyle(overlay).zIndex || '0' : '0', 10)
+      }
+    })
+    expect(layerOrder.menuZ).toBeGreaterThan(layerOrder.overlayZ)
+    await page.screenshot({ path: testInfo.outputPath('work-agent-model-menu-layer.png'), animations: 'disabled' })
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: '保存 Agent', exact: true }).click()
+    await expect.poll(() => fixtureAgents.size).toBe(1)
+    const id = [...fixtureAgents.keys()][0]
+    expect(fixtureAgents.get(id)?.systemPrompt).toBe('阅读文件并检查测试，给出具体反馈。')
+    await page.getByRole('button', { name: '编辑 Agent Work review agent', exact: true }).click()
+    await page.getByLabel('名称', { exact: true }).fill('Work persistent reviewer')
+    await page.getByRole('button', { name: '保存 Agent', exact: true }).click()
+    await expect.poll(() => fixtureAgents.get(id)?.name).toBe('Work persistent reviewer')
+    expect(fixtureAgents.get(id)).toMatchObject({ allowedTools: ['read_file'], skills: ['keep-existing-skill'] })
+    for (const appearance of ['dark', 'light'] as const) {
+      await page.getByRole('button', { name: '完成', exact: true }).click()
+      await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+      const settings = page.getByRole('dialog', { name: '设置', exact: true })
+      await settings.locator('.app-settings__nav-item', { hasText: '外观' }).click()
+      await settings.getByRole('radio', { name: appearance === 'light' ? '浅色' : '深色', exact: true }).click()
+      await expect(page.locator('html')).toHaveAttribute('data-appearance', appearance)
+      await settings.getByRole('button', { name: '关闭', exact: true }).click()
+      await work().getByRole('button', { name: '管理与选择 Agent', exact: true }).click()
+      await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(860, 720))
+      const metrics = await page.locator('.work-agent-manager').evaluate(element => {
+        const bounds = element.getBoundingClientRect()
+        return { left: bounds.left, right: bounds.right, bottom: bounds.bottom, width: innerWidth, height: innerHeight, overflow: element.scrollWidth > element.clientWidth + 1 }
+      })
+      expect(metrics.left).toBeGreaterThanOrEqual(0)
+      expect(metrics.right).toBeLessThanOrEqual(metrics.width)
+      expect(metrics.bottom).toBeLessThanOrEqual(metrics.height)
+      expect(metrics.overflow).toBe(false)
+      await page.screenshot({ path: testInfo.outputPath(`work-agents-${appearance}-860.png`), animations: 'disabled' })
+    }
+    await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900))
+    await page.getByRole('button', { name: '使用 Agent Work persistent reviewer', exact: true }).click()
+    await work().getByRole('textbox', { name: '任务目标', exact: true }).fill('WORK_AGENT_BOUND')
+    await work().getByRole('button', { name: '开始任务', exact: true }).click()
+    await expect.poll(() => chatRequests.at(-1)?.message).toBe('WORK_AGENT_BOUND')
+    expect(chatRequests.at(-1)?.agentId).toBe(id)
+    const task = chatRequests.at(-1)!.sessionId
+    frame(task, { content: 'WORK_AGENT_BOUND_OK' }); finish(task)
+    await expect(runStatus()).toHaveCount(0)
+    await page.reload()
+    await work().getByRole('button', { name: '管理与选择 Agent', exact: true }).click()
+    await expect(page.getByRole('button', { name: '使用 Agent Work persistent reviewer', exact: true })).toBeDisabled()
+    await expect(page.getByRole('button', { name: '删除 Agent Work persistent reviewer', exact: true })).toBeDisabled()
+    await page.getByRole('button', { name: '完成', exact: true }).click()
+    await work().getByRole('button', { name: '新任务', exact: true }).click()
+    await work().getByRole('button', { name: '管理与选择 Agent', exact: true }).click()
+    await page.getByRole('button', { name: '删除 Agent Work persistent reviewer', exact: true }).click()
+    await page.getByRole('button', { name: '确认删除', exact: true }).click()
+    await expect.poll(() => fixtureAgents.size).toBe(0)
+    await page.getByRole('button', { name: '完成', exact: true }).click()
+  })
+
+  test('Agent 在 Work 一级页面提供独立的增删改查入口', async () => {
+    await switchTo('work')
+    await work().getByRole('button', { name: 'Agent', exact: true }).click()
+    const pageSurface = work().locator('.work-agent-manager-page')
+    await expect(pageSurface.getByRole('heading', { name: 'Agent', exact: true })).toBeVisible()
+    await expect(pageSurface.getByRole('button', { name: '新建 Agent', exact: true })).toBeVisible()
+    await pageSurface.getByRole('button', { name: '新建 Agent', exact: true }).click()
+    await expect(pageSurface.getByLabel('名称', { exact: true })).toBeVisible()
+    await expect(pageSurface.locator('legend').filter({ hasText: 'MCP 服务' })).toBeVisible()
+    await expect(pageSurface.locator('legend').filter({ hasText: '知识库' })).toBeVisible()
+    await expect(pageSurface.locator('legend').filter({ hasText: '工具权限' })).toBeVisible()
+    await pageSurface.getByRole('button', { name: '取消', exact: true }).click()
+    await expect(pageSurface.getByRole('button', { name: '新建 Agent', exact: true })).toBeEnabled()
+  })
+
+  test('润色期间切换任务可再次润色，旧回复不能覆盖新任务草稿', async () => {
+    const original = await startTask('WORK_POLISH_ORIGINAL')
+    frame(original, { content: 'WORK_POLISH_READY' }); finish(original)
+    const input = work().getByRole('textbox', { name: '继续对话', exact: true })
+    await input.fill('旧任务的草稿')
+    const before = utilityRequests.length
+    await work().getByRole('button', { name: 'AI 润色', exact: true }).click()
+    await expect.poll(() => utilityRequests.length).toBe(before + 1)
+    await work().getByRole('button', { name: '新任务', exact: true }).click()
+    const homeInput = work().getByRole('textbox', { name: '任务目标', exact: true })
+    await homeInput.fill('新任务的草稿')
+    await expect(work().getByRole('button', { name: 'AI 润色', exact: true })).toBeEnabled()
+    utilityRequests[before].response.setHeader('content-type', 'application/json')
+    utilityRequests[before].response.end(envelope({ text: '不该覆盖的新文本' }))
+    await work().getByRole('button', { name: 'AI 润色', exact: true }).click()
+    await expect.poll(() => utilityRequests.length).toBe(before + 2)
+    expect(utilityRequests[before + 1].body.userPrompt).toBe('新任务的草稿')
+    utilityRequests[before + 1].response.setHeader('content-type', 'application/json')
+    utilityRequests[before + 1].response.end(envelope({ text: '新任务的润色结果' }))
+    await expect(homeInput).toHaveText('新任务的润色结果')
   })
 
   test('快速切换以最后一次选择为准，减少动态效果时不运行过渡', async () => {

@@ -22,6 +22,14 @@ export interface SettingDefinition {
 
 export const SETTINGS_DEFINITIONS: readonly SettingDefinition[] = [
   {
+    key: 'aether.graphicsMode', label: '图形加速', description: '选择自动、硬件加速或软件渲染；下次启动时生效。',
+    section: 'appearance', category: '外观 / 图形', scope: 'user', keywords: ['GPU', 'graphics', '性能', '卡顿', '显卡', '硬件加速']
+  },
+  {
+    key: 'aether.visualEffects', label: '视觉效果', description: '选择自动、完整、精简或实色材质。软件渲染自动减少透明效果。',
+    section: 'appearance', category: '外观 / 图形', scope: 'user', keywords: ['blur', '玻璃', '毛玻璃', '磨砂', '透明度', '卡顿', '性能']
+  },
+  {
     key: 'aether.account.profile', label: '个人账号与登录',
     description: '管理姓名、邮箱、简介、第三方账号绑定、恢复凭证和登录设备。',
     section: 'account', category: '个人账号', scope: 'user',

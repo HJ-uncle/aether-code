@@ -1,0 +1,59 @@
+.work-agent-manager__content { display: grid; gap: 16px; min-width: 0; }
+.work-agent-manager-page { display: grid; gap: 20px; min-width: 0; }
+.work-agent-manager-page__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.work-agent-manager-page__header h1 { margin: 4px 0 6px; font-size: 25px; letter-spacing: -.02em; }
+.work-agent-manager-page__header p { max-width: 720px; margin: 0; color: var(--fg-muted); line-height: 1.6; }
+.work-agent-manager--page { display: grid; gap: 18px; padding: 20px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--material-bg); }
+.work-agent-manager__page-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; border-top: 1px solid var(--border); }
+.work-agent-manager__hint { margin: 0; color: var(--fg-muted); font-size: 13px; line-height: 1.6; }
+.work-agent-manager__toolbar { display: flex; flex-wrap: wrap; gap: 12px; }
+.work-agent-manager__toolbar > input { flex: 1; min-width: 120px; }
+.work-agent-manager--page .work-agent-manager__toolbar > .btn--primary { display: none; }
+.work-agent-manager__content input:not([type='checkbox']),
+.work-agent-manager__content textarea { box-sizing: border-box; min-width: 0; width: 100%; padding: 9px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg-input); color: var(--fg); font: inherit; }
+.work-agent-manager__content textarea { resize: vertical; min-height: 120px; line-height: 1.6; }
+.work-agent-manager__form { display: grid; gap: 16px; }
+.work-agent-manager__form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, .38fr); align-items: center; gap: 16px; }
+.work-agent-manager__form > label { display: grid; gap: 8px; font-size: 13px; font-weight: 500; }
+.work-agent-manager__model { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
+.work-agent-manager__model .select { max-width: 70%; }
+.work-agent-manager__temperature { display: grid; gap: 8px; font-size: 13px; font-weight: 500; }
+.work-agent-manager__bindings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.work-agent-manager__binding { min-width: 0; margin: 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--material-bg-thin); }
+.work-agent-manager__binding legend { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 0; color: var(--fg); font-size: 13px; font-weight: 600; }
+.work-agent-manager__binding legend small { color: var(--fg-muted); font-size: 11px; font-weight: 400; }
+.work-agent-manager__binding-list { display: grid; gap: 6px; max-height: 150px; margin-top: 10px; overflow: auto; }
+.work-agent-manager__binding-option { display: flex; align-items: flex-start; gap: 8px; min-width: 0; padding: 7px; border-radius: var(--radius); cursor: pointer; }
+.work-agent-manager__binding-option:hover { background: var(--bg-hover); }
+.work-agent-manager__binding-option input { flex: 0 0 auto; margin-top: 3px; accent-color: var(--accent); }
+.work-agent-manager__binding-option > span { display: grid; gap: 2px; min-width: 0; }
+.work-agent-manager__binding-option strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.work-agent-manager__binding-option small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-muted); font-size: 11px; }
+.work-agent-manager__binding-empty { display: flex; align-items: center; gap: 6px; min-height: 42px; margin-top: 8px; color: var(--fg-muted); font-size: 12px; }
+/* Select 面板通过 portal 挂到 body；模态遮罩层级高于普通 popover，
+   这里仅把 Agent 编辑器的下拉菜单抬到当前模态之上，避免菜单被 footer/遮罩盖住。 */
+.popover__panel.work-agent-manager__model-panel { z-index: calc(var(--z-overlay) + 1); }
+.work-agent-manager__list { display: grid; gap: 8px; margin: 0; padding: 0; max-height: 360px; overflow: auto; list-style: none; }
+.work-agent-manager__list > li { display: flex; align-items: center; min-width: 0; gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; }
+.work-agent-manager__list > li.is-selected { border-color: var(--accent); background: var(--bg-active); }
+.work-agent-manager__choose { display: flex; flex: 1; align-items: center; gap: 12px; padding: 8px; min-width: 0; border: 0; background: transparent; color: var(--fg); text-align: left; }
+.work-agent-manager__choose:disabled { opacity: .75; }
+.work-agent-manager__choose > span { display: grid; gap: 4px; flex: 1; min-width: 0; }
+.work-agent-manager__choose strong { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.work-agent-manager__choose small { color: var(--fg-muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.work-agent-manager__actions { display: flex; flex-shrink: 0; gap: 6px; }
+.work-agent-manager__empty { justify-content: center; padding: 24px 12px !important; color: var(--fg-muted); font-size: 13px; }
+.work-agent-manager__error,
+.work-agent-manager__confirm { padding: 12px; border: 1px solid var(--border-strong); border-radius: 8px; font-size: 13px; line-height: 1.6; }
+.work-agent-manager__error { color: var(--danger); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.work-agent-manager__confirm p { margin: 0 0 12px; }
+.work-agent-manager__confirm > div { display: flex; justify-content: flex-end; gap: 8px; }
+.work-agent-button > span { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 600px) {
+  .work-agent-manager-page__header { flex-direction: column; }
+  .work-agent-manager--page { padding: 14px; }
+  .work-agent-manager__form-grid,
+  .work-agent-manager__bindings { grid-template-columns: 1fr; }
+  .work-agent-manager__list > li { flex-wrap: wrap; }
+  .work-agent-manager__actions { width: 100%; justify-content: flex-end; }
+}

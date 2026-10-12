@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import { IPC } from '../shared/ipc'
+import type { GraphicsSnapshot } from '../shared/graphics'
 import { BROWSER_IPC, type BrowserApi, type BrowserConnectionState } from '../shared/browser-api'
 import type { BrowserEvent } from '../shared/browser'
 import type { AccountApi, AccountState } from '../shared/account'
@@ -10,6 +11,7 @@ import type {
   CopyIntoWorkspaceInput,
   CopyIntoWorkspaceResult,
   EngineLogEntry,
+  EngineLogBatch,
   EngineRequestInput,
   EngineUploadInput,
   RemoteAttachmentInput,
@@ -173,14 +175,31 @@ const api = {
 
     onLog: (listener: (entry: EngineLogEntry) => void): (() => void) => {
       const handler = (_e: unknown, entry: EngineLogEntry): void => listener(entry)
+      const batchHandler = (_e: unknown, entries: EngineLogBatch): void => {
+        for (const entry of entries) listener(entry)
+      }
       ipcRenderer.on(IPC.event.engineLog, handler)
-      return () => ipcRenderer.removeListener(IPC.event.engineLog, handler)
+      ipcRenderer.on(IPC.event.engineLogs, batchHandler)
+      return () => {
+        ipcRenderer.removeListener(IPC.event.engineLog, handler)
+        ipcRenderer.removeListener(IPC.event.engineLogs, batchHandler)
+      }
     },
 
     onStreamEvent: (listener: (event: StreamEvent) => void): (() => void) => {
       const handler = (_e: unknown, event: StreamEvent): void => listener(event)
       ipcRenderer.on(IPC.event.streamEvent, handler)
       return () => ipcRenderer.removeListener(IPC.event.streamEvent, handler)
+    }
+  },
+
+  graphics: {
+    getSnapshot: (): Promise<GraphicsSnapshot> => ipcRenderer.invoke(IPC.invoke.graphicsGetSnapshot),
+    resetRecovery: (): Promise<GraphicsSnapshot> => ipcRenderer.invoke(IPC.invoke.graphicsResetRecovery),
+    onChanged: (listener: (snapshot: GraphicsSnapshot) => void): (() => void) => {
+      const handler = (_event: unknown, snapshot: GraphicsSnapshot): void => listener(snapshot)
+      ipcRenderer.on(IPC.event.graphicsChanged, handler)
+      return () => ipcRenderer.removeListener(IPC.event.graphicsChanged, handler)
     }
   },
 

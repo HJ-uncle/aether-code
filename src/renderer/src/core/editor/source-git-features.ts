@@ -330,9 +330,13 @@ export function registerSourceGitFeatures(instance: editor.IStandaloneCodeEditor
     computedVersion = 0
     decorations.clear()
     publish(key, { status: baselineReady ? 'loading' : 'unavailable', version: 0, changes: [], blame })
-    renderConflicts()
     clearTimeout(timer)
-    timer = setTimeout(recompute, 100)
+    // 连续输入时合并全文冲突扫描和装饰重建；旧操作仍由模型版本校验阻止误改。
+    timer = setTimeout(() => {
+      if (!valid()) return
+      renderConflicts()
+      recompute()
+    }, 100)
   }))
   let lastFiles = getGitState().files
   let wasLoading = getGitState().loading

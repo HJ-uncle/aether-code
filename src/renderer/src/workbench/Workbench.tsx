@@ -1,4 +1,4 @@
-import { useEffect, useState, type JSX } from 'react'
+import { useEffect, useRef, useState, type JSX } from 'react'
 import { getAppMode, useAppMode } from '@renderer/core/platform/app-mode'
 import { WorkView } from '@renderer/contrib/work/WorkView'
 import { AppSettingsView } from '@renderer/contrib/settings/AppSettingsView'
@@ -11,6 +11,7 @@ import { startEditorRecovery } from '@renderer/core/editor/editor-recovery'
 import { useApp } from '@renderer/core/app-context'
 import { setLayout, LAYOUT_LIMITS } from '@renderer/core/platform/layout-state'
 import { useTheme } from '@renderer/core/useTheme'
+import { useVisualEffects } from '@renderer/core/useVisualEffects'
 import { ActivityBar } from './ActivityBar'
 import { ChatPanel } from './ChatPanel'
 import { CommandPalette } from './CommandPalette'
@@ -45,6 +46,9 @@ export function Workbench(): JSX.Element {
   const layout = useLayout()
   const { settings } = useApp()
   const mode = useAppMode()
+  const sidebarRef = useRef<HTMLDivElement>(null)
+  const chatRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const [workSettingsOpen, setWorkSettingsOpen] = useState(false)
   useEffect(
     () =>
@@ -59,6 +63,7 @@ export function Workbench(): JSX.Element {
 
   // 把外观设置同步到 <html>，具体配色由 tokens.css 决定
   useTheme(settings.appearance, settings.accent, settings.customAccentColor)
+  useVisualEffects(settings.visualEffects)
 
   return (
     <div className="workbench">
@@ -70,13 +75,22 @@ export function Workbench(): JSX.Element {
 
             {layout.sidebarVisible ? (
               <>
-                <div className="workbench__sidebar" style={{ width: layout.sidebarWidth }}>
+                <div
+                  ref={sidebarRef}
+                  className="workbench__sidebar"
+                  style={{ width: layout.sidebarWidth }}
+                >
                   <Sidebar />
                 </div>
                 <Resizer
                   orientation="vertical"
                   ariaLabel="调整侧边栏宽度"
-                  onDelta={(delta) => setLayout({ sidebarWidth: layout.sidebarWidth + delta })}
+                  targetRef={sidebarRef}
+                  size={layout.sidebarWidth}
+                  min={LAYOUT_LIMITS.sidebarMin}
+                  max={LAYOUT_LIMITS.sidebarMax}
+                  active={mode === 'code'}
+                  onResize={(sidebarWidth) => setLayout({ sidebarWidth })}
                 />
               </>
             ) : null}
@@ -85,6 +99,7 @@ export function Workbench(): JSX.Element {
             {layout.chatPanelVisible && layout.chatOnLeft ? (
               <>
                 <div
+                  ref={chatRef}
                   className="workbench__chat workbench__chat--left"
                   style={{ width: layout.chatPanelWidth }}
                 >
@@ -93,8 +108,12 @@ export function Workbench(): JSX.Element {
                 <Resizer
                   orientation="vertical"
                   ariaLabel="调整对话面板宽度"
-                  // 面板在左侧：向右拖（delta>0）变宽，与右侧的「向左拖变宽」相反
-                  onDelta={(delta) => setLayout({ chatPanelWidth: layout.chatPanelWidth + delta })}
+                  targetRef={chatRef}
+                  size={layout.chatPanelWidth}
+                  min={LAYOUT_LIMITS.chatPanelMin}
+                  max={LAYOUT_LIMITS.chatPanelMax}
+                  active={mode === 'code'}
+                  onResize={(chatPanelWidth) => setLayout({ chatPanelWidth })}
                 />
               </>
             ) : null}
@@ -106,12 +125,19 @@ export function Workbench(): JSX.Element {
                 <Resizer
                   orientation="horizontal"
                   ariaLabel="调整面板高度"
-                  onDelta={(delta) => setLayout({ panelHeight: layout.panelHeight - delta })}
+                  targetRef={panelRef}
+                  size={layout.panelHeight}
+                  min={LAYOUT_LIMITS.panelMin}
+                  max={LAYOUT_LIMITS.panelMax}
+                  direction={-1}
+                  active={mode === 'code'}
+                  onResize={(panelHeight) => setLayout({ panelHeight })}
                 />
               ) : null}
               {/* 收起时仅隐藏不卸载（keep-alive）：面板内是终端这类有状态视图，
               重建 DOM 会丢掉 xterm 的画面与会话绑定 */}
               <div
+                ref={panelRef}
                 className="workbench__panel"
                 style={{
                   height: layout.panelVisible ? layout.panelHeight : 0,
@@ -127,9 +153,19 @@ export function Workbench(): JSX.Element {
                 <Resizer
                   orientation="vertical"
                   ariaLabel="调整对话面板宽度"
-                  onDelta={(delta) => setLayout({ chatPanelWidth: layout.chatPanelWidth - delta })}
+                  targetRef={chatRef}
+                  size={layout.chatPanelWidth}
+                  min={LAYOUT_LIMITS.chatPanelMin}
+                  max={LAYOUT_LIMITS.chatPanelMax}
+                  direction={-1}
+                  active={mode === 'code'}
+                  onResize={(chatPanelWidth) => setLayout({ chatPanelWidth })}
                 />
-                <div className="workbench__chat" style={{ width: layout.chatPanelWidth }}>
+                <div
+                  ref={chatRef}
+                  className="workbench__chat"
+                  style={{ width: layout.chatPanelWidth }}
+                >
                   <ChatPanel />
                 </div>
               </>
