@@ -13,7 +13,7 @@ import { ipcErrorMessage } from '../ipc-error'
 import { refreshGit } from '../git/git-store'
 import { diagnoseDocument, clearDocumentDiagnostics } from '../lsp/diagnostics'
 import { rememberRecent } from './recent-files'
-import { paths, readFile, writeFile } from '../workspace/fs-client'
+import { assertSessionFileTarget, paths, readFile, writeFile, type SessionFileTarget } from '../workspace/fs-client'
 import { getWorkspaceState } from '../workspace/workspace-store'
 import { activateDocument } from './editor-activation'
 import { fileIdentity } from './file-identity'
@@ -39,6 +39,8 @@ export interface OpenDocument {
   diskContent?: string
   /** Connection/session identity that owns this document buffer. */
   workspaceKey: string
+  /** Work/session documents retain their own HTTP owner even when Code changes. */
+  sessionFileTarget?: SessionFileTarget
 }
 
 export interface EditorState {
@@ -113,7 +115,7 @@ const VIEW_STATE_LIMIT = 50
  * 已关闭的文件栈（VS Code 的「重新打开已关闭的编辑器」）。
  * 只记文件不记固定视图 —— 固定视图走 closedEditorViews，两者语义不同。
  */
-const closedFiles: string[] = []
+const closedFiles: Array<{ path: string; target?: SessionFileTarget }> = []
 const CLOSED_FILES_LIMIT = 20
 
 export function rememberViewState(filePath: string, viewState: unknown): void {
@@ -211,6 +213,15 @@ export function getDocument(filePath: string): OpenDocument | undefined {
   return state.docs.get(resolveDocumentPath(filePath))
 }
 
+export function assertDocumentConnection(doc: OpenDocument): void {
+  if (doc.sessionFileTarget) assertSessionFileTarget(doc.sessionFileTarget)
+  else if (doc.workspaceKey !== workspaceConnectionKey()) throw new Error('工作区连接或会话已经切换，请关闭旧文档后重新打开。')
+}
+
+export function isDocumentConnectionCurrent(doc: OpenDocument): boolean {
+  try { assertDocumentConnection(doc); return true } catch { return false }
+}
+
 /** 登记跳行请求（全局搜索点击结果时用）；行号非法则忽略 */
 function requestReveal(filePath: string, line?: number, column?: number, length?: number): void {
   if (!line || line < 1) return
@@ -228,13 +239,15 @@ export async function openFile(
   filePath: string,
   line?: number,
   column?: number,
-  length?: number
+  length?: number,
+  sessionFileTarget?: SessionFileTarget
 ): Promise<void> {
+  if (sessionFileTarget) assertSessionFileTarget(sessionFileTarget)
   filePath = resolveDocumentPath(filePath)
-  if (state.docs.has(filePath)) {
-    if (state.docs.get(filePath)?.workspaceKey !== workspaceConnectionKey()) {
-      throw new Error('工作区连接或会话已经切换，请关闭旧文档后重新打开。')
-    }
+  const existingDoc = state.docs.get(filePath)
+  if (existingDoc) {
+    assertDocumentConnection(existingDoc)
+    if ((sessionFileTarget?.key ?? workspaceConnectionKey()) !== existingDoc.workspaceKey) throw new Error('此文件已由其他工作区会话打开，请关闭旧文档后重试。')
     requestReveal(filePath, line, column, length)
     return
   }
@@ -250,8 +263,9 @@ export async function openFile(
     tooLarge: false,
     size: 0,
     loading: true,
-    error: null
-    ,workspaceKey: workspaceConnectionKey()
+    error: null,
+    workspaceKey: sessionFileTarget?.key ?? workspaceConnectionKey(),
+    sessionFileTarget
   }
 
   const nextDocs = new Map(state.docs)
@@ -260,9 +274,9 @@ export async function openFile(
   setState({ docs: nextDocs, order: [...state.order, filePath] })
 
   try {
-    const file = await readFile(filePath)
+    const file = await readFile(filePath, placeholder.sessionFileTarget)
     if (state.docs.get(filePath) !== placeholder) return
-    if (placeholder.workspaceKey !== workspaceConnectionKey()) throw new Error('工作区连接或会话已切换，已取消打开')
+    assertDocumentConnection(placeholder)
     const loaded: OpenDocument = {
       // 保持调用方传入的路径：docs/order 的 key 都是它。
       // 主进程返回的 path 经 resolve 规范化，分隔符可能与调用方不一致，
@@ -278,12 +292,14 @@ export async function openFile(
       size: file.size,
       loading: false,
       error: null,
-      workspaceKey: placeholder.workspaceKey
+      workspaceKey: placeholder.workspaceKey,
+      sessionFileTarget: placeholder.sessionFileTarget
     }
     const withLoaded = new Map(state.docs)
     withLoaded.set(filePath, loaded)
     setState({ docs: withLoaded })
-    rememberRecent(filePath) // 成功打开即记入「最近打开」（快速打开 MRU 数据源）
+    // Code's MRU has no session owner; adding Work paths there would reopen them through Code.
+    if (!sessionFileTarget) rememberRecent(filePath)
     requestReveal(filePath, line, column, length)
   } catch (err) {
     if (state.docs.get(filePath) !== placeholder) return
@@ -297,6 +313,7 @@ export async function openFile(
 /** 关闭文件；有未保存改动时由调用方先确认 */
 export function closeFile(filePath: string): void {
   filePath = resolveDocumentPath(filePath)
+  const closed = state.docs.get(filePath)
   documentIdentities.delete(filePath)
   clearDocumentDiagnostics(filePath)
   const nextDocs = new Map(state.docs)
@@ -308,9 +325,9 @@ export function closeFile(filePath: string): void {
   // 关闭过的文件进「重新打开」栈，且必须是最近的栈顶：
   // 同一个文件可能被关了又开、再关 —— 若因为旧记录还在栈里就跳过，
   // 栈顶会停在一个更早关闭的别的文件上，Ctrl+Shift+T 就会捞错东西。
-  const existing = closedFiles.indexOf(filePath)
+  const existing = closedFiles.findIndex(item => item.path === filePath)
   if (existing >= 0) closedFiles.splice(existing, 1)
-  closedFiles.push(filePath)
+  closedFiles.push({ path: filePath, target: closed?.sessionFileTarget })
   if (closedFiles.length > CLOSED_FILES_LIMIT) closedFiles.shift()
 }
 
@@ -323,9 +340,13 @@ export function closeFile(filePath: string): void {
  */
 export async function reopenLastClosedFile(): Promise<boolean> {
   while (closedFiles.length > 0) {
-    const filePath = closedFiles.pop()
-    if (filePath && !getDocument(filePath)) {
-      await openFile(filePath)
+    const closed = closedFiles.pop()
+    if (closed && !getDocument(closed.path)) {
+      const filePath = closed.path
+      await openFile(filePath, undefined, undefined, undefined, closed.target)
+      const reopened = getDocument(filePath)
+      if (!reopened || reopened.error) throw new Error(reopened?.error ?? '文件已关闭')
+      assertDocumentConnection(reopened)
       // 重开的文件要切到前台：VS Code 的 Ctrl+Shift+T 会把它激活。
       // 只打开不激活的话它只是后台标签，文档槽不会渲染 Monaco，
       // 上次的光标位置也就无从恢复。
@@ -369,7 +390,7 @@ async function saveDocumentNow(filePath: string, identity: DocumentIdentity | un
   if (identity && !sameDocument(filePath, identity, false)) throw new Error('文件已关闭或路径已更改，本次保存已取消。')
   const doc = state.docs.get(filePath)
   if (!doc || doc.isBinary || doc.loading) return
-  if (doc.workspaceKey !== workspaceConnectionKey()) throw new Error('工作区连接或会话已经切换，本次保存已取消。')
+  assertDocumentConnection(doc)
   if (doc.truncated) throw new Error('当前只载入文件的部分内容，已阻止覆盖保存。请使用完整文件编辑器处理。')
 
   setState({ saving: new Set(state.saving).add(filePath) })
@@ -377,12 +398,14 @@ async function saveDocumentNow(filePath: string, identity: DocumentIdentity | un
   try {
     // Another workbench or the AI may have edited this file since it was opened.
     // Preserve the user's buffer instead of silently overwriting newer disk contents.
-    const disk = await readFile(filePath)
-    if (!sameDocument(filePath, identity, false) || doc.workspaceKey !== workspaceConnectionKey()) throw new Error('工作区连接或会话已经切换，本次保存已取消。')
+    const disk = await readFile(filePath, doc.sessionFileTarget)
+    if (!sameDocument(filePath, identity, false)) throw new Error('文件已关闭或路径已更改，本次保存已取消。')
+    assertDocumentConnection(doc)
     if (disk.truncated || disk.isBinary || (disk.content !== doc.savedContent && disk.content !== doc.content)) {
       throw new Error('文件已在其他编辑器或工具中修改，未覆盖磁盘内容。请先保留当前修改并重新加载文件。')
     }
-    await writeFile(filePath, doc.content)
+    await writeFile(filePath, doc.content, doc.sessionFileTarget)
+    assertDocumentConnection(doc)
     // 以「已写入的内容」而非当前编辑器内容为准：
     // 保存期间用户可能继续输入，那部分应保持为未保存状态
     const latest = sameDocument(filePath, identity, false) ? state.docs.get(filePath) : undefined
@@ -392,9 +415,9 @@ async function saveDocumentNow(filePath: string, identity: DocumentIdentity | un
     nextSaving.delete(filePath)
     setState({ docs: nextDocs, saving: nextSaving })
     // 落盘成功意味着 git 工作区可能变了，自动刷新状态栏/版本控制视图
-    void refreshGit(getWorkspaceState().root)
+    if (!doc.sessionFileTarget) void refreshGit(getWorkspaceState().root)
     // 保存后跑引擎诊断（失败静默，不影响保存流程），结果进 Problems 面板与编辑器波浪线
-    if (latest) void diagnoseDocument(filePath, doc.content)
+    if (latest && !doc.sessionFileTarget) void diagnoseDocument(filePath, doc.content)
   } catch (err) {
     const latest = sameDocument(filePath, identity, false) ? state.docs.get(filePath) : undefined
     const nextDocs = new Map(state.docs)
@@ -443,10 +466,11 @@ export async function reloadDocuments(filePaths: string[]): Promise<void> {
   for (const requestedPath of filePaths) {
     const filePath = resolveDocumentPath(requestedPath)
     const doc = state.docs.get(filePath)
-    if (!doc || doc.isBinary || doc.loading || state.saving.has(filePath) || doc.workspaceKey !== workspaceConnectionKey()) continue
+    if (!doc || doc.isBinary || doc.loading || state.saving.has(filePath) || !isDocumentConnectionCurrent(doc)) continue
     const identity = getDocumentIdentity(filePath)
     try {
-      const file = await readFile(filePath)
+      const file = await readFile(filePath, doc.sessionFileTarget)
+      assertDocumentConnection(doc)
       const latest = state.docs.get(filePath)
       if (!latest || !sameDocument(filePath, identity) || latest.content !== doc.content || latest.savedContent !== doc.savedContent || state.saving.has(filePath)) continue
       const nextDocs = new Map(state.docs)
@@ -490,9 +514,11 @@ export async function reloadDocuments(filePaths: string[]): Promise<void> {
 export async function reloadDocumentFromDisk(filePath: string): Promise<void> {
   const doc = getDocument(filePath)
   if (!doc) return
+  assertDocumentConnection(doc)
   const identity = getDocumentIdentity(doc.path)
   if (state.saving.has(doc.path)) throw new Error('文件正在保存，请保存完成后重试。')
-  const file = await readFile(doc.path)
+  const file = await readFile(doc.path, doc.sessionFileTarget)
+  assertDocumentConnection(doc)
   const latest = getDocument(doc.path)
   if (!latest || !sameDocument(doc.path, identity) || latest.content !== doc.content || latest.savedContent !== doc.savedContent || state.saving.has(doc.path)) throw new Error('读取期间文档已修改或重新打开，请重新选择要保留的版本。')
   const docs = new Map(state.docs)

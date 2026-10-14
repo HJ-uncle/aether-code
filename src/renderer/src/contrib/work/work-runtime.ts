@@ -7,7 +7,8 @@ import {
   assertEngineSource,
   getEngineStorageKey,
   getEngineSource,
-  isRemoteEngine
+  isRemoteEngine,
+  sessionStorageKey
 } from '@renderer/core/engine/source'
 import {
   cancelAttachmentUpload,
@@ -18,8 +19,11 @@ import { allowRoot, copyIntoWorkspace, pickFolder } from '@renderer/core/workspa
 import { isSupportedFile } from '@renderer/contrib/chat/useAttachments'
 import { mentionToken, type Mention } from '@renderer/contrib/chat/mention-context'
 import { buildWorkAgentMessage } from './work-agent-collaboration'
+import { queuedDraft, useWorkNextTurnQueue } from './work-next-turn-queue'
+import type { WorkQueueDraft } from '@shared/work-next-turn-api'
 import { ATTACHMENTS_DIRECTORY } from '@shared/attachments'
 import { loadSessionThinkingMode, saveSessionThinkingMode, type SessionThinkingMode } from '../chat/session-thinking-store'
+import { loadSessionModelSelection, resolveSessionComposerModel, saveSessionModelSelection, type SessionModelSelection } from '../chat/session-model-store'
 import { requestedThinkingMode } from '../chat/session-request-config'
 import { getMemoryScopeState } from '@renderer/core/engine/memory-store'
 import type { AgentCollaborator, SubagentRun } from '@shared/subagent'
@@ -41,6 +45,34 @@ import {
 
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
+
+interface WorkDefaultModelSelection { anchorRunId?: string; clientDefault: boolean }
+const WORK_DEFAULT_MODELS_KEY = 'aether:workDefaultModelSelections'
+function workDefaultModelSelections(source: string): Record<string, WorkDefaultModelSelection> {
+  const table = Object.create(null) as Record<string, WorkDefaultModelSelection>
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(sessionStorageKey(WORK_DEFAULT_MODELS_KEY, source)) ?? '{}')
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return table
+    for (const [id, value] of Object.entries(parsed)) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue
+      const anchor = 'anchorRunId' in value ? value.anchorRunId : undefined
+      if (anchor !== undefined && (typeof anchor !== 'string' || !anchor.trim())) continue
+      const clientDefault = 'clientDefault' in value ? value.clientDefault : true
+      if (typeof clientDefault !== 'boolean') continue
+      table[id] = { ...(typeof anchor === 'string' ? { anchorRunId: anchor } : {}), clientDefault }
+    }
+  } catch { /* Unavailable persistence must not block choosing a model. */ }
+  return table
+}
+function saveWorkDefaultModelSelection(id: string, selection: WorkDefaultModelSelection | null, source: string): void {
+  const table = workDefaultModelSelections(source)
+  delete table[id]
+  if (selection) table[id] = selection
+  const keys = Object.keys(table)
+  while (keys.length > 100) delete table[keys.shift()!]
+  try { localStorage.setItem(sessionStorageKey(WORK_DEFAULT_MODELS_KEY, source), JSON.stringify(table)) }
+  catch { /* The current unsent choice remains usable without storage. */ }
+}
 
 /** Keep attachment bytes inside the engine-owned scratch workspace when the
  * user has not selected a project. The browser File API does not expose a
@@ -74,8 +106,32 @@ export function useWorkController() {
   const state = useWorkState(source)
   const chat = useChat({ commandOwner: 'work' })
   const { models } = useModels()
+  // Older Work drafts stored database IDs; requests and both pickers use model IDs.
+  const canonicalModelId = useCallback((value: string): string => models.find(model => model.id === value || model.modelId === value)?.modelId ?? value, [models])
   const activeTask = state.tasks.find((task) => task.id === state.activeTaskId) ?? null
   const activeId = activeTask?.id ?? null
+  const nextTurnQueue = useWorkNextTurnQueue(activeId, epoch, engineReady)
+  const [nextModel, setNextModel] = useState<{ source: string; taskId: string; modelId: string } | null>(null)
+  const [selectedModel, setSelectedModel] = useState<{ source: string; id: string; selection: SessionModelSelection | null; defaultSelection: WorkDefaultModelSelection | null } | null>(null)
+  const storedModelSelection = useMemo(() => activeId ? loadSessionModelSelection(activeId, source) : null, [activeId, source])
+  const storedDefaultModelSelection = useMemo(() => activeId ? workDefaultModelSelections(source)[activeId] ?? null : null, [activeId, source])
+  const localModelSelection = selectedModel?.source === source && selectedModel.id === activeId ? selectedModel : null
+  const modelSelection = localModelSelection ? localModelSelection.selection : storedModelSelection
+  const defaultModelSelection = localModelSelection ? localModelSelection.defaultSelection : storedDefaultModelSelection
+  const sessionModelReady = Boolean(activeId && chat.sessionModel?.source === epoch && chat.sessionModel.sessionId === activeId)
+  const useDefaultModelSelection = Boolean(sessionModelReady && defaultModelSelection && defaultModelSelection.anchorRunId === chat.sessionModel?.runId)
+  const resolvedModelId = useDefaultModelSelection ? '' : activeTask && sessionModelReady ? resolveSessionComposerModel({
+    configuredModelId: chat.sessionModel?.modelId,
+    runId: chat.sessionModel?.runId,
+    selection: modelSelection,
+    defaultModelId: canonicalModelId(activeTask.modelId || settings.lastModelId)
+  }) : activeTask?.modelId ?? state.homeModelId
+  const modelId = canonicalModelId(resolvedModelId)
+  // Work's default follows its configured client model, then the Agent/engine.
+  // Keep this explicit empty choice separate from unknown restored run models.
+  const requestModelId = useDefaultModelSelection ? defaultModelSelection?.clientDefault ? canonicalModelId(settings.lastModelId) : '' : modelId
+  const followsEngineDefault = Boolean(useDefaultModelSelection ? !defaultModelSelection?.clientDefault :
+    sessionModelReady && chat.sessionModel?.runId && !modelId)
   const agentId = activeTask ? activeTask.agentId ?? '' : state.homeAgentId
   const agentIdentity = useWorkAgentIdentity(agentId, engineReady)
   const securitySessionId = activeId ?? state.homeSessionId ?? null
@@ -91,7 +147,6 @@ export function useWorkController() {
   const [loaded, setLoaded] = useState<{ source: string; epoch: number; id: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [uploadCount, setUploadCount] = useState(0)
-  const [sending, setSending] = useState(false)
   const [historyAttempt, setHistoryAttempt] = useState(0)
   const pendingStart = useRef<{ source: string; id: string; text: string; mentions: Mention[] } | null>(null)
   const submitted = useRef(
@@ -100,14 +155,12 @@ export function useWorkController() {
       { source: string; text: string; attachments: ChatAttachment[]; createdAt: number; preserveDraft: boolean }
     >()
   )
-  const sendCountRef = useRef(0)
-  const sendingTaskIdsRef = useRef(new Set<string>())
   const stoppingTaskIdsRef = useRef(new Set<string>())
   const taskRevisionsRef = useRef(new Map<string, number>())
   const invalidateStatusProbe = (id: string): void => {
     taskRevisionsRef.current.set(id, (taskRevisionsRef.current.get(id) ?? 0) + 1)
   }
-  const { resumeStream, send: chatSend, abort, respond: chatRespond, isHistoryReady } = chat
+  const { resumeStream, send: chatSend, abort, respond: chatRespond, isHistoryReady, hasSessionWork } = chat
   useEffect(() => () => flushWorkDrafts(source), [source])
 
   /**
@@ -164,6 +217,14 @@ export function useWorkController() {
     [source]
   )
 
+  useEffect(() => {
+    if (!activeId || !sessionModelReady || epoch !== getEngineSource()) return
+    // An external/cron run can change its requested model without touching Work
+    // metadata. Persist the resolved selection so the next request and restart
+    // follow that run, retaining a local unsent choice anchored to the same run.
+    updateTask(activeId, { modelId: requestModelId })
+  }, [activeId, sessionModelReady, epoch, requestModelId, updateTask])
+
   const probeAuthorityRef = useRef({ selectedId: activeId, selectedLive: false })
   probeAuthorityRef.current = {
     selectedId: activeId,
@@ -205,7 +266,7 @@ export function useWorkController() {
   const optionsFor = useCallback(
     (task: WorkTask): SendOptions => ({
       sessionId: task.id,
-      model: task.modelId || settings.lastModelId || undefined,
+      model: (task.id === activeId && sessionModelReady ? requestModelId : canonicalModelId(task.modelId || settings.lastModelId)) || undefined,
       workspacePaths: task.workspacePath ? [task.workspacePath] : undefined,
       attachments: task.attachments,
       thinkingMode: requestedThinkingMode(thinkingFor(task.id)),
@@ -226,74 +287,116 @@ export function useWorkController() {
       memoryScope: getMemoryScopeState().sessionId === task.id && getMemoryScopeState().loaded
         ? getMemoryScopeState().scope ?? undefined : undefined
     }),
-    [source, thinkingSelection, settings.lastModelId, settings.thinkingMode, settings.subagentModelId, settings.utilityModelId]
+    [source, thinkingSelection, settings.lastModelId, settings.thinkingMode, settings.subagentModelId, settings.utilityModelId, canonicalModelId, activeId, sessionModelReady, requestModelId]
   )
+
+  const enqueueNextTurn = async (text: string, mentions: Mention[], draftRevision: number): Promise<void> => {
+    assertEngineSource(epoch)
+    const task = getWorkState(source).tasks.find(item => item.id === activeId)
+    if (!task || preparing || uploadCount > 0 || !isHistoryReady(task.id)) throw new Error('任务或附件尚未就绪，草稿已保留')
+    const originalDraft = getWorkDraft(source, task.id), options = optionsFor(task), sentAttachments = [...task.attachments]
+    const queuedModel = nextModel?.source === source && nextModel.taskId === task.id ? nextModel.modelId : undefined
+    const resources = (ids: string[] | undefined): WorkQueueDraft['resources']['skills'] => ids?.length ? { kind: 'override', ids: [...ids] } : { kind: 'inherit' }
+    const chosen = queuedModel === undefined ? options.model : canonicalModelId(queuedModel)
+    const submission: WorkQueueDraft = {
+      draft: queuedDraft(text, mentions, draftRevision),
+      model: chosen ? { kind: 'explicit', modelId: chosen } : { kind: 'engine-default' },
+      resources: { skills: resources(options.skills), mcpServers: resources(options.mcpServers), knowledgeBases: resources(options.knowledgeBases) },
+      thinking: options.thinkingMode === false ? { kind: 'off' } : typeof options.thinkingMode === 'string' ? { kind: 'effort', effort: options.thinkingMode } : { kind: 'inherit' },
+      ...(options.subagentModel ? { subagentModel: options.subagentModel } : {}), ...(options.utilityModel ? { utilityModel: options.utilityModel } : {}),
+      attachments: sentAttachments.map(file => ({ path: file.path, name: file.name, type: file.type, size: file.size }))
+    }
+    await nextTurnQueue.enqueue(submission)
+    if (epoch !== getEngineSource()) return
+    // An ACK belongs to the captured draft. Later typing, navigation and new uploads win over cleanup.
+    if (getWorkDraft(source, task.id) === originalDraft) updateWorkDraft(source, task.id, '', [])
+    updateWorkState(source, previous => ({ ...previous, tasks: previous.tasks.map(item => item.id === task.id
+      ? { ...item, attachments: item.attachments.filter(file => !sentAttachments.some(sent => sent.path === file.path)), updatedAt: Date.now() } : item) }))
+  }
 
   const sendTask = useCallback(
     async (task: WorkTask, text: string, mentions: Mention[] = task.mentions ?? [], preserveDraft = false, collaborators?: AgentCollaborator[]): Promise<void> => {
       assertEngineSource(epoch)
-      if (sendingTaskIdsRef.current.has(task.id)) return
-      sendingTaskIdsRef.current.add(task.id)
-      sendCountRef.current += 1
-      setSending(true)
+      // The stream IPC resolves after its reader closes, possibly after an
+      // authoritative terminal snapshot or a later task has been selected.
+      // The hook's exact current-session gate owns admission; old IPC promises
+      // must not turn into a cross-task or cross-turn composer lock.
+      if (getWorkState(source).activeTaskId !== task.id || hasSessionWork(task.id)) return
       setError(null)
       updateTask(task.id, { status: 'running', agentLocked: true, updatedAt: Date.now() })
-      submitted.current.set(task.id, {
+      const submission = {
         source,
         text,
         attachments: preserveDraft ? [] : task.attachments,
         createdAt: Date.now(),
         preserveDraft
-      })
+      }
+      submitted.current.set(task.id, submission)
       try {
         const prepared = buildWorkAgentMessage(text, mentions)
         const delegation = collaborators ?? prepared.collaborators
+        const sendOptions = optionsFor(preserveDraft ? { ...task, attachments: [] } : task)
+        // Clear the input box the moment the request is dispatched (not after the
+        // stream finishes). Attachments/mentions are captured in sendOptions first,
+        // so wiping the live store does not drop them from the outgoing request.
+        if (!preserveDraft) {
+          const sentAttachments = task.attachments
+          updateWorkState(source, (previous) => ({
+            ...previous,
+            tasks: previous.tasks.map((item) =>
+              item.id === task.id
+                ? {
+                    ...item,
+                    draft: '',
+                    mentions: [],
+                    attachments: item.attachments.filter(
+                      (file) => !sentAttachments.some((sent) => sent.path === file.path)
+                    ),
+                    updatedAt: Date.now()
+                  }
+                : item
+            )
+          }))
+        }
         await chatSend(prepared.message, {
-          ...optionsFor(preserveDraft ? { ...task, attachments: [] } : task),
+          ...sendOptions,
           ...(delegation.length ? { collaborators: delegation } : {})
         })
         if (epoch !== getEngineSource()) return
         // A follow-up from the Agent panel is independent of an unsent composer
         // draft. Its attachments and mention offsets must stay untouched.
         if (preserveDraft) return
-        const combined = [...task.sources, ...task.attachments]
         updateWorkState(source, (previous) => ({
           ...previous,
-          tasks: previous.tasks.map((item) =>
-            item.id === task.id
-              ? {
-                  ...item,
-                  title:
-                    item.title === '新任务'
-                      ? text.trim().replace(/\s+/g, ' ').slice(0, 52) || item.title
-                      : item.title,
-                  draft: item.draft === task.draft && item.mentions === task.mentions ? '' : item.draft,
-                  mentions: item.draft === task.draft && item.mentions === task.mentions ? [] : item.mentions,
-                  attachments: item.attachments.filter(
-                    (file) => !task.attachments.some((sent) => sent.path === file.path)
-                  ),
-                  sources: combined.filter(
-                    (file, index) =>
-                      combined.findIndex((other) => other.path === file.path) === index
-                  ),
-                  updatedAt: Date.now()
-                }
-              : item
-          )
+          tasks: previous.tasks.map((item) => {
+            if (item.id !== task.id) return item
+            // Draft/attachments were already cleared on dispatch; here we only fold
+            // the sent attachments into sources and refresh the title. Any text the
+            // user typed while the request was in flight is preserved as-is.
+            const combined = [...item.sources, ...task.attachments]
+            return {
+              ...item,
+              title:
+                item.title === '新任务'
+                  ? text.trim().replace(/\s+/g, ' ').slice(0, 52) || item.title
+                  : item.title,
+              sources: combined.filter(
+                (file, index) =>
+                  combined.findIndex((other) => other.path === file.path) === index
+              ),
+              updatedAt: Date.now()
+            }
+          })
         }))
       } catch (cause) {
-        if (epoch === getEngineSource()) {
+        if (epoch === getEngineSource() && submitted.current.get(task.id) === submission) {
           setError(messageOf(cause))
           updateTask(task.id, { status: 'error' })
         }
         if (preserveDraft) throw cause
-      } finally {
-        sendingTaskIdsRef.current.delete(task.id)
-        sendCountRef.current = Math.max(0, sendCountRef.current - 1)
-        setSending(sendCountRef.current > 0)
       }
     },
-    [epoch, chatSend, optionsFor, updateTask, source]
+    [epoch, chatSend, hasSessionWork, optionsFor, updateTask, source]
   )
   const sendTaskRef = useRef(sendTask)
   useEffect(() => {
@@ -329,14 +432,30 @@ export function useWorkController() {
   }, [activeId, source, epoch, engineReady, resumeStream, isHistoryReady, historyAttempt])
 
   const restored = loaded?.source === source && loaded.epoch === epoch && loaded.id === activeId
-  const messages = restored ? chat.messages : []
+  const previewReady = Boolean(chat.publishedRecovery?.source === epoch && chat.publishedRecovery.sessionId === activeId && chat.publishedRecovery.previewAvailable)
+  const messages = restored || previewReady ? chat.messages : []
   const preparing = Boolean(activeId && pendingStart.current?.source === source && pendingStart.current.id === activeId)
   const agentLocked = Boolean(activeTask && (activeTask.agentLocked || activeTask.status !== 'draft' || messages.length > 0 || preparing))
   const workspaceLocked = isRemoteEngine() || Boolean(activeTask
     ? activeTask.status !== 'draft' || activeTask.attachments.length || preparing
     : state.homeAttachments.length)
-  const streaming = Boolean(restored && (chat.streaming || sending))
-  const artifacts = useMemo(() => workArtifacts(messages), [messages])
+  const streaming = Boolean((restored || previewReady) && chat.streaming)
+  // Streaming text replaces the active message object on every token. File
+  // receipts do not change during those frames, so keep the derived artifact
+  // array stable until a receipt, task scope, or source actually changes.
+  const artifactCache = useRef<{ scope: string; value: WorkArtifact[] }>({ scope: '', value: [] })
+  const artifacts = useMemo(() => {
+    const scope = `${source}\0${activeId ?? ''}`
+    const next = workArtifacts(messages)
+    const previous = artifactCache.current
+    if (previous.scope === scope && previous.value.length === next.length && previous.value.every((item, index) => {
+      const candidate = next[index]
+      return item.id === candidate.id && item.path === candidate.path && item.name === candidate.name &&
+        item.content === candidate.content && item.status === candidate.status && item.createdAt === candidate.createdAt
+    })) return previous.value
+    artifactCache.current = { scope, value: next }
+    return next
+  }, [activeId, messages, source])
   const pending = useMemo(
     () =>
       messages
@@ -358,8 +477,7 @@ export function useWorkController() {
       sent?.source === source &&
       last &&
       last.createdAt >= sent.createdAt &&
-      !chat.streaming &&
-      !sending
+      !chat.streaming
     ) {
       if (last.status === 'error' && task && !sent.preserveDraft) {
         const attachments = [...task.attachments, ...sent.attachments]
@@ -373,7 +491,7 @@ export function useWorkController() {
       if (['done', 'error', 'aborted', 'interrupted'].includes(last.status))
         submitted.current.delete(observedId)
     }
-  }, [epoch, chat.messages, chat.streaming, chat.sessionModel, source, sending, updateTask])
+  }, [epoch, chat.messages, chat.streaming, chat.sessionModel, source, updateTask])
 
   const createTask = useCallback(
     async (text?: string, mentions: Mention[] = []): Promise<void> => {
@@ -486,12 +604,21 @@ export function useWorkController() {
     [activeId, source]
   )
   const setModel = useCallback(
-    (modelId: string): void => {
+    (next: string): void => {
+      if (epoch !== getEngineSource()) return
       if (activeTask && ['running', 'waiting'].includes(activeTask.status)) return
-      if (activeId) updateTask(activeId, { modelId })
-      else updateWorkState(source, (previous) => ({ ...previous, homeModelId: modelId }))
+      if (activeId) {
+        if (!sessionModelReady) return
+        const canonical = canonicalModelId(next)
+        const selection = canonical ? { modelId: canonical, anchorRunId: chat.sessionModel?.runId } : null
+        const defaultSelection = canonical ? null : { anchorRunId: chat.sessionModel?.runId, clientDefault: !followsEngineDefault }
+        setSelectedModel({ source, id: activeId, selection, defaultSelection })
+        saveSessionModelSelection(activeId, selection, source)
+        saveWorkDefaultModelSelection(activeId, defaultSelection, source)
+        updateTask(activeId, { modelId: canonical || (followsEngineDefault ? '' : canonicalModelId(settings.lastModelId)) })
+      } else updateWorkState(source, (previous) => ({ ...previous, homeModelId: next }))
     },
-    [activeId, activeTask, source, updateTask]
+    [activeId, activeTask, source, updateTask, epoch, sessionModelReady, chat.sessionModel, canonicalModelId, settings.lastModelId, followsEngineDefault]
   )
   const setAgent = useCallback(
     (agentId: string): boolean => {
@@ -520,7 +647,7 @@ export function useWorkController() {
   const send = useCallback(
     async (text?: string, mentions: Mention[] = []): Promise<void> => {
       flushWorkDrafts(source)
-      const currentTaskSending = activeTask ? sendingTaskIdsRef.current.has(activeTask.id) : false
+      const currentTaskSending = activeTask ? hasSessionWork(activeTask.id) : false
       if (!engineReady || streaming || currentTaskSending || pending.length || uploadCount > 0) return
       if (!activeTask) {
         const home = getWorkDraft(source, null)
@@ -537,7 +664,7 @@ export function useWorkController() {
     [
       engineReady,
       streaming,
-      sending,
+      hasSessionWork,
       pending.length,
       uploadCount,
       activeTask,
@@ -595,9 +722,9 @@ export function useWorkController() {
     if (['running', 'waiting'].includes(task.status) || !isHistoryReady(task.id))
       throw new Error('当前任务正在执行或等待确认，请完成后再继续子代理')
     if (['queued', 'running', 'cancelling'].includes(current.status)) throw new Error('这个子代理仍在运行，请等待本轮结束')
-    if (sendingTaskIdsRef.current.has(activeTask.id)) throw new Error('当前任务已有请求正在发送')
+    if (hasSessionWork(activeTask.id)) throw new Error('当前任务已有请求正在发送')
     await sendTaskRef.current(task, instruction.trim(), [], true, [{ resumeRunId: current.runId }])
-  }, [activeTask, engineReady, restored, isHistoryReady, streaming, pending.length, uploadCount, epoch, source, sendTask])
+  }, [activeTask, engineReady, restored, isHistoryReady, streaming, pending.length, uploadCount, epoch, source, hasSessionWork, sendTask])
 
   const stopTask = useCallback(async (id: string): Promise<void> => {
     invalidateStatusProbe(id)
@@ -857,14 +984,28 @@ export function useWorkController() {
         source: 'file',
         displayText: artifact.name,
         path: artifact.path,
-        content: artifact.content ?? undefined,
         textOffset: prefix.length
       }
       const token = mentionToken(mention)
-      setDraft(`${prefix}${token}（版本记录 ${artifact.id}）：\n`, [...existing, mention])
+      setDraft(`${prefix}${token}：\n`, [...existing, mention])
     },
     [source, activeId, setDraft]
   )
+
+  const removeSource = useCallback((path: string): void => {
+    if (!activeId || epoch !== getEngineSource()) return
+    // A task reference has a shorter lifetime than the bytes used by its history.
+    updateWorkState(source, previous => ({ ...previous, tasks: previous.tasks.map(task =>
+      task.id === activeId ? { ...task, sources: task.sources.filter(item => item.path !== path) } : task) }))
+  }, [source, activeId, epoch])
+
+  const addSourceReference = useCallback((attachment: ChatAttachment): void => {
+    if (!activeId || epoch !== getEngineSource()) return
+    const latest = getWorkDraft(source, activeId)
+    const prefix = `${latest.text}${latest.text ? '\n\n' : ''}参考资料 `
+    const mention: Mention = { source: 'file', displayText: attachment.name, path: attachment.path, textOffset: prefix.length }
+    setDraft(`${prefix}${mentionToken(mention)}：\n`, [...latest.mentions, mention])
+  }, [source, activeId, epoch, setDraft])
 
   return {
     draftSource: source,
@@ -886,17 +1027,36 @@ export function useWorkController() {
     securitySessionId,
     thinkingMode,
     setThinkingMode,
-    modelId: activeTask?.modelId ?? state.homeModelId,
+    modelId,
+    defaultModelId: followsEngineDefault ? '' : canonicalModelId(settings.lastModelId || agentIdentity.model),
+    defaultModelSource: followsEngineDefault ? undefined : settings.lastModelId ? '客户端默认' : agentIdentity.model ? 'Agent 配置' : undefined,
     models,
     messages,
+    usageSyncNotice: restored ? chat.usageSyncNotice : null,
+    publishedRecovery: chat.publishedRecovery?.source === epoch && chat.publishedRecovery.sessionId === activeId ? chat.publishedRecovery : null,
+    publishedFixedChildren: (restored || previewReady) && chat.publishedFixedChildren,
+    cancelPublishedRecovery: chat.cancelPublishedRecovery,
+    loadPublishedBody: chat.loadPublishedBody,
+    retryPublishedRecovery: chat.retryPublishedRecovery,
+    nextTurnQueue,
+    enqueueNextTurn,
+    nextQueueModelId: nextModel?.source === source && nextModel.taskId === activeId ? nextModel.modelId : modelId,
+    setNextQueueModel: (value: string) => { if (activeId) setNextModel({ source, taskId: activeId, modelId: canonicalModelId(value) }) },
+    workspaceRunId: restored && chat.sessionModel?.source === epoch && chat.sessionModel.sessionId === activeId ? chat.sessionModel.runId : undefined,
+    contextCompaction: restored && chat.sessionModel?.source === epoch && chat.sessionModel.sessionId === activeId ? chat.sessionModel.compaction : undefined,
     todos: restored ? chat.todos : [],
     artifacts,
     pending,
     streaming,
+    pendingInitialStart: preparing,
     launching: Boolean(engineReady && !error && !chat.historyError && activeId && pendingStart.current?.source === source && pendingStart.current.id === activeId),
     remote: isRemoteEngine(),
     ready: engineReady,
-    loading: Boolean(activeId && engineReady && !restored),
+    modelReady: !activeId || sessionModelReady,
+    loading: Boolean(activeId && engineReady && !restored && !previewReady),
+    historyReady: !activeId || (restored && isHistoryReady(activeId)),
+    historyRecovery: activeId && chat.connection.scope?.source === epoch && chat.connection.scope.sessionId === activeId
+      ? chat.connection : null,
     uploading: uploadCount > 0,
     error: error ?? (activeId ? chat.historyError : null),
     createTask,
@@ -914,6 +1074,8 @@ export function useWorkController() {
     chooseWorkspace,
     addFiles,
     removeAttachment,
+    removeSource,
+    addSourceReference,
     setModel,
     setAgent,
     continueSubagent,

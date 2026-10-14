@@ -50,7 +50,8 @@ export function startEditorRecovery(): () => void {
   const persist = (): void => {
     if (!root || restoring) return
     const editor = getEditorState()
-    const tabs: SavedTab[] = editor.order.filter((path) => belongs(root!, path)).map((path) => {
+    // Code recovery has only a workspace path, not the owning Work session/account.
+    const tabs: SavedTab[] = editor.order.filter((path) => belongs(root!, path) && !getDocument(path)?.sessionFileTarget).map((path) => {
       const doc = getDocument(path)
       return { path, ...(doc && !doc.loading && !doc.truncated && isDirty(doc)
         ? { draft: { content: doc.content, savedContent: doc.savedContent } } : {}) }

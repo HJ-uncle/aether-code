@@ -8,6 +8,7 @@ import { requestOrThrow } from '../engine/client'
 import { assertWorkspaceTarget } from '../workspace/connection'
 import { remoteWorkspaceContext, type RemoteWorkspaceContext } from '../workspace/fs-client'
 import { canReuseLspSession } from './session-state'
+import { getDocument } from '../editor/editor-store'
 
 let referenceModels: typeof import('../editor/reference-models') | null = null
 let workspaceActions: WorkspaceActionBridge | null = null
@@ -23,7 +24,7 @@ export function onTsLanguageServiceChanged(listener: () => void): () => void {
 function notifyServiceChanged(): void { for (const listener of serviceListeners) listener() }
 export function getTsLanguageServiceGeneration(): number { return sessionGeneration }
 export function supportsProjectSymbols(model: monaco.editor.ITextModel): boolean {
-  return model.uri.scheme === 'file' && LSP_LANGUAGES.has(model.getLanguageId())
+  return model.uri.scheme === 'file' && LSP_LANGUAGES.has(model.getLanguageId()) && !getDocument(model.uri.fsPath)?.sessionFileTarget
 }
 const REQUEST_TIMEOUT_MS = 15_000
 const INITIALIZE_TIMEOUT_MS = 30_000
@@ -81,14 +82,16 @@ function sendMessage(message: LspMessage): Promise<LspSendResult> {
 }
 function lspRequest<T = unknown>(method: string, params?: unknown, token?: monaco.CancellationToken, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   if (token?.isCancellationRequested) return Promise.reject(new Error('LSP request cancelled'))
+  const uri = params && typeof params === 'object' ? (params as { textDocument?: { uri?: string } }).textDocument?.uri : undefined
+  if (uri && getDocument(monaco.Uri.parse(uri).fsPath)?.sessionFileTarget) return Promise.reject(new Error('当前文档属于独立任务，不能使用 Code 项目的语言服务'))
   const id = nextId++
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
       const pending = pendingRequests.get(id); if (!pending) return
-      pendingRequests.delete(id); pending.cancellationDisposable?.dispose(); void sendMessage({ jsonrpc: '2.0', method: '$/cancelRequest', params: { id } }); reject(new Error(`LSP request timed out: ${method}`))
+      pendingRequests.delete(id); pending.cancellationDisposable?.dispose(); lspNotify('$/cancelRequest', { id }); reject(new Error(`LSP request timed out: ${method}`))
     }, timeoutMs)
     const pending: PendingRequest = { resolve: resolve as (value: unknown) => void, reject, timer }
-    if (token) pending.cancellationDisposable = token.onCancellationRequested(() => { if (!pendingRequests.delete(id)) return; clearTimeout(timer); pending.cancellationDisposable?.dispose(); void sendMessage({ jsonrpc: '2.0', method: '$/cancelRequest', params: { id } }); reject(new Error('LSP request cancelled')) })
+    if (token) pending.cancellationDisposable = token.onCancellationRequested(() => { if (!pendingRequests.delete(id)) return; clearTimeout(timer); pending.cancellationDisposable?.dispose(); lspNotify('$/cancelRequest', { id }); reject(new Error('LSP request cancelled')) })
     pendingRequests.set(id, pending)
     void sendMessage({ jsonrpc: '2.0', id, method, params }).then((result) => {
       const current = pendingRequests.get(id); if (!current) return
@@ -146,7 +149,7 @@ function lspLanguageId(model: monaco.editor.ITextModel): string {
   if (languageId === 'javascript' && /\.jsx$/i.test(model.uri.path)) return 'javascriptreact'
   return languageId
 }
-function attachModel(model: monaco.editor.ITextModel): void { const uri = model.uri.toString(); if (syncedModels.has(uri) || !isLspLanguage(model.getLanguageId())) return; syncedModels.add(uri); openVersions.set(uri, model.getVersionId()); lspNotify('textDocument/didOpen', { textDocument: { uri, languageId: lspLanguageId(model), version: model.getVersionId(), text: model.getValue() } }); modelSubscriptions.set(uri, model.onDidChangeContent(() => { const version = model.getVersionId(); openVersions.set(uri, version); lspNotify('textDocument/didChange', { textDocument: { uri, version }, contentChanges: [{ text: model.getValue() }] }) })) }
+function attachModel(model: monaco.editor.ITextModel): void { const uri = model.uri.toString(); if (getDocument(model.uri.fsPath)?.sessionFileTarget || syncedModels.has(uri) || !isLspLanguage(model.getLanguageId())) return; syncedModels.add(uri); openVersions.set(uri, model.getVersionId()); lspNotify('textDocument/didOpen', { textDocument: { uri, languageId: lspLanguageId(model), version: model.getVersionId(), text: model.getValue() } }); modelSubscriptions.set(uri, model.onDidChangeContent(() => { const version = model.getVersionId(); openVersions.set(uri, version); lspNotify('textDocument/didChange', { textDocument: { uri, version }, contentChanges: [{ text: model.getValue() }] }) })) }
 function detachModel(model: monaco.editor.ITextModel): void { const uri = model.uri.toString(); if (!syncedModels.delete(uri)) return; modelSubscriptions.get(uri)?.dispose(); modelSubscriptions.delete(uri); openVersions.delete(uri); lspNotify('textDocument/didClose', { textDocument: { uri } }); monaco.editor.setModelMarkers(model, MARKER_OWNER, []); const filePath = pathForUri(uri); if (filePath) { tsProblemFiles.delete(filePath); clearFileProblems(filePath, 'tsserver') } }
 function syncAllModels(): void { for (const model of monaco.editor.getModels()) attachModel(model) }
 function disposeModelListeners(): void { createModelSubscription?.dispose(); disposeModelSubscription?.dispose(); createModelSubscription = null; disposeModelSubscription = null; for (const subscription of modelSubscriptions.values()) subscription.dispose(); modelSubscriptions.clear(); syncedModels.clear(); openVersions.clear() }
@@ -174,6 +177,7 @@ async function mapWorkspaceEdit(value: unknown, requestedVersions: Map<string, n
     const resources = documents.map((document) => {
       const resource = monaco.Uri.parse(document.uri)
       if (resource.scheme !== 'file') throw new Error('语言服务只能编辑本地文件')
+      if (getDocument(resource.fsPath)?.sessionFileTarget) throw new Error('语言服务不能编辑其他任务的文档')
       return { document, resource }
     })
     if (token?.isCancellationRequested || generation !== sessionGeneration) return { edits: [], rejectReason: '已取消工作区编辑' }
@@ -203,7 +207,7 @@ function registerProviders(): void {
   providersDisposed.push(monaco.editor.registerEditorOpener({ async openCodeEditor(_source, resource, selection) {
     if (resource.scheme !== 'file') return false
     const { openWorkspaceResource } = await import('../editor/monaco-workspace')
-    await openWorkspaceResource(resource, selection)
+    await openWorkspaceResource(resource, selection, _source.getModel()?.uri)
     return true
   } }))
   providersDisposed.push(monaco.languages.registerHoverProvider(selector, { async provideHover(model, position, token) { const result = await lspRequest<{ contents?: unknown; range?: LspRange } | null>('textDocument/hover', positionParams(model, position), token).catch(() => null); const contents = result?.contents; let value: string | undefined; if (Array.isArray(contents)) value = contents.map((entry) => text(entry) ?? '').filter(Boolean).join('\n\n'); else value = text(contents); return value ? { range: result?.range ? toMonacoRange(result.range) : undefined, contents: [{ value }] } : null } }))

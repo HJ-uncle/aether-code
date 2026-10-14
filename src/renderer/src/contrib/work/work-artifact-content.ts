@@ -1,0 +1,32 @@
+import type { FsFileContent } from '@shared/ipc'
+
+export interface WorkArtifactContent {
+  content: string | null
+  coverage: 'current' | 'partial' | 'receipt' | 'unavailable'
+  notice: string
+}
+
+/** A write receipt describes a past version; it cannot certify the current file. */
+export function workArtifactReadFailure(receipt: string | null, reason: unknown): WorkArtifactContent {
+  const error = reason instanceof Error ? reason.message : String(reason)
+  return receipt === null
+    ? { content: null, coverage: 'unavailable', notice: error }
+    : { content: receipt, coverage: 'receipt', notice: `当前文件读取失败，显示写入回执中的历史版本。${error}` }
+}
+
+export function workArtifactReadResult(file: Pick<FsFileContent, 'content' | 'isBinary' | 'truncated' | 'tooLarge'>): WorkArtifactContent {
+  if (file.isBinary) return { content: null, coverage: 'unavailable', notice: '二进制文件无法在此预览，请在编辑器打开。' }
+  if (typeof file.content !== 'string') return { content: null, coverage: 'unavailable', notice: '工作区返回了无效的文件内容。' }
+  if (file.tooLarge && !file.content) return { content: null, coverage: 'unavailable', notice: '文件过大，无法在此预览，请在编辑器打开。' }
+  if (file.truncated || file.tooLarge) return { content: file.content, coverage: 'partial', notice: '仅显示文件的预览片段。复制和下载只包含此片段，添加到对话会引用当前文件路径。' }
+  return { content: file.content, coverage: 'current', notice: '' }
+}
+
+export function workArtifactExportName(name: string, coverage: WorkArtifactContent['coverage']): string {
+  return coverage === 'partial' ? `${name}.preview.txt` : coverage === 'receipt' ? `${name}.receipt.txt` : name
+}
+
+export function workArtifactSelectionQuote(name: string, path: string, selection: string, coverage?: WorkArtifactContent['coverage']): string {
+  const source = coverage === 'receipt' ? '历史写入回执' : coverage === 'partial' ? '文件预览片段' : '文件预览'
+  return `引用「${name}」${source}中的选中内容（${path}）：\n${selection.split('\n').map(line => `> ${line}`).join('\n')}\n`
+}

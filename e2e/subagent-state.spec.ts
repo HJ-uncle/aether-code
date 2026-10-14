@@ -1,6 +1,6 @@
 /** Pure regression tests: live/replay ownership, honest outcomes, late events and child usage accounting. */
 import { expect, test } from '@playwright/test'
-import type { SubagentRun } from '../src/shared/subagent'
+import type { SubagentRun, SubagentDiscoveryRef } from '../src/shared/subagent'
 import type { ChatMessage, ToolActivity } from '../src/renderer/src/core/engine/useChat'
 import {
   applyToolResult,
@@ -9,6 +9,7 @@ import {
 } from '../src/renderer/src/core/engine/chat-history'
 import {
   attachSubagentRuns,
+  applySubagentDeletions,
   exportSubagentDetails,
   isSubagentActive,
   mergeSubagentRun,
@@ -17,6 +18,7 @@ import {
   toolResultState,
   toolStatusLabel
 } from '../src/renderer/src/core/engine/subagent-state'
+import { workSubagentGroups } from '../src/renderer/src/contrib/work/work-subagents'
 import { groupIntoTurns, sumUsage } from '../src/renderer/src/contrib/chat/usage'
 
 function run(patch: Partial<SubagentRun> = {}): SubagentRun {
@@ -69,6 +71,38 @@ function message(patch: Partial<ChatMessage> = {}): ChatMessage {
     ...patch
   }
 }
+
+test('only a trusted exact tombstone retires a child card, preserving diagnostics and blocking resident revival', () => {
+  const original = run()
+  const deleted: SubagentDiscoveryRef = { ...original, revision: 3, createdRevision: 1, runSeq: 1, deleted: true }
+  const attached = attachSubagentRuns([message()], [original])
+  expect(applySubagentDeletions(attached, [{ ...deleted, deleted: false }])).toBe(attached)
+  for (const key of ['tenantId', 'runId', 'parentSessionId', 'rootSessionId', 'parentConversationId', 'parentToolCallId', 'childSessionId'] as const) {
+    expect(applySubagentDeletions(attached, [{ ...deleted, [key]: 'foreign' }])).toBe(attached)
+  }
+  const retired = applySubagentDeletions(attached, [deleted])
+  expect(retired[0].content).toBe('父代理的回答')
+  expect(retired[0].tools[0]).toMatchObject({ id: 'dispatch-1', hidden: true, state: 'unknown', subagentDeletion: deleted })
+  expect(retired[0].tools[0].subagent).toBe(attached[0].tools[0].subagent)
+  expect(toolStatusLabel(retired[0].tools[0])).toBe('记录已删除')
+  expect(applySubagentDeletions(retired, [deleted])).toBe(retired)
+  expect(attachSubagentRuns(retired, [original])).toBe(retired)
+  expect(workSubagentGroups('parent-session', retired[0].tools, [original])).toEqual([])
+  const resumed = run({ runId: 'run-2', parentToolCallId: 'dispatch-2', createdAt: 2000, updatedAt: 2000 })
+  const withNext = attachSubagentRuns(retired, [original, resumed])
+  expect(workSubagentGroups('parent-session', withNext[0].tools, [original, resumed])[0].tools.map(tool => tool.subagent?.runId)).toEqual(['run-2'])
+})
+
+test('a tombstone can retire a matching legacy dispatch without erasing another turn or ordinary tool', () => {
+  const deleted: SubagentDiscoveryRef = { ...run(), revision: 3, createdRevision: 1, runSeq: 1, deleted: true }
+  const foreign = message({ id: 'other-message', conversationId: 'other-turn' })
+  const ordinary = message({ tools: [tool({ name: 'read_file' })] })
+  const before = [message(), foreign, ordinary]
+  const after = applySubagentDeletions(before, [deleted])
+  expect(after[0].tools[0].hidden).toBe(true)
+  expect(after[1]).toBe(foreign)
+  expect(after[2]).toBe(ordinary)
+})
 
 test('subagent 协议拒绝错版、损坏身份和 seq 不一致的事件', () => {
   const snapshot = run()

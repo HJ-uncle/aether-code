@@ -11,21 +11,29 @@ import {
   type MouseEvent,
   type RefObject
 } from 'react'
-import type { ChatMessage, ToolActivity } from '@renderer/core/engine/useChat'
+import type { ChatAttachment, ChatMessage, ToolActivity } from '@renderer/core/engine/useChat'
+import {
+  AttachmentChip,
+  AttachmentPreviewDialog,
+  type AttachmentPreview
+} from '../chat/AttachmentChip'
 import type { EngineFileChange } from '@shared/ipc'
+import type { CronAutomationRun } from '@shared/automation'
+import type { ChatRecoverySnapshot } from '@renderer/core/engine/chat-recovery'
 import type { PendingInteraction } from '@renderer/core/engine/pending'
 import { toolDisplayName } from '@renderer/core/engine/tool-labels'
+import { isVisibleToolActivity } from '@renderer/core/engine/task-plan'
 import { useApp } from '@renderer/core/app-context'
 import { toast } from '@renderer/core/toast'
 import { getAppMode, useAppMode } from '@renderer/core/platform/app-mode'
-import { getEngineSource } from '@renderer/core/engine/source'
+import { getEngineSource, getEngineStorageKey } from '@renderer/core/engine/source'
+import { setBrowserSessionOverride } from '@renderer/core/browser/connection'
 import { registerCommand } from '@renderer/core/platform/commands'
 import { requestOrThrow } from '@renderer/core/engine/client'
 import { Icon, type IconName } from '@renderer/workbench/icons'
 import { IconButton, SectionHeading, Spinner } from '@renderer/workbench/ui-primitives'
-import { Select } from '@renderer/workbench/Select'
 import { openAppSettings } from '../settings/app-settings-navigation'
-import { Markdown } from '../chat/Markdown'
+import { ToolResult } from '../chat/ToolResult'
 import { UserMessageContent } from '../chat/UserMessageContent'
 import { FileChangeCard } from '../chat/FileChangeCard'
 import { computeLineDiff, diffForDeletedFile, diffForNewFile, diffStats } from '../chat/diff'
@@ -36,15 +44,26 @@ import { openFileFromChat } from '../chat/open-file'
 import { useWorkController } from './work-runtime'
 import { WorkBrowser } from './WorkBrowser'
 import { WorkComposer as WorkComposerV2 } from './WorkComposer'
+import { WorkNextTurnQueuePanel } from './WorkNextTurnQueue'
 import { WorkTaskActions } from './WorkTaskActions'
 import { WorkArtifactPanel } from './WorkArtifactPanel'
+import { workArtifactSelectionQuote, type WorkArtifactContent } from './work-artifact-content'
+import { WorkSourcePreview, useWorkSourceFile } from './WorkSourcePreview'
+import { Markdown } from '../chat/Markdown'
+import { paths, resolveSessionFilePath } from '@renderer/core/workspace/fs-client'
 import { WorkGitPanel } from './WorkGitPanel'
 import { WorkSubagentsPanel } from './WorkSubagentsPanel'
+import { PublishedRecoveryNotice } from '../chat/PublishedRecoveryNotice'
 import { WorkInlineActivity } from './WorkInlineActivity'
 import { WorkAgentManager } from './WorkAgentManager'
 import { workMessageTimeline, workToolTarget } from './work-message-timeline'
+import { workSubagentName } from './work-subagents'
+import { formatActivityValue, readActivityPreview } from './work-activity-presentation'
 import { WORK_ACTIVITY_PAGE_SIZE, WORK_MESSAGE_PAGE_SIZE, WORK_TASK_PAGE_SIZE, workMessageStart, workPageRange, workPaneRatio, workToolSnapshot, type WorkToolSnapshot } from './work-view-performance'
 import { requestedThinkingMode } from '../chat/session-request-config'
+import { AutomationsView } from '../automations/AutomationsView'
+import { subscribeAutomationEditor } from '../automations/automation-navigation'
+import { flushWorkDrafts, getWorkDraft, getWorkState, updateWorkState, type WorkArtifact } from './work-state'
 import { findWorkArtifact } from './work-artifact-utils'
 import { hideBrowserSurfaces, useBrowserState } from '../browser/browser-store'
 import './work.css'
@@ -65,46 +84,13 @@ type ViewState = {
   ratio: number
 }
 
-interface WorkAutomation {
-  id: string
-  name: string
-  description?: string
-  cronExpr: string
-  message: string
-  sessionId: string
-  enabled: boolean
-  lastRunAt?: number
-  nextRunAt?: number
-  createdAt: number
-  thinkingMode?: boolean | 'low' | 'medium' | 'high' | null
-  timeoutSeconds?: number | null
-}
-
-const AUTOMATION_TIMEOUT_OPTIONS = [
-  { value: '120', label: '2 分钟' },
-  { value: '600', label: '10 分钟' },
-  { value: '1800', label: '30 分钟' },
-  { value: '3600', label: '60 分钟' },
-  { value: '10800', label: '3 小时' },
-  { value: '21600', label: '6 小时' },
-  { value: '86400', label: '24 小时' },
-  { value: 'custom', label: '自定义时长' }
-]
-
-function automationTimeoutLabel(seconds: number | null | undefined): string {
-  const value = seconds ?? 120
-  const preset = AUTOMATION_TIMEOUT_OPTIONS.find(option => option.value === String(value))
-  if (preset) return preset.label
-  const minutes = Math.floor(value / 60), remaining = value % 60
-  return minutes ? `${minutes} 分钟${remaining ? ` ${remaining} 秒` : ''}` : `${remaining} 秒`
-}
-
 const VIEW_KEY = 'aether.work.view.v1'
 const conversationPositions = new Map<string, { top: number; follow: boolean; firstId?: string | null; expanded?: boolean }>()
 const pendingDrafts = new Map<string, { values: string[][]; freeText: string[] }>()
 const changeStatCache = new WeakMap<EngineFileChange, ReturnType<typeof diffStats> | null>()
 const MAX_WORK_VIEW_CACHE = 256
-const NO_MESSAGES: ChatMessage[] = []
+const StableWorkSubagentsPanel = memo(WorkSubagentsPanel)
+const StableWorkGitPanel = memo(WorkGitPanel)
 
 function useWorkTools(messages: ChatMessage[]): ToolActivity[] {
   const previous = useRef<WorkToolSnapshot<ToolActivity> | undefined>(undefined)
@@ -259,11 +245,20 @@ export function WorkView(): JSX.Element {
   const controller = useWorkController()
   const appMode = useAppMode()
   const browser = useBrowserState()
+  const browserSource = getEngineSource()
+  useLayoutEffect(() => {
+    // The browser bridge must already know Work's task (or persisted home
+    // session) when browser_open is the first tool, without a mounted panel.
+    setBrowserSessionOverride(controller.securitySessionId, browserSource)
+  }, [controller.securitySessionId, browserSource])
+  useEffect(() => () => setBrowserSessionOverride(null), [])
   const [view, setView] = useState(initialView)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<TaskFilter>('all')
   const [selectedArtifact, setSelectedArtifact] = useState<string | null>(null)
   const [activitySelection, setActivitySelection] = useState<ActivitySelection | null>(null)
+  const [automationRequest, setAutomationRequest] = useState<{ jobId: string; revision: number } | null>(null)
+  const automationRequestRevision = useRef(0)
   const rootRef = useRef<HTMLDivElement>(null)
   const [compactNavigation, setCompactNavigation] = useState(window.innerWidth <= 1160)
   const [navigationOpen, setNavigationOpen] = useState(false)
@@ -348,6 +343,36 @@ export function WorkView(): JSX.Element {
     setSearch('')
     setFilter('all')
   }, [set, controller.showHome])
+  useEffect(() => subscribeAutomationEditor(jobId => {
+    setAutomationRequest({ jobId, revision: ++automationRequestRevision.current })
+    setNavigationOpen(false)
+    set({ page: 'automations' })
+  }), [set])
+  useEffect(() => {
+    // A card opens a single draft; revisiting the management page must not replay it.
+    if (view.page !== 'automations') setAutomationRequest(null)
+  }, [view.page])
+  const openAutomationRun = useCallback(async (run: CronAutomationRun): Promise<void> => {
+    const source = getEngineSource()
+    const storageSource = getEngineStorageKey()
+    const snapshot = await requestOrThrow<ChatRecoverySnapshot>({ method: 'GET', path: '/chat/snapshot', query: { sessionId: run.sessionId } })
+    if (source !== getEngineSource()) throw new Error('引擎连接已变化，请重新打开运行记录。')
+    if (snapshot.schemaVersion !== 1 || snapshot.sessionId !== run.sessionId) throw new Error('运行会话返回了不匹配的历史。')
+    const root = snapshot.run ?? snapshot.runs.at(-1)
+    if (!root || root.sessionId !== run.sessionId) throw new Error('当前运行尚未建立可查看的会话。')
+    flushWorkDrafts(storageSource)
+    if (!getWorkState(storageSource).tasks.some(item => item.id === run.sessionId)) {
+      const status: WorkTask['status'] = root.status === 'running' ? 'running' : root.status === 'waiting' ? 'waiting'
+        : root.status === 'succeeded' ? 'done' : root.status === 'failed' ? 'error' : root.status === 'cancelled' ? 'stopped' : 'interrupted'
+      updateWorkState(storageSource, previous => ({ ...previous, tasks: [{ id: run.sessionId, title: run.snapshot.name, draft: '', status,
+        createdAt: root.createdAt, updatedAt: root.updatedAt, workspacePath: root.workspacePaths?.[0] ?? null,
+        modelId: root.modelId || run.snapshot.effectiveModelId || '', agentId: run.snapshot.effectiveAgentId || run.snapshot.agentId,
+        agentLocked: true, attachments: [], sources: [], origin: { kind: 'automation', jobId: run.jobId, runId: run.id } }, ...previous.tasks] }))
+    }
+    controller.selectTask(run.sessionId)
+    setNavigationOpen(false)
+    set({ page: 'home', pane: 'conversation' })
+  }, [set, controller.selectTask])
   const openWorkspace = useCallback((tab: WorkspaceTab): void =>
     set({ workspace: true, tab, pane: 'workspace' }), [set])
   const openArtifact = useCallback((id: string): void => {
@@ -516,17 +541,8 @@ export function WorkView(): JSX.Element {
               </div>
               <div className="work-task-heading__actions">
                 <TaskStatus status={task.status} />
-                <WorkTaskActions task={task} controller={controller} />
-                {['running', 'waiting'].includes(task.status) && (
-                  <button
-                    className="btn btn--sm"
-                    type="button"
-                    onClick={() => void controller.stop().catch(reportError)}
-                  >
-                    <Icon name="stop" size={13} />
-                    停止
-                  </button>
-                )}
+                <WorkTaskActions task={task} controller={controller} compact showStop={false} />
+                <WorkRootStop key={task.id} controller={controller} />
                 <IconButton
                   icon="layout-panel"
                   label={view.workspace ? '收起工作区' : '打开工作区'}
@@ -675,7 +691,7 @@ export function WorkView(): JSX.Element {
                 title="成果"
                 description="查看当前任务中已经生成的文件，并继续修改。"
               />
-              <ArtifactPanel
+              <TaskArtifactPanel
                 controller={controller}
                 selectedId={selectedArtifact}
                 onSelect={setSelectedArtifact}
@@ -702,7 +718,9 @@ export function WorkView(): JSX.Element {
           <div className="work-page">
             <div className="work-page__inner">
               <SectionHeading title="自动化" description="让重复工作按计划执行。" />
-              <Automations controller={controller} newTask={newTask} />
+              <AutomationsView ready={controller.ready} sessions={controller.tasks} currentSessionId={controller.activeTask?.id}
+                currentAgentId={controller.agentId} thinkingMode={requestedThinkingMode(controller.thinkingMode)}
+                openRequest={automationRequest} onOpenRun={openAutomationRun} onManageAgent={() => navigate('agents')} />
             </div>
           </div>
         )}
@@ -899,8 +917,10 @@ function Conversation({
   }
   return (
     <section className="work-conversation" aria-label="协作对话">
+      <PublishedRecoveryNotice state={controller.publishedRecovery} onCancel={controller.cancelPublishedRecovery} onLoadBody={controller.loadPublishedBody} onRetry={controller.retryPublishedRecovery} />
       <div className="work-conversation__toolbar">
         <h2>协作对话</h2>
+        {controller.usageSyncNotice ? <span className="subagent-history__notice" role="status" title={controller.usageSyncNotice}>统计待同步</span> : null}
         <div>
           <button type="button" onClick={() => openWorkspace('sources')}>
             资料{task.sources.length ? ` ${task.sources.length}` : ''}
@@ -957,7 +977,7 @@ function Conversation({
               openActivity={openActivity}
             />
           ))}
-          <WorkTurnFeedback controller={controller} openActivity={openActivity} />
+          <WorkTurnFeedback controller={controller} announce={following} openActivity={openActivity} />
         </div>
       </div>
       <div className="work-conversation__footer">
@@ -967,7 +987,8 @@ function Conversation({
             回到最新
           </button>
         )}
-        <WorkRunStatus key={task.id} controller={controller} />
+        {!following && <WorkRunStatus controller={controller} />}
+        <WorkNextTurnQueuePanel key={`${controller.draftSource}:${task.id}`} scopeKey={`${controller.draftSource}:${task.id}`} queue={controller.nextTurnQueue} />
         <WorkComposerV2 controller={controller} />
       </div>
     </section>
@@ -975,7 +996,7 @@ function Conversation({
 }
 
 /** Only real engine events change the phase; elapsed time never invents progress. */
-function useWorkRunFeedback(controller: WorkController) {
+function useWorkRunFeedback(controller: WorkController, tick = true) {
   const mode = useAppMode()
   const [now, setNow] = useState(Date.now)
   const waiting = controller.pending.length > 0
@@ -985,7 +1006,7 @@ function useWorkRunFeedback(controller: WorkController) {
   const startedAt = current?.run?.startedAt ?? current?.startedAt ?? current?.createdAt
     ?? (controller.launching ? controller.activeTask?.createdAt : undefined)
   const running = current
-    ? [...current.tools].reverse().find((tool) => tool.state === 'running' && !tool.hidden)
+    ? [...current.tools].reverse().find((tool) => tool.state === 'running' && isVisibleToolActivity(tool))
     : null
   const compacting = current?.run?.compaction?.phase === 'running'
   const thinking = current?.items?.at(-1)?.kind === 'thinking' || Boolean(current && !current.items?.length && current.thinking && !current.content && !running)
@@ -1011,7 +1032,7 @@ function useWorkRunFeedback(controller: WorkController) {
       : compacting
         ? '正在自动压缩上下文…'
         : running
-          ? `${toolDisplayName(running.name)}…`
+          ? `${running.name === 'subagent' || running.subagent ? workSubagentName(running) : toolDisplayName(running.name)}…`
           : thinking
             ? '正在思考…'
             : current?.content
@@ -1019,10 +1040,10 @@ function useWorkRunFeedback(controller: WorkController) {
               : '等待 Agent 响应…'
 
   useEffect(() => {
-    if (!active || mode !== 'work') return
+    if (!active || mode !== 'work' || !tick) return
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
-  }, [active, mode])
+  }, [active, mode, tick])
 
   const seconds = Math.max(0, Math.floor((now - (startedAt ?? now)) / 1000))
   const elapsed =
@@ -1032,13 +1053,18 @@ function useWorkRunFeedback(controller: WorkController) {
 
 /** The first response must be visible in the conversation, including the
  * preflight before the engine has emitted any assistant text or tool frames. */
-function WorkTurnFeedback({ controller, openActivity }: {
+function WorkTurnFeedback({ controller, announce, openActivity }: {
   controller: WorkController
+  announce: boolean
   openActivity: (toolId: string) => void
 }): JSX.Element | null {
-  const feedback = useWorkRunFeedback(controller)
+  // A historical inline card stays quiet; only the visible status owns a clock.
+  const feedback = useWorkRunFeedback(controller, announce)
   if (!feedback.active) return null
   const target = feedback.running ? workToolTarget(feedback.running, controller.workspacePath) : ''
+  const agentName = feedback.running && (feedback.running.name === 'subagent' || feedback.running.subagent)
+    ? workSubagentName(feedback.running)
+    : controller.agentIdentity.name || 'Agent'
   const detail = feedback.phase === 'preparing'
     ? '正在连接任务会话，准备开始执行。'
     : feedback.phase === 'waiting'
@@ -1055,14 +1081,14 @@ function WorkTurnFeedback({ controller, openActivity }: {
                 ? '暂未收到回复内容，可以继续等待或停止任务。'
                 : '任务已发送，正在等待首个响应。'
   return (
-    <div className="work-turn-feedback" data-phase={feedback.phase} aria-label="Agent 执行反馈">
+    <div className="work-turn-feedback" data-phase={feedback.phase} data-state={feedback.waiting ? 'waiting' : 'running'} data-current-run-feedback={announce ? 'true' : undefined} aria-label="Agent 执行反馈">
       <span className="work-turn-feedback__indicator" aria-hidden="true">
         {feedback.waiting ? <Icon name="chat" size={16} /> : <Spinner size={16} />}
       </span>
       <div className="work-turn-feedback__body">
         <div className="work-turn-feedback__heading">
-          <strong title={controller.agentIdentity.name || undefined}>{controller.agentIdentity.name || 'Agent'}</strong>
-          <span>{feedback.label}</span>
+          <strong title={agentName}>{agentName}</strong>
+          <span role="status" aria-live={announce ? 'polite' : 'off'} aria-label="任务运行状态">{feedback.label}</span>
           <span className="work-turn-feedback__elapsed" title="本轮累计用时（含等待）">{feedback.elapsed}</span>
         </div>
         {feedback.running ? (
@@ -1075,17 +1101,32 @@ function WorkTurnFeedback({ controller, openActivity }: {
   )
 }
 
-/** Keep execution feedback beside the composer even while the user reads older messages. */
+/** Root cancellation stays discoverable when the conversation pane is hidden. */
+function WorkRootStop({ controller }: { controller: WorkController }): JSX.Element | null {
+  const [stopping, setStopping] = useState(false)
+  const active = controller.pendingInitialStart || controller.streaming || controller.launching || controller.pending.length > 0 || ['running', 'waiting'].includes(controller.activeTask?.status ?? '')
+  if (!active) return null
+  return <button className="btn btn--sm" type="button" aria-label={stopping ? '正在停止任务' : '停止任务'} disabled={!controller.ready || stopping} onClick={() => {
+    if (stopping) return
+    setStopping(true)
+    void controller.stop().catch(reportError).finally(() => setStopping(false))
+  }}>
+    {stopping ? <Spinner size={13} /> : <Icon name="stop" size={13} />}
+    {stopping ? '正在停止…' : '停止任务'}
+  </button>
+}
+
+/** Reading earlier messages keeps one compact status beside the composer. */
 function WorkRunStatus({ controller }: { controller: WorkController }): JSX.Element | null {
   const feedback = useWorkRunFeedback(controller)
-  const [stopping, setStopping] = useState(false)
   if (!feedback.active) return null
   const { waiting, elapsed } = feedback
   return (
     <div
       className="work-run-status"
+      data-current-run-feedback="true"
       data-state={waiting ? 'waiting' : 'running'}
-      data-phase={stopping ? 'stopping' : feedback.phase}
+      data-phase={feedback.phase}
     >
       <div
         className="work-run-status__label"
@@ -1093,32 +1134,45 @@ function WorkRunStatus({ controller }: { controller: WorkController }): JSX.Elem
         aria-live="polite"
         aria-label="任务运行状态"
       >
-        {waiting && !stopping ? <Icon name="chat" size={14} /> : <Spinner size={13} />}
-        <span>{stopping ? '正在停止…' : feedback.label}</span>
+        {waiting ? <Icon name="chat" size={14} /> : <Spinner size={13} />}
+        <span>{feedback.label}</span>
       </div>
       <span className="work-run-status__elapsed" title="本轮累计用时（含等待）">
         {elapsed}
       </span>
-      <button
-        className="work-quiet-button"
-        type="button"
-        aria-label="停止任务"
-        disabled={stopping}
-        onClick={async () => {
-          setStopping(true)
-          try {
-            await controller.stop()
-          } catch (error) {
-            reportError(error)
-          } finally {
-            setStopping(false)
-          }
-        }}
-      >
-        <Icon name="stop" size={13} />
-        停止
-      </button>
     </div>
+  )
+}
+
+/** 用户消息里的附件：与 Code 模式共用 AttachmentChip（图片缩略图 / 文件 chip，点击预览）。 */
+function WorkAttachment({
+  file,
+  root,
+  group
+}: {
+  file: ChatAttachment
+  root: string | null
+  group?: ChatAttachment[]
+}): JSX.Element {
+  const [preview, setPreview] = useState<AttachmentPreview | null>(null)
+  const images = (group ?? [file]).filter((a) => a.type.startsWith('image/'))
+  return (
+    <>
+      <AttachmentChip
+        root={root}
+        file={file}
+        onPreview={(target, src) => setPreview({ file: target, src })}
+      />
+      {preview ? (
+        <AttachmentPreviewDialog
+          root={root}
+          preview={preview}
+          images={images}
+          onNavigate={(next) => setPreview({ file: next, src: null })}
+          onClose={() => setPreview(null)}
+        />
+      ) : null}
+    </>
   )
 }
 
@@ -1149,7 +1203,16 @@ const WorkMessage = memo(function WorkMessage({
       onClickCapture={onFileLink}
     >
       {message.role === 'user' ? (
-        <div className="message__bubble"><UserMessageContent content={message.content} /></div>
+        <div className="work-message__user">
+          {message.attachments?.length ? (
+            <div className="work-message__attachments" aria-label="附件">
+              {message.attachments.map((file) => (
+                <WorkAttachment key={file.path} file={file} root={fileContext.workspaceRoot ?? null} group={message.attachments} />
+              ))}
+            </div>
+          ) : null}
+          <div className="message__bubble"><UserMessageContent content={message.content} /></div>
+        </div>
       ) : segments.map((segment, index) => segment.kind === 'tools' ? (
         <WorkInlineActivity key={segment.key} tools={segment.tools} fileContext={fileContext} onOpenActivity={openActivity} onOpenFile={openFile} />
       ) : (
@@ -1448,7 +1511,16 @@ const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controll
   source: number
 }): JSX.Element {
   const revealBrowser = useCallback(() => setTab('browser'), [setTab])
-  const tools = useWorkTools(id === 'subagents' ? controller.messages : NO_MESSAGES)
+  const sessionId = controller.activeTask?.id
+  const workspacePath = controller.activeTask?.workspacePath
+  const openGitFile = useCallback((path: string): void => {
+    void openFileFromChat(path, { sessionId: sessionId ?? '', workspaceRoot: workspacePath }).catch(reportError)
+  }, [sessionId, workspacePath])
+  // Keep one derived tool snapshot per pane. `useChat` replaces the active
+  // message object for each streamed token, while its tool receipt arrays stay
+  // referentially stable until a tool actually changes. Passing this snapshot
+  // lets the heavy activity/artifact/subagent panes skip text-only renders.
+  const tools = useWorkTools(controller.messages)
   return <div
     className={`work-workspace__body work-workspace__body--${id}`}
     hidden={hidden}
@@ -1457,7 +1529,7 @@ const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controll
     aria-labelledby={`work-tab-${id}`}
   >
     {id === 'artifacts' ? (
-            <ArtifactPanel
+            <TaskArtifactPanel
               controller={controller}
               active={active}
               selectedId={selectedArtifact}
@@ -1466,364 +1538,77 @@ const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controll
           ) : id === 'sources' ? (
             <SourcePanel controller={controller} />
           ) : id === 'activity' ? (
-            <ActivityPanel key={controller.activeTask?.id} messages={controller.messages} todos={controller.todos} selection={activitySelection} workspacePath={controller.activeTask?.workspacePath} />
+            <StableActivityPanel key={controller.activeTask?.id} tools={tools} todos={controller.todos} selection={activitySelection} workspacePath={controller.activeTask?.workspacePath} />
           ) : id === 'subagents' ? (
-            <WorkSubagentsPanel
+            <StableWorkSubagentsPanel
               sessionId={controller.activeTask?.id ?? null}
+              rootRunId={controller.workspaceRunId}
               tools={tools}
               active={active}
+              publishedFixedChildren={controller.publishedFixedChildren}
               busy={controller.streaming || controller.loading || controller.pending.length > 0 || controller.uploading}
               onContinue={controller.continueSubagent}
             />
           ) : id === 'git' ? (
-            <WorkGitPanel
+            <StableWorkGitPanel
               // Never fall back to the Code workspace when Work has no active
               // task. Git operations must stay scoped to the selected Work
               // task's directory and session.
               cwd={controller.activeTask?.workspacePath}
               sessionId={controller.activeTask?.id}
+              workspaceRunId={controller.workspaceRunId}
               active={active}
-              onOpenFile={(path) =>
-                void openFileFromChat(path, {
-                  sessionId: controller.activeTask?.id ?? '',
-                  workspaceRoot: controller.activeTask?.workspacePath
-                }).catch(reportError)
-              }
+              onOpenFile={openGitFile}
             />
           ) : (
-            <WorkBrowser sessionId={controller.activeTask?.id} onReveal={revealBrowser} />
+            <WorkBrowser onReveal={revealBrowser} />
           )}
   </div>
 }, (previous, next) => !previous.active && !next.active && previous.hidden === next.hidden && previous.source === next.source && previous.controller.activeTask?.id === next.controller.activeTask?.id)
 
-function Automations({
-  controller,
-  newTask
-}: {
+function TaskArtifactPanel({ controller, ...props }: {
   controller: WorkController
-  newTask: () => void
+  active?: boolean
+  selectedId: string | null
+  onSelect: (id: string) => void
 }): JSX.Element {
-  const [jobs, setJobs] = useState<WorkAutomation[]>([])
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [showForm, setShowForm] = useState(false)
-  const [error, setError] = useState('')
-  const [name, setName] = useState('')
-  const [cronExpr, setCronExpr] = useState('0 9 * * 1-5')
-  const [message, setMessage] = useState('')
-  const [editing, setEditing] = useState<WorkAutomation | null>(null)
-  const [thinking, setThinking] = useState('auto')
-  const [timeoutPreset, setTimeoutPreset] = useState('1800')
-  const [customTimeout, setCustomTimeout] = useState('1800')
-  const [timeoutChanged, setTimeoutChanged] = useState(false)
-  const loadGenerationRef = useRef(0)
-  const savingRef = useRef(false)
-  const mutatingJobsRef = useRef(new Set<string>())
-  const [mutatingJobs, setMutatingJobs] = useState<ReadonlySet<string>>(new Set())
-  const activeSession = controller.activeTask?.id
-  const timeoutSeconds = Number(timeoutPreset === 'custom' ? customTimeout : timeoutPreset)
-  const timeoutValid = Number.isInteger(timeoutSeconds) && timeoutSeconds >= 1 && timeoutSeconds <= 86400
-  const load = useCallback(async () => {
-    const generation = ++loadGenerationRef.current
-    const source = getEngineSource()
-    if (!controller.ready) {
-      setLoading(false)
-      return
-    }
-    setLoading(true)
-    try {
-      const next = await requestOrThrow<WorkAutomation[]>({ method: 'GET', path: '/cron' })
-      if (generation !== loadGenerationRef.current || source !== getEngineSource()) return
-      setJobs(next)
-      setError('')
-    } catch (cause) {
-      if (generation === loadGenerationRef.current && source === getEngineSource())
-        setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      if (generation === loadGenerationRef.current && source === getEngineSource()) setLoading(false)
-    }
-  }, [controller.ready])
-  useEffect(() => {
-    void load()
-  }, [load])
-  useEffect(() => () => { loadGenerationRef.current += 1 }, [])
-  const create = async (): Promise<void> => {
-    const sessionId = editing?.sessionId ?? activeSession
-    if (savingRef.current || !sessionId || !name.trim() || !message.trim() || !timeoutValid) return
-    savingRef.current = true
-    setSaving(true)
-    const source = getEngineSource()
-    try {
-      const created = await requestOrThrow<WorkAutomation>({
-        method: editing ? 'PUT' : 'POST',
-        path: editing ? `/cron/${encodeURIComponent(editing.id)}` : '/cron',
-        body: {
-          name: name.trim(),
-          cronExpr: cronExpr.trim(),
-          message: message.trim(),
-          sessionId,
-          thinkingMode: thinking === 'off' ? false : thinking === 'on' ? true : thinking === 'auto' ? null : thinking,
-          // Omission preserves legacy null/default semantics when editing another field.
-          ...(!editing || timeoutChanged ? { timeoutSeconds } : {}),
-          ...(!editing ? { enabled: true } : {})
-        }
-      })
-      if (source !== getEngineSource()) return
-      setJobs((previous) => editing ? previous.map(job => job.id === created.id ? created : job) : [created, ...previous])
-      setName('')
-      setMessage('')
-      setShowForm(false)
-      setEditing(null)
-      setError('')
-    } catch (cause) {
-      if (source === getEngineSource()) setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      savingRef.current = false
-      setSaving(false)
-    }
-  }
-  const updateEnabled = async (job: WorkAutomation): Promise<void> => {
-    if (mutatingJobsRef.current.has(job.id)) return
-    mutatingJobsRef.current.add(job.id)
-    setMutatingJobs(new Set(mutatingJobsRef.current))
-    const source = getEngineSource()
-    try {
-      const updated = await requestOrThrow<WorkAutomation>({
-        method: 'POST',
-        path: `/cron/${encodeURIComponent(job.id)}/${job.enabled ? 'disable' : 'enable'}`,
-        body: {}
-      })
-      if (source === getEngineSource()) setJobs((previous) => previous.map((item) => (item.id === job.id ? updated : item)))
-    } catch (cause) {
-      if (source === getEngineSource()) setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      mutatingJobsRef.current.delete(job.id)
-      setMutatingJobs(new Set(mutatingJobsRef.current))
-    }
-  }
-  const remove = async (job: WorkAutomation): Promise<void> => {
-    if (mutatingJobsRef.current.has(job.id)) return
-    mutatingJobsRef.current.add(job.id)
-    setMutatingJobs(new Set(mutatingJobsRef.current))
-    const source = getEngineSource()
-    try {
-      await requestOrThrow<{ deleted: boolean }>({
-        method: 'DELETE',
-        path: `/cron/${encodeURIComponent(job.id)}`
-      })
-      if (source === getEngineSource()) setJobs((previous) => previous.filter((item) => item.id !== job.id))
-    } catch (cause) {
-      if (source === getEngineSource()) setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      mutatingJobsRef.current.delete(job.id)
-      setMutatingJobs(new Set(mutatingJobsRef.current))
-    }
-  }
-  return (
-    <div className="work-automation">
-      <div className="work-automation__toolbar">
-        <div>
-          <h2>自动化</h2>
-          <p>把重复的 Work 任务交给引擎按计划运行，随时暂停或删除。</p>
-        </div>
-        <button
-          className="btn btn--primary"
-          type="button"
-          onClick={() => {
-            setEditing(null); setName(''); setMessage(''); setCronExpr('0 9 * * 1-5')
-            setTimeoutPreset('1800'); setCustomTimeout('1800'); setTimeoutChanged(false)
-            const requested = requestedThinkingMode(controller.thinkingMode)
-            setThinking(requested === false ? 'off' : requested === true ? 'on' : requested ?? 'auto')
-            setShowForm(true)
-          }}
-          disabled={saving || !controller.ready || !activeSession}
-          title={!activeSession ? '请先打开一个 Work 任务' : undefined}
-        >
-          <Icon name="plus" size={15} />
-          新建自动化
-        </button>
-      </div>
-      {error && (
-        <div className="work-error" role="alert">
-          <Icon name="warning" size={15} />
-          <span>{error}</span>
-          <IconButton icon="close" label="关闭错误提示" onClick={() => setError('')} />
-        </div>
-      )}
-      {showForm && (
-        <form
-          className="work-automation-form"
-          onSubmit={(event) => {
-            event.preventDefault()
-            void create()
-          }}
-        >
-          <label>
-            名称
-            <input
-              value={name}
-              disabled={saving}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="工作日简报"
-              required
-            />
-          </label>
-          <label>
-            时间表达式
-            <input
-              value={cronExpr}
-              disabled={saving}
-              onChange={(event) => setCronExpr(event.target.value)}
-              placeholder="分 时 日 月 周"
-              required
-            />
-          </label>
-          <label className="work-automation-form__message">
-            每次运行的目标
-            <textarea
-              value={message}
-              disabled={saving}
-              onChange={(event) => setMessage(event.target.value)}
-              placeholder="让 AI 完成什么工作？"
-              rows={3}
-              required
-            />
-          </label>
-          <div className="work-automation-form__thinking">
-            <span>思考档位</span>
-            <Select ariaLabel="自动化思考档位" value={thinking} onChange={setThinking} disabled={saving} options={[
-              { value: 'auto', label: '自动 · 使用模型默认' },
-              { value: 'off', label: 'Off · 关闭思考' },
-              { value: 'low', label: 'Low · 轻量思考' },
-              { value: 'medium', label: 'Medium · 平衡思考' },
-              { value: 'high', label: 'High · 深度思考' },
-              ...(thinking === 'on' ? [{ value: 'on', label: 'On · 开启思考' }] : [])
-            ]} />
-          </div>
-          <div className="work-automation-form__timeout">
-            <span>单次最长运行时间</span>
-            <Select ariaLabel="自动化最长运行时间" value={timeoutPreset} disabled={saving} options={AUTOMATION_TIMEOUT_OPTIONS} onChange={value => {
-              if (value === 'custom' && timeoutPreset !== 'custom') setCustomTimeout(timeoutPreset)
-              setTimeoutPreset(value); setTimeoutChanged(true)
-            }} />
-            {timeoutPreset === 'custom' ? <>
-              <label>
-                自定义时长（秒）
-                <input type="number" min={1} max={86400} step={1} required value={customTimeout} disabled={saving}
-                  aria-invalid={!timeoutValid} aria-describedby="automation-timeout-help automation-timeout-validation"
-                  onChange={event => { setCustomTimeout(event.target.value); setTimeoutChanged(true) }} />
-              </label>
-              <span id="automation-timeout-validation" className={timeoutValid ? 'work-automation-form__hint' : 'work-automation-form__validation'}>
-                {timeoutValid ? `当前为 ${automationTimeoutLabel(timeoutSeconds)}` : '请输入 1 至 86400 的整数秒数。'}
-              </span>
-            </> : null}
-          </div>
-          <p id="automation-timeout-help" className="work-automation-form__help">
-            达到时限后会停止本次执行。运行中修改从下一次执行生效；同一自动化尚未完成时不会重复启动。
-          </p>
-          <div className="work-automation-form__actions">
-            <span>{editing ? `继续使用「${controller.tasks.find(task => task.id === editing.sessionId)?.title || editing.name}」的会话和工作目录。` : '将继续使用当前任务的会话和工作目录。'}</span>
-            <button type="button" className="work-quiet-button" disabled={saving} onClick={() => setShowForm(false)}>
-              取消
-            </button>
-            <button
-              type="submit"
-              className="btn btn--primary"
-              disabled={saving || !name.trim() || !message.trim() || !timeoutValid}
-            >
-              {saving ? <Spinner size={13} /> : <Icon name="check" size={14} />}
-              {saving ? '正在保存…' : '保存自动化'}
-            </button>
-          </div>
-        </form>
-      )}
-      {!controller.ready ? (
-        <EmptyState
-          icon="engine"
-          title="引擎尚未就绪"
-          description="连接引擎后才能读取和管理自动化。"
-        />
-      ) : loading ? (
-        <div className="work-loading">
-          <Spinner />
-          正在读取自动化…
-        </div>
-      ) : jobs.length ? (
-        <div className="work-automation-list">
-          {jobs.map((job) => (
-            <article className="work-automation-row" key={job.id}>
-              <div className="work-automation-row__icon">
-                <Icon name="clock-outline" size={18} />
-              </div>
-              <div className="work-automation-row__content">
-                <h3>{job.name}</h3>
-                <p>{job.description || job.message}</p>
-                <span>
-                  {job.cronExpr} · {job.enabled ? '已启用' : '已暂停'}
-                  {job.thinkingMode === false ? ' · 思考 Off' : typeof job.thinkingMode === 'string' ? ` · 思考 ${job.thinkingMode}` : ''}
-                  {` · 单次最长 ${automationTimeoutLabel(job.timeoutSeconds)}`}
-                </span>
-                {job.lastRunAt ? <span>最近运行 {new Date(job.lastRunAt).toLocaleString()}</span> : null}
-              </div>
-              <button type="button" className="work-quiet-button" aria-label={`编辑自动化 ${job.name}`} disabled={saving || mutatingJobs.has(job.id)} onClick={() => {
-                setEditing(job); setName(job.name); setCronExpr(job.cronExpr); setMessage(job.message)
-                setThinking(job.thinkingMode === false ? 'off' : job.thinkingMode === true ? 'on' : job.thinkingMode ?? 'auto')
-                const seconds = String(job.timeoutSeconds ?? 120)
-                setTimeoutPreset(AUTOMATION_TIMEOUT_OPTIONS.some(option => option.value === seconds) ? seconds : 'custom')
-                setCustomTimeout(seconds); setTimeoutChanged(false)
-                setShowForm(true); setError('')
-              }}>编辑</button>
-              <button
-                type="button"
-                className="work-quiet-button"
-                disabled={mutatingJobs.has(job.id)}
-                onClick={() => void updateEnabled(job)}
-              >
-                {job.enabled ? '暂停' : '启用'}
-              </button>
-              <IconButton
-                icon="trash"
-                label={`删除自动化 ${job.name}`}
-                disabled={mutatingJobs.has(job.id)}
-                onClick={() => void remove(job)}
-              />
-            </article>
-          ))}
-        </div>
-      ) : (
-        <EmptyState
-          icon="clock-outline"
-          title="还没有自动化"
-          description={
-            activeSession
-              ? '从当前任务创建第一个定时工作，任务完成后仍会保留。'
-              : '先打开一个 Work 任务，再为它添加定时运行。'
-          }
-        />
-      )}
-      {!activeSession && (
-        <button type="button" className="btn" onClick={newTask}>
-          回到工作台新建任务
-        </button>
-      )}
-    </div>
-  )
+  const tools = useWorkTools(controller.messages)
+  return <StableArtifactPanel {...props} tools={tools} artifacts={controller.artifacts}
+    sessionId={controller.activeTask?.id} workspacePath={controller.activeTask?.workspacePath}
+    ready={controller.ready} streaming={controller.streaming} draftSource={controller.draftSource}
+    setDraft={controller.setDraft} addReference={controller.addReference} />
 }
 
 function ArtifactPanel({
-  controller,
+  artifacts,
+  sessionId,
+  workspacePath,
+  ready,
+  streaming,
+  draftSource,
+  setDraft,
+  addReference,
+  tools,
   active = true,
   selectedId,
   onSelect
 }: {
-  controller: WorkController
+  artifacts: WorkArtifact[]
+  sessionId?: string
+  workspacePath?: string | null
+  ready: boolean
+  streaming: boolean
+  draftSource: string
+  setDraft: WorkController['setDraft']
+  addReference: WorkController['addReference']
+  tools: ToolActivity[]
   active?: boolean
   selectedId: string | null
   onSelect: (id: string) => void
 }): JSX.Element {
   const linkedPath = selectedId?.startsWith('path:') ? selectedId.slice(5) : null
   const artifact =
-    controller.artifacts.find((item) => item.id === selectedId) ??
+    artifacts.find((item) => item.id === selectedId) ??
     (linkedPath
       ? {
           id: selectedId!,
@@ -1833,23 +1618,23 @@ function ArtifactPanel({
           status: 'draft' as const,
           createdAt: Date.now()
         }
-      : controller.artifacts[0] ?? null)
+      : artifacts[0] ?? null)
   const addToConversation = (
-    item: (typeof controller.artifacts)[number],
-    selection?: string
+    item: WorkArtifact,
+    selection?: string,
+    selectionCoverage?: WorkArtifactContent['coverage']
   ): void => {
     if (selection) {
-      controller.setDraft(
-        `${controller.draft}${controller.draft ? '\n\n' : ''}引用「${item.name}」中的内容（${item.path}）：\n${selection
-          .split('\n')
-          .map((line) => `> ${line}`)
-          .join('\n')}\n`
+      // Drafts have their own subscription; read at click time so a memoized
+      // preview appends to the latest input without rendering per keystroke.
+      const draft = getWorkDraft(draftSource, sessionId ?? null)
+      setDraft(
+        `${draft.text}${draft.text ? '\n\n' : ''}${workArtifactSelectionQuote(item.name, item.path, selection, selectionCoverage)}`, draft.mentions
       )
-    } else controller.addReference(item)
+    } else addReference(item)
   }
   const changesRef = useRef<HTMLElement>(null)
   const [detailTab, setDetailTab] = useState<'preview' | 'changes'>('preview')
-  const tools = useWorkTools(controller.messages)
   // Keep the compact list informative without exposing long workspace paths.
   // Stats come from the same diff implementation used by FileChangeCard, so the
   // numbers shown here always match the expanded diff below.
@@ -1884,8 +1669,13 @@ function ArtifactPanel({
   return (
     <div className="work-artifacts-shell">
       <div className="work-artifacts-shell__list" role="listbox" aria-label="成果文件">
-        {controller.artifacts.length ? (
-          controller.artifacts.map((item) => (
+        <div className="work-artifacts-shell__list-head">
+          <h3>
+            成果文件 <span>{artifacts.length}</span>
+          </h3>
+        </div>
+        {artifacts.length ? (
+          artifacts.map((item) => (
             <button
               type="button"
               role="option"
@@ -1910,8 +1700,15 @@ function ArtifactPanel({
             </button>
           ))
         ) : (
-          <p className="work-list-empty">当前任务还没有成果文件。</p>
+          <EmptyState
+            icon="file"
+            title="当前任务还没有成果文件"
+            description="AI 创建或修改文件后，成果会出现在这里，可预览、复制或继续引用。"
+          />
         )}
+        {artifacts.length ? (
+          <WorkChangesPanel sessionId={sessionId} workspacePath={workspacePath} ready={ready} streaming={streaming} sectionRef={changesRef} active={active} />
+        ) : null}
       </div>
       <div className="work-artifacts-shell__detail">
         <div className="work-artifacts-shell__tabs" role="tablist" aria-label="成果内容">
@@ -1919,33 +1716,50 @@ function ArtifactPanel({
           <button type="button" role="tab" aria-selected={detailTab === 'changes'} onClick={() => setDetailTab('changes')}>文件改动</button>
         </div>
         {detailTab === 'preview' ? (
-          <WorkArtifactPanel
-            artifact={artifact}
-            workspaceRoot={controller.activeTask?.workspacePath}
-            sessionId={controller.activeTask?.id}
-            artifacts={controller.artifacts}
-            onSelect={onSelect}
-            onAddToConversation={(item, selection) => {
-              addToConversation(item, selection)
-              toast.success(selection ? '已引用选中内容' : '已添加到对话')
-            }}
-            onOpenFile={(item) =>
-              void openFileFromChat(item.path, {
-                sessionId: controller.activeTask?.id ?? '',
-                workspaceRoot: controller.activeTask?.workspacePath
-              }).catch(reportError)
-            }
-          />
+          artifact ? (
+            <WorkArtifactPanel
+              artifact={artifact}
+              workspaceRoot={workspacePath}
+              sessionId={sessionId}
+              artifacts={artifacts}
+              onSelect={onSelect}
+              onAddToConversation={(item, selection, selectionCoverage) => {
+                addToConversation(item, selection, selectionCoverage)
+                toast.success(selection ? '已引用选中内容' : '已添加到对话')
+              }}
+              onOpenFile={(item) =>
+                void openFileFromChat(item.path, {
+                  sessionId: sessionId ?? '',
+                  workspaceRoot: workspacePath
+                }).catch(reportError)
+              }
+            />
+          ) : (
+            <EmptyState
+              icon="file"
+              title="成果会出现在这里"
+              description="AI 创建或修改文件后，可在此预览、复制或继续引用。"
+            />
+          )
         ) : (
-          <WorkChangesPanel controller={controller} sectionRef={changesRef} standalone active={active} />
+          <WorkChangesPanel sessionId={sessionId} workspacePath={workspacePath} ready={ready} streaming={streaming} sectionRef={changesRef} standalone active={active} />
         )}
       </div>
     </div>
   )
 }
 
-function WorkChangesPanel({ controller, sectionRef, standalone = false, active = true }: { controller: WorkController; sectionRef?: RefObject<HTMLElement | null>; standalone?: boolean; active?: boolean }): JSX.Element | null {
-  const sessionId = controller.activeTask?.id
+const StableArtifactPanel = memo(ArtifactPanel)
+
+function WorkChangesPanel({ sessionId, workspacePath, ready, streaming, sectionRef, standalone = false, active = true }: {
+  sessionId?: string
+  workspacePath?: string | null
+  ready: boolean
+  streaming: boolean
+  sectionRef?: RefObject<HTMLElement | null>
+  standalone?: boolean
+  active?: boolean
+}): JSX.Element | null {
   const [changes, setChanges] = useState<EngineFileChange[]>([])
   const [error, setError] = useState('')
   const [open, setOpen] = useState(true)
@@ -1961,19 +1775,19 @@ function WorkChangesPanel({ controller, sectionRef, standalone = false, active =
       mounted.current = false
       scopeGeneration.current += 1
     }
-  }, [sessionId, controller.ready, source, active])
+  }, [sessionId, ready, source, active])
   const captureScope = (): { generation: number; source: ReturnType<typeof getEngineSource>; sessionId?: string; ready: boolean } => ({
     generation: scopeGeneration.current,
     source,
     sessionId,
-    ready: controller.ready
+    ready
   })
   const scopeCurrent = (scope: ReturnType<typeof captureScope>): boolean =>
     mounted.current &&
     scope.generation === scopeGeneration.current &&
     scope.source === getEngineSource() &&
-    scope.sessionId === controller.activeTask?.id &&
-    scope.ready === controller.ready
+    scope.sessionId === sessionId &&
+    scope.ready === ready
   const refresh = useCallback(async (): Promise<void> => {
     const generation = ++refreshGeneration.current
     const scope = captureScope()
@@ -1999,14 +1813,14 @@ function WorkChangesPanel({ controller, sectionRef, standalone = false, active =
       if (!isCurrent()) return
       setError(reason instanceof Error ? reason.message : String(reason))
     }
-  }, [controller.ready, sessionId, source])
+  }, [ready, sessionId, source])
   useEffect(() => {
     if (active) void refresh()
   }, [refresh, active])
   useEffect(() => {
-    if (active && previousStreaming.current && !controller.streaming) void refresh()
-    previousStreaming.current = active && controller.streaming
-  }, [controller.streaming, refresh, active])
+    if (active && previousStreaming.current && !streaming) void refresh()
+    previousStreaming.current = active && streaming
+  }, [streaming, refresh, active])
   if (!sessionId) return null
   return (
     <section className="work-changes-panel" aria-label="文件改动" ref={sectionRef}>
@@ -2031,7 +1845,7 @@ function WorkChangesPanel({ controller, sectionRef, standalone = false, active =
         ) : changes.length ? (
           <div className="work-changes-panel__list">
             {changes.map((change) => (
-              <FileChangeCard key={change.id} change={change} state="done" fileContext={{ sessionId, workspaceRoot: controller.activeTask?.workspacePath }} />
+              <FileChangeCard key={change.id} change={change} state="done" fileContext={{ sessionId, workspaceRoot: workspacePath }} />
             ))}
           </div>
         ) : standalone ? <EmptyState icon="file" title="还没有文件改动" description="任务创建或修改文件后，改动会显示在这里。" /> : null)}
@@ -2041,32 +1855,42 @@ function WorkChangesPanel({ controller, sectionRef, standalone = false, active =
 
 function SourcePanel({ controller }: { controller: WorkController }): JSX.Element {
   const sources = controller.activeTask?.sources ?? []
+  const root = controller.activeTask?.workspacePath ?? null
+  const [selectedPath, setSelectedPath] = useState<string | null>(sources[0]?.path ?? null)
+  const selected = sources.find((item) => item.path === selectedPath) ?? null
+  useEffect(() => {
+    // Keep a valid selection as the task's source list changes (attach / remove / task switch).
+    if (!sources.some((item) => item.path === selectedPath)) setSelectedPath(sources[0]?.path ?? null)
+  }, [sources, selectedPath])
   return sources.length ? (
-    <div className="work-sources">
+    <div className="work-sources work-sources--manager">
       <h3>
         任务资料 <span>{sources.length}</span>
       </h3>
-      {sources.map((source) => (
-        <div className="work-source-row" key={source.path}>
-          <Icon name="file" size={18} />
-          <div>
-            <strong>{source.name}</strong>
-            <span>{fileSize(source.size)}</span>
-          </div>
-          <button
-            type="button"
-            className="work-quiet-button"
-            onClick={() => {
-              controller.setDraft(
-                `${controller.draft}${controller.draft ? '\n\n' : ''}参考资料：${source.name}\n路径：${source.path}\n`
-              )
-              toast.success('已添加到对话草稿')
-            }}
-          >
-            添加到对话
-          </button>
+      <div className="work-sources__split">
+        <ul className="work-sources__list" role="listbox" aria-label="资料文件">
+          {sources.map((source) => (
+            <SourceRow
+              key={`${controller.draftSource}:${controller.activeTask?.id}:${source.path}`}
+              controller={controller}
+              source={source}
+              root={root}
+              selected={selected?.path === source.path}
+              onSelect={() => setSelectedPath(source.path)}
+            />
+          ))}
+        </ul>
+        <div className="work-sources__preview">
+          {selected ? (
+            <WorkSourcePreview source={selected} root={root} sessionId={controller.activeTask?.id} />
+          ) : (
+            <div className="work-sources__preview-empty">
+              <Icon name="file" size={20} />
+              <span>选择左侧资料查看内容</span>
+            </div>
+          )}
         </div>
-      ))}
+      </div>
     </div>
   ) : (
     <EmptyState
@@ -2074,6 +1898,92 @@ function SourcePanel({ controller }: { controller: WorkController }): JSX.Elemen
       title="还没有添加资料"
       description="在对话输入区选择“添加资料”，或将文件拖入输入区。资料会随消息一起发送。"
     />
+  )
+}
+
+/** 单个资料行：缩略图 + 名称/大小 + 悬浮操作（添加到对话、在文件夹中显示、删除） */
+function SourceRow({
+  controller,
+  source,
+  root,
+  selected,
+  onSelect
+}: {
+  controller: WorkController
+  source: ChatAttachment
+  root: string | null
+  selected: boolean
+  onSelect: () => void
+}): JSX.Element {
+  const isImage = source.type.startsWith('image/')
+  const { file } = useWorkSourceFile(source, controller.activeTask?.id, root, isImage)
+  const thumb = file?.base64 ? `data:${source.type};base64,${file.base64}` : null
+  const [confirming, setConfirming] = useState(false)
+  useEffect(() => {
+    if (!confirming) return
+    const timer = setTimeout(() => setConfirming(false), 3200)
+    return () => clearTimeout(timer)
+  }, [confirming])
+  const reveal = async (): Promise<void> => {
+    try {
+      if (controller.remote) throw new Error('远端资料无法在本机文件夹中显示，可在右侧预览')
+      const sessionId = controller.activeTask?.id
+      const target = sessionId ? await resolveSessionFilePath(sessionId, source.path)
+        : root ? { path: paths.join(root, source.path) } : null
+      if (!target) throw new Error('资料没有关联任务')
+      await window.aether.fs.reveal(target.path)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
+    }
+  }
+  const remove = (): void => {
+    controller.removeSource(source.path)
+    setConfirming(false)
+    toast.success('已从任务资料移除，历史附件仍保留')
+  }
+  return (
+    <li className={`work-source-row${selected ? ' is-selected' : ''}`}>
+      <button
+        type="button"
+        className="work-source-row__main"
+        role="option"
+        aria-selected={selected}
+        title={source.path}
+        onClick={onSelect}
+      >
+        {isImage && thumb ? (
+          <img className="work-source-row__thumb" src={thumb} alt={source.name} />
+        ) : (
+          <span className="work-source-row__thumb work-source-row__thumb--icon">
+            <FileGlyph name={source.name} size={18} />
+          </span>
+        )}
+        <span className="work-source-row__info">
+          <strong>{source.name}</strong>
+          <span>{fileSize(source.size)}</span>
+        </span>
+      </button>
+      <span className="work-source-row__actions">
+        <button
+          type="button"
+          className="work-quiet-button"
+          title="把该资料引用进当前对话草稿"
+          onClick={() => {
+            controller.addSourceReference(source)
+            toast.success('已添加到对话草稿')
+          }}
+        >
+          添加到对话
+        </button>
+        {!controller.remote && <IconButton icon="folder-outline" label="在文件夹中显示" size={14} onClick={() => void reveal()} />}
+        <IconButton
+          icon={confirming ? 'warning' : 'delete-outline'}
+          label={confirming ? `确认移除 ${source.name}` : `从任务资料移除 ${source.name}`}
+          size={14}
+          onClick={() => (confirming ? remove() : setConfirming(true))}
+        />
+      </span>
+    </li>
   )
 }
 
@@ -2096,14 +2006,13 @@ function WorkSteps({ todos }: { todos: WorkController['todos'] }): JSX.Element |
   </details>
 }
 
-function ActivityPanel({ messages, todos, selection, workspacePath }: {
-  messages: ChatMessage[]
+function ActivityPanel({ tools, todos, selection, workspacePath }: {
+  tools: ToolActivity[]
   todos: WorkController['todos']
   selection: ActivitySelection | null
   workspacePath?: string | null
 }): JSX.Element {
-  const tools = useWorkTools(messages)
-  const activities = useMemo(() => tools.filter(tool => !tool.hidden), [tools])
+  const activities = useMemo(() => tools.filter(isVisibleToolActivity), [tools])
   type ActivityFilter = 'all' | ToolActivity['state']
   const [filter, setFilter] = useState<ActivityFilter>('all')
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -2174,6 +2083,7 @@ function ActivityPanel({ messages, todos, selection, workspacePath }: {
           </div>}
           {filtered.length ? filtered.slice(range.start, range.end).map((tool, offset) => {
             const target = workToolTarget(tool, workspacePath)
+            const title = tool.name === 'subagent' || tool.subagent ? workSubagentName(tool) : toolDisplayName(tool.name)
             return (
             <button
               type="button"
@@ -2185,7 +2095,8 @@ function ActivityPanel({ messages, todos, selection, workspacePath }: {
               aria-posinset={range.start + offset + 1}
               aria-setsize={filtered.length}
               tabIndex={selected?.id === tool.id ? 0 : -1}
-              title={`${toolDisplayName(tool.name)}${target ? ` · ${target}` : ''}`}
+              title={`${title}${target ? ` · ${target}` : ''}`}
+              aria-label={`${title} · ${TOOL_STATUS[tool.state]}${target ? ` · ${target}` : ''}`}
               onKeyDown={event => {
                 if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return
                 event.preventDefault()
@@ -2197,20 +2108,20 @@ function ActivityPanel({ messages, todos, selection, workspacePath }: {
               }}
             >
               <span className={`work-activities__icon work-activities__icon--${tool.state}`}>{tool.state === 'running' ? <Spinner size={14} /> : <Icon name={tool.state === 'error' ? 'warning' : tool.state === 'done' ? 'check' : 'output'} size={14} />}</span>
-              <span>{toolDisplayName(tool.name)}{target && <small>{target}</small>}</span>
+              <span>{title}{target && <small>{target}</small>}</span>
               <span className={`work-tool-state work-tool-state--${tool.state}`}>{TOOL_STATUS[tool.state]}</span>
             </button>
           )}) : <p className="work-list-empty">没有符合条件的活动</p>}
         </div>
         {selected ? (
-          <article className="work-activity-detail" aria-label="活动详情">
+          <article key={selected.id} className="work-activity-detail" aria-label="活动详情">
             <header>
-              <div><span className="work-activity-detail__eyebrow">工具调用</span><h3>{toolDisplayName(selected.name)}</h3></div>
+              <div><span className="work-activity-detail__eyebrow">{selected.name === 'subagent' || selected.subagent ? '协作代理' : '工具调用'}</span><h3>{selected.name === 'subagent' || selected.subagent ? workSubagentName(selected) : toolDisplayName(selected.name)}</h3></div>
               <span className={`work-tool-state work-tool-state--${selected.state}`}>{TOOL_STATUS[selected.state]}</span>
             </header>
             {selected.error ? <p className="work-activity-detail__error" role="alert">{selected.error}</p> : null}
-            <ActivityDataBlock title="输入" value={selected.args} onCopy={copy} />
-            <ActivityDataBlock title="输出" value={selected.result} onCopy={copy} />
+            <ActivityResultBlock tool={selected} onCopy={copy} />
+            <ActivityDataBlock title="输入参数" value={selected.args} onCopy={copy} collapsed />
           </article>
         ) : <EmptyState icon="output" title="选择一条活动" description="从左侧列表查看完整的输入、输出和错误。" />}
       </div> : <EmptyState
@@ -2222,12 +2133,31 @@ function ActivityPanel({ messages, todos, selection, workspacePath }: {
   )
 }
 
-function ActivityDataBlock({ title, value, onCopy }: { title: string; value?: string; onCopy: (value: string) => void }): JSX.Element | null {
+const StableActivityPanel = memo(ActivityPanel)
+
+function ActivityResultBlock({ tool, onCopy }: { tool: ToolActivity; onCopy: (value: string) => void }): JSX.Element {
+  const preview = useMemo(() => readActivityPreview(tool), [tool.name, tool.state, tool.result])
+  const output = tool.subagent?.resultSummary || tool.subagent?.partialOutput || tool.result
+  return preview ? <>
+    {preview.content ? <ActivityDataBlock title="文件内容" value={preview.content} onCopy={onCopy} toolName={tool.name} /> : <p className="work-note">文件内容为空</p>}
+    <ActivityDataBlock title="读取信息与原始输出" value={tool.result} onCopy={onCopy} collapsed />
+  </> : <ActivityDataBlock title={tool.subagent ? 'Agent 产出' : '输出'} value={output} onCopy={onCopy} toolName={tool.name} />
+}
+
+function ActivityDataBlock({ title, value, onCopy, collapsed = false, toolName }: {
+  title: string
+  value?: string
+  onCopy: (value: string) => void
+  collapsed?: boolean
+  toolName?: string
+}): JSX.Element | null {
+  const [expanded, setExpanded] = useState(false)
+  const formatted = useMemo(() => !collapsed || expanded ? formatActivityValue(value ?? '') : '', [value, collapsed, expanded])
   if (!value) return null
   return (
     <section className="work-activity-detail__block">
-      <header><h4>{title}</h4><button type="button" onClick={() => onCopy(value)} aria-label={`复制${title}`}><Icon name="copy" size={13} />复制</button></header>
-      <pre>{value}</pre>
+      <header><h4>{title}</h4><button type="button" onClick={() => onCopy(value)} aria-label={`复制${title}`}><Icon name="copy" size={13} />复制原文</button></header>
+      {collapsed ? <details onToggle={event => setExpanded(event.currentTarget.open)}><summary>查看{title}</summary>{expanded ? <ToolResult value={formatted} toolName={toolName} /> : null}</details> : <ToolResult value={formatted} toolName={toolName} />}
     </section>
   )
 }

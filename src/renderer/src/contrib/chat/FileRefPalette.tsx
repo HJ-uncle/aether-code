@@ -38,6 +38,8 @@ export function FileRefPalette({
   onClose
 }: FileRefPaletteProps): JSX.Element {
   const [entries, setEntries] = useState<Entry[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [reload, setReload] = useState(0)
   const [activeIndex, setActiveIndex] = useState(0)
   const [search, setSearch] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
@@ -46,6 +48,8 @@ export function FileRefPalette({
   // 全量列表只拉一次（按 root 缓存于组件存活期内）
   useEffect(() => {
     let cancelled = false
+    setEntries(null)
+    setError(null)
     void listAllFiles(root)
       .then((files) => {
         if (cancelled) return
@@ -61,13 +65,16 @@ export function FileRefPalette({
           ...files.map((path) => ({ path: path.replace(/\\/g, '/'), isDir: false }))
         ])
       })
-      .catch(() => {
-        if (!cancelled) setEntries([])
+      .catch((cause) => {
+        if (!cancelled) {
+          setEntries([])
+          setError(cause instanceof Error ? cause.message : '无法读取工作区文件')
+        }
       })
     return () => {
       cancelled = true
     }
-  }, [root])
+  }, [root, reload])
 
   const filtered = useMemo(() => {
     if (!entries) return []
@@ -93,12 +100,13 @@ export function FileRefPalette({
     const list = listRef.current
     const active = list?.children[activeIndex]
     if (active instanceof HTMLElement) active.scrollIntoView({ block: 'nearest' })
-  }, [activeIndex])
+  }, [activeIndex, filtered])
 
   // 键盘导航：捕获阶段拦截，先于输入框的 Enter=发送 生效
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (event.isComposing) return
+      if (event.isComposing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+      if (event.target instanceof Element && event.target.closest('[data-mention-list-control]')) return
       if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
@@ -151,9 +159,11 @@ export function FileRefPalette({
           onChange={(event) => setSearch(event.target.value)}
         />
       ) : null}
-      <div ref={listRef} className="file-palette__list">
+      <div ref={listRef} className="file-palette__list" role="listbox" aria-label="选择文件或目录" aria-busy={entries === null}>
         {entries === null ? (
-          <div className="file-palette__empty">加载中…</div>
+          <div className="file-palette__empty" role="status">正在加载文件与目录…</div>
+        ) : error ? (
+          <div className="file-palette__empty" role="alert">{error}<button type="button" data-mention-list-control className="mention-ref-picker__retry" onClick={() => setReload(value => value + 1)}>重试</button></div>
         ) : filtered.length === 0 ? (
           <div className="file-palette__empty">没有匹配的文件或目录</div>
         ) : (
@@ -161,10 +171,12 @@ export function FileRefPalette({
             <button
               key={`${entry.isDir ? 'd' : 'f'}:${entry.path}`}
               type="button"
+              role="option"
+              aria-selected={index === activeIndex}
               className={`file-palette__item${index === activeIndex ? ' is-active' : ''}`}
-              // mousedown 抢在输入框 blur 之前触发选择
-              onMouseDown={(event) => {
-                event.preventDefault()
+              // Keep the editor's caret; click also preserves native Space activation.
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
                 onSelect({
                   displayText: formatPathDisplay(entry.path),
                   source: entry.isDir ? 'dir' : 'file',

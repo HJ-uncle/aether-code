@@ -23,7 +23,9 @@ export function EditorToolbar({ filePath, groupId, children }: {
   /** 预览、大纲等文档功能放在文件动作左边，保持窄窗下的操作顺序。 */
   children?: ReactNode
 }): JSX.Element {
-  const { root } = useWorkspace()
+  const workspace = useWorkspace()
+  const doc = getDocument(filePath)
+  const root = doc?.sessionFileTarget?.root ?? workspace.root
   const { cursor } = useEditor()
   const { focusedGroupId } = useEditorGroups()
   const [symbols, setSymbols] = useState<DocumentSymbolsSnapshot>({ status: 'loading', symbols: [] })
@@ -69,7 +71,7 @@ export function EditorToolbar({ filePath, groupId, children }: {
       </nav>
       <div className="editor-toolbar__actions">
         {children}
-        {/\.html?$/i.test(filePath) && root && !isRemoteEngine() ? <button type="button" className="editor-toolbar__button" aria-label="保存并在浏览器中运行" title="保存并在右侧浏览器中运行 HTML"
+        {/\.html?$/i.test(filePath) && root && !doc?.sessionFileTarget && !isRemoteEngine() ? <button type="button" className="editor-toolbar__button" aria-label="保存并在浏览器中运行" title="保存并在右侧浏览器中运行 HTML"
           onClick={() => browserAction(async () => {
             const doc = getDocument(filePath)
             if (doc && isDirty(doc)) await saveDocument(filePath)

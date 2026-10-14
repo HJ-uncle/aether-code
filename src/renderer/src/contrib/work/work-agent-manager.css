@@ -20,12 +20,15 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
 }
 .work-agent-manager-page__header h1 {
   margin: 0 0 4px;
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
 }
 .work-agent-manager-page__header p {
   margin: 0;
@@ -38,21 +41,29 @@
   flex-wrap: wrap;
   gap: 8px;
 }
+.work-agent-manager-page__header-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.work-agent-manager-page__back {
+  flex: none;
+}
 .work-agent-manager {
   container: work-agents / inline-size;
   min-width: 0;
   font-family: var(--font-ui);
   font-size: 13px;
 }
+/* Page form floats content on the window surface instead of boxing it into
+   one bordered panel; width caps keep the rhythm readable on wide monitors. */
 .work-agent-manager--page {
   display: flex;
   flex: 1;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-panel);
-  background: var(--bg-panel);
 }
 .work-agent-manager__content {
   display: flex;
@@ -63,7 +74,10 @@
   min-height: 0;
 }
 .work-agent-manager--page > .work-agent-manager__content {
-  padding: 20px;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0 0 20px;
 }
 .work-agent-manager__page-footer {
   display: flex;
@@ -177,8 +191,10 @@
 }
 .work-agent-manager__section-title h2 {
   margin: 0 0 4px;
-  font-size: 15px;
+  font-size: 12px;
   font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--fg-muted);
 }
 .work-agent-manager__section-title p,
 .work-agent-manager__hint {
@@ -211,6 +227,15 @@
   background: var(--bg-input);
   color: var(--fg);
   font: inherit;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+.work-agent-manager__content input:not([type='checkbox']):focus,
+.work-agent-manager__content textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
 }
 .work-agent-manager__content textarea {
   resize: vertical;
@@ -400,41 +425,99 @@
   flex-wrap: wrap;
   gap: 12px;
 }
-.work-agent-manager__toolbar > input {
+.work-agent-manager__search {
+  position: relative;
   flex: 1;
   min-width: 120px;
+  display: flex;
+  align-items: center;
+}
+.work-agent-manager__search > svg {
+  position: absolute;
+  left: 12px;
+  color: var(--fg-muted);
+  pointer-events: none;
+}
+.work-agent-manager__search > input {
+  padding-left: 34px !important;
+  border-radius: var(--radius-pill) !important;
 }
 .work-agent-manager--page .work-agent-manager__toolbar > .btn--primary {
   display: none;
 }
-.work-agent-manager__list {
+/* Grouped list, iOS Settings style: one continuous rounded card per section,
+   rows separated by hairlines instead of individual borders. */
+.work-agent-manager__groups {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 8px;
+  gap: 20px;
   min-height: 0;
-  max-height: 420px;
-  margin: 0;
-  padding: 0;
   overflow: auto;
   scrollbar-gutter: stable;
+}
+.work-agent-manager__group {
+  display: grid;
+  flex: none;
+  gap: 6px;
+}
+.work-agent-manager__group-title {
+  margin: 0;
+  padding: 0 12px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.work-agent-manager__list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
   list-style: none;
 }
+/* Non-page (dialog) form keeps bordered rows separated by gaps; the groups
+   container above already owns scrolling, so the list itself does not. */
+.work-agent-manager:not(.work-agent-manager--page) .work-agent-manager__list {
+  gap: 8px;
+}
+.work-agent-manager:not(.work-agent-manager--page) .work-agent-manager__list > li {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px;
+}
+.work-agent-manager:not(.work-agent-manager--page) .work-agent-manager__list > li.is-selected {
+  border-color: var(--accent);
+  background: var(--bg-active);
+}
 .work-agent-manager--page .work-agent-manager__list {
-  max-height: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--bg-panel);
+  overflow: hidden;
 }
 .work-agent-manager__list > li {
+  position: relative;
   display: flex;
   flex: none;
   align-items: center;
   min-width: 0;
   gap: 8px;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  transition: background var(--duration-fast) var(--ease-out);
 }
-.work-agent-manager__list > li.is-selected {
-  border-color: var(--accent);
+.work-agent-manager--page .work-agent-manager__list > li + li::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 60px;
+  right: 0;
+  height: 1px;
+  background: var(--border);
+}
+.work-agent-manager--page .work-agent-manager__list > li:hover {
+  background: var(--bg-hover);
+}
+.work-agent-manager--page .work-agent-manager__list > li.is-selected {
   background: var(--bg-active);
 }
 .work-agent-manager__choose {
@@ -442,7 +525,7 @@
   flex: 1;
   align-items: center;
   gap: 12px;
-  padding: 8px;
+  padding: 10px 12px;
   min-width: 0;
   border: 0;
   background: transparent;
@@ -450,46 +533,257 @@
   text-align: left;
   cursor: pointer;
 }
+/* Locked (task-fixed) rows stay legible: only the cursor changes, not the color. */
 .work-agent-manager__choose:disabled {
-  opacity: 0.75;
+  opacity: 1;
   cursor: default;
 }
-.work-agent-manager__choose > span {
+.work-agent-manager__avatar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-round);
+  background: color-mix(in srgb, var(--accent) 20%, var(--bg-panel));
+  color: var(--accent);
+}
+.work-agent-manager__avatar--default {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent) 30%, transparent),
+    color-mix(in srgb, var(--accent) 12%, transparent)
+  );
+  color: var(--accent);
+}
+.work-agent-manager__choose > span:not(.work-agent-manager__avatar) {
   display: grid;
   flex: 1;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
 }
 .work-agent-manager__choose strong {
-  font-size: 13px;
+  color: var(--fg);
+  font-size: 14px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   overflow-wrap: anywhere;
 }
 .work-agent-manager__choose small {
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: 12.5px;
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+.work-agent-manager__choose > svg {
+  flex: none;
+  color: var(--accent);
 }
 .work-agent-manager__actions {
   display: flex;
   flex: none;
   gap: 6px;
+  padding-right: 12px;
 }
+/* Card grid: each agent is its own tile, a more scannable & distinctive form. */
+.work-agent-manager--page .work-agent-manager__list--cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
+  gap: 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+.work-agent-manager--page .work-agent-manager__list--cards > li {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--bg-panel);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--fg) 6%, transparent);
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-normal) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+.work-agent-manager--page .work-agent-manager__list--cards > li:hover {
+  border-color: var(--border-strong);
+  box-shadow:
+    0 2px 6px color-mix(in srgb, var(--fg) 8%, transparent),
+    0 10px 24px color-mix(in srgb, var(--fg) 10%, transparent);
+  transform: translateY(-2px);
+}
+.work-agent-manager--page .work-agent-manager__list--cards > li.is-selected {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 4px 14px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+/* Cards manage their own separators/background, so neutralize the list-row rules. */
+.work-agent-manager--page .work-agent-manager__list--cards > li + li::before {
+  content: none;
+}
+.work-agent-manager--page .work-agent-manager__list--cards > li:hover,
+.work-agent-manager--page .work-agent-manager__list--cards > li.is-selected {
+  background: var(--bg-panel);
+}
+.work-agent-manager--page .work-agent-manager__list--cards .work-agent-manager__choose {
+  flex: none;
+  align-items: flex-start;
+  padding: 0;
+}
+.work-agent-manager--page .work-agent-manager__list--cards .work-agent-manager__avatar {
+  width: 40px;
+  height: 40px;
+}
+.work-agent-manager--page .work-agent-manager__list--cards .work-agent-manager__choose small {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.work-agent-manager--page .work-agent-manager__list--cards .work-agent-manager__choose > svg {
+  display: none;
+}
+.work-agent-manager__picked {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  border-radius: var(--radius-round);
+  background: var(--accent);
+  color: var(--accent-contrast, #fff);
+}
+.work-agent-manager--page .work-agent-manager__list--cards .work-agent-manager__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--border);
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.work-agent-manager--page .work-agent-manager__list--cards > li:hover .work-agent-manager__actions,
+.work-agent-manager--page .work-agent-manager__list--cards > li:focus-within .work-agent-manager__actions {
+  opacity: 1;
+}
+/* macOS inline row actions: revealed on hover, reachable via keyboard focus. */
+.work-agent-manager--page .work-agent-manager__actions {
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.work-agent-manager--page .work-agent-manager__list > li:hover .work-agent-manager__actions,
+.work-agent-manager--page .work-agent-manager__list > li:focus-within .work-agent-manager__actions {
+  opacity: 1;
+}
+/* Empty state: centered icon disc + guidance, instead of a lone grey line. */
 .work-agent-manager__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px 24px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-panel);
+  color: var(--fg-muted);
+  font-size: 13px;
+  text-align: center;
+}
+.work-agent-manager__empty-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px 12px !important;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 4px;
+  border-radius: var(--radius-round);
+  background: var(--bg-input);
   color: var(--fg-muted);
-  font-size: 13px;
+}
+.work-agent-manager__empty strong {
+  color: var(--fg);
+  font-size: 15px;
+  font-weight: 600;
+}
+.work-agent-manager__empty p {
+  margin: 0 0 8px;
+  max-width: 360px;
+  line-height: 1.6;
+}
+/* Loading skeleton rows shimmer while the catalogue resolves. */
+.work-agent-manager__skeleton {
+  display: grid;
+  flex: none;
+  gap: 12px;
+}
+.work-agent-manager__skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--bg-panel);
+}
+.work-agent-manager__skeleton-avatar {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-round);
+}
+.work-agent-manager__skeleton-lines {
+  display: grid;
+  flex: 1;
+  gap: 8px;
+}
+.work-agent-manager__skeleton-lines > span {
+  height: 10px;
+  border-radius: var(--radius-pill);
+}
+.work-agent-manager__skeleton-lines > span:first-child {
+  width: 38%;
+}
+.work-agent-manager__skeleton-lines > span:last-child {
+  width: 62%;
+}
+.work-agent-manager__skeleton-avatar,
+.work-agent-manager__skeleton-lines > span {
+  background: linear-gradient(
+    100deg,
+    var(--bg-input) 40%,
+    var(--bg-hover) 50%,
+    var(--bg-input) 60%
+  );
+  background-size: 200% 100%;
+  animation: work-agent-skeleton 1.4s linear infinite;
+}
+@keyframes work-agent-skeleton {
+  to {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .work-agent-manager__skeleton-avatar,
+  .work-agent-manager__skeleton-lines > span {
+    animation: none;
+  }
 }
 .work-agent-manager__error,
 .work-agent-manager__confirm {
   flex: none;
   padding: 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
   font-size: 13px;
   line-height: 1.6;
 }
@@ -521,6 +815,10 @@
   }
   .work-agent-manager__list > li {
     flex-wrap: wrap;
+  }
+  /* Narrow containers are usually touch-sized: hover-revealed actions stay visible. */
+  .work-agent-manager--page .work-agent-manager__actions {
+    opacity: 1;
   }
   .work-agent-manager__actions {
     width: 100%;

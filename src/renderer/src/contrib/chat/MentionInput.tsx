@@ -395,7 +395,8 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
      * 检测光标前的「@关键词」触发段。
      * 规则：光标位于文本节点内，向左扫描到 '@' 为止；'@' 前一个字符必须是
      * 行首 / 空白 / 换行（避免把邮箱、代码里的装饰器误判成触发）；
-     * 关键词不允许含空白。命中返回关键词文本（可为空串），否则 null。
+     * 文件关键词以空白结束；显式 Agent 别名允许用水平空格搜索名称，
+     * 否则父组件的 @agent / @智能体 名称过滤会在输入名称前被关闭。
      */
     const detectMentionQuery = useCallback((): string | null => {
       const box = boxRef.current
@@ -411,7 +412,9 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       const prevChar = at > 0 ? before[at - 1] : ''
       if (prevChar && !/[\s　]/.test(prevChar)) return null
       const keyword = before.slice(at + 1)
-      if (/[\s　@]/.test(keyword)) return null
+      const namedAgent = /^(?:agent|智能体)[ \u00a0\u3000]/i.test(keyword) &&
+        !/[\s@]/.test(keyword.replace(/[ \u00a0\u3000]/g, ''))
+      if (/[\s　@]/.test(keyword) && !namedAgent) return null
       return keyword
     }, [])
 
@@ -427,7 +430,11 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       const prev = slash > 0 ? before[slash - 1] : ''
       if (prev && !/[\s　]/.test(prev)) return null
       const keyword = before.slice(slash + 1)
-      if (/[\s　/@]/.test(keyword)) return null
+      // The resource palette supports category + name searches; ordinary slash
+      // text still ends at whitespace so prose cannot trap the completion keys.
+      const namedResource = /^(?:skill|skills|技能|mcp|kb|knowledge|知识库)[ \u00a0\u3000]/i.test(keyword) &&
+        !/[\s/@]/.test(keyword.replace(/[ \u00a0\u3000]/g, ''))
+      if (/[\s　/@]/.test(keyword) && !namedResource) return null
       return keyword
     }, [])
 

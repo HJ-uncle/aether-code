@@ -75,11 +75,12 @@ function normalizeList(value: unknown): SkillListItem[] {
   return raw.filter((item): item is SkillListItem => {
     if (!item || typeof item !== 'object') return false
     const candidate = item as Partial<SkillListItem>
-    return typeof candidate.name === 'string' && typeof candidate.description === 'string'
+    // Built-in skills may ship without a description; they must stay visible.
+    return typeof candidate.name === 'string'
   }).map((item) => ({
     id: typeof item.id === 'string' ? item.id : undefined,
     name: item.name,
-    description: item.description,
+    description: typeof item.description === 'string' ? item.description : '',
     enabled: item.enabled !== false,
     order: Number.isFinite(item.order) ? item.order : 0,
     scope: item.scope === 'global' ? 'global' : 'project'

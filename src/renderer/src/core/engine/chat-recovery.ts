@@ -9,7 +9,14 @@ import { applyRootRuns } from './root-run-state'
 
 export interface ChatRecoverySnapshot {
   schemaVersion: 1
-  source: 'live' | 'persisted'
+  source: 'live' | 'persisted' | 'persisted-published'
+  executionRun?: RootRun
+  publishedUsage?: import('@shared/published-child').PublishedChildUsage
+  subagentRecovery?: unknown
+  projectionIndices?: number[]
+  currentTurnComplete?: boolean
+  subagentProjectionArchive?: { protocolVersion: 1; snapshotId: string; totalCount: number; originalProjectionCount: number; endpoint: '/chat/snapshot/projection' }
+  bodyArchive?: { protocolVersion: 1; source: 'sealed-current-turn'; endpoint: '/chat/snapshot/body'; sha256: string; byteLength: number; chunkCount: number; originalProjectionCount: number; originalCurrentTurnComplete: boolean; previewComplete: false }
   sessionId: string
   eventId: string | null
   finished: boolean
@@ -44,7 +51,7 @@ export function restoreChatSnapshot(snapshot: ChatRecoverySnapshot): { messages:
   let messages = replayMessages(snapshot.history)
   let todos = snapshot.todos ?? []
   const run = snapshot.run
-  if (snapshot.source === 'live' && run && snapshot.projection.length) {
+  if ((snapshot.source === 'live' || snapshot.source === 'persisted-published') && run && snapshot.projection.length) {
     const projectedUser = snapshot.projection.find(payload => payload.userMessage)?.userMessage as EngineHistoryRow | undefined
     if (projectedUser) {
       const user = replayMessages([projectedUser])[0]
@@ -61,13 +68,42 @@ export function restoreChatSnapshot(snapshot: ChatRecoverySnapshot): { messages:
       role: 'assistant', content: '', thinking: '', tools: [], items: [],
       status: 'streaming', createdAt: run.createdAt, startedAt: run.createdAt
     }
-    for (const payload of snapshot.projection) {
+    const publishedByTool = new Map<string, number>(), publishedByRun = new Map<string, number>()
+    for (const [frameIndex, payload] of snapshot.projection.entries()) {
       if (payload.todo?.todos) todos = payload.todo.todos
-      assistant = reducePayload(assistant, payload)
+      const previousTools = assistant.tools
+      // The same fixed frame can be restored after another reference page or
+      // a late body read; its fallback identity/time must remain stable.
+      assistant = reducePayload(assistant, payload, { now: run.createdAt,
+        fallbackId: `recovered:${run.runId}:${snapshot.projectionIndices?.[frameIndex] ?? frameIndex}` })
+      if (assistant.tools !== previousTools) {
+        publishedByTool.clear(); publishedByRun.clear()
+        assistant.tools.forEach((tool, index) => {
+          publishedByTool.set(tool.id, index)
+          if (tool.subagentRef) publishedByRun.set(tool.subagentRef.identity.runId, index)
+        })
+      }
+      if (payload.publishedChild) {
+        const ref = payload.publishedChild, id = ref.identity.parentToolCallId
+        const existing = publishedByTool.get(id) ?? publishedByRun.get(ref.identity.runId)
+        // This draft is owned by snapshot restoration and is published once at
+        // the end. Repeated child evidence should not copy every earlier card.
+        if (existing === undefined) {
+          const index = assistant.tools.length
+          assistant.tools.push({ id, name: 'subagent', args: '', result: '', state: 'unknown', subagentRef: ref, startedAt: ref.identity.createdAt })
+          assistant.items.push({ kind: 'tool', id })
+          publishedByTool.set(id, index); publishedByRun.set(ref.identity.runId, index)
+        } else {
+          assistant.tools[existing] = { ...assistant.tools[existing], subagent: undefined, subagentRef: ref, state: 'unknown' }
+          publishedByTool.set(id, existing); publishedByRun.set(ref.identity.runId, existing)
+        }
+      }
     }
+    if (snapshot.publishedUsage) assistant = { ...assistant, publishedChildFence: snapshot.publishedUsage.fence }
     messages.push(assistant)
   }
-  const runs = [...snapshot.runs.filter(item => item.runId !== run?.runId), ...(run ? [run] : [])]
+  const execution = snapshot.executionRun ?? run
+  const runs = [...snapshot.runs.filter(item => item.runId !== run?.runId), ...(execution ? [execution] : [])]
   messages = applyRootRuns(messages, runs)
   // Persisted status can have changed after the tool result was written (keep/revert).
   const changes = new Map((snapshot.changes ?? []).map(change => [change.id, change]))

@@ -1,6 +1,7 @@
-import { useEffect, useId, useMemo, useRef, useState, type JSX } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type JSX } from 'react'
 import { requestOrThrow } from '@renderer/core/engine/client'
 import { getEngineSource } from '@renderer/core/engine/source'
+import { isTaskPlanControl } from '@renderer/core/engine/task-plan'
 import { useModels } from '@renderer/core/engine/model-store'
 import { listKnowledgeBases, type KnowledgeBase } from '@renderer/core/engine/knowledge'
 import { Dialog } from '@renderer/workbench/Dialog'
@@ -77,6 +78,12 @@ function listResult<T>(value: T[] | { list?: T[] }): T[] {
 }
 function toggle(values: string[], value: string): string[] {
   return values.includes(value) ? values.filter((item) => item !== value) : [...values, value]
+}
+/** Give every agent a stable identity color derived from its name. */
+function agentHue(name: string): number {
+  let hash = 0
+  for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) % 360
+  return hash
 }
 
 function BindingGroup({
@@ -225,7 +232,7 @@ export function WorkAgentManager({
   const [resources, setResources] = useState(resourceState)
   const [tab, setTab] = useState<EditorTab>('basics')
   const [binding, setBinding] = useState<ResourceKey>('skills')
-  const [discarding, setDiscarding] = useState(false)
+  const [discarding, setDiscarding] = useState<'close' | 'list' | null>(null)
   const editorId = useId()
   const alive = useRef(true)
   const epoch = useRef(getEngineSource())
@@ -233,16 +240,19 @@ export function WorkAgentManager({
   const nameInput = useRef<HTMLInputElement>(null)
   const close = (): void => {
     if (!busy) {
-      if (draft) setDiscarding(true)
+      if (draft) setDiscarding('close')
       else onClose()
     }
+  }
+  const returnToList = (): void => {
+    if (!busy && draft) setDiscarding('list')
   }
   const beginDraft = (): void => {
     setDraft(newDraft())
     setTab('basics')
     setBinding('skills')
     setError(null)
-    setDiscarding(false)
+    setDiscarding(null)
     setDeleting(null)
   }
 
@@ -384,7 +394,7 @@ export function WorkAgentManager({
         toolProfile: 'general',
         query: workspacePath ? { path: workspacePath } : undefined
       }).then((result) =>
-        listResult(result).map((item) => ({
+        listResult(result).filter(item => !isTaskPlanControl(item.name)).map((item) => ({
           id: item.name,
           label: item.displayName || item.name,
           description: `${item.name.startsWith('mcp_') ? 'MCP' : item.source === 'skill' ? '技能' : '内置'} · ${item.description || item.name}`
@@ -416,12 +426,12 @@ export function WorkAgentManager({
           skills: result.skills ?? [],
           mcpServers: result.mcpServers ?? [],
           knowledgeBases: result.knowledgeBases ?? [],
-          allowedTools: result.allowedTools ?? [],
+          allowedTools: (result.allowedTools ?? []).filter(name => !isTaskPlanControl(name)),
           toolsInitialized: true
         })
       if (current()) {
         setTab('basics')
-        setDiscarding(false)
+        setDiscarding(null)
       }
     } catch (cause) {
       if (current()) setError(cause instanceof Error ? cause.message : '无法读取 Agent 配置')
@@ -432,7 +442,7 @@ export function WorkAgentManager({
 
   const save = async (): Promise<void> => {
     if (!draft || busy) return
-    setDiscarding(false)
+    setDiscarding(null)
     if (!draft.name.trim()) {
       setError('请输入 Agent 名称')
       setTab('basics')
@@ -786,12 +796,15 @@ export function WorkAgentManager({
           : '选择处理这项工作的 Agent，也可以为经常使用的工作方式创建专属助手。'}
       </p>
       <div className="work-agent-manager__toolbar">
-        <input
-          aria-label="搜索 Agent"
-          placeholder="搜索 Agent"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
+        <div className="work-agent-manager__search">
+          <Icon name="search" size={15} />
+          <input
+            aria-label="搜索 Agent"
+            placeholder="搜索 Agent"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </div>
         <button type="button" className="btn btn--primary" disabled={busy} onClick={beginDraft}>
           <Icon name="plus" size={15} />
           新建 Agent
@@ -816,76 +829,128 @@ export function WorkAgentManager({
         </div>
       ) : null}
       {loading ? (
-        <div className="work-agent-manager__empty" role="status">
-          <Spinner />
-          正在加载 Agent…
+        <div className="work-agent-manager__skeleton" role="status" aria-label="正在加载 Agent">
+          {[0, 1, 2].map((row) => (
+            <div key={row} className="work-agent-manager__skeleton-row">
+              <span className="work-agent-manager__skeleton-avatar" />
+              <span className="work-agent-manager__skeleton-lines">
+                <span />
+                <span />
+              </span>
+            </div>
+          ))}
         </div>
       ) : (
-        <ul className="work-agent-manager__list" aria-label="可用 Agent">
+        <div className="work-agent-manager__groups">
           {!query ? (
-            <li className={!selectedId ? 'is-selected' : ''}>
-              <button
-                type="button"
-                className="work-agent-manager__choose"
-                disabled={locked || busy}
-                onClick={() => onSelect(null)}
-              >
-                <Icon name="sparkles" size={20} />
-                <span>
-                  <strong>默认助手</strong>
-                  <small>使用任务的模型与资源设置</small>
-                </span>
-                {!selectedId ? <Icon name="check" size={16} /> : null}
-              </button>
-            </li>
+            <section className="work-agent-manager__group" aria-label="系统">
+              <h3 className="work-agent-manager__group-title">系统</h3>
+              <ul className="work-agent-manager__list">
+                <li className={!selectedId ? 'is-selected' : ''}>
+                  <button
+                    type="button"
+                    className="work-agent-manager__choose"
+                    disabled={locked || busy}
+                    onClick={() => onSelect(null)}
+                  >
+                    <span className="work-agent-manager__avatar work-agent-manager__avatar--default">
+                      <Icon name="sparkles" size={18} />
+                    </span>
+                    <span>
+                      <strong>默认助手</strong>
+                      <small>使用任务的模型与资源设置</small>
+                    </span>
+                    {!selectedId ? <Icon name="check" size={16} /> : null}
+                  </button>
+                </li>
+              </ul>
+            </section>
           ) : null}
-          {filtered.map((agent) => (
-            <li key={agent.id} className={selectedId === agent.id ? 'is-selected' : ''}>
-              <button
-                type="button"
-                className="work-agent-manager__choose"
-                disabled={locked || busy}
-                onClick={() => onSelect(agent)}
-                aria-label={`使用 Agent ${agent.name}`}
-              >
-                <Icon name="account-outline" size={20} />
-                <span>
-                  <strong>{agent.name}</strong>
-                  <small>{agent.description || '自定义工作助手'}</small>
+          <section className="work-agent-manager__group" aria-label="我的 Agent">
+            {!query ? <h3 className="work-agent-manager__group-title">我的 Agent</h3> : null}
+            {filtered.length ? (
+              <ul className="work-agent-manager__list work-agent-manager__list--cards" aria-label="可用 Agent">
+                {filtered.map((agent) => (
+                  <li key={agent.id} className={selectedId === agent.id ? 'is-selected' : ''}>
+                    <button
+                      type="button"
+                      className="work-agent-manager__choose"
+                      disabled={locked || busy}
+                      onClick={() => onSelect(agent)}
+                      aria-label={`使用 Agent ${agent.name}`}
+                    >
+                      <span
+                        className="work-agent-manager__avatar"
+                        style={{
+                          '--agent-hue': agentHue(agent.name),
+                          background: 'var(--agent-identity-bg)',
+                          color: 'var(--agent-identity-fg)'
+                        } as CSSProperties}
+                      >
+                        <Icon name="account-outline" size={20} />
+                      </span>
+                      <span>
+                        <strong>{agent.name}</strong>
+                        <small>{agent.description || '自定义工作助手'}</small>
+                      </span>
+                      {selectedId === agent.id ? (
+                        <span className="work-agent-manager__picked" aria-label="当前选中">
+                          <Icon name="check" size={14} />
+                        </span>
+                      ) : null}
+                    </button>
+                    <div className="work-agent-manager__actions">
+                      <button
+                        type="button"
+                        className="btn btn--sm"
+                        aria-label={`编辑 Agent ${agent.name}`}
+                        disabled={busy}
+                        onClick={() => void edit(agent)}
+                      >
+                        编辑
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn--sm"
+                        aria-label={`删除 Agent ${agent.name}`}
+                        disabled={busy || (locked && selectedId === agent.id)}
+                        onClick={() => {
+                          setDeleting(agent)
+                          setError(null)
+                        }}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="work-agent-manager__empty">
+                <span className="work-agent-manager__empty-icon">
+                  <Icon name="account-outline" size={28} />
                 </span>
-                {selectedId === agent.id ? <Icon name="check" size={16} /> : null}
-              </button>
-              <div className="work-agent-manager__actions">
-                <button
-                  type="button"
-                  className="btn btn--sm"
-                  aria-label={`编辑 Agent ${agent.name}`}
-                  disabled={busy}
-                  onClick={() => void edit(agent)}
-                >
-                  编辑
-                </button>
-                <button
-                  type="button"
-                  className="btn btn--sm"
-                  aria-label={`删除 Agent ${agent.name}`}
-                  disabled={busy || (locked && selectedId === agent.id)}
-                  onClick={() => {
-                    setDeleting(agent)
-                    setError(null)
-                  }}
-                >
-                  删除
-                </button>
+                <strong>{query ? '没有匹配的 Agent' : '还没有自定义 Agent'}</strong>
+                <p>
+                  {query
+                    ? '换个关键词试试。'
+                    : '为经常使用的工作方式创建专属助手，沉淀职责、模型与工具配置。'}
+                </p>
+                {!query ? (
+                  <button
+                    type="button"
+                    className="btn btn--primary"
+                    disabled={busy}
+                    onClick={beginDraft}
+                  >
+                    <Icon name="plus" size={15} />
+                    新建 Agent
+                  </button>
+                ) : null}
               </div>
-            </li>
-          ))}
-          {!filtered.length ? (
-            <li className="work-agent-manager__empty">
-              {query ? '没有匹配的 Agent' : '还没有自定义 Agent，点击「新建 Agent」开始。'}
-            </li>
-          ) : null}
-        </ul>
+            )}
+          </section>
+        </div>
       )}
     </>
   )
@@ -894,7 +959,7 @@ export function WorkAgentManager({
     discarding ? (
       <>
         <span className="work-agent-manager__footer-note">放弃尚未保存的配置？</span>
-        <button type="button" className="btn" disabled={busy} onClick={() => setDiscarding(false)}>
+        <button type="button" className="btn" disabled={busy} onClick={() => setDiscarding(null)}>
           继续编辑
         </button>
         <button
@@ -904,8 +969,10 @@ export function WorkAgentManager({
           onClick={() => {
             setDraft(null)
             setError(null)
-            setDiscarding(false)
-            onClose()
+            setDiscarding(null)
+            // Returning from the editor keeps the manager open; closing the
+            // whole surface retains its original dismissal behavior.
+            if (discarding === 'close') onClose()
           }}
         >
           放弃修改
@@ -966,9 +1033,23 @@ export function WorkAgentManager({
     return (
       <div className="work-agent-manager-page">
         <header className="work-agent-manager-page__header">
-          <div>
-            <h1>Agent</h1>
-            <p>{draft ? '配置你的工作助手' : '管理助手的职责、模型与执行能力'}</p>
+          <div className="work-agent-manager-page__header-main">
+            {draft ? (
+              <button
+                type="button"
+                className="btn btn--sm work-agent-manager-page__back"
+                disabled={busy}
+                onClick={returnToList}
+                aria-label="返回 Agent 列表"
+              >
+                <Icon name="chevron-left" size={15} />
+                返回
+              </button>
+            ) : null}
+            <div>
+              <h1>Agent</h1>
+              <p>{draft ? '配置你的工作助手' : '管理助手的职责、模型与执行能力'}</p>
+            </div>
           </div>
           {!draft ? (
             <div className="work-agent-manager__header-actions">

@@ -23,13 +23,20 @@ function workSubagentArgs(value: string): Record<string, unknown> {
 export function workSubagentTools(sessionId: string, tools: ToolActivity[], runs: SubagentRun[]): ToolActivity[] {
   const result = new Map<string, ToolActivity>()
   for (const tool of tools) {
+    if (tool.subagentDeletion) continue
     if (tool.name !== 'subagent' && !tool.subagent) continue
     if (tool.subagent && tool.subagent.parentSessionId !== sessionId) continue
-    result.set(tool.subagent?.parentToolCallId || tool.id, tool)
+    result.set(tool.subagent?.parentToolCallId || tool.subagentRef?.identity.parentToolCallId || tool.id, tool)
   }
   for (const incoming of runs) {
     if (incoming.parentSessionId !== sessionId) continue
+    if (tools.some(tool => tool.subagentDeletion?.runId === incoming.runId &&
+      tool.subagentDeletion.parentSessionId === incoming.parentSessionId &&
+      tool.subagentDeletion.rootSessionId === incoming.rootSessionId &&
+      tool.subagentDeletion.childSessionId === incoming.childSessionId &&
+      tool.subagentDeletion.parentToolCallId === incoming.parentToolCallId)) continue
     const previous = result.get(incoming.parentToolCallId)
+    if (previous?.subagentRef) continue
     const run = mergeSubagentRun(previous?.subagent, incoming)
     let args = previous?.args || JSON.stringify({ task: run.task, description: run.description, role: run.continuation?.role })
     // A legacy parent invocation can omit the role even though the authoritative
@@ -70,7 +77,7 @@ export function workSubagentGroups(sessionId: string, tools: ToolActivity[], run
   for (const tool of reconciled) {
     const args = workSubagentArgs(tool.args)
     const pendingResume = typeof args.resumeRunId === 'string' ? knownRuns.get(args.resumeRunId) : undefined
-    const childSessionId = tool.subagent?.childSessionId || pendingResume?.childSessionId
+    const childSessionId = tool.subagent?.childSessionId || tool.subagentRef?.identity.childSessionId || pendingResume?.childSessionId
     const key = childSessionId ? `child:${childSessionId}` : `legacy:${tool.id}`
     const bucket = grouped.get(key)
     if (bucket) bucket.push(tool)
@@ -79,22 +86,22 @@ export function workSubagentGroups(sessionId: string, tools: ToolActivity[], run
   return [...grouped.entries()]
     .map(([key, entries]) => {
       const ordered = [...entries].sort((a, b) =>
-        (b.subagent?.createdAt ?? b.startedAt ?? (b.state === 'running' ? Number.MAX_SAFE_INTEGER : 0)) -
-        (a.subagent?.createdAt ?? a.startedAt ?? (a.state === 'running' ? Number.MAX_SAFE_INTEGER : 0)) ||
-        (b.subagent?.updatedAt ?? b.finishedAt ?? 0) - (a.subagent?.updatedAt ?? a.finishedAt ?? 0))
+        (b.subagentRef?.identity.createdAt ?? b.subagent?.createdAt ?? b.startedAt ?? (b.state === 'running' ? Number.MAX_SAFE_INTEGER : 0)) -
+        (a.subagentRef?.identity.createdAt ?? a.subagent?.createdAt ?? a.startedAt ?? (a.state === 'running' ? Number.MAX_SAFE_INTEGER : 0)) ||
+        (b.subagentRef?.identity.createdAt ?? b.subagent?.updatedAt ?? b.finishedAt ?? 0) - (a.subagentRef?.identity.createdAt ?? a.subagent?.updatedAt ?? a.finishedAt ?? 0))
       const latest = ordered[0]
       const run = ordered.find(tool => tool.subagent)?.subagent
       return {
         key,
-        childSessionId: run?.childSessionId || '',
-        label: run?.agentName?.trim() || workSubagentName(latest),
-        modelId: run?.modelId || '',
-        active: entries.some((tool) => tool.subagent ? ['queued', 'running', 'cancelling'].includes(tool.subagent.status) : tool.state === 'running'),
+        childSessionId: run?.childSessionId || latest.subagentRef?.identity.childSessionId || '',
+        label: latest.subagentRef?.identity.agentName?.trim() || run?.agentName?.trim() || workSubagentName(latest),
+        modelId: latest.subagentRef?.identity.modelId || run?.modelId || '',
+        active: entries.some((tool) => !tool.subagentRef && (tool.subagent ? ['queued', 'running', 'cancelling'].includes(tool.subagent.status) : tool.state === 'running')),
         latest,
         tools: ordered
       }
     })
-    .sort((a, b) => (b.latest.subagent?.updatedAt ?? 0) - (a.latest.subagent?.updatedAt ?? 0))
+    .sort((a, b) => (b.latest.subagentRef?.identity.createdAt ?? b.latest.subagent?.updatedAt ?? 0) - (a.latest.subagentRef?.identity.createdAt ?? a.latest.subagent?.updatedAt ?? 0))
 }
 
 /** A preparation announcement receives its durable child identity asynchronously. */
@@ -108,7 +115,7 @@ export function resolveWorkSubagentGroup(groups: WorkSubagentGroup[], selectedKe
 
 export function workSubagentName(tool: ToolActivity): string {
   const run = tool.subagent
-  const agentName = run?.agentName?.trim() || ''
+  const agentName = run?.agentName?.trim() || tool.subagentRef?.identity.agentName?.trim() || ''
   if (agentName) return agentName
   const role = run?.continuation?.role ? workSubagentRole(JSON.stringify({ role: run.continuation.role })) : workSubagentRole(tool.args)
   const description = workSubagentArgs(tool.args).description

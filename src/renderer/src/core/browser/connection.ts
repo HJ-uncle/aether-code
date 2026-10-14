@@ -1,17 +1,28 @@
 import { getAppSettings, onAppSettingsChanged } from '../app-provider'
-import { getExpectedEngine, isEngineReady, subscribeEngineSource } from '../engine/source'
+import {
+  getEngineSource,
+  getExpectedEngine,
+  isEngineReady,
+  subscribeEngineSource
+} from '../engine/source'
 import { onWorkspaceConnectionChanged } from '../workspace/connection'
+import { getAppMode, onAppModeChanged } from '../platform/app-mode'
 
-// Work can own a different session from Code while its browser panel is visible.
+// Work owns a different session from Code even before its browser panel is visible.
 // Keeping the override here means the single native browser bridge never has two
 // competing registrations for the same window.
 let sessionOverride: string | null = null
+let overrideSource = -1
 let scheduleOverride: (() => void) | null = null
 
-export function setBrowserSessionOverride(sessionId?: string | null): void {
+export function setBrowserSessionOverride(
+  sessionId?: string | null,
+  source = getEngineSource()
+): void {
   const next = typeof sessionId === 'string' && sessionId.trim() ? sessionId.trim() : null
-  if (sessionOverride === next) return
+  if (sessionOverride === next && overrideSource === source) return
   sessionOverride = next
+  overrideSource = source
   scheduleOverride?.()
 }
 
@@ -24,11 +35,19 @@ export function wireBrowserConnection(): () => void {
     if (disposed) return
     const settings = getAppSettings()
     const expectedEngine = getExpectedEngine()
-    const sessionId = sessionOverride ?? settings.lastSessionId
+    // A missing/pending Work identity must never attach its pages to Code's
+    // remembered session. Generation guards prevent a hidden view's old account
+    // identity from being reused during an engine/source transition.
+    const sessionId =
+      getAppMode() === 'work'
+        ? overrideSource === getEngineSource()
+          ? sessionOverride
+          : null
+        : settings.lastSessionId
     const key = isEngineReady() && sessionId ? JSON.stringify([expectedEngine, sessionId]) : ''
     if (key === lastKey) return
     lastKey = key
-    if (!key) {
+    if (!key || !sessionId) {
       void window.aether.browser.disconnect().catch(() => {})
       return
     }
@@ -48,6 +67,7 @@ export function wireBrowserConnection(): () => void {
   const settings = onAppSettingsChanged(schedule)
   const source = subscribeEngineSource(schedule)
   const workspace = onWorkspaceConnectionChanged(schedule)
+  const mode = onAppModeChanged(schedule)
   schedule()
   return () => {
     disposed = true
@@ -55,6 +75,7 @@ export function wireBrowserConnection(): () => void {
     settings()
     source()
     workspace()
+    mode()
     void window.aether.browser.disconnect().catch(() => {})
   }
 }

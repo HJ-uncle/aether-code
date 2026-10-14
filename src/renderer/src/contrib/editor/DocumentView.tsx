@@ -147,7 +147,7 @@ export function DocumentView({ filePath, groupId }: { filePath: string; groupId?
           </span>
         ) : null}
         {isDirty(doc) ? <span className="doc-view__dirty">● 未保存</span> : <span>已保存</span>}
-        {!doc.truncated ? <EditorBlameStatus filePath={doc.path} groupId={groupId} /> : null}
+        {!doc.truncated && !doc.sessionFileTarget ? <EditorBlameStatus filePath={doc.path} groupId={groupId} /> : null}
       </footer>
     </div>
   )

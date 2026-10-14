@@ -1,0 +1,36 @@
+{
+  "extends": "./tsconfig.node.json",
+  "include": [
+    "e2e/next-turn-archive.spec.ts",
+    "e2e/next-turn-sqlite-experiment.spec.ts",
+    "e2e/next-turn-sqlite-worker.spec.ts",
+    "e2e/next-turn-dispatcher.spec.ts",
+    "e2e/next-turn-engine-gateway.spec.ts",
+    "e2e/next-turn-queue-foundation.spec.ts",
+    "src/preload/index.d.ts",
+    "src/shared/next-turn-queue*.ts",
+    "src/shared/work-next-turn-api.ts",
+    "src/main/next-turn-queue*.ts",
+    "src/main/next-turn-dispatcher.ts",
+    "src/main/next-turn-admission-protocol.ts",
+    "e2e/work-next-turn-owner.spec.ts",
+    "src/main/work-next-turn-owner.ts",
+    "src/main/work-next-turn-ipc.ts",
+    "e2e/next-turn-worker-production.spec.ts",
+    "e2e/next-turn-worker-factory.spec.ts",
+    "e2e/work-next-turn-native-owner.spec.ts"
+  ],
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "paths": {
+      "@renderer/*": [
+        "src/renderer/src/*"
+      ],
+      "@shared/*": [
+        "src/shared/*"
+      ]
+    }
+  }
+}

@@ -1,7 +1,8 @@
 import { acquireModel, languageForPath, monaco } from './monaco-setup'
 import { activateDocument } from './editor-activation'
-import { getDocument, isDirty, onEditorChanged, openFile, resolveDocumentPath, setDocumentContent } from './editor-store'
+import { assertDocumentConnection, getDocument, isDirty, onEditorChanged, openFile, resolveDocumentPath, setDocumentContent } from './editor-store'
 import { fileIdentity } from './file-identity'
+import type { SessionFileTarget } from '../workspace/fs-client'
 
 const pendingModels = new Map<string, Promise<monaco.editor.ITextModel>>()
 const synchronizedModels = new WeakSet<monaco.editor.ITextModel>()
@@ -50,15 +51,17 @@ function synchronizeDocument(model: monaco.editor.ITextModel, filePath: string):
 }
 
 /** Register every rename target as a visible dirty document, without saving or activating it. */
-export function ensureWorkspaceModel(resource: monaco.Uri): Promise<monaco.editor.ITextModel> {
-  const key = fileIdentity(resource.fsPath)
+export function ensureWorkspaceModel(resource: monaco.Uri, target?: SessionFileTarget): Promise<monaco.editor.ITextModel> {
+  const owner = target ?? getDocument(resource.fsPath)?.sessionFileTarget
+  const key = JSON.stringify([fileIdentity(resource.fsPath), owner?.key ?? 'code'])
   const pending = pendingModels.get(key)
   if (pending) return pending
   const loading = (async () => {
     const filePath = documentPath(resource)
-    await openFile(filePath)
+    await openFile(filePath, undefined, undefined, undefined, owner)
     const doc = getDocument(filePath)
     if (!doc || doc.loading) throw new Error(`文件尚未加载完成：${filePath}`)
+    assertDocumentConnection(doc)
     // 保存失败不妨碍比较用户保留下来的完整缓冲区。
     if (doc.error && !isDirty(doc)) throw new Error(doc.error)
     if (doc.isBinary || doc.truncated || doc.tooLarge) throw new Error(`不能重命名二进制或未完整加载的文件：${filePath}`)
@@ -75,11 +78,15 @@ export function ensureWorkspaceModel(resource: monaco.Uri): Promise<monaco.edito
 }
 
 /** Public Monaco opener -> existing Aether tabs and reveal requests. */
-export async function openWorkspaceResource(resource: monaco.Uri, selection?: monaco.IRange | monaco.IPosition): Promise<void> {
+export async function openWorkspaceResource(resource: monaco.Uri, selection?: monaco.IRange | monaco.IPosition, source?: monaco.Uri): Promise<void> {
   const filePath = documentPath(resource)
+  const target = (source ? getDocument(source.fsPath)?.sessionFileTarget : undefined) ?? getDocument(filePath)?.sessionFileTarget
   const range = selection && 'startLineNumber' in selection ? selection : undefined
   const position = selection && 'lineNumber' in selection ? selection : undefined
   const length = range && range.startLineNumber === range.endLineNumber ? range.endColumn - range.startColumn : undefined
-  await openFile(filePath, range?.startLineNumber ?? position?.lineNumber, range?.startColumn ?? position?.column, length)
+  await openFile(filePath, range?.startLineNumber ?? position?.lineNumber, range?.startColumn ?? position?.column, length, target)
+  const doc = getDocument(filePath)
+  if (!doc || doc.loading || doc.error) throw new Error(doc?.error ?? '文件尚未加载完成')
+  assertDocumentConnection(doc)
   activateDocument(filePath)
 }

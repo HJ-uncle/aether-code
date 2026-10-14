@@ -117,8 +117,8 @@ async function editWindow(value: string) {
   await dialog.getByRole('button', { name: '保存', exact: true }).click(); await expect(dialog).toBeHidden()
 }
 async function selectModel(id: string) {
-  await page.locator('.chat__input').click(); await page.locator('.model-picker__trigger').click()
-  await page.locator('.model-picker__item').filter({ has: page.locator('.model-picker__name', { hasText: id === modelId ? 'Window edit fixture' : 'Other 64K' }) }).click()
+  await page.locator('.chat__input').click(); await page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger').click()
+  await page.locator('.model-select-menu .select__item').filter({ has: page.locator('.select__item-head', { hasText: id === modelId ? 'Window edit fixture' : 'Other 64K' }) }).click()
 }
 
 test.describe.serial('窗口设置与已确认上下文独立显示', () => {
@@ -132,7 +132,7 @@ test.describe.serial('窗口设置与已确认上下文独立显示', () => {
     page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message))
     await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90000 })
     await page.getByRole('button', { name: '会话历史', exact: true }).click(); await page.locator('.history-view__item[data-session-id="' + sessionId + '"]').click()
-    await expect(page.locator('.message--user').first()).toContainText('WINDOW_CONFIRMED_HISTORY'); await expect(page.locator('.model-picker__trigger')).toBeEnabled()
+    await expect(page.locator('.message--user').first()).toContainText('WINDOW_CONFIRMED_HISTORY'); await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toBeEnabled()
   })
   test.afterAll(async () => {
     stream?.destroy(); await app?.close(); server.closeAllConnections(); await new Promise<void>(done => server.close(() => done()))

@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
-import { request } from '@renderer/core/engine/client'
+import { getSubagentProtocol, request } from '@renderer/core/engine/client'
 import { extractText, type EngineHistoryRow } from '@renderer/core/engine/chat-history'
+import { taskPlanTranscriptRows } from '@renderer/core/engine/task-plan'
 import { getEngineSource, getExpectedEngine } from '@renderer/core/engine/source'
 import { errorText } from '@renderer/core/engine/subagent-state'
 import { Spinner } from '@renderer/workbench/ui-primitives'
@@ -93,11 +94,17 @@ export function WorkSubagentTranscript({ source, parentSessionId, childSessionId
     const expectedEngine = getExpectedEngine()
     const current = (): boolean => generation === epoch.current && source === getEngineSource()
     try {
+      const subagentProtocol = await getSubagentProtocol()
+      if (!current()) return
       const previous = memory.window
-      const next = await loadWorkSubagentTranscript({ source, parentSessionId, childSessionId, runId }, input => request({ ...input, expectedEngine }), current, previous, action)
+      const next = await loadWorkSubagentTranscript({ source, parentSessionId, childSessionId, runId, subagentProtocol }, input => request({ ...input, expectedEngine }), current, previous, action)
       if (!current()) return
       if (previous) memory.visibleCount += Math.max(0, next.rows.length - previous.rows.length)
       memory.window = next
+      memory.visibleCount = Math.min(next.rows.length, Math.max(SUBAGENT_TRANSCRIPT_PAGE_SIZE, memory.visibleCount))
+      const keys = new Set(next.rows.flatMap(row => [`${row.id}:body`, `${row.id}:reasoning`, `${row.id}:args`]))
+      for (const key of memory.expanded.keys()) if (!keys.has(key)) memory.expanded.delete(key)
+      for (const key of memory.opened) if (!keys.has(key)) memory.opened.delete(key)
       redraw()
     } catch (cause) {
       if (current() && !(cause instanceof WorkTranscriptSupersededError)) setError(cause instanceof Error ? cause.message : String(cause))
@@ -124,14 +131,15 @@ export function WorkSubagentTranscript({ source, parentSessionId, childSessionId
     if (row) container.scrollTop += row.getBoundingClientRect().top - container.getBoundingClientRect().top - position.top
     anchor.current = null
   }, [revision])
-  const rows = useMemo(() => (memory.window?.rows ?? []).filter(row => row.role !== 'system' && row.isSidechain !== true), [memory, revision])
+  const rows = useMemo(() => taskPlanTranscriptRows(memory.window?.rows ?? []).filter(row => row.role !== 'system' && row.isSidechain !== true), [memory, revision])
   const toolNames = useMemo(() => new Map((memory.window?.rows ?? []).flatMap(row => row.toolCall?.id && row.toolCall.name ? [[row.toolCall.id, row.toolCall.name] as const] : [])), [memory, revision])
   const visible = rows.slice(-memory.visibleCount)
   const hasEarlier = rows.length > memory.visibleCount || (memory.window?.firstPage ?? 1) > 1
   const window = memory.window
   const availableOnly = window?.endpoint === '/conversation/history' || window?.backend !== 'jsonl'
   return <section className="work-subagent-transcript" aria-label={`${name} 的完整对话`}>
-    <div className="work-subagent-transcript__toolbar"><span>{window ? `已读取 ${window.rows.length.toLocaleString()} / ${window.total.toLocaleString()} 条记录` : '读取此代理的独立会话记录'}</span><button type="button" disabled={!ready || loading} onClick={() => void load('refresh')} aria-label="更新子代理完整对话">{loading ? <Spinner size={14} /> : <Icon name="restart" size={14} />}更新对话</button></div>
+    <div className="work-subagent-transcript__toolbar"><span>{window ? `当前窗口 ${window.rows.length.toLocaleString()} / ${window.total.toLocaleString()} 条记录` : '读取此代理的独立会话记录'}</span><button type="button" disabled={!ready || loading} onClick={() => void load('refresh')} aria-label="更新子代理完整对话">{loading ? <Spinner size={14} /> : <Icon name="restart" size={14} />}更新对话</button></div>
+    {window?.windowed ? <p className="work-subagent-transcript__notice">加载更早内容后，点“更新对话”回到最新记录。</p> : null}
     {window && availableOnly ? <p className="work-subagent-transcript__notice" role="status">当前后端提供可用历史；压缩前的部分记录可能未保留。</p> : null}
     {error ? <div className="work-subagent-transcript__error" role="alert"><span>{error}</span><button type="button" disabled={!ready || loading} onClick={() => void load('refresh')}>重试读取</button></div> : null}
     <div className="work-subagent-transcript__scroll" ref={scroller} onScroll={event => { memory.scrollTop = event.currentTarget.scrollTop }} aria-busy={loading}>

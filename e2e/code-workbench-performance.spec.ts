@@ -82,7 +82,7 @@ test.describe.serial('Code 工作台局部布局性能与数据安全', () => {
     const env = { ...process.env, AETHER_GLOBAL_DIR: join(fixture, 'global') }
     delete env.ELECTRON_RUN_AS_NODE
     delete env.AETHER_ENABLE_GPU
-    app = await electron.launch({ args: ['.', `--user-data-dir=${fixture}`], cwd: root, env })
+    app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || '.', `--user-data-dir=${fixture}`], cwd: root, env })
     health = await monitorElectronHealth(app, 'code-layout')
     page = await app.firstWindow()
     page.on('pageerror', (error) => errors.push(error.message))

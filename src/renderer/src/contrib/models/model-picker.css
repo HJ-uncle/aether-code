@@ -1,0 +1,73 @@
+/* The model control follows the same quiet geometry in Code and Work. */
+.model-picker.select {
+  display: inline-flex;
+  flex: 0 1 auto;
+  width: max-content;
+  max-width: 190px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.model-picker.select > .popover__trigger {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+}
+
+.model-picker.select .select__trigger {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  min-height: 30px;
+  padding: 5px 7px;
+  color: var(--fg-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+}
+
+.model-picker.select .select__trigger:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.model-picker.select .select__trigger:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.model-select-menu .select__panel {
+  max-height: min(360px, calc(100vh - 32px));
+}
+
+.model-select-menu .select__hint {
+  padding: var(--space-2) var(--space-3);
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.model-select-menu .select__item-desc {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.model-select-menu .select__actions {
+  margin-top: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--border);
+}
+
+.model-select-menu .select__action {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--fg);
+  font-size: 12px;
+}
+
+.model-select-menu .select__action > svg {
+  flex: 0 0 auto;
+  color: var(--fg-muted);
+}

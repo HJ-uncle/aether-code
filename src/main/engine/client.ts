@@ -1,6 +1,6 @@
 /** Main-process HTTP bridge: shared transport identity and strict response envelopes. */
 import { engineHost } from './host'
-import { engineTargetError, isAccountRequestPath, normalizeEnginePath, remoteRequestError, remoteWorkspacePathError } from './protocol'
+import { engineTargetError, isAccountRequestPath, normalizeEnginePath, remoteRequestError, remoteWorkspacePathError, subagentProtocolHeaders } from './protocol'
 import { prepareRemoteChatBody } from './remote-workspace'
 import { managementRequestSignal } from './request-timeout'
 import type { EngineRequestInput, EngineRequestResult, EngineUploadInput } from '../../shared/ipc'
@@ -17,8 +17,12 @@ function buildQuery(query: EngineRequestInput['query']): string {
 }
 
 export async function engineRequest<T = unknown>(
-  input: EngineRequestInput
+  input: EngineRequestInput,
+  ownedSignal?: AbortSignal
 ): Promise<EngineRequestResult<T>> {
+  let protocolHeaders: Record<string, string>
+  try { protocolHeaders = subagentProtocolHeaders(input.subagentProtocol) }
+  catch { return { ok: false, code: 400, message: '子 Agent 协议版本无效', data: null } }
   if (isAccountRequestPath(input.path)) return { ok: false, code: 403, message: '请通过账号入口操作认证。', data: null }
   const snapshot = engineHost.getSnapshot()
   // Keep this check local to the transport as a defense in depth: callers
@@ -33,9 +37,11 @@ export async function engineRequest<T = unknown>(
   if (!baseUrl) return { ok: false, code: -1, message: '引擎未就绪', data: null }
   const path = normalizeEnginePath(input.path)
   const url = `${baseUrl}${path}${buildQuery(input.query)}`
-  const signal = managementRequestSignal(input, engineHost.requestSignal)
+  const managementSignal = managementRequestSignal(input, engineHost.requestSignal)
+  const signal = ownedSignal ? AbortSignal.any([managementSignal, ownedSignal]) : managementSignal
   const headers: Record<string, string> = {
     Accept: 'application/json',
+    ...protocolHeaders,
     ...await engineHost.prepareRequestHeaders(baseUrl, input.toolProfile)
   }
   const requestBody = snapshot.mode === 'remote' && input.method === 'POST' && path.split('?')[0] === '/api/v1/chat'

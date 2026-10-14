@@ -4,18 +4,21 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import type {
   BrowserAction, BrowserBoundsInput, BrowserClickInteraction, BrowserConsoleEntry, BrowserContext, BrowserCreateInput,
-  BrowserElement, BrowserEvent, BrowserReadKind, BrowserScreenshot,
+  BrowserElement, BrowserEvent, BrowserExecutionIdentity, BrowserReadKind, BrowserScreenshot,
   BrowserSettings, BrowserSnapshot, BrowserTabState, BrowserToolRequest, BrowserToolResult, BrowserUnavailableSnapshot, BrowserViewportScreenshot
 } from '../../shared/browser'
 import { BrowserSettingsStore } from './settings'
 import { BrowserNetworkCollector } from './network-collector'
 import type { BrowserNetworkDetail, BrowserNetworkDetailOptions, BrowserNetworkList, BrowserNetworkQuery } from '../../shared/browser-network'
-import { browserError, clampBounds, contextsMatch, normalizeBrowserUrl, validateContext, validateViewport, validateZoom } from './validation'
+import type { BrowserConnectInput } from '../../shared/browser-api'
+import { browserError, clampBounds, contextsMatch, normalizeBrowserUrl, pendingBrowserEngineMatches, validateContext, validateViewport, validateZoom } from './validation'
+import { BrowserInputQueueError, OwnedBrowserInputQueue, type BrowserInputLease } from './owned-input-queue'
 
 interface BrowserEntry {
   owner: BrowserWindow
   view: WebContentsView
   state: BrowserTabState
+  pendingEngine?: BrowserConnectInput['expectedEngine']
   visible: boolean
   bounds: { x: number; y: number; width: number; height: number }
   emulationScale: number
@@ -127,8 +130,11 @@ function boundedPush<T>(entries: T[], value: T): void {
 function text(value: unknown, limit = 4000): string { return String(value ?? '').slice(0, limit) }
 
 function duration(value: number | undefined): number {
-  if (value === undefined) return 10000
-  if (!Number.isInteger(value) || value < 100 || value > 30000) throw new Error('等待时间应为 100–30000 毫秒')
+  // Waiting for a page condition is a user-observable operation.  Omission or
+  // zero means wait until the condition, cancellation, tab close, or bridge
+  // disconnect; a positive value remains an explicit caller deadline.
+  if (value === undefined || value === 0) return Number.POSITIVE_INFINITY
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error('等待时间应为非负整数毫秒')
   return value
 }
 
@@ -139,6 +145,7 @@ export class BrowserService {
   private readonly owners = new WeakSet<BrowserWindow>()
   private readonly settings = new BrowserSettingsStore()
   private readonly temporaryPartition = `aether-browser-${randomUUID()}`
+  private readonly inputQueue = new OwnedBrowserInputQueue()
   private disposed = false
 
   constructor(private readonly getWindow: () => BrowserWindow | undefined, private readonly emit: (event: BrowserEvent) => void) {}
@@ -149,7 +156,7 @@ export class BrowserService {
 
   list(): BrowserTabState[] { return [...this.tabs.values()].map((entry) => this.state(entry)) }
 
-  async create(input: BrowserCreateInput = {}): Promise<BrowserTabState> {
+  async create(input: BrowserCreateInput = {}, pendingEngine?: BrowserConnectInput['expectedEngine']): Promise<BrowserTabState> {
     if (this.disposed) throw new Error('浏览器服务已关闭')
     const owner = this.getWindow()
     if (!owner || owner.isDestroyed()) throw new Error('编辑器窗口尚未就绪')
@@ -165,7 +172,8 @@ export class BrowserService {
       spellcheck: false, backgroundThrottling: false, safeDialogs: true
     } })
     const entry: BrowserEntry = {
-      owner, view, visible: false, bounds: { x: 0, y: 0, width: 800, height: 600 }, emulationScale: 1, console: [],
+      owner, view, pendingEngine: !context && pendingEngine ? structuredClone(pendingEngine) : undefined,
+      visible: false, bounds: { x: 0, y: 0, width: 800, height: 600 }, emulationScale: 1, console: [],
       network: new BrowserNetworkCollector(async (method, params) => { await this.ensureInitialized(entry); await this.debugger(entry); return this.command(entry, method, params) }),
       networkInterrupted: false, initialization: Promise.resolve(), initializationState: 'starting', navigationVersion: 0, closed: new AbortController(), refs: new Map(),
       queue: Promise.resolve(), logId: 0, visibilityWaiters: new Map(),
@@ -264,8 +272,18 @@ export class BrowserService {
   bindContext(tabId: string, context: BrowserContext): BrowserTabState {
     const entry = this.entry(tabId)
     entry.state.context = validateContext(context)
+    entry.pendingEngine = undefined
     this.changed(entry)
     return this.state(entry)
+  }
+
+  /** Session startup can finish after the user opens a page; existing ownership is never reassigned. */
+  adoptUnboundTabs(context: BrowserContext, engine: BrowserConnectInput['expectedEngine']): void {
+    if (!this.settings.get().aiEnabled) return
+    validateContext(context)
+    for (const entry of this.tabs.values()) {
+      if (!entry.state.context && pendingBrowserEngineMatches(entry.pendingEngine, engine)) this.bindContext(entry.state.tabId, context)
+    }
   }
 
   async clearData(): Promise<void> {
@@ -281,8 +299,11 @@ export class BrowserService {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    this.inputQueue.dispose()
     for (const id of [...this.tabs.keys()]) this.close(id)
   }
+
+  whenInputIdle(): Promise<void> { return this.inputQueue.whenIdle() }
 
   async read(tabId: string, kind: BrowserReadKind): Promise<BrowserToolResult> {
     try { return { success: true, output: await this.readEntry(this.entry(tabId), kind) } }
@@ -310,42 +331,68 @@ export class BrowserService {
     return entry.networkInterrupted ? ['网络捕获曾暂停；暂停期间的请求可能未被采集'] : []
   }
 
-  async execute(request: BrowserToolRequest, context: BrowserContext, signal?: AbortSignal): Promise<BrowserToolResult> {
+  async execute(request: BrowserToolRequest, context: BrowserContext, signal?: AbortSignal,
+    owner?: { execution: Readonly<BrowserExecutionIdentity>; requestId: string }): Promise<BrowserToolResult> {
+    let dispatched = false
+    const metadata = (success: boolean): NonNullable<BrowserToolResult['metadata']> => ({
+      code: success ? dispatched ? 'BROWSER_OPERATION_COMPLETE' : 'BROWSER_OBSERVATION_COMPLETE' : dispatched ? 'BROWSER_OPERATION_UNCONFIRMED' : 'BROWSER_OPERATION_NOT_PERFORMED',
+      operationPerformed: success ? dispatched : dispatched ? 'unknown' : false
+    })
     try {
       const assertConnection = (): void => {
         if (signal?.aborted) throw new Error('浏览器工具连接已切换，当前操作已取消')
       }
       assertConnection()
-      validateContext(context)
+      context = Object.freeze(validateContext(context))
+      if (owner) owner = { execution: Object.freeze({ ...owner.execution }), requestId: owner.requestId }
+      if (owner && (owner.execution.rootSessionId !== context.sessionId || !owner.requestId)) throw new Error('浏览器任务身份与当前页面归属不一致')
       if (!this.settings.get().aiEnabled) throw new Error('内置浏览器的 AI 操作已在设置中关闭')
       if (!request || typeof request !== 'object') throw new Error('浏览器工具请求无效')
-      if (request.action === 'tabs') return { success: true, output: this.list().filter((tab) => contextsMatch(tab.context, context)) }
+      request = structuredClone(request)
+      if (request.action === 'tabs') return { success: true, output: this.list().filter((tab) => contextsMatch(tab.context, context)), metadata: metadata(true) }
       if (request.action === 'open') {
+        dispatched = true
         const tab = await this.create({ url: request.url, context })
         assertConnection()
-        return tab.error ? { success: false, output: tab, error: tab.error } : { success: true, output: tab }
+        return tab.error ? { success: false, output: tab, error: tab.error, metadata: metadata(false) } : { success: true, output: tab, metadata: metadata(true) }
       }
       if (!request.tabId) throw new Error('必须指定 browser_open 或 browser_tabs 返回的 tabId')
       const entry = this.entry(request.tabId)
-      if (!contextsMatch(entry.state.context, context)) throw new Error('这个浏览器标签属于其他会话或引擎，请在当前会话重新打开')
+      if (!contextsMatch(entry.state.context, context)) throw new Error('这个浏览器标签尚未添加到当前会话，请让用户在标签右键菜单中选择“添加到当前会话”，无需重新打开网页')
       const assertActive = (): void => {
         assertConnection()
         if (!this.settings.get().aiEnabled) throw new Error('内置浏览器的 AI 操作已在设置中关闭')
         if (!contextsMatch(entry.state.context, context)) throw new Error('浏览器标签已交给其他会话，当前操作已取消')
       }
-      const run = async (): Promise<unknown> => {
+      const run = async (lease?: BrowserInputLease): Promise<unknown> => {
         this.entry(entry.state.tabId)
         assertActive()
         // Closing addresses the owned tab, not an element in its current document.
         if (request.action !== 'close' && request.navigationId !== undefined && request.navigationId !== entry.state.navigationId) throw new Error('页面已经变化，请重新读取快照后操作')
-        return this.executeEntry(entry, request, assertActive, signal)
+        const operationSignal = lease?.signal ?? signal
+        const assertOperation = (): void => {
+          assertActive()
+          if (operationSignal?.aborted) throw operationSignal.reason ?? new Error('浏览器操作已取消')
+        }
+        const markDispatch = (): void => { assertOperation(); lease?.markInputDispatched(); dispatched = true }
+        return this.executeEntry(entry, request, assertOperation, operationSignal, markDispatch)
       }
-      const task = entry.queue.then(run, run)
+      const task = entry.queue.then(() => {
+        // Reads and waits do not seize the window. Inputs on different roots
+        // share this window's fair queue through their exact admitted identity.
+        if (!['click', 'fill', 'press_key', 'scroll'].includes(request.action)) return run()
+        return this.inputQueue.run({ signal, owner: { engineId: context.engineId, rootSessionId: context.sessionId,
+          runId: owner?.execution.rootRunId ?? `legacy:${context.sessionId}`, requestId: owner?.requestId ?? randomUUID() } }, run)
+      })
       entry.queue = task.catch(() => undefined)
       const output = await task
       assertActive()
-      return { success: true, output }
-    } catch (error) { return { success: false, error: browserError(error) } }
+      return { success: true, output, metadata: metadata(true) }
+    } catch (error) {
+      return { success: false, error: browserError(error), metadata: error instanceof BrowserInputQueueError
+        ? { code: error.operationPerformed === false ? 'BROWSER_INPUT_NOT_PERFORMED' : 'BROWSER_INPUT_UNCONFIRMED', operationPerformed: error.operationPerformed }
+        : metadata(false) }
+    }
   }
 
   private entry(tabId: string): BrowserEntry {
@@ -435,7 +482,7 @@ export class BrowserService {
         }
         else this.action({ tabId: entry.state.tabId, action: 'reload' }).catch((error: unknown) => this.log(entry, 'error', browserError(error)))
       } else if (key === 't') {
-        this.create({ context: entry.state.context }).then((tab) => {
+        this.create({ context: entry.state.context }, entry.pendingEngine).then((tab) => {
           this.focusOwner(entry)
           this.emit({ type: 'focus-address', tabId: tab.tabId })
         }).catch((error: unknown) => this.log(entry, 'error', browserError(error)))
@@ -464,7 +511,7 @@ export class BrowserService {
       // Keep popup ownership explicit, including the AI session that opened the parent.
       try {
         const target = normalizeBrowserUrl(url)
-        this.create({ url: target, context: entry.state.context }).catch((error: unknown) => this.log(entry, 'error', browserError(error)))
+        this.create({ url: target, context: entry.state.context }, entry.pendingEngine).catch((error: unknown) => this.log(entry, 'error', browserError(error)))
       } catch (error) { this.log(entry, 'warning', browserError(error)) }
       return { action: 'deny' }
     })
@@ -777,7 +824,7 @@ export class BrowserService {
     return { tab: this.state(entry), dataUrl: `data:image/png;base64,${png.toString('base64')}`, mimeType: 'image/png', filename: `browser-${entry.state.tabId}.png`, size: png.byteLength, width: size.width, height: size.height, viewport }
   }
 
-  private async executeEntry(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal): Promise<unknown> {
+  private async executeEntry(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal, markDispatch = (): void => {}): Promise<unknown> {
     if (!['navigate', 'close', 'network', 'network_detail', 'console'].includes(request.action)) {
       await this.ensureInitialized(entry)
       assertActive()
@@ -786,17 +833,22 @@ export class BrowserService {
       case 'snapshot': case 'screenshot': case 'console': return this.readEntry(entry, request.action)
       case 'network': return this.network(entry.state.tabId, request.query)
       case 'network_detail': return this.networkRequest(entry.state.tabId, request.requestId ?? '', { bodyTarget: request.bodyTarget, bodyOffset: request.bodyOffset, bodyLimit: request.bodyLimit })
-      case 'close': this.close(entry.state.tabId); return { tabId: entry.state.tabId, closed: true }
-      case 'navigate': if (!request.url) throw new Error('请提供网页地址'); await this.navigate(entry, request.url); return this.snapshot(entry)
-      case 'viewport': entry.state.viewport = validateViewport(request.viewport ?? null); await this.applyViewport(entry); this.changed(entry); return this.snapshot(entry)
+      case 'close': markDispatch(); this.close(entry.state.tabId); return { tabId: entry.state.tabId, closed: true }
+      case 'navigate': if (!request.url) throw new Error('请提供网页地址'); markDispatch(); await this.navigate(entry, request.url); return this.snapshot(entry)
+      case 'viewport': {
+        const viewport = validateViewport(request.viewport ?? null)
+        markDispatch()
+        entry.state.viewport = viewport
+        await this.applyViewport(entry); this.changed(entry); return this.snapshot(entry)
+      }
       case 'click': {
-        const interaction = await this.click(entry, request, assertActive, signal)
+        const interaction = await this.click(entry, request, assertActive, signal, markDispatch)
         return { ...await this.postActionSnapshot(entry, assertActive, signal), interaction }
       }
-      case 'fill': await this.fill(entry, request, assertActive, signal); return this.postActionSnapshot(entry, assertActive, signal)
-      case 'press_key': await this.pressKey(entry, request.key, assertActive, signal); return this.postActionSnapshot(entry, assertActive, signal)
-      case 'scroll': await this.scroll(entry, request, assertActive, signal); return this.snapshot(entry)
-      case 'wait': return this.waitFor(entry, request, assertActive)
+      case 'fill': await this.fill(entry, request, assertActive, signal, markDispatch); return this.postActionSnapshot(entry, assertActive, signal)
+      case 'press_key': await this.pressKey(entry, request.key, assertActive, signal, markDispatch); return this.postActionSnapshot(entry, assertActive, signal)
+      case 'scroll': await this.scroll(entry, request, assertActive, signal, markDispatch); return this.snapshot(entry)
+      case 'wait': return this.waitFor(entry, request, assertActive, signal)
       default: throw new Error('未知浏览器工具操作')
     }
   }
@@ -930,7 +982,7 @@ export class BrowserService {
     } finally { this.command(entry, 'Runtime.releaseObject', { objectId }).catch(() => undefined) }
   }
 
-  private async click(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal): Promise<BrowserClickInteraction> {
+  private async click(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal, markDispatch = (): void => {}): Promise<BrowserClickInteraction> {
     const navigationId = entry.state.navigationId
     await this.focus(entry, assertActive, signal)
     this.assertInputVisible(entry, assertActive)
@@ -939,6 +991,7 @@ export class BrowserService {
       const objectId = await this.elementObject(entry, request)
       try {
         this.assertInputVisible(entry, assertActive)
+        markDispatch()
         capture = await this.command<RuntimeResult<unknown>>(entry, 'Runtime.callFunctionOn', { objectId, returnByValue: false, functionDeclaration: `function(){
           if (!(this instanceof Element) || !this.isConnected) throw new Error('元素已离开页面');
           if (this.matches(':disabled,[aria-disabled="true"]')) throw new Error('元素已禁用');
@@ -994,17 +1047,19 @@ export class BrowserService {
       // Electron's device-emulation fit scale is outside CDP's CSS coordinate conversion.
       // Apply it only to dispatch; saved evidence stays in the page's CSS coordinate space.
       const x = interaction.x * entry.emulationScale, y = interaction.y * entry.emulationScale
+      markDispatch()
       await this.command(entry, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 })
       await this.command(entry, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 })
       return interaction
     } finally { this.command(entry, 'Runtime.releaseObject', { objectId }).catch(() => undefined) }
   }
 
-  private async fill(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal): Promise<void> {
+  private async fill(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal, markDispatch = (): void => {}): Promise<void> {
     const navigationId = entry.state.navigationId
     if (typeof request.text !== 'string' || request.text.length > 100000) throw new Error('输入内容无效或过长')
     await this.focus(entry, assertActive, signal)
     this.assertInputVisible(entry, assertActive)
+    markDispatch()
     await this.withElement(entry, request, `function(){
       if (!(this instanceof HTMLElement) || !this.isConnected) throw new Error('元素已离开页面');
       if (this.matches(':disabled,[readonly],[aria-disabled="true"]')) throw new Error('输入框不可编辑');
@@ -1020,7 +1075,7 @@ export class BrowserService {
     await this.command(entry, 'Input.insertText', { text: request.text })
   }
 
-  private async pressKey(entry: BrowserEntry, key: string | undefined, assertActive: () => void, signal?: AbortSignal): Promise<void> {
+  private async pressKey(entry: BrowserEntry, key: string | undefined, assertActive: () => void, signal?: AbortSignal, markDispatch = (): void => {}): Promise<void> {
     const navigationId = entry.state.navigationId
     if (!key || key.length > 80) throw new Error('按键无效')
     await this.focus(entry, assertActive, signal)
@@ -1045,11 +1100,12 @@ export class BrowserService {
     const input = { key: keyValue, code, windowsVirtualKeyCode, modifiers }
     this.assertNavigation(entry, navigationId)
     this.assertInputVisible(entry, assertActive)
+    markDispatch()
     await this.command(entry, 'Input.dispatchKeyEvent', { type: 'keyDown', ...input, ...(raw === 'Enter' ? { text: '\r' } : !modifiers && keyValue.length === 1 ? { text: keyValue } : {}) })
     await this.command(entry, 'Input.dispatchKeyEvent', { type: 'keyUp', ...input })
   }
 
-  private async scroll(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal): Promise<void> {
+  private async scroll(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal, markDispatch = (): void => {}): Promise<void> {
     const navigationId = entry.state.navigationId
     await this.focus(entry, assertActive, signal)
     this.assertInputVisible(entry, assertActive)
@@ -1057,6 +1113,7 @@ export class BrowserService {
     const deltaY = request.deltaY ?? 600
     if (![deltaX, deltaY].every((value) => Number.isFinite(value) && Math.abs(value) <= 10000)) throw new Error('滚动距离无效')
     this.assertNavigation(entry, navigationId)
+    markDispatch()
     if (request.ref || request.selector) {
       await this.withElement(entry, request, `function(){this.scrollBy({left:${deltaX},top:${deltaY},behavior:'instant'});return true}`, () => this.assertInputVisible(entry, assertActive))
     } else {
@@ -1066,17 +1123,24 @@ export class BrowserService {
     }
   }
 
-  private async waitFor(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void): Promise<BrowserSnapshot> {
+  private async waitFor(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal): Promise<BrowserSnapshot> {
     if (!request.selector && !request.text) throw new Error('等待需要 selector 或 text 条件')
     if (request.selector && request.selector.length > 2000 || request.text && request.text.length > 4000) throw new Error('等待条件过长')
     const timeout = duration(request.timeoutMs)
     const deadline = Date.now() + timeout
-    while (Date.now() < deadline) {
+    const budget: BrowserReadBudget = { deadline, assertActive, signal }
+    while (Date.now() < deadline || timeout === Number.POSITIVE_INFINITY) {
       this.entry(entry.state.tabId)
       assertActive()
-      const matched = await this.evaluate<boolean>(entry, `(()=>{${request.selector ? `const element=document.querySelector(${JSON.stringify(request.selector)});if(!element||!element.getClientRects().length)return false;` : ''}${request.text ? `if(!(document.body?.innerText||'').includes(${JSON.stringify(request.text)}))return false;` : ''}return true})()`)
-      if (matched) return this.snapshot(entry)
-      await new Promise<void>((resolve) => setTimeout(resolve, 100))
+      const matched = await this.evaluate<boolean>(entry, `(()=>{${request.selector ? `const element=document.querySelector(${JSON.stringify(request.selector)});if(!element||!element.getClientRects().length)return false;` : ''}${request.text ? `if(!(document.body?.innerText||'').includes(${JSON.stringify(request.text)}))return false;` : ''}return true})()`, budget)
+      if (matched) return this.snapshot(entry, budget)
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve() }, 100)
+        const abort = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(new Error('浏览器工具连接已切换，当前操作已取消')) }
+        if (signal?.aborted) { abort(); return }
+        signal?.addEventListener('abort', abort, { once: true })
+        timer.unref?.()
+      })
     }
     throw new Error(`等待页面条件超时 (${timeout}ms)`)
   }

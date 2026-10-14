@@ -97,6 +97,14 @@ export interface BrowserToolResult {
   success: boolean
   output?: unknown
   error?: string
+  metadata?: { code: string; operationPerformed: boolean | 'unknown' }
+}
+
+/** Negotiated host v2 identity travels outside model-controlled tool arguments. */
+export interface BrowserExecutionIdentity {
+  rootSessionId: string
+  rootRunId: string
+  ownerRunId: string
 }
 
 export interface BrowserConsoleEntry {

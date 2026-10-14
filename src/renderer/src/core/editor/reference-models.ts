@@ -3,7 +3,7 @@ import { getDocument } from './editor-store'
 import { fileIdentity } from './file-identity'
 import { languageForPath, monaco, peekModel } from './monaco-setup'
 import { ensureWorkspaceModel } from './monaco-workspace'
-import { readFile } from '../workspace/fs-client'
+import { assertSessionFileTarget, readFile, type SessionFileTarget } from '../workspace/fs-client'
 import { toast } from '../toast'
 
 interface PreviewModel {
@@ -52,21 +52,23 @@ function trackEditor(editor: monaco.editor.ICodeEditor): void {
 for (const editor of monaco.editor.getEditors()) trackEditor(editor)
 monaco.editor.onDidCreateEditor(trackEditor)
 
-async function load(resource: monaco.Uri): Promise<monaco.editor.ITextModel | null> {
+async function load(resource: monaco.Uri, target?: SessionFileTarget): Promise<monaco.editor.ITextModel | null> {
   if (resource.scheme !== 'file') return null
+  if (target) assertSessionFileTarget(target)
   const key = fileIdentity(resource.fsPath)
+  if (getDocument(resource.fsPath)) return ensureWorkspaceModel(resource, target)
   const existing = peekModel(resource.fsPath)
   if (existing) return existing
-  if (getDocument(resource.fsPath)) return ensureWorkspaceModel(resource)
-  const waiting = pending.get(key)
+  const pendingKey = JSON.stringify([key, target?.key ?? 'code'])
+  const waiting = pending.get(pendingKey)
   if (waiting) return waiting
   const loadingEpoch = epoch
   const loading = (async () => {
-    const file = await readFile(resource.fsPath)
+    const file = await readFile(resource.fsPath, target)
     if (loadingEpoch !== epoch || file.isBinary || file.truncated || file.tooLarge) return null
     const nowOpen = peekModel(resource.fsPath)
     if (nowOpen) return nowOpen
-    if (getDocument(resource.fsPath)) return ensureWorkspaceModel(resource)
+    if (getDocument(resource.fsPath)) return ensureWorkspaceModel(resource, target)
     const model = monaco.editor.createModel(
       file.content,
       languageForPath(resource.fsPath),
@@ -75,9 +77,9 @@ async function load(resource: monaco.Uri): Promise<monaco.editor.ITextModel | nu
     previews.set(key, { model, owners: new Set() })
     return model
   })().catch(() => null)
-  pending.set(key, loading)
+  pending.set(pendingKey, loading)
   void loading.finally(() => {
-    if (pending.get(key) === loading) pending.delete(key)
+    if (pending.get(pendingKey) === loading) pending.delete(pendingKey)
   })
   return loading
 }
@@ -89,6 +91,7 @@ export async function prepareReferenceLocations(
   token: monaco.CancellationToken
 ): Promise<monaco.languages.Location[]> {
   const active = getActiveEditor()
+  const target = getDocument(source.uri.fsPath)?.sessionFileTarget
   const editor =
     active?.getModel() === source
       ? active
@@ -114,7 +117,7 @@ export async function prepareReferenceLocations(
     Array.from({ length: Math.min(resources.length, 4) }, async () => {
       while (index < resources.length && current()) {
         const resource = resources[index++]
-        const model = await load(resource)
+        const model = await load(resource, target).catch(() => null)
         if (!model || !current()) continue
         const key = fileIdentity(resource.fsPath)
         loaded.set(key, model)

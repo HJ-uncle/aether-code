@@ -110,11 +110,16 @@ export interface GitBranchInfo {
 // ==================== 接口返回 ====================
 
 /** 失败归类：渲染层据此决定给用户哪条出路，不依赖中文文案做判断 */
-export type GitErrorCode = 'ssh-passphrase' | 'divergent' | 'clone-cancelled'
+export type GitErrorCode = 'ssh-passphrase' | 'divergent' | 'clone-cancelled' | 'git-busy' | 'git-orphan' | 'git-quarantined'
+export interface GitLeaseState { busy: boolean; recoverable: boolean; generation?: string; reason?: string }
+export interface GitLeaseResult extends GitResult { lease?: GitLeaseState }
 
 /** 所有 Git 接口的公共返回字段 */
+export type GitExecutionDisposition = 'not_started' | 'may_have_effects'
 export interface GitResult {
   success: boolean
+  /** A failed admission can be retried; verified closure/recovery never proves rollback. */
+  executionDisposition?: GitExecutionDisposition
   error?: string
   /** 仅失败时可能有值 */
   errorCode?: GitErrorCode

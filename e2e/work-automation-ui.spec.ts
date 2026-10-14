@@ -38,6 +38,9 @@ const server = createServer((request, response) => {
       projection.forEach((payload, index) => response.write(`id: ${run.runId}:${index + 1}\ndata: ${JSON.stringify(payload)}\n\n`))
       response.end('data: [DONE]\n\n'); return
     }
+    if (path === '/api/v1/subagent/capabilities') { response.writeHead(404, { 'content-type': 'application/json' }).end(JSON.stringify({ code: 404, message: 'Fixture has legacy subagent events' })); return }
+    if (path === '/api/v1/cron/capabilities') { response.writeHead(404, { 'content-type': 'application/json' }).end(JSON.stringify({ code: 404, message: 'Legacy automation protocol' })); return }
+    if (/^\/api\/v1\/sessions\/[^/]+\/binding$/.test(path)) { response.setHeader('content-type', 'application/json'); response.end(envelope({ started: true, agentId: null, agent: null })); return }
     if (path === '/api/v1/cron' && method === 'GET') { response.setHeader('content-type', 'application/json'); response.end(envelope([...jobs.values()])); return }
     if (path.startsWith('/api/v1/cron') && method !== 'GET') {
       mutations.push({ method, path, body })
@@ -70,7 +73,16 @@ const server = createServer((request, response) => {
   })().catch(error => { errors.push(String(error)); if (!response.headersSent) response.writeHead(500); response.end(String(error)) })
 })
 const work = () => page.locator('.work-view')
-const automation = () => work().locator('.work-automation')
+const automation = () => work().locator('.automations-view')
+const editor = () => page.getByRole('dialog', { name: /^(新建|编辑)自动化$/, exact: true })
+async function expandAdvanced(): Promise<void> {
+  const disclosure = editor().locator('.automation-advanced')
+  if (!await disclosure.evaluate(element => (element as HTMLDetailsElement).open)) await disclosure.locator('summary').click()
+}
+async function openEditor(name: string): Promise<void> {
+  await automation().getByRole('button', { name: `编辑自动化 ${name}`, exact: true }).click()
+  await expandAdvanced()
+}
 async function startTask(prompt: string): Promise<string> {
   await work().getByRole('button', { name: '新任务', exact: true }).click()
   await work().getByRole('textbox', { name: '任务目标', exact: true }).fill(prompt)
@@ -80,7 +92,11 @@ async function startTask(prompt: string): Promise<string> {
   await expect(work().getByRole('region', { name: '协作对话', exact: true })).toContainText(`任务已就绪：${prompt}`)
   return String(chatRequests[count].sessionId)
 }
-async function openAutomations(): Promise<void> { await work().locator('.work-navigation').getByRole('button', { name: '自动化', exact: true }).click() }
+async function openAutomations(): Promise<void> {
+  const navigation = work().locator('.work-navigation').getByRole('button', { name: '自动化', exact: true })
+  if (!await navigation.isVisible()) await work().getByRole('button', { name: '展开 Work 导航', exact: true }).click()
+  await navigation.click()
+}
 
 test.describe.serial('Work 自动化管理', () => {
   test.beforeAll(async () => {
@@ -89,7 +105,7 @@ test.describe.serial('Work 自动化管理', () => {
     if (!address || typeof address === 'string') throw new Error('Missing automation fixture port')
     mkdirSync(fixtureRoot, { recursive: true }); fixture = mkdtempSync(join(fixtureRoot, 'work-automation-'))
     writeFileSync(join(fixture, 'settings.json'), JSON.stringify({ engineMode: 'remote', remoteBaseUrl: `http://127.0.0.1:${address.port}`, autoStartEngine: true, remoteWorkspaceRoot: '/remote/code-project', lastSessionId: '', lastModelId: modelId, thinkingMode: 'off', appearance: 'dark', lastFolder: '' }))
-    app = await electron.launch({ args: ['.', `--user-data-dir=${fixture}`], cwd: root, env: { ...process.env, AETHER_IDE_REMOTE_INSTANCE_TOKEN: token, AETHER_GLOBAL_DIR: join(fixture, 'global') } })
+    app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || '.', `--user-data-dir=${fixture}`], cwd: root, env: { ...process.env, AETHER_IDE_REMOTE_INSTANCE_TOKEN: token, AETHER_GLOBAL_DIR: join(fixture, 'global') } })
     health = await monitorElectronHealth(app, 'work-automation', [token])
     page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message))
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 900))
@@ -111,18 +127,19 @@ test.describe.serial('Work 自动化管理', () => {
     originalSession = await startTask('AUTOMATION_ORIGINAL_SESSION')
     await openAutomations()
     await automation().getByRole('button', { name: '新建自动化', exact: true }).click()
-    await expect(automation().getByRole('button', { name: '自动化最长运行时间', exact: true })).toHaveText('30 分钟')
-    await automation().getByLabel('名称', { exact: true }).fill('每日检查')
-    await automation().getByLabel('时间表达式', { exact: true }).fill('*/15 * * * *')
-    await automation().getByRole('textbox', { name: '每次运行的目标', exact: true }).fill('检查构建与测试结果，记录最近一次结论。')
-    await automation().getByRole('button', { name: '自动化思考档位', exact: true }).click()
+    await expandAdvanced()
+    await expect(editor().getByRole('button', { name: '自动化最长运行时间', exact: true })).toHaveText('不限')
+    await editor().getByLabel('名称', { exact: true }).fill('每日检查')
+    await editor().getByLabel('时间表达式', { exact: true }).fill('*/15 * * * *')
+    await editor().getByRole('textbox', { name: '每次运行的目标', exact: true }).fill('检查构建与测试结果，记录最近一次结论。')
+    await editor().getByRole('button', { name: '自动化思考档位', exact: true }).click()
     await page.getByRole('menuitem', { name: 'Off · 关闭思考', exact: true }).click()
-    await automation().getByRole('button', { name: '保存自动化', exact: true }).click()
+    await editor().getByRole('button', { name: '保存自动化', exact: true }).click()
     await expect.poll(() => jobs.size).toBe(1)
     jobId = [...jobs.keys()][0]
-    expect(mutations.at(-1)).toMatchObject({ method: 'POST', path: '/api/v1/cron', body: { name: '每日检查', cronExpr: '*/15 * * * *', sessionId: originalSession, thinkingMode: false, timeoutSeconds: 1800, enabled: true } })
-    await expect(automation().locator('.work-automation-row')).toContainText('思考 Off')
-    await expect(automation().locator('.work-automation-row')).toContainText('单次最长 30 分钟')
+    expect(mutations.at(-1)).toMatchObject({ method: 'POST', path: '/api/v1/cron', body: { name: '每日检查', cronExpr: '*/15 * * * *', sessionId: originalSession, thinkingMode: false, timeoutSeconds: null, enabled: true } })
+    expect(jobs.get(jobId)?.thinkingMode).toBe(false)
+    await expect(automation().locator('.automation-list-row')).toContainText('单次最长 不限')
     await expect(automation().locator('form')).toHaveCount(0)
   })
 
@@ -132,18 +149,18 @@ test.describe.serial('Work 自动化管理', () => {
     jobs.set(jobId, { ...jobs.get(jobId)!, lastRunAt: Date.now() - 60_000 })
     await openAutomations()
     await expect(automation()).toContainText('最近运行')
-    await automation().getByRole('button', { name: '编辑自动化 每日检查', exact: true }).click()
-    await expect(automation().getByRole('button', { name: '自动化思考档位', exact: true })).toHaveText('Off · 关闭思考')
-    await automation().getByLabel('名称', { exact: true }).fill('持续检查')
-    await automation().getByLabel('时间表达式', { exact: true }).fill('*/30 * * * *')
-    await automation().getByRole('button', { name: '自动化思考档位', exact: true }).click()
-    await page.getByRole('menuitem', { name: '自动 · 使用模型默认', exact: true }).click()
-    await automation().getByRole('button', { name: '保存自动化', exact: true }).click()
+    await openEditor('每日检查')
+    await expect(editor().getByRole('button', { name: '自动化思考档位', exact: true })).toHaveText('Off · 关闭思考')
+    await editor().getByLabel('名称', { exact: true }).fill('持续检查')
+    await editor().getByLabel('时间表达式', { exact: true }).fill('*/30 * * * *')
+    await editor().getByRole('button', { name: '自动化思考档位', exact: true }).click()
+    await page.getByRole('menuitem', { name: '自动 · 模型默认', exact: true }).click()
+    await editor().getByRole('button', { name: '保存自动化', exact: true }).click()
     await expect.poll(() => jobs.get(jobId)?.name).toBe('持续检查')
     expect(mutations.at(-1)).toMatchObject({ method: 'PUT', path: `/api/v1/cron/${jobId}`, body: { name: '持续检查', sessionId: originalSession, thinkingMode: null, cronExpr: '*/30 * * * *' } })
     expect(mutations.at(-1)!.body).not.toHaveProperty('enabled')
     expect(mutations.at(-1)!.body).not.toHaveProperty('timeoutSeconds')
-    expect(jobs.get(jobId)?.timeoutSeconds).toBe(1800)
+    expect(jobs.get(jobId)?.timeoutSeconds).toBeNull()
     for (const appearance of ['dark', 'light'] as const) {
       await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
       const settings = page.getByRole('dialog', { name: '设置', exact: true })
@@ -152,72 +169,72 @@ test.describe.serial('Work 自动化管理', () => {
       await expect(page.locator('html')).toHaveAttribute('data-appearance', appearance)
       await settings.getByRole('button', { name: '关闭', exact: true }).click()
       await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(940, 640))
-      await automation().getByRole('button', { name: '编辑自动化 持续检查', exact: true }).click()
-      await expect(automation().getByRole('button', { name: '自动化思考档位', exact: true })).toHaveText('自动 · 使用模型默认')
-      const save = automation().getByRole('button', { name: '保存自动化', exact: true })
+      await openEditor('持续检查')
+      await expect(editor().getByRole('button', { name: '自动化思考档位', exact: true })).toHaveText('自动 · 模型默认')
+      const save = editor().getByRole('button', { name: '保存自动化', exact: true })
       await save.scrollIntoViewIfNeeded()
       await expect(save).toBeVisible()
       expect(await automation().evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(2)
       await page.screenshot({ path: testInfo.outputPath(`work-automation-${appearance}-940.png`), animations: 'disabled' })
-      await automation().getByRole('button', { name: '取消', exact: true }).click()
+      await editor().getByRole('button', { name: '取消', exact: true }).click()
     }
     await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 900))
   })
 
   test('最长运行时间支持预设和精确秒数，非法输入不发送且修改仍保留会话', async () => {
-    await automation().getByRole('button', { name: '编辑自动化 持续检查', exact: true }).click()
-    const duration = automation().getByRole('button', { name: '自动化最长运行时间', exact: true })
+    await openEditor('持续检查')
+    const duration = editor().getByRole('button', { name: '自动化最长运行时间', exact: true })
     await duration.click()
-    await expect(page.getByRole('menuitem')).toHaveText(['2 分钟', '10 分钟', '30 分钟', '60 分钟', '3 小时', '6 小时', '24 小时', '自定义时长'])
+    await expect(page.getByRole('menuitem')).toHaveText(['不限', '2 分钟', '10 分钟', '30 分钟', '60 分钟', '3 小时', '6 小时', '24 小时', '自定义时长'])
     await page.getByRole('menuitem', { name: '6 小时', exact: true }).click()
-    await expect(automation()).toContainText('运行中修改从下一次执行生效')
-    await expect(automation()).toContainText('同一自动化尚未完成时不会重复启动')
-    await automation().getByRole('button', { name: '保存自动化', exact: true }).click()
+    await expect(editor()).toContainText('修改从下一次运行生效')
+    await expect(editor()).toContainText('暂停计划不会停止当前运行')
+    await editor().getByRole('button', { name: '保存自动化', exact: true }).click()
     await expect.poll(() => jobs.get(jobId)?.timeoutSeconds).toBe(21600)
     expect(mutations.at(-1)).toMatchObject({ method: 'PUT', path: `/api/v1/cron/${jobId}`, body: { timeoutSeconds: 21600, sessionId: originalSession } })
     expect(mutations.at(-1)!.body).not.toHaveProperty('enabled')
-    await expect(automation().locator('.work-automation-row')).toContainText('单次最长 6 小时')
+    await expect(automation().locator('.automation-list-row')).toContainText('单次最长 6 小时')
 
-    await automation().getByRole('button', { name: '编辑自动化 持续检查', exact: true }).click()
+    await openEditor('持续检查')
     await expect(duration).toHaveText('6 小时')
     await duration.click()
     await page.getByRole('menuitem', { name: '自定义时长', exact: true }).click()
-    const seconds = automation().getByRole('spinbutton', { name: '自定义时长（秒）', exact: true })
+    const seconds = editor().getByRole('spinbutton', { name: '自定义时长（秒）', exact: true })
     await expect(seconds).toHaveValue('21600')
     const count = mutations.length
-    for (const value of ['', '0', '1.5', '86401']) {
+    for (const value of ['-1', '1.5']) {
       await seconds.fill(value)
       await expect(seconds).toHaveAttribute('aria-invalid', 'true')
-      await expect(automation().getByRole('button', { name: '保存自动化', exact: true })).toBeDisabled()
-      await expect(automation()).toContainText('请输入 1 至 86400 的整数秒数。')
+      await expect(editor().getByRole('button', { name: '保存自动化', exact: true })).toBeDisabled()
+      await expect(editor()).toContainText('请输入非负整数秒数，0 表示不限。')
     }
     expect(mutations).toHaveLength(count)
     await seconds.fill('125')
     await expect(seconds).toHaveAttribute('aria-invalid', 'false')
-    await automation().getByRole('button', { name: '保存自动化', exact: true }).click()
+    await editor().getByRole('button', { name: '保存自动化', exact: true }).click()
     await expect.poll(() => jobs.get(jobId)?.timeoutSeconds).toBe(125)
-    await expect(automation().locator('.work-automation-row')).toContainText('单次最长 2 分钟 5 秒')
-    await automation().getByRole('button', { name: '编辑自动化 持续检查', exact: true }).click()
+    await expect(automation().locator('.automation-list-row')).toContainText('单次最长 2 分钟 5 秒')
+    await openEditor('持续检查')
     await expect(duration).toHaveText('自定义时长')
     await expect(seconds).toHaveValue('125')
-    await automation().getByRole('textbox', { name: '每次运行的目标', exact: true }).fill('保留精确秒数，仅调整任务内容。')
-    await automation().getByRole('button', { name: '保存自动化', exact: true }).click()
+    await editor().getByRole('textbox', { name: '每次运行的目标', exact: true }).fill('保留精确秒数，仅调整任务内容。')
+    await editor().getByRole('button', { name: '保存自动化', exact: true }).click()
     await expect.poll(() => jobs.get(jobId)?.message).toBe('保留精确秒数，仅调整任务内容。')
     expect(mutations.at(-1)!.body).not.toHaveProperty('timeoutSeconds')
     expect(jobs.get(jobId)?.timeoutSeconds).toBe(125)
   })
 
-  test('旧自动化的空值和缺省时限显示2分钟，无关编辑保留原语义', async () => {
+  test('旧自动化的空值和缺省时限显示不限，无关编辑保留原语义', async () => {
     for (const legacy of [null, undefined]) {
       jobs.set(jobId, { ...jobs.get(jobId)!, timeoutSeconds: legacy })
       await work().locator('.work-navigation').getByRole('button', { name: '工作台', exact: true }).click()
       await openAutomations()
-      await expect(automation().locator('.work-automation-row')).toContainText('单次最长 2 分钟')
-      await automation().getByRole('button', { name: '编辑自动化 持续检查', exact: true }).click()
-      await expect(automation().getByRole('button', { name: '自动化最长运行时间', exact: true })).toHaveText('2 分钟')
+      await expect(automation().locator('.automation-list-row')).toContainText('单次最长 不限')
+      await openEditor('持续检查')
+      await expect(editor().getByRole('button', { name: '自动化最长运行时间', exact: true })).toHaveText('不限')
       const message = `保留旧时限语义 ${legacy === null ? 'null' : 'undefined'}`
-      await automation().getByRole('textbox', { name: '每次运行的目标', exact: true }).fill(message)
-      await automation().getByRole('button', { name: '保存自动化', exact: true }).click()
+      await editor().getByRole('textbox', { name: '每次运行的目标', exact: true }).fill(message)
+      await editor().getByRole('button', { name: '保存自动化', exact: true }).click()
       await expect.poll(() => jobs.get(jobId)?.message).toBe(message)
       expect(mutations.at(-1)!.body).not.toHaveProperty('timeoutSeconds')
       expect(mutations.at(-1)!.body).not.toHaveProperty('enabled')
@@ -227,14 +244,18 @@ test.describe.serial('Work 自动化管理', () => {
   })
 
   test('暂停、启用和删除均变更真实记录，删除后显示空状态', async () => {
-    await automation().getByRole('button', { name: '暂停', exact: true }).click()
+    await automation().getByRole('button', { name: '自动化 持续检查 更多操作', exact: true }).click()
+    await page.getByRole('menuitem', { name: '暂停未来触发', exact: true }).click()
     await expect.poll(() => jobs.get(jobId)?.enabled).toBe(false)
     expect(mutations.at(-1)).toMatchObject({ method: 'POST', path: `/api/v1/cron/${jobId}/disable` })
     await expect(automation()).toContainText('已暂停')
-    await automation().getByRole('button', { name: '启用', exact: true }).click()
+    await automation().getByRole('button', { name: '自动化 持续检查 更多操作', exact: true }).click()
+    await page.getByRole('menuitem', { name: '恢复计划', exact: true }).click()
     await expect.poll(() => jobs.get(jobId)?.enabled).toBe(true)
     expect(mutations.at(-1)).toMatchObject({ method: 'POST', path: `/api/v1/cron/${jobId}/enable` })
-    await automation().getByRole('button', { name: '删除自动化 持续检查', exact: true }).click()
+    await automation().getByRole('button', { name: '自动化 持续检查 更多操作', exact: true }).click()
+    await page.getByRole('menuitem', { name: '删除计划', exact: true }).click()
+    await page.getByRole('dialog', { name: '删除自动化', exact: true }).getByRole('button', { name: '删除计划', exact: true }).click()
     await expect.poll(() => jobs.size).toBe(0)
     expect(mutations.at(-1)).toMatchObject({ method: 'DELETE', path: `/api/v1/cron/${jobId}` })
     await expect(automation()).toContainText('还没有自动化')

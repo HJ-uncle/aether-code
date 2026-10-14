@@ -26,10 +26,14 @@ export function nativeEventFailed(event: NativeEvent): boolean {
 export async function monitorElectronHealth(app: ElectronApplication, label: string, secrets: readonly string[] = []) {
   const child = app.process(), events: NativeEvent[] = [], failures: string[] = []
   const sensitive = [...secrets, ...Object.entries(process.env).filter(([name]) => /TOKEN|SECRET|PASSWORD|API_?KEY/i.test(name)).flatMap(([, value]) => value ? [value] : [])]
-  let stderrTail = '', pending = '', closing = false, exited = false
+  let stderrTail = '', pending = '', closing = false, exited = false, closed = false
   let exit: { code: number | null; signal: NodeJS.Signals | null } | null = null
+  let close: { code: number | null; signal: NodeJS.Signals | null } | null = null
   const exitPromise = new Promise<void>(resolve => {
     child.once('exit', (code, signal) => { exited = true; exit = { code, signal }; resolve() })
+  })
+  const closePromise = new Promise<void>(resolve => {
+    child.once('close', (code, signal) => { closed = true; close = { code, signal }; resolve() })
   })
   const remember = (line: string): void => {
     const safe = redactNativeLog(line, sensitive)
@@ -66,16 +70,18 @@ export async function monitorElectronHealth(app: ElectronApplication, label: str
       expect(failures, `${label}: native crash signals`).toEqual([])
       expect(exited && !closing, `${label}: Electron exited before suite teardown`).toBe(false)
     },
-    async closeAndAssert(testInfo: TestInfo): Promise<void> {
+    async closeAndAssert(testInfo: TestInfo, requestClose: () => Promise<unknown> = () => app.close()): Promise<void> {
       closing = true
       let closeError = ''
-      try { await app.close() } catch (error) { closeError = redactNativeLog(String(error), sensitive) }
+      try { await requestClose() } catch (error) { closeError = redactNativeLog(String(error), sensitive) }
       let timer: NodeJS.Timeout | undefined
       try {
-        await Promise.race([exitPromise, new Promise<void>(resolve => { timer = setTimeout(resolve, 10_000) })])
+        // exit does not imply stdio has drained. A native fatal line can be
+        // delivered afterwards, so preserve the exact close receipt as well.
+        await Promise.race([Promise.all([exitPromise, closePromise]), new Promise<void>(resolve => { timer = setTimeout(resolve, 10_000) })])
       } finally { if (timer) clearTimeout(timer) }
       if (pending) { remember(pending); pending = '' }
-      const report = { label, hostPid, launcherPid: child.pid, exited, exit, closeError, failures, events, stderrTail }
+      const report = { label, hostPid, launcherPid: child.pid, exited, exit, closed, close, closeError, failures, events, stderrTail }
       const reportPath = testInfo.outputPath(`electron-health-${label}.json`)
       mkdirSync(dirname(reportPath), { recursive: true })
       writeFileSync(reportPath, JSON.stringify(report, null, 2))
@@ -83,7 +89,9 @@ export async function monitorElectronHealth(app: ElectronApplication, label: str
       console.log(`ELECTRON_HEALTH ${label} hostPid=${hostPid} launcherPid=${child.pid} exit=${JSON.stringify(exit)} nativeEvents=${events.length} failures=${failures.length}`)
       expect(closeError, `${label}: Electron close error`).toBe('')
       expect(exited, `${label}: Electron process must exit`).toBe(true)
+      expect(closed, `${label}: Electron stdio must close before native log acceptance`).toBe(true)
       expect(exit, `${label}: abnormal Electron exit; inspect attached native health report`).toEqual({ code: 0, signal: null })
+      expect(close, `${label}: abnormal Electron close receipt`).toEqual({ code: 0, signal: null })
       expect(failures, `${label}: native crash signals; inspect attached native health report`).toEqual([])
     }
   }

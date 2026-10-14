@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type JSX } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react'
 import { getAppMode, useAppMode } from '@renderer/core/platform/app-mode'
 import { WorkView } from '@renderer/contrib/work/WorkView'
 import { AppSettingsView } from '@renderer/contrib/settings/AppSettingsView'
@@ -23,6 +23,7 @@ import { Resizer } from './Resizer'
 import { Sidebar } from './Sidebar'
 import { StatusBar } from './StatusBar'
 import { useLayout } from './useLayout'
+import { codePaneBudget } from './code-pane-budget'
 
 /**
  * 工作台骨架（对标 VS Code 布局）
@@ -46,10 +47,31 @@ export function Workbench(): JSX.Element {
   const layout = useLayout()
   const { settings } = useApp()
   const mode = useAppMode()
+  const bodyRef = useRef<HTMLDivElement>(null)
   const sidebarRef = useRef<HTMLDivElement>(null)
   const chatRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const [workSettingsOpen, setWorkSettingsOpen] = useState(false)
+  const [codeGeometry, setCodeGeometry] = useState({ width: Infinity, chromeWidth: 0, sidebarRendered: layout.sidebarVisible })
+  useLayoutEffect(() => {
+    const body = bodyRef.current
+    if (!body || mode !== 'code') return
+    const measure = (): void => {
+      const width = body.getBoundingClientRect().width
+      if (!width) return
+      const chromeWidth = [...body.querySelectorAll<HTMLElement>(':scope > .activity-bar, :scope > .resizer--vertical')]
+        .reduce((total, element) => total + element.getBoundingClientRect().width, 0)
+      const sidebarRendered = Boolean(layout.sidebarVisible && sidebarRef.current && getComputedStyle(sidebarRef.current).display !== 'none')
+      setCodeGeometry(previous => previous.width === width && previous.chromeWidth === chromeWidth && previous.sidebarRendered === sidebarRendered
+        ? previous : { width, chromeWidth, sidebarRendered })
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(body)
+    return () => observer.disconnect()
+  }, [mode, layout])
+  const codePanes = codePaneBudget({ ...codeGeometry, sidebarVisible: codeGeometry.sidebarRendered,
+    sidebarWidth: layout.sidebarWidth, chatPanelVisible: layout.chatPanelVisible, chatPanelWidth: layout.chatPanelWidth }, LAYOUT_LIMITS)
   useEffect(
     () =>
       subscribeSectionRequest(() => {
@@ -70,7 +92,7 @@ export function Workbench(): JSX.Element {
       <MenuBar />
       <div className="mode-deck">
         <ModeSurface mode="code" active={mode === 'code'}>
-          <div className="workbench__body">
+          <div ref={bodyRef} className="workbench__body">
             <ActivityBar />
 
             {layout.sidebarVisible ? (
@@ -78,7 +100,7 @@ export function Workbench(): JSX.Element {
                 <div
                   ref={sidebarRef}
                   className="workbench__sidebar"
-                  style={{ width: layout.sidebarWidth }}
+                  style={{ width: codePanes.sidebarWidth }}
                 >
                   <Sidebar />
                 </div>
@@ -86,9 +108,9 @@ export function Workbench(): JSX.Element {
                   orientation="vertical"
                   ariaLabel="调整侧边栏宽度"
                   targetRef={sidebarRef}
-                  size={layout.sidebarWidth}
-                  min={LAYOUT_LIMITS.sidebarMin}
-                  max={LAYOUT_LIMITS.sidebarMax}
+                  size={codePanes.sidebarWidth}
+                  min={codePanes.sidebarMin}
+                  max={codePanes.sidebarMax}
                   active={mode === 'code'}
                   onResize={(sidebarWidth) => setLayout({ sidebarWidth })}
                 />
@@ -101,7 +123,7 @@ export function Workbench(): JSX.Element {
                 <div
                   ref={chatRef}
                   className="workbench__chat workbench__chat--left"
-                  style={{ width: layout.chatPanelWidth }}
+                  style={{ width: codePanes.chatPanelWidth }}
                 >
                   <ChatPanel />
                 </div>
@@ -109,16 +131,16 @@ export function Workbench(): JSX.Element {
                   orientation="vertical"
                   ariaLabel="调整对话面板宽度"
                   targetRef={chatRef}
-                  size={layout.chatPanelWidth}
-                  min={LAYOUT_LIMITS.chatPanelMin}
-                  max={LAYOUT_LIMITS.chatPanelMax}
+                  size={codePanes.chatPanelWidth}
+                  min={codePanes.chatMin}
+                  max={codePanes.chatMax}
                   active={mode === 'code'}
                   onResize={(chatPanelWidth) => setLayout({ chatPanelWidth })}
                 />
               </>
             ) : null}
 
-            <div className="workbench__main">
+            <div className="workbench__main" style={{ minWidth: codePanes.mainMin }}>
               <EditorArea />
 
               {layout.panelVisible ? (
@@ -154,9 +176,9 @@ export function Workbench(): JSX.Element {
                   orientation="vertical"
                   ariaLabel="调整对话面板宽度"
                   targetRef={chatRef}
-                  size={layout.chatPanelWidth}
-                  min={LAYOUT_LIMITS.chatPanelMin}
-                  max={LAYOUT_LIMITS.chatPanelMax}
+                  size={codePanes.chatPanelWidth}
+                  min={codePanes.chatMin}
+                  max={codePanes.chatMax}
                   direction={-1}
                   active={mode === 'code'}
                   onResize={(chatPanelWidth) => setLayout({ chatPanelWidth })}
@@ -164,7 +186,7 @@ export function Workbench(): JSX.Element {
                 <div
                   ref={chatRef}
                   className="workbench__chat"
-                  style={{ width: layout.chatPanelWidth }}
+                  style={{ width: codePanes.chatPanelWidth }}
                 >
                   <ChatPanel />
                 </div>

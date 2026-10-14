@@ -99,7 +99,7 @@ export function applyRootRuns(messages: ChatMessage[], runs: RootRun[]): ChatMes
   return [...runs].sort((a, b) => a.seq - b.seq).reduce((result, run) => applyRootRun(result, run), messages)
 }
 
-export function finishTransport(message: ChatMessage, error?: string): ChatMessage {
+export function finishTransport(message: ChatMessage, error?: string, receivedAt = Date.now()): ChatMessage {
   if (message.run && message.run.status !== 'running') return error ? { ...message, error } : message
-  return { ...message, status: error ? 'error' : 'interrupted', error: error ?? '连接已结束，但尚未收到运行终态；请重新加载会话查看结果', endedAt: Date.now() }
+  return { ...message, status: error ? 'error' : 'interrupted', error: error ?? '连接已结束，但尚未收到运行终态；请重新加载会话查看结果', endedAt: receivedAt }
 }

@@ -4,6 +4,7 @@ import type { FsEntry } from '@shared/ipc'
 import { readDir, paths } from '@renderer/core/workspace/fs-client'
 import { fileIdentity } from '@renderer/core/editor/file-identity'
 import { openWorkspaceResource } from '@renderer/core/editor/monaco-workspace'
+import { getDocument } from '@renderer/core/editor/editor-store'
 import { monaco } from '@renderer/core/editor/monaco-setup'
 import { toast } from '@renderer/core/toast'
 import { Icon } from '@renderer/workbench/icons'
@@ -18,6 +19,7 @@ export interface EditorPathPickerProps {
 
 /** Directory crumbs browse their children; the file crumb starts with its siblings. */
 export function EditorPathPicker({ directory, workspaceRoot, currentFile, anchor, onClose }: EditorPathPickerProps): JSX.Element {
+  const target = getDocument(currentFile)?.sessionFileTarget
   const [folder, setFolder] = useState(directory)
   const [entries, setEntries] = useState<FsEntry[]>([])
   const [loading, setLoading] = useState(true)
@@ -35,13 +37,13 @@ export function EditorPathPicker({ directory, workspaceRoot, currentFile, anchor
     let cancelled = false
     setLoading(true)
     setError('')
-    void readDir(folder).then((result) => {
+    void readDir(folder, target).then((result) => {
       if (!cancelled) { setEntries(result); setLoading(false) }
     }).catch((reason: unknown) => {
       if (!cancelled) { setEntries([]); setLoading(false); setError(reason instanceof Error ? reason.message : String(reason)) }
     })
     return () => { cancelled = true }
-  }, [folder])
+  }, [folder, target])
   useEffect(() => {
     const outside = (event: MouseEvent): void => {
       if (event.target instanceof Node && !panel.current?.contains(event.target)) close.current()
@@ -63,7 +65,7 @@ export function EditorPathPicker({ directory, workspaceRoot, currentFile, anchor
     if (entry.isDirectory) browse(entry.path)
     else {
       onClose()
-      void openWorkspaceResource(monaco.Uri.file(entry.path)).catch(() => toast.error('无法打开所选文件'))
+      void openWorkspaceResource(monaco.Uri.file(entry.path), undefined, monaco.Uri.file(currentFile)).catch(() => toast.error('无法打开所选文件'))
     }
   }
   return createPortal(<div ref={panel} className="editor-path-picker" role="dialog" aria-label="浏览文件路径"

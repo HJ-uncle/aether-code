@@ -1,7 +1,7 @@
 import type { EngineSnapshot } from './ipc'
 import type { BrowserNetworkQuery, BrowserNetworkList, BrowserNetworkDetail, BrowserNetworkDetailOptions } from './browser-network'
 import type {
-  BrowserAction, BrowserBoundsInput, BrowserCreateInput, BrowserEvent,
+  BrowserAction, BrowserBoundsInput, BrowserContext, BrowserCreateInput, BrowserEvent,
   BrowserReadKind, BrowserSettings, BrowserTabState, BrowserToolResult
 } from './browser'
 
@@ -26,7 +26,7 @@ export interface BrowserApi {
   action(input: BrowserAction): Promise<BrowserTabState>
   setBounds(input: BrowserBoundsInput): Promise<void>
   close(tabId: string): Promise<void>
-  share(tabId: string): Promise<BrowserTabState>
+  share(tabId: string, expectedContext: BrowserContext): Promise<BrowserTabState>
   getSettings(): Promise<BrowserSettings>
   updateSettings(patch: Partial<BrowserSettings>): Promise<BrowserSettings>
   clearData(): Promise<void>

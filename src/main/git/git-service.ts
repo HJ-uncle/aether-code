@@ -11,10 +11,8 @@
  * - git 参数中所有用户输入（路径/分支名/提交信息）一律作为独立 argv 元素传递，
  *   不经 shell 拼接，无注入面
  */
-import { execFile } from 'node:child_process'
-import { readFile, appendFile, mkdir, rm, stat } from 'node:fs/promises'
+import { readFile, appendFile, mkdir, rm, stat, realpath } from 'node:fs/promises'
 import path from 'node:path'
-import { promisify } from 'node:util'
 import type {
   GitBlameLine,
   GitBlameResult,
@@ -50,8 +48,10 @@ import type {
 } from '../../shared/git-types'
 import { assertAllowed } from '../fs/file-service'
 import { resolveGitExecutable } from './git-resolver'
+import { withMainGitOperation, mainGitProcessScope } from './git-operation'
+import { repositoryFailureMetadata } from './repository-lease'
 
-const execFileAsync = promisify(execFile)
+
 
 /** 单次 git 调用超时：远程操作卡住时要能失败，不能让界面一直等 */
 const GIT_TIMEOUT_MS = 30_000
@@ -225,47 +225,20 @@ function toFriendlyMessage(error: unknown): string {
 
 /** 包装为失败信封 */
 function fail(error: unknown): GitResult {
-  return { success: false, error: toFriendlyMessage(error) }
+  return { success: false, error: toFriendlyMessage(error), ...repositoryFailureMetadata(error) }
 }
 
 /**
  * 运行一次 git，返回 stdout。非零退出抛错（错误上带 stderr），
  * 由调用方包成 GitResult 信封。
  */
-async function runGit(cwd: string, args: string[]): Promise<string> {
-  const result = await execFileAsync(
-    resolveGitExecutable(),
-    // core.quotePath=false：防止中文路径被八进制转义成 "\344\270\xx"
-    ['-c', 'core.quotePath=false', ...args],
-    {
-      cwd,
-      timeout: GIT_TIMEOUT_MS,
-      maxBuffer: GIT_MAX_BUFFER,
-      windowsHide: true,
-      encoding: 'utf8',
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }
-    }
-  )
-  return result.stdout ?? ''
+async function runGit(cwd: string, args: string[]): Promise<string>{
+  return mainGitProcessScope().run(resolveGitExecutable(), ['-c','core.quotePath=false',...args], {cwd,env:{...process.env,GIT_TERMINAL_PROMPT:'0'},timeoutMs:GIT_TIMEOUT_MS,maxBytes:GIT_MAX_BUFFER})
 }
 
 /** 带 stdin 的 git 调用（目前仅 hunk 撤销的 apply 用） */
-function runGitWithInput(cwd: string, args: string[], input: string): Promise<void> {
-  return new Promise((resolvePromise, rejectPromise) => {
-    const child = execFile(
-      resolveGitExecutable(),
-      ['-c', 'core.quotePath=false', ...args],
-      { cwd, timeout: GIT_TIMEOUT_MS, windowsHide: true },
-      (error, _stdout, stderr) => {
-        if (error) {
-          rejectPromise(new Error((stderr || error.message || '').trim() || 'git apply 执行失败'))
-          return
-        }
-        resolvePromise()
-      }
-    )
-    child.stdin?.end(input)
-  })
+function runGitWithInput(cwd: string, args: string[], input: string): Promise<void>{
+  return mainGitProcessScope().run(resolveGitExecutable(), ['-c','core.quotePath=false',...args], {cwd,env:{...process.env,GIT_TERMINAL_PROMPT:'0'},input,timeoutMs:GIT_TIMEOUT_MS,maxBytes:GIT_MAX_BUFFER}).then(()=>undefined)
 }
 
 /** 校验 cwd 并收窄到工作区白名单内；越界直接抛错（由 IPC 层兜底成信封） */
@@ -298,16 +271,24 @@ async function isGitRepo(cwd: string): Promise<boolean> {
   }
 }
 
-/** 初始化仓库；已是仓库时幂等成功 */
-export async function init(cwd: string): Promise<GitResult> {
+/** 初始化指定目录自身的仓库；已有自身仓库或 linked worktree 时幂等成功。 */
+export async function init(cwd: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
-    if (await isGitRepo(root)) return { success: true }
+    // Git discovery also succeeds inside a parent repository. Only the exact
+    // canonical worktree root may make initialization an idempotent no-op.
+    if (await isGitRepo(root)) {
+      const top = (await runGit(root, ['rev-parse', '--show-toplevel'])).trim()
+      if (path.relative(await realpath(root), await realpath(top)) === '') return { success: true }
+    }
     await runGit(root, ['init'])
     return { success: true }
   } catch (error) {
     return fail(error)
   }
+
+  }, false, true)
 }
 
 /** porcelain XY 状态码 → 变更类型 */
@@ -333,7 +314,8 @@ function mapChangeType(code: string | undefined): GitChangeType | null {
  * 读取工作区状态：`status --porcelain=v2 --untracked-files=all --renames`，
  * 再补 numstat（暂存区与工作区各一次）与合并状态（MERGE_HEAD/MERGE_MSG）。
  */
-export async function status(cwd: string): Promise<GitStatusResult> {
+export async function status(cwd: string): Promise<GitStatusResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   if (!(await isGitRepo(root))) {
     return { success: true, isRepo: false, files: [] }
@@ -413,6 +395,8 @@ export async function status(cwd: string): Promise<GitStatusResult> {
   } catch (error) {
     return fail(error)
   }
+
+  }, true, false)
 }
 
 /** 合并状态：MERGE_HEAD 存在即合并中，顺带读出 git 自动生成的 MERGE_MSG */
@@ -607,7 +591,8 @@ async function readNewContent(cwd: string, filePath: string, staged: boolean): P
   }
 }
 
-export async function diff(cwd: string, filePath: string, staged: boolean, base?: 'index' | 'head'): Promise<GitDiffResult> {
+export async function diff(cwd: string, filePath: string, staged: boolean, base?: 'index' | 'head'): Promise<GitDiffResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const raw = await runGit(root, await buildDiffArgs(root, filePath, staged, base))
@@ -630,11 +615,14 @@ export async function diff(cwd: string, filePath: string, staged: boolean, base?
   } catch (error) {
     return fail(error)
   }
+
+  }, true, false)
 }
 
 // ==================== 分支信息 ====================
 
-export async function branchInfo(cwd: string): Promise<GitBranchInfoResult> {
+export async function branchInfo(cwd: string): Promise<GitBranchInfoResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   if (!(await isGitRepo(root))) {
     return { success: true, isRepo: false }
@@ -659,12 +647,15 @@ export async function branchInfo(cwd: string): Promise<GitBranchInfoResult> {
   } catch (error) {
     return fail(error)
   }
+
+  }, true, false)
 }
 
 // ==================== 暂存 / 撤销 ====================
 
 /** 暂存单文件（-f：已跟踪文件位于被忽略目录下时不带 -f 会 exit 1 但实际已暂存） */
-export async function stage(cwd: string, filePath: string): Promise<GitResult> {
+export async function stage(cwd: string, filePath: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['add', '-f', '--', filePath])
@@ -672,9 +663,12 @@ export async function stage(cwd: string, filePath: string): Promise<GitResult> {
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
-export async function unstage(cwd: string, filePath: string): Promise<GitResult> {
+export async function unstage(cwd: string, filePath: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     try {
@@ -693,6 +687,8 @@ export async function unstage(cwd: string, filePath: string): Promise<GitResult>
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
 /** 把候选路径收窄到 git 认得的子集（已跟踪或未跟踪但未忽略），避免整批 add 因个别失效路径 fatal */
@@ -714,7 +710,8 @@ async function filterGitKnownPaths(cwd: string, paths: string[]): Promise<string
 }
 
 /** 批量暂存：先收窄到 git 认得的子集，返回实际暂存的路径供调用方记账 */
-export async function stageFiles(cwd: string, paths: string[]): Promise<GitResult> {
+export async function stageFiles(cwd: string, paths: string[]): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   if (!Array.isArray(paths) || paths.length === 0) return { success: true, stagedPaths: [] }
   try {
@@ -725,10 +722,13 @@ export async function stageFiles(cwd: string, paths: string[]): Promise<GitResul
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
 /** 批量查询路径是否被 .gitignore 忽略（exit 1 = 全部未忽略，不是错误） */
-export async function checkIgnored(cwd: string, paths: string[]): Promise<GitIgnoreCheckResult> {
+export async function checkIgnored(cwd: string, paths: string[]): Promise<GitIgnoreCheckResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   if (!Array.isArray(paths) || paths.length === 0) return { success: true, ignored: {} }
   try {
@@ -752,10 +752,13 @@ export async function checkIgnored(cwd: string, paths: string[]): Promise<GitIgn
   } catch (error) {
     return fail(error)
   }
+
+  }, true, false)
 }
 
 /** 批量取消暂存（reset -q 对未跟踪/无 HEAD 场景更宽容） */
-export async function unstageFiles(cwd: string, paths: string[]): Promise<GitResult> {
+export async function unstageFiles(cwd: string, paths: string[]): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   if (!Array.isArray(paths) || paths.length === 0) return { success: true }
   try {
@@ -775,6 +778,8 @@ export async function unstageFiles(cwd: string, paths: string[]): Promise<GitRes
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
 async function isTrackedInHead(cwd: string, filePath: string): Promise<boolean> {
@@ -790,7 +795,8 @@ async function isTrackedInHead(cwd: string, filePath: string): Promise<boolean> 
  * 放弃单文件全部改动（暂存区 + 工作区都还原；HEAD 里不存在的文件直接删磁盘）。
  * 用于「放弃更改」的彻底语义。
  */
-export async function discardFile(cwd: string, filePath: string): Promise<GitResult> {
+export async function discardFile(cwd: string, filePath: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     try {
@@ -815,10 +821,13 @@ export async function discardFile(cwd: string, filePath: string): Promise<GitRes
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
 /** 只放弃工作区改动（还原到 index 版本），暂存区保留 —— 「更改」组的放弃语义 */
-export async function discardWorktree(cwd: string, filePath: string): Promise<GitResult> {
+export async function discardWorktree(cwd: string, filePath: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     try {
@@ -835,29 +844,38 @@ export async function discardWorktree(cwd: string, filePath: string): Promise<Gi
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
-export async function discardWorktreeFiles(cwd: string, paths: string[]): Promise<GitResult> {
+export async function discardWorktreeFiles(cwd: string, paths: string[]): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   for (const p of paths) {
     const result = await discardWorktree(cwd, p)
     if (!result.success) return result
   }
   return { success: true }
+
+  }, false, false)
 }
 
-export async function discardFiles(cwd: string, paths: string[]): Promise<GitResult> {
+export async function discardFiles(cwd: string, paths: string[]): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   for (const p of paths) {
     const result = await discardFile(cwd, p)
     if (!result.success) return result
   }
   return { success: true }
+
+  }, false, false)
 }
 
 /**
  * hunk 级撤销：以 HEAD 为基准重新 diff（与编辑器 gutter 同基准），
  * 按 hunkId（h0/h1…）取出对应块，拼上文件头后 `git apply --reverse`。
  */
-export async function discardHunk(cwd: string, filePath: string, hunkId: string): Promise<GitResult> {
+export async function discardHunk(cwd: string, filePath: string, hunkId: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const raw = await runGit(root, await buildDiffArgs(root, filePath, false, 'head'))
@@ -884,10 +902,13 @@ export async function discardHunk(cwd: string, filePath: string, hunkId: string)
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
 /** 读取 HEAD 版本文件内容；文件不在 HEAD（未跟踪/新增）时返回空串而非错误 */
-export async function headFile(cwd: string, filePath: string): Promise<GitHeadFileResult> {
+export async function headFile(cwd: string, filePath: string): Promise<GitHeadFileResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const content = await runGit(root, ['show', `HEAD:${filePath}`])
@@ -898,6 +919,8 @@ export async function headFile(cwd: string, filePath: string): Promise<GitHeadFi
     }
     return fail(error)
   }
+
+  }, true, false)
 }
 
 /** 「打开文件（HEAD）」入口，语义同 headFile */
@@ -905,7 +928,8 @@ export const getHeadFile = headFile
 
 // ==================== 提交 ====================
 
-export async function commit(cwd: string, message: string): Promise<GitResult> {
+export async function commit(cwd: string, message: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   if (!message?.trim()) return { success: false, error: '请输入提交信息。' }
   try {
@@ -914,9 +938,12 @@ export async function commit(cwd: string, message: string): Promise<GitResult> {
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
-export async function stageAllAndCommit(cwd: string, message: string): Promise<GitResult> {
+export async function stageAllAndCommit(cwd: string, message: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   if (!message?.trim()) return { success: false, error: '请输入提交信息。' }
   try {
@@ -926,10 +953,13 @@ export async function stageAllAndCommit(cwd: string, message: string): Promise<G
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
 /** 修补上一次提交（--amend --no-edit） */
-export async function commitAmend(cwd: string): Promise<GitResult> {
+export async function commitAmend(cwd: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['commit', '--amend', '--no-edit'])
@@ -937,9 +967,12 @@ export async function commitAmend(cwd: string): Promise<GitResult> {
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
-export async function commitAmendWithMessage(cwd: string, message: string): Promise<GitResult> {
+export async function commitAmendWithMessage(cwd: string, message: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['commit', '--amend', '-m', message])
@@ -947,10 +980,13 @@ export async function commitAmendWithMessage(cwd: string, message: string): Prom
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
 /** 撤销上一次提交，改动回到暂存区（reset --soft HEAD~1） */
-export async function undoCommit(cwd: string): Promise<GitResult> {
+export async function undoCommit(cwd: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['reset', '--soft', 'HEAD~1'])
@@ -958,9 +994,12 @@ export async function undoCommit(cwd: string): Promise<GitResult> {
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
-export async function commitEmpty(cwd: string, message: string): Promise<GitResult> {
+export async function commitEmpty(cwd: string, message: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const args = ['commit', '--allow-empty']
@@ -971,10 +1010,13 @@ export async function commitEmpty(cwd: string, message: string): Promise<GitResu
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
 /** 把路径追加到 .gitignore（幂等；目录不存在时先建） */
-export async function appendGitignore(cwd: string, filePath: string): Promise<GitResult> {
+export async function appendGitignore(cwd: string, filePath: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const entry = filePath.replace(/\\/g, '/').replace(/^\/+/, '')
@@ -994,6 +1036,8 @@ export async function appendGitignore(cwd: string, filePath: string): Promise<Gi
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
 /**
@@ -1033,7 +1077,8 @@ async function collectAiContext(root: string, staged: boolean): Promise<string> 
   return sections.join('\n\n')
 }
 
-export async function suggestCommitMessage(cwd: string): Promise<GitSuggestMessageResult> {
+export async function suggestCommitMessage(cwd: string): Promise<GitSuggestMessageResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     interface Group {
@@ -1123,6 +1168,8 @@ export async function suggestCommitMessage(cwd: string): Promise<GitSuggestMessa
   } catch (error) {
     return fail(error)
   }
+
+  }, true, false)
 }
 
 // ==================== 远程 ====================
@@ -1133,7 +1180,8 @@ function remoteFail(error: unknown): GitResult {
   return fail(error)
 }
 
-export async function fetchRemote(cwd: string): Promise<GitResult> {
+export async function fetchRemote(cwd: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['fetch', '--all', '--prune'])
@@ -1141,9 +1189,12 @@ export async function fetchRemote(cwd: string): Promise<GitResult> {
   } catch (error) {
     return remoteFail(error)
   }
+
+  }, false, false)
 }
 
-export async function pull(cwd: string): Promise<GitResult> {
+export async function pull(cwd: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['pull'])
@@ -1152,10 +1203,13 @@ export async function pull(cwd: string): Promise<GitResult> {
     if (isDivergentFailure(error)) return { success: false, ...DIVERGENT_HINT }
     return remoteFail(error)
   }
+
+  }, false, false)
 }
 
 /** 本地与上游的分叉提交数（选择合并方式弹窗的差距展示） */
-export async function divergence(cwd: string): Promise<GitDivergenceResult> {
+export async function divergence(cwd: string): Promise<GitDivergenceResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const out = await runGit(root, ['rev-list', '--left-right', '--count', 'HEAD...@{u}'])
@@ -1164,6 +1218,8 @@ export async function divergence(cwd: string): Promise<GitDivergenceResult> {
   } catch (error) {
     return remoteFail(error)
   }
+
+  }, true, false)
 }
 
 /** pull 策略执行；remember 时把选择写进 pull.rebase 配置（失败仅忽略，不影响拉取） */
@@ -1180,15 +1236,22 @@ async function runPullWithStrategy(cwd: string, args: string[], remember: boolea
   }
 }
 
-export async function pullMerge(cwd: string, remember: boolean): Promise<GitResult> {
+export async function pullMerge(cwd: string, remember: boolean): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   return runPullWithStrategy(resolveCwd(cwd), ['pull', '--no-rebase'], remember, false)
+
+  }, false, false)
 }
 
-export async function pullRebaseWithChoice(cwd: string, remember: boolean): Promise<GitResult> {
+export async function pullRebaseWithChoice(cwd: string, remember: boolean): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   return runPullWithStrategy(resolveCwd(cwd), ['pull', '--rebase'], remember, true)
+
+  }, false, false)
 }
 
-export async function pullRebase(cwd: string): Promise<GitResult> {
+export async function pullRebase(cwd: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['pull', '--rebase'])
@@ -1197,9 +1260,12 @@ export async function pullRebase(cwd: string): Promise<GitResult> {
     if (isDivergentFailure(error)) return { success: false, ...DIVERGENT_HINT }
     return remoteFail(error)
   }
+
+  }, false, false)
 }
 
-export async function push(cwd: string): Promise<GitResult> {
+export async function push(cwd: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     try {
@@ -1218,16 +1284,22 @@ export async function push(cwd: string): Promise<GitResult> {
   } catch (error) {
     return remoteFail(error)
   }
+
+  }, false, false)
 }
 
 /** 同步：pull 后 push */
-export async function sync(cwd: string): Promise<GitResult> {
+export async function sync(cwd: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const pullResult = await pull(cwd)
   if (!pullResult.success) return pullResult
   return push(cwd)
+
+  }, false, false)
 }
 
-export async function pushForce(cwd: string): Promise<GitResult> {
+export async function pushForce(cwd: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['push', '--force-with-lease'])
@@ -1235,9 +1307,12 @@ export async function pushForce(cwd: string): Promise<GitResult> {
   } catch (error) {
     return remoteFail(error)
   }
+
+  }, false, false)
 }
 
-export async function pushTags(cwd: string): Promise<GitResult> {
+export async function pushTags(cwd: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['push', '--tags'])
@@ -1245,9 +1320,12 @@ export async function pushTags(cwd: string): Promise<GitResult> {
   } catch (error) {
     return remoteFail(error)
   }
+
+  }, false, false)
 }
 
-export async function pushTag(cwd: string, name: string): Promise<GitResult> {
+export async function pushTag(cwd: string, name: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['push', 'origin', `refs/tags/${name}`])
@@ -1255,9 +1333,12 @@ export async function pushTag(cwd: string, name: string): Promise<GitResult> {
   } catch (error) {
     return remoteFail(error)
   }
+
+  }, false, false)
 }
 
-export async function pullFrom(cwd: string, remote: string, branch: string): Promise<GitResult> {
+export async function pullFrom(cwd: string, remote: string, branch: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['pull', remote, branch])
@@ -1266,9 +1347,12 @@ export async function pullFrom(cwd: string, remote: string, branch: string): Pro
     if (isDivergentFailure(error)) return { success: false, ...DIVERGENT_HINT }
     return remoteFail(error)
   }
+
+  }, false, false)
 }
 
-export async function pushTo(cwd: string, remote: string, branch?: string): Promise<GitResult> {
+export async function pushTo(cwd: string, remote: string, branch?: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const target = branch?.trim() || (await runGit(root, ['branch', '--show-current'])).trim()
@@ -1278,6 +1362,8 @@ export async function pushTo(cwd: string, remote: string, branch?: string): Prom
   } catch (error) {
     return remoteFail(error)
   }
+
+  }, false, false)
 }
 
 /** 解析 for-each-ref 的分支列表（tab 分隔；跳过 origin/HEAD 这类符号引用） */
@@ -1306,7 +1392,8 @@ function parseRefList(out: string, withHead: boolean): { branches: string[]; inf
 
 const REF_FORMAT = '%(refname:short)%09%(objectname:short)%09%(subject)%09%(authorname)%09%(committerdate:iso-strict)'
 
-export async function listBranches(cwd: string): Promise<GitBranchListResult> {
+export async function listBranches(cwd: string): Promise<GitBranchListResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const out = await runGit(root, [
@@ -1320,9 +1407,12 @@ export async function listBranches(cwd: string): Promise<GitBranchListResult> {
   } catch (error) {
     return fail(error)
   }
+
+  }, true, false)
 }
 
-export async function listRemoteBranches(cwd: string): Promise<GitRemoteBranchListResult> {
+export async function listRemoteBranches(cwd: string): Promise<GitRemoteBranchListResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const out = await runGit(root, [
@@ -1336,9 +1426,12 @@ export async function listRemoteBranches(cwd: string): Promise<GitRemoteBranchLi
   } catch (error) {
     return fail(error)
   }
+
+  }, true, false)
 }
 
-export async function deleteRemoteBranch(cwd: string, remote: string, branch: string): Promise<GitResult> {
+export async function deleteRemoteBranch(cwd: string, remote: string, branch: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['push', remote, '--delete', branch])
@@ -1346,9 +1439,12 @@ export async function deleteRemoteBranch(cwd: string, remote: string, branch: st
   } catch (error) {
     return remoteFail(error)
   }
+
+  }, false, false)
 }
 
-export async function deleteRemoteTag(cwd: string, name: string, remote?: string): Promise<GitResult> {
+export async function deleteRemoteTag(cwd: string, name: string, remote?: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['push', remote?.trim() || 'origin', '--delete', 'tag', name])
@@ -1356,9 +1452,12 @@ export async function deleteRemoteTag(cwd: string, name: string, remote?: string
   } catch (error) {
     return remoteFail(error)
   }
+
+  }, false, false)
 }
 
-export async function listRemotes(cwd: string): Promise<GitRemoteListResult> {
+export async function listRemotes(cwd: string): Promise<GitRemoteListResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const out = await runGit(root, ['remote', '-v'])
@@ -1371,9 +1470,12 @@ export async function listRemotes(cwd: string): Promise<GitRemoteListResult> {
   } catch (error) {
     return fail(error)
   }
+
+  }, true, false)
 }
 
-export async function addRemote(cwd: string, name: string, url: string): Promise<GitResult> {
+export async function addRemote(cwd: string, name: string, url: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['remote', 'add', name, url])
@@ -1381,9 +1483,12 @@ export async function addRemote(cwd: string, name: string, url: string): Promise
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
-export async function removeRemote(cwd: string, name: string): Promise<GitResult> {
+export async function removeRemote(cwd: string, name: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['remote', 'remove', name])
@@ -1391,6 +1496,8 @@ export async function removeRemote(cwd: string, name: string): Promise<GitResult
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
 // ==================== 分支操作 ====================
@@ -1408,7 +1515,8 @@ async function refExists(cwd: string, ref: string): Promise<boolean> {
  * 切换分支。origin/xxx 形式：本地没有同名分支时 `checkout --track`，
  * 已有则直接切本地分支。
  */
-export async function checkout(cwd: string, branch: string): Promise<GitResult> {
+export async function checkout(cwd: string, branch: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     if (branch.includes('/') && (await refExists(root, `refs/remotes/${branch}`))) {
@@ -1425,9 +1533,12 @@ export async function checkout(cwd: string, branch: string): Promise<GitResult> 
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
-export async function createBranch(cwd: string, name: string, startPoint?: string): Promise<GitResult> {
+export async function createBranch(cwd: string, name: string, startPoint?: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const args = ['checkout', '-b', name]
@@ -1437,9 +1548,12 @@ export async function createBranch(cwd: string, name: string, startPoint?: strin
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
-export async function deleteBranch(cwd: string, name: string, force?: boolean): Promise<GitResult> {
+export async function deleteBranch(cwd: string, name: string, force?: boolean): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['branch', force ? '-D' : '-d', name])
@@ -1447,9 +1561,12 @@ export async function deleteBranch(cwd: string, name: string, force?: boolean): 
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
-export async function renameBranch(cwd: string, oldName: string, newName: string): Promise<GitResult> {
+export async function renameBranch(cwd: string, oldName: string, newName: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['branch', '-m', oldName, newName])
@@ -1457,10 +1574,13 @@ export async function renameBranch(cwd: string, oldName: string, newName: string
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
 /** 发布当前分支到 origin 并建立追踪（push -u） */
-export async function publishBranch(cwd: string): Promise<GitResult> {
+export async function publishBranch(cwd: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const branch = (await runGit(root, ['branch', '--show-current'])).trim()
@@ -1470,11 +1590,14 @@ export async function publishBranch(cwd: string): Promise<GitResult> {
   } catch (error) {
     return remoteFail(error)
   }
+
+  }, false, false)
 }
 
 // ==================== merge / rebase / cherry-pick / revert ====================
 
-export async function merge(cwd: string, ref: string): Promise<GitResult> {
+export async function merge(cwd: string, ref: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['merge', ref])
@@ -1482,9 +1605,12 @@ export async function merge(cwd: string, ref: string): Promise<GitResult> {
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
-export async function mergeAbort(cwd: string): Promise<GitResult> {
+export async function mergeAbort(cwd: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['merge', '--abort'])
@@ -1492,9 +1618,12 @@ export async function mergeAbort(cwd: string): Promise<GitResult> {
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
-export async function rebase(cwd: string, ref: string): Promise<GitResult> {
+export async function rebase(cwd: string, ref: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['rebase', ref])
@@ -1502,9 +1631,12 @@ export async function rebase(cwd: string, ref: string): Promise<GitResult> {
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
-export async function rebaseAbort(cwd: string): Promise<GitResult> {
+export async function rebaseAbort(cwd: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['rebase', '--abort'])
@@ -1512,9 +1644,12 @@ export async function rebaseAbort(cwd: string): Promise<GitResult> {
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
-export async function cherryPick(cwd: string, hash: string): Promise<GitResult> {
+export async function cherryPick(cwd: string, hash: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['cherry-pick', hash])
@@ -1522,9 +1657,12 @@ export async function cherryPick(cwd: string, hash: string): Promise<GitResult> 
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
-export async function cherryPickAbort(cwd: string): Promise<GitResult> {
+export async function cherryPickAbort(cwd: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['cherry-pick', '--abort'])
@@ -1532,9 +1670,12 @@ export async function cherryPickAbort(cwd: string): Promise<GitResult> {
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
-export async function revertCommit(cwd: string, hash: string): Promise<GitResult> {
+export async function revertCommit(cwd: string, hash: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['revert', '--no-edit', hash])
@@ -1542,11 +1683,14 @@ export async function revertCommit(cwd: string, hash: string): Promise<GitResult
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
 // ==================== 存储（Stash） ====================
 
-export async function listStashes(cwd: string): Promise<GitStashListResult> {
+export async function listStashes(cwd: string): Promise<GitStashListResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const out = await runGit(root, ['stash', 'list', '--format=%gd%x09%H%x09%gs%x09%aI'])
@@ -1567,9 +1711,12 @@ export async function listStashes(cwd: string): Promise<GitStashListResult> {
   } catch (error) {
     return fail(error)
   }
+
+  }, true, false)
 }
 
-export async function stashPush(cwd: string, message?: string, includeUntracked?: boolean): Promise<GitResult> {
+export async function stashPush(cwd: string, message?: string, includeUntracked?: boolean): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const args = ['stash', 'push']
@@ -1580,10 +1727,13 @@ export async function stashPush(cwd: string, message?: string, includeUntracked?
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
 /** 仅储藏已暂存的改动（stash push --staged，需 git ≥ 2.35） */
-export async function stashPushStaged(cwd: string, message?: string): Promise<GitResult> {
+export async function stashPushStaged(cwd: string, message?: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const args = ['stash', 'push', '--staged']
@@ -1593,9 +1743,12 @@ export async function stashPushStaged(cwd: string, message?: string): Promise<Gi
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
-export async function stashPop(cwd: string, index?: number): Promise<GitResult> {
+export async function stashPop(cwd: string, index?: number): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const args = ['stash', 'pop']
@@ -1605,9 +1758,12 @@ export async function stashPop(cwd: string, index?: number): Promise<GitResult> 
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
-export async function stashApply(cwd: string, index?: number): Promise<GitResult> {
+export async function stashApply(cwd: string, index?: number): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const args = ['stash', 'apply']
@@ -1617,9 +1773,12 @@ export async function stashApply(cwd: string, index?: number): Promise<GitResult
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
-export async function stashDrop(cwd: string, index: number): Promise<GitResult> {
+export async function stashDrop(cwd: string, index: number): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['stash', 'drop', `stash@{${index}}`])
@@ -1627,10 +1786,13 @@ export async function stashDrop(cwd: string, index: number): Promise<GitResult> 
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
 /** 批量删除：按索引降序逐条 drop（大索引先删，避免重排位），失败不中断最后汇总 */
-export async function stashDropBatch(cwd: string, indexes: number[]): Promise<GitResult> {
+export async function stashDropBatch(cwd: string, indexes: number[]): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   const sorted = [...new Set(indexes)].sort((a, b) => b - a)
   const failed: number[] = []
@@ -1650,9 +1812,12 @@ export async function stashDropBatch(cwd: string, indexes: number[]): Promise<Gi
     }
   }
   return { success: true }
+
+  }, false, false)
 }
 
-export async function stashClear(cwd: string): Promise<GitResult> {
+export async function stashClear(cwd: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['stash', 'clear'])
@@ -1660,10 +1825,13 @@ export async function stashClear(cwd: string): Promise<GitResult> {
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
 /** 查看 stash 的完整 diff（git stash show -p） */
-export async function stashShow(cwd: string, index: number): Promise<GitHeadFileResult> {
+export async function stashShow(cwd: string, index: number): Promise<GitHeadFileResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const content = await runGit(root, ['stash', 'show', '-p', `stash@{${index}}`])
@@ -1671,10 +1839,13 @@ export async function stashShow(cwd: string, index: number): Promise<GitHeadFile
   } catch (error) {
     return fail(error)
   }
+
+  }, true, false)
 }
 
 /** 查看 stash 涉及的文件清单（git stash show --name-only） */
-export async function stashShowFiles(cwd: string, index: number): Promise<GitHeadFileResult> {
+export async function stashShowFiles(cwd: string, index: number): Promise<GitHeadFileResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const content = await runGit(root, ['stash', 'show', '--name-only', `stash@{${index}}`])
@@ -1682,11 +1853,14 @@ export async function stashShowFiles(cwd: string, index: number): Promise<GitHea
   } catch (error) {
     return fail(error)
   }
+
+  }, true, false)
 }
 
 // ==================== 标记（Tag） ====================
 
-export async function listTags(cwd: string): Promise<GitTagListResult> {
+export async function listTags(cwd: string): Promise<GitTagListResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const out = await runGit(root, ['tag', '--list'])
@@ -1695,9 +1869,12 @@ export async function listTags(cwd: string): Promise<GitTagListResult> {
   } catch (error) {
     return fail(error)
   }
+
+  }, true, false)
 }
 
-export async function createTag(cwd: string, name: string, message?: string): Promise<GitResult> {
+export async function createTag(cwd: string, name: string, message?: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const args = message?.trim() ? ['tag', '-a', name, '-m', message.trim()] : ['tag', name]
@@ -1706,9 +1883,12 @@ export async function createTag(cwd: string, name: string, message?: string): Pr
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
-export async function deleteTag(cwd: string, name: string): Promise<GitResult> {
+export async function deleteTag(cwd: string, name: string): Promise<GitResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     await runGit(root, ['tag', '-d', name])
@@ -1716,6 +1896,8 @@ export async function deleteTag(cwd: string, name: string): Promise<GitResult> {
   } catch (error) {
     return fail(error)
   }
+
+  }, false, false)
 }
 
 // ==================== 提交历史 ====================
@@ -1796,7 +1978,8 @@ function isEmptyHistoryError(error: unknown): boolean {
 }
 
 /** 最近提交历史（分页 + 过滤 + refs 装饰 + name-status 文件清单） */
-export async function log(cwd: string, limit?: number, skip?: number, query?: GitLogQuery): Promise<GitLogResult> {
+export async function log(cwd: string, limit?: number, skip?: number, query?: GitLogQuery): Promise<GitLogResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   const count = Math.max(1, Math.min(Math.floor(limit ?? 50) || 50, 500))
   try {
@@ -1813,10 +1996,13 @@ export async function log(cwd: string, limit?: number, skip?: number, query?: Gi
     if (isEmptyHistoryError(error)) return { success: true, commits: [] }
     return fail(error)
   }
+
+  }, true, false)
 }
 
 /** 远端领先提交列表（@{u} 可达而 HEAD 不可达）；无上游 / detached 返回空列表 */
-export async function incomingLog(cwd: string, limit?: number): Promise<GitLogResult> {
+export async function incomingLog(cwd: string, limit?: number): Promise<GitLogResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   const size = Math.max(1, Math.min(Math.floor(limit ?? 50) || 50, 500))
   try {
@@ -1839,10 +2025,13 @@ export async function incomingLog(cwd: string, limit?: number): Promise<GitLogRe
     if (isEmptyHistoryError(error)) return { success: true, commits: [] }
     return fail(error)
   }
+
+  }, true, false)
 }
 
 /** 单条提交详情（正文 + numstat 统计 + 文件清单） */
-export async function commitShow(cwd: string, hash: string): Promise<GitCommitInfoResult> {
+export async function commitShow(cwd: string, hash: string): Promise<GitCommitInfoResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const out = await runGit(root, [
@@ -1893,10 +2082,13 @@ export async function commitShow(cwd: string, hash: string): Promise<GitCommitIn
   } catch (error) {
     return fail(error)
   }
+
+  }, true, false)
 }
 
 /** 读取指定提交版本的文件内容；文件在该提交不存在时返回空串 */
-export async function showCommitFile(cwd: string, hash: string, filePath: string): Promise<GitHeadFileResult> {
+export async function showCommitFile(cwd: string, hash: string, filePath: string): Promise<GitHeadFileResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const content = await runGit(root, ['show', `${hash}:${filePath}`])
@@ -1907,6 +2099,8 @@ export async function showCommitFile(cwd: string, hash: string, filePath: string
     }
     return fail(error)
   }
+
+  }, true, false)
 }
 
 /**
@@ -1914,7 +2108,8 @@ export async function showCommitFile(cwd: string, hash: string, filePath: string
  * 分页用「上一页最后一条的哈希」作 cursor，多取一条判断 hasMore。
  * 重命名跟踪游标：每块内在 name-status 行里找当前路径，命中 R/C 时游标换成旧路径继续向上追。
  */
-export async function fileHistory(cwd: string, filePath: string, limit?: number, cursor?: string): Promise<GitFileHistoryResult> {
+export async function fileHistory(cwd: string, filePath: string, limit?: number, cursor?: string): Promise<GitFileHistoryResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   const rel = filePath.replace(/\\/g, '/').replace(/^\.\/+/, '')
   const size = Math.max(1, Math.min(Math.floor(limit ?? 50) || 50, 200))
@@ -2003,6 +2198,8 @@ export async function fileHistory(cwd: string, filePath: string, limit?: number,
     }
     return fail(error)
   }
+
+  }, true, false)
 }
 
 /** 解析 blame --line-porcelain：块尾是 tab 开头的内容行，此时落盘该行归属 */
@@ -2064,7 +2261,8 @@ function parseBlamePorcelain(out: string): GitBlameLine[] {
 }
 
 /** 整文件行级 blame；未跟踪 / 二进制 / 超大文件静默返回空（调用方不展示） */
-export async function blame(cwd: string, filePath: string): Promise<GitBlameResult> {
+export async function blame(cwd: string, filePath: string): Promise<GitBlameResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   const rel = filePath.replace(/\\/g, '/')
   let head = ''
@@ -2090,11 +2288,14 @@ export async function blame(cwd: string, filePath: string): Promise<GitBlameResu
     }
     return fail(error)
   }
+
+  }, true, false)
 }
 
 // ==================== 用户 ====================
 
-export async function getUserName(cwd: string): Promise<GitUserResult> {
+export async function getUserName(cwd: string): Promise<GitUserResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   const [name, email] = await Promise.all([
     runGit(root, ['config', 'user.name']).catch(() => ''),
@@ -2105,10 +2306,13 @@ export async function getUserName(cwd: string): Promise<GitUserResult> {
     name: name.trim() || undefined,
     email: email.trim() || undefined
   }
+
+  }, true, false)
 }
 
 /** 提交历史去重后的作者名（按提交频次降序 + 名称排序） */
-export async function listAuthors(cwd: string): Promise<GitUserListResult> {
+export async function listAuthors(cwd: string): Promise<GitUserListResult>{
+  return withMainGitOperation(cwd, async () => {
   const root = resolveCwd(cwd)
   try {
     const out = await runGit(root, ['log', 'HEAD', '--format=%an'])
@@ -2125,6 +2329,8 @@ export async function listAuthors(cwd: string): Promise<GitUserListResult> {
     if (isEmptyHistoryError(error)) return { success: true, authors: [] }
     return fail(error)
   }
+
+  }, true, false)
 }
 
 // ---------- 兼容旧通道（git:status/log 旧契约已废弃，保留导出避免误用） ----------

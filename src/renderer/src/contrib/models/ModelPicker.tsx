@@ -1,161 +1,170 @@
-import { useEffect, useState, type JSX } from 'react'
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type JSX
+} from 'react'
 import { useModels } from '@renderer/core/engine/model-store'
+import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
 import type { EngineModel } from '@renderer/core/engine/models'
-import { Icon } from '@renderer/workbench/icons'
-import { Popover } from '@renderer/workbench/Popover'
+import { Select, type SelectAction, type SelectOption } from '@renderer/workbench/Select'
 import { ModelFormDialog } from './ModelFormDialog'
+import './model-picker.css'
 
-interface ModelPickerProps {
-  /** 当前选中的 modelId；空串表示使用引擎默认 */
+export interface ModelPickerProps {
+  /** Empty selects the mode controller's default; old stored record IDs remain readable. */
   value: string
   disabled?: boolean
   onChange: (modelId: string) => void
-  /** 打开完整管理页 */
   onManage: () => void
+  ariaLabel?: string
+  /** Keep-alive views close their menu and dialog immediately when the mode changes. */
+  active?: boolean
+  /** Session/task ownership must also close dialogs and reject late selection callbacks. */
+  scopeKey?: string
+  includeDefault?: boolean
+  /** Only a model confirmed by the request controller belongs here, never models[0]. */
+  defaultModelId?: string
+  defaultModelSource?: string
 }
 
-/**
- * 输入框旁的模型快捷入口
- *
- * 点开列出已配置模型，可直接切换；底部提供「添加模型」，避免为了加一个模型
- * 必须先跳转到设置页。列表为空时会把「添加模型」作为主行动突出显示。
- */
-export function ModelPicker({ value, disabled = false, onChange, onManage }: ModelPickerProps): JSX.Element {
+function findModel(models: EngineModel[], value: string): EngineModel | undefined {
+  return value ? models.find((model) => model.modelId === value || model.id === value) : undefined
+}
+
+function displayName(model: EngineModel | undefined, fallback: string): string {
+  return model?.displayName?.trim() || model?.modelId || fallback
+}
+
+/** Both modes use the same quiet Select, with management actions inside its menu. */
+export function ModelPicker({
+  value,
+  disabled = false,
+  onChange,
+  onManage,
+  ariaLabel = '选择模型',
+  active = true,
+  scopeKey = '',
+  includeDefault = true,
+  defaultModelId,
+  defaultModelSource
+}: ModelPickerProps): JSX.Element {
   const { models, loading, error, loaded, refresh } = useModels()
-  const [open, setOpen] = useState(false)
+  const source = useSyncExternalStore(subscribeEngineSource, getEngineSource)
   const [adding, setAdding] = useState(false)
+  const scope = `${source}:${active}:${scopeKey}`
+  const [scopeGeneration, setScopeGeneration] = useState(0)
+  const liveScope = useRef(scopeGeneration)
+  useLayoutEffect(() => {
+    liveScope.current = scopeGeneration
+    return () => {
+      liveScope.current = -1
+    }
+  }, [scopeGeneration])
+  const [previousScope, setPreviousScope] = useState(scope)
+  if (scope !== previousScope) {
+    setPreviousScope(scope)
+    setScopeGeneration(scopeGeneration + 1)
+    setAdding(false)
+  }
 
-  // 首次打开时拉取；引擎重启后 loaded 会被重置
-  useEffect(() => {
-    if (open && !loaded && !loading) void refresh()
-  }, [open, loaded, loading, refresh])
+  const current = findModel(models, value)
+  const defaultModel = findModel(models, defaultModelId ?? '')
+  const confirmedDefault = defaultModelId?.trim() || ''
+  const defaultName = confirmedDefault
+    ? displayName(defaultModel, confirmedDefault)
+    : '跟随引擎配置'
+  const defaultSource =
+    defaultModelSource?.trim() || (confirmedDefault ? '默认配置' : '发送时由引擎解析')
+  const defaultLabel = confirmedDefault ? `${defaultName} · ${defaultSource}` : defaultName
+  const selectedValue = current?.modelId ?? value
+  const label = value ? displayName(current, value) : defaultLabel
+  const selectedDescription = value
+    ? `当前模型：${current?.modelId ?? value}`
+    : `${defaultName} · ${defaultSource}`
 
-  const current = models.find((model) => model.modelId === value)
-  const label = current ? displayNameOf(current) : value || '默认模型'
+  // Multiple records can share a model ID. The engine resolves its first matching
+  // record, so don't expose duplicate values whose selection cannot be distinguished.
+  const uniqueModels = models.filter(
+    (model, index) => models.findIndex((item) => item.modelId === model.modelId) === index
+  )
+  const options: SelectOption[] = [
+    ...(includeDefault
+      ? [{ value: '', label: `默认 · ${defaultName}`, description: defaultSource }]
+      : []),
+    ...uniqueModels.map((model) => ({
+      value: model.modelId,
+      label: displayName(model, model.modelId),
+      description: `${model.provider} · ${model.modelId}`
+    }))
+  ]
+  // An old conversation may reference a removed model or a request-only endpoint.
+  // Preserve the selection visibly instead of silently switching its next request.
+  if (value && !current)
+    options.unshift({ value, label: value, description: '当前会话模型 · 尚未在模型列表中配置' })
+
+  const handleOpen = useCallback(
+    (open: boolean): void => {
+      if (open && !loaded && !loading) void refresh()
+    },
+    [loaded, loading, refresh]
+  )
+  const actions: SelectAction[] = [
+    ...(error
+      ? [
+          {
+            id: 'reload',
+            label: '重新加载模型',
+            icon: 'restart' as const,
+            onSelect: () => {
+              void refresh()
+            }
+          }
+        ]
+      : []),
+    { id: 'add', label: '添加模型', icon: 'plus', onSelect: () => setAdding(true) },
+    { id: 'manage', label: '管理模型', icon: 'settings', onSelect: onManage }
+  ]
+  const hint =
+    loading && !loaded
+      ? '正在加载模型…'
+      : error
+        ? `模型列表加载失败：${error}`
+        : !models.length
+          ? '还没有配置模型，可在下方添加或管理。'
+          : undefined
 
   return (
     <>
-      <Popover
+      <Select
+        key={scope}
         className="model-picker"
-        label="选择模型"
-        open={open}
-        onOpenChange={setOpen}
-        disabled={disabled}
+        panelClassName="model-select-menu"
+        value={selectedValue}
+        options={options}
+        triggerLabel={label}
+        title={selectedDescription}
+        ariaLabel={ariaLabel}
         placement="up"
-        align="start"
-        width={300}
-        flush
-        trigger={({ open: isOpen }) => (
-          <button
-            type="button"
-            disabled={disabled}
-            className={`model-picker__trigger${isOpen ? ' is-open' : ''}`}
-            title={value ? `当前模型：${value}` : '未指定模型，将使用引擎默认配置'}
-          >
-            <span className="picker__label">{label}</span>
-            <span className="model-picker__caret">⌃</span>
-          </button>
-        )}
-      >
-        <div className="model-picker__popup" role="menu">
-          <div className="model-picker__list">
-            {loading && !loaded ? (
-              <div className="model-picker__hint">加载中…</div>
-            ) : error ? (
-              <div className="model-picker__hint model-picker__hint--error">{error}</div>
-            ) : models.length === 0 ? (
-              <div className="model-picker__hint">
-                还没有配置任何模型。
-                <br />
-                添加一个即可开始对话。
-              </div>
-            ) : (
-              <>
-                <div className="model-picker__section">已配置模型</div>
-                {models.map((model) => (
-                  <button
-                    key={model.id}
-                    type="button"
-                    role="menuitem"
-                    className={`model-picker__item${model.modelId === value ? ' is-active' : ''}`}
-                    onClick={() => {
-                      onChange(model.modelId)
-                      setOpen(false)
-                    }}
-                  >
-                    <span className="model-picker__item-main">
-                      <span className="model-picker__avatar">{initialOf(model)}</span>
-                      <span className="model-picker__name">{displayNameOf(model)}</span>
-                      {capabilityTags(model).map((tag) => (
-                        <span key={tag.key} className="model-picker__tag" title={tag.hint}>
-                          {tag.label}
-                        </span>
-                      ))}
-                    </span>
-                    <span className="model-picker__provider">{model.provider}</span>
-                  </button>
-                ))}
-              </>
-            )}
-          </div>
-
-          <div className="model-picker__footer">
-            <button
-              type="button"
-              className="model-picker__action"
-              onClick={() => {
-                setAdding(true)
-                setOpen(false)
-              }}
-            >
-              <Icon name="plus" size={16} />
-              添加模型
-            </button>
-            <button
-              type="button"
-              className="model-picker__action model-picker__action--muted"
-              onClick={() => {
-                setOpen(false)
-                onManage()
-              }}
-            >
-              管理模型
-            </button>
-          </div>
-        </div>
-      </Popover>
-
-      {adding ? (
+        align="end"
+        width={280}
+        disabled={disabled || !active}
+        onChange={onChange}
+        onOpenChange={handleOpen}
+        actions={actions}
+        hint={hint}
+      />
+      {adding && active ? (
         <ModelFormDialog
           onClose={() => setAdding(false)}
-          onSaved={(created) => onChange(created.modelId)}
+          onSaved={(model) => {
+            if (active && liveScope.current === scopeGeneration && source === getEngineSource())
+              onChange(model.modelId)
+          }}
         />
       ) : null}
     </>
   )
-}
-
-function displayNameOf(model: EngineModel): string {
-  return model.displayName?.trim() || model.modelId
-}
-
-function initialOf(model: EngineModel): string {
-  return displayNameOf(model).slice(0, 1).toUpperCase()
-}
-
-/** 列表上的能力标签：多模态（图片/音频/视频）与思考，让模型差异一眼可辨 */
-function capabilityTags(model: EngineModel): Array<{ key: string; label: string; hint: string }> {
-  const caps = model.resolvedCapabilities ?? model.capabilities
-  if (!caps) return []
-  const tags: Array<{ key: string; label: string; hint: string }> = []
-  if (caps.vision || caps.audio || caps.video) {
-    const kinds = [
-      caps.vision ? '图片' : null,
-      caps.audio ? '音频' : null,
-      caps.video ? '视频' : null
-    ].filter(Boolean)
-    tags.push({ key: 'multimodal', label: '多模态', hint: `支持${kinds.join('、')}输入` })
-  }
-  if (caps.thinking) tags.push({ key: 'thinking', label: '思考', hint: '支持思考模式' })
-  return tags
 }

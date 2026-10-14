@@ -7,6 +7,7 @@ import { engineTargetError } from './engine/protocol'
 
 interface BrowserExecutor {
   getSettings(): { aiEnabled: boolean }
+  adoptUnboundTabs(context: BrowserContext, engine: BrowserConnectInput['expectedEngine']): void
   execute(request: BrowserToolRequest, context: BrowserContext, signal?: AbortSignal): Promise<BrowserToolResult>
 }
 
@@ -30,7 +31,8 @@ interface Command {
   sessionId: string
   action: BrowserToolRequest['action']
   args: Omit<BrowserToolRequest, 'action'>
-  expiresAt: number
+  /** null means the engine intentionally left the operation deadline open. */
+  expiresAt: number | null
 }
 
 export function browserEngineId(snapshot: BrowserConnectInput['expectedEngine']): string {
@@ -117,6 +119,7 @@ export class BrowserEngineBridge {
       if (generation !== this.generation) { void this.unregister(connection); return this.state }
       this.connecting = null
       this.active = connection
+      this.service.adoptUnboundTabs(connection.context, input.expectedEngine)
       this.publish({ status: 'connected', sessionId: input.sessionId, message: this.connectedMessage(connection) })
       void this.poll(connection)
     } catch (error) {
@@ -213,8 +216,11 @@ export class BrowserEngineBridge {
   }
 
   private async executeCommand(connection: Connection, command: Command): Promise<BrowserToolResult> {
-    const remaining = Math.max(1, Math.min(60000, command.expiresAt - Date.now()))
-    const lifetime = AbortSignal.any([connection.controller.signal, AbortSignal.timeout(remaining)])
+    const remaining = typeof command.expiresAt === 'number' && Number.isFinite(command.expiresAt)
+      ? Math.max(1, command.expiresAt - Date.now()) : undefined
+    const lifetime = remaining === undefined
+      ? connection.controller.signal
+      : AbortSignal.any([connection.controller.signal, AbortSignal.timeout(remaining)])
     if (connection.registration.capabilities?.requestWatch !== true) {
       // Old engines retain their existing operations; the connection message
       // makes their weaker stop behavior explicit until the engine is upgraded.
@@ -265,7 +271,8 @@ export class BrowserEngineBridge {
         for (const command of data.commands) {
           if (!this.owns(connection)) return
           let result: BrowserToolResult
-          if (command.sessionId !== connection.context.sessionId || !Number.isFinite(command.expiresAt) || command.expiresAt <= Date.now()) {
+          if (command.sessionId !== connection.context.sessionId ||
+            (typeof command.expiresAt === 'number' && (!Number.isFinite(command.expiresAt) || command.expiresAt <= Date.now()))) {
             result = { success: false, error: '浏览器操作已过期或会话不匹配，未执行' }
           } else {
             try {

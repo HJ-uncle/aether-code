@@ -338,7 +338,7 @@ test.describe.serial('聊天流式输出的绘制稳定性', () => {
     await page.getByRole('button', { name: '会话历史', exact: true }).click()
     await page.locator(`.history-view__item[data-session-id="${sessionId}"]`).click()
     await expect(page.locator('.message--user').first()).toContainText('STREAM_HISTORY_START')
-    await expect(page.locator('.model-picker__trigger')).toBeEnabled()
+    await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toBeEnabled()
   })
   test.afterEach(async () => { await completeRun() })
   test.afterAll(async () => {

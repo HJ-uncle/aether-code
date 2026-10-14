@@ -15,14 +15,15 @@ function appendTimeline(items: TimelineItem[], kind: 'thinking' | 'content', tex
   }
 }
 
-export function reducePayload(message: ChatMessage, payload: ChatSsePayload): ChatMessage {
+export function reducePayload(message: ChatMessage, payload: ChatSsePayload,
+  receipt?: { now: number; fallbackId: string }): ChatMessage {
   const payloadError = (payload as { error?: unknown }).error
   if (typeof payloadError === 'string' && payloadError) {
     return {
       ...message,
       status: 'error',
       error: payloadError,
-      endedAt: message.endedAt ?? Date.now()
+      endedAt: message.endedAt ?? (receipt?.now ?? Date.now())
     }
   }
 
@@ -126,14 +127,14 @@ export function reducePayload(message: ChatMessage, payload: ChatSsePayload): Ch
       if (index >= 0) {
         tools[index] = { ...tools[index], ...normalized, state: 'running', ...hidden }
       } else {
-        const id = normalized.id || newId()
+        const id = normalized.id || (receipt?.fallbackId ?? newId())
         tools.push({
           id,
           name: normalized.name || '未命名工具',
           args: normalized.args || '',
           result: '',
           state: 'running',
-          startedAt: Date.now(),
+          startedAt: (receipt?.now ?? Date.now()),
           ...hidden
         })
         items.push({ kind: 'tool', id })
@@ -151,14 +152,14 @@ export function reducePayload(message: ChatMessage, payload: ChatSsePayload): Ch
         return { ...message, tools }
       }
       // args 先于 start：此刻就是该工具真实开始的时间点，占位工具同步进时间线
-      const id = normalized.id || newId()
+      const id = normalized.id || (receipt?.fallbackId ?? newId())
       tools.push({
         id,
         name: normalized.name || '未命名工具',
         args: normalized.args || '',
         result: '',
         state: 'running',
-        startedAt: Date.now(),
+        startedAt: (receipt?.now ?? Date.now()),
         ...hidden
       })
       return { ...message, tools, items: [...message.items, { kind: 'tool', id }] }
@@ -170,7 +171,7 @@ export function reducePayload(message: ChatMessage, payload: ChatSsePayload): Ch
       return { ...message, tools }
     }
     // 只有孤立的 end/result 帧：此刻才知道这个工具存在，补进时间线末尾
-    const id = normalized.id || newId()
+    const id = normalized.id || (receipt?.fallbackId ?? newId())
     tools.push(finishTool({
       id,
       name: normalized.name || '未命名工具',

@@ -15,6 +15,9 @@ export interface RootPending {
 }
 /** Only safe scalar composer settings are returned by the engine. */
 export interface RootRunRequestConfig {
+  cronJobId?: string
+  automationRunId?: string
+  cronTimeoutSeconds?: number
   agentId?: string
   thinkingMode?: boolean | 'low' | 'medium' | 'high'
   subagentModel?: string
@@ -29,7 +32,7 @@ export interface RootRunRequestConfig {
 export function normalizeRootRunRequestConfig(raw: unknown): RootRunRequestConfig | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
   const value = raw as Record<string, unknown>, config: RootRunRequestConfig = {}
-  for (const key of ['agentId', 'subagentModel', 'utilityModel'] as const) {
+  for (const key of ['agentId', 'subagentModel', 'utilityModel', 'cronJobId', 'automationRunId'] as const) {
     if (typeof value[key] === 'string') config[key] = value[key]
   }
   for (const key of ['skills', 'mcpServers', 'knowledgeBases'] as const) {
@@ -37,6 +40,8 @@ export function normalizeRootRunRequestConfig(raw: unknown): RootRunRequestConfi
     if (Array.isArray(ids) && ids.every(id => typeof id === 'string')) config[key] = [...ids]
   }
   const thinking = value.thinkingMode
+  const timeout = value.cronTimeoutSeconds
+  if (typeof timeout === 'number' && Number.isSafeInteger(timeout) && timeout > 0) config.cronTimeoutSeconds = timeout
   if (typeof thinking === 'boolean' || thinking === 'low' || thinking === 'medium' || thinking === 'high') config.thinkingMode = thinking
   const scope = value.memoryScope
   if (scope === 'off' || scope === 'global' || scope === 'session') config.memoryScope = scope

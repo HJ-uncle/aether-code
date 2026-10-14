@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState, type JSX, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX, type MouseEvent } from 'react'
 import { useApp } from '@renderer/core/app-context'
-import { getEngineSource } from '@renderer/core/engine/source'
+import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
 import type { ToolActivity } from '@renderer/core/engine/useChat'
+import { isVisibleToolActivity } from '@renderer/core/engine/task-plan'
 import type { SubagentToolCall } from '@shared/subagent'
-import { stopSubagent } from '@renderer/core/engine/client'
+import { getSubagentProtocol, stopSubagent } from '@renderer/core/engine/client'
 import {
   isSubagentActive,
   mergeSubagentRun,
@@ -13,17 +14,63 @@ import {
 import {
   refreshSubagentRun,
   requestSubagentCancellation,
+  captureSubagentRunScope,
   useSubagentRun
 } from '@renderer/core/engine/subagent-store'
 import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { Markdown } from './Markdown'
 import { getSessionMeta } from '../history/session-meta'
-import { toolDisplayName, toolParamSummary } from './tool-names'
-import { ToolResult } from './ToolResult'
-import { parseToolResult } from './tool-result'
+import { toolDisplayName } from './tool-names'
+import { SubagentToolHistory, SubagentToolRow } from './SubagentToolHistory'
+import { canPageSubagentHistory, subagentToolPresentation } from './subagent-tool-presentation'
 import { useCollapseMemory } from './useCollapseMemory'
 import { formatTokens } from './usage'
+import { readPublishedChild } from '@renderer/core/engine/published-snapshot-client'
+import type { SubagentRun } from '@shared/subagent'
+import { CodePublishedSubagentControl, CodeSubagentFollowup } from './SubagentFollowup'
+
+type SubagentCardProps = { tool: ToolActivity; sessionId: string; defaultOpen?: boolean; visible?: boolean;
+  onPublishedLoaded?: (run: SubagentRun, reference: import('@shared/published-child').PublishedChildReference) => void }
+
+/** Recovery cards load only when requested and keep their published watermark. */
+export function SubagentCard(props: SubagentCardProps): JSX.Element {
+  const ref = props.tool.subagentRef
+  const card = ref && !props.tool.subagent ? <PublishedReferenceCard key={JSON.stringify([ref.source, ref.sessionId, ref.snapshotId, ref.identity.runId, ref.atSeq, ref.projectionIndex])} {...props} /> : <SubagentRunCard {...props} />
+  return <>{card}{ref ? <CodePublishedSubagentControl reference={ref} visible={props.visible !== false} /> : null}</>
+}
+
+function PublishedReferenceCard(props: SubagentCardProps): JSX.Element {
+  const reference = props.tool.subagentRef!
+  const key = JSON.stringify([reference.source, reference.sessionId, reference.snapshotId, reference.identity.runId, reference.atSeq, reference.projectionIndex])
+  const [state, setState] = useState<{ key: string; loading: boolean; error?: string; run?: SubagentRun }>({ key, loading: false })
+  const pending = useRef<Promise<void> | null>(null)
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  const loaded = state.key === key ? state : undefined
+  const read = (): void => {
+    if (pending.current || loaded?.loading || props.visible === false) return
+    setState({ key, loading: true })
+    const operation = readPublishedChild(reference).then(run => {
+      if (mounted.current) { setState({ key, loading: false, run }); props.onPublishedLoaded?.(run, reference) }
+    }).catch((error: unknown) => {
+      if (mounted.current) setState({ key, loading: false, error: error instanceof Error ? error.message : '记录读取失败，请重试' })
+    }).finally(() => { if (pending.current === operation) pending.current = null })
+    pending.current = operation
+  }
+  if (loaded?.run) return <SubagentRunCard {...props} tool={{ ...props.tool, subagent: loaded.run }} />
+  return <section className="subagent-card subagent-card--published" data-published-run={reference.identity.runId} data-published-seq={reference.atSeq} aria-busy={loaded?.loading === true}>
+    <button type="button" className="subagent-card__header" onClick={read} disabled={loaded?.loading || props.visible === false}
+      aria-label={`查看 ${reference.identity.agentName || '子代理'} 的已发布记录`}>
+      <span className="subagent-card__dot"><Icon name="account-outline" size={16} /></span>
+      <span className="subagent-card__name">{reference.identity.agentName || '子代理'}</span>
+      <span className="subagent-card__task">{loaded?.loading ? '正在读取记录…' : loaded?.error ? '读取失败，点击重试' : '点击查看已发布记录'}</span>
+      <span className="subagent-card__stopped">记录 #{reference.atSeq}</span>
+      <Icon name="chevron" size={16} />
+    </button>
+    {loaded?.error ? <div className="message__error" role="alert">{loaded.error}</div> : null}
+  </section>
+}
 
 function parseObject(value: string): Record<string, unknown> {
   try {
@@ -67,81 +114,29 @@ function parseLegacy(result: string): {
   }
 }
 
-/** 行内参数摘要：args 是对象时先序列化再交给 toolParamSummary 提关键参数（避免 String(obj) → [object Object]） */
-function argsSummary(args: unknown): string {
-  if (args == null) return ''
-  const json = typeof args === 'string' ? args : JSON.stringify(args)
-  return toolParamSummary(json)
-}
 function duration(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000))
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60}s`
 }
 
-/**
- * 紧凑工具调用行（对齐 wuzu-client 的 CliCompactToolRow）：
- * 圆点 + 名称 · 状态 + 摘要，一行 24px；点击展开查看输出。
- */
-function CompactToolRow({ call }: { call: SubagentToolCall }): JSX.Element {
-  const parsed = useMemo(() => parseToolResult(call.output), [call.output])
-  const [manualOpen, setOpen] = useState<boolean | null>(null)
-  const hasDetail = Boolean(call.output || call.error)
-  const open = hasDetail && (manualOpen ?? parsed.images.length > 0)
-  const statusText =
-    call.status === 'failed'
-      ? '失败'
-      : call.status === 'succeeded'
-        ? '成功'
-        : call.status === 'cancelled'
-          ? '已取消'
-          : '执行中'
-  return (
-    <div className="subagent-card__call">
-      <span
-        className={`subagent-card__call-dot${call.status === 'failed' ? ' subagent-card__call-dot--fail' : ''}`}
-      />
-      <button
-        type="button"
-        className="subagent-card__call-toggle"
-        aria-expanded={open}
-        disabled={!hasDetail}
-        onClick={() => setOpen(!open)}
-      >
-        <span className="subagent-card__call-name">{toolDisplayName(call.name)}</span>
-        <span className="subagent-card__call-summary">· {statusText}</span>
-        {argsSummary(call.args) ? (
-          <span className="subagent-card__call-args">{argsSummary(call.args)}</span>
-        ) : null}
-      </button>
-      {open ? (
-        <div className="subagent-card__call-detail">
-          {call.error ? <div className="message__error">{call.error.message}</div> : null}
-          {call.output ? (
-            <>
-              <div className="subagent-card__call-section">输出</div>
-              <ToolResult parsed={parsed} toolName={call.name} textClassName="subagent-card__call-pre" />
-            </>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
 /** The run is the authority; a closed parent stream is not a child completion signal. */
-export function SubagentCard({
+function SubagentRunCard({
   tool,
   sessionId,
-  defaultOpen
+  defaultOpen,
+  visible = true
 }: {
   tool: ToolActivity
   sessionId: string
   defaultOpen?: boolean
+  /** Hidden retained Work panes keep local state without polling or clocks. */
+  visible?: boolean
 }): JSX.Element {
   const { engine, ready } = useApp()
   const remoteReadOnly = engine.snapshot.mode === 'remote'
-  const sourceEpoch = getEngineSource()
-  const cached = useSubagentRun(tool.subagent?.runId)
+  const sourceEpoch = useSyncExternalStore(subscribeEngineSource, getEngineSource)
+  const pinned = Boolean(tool.subagentRef)
+  const cached = useSubagentRun(pinned ? undefined : tool.subagent?.runId, visible && !pinned)
   const run = cached ? mergeSubagentRun(tool.subagent, cached) : tool.subagent
   const args = useMemo(() => parseObject(tool.args), [tool.args])
   const legacy = useMemo(() => parseLegacy(tool.result), [tool.result])
@@ -152,7 +147,11 @@ export function SubagentCard({
   const [requesting, setRequesting] = useState(false)
   const [requestError, setRequestError] = useState('')
   const [detailError, setDetailError] = useState('')
+  const [historyProtocol, setHistoryProtocol] = useState<{ source: number; runId: string; protocol: 1 | 2 | null; loading: boolean; error: string } | null>(null)
+  const [historyRetry, setHistoryRetry] = useState(0)
+  const historyPending = useRef(false)
   const [now, setNow] = useState(Date.now)
+  const operationEpoch = useRef(0)
   const active = run ? isSubagentActive(run.status) : tool.state === 'running'
   const cancelling = run?.status === 'cancelling'
   const failed = run
@@ -167,7 +166,14 @@ export function SubagentCard({
     (typeof args.description === 'string' ? args.description : '') ||
     goal.replace(/\s+/g, ' ').slice(0, 60) ||
     '子代理任务'
-  const calls = run?.toolCalls ?? legacy.calls
+  const agentLabel = run?.agentName?.trim() || '子代理'
+  const presentation = useMemo(() => subagentToolPresentation(run, legacy.calls), [run, legacy.calls])
+  const { calls, countLabel } = presentation
+  const totalCalls = presentation.complete ? calls.length : presentation.historyCount
+  const historyState = historyProtocol?.source === sourceEpoch && historyProtocol.runId === run?.runId ? historyProtocol : null
+  const protocol = historyState?.protocol ?? null
+  const historyError = historyState?.error ?? ''
+  const historyLoading = historyState?.loading ?? Boolean(ready && run?.runId)
   const result = run?.resultSummary || run?.partialOutput || legacy.text
   const elapsed =
     active && (run?.startedAt ?? tool.startedAt)
@@ -181,10 +187,15 @@ export function SubagentCard({
       ? '未记录'
       : `${run?.usage.estimated ? '约 ' : ''}${formatTokens(tokens)}`
   const failures = calls.filter((call) => call.status === 'failed').length
-  const currentCall = [...calls].reverse().find((call) => call.status === 'running')
+  const latestCall = run?.schemaVersion === 2 && run.latestActivity && isVisibleToolActivity(run.latestActivity) ? run.latestActivity : undefined
+  const currentCall = latestCall?.status === 'running' ? latestCall : [...calls].sort((a, b) =>
+    ('revisionSeq' in b && typeof b.revisionSeq === 'number' ? b.revisionSeq : b.startedAt ?? 0) -
+    ('revisionSeq' in a && typeof a.revisionSeq === 'number' ? a.revisionSeq : a.startedAt ?? 0)).find(call => call.status === 'running')
 
   // 「执行详情」折叠态：默认收起（运行进展由「当前：xxx」行露出）；用户点过后以用户为准
   const toolsCollapsed = toolsManual ?? true
+  const workspaceRoot = getSessionMeta(sessionId).workspacePath
+  const fileContext = useMemo(() => ({ sessionId, workspaceRoot }), [sessionId, workspaceRoot])
 
   /** 收起态按类型统计：「读取文件 × 5 · 搜索内容 × 78…」，最多露 3 类 */
   const toolsTypeSummary = useMemo(() => {
@@ -199,15 +210,53 @@ export function SubagentCard({
   }, [calls])
 
   useEffect(() => {
-    if (!active) return
+    if (!active || !visible || pinned) return
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
-  }, [active])
+  }, [active, visible, pinned])
 
   useEffect(() => {
-    if (!open || !run?.runId) return
+    operationEpoch.current++
+    setRequesting(false)
+    setRequestError('')
+    setDetailError('')
+    return () => { operationEpoch.current++ }
+  }, [sessionId, run?.runId, sourceEpoch])
+
+  useEffect(() => {
+    if (!visible) return
+    if (!ready || !run?.runId) {
+      historyPending.current = false
+      setHistoryProtocol(null)
+      return
+    }
     let alive = true
-    void refreshSubagentRun(run.runId)
+    const runId = run.runId
+    historyPending.current = true
+    setHistoryProtocol(previous => ({ source: sourceEpoch, runId, protocol: null, loading: true,
+      error: previous?.source === sourceEpoch && previous.runId === runId ? previous.error : '' }))
+    void getSubagentProtocol().then(protocol => {
+      if (alive && sourceEpoch === getEngineSource()) setHistoryProtocol({ source: sourceEpoch, runId, protocol, loading: false, error: '' })
+    }).catch((error: unknown) => {
+      if (alive && sourceEpoch === getEngineSource()) setHistoryProtocol({ source: sourceEpoch, runId, protocol: null, loading: false,
+        error: `记录读取失败：${error instanceof Error ? error.message : String(error)}` })
+    }).finally(() => {
+      if (alive && sourceEpoch === getEngineSource()) historyPending.current = false
+    })
+    return () => { alive = false }
+  }, [run?.runId, sourceEpoch, ready, historyRetry, visible])
+
+  const retryHistory = (): void => {
+    if (!ready || !run?.runId || historyPending.current || sourceEpoch !== getEngineSource()) return
+    historyPending.current = true
+    setHistoryProtocol({ source: sourceEpoch, runId: run.runId, protocol: null, loading: true, error: historyError })
+    setHistoryRetry(value => value + 1)
+  }
+
+  useEffect(() => {
+    if (!visible || !open || !ready || !run?.runId || pinned) return
+    let alive = true
+    void refreshSubagentRun(run.runId, captureSubagentRunScope(run, sourceEpoch))
       .then(() => {
         if (alive) setDetailError('')
       })
@@ -218,7 +267,7 @@ export function SubagentCard({
     return () => {
       alive = false
     }
-  }, [open, run?.runId])
+  }, [open, run?.runId, sourceEpoch, ready, visible, pinned])
 
   const cancel = async (event: MouseEvent): Promise<void> => {
     event.preventDefault()
@@ -226,17 +275,18 @@ export function SubagentCard({
     if (!ready || sourceEpoch !== getEngineSource() || requesting || cancelling || !active) return
     setRequestError('')
     setRequesting(true)
+    const epoch = operationEpoch.current
     try {
-      if (run) await requestSubagentCancellation(run.runId)
+      if (run) await requestSubagentCancellation(run.runId, captureSubagentRunScope(run, sourceEpoch))
       else {
         const result = await stopSubagent({ sessionId, toolCallId: tool.id })
         if (!result.ok || !result.data?.cancelled)
           throw new Error(result.message || '引擎未确认停止请求')
       }
     } catch (error) {
-      if (sourceEpoch === getEngineSource()) setRequestError(`停止失败：${error instanceof Error ? error.message : String(error)}`)
+      if (epoch === operationEpoch.current && sourceEpoch === getEngineSource()) setRequestError(`停止失败：${error instanceof Error ? error.message : String(error)}`)
     } finally {
-      if (sourceEpoch === getEngineSource()) setRequesting(false)
+      if (epoch === operationEpoch.current && sourceEpoch === getEngineSource()) setRequesting(false)
     }
   }
 
@@ -246,6 +296,7 @@ export function SubagentCard({
       open={open}
       data-run-id={run?.runId}
       data-status={run?.status ?? tool.state}
+      data-published-seq={tool.subagentRef?.atSeq}
     >
       <summary
         onClick={(event) => {
@@ -254,18 +305,18 @@ export function SubagentCard({
         }}
       >
         <span className={`subagent-card__dot${failed ? ' subagent-card__dot--fail' : ''}`}>
-          {active ? <Spinner size={12} className="subagent-card__spinner" /> : <Icon name="circle" size={16} />}
+          {active && !pinned ? <Spinner size={12} className="subagent-card__spinner" /> : <Icon name="circle" size={16} />}
         </span>
-        <span className="subagent-card__name">{remoteReadOnly ? '远端子代理' : '子代理'}</span>
+        <span className="subagent-card__name" title={agentLabel}>{remoteReadOnly ? `远端 · ${agentLabel}` : agentLabel}</span>
         <span className="subagent-card__task" title={goal}>
           {title}
         </span>
-        <span className={failed ? 'subagent-card__fail' : 'subagent-card__stopped'}>{status}</span>
+        <span className={failed ? 'subagent-card__fail' : 'subagent-card__stopped'}>{pinned ? `已发布 · ${active ? '记录时运行中' : status}` : status}</span>
         <span className="subagent-card__stats">
-          {calls.length} 次调用 · {tokenLabel} tokens
+          {countLabel} · {tokenLabel} tokens
           {elapsed !== undefined ? ` · ${duration(elapsed)}` : ''}
         </span>
-        {active ? (
+        {active && !pinned ? (
           <button
             type="button"
             className="subagent-card__stop"
@@ -277,7 +328,7 @@ export function SubagentCard({
             }}
           >
             <Icon name="close" size={16} />
-            {requesting || cancelling ? '取消中…' : '停止'}
+            {requesting || cancelling ? '取消中…' : '停止此 Agent'}
           </button>
         ) : null}
         <Icon name="chevron" size={16} />
@@ -294,6 +345,11 @@ export function SubagentCard({
         </div>
       ) : null}
       {detailError ? <div className="message__error">{detailError}</div> : null}
+      {historyError ? <div className="subagent-history__error" role="alert">
+        {historyError}<button type="button" disabled={!ready || historyLoading} onClick={retryHistory}>
+          {historyLoading ? '正在重试…' : '重试读取'}
+        </button>
+      </div> : null}
       {run?.stopReason ? (
         <div className="subagent-card__running">
           结束原因：{subagentStopReasonLabel(run.stopReason)}
@@ -327,13 +383,13 @@ export function SubagentCard({
       </div>
 
       {currentCall ? (
-        <div className="subagent-card__running">当前：{toolDisplayName(currentCall.name)}</div>
-      ) : null}
+        <div className="subagent-card__running">{pinned ? '记录时' : '当前'}：{toolDisplayName(currentCall.name)}</div>
+      ) : active && presentation.unseenActiveCount > 0 ? <div className="subagent-card__running">{pinned ? '记录时仍有活动，详情可按需查看。' : '正在执行任务，详情可按需查看。'}</div> : latestCall ? <div className="subagent-card__running">最近：{toolDisplayName(latestCall.name)} · {latestCall.status === 'succeeded' ? '成功' : latestCall.status === 'cancelled' ? '已取消' : '失败'}</div> : null}
 
       {/* 执行详情：默认收起一行（按类型统计），展开是紧凑日志行（对齐 wuzu） */}
-      {calls.length === 0 ? (
+      {totalCalls === 0 ? (
         <div className="subagent-card__running">
-          {active ? '子代理正在启动…' : '没有内部工具调用记录'}
+          {active ? pinned ? '此记录保存时，子代理仍在执行。' : '子代理正在执行任务…' : '没有可显示的工具调用记录'}
         </div>
       ) : (
         <div className="subagent-card__tools-block">
@@ -343,18 +399,21 @@ export function SubagentCard({
             onClick={() => setToolsManual(toolsCollapsed ? false : true)}
           >
             <Icon name={toolsCollapsed ? 'chevron-right' : 'chevron-down'} size={16} />
-            <span>执行详情 · 工具调用 {calls.length}</span>
+            <span>执行详情 · {countLabel}</span>
             {toolsCollapsed && toolsTypeSummary ? (
-              <span className="subagent-card__tools-summary">{toolsTypeSummary}</span>
+              <span className="subagent-card__tools-summary">{run?.schemaVersion === 2 && run.coverage.hasMore ? '最近记录：' : ''}{toolsTypeSummary}</span>
             ) : null}
             {failures > 0 ? (
-              <span className="subagent-card__fail"> · {failures} 失败</span>
+              <span className="subagent-card__fail"> · {failures} 项已显示记录失败</span>
             ) : null}
           </button>
-          {!toolsCollapsed ? (
-            <div className="subagent-card__tools-list">
+          {open && !toolsCollapsed ? (
+            run?.schemaVersion === 2 && canPageSubagentHistory(run, protocol) ? <SubagentToolHistory run={run} /> : <div className="subagent-card__tools-list">
+              {run && historyLoading ? <p className="subagent-history__notice" role="status">正在确认记录读取方式…</p> : null}
+              {run && !ready ? <p className="subagent-history__notice">当前显示已保存的记录，连接引擎后可读取更多历史。</p> : null}
+              {run && protocol === 1 ? <p className="subagent-history__notice">当前引擎仅支持已有工具记录，升级引擎后可按需加载历史与详情。</p> : null}
               {calls.map((call) => (
-                <CompactToolRow key={call.id} call={call} />
+                <SubagentToolRow key={call.id} call={call} />
               ))}
             </div>
           ) : null}
@@ -362,7 +421,7 @@ export function SubagentCard({
       )}
 
       {/* 返回结果：实背景块，产出主体（对齐 wuzu：与过程记录拉开层次） */}
-      {result ? (
+      {open && visible && result ? (
         <div className="subagent-card__result-block">
           <div className="subagent-card__result-label">
             {run?.partialOutput && !run.resultSummary ? '部分结果' : '返回结果'}
@@ -374,15 +433,16 @@ export function SubagentCard({
               </pre>
             ) : (
               <div className="subagent-card__result-markdown">
-                <Markdown text={result} fileContext={{ sessionId, workspaceRoot: getSessionMeta(sessionId).workspacePath }} />
+                <Markdown text={result} fileContext={fileContext} />
               </div>
             )}
           </div>
         </div>
       ) : null}
+      {!pinned && run ? <CodeSubagentFollowup run={run} sessionId={sessionId} source={sourceEpoch} visible={visible} /> : null}
       <div className="subagent-card__footer">
         {run?.modelId ? <span>模型 {run.modelId}</span> : null}
-        <span>工具调用 {calls.length}</span>
+        <span>{countLabel}</span>
         <span>Tokens {tokenLabel}</span>
         {elapsed !== undefined ? <span>耗时 {duration(elapsed)}</span> : null}
       </div>

@@ -36,6 +36,17 @@ const receipt: EngineFileChange = {
   createdAt: 20
 }
 
+test('真实自动化 UUID 会话带来源恢复，普通 Code ID 与不完整来源仍不能混入 Work', () => {
+  const task = { id: '58a84948-15bf-4d80-a40c-c94508814aa3', title: '定时审查', createdAt: 10, status: 'done',
+    origin: { kind: 'automation', jobId: 'actual-job', runId: 'actual-cron-run' } }
+  const saved = JSON.parse(JSON.stringify({ tasks: [task, { ...task, id: 'unmarked-code', origin: undefined },
+    { ...task, id: 'incomplete-record', origin: { kind: 'automation', jobId: 'actual-job' } }], activeTaskId: task.id }))
+  const recovered = normalizeWorkState(saved)
+  expect(recovered.tasks).toHaveLength(1)
+  expect(recovered.tasks[0]).toMatchObject({ id: task.id, status: 'done', origin: task.origin })
+  expect(recovered.activeTaskId).toBe(task.id)
+})
+
 test('Work 本地恢复丢弃损坏数据与 Code 会话，不保留悬空选中项', () => {
   for (const value of [null, false, [], 'bad']) {
     expect(normalizeWorkState(value)).toMatchObject({

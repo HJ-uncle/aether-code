@@ -266,82 +266,8 @@
   }
 }
 
-/*
- * 对话输入区是右侧可调整宽度的面板，窗口媒体查询无法反映它的真实空间。
- * 这些规则使用 .chat__composer 的容器宽度，让窄侧栏仍保持完整的控制层级：
- * 发送键、模型选择和偏好入口始终有自己的命中区域，长模型名只在中间截断。
- */
-@container composer (max-width: 520px) {
-  .chat__surface {
-    padding: 10px 10px 8px;
-    gap: 5px;
-  }
-
-  .chat__toolbar {
-    gap: 3px;
-  }
-
-  .chat__toolbar .model-picker {
-    flex: 0 1 auto;
-    width: max-content;
-    max-width: 170px;
-  }
-
-  .chat__toolbar .model-picker__trigger {
-    padding-inline: 6px;
-  }
-
-  .chat__toolbar .chat__send {
-    width: 28px;
-    height: 28px;
-  }
-}
-
-@container composer (max-width: 390px) {
-  .chat__toolbar .model-picker {
-    flex-basis: auto;
-    max-width: 132px;
-  }
-
-  /* 建索引是低频入口，保留图标和 title，避免它吞掉发送键的空间。 */
-  .chat__index-cta {
-    width: 26px;
-    justify-content: center;
-    padding-inline: 0;
-  }
-
-  .chat__index-cta .picker__label {
-    display: none;
-  }
-}
-
+/* Input controls now resize inside the shared InputComposer container. */
 @container composer (max-width: 330px) {
-  .chat__surface {
-    padding-inline: 8px;
-  }
-
-  .chat__toolbar {
-    gap: 2px;
-  }
-
-  /* 润色是低频动作，在极窄面板仅保留 24px 图标命中区，不挤掉主操作。 */
-  .chat__polish-btn,
-  .composer-options__trigger {
-    width: 24px;
-    height: 24px;
-  }
-
-  .chat__toolbar .model-picker {
-    flex-basis: auto;
-    max-width: 108px;
-  }
-
-  .chat__toolbar .model-picker__trigger {
-    height: 24px;
-    padding-inline: 5px;
-    gap: 3px;
-  }
-
   .session-tray__tab-progress {
     width: 28px;
     flex-basis: 28px;

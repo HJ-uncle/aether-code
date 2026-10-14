@@ -1,0 +1,57 @@
+/* The window controls must keep their size; commands move into a menu before
+   flex compression can turn Chinese labels into vertical text. */
+.menu-bar .menu-bar__menus {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  flex: 0 0 auto;
+  gap: var(--space-1);
+}
+.menu-bar .menu-bar__menu,
+.menu-bar .menu-bar__brand,
+.menu-bar .menu-bar__actions,
+.menu-bar .menu-bar__win,
+.menu-bar .menu-bar__action,
+.menu-bar .menu-bar__win-btn {
+  flex-shrink: 0;
+}
+.menu-bar .menu-bar__trigger,
+.menu-bar .account-menu__trigger,
+.menu-bar .app-mode-switch button {
+  white-space: nowrap;
+}
+.menu-bar .menu-bar__compact-trigger {
+  display: none;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+}
+.menu-bar__dropdown {
+  max-width: min(344px, calc(100vw - 16px));
+  max-height: calc(100vh - var(--titlebar-h) - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.menu-bar__group-label {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  color: var(--fg-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.menu-bar__dropdown [role='group'] + [role='group'] {
+  margin-top: var(--space-1);
+  border-top: 1px solid var(--border);
+}
+@media (max-width: 1080px) {
+  .menu-bar .menu-bar__menus { display: none; }
+  .menu-bar .menu-bar__compact-trigger { display: inline-flex; }
+}
+@media (max-width: 680px) {
+  .menu-bar .menu-bar__brand { min-width: auto; padding: 0; }
+  .menu-bar .menu-bar__brand-name,
+  .menu-bar .account-menu__trigger > span:not(.account-avatar) { display: none; }
+  .menu-bar .app-mode-switch { margin-inline: var(--space-1); }
+  .menu-bar .app-mode-switch button { width: 76px; padding-inline: var(--space-1); }
+  .menu-bar .menu-bar__actions { gap: var(--space-1); }
+}

@@ -1,0 +1,41 @@
+.completion-popover { z-index: var(--z-popover); }
+.mention-ref-picker {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: inherit;
+  overflow: hidden;
+  border: 1px solid var(--material-border);
+  border-radius: var(--radius-panel);
+  background: var(--material-bg);
+  color: var(--fg);
+  box-shadow: var(--material-shadow), var(--material-highlight);
+  backdrop-filter: blur(var(--material-blur));
+}
+.mention-ref-picker__tabs { display: flex; flex-shrink: 0; gap: 4px; margin: 8px; padding: 3px; border-radius: var(--radius); background: var(--bg-hover); }
+.mention-ref-picker__tabs button { flex: 1; min-height: 28px; border: 0; border-radius: var(--radius); background: transparent; color: var(--fg-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.mention-ref-picker__tabs button[aria-selected="true"] { background: var(--bg-elevated); color: var(--fg-strong); box-shadow: var(--shadow-control); }
+.mention-ref-picker__tabs button:hover { color: var(--fg-strong); }
+.mention-ref-picker button:focus-visible, .mention-ref-picker__search:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.mention-ref-picker__content { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.mention-ref-picker__search { flex-shrink: 0; min-width: 0; margin: 0 8px 6px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-input); color: var(--fg); font: inherit; font-size: 12px; }
+.mention-ref-picker__empty { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 16px 12px; color: var(--fg-muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.mention-ref-picker__retry { min-height: 28px; padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-hover); color: var(--fg-strong); font: inherit; cursor: pointer; }
+.mention-ref-picker__footer { display: flex; flex-direction: column; flex-shrink: 0; gap: 4px; padding: 8px 12px; border-top: 1px solid var(--border); color: var(--fg-muted); font-size: 11px; line-height: 1.4; }
+.mention-ref-picker__footer span { color: var(--fg-faint); font-size: 10px; }
+/* One outer material and one scrolling list keep short windows usable. */
+.mention-ref-picker .file-palette, .mention-ref-picker .agent-ref-picker {
+  position: static; inset: auto; display: flex; flex: 1; flex-direction: column; width: 100%; min-height: 0; max-height: none;
+  border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow: hidden;
+}
+.mention-ref-picker .file-palette__list, .agent-ref-picker__list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px; }
+.mention-ref-picker .file-palette__hint { display: none; }
+.mention-ref-picker .agent-ref-picker__item { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 42px; padding: 6px 8px; border: 0; border-radius: var(--radius); background: transparent; color: var(--fg); text-align: left; cursor: pointer; }
+.mention-ref-picker .agent-ref-picker__item:hover, .mention-ref-picker .agent-ref-picker__item.is-active { background: var(--bg-active); }
+.agent-ref-picker__badge { display: grid; flex-shrink: 0; width: 24px; height: 24px; place-items: center; border-radius: var(--radius); background: var(--bg-hover); color: var(--accent); font-size: 12px; font-weight: 600; }
+.mention-ref-picker .agent-ref-picker__copy { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
+.agent-ref-picker__copy strong, .agent-ref-picker__copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-ref-picker__copy strong { font-size: 12px; font-weight: 500; }
+.agent-ref-picker__copy small { color: var(--fg-muted); font-size: 11px; }
+.mention-ref-picker .file-palette__name { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-height: 500px) { .mention-ref-picker__footer { padding: 5px 10px; } .mention-ref-picker__footer span { display: none; } }

@@ -4,12 +4,15 @@ import { normalizeSubagentRun } from '@renderer/core/engine/subagent-state'
 
 export const SUBAGENT_TRANSCRIPT_PAGE_SIZE = 50
 export const SUBAGENT_TRANSCRIPT_TEXT_STEP = 4000
+export const SUBAGENT_TRANSCRIPT_WINDOW_PAGES = 3
+export const SUBAGENT_TRANSCRIPT_WINDOW_BYTES = 512 * 1024
 
 export interface WorkTranscriptIdentity {
   source: number
   parentSessionId: string
   childSessionId: string
   runId: string
+  subagentProtocol?: 1 | 2
 }
 export interface WorkTranscriptWindow {
   identity: WorkTranscriptIdentity
@@ -21,6 +24,8 @@ export interface WorkTranscriptWindow {
   revision?: string
   backend?: string
   compressed: boolean
+  residentBytes?: number
+  windowed?: boolean
 }
 export type WorkTranscriptRequest = (input: EngineRequestInput) => Promise<EngineRequestResult<unknown>>
 export class WorkTranscriptSupersededError extends Error {
@@ -75,7 +80,8 @@ export async function loadWorkSubagentTranscript(
     if (!isCurrent()) throw new WorkTranscriptSupersededError()
     return result
   }
-  const ownership = await checkedRequest({ method: 'GET', path: `/subagent/runs/${encodeURIComponent(identity.runId)}` })
+  const ownership = await checkedRequest({ method: 'GET', path: `/subagent/runs/${encodeURIComponent(identity.runId)}`,
+    ...(identity.subagentProtocol === 2 ? { subagentProtocol: 2, query: { view: 'summary', parentSessionId: identity.parentSessionId } } : {}) })
   if (!ownership.ok) throw new Error(ownership.message || '无法验证子代理对话，请重试')
   const run = normalizeSubagentRun(ownership.data)
   if (!run || run.runId !== identity.runId || run.parentSessionId !== identity.parentSessionId || !run.childSessionId || run.childSessionId !== identity.childSessionId) throw new Error('子代理不属于当前任务，无法读取对话')
@@ -90,21 +96,71 @@ export async function loadWorkSubagentTranscript(
     headerResult = await pageRequest(1, 1)
   }
   const header = checkedPage(headerResult, 1, 1)
-  const lastPage = Math.max(1, Math.ceil(header.total / SUBAGENT_TRANSCRIPT_PAGE_SIZE))
+  // Each archive page is internally coherent, but the legacy offset API does
+  // not pin a revision across separate requests. While a child appends, fall
+  // back to one authoritative page rather than rejecting normal streaming or
+  // combining records from different revisions. Pagination stays bounded.
+  const livePageWindow = async (result: EngineRequestResult<unknown>, current: number): Promise<WorkTranscriptWindow> => {
+    let page = checkedPage(result, current, SUBAGENT_TRANSCRIPT_PAGE_SIZE)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const newest = Math.max(1, Math.ceil(page.total / SUBAGENT_TRANSCRIPT_PAGE_SIZE))
+      if (current === newest) break
+      current = newest
+      result = await pageRequest(current, SUBAGENT_TRANSCRIPT_PAGE_SIZE)
+      page = checkedPage(result, current, SUBAGENT_TRANSCRIPT_PAGE_SIZE)
+    }
+    if (!page.rows.length && page.total > 0) throw new Error('子代理对话在读取期间有更新，请重试')
+    const residentBytes = new TextEncoder().encode(JSON.stringify(page.rows)).byteLength
+    if (residentBytes > SUBAGENT_TRANSCRIPT_WINDOW_BYTES) throw new Error('此对话页正文较大，请在工具记录中按段读取原始详情')
+    return {
+      identity: { ...identity }, endpoint, rows: page.rows, firstPage: current, lastPage: current, total: page.total,
+      ...(page.revision !== undefined ? { revision: page.revision } : {}),
+      ...(typeof result.metadata?.backend === 'string' ? { backend: result.metadata.backend } : {}),
+      compressed: result.metadata?.compressed === true, residentBytes, windowed: page.rows.length < page.total
+    }
+  }
+  const archiveLastPage = Math.max(1, Math.ceil(header.total / SUBAGENT_TRANSCRIPT_PAGE_SIZE))
   const prior = previous && sameChild(previous.identity, identity) && previous.endpoint === endpoint ? previous : undefined
-  const firstPage = prior ? Math.max(1, Math.min(lastPage, prior.firstPage - (action === 'older' ? 1 : 0))) : lastPage
+  let firstPage = prior ? Math.max(1, Math.min(archiveLastPage, prior.firstPage - (action === 'older' ? 1 : 0))) : archiveLastPage
+  let lastPage = action === 'older' ? Math.min(archiveLastPage, firstPage + SUBAGENT_TRANSCRIPT_WINDOW_PAGES - 1) : archiveLastPage
+  firstPage = Math.max(firstPage, lastPage - SUBAGENT_TRANSCRIPT_WINDOW_PAGES + 1)
   const unchanged = prior && header.revision !== undefined && header.revision === prior.revision && header.total === prior.total && lastPage === prior.lastPage
   const rows: EngineHistoryRow[] = []
+  let residentBytes = 0
+  const encoder = new TextEncoder()
   if (header.total > 0) {
-    // A changed archive refreshes the selected window, preserving the earlier
-    // pages the user already opened. An unchanged archive reads only new pages.
+    // Read only a bounded page window; preserving every page ever opened recreates the long-run leak.
+    const pages: { current: number; rows: EngineHistoryRow[]; bytes: number }[] = []
     const endPage = unchanged ? prior.firstPage - 1 : lastPage
     for (let current = firstPage; current <= endPage; current++) {
-      const page = checkedPage(await pageRequest(current, SUBAGENT_TRANSCRIPT_PAGE_SIZE), current, SUBAGENT_TRANSCRIPT_PAGE_SIZE)
-      if (page.total !== header.total || page.revision !== header.revision) throw new Error('子代理对话在读取期间有更新，请重试')
-      rows.push(...page.rows)
+      const result = await pageRequest(current, SUBAGENT_TRANSCRIPT_PAGE_SIZE)
+      const page = checkedPage(result, current, SUBAGENT_TRANSCRIPT_PAGE_SIZE)
+      if (page.total !== header.total || page.revision !== header.revision) {
+        if (action === 'refresh') return livePageWindow(result, current)
+        throw new Error('子代理对话在读取期间有更新，请重试')
+      }
+      const bytes = encoder.encode(JSON.stringify(page.rows)).byteLength
+      if (bytes > SUBAGENT_TRANSCRIPT_WINDOW_BYTES) throw new Error('此对话页正文较大，请在工具记录中按段读取原始详情')
+      pages.push({ current, rows: page.rows, bytes })
     }
-    if (unchanged) rows.push(...prior.rows)
+    if (unchanged) {
+      for (let current = prior.firstPage; current <= prior.lastPage; current++) {
+        const offset = (current - prior.firstPage) * SUBAGENT_TRANSCRIPT_PAGE_SIZE
+        const pageRows = prior.rows.slice(offset, offset + SUBAGENT_TRANSCRIPT_PAGE_SIZE)
+        pages.push({ current, rows: pageRows, bytes: encoder.encode(JSON.stringify(pageRows)).byteLength })
+      }
+    }
+    const ordered = action === 'older' ? pages : [...pages].reverse()
+    const selected: typeof pages = []
+    for (const page of ordered) {
+      if (residentBytes + page.bytes > SUBAGENT_TRANSCRIPT_WINDOW_BYTES) break
+      residentBytes += page.bytes
+      selected.push(page)
+    }
+    selected.sort((a, b) => a.current - b.current)
+    firstPage = selected[0]?.current ?? firstPage
+    lastPage = selected.at(-1)?.current ?? lastPage
+    for (const page of selected) rows.push(...page.rows)
   }
   const ids = new Set<string>()
   for (const row of rows) {
@@ -115,7 +171,8 @@ export async function loadWorkSubagentTranscript(
     identity: { ...identity }, endpoint, rows, firstPage, lastPage, total: header.total,
     ...(header.revision !== undefined ? { revision: header.revision } : {}),
     ...(typeof headerResult.metadata?.backend === 'string' ? { backend: headerResult.metadata.backend } : {}),
-    compressed: headerResult.metadata?.compressed === true
+    compressed: headerResult.metadata?.compressed === true, residentBytes,
+    windowed: rows.length < header.total
   }
 }
 

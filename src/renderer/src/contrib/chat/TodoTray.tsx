@@ -16,8 +16,8 @@ const STATUS_LABEL: Record<EngineTodo['status'], string> = {
  * - 已完成/取消项排在底部，和进行中项目保持同一条信息轴
  * - 任务内容独立滚动；完成进度显示在外层「任务」标签中
  *
- * 数据来自引擎 todo 帧（useChat.todos），组件只读不回写 ——
- * 状态变更由 Agent 调 todo_update 后经新帧整表下发。
+ * 数据来自引擎任务计划帧（useChat.todos），组件只读不回写；
+ * 计划状态独立下发，不根据工具成功或会话完成状态推断。
  */
 export function TodoTray({ todos }: { todos: EngineTodo[] }): JSX.Element | null {
   if (todos.length === 0) return null

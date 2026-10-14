@@ -2,6 +2,7 @@ import type { ToolActivity } from '@renderer/core/engine/useChat'
 import { commandToolState } from '@renderer/core/engine/command-job-state'
 import { runToolState, toolStatusLabel } from '@renderer/core/engine/subagent-state'
 import { toolDisplayName } from '@renderer/core/engine/tool-labels'
+import { isVisibleToolActivity } from '@renderer/core/engine/task-plan'
 import { workToolTarget } from './work-message-timeline'
 
 export const WORK_INLINE_ACTIVITY_PAGE_SIZE = 20
@@ -15,6 +16,7 @@ export function workActivityState(tool: ToolActivity): ToolActivity['state'] {
 export function workActivitySummary(tools: readonly ToolActivity[], workspacePath?: string | null): {
   tool: ToolActivity; state: ToolActivity['state']; label: string; target: string
 } | null {
+  tools = tools.filter(isVisibleToolActivity)
   if (!tools.length) return null
   const current = tools.findLast(tool => ['running', 'waiting'].includes(workActivityState(tool)))
     ?? tools.findLast(tool => workActivityState(tool) !== 'done')

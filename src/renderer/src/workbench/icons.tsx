@@ -30,6 +30,7 @@ export type IconName =
   | 'chevron-up'
   | 'chevron-down'
   | 'chevron-right'
+  | 'chevron-left'
   | 'collapse-all'
   | 'sort'
   | 'check'
@@ -437,6 +438,7 @@ const PATHS: Record<IconName, JSX.Element> = {
   'chevron-up': <path d="M7 14l5-5 5 5H7z" fill="currentColor" />,
   'chevron-down': <path d="M7 10l5 5 5-5H7z" fill="currentColor" />,
   'chevron-right': <path d="M10 7l5 5-5 5V7z" fill="currentColor" />,
+  'chevron-left': <path d="M14 7l-5 5 5 5V7z" fill="currentColor" />,
   'collapse-all': (
     <path d="M4 4h8v8H4V4zm2 2v4h4V6H6zm6 6h8v8h-8v-8zm-6 2h4v4H6v-4z" fill="currentColor" />
   ),

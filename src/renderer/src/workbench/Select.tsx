@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useId,
   useLayoutEffect,
   useRef,
@@ -6,7 +7,7 @@ import {
   type JSX,
   type KeyboardEvent as ReactKeyboardEvent
 } from 'react'
-import { Icon } from './icons'
+import { Icon, type IconName } from './icons'
 import { Popover, type PopoverAlign, type PopoverPlacement } from './Popover'
 
 export interface SelectOption {
@@ -14,6 +15,13 @@ export interface SelectOption {
   label: string
   /** 次要说明：展示在选项下方，帮助区分相近选项 */
   description?: string
+}
+
+export interface SelectAction {
+  id: string
+  label: string
+  icon?: IconName
+  onSelect: () => void
 }
 
 interface SelectProps {
@@ -34,6 +42,12 @@ interface SelectProps {
   className?: string
   /** 仅附加到 portal 菜单面板的类名；用于嵌套在模态框中的选择器。 */
   panelClassName?: string
+  /** Actions share the menu's keyboard navigation without masquerading as values. */
+  actions?: SelectAction[]
+  /** Selection labels can be verbose in the menu while the trigger stays compact. */
+  triggerLabel?: string
+  hint?: string
+  onOpenChange?: (open: boolean) => void
 }
 
 /**
@@ -54,7 +68,11 @@ export function Select({
   align = 'start',
   width,
   className,
-  panelClassName
+  panelClassName,
+  actions = [],
+  triggerLabel,
+  hint,
+  onOpenChange
 }: SelectProps): JSX.Element {
   const current = options.find((option) => option.value === value)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -64,6 +82,14 @@ export function Select({
   const [activeIndex, setActiveIndex] = useState(-1)
   /** Popover 经 onOpenChange 透出的开合态，供打开时同步高亮项 */
   const [open, setOpen] = useState(false)
+  const itemCount = options.length + actions.length
+  const changeOpen = useCallback(
+    (next: boolean): void => {
+      setOpen(next)
+      onOpenChange?.(next)
+    },
+    [onOpenChange]
+  )
 
   // 打开时高亮当前选中项；关闭后复位，下次打开重新定位。
   // 用 React 官方「渲染时调整 state」模式（同 Popover 的 prevOpen），
@@ -103,16 +129,21 @@ export function Select({
     }
     focusItem()
     return () => cancelAnimationFrame(frame)
-  }, [open, activeIndex, disabled])
+  }, [open, activeIndex, disabled, itemCount])
 
   const closeAndFocus = (): void => {
-    setOpen(false)
+    changeOpen(false)
     triggerRef.current?.focus({ preventScroll: true })
   }
 
   const choose = (option: SelectOption): void => {
     onChange(option.value)
     closeAndFocus()
+  }
+
+  const chooseAction = (action: SelectAction): void => {
+    closeAndFocus()
+    action.onSelect()
   }
 
   const onKeyDown = (event: ReactKeyboardEvent): void => {
@@ -129,27 +160,31 @@ export function Select({
       closeAndFocus()
       return
     }
-    if (options.length === 0) return
+    if (itemCount === 0) return
     if (!open) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()
-        setOpen(true)
+        changeOpen(true)
       }
       return
     }
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      setActiveIndex((i) => (i < 0 ? 0 : Math.min(i + 1, options.length - 1)))
+      setActiveIndex((i) => (i < 0 ? 0 : Math.min(i + 1, itemCount - 1)))
     } else if (event.key === 'ArrowUp') {
       event.preventDefault()
-      setActiveIndex((i) => (i < 0 ? options.length - 1 : Math.max(i - 1, 0)))
+      setActiveIndex((i) => (i < 0 ? itemCount - 1 : Math.max(i - 1, 0)))
     } else if (event.key === 'Home' || event.key === 'End') {
       event.preventDefault()
-      setActiveIndex(event.key === 'Home' ? 0 : options.length - 1)
+      setActiveIndex(event.key === 'Home' ? 0 : itemCount - 1)
     } else if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
       const picked = options[activeIndex]
       if (picked) choose(picked)
+      else {
+        const action = actions[activeIndex - options.length]
+        if (action) chooseAction(action)
+      }
     }
   }
 
@@ -164,7 +199,7 @@ export function Select({
       flush
       disabled={disabled}
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={changeOpen}
       trigger={() => (
         <button
           ref={triggerRef}
@@ -178,7 +213,7 @@ export function Select({
           aria-controls={open && !disabled ? menuId : undefined}
           onKeyDown={onKeyDown}
         >
-          <span className="select__value">{current?.label ?? value}</span>
+          <span className="select__value">{triggerLabel ?? current?.label ?? value}</span>
           <Icon name="chevron" size={16} className="select__caret" />
         </button>
       )}
@@ -192,6 +227,11 @@ export function Select({
         aria-label={ariaLabel ?? title}
         onKeyDown={onKeyDown}
       >
+        {hint ? (
+          <div className="select__hint" role="status">
+            {hint}
+          </div>
+        ) : null}
         {options.map((option, index) => (
           <button
             key={option.value}
@@ -214,6 +254,28 @@ export function Select({
             ) : null}
           </button>
         ))}
+        {actions.length ? (
+          <div className="select__actions" role="group" aria-label="更多操作">
+            {actions.map((action, index) => {
+              const itemIndex = options.length + index
+              return (
+                <button
+                  key={action.id}
+                  type="button"
+                  role="menuitem"
+                  data-select-index={itemIndex}
+                  tabIndex={itemIndex === activeIndex ? 0 : -1}
+                  className={`select__item select__action${itemIndex === activeIndex ? ' is-highlight' : ''}`}
+                  onFocus={() => setActiveIndex(itemIndex)}
+                  onClick={() => chooseAction(action)}
+                >
+                  {action.icon ? <Icon name={action.icon} size={15} /> : null}
+                  <span>{action.label}</span>
+                </button>
+              )
+            })}
+          </div>
+        ) : null}
       </div>
     </Popover>
   )

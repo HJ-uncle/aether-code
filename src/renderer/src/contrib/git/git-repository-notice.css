@@ -1,0 +1,15 @@
+.git-repository-notice { flex: none; display: grid; gap: 8px; margin: 8px 12px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-elevated); font-size: 12px; line-height: 1.5; min-width: 0; }
+.git-repository-notice__content { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.git-repository-notice__content > svg { flex: none; margin-top: 2px; color: var(--fg-muted); }
+.git-repository-notice strong { font-size: 12px; font-weight: 600; }
+.git-repository-notice p { margin: 2px 0 0; overflow-wrap: anywhere; color: var(--fg-muted); }
+.git-repository-notice details { min-width: 0; }
+.git-repository-notice summary { cursor: pointer; color: var(--fg-muted); }
+.git-repository-notice__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.git-repository-notice__actions > span { display: inline-flex; align-items: center; gap: 6px; color: var(--fg-muted); }
+.git-repository-notice p.git-repository-notice__error { color: var(--danger); }
+
+@media (max-height: 640px) {
+  .git-repository-notice { gap: var(--space-1); padding: var(--space-2); margin-block: var(--space-1); }
+  .git-repository-notice__content { gap: var(--space-2); }
+}

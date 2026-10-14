@@ -58,6 +58,8 @@ export const IPC = {
     /** 版本控制（IDE 自己跑 git；全部返回 { success, error? } 信封，见 git-types.ts） */
     gitInit: 'git:init',
     gitStatus: 'git:status',
+    gitLeaseStatus: 'git:lease-status',
+    gitRecoverLease: 'git:recover-lease',
     gitDiff: 'git:diff',
     gitBranchInfo: 'git:branch-info',
     gitStage: 'git:stage',
@@ -520,6 +522,8 @@ export interface StandardResponse<T = unknown> {
 }
 
 export interface EngineRequestInput {
+  /** Opt in only after the engine confirms its incremental subagent protocol. */
+  subagentProtocol?: 2
   /** Product capability profile for this request. Code and Work share one
    * engine process but must receive different tool registries. */
   toolProfile?: 'code' | 'general'
@@ -592,10 +596,11 @@ export interface EngineTodo {
  * 同一帧只会出现其中一个字段，用可选字段而非联合类型以便透传未知帧。
  */
 export interface ChatSsePayload {
+  publishedChild?: import('./published-child').PublishedChildReference
   userMessage?: unknown
   run?: import('./root-run').RootRun
   assistantMsgId?: string
-  subagentEvent?: import('./subagent').SubagentEvent
+  subagentEvent?: import('./subagent').SubagentWireEvent
   content?: string
   thinking?: string
   toolStart?: unknown
@@ -658,6 +663,8 @@ export type StreamEvent = { streamId: string; eventId?: string } & (
 )
 
 export interface StreamStartInput {
+  /** Resume and initial streams must use the same negotiated event contract. */
+  subagentProtocol?: 2
   /** Product capability profile for this stream. */
   toolProfile?: 'code' | 'general'
   expectedEngine?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>

@@ -6,8 +6,7 @@ import type { SessionThinkingMode } from '@renderer/contrib/chat/session-thinkin
 /**
  * Work 输入区的轻量偏好入口。
  *
- * 长期记忆 / 思考档位 / 安全模式统一收进 ⚙ 弹层（ComposerOptions），
- * 工具条上不再单独放安全模式入口，避免与弹层里的设置重复。
+ * 复用两种模式同一偏好组件；当前访问权限始终可见，低频偏好逐步展开。
  */
 export function WorkComposerPreferences({
   sessionId,

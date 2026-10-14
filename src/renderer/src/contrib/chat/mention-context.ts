@@ -17,7 +17,7 @@
  * 能可靠往返的只有正文这段字符串。
  */
 
-export type MentionSource = 'file' | 'dir' | 'code' | 'terminal' | 'agent'
+export type MentionSource = 'file' | 'dir' | 'code' | 'terminal' | 'agent' | 'browser'
 
 /** 每种引用标签的配色与悬停提示：输入框 chip 与气泡 chip 共用这一份 */
 export const MENTION_META: Record<MentionSource, { color: string; hint: string }> = {
@@ -25,7 +25,8 @@ export const MENTION_META: Record<MentionSource, { color: string; hint: string }
   dir: { color: '#d97706', hint: '目录' },
   code: { color: '#8b5cf6', hint: '源码位置' },
   terminal: { color: '#0ea5e9', hint: '终端输出' },
-  agent: { color: '#10b981', hint: '协作 Agent' }
+  agent: { color: '#10b981', hint: '协作 Agent' },
+  browser: { color: 'var(--accent)', hint: '浏览器网页' }
 }
 
 export interface Mention {
@@ -77,7 +78,7 @@ export const LEGACY_SNAPSHOT_MARKER = '\n\n以下为添加到对话时的编辑�
 
 /** `<reference …>…</reference>` 结构化块（捕获类型 / 路径 / 行号区间 / 块内原文） */
 const REF_BLOCK_RE =
-  /<reference type="(file|code|terminal)" path="([^"]*)"(?: lines="(\d+)-(\d+)")?(?: columns="(\d+)-(\d+)")?>\n(`{3,})([^\r\n]*)\n([\s\S]*?)\n\7\n<\/reference>/g
+  /<reference type="(file|code|terminal|browser)" path="([^"]*)"(?: lines="(\d+)-(\d+)")?(?: columns="(\d+)-(\d+)")?>\n(`{3,})([^\r\n]*)\n([\s\S]*?)\n\7\n<\/reference>/g
 
 /** 常见后缀 → 代码围栏语言标识（拿不到就留空，围栏照样成立） */
 const LANG_BY_EXT: Record<string, string> = {
@@ -127,7 +128,7 @@ export function isStoredMention(value: unknown): value is Mention {
   if (!value || typeof value !== 'object') return false
   const record = value as Record<string, unknown>
   return typeof record.displayText === 'string' &&
-    ['file', 'dir', 'code', 'terminal', 'agent'].includes(String(record.source)) &&
+    ['file', 'dir', 'code', 'terminal', 'agent', 'browser'].includes(String(record.source)) &&
     ['path', 'content'].every((key) => record[key] === undefined || typeof record[key] === 'string') &&
     ['startLine', 'endLine', 'startColumn', 'endColumn', 'textOffset'].every((key) =>
       record[key] === undefined || (typeof record[key] === 'number' && Number.isInteger(record[key]) && Number(record[key]) >= 0))
@@ -160,7 +161,7 @@ function fenceFor(content: string): string {
  * 返回 undefined 表示目录/协作 Agent，保留标签；空字符串是有效快照。
  */
 export function formatReferenceBlock(mention: Mention, content: string): string | undefined {
-  if (mention.source !== 'file' && mention.source !== 'code' && mention.source !== 'terminal') return undefined
+  if (!['file', 'code', 'terminal', 'browser'].includes(mention.source)) return undefined
   const path = escapeAttr(mention.path ?? '')
   const type = mention.source
   const lines = mention.source === 'code' && mention.startLine
@@ -266,7 +267,7 @@ export function buildMentionMessage(text: string, mentions: readonly Mention[], 
 function isValidRefShape(value: unknown): value is PromptRef {
   if (!value || typeof value !== 'object') return false
   const r = value as Record<string, unknown>
-  if (!['file', 'dir', 'code', 'terminal', 'agent'].includes(String(r.t))) return false
+  if (!['file', 'dir', 'code', 'terminal', 'agent', 'browser'].includes(String(r.t))) return false
   if (typeof r.p !== 'string' || typeof r.d !== 'string') return false
   if (typeof r.s !== 'number' || typeof r.e !== 'number') return false
   if (!Number.isInteger(r.s) || !Number.isInteger(r.e)) return false
@@ -301,7 +302,7 @@ export function recoverRefsFromReferenceBlocks(body: string): PromptRef[] {
   REF_BLOCK_RE.lastIndex = 0
   let match: RegExpExecArray | null
   while ((match = REF_BLOCK_RE.exec(body)) !== null) {
-    const type = match[1] as 'file' | 'code' | 'terminal'
+    const type = match[1] as 'file' | 'code' | 'terminal' | 'browser'
     const path = match[2].replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
     const startLine = match[3] ? Number(match[3]) : undefined
     const endLine = match[4] ? Number(match[4]) : undefined
@@ -373,7 +374,7 @@ export function parseMentionContent(content: string): { body: string; refs: Prom
 
 /** 引用区间在原数据块里的原文（回填时把快照一起带回去，不必重新读盘） */
 function contentFromBody(body: string, ref: PromptRef): string | undefined {
-  if (ref.t !== 'file' && ref.t !== 'code' && ref.t !== 'terminal') return undefined
+  if (!['file', 'code', 'terminal', 'browser'].includes(ref.t)) return undefined
   const slice = body.slice(ref.s, ref.e)
   const match = /^<reference [^>]*>\n([\s\S]*)\n<\/reference>$/.exec(slice)
   return match ? unfence(match[1]) : undefined

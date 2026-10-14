@@ -1,4 +1,5 @@
 import type { ChatMessage, ToolActivity } from '@renderer/core/engine/useChat'
+import { isVisibleToolActivity } from '@renderer/core/engine/task-plan'
 
 export type WorkMessageSegment =
   | { kind: 'content'; key: string; text: string }
@@ -8,7 +9,7 @@ export type WorkMessageSegment =
 export function workMessageTimeline(message: ChatMessage): WorkMessageSegment[] {
   if (message.role === 'user') return message.content ? [{ kind: 'content', key: 'content', text: message.content }] : []
   const segments: WorkMessageSegment[] = []
-  const tools = new Map(message.tools.filter(tool => !tool.hidden).map(tool => [tool.id, tool]))
+  const tools = new Map(message.tools.filter(isVisibleToolActivity).map(tool => [tool.id, tool]))
   const seen = new Set<string>()
   const appendTool = (tool: ToolActivity): void => {
     if (seen.has(tool.id)) return

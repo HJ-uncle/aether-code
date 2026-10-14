@@ -223,7 +223,7 @@ test.describe.serial('上下文 tooltip 连续动效与生命周期', () => {
     await page.getByRole('button', { name: '会话历史', exact: true }).click()
     await page.locator('.history-view__item[data-session-id="' + sessionId + '"]').click()
     await expect(page.locator('.message--user').first()).toContainText('CONTEXT_MOTION_HISTORY')
-    await expect(page.locator('.model-picker__trigger')).toBeEnabled()
+    await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toBeEnabled()
   })
   test.afterEach(async ({}, testInfo) => {
     if (testInfo.status !== testInfo.expectedStatus && page && !page.isClosed()) {

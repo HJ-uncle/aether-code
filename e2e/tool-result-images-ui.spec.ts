@@ -119,7 +119,7 @@ test.describe.serial('工具图片输出与中文名称真机回归', () => {
     await page.getByRole('button', { name: '会话历史', exact: true }).click()
     await page.locator(`.history-view__item[data-session-id="${sessionId}"]`).click()
     await expect(page.locator('.message--user').first()).toContainText('图片工具回归会话')
-    await expect(page.locator('.model-picker__trigger')).toBeEnabled()
+    await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toBeEnabled()
   })
   test.afterEach(() => { expect(rendererErrors).toEqual([]); expect(serverErrors).toEqual([]) })
   test.afterAll(async () => {

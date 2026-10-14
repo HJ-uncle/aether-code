@@ -9,6 +9,7 @@
 import { app, dialog, ipcMain, webContents, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { IPC } from '../shared/ipc'
 import { accountService, configureAccountService } from './account/service'
+import { registerWorkNextTurnQueue } from './work-next-turn-ipc'
 import { disconnectBrowserClients } from './browser-ipc'
 import type { AccountProfileInput } from '../shared/account'
 import type {
@@ -31,6 +32,8 @@ import { createEngineLogBatcher } from './engine/log-batch'
 import * as fileService from './fs/file-service'
 import { watchDocuments } from './fs/document-watch'
 import * as gitService from './git/git-service'
+import { mainGitLeaseStatus, recoverMainGitLease } from './git/git-operation'
+import { repositoryFailureMetadata } from './git/repository-lease'
 import * as lspServer from './lsp/server'
 import {
   createTerminal,
@@ -71,6 +74,7 @@ function broadcast(channel: string, payload: unknown): void {
 }
 
 export function registerIpcHandlers(): void {
+  registerWorkNextTurnQueue()
   onGraphicsChanged(snapshot => broadcast(IPC.event.graphicsChanged, snapshot))
   ipcMain.handle(IPC.invoke.graphicsGetSnapshot, getGraphicsSnapshot)
   ipcMain.handle(IPC.invoke.graphicsResetRecovery, resetGraphicsRecovery)
@@ -275,7 +279,7 @@ export function registerIpcHandlers(): void {
     activeStreams.set(input.streamId, controller)
 
     try {
-      await engineHost.stream(input.streamId, input.path, input.body, controller.signal, input.method, input.query, input.expectedEngine, input.toolProfile)
+      await engineHost.stream(input.streamId, input.path, input.body, controller.signal, input.method, input.query, input.expectedEngine, input.toolProfile, input.subagentProtocol)
     } finally {
       activeStreams.delete(input.streamId)
     }
@@ -433,11 +437,14 @@ export function registerIpcHandlers(): void {
   const guard = <T extends GitResult>(run: () => Promise<T>): Promise<T> =>
     run().catch((error: unknown) => ({
       success: false,
-      error: error instanceof Error ? error.message : String(error)
+      error: error instanceof Error ? error.message : String(error),
+      ...repositoryFailureMetadata(error)
     }) as T)
 
   ipcMain.handle(IPC.invoke.gitInit, (_e, cwd: string) => guard(() => gitService.init(cwd)))
   ipcMain.handle(IPC.invoke.gitStatus, (_e, cwd: string) => guard(() => gitService.status(cwd)))
+  ipcMain.handle(IPC.invoke.gitLeaseStatus, (_e, cwd: string) => guard(async () => ({success:true,lease:mainGitLeaseStatus(cwd)})))
+  ipcMain.handle(IPC.invoke.gitRecoverLease, (_e, cwd: string, generation: string) => guard(async () => ({success:true,lease:recoverMainGitLease(cwd,generation)})))
   ipcMain.handle(IPC.invoke.gitDiff, (_e, cwd: string, path: string, staged: boolean, base?: 'index' | 'head') =>
     guard(() => gitService.diff(cwd, path, staged, base))
   )

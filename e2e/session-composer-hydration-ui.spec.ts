@@ -104,13 +104,13 @@ test.describe.serial('会话配置延迟恢复的快速发送',()=>{
  test('权威requested模型到达前禁止快速Enter，恢复后实际HTTP请求使用本会话模型',async()=>{
   await page.locator('.chat__input').fill('QUICK_SEND_GUARD')
   await expect(page.getByRole('button',{name:'发送',exact:true})).toBeDisabled()
-  await expect(page.locator('.model-picker__trigger')).toBeDisabled()
+  await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toBeDisabled()
   await page.locator('.chat__input').press('Enter')
   await expect(page.locator('.chat__input')).toHaveText('QUICK_SEND_GUARD')
   expect(captured).toEqual([])
   holdSnapshots=false
   for(const response of held)if(!response.destroyed&&!response.writableEnded)response.end(envelope(snapshotData()))
-  await expect(page.locator('.model-picker__trigger')).toHaveAttribute('title','当前模型：'+requested)
+  await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toHaveAttribute('title','当前模型：'+requested)
   await expect(page.locator('.turn-usage__model')).toHaveText(other)
   await expect(page.getByRole('button',{name:'发送',exact:true})).toBeEnabled()
   await page.getByRole('button',{name:'发送',exact:true}).click()
@@ -129,7 +129,7 @@ test.describe.serial('会话配置延迟恢复的快速发送',()=>{
   await page.locator('.chat__input').press('Enter')
   expect(captured.length).toBe(beforeChats)
   await expect.poll(()=>targetSnapshotRequests,{timeout:15000}).toBeGreaterThanOrEqual(beforeRequests+3)
-  await expect(page.locator('.model-picker__trigger')).toHaveAttribute('title','当前模型：'+requested)
+  await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toHaveAttribute('title','当前模型：'+requested)
   await expect(page.locator('.message--user')).toContainText('Delayed model restoration')
   await expect(page.getByRole('button',{name:'发送',exact:true})).toBeEnabled()
   await page.getByRole('button',{name:'发送',exact:true}).click()
@@ -152,12 +152,12 @@ test.describe.serial('会话配置延迟恢复的快速发送',()=>{
   await expect(page.locator('.message--user')).toContainText('OTHER_SESSION_HISTORY')
   remainingSnapshotFailures=0
   await selectSession('Delayed model restoration')
-  await expect(page.locator('.model-picker__trigger')).toHaveAttribute('title','当前模型：'+requested)
+  await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toHaveAttribute('title','当前模型：'+requested)
   expect(errors).toEqual([])
  })
  test('列表缺少旧会话模型时保留原ID，真实发送不静默换为首模型',async()=>{
   snapshotModel='removed-or-environment-only-model';await page.reload()
-  await expect(page.locator('.model-picker__trigger')).toHaveAttribute('title','当前模型：'+snapshotModel)
+  await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toHaveAttribute('title','当前模型：'+snapshotModel)
   await expect(page.locator('.chat__notice')).toContainText('继续发送将使用会话原模型')
   await page.locator('.chat__input').fill('PRESERVE_UNKNOWN_REQUESTED')
   await expect(page.getByRole('button',{name:'发送',exact:true})).toBeEnabled()
@@ -167,7 +167,7 @@ test.describe.serial('会话配置延迟恢复的快速发送',()=>{
  })
  test('disabled列表条目保持当前引擎既有调用语义，不新增客户端单方限制',async()=>{
   snapshotModel=requested;disableRequested=true;await page.reload()
-  await expect(page.locator('.model-picker__trigger')).toHaveAttribute('title','当前模型：'+requested)
+  await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toHaveAttribute('title','当前模型：'+requested)
   await page.locator('.chat__input').fill('PRESERVE_DISABLED_SEMANTICS')
   await expect(page.getByRole('button',{name:'发送',exact:true})).toBeEnabled()
   const before=captured.length;await page.getByRole('button',{name:'发送',exact:true}).click()
@@ -178,8 +178,8 @@ test.describe.serial('会话配置延迟恢复的快速发送',()=>{
   disableRequested=false
   for(const defaultModel of ['当前配置 of AI','']){
    snapshotModel=defaultModel;await page.reload()
-   await expect(page.locator('.model-picker__trigger')).toHaveAttribute('title','未指定模型，将使用引擎默认配置')
-   await expect(page.locator('.model-picker__trigger')).toBeEnabled()
+   await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toHaveAttribute('title','跟随引擎配置 · 发送时由引擎解析')
+   await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toBeEnabled()
    await page.locator('.chat__input').fill('PRESERVE_ENGINE_DEFAULT')
    const before=captured.length;await page.getByRole('button',{name:'发送',exact:true}).click()
    await expect.poll(()=>captured.length).toBe(before+1)
@@ -192,7 +192,7 @@ test.describe.serial('会话配置延迟恢复的快速发送',()=>{
   snapshotModel=requested;snapshotRunId='config-run-A';fixtureMemoryScope='session'
   snapshotConfig={agentId:'external-agent',thinkingMode:'medium',subagentModel:'MiniMax-M2.5',utilityModel:'glm-5.3',skills:['restored-skill'],mcpServers:['restored-mcp'],knowledgeBases:['restored-kb'],memoryScope:'session'}
   await page.evaluate(()=>window.aether.settings.update({lastAgentId:'global-agent',subagentModelId:'global-sub',utilityModelId:'global-utility',thinkingMode:'off'}));await page.reload()
-  await expect(page.locator('.model-picker__trigger')).toHaveAttribute('title','当前模型：'+requested)
+  await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toHaveAttribute('title','当前模型：'+requested)
   await expect(page.getByRole('button',{name:'移除技能 restored-skill',exact:true})).toBeVisible()
   await expect(page.getByRole('button',{name:'移除 MCP restored-mcp',exact:true})).toBeVisible()
   await expect(page.getByRole('button',{name:'移除知识库 restored-kb',exact:true})).toBeVisible()
@@ -222,7 +222,7 @@ test.describe.serial('会话配置延迟恢复的快速发送',()=>{
  })
  test('权威配置缺省字段保持省略；用户后改记忆设置立即用于下一请求',async()=>{
   snapshotRunId='config-run-C';snapshotConfig={};await page.reload()
-  await expect(page.locator('.model-picker__trigger')).toHaveAttribute('title','当前模型：'+requested)
+  await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toHaveAttribute('title','当前模型：'+requested)
   const before=captured.length;await page.locator('.chat__input').fill('NO_INVENTED_DEFAULTS');await page.getByRole('button',{name:'发送',exact:true}).click()
   await expect.poll(()=>captured.length).toBe(before+1)
   for(const key of ['agentId','thinkingMode','subagentModel','utilityModel','skills','mcpServers','knowledgeBases'])expect(captured.at(-1)).not.toHaveProperty(key)
@@ -236,8 +236,8 @@ test.describe.serial('会话配置延迟恢复的快速发送',()=>{
 
  test('恢复后显式修改用途模型用于当前请求，换会话或远端不能串用覆盖',async()=>{
   snapshotModel=requested;snapshotRunId='assigned-edit-run';snapshotConfig={thinkingMode:false,subagentModel:'restored-old-sub',utilityModel:'restored-old-utility'};await page.reload()
-  await expect(page.locator('.model-picker__trigger')).toHaveAttribute('title','当前模型：'+requested)
-  await expect(page.locator('.model-picker__trigger')).toBeEnabled()
+  await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toHaveAttribute('title','当前模型：'+requested)
+  await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toBeEnabled()
   await chooseAssignedModel('子代理使用的模型','user-chosen-sub')
   await chooseAssignedModel('轻任务使用的模型','user-chosen-utility')
   const before=captured.length;await page.locator('.chat__input').fill('EXPLICIT_ASSIGNMENT_EDIT');await page.getByRole('button',{name:'发送',exact:true}).click()
@@ -249,7 +249,7 @@ test.describe.serial('会话配置延迟恢复的快速发送',()=>{
   await page.evaluate(({origin,id,key})=>{localStorage.setItem(key,id);return window.aether.settings.update({remoteBaseUrl:origin})},{origin:secondaryOrigin,id:target,key:sessionStorageKey('aether:lastSessionId',engineStorageKey({mode:'remote',baseUrl:secondaryOrigin}))})
   await page.evaluate(()=>window.aether.engine.restart())
   await expect(page.locator('.status-bar')).toContainText('引擎：就绪',{timeout:30000})
-  await expect(page.locator('.model-picker__trigger')).toHaveAttribute('title','当前模型：'+requested)
+  await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toHaveAttribute('title','当前模型：'+requested)
   const sourceBefore=captured.length;await page.locator('.chat__input').fill('OTHER_SOURCE_ASSIGNMENT');await page.getByRole('button',{name:'发送',exact:true}).click()
   await expect.poll(()=>captured.length).toBe(sourceBefore+1);expect(captured.at(-1)).toMatchObject({sessionId:target,thinkingMode:'low',subagentModel:'source-B-sub',utilityModel:'source-B-utility'})
   expect(errors).toEqual([])

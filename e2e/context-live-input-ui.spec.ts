@@ -81,7 +81,7 @@ test.beforeAll(async () => {
   page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message))
   await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90000 })
   await page.getByRole('button', { name: '会话历史', exact: true }).click(); await page.locator('.history-view__item[data-session-id="' + sessionId + '"]').click()
-  await expect(page.locator('.message--user').first()).toContainText('EXACT_CONTEXT_HISTORY'); await expect(page.locator('.model-picker__trigger')).toBeEnabled()
+  await expect(page.locator('.message--user').first()).toContainText('EXACT_CONTEXT_HISTORY'); await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toBeEnabled()
 })
 test.afterAll(async () => {
   heldStream?.destroy(); await app?.close(); server.closeAllConnections(); await new Promise<void>(done => server.close(() => done()))

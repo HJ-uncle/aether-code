@@ -12,6 +12,9 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { logger } from '../logger'
+import { observeProcessLifecycle, type ProcessLifecycle } from './process-lifecycle'
+
+const stopTasks = new WeakMap<ChildProcess, Promise<void>>()
 
 export interface StartProcessOptions {
   /** node 可执行文件路径（默认 process.execPath） */
@@ -35,7 +38,8 @@ export interface ProcessHandle {
   port: number
   /** 子进程 PID；spawn 失败时为 undefined */
   pid: number | undefined
-  /** 优雅关闭：SIGTERM → 超时 SIGKILL */
+  lifecycle: ProcessLifecycle
+  /** Bounded SIGTERM/SIGKILL; resolves only after observed exit and pipe close. */
   stop: (timeoutMs?: number) => Promise<void>
 }
 
@@ -114,10 +118,12 @@ export function startProcess(opts: StartProcessOptions): ProcessHandle {
     cwd: opts.cwd ?? binDir,
     windowsHide: true,
     env,
-    // 不 detached：父进程退出时子进程随之终止，避免留下孤儿
+    // Keep a direct child handle for owned cleanup; detached:false is not a
+    // guarantee that OS descendants will terminate when the desktop exits.
     detached: false,
     stdio: ['pipe', 'pipe', 'pipe']
   })
+  const lifecycle = observeProcessLifecycle(child)
 
   child.stdout?.on('data', (chunk: Buffer) => {
     for (const line of chunk.toString().split('\n')) {
@@ -150,46 +156,17 @@ export function startProcess(opts: StartProcessOptions): ProcessHandle {
     process: child,
     port: opts.port,
     pid: child.pid,
+    lifecycle,
     stop: (timeoutMs = 5000) => stopProcess(child, timeoutMs)
   }
 }
 
-/** 优雅关闭：先 SIGTERM，超时后 SIGKILL */
+/** Share the eager observation and signal sequence with the original handle. */
 export function stopProcess(child: ChildProcess, timeoutMs = 5000): Promise<void> {
-  return new Promise((resolve) => {
-    if (child.exitCode !== null || child.killed) {
-      resolve()
-      return
-    }
-
-    let timer: NodeJS.Timeout | null = null
-
-    const cleanup = (): void => {
-      if (timer) {
-        clearTimeout(timer)
-        timer = null
-      }
-      resolve()
-    }
-
-    child.once('exit', cleanup)
-
-    try {
-      child.kill('SIGTERM')
-    } catch {
-      cleanup()
-      return
-    }
-
-    timer = setTimeout(() => {
-      child.removeListener('exit', cleanup)
-      try {
-        child.kill('SIGKILL')
-      } catch {
-        /* 进程可能已退出 */
-      }
-      child.once('exit', resolve)
-      setTimeout(resolve, 200)
-    }, timeoutMs)
-  })
+  let task = stopTasks.get(child)
+  if (!task) {
+    task = observeProcessLifecycle(child).stop(timeoutMs).then(() => undefined)
+    stopTasks.set(child, task)
+  }
+  return task
 }

@@ -120,6 +120,8 @@ export function validateRemoteInstanceToken(value: string): string {
 
 // These routes observe engine-owned records; none resolves a local IDE workspace path.
 const REMOTE_READ_ROUTES = [
+  // Work scratch and project Git resolve the same authenticated session owner.
+  /^\/api\/v1\/git\/(?:binding|lease)$/,
   /^\/(health|meta|metrics)$/,
   /^\/api\/v1\/(models|models\/capability-defs|tools|system-tools|external-skills|changes|todos)$/,
   /^\/api\/v1\/agents(?:\/[a-zA-Z0-9_-]+)?$/,
@@ -127,6 +129,8 @@ const REMOTE_READ_ROUTES = [
   /^\/api\/v1\/(mcp\/servers(?:\/[a-zA-Z0-9_-]+)?|skills(?:\/[a-zA-Z0-9_.-]+)?|knowledge\/(?:formats|documents(?:\/[a-zA-Z0-9_-]+)?|bases(?:\/[a-zA-Z0-9_-]+)?|status))$/,
   /^\/api\/v1\/skills\/imports(?:\/[a-zA-Z0-9_-]+)?(?:\/chunks)?$/,
   /^\/api\/v1\/chat\/(snapshot|status|runs|stream)$/,
+  /^\/api\/v1\/chat\/snapshot\/(?:projection|body|children(?:\/[^/?#]+)?)$/,
+  /^\/api\/v1\/chat\/admission\/context$/,
   /^\/api\/v1\/security\/(mode|policies)$/,
   // Remote Explorer/editor requests are session-scoped by the engine. They
   // carry only a relative path and never resolve the IDE's local workspace.
@@ -140,18 +144,29 @@ const REMOTE_READ_ROUTES = [
   /^\/api\/v1\/lsp\/request$/,
   /^\/api\/v1\/lsp\/adapters$/,
   /^\/api\/v1\/subagent\/runs(?:\/[a-zA-Z0-9_-]+(?:\/events)?)?$/,
+  // Capability negotiation alone is insufficient: the discovery read must
+  // reach the same remote owner to observe later-page children without SSE.
+  /^\/api\/v1\/subagent\/(?:capabilities|discovery)$/,
+  /^\/api\/v1\/collaboration\/capabilities$/,
+  /^\/api\/v1\/collaboration\/roots\/[^/?#]+\/(?:controller-context|controller-receipts\/[^/?#]+)$/,
+  /^\/api\/v1\/subagent\/runs\/[a-zA-Z0-9_-]+\/tools(?:\/[a-zA-Z0-9_-]+)?$/,
   /^\/api\/v1\/command-jobs(?:\/[a-zA-Z0-9_-]+(?:\/output)?)?$/,
   // Scheduled Work tasks are engine-owned and scoped by their stored session.
   /^\/api\/v1\/cron$/,
+  /^\/api\/v1\/cron\/(?:capabilities|notifications)$/,
+  /^\/api\/v1\/cron\/[a-zA-Z0-9_-]+(?:\/runs)?$/,
+  /^\/api\/v1\/cron\/runs\/[a-zA-Z0-9_-]+$/,
   /^\/api\/v1\/sessions\/[a-zA-Z0-9_-]+\/binding$/,
   /^\/api\/v1\/memory\/(settings|recall\/[a-zA-Z0-9_.:-]+|list|graph|[a-zA-Z0-9_.:-]+)$/
 ]
 
 const REMOTE_CHAT_ROUTES = [
+  /^\/api\/v1\/chat\/admission\/receipt$/,
   /^\/api\/v1\/chat(?:\/cancel)?$/,
   /^\/api\/v1\/utility\/chat$/,
   /^\/api\/v1\/models(?:\/detect-capabilities|\/[a-zA-Z0-9_-]+\/test)?$/,
   /^\/api\/v1\/subagent\/cancel$/,
+  /^\/api\/v1\/collaboration\/roots\/[^/?#]+\/messages$/,
   /^\/api\/v1\/subagent\/runs\/[a-zA-Z0-9_-]+\/cancel$/,
   /^\/api\/v1\/command-jobs\/[a-zA-Z0-9_-]+\/cancel$/,
   /^\/api\/v1\/cron(?:\/[a-zA-Z0-9_-]+(?:\/(?:enable|disable))?)?$/,
@@ -167,6 +182,18 @@ const REMOTE_CHAT_ROUTES = [
 export function remoteRequestError(mode: 'embedded' | 'remote', method: string, path: string): string | null {
   if (mode !== 'remote') return null
   const pathname = normalizeEnginePath(path).split('?')[0]
+  // Reserved automation endpoints must not fall through as a generic job ID.
+  if (/^\/api\/v1\/cron\/(?:capabilities|preview|notifications|runs)(?:\/|$)/.test(pathname)) {
+    const supported = method === 'GET' && (
+      /^\/api\/v1\/cron\/(?:capabilities|notifications)$/.test(pathname)
+      || /^\/api\/v1\/cron\/runs\/[a-zA-Z0-9_-]+$/.test(pathname)
+    ) || method === 'POST' && (
+      pathname === '/api/v1/cron/preview'
+      || /^\/api\/v1\/cron\/runs\/[a-zA-Z0-9_-]+\/cancel$/.test(pathname)
+      || /^\/api\/v1\/cron\/notifications\/[a-zA-Z0-9_-]+\/read$/.test(pathname)
+    )
+    return supported ? null : '此自动化路径或方法尚未接入远端服务。'
+  }
   if (method === 'GET' && REMOTE_READ_ROUTES.some(route => route.test(pathname))) return null
   if (method === 'POST' && REMOTE_CHAT_ROUTES.some(route => route.test(pathname))) return null
   // Custom agents are tenant-scoped engine records, with a narrow CRUD API.
@@ -174,6 +201,9 @@ export function remoteRequestError(mode: 'embedded' | 'remote', method: string, 
   if ((method === 'PUT' || method === 'DELETE') && /^\/api\/v1\/agents\/[a-zA-Z0-9_-]+$/.test(pathname)) return null
   if (method === 'POST' && /^\/api\/v1\/(mcp\/servers|mcp\/config\/import|skills)$/.test(pathname)) return null
   if (method === 'POST' && pathname === '/api/v1/git/action') return null
+  if (method === 'POST' && pathname === '/api/v1/cron/preview') return null
+  if (method === 'POST' && /^\/api\/v1\/cron\/runs\/[a-zA-Z0-9_-]+\/cancel$/.test(pathname)) return null
+  if (method === 'POST' && /^\/api\/v1\/cron\/notifications\/[a-zA-Z0-9_-]+\/read$/.test(pathname)) return null
   if (method === 'POST' && /^\/api\/v1\/(security\/policies(?:\/reset)?|changes\/(keep-all|keep-many)|codegraph\/index|lsp\/diagnose)$/.test(pathname)) return null
   if (method === 'POST' && pathname === '/api/v1/lsp/request') return null
   if (method === 'PUT' && /^\/api\/v1\/(knowledge\/(documents|bases)\/[a-zA-Z0-9_-]+|mcp\/servers\/[a-zA-Z0-9_-]+)$/.test(pathname)) return null
@@ -235,6 +265,13 @@ export function engineHeaders(instanceToken: string, toolProfile: ToolProfile = 
     ...toolProfileHeaders(toolProfile),
     ...(instanceToken ? { 'X-Aether-Instance-Token': instanceToken } : {})
   }
+}
+
+/** A renderer cannot introduce arbitrary transport headers through this opt-in. */
+export function subagentProtocolHeaders(version: unknown): Record<string, string> {
+  if (version === undefined) return {}
+  if (version !== 2) throw new Error('子 Agent 协议版本无效')
+  return { 'X-Aether-Subagent-Protocol': '2' }
 }
 
 export function normalizeEnginePath(path: string): string {

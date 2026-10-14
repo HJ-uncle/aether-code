@@ -1,16 +1,21 @@
 import { CommandJobCard } from './CommandJobCard'
-import { ContextUsageBar, RollingContextNumber, useReducedContextMotion } from './ContextUsageMotion'
+import { ContextUsageIndicator } from './ContextUsageIndicator'
+import { PublishedRecoveryNotice } from './PublishedRecoveryNotice'
+import { publishedVisibleWindow } from '@renderer/core/engine/published-card-memory'
 import { exportCommandJob, visibleChildCommandJobs } from '@renderer/core/engine/command-job-state'
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
-import { createPortal } from 'react-dom'
 import { useApp } from '@renderer/core/app-context'
+import { useAppMode } from '@renderer/core/platform/app-mode'
 import { useChat, type ChatMessage, type ToolActivity } from '@renderer/core/engine/useChat'
+import { isVisibleToolActivity } from '@renderer/core/engine/task-plan'
 import { engineConnectionKey, engineStorageKey, getEngineSource } from '@renderer/core/engine/source'
 import type { PendingInteraction } from '@renderer/core/engine/pending'
 import { rootStatusLabel } from '@renderer/core/engine/root-run-state'
 import { SessionTray } from './SessionTray'
 import { FileChangeCard } from './FileChangeCard'
 import { SubagentCard } from './SubagentCard'
+import { SubagentControllerContext } from './SubagentFollowup'
+import { subagentControllerScope } from './subagent-controller-scope'
 import { exportSubagentDetails, toolStatusLabel } from '@renderer/core/engine/subagent-state'
 import { exportToolDiagnostics } from '@renderer/core/engine/tool-feedback'
 import { Markdown } from './Markdown'
@@ -35,6 +40,7 @@ import { currentWorkspacePaths, useWorkspace } from '@renderer/core/workspace/wo
 import { Icon } from '@renderer/workbench/icons'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { Popover } from '@renderer/workbench/Popover'
+import { CompletionPopover } from '@renderer/workbench/CompletionPopover'
 import { ContextMenu } from '@renderer/workbench/ContextMenu'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { ModelPicker } from '../models/ModelPicker'
@@ -42,7 +48,7 @@ import { ComposerOptions } from './ComposerOptions'
 import { loadSessionModelSelection, resolveSessionComposerModel, saveSessionModelSelection, type SessionModelSelection } from './session-model-store'
 import { loadSessionThinkingMode, saveSessionThinkingMode, type SessionThinkingMode } from './session-thinking-store'
 import { composerThinkingMode, requestedThinkingMode, resolveSessionRequestConfig, loadSessionRequestSelection, saveSessionRequestSelection, type SessionRequestSelection } from './session-request-config'
-import { normalizeRootRunRequestConfig, type RootRunCompaction, type RootRunRequestConfig } from '@shared/root-run'
+import { normalizeRootRunRequestConfig, type RootRunRequestConfig } from '@shared/root-run'
 import { MessageNavRail, type NavTurn } from './MessageNavRail'
 import {
   formatDuration,
@@ -52,9 +58,7 @@ import {
   type UsageDetailRow
 } from './usage'
 import { useAttachments, shouldAttachPastedText, createPastedTextFile } from './useAttachments'
-import { readFile } from '@renderer/core/workspace/fs-client'
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
-import { Dialog } from '@renderer/workbench/Dialog'
 import { knowledgeBindingKey, saveKnowledgeBinding } from '@renderer/core/engine/knowledge'
 import { ResourcePicker, type ResourceItem } from './ResourcePicker'
 import './apple-chat-panels.css'
@@ -96,160 +100,21 @@ function loadLegacyComposerResources(sessionId: string, source: string): RootRun
 }
 
 /** 按工作区相对路径读 base64 data URL（图片缩略图 / 放大查看共用） */
-function useAttachmentImageSrc(root: string | null, file: ChatAttachment): string | null {
-  const [src, setSrc] = useState<string | null>(null)
-  useEffect(() => {
-    let alive = true
-    if (root && file.type.startsWith('image/')) {
-      void readFile(`${root}/${file.path}`)
-        .then((result) => {
-          if (alive && result.base64) setSrc(`data:${file.type};base64,${result.base64}`)
-        })
-        .catch(() => {})
-    }
-    return () => {
-      alive = false
-    }
-  }, [root, file.path, file.type])
-  return src
-}
-
-/** 附件预览状态：图片带 data URL，文本附件由弹窗按路径回读内容 */
-interface AttachmentPreview {
-  file: ChatAttachment
-  src: string | null
-}
-
-/** 统一附件查看组件：图片放大显示，文本附件显示内容；chip 与消息气泡共用 */
-function AttachmentPreviewDialog({
-  root,
-  preview,
-  onClose
-}: {
-  root: string | null
-  preview: AttachmentPreview
-  onClose: () => void
-}): JSX.Element {
-  const { file, src } = preview
-  const isImage = file.type.startsWith('image/')
-  const [text, setText] = useState<string | null>(null)
-
-  useEffect(() => {
-    let alive = true
-    if (!isImage && root) {
-      void readFile(`${root}/${file.path}`)
-        .then((result) => {
-          if (alive) setText(result.truncated ? `${result.content}\n\n…（内容过长已截断）` : result.content)
-        })
-        .catch(() => {
-          if (alive) setText('（读取失败）')
-        })
-    }
-    return () => {
-      alive = false
-    }
-  }, [isImage, root, file.path])
-
-  return (
-    <Dialog title={file.name} className="modal--image-preview" width={860} onClose={onClose}>
-      {isImage ? (
-        <div className="image-preview">
-          {src ? <img src={src} alt={file.name} /> : <span className="image-preview__loading">加载中…</span>}
-        </div>
-      ) : (
-        <pre className="attachment-text-preview">{text ?? '加载中…'}</pre>
-      )}
-    </Dialog>
-  )
-}
-
-/** 附件 chip：图片只显示缩略图（点击放大），文本类可点击查看内容，其它显示图标 + 名称 */
-function AttachmentChip({
-  root,
-  file,
-  onRemove,
-  onPreview
-}: {
-  root: string | null
-  file: ChatAttachment
-  onRemove?: () => void
-  onPreview: (file: ChatAttachment, src: string | null) => void
-}): JSX.Element {
-  const isImage = file.type.startsWith('image/')
-  const isText = !isImage && (file.type.startsWith('text/') || /\.(txt|md|markdown|json|jsonc|log|csv|tsv|xml|ya?ml|toml|ini)$/i.test(file.name))
-  const src = useAttachmentImageSrc(root, file)
-
-  if (isImage && src) {
-    return (
-      <span className="attach-chip attach-chip--image" title={file.path}>
-        <button
-          type="button"
-          className="attach-chip__image-btn"
-          title={`点击查看 ${file.name}`}
-          onClick={() => onPreview(file, src)}
-        >
-          <img className="attach-chip__thumb" src={src} alt={file.name} />
-        </button>
-        {onRemove ? (
-          <button
-            type="button"
-            className="attach-chip__remove"
-            title="移除附件"
-            aria-label={`移除附件 ${file.name}`}
-            onClick={onRemove}
-          >
-            <Icon name="close" size={12} />
-          </button>
-        ) : null}
-      </span>
-    )
-  }
-
-  const body = (
-    <>
-      <Icon name={isImage ? 'image' : 'file'} size={16} />
-      <span className="attach-chip__name">{file.name}</span>
-      {file.size > 0 ? <span className="attach-chip__size">{formatBytes(file.size)}</span> : null}
-    </>
-  )
-
-  return (
-    <span className={`attach-chip${isText ? ' attach-chip--clickable' : ''}`} title={file.path}>
-      {isText ? (
-        <button
-          type="button"
-          className="attach-chip__open"
-          title={`查看 ${file.name}`}
-          onClick={() => onPreview(file, null)}
-        >
-          {body}
-        </button>
-      ) : (
-        <>{body}</>
-      )}
-      {onRemove ? (
-        <button
-          type="button"
-          className="attach-chip__remove"
-          title="移除附件"
-          aria-label={`移除附件 ${file.name}`}
-          onClick={onRemove}
-        >
-          <Icon name="close" size={12} />
-        </button>
-      ) : null}
-    </span>
-  )
-}
-import { MentionInput, type Mention, type MentionInputHandle } from './MentionInput'
+import {
+  AttachmentChip,
+  AttachmentPreviewDialog,
+  type AttachmentPreview
+} from './AttachmentChip'
+import { type Mention, type MentionInputHandle } from './MentionInput'
+import { InputComposer, ComposerInput, ComposerPolish, ComposerToolbar, ComposerSend } from './InputComposer'
 import { loadChatDraftState, saveChatDraft } from './draft-store'
 import {
-  buildMentionMessage,
   preserveMentions,
   userMessageDraft,
   userMessageText
 } from './mention-context'
-import { FileRefPalette } from './FileRefPalette'
+import { MentionRefPicker } from './MentionRefPicker'
+import { buildAgentMentionMessage } from './agent-references'
 import { consumePendingMentions, subscribePendingMentions } from './pending-mentions'
 
 function newSessionId(): string {
@@ -257,12 +122,6 @@ function newSessionId(): string {
 }
 
 /** 字节数 → 人类可读（附件条上展示大小） */
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
 /**
  * 对话视图（P0 核心）
  *
@@ -271,11 +130,12 @@ function formatBytes(bytes: number): string {
  */
 export function ChatView(): JSX.Element {
   const { engine, ready, settings, updateSettings, settingsLoaded } = useApp()
+  const appMode = useAppMode()
   const remoteReadOnly = engine.snapshot.mode === 'remote'
   const connectionKey = engineConnectionKey(engine.snapshot)
   const storageSource = engineStorageKey(engine.snapshot)
   const sourceEpoch = getEngineSource()
-  const { messages, sessionUsage, commandJobs, sessionModel, streaming, historyCompacted, archiveRemaining, archiveLoading, archiveError, loadArchive, todos, send, respond, abort, resumeStream, deleteTurn, retryFrom, revertFrom, queue, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, queueSendMode, setQueueSendMode, retargetQueuedModel } = useChat()
+  const { messages, sessionUsage, usageSyncNotice, publishedRecovery, cancelPublishedRecovery, loadPublishedBody, retryPublishedRecovery, commandJobs, sessionModel, streaming, connection, historyError, historyCompacted, archiveRemaining, archiveLoading, archiveError, loadArchive, todos, send, respond, abort, resumeStream, deleteTurn, retryFrom, revertFrom, queue, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, queueSendMode, setQueueSendMode, retargetQueuedModel } = useChat()
   const { models, loaded: modelsLoaded } = useModels()
   const workspace = useWorkspace()
   // AppProvider 按引擎来源统一恢复或创建会话。这里提前创建会与远端选择
@@ -383,6 +243,7 @@ export function ChatView(): JSX.Element {
   const activeSessionIdRef = useRef('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<MentionInputHandle>(null)
+  const composerRef = useRef<HTMLDivElement>(null)
   /** @ 触发的内联补全关键词；null 表示未触发（光标不在 @ 段内） */
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
   /** / 资源菜单触发的关键词；选择后绑定到本轮会话并显示为资源 chip。 */
@@ -393,14 +254,23 @@ export function ChatView(): JSX.Element {
   const suppressResourceReconcileRef = useRef(false)
   /** 「+」菜单里手动打开的工作空间选择面板（与 @ 补全共用 FileRefPalette） */
   const [manualPalette, setManualPalette] = useState(false)
+  useEffect(() => {
+    // Keep-alive composers must release completion keys when their scope changes.
+    setMentionQuery(null)
+    setResourceQuery(null)
+    setManualPalette(false)
+  }, [appMode, sessionId, storageSource])
   /** 「+」按钮弹出的附件/引用菜单（视口坐标） */
   const [attachMenu, setAttachMenu] = useState<{ x: number; y: number } | null>(null)
   // 附件：落盘到当前工作区，发送时把相对路径交给引擎（图片→视觉/OCR，文本→smart_read）
   const attach = useAttachments(workspace.root, sessionId)
   /** 附件点击预览（图片放大 / 文本查看，统一 AttachmentPreviewDialog） */
   const [previewImage, setPreviewImage] = useState<AttachmentPreview | null>(null)
-  const previewAttachment = useCallback((file: ChatAttachment, src: string | null) => {
+  /** 预览来源的同组图片（查看器内左右翻页） */
+  const [previewGroup, setPreviewGroup] = useState<ChatAttachment[]>([])
+  const previewAttachment = useCallback((file: ChatAttachment, src: string | null, group?: ChatAttachment[]) => {
     setPreviewImage({ file, src })
+    setPreviewGroup(group ?? (file.type.startsWith('image/') ? [file] : []))
   }, [])
 
   /** AI 润色输入框内容：用轻任务模型改写得更清晰；chip 引用会随文本一起被序列化给模型 */
@@ -636,30 +506,15 @@ export function ChatView(): JSX.Element {
   // 启动 / 会话切换时回放引擎侧历史：conversations 表本来是 AI 的上下文来源，
   // 把同一份数据还原到界面，解决「重启后界面空白但 AI 记得一切」的割裂感
   const historyLoadedRef = useRef('')
-  const historyRetryDelayRef = useRef(1000)
-  const [historyRetry, setHistoryRetry] = useState(0)
   useEffect(() => {
     if (!ready) { historyLoadedRef.current = ''; return }
     if (!sessionId) return
-    const previouslyRequested = historyLoadedRef.current === sourceSessionKey
-    if (previouslyRequested && sessionModelReady) return
-    if (!previouslyRequested) historyRetryDelayRef.current = 1000
+    if (historyLoadedRef.current === sourceSessionKey) return
     historyLoadedRef.current = sourceSessionKey
-    let cancelled = false
-    let retryTimer: ReturnType<typeof setTimeout> | undefined
-    // A failed snapshot must stay retryable even while /health remains ready.
-    // Only one restore runs at a time; navigation cancels its scheduled retry.
-    void resumeStream(sessionId).catch(() => {}).finally(() => {
-      if (cancelled) return
-      const delay = historyRetryDelayRef.current
-      historyRetryDelayRef.current = Math.min(delay * 2, 10000)
-      retryTimer = setTimeout(() => setHistoryRetry(value => value + 1), delay)
-    })
-    return () => {
-      cancelled = true
-      if (retryTimer !== undefined) clearTimeout(retryTimer)
-    }
-  }, [ready, sessionId, sourceSessionKey, resumeStream, sessionModelReady, historyRetry])
+    // Initial history loading and transport recovery share useChat's cancellable
+    // single-flight loop, including failures while /health still reports ready.
+    void resumeStream(sessionId).catch(() => {})
+  }, [ready, sessionId, sourceSessionKey, resumeStream])
 
   const loadArchivedEarlier = useCallback((): void => {
     if (archiveLoading) return
@@ -781,9 +636,18 @@ export function ChatView(): JSX.Element {
     setFollowBottom(false)
   }, [])
 
+  // Editing a live child is an explicit choice to stay at that card. Streaming
+  // or resize observations must not pull the focused editor out of view.
+  const handleListFocus = useCallback((event: React.FocusEvent<HTMLDivElement>) => {
+    if (!(event.target as HTMLElement).closest('.subagent-followup, .subagent-current')) return
+    followBottomRef.current = false
+    setFollowBottom(false)
+  }, [])
+
   // 滚回底部附近（含拖动滚动条）时恢复跟随；滚到顶部附近时加载更早的消息
   const handleListScroll = useCallback(() => {
-    if (!followBottomRef.current && measureDistToBottom() < RESUME_FOLLOW_PX) resumeFollowBottom()
+    const editingChild = document.activeElement instanceof HTMLElement && Boolean(document.activeElement.closest('.subagent-followup, .subagent-current'))
+    if (!editingChild && !followBottomRef.current && measureDistToBottom() < RESUME_FOLLOW_PX) resumeFollowBottom()
     const el = scrollRef.current
     if (el && el.scrollTop < LOAD_EARLIER_PX) loadEarlier()
   }, [measureDistToBottom, resumeFollowBottom, loadEarlier])
@@ -884,7 +748,7 @@ export function ChatView(): JSX.Element {
   const submit = useCallback(() => {
     // When the slash palette is open, Enter belongs to palette selection;
     // ResourcePicker's document listener consumes it after this guard.
-    if (resourceQuery !== null) return
+    if (resourceQuery !== null || mentionQuery !== null || manualPalette) return
     const text = input.trim()
     // 允许「只发附件」：丢张截图直接问，是视觉模型的常见用法
     const files = attach.attachments
@@ -893,7 +757,7 @@ export function ChatView(): JSX.Element {
     // Mentions are workspace-relative.  They are safe for remote sessions;
     // the main-process remote adapter strips local paths and resolves them
     // against the session-bound server workspace.
-    const message = buildMentionMessage(text, mentionsRef.current)
+    const { message, collaborators } = buildAgentMentionMessage(input, mentionsRef.current)
     setInput('')
     mentionsRef.current = []
     // Clearing the editor after a send is not a user deletion. Keep the
@@ -915,10 +779,11 @@ export function ChatView(): JSX.Element {
     resumeFollowBottom()
     void send(message, {
       ...buildSendOptions(),
+      ...(collaborators.length ? { collaborators } : {}),
       attachments: files.length > 0 ? files : undefined
     })
     scrollToBottom(true)
-  }, [attach, buildSendOptions, input, canExecute, sourceEpoch, storageSource, send, sessionId, resumeFollowBottom, scrollToBottom, resourceQuery])
+  }, [attach, buildSendOptions, input, canExecute, sourceEpoch, storageSource, send, sessionId, resumeFollowBottom, scrollToBottom, resourceQuery, mentionQuery, manualPalette])
 
   /** 托盘的「发送」：空闲时按当前模式（逐条/合并）立即发出队列 */
   const flushQueueFromTray = useCallback(() => {
@@ -1278,6 +1143,7 @@ export function ChatView(): JSX.Element {
 
   return (
     <div className="chat">
+      <PublishedRecoveryNotice state={publishedRecovery} onCancel={cancelPublishedRecovery} onLoadBody={loadPublishedBody} onRetry={retryPublishedRecovery} />
       <div className="chat__topbar">
         {remoteReadOnly ? <span className="chat__workspace" title="任务在远端引擎的会话工作目录中执行">远端会话</span> : workspace.root ? (
           <span className="chat__workspace" title={`Agent 的工作区：${workspace.root}`}>
@@ -1285,6 +1151,7 @@ export function ChatView(): JSX.Element {
           </span>
         ) : null}
         <div className="chat__toolbar-spacer" />
+        {usageSyncNotice ? <span className="subagent-history__notice" role="status" title={usageSyncNotice}>统计待同步</span> : null}
         {usageTotal.total > 0 || usageTotal.unknownSubagents > 0 ? (
           <UsageMeter
             total={usageTotal.total}
@@ -1367,6 +1234,7 @@ export function ChatView(): JSX.Element {
           ref={scrollRef}
           onWheel={handleListWheel}
           onPointerDown={handleListPointerDown}
+          onFocusCapture={handleListFocus}
           onScroll={handleListScroll}
         >
         {/* 非跟随期间来了新内容：浮动「回到底部」（对齐 wuzu-client） */}
@@ -1416,6 +1284,7 @@ export function ChatView(): JSX.Element {
                     key={message.id}
                     message={message}
                     sessionId={sessionId}
+                    controllerSource={appMode === 'code' && sessionModelReady ? sourceEpoch : undefined}
                     usage={usageByMessage.get(message.id)}
                     disabled={!canExecute || streaming}
                   onAllowAll={allowAllForSession}
@@ -1491,12 +1360,18 @@ export function ChatView(): JSX.Element {
           onClearQueue={clearQueue}
           onMergeQueue={flushQueueFromTray}
         />
+        {connection.scope?.sessionId === sessionId && ['connecting', 'retrying', 'blocked'].includes(connection.phase) ? (
+          <div className="chat__notice" role="status" aria-live="polite" title={historyError ?? undefined}>
+            {connection.phase === 'blocked' ? connection.reason : connection.failures > 0 ? messages.some(message => message.run?.status === 'running') ? '连接已中断，正在重新连接；任务仍由引擎继续执行' : '正在重新连接并读取会话…' : '正在读取会话…'}
+            {connection.phase === 'blocked' ? <button type="button" className="chat__toolbar-btn" onClick={() => { void resumeStream(sessionId) }}>重新加载</button> : null}
+          </div>
+        ) : null}
         {sessionModelReady && modelsLoaded && modelId && !modelExists ? (
           <div className="chat__notice" role="status">
             当前模型未在模型列表中。继续发送将使用会话原模型，也可在模型菜单中重新选择或配置。
           </div>
         ) : null}
-        <div className="chat__surface">
+        <InputComposer ref={composerRef}>
           {(attach.attachments.length > 0 || attach.uploading) ? (
             <div className="chat__attach-strip">
               {attach.attachments.map((file) => (
@@ -1504,7 +1379,9 @@ export function ChatView(): JSX.Element {
                   key={file.path}
                   root={workspace.root}
                   file={file}
-                  onPreview={previewAttachment}
+                  onPreview={(f, src) =>
+                    previewAttachment(f, src, attach.attachments.filter((a) => a.type.startsWith('image/')))
+                  }
                   onRemove={() => attach.remove(file.path)}
                 />
               ))}
@@ -1529,12 +1406,12 @@ export function ChatView(): JSX.Element {
             </div>
           ) : null}
 
-          <MentionInput
+          <ComposerInput
             ref={inputRef}
             value={input}
             disabled={!settingsLoaded}
             placeholder={
-              ready ? '输入消息，Enter 发送，Shift+Enter 换行；@ 引用文件，/ 选择 MCP、技能或知识库' : '可先准备问题和代码引用，引擎就绪后发送'
+              ready ? '输入消息，Enter 发送，Shift+Enter 换行；@ 引用文件或协作 Agent，/ 选择资源' : '可先准备问题和代码引用，引擎就绪后发送'
             }
             onChange={(text, mentions) => {
               mentionsRef.current = mentions
@@ -1554,21 +1431,12 @@ export function ChatView(): JSX.Element {
             onMentionQuery={(query) => { setMentionQuery(query); if (query !== null) setResourceQuery(null) }}
             onSlashQuery={(query) => { setResourceQuery(query); if (query !== null) setMentionQuery(null) }}
           />
-          <button
-            type="button"
-            className="chat__icon-btn chat__polish-btn"
-            disabled={!canExecute || polishing || !input.trim()}
-            aria-busy={polishing}
-            title="AI 润色：让指令更清晰具体（使用轻任务模型）"
-            aria-label="AI 润色输入"
-            onClick={() => void handlePolish()}
-          >
-            {polishing ? <Spinner size={14} /> : <Icon name="sparkles" size={16} />}
-          </button>
-          {canExecute && workspace.root && (mentionQuery !== null || manualPalette) ? (
-            <FileRefPalette
+          <ComposerPolish busy={polishing} disabled={!canExecute || !input.trim()} title="AI 润色：让指令更清晰具体（使用轻任务模型）" onClick={() => void handlePolish()} />
+          {canExecute && appMode === 'code' && (mentionQuery !== null || manualPalette) ? (
+            <CompletionPopover anchorRef={composerRef} onClose={() => { setManualPalette(false); setMentionQuery(null) }}>
+            <MentionRefPicker
               root={workspace.root}
-              keyword={mentionQuery ?? ''}
+              query={mentionQuery ?? ''}
               showSearch={manualPalette && mentionQuery === null}
               onSelect={(mention) => {
                 if (mentionQuery !== null) inputRef.current?.completeMention(mention)
@@ -1582,6 +1450,7 @@ export function ChatView(): JSX.Element {
                 inputRef.current?.focus()
               }}
             />
+            </CompletionPopover>
           ) : null}
           {resourceQuery !== null ? (
             <ResourcePicker
@@ -1604,6 +1473,8 @@ export function ChatView(): JSX.Element {
             <AttachmentPreviewDialog
               root={workspace.root}
               preview={previewImage}
+              images={previewGroup}
+              onNavigate={(file) => setPreviewImage({ file, src: null })}
               onClose={() => setPreviewImage(null)}
             />
           ) : null}
@@ -1622,7 +1493,7 @@ export function ChatView(): JSX.Element {
           />
 
           {/* 工具条：左「＋ / 权限 / Agent」，右「模型 / 语音 / 发送」——同 Trae 的排布 */}
-          <div className="chat__toolbar">
+          <ComposerToolbar leading={<>
             <button
               type="button"
               className={`chat__icon-btn${attach.dragging ? ' is-active' : ''}`}
@@ -1689,10 +1560,10 @@ export function ChatView(): JSX.Element {
               </button>
             ) : null}
 
-            <div className="chat__toolbar-spacer" />
+            </>} trailing={<>
 
             {contextUsage !== null || contextCompaction ? (
-              <ContextRing
+              <ContextUsageIndicator
                 requestEstimate={contextDisplay.requestEstimate}
                 key={`${sourceEpoch}:${sessionId}`}
                 used={contextUsed}
@@ -1706,39 +1577,18 @@ export function ChatView(): JSX.Element {
             ) : null}
 
             <ModelPicker
+              includeDefault={false}
+              active={appMode === 'code'}
+              scopeKey={sessionId}
               value={modelId}
               disabled={!sessionModelReady || !ready}
               onChange={selectModel}
               onManage={() => openAppSettings('models')}
             />
 
-            {streaming ? (
-              <button
-                type="button"
-                className="chat__send chat__send--stop"
-                aria-label="停止生成"
-                disabled={!canExecute}
-                title="停止生成"
-                onClick={abort}
-              >
-                <Icon name="stop" size={16} />
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="chat__send"
-                disabled={
-                  !canExecute || attach.uploading || (!input.trim() && attach.attachments.length === 0)
-                }
-                title="发送（Enter）"
-                aria-label="发送"
-                onClick={submit}
-              >
-                <Icon name="send" size={16} />
-              </button>
-            )}
-          </div>
-        </div>
+            <ComposerSend stopping={streaming} disabled={streaming ? !canExecute : !canExecute || attach.uploading || (!input.trim() && attach.attachments.length === 0)} onClick={streaming ? abort : submit} />
+          </>} />
+        </InputComposer>
       </div>
 
       {toast ? (
@@ -1751,228 +1601,6 @@ export function ChatView(): JSX.Element {
 }
 
 // ==================== 消息渲染 ====================
-
-/** The ring observes engine-owned automatic compaction; it never starts maintenance. */
-function ContextRing({
-  requestEstimate,
-  used,
-  limit,
-  estimated,
-  provisional,
-  usageKnown,
-  compaction,
-  streaming
-}: {
-  used: number
-  limit: number
-  estimated?: boolean
-  provisional?: boolean
-  requestEstimate?: number
-  usageKnown: boolean
-  compaction?: RootRunCompaction
-  streaming: boolean
-}): JSX.Element {
-  const [hoverAnchor, setHoverAnchor] = useState<DOMRect | null>(null)
-  const ringRef = useRef<HTMLDivElement>(null)
-  const closeTimerRef = useRef(0)
-  const [, refreshStatus] = useState(0)
-  const openHover = (rect: DOMRect): void => {
-    window.clearTimeout(closeTimerRef.current)
-    setHoverAnchor(rect)
-  }
-  const scheduleCloseHover = (): void => {
-    window.clearTimeout(closeTimerRef.current)
-    if (document.activeElement === ringRef.current) return
-    closeTimerRef.current = window.setTimeout(() => setHoverAnchor(null), 200)
-  }
-  useEffect(() => () => window.clearTimeout(closeTimerRef.current), [])
-  // Persisted completion time, rather than navigation time, owns this brief notice.
-  useEffect(() => {
-    if (!compaction || compaction.phase === 'running' || compaction.finishedAt === undefined) return
-    const remaining = compaction.finishedAt + 6000 - Date.now()
-    if (remaining <= 0) return
-    const timer = window.setTimeout(() => refreshStatus(value => value + 1), remaining)
-    return () => window.clearTimeout(timer)
-  }, [compaction?.phase, compaction?.startedAt, compaction?.finishedAt])
-  const recent = compaction?.finishedAt !== undefined && Date.now() < compaction.finishedAt + 6000
-  const phase = compaction?.phase === 'running' ? 'running' : recent ? compaction?.phase : undefined
-  const busy = phase === 'running'
-  const ratio = Math.min(1, used / limit)
-  const percent = Math.round(ratio * 100)
-  const precisePercent = (Math.round(Math.min(used, limit) * 100_000 / limit) / 1000).toFixed(3)
-  const radius = 10
-  const circumference = 2 * Math.PI * radius
-  const offset = circumference * (1 - ratio)
-  const warn = ratio >= 0.85
-  const status = busy ? '正在自动压缩上下文' : phase === 'succeeded'
-    ? '自动压缩完成' + (compaction?.beforeTokens !== undefined && compaction.afterTokens !== undefined ? '（历史估算 ' + formatTokens(compaction.beforeTokens) + ' → ' + formatTokens(compaction.afterTokens) + '）' : '')
-    : phase === 'failed' ? '自动压缩失败' + (compaction?.error ? '：' + compaction.error : '') : undefined
-  const title = status ?? (usageKnown
-    ? '上下文用量 ' + precisePercent + '%（最近一次模型请求 ' + formatTokens(used) + ' / ' + formatTokens(limit) + '；' + used.toLocaleString('en-US') + ' / ' + limit.toLocaleString('en-US') + ' tokens）'
-    : '上下文用量尚未确认')
-  return (
-    <>
-      <div
-        ref={ringRef}
-        role="img"
-        tabIndex={0}
-        className={'context-ring' + (warn ? ' context-ring--warn' : '') + (busy ? ' context-ring--busy' : '')}
-        aria-label={title}
-        aria-busy={busy}
-        data-compaction-phase={phase ?? 'idle'}
-        data-context-source={provisional === true ? 'provisional' : estimated === true ? 'estimated' : estimated === false ? 'reported' : 'unknown'}
-        data-context-pending={requestEstimate !== undefined || estimated === true || provisional === true ? 'true' : 'false'}
-        onMouseEnter={(event) => openHover(event.currentTarget.getBoundingClientRect())}
-        onMouseLeave={scheduleCloseHover}
-        onFocus={(event) => openHover(event.currentTarget.getBoundingClientRect())}
-        onBlur={scheduleCloseHover}
-        onKeyDown={(event) => { if (event.key === 'Escape') setHoverAnchor(null) }}
-      >
-        <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
-          <circle className="context-ring__track" cx="13" cy="13" r={radius} fill="none" strokeWidth="2.5" />
-          <circle className="context-ring__bar" cx="13" cy="13" r={radius} fill="none" strokeWidth="2.5"
-            strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={busy ? circumference * 0.25 : offset} />
-        </svg>
-        <span className="context-ring__label" aria-hidden="true">{busy ? '…' : phase === 'succeeded' ? '✓' : phase === 'failed' ? '✕' : usageKnown ? percent : '—'}</span>
-      </div>
-      {hoverAnchor ? (
-        <ContextRingCard requestEstimate={requestEstimate} anchor={hoverAnchor} anchorElement={ringRef.current}
-          used={used} limit={limit} estimated={estimated} provisional={provisional} usageKnown={usageKnown}
-          compactionPhase={phase} status={status} streaming={streaming} />
-      ) : null}
-    </>
-  )
-}
-
-/**
- * 上下文用量环的 hover 卡片（布局对齐 wuzu ContextUsageRing 的 tooltip）。
- * 结构：标题行（上下文窗口）→ 大号百分比 + 右侧「已用 / 上限」→ 底部状态提示；
- * 自动压缩状态来自引擎；已确认的模型输入快照独立保留。
- * 信息卡不包含操作，鼠标可以穿过卡片继续点击输入框；定位在环的上方并贴边钳制。
- */
-function ContextRingCard({
-  requestEstimate,
-  anchor,
-  anchorElement,
-  used,
-  limit,
-  estimated,
-  provisional,
-  usageKnown,
-  compactionPhase,
-  status,
-  streaming
-}: {
-  requestEstimate?: number
-  anchor: DOMRect
-  anchorElement: HTMLDivElement | null
-  used: number
-  limit: number
-  estimated?: boolean
-  provisional?: boolean
-  usageKnown: boolean
-  compactionPhase?: RootRunCompaction['phase']
-  status?: string
-  streaming: boolean
-}): JSX.Element {
-  const cardRef = useRef<HTMLDivElement>(null)
-  const percent = (Math.min(used, limit) * 100 / limit).toFixed(1)
-
-  const reducedMotion = useReducedContextMotion()
-  const positionCard = (): void => {
-    const el = cardRef.current
-    if (!el) return
-    const margin = 8
-    const rect = el.getBoundingClientRect()
-    const currentAnchor = anchorElement?.getBoundingClientRect() ?? anchor
-    const maxX = Math.max(margin, window.innerWidth - rect.width - margin)
-    const x = Math.min(Math.max(margin, currentAnchor.left + (currentAnchor.width - rect.width) / 2), maxX)
-    let y = currentAnchor.top - rect.height - margin
-    if (y < margin) y = currentAnchor.bottom + margin
-    y = Math.min(Math.max(margin, y), Math.max(margin, window.innerHeight - rect.height - margin))
-    el.style.left = x + 'px'
-    el.style.top = y + 'px'
-    el.style.visibility = 'visible'
-    el.dataset.positioned = 'true'
-  }
-
-  // Position before every paint; changing source/status text must not leave one frame
-  // at an old location. The observer also covers font and viewport size changes.
-  useLayoutEffect(positionCard)
-  useLayoutEffect(() => {
-    const el = cardRef.current
-    if (!el) return
-    const observer = new ResizeObserver(positionCard)
-    const targets = [el, anchorElement, anchorElement?.closest('.chat__toolbar'), anchorElement?.closest('.chat__surface')]
-    for (const target of targets) if (target) observer.observe(target)
-    window.addEventListener('resize', positionCard)
-    window.addEventListener('scroll', positionCard, true)
-    // ResizeObserver cannot see an equal-sized toolbar move after its sibling changes.
-    // Track only the anchor bounds while open, and reposition only when they change.
-    let frame = 0
-    let previousBounds = ''
-    const trackAnchor = (): void => {
-      const rect = anchorElement?.getBoundingClientRect() ?? anchor
-      const bounds = [rect.left, rect.top, rect.width, rect.height].join(',')
-      if (bounds !== previousBounds) {
-        previousBounds = bounds
-        positionCard()
-      }
-      frame = window.requestAnimationFrame(trackAnchor)
-    }
-    frame = window.requestAnimationFrame(trackAnchor)
-    return () => {
-      observer.disconnect()
-      window.cancelAnimationFrame(frame)
-      window.removeEventListener('resize', positionCard)
-      window.removeEventListener('scroll', positionCard, true)
-    }
-  }, [anchor, anchorElement])
-
-  return createPortal(
-    <div ref={cardRef} className="git-stashcard ctx-card" role="tooltip" data-testid="context-usage-card" data-reduced-motion={reducedMotion} style={{ pointerEvents: 'none', visibility: 'hidden' }}>
-      <div className="ctx-card__header">
-        <span>当前上下文</span>
-        <span className="ctx-card__percent">
-          {compactionPhase === 'running' ? '压缩中…' : usageKnown ? <>
-            <RollingContextNumber value={Number(percent)} formatted={percent} reduced={reducedMotion} testId="context-percent-number" />
-            <span className="ctx-card__percent-sign">%</span>
-          </> : '—'}
-        </span>
-      </div>
-      <div className="ctx-card__tokens">
-        <span className="ctx-card__tokens-value">
-          {usageKnown ? <RollingContextNumber value={used} formatted={formatTokens(used)} reduced={reducedMotion} testId="context-used-compact-number" /> : '尚未确认'} / {formatTokens(limit)}
-        </span>
-        <span className="ctx-card__tokens-label">使用 / 上限</span>
-      </div>
-      <div className="ctx-card__exact-tokens">
-        {usageKnown ? <RollingContextNumber value={used} formatted={used.toLocaleString('en-US')} reduced={reducedMotion} testId="context-used-number" /> : '尚未确认'} / {limit.toLocaleString('en-US')} tokens
-      </div>
-      {compactionPhase === 'running' ? (
-        <div className="ctx-card__bar ctx-card__bar--compacting" role="progressbar" aria-label="自动压缩上下文" aria-valuetext="正在自动压缩" data-reduced-motion={reducedMotion} />
-      ) : <ContextUsageBar ratio={used / limit} reduced={reducedMotion} />}
-      <div className="ctx-card__hint ctx-card__source-hint">
-        {provisional === true ? '当前模型请求' : estimated === false ? '最近确认的模型请求' : streaming ? '当前请求' : '最近一次模型请求'}的输入
-        {provisional === true
-          ? '（模型初步统计）；等待最终确认。'
-          : estimated === true
-          ? '估算（本地预估）；等待模型确认。'
-          : estimated === false
-            ? requestEstimate !== undefined
-              ? '（模型统计）；最新请求输入尚未确认。'
-              : '（模型统计）。'
-            : '（模型统计或估算）。'}
-      </div>
-      <div className="ctx-card__hint ctx-card__status-hint" role="status">
-        {status ? <span className={compactionPhase === 'failed' ? 'ctx-card__error' : undefined}>{status}</span>
-          : streaming ? '生成中；引擎会在需要时自动压缩上下文。' : '引擎会在需要时自动压缩上下文。'}
-      </div>
-      <div className="ctx-card__hint ctx-card__billing-hint">此处是单次请求占用，不等于累计计费用量。</div>
-    </div>,
-    document.body
-  )
-}
 
 /**
  * 把选中的消息序列化成 Markdown（复制与导出共用）。
@@ -2012,6 +1640,7 @@ function serializeMessages(selected: ChatMessage[]): string {
 const MessageItem = memo(function MessageItem({
   message,
   sessionId,
+  controllerSource,
   usage,
   disabled,
   onAllowAll,
@@ -2031,6 +1660,7 @@ const MessageItem = memo(function MessageItem({
   message: ChatMessage
   /** 当前会话 ID（子代理停止按钮走 /subagent/cancel 要用） */
   sessionId: string
+  controllerSource?: number
   /** 该轮的累计用量：只挂在最后一条 AI 消息底部的过程行上 */
   usage?: TurnUsageInfo
   disabled: boolean
@@ -2056,7 +1686,7 @@ const MessageItem = memo(function MessageItem({
   /** 工作区根目录：附件图片缩略图按相对路径回读 */
   workspaceRoot: string | null
   /** 图片附件点击放大 */
-  onPreviewImage: (file: ChatAttachment, src: string | null) => void
+  onPreviewImage: (file: ChatAttachment, src: string | null, group?: ChatAttachment[]) => void
 }): JSX.Element {
   const isUser = message.role === 'user'
   const streaming = message.status === 'streaming'
@@ -2165,7 +1795,9 @@ const MessageItem = memo(function MessageItem({
                   key={file.path}
                   root={workspaceRoot}
                   file={file}
-                  onPreview={onPreviewImage}
+                  onPreview={(f, src) =>
+                    onPreviewImage(f, src, message.attachments?.filter((a) => a.type.startsWith('image/')) ?? [])
+                  }
                 />
               ))}
             </div>
@@ -2179,7 +1811,9 @@ const MessageItem = memo(function MessageItem({
     <article className="message message--assistant" data-message-id={message.id} data-turn-id={message.conversationId}>
       {pick}
 
-      <MessageTimeline message={message} sessionId={sessionId} streaming={streaming} />
+      <SubagentControllerContext.Provider value={subagentControllerScope(message, sessionId, controllerSource)}>
+        <MessageTimeline message={message} sessionId={sessionId} streaming={streaming} />
+      </SubagentControllerContext.Provider>
 
       <div className="message__meta">
         {/* 该轮累计用量常显；操作图标随悬停出现，两者同行（用量在左） */}
@@ -2242,19 +1876,6 @@ function isFullSizeTool(tool: ToolActivity): boolean {
   )
 }
 
-/**
- * 待办类工具对用户是噪音：状态已在顶部待办列表呈现，时间线再插一条只是刷屏。
- * 界面过滤，但复制/导出仍包含（不能用 hidden 字段，那条链会让导出也漏掉）。
- */
-function isTimelineHiddenTool(tool: ToolActivity): boolean {
-  return (
-    tool.name === 'todo_create' ||
-    tool.name === 'todo_list' ||
-    tool.name === 'todo_update' ||
-    tool.name === 'todo_delete'
-  )
-}
-
 /** 过程块内的紧凑条目：一段思考 或 一次过程性工具调用 */
 type CompactEntry = { kind: 'thinking'; text: string } | { kind: 'tool'; tool: ToolActivity }
 
@@ -2284,7 +1905,7 @@ function isMessageCompacting(message: ChatMessage): boolean {
 function streamStatusText(message: ChatMessage): string {
   if (isMessageCompacting(message)) return '正在自动压缩上下文…'
   // 正在执行的工具优先：用户最关心的是「此刻在干什么」
-  const running = [...message.tools].reverse().find((tool) => tool.state === 'running')
+  const running = [...message.tools].reverse().find((tool) => tool.state === 'running' && isVisibleToolActivity(tool))
   if (running) return `${toolDisplayName(running.name)}…`
   // 已有正文流出说明在生成回复
   if (message.content) return '正在生成回复…'
@@ -2342,7 +1963,7 @@ function MessageTimeline({
   const { inline } = useMemo(() => {
     const toolById = new Map(
       message.tools
-        .filter((tool) => !tool.hidden && !isTimelineHiddenTool(tool))
+        .filter(isVisibleToolActivity)
         .map((tool) => [tool.id, tool])
     )
     let processEntries: CompactEntry[] = []
@@ -2456,6 +2077,8 @@ function SubagentGroup({
   sessionId: string
 }): JSX.Element {
   const [open, setOpen] = useState(false)
+  const [visibleCount, setVisibleCount] = useState(64)
+  const window = publishedVisibleWindow(tools, visibleCount)
   const running = tools.some((tool) => tool.state === 'running')
   const failCount = tools.filter((tool) => tool.state === 'error').length
   const unknownCount = tools.filter((tool) => tool.state === 'unknown').length
@@ -2481,9 +2104,12 @@ function SubagentGroup({
       </button>
       {open ? (
         <div className="subagent-group__body">
-          {tools.map((tool) => (
+          {window.items.map((tool) => (
             <SubagentCard key={tool.id} tool={tool} sessionId={sessionId} />
           ))}
+          {tools.length > 64 ? <div className="subagent-history__navigation"><span>调用 {window.start + 1}–{window.end} / {tools.length}</span>
+            {window.start > 0 ? <button type="button" className="btn btn--sm" onClick={() => setVisibleCount(count => Math.max(64, count - 64))}>上一页</button> : null}
+            {window.end < tools.length ? <button type="button" className="btn btn--sm" onClick={() => setVisibleCount(count => count + 64)}>下一页</button> : null}</div> : null}
         </div>
       ) : null}
     </div>

@@ -115,6 +115,7 @@ import { GitBranchBar } from './GitBranchBar'
 import { GitChangeRow } from './GitChangeRow'
 import { GitChangeTreeNode, type GitChangeTreeNodeData } from './GitChangeTreeNode'
 import { GitCommitBar } from './GitCommitBar'
+import { GitRepositoryNotice } from './GitRepositoryNotice'
 import { GitCommitDetailDialog } from './GitCommitDetailDialog'
 import { GitCommitHoverCard } from './GitCommitHoverCard'
 import { GitHistoryGraph } from './GitHistoryGraph'
@@ -2446,6 +2447,7 @@ export function GitChangesPanel(): JSX.Element {
       ) : null}
 
       {/* 内容区 */}
+      <GitRepositoryNotice operation={git.repositoryOperation} onRefresh={() => refreshGit(git.cwd)} />
       <div className="git-panel__content">{content}</div>
 
       {/* 底部汇总 */}

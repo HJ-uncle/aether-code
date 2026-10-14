@@ -4,16 +4,20 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { basename, dirname, join, resolve } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import type { AetherIdeApi } from '../src/preload'
+import { monitorElectronHealth, type ElectronHealthMonitor } from './helpers/electron-health'
 
 /** D0: real main/IPC/engine ownership, authentication, metadata, and start/stop races. */
 declare global { interface Window { aether: AetherIdeApi } }
 const root = resolve(__dirname, '..')
-const engineRoot = resolve(root, '..', 'ai-agent-engine')
+const engineRoot = process.env.AETHER_TEST_ENGINE_ROOT || resolve(root, '..', 'ai-agent-engine')
 let app: ElectronApplication | undefined
+let health: ElectronHealthMonitor | undefined
+const pageErrors: string[] = []
 let page: Page
 let imposter: Server
 let occupiedPort: number
 let fixture: string
+let launchEnv: NodeJS.ProcessEnv
 let compatibleRemote = false
 let requireRemoteToken = false
 let requiredRemoteToken = 'fixture-required-token'
@@ -78,24 +82,50 @@ test.describe.serial('D0 配对运行时与身份', () => {
       engineMode: 'embedded', preferredPort: occupiedPort, autoStartEngine: true,
       lastFolder: fixture, thinkingMode: 'off'
     }))
+    launchEnv = { ...process.env, AETHER_IDE_ENGINE_ENTRY: join(engineRoot, 'dist/main.js'),
+      AUTH_ENABLED: 'false', AETHER_IDE_REMOTE_INSTANCE_TOKEN: 'synthetic-d0-remote-token', AETHER_GLOBAL_DIR: join(fixture, 'global'),
+      WORKSPACE_ROOT: join(fixture, 'workspace'), MCP_CONFIG_PATH: join(fixture, 'mcp.json'),
+      SKILLS_ROOT: join(fixture, 'skills'), ENABLE_LONG_TERM_MEMORY: 'false' }
     app = await electron.launch({
-      args: ['.', `--user-data-dir=${fixture}`], cwd: root,
-      env: { ...process.env, AETHER_IDE_ENGINE_ENTRY: join(engineRoot, 'dist/main.js'),
-        AUTH_ENABLED: 'false', AETHER_IDE_REMOTE_INSTANCE_TOKEN: 'synthetic-d0-remote-token', AETHER_GLOBAL_DIR: join(fixture, 'global'),
-        WORKSPACE_ROOT: join(fixture, 'workspace'), MCP_CONFIG_PATH: join(fixture, 'mcp.json'),
-        SKILLS_ROOT: join(fixture, 'skills'), ENABLE_LONG_TERM_MEMORY: 'false' }
+      args: [process.env.AETHER_E2E_APP_ENTRY || '.', `--user-data-dir=${fixture}`], cwd: root,
+      env: launchEnv
     })
+    health = await monitorElectronHealth(app, 'engine-host-initial', ['synthetic-d0-remote-token'])
     page = await app.firstWindow()
+    page.on('pageerror', error => pageErrors.push(error.message))
     await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
     safeStorageAvailable = await app.evaluate(
       ({ safeStorage }) => safeStorage.isEncryptionAvailable()
     )
   })
-  test.afterAll(async () => {
-    await app?.close()
-    await new Promise<void>(done => imposter?.close(() => done()))
-    if (dirname(fixture) !== join(root, '.e2e-tmp') || !basename(fixture).startsWith('d0-host-')) throw new Error('Unsafe host fixture cleanup')
-    rmSync(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  test.afterEach(() => {
+    health?.assertHealthy()
+    expect(pageErrors).toEqual([])
+  })
+  test.afterAll(async ({}, testInfo) => {
+    let closeFailed = false
+    try {
+      if (health) await health.closeAndAssert(testInfo)
+      else await app?.close()
+    } catch (error) {
+      closeFailed = true
+      throw error
+    } finally {
+      // A native close failure must retain its dump without leaking the owned
+      // HTTP fixture. Removing the profile would erase the failure evidence.
+      if (imposter) {
+        imposter.closeAllConnections()
+        await new Promise<void>(done => imposter.close(() => done()))
+      }
+      if (fixture) {
+        if (dirname(fixture) !== join(root, '.e2e-tmp') || !basename(fixture).startsWith('d0-host-')) throw new Error('Unsafe host fixture cleanup')
+        if (!closeFailed && testInfo.status === testInfo.expectedStatus) {
+          rmSync(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+        } else {
+          await testInfo.attach('retained-host-fixture', { body: JSON.stringify({ fixture, closeFailed }), contentType: 'application/json' })
+        }
+      }
+    }
   })
 
   test('端口被占用也启动指定产物，所有业务接口要求实例身份', async () => {
@@ -139,6 +169,26 @@ test.describe.serial('D0 配对运行时与身份', () => {
     expect(result.afterStop).not.toContain('ready')
     const restarted = await page.evaluate(() => window.aether.engine.start())
     expect(restarted.phase, restarted.error ?? '').toBe('ready')
+  })
+
+  test('并发停止等待旧进程关闭，再启动仅产生新owned进程', async () => {
+    const before = await page.evaluate(() => window.aether.engine.getSnapshot())
+    expect(before.phase).toBe('ready')
+    expect(before.dataDir).toBe(join(fixture, 'engine/state/agent.db'))
+    expect(before.pid).toBeGreaterThan(0)
+    const stopped = await page.evaluate(() => Promise.all([window.aether.engine.stop(), window.aether.engine.stop()]))
+    expect(stopped.map(snapshot => snapshot.phase)).toEqual(['idle', 'idle'])
+    const oldGone = await app!.evaluate((_electron, pid) => {
+      try { process.kill(pid!, 0); return false }
+      catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH' }
+    }, before.pid)
+    expect(oldGone).toBe(true)
+    const restarted = await page.evaluate(() => window.aether.engine.start())
+    expect(restarted.phase, restarted.error ?? '').toBe('ready')
+    expect(restarted.pid).toBeGreaterThan(0)
+    expect(restarted.pid).not.toBe(before.pid)
+    expect(restarted.instanceId).not.toBe(before.instanceId)
+    expect(restarted.dataDir).toBe(before.dataDir)
   })
 
   test('remote 的 HTTP200 不足以就绪，协议不匹配会清楚失败', async () => {
@@ -310,7 +360,7 @@ test.describe.serial('D0 配对运行时与身份', () => {
     expect(remoteRequests.slice(before).filter(path => path === '/api/v1/chat' || path.includes('stale-identity-request'))).toEqual([])
   })
 
-  test('远端目录与连接一起固定：保存B不改变A，重连和自动启动才使用B目录', async () => {
+  test('远端目录与连接一起固定：保存B不改变A，重连和自动启动才使用B目录', async ({}, testInfo) => {
     const rootA = '/srv/fixture-a'
     const rootB = '/srv/fixture-b'
     const urlA = `http://127.0.0.1:${occupiedPort}`
@@ -394,13 +444,16 @@ test.describe.serial('D0 配对运行时与身份', () => {
       expect(secondBodies.map(body => body.workspacePaths)).toEqual([[rootB], [rootB]])
 
       // The application boot entry point must capture the same root as explicit start/restart.
-      await app!.close()
+      await health!.closeAndAssert(testInfo)
+      health = undefined
       app = undefined
       app = await electron.launch({
-        args: ['.', `--user-data-dir=${fixture}`], cwd: root,
-        env: { ...process.env, AETHER_IDE_ENGINE_ENTRY: join(engineRoot, 'dist/main.js') }
+        args: [process.env.AETHER_E2E_APP_ENTRY || '.', `--user-data-dir=${fixture}`], cwd: root,
+        env: launchEnv
       })
+      health = await monitorElectronHealth(app, 'engine-host-restarted')
       page = await app.firstWindow()
+      page.on('pageerror', error => pageErrors.push(error.message))
       await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90000 })
       expect((await page.evaluate(() => window.aether.engine.getSnapshot())).baseUrl).toBe(urlB)
       await sendBoth('workspace-boot-b')

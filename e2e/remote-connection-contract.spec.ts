@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { clearRemoteAttachments, rememberRemoteAttachment, remoteAttachmentsForRequest } from '../src/main/engine/remote-attachments'
 import { prepareRemoteChatBody, selectRemoteWorkspacePaths, validateRemoteWorkspaceRoot } from '../src/main/engine/remote-workspace'
-import { remoteInstanceToken, remoteRequestError, validateRemoteInstanceToken } from '../src/main/engine/protocol'
+import { remoteInstanceToken, remoteRequestError, validateRemoteInstanceToken, subagentProtocolHeaders } from '../src/main/engine/protocol'
 import { remoteWorkspaceRelativePath } from '../src/renderer/src/core/workspace/fs-client'
 
 test('手动本机开发地址可无token，非本机仍需明确凭据', () => {
@@ -25,6 +25,39 @@ test('远端令牌在保存和环境变量入口使用同一请求头边界', ()
     expect(() => validateRemoteInstanceToken(token)).toThrow('远端令牌')
     expect(() => remoteInstanceToken('http://localhost:12323', token)).toThrow('远端令牌')
   }
+})
+
+test('子 Agent 新协议只允许显式版本2，分页详情遵守窄路由', () => {
+  expect(subagentProtocolHeaders(undefined)).toEqual({})
+  expect(subagentProtocolHeaders(2)).toEqual({ 'X-Aether-Subagent-Protocol': '2' })
+  for (const value of [null, 1, 3, '2', '2\r\nInjected: yes', {}, []]) {
+    expect(() => subagentProtocolHeaders(value)).toThrow('协议版本无效')
+  }
+  for (const path of ['/subagent/capabilities', '/subagent/discovery', '/api/v1/subagent/discovery?parentSessionId=parent&mode=active', '/subagent/runs/run-1/tools', '/subagent/runs/run-1/tools/tool-1']) {
+    expect(remoteRequestError('remote', 'GET', path)).toBeNull()
+    for (const method of ['POST', 'PUT', 'DELETE']) expect(remoteRequestError('remote', method, path)).not.toBeNull()
+  }
+  for (const path of ['/subagent/discovery/extra', '/subagent/discovery/../cancel', '/subagent/runs/run-1/detail', '/subagent/runs/run-1/tools/../../cancel', '/subagent/runs/run-1/tools/tool-1/extra']) {
+    expect(remoteRequestError('remote', 'GET', path)).not.toBeNull()
+  }
+})
+
+test('定时任务管理按确切路径和方法开放，保留owned运行边界', () => {
+  const routes: Array<[string, string]> = [
+    ['GET', '/cron'], ['POST', '/cron'], ['GET', '/cron/job-1'], ['PUT', '/cron/job-1'], ['DELETE', '/cron/job-1'],
+    ['POST', '/cron/job-1/enable'], ['POST', '/cron/job-1/disable'],
+    ['GET', '/cron/capabilities'], ['POST', '/cron/preview'], ['GET', '/cron/job-1/runs'],
+    ['GET', '/cron/runs/run-1'], ['POST', '/cron/runs/run-1/cancel'],
+    ['GET', '/cron/notifications'], ['POST', '/cron/notifications/notice-1/read']
+  ]
+  for (const [method, path] of routes) expect(remoteRequestError('remote', method, path)).toBeNull()
+  for (const [method, path] of [
+    ['POST', '/cron/capabilities'], ['GET', '/cron/preview'], ['DELETE', '/cron/notifications'],
+    ['GET', '/cron/notifications/notice-1/read'], ['POST', '/cron/runs/run-1'],
+    ['GET', '/cron/runs/run-1/cancel'], ['POST', '/cron/job-1/run-now'],
+    ['GET', '/cron/job-1/runs/extra'], ['POST', '/cron/runs/run-1/../../chat/cancel'],
+    ['GET', '/cron/runs/%2e%2e']
+  ]) expect(remoteRequestError('remote', method, path)).not.toBeNull()
 })
 
 test('远端开放已接入的管理与会话接口，仍拒绝未接入路径', () => {
@@ -289,5 +322,21 @@ test('非文本远端消息在联网前被拒绝，结构化文件不能绕过�
     { text: 'unexpected object' }, null, 1, true
   ]) {
     await expect(prepareRemoteChatBody({ sessionId: 'message-validation', message }, context)).rejects.toThrow('远端聊天消息必须是文本')
+  }
+})
+
+
+test('Git 绑定与占用查询允许精确 GET，保留动作入口的独立方法边界', () => {
+  for (const path of ['/git/binding', '/git/lease', '/api/v1/git/binding?sessionId=task-1', '/api/v1/git/lease?sessionId=task-1&bindingEpoch=e1']) {
+    expect(remoteRequestError('remote', 'GET', path)).toBeNull()
+    for (const method of ['POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']) expect(remoteRequestError('remote', method, path)).not.toBeNull()
+  }
+  expect(remoteRequestError('remote', 'POST', '/git/action')).toBeNull()
+  expect(remoteRequestError('remote', 'GET', '/git/action')).not.toBeNull()
+})
+
+test('Git 绑定与占用查询拒绝额外路径与目录逃逸', () => {
+  for (const path of ['/git/binding/extra', '/git/lease/extra', '/git/binding/../action', '/git/lease/../../workspace/file', '/git/%62inding', '/git/binding%2fextra']) {
+    expect(remoteRequestError('remote', 'GET', path)).not.toBeNull()
   }
 })

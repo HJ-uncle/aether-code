@@ -290,7 +290,7 @@ async function selectSession(id: string) {
   if (!await page.locator('.history-view').isVisible()) await page.getByRole('button', { name: '会话历史', exact: true }).click()
   await page.locator('.history-view__item[data-session-id="' + id + '"]').click()
   await expect(page.locator('.message--user').first()).toContainText(id === sessionA ? 'CONTEXT_HISTORY_A' : 'CONTEXT_HISTORY_B')
-  await expect(page.locator('.model-picker__trigger')).toBeEnabled()
+  await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toBeEnabled()
 }
 test.describe.serial('上下文用量环与会话压缩隔离', () => {
   test.beforeAll(async () => {
@@ -312,9 +312,9 @@ test.describe.serial('上下文用量环与会话压缩隔离', () => {
   test('显式历史快照优先，12K→22K→10K按调用更新而本轮累计用量持续增长，刷新保持一致', async ({}, testInfo) => {
     await expect(ring()).toHaveAttribute('aria-label', /最近一次模型请求 12k \/ 100k/)
     await expect(ring().locator('.context-ring__bar')).toHaveCSS('animation-name', 'none')
-    await page.locator('.model-picker__trigger').click(); await page.locator('.model-picker__item').filter({ has: page.locator('.model-picker__name', { hasText: modelB }) }).click()
+    await page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger').click(); await page.locator('.model-select-menu .select__item').filter({ has: page.locator('.select__item-head', { hasText: modelB }) }).click()
     await expect(ring()).toHaveAttribute('aria-label', /12k \/ 100k/)
-    await page.locator('.model-picker__trigger').click(); await page.locator('.model-picker__item').filter({ has: page.locator('.model-picker__name', { hasText: modelA }) }).click()
+    await page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger').click(); await page.locator('.model-select-menu .select__item').filter({ has: page.locator('.select__item-head', { hasText: modelA }) }).click()
     await page.locator('.chat__input').fill('EXERCISE_CONTEXT_COMPRESSION'); await page.getByRole('button', { name: '发送', exact: true }).click()
     await expect.poll(() => chats.length).toBe(1); expect(chats[0]).toMatchObject({ sessionId: sessionA, model: modelA })
     await page.emulateMedia({ reducedMotion: 'no-preference' })

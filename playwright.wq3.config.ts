@@ -1,0 +1,2 @@
+import { defineConfig } from '@playwright/test'
+export default defineConfig({ testDir: './e2e', testMatch: ['next-turn-dispatcher.spec.ts', 'next-turn-engine-gateway.spec.ts', 'next-turn-queue-foundation.spec.ts', 'work-next-turn-owner.spec.ts', 'next-turn-archive.spec.ts', 'next-turn-sqlite-experiment.spec.ts', 'next-turn-sqlite-worker.spec.ts'], workers: 1, timeout: 20000, fullyParallel: false, outputDir: './.e2e-tmp/results', reporter: 'list' })

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve, relative, isAbsolute } from 'node:path'
 import type { AetherIdeApi } from '../src/preload'
 
-/** All 80 Git IPC operations, exercised against disposable repositories and local bare remotes.
+/** All 82 Git IPC operations, exercised against disposable repositories and local bare remotes.
  * No user repository, credential, SSH agent or Internet remote is modified.
  * The root runner owns Electron serialization; this spec launches only when explicitly executed.
  */
@@ -41,6 +41,8 @@ async function repo(empty = false): Promise<string> {
   const root = join(scratch, `repo-${++sequence}`)
   mkdirSync(root)
   await ok('init', root)
+  expect(existsSync(join(root, '.git')), 'native mutations require an independently initialized fixture').toBe(true)
+  expect(resolve(git(root, 'rev-parse', '--show-toplevel'))).toBe(resolve(root))
   git(root, 'symbolic-ref', 'HEAD', 'refs/heads/main')
   git(root, 'config', 'user.name', 'Aether Matrix')
   git(root, 'config', 'user.email', 'matrix@example.invalid')
@@ -274,10 +276,27 @@ test('local bare remote fetch/pull strategies/push/publish/sync/force/tags and c
   if (process.platform === 'win32') { const ssh = await call('addSshKey', 'synthetic-no-real-secret'); expect(ssh.success).toBe(false); expect(ssh.error).toContain('Windows') }
 })
 
+
+test('native lease status is idle after closure; stale recovery preserves repository state', async () => {
+  const root = await repo()
+  write(root, 'a.txt', 'staged lease boundary\n')
+  await ok('stage', root, 'a.txt')
+  const beforeHead = git(root, 'rev-parse', 'HEAD')
+  const beforeStatus = git(root, 'status', '--porcelain')
+  const beforeIndex = git(root, 'diff', '--cached')
+  expect((await ok('leaseStatus', root)).lease).toEqual({ busy: false, recoverable: false })
+  const recovery = await call('recoverLease', root, '00000000-0000-0000-0000-000000000000')
+  expect(recovery.success).toBe(false)
+  expect(git(root, 'rev-parse', 'HEAD')).toBe(beforeHead)
+  expect(git(root, 'status', '--porcelain')).toBe(beforeStatus)
+  expect(git(root, 'diff', '--cached')).toBe(beforeIndex)
+  expect((await ok('leaseStatus', root)).lease).toEqual({ busy: false, recoverable: false })
+})
+
 test('coverage inventory includes every Git invoke method through the preload bridge', async () => {
   const source = readFileSync(__filename, 'utf8')
   const exercised = new Set([...source.matchAll(/(?:ok|call)\('([^']+)'/g)].map(m => m[1]))
   const exposed = await page.evaluate(() => Object.keys(window.aether.git).filter(name => name !== 'onCloneProgress'))
-  expect(exposed).toHaveLength(80)
+  expect(exposed).toHaveLength(82)
   expect(exposed.filter(name => !exercised.has(name))).toEqual([])
 })

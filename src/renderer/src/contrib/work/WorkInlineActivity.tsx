@@ -1,5 +1,6 @@
 import { memo, useId, useMemo, useState, type JSX } from 'react'
 import type { ToolActivity } from '@renderer/core/engine/useChat'
+import { isVisibleToolActivity } from '@renderer/core/engine/task-plan'
 import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { CompactToolRow } from '../chat/CompactToolRow'
@@ -25,9 +26,10 @@ const ActivityTool = memo(function ActivityTool({ tool, fileContext, onOpenFile 
 })
 
 /** Receipts stay beside their prose; complete diagnostics remain in the activity overview. */
-export function WorkInlineActivity({ tools, fileContext, onOpenActivity, onOpenFile }: {
+export function WorkInlineActivity({ tools: receipts, fileContext, onOpenActivity, onOpenFile }: {
   tools: ToolActivity[]; fileContext: ChatFileContext; onOpenActivity?: (toolId: string) => void; onOpenFile?: (path: string) => void
 }): JSX.Element | null {
+  const tools = useMemo(() => receipts.filter(isVisibleToolActivity), [receipts])
   const [manual, setManual] = useCollapseMemory(`work-process:${fileContext.sessionId}:${tools[0]?.id}`)
   const [selectedPage, setSelectedPage] = useState<number | null>(null)
   const detailId = useId()

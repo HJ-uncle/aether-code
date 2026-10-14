@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import { IPC } from '../shared/ipc'
+import { WORK_QUEUE_IPC, type WorkNextTurnApi, type WorkQueueInvokeResult } from '../shared/work-next-turn-api'
 import type { GraphicsSnapshot } from '../shared/graphics'
 import { BROWSER_IPC, type BrowserApi, type BrowserConnectionState } from '../shared/browser-api'
 import type { BrowserEvent } from '../shared/browser'
@@ -41,6 +42,7 @@ import type {
 } from '../shared/ipc'
 import type {
   GitBlameResult,
+  GitLeaseResult,
   GitBranchInfoResult,
   GitBranchListResult,
   GitCloneOptions,
@@ -83,6 +85,17 @@ async function invokeBrowser<T>(method: string, ...args: unknown[]): Promise<T> 
   return result.value
 }
 
+const workQueue: WorkNextTurnApi = {
+  invoke: async input => {
+    // contextBridge strips custom Error fields; the renderer owns typed error construction.
+    return await ipcRenderer.invoke(WORK_QUEUE_IPC.invoke, input) as WorkQueueInvokeResult
+  },
+  onChanged: listener => {
+    const handler = (_event: unknown, payload: Parameters<Parameters<WorkNextTurnApi['onChanged']>[0]>[0]): void => listener(payload)
+    ipcRenderer.on(WORK_QUEUE_IPC.changed, handler)
+    return () => ipcRenderer.removeListener(WORK_QUEUE_IPC.changed, handler)
+  }
+}
 const browserApi: BrowserApi = {
   getHostZoomFactor: () => webFrame.getZoomFactor(),
   list: () => invokeBrowser('list'),
@@ -90,7 +103,7 @@ const browserApi: BrowserApi = {
   action: input => invokeBrowser('action', input),
   setBounds: input => invokeBrowser('setBounds', input),
   close: tabId => invokeBrowser('close', tabId),
-  share: tabId => invokeBrowser('share', tabId),
+  share: (tabId, expectedContext) => invokeBrowser('share', tabId, expectedContext),
   getSettings: () => invokeBrowser('getSettings'),
   updateSettings: patch => invokeBrowser('updateSettings', patch),
   clearData: () => invokeBrowser('clearData'),
@@ -114,6 +127,7 @@ const browserApi: BrowserApi = {
 }
 
 const api = {
+  workQueue,
   browser: browserApi,
   account: {
     getState: () => invokeAccount('getState'),
@@ -260,6 +274,8 @@ const api = {
   git: {
     init: (cwd: string): Promise<GitResult> => ipcRenderer.invoke(IPC.invoke.gitInit, cwd),
     status: (cwd: string): Promise<GitStatusResult> => ipcRenderer.invoke(IPC.invoke.gitStatus, cwd),
+    leaseStatus: (cwd: string): Promise<GitLeaseResult> => ipcRenderer.invoke(IPC.invoke.gitLeaseStatus, cwd),
+    recoverLease: (cwd: string, generation: string): Promise<GitLeaseResult> => ipcRenderer.invoke(IPC.invoke.gitRecoverLease, cwd, generation),
     diff: (cwd: string, path: string, staged: boolean, base?: 'index' | 'head'): Promise<GitDiffResult> =>
       ipcRenderer.invoke(IPC.invoke.gitDiff, cwd, path, staged, base),
     branchInfo: (cwd: string): Promise<GitBranchInfoResult> =>

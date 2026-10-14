@@ -20,6 +20,7 @@ const TOOL_NAMES: Readonly<Record<string, string>> = {
   todo_create: '创建待办',
   todo_update: '更新待办',
   todo_delete: '删除待办',
+  plan_update: '更新任务计划',
   ask_user: '向用户提问',
   subagent: '子代理',
   code_diagnose: '代码诊断',

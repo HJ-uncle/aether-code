@@ -91,6 +91,14 @@ async function expectPointerTarget(option: Locator): Promise<void> {
 
 async function expectPopoverInViewport(palette: Locator, input: Locator): Promise<void> {
   await expect(palette).toBeVisible()
+  // Native setSize can finish before Chromium delivers its resize event. Wait
+  // for the portal's measured position, keeping the same viewport constraints.
+  await expect.poll(() => palette.evaluate(element => {
+    const rect = element.getBoundingClientRect()
+    const chromeBottom = document.querySelector('.menu-bar')?.getBoundingClientRect().bottom ?? 0
+    return rect.left >= 8 && rect.right <= innerWidth - 8 &&
+      rect.top >= chromeBottom && rect.bottom <= innerHeight - 8
+  })).toBe(true)
   const metrics = await palette.evaluate(element => {
     const rect = element.getBoundingClientRect()
     return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: innerWidth, height: innerHeight, chromeBottom: document.querySelector('.menu-bar')?.getBoundingClientRect().bottom ?? 0 }
@@ -217,7 +225,7 @@ test.describe.serial('Work 时间线与协作详情', () => {
     await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 900))
   })
 
-  test('正文与操作按实际发生顺序显示，工具状态行直接打开对应活动', async ({}, testInfo) => {
+  test('正文与操作按实际发生顺序显示，工具状态行就地展开并能打开对应侧栏活动', async ({}, testInfo) => {
     await work().getByRole('textbox', { name: '任务目标', exact: true }).fill('按顺序调研、编辑和验证，不要混淆过程与正文')
     await work().getByRole('button', { name: '开始任务', exact: true }).click()
     await expect.poll(() => requests.length).toBe(1)
@@ -248,17 +256,23 @@ test.describe.serial('Work 时间线与协作详情', () => {
     frame({ toolStart: { id: 'write-page', name: 'write_file', args: { path: 'index.html' } } })
     const conversation = work().getByRole('region', { name: '协作对话', exact: true })
     const message = conversation.locator('.work-message--assistant').last()
-    await expect(message.locator('.work-process').last()).toContainText('进行中 · 写入文件')
-    expect(await message.locator(':scope > .md, :scope > .work-process').allTextContents()).toEqual([
-      '先读取需求，确认验收范围。', '已完成 · 读取文件requirements.md', '需求已确认，现在实现页面。', '进行中 · 写入文件index.html'
+    await expect(message.locator('.work-process').last()).toContainText('运行中 · 写入文件')
+    expect(await message.locator(':scope > .md, :scope > .work-inline-activity > .work-process').allTextContents()).toEqual([
+      '先读取需求，确认验收范围。', '已完成 · 读取文件requirements.md', '需求已确认，现在实现页面。', '运行中 · 写入文件index.html'
     ])
     await expect(message.locator('.work-process__items')).toHaveCount(0)
     await message.locator('.work-process').first().click()
+    const readGroup = message.locator('.work-inline-activity').first()
+    await expect(readGroup.getByRole('region', { name: '活动详情', exact: true })).toBeVisible()
+    await readGroup.locator('.compact-tool-row button.logline').click()
+    await expect(readGroup).toContainText('READ_REQUIREMENTS_RESULT')
+    await readGroup.getByRole('button', { name: '在侧栏查看详情', exact: true }).click()
     await expect(work().getByRole('tab', { name: '活动', exact: true })).toHaveAttribute('aria-selected', 'true')
     await expect(work().getByRole('option', { selected: true })).toContainText('读取文件')
     await expect(work().getByRole('article', { name: '活动详情' })).toContainText('READ_REQUIREMENTS_RESULT')
     await work().getByRole('group', { name: '活动筛选' }).getByRole('button', { name: '已完成', exact: true }).click()
     await message.locator('.work-process').last().click()
+    await message.locator('.work-inline-activity').last().getByRole('button', { name: '在侧栏查看详情', exact: true }).click()
     await expect(work().getByRole('option', { selected: true })).toContainText('写入文件')
     await expect(work().getByRole('article', { name: '活动详情' })).toContainText('index.html')
     await expect(work().getByRole('group', { name: '活动筛选' }).getByRole('button', { name: '全部', exact: true })).toHaveAttribute('aria-pressed', 'true')
@@ -308,28 +322,29 @@ test.describe.serial('Work 时间线与协作详情', () => {
     }
     await work().getByRole('tab', { name: '子代理', exact: true }).click()
     const panel = work().getByRole('region', { name: '协作代理', exact: true })
-    await panel.getByRole('button', { name: '刷新', exact: true }).click()
+    await panel.getByRole('button', { name: '刷新子代理状态', exact: true }).click()
     await expect(panel).toContainText('页面开发代理')
     await expect(panel).toContainText('开发实现')
     const input = work().getByRole('textbox', { name: '继续对话', exact: true })
     await input.fill('DRAFT_MUST_SURVIVE_CHILD_CONTINUATION')
-    await panel.getByRole('button', { name: '继续此代理', exact: true }).click()
-    const continuation = panel.getByRole('textbox', { name: '给这个代理的新任务', exact: true })
+    await panel.getByRole('button', { name: '查看 开发实现 子代理详情', exact: true }).click()
+    const continuation = panel.getByRole('textbox', { name: '继续交给 开发实现', exact: true })
     await continuation.fill('继续检查小屏布局，修复后给出验证结果')
     let releaseLookup: () => void = () => undefined
     childLookupDelay = new Promise<void>(resolve => { releaseLookup = resolve })
     try {
       await panel.getByRole('button', { name: '继续执行', exact: true }).click()
       await expect.poll(() => childLookupCount).toBe(1)
-      await expect(continuation).toBeDisabled()
+      // The persistent detail composer can keep a next-step draft while the
+      // submitted request is being checked; only duplicate submission is locked.
+      await expect(continuation).toBeEnabled()
       await expect(continuation).toHaveValue('继续检查小屏布局，修复后给出验证结果')
-      await expect(panel.getByRole('button', { name: '取消', exact: true })).toBeDisabled()
       await expect(panel.getByRole('button', { name: '正在提交…', exact: true })).toBeDisabled()
       expect(requests).toHaveLength(1)
     } finally { childLookupDelay = null; releaseLookup() }
     await expect.poll(() => requests.length).toBe(2)
     expect(requests[1].sessionId).toBe(requests[0].sessionId)
-    expect(String(requests[1].message)).toContain('"resumeRunId": "child-first-run"')
+    expect(requests[1].collaborators).toEqual([{ resumeRunId: 'child-first-run' }])
     expect(String(requests[1].message)).toContain('继续检查小屏布局')
     expect(String(requests[1].message)).not.toContain('DRAFT_MUST_SURVIVE')
     await expect(input).toHaveText('DRAFT_MUST_SURVIVE_CHILD_CONTINUATION')

@@ -1,0 +1,13 @@
+.subagent-history { min-width: 0; }
+.subagent-history__toolbar { display: flex; align-items: center; gap: 8px; padding-block: 6px; color: var(--fg-muted); font-size: 12px; }
+.subagent-history__toolbar > span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.subagent-history :is(button), .subagent-history__detail button { font: inherit; cursor: pointer; }
+.subagent-history__toolbar button, .subagent-history__more, .subagent-history__error button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 28px; padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--fg); background: var(--bg-elevated); }
+.subagent-history__more { margin-block: 8px; }
+.subagent-history__navigation { display: inline-flex; gap: 8px; margin-inline-end: 8px; }
+.subagent-history__notice { margin-block: 6px; color: var(--fg-muted); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.subagent-history__error { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--danger-fg); font-size: 12px; overflow-wrap: anywhere; }
+.subagent-history__detail { max-height: 360px; overflow: auto; min-width: 0; scrollbar-width: thin; overscroll-behavior: contain; }
+.subagent-history :is(button):disabled, .subagent-history__detail button:disabled { cursor: default; opacity: .5; }
+.subagent-history :is(button):focus-visible, .subagent-history__detail button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.subagent-history__toolbar button:hover:not(:disabled), .subagent-history__more:hover:not(:disabled) { background: var(--bg-hover); }

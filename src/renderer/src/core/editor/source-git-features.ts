@@ -2,6 +2,7 @@ import type { editor, IDisposable } from 'monaco-editor'
 import type { GitBlameLine } from '@shared/git-types'
 import { monaco } from './monaco-setup'
 import { fileIdentity } from './file-identity'
+import { getDocument } from './editor-store'
 import { gitBlame, gitHeadFile, gitShowCommitFile } from '../git/git-client'
 import { getGitState, onGitChanged } from '../git/git-store'
 import { findConflictAtLine, nextConflict, resolveConflictText, scanConflicts, type DocumentMergeConflict } from '../git/git-conflict-parser'
@@ -46,6 +47,8 @@ function button(label: string, action: () => void): HTMLButtonElement {
 
 /** Owns only decorations and temporary diff models; every edit goes through the source buffer's undo stack. */
 export function registerSourceGitFeatures(instance: editor.IStandaloneCodeEditor, filePath: string): () => void {
+  // Code Git owns a single selected workspace/session, not independent Work documents.
+  if (getDocument(filePath)?.sessionFileTarget) return () => undefined
   const model = instance.getModel()
   if (!model) return () => undefined
   const key = fileIdentity(filePath)

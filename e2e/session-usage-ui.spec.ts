@@ -109,7 +109,7 @@ const archiveButton = () => page.locator('.chat__load-earlier[data-archive-page]
 async function selectSession(id: string) {
   if (!await page.locator('.history-view').isVisible()) await page.getByRole('button', { name: '会话历史', exact: true }).click()
   await page.locator('.history-view__item[data-session-id="' + id + '"]').click()
-  await expect(page.locator('.model-picker__trigger')).toBeEnabled()
+  await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toBeEnabled()
   await expect(page.locator('.message--user')).toContainText([id === sessionA ? 'USAGE_TASK_109' : id === pairedSession ? 'USAGE_CHILD_WATERMARK' : 'USAGE_PEER_B'])
 }
 async function launch() {

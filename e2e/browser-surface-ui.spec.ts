@@ -162,7 +162,7 @@ test.describe.serial('原生网页与调试面板绘制', () => {
       JSON.stringify({ autoStartEngine: false, engineMode: 'embedded' })
     )
     app = await electron.launch({
-      args: ['.', `--user-data-dir=${fixture}`],
+      args: [process.env.AETHER_E2E_APP_ENTRY || '.', `--user-data-dir=${fixture}`],
       cwd: root,
       env: { ...process.env, AETHER_GLOBAL_DIR: join(fixture, 'global') }
     })

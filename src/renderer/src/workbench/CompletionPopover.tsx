@@ -68,7 +68,7 @@ export function CompletionPopover({ anchorRef, children, onClose, className = ''
     // contentEditable. Capture it before editor handlers can consume it and
     // release the portal immediately.
     const keydown = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
+      if (event.key !== 'Escape' || event.isComposing || event.keyCode === 229) return
       event.preventDefault()
       event.stopPropagation()
       closeRef.current()

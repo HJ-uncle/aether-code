@@ -1,10 +1,19 @@
-import { useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type JSX,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent
+} from 'react'
 import type { BrowserBoundsInput, BrowserTabState, BrowserViewport } from '@shared/browser'
 import type { BrowserConnectionState } from '@shared/browser-api'
 import { Icon, type IconName } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { Select } from '@renderer/workbench/Select'
 import { ActionMenu } from '@renderer/workbench/ActionMenu'
+import { toast } from '@renderer/core/toast'
 import { NetworkInspector } from './NetworkInspector'
 import { isBrowserSurfaceOccluded } from './browser-occlusion'
 import { openViewToRight } from '@renderer/core/editor/editor-groups'
@@ -12,12 +21,15 @@ import { getAppMode, onAppModeChanged, type AppMode } from '@renderer/core/platf
 import { openAppSettings } from '../settings/app-settings-navigation'
 import {
   browserAction,
+  getBrowserState,
   initializeBrowser,
   openBrowser,
   refreshBrowserSettings,
   selectBrowserTab,
   useBrowserState
 } from './browser-store'
+import { addBrowserTabToChat } from './browser-chat'
+import { BrowserTabContextMenu, openBrowserTabContextMenu } from './BrowserTabContextMenu'
 import './browser.css'
 import {
   PHONE_VIEWPORT as PHONE,
@@ -319,6 +331,15 @@ export function BrowserView({ surfaceMode = 'code' }: { surfaceMode?: AppMode } 
   const [width, setWidth] = useState('1280')
   const [height, setHeight] = useState('800')
   const [connection, setConnection] = useState<BrowserConnectionState>({ status: 'disconnected' })
+  const [menu, setMenu] = useState<{
+    tabId: string
+    x: number
+    y: number
+    anchor: HTMLElement
+  } | null>(null)
+  const [addingToChat, setAddingToChat] = useState(false)
+  const addingToChatRef = useRef(false)
+  const menuTab = state.tabs.find((item) => item.tabId === menu?.tabId)
   useEffect(() => {
     void initializeBrowser().then(refreshBrowserSettings)
   }, [])
@@ -352,6 +373,61 @@ export function BrowserView({ surfaceMode = 'code' }: { surfaceMode?: AppMode } 
   }, [])
   const run = (action: 'back' | 'forward' | 'reload' | 'stop' | 'devtools'): void => {
     if (tab) browserAction(() => window.aether.browser.action({ tabId: tab.tabId, action }))
+  }
+  const openTabMenu = (
+    item: BrowserTabState,
+    event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>
+  ): void => {
+    openBrowserTabContextMenu(event, (x, y, anchor) => {
+      if (item.tabId !== tab?.tabId) selectBrowserTab(item.tabId)
+      setMenu({ tabId: item.tabId, x, y, anchor })
+    })
+  }
+  const addToChat = (item: BrowserTabState): void => {
+    if (addingToChatRef.current) return
+    addingToChatRef.current = true
+    setAddingToChat(true)
+    browserAction(async () => {
+      try {
+        await addBrowserTabToChat(item, connection, surfaceMode)
+      } finally {
+        addingToChatRef.current = false
+        setAddingToChat(false)
+      }
+    })
+  }
+  const closeTabs = (ids: readonly string[], keepTabId?: string): void => {
+    // A close group is fixed at selection time. Tabs opened by another action
+    // while IPC is in flight must not become accidental close targets.
+    if (keepTabId) selectBrowserTab(keepTabId)
+    browserAction(async () => {
+      const failures: string[] = []
+      for (const id of ids) {
+        if (!getBrowserState().tabs.some((item) => item.tabId === id)) continue
+        try {
+          await window.aether.browser.close(id)
+        } catch (error) {
+          failures.push(error instanceof Error ? error.message : String(error))
+        }
+      }
+      if (failures.length) throw new Error(`有 ${failures.length} 个标签页未能关闭：${failures[0]}`)
+    })
+  }
+  const duplicateTab = (item: BrowserTabState): void => {
+    browserAction(async () => {
+      const duplicate = await window.aether.browser.create({ url: item.url })
+      await window.aether.browser.action({
+        tabId: duplicate.tabId,
+        action: 'viewport',
+        viewport: item.viewport
+      })
+      if (duplicate.zoomFactor !== item.zoomFactor)
+        await window.aether.browser.action({
+          tabId: duplicate.tabId,
+          action: 'zoom',
+          zoomFactor: item.zoomFactor
+        })
+    })
   }
   const viewport = (value: BrowserViewport | null): void => {
     if (tab)
@@ -404,16 +480,30 @@ export function BrowserView({ surfaceMode = 'code' }: { surfaceMode?: AppMode } 
         {state.tabs.map((item, index) => (
           <div
             key={item.tabId}
+            data-browser-tab-id={item.tabId}
             className={`browser-tab${item.tabId === tab?.tabId ? ' is-active' : ''}`}
+            onContextMenu={(event) => openTabMenu(item, event)}
+            onMouseDown={(event) => {
+              if (event.button !== 1) return
+              event.preventDefault()
+              event.stopPropagation()
+              closeTabs([item.tabId])
+            }}
           >
             <button
               type="button"
               role="tab"
+              aria-haspopup="menu"
+              aria-expanded={menu?.tabId === item.tabId}
               aria-selected={item.tabId === tab?.tabId}
               tabIndex={item.tabId === tab?.tabId ? 0 : -1}
-              title={item.url}
+              title={`${item.url} · 右键查看更多操作`}
               onClick={() => selectBrowserTab(item.tabId)}
               onKeyDown={(event) => {
+                if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+                  openTabMenu(item, event)
+                  return
+                }
                 const next =
                   event.key === 'ArrowRight'
                     ? (index + 1) % state.tabs.length
@@ -460,6 +550,68 @@ export function BrowserView({ surfaceMode = 'code' }: { surfaceMode?: AppMode } 
           />
         ) : null}
       </div>
+      {menu && menuTab ? (
+        <BrowserTabContextMenu
+          tab={menuTab}
+          tabs={state.tabs}
+          x={menu.x}
+          y={menu.y}
+          anchor={menu.anchor}
+          onClose={() => setMenu(null)}
+          onNew={() => browserAction(() => window.aether.browser.create({}))}
+          onDuplicate={() => duplicateTab(menuTab)}
+          onReload={() =>
+            browserAction(() =>
+              window.aether.browser.action({ tabId: menuTab.tabId, action: 'reload' })
+            )
+          }
+          onStop={() =>
+            browserAction(() =>
+              window.aether.browser.action({ tabId: menuTab.tabId, action: 'stop' })
+            )
+          }
+          onDevtools={() =>
+            browserAction(() =>
+              window.aether.browser.action({ tabId: menuTab.tabId, action: 'devtools' })
+            )
+          }
+          onCopyAddress={() =>
+            browserAction(async () => {
+              await navigator.clipboard.writeText(menuTab.url)
+              toast.success('网页地址已复制')
+            })
+          }
+          onAddToChat={() => addToChat(menuTab)}
+          addToChatDisabled={
+            addingToChat || !state.settings.aiEnabled || connection.status !== 'connected'
+          }
+          addToChatHint={
+            addingToChat
+              ? '正在添加…'
+              : !state.settings.aiEnabled
+                ? '请先启用 AI 浏览器'
+                : connection.status !== 'connected'
+                  ? '请先连接引擎并选择会话'
+                  : '引用此标签页，允许 AI 读取和操作'
+          }
+          onCloseTab={() => closeTabs([menuTab.tabId])}
+          onCloseOthers={() =>
+            closeTabs(
+              state.tabs.filter((item) => item.tabId !== menuTab.tabId).map((item) => item.tabId),
+              menuTab.tabId
+            )
+          }
+          onCloseRight={() =>
+            closeTabs(
+              state.tabs
+                .slice(state.tabs.findIndex((item) => item.tabId === menuTab.tabId) + 1)
+                .map((item) => item.tabId),
+              menuTab.tabId
+            )
+          }
+          onCloseAll={() => closeTabs(state.tabs.map((item) => item.tabId))}
+        />
+      ) : null}
       <form
         className="browser-navigation"
         onSubmit={(event) => {
@@ -690,14 +842,15 @@ export function BrowserView({ surfaceMode = 'code' }: { surfaceMode?: AppMode } 
                     ? '网页尚未交给当前对话'
                     : '打开对话并连接引擎后，AI 可操作网页'}
         </span>
-        {tab && !aiReady && state.settings.aiEnabled && connection.status === 'connected' ? (
+        {tab && state.settings.aiEnabled && connection.status === 'connected' ? (
           <button
             type="button"
             className="browser-text-tool"
-            title="将当前网页分配给当前对话，允许 AI 读取和操作"
-            onClick={() => browserAction(() => window.aether.browser.share(tab.tabId))}
+            title="引用当前网页到会话，允许 AI 读取和操作"
+            disabled={addingToChat}
+            onClick={() => addToChat(tab)}
           >
-            交给当前会话
+            {addingToChat ? '正在添加…' : '添加到当前会话'}
           </button>
         ) : null}
         <div className="browser-spacer" />

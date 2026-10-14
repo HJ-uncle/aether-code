@@ -7,6 +7,7 @@ import { changeMemoryScope, useMemoryScope } from '@renderer/core/engine/memory-
 import { MEMORY_SCOPE_DESCRIPTORS, type MemoryScope } from '@renderer/core/engine/memory'
 import { Icon } from '@renderer/workbench/icons'
 import { Popover } from '@renderer/workbench/Popover'
+import { Select } from '@renderer/workbench/Select'
 import { useAppMode } from '@renderer/core/platform/app-mode'
 import type { SessionThinkingMode } from './session-thinking-store'
 import type { ComposerThinkingMode } from './session-request-config'
@@ -127,6 +128,7 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
 
   const pickSecurity = (next: string): void => {
     if (next === mode || loading || !ready || !sessionId) return
+    if (!MODE_DESCRIPTORS.some(item => item.value === next)) return
     void changeSecurityMode(sessionId, next as SecurityMode).catch(() => undefined)
   }
 
@@ -136,6 +138,23 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
   }
 
   return (
+    <>
+    <Select
+      className="composer-access-picker"
+      ariaLabel={`切换本会话访问权限：${secDescriptor?.label ?? '尚未确认'}`}
+      title={secSummary}
+      triggerLabel={loading ? '读取权限…' : secDescriptor?.label ?? '访问权限'}
+      value={mode ?? ''}
+      options={MODE_DESCRIPTORS.map(item => ({ value: item.value, label: item.label,
+        description: [item.summary, item.warning].filter(Boolean).join(' ') }))}
+      onChange={pickSecurity}
+      disabled={!ready || !active || loading || !sessionId}
+      placement="up"
+      width={340}
+      hint={error ?? undefined}
+      actions={error ? [{ id: 'retry-security', label: '重新读取访问权限', icon: 'restart',
+        onSelect: () => { void refresh(sessionId).catch(() => undefined) } }] : []}
+    />
     <Popover
       className="composer-options"
       label="对话偏好"
@@ -301,5 +320,6 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
         </div>
       </div>
     </Popover>
+    </>
   )
 }

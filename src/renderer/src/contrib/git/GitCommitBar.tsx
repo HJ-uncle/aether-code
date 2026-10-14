@@ -22,6 +22,8 @@ import {
   stagedFilesOf,
   changeCountOf,
   setCommitMessage,
+  getCommitDraftRevision,
+  getGitState,
   commit,
   commitStaged,
   commitAll,
@@ -33,8 +35,8 @@ import {
   gitRemoteStore,
   mergeStrategyStore
 } from '../../core/git/git-store'
-import { gitSuggestCommitMessage } from '../../core/git/git-client'
-import { utilityChat } from '../../core/engine/utility-chat'
+import { createGitClient } from '../../core/git/git-client'
+import { captureCodeGitTarget, assertGitTarget, gitUtilityChat } from '../../core/git/git-target'
 import { useApp } from '../../core/app-context'
 import { runGitRemoteAction, type GitRemoteAction } from '../../core/git/git-remote-actions'
 import { chooseMergeStrategy, type ChooseStrategy } from '../../core/git/git-merge-strategy'
@@ -50,35 +52,8 @@ import { Spinner } from '../../workbench/ui-primitives'
  * 轻任务模型有时会把结果包在 Markdown 围栏或“提交信息：”标签里；
  * 这里只清理包装，不截断正文，避免几十个文件的改动最后只剩一句标题。
  */
-export function cleanAiCommitMessage(raw: string): string {
-  let text = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
-  // 只去掉包裹整段结果的围栏；正文里的 Markdown 反引号属于有效内容，不能全局删除。
-  if (text.startsWith('```')) {
-    const openingLineEnd = text.indexOf('\n')
-    text = openingLineEnd >= 0 ? text.slice(openingLineEnd + 1) : text.slice(3)
-    text = text.replace(/\s*```$/i, '').trim()
-  }
-  if (!text) return ''
-
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => line.trimEnd())
-  while (lines.length > 0 && !lines[0].trim()) lines.shift()
-  if (lines.length === 0) return ''
-
-  // 常见的模型包装标签不属于提交正文。
-  lines[0] = lines[0]
-    .replace(/^(?:提交信息|commit message|message|标题)\s*[:：]\s*/i, '')
-    .trim()
-  while (lines.length > 0 && !lines[lines.length - 1].trim()) lines.pop()
-  let value = lines.join('\n').trim()
-  if (value.length >= 2) {
-    const first = value[0]
-    const last = value[value.length - 1]
-    if ((first === '"' && last === '"') || (first === "'" && last === "'")) value = value.slice(1, -1).trim()
-  }
-  return value
-}
+export { cleanAiCommitMessage } from '../../core/git/commit-message'
+import { cleanAiCommitMessage } from '../../core/git/commit-message'
 
 /** 远程操作的中文名（进度文案与失败提示共用） */
 const labels: Record<GitRemoteAction, string> = {
@@ -99,6 +74,14 @@ export function GitCommitBar(): JSX.Element {
   /** SSH 口令 / 空提交信息两个对话框的开关 */
   const [sshAsk, setSshAsk] = useState<{ resolve: (v: string | null) => void } | null>(null)
   const [emptyAsk, setEmptyAsk] = useState(false)
+  const mounted = useRef(false)
+  const suggestInFlight = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
 
   const opBusy = busyOperationOf(s) !== ''
@@ -154,10 +137,24 @@ export function GitCommitBar(): JSX.Element {
   useEffect(autosize, [s.commitMessage])
 
   const handleSuggest = async (): Promise<void> => {
-    if (suggesting) return
+    if (suggesting || suggestInFlight.current) return
+    suggestInFlight.current = true
+    const revision = getCommitDraftRevision()
+    const cwd = s.cwd
     setSuggesting(true)
     try {
-      const res = await gitSuggestCommitMessage(s.cwd)
+      const target = await captureCodeGitTarget(cwd)
+      const apply = (value: string): boolean => {
+        assertGitTarget(target)
+        if (!mounted.current || getGitState().cwd !== cwd) return false
+        if (getCommitDraftRevision() !== revision) {
+          toast.warning('提交草稿已编辑，已保留你的内容；可再次生成 AI 建议')
+          return false
+        }
+        setCommitMessage(value)
+        return true
+      }
+      const res = await createGitClient(target).gitSuggestCommitMessage()
       if (!res.success) {
         toast.error(res.error ?? '生成失败，请稍后重试')
         return
@@ -168,7 +165,7 @@ export function GitCommitBar(): JSX.Element {
       if (res.aiContext) {
         let aiError: string | null = null
         try {
-          const ai = await utilityChat({
+          const ai = await gitUtilityChat(target, {
             // 轻任务模型为空时跟随当前主对话模型；设置页的语义就是如此。
             model: settings.utilityModelId || settings.lastModelId || undefined,
             systemPrompt:
@@ -186,7 +183,7 @@ export function GitCommitBar(): JSX.Element {
           })
           const cleaned = cleanAiCommitMessage(ai.text)
           if (cleaned) {
-            setCommitMessage(cleaned)
+            apply(cleaned)
             return
           }
           aiError = 'AI 返回了空内容'
@@ -194,17 +191,19 @@ export function GitCommitBar(): JSX.Element {
           aiError = err instanceof Error ? err.message : '请求失败'
         }
         if (res.message) {
-          setCommitMessage(res.message)
+          assertGitTarget(target)
+          if (!apply(res.message)) return
           toast.warning(`AI 提交信息不可用（${aiError ?? '返回为空'}），已使用本地摘要`)
           return
         }
       }
-      if (res.message) setCommitMessage(res.message)
+      if (res.message) apply(res.message)
       else toast.error('生成失败，请稍后重试')
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '生成失败，请稍后重试')
+      if (mounted.current) toast.error(err instanceof Error ? err.message : '生成失败，请稍后重试')
     } finally {
-      setSuggesting(false)
+      suggestInFlight.current = false
+      if (mounted.current) setSuggesting(false)
     }
   }
 
@@ -399,7 +398,6 @@ export function GitCommitBar(): JSX.Element {
           <Icon name="chevron" size={16} />
         </button>
       </div>
-
 
       {menu ? (
         <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />

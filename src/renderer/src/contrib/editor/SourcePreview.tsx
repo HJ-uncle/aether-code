@@ -1,10 +1,13 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type JSX } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { cssVar, watchTheme } from '@renderer/core/theme/palette'
 import { monaco } from '@renderer/core/editor/monaco-setup'
 import { openWorkspaceResource } from '@renderer/core/editor/monaco-workspace'
 import { resolvePreviewResource } from '@renderer/core/editor/preview-resource-path'
-import { isRemoteEngine } from '@renderer/core/engine/source'
+import { getEngineSource, isRemoteEngine, subscribeEngineSource } from '@renderer/core/engine/source'
+import { getDocument } from '@renderer/core/editor/editor-store'
+import { assertSessionFileTarget } from '@renderer/core/workspace/fs-client'
+import { fileIdentity } from '@renderer/core/editor/file-identity'
 import { toast } from '@renderer/core/toast'
 import { buildSourcePreviewDocument } from './source-preview-document'
 import bridgeSource from './preview-bridge.js?raw'
@@ -31,7 +34,11 @@ export const SourcePreview = forwardRef<SourcePreviewHandle, {
   kind: 'markdown' | 'html'
   onScroll: (ratio: number) => void
 }>(function SourcePreview({ filePath, content, kind, onScroll }, ref): JSX.Element {
-  const { root } = useWorkspace()
+  const workspace = useWorkspace()
+  const target = getDocument(filePath)?.sessionFileTarget
+  const root = target?.root ?? workspace.root
+  const epoch = useSyncExternalStore(subscribeEngineSource, getEngineSource)
+  const remote = Boolean(target) || isRemoteEngine()
   const frame = useRef<HTMLIFrameElement>(null)
   const [channel] = useState(() => crypto.randomUUID())
   const [document, setDocument] = useState('')
@@ -53,20 +60,20 @@ export const SourcePreview = forwardRef<SourcePreviewHandle, {
     const timer = setTimeout(() => {
       void buildSourcePreviewDocument({
         filePath, content, kind, workspaceRoot: root ?? '', channel,
-        remote: isRemoteEngine(),
+        remote, sessionFileTarget: target,
         bridgeScript: bridgeSource.replace(/\r\n?/g, '\n'),
         colors: {
           background: cssVar('--bg-app'), foreground: cssVar('--fg'), muted: cssVar('--fg-muted'),
           border: cssVar('--border'), accent: cssVar('--accent')
         }
       }).then((html) => {
-        if (!cancelled) { setDocument(html); setError('') }
+        if (!cancelled && epoch === getEngineSource()) { setDocument(html); setError('') }
       }).catch((reason: unknown) => {
         if (!cancelled) setError(`无法生成预览：${reason instanceof Error ? reason.message : String(reason)}`)
       })
     }, 180)
     return () => { cancelled = true; clearTimeout(timer) }
-  }, [filePath, content, kind, root, channel, themeRevision])
+  }, [filePath, content, kind, root, channel, themeRevision, epoch, remote, target])
   useEffect(() => {
     const receive = (event: MessageEvent): void => {
       if (event.source !== frame.current?.contentWindow || typeof event.data !== 'object' || !event.data || event.data.channel !== channel) return
@@ -76,15 +83,19 @@ export const SourcePreview = forwardRef<SourcePreviewHandle, {
         onScrollRef.current(ratioRef.current)
       }
       if (event.data.type === 'aether.preview.openFile' && typeof event.data.path === 'string') {
-        const safePath = resolvePreviewResource(filePath, event.data.path, root ?? '', isRemoteEngine())
-        if (safePath) void openWorkspaceResource(monaco.Uri.file(safePath)).catch(() => toast.error('无法打开预览中的文件链接'))
+        try { if (target) assertSessionFileTarget(target) } catch { return }
+        const candidate = event.data.path.replace(/\\/g, '/')
+        const prefix = root ? fileIdentity(root).replace(/\/+$/, '') : ''
+        const safePath = target && prefix && fileIdentity(candidate).startsWith(`${prefix}/`) && !candidate.split('/').some(part => part === '.' || part === '..')
+          ? candidate : resolvePreviewResource(filePath, candidate, root ?? '', remote)
+        if (safePath) void openWorkspaceResource(monaco.Uri.file(safePath), undefined, monaco.Uri.file(filePath)).catch(() => toast.error('无法打开预览中的文件链接'))
       }
     }
     window.addEventListener('message', receive)
     return () => window.removeEventListener('message', receive)
     // The ref contains the current ratio, independent of render timing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filePath, root, channel])
+  }, [filePath, root, channel, remote, target])
   return <section className="source-preview" aria-label={kind === 'markdown' ? 'Markdown 预览' : 'HTML 预览'}>
     {error ? <div className="source-preview__message" role="alert">{error}</div> : null}
     {!document && !error ? <div className="source-preview__message" role="status">正在生成预览…</div> : null}

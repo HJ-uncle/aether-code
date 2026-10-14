@@ -1,12 +1,21 @@
 import { activateDocument } from '@renderer/core/editor/editor-activation'
-import { getEditorState, openFile, resolveDocumentPath } from '@renderer/core/editor/editor-store'
+import { assertDocumentConnection, getDocument, openFile } from '@renderer/core/editor/editor-store'
 import { getWorkspaceState } from '@renderer/core/workspace/workspace-store'
 import { getSnapshot } from '@renderer/core/engine/client'
 import { resolveChatPath } from './chat-file-path'
-import { getEngineSource, isRemoteEngine } from '@renderer/core/engine/source'
-import { remoteWorkspaceContext, resolveSessionFilePath } from '@renderer/core/workspace/fs-client'
+import { assertEngineSource, getEngineSource, isRemoteEngine } from '@renderer/core/engine/source'
+import { remoteWorkspaceContext, remoteWorkspaceRelativePath, resolveSessionFilePath } from '@renderer/core/workspace/fs-client'
 import { assertWorkspaceTarget } from '@renderer/core/workspace/connection'
-import { resolveArtifactPath, type ChatFileContext, type ChatLinkTarget } from './chat-link'
+import { type ChatFileContext, type ChatLinkTarget } from './chat-link'
+
+function activateLoadedFile(filePath: string, source: number): void {
+  assertEngineSource(source)
+  const doc = getDocument(filePath)
+  if (!doc || doc.loading) throw new Error('文件已关闭或尚未加载完成，请重试。')
+  if (doc.error) throw new Error(doc.error)
+  assertDocumentConnection(doc)
+  activateDocument(doc.path)
+}
 
 /**
  * 从聊天里打开文件：读进编辑器标签并激活，可带行号定位。
@@ -22,53 +31,41 @@ import { resolveArtifactPath, type ChatFileContext, type ChatLinkTarget } from '
  * - 尾部可带 :line 或 :line:column（用户截图里 `file.ts:15` 这种写法）。
  */
 export async function openFileFromChat(rawPath: string, context?: ChatFileContext): Promise<void> {
-  if ((await getSnapshot()).mode === 'remote' || isRemoteEngine()) {
-    const remote = await remoteWorkspaceContext()
-    if (context && remote.sessionId !== context.sessionId) throw new Error('会话已经切换，请返回文件所属会话后重试。')
-    const match = /:(\d+)(?::(\d+))?$/.exec(rawPath.trim())
-    const pathText = (match ? rawPath.trim().slice(0, match.index) : rawPath).trim().replace(/^[`'"<]+|[`'">]+$/g, '')
-    if (!pathText || pathText.startsWith('/') || /^[A-Za-z]:[\\/]/.test(pathText)) return
-    const filePath = `${remote.root}/${pathText.replace(/^[/\\]+|[/\\]+$/g, '')}`
-    await openFile(filePath, match ? Number(match[1]) : undefined, match?.[2] ? Number(match[2]) : undefined)
-    activateDocument(filePath)
-    return
-  }
-  // Work's independent tasks are backed by an engine-managed workspace (often
-  // outside the Code project). Resolve and authorize that concrete session
-  // root before asking the local editor to read the file; otherwise the normal
-  // fs allow-list reports a misleading "请先打开文件夹" error.
-  if (context?.sessionId && !context.workspaceRoot) {
+  const source = getEngineSource()
+  const snapshot = await getSnapshot()
+  assertEngineSource(source)
+  const remoteMode = snapshot.mode === 'remote' || isRemoteEngine()
+  if (context?.sessionId && (context.sessionId.startsWith('work-') || (!remoteMode && !context.workspaceRoot))) {
     const match = /:(\d+)(?::(\d+))?$/.exec(rawPath.trim())
     const pathText = (match ? rawPath.trim().slice(0, match.index) : rawPath).trim().replace(/^[`'"<]+|[`'">]+$/g, '')
     const resolved = await resolveSessionFilePath(context.sessionId, pathText)
-    await openFile(resolved.path, match ? Number(match[1]) : undefined, match?.[2] ? Number(match[2]) : undefined)
-    activateDocument(resolved.path)
+    assertEngineSource(source)
+    await openFile(resolved.path, match ? Number(match[1]) : undefined, match?.[2] ? Number(match[2]) : undefined, undefined, resolved.target)
+    activateLoadedFile(resolved.path, source)
+    return
+  }
+  if (remoteMode) {
+    const remote = await remoteWorkspaceContext()
+    if (context?.sessionId && context.sessionId !== remote.sessionId) throw new Error('会话已经切换，请返回文件所属会话后重试。')
+    const match = /:(\d+)(?::(\d+))?$/.exec(rawPath.trim())
+    const pathText = (match ? rawPath.trim().slice(0, match.index) : rawPath).trim().replace(/^[`'"<]+|[`'">]+$/g, '')
+    if (!pathText) return
+    const absolute = /^(?:[/\\]|[A-Za-z]:)/.test(pathText)
+    const filePath = absolute ? pathText.replace(/\\/g, '/') : `${remote.root}/${pathText}`
+    remoteWorkspaceRelativePath(remote, filePath)
+    await openFile(filePath, match ? Number(match[1]) : undefined, match?.[2] ? Number(match[2]) : undefined)
+    assertWorkspaceTarget(remote.target)
+    activateLoadedFile(filePath, source)
     return
   }
   const target = resolveChatPath(rawPath, context ? context.workspaceRoot ?? null : getWorkspaceState().root)
   if (!target) return
   await openFile(target.filePath, target.line, target.column)
-  activateDocument(target.filePath)
+  activateLoadedFile(target.filePath, source)
 }
 
 /** A download URL names a session artifact, not a local path or a navigation URL. */
 export async function openArtifactFromChat(target: Extract<ChatLinkTarget, { kind: 'artifact' }>, context: ChatFileContext): Promise<void> {
   if (target.sessionId !== context.sessionId) throw new Error('文件链接不属于当前消息会话。')
-  const source = getEngineSource()
-  const snapshot = await getSnapshot()
-  if (source !== getEngineSource()) throw new Error('引擎连接已变化，请重试。')
-  let root = context.workspaceRoot
-  const remote = snapshot.mode === 'remote' || isRemoteEngine() ? await remoteWorkspaceContext() : null
-  if (remote) {
-    if (remote.sessionId !== target.sessionId) throw new Error('会话已经切换，请返回文件所属会话后重试。')
-    assertWorkspaceTarget(remote.target)
-    root = remote.root
-  }
-  const filePath = resolveDocumentPath(resolveArtifactPath(target.path, root))
-  await openFile(filePath)
-  if (source !== getEngineSource()) throw new Error('引擎连接已变化，请重试。')
-  if (remote) assertWorkspaceTarget(remote.target)
-  const error = getEditorState().docs.get(filePath)?.error
-  if (error) throw new Error(error)
-  activateDocument(filePath)
+  await openFileFromChat(target.path, context)
 }

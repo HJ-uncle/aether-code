@@ -1,4 +1,5 @@
 import type { BrowserContext, BrowserSettings, BrowserViewport } from '../../shared/browser'
+import type { BrowserConnectInput } from '../../shared/browser-api'
 
 /** Address input accepts a hostname, but never promotes executable/local protocols. */
 export function normalizeBrowserUrl(input: string): string {
@@ -37,6 +38,18 @@ export function validateContext(value: BrowserContext): BrowserContext {
 
 export function contextsMatch(left: BrowserContext | undefined, right: BrowserContext): boolean {
   return !!left && left.sessionId === right.sessionId && left.engineId === right.engineId
+}
+
+/** A page opened before session bootstrap may join that engine, never a different account/server. */
+export function pendingBrowserEngineMatches(pending: BrowserConnectInput['expectedEngine'] | undefined, target: BrowserConnectInput['expectedEngine']): boolean {
+  const address = (value: string): string => {
+    try { return new URL(value).href.replace(/\/+$/, '') } catch { return value.replace(/\/+$/, '') }
+  }
+  return !!pending && pending.mode === target.mode &&
+    (pending.mode === 'embedded' && !pending.baseUrl ||
+      !!pending.baseUrl && address(pending.baseUrl) === address(target.baseUrl)) &&
+    (pending.accountId ?? null) === (target.accountId ?? null) &&
+    (pending.instanceId == null || pending.instanceId === target.instanceId)
 }
 
 export function validateSettings(previous: BrowserSettings, patch: Partial<BrowserSettings>): BrowserSettings {

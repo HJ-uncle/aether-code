@@ -171,6 +171,10 @@
      单独给一个提亮版本，避免每个组件各自 rgba() 调 */
   --danger-fg: #f19c9c;
   --ok-fg: #7ee08b;
+  --agent-hue: 210;
+  --agent-identity-top-lightness: 78%;
+  --agent-identity-bottom-lightness: 66%;
+  --agent-identity-fg: #fff;
   /* 缓存复用使用柔和绿色，与输出的鲜绿色区分。 */
   --usage-cache: #86caa3;
   /* 语义色的低饱和大面积底：错误提示条、失败徽章等 */
@@ -288,6 +292,10 @@
   --ok: #1a7f37;
   --danger-fg: #b3261e;
   --ok-fg: #1a7f37;
+  --agent-hue: 210;
+  --agent-identity-top-lightness: 70%;
+  --agent-identity-bottom-lightness: 58%;
+  --agent-identity-fg: #fff;
   --usage-cache: #4f8967;
   /* 浅色下软底的透明度要更低：同样的 alpha 在亮底上会显得脏 */
   --danger-soft: rgba(215, 0, 21, 0.08);
@@ -521,6 +529,15 @@
   backdrop-filter: blur(var(--material-blur)) saturate(180%);
   -webkit-backdrop-filter: blur(var(--material-blur)) saturate(180%);
   box-shadow: var(--material-highlight);
+}
+
+/* Resolve the hue on the avatar so its local identity survives inherited theme tokens. */
+.work-agent-manager__avatar {
+  --agent-identity-bg: linear-gradient(
+    135deg,
+    oklch(var(--agent-identity-top-lightness) 0.15 var(--agent-hue)),
+    oklch(var(--agent-identity-bottom-lightness) 0.17 var(--agent-hue))
+  );
 }
 
 /* 回退：无法模糊时退到实心材质，杜绝"半透明但不模糊"的穿透观感 */

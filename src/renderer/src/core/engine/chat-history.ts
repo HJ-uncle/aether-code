@@ -1,5 +1,6 @@
 import { normalizeCommandJob, mergeCommandJob, commandToolState } from './command-job-state'
 import { retainConfirmedContext } from './context-input'
+import { normalizePublishedChildReference } from './published-child-recovery'
 import type { ChatMessage, TimelineItem, ToolActivity } from './useChat'
 import {
   errorText,
@@ -71,7 +72,7 @@ export interface EngineHistoryRow {
   toolCall?: { id?: string; name?: string; args?: unknown } | null
   success?: boolean
   error?: unknown
-  metadata?: { contextUsageEstimated?: boolean; contextUsageProvisional?: boolean; requestInputTokenEstimate?: number; outputContinuation?: boolean; commandJob?: unknown; commandJobs?: unknown[]; subagent?: unknown; success?: boolean; error?: unknown; status?: string; outputPreview?: string; durationMs?: number; startedAt?: number; finishedAt?: number; runId?: string; turnId?: string; attachments?: Array<{ name: string; type?: string; size?: number }>; change?: import('@shared/ipc').EngineFileChange; isCompactSummary?: boolean }
+  metadata?: { contextUsageEstimated?: boolean; contextUsageProvisional?: boolean; requestInputTokenEstimate?: number; outputContinuation?: boolean; commandJob?: unknown; commandJobs?: unknown[]; subagent?: unknown; success?: boolean; error?: unknown; status?: string; outputPreview?: string; durationMs?: number; startedAt?: number; finishedAt?: number; runId?: string; turnId?: string; attachments?: Array<{ name: string; type?: string; size?: number }>; change?: import('@shared/ipc').EngineFileChange; isCompactSummary?: boolean; toolName?: string }
   isSidechain?: boolean
 }
 
@@ -355,6 +356,7 @@ export function normalizeTool(raw: unknown): Partial<ToolActivity> {
           : undefined)
     ),
     commandJob: normalizeCommandJob(record.commandJob ?? (record.metadata as Record<string, unknown> | undefined)?.commandJob),
+    subagentRef: normalizePublishedChildReference(record.publishedChild),
     subagent: normalizeSubagentRun(
       record.subagent ??
         (record.metadata && typeof record.metadata === 'object'
@@ -376,7 +378,7 @@ export function finishTool(previous: ToolActivity, raw: unknown): ToolActivity {
     name,
     result:
       subagent?.resultSummary ?? subagent?.partialOutput ?? (normalized.result || previous.result),
-    state: commandJob ? commandToolState(commandJob) : subagent
+    state: normalized.subagentRef && !subagent ? 'unknown' : commandJob ? commandToolState(commandJob) : subagent
       ? runToolState(subagent)
       : toolResultState(raw, normalized.name || previous.name),
     error: commandJob ? commandJob.error?.message : subagent?.error?.message ?? normalized.error,
@@ -386,7 +388,8 @@ export function finishTool(previous: ToolActivity, raw: unknown): ToolActivity {
     metadata: normalized.metadata ?? previous.metadata,
     change: (normalized.metadata?.change as ToolActivity['change']) ?? previous.change,
     subagent,
-    commandJob
+    commandJob,
+    subagentRef: normalized.subagentRef ?? previous.subagentRef
   }
 }
 

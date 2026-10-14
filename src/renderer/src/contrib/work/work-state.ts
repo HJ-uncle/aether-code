@@ -24,6 +24,8 @@ export interface WorkTask {
   /** 已归档任务仍保留在本地状态中，方便恢复历史与导出，不参与默认任务列表。 */
   archived?: boolean
   archivedAt?: number
+  /** A real scheduler session can use a UUID rather than Work's client-generated prefix. */
+  origin?: { kind: 'automation'; jobId: string; runId: string }
 }
 export interface WorkArtifact {
   id: string
@@ -59,7 +61,7 @@ function sameFields<T extends object>(left: T, right: T): boolean {
   const keys = Object.keys(left) as Array<keyof T>
   return keys.length === Object.keys(right).length && keys.every(key => Object.is(left[key], right[key]))
 }
-function sameMentions(left: Mention[], right: Mention[]): boolean {
+export function sameMentions(left: Mention[], right: Mention[]): boolean {
   return left === right || (left.length === right.length && left.every((item, index) => sameFields(item, right[index])))
 }
 function sourceDrafts(source: string): Map<string | null, WorkDraft> {
@@ -183,7 +185,7 @@ export function normalizeWorkState(value: unknown): WorkState {
           (task) =>
             task &&
             typeof task.id === 'string' &&
-            task.id.startsWith('work-') &&
+            (task.id.startsWith('work-') || storedAutomationOrigin(task.origin)) &&
             typeof task.title === 'string' &&
             typeof task.createdAt === 'number' && Number.isFinite(task.createdAt)
         )
@@ -200,6 +202,7 @@ export function normalizeWorkState(value: unknown): WorkState {
           sources: attachments(task.sources),
           ...(typeof task.agentId === 'string' && task.agentId.trim() ? { agentId: task.agentId } : {}),
           ...(task.agentLocked === true ? { agentLocked: true } : {}),
+          ...(storedAutomationOrigin(task.origin) ? { origin: { ...task.origin } } : {}),
           ...(Array.isArray(task.mentions) ? { mentions: task.mentions.filter(isStoredMention) } : {}),
           ...(task.resources && typeof task.resources === 'object' ? {
             resources: {
@@ -235,6 +238,13 @@ export function normalizeWorkState(value: unknown): WorkState {
       knowledgeBases: Array.isArray(data.homeResources.knowledgeBases) ? data.homeResources.knowledgeBases.filter((v): v is string => typeof v === 'string') : []
     } : { skills: [], mcpServers: [], knowledgeBases: [] }
   }
+}
+
+function storedAutomationOrigin(value: unknown): value is NonNullable<WorkTask['origin']> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const origin = value as Record<string, unknown>
+  return origin.kind === 'automation' && typeof origin.jobId === 'string' && origin.jobId.trim().length > 0
+    && typeof origin.runId === 'string' && origin.runId.trim().length > 0
 }
 
 export function getWorkState(source: string): WorkState {

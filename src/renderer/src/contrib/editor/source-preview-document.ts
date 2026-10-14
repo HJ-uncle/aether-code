@@ -1,5 +1,5 @@
 import { Marked } from 'marked'
-import { readFile, stat, paths } from '@renderer/core/workspace/fs-client'
+import { assertSessionFileTarget, readFile, stat, paths, type SessionFileTarget } from '@renderer/core/workspace/fs-client'
 import { getDocument } from '@renderer/core/editor/editor-store'
 import { resolvePreviewResource } from '@renderer/core/editor/preview-resource-path'
 import { fileIdentity } from '@renderer/core/editor/file-identity'
@@ -41,10 +41,12 @@ export interface PreviewDocumentInput {
   bridgeScript: string
   colors: { background: string; foreground: string; muted: string; border: string; accent: string }
   remote?: boolean
+  sessionFileTarget?: SessionFileTarget
 }
 
 /** Static resources use the existing workspace-checked IPC; the iframe gets only self-contained bytes. */
 export async function buildSourcePreviewDocument(input: PreviewDocumentInput): Promise<string> {
+  if (input.sessionFileTarget) assertSessionFileTarget(input.sessionFileTarget)
   const parser = new Marked({ gfm: true, breaks: false })
   const html = input.kind === 'markdown' ? await parser.parse(input.content) : input.content
   const document = new DOMParser().parseFromString(html, 'text/html')
@@ -58,12 +60,12 @@ export async function buildSourcePreviewDocument(input: PreviewDocumentInput): P
     if (resources.size >= 64) return Promise.resolve(null)
     const job = (async () => {
       try {
-        const info = await stat(path)
+        const info = await stat(path, input.sessionFileTarget)
         if (info.size > MAX_RESOURCE_BYTES || totalBytes + info.size > MAX_TOTAL_BYTES) return null
         totalBytes += info.size
         const edited = getDocument(path)
-        if (edited && !edited.isBinary && !edited.truncated) return { path, content: edited.content, isBinary: false, size: info.size, truncated: false }
-        const file = await readFile(path)
+        if (edited && !edited.isBinary && !edited.truncated && (!input.sessionFileTarget || edited.sessionFileTarget?.key === input.sessionFileTarget.key)) return { path, content: edited.content, isBinary: false, size: info.size, truncated: false }
+        const file = await readFile(path, input.sessionFileTarget)
         return file.tooLarge || file.truncated ? null : file
       } catch { return null }
     })()

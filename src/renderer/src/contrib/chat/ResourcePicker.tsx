@@ -24,13 +24,14 @@ export function ResourcePicker({ query, projectPath, source, onSelect, onClose }
   const [items, setItems] = useState<ResourceItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [reload, setReload] = useState(0)
   const [active, setActive] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     let alive = true
     const sourceAtStart = source ?? getEngineSource()
-    setLoading(true); setError(''); setActive(0)
+    setLoading(true); setItems([]); setError(''); setActive(0)
     void Promise.allSettled([
       requestOrThrow<{ list?: SkillRow[] }>({ method: 'GET', path: '/skills', query: { reload: 1, path: projectPath || undefined } }),
       requestOrThrow<McpRow[]>({ method: 'GET', path: '/mcp/servers', query: projectPath ? { path: projectPath } : undefined }),
@@ -55,10 +56,12 @@ export function ResourcePicker({ query, projectPath, source, onSelect, onClose }
       }
       for (const row of bases as KnowledgeBase[]) result.push({ kind: 'kb', id: row.id, label: row.name, description: `${row.documentCount ?? 0} 篇文档` })
       setItems(result); setLoading(false)
-      if (result.length === 0 && failures.length === 3) setError(`资源加载失败：${failures.join('、')}`)
+      // Successful categories remain usable, but an unavailable catalogue must
+      // not be described as empty or as a missing user configuration.
+      if (failures.length) setError(`资源加载失败：${failures.join('、')}`)
     })
     return () => { alive = false }
-  }, [projectPath, source])
+  }, [projectPath, source, reload])
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase()
@@ -80,6 +83,7 @@ export function ResourcePicker({ query, projectPath, source, onSelect, onClose }
     const onKey = (event: KeyboardEvent): void => {
       if (event.isComposing) return
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return }
+      if ((event.key === 'Enter' || event.key === 'Tab') && event.target instanceof HTMLButtonElement && event.target.classList.contains('resource-picker__retry')) return
       // Own the selection keys before the contenteditable handles Enter as send,
       // including the loading/empty state where there is nothing to select yet.
       if (!['ArrowDown', 'ArrowUp', 'Enter', 'Tab'].includes(event.key)) return
@@ -124,7 +128,8 @@ export function ResourcePicker({ query, projectPath, source, onSelect, onClose }
 
   return <div ref={rootRef} className="resource-picker" role="listbox" aria-label="选择 MCP、技能或知识库">
     <div className="resource-picker__title">添加资源 <span>/skill、/mcp、/kb</span></div>
-    {loading ? <div className="resource-picker__hint">加载中…</div> : error ? <div className="resource-picker__hint is-error">{error}</div> : filtered.length === 0 ? <div className="resource-picker__hint">没有匹配资源，请先在设置中创建。</div> : filtered.map((item, index) => <button key={`${item.kind}:${item.id}`} type="button" role="option" aria-selected={index === active} className={`resource-picker__item${index === active ? ' is-active' : ''}`} onMouseEnter={() => setActive(index)} onMouseDown={(event) => { event.preventDefault(); onSelect(item) }}>
+    {!loading && error ? <div className="resource-picker__hint is-error" role="alert">{error}<button type="button" className="resource-picker__retry" onClick={() => setReload(value => value + 1)}>重试加载资源</button></div> : null}
+    {loading ? <div className="resource-picker__hint" role="status">加载中…</div> : filtered.length === 0 ? <div className="resource-picker__hint">{error ? '目录暂不可用，重试后继续选择。' : '没有匹配资源，请先在设置中创建。'}</div> : filtered.map((item, index) => <button key={`${item.kind}:${item.id}`} type="button" role="option" aria-selected={index === active} className={`resource-picker__item${index === active ? ' is-active' : ''}`} onMouseEnter={() => setActive(index)} onMouseDown={(event) => { event.preventDefault(); onSelect(item) }}>
       <span className={`resource-picker__badge is-${item.kind}`}>{item.kind === 'skill' ? '技' : item.kind === 'mcp' ? 'MCP' : '库'}</span>
       <span className="resource-picker__copy"><strong>{item.label}</strong><small>{item.description || item.id}</small></span>
       <kbd>/{item.kind}</kbd>

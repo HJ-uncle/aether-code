@@ -10,6 +10,7 @@ export interface SessionSubagentUsage {
 }
 
 export interface SessionUsageAnchor {
+  publishedChildren?: import('@shared/published-child').PublishedChildUsage
   parent?: Record<string, number>
   children?: SessionSubagentUsage
   visible: UsageTotal
@@ -36,23 +37,26 @@ export function createSessionUsageAnchor(
   messages: ChatMessage[],
   parent?: Record<string, number>,
   children?: SessionSubagentUsage,
-  alignedChildRuns?: readonly SubagentRun[]
+  alignedChildRuns?: readonly SubagentRun[],
+  publishedChildren?: import('@shared/published-child').PublishedChildUsage
 ): SessionUsageAnchor | null {
   const parentUsage = billingUsage(parent)
-  const childUsage = children && {
-    totalTokens: nonnegative(children.totalTokens),
-    count: Math.floor(nonnegative(children.count)),
-    unknown: Math.floor(nonnegative(children.unknown)),
-    ...(children.finishedAt !== undefined && Number.isFinite(children.finishedAt)
-      ? { finishedAt: children.finishedAt } : {})
+  const authoritativeChildren = publishedChildren?.scalar ?? children
+  const childUsage = authoritativeChildren && {
+    totalTokens: nonnegative(authoritativeChildren.totalTokens),
+    count: Math.floor(nonnegative(authoritativeChildren.count)),
+    unknown: Math.floor(nonnegative(authoritativeChildren.unknown)),
+    ...(authoritativeChildren.finishedAt !== undefined && Number.isFinite(authoritativeChildren.finishedAt)
+      ? { finishedAt: authoritativeChildren.finishedAt } : {})
   }
   if (!parentUsage && !childUsage) return null
   const visible = sumUsage(messages)
   // Live stores can be newer than the snapshot cursor, while old history can
   // be older than authoritative child billing. Pair the baseline with the
   // server's exact run selection instead of either independently sampled view.
-  const alignedChildren = alignedChildRuns === undefined ? undefined : childSnapshots(alignedChildRuns)
+  const alignedChildren = publishedChildren || alignedChildRuns === undefined ? undefined : childSnapshots(alignedChildRuns)
   return {
+    ...(publishedChildren ? { publishedChildren } : {}),
     ...(parentUsage ? { parent: parentUsage } : {}),
     ...(childUsage ? { children: childUsage } : {}),
     visible,
@@ -83,9 +87,9 @@ export function sessionUsageTotal(messages: ChatMessage[], anchor?: SessionUsage
     id: 'session-usage-parent', role: 'assistant', content: '', thinking: '',
     tools: [], items: [], status: 'done', createdAt: 0, usage: parentUsage
   }] : messages.map(message => ({ ...message, tools: [], usage: billingUsage(message.usage) })))
-  const alignedGrowth = anchor.alignedChildren === undefined ? undefined
+  const alignedGrowth = anchor.publishedChildren || anchor.alignedChildren === undefined ? undefined
     : childGrowth(messages, anchor.alignedChildren)
-  const children = anchor.children && alignedGrowth
+  const children = anchor.publishedChildren ? anchor.publishedChildren.scalar : anchor.children && alignedGrowth
     ? {
       totalTokens: anchor.children.totalTokens + alignedGrowth.totalTokens,
       count: anchor.children.count + alignedGrowth.count,
@@ -113,7 +117,7 @@ export function sessionUsageTotal(messages: ChatMessage[], anchor?: SessionUsage
     }
   }
   const startedAt = earliest(anchor.visible.startedAt, visible.startedAt)
-  const endedAt = latest(anchor.visible.endedAt, visible.endedAt, anchor.children?.finishedAt)
+  const endedAt = latest(anchor.visible.endedAt, visible.endedAt, anchor.publishedChildren?.scalar.finishedAt ?? anchor.children?.finishedAt)
   return {
     total: parent.parentTotal + children.totalTokens,
     parentTotal: parent.parentTotal,

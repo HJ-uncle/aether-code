@@ -16,6 +16,7 @@ import { prepareRemoteChatBody, validateRemoteWorkspaceRoot } from './remote-wor
 import { clearRemoteAttachments } from './remote-attachments'
 import { findAvailablePort } from './sdk/port-finder'
 import { startProcess, type ProcessHandle } from './sdk/process-manager'
+import { OwnedProcessLedger } from './sdk/process-lifecycle'
 import { waitUntilReady } from './sdk/readiness-probe'
 import { engineDataFile, migrateLegacyModels, resolveRuntime, runtimeEnvironment } from './runtime'
 import {
@@ -29,9 +30,11 @@ import {
   remoteRequestError,
   remoteWorkspacePathError,
   remoteInstanceToken,
+  subagentProtocolHeaders,
   type EngineMeta
 } from './protocol'
 import type { ToolProfile } from './tool-profile'
+import type { NativeBrowserHostTransport } from '../browser/native-host-manager'
 
 const PREFERRED_PORT = 12323
 const STARTUP_TIMEOUT_MS = 60_000
@@ -48,6 +51,8 @@ export interface EngineHostEvents {
 
 export class EngineHost extends EventEmitter {
   private handle: ProcessHandle | null = null
+  private readonly ownedProcesses = new OwnedProcessLedger<ProcessHandle>()
+  private stopping: Promise<EngineSnapshot> | null = null
   private snapshot: EngineSnapshot = {
     mode: 'embedded',
     phase: 'idle',
@@ -73,7 +78,6 @@ export class EngineHost extends EventEmitter {
   private generation = 0
   private startupController: AbortController | null = null
   private transportController = new AbortController()
-  private teardown: Promise<void> = Promise.resolve()
   // Credentials never enter snapshots, logs, or persisted settings. Token IPC is
   // handled only by dedicated main-process handlers and never returned to the renderer.
   private instanceToken = ''
@@ -146,7 +150,53 @@ export class EngineHost extends EventEmitter {
     return headers
   }
 
+  /** Main-only authority sources. An embedded snapshot alone never proves process ownership. */
+  async nativeBrowserHostTransports(): Promise<NativeBrowserHostTransport[]> {
+    const snapshot = this.snapshot, epoch = this.transportController, generation = this.generation
+    if (snapshot.phase !== 'ready' || !snapshot.baseUrl || !snapshot.instanceId || epoch.signal.aborted) return []
+    const headers = await this.prepareRequestHeaders(snapshot.baseUrl)
+    const current = (): boolean => this.snapshot.phase === 'ready' && this.snapshot.baseUrl === snapshot.baseUrl &&
+      this.snapshot.instanceId === snapshot.instanceId && this.generation === generation && this.transportController === epoch && !epoch.signal.aborted
+    if (!current()) return []
+    const transports: NativeBrowserHostTransport[] = []
+    const engineId = (accountId: string | null | undefined) => JSON.stringify([snapshot.mode, snapshot.baseUrl.replace(/\/+$/, ''), snapshot.instanceId, accountId ?? null])
+    if (headers.Authorization || headers['X-API-Key'] || headers['x-api-key']) {
+      transports.push({ baseUrl: snapshot.baseUrl, engineId: engineId(snapshot.accountId), authorityKind: 'account', signal: epoch.signal,
+        headers: async () => {
+          if (!current()) throw new Error('浏览器账户或引擎已变化')
+          const refreshed = await this.prepareRequestHeaders(snapshot.baseUrl)
+          if (!current()) throw new Error('浏览器账户或引擎已变化')
+          if (!refreshed.Authorization && !refreshed['X-API-Key'] && !refreshed['x-api-key']) throw new Error('浏览器账户认证已失效')
+          return refreshed
+        } })
+    }
+    const handle = this.handle, token = this.instanceToken
+    const owned = (): boolean => current() && this.handle === handle && !!handle?.pid && !!token &&
+      !handle.lifecycle.observation().exitObserved && !handle.lifecycle.observation().closeObserved
+    if (snapshot.mode === 'embedded' && !snapshot.adopted && owned()) {
+      transports.push({ baseUrl: snapshot.baseUrl, engineId: engineId(null), authorityKind: 'instance', signal: epoch.signal,
+        headers: async () => {
+          if (!owned()) throw new Error('本机引擎进程所有权已结束')
+          // Cron default/none requests must never borrow a logged-in user's credentials.
+          return engineHeaders(token, 'general')
+        } })
+    }
+    return transports
+  }
+
   async start(mode: 'embedded' | 'remote', remoteBaseUrl = '', remoteWorkspaceRoot = '', autoReconnect = false): Promise<EngineSnapshot> {
+    if (this.stopping) {
+      const stopping = this.stopping
+      try { await stopping } catch (error) {
+        // A late close can remove the live-process hazard, but the previous
+        // failure remains in logs/snapshot rather than becoming a clean stop.
+        this.ownedProcesses.assertNoUnclosed()
+        logger.warn(`上次引擎关闭未验证：${error instanceof Error ? error.message : String(error)}`)
+        if (this.stopping === stopping) {
+          this.stopping = null
+        }
+      }
+    }
     if (this.starting) return this.starting
     const normalizedRemote = remoteBaseUrl.trim().replace(/\/+$/, '')
     const configuredRoot = mode === 'remote' ? validateRemoteWorkspaceRoot(remoteWorkspaceRoot) : ''
@@ -187,39 +237,42 @@ export class EngineHost extends EventEmitter {
     generation: number,
     signal: AbortSignal
   ): Promise<EngineSnapshot> {
-    this.patch({
-      mode,
-      phase: 'starting',
-      baseUrl: '',
-      port: null,
-      pid: null,
-      adopted: false,
-      entryPath: null,
-      runtimeSource: null,
-      version: null,
-      dataDir: null,
-      error: null,
-      buildId: undefined,
-      protocolVersion: undefined,
-      instanceId: undefined
-    })
-    await this.releaseResources()
-    if (!this.current(generation, signal)) return this.snapshot
-    this.transportController = new AbortController()
-    this.activeRemoteWorkspaceRoot = remoteWorkspaceRoot
     try {
+      await this.releaseResources()
+      this.ownedProcesses.assertNoUnclosed()
+      if (!this.current(generation, signal)) return this.snapshot
+      this.patch({
+        mode,
+        phase: 'starting',
+        baseUrl: '',
+        port: null,
+        pid: null,
+        adopted: false,
+        entryPath: null,
+        runtimeSource: null,
+        version: null,
+        dataDir: null,
+        error: null,
+        buildId: undefined,
+        protocolVersion: undefined,
+        instanceId: undefined
+      })
+      this.transportController = new AbortController()
+      this.activeRemoteWorkspaceRoot = remoteWorkspaceRoot
       if (mode === 'remote') await this.startRemote(remoteBaseUrl, generation, signal)
       else await this.startEmbedded(generation, signal)
     } catch (err) {
       if (!this.current(generation, signal)) return this.snapshot
-      await this.releaseResources()
+      let error = err instanceof Error ? err.message : String(err)
+      try { await this.releaseResources() } catch (cleanupError) {
+        error += `；关闭失败：${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`
+      }
       if (this.current(generation, signal)) {
         this.patch({
           phase: 'error',
           baseUrl: '',
-          port: null,
-          pid: null,
-          error: err instanceof Error ? err.message : String(err)
+          pid: this.handle?.pid ?? null,
+          error
         })
       }
     }
@@ -269,6 +322,7 @@ export class EngineHost extends EventEmitter {
   }
 
   private async startEmbedded(generation: number, signal: AbortSignal): Promise<void> {
+    this.ownedProcesses.assertNoUnclosed()
     const runtime = resolveRuntime()
     if (!runtime)
       throw new Error(
@@ -290,7 +344,7 @@ export class EngineHost extends EventEmitter {
     if (!this.current(generation, signal)) return
     const dataDir = engineDataFile()
     this.instanceToken = randomBytes(32).toString('hex')
-    this.handle = startProcess({
+    const handle = startProcess({
       binPath: runtime.entryPath,
       nodePath: runtime.nodePath,
       cwd: runtimeConfig.cwd,
@@ -306,7 +360,20 @@ export class EngineHost extends EventEmitter {
         ENCRYPTION_KEY: secret.key,
         AETHER_INSTANCE_TOKEN: this.instanceToken
       },
-      onExit: (code, exitSignal) => this.onProcessExit(generation, code, exitSignal)
+      onExit: (code, exitSignal) => this.onProcessExit(generation, handle, code, exitSignal)
+    })
+    this.handle = handle
+    this.ownedProcesses.register(handle, generation)
+    void handle.lifecycle.closed.then((receipt) => {
+      if (this.handle === handle) this.handle = null
+      // Records with a failed stop remain available until a later explicit
+      // retry observes this close; no stale PID lookup is used for recovery.
+      logger.info(`引擎进程关闭观测（pid=${receipt.pid ?? '-'} code=${receipt.exitCode ?? '-'} signal=${receipt.signal ?? '-'} outcome=${receipt.outcome} cleanupVerified=false）`)
+      if (receipt.outcome === 'spawn-failed' && this.current(generation)) {
+        ++this.generation
+        this.startupController?.abort()
+        this.patch({ phase: 'error', baseUrl: '', port: null, pid: null, error: `引擎进程创建失败：${receipt.spawnError}` })
+      }
     })
     const baseUrl = `http://127.0.0.1:${port}`
     await waitUntilReady({ baseUrl, timeoutMs: STARTUP_TIMEOUT_MS, signal })
@@ -317,7 +384,7 @@ export class EngineHost extends EventEmitter {
       phase: 'ready',
       baseUrl,
       port,
-      pid: this.handle?.pid ?? null,
+      pid: handle.pid ?? null,
       adopted: false,
       version: meta.version,
       buildId: meta.buildId,
@@ -326,7 +393,7 @@ export class EngineHost extends EventEmitter {
       dataDir,
       error: null
     })
-    logger.info(`引擎已就绪 ${baseUrl}（pid ${this.handle?.pid ?? '未知'}）`)
+    logger.info(`引擎已就绪 ${baseUrl}（pid ${handle.pid ?? '未知'}）`)
     this.startHealthWatch()
   }
 
@@ -361,12 +428,12 @@ export class EngineHost extends EventEmitter {
     return meta
   }
 
-  private onProcessExit(generation: number, code: number | null, signal: string | null): void {
-    if (!this.current(generation) || !this.handle) return
+  private onProcessExit(generation: number, handle: ProcessHandle, code: number | null, signal: string | null): void {
+    if (this.ownedProcesses.wasStopRequested(handle)) return
+    if (!this.current(generation) || this.handle !== handle) return
     ++this.generation
     this.startupController?.abort()
     this.starting = null
-    this.handle = null
     this.stopHealthWatch()
     this.transportController.abort()
     this.instanceToken = ''
@@ -376,28 +443,28 @@ export class EngineHost extends EventEmitter {
     this.patch({ phase: 'error', baseUrl: '', port: null, pid: null, error })
   }
 
-  /** Detach immediately, serialize owned-process cleanup, and never stop an external process. */
+  /** Invalidate transport immediately; retain exact owned handles until actual close. */
   private releaseResources(): Promise<void> {
     this.stopHealthWatch()
     this.transportController.abort()
     this.instanceToken = ''
     this.activeRemoteWorkspaceRoot = ''
     clearRemoteAttachments()
-    const handle = this.handle
-    this.handle = null
-    if (handle) {
-      this.teardown = this.teardown.then(async () => {
-        try {
-          await handle.stop()
-        } catch (err) {
-          logger.warn(`停止引擎进程时出错：${err instanceof Error ? err.message : String(err)}`)
-        }
-      })
-    }
-    return this.teardown
+    return this.ownedProcesses.stopAll()
   }
 
-  async stop(): Promise<EngineSnapshot> {
+  stop(): Promise<EngineSnapshot> {
+    if (this.stopping) return this.stopping
+    const task = this.doStop()
+    this.stopping = task
+    void task.then(
+      () => { if (this.stopping === task) this.stopping = null },
+      () => { /* Only an explicit start after actual close may recover this failure. */ }
+    )
+    return task
+  }
+
+  private async doStop(): Promise<EngineSnapshot> {
     const generation = ++this.generation
     // stop() is explicit: never let a health check or pending timer reconnect
     // after the user has shut the engine down.
@@ -406,9 +473,21 @@ export class EngineHost extends EventEmitter {
     this.cancelRemoteReconnect()
     this.startupController?.abort()
     this.startupController = null
-    this.starting = null
+    const startup = this.starting
     this.patch({ phase: 'stopping', baseUrl: '' })
-    await this.releaseResources()
+    try {
+      // Signal already-spawned children before waiting for aborted readiness.
+      await this.releaseResources()
+      await startup
+      await this.releaseResources()
+      this.ownedProcesses.assertNoUnclosed()
+    } catch (error) {
+      if (this.current(generation)) this.patch({
+        phase: 'error', baseUrl: '', pid: this.handle?.pid ?? null,
+        error: error instanceof Error ? error.message : String(error)
+      })
+      throw error
+    }
     if (!this.current(generation)) return this.snapshot
     return this.patch({
       phase: 'idle',
@@ -525,7 +604,8 @@ export class EngineHost extends EventEmitter {
     method: 'GET' | 'POST' = 'POST',
     query?: Record<string, string>,
     expectedEngine?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>,
-    toolProfile: ToolProfile = 'code'
+    toolProfile: ToolProfile = 'code',
+    subagentProtocol?: 2
   ): Promise<void> {
     const snapshot = this.snapshot
     if (isAccountRequestPath(path)) {
@@ -546,7 +626,7 @@ export class EngineHost extends EventEmitter {
 
     try {
       const normalizedPath = normalizeEnginePath(path)
-      const headers = { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...await this.prepareRequestHeaders(baseUrl, toolProfile) }
+      const headers = { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...subagentProtocolHeaders(subagentProtocol), ...await this.prepareRequestHeaders(baseUrl, toolProfile) }
       const requestBody = snapshot.mode === 'remote' && method === 'POST' && normalizedPath.split('?')[0] === '/api/v1/chat'
         ? await prepareRemoteChatBody(body, { baseUrl, headers, signal: requestSignal, configuredRoot: this.remoteWorkspaceRoot, target: snapshot })
         : body

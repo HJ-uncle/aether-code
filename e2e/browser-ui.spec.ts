@@ -5,6 +5,8 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { BrowserSnapshot, BrowserToolRequest, BrowserUnavailableSnapshot } from '../src/shared/browser'
+import { monitorElectronHealth, type ElectronHealthMonitor } from './helpers/electron-health'
+let health: ElectronHealthMonitor | undefined
 
 const root = resolve(__dirname, '..')
 const instanceToken = 'browser-ui-test-instance'
@@ -130,16 +132,22 @@ test.describe.serial('内置浏览器与远端工具通道', () => {
     origin = `http://127.0.0.1:${address.port}`
     mkdirSync(join(root, '.e2e-tmp'), { recursive: true }); fixture = mkdtempSync(join(root, '.e2e-tmp/browser-ui-'))
     writeFileSync(join(fixture, 'settings.json'), JSON.stringify({ engineMode: 'remote', remoteBaseUrl: origin, autoStartEngine: true, lastSessionId: '' }))
-    app = await electron.launch({ args: ['.', `--user-data-dir=${fixture}`], cwd: root, env: { ...process.env, AETHER_IDE_REMOTE_INSTANCE_TOKEN: instanceToken, AETHER_GLOBAL_DIR: join(fixture, 'global') } })
+    app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || '.', `--user-data-dir=${fixture}`], cwd: root, env: { ...process.env, AETHER_IDE_REMOTE_INSTANCE_TOKEN: instanceToken, AETHER_GLOBAL_DIR: join(fixture, 'global') } })
+    health = await monitorElectronHealth(app, 'browser-ui')
     page = await app.firstWindow(); page.on('pageerror', error => errors.push(String(error)))
     await expect.poll(() => page.evaluate(() => window.aether.browser.getConnection())).toMatchObject({ status: 'connected' })
   })
-  test.afterEach(() => expect(errors).toEqual([]))
-  test.afterAll(async () => {
-    await app?.close(); server.closeAllConnections(); await new Promise<void>(done => server.close(() => done()))
-    const absolute = resolve(fixture)
-    if (dirname(absolute) !== join(root, '.e2e-tmp') || !basename(absolute).startsWith('browser-ui-')) throw new Error('Unsafe fixture cleanup')
-    rmSync(absolute, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+  test.afterEach(() => { expect(errors).toEqual([]); health?.assertHealthy() })
+  test.afterAll(async ({}, testInfo) => {
+    try {
+      if (health) await health.closeAndAssert(testInfo)
+      else await app?.close()
+    } finally {
+      server.closeAllConnections(); await new Promise<void>(done => server.close(() => done()))
+      const absolute = resolve(fixture)
+      if (dirname(absolute) !== join(root, '.e2e-tmp') || !basename(absolute).startsWith('browser-ui-')) throw new Error('Unsafe fixture cleanup')
+      rmSync(absolute, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    }
   })
 
   test('快捷入口打开分栏浏览器，真实网页加载且与IDE能力隔离', async () => {

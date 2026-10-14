@@ -16,6 +16,7 @@ import type { AetherIdeApi } from '../src/preload'
 import type { BrowserSnapshot, BrowserTabState } from '../src/shared/browser'
 import type { BrowserNetworkDetail, BrowserNetworkList } from '../src/shared/browser-network'
 import type { ChatRecoverySnapshot } from '../src/renderer/src/core/engine/chat-recovery'
+import { monitorElectronHealth, type ElectronHealthMonitor } from './helpers/electron-health'
 
 declare global {
   interface Window {
@@ -24,7 +25,7 @@ declare global {
 }
 
 const root = resolve(__dirname, '..')
-const engineRoot = resolve(root, '..', 'ai-agent-engine')
+const engineRoot = process.env.AETHER_E2E_ENGINE_ROOT || resolve(root, '..', 'ai-agent-engine')
 const model = 'browser-visual-anthropic-fixture'
 const sessionId = 'browser-agent-loop'
 const key = 'b'.repeat(64)
@@ -78,6 +79,7 @@ let fixture = '',
   origin = '',
   app: ElectronApplication | undefined,
   page: Page
+let health: ElectronHealthMonitor | undefined
 let pingCount = 0,
   streamCount = 0,
   pixels = '',
@@ -590,11 +592,29 @@ test.describe.serial('AI 模型到内置浏览器完整闭环', () => {
       timeout: 30000,
       env: { ...env(), DATA_DIR: join(fixture, 'engine', 'state', 'agent.db'), ENCRYPTION_KEY: key }
     })
+    // Native managers capture fetch at construction. Observe before importing
+    // the real entry, while callbacks are enabled only by the cancellation test.
+    const appEntry = process.env.AETHER_E2E_APP_ENTRY || join(root, 'out/main/index.js')
+    const bootstrap = join(fixture, 'browser-observation-entry.cjs')
+    writeFileSync(bootstrap, `
+      const original = globalThis.fetch;
+      globalThis.fetch = async (...args) => {
+        const input = args[0];
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        const observer = globalThis.browserFixtureFetchObserver;
+        observer?.onRequest(url);
+        const response = await Reflect.apply(original, globalThis, args);
+        observer?.onResponse(url, response);
+        return response;
+      };
+      void import(${JSON.stringify(pathToFileURL(appEntry).href)});
+    `)
     app = await electron.launch({
-      args: ['.', `--user-data-dir=${fixture}`],
+      args: [bootstrap, `--user-data-dir=${fixture}`],
       cwd: root,
       env: env()
     })
+    health = await monitorElectronHealth(app, 'browser-agent')
     page = await app.firstWindow()
     page.on('pageerror', (error) => rendererErrors.push(String(error)))
     await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90000 })
@@ -602,18 +622,23 @@ test.describe.serial('AI 模型到内置浏览器完整闭环', () => {
       .poll(() => page.evaluate(() => window.aether.browser.getConnection()))
       .toMatchObject({ status: 'connected', sessionId })
   })
-  test.afterAll(async () => {
-    await app?.close()
-    provider.closeAllConnections()
-    await new Promise<void>((done) => provider.close(() => done()))
-    if (!fixture) return
-    const absolute = resolve(fixture)
-    if (
-      dirname(absolute) !== resolve(root, '.e2e-tmp') ||
-      !basename(absolute).startsWith('browser-agent-ui-')
-    )
-      throw new Error('Unsafe fixture cleanup')
-    rmSync(absolute, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+  test.afterEach(() => health?.assertHealthy())
+  test.afterAll(async ({}, testInfo) => {
+    try {
+      if (health) await health.closeAndAssert(testInfo)
+      else await app?.close()
+    } finally {
+      provider.closeAllConnections()
+      await new Promise<void>((done) => provider.close(() => done()))
+      if (!fixture) return
+      const absolute = resolve(fixture)
+      if (
+        dirname(absolute) !== resolve(root, '.e2e-tmp') ||
+        !basename(absolute).startsWith('browser-agent-ui-')
+      )
+        throw new Error('Unsafe fixture cleanup')
+      rmSync(absolute, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    }
   })
 
   test('真实工具调用操作同一可见网页，并将截图像素与导航信息送回模型', async ({}, testInfo) => {
@@ -870,27 +895,26 @@ test.describe.serial('AI 模型到内置浏览器完整闭环', () => {
     stopScenario = blocked
     await app!.evaluate(() => {
       const owned = globalThis as typeof globalThis & {
-        stopFixtureOriginalFetch?: typeof fetch
+        browserFixtureFetchObserver?: { onRequest(url: string): void; onResponse(url: string, response: Response): void }
         stopFixtureWatchRequests?: string[]
         stopFixtureWatchReplies?: Array<{ url: string; active: boolean }>
       }
-      if (owned.stopFixtureOriginalFetch) throw new Error('Previous request monitor was not restored')
-      const original = globalThis.fetch
-      owned.stopFixtureOriginalFetch = original
+      if (owned.browserFixtureFetchObserver) throw new Error('Previous request monitor was not restored')
       owned.stopFixtureWatchRequests = []
       owned.stopFixtureWatchReplies = []
       // Observe actual HTTP replies. The fixture never fabricates cancellation,
       // replaces AbortSignals, or short-circuits the browser service.
-      globalThis.fetch = async (...args) => {
-        const input = args[0]
-        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-        const watching = /\/browser\/clients\/[^/]+\/requests\/[^/]+\/state\?wait=true(?:&|$)/.test(url)
-        if (watching) owned.stopFixtureWatchRequests!.push(url)
-        const response = await original.apply(globalThis, args)
-        if (watching) void response.clone().json().then((body: { data?: { active?: unknown } }) => {
-          if (typeof body.data?.active === 'boolean') owned.stopFixtureWatchReplies!.push({ url, active: body.data.active })
-        }).catch(() => {})
-        return response
+      const watching = (url: string): boolean => {
+        const parsed = new URL(url)
+        return /\/browser\/clients\/[^/]+\/requests\/[^/]+\/state$/.test(parsed.pathname) && parsed.searchParams.get('wait') === 'true'
+      }
+      owned.browserFixtureFetchObserver = {
+        onRequest: url => { if (watching(url)) owned.stopFixtureWatchRequests!.push(url) },
+        onResponse: (url, response) => {
+          if (watching(url)) void response.clone().json().then((body: { data?: { active?: unknown } }) => {
+            if (typeof body.data?.active === 'boolean') owned.stopFixtureWatchReplies!.push({ url, active: body.data.active })
+          }).catch(() => {})
+        }
       }
     })
     await page.evaluate(() => {
@@ -957,12 +981,11 @@ test.describe.serial('AI 模型到内置浏览器完整闭环', () => {
       stopScenario = undefined
       await app!.evaluate(() => {
         const owned = globalThis as typeof globalThis & {
-          stopFixtureOriginalFetch?: typeof fetch
+          browserFixtureFetchObserver?: unknown
           stopFixtureWatchRequests?: string[]
           stopFixtureWatchReplies?: Array<{ url: string; active: boolean }>
         }
-        if (owned.stopFixtureOriginalFetch) globalThis.fetch = owned.stopFixtureOriginalFetch
-        delete owned.stopFixtureOriginalFetch; delete owned.stopFixtureWatchRequests; delete owned.stopFixtureWatchReplies
+        delete owned.browserFixtureFetchObserver; delete owned.stopFixtureWatchRequests; delete owned.stopFixtureWatchReplies
       })
       await page.evaluate(() => {
         const owned = window as typeof window & { stopFixtureReveals?: string[]; stopFixtureUnsubscribe?: () => void }

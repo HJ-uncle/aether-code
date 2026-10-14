@@ -28,6 +28,9 @@
  *   纯数据接口，供后续 UI 任务按需接入。
  */
 import { useSyncExternalStore } from 'react'
+import { captureCodeGitTarget, gitFailure } from './git-target'
+import type { ScopedGitClient } from './git-client'
+import { captureGitCommand, createRepositoryOperation, type GitRepositoryOperation } from './git-repository-operation'
 import type {
   GitBlameLine,
   GitCommitInfo,
@@ -41,38 +44,18 @@ import type {
   GitResult
 } from '@shared/git-types'
 import {
-  gitAddRemote,
   gitAddSshKey,
   gitBlame,
   gitBranchInfo,
   gitCheckIgnored,
-  gitCherryPick,
-  gitCherryPickAbort,
-  gitCheckout,
-  gitCommit,
-  gitCommitAmend,
-  gitCommitAmendWithMessage,
-  gitCommitEmpty,
   gitCommitShow,
-  gitCreateBranch,
-  gitCreateTag,
-  gitDeleteBranch,
-  gitDeleteRemoteBranch,
-  gitDeleteRemoteTag,
-  gitDeleteTag,
   gitDiff,
-  gitDiscardFile,
-  gitDiscardFiles,
-  gitDiscardHunk,
-  gitDiscardWorktree,
-  gitDiscardWorktreeFiles,
   gitDivergence,
   gitFetch,
   gitFileHistory,
   gitGetUserName,
   gitHeadFile,
   gitIncoming,
-  gitInit,
   gitListAuthors,
   gitListBranches,
   gitListRemoteBranches,
@@ -80,39 +63,7 @@ import {
   gitListStashes,
   gitListTags,
   gitLog,
-  gitMerge,
-  gitMergeAbort,
-  gitPublishBranch,
-  gitPull,
-  gitPullFrom,
-  gitPullMerge,
-  gitPullRebase,
-  gitPullRebaseWithChoice,
-  gitPush,
-  gitPushForce,
-  gitPushTag,
-  gitPushTags,
-  gitPushTo,
-  gitRebase,
-  gitRebaseAbort,
-  gitRemoveRemote,
-  gitRenameBranch,
-  gitRevertCommit,
-  gitStage,
-  gitStageAllAndCommit,
-  gitStageFiles,
-  gitStashApply,
-  gitStashClear,
-  gitStashDrop,
-  gitStashDropBatch,
-  gitStashPop,
-  gitStashPush,
-  gitStashPushStaged,
   gitStatus,
-  gitSync,
-  gitUndoCommit,
-  gitUnstage,
-  gitUnstageFiles
 } from './git-client'
 import { getGitAutoFetch, getGitAutoFetchIntervalMs, onGitPreferencesChanged } from './git-pref'
 import { getEngineSource, isRemoteEngine, sessionStorageKey } from '../engine/source'
@@ -165,6 +116,7 @@ export interface GitStoreState {
   committing: boolean
   /** 正在执行的写操作名（空串表示空闲），一次只有一个 */
   operation: string
+  repositoryOperation: GitRepositoryOperation | null
   /** 远端领先（@{u} 有而 HEAD 没有）的提交，fetch / 历史加载后更新，过滤时清空 */
   incomingCommits: GitLogEntry[]
   incomingLoading: boolean
@@ -216,6 +168,7 @@ function emptyState(): GitStoreState { return {
   commitMessage: '',
   committing: false,
   operation: '',
+  repositoryOperation: null,
   incomingCommits: [],
   incomingLoading: false,
   merging: false,
@@ -245,10 +198,14 @@ function emptyState(): GitStoreState { return {
   loaded: false
 } }
 let state: GitStoreState = emptyState()
+let commitDraftRevision = 0
 
 const listeners = new Set<() => void>()
 
 function setState(patch: Partial<GitStoreState>): void {
+  // Value equality misses edits that return to the original text (ABA).
+  // Repository reselection also invalidates pending AI draft writes.
+  if (Object.hasOwn(patch, 'commitMessage') || Object.hasOwn(patch, 'cwd')) commitDraftRevision += 1
   state = { ...state, ...patch }
   for (const listener of listeners) listener()
 }
@@ -256,6 +213,7 @@ function setState(patch: Partial<GitStoreState>): void {
 export function getGitState(): GitStoreState {
   return state
 }
+export function getCommitDraftRevision(): number { return commitDraftRevision }
 
 // ==================== 提交信息草稿持久化（按仓库 cwd） ====================
 
@@ -449,6 +407,8 @@ function assertGitTarget(target: GitTarget): void {
 }
 
 function resetSelection(cwd: string): void {
+  repositoryOperationDispose?.()
+  repositoryOperationDispose = null
   selectionRevision++
   selectedConnection = connectionIdentity()
   // A previous endpoint may use the exact same absolute path. None of its
@@ -721,6 +681,8 @@ export const autoFetchRemoteForStore = autoFetchRemote
 
 /** 停止自动获取并清理定时器（应用退出 / 测试用） */
 export function disposeGitStore(): void {
+  repositoryOperationDispose?.()
+  repositoryOperationDispose = null
   disposed = true
   if (autoFetchTimer) {
     clearTimeout(autoFetchTimer)
@@ -741,73 +703,101 @@ export function disposeGitStore(): void {
 
 /** 执行写操作并在成功后刷新列表。执行期间把操作名登记到 operation，供 UI 共用同一份「进行中」真相。 */
 let operationCount = 0
+let repositoryOperationDispose: (() => void) | null = null
 async function mutate(
-  run: () => Promise<GitResult>,
-  opName = 'write'
+  run: (client: ScopedGitClient) => Promise<GitResult>,
+  opName = 'write',
+  onSuccess?: () => void | Promise<void>
 ): Promise<GitResult> {
   if (!state.cwd) return { success: false, error: 'Git 能力不可用' }
   const target = captureGitTarget()
-  setState({ operation: opName })
+  setState({ operation: opName, committing: opName === 'commit' })
   operationCount++
   try {
-    return await runQueued(async () => {
-      assertGitTarget(target)
-      const res = await run()
-      assertGitTarget(target)
-      if (res.success) {
+    // Capture before entering the local queue; later drafts and directories must
+    // never become the operands of an already requested command or its retry.
+    const scopedTarget = await captureCodeGitTarget(target.cwd)
+    assertGitTarget(target)
+    const operation = createRepositoryOperation({
+      target: scopedTarget,
+      label: operationLabel(opName),
+      assertCurrent: () => assertGitTarget(target),
+      run: client => runQueued(async () => {
+        assertGitTarget(target)
+        return run(client)
+      }),
+      onSuccess: async () => {
+        assertGitTarget(target)
+        await onSuccess?.()
+        assertGitTarget(target)
         await refreshGit(target.cwd)
         assertGitTarget(target)
-      } else {
-        setState({ errorMessage: res.error ?? '操作失败' })
+        if (state.errorMessage) throw new Error(state.errorMessage)
       }
-      return res
     })
+    repositoryOperationDispose?.()
+    repositoryOperationDispose = operation.subscribe(() => {
+      if (!sameGitTarget(target) || state.repositoryOperation !== operation) return
+      const snapshot = operation.getSnapshot()
+      const executing = snapshot.pending === 'run' || snapshot.pending === 'retry'
+      setState({
+        errorMessage: snapshot.phase === 'failed' ? snapshot.failure?.error ?? '操作失败' : '',
+        ...(executing ? { operation: opName, committing: opName === 'commit' }
+          : operationCount === 0 ? { operation: '', committing: false } : {})
+      })
+    })
+    setState({ repositoryOperation: operation })
+    return await operation.start()
   } catch (error) {
-    const message = error instanceof Error ? error.message : '操作失败'
-    if (sameGitTarget(target)) setState({ errorMessage: message })
-    return { success: false, error: message }
+    const failure = gitFailure(error)
+    if (sameGitTarget(target)) setState({ errorMessage: failure.error ?? '操作失败' })
+    return failure
   } finally {
-    // 并发写操作计数，最后一个结束时才清空 operation（对齐 wuzu）
     if (sameGitTarget(target)) operationCount--
     if (sameGitTarget(target) && operationCount <= 0) {
       operationCount = 0
-      setState({ operation: '' })
+      const pending = state.repositoryOperation?.getSnapshot().pending
+      if (pending !== 'run' && pending !== 'retry') setState({ operation: '', committing: false })
     }
   }
+}
+function operationLabel(name: string): string {
+  const labels: Record<string, string> = { commit: '提交', fetch: '获取更新', pull: '拉取', push: '推送', sync: '同步', stash: '存储', checkout: '切换分支', merge: '合并', rebase: '变基', 'cherry-pick': '拣选', revert: '还原提交', remote: '远程操作', write: 'Git 操作' }
+  return labels[name] ?? 'Git 操作'
 }
 
 // ---------- 状态 / diff ----------
 
 export function gitInitRepo(): Promise<GitResult> {
-  return mutate(() => gitInit(state.cwd))
+  return mutate(captureGitCommand('gitInit'))
 }
 
 export function stage(path: string): Promise<GitResult> {
-  return mutate(() => gitStage(state.cwd, path))
+  return mutate(captureGitCommand('gitStage', path))
 }
 export function unstage(path: string): Promise<GitResult> {
-  return mutate(() => gitUnstage(state.cwd, path))
+  return mutate(captureGitCommand('gitUnstage', path))
 }
 export function discardFile(path: string): Promise<GitResult> {
-  return mutate(() => gitDiscardFile(state.cwd, path))
+  return mutate(captureGitCommand('gitDiscardFile', path))
 }
 export function discardWorktree(path: string): Promise<GitResult> {
-  return mutate(() => gitDiscardWorktree(state.cwd, path))
+  return mutate(captureGitCommand('gitDiscardWorktree', path))
 }
 export function discardWorktreeFiles(paths: string[]): Promise<GitResult> {
-  return mutate(() => gitDiscardWorktreeFiles(state.cwd, paths))
+  return mutate(captureGitCommand('gitDiscardWorktreeFiles', paths))
 }
 export function stageFiles(paths: string[]): Promise<GitResult> {
-  return mutate(() => gitStageFiles(state.cwd, paths))
+  return mutate(captureGitCommand('gitStageFiles', paths))
 }
 export function unstageFiles(paths: string[]): Promise<GitResult> {
-  return mutate(() => gitUnstageFiles(state.cwd, paths))
+  return mutate(captureGitCommand('gitUnstageFiles', paths))
 }
 export function discardFiles(paths: string[]): Promise<GitResult> {
-  return mutate(() => gitDiscardFiles(state.cwd, paths))
+  return mutate(captureGitCommand('gitDiscardFiles', paths))
 }
 export function discardHunk(path: string, hunkId: string): Promise<GitResult> {
-  return mutate(() => gitDiscardHunk(state.cwd, path, hunkId))
+  return mutate(captureGitCommand('gitDiscardHunk', path, hunkId))
 }
 
 /** 查询哪些路径被 .gitignore 忽略（只读，不触发刷新） */
@@ -828,95 +818,50 @@ export async function checkIgnored(paths: string[]): Promise<Set<string> | null>
 // ---------- 提交 ----------
 
 /** 提交：暂存区非空时只提交暂存区；暂存区为空时自动暂存全部改动后提交（smart commit） */
-export async function commit(): Promise<GitResult> {
-  const target = captureGitTarget()
-  setState({ committing: true })
-  try {
-    const stagedCount = stagedFilesOf(state).length
-    const res =
-      stagedCount > 0
-        ? await mutate(() => gitCommit(state.cwd, state.commitMessage), 'commit')
-        : await mutate(() => gitStageAllAndCommit(state.cwd, state.commitMessage), 'commit')
-    if (res.success) {
-      clearCommitMessage()
-      setState({ selectedPath: '', currentDiff: null })
-    }
-    return res
-  } finally {
-    if (sameGitTarget(target)) setState({ committing: false })
-  }
-}
-
-/** 只提交暂存区，暂存区为空时不回退到全量暂存（下拉「提交（暂存区）」用） */
-export async function commitStaged(): Promise<GitResult> {
-  const target = captureGitTarget()
-  if (stagedFilesOf(state).length === 0) {
-    return { success: false, error: '暂存区没有可提交的内容' }
-  }
-  setState({ committing: true })
-  try {
-    const res = await mutate(() => gitCommit(state.cwd, state.commitMessage), 'commit')
-    if (res.success) {
-      clearCommitMessage()
-      setState({ selectedPath: '', currentDiff: null })
-    }
-    return res
-  } finally {
-    if (sameGitTarget(target)) setState({ committing: false })
-  }
-}
-
-/** 暂存全部改动并提交 */
-export async function commitAll(): Promise<GitResult> {
-  const target = captureGitTarget()
-  setState({ committing: true })
-  try {
-    const res = await mutate(() => gitStageAllAndCommit(state.cwd, state.commitMessage), 'commit')
-    if (res.success) {
-      clearCommitMessage()
-      setState({ selectedPath: '', currentDiff: null })
-    }
-    return res
-  } finally {
-    if (sameGitTarget(target)) setState({ committing: false })
-  }
-}
-
-/** 提交（含 amend）成功后清空提交框与选中态 */
-function afterCommit(res: GitResult): GitResult {
-  if (res.success) {
-    clearCommitMessage()
+function commitSuccess(target: GitTarget, revision: number): () => void {
+  return () => {
+    if (!sameGitTarget(target)) return
+    if (commitDraftRevision === revision) clearCommitMessage()
     setState({ selectedPath: '', currentDiff: null })
   }
-  return res
 }
-
-/** 修补上一次提交；message 非空时改用新信息 */
+export function commit(): Promise<GitResult> {
+  const target = captureGitTarget(), revision = commitDraftRevision
+  const command = stagedFilesOf(state).length > 0 ? 'gitCommit' : 'gitStageAllAndCommit'
+  return mutate(captureGitCommand(command, state.commitMessage), 'commit', commitSuccess(target, revision))
+}
+export function commitStaged(): Promise<GitResult> {
+  if (stagedFilesOf(state).length === 0) return Promise.resolve({ success: false, error: '暂存区没有可提交的内容' })
+  const target = captureGitTarget(), revision = commitDraftRevision
+  return mutate(captureGitCommand('gitCommit', state.commitMessage), 'commit', commitSuccess(target, revision))
+}
+export function commitAll(): Promise<GitResult> {
+  const target = captureGitTarget(), revision = commitDraftRevision
+  return mutate(captureGitCommand('gitStageAllAndCommit', state.commitMessage), 'commit', commitSuccess(target, revision))
+}
 export function commitAmend(message?: string): Promise<GitResult> {
-  return mutate(
-    () => (message?.trim() ? gitCommitAmendWithMessage(state.cwd, message) : gitCommitAmend(state.cwd)),
-    'commit'
-  ).then(afterCommit)
+  const target = captureGitTarget(), revision = commitDraftRevision
+  return mutate(message?.trim() ? captureGitCommand('gitCommitAmendWithMessage', message) : captureGitCommand('gitCommitAmend'), 'commit', commitSuccess(target, revision))
 }
 
 export function undoCommit(): Promise<GitResult> {
-  return mutate(() => gitUndoCommit(state.cwd))
+  return mutate(captureGitCommand('gitUndoCommit'))
 }
 
 export function commitEmpty(message: string): Promise<GitResult> {
-  return mutate(() => gitCommitEmpty(state.cwd, message))
+  return mutate(captureGitCommand('gitCommitEmpty', message))
 }
 
 // ---------- 远程 ----------
 
 export function fetchRemote(): Promise<GitResult> {
-  return mutate(() => gitFetch(state.cwd), 'fetch')
+  return mutate(captureGitCommand('gitFetch'), 'fetch')
 }
 export function pull(): Promise<GitResult> {
-  return mutate(() => gitPull(state.cwd), 'pull')
+  return mutate(captureGitCommand('gitPull'), 'pull')
 }
 export function push(): Promise<GitResult> {
-  return mutate(() => gitPush(state.cwd), 'push')
+  return mutate(captureGitCommand('gitPush'), 'push')
 }
 /** 分叉计数：只读查询，不触发写操作后的状态刷新 */
 export async function divergence(): Promise<GitResult & { ahead?: number; behind?: number }> {
@@ -924,41 +869,41 @@ export async function divergence(): Promise<GitResult & { ahead?: number; behind
   return gitDivergence(state.cwd)
 }
 export function pullMerge(remember: boolean): Promise<GitResult> {
-  return mutate(() => gitPullMerge(state.cwd, remember), 'pull')
+  return mutate(captureGitCommand('gitPullMerge', remember), 'pull')
 }
 export function pullRebaseWithChoice(remember: boolean): Promise<GitResult> {
-  return mutate(() => gitPullRebaseWithChoice(state.cwd, remember), 'pull')
+  return mutate(captureGitCommand('gitPullRebaseWithChoice', remember), 'pull')
 }
 /** 装载 SSH 私钥：不走 mutate，避免成功后又触发一次必然失败的远程刷新 */
 export async function addSshKey(passphrase: string): Promise<GitResult> {
   return gitAddSshKey(passphrase)
 }
 export function sync(): Promise<GitResult> {
-  return mutate(() => gitSync(state.cwd), 'sync')
+  return mutate(captureGitCommand('gitSync'), 'sync')
 }
 export function pullRebase(): Promise<GitResult> {
-  return mutate(() => gitPullRebase(state.cwd), 'pull')
+  return mutate(captureGitCommand('gitPullRebase'), 'pull')
 }
 export function pushForce(): Promise<GitResult> {
-  return mutate(() => gitPushForce(state.cwd), 'push')
+  return mutate(captureGitCommand('gitPushForce'), 'push')
 }
 export function pushTags(): Promise<GitResult> {
-  return mutate(() => gitPushTags(state.cwd), 'push')
+  return mutate(captureGitCommand('gitPushTags'), 'push')
 }
 export function pushTag(name: string): Promise<GitResult> {
-  return mutate(() => gitPushTag(state.cwd, name), 'push')
+  return mutate(captureGitCommand('gitPushTag', name), 'push')
 }
 export function pullFrom(remote: string, branch: string): Promise<GitResult> {
-  return mutate(() => gitPullFrom(state.cwd, remote, branch), 'pull')
+  return mutate(captureGitCommand('gitPullFrom', remote, branch), 'pull')
 }
 export function pushTo(remote: string, branch?: string): Promise<GitResult> {
-  return mutate(() => gitPushTo(state.cwd, remote, branch), 'push')
+  return mutate(captureGitCommand('gitPushTo', remote, branch), 'push')
 }
 export function deleteRemoteBranch(remote: string, branch: string): Promise<GitResult> {
-  return mutate(() => gitDeleteRemoteBranch(state.cwd, remote, branch), 'remote')
+  return mutate(captureGitCommand('gitDeleteRemoteBranch', remote, branch), 'remote')
 }
 export function deleteRemoteTag(name: string, remote?: string): Promise<GitResult> {
-  return mutate(() => gitDeleteRemoteTag(state.cwd, name, remote), 'remote')
+  return mutate(captureGitCommand('gitDeleteRemoteTag', name, remote), 'remote')
 }
 
 export async function loadRemotes(): Promise<void> {
@@ -983,15 +928,11 @@ export async function loadRemoteBranches(): Promise<void> {
 }
 
 export async function addRemote(name: string, url: string): Promise<GitResult> {
-  const res = await mutate(() => gitAddRemote(state.cwd, name, url))
-  if (res.success) await loadRemotes()
-  return res
+  return mutate(captureGitCommand('gitAddRemote', name, url), 'write', loadRemotes)
 }
 
 export async function removeRemote(name: string): Promise<GitResult> {
-  const res = await mutate(() => gitRemoveRemote(state.cwd, name))
-  if (res.success) await loadRemotes()
-  return res
+  return mutate(captureGitCommand('gitRemoveRemote', name), 'write', loadRemotes)
 }
 
 // ---------- 存储（Stash） ----------
@@ -1005,32 +946,30 @@ export async function loadStashes(): Promise<void> {
 }
 
 /** stash 写操作：成功后同时刷新变更列表与 stash 列表 */
-async function stashMutate(run: () => Promise<GitResult>): Promise<GitResult> {
-  const res = await mutate(run, 'stash')
-  if (res.success) await loadStashes()
-  return res
+async function stashMutate(run: (client: ScopedGitClient) => Promise<GitResult>): Promise<GitResult> {
+  return mutate(run, 'stash', loadStashes)
 }
 
 export function stashPush(message?: string, includeUntracked = false): Promise<GitResult> {
-  return stashMutate(() => gitStashPush(state.cwd, message, includeUntracked))
+  return stashMutate(captureGitCommand('gitStashPush', message, includeUntracked))
 }
 export function stashPushStaged(message?: string): Promise<GitResult> {
-  return stashMutate(() => gitStashPushStaged(state.cwd, message))
+  return stashMutate(captureGitCommand('gitStashPushStaged', message))
 }
 export function stashPop(index?: number): Promise<GitResult> {
-  return stashMutate(() => gitStashPop(state.cwd, index))
+  return stashMutate(captureGitCommand('gitStashPop', index))
 }
 export function stashApply(index?: number): Promise<GitResult> {
-  return stashMutate(() => gitStashApply(state.cwd, index))
+  return stashMutate(captureGitCommand('gitStashApply', index))
 }
 export function stashDrop(index: number): Promise<GitResult> {
-  return stashMutate(() => gitStashDrop(state.cwd, index))
+  return stashMutate(captureGitCommand('gitStashDrop', index))
 }
 export function stashDropBatch(indexes: number[]): Promise<GitResult> {
-  return stashMutate(() => gitStashDropBatch(state.cwd, indexes))
+  return stashMutate(captureGitCommand('gitStashDropBatch', indexes))
 }
 export function stashClear(): Promise<GitResult> {
-  return stashMutate(() => gitStashClear(state.cwd))
+  return stashMutate(captureGitCommand('gitStashClear'))
 }
 
 // ---------- 标记（Tag） ----------
@@ -1044,15 +983,11 @@ export async function loadTags(): Promise<void> {
 }
 
 export async function createTag(name: string, message?: string): Promise<GitResult> {
-  const res = await mutate(() => gitCreateTag(state.cwd, name, message))
-  if (res.success) await loadTags()
-  return res
+  return mutate(captureGitCommand('gitCreateTag', name, message), 'write', loadTags)
 }
 
 export async function deleteTag(name: string): Promise<GitResult> {
-  const res = await mutate(() => gitDeleteTag(state.cwd, name))
-  if (res.success) await loadTags()
-  return res
+  return mutate(captureGitCommand('gitDeleteTag', name), 'write', loadTags)
 }
 
 // ---------- 提交历史 ----------
@@ -1313,57 +1248,49 @@ export async function loadBranches(): Promise<void> {
 
 /** 切换分支（有未提交改动时 git 会拒绝，错误透传） */
 export async function checkout(name: string): Promise<GitResult> {
-  const res = await mutate(() => gitCheckout(state.cwd, name), 'checkout')
-  if (res.success) {
+  return mutate(captureGitCommand('gitCheckout', name), 'checkout', async () => {
     // 分支变了，原来选中的文件 diff 与 hunk 基准全部作废
     setState({ selectedPath: '', currentDiff: null, hunksMap: {} })
     await loadBranches()
-  }
-  return res
+  })
 }
 
 /** 新建分支并切换；startPoint 缺省基于当前 HEAD */
 export async function createBranch(name: string, startPoint?: string): Promise<GitResult> {
-  const res = await mutate(() => gitCreateBranch(state.cwd, name, startPoint), 'checkout')
-  if (res.success) await loadBranches()
-  return res
+  return mutate(captureGitCommand('gitCreateBranch', name, startPoint), 'checkout', loadBranches)
 }
 
 export async function deleteBranch(name: string, force = false): Promise<GitResult> {
-  const res = await mutate(() => gitDeleteBranch(state.cwd, name, force))
-  if (res.success) await loadBranches()
-  return res
+  return mutate(captureGitCommand('gitDeleteBranch', name, force), 'write', loadBranches)
 }
 
 export async function renameBranch(oldName: string, newName: string): Promise<GitResult> {
-  const res = await mutate(() => gitRenameBranch(state.cwd, oldName, newName))
-  if (res.success) await loadBranches()
-  return res
+  return mutate(captureGitCommand('gitRenameBranch', oldName, newName), 'write', loadBranches)
 }
 
 export function publishBranch(): Promise<GitResult> {
-  return mutate(() => gitPublishBranch(state.cwd), 'push')
+  return mutate(captureGitCommand('gitPublishBranch'), 'push')
 }
 export function merge(ref: string): Promise<GitResult> {
-  return mutate(() => gitMerge(state.cwd, ref), 'merge')
+  return mutate(captureGitCommand('gitMerge', ref), 'merge')
 }
 export function mergeAbort(): Promise<GitResult> {
-  return mutate(() => gitMergeAbort(state.cwd))
+  return mutate(captureGitCommand('gitMergeAbort'))
 }
 export function rebase(ref: string): Promise<GitResult> {
-  return mutate(() => gitRebase(state.cwd, ref), 'rebase')
+  return mutate(captureGitCommand('gitRebase', ref), 'rebase')
 }
 export function rebaseAbort(): Promise<GitResult> {
-  return mutate(() => gitRebaseAbort(state.cwd))
+  return mutate(captureGitCommand('gitRebaseAbort'))
 }
 export function cherryPick(hash: string): Promise<GitResult> {
-  return mutate(() => gitCherryPick(state.cwd, hash), 'cherry-pick')
+  return mutate(captureGitCommand('gitCherryPick', hash), 'cherry-pick')
 }
 export function cherryPickAbort(): Promise<GitResult> {
-  return mutate(() => gitCherryPickAbort(state.cwd))
+  return mutate(captureGitCommand('gitCherryPickAbort'))
 }
 export function revertCommit(hash: string): Promise<GitResult> {
-  return mutate(() => gitRevertCommit(state.cwd, hash), 'revert')
+  return mutate(captureGitCommand('gitRevertCommit', hash), 'revert')
 }
 
 // ---------- diff 预览 / hunks ----------

@@ -1,0 +1,41 @@
+.subagent-followup { padding: 8px 10px; border-top: 1px solid var(--border); background: var(--bg-surface); }
+.subagent-followup__toggle { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 32px; padding: 0; border: 0; background: transparent; color: var(--fg); text-align: left; font-size: 12px; }
+.subagent-followup__toggle > svg { flex-shrink: 0; transition: transform 120ms ease; }
+.subagent-followup__toggle[aria-expanded="false"] > svg { transform: rotate(-90deg); }
+.subagent-followup__draft-status { margin-left: auto; color: var(--fg-muted); font-size: 11px; }
+.subagent-followup__form { display: grid; gap: 8px; min-width: 0; }
+.subagent-followup__form[hidden] { display: none; }
+.subagent-followup__form textarea { box-sizing: border-box; width: 100%; min-width: 0; min-height: 58px; max-height: 160px; resize: vertical; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-input); color: var(--fg); font: inherit; font-size: 12px; line-height: 1.5; }
+.subagent-followup__form textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.subagent-followup__actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.subagent-followup__actions > p { flex: 1 1 180px; margin: 0; color: var(--fg-muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.subagent-followup__actions > button { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; flex-shrink: 0; }
+.subagent-followup__notice, .subagent-followup__error { margin: 6px 0 0; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.subagent-followup__notice { color: var(--fg-muted); }
+.subagent-followup__error { color: var(--danger); }
+.subagent-current { margin: 4px 0 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-surface); }
+.subagent-current__header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; min-height: 28px; color: var(--fg); font-size: 12px; }
+.subagent-current__header > button { display: inline-flex; align-items: center; gap: 4px; }
+.subagent-current__hint { margin: 4px 0; color: var(--fg-muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.subagent-current .subagent-followup { margin: 4px -10px -8px; }
+.subagent-tracking-recovery { min-width: 0; color: var(--fg-muted); font-size: 11px; line-height: 1.5; }
+.subagent-tracking-recovery > summary { cursor: pointer; min-height: 24px; }
+.subagent-tracking-recovery > p { margin: 4px 0; overflow-wrap: anywhere; }
+.subagent-tracking-recovery > div { display: flex; flex-wrap: wrap; gap: 12px; }
+.subagent-receipt-history { min-width: 0; margin-top: 8px; color: var(--fg-muted); font-size: 12px; line-height: 1.5; }
+.subagent-receipt-history summary { display: flex; align-items: center; gap: 8px; min-height: 28px; cursor: pointer; list-style: none; }
+.subagent-receipt-history summary::before { content: '›'; flex: 0 0 10px; text-align: center; }
+.subagent-receipt-history details[open] > summary::before, .subagent-receipt-history[open] > summary::before { transform: rotate(90deg); }
+.subagent-receipt-history summary::-webkit-details-marker { display: none; }
+.subagent-receipt-history summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: var(--radius); }
+.subagent-receipt-history summary > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.subagent-receipt-history summary > time { flex: 0 0 auto; font-size: 11px; }
+.subagent-receipt-history p { margin: 4px 0; overflow-wrap: anywhere; }
+.subagent-receipt-history__list { max-height: 260px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.subagent-receipt-history__list > article { padding-block: 6px; border-top: 1px solid var(--border); }
+.subagent-receipt-history__scope { color: var(--fg-muted); font-size: 11px; }
+.subagent-receipt-history pre { margin: 8px 0; padding: 8px 10px; border-radius: var(--radius); background: var(--bg-input); color: var(--fg); font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+.subagent-receipt-history__actions, .subagent-receipt-history__confirm { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+.subagent-receipt-history__actions > button, .subagent-receipt-history__confirm > button { min-height: 28px; }
+.subagent-receipt-history__confirm > p { flex-basis: 100%; }
+@media (prefers-reduced-motion: reduce) { .subagent-followup__toggle > svg { transition: none; } }

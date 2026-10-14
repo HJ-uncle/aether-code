@@ -2,6 +2,8 @@ import { memo, useMemo, useState, type JSX } from 'react'
 import { Dialog } from '@renderer/workbench/Dialog'
 import { BrowserSnapshotResult } from './BrowserSnapshotResult'
 import { parseToolResult, type ParsedToolResult, type ToolResultImage } from './tool-result'
+import { AutomationCard } from '../automations/AutomationCard'
+import { parseAutomationReceipt } from '../automations/automation-draft'
 import './tool-result.css'
 
 function ResultImage({ image }: { image: ToolResultImage }): JSX.Element {
@@ -37,6 +39,9 @@ export const ToolResult = memo(function ToolResult({
   textClassName?: string
 }): JSX.Element {
   const result = useMemo(() => parsed ?? parseToolResult(value), [parsed, value])
+  const receipt = useMemo(() => ['cron_create', 'cron_update'].includes(toolName ?? '')
+    ? parseAutomationReceipt(value ?? result.text) : null, [toolName, value, result.text])
+  if (receipt) return <><AutomationCard receipt={receipt} /><details className="automation-card-receipt"><summary>原始收据</summary><pre className={textClassName}>{result.text}</pre></details></>
   if (!result.images.length && !result.browserSnapshots?.length) return <pre className={textClassName}>{result.text}</pre>
   return (
     <div className="tool-result">

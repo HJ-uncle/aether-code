@@ -5,8 +5,11 @@
  * model 传空字符串时由引擎回退到默认模型；传「轻任务模型」设置值时使用对应凭据。
  */
 import { requestOrThrow } from './client'
+import type { EngineRequestInput } from '@shared/ipc'
 
 export interface UtilityChatInput {
+  /** Optional caller-owned identity for a multi-step operation. */
+  expectedEngine?: EngineRequestInput['expectedEngine']
   /** 模型 modelId；空串 = 引擎默认模型 */
   model?: string
   systemPrompt?: string
@@ -19,6 +22,7 @@ export function utilityChat(input: UtilityChatInput): Promise<{ text: string }> 
   return requestOrThrow<{ text: string }>({
     method: 'POST',
     path: '/utility/chat',
+    expectedEngine: input.expectedEngine,
     body: {
       model: input.model?.trim() || undefined,
       systemPrompt: input.systemPrompt,

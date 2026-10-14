@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { engineHost } from './engine/host'
+import { closeWorkNextTurnQueue } from './work-next-turn-ipc'
 import * as fileService from './fs/file-service'
 import { abortAllStreams, disposeLsp, registerIpcHandlers } from './ipc'
 import { disposeAllTerminals } from './terminal/pty-service'
@@ -205,8 +206,8 @@ if (!gotTheLock) {
     event.preventDefault()
     if (shutdown) return
     abortAllStreams()
-    shutdown = Promise.allSettled([disposeAllTerminals(), remoteTerminalService.disposeAll()]).then(async results => {
-      for (const result of results) if (result.status === 'rejected') console.error('[shutdown] terminal cleanup failed:', result.reason)
+    shutdown = Promise.allSettled([disposeAllTerminals(), remoteTerminalService.disposeAll(), closeWorkNextTurnQueue()]).then(async results => {
+      for (const result of results) if (result.status === 'rejected') console.error('[shutdown] owned cleanup failed:', result.reason)
       disposeLsp()
       try { await engineHost.stop() }
       catch (error) { console.error('[shutdown] engine cleanup failed:', error) }

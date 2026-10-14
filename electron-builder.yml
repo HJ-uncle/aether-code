@@ -14,6 +14,7 @@ files:
   - '!.ae/**'
 asarUnpack:
   - resources/**
+  - out/main/queue-storage-worker.cjs
 win:
   executableName: aether-code
 nsis:

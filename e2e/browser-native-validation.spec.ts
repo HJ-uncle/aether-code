@@ -1,7 +1,7 @@
 /** Pure browser boundary tests: executable URLs, context ownership, settings, viewport and native bounds. */
 import { expect, test } from '@playwright/test'
 import { DEFAULT_BROWSER_SETTINGS } from '../src/shared/browser'
-import { clampBounds, contextsMatch, normalizeBrowserUrl, validateContext, validateSettings, validateViewport, validateZoom } from '../src/main/browser/validation'
+import { clampBounds, contextsMatch, normalizeBrowserUrl, pendingBrowserEngineMatches, validateContext, validateSettings, validateViewport, validateZoom } from '../src/main/browser/validation'
 
 test('browser address accepts development servers and normalizes ordinary hosts', () => {
   expect(normalizeBrowserUrl('localhost:3000/app?q=中文')).toBe('http://localhost:3000/app?q=%E4%B8%AD%E6%96%87')
@@ -25,6 +25,23 @@ test('tab ownership requires both engine and conversation identity', () => {
   expect(contextsMatch({ ...owner, engineId: 'local-instance-2' }, owner)).toBe(false)
   expect(contextsMatch({ ...owner, sessionId: 'session-2' }, owner)).toBe(false)
   expect(() => validateContext({ sessionId: '', engineId: 'local' })).toThrow()
+})
+
+test('unbound user tabs only attach to their original engine and account after bootstrap', () => {
+  const ready = { mode: 'remote' as const, baseUrl: 'https://engine.example.test', instanceId: 'engine-one', accountId: 'account-one' }
+  expect(pendingBrowserEngineMatches({ ...ready }, ready)).toBe(true)
+  expect(pendingBrowserEngineMatches({ ...ready, baseUrl: `${ready.baseUrl}/`, instanceId: null }, ready)).toBe(true)
+  expect(pendingBrowserEngineMatches({ ...ready, baseUrl: 'HTTPS://ENGINE.EXAMPLE.TEST:443/' }, ready)).toBe(true)
+  expect(pendingBrowserEngineMatches(undefined, ready)).toBe(false)
+  for (const changed of [
+    { mode: 'embedded' as const }, { baseUrl: 'https://other.example.test' },
+    { instanceId: 'engine-two' }, { accountId: 'account-two' }, { accountId: null }
+  ]) expect(pendingBrowserEngineMatches({ ...ready, ...changed }, ready), JSON.stringify(changed)).toBe(false)
+  expect(pendingBrowserEngineMatches({ ...ready, accountId: null, instanceId: null }, ready)).toBe(false)
+  expect(pendingBrowserEngineMatches({ ...ready, baseUrl: '', instanceId: null }, ready)).toBe(false)
+  expect(pendingBrowserEngineMatches({ mode: 'embedded', baseUrl: '', accountId: null },
+    { mode: 'embedded', baseUrl: 'http://127.0.0.1:12323', instanceId: 'local', accountId: null })).toBe(true)
+  expect(pendingBrowserEngineMatches({ mode: 'embedded', baseUrl: '', accountId: null }, ready)).toBe(false)
 })
 
 test('viewport validation rejects invalid and excessive native allocations', () => {

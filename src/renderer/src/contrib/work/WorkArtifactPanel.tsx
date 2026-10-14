@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import type { WorkArtifact } from './work-state'
 import { paths, readFile, readSessionFile } from '@renderer/core/workspace/fs-client'
 import { openFileFromChat } from '@renderer/contrib/chat/open-file'
@@ -8,6 +8,8 @@ import { Spinner } from '@renderer/workbench/ui-primitives'
 import { Select } from '@renderer/workbench/Select'
 import { toast } from '@renderer/core/toast'
 import { workSourceMarkdown } from './work-artifact-utils'
+import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
+import { workArtifactExportName, workArtifactReadFailure, workArtifactReadResult, type WorkArtifactContent } from './work-artifact-content'
 import { FileGlyph } from '../explorer/FileGlyph'
 import './work-artifact-panel.css'
 
@@ -15,7 +17,7 @@ export interface WorkArtifactPanelProps {
   artifact: WorkArtifact | null
   workspaceRoot?: string | null
   sessionId?: string
-  onAddToConversation?: (artifact: WorkArtifact, selection?: string) => void
+  onAddToConversation?: (artifact: WorkArtifact, selection?: string, selectionCoverage?: WorkArtifactContent['coverage']) => void
   onOpenFile?: (artifact: WorkArtifact) => void
   artifacts?: WorkArtifact[]
   onSelect?: (id: string) => void
@@ -33,7 +35,7 @@ function isText(name: string): boolean {
 async function readWorkFile(
   path: string,
   sessionId: string | undefined
-): Promise<{ content: string; isBinary: boolean; truncated?: boolean; tooLarge?: boolean }> {
+): Promise<{ content: string; isBinary: boolean; truncated: boolean; tooLarge?: boolean }> {
   if (sessionId) {
     const result = await readSessionFile(sessionId, path)
     return {
@@ -48,18 +50,28 @@ async function readWorkFile(
 
 /** Work's artifact surface is deliberately session-scoped: a receipt may be stale,
  * so preview reads the workspace before falling back to the receipt content. */
-export function WorkArtifactPanel({
+export function WorkArtifactPanel(props: WorkArtifactPanelProps): JSX.Element {
+  const epoch = useSyncExternalStore(subscribeEngineSource, getEngineSource)
+  // Remount at an identity change so old content and selections never become
+  // actionable during the first render of another task or engine connection.
+  return <ArtifactContent key={JSON.stringify([epoch, props.sessionId, props.workspaceRoot, props.artifact?.id, props.artifact?.path])} {...props} epoch={epoch} />
+}
+
+function ArtifactContent({
   artifact,
   workspaceRoot,
   sessionId,
   onAddToConversation,
   onOpenFile,
   artifacts = [],
-  onSelect
-}: WorkArtifactPanelProps): JSX.Element {
-  const [content, setContent] = useState<string | null>(artifact?.content ?? null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  onSelect,
+  epoch
+}: WorkArtifactPanelProps & { epoch: number }): JSX.Element {
+  const [read, setRead] = useState<{ receipt: string | null | undefined; value: WorkArtifactContent | null }>({ receipt: artifact?.content, value: null })
+  const value = read.receipt === artifact?.content ? read.value : null
+  const content = value?.content ?? null
+  const loading = Boolean(artifact && !value)
+  const error = value?.coverage === 'unavailable' ? value.notice : ''
   const [mode, setMode] = useState<'preview' | 'source'>('preview')
   const [selection, setSelection] = useState('')
   const [readVersion, setReadVersion] = useState(0)
@@ -67,15 +79,15 @@ export function WorkArtifactPanel({
 
   useEffect(() => {
     let active = true
-    setContent(artifact?.content ?? null)
-    setError('')
+    setRead({ receipt: artifact?.content, value: null })
     setSelection('')
     setMode(artifact && isMarkdown(artifact.name) ? 'preview' : 'source')
-    if (!artifact || !artifact.path)
+    if (!artifact || !artifact.path) {
+      if (artifact) setRead({ receipt: artifact.content, value: { content: null, coverage: 'unavailable', notice: '该成果没有有效的文件路径，无法读取。' } })
       return () => {
         active = false
       }
-    setLoading(true)
+    }
     const readPath = /^(?:[A-Za-z]:[\\/]|\/)/.test(artifact.path)
       ? artifact.path
       : workspaceRoot
@@ -83,28 +95,15 @@ export function WorkArtifactPanel({
         : artifact.path
     void readWorkFile(readPath, sessionId)
       .then((result) => {
-        if (!active) return
-        if (result.isBinary) {
-          setError('二进制文件无法在此预览')
-        } else if (typeof result.content === 'string') {
-          setContent(result.content)
-        } else if (artifact.content === null) {
-          setError('工作区返回了无效的文件内容')
-        }
+        if (active && epoch === getEngineSource()) setRead({ receipt: artifact.content, value: workArtifactReadResult(result) })
       })
       .catch((reason: unknown) => {
-        // The engine write receipt remains a valid first frame while the workspace
-        // is still settling; only show the read error when there is no receipt to use.
-        if (active && artifact.content === null)
-          setError(reason instanceof Error ? reason.message : String(reason))
-      })
-      .finally(() => {
-        if (active) setLoading(false)
+        if (active && epoch === getEngineSource()) setRead({ receipt: artifact.content, value: workArtifactReadFailure(artifact.content, reason) })
       })
     return () => {
       active = false
     }
-  }, [artifact?.id, artifact?.path, artifact?.content, workspaceRoot, sessionId, readVersion])
+  }, [artifact?.id, artifact?.path, artifact?.content, workspaceRoot, sessionId, readVersion, epoch])
 
   const language = useMemo(
     () => artifact?.name.split('.').pop()?.toUpperCase() ?? 'TEXT',
@@ -140,27 +139,29 @@ export function WorkArtifactPanel({
     )
 
   const copy = async (): Promise<void> => {
-    if (content === null) return
+    if (content === null || epoch !== getEngineSource()) return
     try {
       if (!navigator.clipboard) throw new Error('当前环境不支持复制')
       await navigator.clipboard.writeText(content)
-      toast.success('已复制文件内容')
+      if (epoch === getEngineSource()) toast.success(value?.coverage === 'partial' ? '已复制预览片段' : value?.coverage === 'receipt' ? '已复制历史回执内容' : '已复制当前文件内容')
     } catch (reason: unknown) {
       toast.error(reason instanceof Error ? reason.message : String(reason))
     }
   }
   const download = (): void => {
-    if (content === null) return
+    if (content === null || epoch !== getEngineSource()) return
     const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }))
     const link = document.createElement('a')
     link.href = url
-    link.download = artifact.name
+    link.download = workArtifactExportName(artifact.name, value?.coverage ?? 'unavailable')
     link.click()
     URL.revokeObjectURL(url)
   }
   const addReference = (): void => {
-    onAddToConversation?.(artifact, selection || undefined)
-    if (onAddToConversation) toast.success(selection ? '已引用选中内容' : '已添加到对话')
+    if (epoch !== getEngineSource()) return
+    // A whole-file reference resolves its path at the next send. Never inject
+    // the receipt bytes as though they were the successfully read version.
+    onAddToConversation?.({ ...artifact, content: null }, selection || undefined, selection ? value?.coverage : undefined)
   }
   return (
     <section className="work-artifact-panel-v2" aria-label="成果预览">
@@ -197,16 +198,17 @@ export function WorkArtifactPanel({
         <button
           type="button"
           className="work-quiet-button"
-          onClick={() =>
-            onOpenFile
-              ? onOpenFile(artifact)
-              : void openFileFromChat(
+          disabled={!artifact.path}
+          onClick={() => {
+            if (epoch !== getEngineSource()) return
+            if (onOpenFile) onOpenFile(artifact)
+            else void openFileFromChat(
                   artifact.path,
                   sessionId ? { sessionId, workspaceRoot: workspaceRoot ?? undefined } : undefined
                 ).catch((reason: unknown) =>
                   toast.error(reason instanceof Error ? reason.message : String(reason))
                 )
-          }
+          }}
         >
           <Icon name="file" size={14} />
           在编辑器打开
@@ -214,8 +216,19 @@ export function WorkArtifactPanel({
         <button
           type="button"
           className="work-quiet-button"
+          onClick={() => { if (epoch === getEngineSource()) setReadVersion(value => value + 1) }}
+          disabled={loading || !artifact.path}
+          aria-label="刷新成果预览"
+          title="重新读取文件，更新预览"
+        >
+          <Icon name="restart" size={14} />
+          刷新
+        </button>
+        <button
+          type="button"
+          className="work-quiet-button"
           onClick={addReference}
-          disabled={!onAddToConversation}
+          disabled={!onAddToConversation || !artifact.path}
         >
           <Icon name="chat" size={14} />
           {selection ? '引用选中内容' : '添加到对话'}
@@ -227,7 +240,7 @@ export function WorkArtifactPanel({
           disabled={content === null}
         >
           <Icon name="copy" size={14} />
-          复制
+          {value?.coverage === 'partial' ? '复制片段' : value?.coverage === 'receipt' ? '复制回执' : '复制'}
         </button>
         <button
           type="button"
@@ -236,7 +249,7 @@ export function WorkArtifactPanel({
           disabled={content === null}
         >
           <Icon name="cloud-download-outline" size={14} />
-          下载
+          {value?.coverage === 'partial' ? '下载片段' : value?.coverage === 'receipt' ? '下载回执' : '下载'}
         </button>
         {isMarkdown(artifact.name) && (
           <div className="work-artifact-panel-v2__modes">
@@ -259,19 +272,25 @@ export function WorkArtifactPanel({
           </div>
         )}
       </div>
+      {value && value.coverage !== 'current' && value.coverage !== 'unavailable' ? (
+        <div className="work-artifact-panel-v2__notice" role="status">
+          <Icon name="warning" size={14} />
+          <span>{value.notice}</span>
+          <button type="button" className="work-quiet-button" onClick={() => setReadVersion(version => version + 1)}>重试读取</button>
+        </div>
+      ) : null}
       <div className="work-artifact-panel-v2__content work-artifact-preview" ref={previewRef}>
         {loading ? (
-          <div className="work-artifact-panel-v2__loading">
+          <div className="work-artifact-panel-v2__loading" role="status">
             <Spinner size={16} />
             正在读取工作区文件…
           </div>
         ) : error ? (
-          <div className="work-artifact-panel-v2__error">
+          <div className="work-artifact-panel-v2__error" role="alert">
             {error}
             <button
               type="button"
               onClick={() => {
-                setError('')
                 setReadVersion((value) => value + 1)
               }}
             >

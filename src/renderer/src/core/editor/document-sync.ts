@@ -1,5 +1,5 @@
-import { getEditorState, onEditorChanged, reloadDocuments, resolveDocumentPath } from './editor-store'
-import { isRemoteEngine } from '../engine/source'
+import { getEditorState, isDocumentConnectionCurrent, onEditorChanged, reloadDocuments, resolveDocumentPath } from './editor-store'
+import { isRemoteEngine, subscribeEngineSource } from '../engine/source'
 
 let watcherGeneration = 0
 
@@ -24,8 +24,11 @@ export function watchOpenDocuments(): () => void {
     void drain()
   }
   const synchronize = (): void => {
-    const paths = [...getEditorState().docs.keys()].sort()
-    const key = JSON.stringify(paths)
+    // Session documents use the HTTP allow-list even on an embedded engine;
+    // their roots must not be granted to the unrelated Code/main-process watcher.
+    const paths = isRemoteEngine() ? [] : [...getEditorState().docs.values()]
+      .filter(doc => !doc.sessionFileTarget && isDocumentConnectionCurrent(doc)).map(doc => doc.path).sort()
+    const key = JSON.stringify([isRemoteEngine(), paths])
     if (key === lastPaths) return
     lastPaths = key
     chain = chain.then(async () => {
@@ -40,6 +43,7 @@ export function watchOpenDocuments(): () => void {
   }
   const unsubscribe = window.aether.fs.onDocumentsChanged(enqueue)
   const unsubscribeEditor = onEditorChanged(() => { synchronize(); void drain() })
+  const unsubscribeSource = subscribeEngineSource(synchronize)
   const refresh = (): void => enqueue([...getEditorState().docs.keys()])
   window.addEventListener('focus', refresh)
   synchronize()
@@ -47,6 +51,7 @@ export function watchOpenDocuments(): () => void {
     disposed = true
     unsubscribe()
     unsubscribeEditor()
+    unsubscribeSource()
     window.removeEventListener('focus', refresh)
     // StrictMode 重挂载或工作台重建后，旧实例的异步清理不能清掉新实例的监听。
     void chain.then(() => {

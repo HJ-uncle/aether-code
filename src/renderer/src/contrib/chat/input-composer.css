@@ -1,0 +1,127 @@
+/* A surface-local container keeps both modes responsive to their own panel,
+ * including a narrow Code sidebar inside a wide desktop window. */
+.input-composer.chat__surface {
+  container: input-composer / inline-size;
+  padding: 12px 12px 8px;
+  gap: 6px;
+  overflow: visible;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-card);
+}
+.input-composer.chat__surface:focus-within {
+  border-color: var(--border-strong);
+}
+.input-composer > .input-composer__input {
+  display: block;
+  width: 100%;
+  min-height: 56px;
+  max-height: 300px;
+  padding: 2px 36px 2px 4px;
+  overflow-y: auto;
+  color: var(--fg-strong);
+  background: transparent;
+  border: 0;
+  outline: none;
+  box-shadow: none;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.input-composer > .input-composer__input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.input-composer__input:empty::before,
+.input-composer__input:has(> br):not(:has(> :not(br)))::before {
+  content: attr(data-placeholder);
+  color: var(--fg-faint);
+  pointer-events: none;
+}
+.input-composer > .chat__polish-btn {
+  top: 8px;
+  right: 8px;
+}
+/* Leave the polish corner clear even when attachments occupy the first row. */
+.input-composer
+  > :is(.chat__attach-strip, .work-attachments, .resource-binding-strip, .work-resource-strip) {
+  padding: 0 32px 0 4px;
+}
+.input-composer__toolbar {
+  gap: 4px;
+}
+.input-composer__leading,
+.input-composer__trailing {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.input-composer__leading {
+  flex: 0 1 auto;
+}
+.input-composer__trailing {
+  flex: 0 1 auto;
+}
+.input-composer__leading > .work-quiet-button {
+  height: 28px;
+  padding: 0 6px;
+  color: var(--fg);
+}
+.input-composer__leading > .work-attach-button {
+  width: 28px;
+  justify-content: center;
+  padding: 0;
+}
+.input-composer__leading > :is(.work-folder-button, .work-agent-button) {
+  min-width: 28px;
+}
+.input-composer__leading :is(.work-folder-button, .work-agent-button) > span {
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.input-composer__trailing > .chat__send {
+  padding: 0;
+  align-self: center;
+}
+.input-composer .model-picker {
+  min-width: 0;
+  max-width: 190px;
+}
+.input-composer__trailing > .context-ring {
+  flex-shrink: 0;
+}
+@container input-composer (max-width: 520px) {
+  .input-composer__leading :is(.work-folder-button, .work-agent-button) > span {
+    display: none;
+  }
+  .input-composer .model-picker {
+    max-width: 160px;
+  }
+}
+@container input-composer (max-width: 390px) {
+  .input-composer__leading,
+  .input-composer__trailing {
+    gap: 2px;
+  }
+  .input-composer .model-picker {
+    max-width: 120px;
+  }
+  .input-composer__leading .chat__index-cta .picker__label {
+    display: none;
+  }
+  .input-composer__leading .chat__index-cta {
+    width: 26px;
+    padding-inline: 0;
+    justify-content: center;
+  }
+}
+@container input-composer (max-width: 330px) {
+  .input-composer .model-picker {
+    max-width: 95px;
+  }
+}

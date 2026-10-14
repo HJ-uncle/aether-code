@@ -176,7 +176,7 @@ test.describe.serial('远端会话交付链接', () => {
     await expect(page.locator('.message--assistant .md').getByRole('link', { name: 'index.html', exact: true })).toBeVisible()
     expect(await page.evaluate(key => localStorage.getItem(key), selectedSessionKey)).toBe(sessionId)
     expect(await page.evaluate(async () => (await window.aether.settings.get()).lastSessionId)).toBe('')
-    await expect(page.locator('.model-picker__trigger')).toHaveAttribute('title', '当前模型：fixture-model')
+    await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toHaveAttribute('title', '当前模型：fixture-model')
     expect(await page.evaluate(async () => (await window.aether.settings.get()).lastModelId)).toBe('')
   })
   test.afterAll(async () => {
@@ -211,7 +211,7 @@ test.describe.serial('远端会话交付链接', () => {
     await page.reload()
     await expect(page.locator('.message--assistant .md').getByRole('link', { name: 'index.html', exact: true })).toBeVisible()
     expect(await page.evaluate(key => localStorage.getItem(key), selectedSessionKey)).toBe(sessionId)
-    await expect(page.locator('.model-picker__trigger')).toHaveAttribute('title', '当前模型：fixture-model')
+    await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toHaveAttribute('title', '当前模型：fixture-model')
     await page.getByRole('button', { name: '对话偏好', exact: true }).click()
     await expect(page.getByTitle('选择思考档位', { exact: true })).toContainText('Off')
     expect(await page.evaluate(({ key, id }) => JSON.parse(localStorage.getItem(key) ?? '{}')[id], { key: thinkingKey, id: sessionId })).toBe('off')

@@ -1,6 +1,14 @@
 /** Pure request restoration contract: no endpoint/credentials, no invented defaults, durable local edits. */
 import { expect, test } from '@playwright/test'
 import { normalizeRootRunRequestConfig } from '../src/shared/root-run'
+
+test('定时运行关联只保留安全身份和有效超时，忽略载荷与凭据', () => {
+  expect(normalizeRootRunRequestConfig({ cronJobId: 'job-1', automationRunId: 'occurrence-1', cronTimeoutSeconds: 90,
+    configuration: { message: 'private task' }, apiKey: 'SECRET', dispatchTicket: 'SECRET' }))
+    .toEqual({ cronJobId: 'job-1', automationRunId: 'occurrence-1', cronTimeoutSeconds: 90 })
+  for (const value of [0, null, -1, 1.5, '90', Infinity])
+    expect(normalizeRootRunRequestConfig({ cronTimeoutSeconds: value })).toEqual({})
+})
 import { composerThinkingMode, requestedThinkingMode, resolveSessionRequestConfig, loadSessionRequestSelection, saveSessionRequestSelection } from '../src/renderer/src/contrib/chat/session-request-config'
 class MemoryStorage {
   private values = new Map<string,string>()
