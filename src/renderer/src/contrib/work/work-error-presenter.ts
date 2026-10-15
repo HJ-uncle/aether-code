@@ -2,6 +2,8 @@ export interface WorkErrorPresentation {
   title: string
   summary: string
   detail: string
+  /** A terminal Work error can be safely offered as a user initiated retry. */
+  retryable: boolean
   status?: string
   runId?: string
   code?: string
@@ -74,5 +76,10 @@ export function presentWorkError(rawValue: string): WorkErrorPresentation {
     ? `${raw.slice(0, MAX_DETAIL_LENGTH)}\n\n…诊断信息过长，已折叠其余 ${raw.length - MAX_DETAIL_LENGTH} 个字符。` : raw
   const detail = [status ? `状态：${workErrorStatusLabel(status)}` : '', runId ? `运行 ID：${runId}` : '',
     code ? `错误码：${code}` : '', `原始诊断：\n${capped}`].filter(Boolean).join('\n')
-  return { title, summary, detail, status, runId, code }
+  // Waiting/blocked states still have an outstanding interaction or require a
+  // user decision. Replaying the original request from an error card would
+  // create a second run and can duplicate side effects, so those surfaces only
+  // expose diagnostics (the pending card owns its real response action).
+  const retryable = status !== 'waiting' && status !== 'blocked'
+  return { title, summary, detail, retryable, status, runId, code }
 }

@@ -6,8 +6,9 @@
  *
  * 流式对话例外：SSE 需要主进程持续推送，用 start/abort + 事件通道实现。
  */
-import { app, dialog, ipcMain, webContents, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { app, dialog, ipcMain, webContents, BrowserWindow, type IpcMainInvokeEvent, type WebContents } from 'electron'
 import { IPC } from '../shared/ipc'
+import { readWindowVisibility } from './window-visibility'
 import { accountService, configureAccountService } from './account/service'
 import { registerWorkNextTurnQueue } from './work-next-turn-ipc'
 import { disconnectBrowserClients } from './browser-ipc'
@@ -26,6 +27,7 @@ import type {
 } from '../shared/ipc'
 import { engineRequest, engineUpload } from './engine/client'
 import { cancelRemoteAttachmentUpload, uploadRemoteAttachment } from './engine/upload-remote-attachment'
+import { saveWorkspaceFile } from './engine/save-workspace-file'
 import { engineHost } from './engine/host'
 import { getEngineResourceSnapshot, getEngineStorageSnapshot } from './engine/diagnostics'
 import type { EngineDiagnostics } from '../shared/engine-diagnostics'
@@ -59,9 +61,20 @@ import { remoteAuthStatus, withRemoteAuthChange } from './engine/remote-auth'
 import { importLocalRuntime } from './engine/import-local-runtime'
 import { getActiveRuntimeId, listLocalRuntimes, removeLocalRuntime, setActiveRuntimeId } from './engine/local-runtime-store'
 import type { EngineImportProgress, EngineRuntimeCatalog } from '../shared/engine-import'
+import { assertTrustedRenderer } from './ipc-security'
+import { engineIdentityOf } from './engine/protocol'
 
-/** 进行中的 SSE 请求：streamId → AbortController */
-const activeStreams = new Map<string, AbortController>()
+interface OwnedEngineStream {
+  controller: AbortController
+  sender: WebContents
+  streamId: string
+  routeId: string
+}
+/** Renderer stream names are local to a window, never global cancellation keys. */
+const activeStreams = new Map<string, OwnedEngineStream>()
+const streamRoutes = new Map<string, OwnedEngineStream>()
+let streamGeneration = 0
+const engineStreamKey = (senderId: number, streamId: string): string => JSON.stringify([senderId, streamId])
 let runtimeImportBusy = false
 let runtimeActivationBusy = false
 
@@ -142,11 +155,23 @@ export function registerIpcHandlers(): void {
     broadcast(IPC.event.engineSnapshot, snapshot)
   })
   engineHost.on('stream', (event: StreamEvent) => {
-    broadcast(IPC.event.streamEvent, event)
+    const owner = streamRoutes.get(event.streamId)
+    if (!owner) return
+    if (owner.sender.isDestroyed()) {
+      owner.controller.abort()
+      return
+    }
+    // A payload can contain private conversation text. Only its originating
+    // window receives it, even when another window reused the public streamId.
+    owner.sender.send(IPC.event.streamEvent, { ...event, streamId: owner.streamId })
   })
   // ── 生命周期 ──
-  ipcMain.handle(IPC.invoke.engineGetSnapshot, () => engineHost.getSnapshot())
-  ipcMain.handle(IPC.invoke.engineDiagnostics, async (_event, input: unknown): Promise<EngineDiagnostics> => {
+  ipcMain.handle(IPC.invoke.engineGetSnapshot, (event) => {
+    assertTrustedRenderer(event, '引擎状态读取')
+    return engineHost.getSnapshot()
+  })
+  ipcMain.handle(IPC.invoke.engineDiagnostics, async (event, input: unknown): Promise<EngineDiagnostics> => {
+    assertTrustedRenderer(event, '引擎诊断')
     const snapshot = engineHost.getSnapshot()
     const identityOf = (value: EngineSnapshot): string => JSON.stringify([
       value.mode, value.baseUrl, value.instanceId ?? null, value.accountId ?? null, value.pid, value.dataDir ?? null
@@ -161,32 +186,39 @@ export function registerIpcHandlers(): void {
     return { identity, resources, storage, health: { ...engineHost.getHealthDiagnostics(), activeStreams: activeStreams.size } }
   })
 
-  ipcMain.handle(IPC.invoke.engineStart, async () => {
+  ipcMain.handle(IPC.invoke.engineStart, async (event) => {
+    assertTrustedRenderer(event, '引擎启动')
     ensureNotActivatingRuntime()
     const settings = getSettings()
     return engineHost.start(settings.engineMode, settings.remoteBaseUrl, settings.remoteWorkspaceRoot)
   })
 
-  ipcMain.handle(IPC.invoke.engineStop, () => {
+  ipcMain.handle(IPC.invoke.engineStop, (event) => {
+    assertTrustedRenderer(event, '引擎停止')
     ensureNotActivatingRuntime()
     return engineHost.stop()
   })
 
-  ipcMain.handle(IPC.invoke.engineRestart, async () => {
+  ipcMain.handle(IPC.invoke.engineRestart, async (event) => {
+    assertTrustedRenderer(event, '引擎重启')
     ensureNotActivatingRuntime()
     const settings = getSettings()
     await engineHost.stop()
     return engineHost.start(settings.engineMode, settings.remoteBaseUrl, settings.remoteWorkspaceRoot)
   })
 
-  ipcMain.handle(IPC.invoke.engineGetLocalRuntimes, (): EngineRuntimeCatalog => ({
-    activeId: getActiveRuntimeId(app.getPath('userData')),
-    runtimes: listLocalRuntimes(app.getPath('userData'))
-  }))
+  ipcMain.handle(IPC.invoke.engineGetLocalRuntimes, (event): EngineRuntimeCatalog => {
+    assertTrustedRenderer(event, '本地引擎读取')
+    return {
+      activeId: getActiveRuntimeId(app.getPath('userData')),
+      runtimes: listLocalRuntimes(app.getPath('userData'))
+    }
+  })
 
   // Only the native picker can supply import paths; the renderer cannot invoke
   // archive extraction against arbitrary filesystem locations through this IPC.
   ipcMain.handle(IPC.invoke.engineImportLocalRuntime, async (event) => {
+    assertTrustedRenderer(event, '本地引擎导入')
     if (runtimeImportBusy || runtimeActivationBusy) throw new Error('正在处理本地引擎，请稍后再试')
     if (getSettings().engineMode !== 'embedded') throw new Error('请先保存“本地内置”运行方式')
     runtimeImportBusy = true
@@ -209,7 +241,8 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle(IPC.invoke.engineActivateLocalRuntime, async (_event, id: unknown) => {
+  ipcMain.handle(IPC.invoke.engineActivateLocalRuntime, async (event, id: unknown) => {
+    assertTrustedRenderer(event, '本地引擎切换')
     if (runtimeImportBusy || runtimeActivationBusy) throw new Error('正在处理本地引擎，请稍后再试')
     if (id !== null && typeof id !== 'string') throw new Error('无效的本地引擎标识')
     const settings = getSettings()
@@ -268,7 +301,8 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle(IPC.invoke.engineDeleteLocalRuntime, (_event, id: unknown): void => {
+  ipcMain.handle(IPC.invoke.engineDeleteLocalRuntime, (event, id: unknown): void => {
+    assertTrustedRenderer(event, '本地引擎删除')
     if (runtimeImportBusy || runtimeActivationBusy) throw new Error('正在处理本地引擎，请稍后再试')
     if (typeof id !== 'string') throw new Error('无效的本地引擎标识')
     const userData = app.getPath('userData')
@@ -277,36 +311,68 @@ export function registerIpcHandlers(): void {
   })
 
   // ── 业务请求 ──
-  ipcMain.handle(IPC.invoke.engineRequest, (_event, input: EngineRequestInput) =>
-    engineRequest(input)
-  )
-  ipcMain.handle(IPC.invoke.engineUpload, (_event, input) => engineUpload(input))
-  ipcMain.handle(IPC.invoke.engineUploadAttachment, (event, input) => uploadRemoteAttachment(input, event.sender.id))
+  ipcMain.handle(IPC.invoke.engineRequest, (event, input: EngineRequestInput) => {
+    assertTrustedRenderer(event, '引擎请求')
+    const snapshot = engineHost.getSnapshot()
+    return engineRequest(input.expectedEngine ? input : { ...input, expectedEngine: engineIdentityOf(snapshot) })
+  })
+  ipcMain.handle(IPC.invoke.engineUpload, (event, input) => {
+    assertTrustedRenderer(event, '引擎上传')
+    const snapshot = engineHost.getSnapshot()
+    return engineUpload(input.expectedEngine ? input : { ...input, expectedEngine: engineIdentityOf(snapshot) })
+  })
+  ipcMain.handle(IPC.invoke.engineUploadAttachment, (event, input) => {
+    assertTrustedRenderer(event, '附件上传')
+    return uploadRemoteAttachment(input, event.sender.id)
+  })
+  ipcMain.handle(IPC.invoke.engineSaveWorkspaceFile, (event, input) => {
+    const owner = assertTrustedRenderer(event, '成果下载')
+    return saveWorkspaceFile(input, owner)
+  })
   ipcMain.handle(IPC.invoke.engineCancelAttachmentUpload, (event, requestId: unknown) =>
-    cancelRemoteAttachmentUpload(requestId, event.sender.id)
+    (assertTrustedRenderer(event, '附件上传取消'), cancelRemoteAttachmentUpload(requestId, event.sender.id))
   )
 
   // ── 流式请求 ──
-  ipcMain.handle(IPC.invoke.engineStreamStart, async (_event, input: StreamStartInput) => {
-    // 同一 streamId 重复启动时先中止旧的，避免两个 reader 抢同一个通道
-    activeStreams.get(input.streamId)?.abort()
+  ipcMain.handle(IPC.invoke.engineStreamStart, async (event, input: StreamStartInput) => {
+    assertTrustedRenderer(event, '引擎流式请求')
+    if (typeof input.streamId !== 'string' || !input.streamId.trim() || input.streamId.length > 256)
+      throw new Error('无效的引擎流标识')
+    const boundInput = input.expectedEngine ? input : { ...input, expectedEngine: engineIdentityOf(engineHost.getSnapshot()) }
+    const key = engineStreamKey(event.sender.id, boundInput.streamId)
+    const previous = activeStreams.get(key)
+    if (previous) {
+      streamRoutes.delete(previous.routeId)
+      previous.controller.abort()
+    }
 
     const controller = new AbortController()
-    activeStreams.set(input.streamId, controller)
+    const routeId = JSON.stringify([event.sender.id, boundInput.streamId, ++streamGeneration])
+    const owner: OwnedEngineStream = { controller, sender: event.sender, streamId: boundInput.streamId, routeId }
+    activeStreams.set(key, owner)
+    streamRoutes.set(routeId, owner)
+    const onDestroyed = (): void => controller.abort()
+    event.sender.once('destroyed', onDestroyed)
 
     try {
-      await engineHost.stream(input.streamId, input.path, input.body, controller.signal, input.method, input.query, input.expectedEngine, input.toolProfile, input.subagentProtocol)
+      await engineHost.stream(routeId, boundInput.path, boundInput.body, controller.signal, boundInput.method, boundInput.query, boundInput.expectedEngine, boundInput.toolProfile, boundInput.subagentProtocol)
     } finally {
-      activeStreams.delete(input.streamId)
+      event.sender.removeListener('destroyed', onDestroyed)
+      streamRoutes.delete(routeId)
+      // An aborted older request may finish after its replacement started.
+      if (activeStreams.get(key) === owner) activeStreams.delete(key)
     }
     return { ok: true }
   })
 
-  ipcMain.handle(IPC.invoke.engineStreamAbort, (_event, streamId: string) => {
-    const controller = activeStreams.get(streamId)
-    if (!controller) return { ok: false }
-    controller.abort()
-    activeStreams.delete(streamId)
+  ipcMain.handle(IPC.invoke.engineStreamAbort, (event, streamId: string) => {
+    assertTrustedRenderer(event, '引擎流式请求取消')
+    const key = engineStreamKey(event.sender.id, streamId)
+    const owner = activeStreams.get(key)
+    if (!owner) return { ok: false }
+    streamRoutes.delete(owner.routeId)
+    owner.controller.abort()
+    activeStreams.delete(key)
     return { ok: true }
   })
 
@@ -329,6 +395,8 @@ export function registerIpcHandlers(): void {
     windowOf(event)?.close()
   })
   ipcMain.handle(IPC.invoke.windowIsMaximized, (event) => windowOf(event)?.isMaximized() ?? false)
+  ipcMain.handle(IPC.invoke.windowGetVisibility, event =>
+    readWindowVisibility(assertTrustedRenderer(event, '窗口可见性读取')))
 
   // ── 设置 ──
   ipcMain.handle(IPC.invoke.settingsGet, () => getSettings())
@@ -755,8 +823,9 @@ export function registerIpcHandlers(): void {
 
 /** 应用退出时中止所有流，避免 reader 悬挂 */
 export function abortAllStreams(): void {
-  for (const controller of activeStreams.values()) controller.abort()
+  for (const owner of activeStreams.values()) owner.controller.abort()
   activeStreams.clear()
+  streamRoutes.clear()
 }
 
 /** 应用退出时停掉语言服务进程 */

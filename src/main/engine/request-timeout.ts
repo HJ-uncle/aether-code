@@ -16,6 +16,7 @@ export function managementRequestTimeout(
   const path = normalizeEnginePath(input.path).split('?')[0]
   // A hung status probe must not block every task's next reconciliation cycle.
   if (input.method === 'GET' && path === '/api/v1/chat/status') return WORK_STATUS_TIMEOUT_MS
+  if (input.method === 'GET' && path === '/api/v1/performance/runtime') return WORK_STATUS_TIMEOUT_MS
   // Observation shares two real transport slots; a stalled child read must
   // release its fetch before another discovery or selected run can proceed.
   if (input.method === 'GET' && (path === '/api/v1/subagent/discovery' ||

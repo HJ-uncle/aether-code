@@ -73,19 +73,29 @@ export function parseControllerContext(value: unknown, target: ControllerTarget)
     throw new Error('子代理已切换工作轮次，请刷新后重新确认补充要求')
   return result
 }
-export function parseControllerReceipt(value: unknown, pending: ControllerPending): ControllerReceipt {
+/** Public receipt reads contain immutable acceptance evidence, never message bodies. */
+export function parseControllerReceiptEvidence(value: unknown): ControllerReceipt {
   if (!record(value) || !identifier(value.messageId) || !identifier(value.rootRunId) || !identifier(value.rootAttemptId) || !identifier(value.senderParticipantId)
     || !identifier(value.senderInvocationRunId) || !identifier(value.recipientParticipantId) || !identifier(value.requestKey)
     || typeof value.payloadHash !== 'string' || !/^[a-f0-9]{64}$/i.test(value.payloadHash)
     || !integer(value.payloadBytes) || !integer(value.acceptedSeq) || !integer(value.acceptedAt)
     || typeof value.state !== 'string' || !['queued', 'rejected', 'interrupted'].includes(value.state)
     || (value.reason !== undefined && (typeof value.reason !== 'string' || utf8Bytes(value.reason) > 4096)))
-    throw new Error('排队回执无效，已保留原要求，请核对结果')
-  if (value.rootRunId !== pending.rootRunId || value.rootAttemptId !== pending.rootAttemptId
-    || value.recipientParticipantId !== pending.recipientParticipantId || value.requestKey !== pending.requestKey
-    || value.payloadBytes !== pending.payloadBytes)
+    throw new Error('排队回执无效，已拒绝显示，请核对原记录')
+  // Do not retain unknown body/detail fields from a nominally scalar receipt page.
+  return { messageId: value.messageId, rootRunId: value.rootRunId, rootAttemptId: value.rootAttemptId,
+    senderParticipantId: value.senderParticipantId, senderInvocationRunId: value.senderInvocationRunId,
+    recipientParticipantId: value.recipientParticipantId, requestKey: value.requestKey, payloadHash: value.payloadHash,
+    payloadBytes: value.payloadBytes, acceptedSeq: value.acceptedSeq, acceptedAt: value.acceptedAt,
+    state: value.state as ControllerReceipt['state'], ...(typeof value.reason === 'string' ? { reason: value.reason } : {}) }
+}
+export function parseControllerReceipt(value: unknown, pending: ControllerPending): ControllerReceipt {
+  const receipt = parseControllerReceiptEvidence(value)
+  if (receipt.rootRunId !== pending.rootRunId || receipt.rootAttemptId !== pending.rootAttemptId
+    || receipt.recipientParticipantId !== pending.recipientParticipantId || receipt.requestKey !== pending.requestKey
+    || receipt.payloadBytes !== pending.payloadBytes)
     throw new Error('排队回执与原请求不符，已保留原要求，请核对结果')
-  return value as unknown as ControllerReceipt
+  return receipt
 }
 
 export function controllerConnectionIdentity(value: NonNullable<EngineRequestInput['expectedEngine']>): string {

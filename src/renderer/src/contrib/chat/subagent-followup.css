@@ -38,4 +38,20 @@
 .subagent-receipt-history__actions, .subagent-receipt-history__confirm { display: flex; flex-wrap: wrap; gap: 6px 12px; }
 .subagent-receipt-history__actions > button, .subagent-receipt-history__confirm > button { min-height: 28px; }
 .subagent-receipt-history__confirm > p { flex-basis: 100%; }
+.collaboration-inspector { flex: 0 0 auto; min-width: 0; padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--fg-muted); font-size: 12px; line-height: 1.5; }
+.collaboration-inspector summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; cursor: pointer; color: var(--fg); }
+.collaboration-inspector > summary { font-weight: 500; }
+.collaboration-inspector summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: var(--radius); }
+.collaboration-inspector p { margin: 6px 0; overflow-wrap: anywhere; }
+.collaboration-inspector__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; }
+.collaboration-inspector__actions > button { display: inline-flex; align-items: center; gap: 4px; min-height: 30px; }
+.collaboration-inspector__capabilities, .collaboration-inspector__evidence { margin: 8px 0; }
+.collaboration-inspector__capabilities { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px 12px; }
+.collaboration-inspector dt { color: var(--fg-muted); }
+.collaboration-inspector dd { margin: 0; color: var(--fg); overflow-wrap: anywhere; }
+.collaboration-inspector__list { max-height: 240px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.collaboration-inspector__list > details { padding-block: 4px; border-top: 1px solid var(--border); }
+.collaboration-inspector__evidence > div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 8px; padding-block: 3px; }
+.collaboration-inspector__evidence dt { color: var(--fg-muted); }
+.collaboration-inspector__evidence dd { margin: 0; color: var(--fg); overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) { .subagent-followup__toggle > svg { transition: none; } }

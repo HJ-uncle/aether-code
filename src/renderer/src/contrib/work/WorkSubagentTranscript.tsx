@@ -84,7 +84,7 @@ export function WorkSubagentTranscript({ source, parentSessionId, childSessionId
     const row = Array.from(container.querySelectorAll<HTMLElement>('[data-transcript-id]')).find(item => item.getBoundingClientRect().bottom > top)
     if (row?.dataset.transcriptId) anchor.current = { id: row.dataset.transcriptId, top: row.getBoundingClientRect().top - top }
   }
-  const load = async (action: 'older' | 'refresh'): Promise<void> => {
+  const load = async (action: 'older' | 'newer' | 'refresh'): Promise<void> => {
     if (!active || !ready || pending.current) return
     captureAnchor()
     pending.current = true
@@ -100,6 +100,7 @@ export function WorkSubagentTranscript({ source, parentSessionId, childSessionId
       const next = await loadWorkSubagentTranscript({ source, parentSessionId, childSessionId, runId, subagentProtocol }, input => request({ ...input, expectedEngine }), current, previous, action)
       if (!current()) return
       if (previous) memory.visibleCount += Math.max(0, next.rows.length - previous.rows.length)
+      if (next.revision === undefined) { anchor.current = null; memory.scrollTop = 0; if (scroller.current) scroller.current.scrollTop = 0 }
       memory.window = next
       memory.visibleCount = Math.min(next.rows.length, Math.max(SUBAGENT_TRANSCRIPT_PAGE_SIZE, memory.visibleCount))
       const keys = new Set(next.rows.flatMap(row => [`${row.id}:body`, `${row.id}:reasoning`, `${row.id}:args`]))
@@ -140,11 +141,13 @@ export function WorkSubagentTranscript({ source, parentSessionId, childSessionId
   return <section className="work-subagent-transcript" aria-label={`${name} 的完整对话`}>
     <div className="work-subagent-transcript__toolbar"><span>{window ? `当前窗口 ${window.rows.length.toLocaleString()} / ${window.total.toLocaleString()} 条记录` : '读取此代理的独立会话记录'}</span><button type="button" disabled={!ready || loading} onClick={() => void load('refresh')} aria-label="更新子代理完整对话">{loading ? <Spinner size={14} /> : <Icon name="restart" size={14} />}更新对话</button></div>
     {window?.windowed ? <p className="work-subagent-transcript__notice">加载更早内容后，点“更新对话”回到最新记录。</p> : null}
+    {window && window.revision === undefined ? <p className="work-subagent-transcript__notice" role="status">归档第 {window.firstPage} / {Math.max(1, Math.ceil(window.total / SUBAGENT_TRANSCRIPT_PAGE_SIZE))} 页 · 引擎未提供跨页版本一致性，每次仅显示当前页。</p> : null}
     {window && availableOnly ? <p className="work-subagent-transcript__notice" role="status">当前后端提供可用历史；压缩前的部分记录可能未保留。</p> : null}
     {error ? <div className="work-subagent-transcript__error" role="alert"><span>{error}</span><button type="button" disabled={!ready || loading} onClick={() => void load('refresh')}>重试读取</button></div> : null}
     <div className="work-subagent-transcript__scroll" ref={scroller} onScroll={event => { memory.scrollTop = event.currentTarget.scrollTop }} aria-busy={loading}>
       {hasEarlier ? <button type="button" className="work-subagent-transcript__earlier" disabled={!ready || loading} onClick={() => { if (rows.length > memory.visibleCount) { captureAnchor(); memory.visibleCount += SUBAGENT_TRANSCRIPT_PAGE_SIZE; redraw() } else void load('older') }}><Icon name="chevron-up" size={14} />加载更早记录</button> : null}
       {visible.map(row => <TranscriptRow key={row.id} row={row} name={name} memory={memory} redraw={redraw} fileContext={fileContext} toolNames={toolNames} />)}
+      {window && window.lastPage < Math.ceil(window.total / SUBAGENT_TRANSCRIPT_PAGE_SIZE) ? <button type="button" className="work-subagent-transcript__earlier" disabled={!ready || loading} onClick={() => void load('newer')}><Icon name="chevron-down" size={14} />加载较新记录</button> : null}
       {!visible.length ? <div className="work-subagent-transcript__empty" role="status">{loading ? <><Spinner size={18} /><p>正在读取完整对话…</p></> : window ? <><Icon name="chat" size={24} /><p>{running ? '此代理尚未写入对话记录，稍后可更新查看。' : '此代理没有可用的对话记录。'}</p></> : <p>连接就绪后可读取此代理的对话。</p>}</div> : null}
       {running && visible.length ? <p className="work-subagent-transcript__notice">本轮仍在运行，更新对话可查看新记录。</p> : null}
     </div>

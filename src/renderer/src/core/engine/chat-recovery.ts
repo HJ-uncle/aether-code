@@ -6,6 +6,7 @@ import type { ChatMessage } from './useChat'
 import { replayMessages, type EngineHistoryRow } from './chat-history'
 import { reducePayload } from './chat-payload'
 import { applyRootRuns } from './root-run-state'
+import { inspectStreamCursor } from '@shared/stream-event'
 
 export interface ChatRecoverySnapshot {
   schemaVersion: 1
@@ -39,11 +40,8 @@ export interface ChatRecoverySnapshot {
 
 /** Same-stream repeated or older delivery must never append text or tool arguments twice. */
 export function acceptEventId(consumed: string | null, incoming?: string): boolean {
-  if (!incoming || !consumed) return true
-  const previous = consumed.lastIndexOf(':'), next = incoming.lastIndexOf(':')
-  if (previous < 0 || next < 0 || consumed.slice(0, previous) !== incoming.slice(0, next)) return incoming !== consumed
-  const oldSeq = Number(consumed.slice(previous + 1)), newSeq = Number(incoming.slice(next + 1))
-  return Number.isSafeInteger(newSeq) && Number.isSafeInteger(oldSeq) && newSeq > oldSeq
+  const disposition = inspectStreamCursor(consumed, incoming)
+  return disposition === 'untracked' || disposition === 'forward'
 }
 
 /** Replace the current assistant turn, never append a snapshot to already replayed partial text. */

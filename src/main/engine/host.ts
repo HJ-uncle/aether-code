@@ -19,9 +19,11 @@ import { findAvailablePort } from './sdk/port-finder'
 import { startProcess, type ProcessHandle } from './sdk/process-manager'
 import { OwnedProcessLedger } from './sdk/process-lifecycle'
 import { waitUntilReady } from './sdk/readiness-probe'
+import { isHealthProbeCurrent } from './health-probe'
 import { engineDataFile, migrateLegacyModels, resolveRuntime, runtimeEnvironment } from './runtime'
 import {
   assertEngineHealth,
+  engineIdentityOf,
   engineHeaders,
   engineTargetError,
   normalizeEnginePath,
@@ -40,6 +42,7 @@ import type { NativeBrowserHostTransport } from '../browser/native-host-manager'
 const PREFERRED_PORT = 12323
 const STARTUP_TIMEOUT_MS = 60_000
 const HEALTH_INTERVAL_MS = 5_000
+const HEALTH_TIMEOUT_MS = 3_000
 const HEALTH_FAILURE_THRESHOLD = 3
 /** Remote links should survive short network flaps and service restarts. */
 const REMOTE_RECONNECT_INITIAL_MS = 1_000
@@ -73,6 +76,7 @@ export class EngineHost extends EventEmitter {
   private healthLastSuccessAt: number | null = null
   private healthLastCheckedAt: number | null = null
   private healthLastLatencyMs: number | null = null
+  private healthCheckOwner: AbortController | null = null
   private remoteReconnectTimer: ReturnType<typeof setTimeout> | null = null
   private remoteReconnectAttempt = 0
   /** Explicitly disabled by stop(); enabled while a remote target is selected. */
@@ -94,12 +98,15 @@ export class EngineHost extends EventEmitter {
   /** Diagnostics reuse the existing probes, so opening a monitor adds no HTTP heartbeat. */
   getHealthDiagnostics(): Omit<EngineHealthDiagnostics, 'activeStreams'> {
     return {
+      source: 'desktop-http-probe',
       lastSuccessAt: this.healthLastSuccessAt,
       lastCheckedAt: this.healthLastCheckedAt,
       lastLatencyMs: this.healthLastLatencyMs,
       consecutiveFailures: this.healthFailures,
       checkIntervalMs: HEALTH_INTERVAL_MS,
-      failureThreshold: HEALTH_FAILURE_THRESHOLD
+      failureThreshold: HEALTH_FAILURE_THRESHOLD,
+      timeoutMs: HEALTH_TIMEOUT_MS,
+      checking: this.snapshot.phase === 'ready' && this.healthCheckOwner === this.transportController
     }
   }
 
@@ -532,6 +539,9 @@ export class EngineHost extends EventEmitter {
     this.stopHealthWatch()
     this.healthFailures = 0
     this.healthLastSuccessAt = Date.now()
+    // A successful handshake already checked /health and the instance id.
+    // Keep the initial freshness truthful before the first interval fires.
+    this.healthLastCheckedAt = this.healthLastSuccessAt
     this.healthTimer = setInterval(() => {
       void this.checkHealth()
     }, HEALTH_INTERVAL_MS)
@@ -582,27 +592,35 @@ export class EngineHost extends EventEmitter {
   }
 
   private async checkHealth(): Promise<void> {
-    const { baseUrl, instanceId } = this.snapshot
+    const snapshot = this.snapshot
+    const { baseUrl, instanceId } = snapshot
     const generation = this.generation
+    const transport = this.transportController
     if (!baseUrl || this.snapshot.phase !== 'ready') return
+    if (this.healthCheckOwner === transport) return
+    this.healthCheckOwner = transport
+    const lease = { snapshot, generation, transport }
+    const current = (): boolean => isHealthProbeCurrent(lease, this.generation, this.transportController, this.snapshot)
     const startedAt = performance.now()
     try {
-      const signal = AbortSignal.any([this.requestSignal, AbortSignal.timeout(3000)])
+      const signal = AbortSignal.any([transport.signal, AbortSignal.timeout(HEALTH_TIMEOUT_MS)])
       const health = await fetch(`${baseUrl}/health`, { signal, redirect: 'error' })
       if (!health.ok) throw new Error(String(health.status))
       assertEngineHealth(await health.json())
       const response = await fetch(`${baseUrl}/meta`, { signal, redirect: 'error' })
       if (!response.ok) throw new Error(String(response.status))
-      const meta = parseEngineMeta(await response.json(), this.snapshot.buildId ?? undefined)
+      const meta = parseEngineMeta(await response.json(), snapshot.buildId ?? undefined)
       if (meta.instanceId !== instanceId) throw new Error('引擎实例已变化')
-      if (this.current(generation)) {
+      if (current()) {
         this.healthFailures = 0
         this.healthLastSuccessAt = Date.now()
         this.healthLastCheckedAt = this.healthLastSuccessAt
         this.healthLastLatencyMs = performance.now() - startedAt
       }
     } catch {
-      if (!this.current(generation) || this.snapshot.phase !== 'ready') return
+      // Account changes abort the old transport without changing generation.
+      // Its abort/late response must never make the new identity look unhealthy.
+      if (!current()) return
       this.healthLastCheckedAt = Date.now()
       this.healthLastLatencyMs = performance.now() - startedAt
       if (++this.healthFailures >= HEALTH_FAILURE_THRESHOLD) {
@@ -623,6 +641,8 @@ export class EngineHost extends EventEmitter {
           })
         }
       }
+    } finally {
+      if (this.healthCheckOwner === transport) this.healthCheckOwner = null
     }
   }
 
@@ -646,11 +666,12 @@ export class EngineHost extends EventEmitter {
     subagentProtocol?: 2
   ): Promise<void> {
     const snapshot = this.snapshot
+    const boundExpectedEngine = expectedEngine ?? engineIdentityOf(snapshot)
     if (isAccountRequestPath(path)) {
       this.emit('stream', { streamId, type: 'error', message: '请通过账号入口操作认证。' } satisfies StreamEvent)
       return
     }
-    const unsupported = engineTargetError(snapshot, expectedEngine) ?? remoteRequestError(snapshot.mode, method, path) ?? remoteWorkspacePathError(snapshot.mode, method, path, body)
+    const unsupported = engineTargetError(snapshot, boundExpectedEngine) ?? remoteRequestError(snapshot.mode, method, path) ?? remoteWorkspacePathError(snapshot.mode, method, path, body)
     if (unsupported) {
       this.emit('stream', { streamId, type: 'error', message: unsupported } satisfies StreamEvent)
       return
@@ -684,7 +705,7 @@ export class EngineHost extends EventEmitter {
       if (!res.ok || !res.body) {
         const envelope = await res.json().catch(() => ({})) as { code?: number; message?: string }
         if (res.status === 409 && envelope.code === 40902) {
-          this.emit('stream', { streamId, type: 'snapshot-required' } satisfies StreamEvent)
+          this.emit('stream', { streamId, type: 'snapshot-required', reason: 'retention-gap' } satisfies StreamEvent)
           return
         }
         this.emit('stream', { streamId, type: 'error', status: res.status, code: envelope.code,
@@ -728,6 +749,12 @@ export class EngineHost extends EventEmitter {
           const parsed = parseSseBlock(block)
           if (parsed) {
             this.emit('stream', { streamId, ...parsed } satisfies StreamEvent)
+            if (parsed.type === 'snapshot-required') {
+              // A protocol fault closes this viewer only. Leaving its reader
+              // open would retain an unconsumed connection during recovery.
+              void reader.cancel().catch(() => {})
+              return
+            }
             if (parsed.type === 'done') return
           }
         }

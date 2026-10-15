@@ -1,6 +1,6 @@
 /** Main-process HTTP bridge: shared transport identity and strict response envelopes. */
 import { engineHost } from './host'
-import { engineTargetError, isAccountRequestPath, normalizeEnginePath, remoteRequestError, remoteWorkspacePathError, subagentProtocolHeaders } from './protocol'
+import { engineIdentityOf, engineTargetError, isAccountRequestPath, normalizeEnginePath, remoteRequestError, remoteWorkspacePathError, subagentProtocolHeaders } from './protocol'
 import { prepareRemoteChatBody } from './remote-workspace'
 import { managementRequestSignal } from './request-timeout'
 import type { EngineRequestInput, EngineRequestResult, EngineUploadInput } from '../../shared/ipc'
@@ -25,13 +25,17 @@ export async function engineRequest<T = unknown>(
   catch { return { ok: false, code: 400, message: '子 Agent 协议版本无效', data: null } }
   if (isAccountRequestPath(input.path)) return { ok: false, code: 403, message: '请通过账号入口操作认证。', data: null }
   const snapshot = engineHost.getSnapshot()
+  // Bind even legacy callers that omitted expectedEngine to the instance that
+  // was current when this request entered the main process.  This closes the
+  // delayed-request gap while preserving the existing renderer API shape.
+  const expectedEngine = input.expectedEngine ?? engineIdentityOf(snapshot)
   // Keep this check local to the transport as a defense in depth: callers
   // must never be able to send a client-local absolute path to a remote
   // workspace endpoint, even if a future route is added to the allowlist.
   if (snapshot.mode === 'remote' && input.method === 'POST' && /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(String((input.body as Record<string, unknown> | undefined)?.path ?? '')) && /\/workspace\/file(?:\/|$)/.test(input.path)) {
     return { ok: false, code: 409, message: '远端工作区请求必须使用相对路径，不能携带本机绝对路径', data: null }
   }
-  const unsupported = engineTargetError(snapshot, input.expectedEngine) ?? remoteRequestError(snapshot.mode, input.method, input.path) ?? remoteWorkspacePathError(snapshot.mode, input.method, input.path, input.body)
+  const unsupported = engineTargetError(snapshot, expectedEngine) ?? remoteRequestError(snapshot.mode, input.method, input.path) ?? remoteWorkspacePathError(snapshot.mode, input.method, input.path, input.body)
   if (unsupported) return { ok: false, code: 409, message: unsupported, data: null }
   const baseUrl = engineHost.baseUrl
   if (!baseUrl) return { ok: false, code: -1, message: '引擎未就绪', data: null }
@@ -108,7 +112,8 @@ export async function engineRequest<T = unknown>(
 export async function engineUpload<T = unknown>(input: EngineUploadInput): Promise<EngineRequestResult<T>> {
   if (isAccountRequestPath(input.path)) return { ok: false, code: 403, message: '请通过账号入口操作认证。', data: null }
   const snapshot = engineHost.getSnapshot()
-  const unsupported = engineTargetError(snapshot, input.expectedEngine) ?? remoteRequestError(snapshot.mode, 'POST', input.path)
+  const expectedEngine = input.expectedEngine ?? engineIdentityOf(snapshot)
+  const unsupported = engineTargetError(snapshot, expectedEngine) ?? remoteRequestError(snapshot.mode, 'POST', input.path)
   if (unsupported) return { ok: false, code: 409, message: unsupported, data: null }
   const baseUrl = engineHost.baseUrl
   if (!baseUrl) return { ok: false, code: -1, message: '引擎未就绪', data: null }

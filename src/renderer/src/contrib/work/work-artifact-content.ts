@@ -2,6 +2,7 @@ import type { FsFileContent } from '@shared/ipc'
 
 export interface WorkArtifactContent {
   content: string | null
+  isBinary?: boolean
   coverage: 'current' | 'partial' | 'receipt' | 'unavailable'
   notice: string
 }
@@ -15,7 +16,7 @@ export function workArtifactReadFailure(receipt: string | null, reason: unknown)
 }
 
 export function workArtifactReadResult(file: Pick<FsFileContent, 'content' | 'isBinary' | 'truncated' | 'tooLarge'>): WorkArtifactContent {
-  if (file.isBinary) return { content: null, coverage: 'unavailable', notice: '二进制文件无法在此预览，请在编辑器打开。' }
+  if (file.isBinary) return { content: null, isBinary: true, coverage: 'unavailable', notice: '当前不提供原版式预览，可下载原文件，或添加到对话继续处理。' }
   if (typeof file.content !== 'string') return { content: null, coverage: 'unavailable', notice: '工作区返回了无效的文件内容。' }
   if (file.tooLarge && !file.content) return { content: null, coverage: 'unavailable', notice: '文件过大，无法在此预览，请在编辑器打开。' }
   if (file.truncated || file.tooLarge) return { content: file.content, coverage: 'partial', notice: '仅显示文件的预览片段。复制和下载只包含此片段，添加到对话会引用当前文件路径。' }

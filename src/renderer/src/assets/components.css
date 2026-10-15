@@ -5566,6 +5566,11 @@
   font-size: 12px;
 }
 
+.chat__notice--info {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--fg);
+}
+
 .link {
   color: var(--accent);
   text-decoration: underline;

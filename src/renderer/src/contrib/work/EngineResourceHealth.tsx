@@ -2,12 +2,15 @@ import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import type { EngineSnapshot } from '@shared/ipc'
 import type { EngineDiagnostics } from '@shared/engine-diagnostics'
 import { Icon } from '@renderer/workbench/icons'
+import { getWorkbenchVisible, onWorkbenchVisibility } from '@renderer/core/platform/workbench-visibility'
+import { EngineRuntimeHealth } from './EngineRuntimeHealth'
 import {
   engineDiagnosticsIdentity,
   formatResourceBytes,
   formatResourcePercent,
   formatResourceRate,
   formatResourceTimestamp,
+  healthProbeFreshness,
   presentResourceHealth,
   resourceFraction,
   resourceSampleIsStale,
@@ -82,8 +85,8 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
       setCollecting(false)
       setRefreshingStorage(false)
     }, 0)
-    // Do not probe an idle/stopping engine. A remote engine gets one explicit
-    // unavailable response so the UI can state the boundary, then stays quiet.
+    // Remote diagnostics reuse the existing host heartbeat and return explicit
+    // unavailable OS resources; they never inspect a local stand-in process.
     if (snapshot.phase !== 'ready') {
       collect.current = async () => {}
       return () => {
@@ -94,17 +97,17 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
     }
     const schedule = (): void => {
       window.clearTimeout(timer)
-      if (alive && snapshot.mode === 'embedded' && !document.hidden)
+      if (alive && getWorkbenchVisible())
         timer = window.setTimeout(() => void read(), SAMPLE_INTERVAL_MS)
     }
     const read = async (refreshStorage = false): Promise<void> => {
-      if (!alive || document.hidden || pending) return
+      if (!alive || !getWorkbenchVisible() || pending) return
       pending = true
       setCollecting(true)
       if (refreshStorage) setRefreshingStorage(true)
       try {
         const result = await window.aether.engine.diagnostics({ refreshStorage })
-        if (!alive || result.identity !== identity) return
+        if (!alive || !getWorkbenchVisible() || result.identity !== identity) return
         setDiagnostics(result)
         setError(null)
         // The initial diagnostics call also performs the first storage scan.
@@ -116,7 +119,7 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
         if (refreshStorage) setLastStorageRefresh(Date.now())
         setNow(Date.now())
       } catch (cause) {
-        if (alive) {
+        if (alive && getWorkbenchVisible()) {
           setError({
             identity,
             message: cause instanceof Error ? cause.message : '无法读取引擎资源，请重试。'
@@ -135,15 +138,15 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
     collect.current = read
     const onVisibility = (): void => {
       window.clearTimeout(timer)
-      if (!document.hidden) void read()
+      if (getWorkbenchVisible()) void read()
     }
-    document.addEventListener('visibilitychange', onVisibility)
+    const offVisibility = onWorkbenchVisibility(onVisibility)
     window.setTimeout(() => void read(), 0)
     return () => {
       alive = false
       window.clearTimeout(timer)
       window.clearTimeout(resetTimer)
-      document.removeEventListener('visibilitychange', onVisibility)
+      offVisibility()
       if (collect.current === read) collect.current = async () => {}
     }
   }, [identity, snapshot.mode, snapshot.phase])
@@ -153,6 +156,7 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
   const resources = currentDiagnostics?.resources
   const storage = currentDiagnostics?.storage
   const health = currentDiagnostics?.health
+  const heartbeat = healthProbeFreshness(health, now)
   const processAvailable = resources?.state === 'available'
   const stale = Boolean(processAvailable && resourceSampleIsStale(resources.sampledAt, now))
   const status = presentResourceHealth(snapshot, currentDiagnostics, now, Boolean(currentError))
@@ -197,7 +201,7 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
       <header className="engine-resource__heading">
         <div>
           <h2>资源与健康</h2>
-          <p>CPU、内存与进程 I/O · 每 5 秒采样</p>
+          <p>{snapshot.mode === 'remote' ? '远端连接心跳 · 每 5 秒同步' : 'CPU、内存与进程 I/O · 每 5 秒采样'}</p>
         </div>
         <span className="engine-resource__health" data-state={status.state}>
           <span aria-hidden="true" />
@@ -348,6 +352,10 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
           <strong>{formatResourceTimestamp(health?.lastCheckedAt)}</strong>
         </div>
         <div>
+          <span>心跳新鲜度</span>
+          <strong data-freshness={heartbeat.state}>{heartbeat.label}</strong>
+        </div>
+        <div>
           <span>健康检查延迟</span>
           <strong>
             {usableResourceNumber(health?.lastLatencyMs)
@@ -366,6 +374,7 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
           <strong>{health ? health.activeStreams : '—'}</strong>
         </div>
       </div>
+      <EngineRuntimeHealth snapshot={snapshot} />
       <div className="engine-resource__capacity" aria-label="宿主容量">
         <div>
           <span>宿主内存</span>
@@ -480,7 +489,8 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
       </footer>
       <p className="engine-resource__scope">
         顶部资源卡显示引擎主进程；“进程”表会在权限允许时合计可确认的后代进程。I/O
-        包括文件、管道和设备传输。健康检查延迟来自连接探针。
+        包括文件、管道和设备传输。连接心跳复用主进程每 5 秒的 /health 与实例身份检查，
+        不新增引擎请求{health?.timeoutMs ? `；单次超时 ${health.timeoutMs / 1000} 秒` : ''}。
       </p>
     </section>
   )

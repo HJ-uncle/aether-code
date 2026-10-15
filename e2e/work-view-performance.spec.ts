@@ -1,7 +1,7 @@
 /** Pure Work rendering boundaries: long-history anchors, complete page
  * coverage and pointer coordinates independent of React commit frequency. */
 import { expect, test } from '@playwright/test'
-import { WORK_ACTIVITY_PAGE_SIZE, WORK_MESSAGE_PAGE_SIZE, workMessageStart, workPageRange, workPaneRatio, workToolSnapshot } from '../src/renderer/src/contrib/work/work-view-performance'
+import { WORK_ACTIVITY_PAGE_SIZE, WORK_MESSAGE_PAGE_SIZE, WORK_MESSAGE_WINDOW_SIZE, workMessageRange, workMessageStart, workPageRange, workPaneRatio, workToolSnapshot } from '../src/renderer/src/contrib/work/work-view-performance'
 
 test('正文流式帧复用工具派生列表，工具回执与消息增删仍立即更新', () => {
   const tools = [{ id: 'call-1', result: '' }]
@@ -45,4 +45,21 @@ test('拖动宽度由初始坐标计算，多个未提交事件不会丢失位�
   expect(workPaneRatio(44, 100, -1000, 1000)).toBe(35)
   expect(workPaneRatio(44, 100, 3000, 1000)).toBe(62)
   expect(workPaneRatio(44, 100, 100, 0)).toBe(44)
+})
+
+test('浏览旧页与持续追加同时发生时，正文 DOM 窗口保持固定且所有页可达', () => {
+  const messages = Array.from({ length: 1_000 }, (_, index) => ({ id: `message-${index}` }))
+  const initial = workMessageRange(messages, null)
+  expect(initial).toEqual({ start: 940, end: 1_000, newer: 0 })
+  const old = workMessageRange(messages, 'message-100')
+  expect(old).toEqual({ start: 100, end: 100 + WORK_MESSAGE_WINDOW_SIZE, newer: 1_000 - 100 - WORK_MESSAGE_WINDOW_SIZE })
+  const appended = [...messages, ...Array.from({ length: 1_000 }, (_, index) => ({ id: `later-${index}` }))]
+  expect(workMessageRange(appended, 'message-100')).toEqual({ ...old, newer: old.newer + 1_000 })
+  const covered = new Set<number>()
+  for (let start = 0; start < messages.length; start += WORK_MESSAGE_PAGE_SIZE) {
+    const range = workMessageRange(messages, messages[start].id)
+    expect(range.end - range.start).toBeLessThanOrEqual(WORK_MESSAGE_WINDOW_SIZE)
+    for (let index = range.start; index < range.end; index++) covered.add(index)
+  }
+  expect(covered.size).toBe(messages.length)
 })

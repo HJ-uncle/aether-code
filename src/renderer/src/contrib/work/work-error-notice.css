@@ -80,6 +80,20 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.work-error-notice__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-inline-start: 23px;
+}
+.work-error-notice__actions .btn {
+  min-height: 26px;
+}
+.work-error-notice__action-error {
+  margin: 0 0 0 23px;
+  color: var(--danger-fg);
+  font-size: 11px;
+}
 .work-error-notice--subagent {
   margin: 0;
   border: 0;

@@ -1,7 +1,19 @@
 import { toolProfileHeaders, type ToolProfile } from './tool-profile'
 import type { EngineSnapshot } from '../../shared/ipc'
 
-export function engineTargetError(snapshot: EngineSnapshot, expected?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>): string | null {
+export type EngineIdentity = Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>
+
+/** Public connection identity used to fence delayed renderer work. */
+export function engineIdentityOf(snapshot: EngineSnapshot): EngineIdentity {
+  return {
+    mode: snapshot.mode,
+    baseUrl: snapshot.baseUrl,
+    instanceId: snapshot.instanceId,
+    accountId: snapshot.accountId ?? null
+  }
+}
+
+export function engineTargetError(snapshot: EngineSnapshot, expected?: EngineIdentity): string | null {
   return expected && (snapshot.mode !== expected.mode || snapshot.baseUrl !== expected.baseUrl || snapshot.instanceId !== expected.instanceId || (snapshot.accountId ?? null) !== (expected.accountId ?? null))
     ? '引擎连接已经切换，请在当前会话重新操作。'
     : null
@@ -123,6 +135,7 @@ const REMOTE_READ_ROUTES = [
   // Work scratch and project Git resolve the same authenticated session owner.
   /^\/api\/v1\/git\/(?:binding|lease)$/,
   /^\/(health|meta|metrics)$/,
+  /^\/api\/v1\/performance\/runtime$/,
   /^\/api\/v1\/(models|models\/capability-defs|tools|system-tools|external-skills|changes|todos)$/,
   /^\/api\/v1\/agents(?:\/[a-zA-Z0-9_-]+)?$/,
   /^\/api\/v1\/conversation\/(sessions|history|archive)$/,
@@ -149,6 +162,7 @@ const REMOTE_READ_ROUTES = [
   /^\/api\/v1\/subagent\/(?:capabilities|discovery)$/,
   /^\/api\/v1\/collaboration\/capabilities$/,
   /^\/api\/v1\/collaboration\/roots\/[^/?#]+\/(?:controller-context|controller-receipts\/[^/?#]+)$/,
+  /^\/api\/v1\/collaboration\/roots\/[^/?#]+\/participants\/[^/?#]+\/receipts$/,
   /^\/api\/v1\/subagent\/runs\/[a-zA-Z0-9_-]+\/tools(?:\/[a-zA-Z0-9_-]+)?$/,
   /^\/api\/v1\/command-jobs(?:\/[a-zA-Z0-9_-]+(?:\/output)?)?$/,
   // Scheduled Work tasks are engine-owned and scoped by their stored session.

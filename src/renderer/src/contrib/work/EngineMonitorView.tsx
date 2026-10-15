@@ -3,11 +3,15 @@ import type { EngineSnapshot } from '@shared/ipc'
 import { useApp } from '@renderer/core/app-context'
 import { getEngineSource } from '@renderer/core/engine/source'
 import { requestOrThrow } from '@renderer/core/engine/client'
+import { getWorkbenchVisible, useWorkbenchVisible } from '@renderer/core/platform/workbench-visibility'
 import { Icon } from '@renderer/workbench/icons'
 import { SectionHeading } from '@renderer/workbench/ui-primitives'
 import type { WorkTask, WorkTaskStatus } from './work-state'
 import { listAutomations, type AutomationJob } from '../automations/automation-client'
 import { EngineResourceHealth } from './EngineResourceHealth'
+import { RendererPerformanceHealth } from './RendererPerformanceHealth'
+import { engineDiagnosticsIdentity } from './engine-resource-presentation'
+import { createMonitorReadFlight } from './monitor-read-flight'
 
 const STATUS_LABEL: Record<WorkTaskStatus, string> = {
   draft: '草稿',
@@ -266,58 +270,57 @@ export function EngineMonitorView({
   onSelectTask?: (id: string) => void
 }): JSX.Element {
   const { engine } = useApp()
+  const monitorIdentity = engineDiagnosticsIdentity(engine.snapshot)
+  const visible = useWorkbenchVisible()
   const [showDetails, setShowDetails] = useState(false)
   const [now, setNow] = useState(() => Date.now())
-  const [automationJobs, setAutomationJobs] = useState<AutomationJob[]>([])
+  const [automationData, setAutomationData] = useState<{ identity: string; jobs: AutomationJob[]; error: string; truncated: boolean }>({ identity: monitorIdentity, jobs: [], error: '', truncated: false })
   const [automationLoading, setAutomationLoading] = useState(false)
-  const [automationError, setAutomationError] = useState('')
-  const [automationTruncated, setAutomationTruncated] = useState(false)
   const [automationReload, setAutomationReload] = useState(0)
   const automationGeneration = useRef(0)
-  const automationPending = useRef(false)
+  const automationFlight = useRef(createMonitorReadFlight())
+  const automationJobs = automationData.identity === monitorIdentity ? automationData.jobs : []
+  const automationError = automationData.identity === monitorIdentity ? automationData.error : ''
+  const automationTruncated = automationData.identity === monitorIdentity && automationData.truncated
   useEffect(() => {
+    if (!visible || !ready) return
     let alive = true
+    const binding = automationFlight.current.bind(() => void load())
     const load = async (): Promise<void> => {
-      if (!alive || document.hidden || !ready || automationPending.current) return
-      automationPending.current = true
+      if (!alive || !getWorkbenchVisible() || !ready) return
+      const finish = binding.acquire()
+      if (!finish) return
       const stamp = ++automationGeneration.current
       const source = getEngineSource()
       setAutomationLoading(true)
       try {
         const jobs = await listAutomations()
-        if (!alive || stamp !== automationGeneration.current || source !== getEngineSource()) return
-        setAutomationTruncated(jobs.length > 64)
-        setAutomationJobs(jobs.slice(0, 64))
-        setAutomationError('')
+        if (!alive || !getWorkbenchVisible() || stamp !== automationGeneration.current || source !== getEngineSource()) return
+        setAutomationData({ identity: monitorIdentity, jobs: jobs.slice(0, 64), truncated: jobs.length > 64, error: '' })
       } catch (cause) {
         if (alive && stamp === automationGeneration.current && source === getEngineSource()) {
-          setAutomationJobs([])
-          setAutomationTruncated(false)
-          setAutomationError(cause instanceof Error ? cause.message : '无法读取定时计划')
+          setAutomationData({ identity: monitorIdentity, jobs: [], truncated: false, error: cause instanceof Error ? cause.message : '无法读取定时计划' })
         }
       } finally {
-        automationPending.current = false
         if (alive && stamp === automationGeneration.current) setAutomationLoading(false)
+        finish()
       }
     }
     void load()
     const timer = window.setInterval(() => void load(), 30_000)
-    const onVisibility = (): void => { if (!document.hidden) void load() }
-    document.addEventListener('visibilitychange', onVisibility)
-    return () => { alive = false; automationGeneration.current += 1; document.removeEventListener('visibilitychange', onVisibility); window.clearInterval(timer) }
-  }, [ready, automationReload])
+    return () => { alive = false; automationGeneration.current += 1; binding.dispose(); window.clearInterval(timer) }
+  }, [ready, automationReload, visible, monitorIdentity])
   useEffect(() => {
     if (!ready) {
-      setAutomationJobs([])
-      setAutomationTruncated(false)
-      setAutomationError('')
+      setAutomationData({ identity: monitorIdentity, jobs: [], truncated: false, error: '' })
       setAutomationLoading(false)
     }
-  }, [ready])
+  }, [ready, monitorIdentity])
   useEffect(() => {
+    if (!visible) return
     const timer = window.setInterval(() => setNow(Date.now()), 30_000)
     return () => window.clearInterval(timer)
-  }, [])
+  }, [visible])
   const snapshot = engine.snapshot
   const state = snapshotState(snapshot)
   const taskView = useMemo(() => {
@@ -455,13 +458,14 @@ export function EngineMonitorView({
           />
         </div>
         <AutomationHealth jobs={automationJobs} loading={automationLoading} error={automationError} truncated={automationTruncated} onRetry={() => {
-          setAutomationError('')
+          setAutomationData(previous => ({ ...previous, error: '' }))
           setAutomationReload(value => value + 1)
         }} onRefresh={() => {
-          setAutomationError('')
+          setAutomationData(previous => ({ ...previous, error: '' }))
           setAutomationReload(value => value + 1)
         }} />
         <PerformanceSummary />
+        <RendererPerformanceHealth />
         <p className="engine-monitor__note"><Icon name="account-outline" size={14} /> 子 Agent 详情沿用任务页的按需加载；点击任务后打开“子 Agent”面板，监控页不会扫描全量会话或保留事件历史。</p>
       </div>
     </div>

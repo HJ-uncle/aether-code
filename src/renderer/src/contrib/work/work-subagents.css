@@ -90,11 +90,18 @@
 }
 .work-subagents__row:hover, .work-subagents__row:focus-visible { background: var(--bg-hover); }
 .work-subagents__row:active { background: var(--bg-active); }
-.work-subagents__row-content { display: flex; flex-direction: column; flex: 1; min-width: 0; gap: 4px; }
+.work-subagents__row-content { display: flex; flex-direction: column; flex: 1; min-width: 0; gap: 3px; }
 .work-subagents__row-content strong { font-size: 13px; font-weight: 500; line-height: 18px; overflow-wrap: anywhere; }
 .work-subagents__row-content > span { color: var(--fg-muted); font-size: 12px; line-height: 16px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.work-subagents__row-properties { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.work-subagents__row-properties > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-subagents__row-properties > span + span::before { content: '·'; margin-inline-end: 8px; color: var(--fg-faint); }
+.work-subagents__row-model { color: var(--fg-faint); }
+.work-subagents__row-pending { color: var(--warn); }
 .work-subagents__row-meta { display: flex; flex-direction: column; align-items: flex-end; flex: 0 0 auto; gap: 4px; color: var(--fg-muted); font-size: 12px; line-height: 16px; }
 .work-subagents__row-meta > span:last-child { font-size: 11px; }
+.work-subagents__row-status--active { color: var(--accent); }
+.work-subagents__row-status--complete { color: var(--fg-muted); }
 .work-subagents__row > svg { flex: 0 0 auto; color: var(--fg-muted); }
 .work-subagents__group-empty { padding: 8px; }
 .work-subagents__empty { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 220px; gap: 12px; padding: 24px 16px; text-align: center; }
@@ -197,6 +204,7 @@
   .work-subagent-transcript__scroll { padding-inline: 12px; }
   .work-subagents__model { display: none; }
   .work-subagents__row { gap: 8px; padding-inline: 4px; }
+  .work-subagents__row-properties > span:not(.work-subagents__row-model) { display: none; }
   .work-subagents__row-meta > span:last-child { display: none; }
   .work-subagents__composer-actions { flex-wrap: wrap; }
   .work-subagents__composer-actions p { flex: 1 1 120px; }

@@ -31,8 +31,18 @@ export function ControllerReceiptHistory({ records, rootRunId, invocationRunId, 
           <p className="subagent-receipt-history__scope">{item.rootRunId === rootRunId && item.recipientInvocationRunId === invocationRunId ? '当前工作轮次' : '较早工作轮次'} · {item.recipientInvocationRunId}</p>
           <pre>{item.message}</pre><p className="subagent-receipt-history__scope">请求标识：{item.requestKey}</p>
           {item.kind === 'refused' ? <p>{item.rejection.message}（{item.rejection.code}）</p> : null}
+          {item.kind === 'refused' && item.rejection.code === 409 ? <p>引擎以 409 拒绝接纳。请核对当前工作轮次、原请求标识与原文；上方保留引擎返回的具体原因。</p> : null}
+          {item.kind === 'accepted' ? <dl className="collaboration-inspector__evidence">
+            <div><dt>接纳序号</dt><dd>{item.receipt.acceptedSeq}</dd></div>
+            <div><dt>消息标识</dt><dd>{item.receipt.messageId}</dd></div>
+            <div><dt>尝试标识</dt><dd>{item.receipt.rootAttemptId}</dd></div>
+            <div><dt>正文大小</dt><dd>{item.receipt.payloadBytes} B</dd></div>
+            <div><dt>SHA-256</dt><dd>{item.receipt.payloadHash}</dd></div>
+            {item.receipt.reason ? <div><dt>引擎原因</dt><dd>{item.receipt.reason}</dd></div> : null}
+          </dl> : null}
           <div className="subagent-receipt-history__actions">
             {item.kind === 'accepted' ? <button type="button" className="link" disabled={disabled} onClick={() => void onQuery(item)}>查询原回执</button> : null}
+            {item.kind === 'accepted' ? <button type="button" className="link" disabled={disabled} onClick={() => void navigator.clipboard.writeText(JSON.stringify({ rootSessionId: item.rootSessionId, recipientInvocationRunId: item.recipientInvocationRunId, receipt: item.receipt }, null, 2)).then(() => setNotice('回执证据已复制'), () => setNotice('复制失败，请手动保存回执证据'))}>复制回执证据</button> : null}
             <button type="button" className="link" disabled={disabled} onClick={() => void navigator.clipboard.writeText(item.message).then(() => setNotice('原文已复制'), () => setNotice('复制失败，请手动保存原文'))}>复制原文</button>
             <button type="button" className="link" disabled={disabled} onClick={() => setConfirmKey(item.requestKey)}>移除此本地记录</button>
           </div>

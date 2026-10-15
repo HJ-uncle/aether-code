@@ -25,6 +25,7 @@ export const IPC = {
     engineRequest: 'engine:request',
     engineUpload: 'engine:upload',
     engineUploadAttachment: 'engine:upload-attachment',
+    engineSaveWorkspaceFile: 'engine:save-workspace-file',
     engineCancelAttachmentUpload: 'engine:cancel-attachment-upload',
     engineStreamStart: 'engine:stream:start',
     engineStreamAbort: 'engine:stream:abort',
@@ -161,7 +162,8 @@ export const IPC = {
     windowMinimize: 'window:minimize',
     windowToggleMaximize: 'window:toggle-maximize',
     windowClose: 'window:close',
-    windowIsMaximized: 'window:is-maximized'
+    windowIsMaximized: 'window:is-maximized',
+    windowGetVisibility: 'window:get-visibility'
   },
   /** 主进程 → 渲染进程（send） */
   event: {
@@ -180,7 +182,8 @@ export const IPC = {
     /** 语言服务 → 渲染进程：stdout 解出的 JSON-RPC 消息（publishDiagnostics / hover 响应等） */
     lspMessage: 'lsp:message',
     /** 语言服务进程退出（code/signal）；渲染端据此决定是否重启或降级 */
-    lspExit: 'lsp:exit'
+    lspExit: 'lsp:exit',
+    windowVisibility: 'window:visibility'
   }
 } as const
 
@@ -557,6 +560,21 @@ export interface RemoteAttachmentResult {
   size: number
 }
 
+/** A user-initiated save retains the original engine and session binding. */
+export interface EngineFileSaveInput {
+  expectedEngine: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>
+  sessionId: string
+  path: string
+  workspaceRoot: string
+}
+
+export interface EngineFileSaveResult {
+  saved: boolean
+  path?: string
+  bytes?: number
+  sha256?: string
+}
+
 /** Multipart upload to an engine route (skill/knowledge imports). */
 export interface EngineUploadInput {
   expectedEngine: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>
@@ -655,13 +673,8 @@ export interface EngineFileChange {
   toolCallId?: string
 }
 
-/** 主进程转发给渲染进程的流式事件 */
-export type StreamEvent = { streamId: string; eventId?: string } & (
-  | { type: 'payload'; payload: ChatSsePayload }
-  | { type: 'done' }
-  | { type: 'snapshot-required' }
-  | { type: 'error'; message: string; status?: number; code?: number }
-)
+/** Shared envelope for both SSE and HTTP replay-recovery signals. */
+export type { StreamEvent } from './stream-event'
 
 export interface StreamStartInput {
   /** Resume and initial streams must use the same negotiated event contract. */

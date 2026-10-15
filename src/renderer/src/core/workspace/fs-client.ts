@@ -142,6 +142,19 @@ export async function readSessionFile(sessionId: string, candidate: string): Pro
   return sessionFileContent(sessionAbsolutePath(context.root, relative), result)
 }
 
+/** Original binary bytes bypass renderer text previews and retain this session's
+ * binding across the save dialog and the complete authenticated transfer. */
+export async function saveSessionFile(sessionId: string, candidate: string): Promise<import('@shared/ipc').EngineFileSaveResult> {
+  const target = { source: getEngineSource(), expectedEngine: getExpectedEngine() }
+  const context = await readSessionWorkspaceContext(sessionId, target)
+  const relative = sessionRelativePath(context.root, candidate)
+  assertEngineSource(target.source)
+  const result = await bridge().engine.saveWorkspaceFile({ sessionId: context.sessionId, path: relative,
+    workspaceRoot: context.root, expectedEngine: target.expectedEngine })
+  assertEngineSource(target.source)
+  return result
+}
+
 interface DirectoryResponse { root: string; entries: FsEntry[] }
 let remoteContextCache: { key: string; promise: Promise<RemoteWorkspaceContext> } | null = null
 

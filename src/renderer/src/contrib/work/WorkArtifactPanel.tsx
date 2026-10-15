@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import type { WorkArtifact } from './work-state'
-import { paths, readFile, readSessionFile } from '@renderer/core/workspace/fs-client'
+import { paths, readFile, readSessionFile, saveSessionFile } from '@renderer/core/workspace/fs-client'
 import { openFileFromChat } from '@renderer/contrib/chat/open-file'
 import { Markdown } from '@renderer/contrib/chat/Markdown'
 import { Icon } from '@renderer/workbench/icons'
@@ -71,11 +71,18 @@ function ArtifactContent({
   const value = read.receipt === artifact?.content ? read.value : null
   const content = value?.content ?? null
   const loading = Boolean(artifact && !value)
-  const error = value?.coverage === 'unavailable' ? value.notice : ''
+  const error = value?.coverage === 'unavailable' && !value.isBinary ? value.notice : ''
+  const [saving, setSaving] = useState(false)
+  const mounted = useRef(true)
   const [mode, setMode] = useState<'preview' | 'source'>('preview')
   const [selection, setSelection] = useState('')
   const [readVersion, setReadVersion] = useState(0)
   const previewRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -148,14 +155,29 @@ function ArtifactContent({
       toast.error(reason instanceof Error ? reason.message : String(reason))
     }
   }
-  const download = (): void => {
+  const download = async (): Promise<void> => {
+    if (saving || epoch !== getEngineSource()) return
+    if (value?.isBinary && sessionId) {
+      setSaving(true)
+      try {
+        const saved = await saveSessionFile(sessionId, artifact.path)
+        if (mounted.current && epoch === getEngineSource() && saved.saved) toast.success('原文件已保存')
+      } catch (reason: unknown) {
+        if (mounted.current && epoch === getEngineSource()) toast.error(reason instanceof Error ? reason.message : String(reason))
+      } finally {
+        if (mounted.current) setSaving(false)
+      }
+      return
+    }
     if (content === null || epoch !== getEngineSource()) return
     const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }))
     const link = document.createElement('a')
     link.href = url
     link.download = workArtifactExportName(artifact.name, value?.coverage ?? 'unavailable')
+    document.body.append(link)
     link.click()
-    URL.revokeObjectURL(url)
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
   const addReference = (): void => {
     if (epoch !== getEngineSource()) return
@@ -245,11 +267,11 @@ function ArtifactContent({
         <button
           type="button"
           className="work-quiet-button"
-          onClick={download}
-          disabled={content === null}
+          onClick={() => void download()}
+          disabled={saving || (content === null && !(value?.isBinary && sessionId))}
         >
           <Icon name="cloud-download-outline" size={14} />
-          {value?.coverage === 'partial' ? '下载片段' : value?.coverage === 'receipt' ? '下载回执' : '下载'}
+          {saving ? '正在保存…' : value?.isBinary ? '下载原文件' : value?.coverage === 'partial' ? '下载片段' : value?.coverage === 'receipt' ? '下载回执' : '下载'}
         </button>
         {isMarkdown(artifact.name) && (
           <div className="work-artifact-panel-v2__modes">
@@ -296,6 +318,10 @@ function ArtifactContent({
             >
               重试
             </button>
+          </div>
+        ) : value?.isBinary ? (
+          <div className="work-artifact-panel-v2__empty" role="status">
+            {language} 文件 · {value.notice}
           </div>
         ) : content === null ? (
           <div className="work-artifact-panel-v2__empty">

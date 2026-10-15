@@ -51,10 +51,10 @@ React 收到消息的顺序直接覆盖。固定缓存避免长任务把整个�
 `coverage` 表示视图是否完整。`subagent-store.ts` 另外以引擎 `source`、本地 generation、
 server generation 和 epoch 丢弃过期响应。
 
-**差距和风险。** Aether 的严格性目前集中在“每个子代理运行”，没有与 Codex 类似的统一
-用户级事件 envelope、全局 event id 去重和带 cursor 的重连 ring buffer。引擎重启时可以
-保护 renderer 不被旧响应污染，但用户看不到“丢了多少事件、从哪个序列重新同步、当前快照
-是否完整”的统一说明。多个订阅方也缺少同一事件源的共享水位。
+**差距和风险。** Aether 的严格性目前集中在“每个子代理运行”；live SSE 已有带 stream
+前缀的 event id、有限 replay 和 snapshot-required，但还没有与 Codex 类似的统一用户级事件
+envelope、全局水位和可审查的 retention gap 统计。renderer 已能提示缺口并恢复精确快照，
+但用户仍看不到丢失事件数量和跨订阅方共享水位。
 
 **建议。** P1 在引擎/客户端之间定义有限字段的事件 envelope：`eventId`、`emittedAt`、
 `streamGeneration`、`runId`、`seq`、`kind` 和 `coverage`；服务端保留固定 ring buffer，
@@ -67,9 +67,10 @@ server generation 和 epoch 丢弃过期响应。
 状态、角色或入口，并把详情作为可展开或可导航内容。排序不会因为每一次工具事件而把
 用户正在阅读的条目搬走。
 
-**Aether 当前实现。** `workSubagentGroups()` 按 `childSessionId` 合并续跑记录；组内按
-最近运行信息选取展示内容，但组外排序使用首次持久化的 `createdAt/startedAt`，没有把
-变化频繁的 `updatedAt` 作为主键。组还提供模型、角色、active 状态、工具摘要和详情入口。
+**Aether 当前实现。** `workSubagentGroups()` 按 `childSessionId` 合并续跑记录；组外排序使用
+首次持久化的 `createdAt/startedAt`，没有把变化频繁的 `updatedAt` 作为主键。Work 面板固定
+active/completed 分组，并展示真实模型、状态、运行时长、最近工具、工具总数、执行中工具数和
+pending interaction；续跑尚未收到新 run 时会显示 pending，不会冒充上一轮结果。
 
 **差距和风险。** 源码逻辑已经具备稳定排序，截图中仍出现顺序变化时，应先排查旧的
 `out/` 构建、历史消息投影或绕过 `WorkErrorNotice` 的路径。界面层目前还可以更接近 Codex
@@ -77,8 +78,13 @@ server generation 和 epoch 丢弃过期响应。
 最后工具、工具数、pending interaction、workspace 和 diff 摘要。排序依据和显示依据需要
 分开，避免“最后活动最热”被误解为导航顺序。
 
-**建议。** P0 用当前构建验证“事件更新不改变组位置、续跑不产生重复组”；P1 增加固定的
-active/completed 分组和信息字段；字段缺失时显示“未知”，不要使用前端推断替代引擎事实。
+**已完成。** 当前构建已验证事件更新不改变组位置、续跑不产生重复组；active/completed
+分组和真实属性字段已落地。字段缺失时显示“未知”或省略，不使用前端推断替代引擎事实。
+
+当前 live SSE 已使用带 stream 前缀的 `eventId` 游标并在引擎端保留有限 replay；renderer
+遇到 `snapshot_required` 或子代理 delta gap 时会停止消费旧流、从精确快照恢复，并在聊天区
+显示可关闭的“实时更新发生缺口，正在从引擎快照重新同步”提示。这样 retention gap 不再被
+静默当作普通断线，也不会把缺失事件拼成连续成功记录。
 
 ### 3. 错误语义和 Work 消息专业度
 
@@ -88,17 +94,17 @@ active/completed 分组和信息字段；字段缺失时显示“未知”，不
 
 **Aether 当前实现。** `WorkErrorNotice` 会解析 `[子任务状态]`，把状态、错误码、run ID
 和原始诊断折叠到详情；`ENGINE_RESTARTED`、`EMPTY_OUTPUT`、上下文超限和输出超限有中文
-解释，并限制诊断为 16KB。`WorkView` 已在消息、任务错误和工具详情使用该组件。
+解释，并限制诊断为 16KB。消息、待处理回复和发布记录读取都使用统一组件，并提供真实的
+重新发起、重新提交、重新读取和复制诊断动作；waiting/blocked 不提供会造成重复副作用的重试。
 
 **差距和风险。** 旧历史记录或某个子代理投影路径仍可能直接显示 JSON，所以用户看到的
 “错误消息”会像内部日志而不是可行动的产品错误。若错误码只存在旧记录文本中，解析失败时
 应明确标为“诊断信息不完整”，不能误报为成功。错误还需要区分：引擎已重启、任务被取消、
 用户需要授权、网络断开、模型无输出和真正的引擎故障。
 
-**建议。** P0 对所有 Work 消息入口做统一错误投影审计，补一条当前 Electron 验证：原始
-JSON 不出现在首屏，标题/摘要可读，详情可展开，状态为 interrupted/failed 时不能显示成功。
-P1 为每类错误补可执行动作（重试、继续、重新发起、打开诊断），并保留 run/engine identity
-作为排查依据。
+**已完成。** 所有当前 Work 消息入口已统一到错误投影，错误首屏显示标题和摘要，诊断可展开，
+并保留 run/engine identity；恢复动作带忙态和失败反馈，失败重试复用原始指令、mentions 与
+附件，避免用户修改草稿后错重放。后续只需继续清理新增入口的绕过路径。
 
 ### 4. 性能和长列表
 
@@ -136,9 +142,14 @@ ring buffer。验收指标应包括 1 小时长任务的 renderer heap、长任�
 延迟与连续失败；`/cron` 低频按需刷新，`/metrics` 由用户点击读取业务统计，所有读取有
 source/generation/identity 护栏。未知值仍显示不可用，不保存原始日志和无限事件历史。
 
-**差距和风险。** 监控仍缺少 V8 heap、event-loop lag、root/child 最后活动、最后工具、idle duration、pending interaction、
-协作消息/ACK 失败和 UI long-task。仅凭 `EngineSnapshot.updatedAt` 不能判断引擎健康，
-它只表示最近一次状态变化。
+**本轮 P1。** 已增加真实引擎 V8 heap、堆外内存、ELU 和事件循环延迟，以及独立的客户端
+long-task 汇总。运行时接口沿用鉴权，展开可见时才读，5 秒缓存，15 秒空闲停采；UI 明示
+20 ms 延迟采样基线。心跳显示已有身份检查的来源与新鲜度，切账号/transport 后拒绝迟到样本。
+窗口显隐由 Electron 原生事件与 DOM 可见性共同确认，一条共享订阅控制 OS、runtime、页面
+和 cron 停采；隐藏再显示期间的迟到 cron 请求保持单飞，完成后立即唤醒当前页面，旧账号数据
+在渲染阶段即被隔离。
+仅凭 `EngineSnapshot.updatedAt` 仍不能判断健康，它只表示最近一次状态变化。任务级 idle、
+消费 ACK 与冲突完成证明仍需服务端补齐。
 
 **建议。** P1 在 engine observability service 提供固定字段、低频、无敏感正文的摘要：
 `heartbeatAt`、连续失败、`eventLoopLagMs`、内存采样、active streams、任务最后活动和
@@ -151,10 +162,11 @@ source/generation/identity 护栏。未知值仍显示不可用，不保存原�
 有不同的 stale time；查询传递 `AbortSignal`，401/403/404 等不可用结果变成有限空页，
 不会无限重试或缓存无限历史。
 
-**Aether 当前实现。** `work-subagent-transcript.ts` 使用 cursor，每页 50 条、最多 3 页，
-并验证子代理归属和总字节数；`archive-pages.ts` 进行 revision 校验、消息 ID 去重、页大小
-和总数一致性校验。`subagent-store.ts` 在读取期间检查 source/generation/epoch，旧引擎
-响应不能覆盖新缓存。
+**Aether 当前实现。** `work-subagent-transcript.ts` 使用 offset 分页，每页 50 条、版本化窗口
+最多 3 页，并验证子代理归属和总字节数；archive/child 统一校验页大小、完整性、消息 ID 与
+revision 校验。无 revision 的 SQLite/旧接口每次仅替换一页，支持前后与最新导航，并明确
+无法证明跨页版本一致性。Work 正文固定 180 条窗口，流式追加保留旧页阅读锚点。
+`subagent-store.ts` 在读取期间检查 source/generation/epoch，旧引擎响应不能覆盖新缓存。
 
 **差距和风险。** Aether 目前存在多套分页形态（transcript、archive、subagent directory），
 它们的 cursor、revision 和“无法继续读取”的错误语义并未完全统一。重启、压缩或 retention
@@ -175,12 +187,16 @@ gap 时，UI 需要明确显示“部分历史/需要重新同步”，不能把
 conversation 和 child session。renderer store 在每次读取和写回前校验 expected engine、
 source/generation/epoch，发现 identity 不一致或已删除运行会拒绝操作。
 
-**差距和风险。** 现有 renderer→main `engineRequest` 仍应增加 sender/window 校验，避免只依赖
-renderer 传入的 session/engine 字段。错误、日志和监控摘要还应确认不会泄露 token、完整请求体
-或跨账号的任务标题。多窗口/远端引擎切换需要一条可见的 identity 变更信号，而不是静默清空。
+**已完成。** 15 个引擎相关 renderer→main IPC handler 统一校验存活 BrowserWindow 的主帧、
+owner webContents 和 senderFrame，并在请求、上传和流式传输边界绑定当前 engine identity；
+入口还核对准确工作台文档 URL；预加载仅向可信主帧暴露窄业务桥，移除了会暴露环境变量的
+通用 `window.electron` 桥，并阻止主工作台导航到外部文档。
+缺失 expected identity 的旧调用也由主进程补齐。错误、日志和监控摘要仍需继续审查敏感字段，
+多窗口/远端引擎切换仍应保留可见的 identity 变更信号。
 
-**建议。** P0 为 engine IPC 加 sender/window 与当前实例绑定校验；P1 对所有任务、事件、历史
-和协作请求执行同一 identity schema；P1 增加跨账号、重启、迟到响应、重复提交和 fork 冲突测试。
+**本轮 P1 / 后续。** 流式请求的内部键绑定 sender 与公共 streamId，正文只回发起窗口；
+同 ID 的其他窗口可以独立运行和取消，旧流结束不会清理新流。补了真实双窗口、连接切换和
+迟到响应场景。后续继续审查跨账号凭据字段与所有非引擎 IPC 入口。
 
 ### 8. 独立任务、协作和冲突处理
 
@@ -193,9 +209,11 @@ execution owner、SQLite/JSONL delivery 和 store；HTTP 有 collaboration route
 使用 parent/root/child identity、continuation 和可恢复的 run，能够让独立 Work 任务各自运行，
 同时为共享目标保留父子归属和续跑上下文。
 
-**差距和风险。** “能并发运行”不等于“协作不会产生冲突”。当前监控页没有消息/ACK、nonce
-mismatch、版本冲突、重叠写入、孤儿子任务和未解决证据等摘要；UI 也没有把独立任务和共同
-目标的协作边界展示出来。定时任务应保持独立 lane，不能误并入人工协作链。
+**本轮 P1 / 差距。** 子代理详情增加按需只读协作检查器，验证可信 root/attempt/recipient，
+每页 24 条，展示真实 requestKey、acceptedSeq、payloadHash 及回执与拒绝原因证据；终页必须抵达固定
+revision。当前引擎公开 `runtimeCommunication=false`、`mailboxConsumer=false`，queued 只证明
+持久接纳，不证明已读、执行或无冲突完成。nonce、重叠写入、孤儿子任务和消费 ACK 仍待引擎
+能力升级。定时任务保持独立 lane。
 
 **建议。** P1 为协作消息定义 `messageId/peerId/parentRunId/nonce/revision/ack` 和幂等键，
 对重复、乱序、过期和错误 peer 明确拒绝或重试；P1 在任务详情和监控页只显示计数、最后活动
@@ -206,13 +224,13 @@ mismatch、版本冲突、重叠写入、孤儿子任务和未解决证据等摘
 
 | 领域          | Aether 已具备                                         | 尚需补齐                                           | 优先级 |
 | ------------- | ----------------------------------------------------- | -------------------------------------------------- | ------ |
-| 状态正确性    | seq/baseSeq、identity、coverage、gap/conflict 拒绝    | 统一事件 envelope、重连 cursor 和 retention gap UI | P1     |
-| 子 Agent 列表 | childSession 合并、创建顺序稳定、按需详情             | Codex 式 active/completed 固定布局和更多真实属性   | P0/P1  |
-| 错误体验      | 结构化 WorkErrorNotice、错误码和折叠诊断              | 清理所有绕过路径、可行动恢复按钮                   | P0     |
-| 历史与内存    | 多层上限、LRU、cursor、revision 去重                  | 统一分页合同、viewport 虚拟化                      | P1/P2  |
-| 引擎监控      | phase/identity/任务 lane、CPU/RSS/private/I/O、磁盘、存储分类、受限进程树、按需 metrics/cron | heartbeat、V8 heap、事件循环与 UI 性能信号         | P1     |
-| 安全隔离      | engine generation、run identity、JWT/OIDC、协作 owner | IPC sender/window 校验、跨窗口身份切换测试         | P0/P1  |
-| 协作          | parent/root/child、delivery/store、continuation       | ACK/nonce/revision 冲突摘要和可审查证据            | P1     |
+| 状态正确性    | seq/baseSeq、identity、coverage、客户端统一 envelope/cursor、坏帧/retention 恢复提示 | 服务端用户级 envelope、共享水位和缺口数量 | P1 |
+| 子 Agent 列表 | childSession 合并、创建顺序稳定、active/completed 固定布局、模型/时长/工具/pending 属性、按需详情 | 继续完善更多真实引擎摘要字段 | P1 |
+| 错误体验      | 结构化 WorkErrorNotice、错误码、折叠诊断、重试/继续/重新读取/复制诊断动作 | 清理新增入口的绕过路径 | P1 |
+| 历史与内存    | 统一有界页校验、Work 180 条窗口、无版本单页替换与双向导航、LRU/revision 去重 | SQLite 持久版本化分页、viewport 虚拟化 | P1/P2 |
+| 引擎监控      | CPU/RSS/private/I/O、磁盘/存储/进程树、心跳新鲜度、真实 V8/ELU/delay、按需 UI 长任务 | 任务级 idle 与消费 ACK 摘要、实测长期性能趋势 | P1/P2 |
+| 安全隔离      | engine/run/account identity、IPC 主帧校验、sender-owned 流取消与定向回传、双窗口场景 | 继续扩大跨账号与敏感字段审计 | P1 |
+| 协作          | parent/root/child、delivery/store、真实回执检查器、attempt/revision/hash 与拒绝原因证据 | runtime 通讯/消费 ACK/nonce 与无冲突完成证明 | P1 |
 
 ## 建议的验证顺序
 

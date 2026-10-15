@@ -1,4 +1,4 @@
-import type { SubagentRun } from '@shared/subagent'
+import type { SubagentRun, SubagentRunStatus, SubagentToolCall, SubagentToolSummary } from '@shared/subagent'
 import type { ToolActivity } from '@renderer/core/engine/useChat'
 import { mergeSubagentRun, runToolState } from '@renderer/core/engine/subagent-state'
 
@@ -10,6 +10,95 @@ export interface WorkSubagentGroup {
   active: boolean
   latest: ToolActivity
   tools: ToolActivity[]
+}
+
+/**
+ * Bounded, display-only facts for a child row.  The list must stay cheap to
+ * render while still showing the same useful context as Codex's agent list:
+ * model, current status, latest tool and real work duration.  Counts are
+ * derived from the server's summary watermark when available; we never infer
+ * a missing count from a truncated v2 tool list.
+ */
+export interface WorkSubagentStats {
+  runId?: string
+  status: SubagentRunStatus | ToolActivity['state']
+  modelId: string
+  startedAt?: number
+  updatedAt?: number
+  finishedAt?: number
+  durationMs?: number
+  toolCount: number
+  activeToolCount: number
+  latestTool?: Pick<SubagentToolCall | SubagentToolSummary, 'name' | 'status'>
+  pending: boolean
+}
+
+function validTime(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+}
+
+function runToolCount(run: SubagentRun): number {
+  if (run.schemaVersion === 2 && validTime(run.toolCount)) return run.toolCount
+  return run.toolCalls.length
+}
+
+function runActiveToolCount(run: SubagentRun): number {
+  if (run.schemaVersion === 2 && validTime(run.activeToolCount)) return run.activeToolCount
+  return run.toolCalls.filter(tool => tool.status === 'running').length
+}
+
+function latestRunTool(run: SubagentRun): Pick<SubagentToolCall | SubagentToolSummary, 'name' | 'status'> | undefined {
+  if (run.schemaVersion === 2 && run.latestActivity) return run.latestActivity
+  return run.toolCalls[run.toolCalls.length - 1]
+}
+
+/**
+ * Return row facts without sorting or mutating the durable group.  `now` is an
+ * explicit argument so callers can tick active durations once per second and
+ * pure tests can remain deterministic.
+ */
+export function workSubagentStats(group: WorkSubagentGroup, now = Date.now()): WorkSubagentStats {
+  const run = group.tools.find(tool => tool.subagent)?.subagent
+  // A continuation announcement can be visible for one refresh before the
+  // engine publishes its new run snapshot. Treat that newest parent call as
+  // the active item so the row does not briefly show the previous round's
+  // completed duration or latest tool as if it were current.
+  const pendingAnnouncement = !group.latest.subagent && (group.latest.state === 'running' || group.latest.state === 'waiting')
+  const latest = run ?? group.latest.subagent
+  const modelId = group.modelId || latest?.modelId || ''
+  const status = latest?.status ?? group.latest.state
+  const startedAt = pendingAnnouncement ? group.latest.startedAt : latest?.startedAt ?? group.latest.startedAt
+  const updatedAt = pendingAnnouncement ? undefined : latest?.updatedAt
+  const finishedAt = pendingAnnouncement ? undefined : latest?.finishedAt ?? group.latest.finishedAt
+  const durationMs = pendingAnnouncement ? (validTime(startedAt) && validTime(now) ? Math.max(0, now - startedAt) : undefined) : group.active && validTime(startedAt) && validTime(now)
+    ? Math.max(0, now - startedAt)
+    : latest?.durationMs ?? (validTime(startedAt) && validTime(finishedAt) ? Math.max(0, finishedAt - startedAt) : undefined)
+  const runs = group.tools.flatMap(tool => tool.subagent ? [tool.subagent] : [])
+  const toolCount = runs.reduce((total, item) => total + runToolCount(item), 0)
+  const activeToolCount = runs.reduce((total, item) => total + runActiveToolCount(item), 0)
+  const latestTool = latest && !pendingAnnouncement ? latestRunTool(latest) : undefined
+  return {
+    runId: latest?.runId,
+    status,
+    modelId,
+    startedAt,
+    updatedAt,
+    finishedAt,
+    durationMs,
+    toolCount,
+    activeToolCount,
+    latestTool,
+    pending: latest?.status === 'queued' || pendingAnnouncement
+  }
+}
+
+export function formatWorkSubagentDuration(durationMs: number | undefined): string | undefined {
+  if (!validTime(durationMs)) return undefined
+  const seconds = Math.floor(durationMs / 1000)
+  if (seconds < 60) return `${seconds} 秒`
+  const minutes = Math.floor(seconds / 60)
+  const remainder = seconds % 60
+  return remainder ? `${minutes} 分 ${remainder} 秒` : `${minutes} 分`
 }
 
 /**

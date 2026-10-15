@@ -6,6 +6,7 @@ test.describe('Work 错误摘要', () => {
     const result = presentWorkError('[子代理最终结果]\n[子任务状态] {"status":"interrupted","errorCode":"ENGINE_RESTARTED","runId":"run-123456789"}')
     expect(result.title).toBe('任务已中断')
     expect(result.summary).toContain('引擎已重启')
+    expect(result.retryable).toBe(true)
     expect(result.detail).toContain('ENGINE_RESTARTED')
     expect(result.detail).toContain('run-123456789')
   })
@@ -14,6 +15,12 @@ test.describe('Work 错误摘要', () => {
     const result = presentWorkError('[子代理最终结果]\n[子任务状态] {"status":"failed"}')
     expect(result.summary).toBe('引擎未提供具体原因，请查看诊断详情。')
     expect(result.summary).not.toContain('子代理最终结果')
+    expect(result.retryable).toBe(true)
+  })
+
+  test('等待确认或受阻状态不提供重复执行建议', () => {
+    expect(presentWorkError('[子任务状态] {"status":"waiting"}').retryable).toBe(false)
+    expect(presentWorkError('[子任务状态] {"status":"blocked"}').retryable).toBe(false)
   })
 
   test('成功状态的正文引用旧错误码时不重新标记为引擎重启', () => {

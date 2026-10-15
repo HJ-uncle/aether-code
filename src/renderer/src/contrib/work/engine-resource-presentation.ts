@@ -1,5 +1,5 @@
 import type { EngineSnapshot } from '@shared/ipc'
-import type { EngineDiagnostics, EngineStorageSnapshot } from '@shared/engine-diagnostics'
+import type { EngineDiagnostics, EngineHealthDiagnostics, EngineStorageSnapshot } from '@shared/engine-diagnostics'
 
 const BINARY_UNITS = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'] as const
 
@@ -69,8 +69,25 @@ export function engineDiagnosticsIdentity(
   ])
 }
 
+/** Heartbeat freshness uses the last successful identity-checked probe, never
+ * an unrelated snapshot update or the time at which the monitor was opened. */
+export function healthProbeFreshness(
+  health: EngineHealthDiagnostics | null | undefined,
+  now: number
+): { state: 'fresh' | 'stale' | 'unknown'; label: string; ageMs: number | null } {
+  if (!health || !usableResourceNumber(health.lastSuccessAt) || health.lastSuccessAt === 0 ||
+    !usableResourceNumber(now)) return { state: 'unknown', label: '尚无成功检查', ageMs: null }
+  const ageMs = Math.max(0, now - health.lastSuccessAt)
+  const budget = usableResourceNumber(health.checkIntervalMs) && usableResourceNumber(health.failureThreshold)
+    ? health.checkIntervalMs * health.failureThreshold : 0
+  const stale = ageMs > Math.max(20_000, budget)
+  const seconds = Math.floor(ageMs / 1000)
+  const age = seconds < 60 ? `${seconds} 秒前` : `${Math.floor(seconds / 60)} 分钟前`
+  return { state: stale ? 'stale' : 'fresh', label: stale ? `${age} · 已过期` : age, ageMs }
+}
+
 export function presentResourceHealth(
-  snapshot: Pick<EngineSnapshot, 'phase'>,
+  snapshot: Pick<EngineSnapshot, 'phase'> & Partial<Pick<EngineSnapshot, 'mode'>>,
   diagnostics:
     | (Pick<EngineDiagnostics, 'health'> & {
         resources?: Pick<EngineDiagnostics['resources'], 'state'>
@@ -88,17 +105,12 @@ export function presentResourceHealth(
   if (health.consecutiveFailures >= health.failureThreshold && health.failureThreshold > 0)
     return { label: '健康检查失败', state: 'error' }
   if (health.consecutiveFailures > 0) return { label: '健康检查异常', state: 'warning' }
-  if (diagnostics.resources?.state === 'unavailable')
-    return { label: '资源遥测不可用', state: 'warning' }
-  if (
-    failed ||
-    resourceSampleIsStale(
-      health.lastSuccessAt,
-      now,
-      Math.max(20_000, health.checkIntervalMs * health.failureThreshold)
-    )
-  )
+  if (failed || healthProbeFreshness(health, now).state !== 'fresh')
     return { label: '健康数据过期', state: 'warning' }
+  // A remote engine cannot expose this machine's OS process counters. That
+  // boundary does not imply a failed connection heartbeat.
+  if (diagnostics.resources?.state === 'unavailable' && snapshot.mode !== 'remote')
+    return { label: '资源遥测不可用', state: 'warning' }
   return { label: '响应正常', state: 'ok' }
 }
 

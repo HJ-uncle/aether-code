@@ -59,7 +59,7 @@ import { WorkAgentManager } from './WorkAgentManager'
 import { workMessageTimeline, workToolTarget } from './work-message-timeline'
 import { workSubagentName } from './work-subagents'
 import { formatActivityValue, readActivityPreview } from './work-activity-presentation'
-import { WORK_ACTIVITY_PAGE_SIZE, WORK_MESSAGE_PAGE_SIZE, WORK_TASK_PAGE_SIZE, workMessageStart, workPageRange, workPaneRatio, workToolSnapshot, type WorkToolSnapshot } from './work-view-performance'
+import { WORK_ACTIVITY_PAGE_SIZE, WORK_MESSAGE_PAGE_SIZE, WORK_TASK_PAGE_SIZE, workMessageRange, workPageRange, workPaneRatio, workToolSnapshot, type WorkToolSnapshot } from './work-view-performance'
 import { requestedThinkingMode } from '../chat/session-request-config'
 import { AutomationsView } from '../automations/AutomationsView'
 import { subscribeAutomationEditor } from '../automations/automation-navigation'
@@ -852,12 +852,14 @@ function Conversation({
     openArtifact(artifact?.id ?? `path:${path}`)
   }, [openArtifact])
   const respond = useCallback<WorkController['respond']>((...args) => controllerRef.current.respond(...args), [])
+  const retryFailedTask = useCallback<WorkController['retryFailedTask']>(() => controllerRef.current.retryFailedTask(), [])
   const [firstId, setFirstId] = useState<string | null>(() => conversationPositions.get(positionKey)?.firstId ?? null)
   const expandedHistory = useRef(conversationPositions.get(positionKey)?.expanded ?? false)
-  const start = useMemo(() => workMessageStart(controller.messages, firstId), [controller.messages, firstId])
+  const { start, end, newer } = useMemo(() => workMessageRange(controller.messages, firstId), [controller.messages, firstId])
   const firstIdRef = useRef(firstId)
   firstIdRef.current = controller.messages[start]?.id ?? firstId
   const prependAnchor = useRef<{ id: string; offset: number } | null>(null)
+  const archiveNavigation = useRef<'older' | 'newer' | 'latest' | null>(null)
   const restoredPosition = useRef(false)
   useLayoutEffect(() => {
     if (!firstId && controller.messages.length) setFirstId(controller.messages[start].id)
@@ -905,6 +907,11 @@ function Conversation({
     return () => observer.disconnect()
   }, [])
   const latest = (): void => {
+    if (controller.archivePage?.unversioned && controller.archivePage.lastPage < controller.archivePage.totalPages) {
+      archiveNavigation.current = 'latest'
+      void controller.loadArchive('latest')
+      return
+    }
     expandedHistory.current = false
     followRef.current = true
     setFollowing(true)
@@ -921,6 +928,37 @@ function Conversation({
     setFollowing(false)
     setFirstId(controller.messages[Math.max(0, start - WORK_MESSAGE_PAGE_SIZE)].id)
   }
+  const loadNewer = (): void => {
+    const nextStart = Math.min(Math.max(0, controller.messages.length - WORK_MESSAGE_PAGE_SIZE), start + WORK_MESSAGE_PAGE_SIZE)
+    const anchor = controller.messages[nextStart]
+    const element = scrollRef.current
+    const article = anchor && element?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(anchor.id)}"]`)
+    if (element && article) prependAnchor.current = { id: anchor.id, offset: article.getBoundingClientRect().top - element.getBoundingClientRect().top }
+    expandedHistory.current = true
+    followRef.current = false
+    setFollowing(false)
+    setFirstId(anchor?.id ?? null)
+  }
+  const loadArchivePage = (action: 'older' | 'newer'): void => {
+    if (controller.archiveLoading) return
+    archiveNavigation.current = action
+    expandedHistory.current = true
+    followRef.current = false
+    setFollowing(false)
+    void controller.loadArchive(action)
+  }
+  useLayoutEffect(() => {
+    const action = archiveNavigation.current
+    if (!action || !controller.archivePage) return
+    archiveNavigation.current = null
+    prependAnchor.current = null
+    const atLatest = action === 'latest'
+    expandedHistory.current = !atLatest
+    followRef.current = atLatest
+    setFollowing(atLatest)
+    setFirstId(controller.messages[atLatest ? Math.max(0, controller.messages.length - WORK_MESSAGE_PAGE_SIZE) : 0]?.id ?? null)
+    if (scrollRef.current) scrollRef.current.scrollTop = atLatest ? scrollRef.current.scrollHeight : 0
+  }, [controller.archivePage])
   const inspectActivity = (target: EventTarget | null): void => {
     // Code's shared file cards activate with a role=button, including keyboard
     // events. All disclosures represent reading intent, regardless of markup.
@@ -950,6 +988,12 @@ function Conversation({
           </button>
         </div>
       </div>
+      {controller.recoveryNotice ? (
+        <div className="chat__notice chat__notice--info" role="status" aria-live="polite">
+          <span>{controller.recoveryNotice}</span>
+          <button type="button" className="chat__toolbar-btn" onClick={controller.dismissRecoveryNotice}>知道了</button>
+        </div>
+      ) : null}
       <div
         className="work-conversation__scroll"
         ref={scrollRef}
@@ -960,12 +1004,15 @@ function Conversation({
         onScroll={(event) => {
           const node = event.currentTarget
           if (!node.clientHeight) return
-          const bottom = node.scrollHeight - node.scrollTop - node.clientHeight < 70
+          const bottom = newer === 0 && node.scrollHeight - node.scrollTop - node.clientHeight < 70
           followRef.current = bottom
           setFollowing(bottom)
         }}
       >
-        <div className="work-conversation__content">
+        <div className="work-conversation__content" data-history-start={start} data-history-end={end}>
+          {controller.archiveError ? <p className="chat__notice" role="alert">{controller.archiveError}</p> : null}
+          {controller.archivePage?.unversioned ? <p className="subagent-history__notice" role="status">归档第 {controller.archivePage.firstPage} / {controller.archivePage.totalPages} 页 · 引擎未提供跨页版本一致性，每次仅显示当前页。</p> : null}
+          {start === 0 && controller.historyCompacted ? <button type="button" className="btn btn--sm work-history-load" disabled={controller.archiveLoading || controller.streaming || controller.launching} onClick={() => loadArchivePage('older')}>{controller.archiveLoading ? '正在加载历史归档…' : controller.archiveRemaining === null ? '查看更早归档' : `查看更早归档（${controller.archiveRemaining} 条）`}</button> : null}
           {start > 0 && <button type="button" className="btn btn--sm work-history-load" onClick={loadEarlier}>查看更早消息（{start} 条）</button>}
           {controller.loading && !controller.launching && (
             <div className="work-loading">
@@ -980,7 +1027,7 @@ function Conversation({
               description="在下方描述目标。执行过程、需要补充的问题和最终结果都会出现在这里。"
             />
           )}
-          {controller.messages.slice(start).map((message) => (
+          {controller.messages.slice(start, end).map((message) => (
             <WorkMessage
               key={message.id}
               message={message}
@@ -988,15 +1035,18 @@ function Conversation({
               onFileLink={onFileLink}
               openFile={openActivityFile}
               respond={respond}
+              retryFailedTask={retryFailedTask}
               openActivity={openActivity}
             />
           ))}
+          {newer > 0 ? <button type="button" className="btn btn--sm work-history-load" onClick={loadNewer}>查看较新消息（{newer} 条）</button> : null}
+          {newer === 0 && controller.archivePage?.unversioned && controller.archivePage.lastPage < controller.archivePage.totalPages ? <button type="button" className="btn btn--sm work-history-load" disabled={controller.archiveLoading} onClick={() => loadArchivePage('newer')}>查看较新归档页</button> : null}
           <WorkTurnFeedback controller={controller} announce={following} openActivity={openActivity} />
         </div>
       </div>
       <div className="work-conversation__footer">
-        {!following && (
-          <button className="work-follow-latest" type="button" onClick={latest}>
+        {(!following || (controller.archivePage?.unversioned && controller.archivePage.lastPage < controller.archivePage.totalPages)) && (
+          <button className="work-follow-latest" type="button" disabled={controller.archiveLoading} onClick={latest}>
             <Icon name="chevron-down" size={14} />
             回到最新
           </button>
@@ -1196,6 +1246,7 @@ const WorkMessage = memo(function WorkMessage({
   onFileLink,
   openFile,
   respond,
+  retryFailedTask,
   openActivity
 }: {
   message: ChatMessage
@@ -1203,6 +1254,7 @@ const WorkMessage = memo(function WorkMessage({
   onFileLink: (event: MouseEvent<HTMLElement>) => void
   openFile: (path: string) => void
   respond: WorkController['respond']
+  retryFailedTask: WorkController['retryFailedTask']
   openActivity: (toolId: string) => void
 }): JSX.Element {
   const pending = useMemo(() =>
@@ -1237,7 +1289,7 @@ const WorkMessage = memo(function WorkMessage({
           fileContext={fileContext}
         />
       ))}
-      {message.error ? <WorkErrorNotice error={message.error} /> : null}
+      {message.error ? <WorkErrorNotice error={message.error} onRetry={retryFailedTask} retryLabel="重新发起任务" /> : null}
       {pending.map((item) => (
         <WorkPending
           key={item.requestId || item.toolCallId}
@@ -1272,17 +1324,20 @@ function WorkPending({
   const answers = pending.groups.map((_, index) =>
     [...(values[index] ?? []), freeText[index]?.trim()].filter(Boolean).join('、')
   )
+  const submit = (): void => {
+    if (submitting || answers.some((answer) => !answer) || !pending.requestId) return
+    setSubmitting(true)
+    setError('')
+    void respond(pending.requestId, answers)
+      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)))
+      .finally(() => setSubmitting(false))
+  }
   return (
     <form
       className="work-pending"
       onSubmit={(event) => {
         event.preventDefault()
-        if (submitting || answers.some((answer) => !answer) || !pending.requestId) return
-        setSubmitting(true)
-        setError('')
-        void respond(pending.requestId, answers)
-          .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)))
-          .finally(() => setSubmitting(false))
+        submit()
       }}
     >
       <h3>{pending.kind === 'permission' ? '需要你的确认' : '请补充一下'}</h3>
@@ -1331,7 +1386,7 @@ function WorkPending({
           )}
         </fieldset>
       ))}
-      {error ? <WorkErrorNotice error={error} /> : null}
+      {error ? <WorkErrorNotice error={error} onRetry={submit} retryLabel="重新提交回复" /> : null}
       <button
         className="btn btn--primary"
         type="submit"

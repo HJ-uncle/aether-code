@@ -135,7 +135,7 @@ export function ChatView(): JSX.Element {
   const connectionKey = engineConnectionKey(engine.snapshot)
   const storageSource = engineStorageKey(engine.snapshot)
   const sourceEpoch = getEngineSource()
-  const { messages, sessionUsage, usageSyncNotice, publishedRecovery, cancelPublishedRecovery, loadPublishedBody, retryPublishedRecovery, commandJobs, sessionModel, streaming, connection, historyError, historyCompacted, archiveRemaining, archiveLoading, archiveError, loadArchive, todos, send, respond, abort, resumeStream, deleteTurn, retryFrom, revertFrom, queue, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, queueSendMode, setQueueSendMode, retargetQueuedModel } = useChat()
+  const { messages, sessionUsage, usageSyncNotice, publishedRecovery, cancelPublishedRecovery, loadPublishedBody, retryPublishedRecovery, commandJobs, sessionModel, streaming, connection, historyError, recoveryNotice, dismissRecoveryNotice, historyCompacted, archiveRemaining, archivePage, archiveLoading, archiveError, loadArchive, todos, send, respond, abort, resumeStream, deleteTurn, retryFrom, revertFrom, queue, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, queueSendMode, setQueueSendMode, retargetQueuedModel } = useChat()
   const { models, loaded: modelsLoaded } = useModels()
   const workspace = useWorkspace()
   // AppProvider 按引擎来源统一恢复或创建会话。这里提前创建会与远端选择
@@ -516,15 +516,19 @@ export function ChatView(): JSX.Element {
     void resumeStream(sessionId).catch(() => {})
   }, [ready, sessionId, sourceSessionKey, resumeStream])
 
-  const loadArchivedEarlier = useCallback((): void => {
+  const archiveNavigationRef = useRef<'older' | 'newer' | 'latest' | null>(null)
+  const loadArchivedPage = useCallback((action: 'older' | 'newer' | 'latest' = 'older'): void => {
     if (archiveLoading) return
     const requestedView = sourceSessionKey
     const el = scrollRef.current
-    if (el) prependSnapshotRef.current = { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop }
-    void loadArchive(sessionId).then(() => {
+    archiveNavigationRef.current = action
+    if (el && !archivePage?.unversioned) prependSnapshotRef.current = { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop }
+    followBottomRef.current = false
+    setFollowBottom(false)
+    void loadArchive(sessionId, action).then(() => {
       if (displayedSessionRef.current === requestedView) setVisibleCount(count => count + MESSAGE_PAGE_SIZE)
     })
-  }, [archiveLoading, sourceSessionKey, sessionId, loadArchive])
+  }, [archiveLoading, archivePage, sourceSessionKey, sessionId, loadArchive])
 
   // ── 每会话输入草稿（对齐 wuzu lobster-chat:draft）──
   // 切会话/重启时恢复该会话未发送的草稿；保存走防抖，不用 effect 持久化
@@ -696,6 +700,16 @@ export function ChatView(): JSX.Element {
     resumeFollowBottom()
     scrollToBottom(true)
   }, [resumeFollowBottom, scrollToBottom])
+  useLayoutEffect(() => {
+    if (!archivePage || !archiveNavigationRef.current) return
+    const action = archiveNavigationRef.current
+    archiveNavigationRef.current = null
+    if (archivePage.unversioned) {
+      prependSnapshotRef.current = null
+      setVisibleCount(200)
+      if (scrollRef.current) scrollRef.current.scrollTop = action === 'latest' ? scrollRef.current.scrollHeight : 0
+    }
+  }, [archivePage])
 
   const showBackToBottom = !followBottom && hasNewWhileUnfollowed
 
@@ -1243,7 +1257,7 @@ export function ChatView(): JSX.Element {
             <Icon name="chevron-double-down" size={16} />
           </button>
         ) : null}
-        {messages.length === 0 && !historyCompacted ? (
+        {messages.length === 0 && !historyCompacted && !archivePage ? (
           <div className="chat__empty">
             <h2>Agent IDE</h2>
             <p>
@@ -1257,11 +1271,12 @@ export function ChatView(): JSX.Element {
         ) : (
           <>
             {archiveError ? <p className="chat__notice" role="alert">{archiveError}</p> : null}
+            {archivePage?.unversioned ? <div className="chat__notice" role="status"><span>归档第 {archivePage.firstPage} / {archivePage.totalPages} 页 · 引擎未提供跨页版本一致性，每次仅显示当前页。</span></div> : null}
             {historyCompacted ? (
               <button
                 type="button"
                 className="chat__load-earlier"
-                onClick={loadArchivedEarlier}
+                onClick={() => loadArchivedPage('older')}
                 data-archive-page="true"
                 disabled={archiveLoading}
               >
@@ -1304,6 +1319,7 @@ export function ChatView(): JSX.Element {
                 ))}
             </div>
             ))}
+            {archivePage?.unversioned && archivePage.lastPage < archivePage.totalPages ? <div className="chat__notice"><button type="button" className="chat__load-earlier" disabled={archiveLoading} onClick={() => loadArchivedPage('newer')}>查看较新归档页</button><button type="button" className="chat__load-earlier" disabled={archiveLoading} onClick={() => loadArchivedPage('latest')}>回到最新归档</button></div> : null}
           </>
         )}
         </div>
@@ -1364,6 +1380,12 @@ export function ChatView(): JSX.Element {
           <div className="chat__notice" role="status" aria-live="polite" title={historyError ?? undefined}>
             {connection.phase === 'blocked' ? connection.reason : connection.failures > 0 ? messages.some(message => message.run?.status === 'running') ? '连接已中断，正在重新连接；任务仍由引擎继续执行' : '正在重新连接并读取会话…' : '正在读取会话…'}
             {connection.phase === 'blocked' ? <button type="button" className="chat__toolbar-btn" onClick={() => { void resumeStream(sessionId) }}>重新加载</button> : null}
+          </div>
+        ) : null}
+        {recoveryNotice ? (
+          <div className="chat__notice chat__notice--info" role="status" aria-live="polite">
+            <span>{recoveryNotice}</span>
+            <button type="button" className="chat__toolbar-btn" onClick={dismissRecoveryNotice}>知道了</button>
           </div>
         ) : null}
         {sessionModelReady && modelsLoaded && modelId && !modelExists ? (

@@ -12,9 +12,10 @@ import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { SubagentCard } from '../chat/SubagentCard'
 import { ControllerReceiptHistory, ControllerTrackingRecovery, SubagentFollowupInput } from '../chat/SubagentFollowup'
+import { CollaborationReceiptInspector } from '../chat/CollaborationReceiptInspector'
 import { subagentToolPresentation } from '../chat/subagent-tool-presentation'
 import { toolDisplayName } from '../chat/tool-names'
-import { resolveWorkSubagentGroup, workSubagentGroups, type WorkSubagentGroup } from './work-subagents'
+import { formatWorkSubagentDuration, resolveWorkSubagentGroup, workSubagentGroups, workSubagentStats, type WorkSubagentGroup } from './work-subagents'
 import { newWorkSubagentTranscriptMemory, WorkSubagentTranscript, type WorkSubagentTranscriptMemory } from './WorkSubagentTranscript'
 import { trimWorkSubagentSessionCaches } from './work-subagent-memory'
 import { publishedDetailKey, publishedVisibleWindow, rememberPublishedDetail } from '@renderer/core/engine/published-card-memory'
@@ -315,13 +316,21 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
   }
   const renderRow = (group: WorkSubagentGroup): JSX.Element => {
     const run = group.latest.subagent
+    const stats = workSubagentStats(group, now)
     const age = run ? Math.max(0, Math.round((now - (run.updatedAt || run.createdAt)) / 60000)) : 0
-    return <button type="button" className="work-subagents__row" key={group.key} ref={node => { if (node) rowRefs.current.set(group.key, node); else rowRefs.current.delete(group.key) }} data-child-session-id={group.childSessionId} onClick={() => openDetail(group)} aria-label={`查看 ${group.label} 子代理详情`}>
+    const duration = formatWorkSubagentDuration(stats.durationMs)
+    const latestTool = stats.latestTool?.name ? toolDisplayName(stats.latestTool.name) : undefined
+    const status = toolStatusLabel(group.latest)
+    return <button type="button" className="work-subagents__row" key={group.key} ref={node => { if (node) rowRefs.current.set(group.key, node); else rowRefs.current.delete(group.key) }} data-child-session-id={group.childSessionId} data-agent-status={stats.status} data-model-id={stats.modelId || undefined} data-tool-count={stats.toolCount} data-active-tool-count={stats.activeToolCount} data-pending={stats.pending ? 'true' : 'false'} onClick={() => openDetail(group)} aria-label={`查看 ${group.label} 子代理详情`}>
       <span className={`work-subagents__avatar${group.active ? ' work-subagents__avatar--active' : ''}`}>
         {group.active ? <Spinner size={16} /> : <Icon name="account-outline" size={18} />}
       </span>
-      <span className="work-subagents__row-content"><strong>{group.label}</strong><span>{currentAction(group)}</span></span>
-      <span className="work-subagents__row-meta"><span>{toolStatusLabel(group.latest)}</span><span>{group.tools.length} 轮{!group.active && run ? ` · ${age ? `${age} 分钟前` : '刚刚'}` : ''}</span></span>
+      <span className="work-subagents__row-content"><strong>{group.label}</strong><span>{currentAction(group)}</span><span className="work-subagents__row-properties" aria-label="子代理属性">
+        {stats.modelId ? <span className="work-subagents__row-model" title={`模型 ${stats.modelId}`}>模型 {stats.modelId}</span> : null}
+        {latestTool ? <span title={`最近工具 ${latestTool}`}>最近 {latestTool}</span> : null}
+        {stats.pending ? <span className="work-subagents__row-pending">待处理</span> : null}
+      </span></span>
+      <span className="work-subagents__row-meta"><span className={`work-subagents__row-status work-subagents__row-status--${group.active ? 'active' : 'complete'}`}>{status}</span><span>{group.tools.length} 轮 · {stats.toolCount} 工具{stats.activeToolCount ? ` · ${stats.activeToolCount} 执行中` : ''}</span><span>{duration ? `耗时 ${duration}` : !group.active && run ? (age ? `${age} 分钟前` : '刚刚') : '等待开始'}</span></span>
       <Icon name="chevron-right" size={16} />
     </button>
   }
@@ -348,6 +357,9 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
         <button type="button" aria-pressed={selectedView === 'transcript'} disabled={Boolean(selected.latest.subagentRef) || !transcriptRun?.childSessionId} title={selected.latest.subagentRef ? '当前显示固定发布记录；恢复实时更新后可查看独立会话' : !transcriptRun?.childSessionId ? '代理开始后可查看独立会话' : undefined} onClick={() => { if (detailRef.current) memory.detailTop.set(selected.key, detailRef.current.scrollTop); memory.views.set(selected.key, 'transcript'); redraw() }}>完整对话</button>
       </div>
       {selected.active ? <div className="work-subagents__live" role="status"><Spinner size={14} /><span className="work-subagents__live-label">{currentAction(selected)}</span>{activeRun ? <button type="button" disabled={!ready || cancellingKey !== null || activeRun.status === 'cancelling'} onClick={() => void cancelRun(selected)}>{cancellingKey === selected.key || activeRun.status === 'cancelling' ? '正在停止…' : '停止本轮'}</button> : null}</div> : null}
+      {rootRunId && selected.childSessionId && selectedRunIdRef.current && !selected.latest.subagentRef && !publishedFixedChildren ? <CollaborationReceiptInspector
+        key={selectionKey} target={{ rootRunId, rootSessionId: sessionId!, childSessionId: selected.childSessionId, invocationRunId: selectedRunIdRef.current }}
+        source={source} ready={ready} visible={panelActive} /> : null}
       {selectedView === 'transcript' && !selected.latest.subagentRef && transcriptRun?.childSessionId ? <WorkSubagentTranscript source={source} parentSessionId={sessionId!} childSessionId={transcriptRun.childSessionId} runId={transcriptRun.runId} name={selected.label} memory={memory.transcripts.get(selected.key)!} active={panelActive} running={selected.active} /> : <div className="work-subagents__detail" ref={detailRef} onScroll={event => memory.detailTop.set(selected.key, event.currentTarget.scrollTop)} aria-label={`${selected.label} 的工作记录`}>
         {[...roundWindow.items].reverse().map((tool, index) => <article className="work-subagents__round" key={tool.subagent?.runId || tool.id} data-run-id={tool.subagent?.runId}>
           <div className="work-subagents__round-heading"><span>第 {selected.tools.length - roundWindow.end + index + 1} 轮</span><time dateTime={tool.subagent?.createdAt ? new Date(tool.subagent.createdAt).toISOString() : undefined}>{tool.subagent?.createdAt ? new Date(tool.subagent.createdAt).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '历史记录'}</time></div>

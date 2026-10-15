@@ -1,6 +1,9 @@
 /** Bound the initial DOM without removing content the user explicitly opens. */
 export const WORK_TASK_PAGE_SIZE = 40
 export const WORK_MESSAGE_PAGE_SIZE = 60
+/** Explicit history browsing keeps at most three pages mounted, even when a
+ * live task continues appending while the reader stays on an older page. */
+export const WORK_MESSAGE_WINDOW_SIZE = WORK_MESSAGE_PAGE_SIZE * 3
 export const WORK_ACTIVITY_PAGE_SIZE = 80
 
 export interface WorkToolSnapshot<T> { sources: T[][]; tools: T[] }
@@ -36,4 +39,10 @@ export function workMessageStart(messages: ReadonlyArray<{ id: string }>, firstI
     if (index >= 0) return index
   }
   return Math.max(0, messages.length - size)
+}
+
+export function workMessageRange(messages: ReadonlyArray<{ id: string }>, firstId: string | null): { start: number; end: number; newer: number } {
+  const start = workMessageStart(messages, firstId)
+  const end = Math.min(messages.length, start + WORK_MESSAGE_WINDOW_SIZE)
+  return { start, end, newer: messages.length - end }
 }

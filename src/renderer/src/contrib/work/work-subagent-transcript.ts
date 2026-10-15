@@ -1,6 +1,7 @@
 import type { EngineRequestInput, EngineRequestResult } from '@shared/ipc'
 import type { EngineHistoryRow } from '@renderer/core/engine/chat-history'
 import { normalizeSubagentRun } from '@renderer/core/engine/subagent-state'
+import { checkHistoryPage } from '@renderer/core/engine/history-page'
 
 export const SUBAGENT_TRANSCRIPT_PAGE_SIZE = 50
 export const SUBAGENT_TRANSCRIPT_TEXT_STEP = 4000
@@ -35,35 +36,8 @@ export class WorkTranscriptSupersededError extends Error {
 function sameChild(a: WorkTranscriptIdentity, b: WorkTranscriptIdentity): boolean {
   return a.source === b.source && a.parentSessionId === b.parentSessionId && a.childSessionId === b.childSessionId
 }
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-function optionalString(value: unknown): boolean { return value === undefined || typeof value === 'string' }
-function displayRow(value: unknown): value is EngineHistoryRow {
-  if (!object(value) || typeof value.id !== 'string' || !value.id || typeof value.role !== 'string' || !['user', 'assistant', 'tool', 'system'].includes(value.role)) return false
-  if (value.createdAt !== undefined && (typeof value.createdAt !== 'number' || !Number.isFinite(value.createdAt) || !Number.isFinite(new Date(value.createdAt).getTime()))) return false
-  if (!optionalString(value.modelId) || !optionalString(value.conversationId) || (value.isSidechain !== undefined && typeof value.isSidechain !== 'boolean')) return false
-  if (value.toolCall !== undefined && value.toolCall !== null && (!object(value.toolCall) || !optionalString(value.toolCall.id) || !optionalString(value.toolCall.name))) return false
-  if (value.metadata !== undefined) {
-    if (!object(value.metadata)) return false
-    const attachments = value.metadata.attachments
-    if (attachments !== undefined && (!Array.isArray(attachments) || attachments.some(file => !object(file) || typeof file.name !== 'string' || !optionalString(file.type) || (file.size !== undefined && (typeof file.size !== 'number' || !Number.isFinite(file.size) || file.size < 0))))) return false
-  }
-  return true
-}
 function checkedPage(result: EngineRequestResult<unknown>, current: number, pageSize: number): { rows: EngineHistoryRow[]; total: number; revision?: string } {
-  if (!result.ok || !Array.isArray(result.data)) throw new Error(result.message || '读取子代理对话失败，请重试')
-  const pagination = result.pagination
-  if (!pagination || pagination.current !== current || pagination.pageSize !== pageSize || !Number.isSafeInteger(pagination.total) || pagination.total < 0 || pagination.totalPages !== Math.ceil(pagination.total / pageSize)) throw new Error('子代理对话分页信息无效，请重试')
-  if (result.metadata?.archiveMessageCount !== undefined && result.metadata.archiveMessageCount !== pagination.total) throw new Error('子代理归档数量不一致，请重试')
-  if (result.data.length !== Math.max(0, Math.min(pageSize, pagination.total - (current - 1) * pageSize))) throw new Error('子代理对话页不完整，请重试')
-  const ids = new Set<string>()
-  for (const row of result.data) {
-    if (!displayRow(row)) throw new Error('子代理对话内容格式无效，请重试')
-    if (ids.has(row.id!)) throw new Error('子代理对话出现重复的消息 ID，请重试')
-    ids.add(row.id!)
-  }
-  return { rows: result.data, total: pagination.total, ...(typeof result.metadata?.archiveRevision === 'string' ? { revision: result.metadata.archiveRevision } : {}) }
+  return checkHistoryPage(result, current, pageSize, '子代理对话')
 }
 
 /** Verify the parent relationship before using a durable child ID to read history. */
@@ -72,7 +46,7 @@ export async function loadWorkSubagentTranscript(
   request: WorkTranscriptRequest,
   isCurrent: () => boolean,
   previous?: WorkTranscriptWindow,
-  action: 'older' | 'refresh' = 'refresh'
+  action: 'older' | 'newer' | 'refresh' = 'refresh'
 ): Promise<WorkTranscriptWindow> {
   const checkedRequest = async (input: EngineRequestInput): Promise<EngineRequestResult<unknown>> => {
     if (!isCurrent()) throw new WorkTranscriptSupersededError()
@@ -121,6 +95,25 @@ export async function loadWorkSubagentTranscript(
   }
   const archiveLastPage = Math.max(1, Math.ceil(header.total / SUBAGENT_TRANSCRIPT_PAGE_SIZE))
   const prior = previous && sameChild(previous.identity, identity) && previous.endpoint === endpoint ? previous : undefined
+  if (header.revision === undefined) {
+    let current = action === 'refresh' || !prior ? archiveLastPage
+      : Math.max(1, Math.min(archiveLastPage, action === 'older' ? prior.firstPage - 1 : prior.lastPage + 1))
+    let result = await pageRequest(current, SUBAGENT_TRANSCRIPT_PAGE_SIZE)
+    let selected = checkedPage(result, current, SUBAGENT_TRANSCRIPT_PAGE_SIZE)
+    const actualLast = Math.max(1, Math.ceil(selected.total / SUBAGENT_TRANSCRIPT_PAGE_SIZE))
+    if (current > actualLast) {
+      current = actualLast
+      result = await pageRequest(current, SUBAGENT_TRANSCRIPT_PAGE_SIZE)
+      selected = checkedPage(result, current, SUBAGENT_TRANSCRIPT_PAGE_SIZE)
+    }
+    if (!selected.rows.length && selected.total > 0) throw new Error('子代理对话在读取期间有更新，请重试')
+    const residentBytes = new TextEncoder().encode(JSON.stringify(selected.rows)).byteLength
+    if (residentBytes > SUBAGENT_TRANSCRIPT_WINDOW_BYTES) throw new Error('此对话页正文较大，请在工具记录中按段读取原始详情')
+    return { identity: { ...identity }, endpoint, rows: selected.rows, firstPage: current, lastPage: current, total: selected.total,
+      ...(selected.revision !== undefined ? { revision: selected.revision } : {}),
+      ...(typeof result.metadata?.backend === 'string' ? { backend: result.metadata.backend } : {}),
+      compressed: result.metadata?.compressed === true, residentBytes, windowed: selected.rows.length < selected.total }
+  }
   let firstPage = prior ? Math.max(1, Math.min(archiveLastPage, prior.firstPage - (action === 'older' ? 1 : 0))) : archiveLastPage
   let lastPage = action === 'older' ? Math.min(archiveLastPage, firstPage + SUBAGENT_TRANSCRIPT_WINDOW_PAGES - 1) : archiveLastPage
   firstPage = Math.max(firstPage, lastPage - SUBAGENT_TRANSCRIPT_WINDOW_PAGES + 1)

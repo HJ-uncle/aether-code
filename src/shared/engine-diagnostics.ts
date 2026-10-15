@@ -82,12 +82,16 @@ export interface EngineStorageSnapshot {
 }
 
 export interface EngineHealthDiagnostics {
+  /** Desktop-owned identity-checked HTTP probes, not a runtime heartbeat metric. */
+  source?: 'desktop-http-probe'
   lastSuccessAt: number | null
   lastCheckedAt: number | null
   lastLatencyMs: number | null
   consecutiveFailures: number
   checkIntervalMs: number
   failureThreshold: number
+  timeoutMs?: number
+  checking?: boolean
   activeStreams: number
 }
 

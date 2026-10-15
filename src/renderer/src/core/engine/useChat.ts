@@ -12,7 +12,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createSessionUsageAnchor, sessionUsageTotal, type SessionUsageAnchor } from '@renderer/contrib/chat/session-usage'
 import type { UsageTotal } from '@renderer/contrib/chat/usage'
 import { reducePayload } from './chat-payload'
-import { acceptEventId, restoreChatSnapshot, type ChatRecoverySnapshot } from './chat-recovery'
+import { restoreChatSnapshot, type ChatRecoverySnapshot } from './chat-recovery'
+import { inspectStreamCursor, parseEngineStreamCursor } from '@shared/stream-event'
+import { streamRecoveryNoticeText, type StreamRecoveryNotice } from './stream-recovery-notice'
 import { preparePublishedSnapshot } from './published-snapshot-client'
 import { createPublishedHydrationBuffer } from './published-hydration-buffer'
 import { advancePublishedChild, parsePublishedUsage } from './published-child-recovery'
@@ -31,7 +33,7 @@ import {
 } from './pending'
 import { patchSessionMeta } from '@renderer/contrib/history/session-meta'
 import type { MemoryScope } from './memory'
-import { ARCHIVE_PAGE_SIZE, loadArchiveWindow, mergeArchiveProjection, type ArchiveWindow } from './archive-pages'
+import { ARCHIVE_PAGE_SIZE, loadArchiveWindow, archiveDisplayHistory, type ArchiveWindow, type ArchivePageAction, type ArchivePageInfo } from './archive-pages'
 import { createIdleRootDiscovery } from './idle-root-discovery'
 import { createHistoryMutationGuard } from './history-mutation'
 import { getAppMode, onAppModeChanged } from '@renderer/core/platform/app-mode'
@@ -233,14 +235,18 @@ export function useChat(options: { commandOwner?: string } = {}): {
   /** Transport recovery is independent of the durable execution outcome. */
   connection: RecoveryState
   historyError: string | null
+  /** A bounded, user-visible notice when the live cursor needs a snapshot replay. */
+  recoveryNotice: string | null
+  dismissRecoveryNotice: () => void
   isHistoryReady: (sessionId: string) => boolean
   /** The compact snapshot omitted older JSONL rows that can be loaded on demand. */
   historyCompacted: boolean
   archiveRemaining: number | null
+  archivePage: ArchivePageInfo | null
   archiveLoading: boolean
   archiveError: string | null
   /** Expand the explicit transcript archive into the visible chat timeline. */
-  loadArchive: (sessionId: string) => Promise<void>
+  loadArchive: (sessionId: string, action?: ArchivePageAction) => Promise<void>
   /** 会话待办清单（引擎 todo 工具维护，随 \x00__todo__ 帧整表下发） */
   todos: EngineTodo[]
   send: (text: string, options: SendOptions) => Promise<void>
@@ -330,12 +336,14 @@ export function useChat(options: { commandOwner?: string } = {}): {
   const [sessionModel, setSessionModel] = useState<ChatSessionModelContext | null>(null)
   const [streaming, setStreaming] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
+  const [recoveryNoticeState, setRecoveryNoticeState] = useState<StreamRecoveryNotice | null>(null)
   const restoredSessionRef = useRef<string | null>(null)
   const isHistoryReady = useCallback((sessionId: string): boolean => restoredSessionRef.current === sessionId && sourceRef.current === getEngineSource(), [])
   const [todos, setTodos] = useState<EngineTodo[]>([])
   const [historyCompacted, setHistoryCompacted] = useState(false)
   const [archiveExpanded, setArchiveExpanded] = useState(false)
   const [archiveRemaining, setArchiveRemaining] = useState<number | null>(null)
+  const [archivePage, setArchivePage] = useState<ArchivePageInfo | null>(null)
   const [archiveLoading, setArchiveLoading] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
   const archiveWindowRef = useRef<ArchiveWindow | undefined>(undefined)
@@ -454,6 +462,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
     publishedControlRef.current?.cancel()
     publishedControlRef.current = null
     if (mountedRef.current) setPublishedRecovery(null)
+    if (mountedRef.current) setRecoveryNoticeState(null)
     stoppingRef.current = null
   }, [recoveryLoop, snapshotReads, idleRootDiscovery])
   const hasSessionWork = useCallback((sessionId = viewSessionRef.current): boolean => {
@@ -536,6 +545,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
     archiveWindowRef.current = undefined
     archiveLoadingRef.current = null
     setArchiveRemaining(null)
+    setArchivePage(null)
     setArchiveLoading(false)
     setArchiveError(null)
     // Detach only this client. The server owns the old run's eventual outcome.
@@ -752,7 +762,16 @@ export function useChat(options: { commandOwner?: string } = {}): {
     const off = engine.onStreamEvent((event: StreamEvent) => {
       // Reject before ingesting child/job snapshots; IDs can collide across engines.
       if (sourceRef.current !== getEngineSource() || event.streamId !== activeStreamRef.current) return
-      if (!acceptEventId(consumedEventIdRef.current, event.eventId)) return
+      // Snapshot controls do not consume a cursor. Verify data ownership before
+      // admitting it to either the root reducer or a shared child store.
+      if (event.type !== 'snapshot-required') {
+        const disposition = inspectStreamCursor(consumedEventIdRef.current, event.eventId)
+        if (disposition === 'duplicate') return
+        if (disposition === 'invalid' || disposition === 'foreign') {
+          applyEvent({ streamId: event.streamId, type: 'snapshot-required', reason: disposition === 'foreign' ? 'stream-changed' : 'invalid-cursor' })
+          return
+        }
+      }
       publishedHydrationRef.current?.buffer.account(event)
       const acknowledge = (status: 'applied' | 'verified-duplicate' | 'gap' | 'invalid' = 'applied'): void => {
         consumedEventIdRef.current = reducedEventCursor(consumedEventIdRef.current, event.eventId, status)
@@ -762,7 +781,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
         if (event.payload.subagentEvent) {
           const result = ingestSubagentEventResult(event.payload.subagentEvent)
           if (result.status === 'gap' || result.status === 'invalid') {
-            applyEvent({ streamId: event.streamId, type: 'snapshot-required' })
+            applyEvent({ streamId: event.streamId, type: 'snapshot-required', reason: 'child-gap' })
             return
           }
           acknowledge(result.status)
@@ -780,7 +799,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
           if (normalized.subagent) {
             const child = ingestSubagentRunResult(normalized.subagent)
             if (child.status === 'gap' || child.status === 'invalid') {
-              applyEvent({ streamId: event.streamId, type: 'snapshot-required' })
+              applyEvent({ streamId: event.streamId, type: 'snapshot-required', reason: 'child-gap' })
               return
             }
             if (child.run) {
@@ -835,6 +854,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
     function applyEvent(event: StreamEvent): void {
       const eventScope = recoveryScope(viewSessionRef.current ?? '')
       if (event.type === 'snapshot-required' || (event.type === 'payload' && (event.payload as { code?: string }).code === 'snapshot_required')) {
+        setRecoveryNoticeState({ reason: event.type === 'snapshot-required' ? event.reason ?? 'retention-gap' : 'retention-gap', restored: false })
         const sessionId = activeSessionRef.current
         const previousStream = activeStreamRef.current
         activeStreamRef.current = null
@@ -1237,7 +1257,8 @@ export function useChat(options: { commandOwner?: string } = {}): {
         capabilities.childRecovery ? Promise.resolve() : refreshSubagentRuns(sessionId).catch(() => {})
       ])
       if (!current()) return { kind: 'stale' }
-      if (!result.ok || !result.data || result.data.schemaVersion !== 1 || result.data.sessionId !== sessionId) {
+      if (!result.ok || !result.data || result.data.schemaVersion !== 1 || result.data.sessionId !== sessionId ||
+        result.data.eventId !== null && !parseEngineStreamCursor(result.data.eventId)) {
         const message = !result.ok && result.message ? result.message : '无法读取任务历史，正在重新连接'
         setHistoryError(message)
         const failure = result.ok ? 'retry' : recoveryFailure(result.code, message)
@@ -1254,6 +1275,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
       archiveWindowRef.current = undefined
       archiveLoadingRef.current = null
       setArchiveRemaining(null)
+      setArchivePage(null)
       setArchiveLoading(false)
       setArchiveError(null)
       for (const job of snapshot.commandJobs ?? []) ingestCommandJob(job)
@@ -1279,6 +1301,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
       setCommandJobs(getCommandJobs(sessionId))
       setTodos(restored.todos)
       setHistoryError(null)
+      setRecoveryNoticeState(notice => notice ? { ...notice, restored: true } : null)
       setStreaming((snapshot.executionRun ?? snapshot.run)?.status === 'running')
       restoredSessionRef.current = sessionId
       return { kind: 'restored', snapshot }
@@ -1294,7 +1317,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
     })
   }, [selectView, renderSource, snapshotReads, recoveryScope, scopeIsCurrent, commitUsageAnchor, prepareInView, activatePublishedSnapshot])
 
-  const loadArchive = useCallback(async (sessionId: string): Promise<void> => {
+  const loadArchive = useCallback(async (sessionId: string, action: ArchivePageAction = 'older'): Promise<void> => {
     if (!sessionId || !isEngineReady() || renderSource !== getEngineSource() || hasSessionWork(sessionId) || archiveLoadingRef.current || historyMutationGuard.blocked(recoveryScope(sessionId))) return
     const source = getEngineSource()
     const generation = ++historyRequestRef.current
@@ -1309,18 +1332,19 @@ export function useChat(options: { commandOwner?: string } = {}): {
         const result = await engine.request<EngineHistoryRow[]>({ method: 'GET', path: '/conversation/archive', query: { sessionId, current: String(page), pageSize: String(pageSize) } })
         if (!current()) throw new Error('会话或连接已切换')
         return result
-      }, sessionId, archiveWindowRef.current)
+      }, sessionId, archiveWindowRef.current, action)
       const capabilities = await engine.getSubagentCapabilities()
       const protocol = capabilities.protocol
       if (!current()) return
       const result = await engine.request<ChatRecoverySnapshot>({ ...(protocol === 2 ? { subagentProtocol: 2 as const } : {}), method: 'GET', path: '/chat/snapshot', query: { sessionId, ...(capabilities.childRecovery ? { childRecoveryProtocol: 1 } : {}) } })
       if (!current()) return
       if (!result.ok || !result.data || result.data.schemaVersion !== 1 || result.data.sessionId !== sessionId) throw new Error(result.message || '读取会话快照失败，请重试')
-      const snapshot = capabilities.childRecovery
-        ? await prepareInView({ ...result.data, history: mergeArchiveProjection(window.rows, result.data.history) }, source, () => source === getEngineSource() && generation === historyRequestRef.current && viewSessionRef.current === sessionId && mountedRef.current)
+      const snapshot = capabilities.childRecovery && window.revision !== undefined
+        ? await prepareInView({ ...result.data, history: archiveDisplayHistory(window, result.data.history) }, source, () => source === getEngineSource() && generation === historyRequestRef.current && viewSessionRef.current === sessionId && mountedRef.current)
         : result.data
       if (!current()) return
-      const restored = restoreChatSnapshot({ ...snapshot, history: mergeArchiveProjection(window.rows, snapshot.history), historyCompacted: false })
+      const restored = restoreChatSnapshot({ ...snapshot, history: archiveDisplayHistory(window, snapshot.history), historyCompacted: false,
+        ...(window.revision === undefined ? { source: 'persisted' as const, projection: [] } : {}) })
       for (const job of snapshot.commandJobs ?? []) ingestCommandJob(job)
       for (const run of snapshot.subagentRuns ?? []) ingestSubagentRun(run)
       for (const message of restored.messages) for (const tool of message.tools) {
@@ -1333,7 +1357,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
       if (snapshot.executionRun) rootRunsRef.current.set(snapshot.executionRun.runId, snapshot.executionRun)
       const configuredRun = snapshot.executionRun ?? snapshot.run ?? [...snapshot.runs].filter(run => run.sessionId === sessionId).sort((a, b) => b.createdAt - a.createdAt || b.updatedAt - a.updatedAt)[0]
       setSessionModel({ source, sessionId, modelId: configuredRun?.modelId, runId: configuredRun?.runId, requestConfig: normalizeRootRunRequestConfig(configuredRun?.requestConfig), compaction: normalizeRootRunCompaction(configuredRun?.compaction) })
-      const restoredMessages = attachCommandJobs(attachSubagentRuns(restored.messages, getSubagentRuns(sessionId), true), getCommandJobs(sessionId), sessionId)
+      const restoredMessages = attachCommandJobs(attachSubagentRuns(restored.messages, getSubagentRuns(sessionId), window.revision !== undefined), getCommandJobs(sessionId), sessionId)
       commitUsageAnchor(createSessionUsageAnchor(restoredMessages, snapshot.sessionUsage, snapshot.sessionSubagentUsage, snapshot.subagentRuns, snapshot.publishedUsage))
       dispatchMessages(restoredMessages)
       activatePublishedSnapshot(snapshot, source)
@@ -1341,6 +1365,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
       setTodos(restored.todos)
       archiveWindowRef.current = window
       setArchiveRemaining((window.firstPage - 1) * ARCHIVE_PAGE_SIZE)
+      setArchivePage({ firstPage: window.firstPage, lastPage: window.lastPage, totalPages: Math.max(1, Math.ceil(window.total / ARCHIVE_PAGE_SIZE)), unversioned: window.revision === undefined })
       setArchiveExpanded(true)
     } catch (error) {
       if (current()) setArchiveError(error instanceof Error ? error.message : '加载历史归档失败，请重试')
@@ -1692,9 +1717,12 @@ export function useChat(options: { commandOwner?: string } = {}): {
     hasSessionWork,
     connection,
     historyError,
+    recoveryNotice: streamRecoveryNoticeText(recoveryNoticeState, connection),
+    dismissRecoveryNotice: () => setRecoveryNoticeState(null),
     isHistoryReady,
-    historyCompacted: historyCompacted && (!archiveExpanded || (archiveRemaining ?? 0) > 0),
+    historyCompacted: archiveExpanded ? (archiveRemaining ?? 0) > 0 : historyCompacted,
     archiveRemaining,
+    archivePage,
     archiveLoading,
     archiveError,
     loadArchive,

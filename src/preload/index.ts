@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer, webFrame } from 'electron'
-import { electronAPI } from '@electron-toolkit/preload'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { isTrustedWorkbenchUrl } from '../shared/workbench-url'
 import { IPC } from '../shared/ipc'
 import { WORK_QUEUE_IPC, type WorkNextTurnApi, type WorkQueueInvokeResult } from '../shared/work-next-turn-api'
 import type { GraphicsSnapshot } from '../shared/graphics'
@@ -16,6 +18,8 @@ import type {
   EngineLogBatch,
   EngineRequestInput,
   EngineUploadInput,
+  EngineFileSaveInput,
+  EngineFileSaveResult,
   RemoteAttachmentInput,
   RemoteAttachmentResult,
   EngineRequestResult,
@@ -172,6 +176,8 @@ const api = {
       ipcRenderer.invoke(IPC.invoke.engineUpload, input),
     uploadAttachment: (input: RemoteAttachmentInput): Promise<RemoteAttachmentResult> =>
       ipcRenderer.invoke(IPC.invoke.engineUploadAttachment, input),
+    saveWorkspaceFile: (input: EngineFileSaveInput): Promise<EngineFileSaveResult> =>
+      ipcRenderer.invoke(IPC.invoke.engineSaveWorkspaceFile, input),
     cancelAttachmentUpload: (requestId: string): Promise<void> =>
       ipcRenderer.invoke(IPC.invoke.engineCancelAttachmentUpload, requestId),
 
@@ -513,22 +519,31 @@ const api = {
     minimize: (): Promise<void> => ipcRenderer.invoke(IPC.invoke.windowMinimize),
     toggleMaximize: (): Promise<void> => ipcRenderer.invoke(IPC.invoke.windowToggleMaximize),
     close: (): Promise<void> => ipcRenderer.invoke(IPC.invoke.windowClose),
-    isMaximized: (): Promise<boolean> => ipcRenderer.invoke(IPC.invoke.windowIsMaximized)
+    isMaximized: (): Promise<boolean> => ipcRenderer.invoke(IPC.invoke.windowIsMaximized),
+    getVisibility: (): Promise<boolean> => ipcRenderer.invoke(IPC.invoke.windowGetVisibility),
+    onVisibility: (listener: (visible: boolean) => void): (() => void) => {
+      const handler = (_event: unknown, visible: unknown): void => { if (typeof visible === 'boolean') listener(visible) }
+      ipcRenderer.on(IPC.event.windowVisibility, handler)
+      return () => ipcRenderer.removeListener(IPC.event.windowVisibility, handler)
+    }
   }
 }
 
 export type AetherIdeApi = typeof api
 
-if (process.contextIsolated) {
+const trustedDocument = process.isMainFrame && (
+  isTrustedWorkbenchUrl(location.href, pathToFileURL(join(__dirname, '../renderer/index.html')).href) ||
+  Boolean(process.env.ELECTRON_RENDERER_URL && isTrustedWorkbenchUrl(location.href, process.env.ELECTRON_RENDERER_URL))
+)
+
+// A generic Electron bridge exposes arbitrary IPC and a copy of process.env.
+// Only the explicit business contract is needed by the workbench document.
+if (trustedDocument && process.contextIsolated) {
   try {
-    contextBridge.exposeInMainWorld('electron', electronAPI)
     contextBridge.exposeInMainWorld('aether', api)
   } catch (error) {
     console.error(error)
   }
-} else {
-  // @ts-ignore (define in dts)
-  window.electron = electronAPI
-  // @ts-ignore (define in dts)
-  window.aether = api
+} else if (trustedDocument) {
+  Object.assign(window, { aether: api })
 }

@@ -1,7 +1,7 @@
 // Pure contracts: durable child identity, independent rounds, honest running and legacy states.
 import { expect, test } from '@playwright/test'
 import type { SubagentRun } from '../src/shared/subagent'
-import { resolveWorkSubagentGroup, workSubagentGroups, workSubagentName } from '../src/renderer/src/contrib/work/work-subagents'
+import { formatWorkSubagentDuration, resolveWorkSubagentGroup, workSubagentGroups, workSubagentName, workSubagentStats } from '../src/renderer/src/contrib/work/work-subagents'
 
 function child(overrides: Partial<SubagentRun> = {}): SubagentRun {
   return {
@@ -94,4 +94,31 @@ test('a continuation announcement joins the existing context before its new run 
   expect(groups[0].latest.id).toBe('next-call')
   expect(groups[0].tools).toHaveLength(2)
   expect(resolveWorkSubagentGroup(groups, 'legacy:next-call')?.key).toBe('child:review-context')
+})
+
+test('row stats expose real model, bounded tool counts, latest tool and deterministic duration', () => {
+  const groups = workSubagentGroups('parent', [], [child({
+    status: 'running', modelId: 'reasoning-model', startedAt: 1000, updatedAt: 2500,
+    toolCalls: [{ id: 'read', name: 'read_file', args: {}, status: 'succeeded', startedAt: 1000, finishedAt: 1500 },
+      { id: 'search', name: 'search', args: {}, status: 'running', startedAt: 2000 }]
+  })])
+  const stats = workSubagentStats(groups[0], 4000)
+  expect(stats).toMatchObject({ modelId: 'reasoning-model', status: 'running', runId: 'run-one', startedAt: 1000, updatedAt: 2500, durationMs: 3000, toolCount: 2, activeToolCount: 1, pending: false })
+  expect(stats.latestTool).toMatchObject({ name: 'search', status: 'running' })
+  expect(formatWorkSubagentDuration(stats.durationMs)).toBe('3 秒')
+})
+
+test('queued preparation reports pending without inventing model or duration', () => {
+  const groups = workSubagentGroups('parent', [{ id: 'queued-call', name: 'subagent', args: '{}', result: '', state: 'running', startedAt: 100 }], [])
+  const stats = workSubagentStats(groups[0], 5000)
+  expect(stats).toMatchObject({ status: 'running', toolCount: 0, activeToolCount: 0, pending: true })
+  expect(stats.modelId).toBe('')
+  expect(stats.durationMs).toBe(4900)
+})
+
+test('continuation announcement keeps the previous round from masquerading as current', () => {
+  const groups = workSubagentGroups('parent', [{ id: 'next-call', name: 'subagent', args: '{"resumeRunId":"run-one"}', result: '', state: 'running', startedAt: 3000 }], [child({ startedAt: 1000, finishedAt: 2000 })])
+  const stats = workSubagentStats(groups[0], 4500)
+  expect(stats).toMatchObject({ pending: true, startedAt: 3000, durationMs: 1500 })
+  expect(stats.latestTool).toBeUndefined()
 })

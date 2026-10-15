@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '@renderer/core/app-context'
 import { useChat, type ChatAttachment, type SendOptions } from '@renderer/core/engine/useChat'
+import type { ArchivePageAction } from '@renderer/core/engine/archive-pages'
 import { useModels } from '@renderer/core/engine/model-store'
 import { restoreChatSnapshot, type ChatRecoverySnapshot } from '@renderer/core/engine/chat-recovery'
 import {
@@ -152,8 +153,14 @@ export function useWorkController() {
   const submitted = useRef(
     new Map<
       string,
-      { source: string; text: string; attachments: ChatAttachment[]; createdAt: number; preserveDraft: boolean }
+      { source: string; text: string; mentions: Mention[]; attachments: ChatAttachment[]; createdAt: number; preserveDraft: boolean }
     >()
+  )
+  // Keep the exact failed turn separate from the editable draft. A user may
+  // type a new draft while an error card is visible; retry must replay the
+  // failed request the card refers to, including its captured attachments.
+  const failedSubmissions = useRef(
+    new Map<string, { text: string; mentions: Mention[]; attachments: ChatAttachment[] }>()
   )
   const stoppingTaskIdsRef = useRef(new Set<string>())
   const taskRevisionsRef = useRef(new Map<string, number>())
@@ -327,11 +334,13 @@ export function useWorkController() {
       const submission = {
         source,
         text,
+        mentions: [...mentions],
         attachments: preserveDraft ? [] : task.attachments,
         createdAt: Date.now(),
         preserveDraft
       }
       submitted.current.set(task.id, submission)
+      if (!preserveDraft) failedSubmissions.current.delete(task.id)
       try {
         const prepared = buildWorkAgentMessage(text, mentions)
         const delegation = collaborators ?? prepared.collaborators
@@ -390,6 +399,11 @@ export function useWorkController() {
         }))
       } catch (cause) {
         if (epoch === getEngineSource() && submitted.current.get(task.id) === submission) {
+          if (!preserveDraft) failedSubmissions.current.set(task.id, {
+            text,
+            mentions: [...mentions],
+            attachments: [...task.attachments]
+          })
           setError(messageOf(cause))
           updateTask(task.id, { status: 'error' })
         }
@@ -481,6 +495,11 @@ export function useWorkController() {
     ) {
       if (last.status === 'error' && task && !sent.preserveDraft) {
         const attachments = [...task.attachments, ...sent.attachments]
+        failedSubmissions.current.set(observedId, {
+          text: sent.text,
+          mentions: [...sent.mentions],
+          attachments: [...sent.attachments]
+        })
         updateTask(observedId, {
           draft: task.draft || sent.text,
           attachments: attachments.filter(
@@ -678,6 +697,25 @@ export function useWorkController() {
     ]
   )
 
+  /** Replay the exact failed user turn from a Work error card. */
+  const retryFailedTask = useCallback(async (): Promise<void> => {
+    if (!activeTask || !engineReady) throw new Error('引擎尚未就绪，请稍后重试')
+    if (streaming || pending.length || uploadCount > 0 || hasSessionWork(activeTask.id))
+      throw new Error('当前任务仍在执行，请等待本轮结束后重试')
+    if (!restored || !isHistoryReady(activeTask.id)) {
+      setHistoryAttempt(attempt => attempt + 1)
+      throw new Error('任务历史尚未就绪，正在重新读取后再试')
+    }
+    const latest = getWorkState(source).tasks.find(task => task.id === activeTask.id)
+    if (!latest) throw new Error('任务已不存在，请重新打开任务')
+    const failed = failedSubmissions.current.get(activeTask.id)
+    const text = failed?.text ?? latest.draft
+    const attachments = failed?.attachments ?? latest.attachments
+    if (!text.trim() && !attachments.length) throw new Error('没有可重试的原始指令，请在输入框中重新描述任务')
+    await sendTaskRef.current({ ...latest, attachments }, text, failed?.mentions ?? latest.mentions ?? [])
+    failedSubmissions.current.delete(activeTask.id)
+  }, [activeTask, engineReady, streaming, pending.length, uploadCount, hasSessionWork, restored, isHistoryReady, source])
+
   const stop = useCallback(async (): Promise<void> => {
     if (!activeTask || !engineReady) return
     // The user can stop before the first stream exists. Clearing the queued
@@ -818,7 +856,10 @@ export function useWorkController() {
       try {
         await chatRespond(requestId, values, optionsFor(activeTask))
       } catch (cause) {
-        setError(messageOf(cause))
+        // The pending card owns this interaction's error and recovery action.
+        // Re-throw so it can offer a real response retry instead of leaving a
+        // second, unrelated composer-level error behind.
+        throw cause
       }
     },
     [activeTask, restored, chatRespond, optionsFor]
@@ -1057,6 +1098,14 @@ export function useWorkController() {
     historyReady: !activeId || (restored && isHistoryReady(activeId)),
     historyRecovery: activeId && chat.connection.scope?.source === epoch && chat.connection.scope.sessionId === activeId
       ? chat.connection : null,
+    recoveryNotice: activeId && chat.sessionModel?.source === epoch && chat.sessionModel.sessionId === activeId ? chat.recoveryNotice : null,
+    dismissRecoveryNotice: chat.dismissRecoveryNotice,
+    historyCompacted: restored && chat.historyCompacted,
+    archiveRemaining: restored ? chat.archiveRemaining : null,
+    archivePage: restored ? chat.archivePage : null,
+    archiveLoading: restored && chat.archiveLoading,
+    archiveError: restored ? chat.archiveError : null,
+    loadArchive: (action: ArchivePageAction = 'older') => activeId ? chat.loadArchive(activeId, action) : Promise.resolve(),
     uploading: uploadCount > 0,
     error: error ?? (activeId ? chat.historyError : null),
     createTask,
@@ -1083,6 +1132,7 @@ export function useWorkController() {
     removeResource,
     addReference,
     clearError: () => setError(null),
-    retryHistory: () => setHistoryAttempt((attempt) => attempt + 1)
+    retryHistory: () => setHistoryAttempt((attempt) => attempt + 1),
+    retryFailedTask
   }
 }

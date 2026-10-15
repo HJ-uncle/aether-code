@@ -5,6 +5,7 @@
 const TOOL_NAMES: Readonly<Record<string, string>> = {
   read_file: '读取文件',
   write_file: '写入文件',
+  office_document: '办公文档',
   edit_file: '编辑文件',
   list_files: '列出文件',
   delete_file: '删除文件',

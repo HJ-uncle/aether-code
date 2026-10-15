@@ -69,7 +69,7 @@ function PublishedReferenceCard(props: SubagentCardProps): JSX.Element {
       <span className="subagent-card__stopped">记录 #{reference.atSeq}</span>
       <Icon name="chevron" size={16} />
     </button>
-    {loaded?.error ? <WorkErrorNotice error={loaded.error} /> : null}
+    {loaded?.error ? <WorkErrorNotice error={loaded.error} onRetry={read} retryLabel="重新读取记录" /> : null}
   </section>
 }
 

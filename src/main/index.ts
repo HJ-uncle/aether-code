@@ -13,6 +13,8 @@ import { registerBrowserIpc } from './browser-ipc'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { initializeNativeDiagnostics } from './native-diagnostics'
 import { configureGraphics, confirmGraphicsStartup, initializeGraphicsRecovery } from './graphics'
+import { workbenchEntryUrl } from './ipc-security'
+import { isTrustedWorkbenchUrl } from '../shared/workbench-url'
 
 configureGraphics()
 
@@ -119,8 +121,18 @@ function createWindow(): void {
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    if (/^(https?:|mailto:)/i.test(details.url)) void shell.openExternal(details.url)
     return { action: 'deny' }
+  })
+
+  // A navigation must never carry the privileged preload into arbitrary web
+  // content. External pages belong in the separate browser surface.
+  const guardNavigation = (event: Electron.Event, url: string): void => {
+    if (!isTrustedWorkbenchUrl(url, workbenchEntryUrl())) event.preventDefault()
+  }
+  mainWindow.webContents.on('will-navigate', event => guardNavigation(event, event.url))
+  mainWindow.webContents.on('will-redirect', event => {
+    if (event.isMainFrame) guardNavigation(event, event.url)
   })
 
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
