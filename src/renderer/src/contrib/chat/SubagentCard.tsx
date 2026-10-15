@@ -20,6 +20,7 @@ import {
 import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { Markdown } from './Markdown'
+import { WorkErrorNotice } from '../work/WorkErrorNotice'
 import { getSessionMeta } from '../history/session-meta'
 import { toolDisplayName } from './tool-names'
 import { SubagentToolHistory, SubagentToolRow } from './SubagentToolHistory'
@@ -68,7 +69,7 @@ function PublishedReferenceCard(props: SubagentCardProps): JSX.Element {
       <span className="subagent-card__stopped">记录 #{reference.atSeq}</span>
       <Icon name="chevron" size={16} />
     </button>
-    {loaded?.error ? <div className="message__error" role="alert">{loaded.error}</div> : null}
+    {loaded?.error ? <WorkErrorNotice error={loaded.error} /> : null}
   </section>
 }
 
@@ -335,16 +336,12 @@ function SubagentRunCard({
       </summary>
 
       {reason ? (
-        <div className="message__error" role="alert">
-          {reason}
-        </div>
+        <WorkErrorNotice error={reason} />
       ) : null}
       {requestError ? (
-        <div className="message__error" role="alert">
-          {requestError}
-        </div>
+        <WorkErrorNotice error={requestError} />
       ) : null}
-      {detailError ? <div className="message__error">{detailError}</div> : null}
+      {detailError ? <WorkErrorNotice error={detailError} /> : null}
       {historyError ? <div className="subagent-history__error" role="alert">
         {historyError}<button type="button" disabled={!ready || historyLoading} onClick={retryHistory}>
           {historyLoading ? '正在重试…' : '重试读取'}
@@ -428,9 +425,7 @@ function SubagentRunCard({
           </div>
           <div className="subagent-card__result-inner">
             {failed ? (
-              <pre className="subagent-card__result-text subagent-card__result-text--error">
-                {result}
-              </pre>
+              <WorkErrorNotice error={result} className="work-error-notice--subagent" />
             ) : (
               <div className="subagent-card__result-markdown">
                 <Markdown text={result} fileContext={fileContext} />

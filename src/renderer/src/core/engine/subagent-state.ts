@@ -693,6 +693,30 @@ export interface SubagentReduceResult {
   reason?: string
 }
 
+/**
+ * A list/detail request can legitimately observe two projections at the same
+ * run watermark.  The bounded list projection may be partial while a detail
+ * request already resident in the renderer is complete.  If their scalar
+ * fields disagree, the partial response cannot safely replace the complete
+ * snapshot; keep the complete cache and let the next observation reconcile it.
+ *
+ * This is deliberately narrower than the reducer's strict conflict policy:
+ * identity mismatches, complete-vs-complete conflicts, and delta gaps still
+ * require recovery instead of silently choosing an arrival order.
+ */
+export function isRecoverableSubagentSnapshotConflict(
+  previous: SubagentRun | undefined,
+  incoming: SubagentRun | undefined,
+  result: SubagentReduceResult
+): boolean {
+  if (!previous || !incoming || previous.schemaVersion !== 2 || incoming.schemaVersion !== 2)
+    return false
+  if (previous.lastSeq !== incoming.lastSeq || previous.coverage.completeness !== 'complete'
+    || incoming.coverage.completeness === 'complete') return false
+  if (result.status !== 'invalid' && result.status !== 'gap') return false
+  return result.reason === 'same-seq scalar conflict' || result.reason === 'same-revision tool conflict'
+}
+
 function deltaIdentity(event: SubagentDeltaEvent, run: SubagentRun): boolean {
   return event.runId === run.runId && IDENTITY_KEYS.every((key) => event.identity[key] === run[key])
 }

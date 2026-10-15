@@ -64,6 +64,7 @@ import { requestedThinkingMode } from '../chat/session-request-config'
 import { AutomationsView } from '../automations/AutomationsView'
 import { subscribeAutomationEditor } from '../automations/automation-navigation'
 import { EngineMonitorView } from './EngineMonitorView'
+import { WorkErrorNotice } from './WorkErrorNotice'
 import { flushWorkDrafts, getWorkDraft, getWorkState, updateWorkState, type WorkArtifact } from './work-state'
 import { findWorkArtifact } from './work-artifact-utils'
 import { hideBrowserSurfaces, useBrowserState } from '../browser/browser-store'
@@ -708,7 +709,7 @@ export function WorkView(): JSX.Element {
         ) : view.page === 'connections' ? (
           <Connections ready={controller.ready} />
         ) : view.page === 'monitor' ? (
-          <EngineMonitorView tasks={controller.tasks} ready={controller.ready} />
+          <EngineMonitorView tasks={controller.tasks} ready={controller.ready} onSelectTask={openTask} />
         ) : view.page === 'agents' ? (
           <div className="work-page work-page--agents"><div className="work-page__inner work-page__inner--agents"><WorkAgentManager
             key={getEngineSource()}
@@ -1236,11 +1237,7 @@ const WorkMessage = memo(function WorkMessage({
           fileContext={fileContext}
         />
       ))}
-      {message.error && (
-        <p className="work-message__error" role="alert">
-          {message.error}
-        </p>
-      )}
+      {message.error ? <WorkErrorNotice error={message.error} /> : null}
       {pending.map((item) => (
         <WorkPending
           key={item.requestId || item.toolCallId}
@@ -1334,11 +1331,7 @@ function WorkPending({
           )}
         </fieldset>
       ))}
-      {error && (
-        <p className="work-message__error" role="alert">
-          {error}
-        </p>
-      )}
+      {error ? <WorkErrorNotice error={error} /> : null}
       <button
         className="btn btn--primary"
         type="submit"
@@ -2132,7 +2125,7 @@ function ActivityPanel({ tools, todos, selection, workspacePath }: {
               <div><span className="work-activity-detail__eyebrow">{selected.name === 'subagent' || selected.subagent ? '协作代理' : '工具调用'}</span><h3>{selected.name === 'subagent' || selected.subagent ? workSubagentName(selected) : toolDisplayName(selected.name)}</h3></div>
               <span className={`work-tool-state work-tool-state--${selected.state}`}>{TOOL_STATUS[selected.state]}</span>
             </header>
-            {selected.error ? <p className="work-activity-detail__error" role="alert">{selected.error}</p> : null}
+            {selected.error ? <WorkErrorNotice error={selected.error} /> : null}
             <ActivityResultBlock tool={selected} onCopy={copy} />
             <ActivityDataBlock title="输入参数" value={selected.args} onCopy={copy} collapsed />
           </article>

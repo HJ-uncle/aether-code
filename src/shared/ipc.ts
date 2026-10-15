@@ -14,6 +14,7 @@ export const IPC = {
   invoke: {
     accountAction: 'account:action',
     engineGetSnapshot: 'engine:get-snapshot',
+    engineDiagnostics: 'engine:diagnostics',
     engineStart: 'engine:start',
     engineStop: 'engine:stop',
     engineRestart: 'engine:restart',

@@ -11,6 +11,7 @@ import { toolDisplayName, toolParamSummary, toolPathArg } from './tool-names'
 import { toolPresentation } from './tool-presentation'
 import { ToolResult } from './ToolResult'
 import { useCollapseMemory } from './useCollapseMemory'
+import { WorkErrorNotice } from '../work/WorkErrorNotice'
 
 /** Code and Work share the same one-line receipt and result-only disclosure. */
 export const CompactToolRow = memo(function CompactToolRow({
@@ -33,6 +34,11 @@ export const CompactToolRow = memo(function CompactToolRow({
   const label = toolDisplayName(tool.name)
   const summary = summaryOverride ?? toolParamSummary(tool.args)
   const failure = toolFailureMessage(tool)
+  // Some durable subagent projections are stored both as `error` and as the
+  // tool result.  WorkErrorNotice already keeps that diagnostic behind a
+  // disclosure; rendering the same raw payload below would recreate the
+  // giant red block this surface is meant to avoid.
+  const duplicateWorkFailure = Boolean(fileContext && failure && result.text.trim() === failure.trim())
   const hasDetail = Boolean(result.text || result.images.length || result.browserSnapshots?.length || failure)
   const pathArg = toolPathArg(tool.args)
   // Work opens files in its own task; Code retains its editor and remote policy.
@@ -81,8 +87,10 @@ export const CompactToolRow = memo(function CompactToolRow({
       </button>
       {open && hasDetail ? (
         <div id={detailId} className="logline__detail">
-          {failure ? <div className="message__error" role="alert">{failure}</div> : null}
-          {result.text || result.images.length || result.browserSnapshots?.length ? <ToolResult parsed={result} toolName={tool.name} /> : null}
+          {failure ? (
+            fileContext ? <WorkErrorNotice error={failure} /> : <div className="message__error" role="alert">{failure}</div>
+          ) : null}
+          {!duplicateWorkFailure && (result.text || result.images.length || result.browserSnapshots?.length) ? <ToolResult parsed={result} toolName={tool.name} /> : null}
         </div>
       ) : null}
     </div>

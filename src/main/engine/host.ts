@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import { randomBytes } from 'node:crypto'
 import { parseSseBlock } from './sse'
 import type { EngineSnapshot, StreamEvent } from '../../shared/ipc'
+import type { EngineHealthDiagnostics } from '../../shared/engine-diagnostics'
 import { getSettings } from '../settings-store'
 import { logger } from './logger'
 import { ensureEncryptionKey } from './secrets'
@@ -69,6 +70,9 @@ export class EngineHost extends EventEmitter {
   }
   private healthTimer: ReturnType<typeof setInterval> | null = null
   private healthFailures = 0
+  private healthLastSuccessAt: number | null = null
+  private healthLastCheckedAt: number | null = null
+  private healthLastLatencyMs: number | null = null
   private remoteReconnectTimer: ReturnType<typeof setTimeout> | null = null
   private remoteReconnectAttempt = 0
   /** Explicitly disabled by stop(); enabled while a remote target is selected. */
@@ -85,6 +89,18 @@ export class EngineHost extends EventEmitter {
 
   getSnapshot(): EngineSnapshot {
     return this.snapshot
+  }
+
+  /** Diagnostics reuse the existing probes, so opening a monitor adds no HTTP heartbeat. */
+  getHealthDiagnostics(): Omit<EngineHealthDiagnostics, 'activeStreams'> {
+    return {
+      lastSuccessAt: this.healthLastSuccessAt,
+      lastCheckedAt: this.healthLastCheckedAt,
+      lastLatencyMs: this.healthLastLatencyMs,
+      consecutiveFailures: this.healthFailures,
+      checkIntervalMs: HEALTH_INTERVAL_MS,
+      failureThreshold: HEALTH_FAILURE_THRESHOLD
+    }
   }
 
   on<K extends keyof EngineHostEvents>(event: K, listener: EngineHostEvents[K]): this {
@@ -239,6 +255,10 @@ export class EngineHost extends EventEmitter {
     recoverClosedFailure: boolean
   ): Promise<EngineSnapshot> {
     try {
+      this.healthLastSuccessAt = null
+      this.healthLastCheckedAt = null
+      this.healthLastLatencyMs = null
+      this.healthFailures = 0
       try { await this.releaseResources() }
       catch (error) {
         // An explicit start may replace a failed process only after its exact
@@ -511,6 +531,7 @@ export class EngineHost extends EventEmitter {
   private startHealthWatch(): void {
     this.stopHealthWatch()
     this.healthFailures = 0
+    this.healthLastSuccessAt = Date.now()
     this.healthTimer = setInterval(() => {
       void this.checkHealth()
     }, HEALTH_INTERVAL_MS)
@@ -564,6 +585,7 @@ export class EngineHost extends EventEmitter {
     const { baseUrl, instanceId } = this.snapshot
     const generation = this.generation
     if (!baseUrl || this.snapshot.phase !== 'ready') return
+    const startedAt = performance.now()
     try {
       const signal = AbortSignal.any([this.requestSignal, AbortSignal.timeout(3000)])
       const health = await fetch(`${baseUrl}/health`, { signal, redirect: 'error' })
@@ -573,9 +595,16 @@ export class EngineHost extends EventEmitter {
       if (!response.ok) throw new Error(String(response.status))
       const meta = parseEngineMeta(await response.json(), this.snapshot.buildId ?? undefined)
       if (meta.instanceId !== instanceId) throw new Error('引擎实例已变化')
-      if (this.current(generation)) this.healthFailures = 0
+      if (this.current(generation)) {
+        this.healthFailures = 0
+        this.healthLastSuccessAt = Date.now()
+        this.healthLastCheckedAt = this.healthLastSuccessAt
+        this.healthLastLatencyMs = performance.now() - startedAt
+      }
     } catch {
       if (!this.current(generation) || this.snapshot.phase !== 'ready') return
+      this.healthLastCheckedAt = Date.now()
+      this.healthLastLatencyMs = performance.now() - startedAt
       if (++this.healthFailures >= HEALTH_FAILURE_THRESHOLD) {
         if (this.snapshot.mode === 'remote') {
           this.scheduleRemoteReconnect(

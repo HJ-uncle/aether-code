@@ -16,6 +16,7 @@ import {
   normalizeSubagentRun,
   reduceSubagentEvent,
   reduceSubagentRun,
+  isRecoverableSubagentSnapshotConflict,
   subagentResidentBytes,
   toSubagentView,
   SUBAGENT_CACHE_MAX_BYTES,
@@ -342,7 +343,17 @@ async function readSubagentDirectory(parentSessionId: string, kind: 'head' | 'mo
     const reduced = reduceSubagentDirectory(directory, { scope, inputCursor, page, updatedAt: Date.now(), restart })
     if (reduced.status === 'rejected') throw new Error(`子代理目录更新失败：${reduced.reason}`)
     // Reject the entire response before committing either the cursor or views.
-    const updates = incoming.map(run => reduceSubagentRun(runs.get(run!.runId), run))
+    const updates = incoming.map(run => {
+      const previous = runs.get(run!.runId)
+      const update = reduceSubagentRun(previous, run)
+      // Detail and list endpoints can race at the same run watermark.  A
+      // partial list projection must not invalidate a complete detail already
+      // shown to the user; retain the verified cache and continue the atomic
+      // directory commit.  Other conflicts remain hard failures.
+      return isRecoverableSubagentSnapshotConflict(previous, run, update)
+        ? { status: 'verified-duplicate' as const, run: previous }
+        : update
+    })
     if (updates.some(update => update.status === 'invalid' || update.status === 'gap'))
       throw new Error('子代理列表状态或序列冲突，请更新列表后重试')
     let removed = false
@@ -579,8 +590,10 @@ export async function refreshSubagentRun(runId: string, expectedScope?: Subagent
       if (discoveryAtStart && latest && (discoveryAtStart.epoch !== latest.epoch ||
         !ref && versionAtStart !== discoveryVersions.get(scope.identity.parentSessionId))) return
       if (runGenerations.has(runId) && latest?.generation !== runGenerations.get(runId)) removeCachedRun(runId)
+      const previous = runs.get(runId)
       const result = ingestSubagentRunResult(run)
-      if (result.status === 'invalid' || result.status === 'gap')
+      if ((result.status === 'invalid' || result.status === 'gap') &&
+        !isRecoverableSubagentSnapshotConflict(previous, run, result))
         throw new Error('子代理状态或序列冲突，请更新列表后重试')
       if (runs.has(runId)) runGenerations.set(runId, latest?.generation)
       if (ref && latest) publishDiscovery(scope.identity.parentSessionId, { ...getSubagentDiscovery(scope.identity.parentSessionId),

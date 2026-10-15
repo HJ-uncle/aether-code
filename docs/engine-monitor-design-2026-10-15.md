@@ -2,11 +2,22 @@
 
 ## 已落地的 MVP
 
-Work 模式新增「引擎监控」页。它复用现有 `EngineSnapshot` 推送和 Work 本地任务状态，展示引擎 phase、PID、端口、版本/build、实例、数据目录、运行时来源、错误，以及 Work/定时任务两条 lane。任务列表最多渲染 24 项；页面不订阅原始引擎日志、不保存事件历史，只用已有快照和 30 秒时间刷新，因此可以长时间打开。
+Work 模式新增「引擎监控」页。它复用现有 `EngineSnapshot` 推送和 Work 本地任务状态，展示引擎 phase、PID、端口、版本/build、实例、数据目录、运行时来源、错误，以及 Work/定时会话两条 lane。任务行是可键盘访问的按钮，可以回到任务并继续查看现有的子 Agent 面板；每条 lane 最多渲染前 24 项。
+
+监控页还会在页面可见且引擎就绪时低频读取实际 `/cron` 计划，单次只保留前 64 项、界面展示前 24 项，并将计划启用状态、计划表达式、上次/下次运行时间与本地会话分开显示。计划读取每 30 秒最多发起一次，页面隐藏或离开监控页时停止；引擎切换和迟到响应由 source generation 丢弃。当前 `/cron` 接口没有分页，超过 64 项时界面会明确标记为截断。
+
+资源与健康卡片通过主进程 IPC 读取真实引擎数据：嵌入式引擎每 5 秒按需采样单个引擎 PID 的 CPU、RSS/private memory、进程读写计数与速率，同时显示宿主内存、数据磁盘容量、健康探针延迟/连续失败和桌面活动流。进程区块按 Codex Processes 面板的语义显示引擎主进程及可确认的后代进程，提供稳定的父子层级、PID、年龄、CPU、RSS 和合计 I/O；Windows 进程表枚举单独采用 15 秒冷却，最多保留 256 个候选、界面最多渲染 24 行，排除命令行参数以避免把凭据带入 IPC。PID 创建时间不一致时丢弃缓存，防止 PID 复用把旧子进程挂到新引擎上。存储目录按 60 秒冷却扫描，限制文件数、深度和耗时，并按数据库、会话、memory、snapshots、备份、日志、缓存和其他文件分类。远端引擎或系统拒绝进程读取时显示不可用原因，不把未知值写成 0。
+
+请求数、Token 总量和工具耗时/成功率仍通过用户点击读取 `/metrics`，现在标为“业务统计”，不与 OS 资源健康混为一谈。
+
+页面不订阅原始引擎日志、不保存事件历史；已有引擎快照推送和 Work 状态探测继续由全局单例负责。页面采用浅色/深色各自定义的 Apple 系统灰阶，卡片使用令牌化圆角、细描边、层叠阴影和可降级的毛玻璃材质；列表保留键盘焦点、悬停反馈、窄屏横向滚动和 `prefers-reduced-motion` 边界。引擎的 `updatedAt` 表示最近一次状态变化，不等同于健康探针心跳，界面按此语义标注。
 
 入口和实现：
 
 - `src/renderer/src/contrib/work/EngineMonitorView.tsx`
+- `src/renderer/src/contrib/work/EngineResourceHealth.tsx`
+- `src/main/engine/diagnostics.ts`
+- `src/shared/engine-diagnostics.ts`
 - `src/renderer/src/contrib/work/WorkView.tsx`
 - `src/renderer/src/contrib/work/work.css`
 
@@ -25,7 +36,7 @@ Aether 后续扩展应沿用这些边界：主进程维护紧凑快照，渲染�
 在不改变 MVP 更新频率的前提下，可以把下面的摘要挂到主进程 observability service：
 
 1. 健康：最近探测时间、连续失败次数、restart generation、owned/adopted 状态。
-2. 压力：RSS/private/heap/external、active streams、replay bytes、projection slots、event-loop lag 和固定窗口斜率/峰值。
+2. 压力：V8 heap/external、active streams、replay bytes、projection slots、event-loop lag 和固定窗口斜率/峰值。当前 UI 已聚合可确认的引擎后代进程，后续再接入引擎自身的运行时指标。
 3. 任务：root/child、model、workspace、pending interaction、最后工具和 elapsed/idle 时间。
 4. 协作：消息/ACK、nonce mismatch、错误 peer、版本冲突、重叠写入和未解决证据。
 5. 资源：数据库、JSONL、replay、workspace、artifact、diagnostic 占用及可审查清理候选。

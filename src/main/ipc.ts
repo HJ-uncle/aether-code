@@ -27,6 +27,8 @@ import type {
 import { engineRequest, engineUpload } from './engine/client'
 import { cancelRemoteAttachmentUpload, uploadRemoteAttachment } from './engine/upload-remote-attachment'
 import { engineHost } from './engine/host'
+import { getEngineResourceSnapshot, getEngineStorageSnapshot } from './engine/diagnostics'
+import type { EngineDiagnostics } from '../shared/engine-diagnostics'
 import { onEngineLog } from './engine/logger'
 import { createEngineLogBatcher } from './engine/log-batch'
 import * as fileService from './fs/file-service'
@@ -144,6 +146,20 @@ export function registerIpcHandlers(): void {
   })
   // ── 生命周期 ──
   ipcMain.handle(IPC.invoke.engineGetSnapshot, () => engineHost.getSnapshot())
+  ipcMain.handle(IPC.invoke.engineDiagnostics, async (_event, input: unknown): Promise<EngineDiagnostics> => {
+    const snapshot = engineHost.getSnapshot()
+    const identityOf = (value: EngineSnapshot): string => JSON.stringify([
+      value.mode, value.baseUrl, value.instanceId ?? null, value.accountId ?? null, value.pid, value.dataDir ?? null
+    ])
+    const identity = identityOf(snapshot)
+    const refresh = input !== null && typeof input === 'object' &&
+      'refreshStorage' in input && input.refreshStorage === true
+    const [resources, storage] = await Promise.all([
+      getEngineResourceSnapshot(snapshot), getEngineStorageSnapshot(snapshot, refresh)
+    ])
+    if (identity !== identityOf(engineHost.getSnapshot())) throw new Error('引擎连接已变化，正在重新读取资源指标。')
+    return { identity, resources, storage, health: { ...engineHost.getHealthDiagnostics(), activeStreams: activeStreams.size } }
+  })
 
   ipcMain.handle(IPC.invoke.engineStart, async () => {
     ensureNotActivatingRuntime()

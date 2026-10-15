@@ -193,6 +193,23 @@ test('a conflict anywhere in a page rejects the valid prefix and leaves its curs
   expect(getSubagentRuns('parent').find(item => item.runId === 'run-0')?.status).toBe('running')
 })
 
+test('a partial same-watermark list projection keeps the complete cached detail', async () => {
+  let partial = false
+  bridge(async () => {
+    const full = run(0)
+    return { schemaVersion: 2, runs: [partial ? {
+      ...full,
+      usage: { totalTokens: 99 },
+      toolCount: 1,
+      coverage: { ...full.coverage, toolCount: 1, hasMore: true, truncated: true, completeness: 'partial' as const }
+    } : full], revision: 'fixed', hasMore: false, listComplete: true }
+  })
+  await restartSubagentDirectory('parent')
+  partial = true
+  await expect(restartSubagentDirectory('parent')).resolves.toBeUndefined()
+  expect(getSubagentRuns('parent')[0]).toMatchObject({ runId: 'run-0', usage: { totalTokens: 42 } })
+})
+
 test('a failed directory read still observes known active children and a conflicting targeted view is reported', async () => {
   let conflict = false
   bridge(async input => {

@@ -7,6 +7,7 @@ import { BROWSER_IPC, type BrowserApi, type BrowserConnectionState } from '../sh
 import type { BrowserEvent } from '../shared/browser'
 import type { AccountApi, AccountState } from '../shared/account'
 import type { EngineImportProgress, EngineRuntimeCatalog, EngineRuntimeInfo } from '../shared/engine-import'
+import type { EngineDiagnostics, EngineDiagnosticsInput } from '../shared/engine-diagnostics'
 import type {
   AppSettings,
   CopyIntoWorkspaceInput,
@@ -151,6 +152,7 @@ const api = {
   } satisfies AccountApi,
   engine: {
     getSnapshot: (): Promise<EngineSnapshot> => ipcRenderer.invoke(IPC.invoke.engineGetSnapshot),
+    diagnostics: (input?: EngineDiagnosticsInput): Promise<EngineDiagnostics> => ipcRenderer.invoke(IPC.invoke.engineDiagnostics, input),
     start: (): Promise<EngineSnapshot> => ipcRenderer.invoke(IPC.invoke.engineStart),
     stop: (): Promise<EngineSnapshot> => ipcRenderer.invoke(IPC.invoke.engineStop),
     restart: (): Promise<EngineSnapshot> => ipcRenderer.invoke(IPC.invoke.engineRestart),

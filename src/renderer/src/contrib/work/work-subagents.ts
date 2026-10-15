@@ -12,6 +12,24 @@ export interface WorkSubagentGroup {
   tools: ToolActivity[]
 }
 
+/**
+ * A child's list position is a navigation affordance, not a live activity
+ * ranking.  `updatedAt` changes on every tool/status event and therefore must
+ * never be used as the primary list key: doing so makes rows jump while the
+ * user is reading them.  Use the first durable invocation timestamp instead;
+ * callers without a timestamp retain their insertion order via the fallback
+ * index below.
+ */
+function subagentFirstSeenAt(entries: readonly ToolActivity[]): number | undefined {
+  let first: number | undefined
+  for (const tool of entries) {
+    const candidate = tool.subagentRef?.identity.createdAt ?? tool.subagent?.createdAt ?? tool.startedAt
+    if (typeof candidate !== 'number' || !Number.isFinite(candidate)) continue
+    if (first === undefined || candidate < first) first = candidate
+  }
+  return first
+}
+
 function workSubagentArgs(value: string): Record<string, unknown> {
   try {
     const parsed: unknown = JSON.parse(value)
@@ -84,7 +102,7 @@ export function workSubagentGroups(sessionId: string, tools: ToolActivity[], run
     else grouped.set(key, [tool])
   }
   return [...grouped.entries()]
-    .map(([key, entries]) => {
+    .map(([key, entries], insertionOrder) => {
       const ordered = [...entries].sort((a, b) =>
         (b.subagentRef?.identity.createdAt ?? b.subagent?.createdAt ?? b.startedAt ?? (b.state === 'running' ? Number.MAX_SAFE_INTEGER : 0)) -
         (a.subagentRef?.identity.createdAt ?? a.subagent?.createdAt ?? a.startedAt ?? (a.state === 'running' ? Number.MAX_SAFE_INTEGER : 0)) ||
@@ -98,10 +116,29 @@ export function workSubagentGroups(sessionId: string, tools: ToolActivity[], run
         modelId: latest.subagentRef?.identity.modelId || run?.modelId || '',
         active: entries.some((tool) => !tool.subagentRef && (tool.subagent ? ['queued', 'running', 'cancelling'].includes(tool.subagent.status) : tool.state === 'running')),
         latest,
-        tools: ordered
+        tools: ordered,
+        // Temporary metadata is stripped before returning so the public group
+        // shape remains unchanged for callers and tests.
+        order: subagentFirstSeenAt(entries),
+        insertionOrder
       }
     })
-    .sort((a, b) => (b.latest.subagentRef?.identity.createdAt ?? b.latest.subagent?.updatedAt ?? 0) - (a.latest.subagentRef?.identity.createdAt ?? a.latest.subagent?.updatedAt ?? 0))
+    .sort((a, b) => {
+      // Stable creation order mirrors Codex's agent list: active work may
+      // update in place, but it does not move ahead of an older sibling.
+      const at = a.order
+      const bt = b.order
+      if (at !== undefined || bt !== undefined) {
+        if (at === undefined) return 1
+        if (bt === undefined) return -1
+        if (at !== bt) return at - bt
+      } else {
+        return a.insertionOrder - b.insertionOrder
+      }
+      const byKey = a.key.localeCompare(b.key)
+      return byKey || a.insertionOrder - b.insertionOrder
+    })
+    .map(({ order: _order, insertionOrder: _insertionOrder, ...group }) => group)
 }
 
 /** A preparation announcement receives its durable child identity asynchronously. */

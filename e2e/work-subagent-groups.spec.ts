@@ -31,6 +31,20 @@ test('late updates to an old round cannot replace the newest continuation contex
   expect(groups[0].latest.subagent?.runId).toBe('new')
 })
 
+test('child rows keep creation order when live updates change their timestamps', () => {
+  const first = child({ childSessionId: 'first-context', runId: 'first', parentToolCallId: 'first-call', createdAt: 10, updatedAt: 100 })
+  const second = child({ childSessionId: 'second-context', runId: 'second', parentToolCallId: 'second-call', createdAt: 20, updatedAt: 200 })
+  const third = child({ childSessionId: 'third-context', runId: 'third', parentToolCallId: 'third-call', createdAt: 30, updatedAt: 300 })
+  const initial = workSubagentGroups('parent', [], [first, second, third])
+  const afterUpdates = workSubagentGroups('parent', [], [
+    { ...third, updatedAt: 9000 },
+    { ...first, updatedAt: 10000 },
+    { ...second, updatedAt: 11000 }
+  ])
+  expect(initial.map(group => group.childSessionId)).toEqual(['first-context', 'second-context', 'third-context'])
+  expect(afterUpdates.map(group => group.childSessionId)).toEqual(initial.map(group => group.childSessionId))
+})
+
 test('same named agents remain independent while foreign parents and legacy states are isolated', () => {
   const groups = workSubagentGroups('parent', [
     { id: 'legacy', name: 'subagent', args: '{}', result: 'Unverified legacy output', state: 'unknown' },

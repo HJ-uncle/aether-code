@@ -7,6 +7,7 @@ import { isVisibleToolActivity } from '@renderer/core/engine/task-plan'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { Icon } from '@renderer/workbench/icons'
 import { ToolResult } from './ToolResult'
+import { WorkErrorNotice } from '../work/WorkErrorNotice'
 import { parseToolResult } from './tool-result'
 import { toolDisplayName, toolParamSummary } from './tool-names'
 import { loadSubagentToolWindow, subagentHistoryScope, subagentDetailOffsetTrail, SubagentHistorySupersededError,
@@ -93,7 +94,7 @@ export function SubagentToolRow({ call, run, latestSeq, open: controlledOpen, on
       <span className="subagent-card__call-name">{toolDisplayName(call.name)}</span><span className="subagent-card__call-summary">· {status}</span>
       {summary ? <span className="subagent-card__call-args">{summary}</span> : null}
     </button>
-    {open ? <div className="subagent-card__call-detail">{call.error ? <div className="message__error">{call.error.message}</div> : null}
+    {open ? <div className="subagent-card__call-detail">{call.error ? <WorkErrorNotice error={call.error.message} /> : null}
       {run ? <ToolDetail call={call} run={run} latestSeq={latestSeq} /> : call.output ? <><div className="subagent-card__call-section">输出</div><ToolResult parsed={parsed} toolName={call.name} textClassName="subagent-card__call-pre" /></> : null}
     </div> : null}
   </div>
