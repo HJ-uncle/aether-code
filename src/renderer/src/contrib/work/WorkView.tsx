@@ -63,6 +63,7 @@ import { WORK_ACTIVITY_PAGE_SIZE, WORK_MESSAGE_PAGE_SIZE, WORK_TASK_PAGE_SIZE, w
 import { requestedThinkingMode } from '../chat/session-request-config'
 import { AutomationsView } from '../automations/AutomationsView'
 import { subscribeAutomationEditor } from '../automations/automation-navigation'
+import { EngineMonitorView } from './EngineMonitorView'
 import { flushWorkDrafts, getWorkDraft, getWorkState, updateWorkState, type WorkArtifact } from './work-state'
 import { findWorkArtifact } from './work-artifact-utils'
 import { hideBrowserSurfaces, useBrowserState } from '../browser/browser-store'
@@ -71,7 +72,7 @@ import '../chat/apple-chat-panels.css'
 
 type WorkController = ReturnType<typeof useWorkController>
 type WorkTask = WorkController['tasks'][number]
-type Page = 'home' | 'projects' | 'artifacts' | 'browser' | 'automations' | 'connections' | 'agents'
+type Page = 'home' | 'projects' | 'artifacts' | 'browser' | 'automations' | 'connections' | 'agents' | 'monitor'
 type WorkspaceTab = 'artifacts' | 'sources' | 'browser' | 'activity' | 'subagents' | 'git'
 type ActivitySelection = { taskId: string; toolId: string; revision: number }
 type TaskFilter = 'all' | 'running' | 'waiting' | 'done'
@@ -125,7 +126,8 @@ const NAVIGATION: Array<{ id: Page; label: string; icon: IconName }> = [
   { id: 'artifacts', label: '成果', icon: 'file' },
   { id: 'browser', label: '浏览器', icon: 'search' },
   { id: 'automations', label: '自动化', icon: 'clock-outline' },
-  { id: 'connections', label: '连接', icon: 'graph' }
+  { id: 'connections', label: '连接', icon: 'graph' },
+  { id: 'monitor', label: '引擎监控', icon: 'engine' }
 ]
 const TEMPLATES: Array<{ title: string; icon: IconName; text: string }> = [
   {
@@ -462,12 +464,15 @@ export function WorkView(): JSX.Element {
               key={item.id}
               type="button"
               className="work-sidebar__task"
-              title={item.title}
+              title={!controller.ready && (item.status === 'running' || item.status === 'waiting')
+                ? `${item.title} · 连接中断，等待恢复确认` : item.title}
               aria-current={task?.id === item.id && view.page === 'home' ? 'true' : undefined}
               onClick={() => openTask(item.id)}
             >
               <span>{item.title}</span>
-              {item.status === 'running' ? (
+              {!controller.ready && (item.status === 'running' || item.status === 'waiting') ? (
+                <Icon name="warning" size={12} />
+              ) : item.status === 'running' ? (
                 <Spinner size={11} />
               ) : item.status === 'waiting' ? (
                 <Icon name="circle-dot" size={12} />
@@ -540,7 +545,7 @@ export function WorkView(): JSX.Element {
                 </button>
               </div>
               <div className="work-task-heading__actions">
-                <TaskStatus status={task.status} />
+                <TaskStatus status={task.status} ready={controller.ready} />
                 <WorkTaskActions task={task} controller={controller} compact showStop={false} />
                 <WorkRootStop key={task.id} controller={controller} />
                 <IconButton
@@ -664,6 +669,7 @@ export function WorkView(): JSX.Element {
                 <TaskList
                   key={`${filter}:${search}`}
                   tasks={filteredTasks}
+                  ready={controller.ready}
                   onSelect={openTask}
                   empty={
                     activeTasks.length
@@ -701,6 +707,8 @@ export function WorkView(): JSX.Element {
           </div>
         ) : view.page === 'connections' ? (
           <Connections ready={controller.ready} />
+        ) : view.page === 'monitor' ? (
+          <EngineMonitorView tasks={controller.tasks} ready={controller.ready} />
         ) : view.page === 'agents' ? (
           <div className="work-page work-page--agents"><div className="work-page__inner work-page__inner--agents"><WorkAgentManager
             key={getEngineSource()}
@@ -729,10 +737,13 @@ export function WorkView(): JSX.Element {
   )
 }
 
-function TaskStatus({ status }: { status: WorkTask['status'] }): JSX.Element {
+function TaskStatus({ status, ready }: { status: WorkTask['status']; ready: boolean }): JSX.Element {
+  // A lost observer cannot assert whether the durable run has reached a terminal state.
+  const disconnected = !ready && (status === 'running' || status === 'waiting')
   return (
-    <span className={`work-status work-status--${status}`}>
-      {status === 'running' ? (
+    <span className={`work-status work-status--${disconnected ? 'interrupted' : status}`}
+      title={disconnected ? '连接中断，等待恢复确认' : undefined}>
+      {disconnected ? <Icon name="warning" size={12} /> : status === 'running' ? (
         <Spinner size={12} />
       ) : (
         <Icon
@@ -748,7 +759,7 @@ function TaskStatus({ status }: { status: WorkTask['status'] }): JSX.Element {
           size={12}
         />
       )}
-      {STATUS_LABEL[status]}
+      {disconnected ? '连接中断' : STATUS_LABEL[status]}
     </span>
   )
 }
@@ -773,10 +784,12 @@ function EmptyState({
 
 function TaskList({
   tasks,
+  ready,
   onSelect,
   empty
 }: {
   tasks: WorkTask[]
+  ready: boolean
   onSelect: (id: string) => void
   empty: string
 }): JSX.Element {
@@ -795,7 +808,7 @@ function TaskList({
             <strong>{task.title}</strong>
             <span>{task.workspacePath ? filename(task.workspacePath) : '独立任务'}</span>
           </span>
-          <TaskStatus status={task.status} />
+          <TaskStatus status={task.status} ready={ready} />
           <time dateTime={new Date(task.updatedAt).toISOString()}>{shortDate(task.updatedAt)}</time>
           <Icon name="chevron-right" size={14} />
         </button>
@@ -2194,7 +2207,7 @@ function Projects({
                 </div>
                 <span>{tasks.length} 项任务</span>
               </header>
-              <TaskList tasks={tasks} onSelect={openTask} empty="" />
+              <TaskList tasks={tasks} ready={controller.ready} onSelect={openTask} empty="" />
             </section>
           ))
         ) : (

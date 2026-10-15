@@ -218,7 +218,7 @@ export class EngineHost extends EventEmitter {
     this.startupController?.abort()
     const controller = new AbortController()
     this.startupController = controller
-    const task = this.doStart(mode, normalizedRemote, configuredRoot, generation, controller.signal).finally(() => {
+    const task = this.doStart(mode, normalizedRemote, configuredRoot, generation, controller.signal, !autoReconnect).finally(() => {
       if (this.starting === task) this.starting = null
       if (this.startupController === controller) this.startupController = null
     })
@@ -235,10 +235,19 @@ export class EngineHost extends EventEmitter {
     remoteBaseUrl: string,
     remoteWorkspaceRoot: string,
     generation: number,
-    signal: AbortSignal
+    signal: AbortSignal,
+    recoverClosedFailure: boolean
   ): Promise<EngineSnapshot> {
     try {
-      await this.releaseResources()
+      try { await this.releaseResources() }
+      catch (error) {
+        // An explicit start may replace a failed process only after its exact
+        // owned handle closes. Its failed stop receipt remains an error, rather
+        // than forcing the user to repeat start just to consume that receipt.
+        this.ownedProcesses.assertNoUnclosed()
+        if (!recoverClosedFailure) throw error
+        logger.warn(`上次引擎关闭未验证，旧进程已确认关闭，继续启动：${error instanceof Error ? error.message : String(error)}`)
+      }
       this.ownedProcesses.assertNoUnclosed()
       if (!this.current(generation, signal)) return this.snapshot
       this.patch({

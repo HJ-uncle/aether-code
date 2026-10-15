@@ -1,0 +1,3 @@
+import fs from 'node:fs'; import path from 'node:path';
+const dirs=fs.readdirSync('.ae/qa/all-mode-stress').filter(n=>n.startsWith('six-')).map(n=>({n,t:fs.statSync(path.join('.ae/qa/all-mode-stress',n)).mtimeMs})).sort((a,b)=>b.t-a.t).slice(0,8);
+for(const d of dirs){for(const name of ['joint-acceptance.json','client-window-acceptance.json','client-live-six-acceptance-'+d.n+'.json','post-exit-audit.json','cleanup.json','supervisor-integrity.json']){const f=path.join('.ae/qa/all-mode-stress',d.n,name);if(!fs.existsSync(f))continue;let x;try{x=JSON.parse(fs.readFileSync(f))}catch(e){console.log(d.n,name,'parse');continue};console.log('\n===',d.n,name,'==='); console.dir(x,{depth:4,maxArrayLength:20});}}

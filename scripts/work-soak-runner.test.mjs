@@ -355,6 +355,47 @@ test('cleanup attempts delete after disable failure and drains before deleting A
   assert.equal(statusReads, 2)
 })
 
+test('cleanup drains a native child after its root is terminal before deleting the Agent', async () => {
+  const calls = []
+  let childReads = 0
+  const client = { request: async (route, options) => {
+    calls.push(`${options?.method || 'GET'} ${route}`)
+    if (route.includes('/status?')) return { running: false, run: { sessionId: 'owned-session', status: 'succeeded' } }
+    if (route.includes('/subagent/runs?')) {
+      childReads += 1
+      return { runs: [{ runId: 'child-run', parentSessionId: 'owned-session', status: childReads === 1 ? 'running' : 'cancelled' }] }
+    }
+    return {}
+  } }
+  const errors = await cleanupOwned(client, {
+    cronIds: [], sessions: [{ sessionId: 'owned-session' }], cron: [], agentIds: ['owned-agent']
+  }, () => {})
+  assert.deepEqual(errors, [])
+  const childCancel = calls.indexOf('POST /api/v1/subagent/runs/child-run/cancel')
+  const agentDelete = calls.indexOf('DELETE /api/v1/agents/owned-agent')
+  assert.ok(childCancel >= 0, 'running native child must be cancelled')
+  assert.ok(agentDelete > childCancel, 'Agent deletion must wait for child drain')
+  assert.ok(childReads >= 2, 'cleanup must re-read child archive after cancellation')
+})
+
+test('cleanup preserves evidence and keeps the Agent when a native child never reaches terminal state', async () => {
+  const calls = []
+  const events = []
+  const client = { request: async (route, options) => {
+    calls.push(`${options?.method || 'GET'} ${route}`)
+    if (route.includes('/status?')) return { running: false, run: { sessionId: 'owned-session', status: 'succeeded' } }
+    if (route.includes('/subagent/runs?')) return { runs: [{ runId: 'stuck-child', parentSessionId: 'owned-session', status: 'running' }] }
+    return {}
+  } }
+  const errors = await cleanupOwned(client, {
+    cronIds: [], sessions: [{ sessionId: 'owned-session' }], cron: [], agentIds: ['owned-agent']
+  }, event => events.push(event), { drainTimeoutMs: 20 })
+  assert.equal(errors.length, 1)
+  assert.match(errors[0].error, /terminal after cancellation/)
+  assert.ok(events.some(event => event.type === 'cleanup-error' && event.resource === 'session-drain'))
+  assert.equal(calls.some(call => call === 'DELETE /api/v1/agents/owned-agent'), false)
+})
+
 test('Cron stale snapshots never increment counts; missing intermediate evidence and waiting are red', () => {
   const observed = { verifiedRunIds: ['old'] }
   assert.deepEqual(unverifiedCronRuns([{ runId: 'old', status: 'succeeded' }], observed), [])
@@ -399,6 +440,24 @@ test('failed-task cancellation pins the observed run and refuses replacement ide
   await assert.rejects(drainFailedSession({ request: async () => ({ running: false }) }, 'owned', 'r'), /different session or run/)
   await assert.rejects(drainFailedSession({ request: async () => ({ running: true, run: { sessionId: 'owned', runId: 'replacement', status: 'running' } }) }, 'owned', 'r'), /different session or run/)
   await assert.rejects(drainFailedSession({ request: async () => ({ running: true, run: { sessionId: 'owned', runId: 'r', status: 'running' } }) }, 'owned', 'r', { timeoutMs: 10 }), /did not become terminal/)
+})
+
+test('failed-task isolation drains a child even when the root is already terminal', async () => {
+  const calls = []
+  let childReads = 0
+  const client = { request: async (route, options) => {
+    calls.push(`${options?.method || 'GET'} ${route}`)
+    if (route.includes('/status?')) return { running: false, run: { sessionId: 'owned', runId: 'r', status: 'succeeded' } }
+    if (route.includes('/subagent/runs?')) {
+      childReads += 1
+      return { runs: [{ runId: 'child-r', parentSessionId: 'owned', status: childReads === 1 ? 'running' : 'cancelled' }] }
+    }
+    return {}
+  } }
+  assert.deepEqual(await drainFailedSession(client, 'owned', 'r'), { runId: 'r', status: 'succeeded' })
+  assert.ok(calls.includes('POST /api/v1/subagent/runs/child-r/cancel'))
+  assert.equal(calls.some(call => call === 'POST /api/v1/chat/cancel'), false)
+  assert.ok(childReads >= 2)
 })
 
 async function implementFixture(item, workload) {

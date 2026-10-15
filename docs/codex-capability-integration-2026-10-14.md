@@ -367,3 +367,96 @@ WQ2 bounded 与 P4 v3 已按真实共同 chat 前像三方整合，追加同时�
 上述应用没有模型调用、Electron 或新正式分钟，现代 capability 默认仍 false。应用后的联合 capture/build/窗口验收尚待完成。WQ3 正修真实 public receipt 剥离 private attemptId 的 DTO 差异，旧 synthetic 63 项不能覆盖该差异。P5a 的首个 13/13 HTTP/WAL 候选正三方重放到最新附件修正基线；不得覆盖修正后的 chat。
 
 Git v3 whole-operation/native Job Object 候选已封但未应用。新 clone v4 真实测试发现长路径关闭回执与取消 marker 在旧 .NET 文件 API 下不可用，安全 quarantine 不能解决取消长等；正以 Win32 Unicode API 修复并保留原失败。新 asset 的 clone 六合同与 v3 十二合同已通过各自范围，额外深路径还需 Git 调用级 `core.longpaths=true` 保护及原 93/12/2 回归。UI 重试必须区别 acquire 前未开始与可能产生副作用的操作，恢复锁不自动重放 commit。G3b2a SQLite mailbox consumer/同事务 receipt、G3b2b 默认 JSONL writer 合同及 async 协作接线仍是后续生产差距。
+
+## 2026-10-14 06:30 UTC 当前联合版本与生产协作入口
+
+本节更新当前事实；前述分阶段记录保留为历史，不把旧失败改成成功。正式指针再次核验仍是 `six-20261013T143500-p4qYd4` / `a5e572b6-84ab-4f7c-a001-b3846a4e6747`，30.8161 分钟失败、snapshot 超时、共享往返/集成均 0、noActiveWork=true。现在没有新正式 root、模型预检或正式运行分钟。
+
+| 项目 | 当前已应用及验证 | 下一项真实闭环 |
+| --- | --- | --- |
+| 顶栏响应式 | 三叶已应用；永久真实 Electron 两项在 1440/1024/760/620、Code/Work、实际深浅主题验证菜单、键盘、几何及命令副作用 | 随联合最终版本继续保留回归 |
+| 运行中补充要求 | G9 客户端 v11 十六叶已应用；原文/key/scope 的 unknown outbox 与 known receipt 历史分别有界，先保存/readback 后清 unknown；GET-only 核对、明确本地移除，不自动 cancel/rePOST；Work 当前手改前像仅加入 rootRunId 接线 | 同准确引擎的 queued→integrated/terminal、模型请求消费与重启验证 |
+| G9 后端 | 最终 `859c181a` 十八叶（十四产品/四测试）已应用；55 文件 728 passed/0 failed/1 原 skip，总 729；literal typecheck/build0、737 输入/2482 输出、native seed/reopen 共十一项、正常退出及残留 0 | 新准确联合版本与实际 factory/ReAct/registry/模型 transport 验证 |
+| 生产路由注册 | 生产 server 缺少 `collaborationRoutes` 注册已定位并补两叶；真实 buildServer、loopback、实例鉴权、SQLite/JSONL 正控 3/3，原 server 三个真实 URL404 负控；独立正常关闭/端口/PID 验证通过 | 该测试中的 root/child owner 是合成接纳，仍需正常模型生命周期 |
+| 当前准确联合构建 | `.ae/tmp/current-joint-candidate-20261014-Y70afU/app`：776 输入/110 输出、literal TC/build0；`engine`：738 输入/2486 输出、literal 主机 TC/build0；源码与产物稳定、publicDrift=[]，未改公共 out/dist | 56 文件联合引擎回归正在运行；完整生产 HTTP、Cron 与窗口联测 |
+
+G9 后端最终 manifest SHA `0276229b764f9f856db2a732ba645d95e508fbecf82173bc0e94b96c4201838b`，3324 叶 seal SHA `b76d140c73e06a408c4bb46ff89e9e38b64f2063a2d1abb156ff46743b8cf820`，应用 journal SHA `31eb6f0e2473d78119f86101ea3e25766e33784e8e5d0103b6343be2dc54529b`。缺表失败 `e256862c` 和 terminal-first 旧夹具超时 `0a7f8508` 全部保留；旧 apply 脚本不得执行或代签最终版本。
+
+生产注册应用 journal SHA `b2e28ae3a0f3b66a52b7268b0c1821e9a127a3e01debe1ef42e699e96315c310`，有限独立 review 为 `.ae/tmp/g9-registration-independent-ehciGU/REVIEW.md`，seal SHA `4aca027d3c75253ca2b4c42651d1fee1d6dd02771c2203bc77171b248329afaa`。注册后的首次准确联合 build 在 sandbox 的 tsx 启动发生 `uv_os_get_passwd ENOMEM`，还未执行构建；该失败原回执保留。同源 literal 命令主机重跑 typecheck/build0，回执 SHA `30261c48e1c8433b1ca3af417efa032a6cf445d2e4c7d4f6d60a9d842b68aee6`，不能用新回执覆盖旧失败。
+
+当前 app 的独立联合验收为 `Y70afU/frontend-union-W2KSHu/REVIEW.md`：顶栏 2/2、协作纯合同 40/40、composed G9 真窗场景通过，19 次补充 POST 与一次显式恢复续轮 POST、17 hosts 正常 exit/stdio-close0；准确候选 SHA 在测试后不变，两个 QA profile/34已知PID/18端口的独立主机残留审计通过。seal SHA `36b8b29d50ef5a66cb515a141f53afd9e26e5cf582799858f5d20194d4ccdc2c`。G9 窗口使用合成 authenticated gateway；24 条 `terminal:create Error: OK` 是该夹具未实现 terminal/create 的占位响应，仍保留原始错误。本轮 pageerror 为 0，但 G9 未单收全部 consoleErrors，不能说所有 app-errors=0，也不能代签真实引擎、外部模型、PTY 或压力测试。
+
+五项协作 capability 仍 false。只读准入图见 `.ae/tmp/g9-renderer-independent-review-20261014/capability-admission-map-v1/ADMISSION.md`（seal SHA `6aeea578426f76f8f5ef3afd626c7a7c407452093a71486b76cb5643a7d49ee5`）：canonical `/chat` 的持久 admission/boundary 是真实消费前提；legacy messages/flow 尚未接同等 owner/consumer；Cron 当前明确支持 loopback/default tenant，远程认证调度尚未实现。实际 general 默认 OSM 是 balanced，显式 off 才收窄核心工具，不能误称默认 Work 缺工具。下一步以真实数据库配置的本地 scripted LLM HTTP，验证实际生产 server→chat admission→factory/ReAct→async tools→consumer→provider 与真实 Cron，再对同一候选完成 Electron；不能仅修改 capability 或代理伪造支持。
+
+另确认 Code 终态子代理卡暂无显式复用入口，Work 已有“继续此代理”。正基于新公共前像补齐 Code 的同级显式续轮，保留草稿、准确 child identity、连接/账号/会话和忙碌边界；没有自动重放任务或修改旧历史。新功能完成后将另作准确构建与真实点击/transport 回归，不拿当前 Y70afU 旧构建代签。
+
+## 2026-10-14 07:07 UTC 联合回归与恢复闭环门槛
+
+准确 `Y70afU/engine` 的 56 文件联合回归已自然退出 0：**732 passed / 0 failed / 0 pending**，06:36:54.681–06:44:06.427 UTC；来源与输出稳定。回执为 `engine-joint-v1-receipt.json`，其 SHA `1b4de80f2a41ef9202e985e29ebe133289c9c37fe1d62c32c595806a0c13f7c8`。本轮主机具备 ripgrep 能力，实际执行了原环境 skip，不将未执行项算通过。零模型、零 Electron，不计正式时长。
+
+真实生产 SDK/HTTP 闭环 `.ae/tmp/production-model-mailbox-20261014-zlkTQa` 已封存：**11/11**、66 次真实 SDK HTTP 请求，覆盖 Code/general × SQLite/JSONL、实际 `dispatchCronRun`、同 Node 进程 datasource/server 重开、实际 `resumeRunId` 多轮和默认 factory。仅本地 provider responses scripted；没有替换 factory/ReAct/registry/owner，也没有人工接纳 root 来代替生产路径。manifest SHA `7295b45e64922a2e2688f1063b201eb0e48ce76e2a30438ea30aaf6780550ec4`，seal SHA `403a07beee88a9103a25b0245caacd4cd6924ac34fa036463eac4a7a5e12113c`。同 Node 进程重开保留 runtimeIdentity，不能证明换引擎进程后回执仍可读取。
+
+准确 `Y70afU/app` 的自动化窗口回归为 `automation-current-6ScS19`：**13/13**、15.5 秒，三个独立 Electron host 正常 exit 与 stdio close，nativeEvents/failures 为 0；包含三个窗口尺寸、深浅主题、关闭草稿、保存失败/409 保稿、重启恢复、暂停与 owned run 停止分离、运行记录/通知、目标绑定、Tab/Shift+Tab、IME、重复保存和旧来源迟到响应。来源 776 叶和输出 110 叶前后指纹不变，build receipt SHA `4039b035c9d1d7d323d91a6d203ab0b389212a67699777677047fa9adb6b8156`。该 spec 使用 disk-backed authenticated HTTP fixture；真实 scheduler tick 仍是独立门，不能拿这一结果代签实际调度或真实模型。
+
+只读主机残留审计 `Y70afU/root-current-union-residual-audit.json`：候选目录进程标记、六个已知 host/launcher PID、三个 inspector 端口均无残留。引擎联合回归没有记录所有子 PID/临时端口，因此仅证明准确候选标记无残留，不能宣称任意后代均已独立审计。首版 WQL 路径转义错误导致枚举前失败，原失败记录保留，未修改进程。
+
+自动化窗口的原 health stderr 同样含 fixture 未实现 `terminal:create` 产生的 `Error: ok`，未经删除；native 健康和 pageerror 通过不代表全部主进程日志无报错。真实引擎窗口应验收实际终端服务，不将占位 HTTP 响应当产品故障已修复的依据。
+
+继续补两个真实恢复缺陷，完成后才准入新正式轮：
+
+- AUTH_DISABLED 的本地 controller 主体使用随机 process instanceId，换 Node 进程后同数据库的原 key 回执会 403。新隔离候选采用真实数据库 epoch/namespace/generation 派生稳定主体；当前 instance token、account/browser authority 仍分开，不迁移 legacy process 主体，不复活旧 root。正在以两独立 emitted Node 进程、SQLite/JSONL 和旧 token/别库/namespace 旋转等负控验证，尚未公共应用。
+- 显式子 Agent 续轮的 HTTP 拒绝可能被现有 stream Promise 正常 resolve 掩盖，导致错误清稿；Code 也缺同级续轮入口。新候选先实现准确同 stream 的接纳/拒绝/未知区分与持久保稿，再复用现有 canonical admission key、最终远端规范化请求与原 key receipt 查询完成未知结果恢复。未知永远锁住、仅看 latest root 或自动重新 POST 都不能视为完整功能。
+
+协作五项公开 capability 仍 false。`Ig4EjF/capability-pending-release-manifest.json` 四叶仅为待发布隔离候选；声明范围限定 canonical persisted `/chat` admission/live execution、SQLite/JSONL、profile/Agent policy、local/default-tenant Cron。legacy messages/flows 与远程认证调度没有同等接线，不扩大安全或工具政策。最终新捕获必须包含稳定主体、续轮恢复和 capability，完成准确 typecheck/build 与真实 engine/adapter/database/IPC/Electron、真实 Cron scheduler 交互后，才最小逐叶接入并启动双模型预检。
+
+指针本轮再次核对仍为 `six-20261013T143500-p4qYd4` 的 **30.8161 分钟失败**，snapshot 15 秒超时、双向交接/集成 0。没有新正式 root、商业模型调用或正式分钟，不累计旧轮；原 native 0xC0000005 根因仍未证明修复。
+
+根代理上述有限验收已存 `Y70afU/root-current-union-acceptance-seal.json`，29 个证据叶的 manifest SHA `892ed004105bacd35fd2b49475900678729e6c5fe945075b88db9cc134d21918`。包含原 sandbox build 和 WQL 审计失败；零正式分钟，未代签新续轮功能或商业模型。
+
+续轮 exact receipt 方案补充：`absent` 只是查询时点的观察，旧 POST 仍可能在途。unknown 不能凭 absence 换新 key 或修改 frozen 正文；显式重试只允许原 key、原 wireBody、原 selector，重新核对准确 scope，并由引擎幂等接纳防止迟到重复。只有明确原始请求被拒绝时才可另起修正草稿。旧 unknown 的重试收到 4xx 也不能替原始请求证明未接纳，仍须核对原 key。该竞态合同正在隔离 successor 实施，尚未公共应用。
+
+## 2026-10-14 08:05 UTC 恢复候选与原生协作测试覆盖
+
+正式指针再次实际核验：仍是 `six-20261013T143500-p4qYd4` 的 30.8161 分钟失败，snapshot 15 秒超时、共享往返/集成 0、noActiveWork=true。没有新正式 root、商业模型预检或正式分钟。
+
+稳定本地 controller 主体候选 `stable-local-controller-20261014-rm7Dgx` 已封：三产品/六回归叶，manifest `81a2217d9ae68af8050912a186ef1f1a437d0e354a33d122e967282b04d93a3b`，seal `b97559d37a55c0679e6eca6371f23480b740760f1d18f500d903e49bbefafff4`。真实两独立 emitted Node 重启 SQLite/JSONL/旧版本拒绝共 3/3；startup/unit 9/9、SDK 11/11；作者联合 59 文件 751 passed/0 failed/1 环境 skip。运行中的 token、account、browser、执行身份仍独立，旧 process origin 不迁移。production 初始化失败先 join 现有 close hooks 再抛原错；同 Node 单 server 的冻结 middleware 限制仍在。原 cross-v1–v4 失败全保留，其中真实 Node 自然退出等待超时来自既有 60 秒 activeStreams 缓存 timer；最终夹具按实际 main 关闭 ACK 后 exit，不宣称修掉了这个 timer。
+
+显式续轮前继 `53M7Uv` 的 113 合同/build 虽通过，自审仍发现同 key 在途的第二次零 HTTP 返回不能代表原请求被拒。最终 `explicit-continuation-final-20261014-tirK9N` 在首个 await 前加精确 key 锁，并用有界本进程“尚未交给 transport”证据区分 refused/unknown；失证、重启、重复、retry 均保 unknown。117/117、literal typecheck/build0，21 叶 manifest `3afcea555ff5f84d42427cd9117b511bb49e22b923116782b9c57178623ed03f`。前继不应用，源码未公共接入，真实点击/断线/重启尚待联合窗口。
+
+全新联合候选 `current-joint-candidate-20261014-RUePJl` 已从当前公共前像准确捕获，overlay 稳定主体和 capability 四叶、三方合并 registration fixture，再 overlay 最终续轮 21 叶。app literal typecheck/build0、786 输入/110 输出，准确成功回执 `app-union-final-build-receipt.json`；engine literal 主机 typecheck/build0、744 输入/2510 输出，准确成功回执 `engine-union-host-retry-build-receipt.json` SHA `9b83f8dd9112422eb5e5eb9cb403598b6fc6cd2ebcb9523fe81cb4d7e5d87e0b`。首 sandbox tsx ENOMEM build 失败原回执保留。build 的 publicDrift 列表是尚未应用的精确 overlay 差异，公共原前像另存 `*-public-capture-original.json`，不能把该列表叫用户源码并发漂移。引擎新增联合 focused 五文件 **90/90**、源码/产物稳定，覆盖真实 production registration、scope、controller、startup 和 SDK。仍未代签 Electron 或正式模型测试。
+
+旧压力 driver 只有同步 `subagent`，CodeA/WorkA 是真实文件异步转交，不能代签新原生通信。新隔离 `native-collaboration-driver-20261014-v1` 继续保留该跨 root 文件交接，并另外加入同 canonical root 的 async start/send/wait/participants/inbox、精确 childSession 续轮、父补充与子回信、实际 history delivery 检查。当前引擎不支持任意跨 root 原生实时消息，不能把两者混称。独立审查先定位并修 Cron seed 前缺 AgentID 导致首轮旧 prompt、固定 Agent 模型掩盖子任务换模、持久 root.request 与 public requestConfig 形状差异、rootinv 派生身份。真实本地 SDK finite 已实际运行父/子/续轮与双方 provider 消费，正式准入还需加强后的 evidence gate 独立复算。
+
+根代理本地负控早期十条 SQL 变异误置于 SAVEPOINT，verifier 自开 BEGIN 导致提前拒绝，不能证明业务字段校验。原 receipts 保留并明确失效记录；修为已提交变异、要求语义 AssertionError、恢复后再证明正控。最新两后端正控/32 负控通过；旧 driver 320 案例与模型 gate 5 正/31 拒绝通过，均零商业模型/零 Electron。该 driver 仍是待独立审的草稿，尚未公共应用/冻结，不能直接启动新正式轮。
+
+## 2026-10-14 用户收缩范围：独立任务优先，协作须主动发起
+
+用户明确要求本轮先不测试协作：普通任务彼此独立；多会话协作只应在 Work 模式由用户主动发起并指定参与会话，不能自动加入其他会话、共享内容或互发消息。后续准入因此移除跨会话文件交接、原生消息协作及共享项目集成要求；各任务自己的验收、双模型切换、子 Agent 基本启动/续跑、真实 Cron、界面与关闭证据仍须完成。不能以范围变更把旧失败改为通过。
+
+原生协作独立 review `native-collaboration-independent-20261014-b0d7b1` 已封，manifest `d1938ca3367090459c0028f57f7c2c56a7f56d5430325ca6c6cc1290692cd9fc`，seal `048d2b3adecfa5048591fb5fd06a948b6a72a06a135276c820fa063a90771320`。两条实际 Code/general Cron 生产链共 24 次本地 scripted SDK 请求，旧八个错误接纳均已拒绝；这项有限证据留供以后用户主动协作场景参考，不应用或继续运行本轮协作 driver。实际 due claim/dispatch 不等于 UI 等待真实 scheduler tick。
+
+RUePJl 联合引擎独立静审 `engine-union-independent-review-20261014-UI8R1I/REVIEW.md` SHA `d1f97daca1010f22f953559c7b118c877bce0379ab1a3e1d99b35f41000a5b82` 已核对 744 输入/2510 输出、12 个唯一 overlay 与 focused 90/90，无新增静态阻碍。真实窗口首轮 `g9-real-engine-window-draft-20261014/run-Z8xGPc` 因测试夹具把未持久的 root.request.message 当原文而失败，只发生一次本地 provider 请求，未进入子 Agent 或视觉验证；产品源码和产物前后稳定。owned 引擎/SQLite/Electron 均有 ACK、exit0 与 stdio join。root 正常权限只读独立审计七个已知 PID、fixture/preparation/run 标记及三个监听端口无残留；该有限范围不冒称任意历史后代完整审计。
+
+当前没有 owned 窗口/引擎或新正式 root。旧 G9 协作 harness 保留而不再重跑，正在准备非协作 successor：用户明确启动单个自定义子 Agent、完成后显式续跑、unknown 原 key 恢复、真实 Cron 创建/编辑/tick/暂停与停止分离/重启、三尺寸 UI；强断言消息 POST、peer 工具调用、消息/delivery 持久行均为零。产品多会话协作触发边界另作只读核对，不覆盖用户手改。公共独立任务 driver 与最终验收也须改为六个独立工作区并经准确合同核验，不能直接沿用旧共享准入。
+
+现有自动跟进 `aether` 已通过应用工具更新为“Aether 独立任务与自动化稳定性验收”，保留原周期与当前聊天，删除过时状态和协作要求，后续不重复已完成准备；全部剩余目标完成后暂停。正式状态仍为旧 30.8161 分钟失败，本次商业模型/正式分钟为零。
+
+## 2026-10-14 08:48 UTC 独立窗口回归与监控更新
+
+用户询问旧定时监控是否应更新或移除。本轮再次用应用工具核对并更新既有 `aether`，没有创建重复监控，保留每十分钟的跟进周期。保存的提示已改为当前独立任务范围、真实失败状态与修复准入顺序；全部剩余目标完成后暂停，不长期运行过时测试指令。
+
+G10 `g10-independent-window-draft-20261014-upHIPP/run-UB7qeb` 已自然结束为失败，不能改签通过。Work 首轮自定义子 Agent 及保留 childSession 的续跑成功；本地 scripted provider 共 13 次请求、零 provider errors、零 peer calls，Code 与真实 Cron 尚未覆盖。结束原因是测试夹具在 ACK 丢失后仍允许只读原 key 查询取得准确 accepted receipt，却错误要求 UI 一直保持 unknown。该安全恢复不应列为产品缺陷。G11 隔离后继已补准确 accepted receipt 丢弃门、显式解除、滚动与剪贴板异步断言及缺 DOM 快速失败，只有静态准入，不代签新产品真窗验收。
+
+真实视觉记录共 205 条：123 通过、46 失败、36 未覆盖；这些旧结果保持原样。已定位产品问题：`readActivityPreview` 只识别裸十六进制 hash，而引擎返回 `sha256:` 前缀；更深层是 exact read 的 JSON 被通用 8000 字符头尾截断破坏，模型 wire 与持久历史均含非法 JSON。实际原文另存 `actual-read-file-model-wire.txt`，SHA `6f2b5e9d793f7749e5e715331e8dc1c302ba7d40f2928dcf32d5e02e69795d1a`，不能当作完整文件内容复制或仅改前端正则掩盖。过程条右边缘短于输入框及 async 子 Agent 工具显示名缺失一并进入新的隔离修复；尚未修改公共产品源码或冻结 RUePJl。
+
+G10 引擎、三个 native DB 宿主与 Electron 的关闭回执均为正常 ACK/exit0/stdio join；Playwright 按失败退出1。root 默认权限 CIM 只读查询被拒，主机权限只读重试成功：`root-independent-residual-audit.json` 在 08:47:16 UTC 对七个已知 owned PID、run/preparation 命令标记与三个监听端口均无观察残留。这是有限快照，不能证明任意历史后代，也不能用清理成功证明 workload 通过。
+
+非协作六任务 driver 草稿 `independent-task-driver-20261014-v1` 已冻结交独立复核，manifest SHA `f7345e6ef062bf26a269992e0db7ee6af312d4053b6ed191e540b573a20a0b00`；九个变更叶、四个未改依赖，34 个准入负控、模型证据 5 正/31 负及 13 个语法检查通过。它还未公共应用或运行引擎/模型/Electron，正式输出、子 Agent 业务续跑、80 案例与两个三十分钟窗口需独立从落盘证据重算。08:48 实际运行 `six-stress-status` 仍核对到旧正式轮 30.8161 分钟失败；没有新正式 root，不累计旧失败分钟。
+
+### 08:55 UTC 独立 driver 已接入，产品修复仍在隔离草稿
+
+独立审查 `independent-driver-review-20261014-b793e5/REVIEW.md` SHA `ff32b2f85ea8c3425a01094364e2a4c2ecb7d2f8e53514e62a2be0915a7e76b0` 已通过：2 个独立正控、42 个负控及 30 项静态完整性/闭包/既有守卫等价核验。root 再读关键检查与限制，精确前像 dry-run 核对九个改动和四个依赖后，逐叶应用九个 test-driver 文件；没有应用原生协作草稿。应用 journal SHA `656ef5cde9c30c1c388e31510a17c31a200b6c60d007e701563278ce68b568a7`，安装后九叶 hash/语法均通过，回执 `root-installed-syntax-verification.json`。未运行引擎、Electron 或商业模型。
+
+驱动工作区分离和 peer 禁用不是任意命令的 OS 沙箱保证；正式 80case 仍由外层实际执行产生证据，不以合成 helper 合同代签一小时通过。产品修复前仍不得启动正式轮。前端草稿 `work-visual-activity-draft-20261014-P5aV4` 与引擎草稿 `g12-exact-read-repair-20261014-a8j5Wa` 各自修复并产出新回归，尚待最终清单与联合构建。新联合 successor 直接捕获当前 public driver，不重放旧 driver。
+
+读取保真另发现同链旧代码：ReAct 对所有工具输出无条件删除 `__SUBAGENT_META__` 后文，而当前生产子 Agent 已通过结构化 metadata 返回、源码树没有该字符串的输出 producer。普通文件正文含该字面量也会被误删；正在独立核实并纳入最小修复与回归，不只转义 exact JSON 后声称所有读取已修。

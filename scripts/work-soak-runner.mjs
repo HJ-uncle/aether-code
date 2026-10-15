@@ -135,7 +135,17 @@ export async function cleanupOwned(client, manifest, emit, { drainTimeoutMs = 30
     const ok = await attempt('session-drain', item.sessionId, async () => {
       for (;;) {
         const state = await client.request(`/api/v1/chat/status?sessionId=${encodeURIComponent(item.sessionId)}`, { timeoutMs: 15_000 })
-        if (!state?.running && !['running', 'waiting'].includes(state?.run?.status)) break
+        // A root can reach a terminal state while one of its native child
+        // Agents is still running.  Deleting the owned Agent at that point
+        // races the child and leaves an unfinished run in the evidence.  Read
+        // and cancel children by their exact parent/session identity before
+        // declaring the session drained.
+        const children = await listSubagentRuns(client, item.sessionId, { timeoutMs: 15_000 })
+        const activeChildren = children.filter(child => ['queued', 'running', 'waiting', 'cancelling'].includes(child.status))
+        for (const child of activeChildren) {
+          await client.request(`/api/v1/subagent/runs/${encodeURIComponent(child.runId)}/cancel`, { method: 'POST', body: {}, timeoutMs: 15_000 })
+        }
+        if (!state?.running && !['running', 'waiting'].includes(state?.run?.status) && activeChildren.length === 0) break
         if (Date.now() >= deadline) throw new Error('Session did not become terminal after cancellation')
         await delay(200)
       }
@@ -203,16 +213,42 @@ export async function drainFailedSession(client, sessionId, expectedRunId, { sig
   }
   let state = await status()
   const runId = expectedRunId
-  if (state.running || ['running', 'waiting'].includes(state.run?.status)) {
-    await client.request('/api/v1/chat/cancel', { method: 'POST', body: { sessionId, runId }, signal, timeoutMs: Math.min(10_000, timeoutMs) })
-    for (;;) {
-      state = await status()
-      if (!state.running && !['running', 'waiting'].includes(state.run?.status)) break
-      if (Date.now() >= deadline) throw new Error('Failed task did not become terminal after exact-run cancellation')
-      await delay(Math.min(200, Math.max(1, deadline - Date.now())), undefined, { signal })
+  let rootCancelSent = false
+  for (;;) {
+    if (!rootCancelSent && (state.running || ['running', 'waiting'].includes(state.run?.status))) {
+      await client.request('/api/v1/chat/cancel', { method: 'POST', body: { sessionId, runId }, signal, timeoutMs: Math.min(10_000, timeoutMs) })
+      rootCancelSent = true
     }
+    state = await status()
+    const children = await listSubagentRuns(client, sessionId, { signal, timeoutMs: Math.min(10_000, timeoutMs) })
+    const activeChildren = children.filter(child => ['queued', 'running', 'waiting', 'cancelling'].includes(child.status))
+    for (const child of activeChildren) {
+      await client.request(`/api/v1/subagent/runs/${encodeURIComponent(child.runId)}/cancel`, { method: 'POST', body: {}, signal, timeoutMs: Math.min(10_000, timeoutMs) })
+    }
+    if (!state.running && !['running', 'waiting'].includes(state.run?.status) && activeChildren.length === 0) break
+    if (Date.now() >= deadline) throw new Error('Failed task did not become terminal after exact-run cancellation')
+    await delay(Math.min(200, Math.max(1, deadline - Date.now())), undefined, { signal })
   }
   return { runId: state.run?.runId || runId || null, status: state.run?.status || 'absent' }
+}
+
+/** Read the durable native child archive without assuming one wire shape. */
+export async function listSubagentRuns(client, sessionId, { signal, timeoutMs = 15_000 } = {}) {
+  const payload = await client.request(`/api/v1/subagent/runs?parentSessionId=${encodeURIComponent(sessionId)}&view=legacy`, { signal, timeoutMs })
+  const runs = Array.isArray(payload) ? payload : Array.isArray(payload?.runs) ? payload.runs : Array.isArray(payload?.data?.runs) ? payload.data.runs : []
+  return runs.filter(run => run && run.parentSessionId === sessionId && typeof run.runId === 'string')
+}
+
+function mergeChildEvidence(streamChildren, durableChildren) {
+  const merged = new Map((streamChildren ?? []).filter(child => child?.runId).map(child => [child.runId, child]))
+  for (const durable of durableChildren) {
+    const prior = merged.get(durable.runId)
+    const summary = String(durable.resultSummary ?? durable.result?.summary ?? '')
+    const resultNonces = [...new Set([...(prior?.resultNonces ?? []), ...(summary.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/gi) ?? [])])].slice(0, 16)
+    const readPaths = [...new Set([...(prior?.readPaths ?? []), ...(durable.toolCalls ?? []).filter(tool => tool.name === 'read_file' && tool.status === 'succeeded' && typeof tool.args?.path === 'string').map(tool => tool.args.path.slice(0, 1024))])].slice(0, 32)
+    merged.set(durable.runId, { ...prior, ...durable, ...(resultNonces.length ? { resultNonces } : {}), ...(readPaths.length ? { readPaths } : {}) })
+  }
+  return [...merged.values()]
 }
 
 export async function execute(config, plan, discovery, client, { secrets = [] } = {}) {
@@ -289,6 +325,11 @@ export async function execute(config, plan, discovery, client, { secrets = [] } 
       if (status.run?.runId !== stream.runId) throw new Error('Root run identity changed before thinking configuration verification')
       if (config.thinking === 'off' && status.run?.requestConfig?.thinkingMode !== false) throw new Error('Parent run did not persist explicit thinkingMode:false')
       stream.thinkingMode = status.run?.requestConfig?.thinkingMode ?? null
+      // SSE child snapshots are advisory and can arrive before the durable
+      // archive commits the final result.  Reconcile them with the exact
+      // parent-scoped archive before checking nonce/spec evidence, so a normal
+      // commit race is recorded as a real child rather than a false failure.
+      stream.children = mergeChildEvidence(stream.children, await listSubagentRuns(client, item.sessionId, { signal: controller.signal, timeoutMs: 30_000 }))
       phase = 'verification'
       const disk = await verifyWorkload(item, workload, stream, requestedModel, { signal: controller.signal, peer: peerFor(item) })
       manifest.metrics.turnsCompleted += 1; manifest.metrics.streamBytes += stream.bytes; manifest.metrics.streamEvents += stream.events
@@ -354,6 +395,7 @@ export async function execute(config, plan, discovery, client, { secrets = [] } 
       collector.apply({ run })
       const stream = { ...collector.result(), thinkingMode: snapshot.run?.requestConfig?.thinkingMode ?? null,
         cronTimeoutSeconds: snapshot.run?.requestConfig?.cronTimeoutSeconds, cronJobId: snapshot.run?.requestConfig?.cronJobId }
+      stream.children = mergeChildEvidence(stream.children, await listSubagentRuns(client, item.sessionId, { signal: controller.signal, timeoutMs: 30_000 }))
       const workload = workloads.get(item.sessionId)
       let disk
       try { disk = await verifyWorkload(item, workload, stream, item.requestedModel, { signal: controller.signal }) }
