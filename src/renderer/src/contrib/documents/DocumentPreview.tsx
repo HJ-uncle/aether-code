@@ -21,10 +21,10 @@ export function DocumentPreview({ active = true, ...props }: DocumentPreviewProp
   return active ? <DocumentPreviewContent key={JSON.stringify([props.identityKey, props.name])} {...props} /> : null
 }
 
-class PreviewBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+class PreviewBoundary extends Component<{ children: ReactNode; onRetry: () => void }, { failed: boolean }> {
   state = { failed: false }
   static getDerivedStateFromError(): { failed: boolean } { return { failed: true } }
-  render(): ReactNode { return this.state.failed ? <PreviewMessage error="预览组件暂时无法加载，请重新预览。" /> : this.props.children }
+  render(): ReactNode { return this.state.failed ? <PreviewMessage error="预览组件暂时无法加载。" onRetry={this.props.onRetry} /> : this.props.children }
 }
 
 function DocumentPreviewContent({ name, base64, size }: Omit<DocumentPreviewProps, 'active'>): JSX.Element {
@@ -37,14 +37,10 @@ function DocumentPreviewContent({ name, base64, size }: Omit<DocumentPreviewProp
   return <section className="document-preview" data-document-preview={kind || 'unsupported'} aria-label={`${name}文档预览`}>
     <div className="document-preview__content" key={attempt}>
       {input.error || !kind || !input.data ? <PreviewMessage error={input.error || '此格式暂不支持预览。'} /> :
-        <PreviewBoundary><Suspense fallback={<PreviewMessage />}>
-          {kind === 'pdf' ? <PdfPreview data={input.data} name={name} /> :
-            kind === 'xlsx' ? <SpreadsheetPreview data={input.data} /> : <OfficePreview data={input.data} kind={kind} name={name} />}
+        <PreviewBoundary onRetry={() => retry(value => value + 1)}><Suspense fallback={<PreviewMessage />}>
+          {kind === 'pdf' ? <PdfPreview data={input.data} name={name} onRetry={() => retry(value => value + 1)} /> :
+            kind === 'xlsx' ? <SpreadsheetPreview data={input.data} onRetry={() => retry(value => value + 1)} /> : <OfficePreview data={input.data} kind={kind} name={name} onRetry={() => retry(value => value + 1)} />}
         </Suspense></PreviewBoundary>}
     </div>
-    <footer className="document-preview__footer">
-      <span title={kind === 'pptx' ? '部分复杂图形、动画及字体可能与原件不同。' : '原件保持不变；复杂排版和公式显示可能与本机办公软件不同。'}>只读预览 · 原件保持不变</span>
-      <button type="button" onClick={() => retry(value => value + 1)}>重新预览</button>
-    </footer>
   </section>
 }

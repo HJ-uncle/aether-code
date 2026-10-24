@@ -139,8 +139,57 @@ function cleanXml(text: string, name: string): string {
       const column = Array.from(match[1]).reduce((value, letter) => value * 26 + letter.charCodeAt(0) - 64, 0)
       if (column > DOCUMENT_LIMITS.columns || Number(match[2]) > DOCUMENT_LIMITS.rows) return invalid()
     }
+    // ExcelJS rejects a workbook when a producer emitted duplicate or
+    // overlapping merge ranges (`Cannot merge already merged cells`).  Such
+    // ranges are invalid OOXML, but the rest of the sheet can still be
+    // displayed safely.  Keep the first valid range and drop only malformed
+    // or conflicting ranges in the sanitized, read-only preview archive.
+    const mergeCells = Array.from(xml.getElementsByTagNameNS('*', 'mergeCell'))
+    const accepted = sanitizeMergeRefs(mergeCells.map(cell => cell.getAttribute('ref') || ''))
+    let acceptedIndex = 0
+    for (const cell of mergeCells) {
+      const ref = cell.getAttribute('ref') || ''
+      if (accepted[acceptedIndex] === ref) acceptedIndex += 1
+      else cell.parentNode?.removeChild(cell)
+    }
   }
   return new XMLSerializer().serializeToString(xml)
+}
+
+interface MergeRange { startColumn: number; endColumn: number; startRow: number; endRow: number }
+
+function mergeRange(ref: string): MergeRange | null {
+  const parse = (value: string): [number, number] | null => {
+    const match = /^([A-Z]+)([1-9]\d*)$/i.exec(value.trim())
+    if (!match) return null
+    const column = Array.from(match[1].toUpperCase()).reduce((result, letter) => result * 26 + letter.charCodeAt(0) - 64, 0)
+    const row = Number(match[2])
+    return column > 0 && column <= DOCUMENT_LIMITS.columns && row > 0 && row <= DOCUMENT_LIMITS.rows ? [column, row] : null
+  }
+  const parts = ref.split(':')
+  if (parts.length !== 2) return null
+  const start = parse(parts[0]), end = parse(parts[1])
+  if (!start || !end) return null
+  return {
+    startColumn: Math.min(start[0], end[0]), endColumn: Math.max(start[0], end[0]),
+    startRow: Math.min(start[1], end[1]), endRow: Math.max(start[1], end[1])
+  }
+}
+
+function mergeRangesOverlap(left: MergeRange, right: MergeRange): boolean {
+  return left.startColumn <= right.endColumn && right.startColumn <= left.endColumn &&
+    left.startRow <= right.endRow && right.startRow <= left.endRow
+}
+
+/** Keep only valid, non-overlapping OOXML merge refs before ExcelJS parses a sheet. */
+export function sanitizeMergeRefs(refs: string[]): string[] {
+  const accepted: Array<{ ref: string; range: MergeRange }> = []
+  for (const ref of refs) {
+    const range = mergeRange(ref)
+    if (!range || accepted.some(item => mergeRangesOverlap(item.range, range))) continue
+    accepted.push({ ref, range })
+  }
+  return accepted.map(item => item.ref)
 }
 
 /** A fresh STORE archive removes external relationships and unneeded executable

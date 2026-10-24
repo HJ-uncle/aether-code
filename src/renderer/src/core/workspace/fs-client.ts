@@ -35,8 +35,63 @@ export interface SessionWorkspaceContext {
   root: string
 }
 
-export async function sessionWorkspaceContext(sessionId: string): Promise<SessionWorkspaceContext> {
-  return readSessionWorkspaceContext(sessionId, { source: getEngineSource(), expectedEngine: getExpectedEngine() })
+/**
+ * Work's workspace and Git panels can mount at the same time. The engine
+ * keeps a single lease per session, so two identical bind requests racing
+ * during panel startup would make one of them fail with WORKSPACE_LEASE_BUSY.
+ * Keep the in-flight operation scoped to the complete engine identity and
+ * request arguments; completed operations are removed so a later explicit
+ * rebind still reaches the engine.
+ */
+const sessionBindingRequests = new Map<string, Promise<SessionWorkspaceContext>>()
+
+/**
+ * Resolve the workspace owned by a Work session. A newly admitted local Work
+ * run starts with a private scratch directory in the engine. The task root is
+ * carried separately as a local recovery hint; merely viewing a receipt must
+ * never mutate the server binding. A binding is established when the task is
+ * admitted or when the user explicitly selects a workspace.
+ */
+export async function sessionWorkspaceContext(sessionId: string, workspaceRoot?: string | null): Promise<SessionWorkspaceContext> {
+  const target = { source: getEngineSource(), expectedEngine: getExpectedEngine() }
+  return readSessionWorkspaceContext(sessionId, target, workspaceRoot)
+}
+
+/**
+ * Bind a Work session to the directory the user explicitly selected.
+ *
+ * The authenticated engine deliberately falls back to a private scratch root
+ * when a session has no binding; merely reading a persisted workspace hint must
+ * not change that binding.  Work's folder picker and the active task scope call
+ * this explicit operation before displaying files or invoking Git, so every
+ * panel follows the same session workspace instead of silently showing the
+ * engine's generated `work-home-*` directory.
+ */
+export async function bindSessionWorkspace(sessionId: string, workspaceRoot: string): Promise<SessionWorkspaceContext> {
+  const target = { source: getEngineSource(), expectedEngine: getExpectedEngine() }
+  const id = sessionId.trim()
+  const root = workspaceRoot.trim()
+  if (!id) throw new Error('工作区会话无效')
+  if (!root || !/^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(root)) throw new Error('工作区目录无效')
+  const key = JSON.stringify([target.source, target.expectedEngine, id, root])
+  const existing = sessionBindingRequests.get(key)
+  if (existing) return existing
+
+  const operation = (async (): Promise<SessionWorkspaceContext> => {
+    await sessionRequest(id, target, {
+      method: 'POST',
+      path: '/workspace/bind',
+      body: { sessionId: id, workspaceRoot: root }
+    })
+    assertEngineSource(target.source)
+    return readSessionWorkspaceContext(id, target, root)
+  })()
+  sessionBindingRequests.set(key, operation)
+  try {
+    return await operation
+  } finally {
+    if (sessionBindingRequests.get(key) === operation) sessionBindingRequests.delete(key)
+  }
 }
 
 interface SessionRequestTarget {
@@ -64,10 +119,14 @@ async function sessionRequest<T>(sessionId: string, target: SessionRequestTarget
   return result
 }
 
-async function readSessionWorkspaceContext(sessionId: string, target: SessionRequestTarget): Promise<SessionWorkspaceContext> {
+async function readSessionWorkspaceContext(sessionId: string, target: SessionRequestTarget, workspaceRoot?: string | null): Promise<SessionWorkspaceContext> {
   assertEngineSource(target.source)
   const id = sessionId.trim()
   if (!id) throw new Error('工作区会话无效')
+  // `workspaceRoot` is intentionally not sent to /workspace/bind here. It is
+  // a desktop task hint and may be stale after a restart; binding while merely
+  // previewing would silently move a session to the wrong root.
+  void workspaceRoot
   const result = await sessionRequest<DirectoryResponse>(id, target, {
     method: 'GET', path: '/workspace/directory', query: { sessionId: id, path: '.' }
   })
@@ -85,7 +144,7 @@ async function readSessionWorkspaceContext(sessionId: string, target: SessionReq
 function sessionRelativePath(root: string, candidate: string, allowDirectoryRoot = false): string {
   const normalizedRoot = root.replace(/\\/g, '/').replace(/\/+$/, '')
   const normalized = candidate.replace(/\\/g, '/')
-  const windows = /^(?:[A-Za-z]:\/|\/\/)/.test(normalizedRoot)
+  const windows = /^(?:[A-Za-z]:(?:\/|$)|\/\/)/.test(normalizedRoot)
   const rootForCompare = windows ? normalizedRoot.toLowerCase() : normalizedRoot
   const candidateForCompare = windows ? normalized.toLowerCase() : normalized
   let relative = normalized
@@ -99,19 +158,73 @@ function sessionRelativePath(root: string, candidate: string, allowDirectoryRoot
   return relative
 }
 
+function sessionRelativePathsForHint(root: string, candidate: string, workspaceRoot?: string | null): string[] {
+  let firstError: unknown
+  const relative: string[] = []
+  const seen = new Set<string>()
+  const add = (value: string): void => {
+    try {
+      const next = sessionRelativePath(root, value)
+      const key = /^(?:[A-Za-z]:(?:\/|$)|\/\/)/.test(root.replace(/\\/g, '/')) ? next.toLowerCase() : next
+      if (!seen.has(key)) {
+        seen.add(key)
+        relative.push(next)
+      }
+    } catch (error) {
+      firstError ??= error
+    }
+  }
+
+  // Keep the receipt's original path first.  Recovery aliases are only
+  // considered when the session root rejects it, and every alias is checked
+  // against that same authenticated root before it can reach the server.
+  add(candidate)
+  if (workspaceRoot) {
+    for (const recovered of workspaceRecoveryCandidates(candidate, workspaceRoot)) add(recovered)
+  }
+  if (relative.length === 0) throw firstError instanceof Error ? firstError : new Error('任务文件路径无效')
+  return relative
+}
+
+function sessionRelativePathForHint(root: string, candidate: string, workspaceRoot?: string | null): string {
+  return sessionRelativePathsForHint(root, candidate, workspaceRoot)[0]!
+}
+
+function isMissingSessionFileError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /(?:404|not[\s_-]*found|no such file|不存在|文件不存在)/i.test(message)
+}
+
 function sessionAbsolutePath(root: string, relative: string): string {
   return `${root.replace(/\\/g, '/').replace(/\/+$/, '')}/${relative}`
 }
 
 /** Both embedded scratch and remote files remain under the engine's session allow-list. */
-export async function resolveSessionFilePath(sessionId: string, candidate: string): Promise<{ path: string; root: string; target: SessionFileTarget }> {
+export async function resolveSessionFilePath(sessionId: string, candidate: string, workspaceRoot?: string | null): Promise<{ path: string; root: string; target: SessionFileTarget }> {
   const target = { source: getEngineSource(), expectedEngine: getExpectedEngine() }
-  const context = await readSessionWorkspaceContext(sessionId, target)
-  const relative = sessionRelativePath(context.root, candidate)
+  const context = await readSessionWorkspaceContext(sessionId, target, workspaceRoot)
+  const relative = sessionRelativePathForHint(context.root, candidate, workspaceRoot)
   assertEngineSource(target.source)
   const owner: SessionFileTarget = Object.freeze({ ...target, ...context,
     key: JSON.stringify([target.source, target.expectedEngine, context.sessionId, context.root]) })
   return { path: sessionAbsolutePath(context.root, relative), root: context.root, target: owner }
+}
+
+/**
+ * Capture the authenticated file target for a Work task without reading a
+ * file.  Work's workspace browser uses this to list directories through the
+ * session-scoped endpoint; it must never fall back to the Code workspace
+ * bridge, even when the task has a stale local workspace hint.
+ */
+export async function captureSessionFileTarget(sessionId: string, workspaceRoot?: string | null): Promise<SessionFileTarget> {
+  const target = { source: getEngineSource(), expectedEngine: getExpectedEngine() }
+  const context = await readSessionWorkspaceContext(sessionId, target, workspaceRoot)
+  assertEngineSource(target.source)
+  return Object.freeze({
+    ...target,
+    ...context,
+    key: JSON.stringify([target.source, target.expectedEngine, context.sessionId, context.root])
+  })
 }
 
 async function verifySessionBinding(target: SessionFileTarget): Promise<void> {
@@ -128,31 +241,54 @@ function sessionFileContent(path: string, result: SessionContentResponse): FsFil
     truncated: result.truncated ?? (typeof result.originalLength === 'number' && result.originalLength > 500 * 1024) }
 }
 
-export async function readSessionFile(sessionId: string, candidate: string): Promise<FsFileContent> {
+export async function readSessionFile(sessionId: string, candidate: string, workspaceRoot?: string | null): Promise<FsFileContent> {
   // Resolving a root and reading its bytes must use the same endpoint identity.
   // A connection change between the two requests cannot authorize the new one.
   const target = { source: getEngineSource(), expectedEngine: getExpectedEngine() }
-  const context = await readSessionWorkspaceContext(sessionId, target)
-  const relative = sessionRelativePath(context.root, candidate)
-  const result = await sessionRequest<SessionContentResponse>(context.sessionId, target, {
-    method: 'GET', path: '/workspace/file/content',
-    query: { sessionId: context.sessionId, path: relative }, expectedEngine: target.expectedEngine
-  })
-  assertEngineSource(target.source)
-  return sessionFileContent(sessionAbsolutePath(context.root, relative), result)
+  const context = await readSessionWorkspaceContext(sessionId, target, workspaceRoot)
+  const relatives = sessionRelativePathsForHint(context.root, candidate, workspaceRoot)
+  let lastError: unknown
+  for (let index = 0; index < relatives.length; index += 1) {
+    const relative = relatives[index]!
+    try {
+      const result = await sessionRequest<SessionContentResponse>(context.sessionId, target, {
+        method: 'GET', path: '/workspace/file/content',
+        query: { sessionId: context.sessionId, path: relative }, expectedEngine: target.expectedEngine
+      })
+      assertEngineSource(target.source)
+      return sessionFileContent(sessionAbsolutePath(context.root, relative), result)
+    } catch (error) {
+      lastError = error
+      // A stale receipt can produce several syntactically valid aliases. Only
+      // continue on an explicit missing-file response; permission, transport,
+      // engine-generation and protocol failures must remain visible.
+      if (!isMissingSessionFileError(error) || index === relatives.length - 1) throw error
+    }
+  }
+  throw lastError ?? new Error('任务文件读取失败')
 }
 
 /** Original binary bytes bypass renderer text previews and retain this session's
  * binding across the save dialog and the complete authenticated transfer. */
-export async function saveSessionFile(sessionId: string, candidate: string): Promise<import('@shared/ipc').EngineFileSaveResult> {
+export async function saveSessionFile(sessionId: string, candidate: string, workspaceRoot?: string | null): Promise<import('@shared/ipc').EngineFileSaveResult> {
   const target = { source: getEngineSource(), expectedEngine: getExpectedEngine() }
-  const context = await readSessionWorkspaceContext(sessionId, target)
-  const relative = sessionRelativePath(context.root, candidate)
-  assertEngineSource(target.source)
-  const result = await bridge().engine.saveWorkspaceFile({ sessionId: context.sessionId, path: relative,
-    workspaceRoot: context.root, expectedEngine: target.expectedEngine })
-  assertEngineSource(target.source)
-  return result
+  const context = await readSessionWorkspaceContext(sessionId, target, workspaceRoot)
+  const relatives = sessionRelativePathsForHint(context.root, candidate, workspaceRoot)
+  let lastError: unknown
+  for (let index = 0; index < relatives.length; index += 1) {
+    const relative = relatives[index]!
+    try {
+      assertEngineSource(target.source)
+      const result = await bridge().engine.saveWorkspaceFile({ sessionId: context.sessionId, path: relative,
+        workspaceRoot: context.root, expectedEngine: target.expectedEngine })
+      assertEngineSource(target.source)
+      return result
+    } catch (error) {
+      lastError = error
+      if (!isMissingSessionFileError(error) || index === relatives.length - 1) throw error
+    }
+  }
+  throw lastError ?? new Error('任务文件保存失败')
 }
 
 interface DirectoryResponse { root: string; entries: FsEntry[] }
@@ -201,7 +337,7 @@ export function remoteWorkspaceRelativePath(context: Pick<RemoteWorkspaceContext
   if (!path || path === '.') return ''
   const from = context.root.replace(/\\/g, '/').replace(/\/+$/, '')
   const to = path.replace(/\\/g, '/').replace(/\/+$/, '')
-  const windows = /^(?:[A-Za-z]:\/|\/\/)/.test(from)
+  const windows = /^(?:[A-Za-z]:(?:\/|$)|\/\/)/.test(from)
   const a = windows ? from.toLowerCase() : from
   const b = windows ? to.toLowerCase() : to
   if (b !== a && !b.startsWith(a + '/')) throw new Error('远程路径超出当前工作区')
@@ -325,6 +461,172 @@ export async function readFile(path: string, target?: SessionFileTarget): Promis
 export function readExternalFile(path: string): Promise<FsFileContent> {
   if (isRemoteEngine()) return Promise.reject(new Error('远端引擎不能读取本机外部文件，请先下载后打开'))
   return bridge().fs.readExternalFile(path)
+}
+
+/**
+ * Read a candidate produced by workspaceRecoveryCandidates.  Existing
+ * windows may still have a preload without the newer external-file channel,
+ * while the normal workspace bridge already knows how to read an opened
+ * company root.  Prefer that bridge and use the explicit read-only external
+ * channel only for a fresh window or a root outside the current grant.
+ */
+export async function readLocalRecoveryFile(path: string): Promise<FsFileContent> {
+  if (isRemoteEngine()) throw new Error('远端引擎不能读取本机恢复文件')
+  try {
+    return await bridge().fs.readFile(path)
+  } catch (workspaceError) {
+    try {
+      return await bridge().fs.readExternalFile(path)
+    } catch {
+      throw workspaceError
+    }
+  }
+}
+
+function windowsPath(value: string): boolean {
+  const normalized = value.replace(/\\/g, '/')
+  return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith('//')
+}
+
+/** Windows paths compare case-insensitively; POSIX recovery paths do not. */
+function recoveryPathContains(parent: string, child: string): boolean {
+  const from = parent.replace(/\\/g, '/').replace(/\/+$/, '')
+  const to = child.replace(/\\/g, '/')
+  const left = windowsPath(from) ? from.toLowerCase() : from
+  const right = windowsPath(from) ? to.toLowerCase() : to
+  return right === left || right.startsWith(`${left}/`)
+}
+
+function recoveryPathEqual(left: string, right: string): boolean {
+  const normalizedLeft = left.replace(/\\/g, '/')
+  const normalizedRight = right.replace(/\\/g, '/')
+  return windowsPath(normalizedLeft)
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight
+}
+
+function filesystemRoot(value: string): boolean {
+  const normalized = value.replace(/\\/g, '/').replace(/\/+$/, '')
+  return normalized === '' || normalized === '/' || /^[A-Za-z]:$/.test(normalized) || /^\/\/[^/]+$/.test(normalized)
+}
+
+/**
+ * Return the small set of local roots that may be used to recover a Work
+ * receipt after its engine session has been restored.  A Work run owns one
+ * directory with `company/` outputs and `scratch/<tenant>/<session>/` engine
+ * sandboxes.  The renderer may compare/read those roots only; it must never
+ * turn a model supplied absolute path into an arbitrary local file grant.
+ */
+export function workspaceRecoveryRoots(root: string): string[] {
+  const clean = root.replace(/\\/g, '/').replace(/\/+$/, '')
+  // A relative root would resolve against the renderer cwd and could turn a
+  // model-provided path into an arbitrary local file grant.
+  if (!clean || !absolutePath(clean) || /[\u0000-\u001f\u007f]/.test(clean)) return []
+  if (clean.split('/').some((part, index) => part === '.' || part === '..' || (part.includes(':') && !(index === 0 && /^[A-Za-z]:$/.test(part))))) return []
+  const roots: string[] = [clean]
+  const parent = paths.dirname(clean)
+  // Never broaden a recovery hint to a drive/share/POSIX filesystem root.
+  if (parent && parent !== clean && !filesystemRoot(parent)) roots.push(parent)
+
+  const parts = clean.split('/').filter(Boolean)
+  const scratchIndex = parts.findIndex(part => part.toLowerCase() === 'scratch')
+  if (scratchIndex > 0 && scratchIndex < parts.length - 1) {
+    const runRoot = parts.slice(0, scratchIndex).join('/')
+    const prefix = clean.startsWith('//') ? `//${runRoot}` : clean.startsWith('/') ? `/${runRoot}` : runRoot
+    roots.push(`${prefix.replace(/\\/g, '/').replace(/\/+$/, '')}/company`)
+  } else {
+    const companyIndex = parts.findIndex(part => part.toLowerCase() === 'company')
+    if (companyIndex > 0) {
+      const company = parts.slice(0, companyIndex + 1).join('/')
+      roots.push(clean.startsWith('//') ? `//${company}` : clean.startsWith('/') ? `/${company}` : company)
+    }
+  }
+
+  const seen = new Set<string>()
+  return roots.filter(value => {
+    const key = /^[A-Za-z]:/.test(value) || value.startsWith('//') ? value.toLowerCase() : value
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function absolutePath(value: string): boolean {
+  return /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(value)
+}
+
+/**
+ * Build bounded local candidates for a receipt path.  Besides the task root
+ * and its parent, map `<run>/scratch/<tenant>/<session>/<file>` to
+ * `<run>/company/<file>` by dropping at most three sandbox components.  The
+ * fixed bound matches the engine's current scratch shape and keeps this
+ * operation a read-only recovery hint rather than a filesystem search.
+ */
+export function workspaceRecoveryCandidates(filePath: string, workspaceRoot?: string | null): string[] {
+  const clean = filePath.replace(/^path:/i, '').replace(/\\/g, '/')
+  const parts = clean.split('/')
+  if (!clean || /[\u0000-\u001f\u007f]/.test(clean) || parts.some((part, index) => part === '.' || part === '..' || (part.includes(':') && !(index === 0 && /^[A-Za-z]:$/.test(part))))) return []
+  if (!workspaceRoot) return absolutePath(clean) ? [] : [clean]
+  const roots = workspaceRecoveryRoots(workspaceRoot)
+  const candidates: string[] = []
+  const add = (value: string): void => {
+    const normalized = value.replace(/\\/g, '/').replace(/\/+$/, '')
+    if (!normalized || candidates.some(existing => recoveryPathEqual(existing, normalized))) return
+    candidates.push(normalized)
+  }
+  if (!absolutePath(clean)) {
+    for (const root of roots) {
+      // `paths.join('/', value)` intentionally trims the root's separator;
+      // preserve it here so a POSIX parent root never yields a cwd-relative
+      // recovery candidate.
+      add(root === '/' ? `/${clean.replace(/^\/+/, '')}` : paths.join(root, clean))
+    }
+    return candidates
+  }
+
+  for (const root of roots) {
+    if (recoveryPathContains(root, clean)) add(clean)
+  }
+
+  const normalizedRoot = workspaceRoot.replace(/\\/g, '/').replace(/\/+$/, '')
+  const rootParts = normalizedRoot.split('/').filter(Boolean)
+  const scratchIndex = rootParts.findIndex(part => part.toLowerCase() === 'scratch')
+  if (scratchIndex > 0) {
+    const runRoot = rootParts.slice(0, scratchIndex).join('/')
+    const runPrefix = (normalizedRoot.startsWith('//') ? `//${runRoot}` : normalizedRoot.startsWith('/') ? `/${runRoot}` : runRoot).replace(/\/+$/, '')
+    const scratchRoot = `${runPrefix}/scratch`
+    if (recoveryPathContains(scratchRoot, clean)) {
+      const suffix = clean.slice(scratchRoot.length).replace(/^\/+/, '').split('/').filter(Boolean)
+      const companyRoot = `${runPrefix}/company`
+      // Prefer the depth encoded by the persisted scratch hint.  Restored
+      // Work runs may include an extra `work-home` sandbox component.
+      const hintSuffix = normalizedRoot.slice(scratchRoot.length).replace(/^\/+/, '').split('/').filter(Boolean)
+      const drops = hintSuffix.length >= 3 || /^work-home$/i.test(suffix[2] ?? '') ? [3, 2, 1] : [2, 1, 3]
+      for (const drop of drops) {
+        if (drop > Math.min(3, suffix.length - 1)) continue
+        add(paths.join(companyRoot, suffix.slice(drop).join('/')))
+      }
+    }
+  } else {
+    const companyRoot = roots.find(value => /(?:^|\/)company$/i.test(value))
+    const runRoot = companyRoot ? paths.dirname(companyRoot) : ''
+    const scratchRoot = runRoot ? paths.join(runRoot, 'scratch') : ''
+    if (scratchRoot && recoveryPathContains(scratchRoot, clean)) {
+      const suffix = clean.slice(scratchRoot.length).replace(/^\/+/, '').split('/').filter(Boolean)
+      const drops = /^work-home$/i.test(suffix[2] ?? '') ? [3, 2, 1] : [2, 1, 3]
+      for (const drop of drops) {
+        if (drop > Math.min(3, suffix.length - 1)) continue
+        add(paths.join(companyRoot!, suffix.slice(drop).join('/')))
+      }
+    }
+  }
+  return candidates
+}
+
+export function isWorkspaceRecoveryPath(filePath: string, workspaceRoot?: string | null): boolean {
+  if (!workspaceRoot) return false
+  const clean = filePath.replace(/^path:/i, '').replace(/\\/g, '/')
+  return workspaceRecoveryCandidates(clean, workspaceRoot).some(candidate => recoveryPathEqual(candidate, clean))
 }
 
 export function pickExternalFile(): Promise<string | null> {
@@ -484,7 +786,12 @@ export const paths = {
   contains(parent: string, child: string): boolean {
     const from = parent.replace(/\\/g, '/').replace(/\/+$/, '')
     const to = child.replace(/\\/g, '/')
-    return to === from || to.startsWith(`${from}/`)
+    // Windows paths are case-insensitive even when the engine serializes
+    // one side with a different casing.  Keep POSIX comparisons strict.
+    const windows = /^(?:[A-Za-z]:(?:\/|$)|\/\/)/.test(from)
+    const a = windows ? from.toLowerCase() : from
+    const b = windows ? to.toLowerCase() : to
+    return b === a || b.startsWith(`${a}/`)
   },
   /**
    * 取 child 相对 parent 的路径，供 glob 匹配使用（分隔符统一成正斜杠）。

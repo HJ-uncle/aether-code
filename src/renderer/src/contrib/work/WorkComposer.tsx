@@ -56,6 +56,10 @@ export function WorkComposer({
   const [resourceQuery, setResourceQuery] = useState<string | null>(null)
   const [polishing, setPolishing] = useState(false)
   const [agentsOpen, setAgentsOpen] = useState(false)
+  // Native folder dialogs are asynchronous. Keep the chip visibly busy while
+  // the dialog is open so a click never looks like it was ignored (and avoid
+  // opening multiple pickers when a user double-clicks it).
+  const [workspacePicking, setWorkspacePicking] = useState(false)
   const [preview, setPreview] = useState<AttachmentPreview | null>(null)
   const polishEpoch = useRef(0)
   const appMode = useAppMode()
@@ -342,17 +346,28 @@ export function WorkComposer({
                 <button
                   type="button"
                   className="work-quiet-button work-folder-button"
-                  onClick={() => void controller.chooseWorkspace().catch(reportError)}
-                  disabled={controller.streaming || controller.uploading}
+                  aria-label="选择工作区"
+                  onClick={() => {
+                    if (workspacePicking) return
+                    setWorkspacePicking(true)
+                    void controller.chooseWorkspace()
+                      .catch(reportError)
+                      .finally(() => setWorkspacePicking(false))
+                  }}
+                  disabled={controller.streaming || controller.uploading || workspacePicking}
                   title={
-                    controller.workspacePath
+                    workspacePicking
+                      ? '正在等待选择工作区…'
+                      : controller.workspacePath
                       ? controller.workspacePath
                       : '未选择项目，任务会使用独立沙箱；点击可绑定本地项目'
                   }
                 >
-                  <Icon name="folder-outline" size={16} />
+                  {workspacePicking ? <Spinner size={14} /> : <Icon name="folder-outline" size={16} />}
                   <span>
-                    {controller.workspacePath
+                    {workspacePicking
+                      ? '选择中…'
+                      : controller.workspacePath
                       ? controller.workspacePath.split(/[\\/]/).pop()
                       : '独立沙箱'}
                   </span>

@@ -50,8 +50,9 @@ import { WorkArtifactPanel } from './WorkArtifactPanel'
 import { workArtifactSelectionQuote, type WorkArtifactContent } from './work-artifact-content'
 import { WorkSourcePreview, useWorkSourceFile } from './WorkSourcePreview'
 import { Markdown } from '../chat/Markdown'
-import { paths, readExternalFile, resolveSessionFilePath } from '@renderer/core/workspace/fs-client'
+import { paths, readLocalRecoveryFile, resolveSessionFilePath, workspaceRecoveryCandidates } from '@renderer/core/workspace/fs-client'
 import { WorkGitPanel } from './WorkGitPanel'
+import { WorkWorkspacePanel } from './WorkWorkspacePanel'
 import { WorkSubagentsPanel } from './WorkSubagentsPanel'
 import { PublishedRecoveryNotice } from '../chat/PublishedRecoveryNotice'
 import { WorkInlineActivity } from './WorkInlineActivity'
@@ -77,7 +78,7 @@ import { changesForWorkFile, type SessionFileChange } from './work-file-changes'
 type WorkController = ReturnType<typeof useWorkController>
 type WorkTask = WorkController['tasks'][number]
 type Page = 'home' | 'projects' | 'artifacts' | 'browser' | 'automations' | 'connections' | 'agents' | 'monitor'
-type WorkspaceTab = 'artifacts' | 'sources' | 'browser' | 'activity' | 'subagents' | 'git'
+type WorkspaceTab = 'artifacts' | 'sources' | 'workspace' | 'browser' | 'activity' | 'subagents' | 'git'
 type ActivitySelection = { taskId: string; toolId: string; revision: number }
 type TaskFilter = 'all' | 'running' | 'waiting' | 'done'
 type ViewState = {
@@ -181,21 +182,29 @@ function initialView(): ViewState {
     workspace: false,
     tab: 'artifacts',
     pane: 'conversation',
-    ratio: 44
+    // Keep the conversation as the primary surface.  The workspace is a
+    // supporting inspector, so it should open at a useful but compact width.
+    ratio: 56
   }
   try {
     const value: unknown = JSON.parse(localStorage.getItem(VIEW_KEY) || 'null')
     if (!value || typeof value !== 'object') return fallback
     const record = value as Record<string, unknown>
+    const storedRatio = typeof record.ratio === 'number' && Number.isFinite(record.ratio) ? record.ratio : null
+    // 44% was the old default and made the workspace consume most of the
+    // desktop on first launch.  Migrate only that untouched default; a user
+    // who dragged the divider keeps their chosen ratio.
+    const ratio = storedRatio === 44 ? 56 : storedRatio
+    const workspace = record.workspace === true
     return {
       page: NAVIGATION.some((item) => item.id === record.page) ? (record.page as Page) : 'home',
       collapsed: record.collapsed === true,
-      workspace: record.workspace === true,
-      tab: ['artifacts', 'sources', 'browser', 'activity', 'subagents', 'git'].includes(String(record.tab))
+      workspace,
+      tab: ['artifacts', 'sources', 'workspace', 'browser', 'activity', 'subagents', 'git'].includes(String(record.tab))
         ? (record.tab as WorkspaceTab)
         : 'artifacts',
-      pane: record.pane === 'workspace' ? 'workspace' : 'conversation',
-      ratio: typeof record.ratio === 'number' ? Math.min(62, Math.max(35, record.ratio)) : 44
+      pane: workspace && record.pane === 'workspace' ? 'workspace' : 'conversation',
+      ratio: ratio === null ? 56 : Math.min(62, Math.max(35, ratio))
     }
   } catch {
     return fallback
@@ -404,15 +413,10 @@ export function WorkView(): JSX.Element {
       // panel. No external fallback is attempted for remote engines.
       if (isRemoteEngine()) { reportError(reason); return }
       const raw = path.replace(/^path:/, '')
-      const absolute = /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(raw)
-      const candidates = absolute
-        ? task.workspacePath && (paths.contains(task.workspacePath, raw) || paths.contains(paths.dirname(task.workspacePath), raw)) ? [raw] : []
-        : task.workspacePath
-          ? [paths.join(task.workspacePath, raw), paths.join(paths.dirname(task.workspacePath), raw)]
-          : []
+      const candidates = workspaceRecoveryCandidates(raw, task.workspacePath)
       for (const candidate of candidates) {
         try {
-          await readExternalFile(candidate)
+          await readLocalRecoveryFile(candidate)
           openExternalWorkPathResource(candidate, task.id)
           openWorkspace('browser')
           return
@@ -1539,6 +1543,7 @@ function Workspace({
   const tabs: Array<[WorkspaceTab, string]> = [
     ['artifacts', '成果'],
     ['sources', '资料'],
+    ['workspace', '工作区'],
     ['browser', '资源'],
     ['activity', '活动'],
     ['subagents', '子代理'],
@@ -1567,23 +1572,27 @@ function Workspace({
       }}>
       <WorkResourceTabs sessionId={controller.activeTask!.id} active={tab === 'browser'} onSelect={() => setTab('browser')} />
       <div className="work-workspace__tools" role="toolbar" aria-label="工作区工具">
-        {tabs.map(([id, label]) => (
-          <button
-            type="button"
-            id={`work-tab-${id}`}
-            aria-controls={`work-panel-${id}`}
-            aria-pressed={tab === id}
-            key={id}
-            onClick={() => setTab(id)}
-          >
-            {label}
-            {id === 'artifacts' && controller.artifacts.length > 0 && (
-              <span>{controller.artifacts.length}</span>
-            )}
-          </button>
-        ))}
+        <div className="work-workspace__tool-tabs" role="tablist" aria-label="工作区内容">
+          {tabs.map(([id, label]) => (
+            <button
+              type="button"
+              role="tab"
+              id={`work-tab-${id}`}
+              aria-controls={`work-panel-${id}`}
+              aria-selected={tab === id}
+              aria-label={id === 'artifacts' && controller.artifacts.length > 0 ? `成果 ${controller.artifacts.length}` : label}
+              key={id}
+              onClick={() => setTab(id)}
+            >
+              {label}
+              {id === 'artifacts' && controller.artifacts.length > 0 && (
+                <span>{` ${controller.artifacts.length}`}</span>
+              )}
+            </button>
+          ))}
+        </div>
       </div>
-      {tabs.filter(([id]) => id === tab || (visited.has(id) && !['artifacts', 'sources', 'browser'].includes(id))).map(([id]) => (
+      {tabs.filter(([id]) => id === tab || (visited.has(id) && !['artifacts', 'sources', 'workspace', 'browser'].includes(id))).map(([id]) => (
         <WorkspacePane
           key={id}
           id={id}
@@ -1632,7 +1641,7 @@ const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controll
     id={`work-panel-${id}`}
     aria-labelledby={`work-tab-${id}`}
   >
-    {!active && ['artifacts', 'sources', 'browser'].includes(id) ? null : id === 'artifacts' ? (
+    {!active && ['artifacts', 'sources', 'workspace', 'browser'].includes(id) ? null : id === 'artifacts' ? (
             <TaskArtifactPanel
               controller={controller}
               active={active}
@@ -1641,6 +1650,13 @@ const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controll
             />
           ) : id === 'sources' ? (
             <SourcePanel controller={controller} />
+          ) : id === 'workspace' ? (
+            <WorkWorkspacePanel
+              sessionId={controller.activeTask?.id}
+              workspaceRoot={controller.activeTask?.workspacePath}
+              active={active}
+              onOpenFile={openGitFile}
+            />
           ) : id === 'activity' ? (
             <StableActivityPanel key={controller.activeTask?.id} tools={tools} todos={controller.todos} selection={activitySelection} workspacePath={controller.activeTask?.workspacePath} />
           ) : id === 'subagents' ? (
@@ -1683,16 +1699,58 @@ function WorkResourcePane({ controller, onReveal }: { controller: WorkController
   return <EmptyState icon="file" title="文件和网页，在同一个地方查看" description="从成果、资料或对话中打开文件，也可以拖入电脑文件或点击文件按钮；新建网页后也会显示在上方标签栏。" />
 }
 
+/**
+ * A resource tab is a preview surface first.  Only expose the changes tab
+ * after the authenticated changes endpoint confirms that this exact file has
+ * pending changes.  This keeps external files and clean workspace files from
+ * showing an empty, non-actionable tab.
+ */
+function usePendingResourceChanges(controller: WorkController, file: ReturnType<typeof useWorkResources>['files'][number]): boolean | null {
+  const sessionId = controller.activeTask?.id ?? file.target?.sessionId
+  const source = getEngineSource()
+  const [pending, setPending] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    let active = true
+    if (!file.target || !sessionId || !controller.ready) {
+      setPending(false)
+      return () => { active = false }
+    }
+    setPending(null)
+    void requestOrThrow<SessionFileChange[]>({
+      method: 'GET',
+      path: '/changes',
+      query: { sessionId, status: 'pending', view: 'net' }
+    }).then(result => {
+      if (!active || source !== getEngineSource()) return
+      const matches = changesForWorkFile(Array.isArray(result) ? result : [], sessionId, file.path, file.target?.root)
+      setPending(matches.length > 0)
+    }).catch(() => {
+      // A failed probe must not turn into a misleading empty tab. The panel
+      // can still be reopened after the next resource/engine refresh.
+      if (active && source === getEngineSource()) setPending(false)
+    })
+    return () => { active = false }
+  }, [controller.ready, controller.streaming, file.id, file.path, file.target, sessionId, source])
+
+  return pending
+}
+
 function WorkResourceFile({ controller, file }: { controller: WorkController; file: ReturnType<typeof useWorkResources>['files'][number] }): JSX.Element {
   // External resources still belong to the visible Work conversation for
   // references/drafts, while their preview deliberately carries no session
   // file target and therefore cannot be written by the Agent.
   const sessionId = controller.activeTask?.id ?? file.target?.sessionId
   const [tab, setTab] = useState<'preview' | 'changes'>('preview')
+  const pendingChanges = usePendingResourceChanges(controller, file)
+  const showChangesTab = pendingChanges === true && Boolean(file.target)
+  useEffect(() => {
+    if (!showChangesTab && tab === 'changes') setTab('preview')
+  }, [showChangesTab, tab])
   const addExternalToConversation = async (): Promise<void> => {
     let input = file.externalFile
     if (!input && file.externalPath) {
-      const result = await readExternalFile(file.externalPath)
+      const result = await readLocalRecoveryFile(file.externalPath)
       if (result.tooLarge || result.size > 20 * 1024 * 1024) throw new Error('文件超过 20 MB，请缩小文件后重试')
       const bytes = result.base64
         ? Uint8Array.from(atob(result.base64), char => char.charCodeAt(0))
@@ -1704,11 +1762,11 @@ function WorkResourceFile({ controller, file }: { controller: WorkController; fi
     toast.success('已加入对话资料，发送时将上传副本')
   }
   return <div className="work-artifacts-shell__detail work-resource-file">
-    <div className="work-artifacts-shell__tabs" role="tablist" aria-label="文件内容">
+    {showChangesTab ? <div className="work-artifacts-shell__tabs" role="tablist" aria-label="文件内容">
       <button type="button" role="tab" aria-selected={tab === 'preview'} onClick={() => setTab('preview')}>预览</button>
-      <button type="button" role="tab" aria-selected={tab === 'changes'} disabled={!file.target} onClick={() => setTab('changes')} title={file.target ? '查看此文件在任务中的改动' : '电脑文件没有任务改动记录'}>文件改动</button>
-    </div>
-    {tab === 'changes' && file.target ? <WorkChangesPanel sessionId={sessionId!} workspacePath={file.target.root} filePath={file.path} ready={controller.ready} streaming={controller.streaming} /> : <WorkArtifactPanel
+      <button type="button" role="tab" aria-selected={tab === 'changes'} onClick={() => setTab('changes')} title="查看此文件在任务中的改动">文件改动</button>
+    </div> : null}
+    {tab === 'changes' && showChangesTab && file.target ? <WorkChangesPanel sessionId={sessionId!} workspacePath={file.target.root} filePath={file.path} ready={controller.ready} streaming={controller.streaming} /> : <WorkArtifactPanel
     artifact={{ id: file.id, path: file.path, name: file.name, content: null, status: 'ready', createdAt: 0 }}
     workspaceRoot={file.target?.root} sessionId={sessionId} externalFile={file.externalFile} externalPath={file.externalPath} inResourceTab
     onAddToConversation={(item, selection, coverage) => {
@@ -2083,11 +2141,25 @@ function SourceRow({
     try {
       if (controller.remote) throw new Error('远端资料无法在本机文件夹中显示，可在右侧预览')
       const sessionId = controller.activeTask?.id
-      const target = sessionId ? await resolveSessionFilePath(sessionId, source.path)
+      let target = sessionId ? await resolveSessionFilePath(sessionId, source.path, root)
         : root ? { path: paths.join(root, source.path) } : null
       if (!target) throw new Error('资料没有关联任务')
       await window.aether.fs.reveal(target.path)
     } catch (error) {
+      // A restored local task can still point at a project root that the
+      // engine's session binder has not persisted.  Reveal the same bounded
+      // task-root candidates used by the read-only preview instead of hiding
+      // the file behind a misleading session-path error.
+      if (!controller.remote && root) {
+        const candidates = workspaceRecoveryCandidates(source.path, root)
+        for (const candidate of candidates) {
+          try {
+            await readLocalRecoveryFile(candidate)
+            await window.aether.fs.reveal(candidate)
+            return
+          } catch { /* try the next bounded root */ }
+        }
+      }
       toast.error(error instanceof Error ? error.message : String(error))
     }
   }

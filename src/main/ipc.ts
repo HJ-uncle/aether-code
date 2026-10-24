@@ -460,8 +460,13 @@ export function registerIpcHandlers(): void {
   // ── 文件系统 ──
   // 这些 handler 直接抛错：文件操作失败原因（不存在/无权限/越界）需要原样
   // 传到界面，包一层 result 信封反而会丢掉调用栈与错误类型。
-  ipcMain.handle(IPC.invoke.fsPickFolder, async () => {
-    const folder = await fileService.pickFolder()
+  ipcMain.handle(IPC.invoke.fsPickFolder, async (event) => {
+    // Parent the native dialog to the invoking window.  This is important for
+    // Work's folder chip: an unowned Windows dialog can open behind Electron,
+    // so clicking the chip appears to have no effect and the selected project
+    // never reaches the Work composer.
+    const owner = BrowserWindow.fromWebContents(event.sender)
+    const folder = await fileService.pickFolder(owner)
     // 记住选择，下次启动可直接恢复并保持授权
     if (folder) updateSettings({ lastFolder: folder })
     return folder

@@ -14,8 +14,11 @@
 .work-resource-tabs__file-input { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
 .work-resource-tabs__drop-hint { position:sticky; right:8px; align-self:center; margin-left:auto; padding:4px 8px; border-radius:var(--radius); background:var(--accent); color:var(--fg-on-accent, #fff); font-size:12px; white-space:nowrap; pointer-events:none; }
 .work-resource-content { min-height:0; flex:1; overflow:hidden; }
-.work-workspace__tools { display:flex; flex:none; gap:4px; align-items:center; padding:5px 8px; border-bottom:1px solid var(--border); background:var(--bg-surface); overflow-x:auto; }
+.work-workspace__tools { display:flex; flex:none; gap:8px; align-items:center; padding:5px 8px; border-bottom:1px solid var(--border); background:var(--bg-surface); overflow-x:auto; }
+.work-workspace__tool-tabs { display:flex; min-width:0; flex:1; gap:4px; align-items:center; overflow-x:auto; scrollbar-width:thin; }
 .work-workspace__tools > button { border:0; border-radius:var(--radius); background:transparent; color:var(--fg-muted); padding:5px 9px; white-space:nowrap; font:inherit; font-size:12px; cursor:pointer; }
+.work-workspace__tool-tabs > button { border:0; border-radius:var(--radius); background:transparent; color:var(--fg-muted); padding:5px 9px; white-space:nowrap; font:inherit; font-size:12px; cursor:pointer; }
 .work-workspace__tools > button[aria-pressed=true] { color:var(--fg); background:var(--bg-hover); }
-.work-workspace__tools > button:hover { color:var(--fg); background:var(--bg-hover); }
-.work-workspace__tools > button:focus-visible { outline:2px solid var(--accent); }
+.work-workspace__tool-tabs > button[aria-selected=true] { color:var(--fg); background:var(--bg-hover); }
+.work-workspace__tools > button:hover, .work-workspace__tool-tabs > button:hover { color:var(--fg); background:var(--bg-hover); }
+.work-workspace__tools > button:focus-visible, .work-workspace__tool-tabs > button:focus-visible { outline:2px solid var(--accent); }

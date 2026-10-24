@@ -15,7 +15,12 @@ import { initializeNativeDiagnostics } from './native-diagnostics'
 import { configureGraphics, confirmGraphicsStartup, initializeGraphicsRecovery } from './graphics'
 import { workbenchEntryUrl } from './ipc-security'
 import { isTrustedWorkbenchUrl } from '../shared/workbench-url'
+import { configureLaunchInstance } from './instance-profile'
 
+// An explicit instance profile is opt-in. It is applied before settings,
+// graphics recovery, or engine state are read so each desktop process gets an
+// independent Chromium profile and SQLite database.
+const launchInstance = configureLaunchInstance()
 configureGraphics()
 
 // ==================== 窗口尺寸/位置记忆 ====================
@@ -148,7 +153,9 @@ function createWindow(): void {
   }
 }
 
-// 单实例：IDE 重复启动没有意义，且会造成两个引擎争抢端口
+// The default profile remains single-instance. Pass --new-instance for a fresh
+// isolated profile (or --aether-instance=<id> for a repeatable one); the
+// engine then reserves the first available port starting at the preferred port.
 const gotTheLock = app.requestSingleInstanceLock()
 if (!gotTheLock) {
   app.quit()
@@ -185,6 +192,9 @@ if (!gotTheLock) {
       '[aether-ide] Engine logs are shown in the IDE "Output" panel. ' +
         'Set AETHER_IDE_ECHO_ENGINE=1 to also echo them to this terminal.'
     )
+    if (launchInstance.mode !== 'default') {
+      console.log(`[aether-ide] 独立实例配置已启用：${launchInstance.id}（端口从首选端口自动递增）`)
+    }
 
     // 恢复上次打开的工作区并重新授权：
     // 授权集合保存在内存中，重启后必须显式恢复，否则文件树会因越界校验而报错

@@ -8,7 +8,7 @@
  * 渲染进程虽然是我们自己的代码，但一旦出现 XSS 或依赖投毒，通用 fs 访问
  * 会变成任意文件写入。用根目录白名单把影响面收敛到用户显式打开的项目内。
  */
-import { shell, dialog } from 'electron'
+import { shell, dialog, type BrowserWindow, type OpenDialogOptions } from 'electron'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -164,11 +164,18 @@ export function assertAllowed(target: string): string {
 }
 
 /** 弹出系统目录选择框，选中后自动授权 */
-export async function pickFolder(): Promise<string | null> {
-  const result = await dialog.showOpenDialog({
+export async function pickFolder(owner?: BrowserWindow | null): Promise<string | null> {
+  // Keep the native picker owned by the renderer window that initiated it.
+  // Without an owner Windows may place the dialog behind the Electron window
+  // (especially after switching between Work/Code views), making the folder
+  // button look as if it did nothing and preventing a workspace switch.
+  const options: OpenDialogOptions = {
     title: '打开文件夹',
     properties: ['openDirectory', 'createDirectory']
-  })
+  }
+  const result = owner
+    ? await dialog.showOpenDialog(owner, options)
+    : await dialog.showOpenDialog(options)
   if (result.canceled || result.filePaths.length === 0) return null
 
   const picked = path.resolve(result.filePaths[0])

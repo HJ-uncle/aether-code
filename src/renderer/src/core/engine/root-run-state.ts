@@ -39,10 +39,18 @@ export function applyRootRun(
   optimistic?: { userId?: string; assistantId?: string }
 ): ChatMessage[] {
   let assistantFound = false
-  const update = (message: ChatMessage): ChatMessage => {
+  /**
+   * A few legacy history rows predate the durable identity envelope and have
+   * neither conversationId nor runId.  They are still recoverable when they
+   * sit directly after this run's user row; the caller marks that positional
+   * candidate explicitly so an unrelated orphan later in the transcript is
+   * never claimed by a run.
+   */
+  const update = (message: ChatMessage, positionalAssistant = false): ChatMessage => {
     const own = message.runId === run.runId || message.conversationId === run.turnId ||
       message.id === (message.role === 'user' ? run.userMessageId : run.assistantMessageId) ||
-      message.id === (message.role === 'user' ? optimistic?.userId : optimistic?.assistantId)
+      message.id === (message.role === 'user' ? optimistic?.userId : optimistic?.assistantId) ||
+      positionalAssistant && message.role === 'assistant' && !message.runId && !message.conversationId && !message.run
     if (!own) return message
     if (message.run && message.run.version > run.version) return message
     const base = { ...message, runId: run.runId, conversationId: run.turnId, run }
@@ -85,12 +93,30 @@ export function applyRootRun(
       })
     }
   }
-  const result = messages.map(update)
-  if (!assistantFound && result.some(message => message.role === 'user' && message.id === run.userMessageId)) {
-    result.push(update({
-      id: run.assistantMessageId || `run-${run.runId}`, runId: run.runId, conversationId: run.turnId,
-      role: 'assistant', content: '', thinking: '', tools: [], items: [], status: rootStatus(run.status), createdAt: run.createdAt
-    }))
+  // Do not pass `update` directly to Array#map: its second callback argument
+  // is the numeric index, which would accidentally enable the positional
+  // legacy-assistant fallback for every other assistant row.
+  const result = messages.map(message => update(message))
+  if (!assistantFound) {
+    // Empty-output/failed turns may have a durable root-run record and a user
+    // history row, but no assistant row at all.  Appending the synthetic error
+    // card to the end makes it drift below later retries after a restart. Keep
+    // the card attached to its own request by inserting it immediately after
+    // the matching user message, which is also where the live optimistic turn
+    // rendered it before persistence caught up.
+    const userIndex = result.findIndex(message => message.role === 'user' && message.id === run.userMessageId)
+    if (userIndex >= 0) {
+      const positionalAssistant = result[userIndex + 1]
+      if (positionalAssistant?.role === 'assistant' && !positionalAssistant.runId && !positionalAssistant.conversationId && !positionalAssistant.run) {
+        result[userIndex + 1] = update(positionalAssistant, true)
+        return result
+      }
+      const assistant = update({
+        id: run.assistantMessageId || `run-${run.runId}`, runId: run.runId, conversationId: run.turnId,
+        role: 'assistant', content: '', thinking: '', tools: [], items: [], status: rootStatus(run.status), createdAt: run.createdAt
+      })
+      result.splice(userIndex + 1, 0, assistant)
+    }
   }
   return result
 }

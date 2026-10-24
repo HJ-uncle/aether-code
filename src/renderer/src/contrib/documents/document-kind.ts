@@ -18,6 +18,30 @@ export const DOCUMENT_LIMITS = Object.freeze({
   parseTimeoutMs: 30_000
 })
 
+/**
+ * pdfjs-dist 6 uses the proposed Map#getOrInsertComputed API while rendering.
+ * Electron can ship a Chromium version without that proposal, so provide the
+ * small spec-compatible operation before loading pdfjs. Keeping this local to
+ * the renderer avoids changing the global application behavior for other code.
+ */
+export function ensureMapGetOrInsertComputed(): void {
+  type CompatibleMap = Map<unknown, unknown> & {
+    getOrInsertComputed?: (key: unknown, callback: () => unknown) => unknown
+  }
+  const prototype = Map.prototype as CompatibleMap
+  if (prototype.getOrInsertComputed) return
+  Object.defineProperty(prototype, 'getOrInsertComputed', {
+    configurable: true,
+    writable: true,
+    value(this: Map<unknown, unknown>, key: unknown, callback: () => unknown): unknown {
+      if (this.has(key)) return this.get(key)
+      const value = callback()
+      this.set(key, value)
+      return value
+    }
+  })
+}
+
 export function documentKindFor(name: string): DocumentKind | null {
   const extension = name.slice(name.lastIndexOf('.') + 1).toLowerCase()
   return extension === 'pdf' || extension === 'docx' || extension === 'xlsx' || extension === 'pptx' ? extension : null

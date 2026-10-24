@@ -348,7 +348,10 @@ test('history metadata estimate source is paired to each input and a later model
 
 test('history new input without estimate metadata clears the earlier source including legacy prompt fallback', () => {
   const estimated = historyRow('estimated-input', { promptTokens: 42_900, currentPromptTokens: 42_900, contextWindow: window },
-    { metadata: { contextUsageEstimated: true } })
+    // Keep the durable identities while adding the estimate flag.  A row that
+    // drops its run metadata is intentionally treated as a separate legacy
+    // message by replayMessages, rather than inheriting this turn's state.
+    { metadata: { runId: baseRun.runId, turnId: baseRun.turnId, contextUsageEstimated: true } })
   for (const input of [{ currentPromptTokens: 39_000, promptTokens: 39_000 }, { promptTokens: 39_000 }]) {
     const messages = replayMessages([estimated, historyRow('legacy-input', input, { modelId: 'legacy-input-model' })])
     expect(messages[0].contextUsageEstimated).toBeUndefined()

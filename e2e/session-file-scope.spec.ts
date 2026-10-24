@@ -73,3 +73,30 @@ test('Windows 盘符与 UNC 路径归一化，但冒号、反斜杠上级段和�
   for (const path of ['\\\\other\\share\\brief.md', '..\\brief.md', 'file.txt:stream', 'sub//brief.md']) await expect(readSessionFile('work-a', path)).rejects.toThrow()
   expect(calls.slice(previous).every(call => call.path === '/workspace/directory')).toBe(true)
 })
+
+test('旧 scratch 回执按受限候选重试，直到 canonical company 产物命中', async () => {
+  directory = { root: 'D:/run/company', entries: [] }
+  const oldReceipt = 'D:/run/scratch/account/session/job-home/published/finance/v002/release-manifest.json'
+  const requested: string[] = []
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { aether: { engine: {
+    request: async (input: EngineRequestInput) => {
+      calls.push(input)
+      if (input.path === '/workspace/file/content') {
+        const path = String(input.query?.path ?? '')
+        requested.push(path)
+        if (path !== 'published/finance/v002/release-manifest.json') {
+          return { ok: false, code: 40400, message: 'File not found' }
+        }
+      }
+      return { ok: true, code: 200, data: input.path === '/workspace/directory' ? directory : { content: '{}', isBinary: false, totalSize: 2 } }
+    }
+  } } } })
+  expect(await readSessionFile('work-recovered', oldReceipt, 'D:/run/scratch/account/session')).toMatchObject({
+    path: 'D:/run/company/published/finance/v002/release-manifest.json', content: '{}'
+  })
+  expect(requested).toEqual([
+    'job-home/published/finance/v002/release-manifest.json',
+    'session/job-home/published/finance/v002/release-manifest.json',
+    'published/finance/v002/release-manifest.json'
+  ])
+})

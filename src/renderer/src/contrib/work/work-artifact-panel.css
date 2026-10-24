@@ -19,6 +19,11 @@
 .work-artifact-panel-v2__modes button[aria-pressed=true] { color:var(--fg); background:var(--bg-selected); }
 .work-artifact-panel-v2__content { min-height:0; flex:1; overflow:auto; padding:var(--space-4); overscroll-behavior:contain; }
 .work-artifact-panel-v2__content--document { display:flex; flex-direction:column; padding:0; overflow:hidden; }
+/* Resource tabs already identify the file above the preview. Keep the
+   remaining controls compact and give the actual document viewport the full
+   height of the detail pane. */
+.work-artifact-panel-v2[data-resource-tab='true'] .work-artifact-panel-v2__content { padding:var(--space-3); }
+.work-artifact-panel-v2[data-resource-tab='true'] .work-artifact-panel-v2__content--document { padding:0; }
 .work-artifact-panel-v2__source { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.65 var(--font-mono); color:var(--fg); tab-size:2; }
 .work-artifact-panel-v2__markdown { max-width:78ch; margin:0 auto; line-height:1.65; }
 .work-artifact-panel-v2__source-markdown { max-width:none; margin:0; }

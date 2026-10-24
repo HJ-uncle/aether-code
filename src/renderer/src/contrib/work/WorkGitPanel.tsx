@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
-import type { GitFileChange, GitFileDiff, GitResult } from '@shared/git-types'
+import type { GitBranchInfoResult, GitFileChange, GitFileDiff, GitHunk, GitResult, GitStatusResult } from '@shared/git-types'
 import { createGitClient, type ScopedGitClient } from '@renderer/core/git/git-client'
 import {
   captureSessionGitTarget,
   gitUtilityChat,
+  GitRequestError,
   type GitTarget
 } from '@renderer/core/git/git-target'
 import { useApp } from '@renderer/core/app-context'
@@ -15,11 +16,47 @@ import {
   getWorkGitRepositoryOperation, retainWorkGitRepositoryOperation, publishWorkGitSuccess, subscribeWorkGitSuccess
 } from '@renderer/core/git/work-git-operation'
 import { captureGitCommand, createRepositoryOperation } from '@renderer/core/git/git-repository-operation'
+import { bindSessionWorkspace } from '@renderer/core/workspace/fs-client'
 import { GitRepositoryNotice } from '@renderer/contrib/git/GitRepositoryNotice'
+import { GitChangeRow } from '@renderer/contrib/git/GitChangeRow'
 import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { toast } from '@renderer/core/toast'
 import './work-git-panel.css'
+
+type WorkGitReadSnapshot = { status: GitStatusResult; branch?: GitBranchInfoResult }
+const workGitReadFlights = new Map<string, Promise<WorkGitReadSnapshot>>()
+
+/**
+ * Work's status and branch reads are intentionally shared per task scope.
+ * StrictMode and pane remounts can otherwise start several expensive native
+ * Git supervisors while an earlier read still owns the session lease.
+ */
+function sharedWorkGitRead(key: string, loader: () => Promise<WorkGitReadSnapshot>): Promise<WorkGitReadSnapshot> {
+  const existing = workGitReadFlights.get(key)
+  if (existing) return existing
+  const operation = loader()
+  workGitReadFlights.set(key, operation)
+  void operation.then(
+    () => { if (workGitReadFlights.get(key) === operation) workGitReadFlights.delete(key) },
+    () => { if (workGitReadFlights.get(key) === operation) workGitReadFlights.delete(key) }
+  )
+  return operation
+}
+
+/**
+ * Older engine builds returned the orphan lease wording without the typed
+ * `errorCode`.  Keep Work recovery compatible with those responses: the
+ * wording is emitted only by the verified repository-lease admission guard,
+ * so it is safe to use as a narrow fallback while retaining the typed code as
+ * the primary signal.
+ */
+function isVerifiedOrphanLease(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false
+  const item = value as { errorCode?: unknown; error?: unknown }
+  return item.errorCode === 'git-orphan' ||
+    (typeof item.error === 'string' && /Git operation left a verified orphan lease/i.test(item.error))
+}
 
 export interface WorkGitPanelProps {
   cwd: string | null | undefined
@@ -28,21 +65,6 @@ export interface WorkGitPanelProps {
   workspaceRunId?: string | null
   onOpenFile?: (path: string) => void
   onOpenDiff?: (path: string, staged: boolean) => void
-}
-
-function label(change: GitFileChange): string {
-  return change.changeType === 'untracked'
-    ? '未跟踪'
-    : change.changeType === 'added'
-      ? '新增'
-      : change.changeType === 'deleted'
-        ? '删除'
-        : change.changeType === 'renamed'
-          ? '重命名'
-          : '修改'
-}
-function stateClass(change: GitFileChange): string {
-  return `work-git-file--${change.changeType}`
 }
 
 /** Task-owned Git transport and draft; Code selection is never overridden. */
@@ -148,7 +170,14 @@ export function WorkGitPanel({
   ): Promise<{ target: GitTarget; client: ScopedGitClient }> => {
     if (!scopeCurrent(scope) || !scope.sessionId)
       throw new Error('任务工作区尚未就绪')
-    const target = await captureSessionGitTarget(scope.sessionId, scope.cwd ?? '')
+    if (scope.cwd) await bindSessionWorkspace(scope.sessionId, scope.cwd)
+    // `/git/binding` is the authenticated source of truth for a Work task.
+    // The persisted `workspacePath` is only a local recovery hint and can
+    // point at the run's company output while the engine binds the task to a
+    // scratch/repository root.  Passing an empty cwd asks the session route to
+    // operate at that bound root instead of rejecting a valid task as outside
+    // its workspace (the old source of the misleading 目录不属于错误).
+    const target = await captureSessionGitTarget(scope.sessionId, '')
     if (!scopeCurrent(scope)) throw new Error('Git 任务已切换')
     return { target, client: createGitClient(target) }
   }
@@ -173,10 +202,50 @@ export function WorkGitPanel({
     setRefreshing(true)
     setError('')
     try {
-      const { client } = await clientFor(scope)
-      const result = await client.gitStatus()
+      const flightKey = JSON.stringify([source, sessionId, scope.cwd ?? '', workspaceRunId ?? ''])
+      const snapshot = await sharedWorkGitRead(flightKey, async () => {
+        const { client } = await clientFor(scope)
+        // A verified orphan repository lease means the previous owner and its
+        // supervisor have already ended. The engine fences recovery by the
+        // exact lease generation, so Work can complete that recovery during
+        // its first read instead of leaving the user stuck behind a red bar.
+        // Busy or unverified leases still surface as errors and are never
+        // silently reclaimed.
+        const recoverOrphanLease = async (): Promise<GitStatusResult> => {
+          const lease = await client.gitLeaseStatus()
+          const generation = lease.lease?.generation
+          if (!lease.success || !lease.lease?.recoverable || !generation) {
+            throw new Error('Git 存在可疑中断占用，请先重新核对仓库状态')
+          }
+          const recovered = await client.gitRecoverLease(generation)
+          if (!recovered.success || recovered.lease?.busy) {
+            throw new Error(recovered.error || 'Git 中断占用尚未解除，请稍后重试')
+          }
+          return client.gitStatus()
+        }
+        const readStatus = async (): Promise<GitStatusResult> => {
+          try {
+            const status = await client.gitStatus()
+            // A few older engine builds wrapped the business failure in a
+            // successful HTTP envelope.  Inspect the typed result as well as
+            // transport exceptions so a verified orphan is still recovered.
+            return !status.success && isVerifiedOrphanLease(status)
+              ? await recoverOrphanLease()
+              : status
+          } catch (reason: unknown) {
+            if (!(reason instanceof GitRequestError) || !isVerifiedOrphanLease(reason.failure)) throw reason
+            return recoverOrphanLease()
+          }
+        }
+        const status = await readStatus()
+        if (!status.success) throw new Error(status.error ?? '读取 Git 状态失败')
+        if (!status.isRepo) return { status }
+        const branch = await client.gitBranchInfo()
+        if (!branch.success) throw new Error(branch.error ?? '读取分支状态失败')
+        return { status, branch }
+      })
+      const { status: result, branch: info } = snapshot
       if (!isCurrent()) return
-      if (!result.success) throw new Error(result.error ?? '读取 Git 状态失败')
       setIsRepo(result.isRepo === true)
       setFiles(result.files ?? [])
       if (!result.isRepo) {
@@ -185,13 +254,10 @@ export function WorkGitPanel({
         setAhead(null)
         setBehind(null)
       } else {
-        const info = await client.gitBranchInfo()
-        if (!info.success) throw new Error(info.error ?? '读取分支状态失败')
-        if (!isCurrent()) return
-        setBranch(info.info?.branch ?? '')
-        setUpstream(info.info?.upstream ?? '')
-        setAhead(info.info?.ahead ?? null)
-        setBehind(info.info?.behind ?? null)
+        setBranch(info?.info?.branch ?? '')
+        setUpstream(info?.info?.upstream ?? '')
+        setAhead(info?.info?.ahead ?? null)
+        setBehind(info?.info?.behind ?? null)
       }
     } catch (reason: unknown) {
       if (isCurrent()) setError(reason instanceof Error ? reason.message : String(reason))
@@ -202,7 +268,12 @@ export function WorkGitPanel({
   // identity refreshes reads without retiring drafts or mutation reservations.
   }, [active, cwd, sessionId, source, operationOwner, workspaceRunId])
   useEffect(() => {
-    if (active && !operation) void refresh()
+    if (!active || operation) return
+    // React StrictMode replays mount effects. Defer the transport launch until
+    // the replay cleanup has run so the first setup cannot leave a duplicate
+    // /git/status request holding this session's exclusive workspace lease.
+    const timer = setTimeout(() => { void refresh() }, 0)
+    return () => clearTimeout(timer)
   }, [active, refresh, operation])
 
   const selectedFile = useMemo(
@@ -271,6 +342,15 @@ export function WorkGitPanel({
       .finally(() => {
         if (current()) setDiffLoading(false)
       })
+  }
+
+  const loadHunks = async (file: GitFileChange, staged: boolean): Promise<GitHunk[]> => {
+    const scope = captureScope()
+    if (!scope.active || !scopeCurrent(scope)) return []
+    const { client } = await clientFor(scope)
+    const result = await client.gitDiff(file.path, staged)
+    if (!result.success) throw new Error(result.error ?? '读取文件变更块失败')
+    return result.diff?.hunks ?? []
   }
 
   const suggestMessage = async (): Promise<void> => {
@@ -348,32 +428,33 @@ export function WorkGitPanel({
   const stageable = unstaged.filter(
     (file) => file.unstagedChange || file.changeType === 'untracked'
   )
-  const renderFile = (file: GitFileChange, isStaged: boolean): JSX.Element => (
-    <div
-      className={`work-git-file ${stateClass(file)} ${selected === file.path ? 'is-selected' : ''}`}
+  const renderFile = (file: GitFileChange, isStaged: boolean): JSX.Element => {
+    // GitChangeRow is the Code-mode visual contract (status colour, line
+    // counts, hunk affordance).  Only its transport callbacks are replaced:
+    // every Work action remains pinned to this task's ScopedGitClient.
+    const scopedFile = { ...file, staged: isStaged }
+    return <GitChangeRow
       key={`${isStaged ? 's' : 'u'}:${file.path}`}
-    >
-      <button type="button" className="work-git-file__main" onClick={() => open(file, isStaged)}>
-        <Icon name="file" size={15} />
-        <span title={file.path}>{file.path}</span>
-        <em>{label(file)}</em>
-      </button>
-      <button
-        type="button"
-        className="work-git-file__action"
-        disabled={busy || suggesting}
-        aria-label={isStaged ? `取消暂存 ${file.path}` : `暂存 ${file.path}`}
-        onClick={() =>
-          void run(
-            captureGitCommand(isStaged ? 'gitUnstage' : 'gitStage', file.path),
-            isStaged ? '已取消暂存' : '已暂存'
-          )
-        }
-      >
-        {isStaged ? '−' : '+'}
-      </button>
-    </div>
-  )
+      file={scopedFile}
+      active={selected === file.path}
+      onSelect={() => open(file, isStaged)}
+      onOpen={() => open(file, isStaged)}
+      onToggleStage={() => void run(
+        captureGitCommand(isStaged ? 'gitUnstage' : 'gitStage', file.path),
+        isStaged ? '已取消暂存' : '已暂存'
+      )}
+      // Match Code Git semantics: discarding a staged row means unstage it;
+      // only an unstaged row may reset the worktree contents.  Keeping the
+      // decision here preserves the session-scoped transport while avoiding
+      // accidental loss of staged work in a Work task.
+      onDiscard={() => void run(
+        captureGitCommand(isStaged ? 'gitUnstage' : 'gitDiscardFile', file.path),
+        isStaged ? '已取消暂存' : '已放弃文件改动'
+      )}
+      onLoadHunks={() => loadHunks(file, isStaged)}
+      onDiscardHunk={(_, hunk) => void run(captureGitCommand('gitDiscardHunk', file.path, hunk.id), '已放弃变更块')}
+    />
+  }
   return (
     <section className="work-git-panel" aria-label="Git">
       <header className="work-git-panel__header">

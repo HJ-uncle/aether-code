@@ -72,6 +72,18 @@ npm install
 npm run dev
 ```
 
+需要同时运行多个独立客户端时，显式启动隔离实例。默认启动仍保持单实例；每个隔离实例拥有自己的设置、会话数据库、凭据和窗口状态，内置引擎会从首选端口开始自动递增并避开其他实例：
+
+```powershell
+# 每次创建一个新的随机实例
+npx electron . --new-instance
+
+# 创建可重复使用的命名实例（同名实例仍保持单实例）
+npx electron . --aether-instance=work-2
+```
+
+打包版使用同样的参数，例如 `Aether.exe --new-instance`。关闭实例不会影响其他实例正在运行的引擎。
+
 启动后：
 
 1. 用命令面板（`Ctrl+Shift+P`）的「打开文件夹」选一个目录

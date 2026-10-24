@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type JSX } from 'react'
 import type { PDFDocumentProxy, PDFDocumentLoadingTask, PDFWorker, RenderTask } from 'pdfjs-dist'
-import { DOCUMENT_LIMITS, pdfCanvasSize, previewErrorMessage } from './document-kind'
-import { PreviewMessage, PreviewPager, usePreviewWidth } from './preview-controls'
+import { DOCUMENT_LIMITS, ensureMapGetOrInsertComputed, pdfCanvasSize, previewErrorMessage } from './document-kind'
+import { PreviewMessage, PreviewPager, usePreviewVisibility, usePreviewWidth } from './preview-controls'
 
-export default function PdfDocumentPreview({ data, name }: { data: ArrayBuffer; name: string }): JSX.Element {
+export default function PdfDocumentPreview({ data, name, onRetry }: { data: ArrayBuffer; name: string; onRetry?: () => void }): JSX.Element {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null), [error, setError] = useState('')
   const [page, setPage] = useState(1), [zoom, setZoom] = useState(0), [renderedPage, setRenderedPage] = useState(0)
-  const body = useRef<HTMLDivElement>(null), canvas = useRef<HTMLCanvasElement>(null), width = usePreviewWidth(body)
+  const body = useRef<HTMLDivElement>(null), canvas = useRef<HTMLCanvasElement>(null), width = usePreviewWidth(body, Boolean(pdf)), layoutReady = usePreviewVisibility(body, Boolean(pdf))
   const disposeDocument = useRef<() => void>(() => {})
   useEffect(() => {
     let disposed = false, task: PDFDocumentLoadingTask | undefined, worker: Worker | undefined, pdfWorker: PDFWorker | undefined
@@ -15,7 +15,12 @@ export default function PdfDocumentPreview({ data, name }: { data: ArrayBuffer; 
     disposeDocument.current = cleanup
     const timer = setTimeout(() => { if (!disposed) { disposed = true; setError('此 PDF 解析时间较长，请重试或使用本机应用打开。'); cleanup() } }, DOCUMENT_LIMITS.parseTimeoutMs)
     void (async () => {
-      const [library, source] = await Promise.all([import('pdfjs-dist'), import('pdfjs-dist/build/pdf.worker.min.mjs?url')])
+      ensureMapGetOrInsertComputed()
+      // Electron may lag the browser runtime APIs used by the generic PDF.js
+      // bundle. The legacy build carries PDF.js' compatibility shims and must
+      // be paired with its matching worker; mixing the generic and legacy
+      // builds can fail only when the first page is rendered.
+      const [library, source] = await Promise.all([import('pdfjs-dist/legacy/build/pdf.mjs'), import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url')])
       if (disposed) return
       worker = new Worker(source.default, { type: 'module', name: 'aether-document-pdf' })
       pdfWorker = library.PDFWorker.create({ port: worker })
@@ -34,7 +39,7 @@ export default function PdfDocumentPreview({ data, name }: { data: ArrayBuffer; 
     return () => { disposed = true; clearTimeout(timer); cleanup() }
   }, [data])
   useEffect(() => {
-    if (!pdf || !canvas.current || error) return
+    if (!pdf || !canvas.current || !layoutReady || error) return
     let disposed = false, rendering: RenderTask | undefined
     const target = canvas.current
     setRenderedPage(0)
@@ -60,13 +65,13 @@ export default function PdfDocumentPreview({ data, name }: { data: ArrayBuffer; 
       finally { documentPage.cleanup() }
     })().catch((reason: unknown) => { if (!disposed) { disposeDocument.current(); setError(previewErrorMessage(reason)) } }).finally(() => clearTimeout(timer))
     return () => { disposed = true; clearTimeout(timer); rendering?.cancel(); target.width = 0; target.height = 0 }
-  }, [pdf, page, zoom, width, error])
-  if (error) return <PreviewMessage error={error} />
+  }, [pdf, page, zoom, width, layoutReady, error])
+  if (error) return <PreviewMessage error={error} onRetry={onRetry} />
   if (!pdf) return <PreviewMessage />
   return <>
     <PreviewPager page={page} total={pdf.numPages} onPage={setPage} zoom={zoom} onZoom={setZoom} />
     <div className="document-preview__body document-preview__body--pdf" ref={body} aria-busy={renderedPage !== page}>
-      <canvas ref={canvas} aria-label={`${name} · 第 ${page} 页`} data-document-page={page} data-rendered-page={renderedPage} />
+      {layoutReady ? <canvas ref={canvas} aria-label={`${name} · 第 ${page} 页`} data-document-page={page} data-rendered-page={renderedPage} /> : <PreviewMessage />}
     </div>
   </>
 }

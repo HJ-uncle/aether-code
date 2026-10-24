@@ -1,8 +1,8 @@
 import { useEffect, useState, type JSX } from 'react'
 import type { FsFileContent } from '@shared/ipc'
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
-import { getEngineSource } from '@renderer/core/engine/source'
-import { paths, readFile, readSessionFile } from '@renderer/core/workspace/fs-client'
+import { getEngineSource, isRemoteEngine } from '@renderer/core/engine/source'
+import { paths, readFile, readLocalRecoveryFile, readSessionFile, workspaceRecoveryCandidates } from '@renderer/core/workspace/fs-client'
 import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { Markdown } from '../chat/Markdown'
@@ -19,7 +19,14 @@ export function useWorkSourceFile(source: ChatAttachment, sessionId?: string, ro
     let active = true
     setState({ key })
     if (!enabled) return () => { active = false }
-    const request = sessionId ? readSessionFile(sessionId, source.path)
+    const request = sessionId ? readSessionFile(sessionId, source.path, root).catch(async (reason: unknown) => {
+      if (isRemoteEngine() || !root) throw reason
+      const candidates = workspaceRecoveryCandidates(source.path, root)
+      for (const candidate of candidates) {
+        try { return await readLocalRecoveryFile(candidate) } catch { /* try the next bounded root */ }
+      }
+      throw reason
+    })
       : root ? readFile(paths.join(root, source.path))
         : Promise.reject(new Error('资料没有关联任务，请重新选择任务'))
     void request.then(file => {

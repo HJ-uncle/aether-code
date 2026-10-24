@@ -16,7 +16,7 @@ import {
   requestOrThrow,
   uploadAttachment
 } from '@renderer/core/engine/client'
-import { allowRoot, copyIntoWorkspace, pickFolder } from '@renderer/core/workspace/fs-client'
+import { allowRoot, bindSessionWorkspace, copyIntoWorkspace, pickFolder } from '@renderer/core/workspace/fs-client'
 import { isSupportedFile } from '@renderer/contrib/chat/useAttachments'
 import { mentionToken, type Mention } from '@renderer/contrib/chat/mention-context'
 import { buildWorkAgentMessage } from './work-agent-collaboration'
@@ -327,6 +327,10 @@ export function useWorkController() {
       // must not turn into a cross-task or cross-turn composer lock.
       if (getWorkState(source).activeTaskId !== task.id || hasSessionWork(task.id)) return
       setError(null)
+      // Authenticated Work sessions start on a private scratch root until an
+      // explicitly selected project is bound. Do that before the first turn so
+      // files, Git and tool output all use the task's selected workspace.
+      if (task.workspacePath) await bindSessionWorkspace(task.id, task.workspacePath)
       updateTask(task.id, { status: 'running', agentLocked: true, updatedAt: Date.now() })
       const submission = {
         source,
@@ -407,7 +411,7 @@ export function useWorkController() {
         if (preserveDraft) throw cause
       }
     },
-    [epoch, chatSend, hasSessionWork, optionsFor, updateTask, source]
+    [epoch, bindSessionWorkspace, chatSend, hasSessionWork, optionsFor, updateTask, source]
   )
   const sendTaskRef = useRef(sendTask)
   useEffect(() => {
@@ -528,7 +532,14 @@ export function useWorkController() {
         status: 'draft',
         createdAt: now,
         updatedAt: now,
-        workspacePath: current.homeWorkspacePath,
+        // A remote workspace root is an explicit user selection.  Keep it on
+        // the Work task just like a local folder selection so the first turn
+        // binds the session before Git/files are read.  Previously remote
+        // tasks always copied null from the Work home state and silently fell
+        // back to an engine scratch directory, making the Work Git pane look
+        // like a non-repository even when the configured remote project was a
+        // valid Git checkout.
+        workspacePath: current.homeWorkspacePath || (isRemoteEngine() ? settings.remoteWorkspaceRoot.trim() || null : null),
         modelId: current.homeModelId || settings.lastModelId,
         attachments: fromHome ? current.homeAttachments : [],
         sources: [],
@@ -546,7 +557,7 @@ export function useWorkController() {
         ...(fromHome ? { homeDraft: '', homeAttachments: [], homeSessionId: null, homeAgentId: '', homeMentions: [], homeResources: { skills: [], mcpServers: [], knowledgeBases: [] } } : {})
       }))
     },
-    [source, settings.lastModelId, uploadCount]
+    [source, settings.lastModelId, settings.remoteWorkspaceRoot, uploadCount]
   )
 
   const selectTask = useCallback(

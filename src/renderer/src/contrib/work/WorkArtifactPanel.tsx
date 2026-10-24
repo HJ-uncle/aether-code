@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import type { WorkArtifact } from './work-state'
-import { paths, readExternalFile as readExternalFileFromDisk, readFile, readSessionFile, saveSessionFile } from '@renderer/core/workspace/fs-client'
+import { isWorkspaceRecoveryPath, readFile, readLocalRecoveryFile, readSessionFile, saveSessionFile, workspaceRecoveryCandidates } from '@renderer/core/workspace/fs-client'
 import { openFileFromChat } from '@renderer/contrib/chat/open-file'
 import { Markdown } from '@renderer/contrib/chat/Markdown'
 import { Icon } from '@renderer/workbench/icons'
@@ -44,6 +44,7 @@ function isText(name: string): boolean {
 async function readWorkFile(
   path: string,
   sessionId: string | undefined,
+  workspaceRoot: string | null | undefined,
   allowExternal = false
 ): Promise<FsFileContent> {
   // A normal Work receipt is always read through its authenticated session.
@@ -51,32 +52,24 @@ async function readWorkFile(
   // read-only local bridge; this keeps model-supplied paths from becoming an
   // implicit arbitrary-file read.
   if (sessionId) {
-    try { return await readSessionFile(sessionId, path) } catch (error) {
+    try { return await readSessionFile(sessionId, path, workspaceRoot) } catch (error) {
+      // A local Work task may have been admitted with a project root that the
+      // engine's authenticated workspace binder does not know yet (for
+      // example a restored campaign root).  The root comes from the user's
+      // task selection, so a read-only bounded fallback keeps previews usable
+      // without turning a model-supplied path into an arbitrary disk read.
+      if (!isRemoteEngine() && isWorkspaceRecoveryPath(path, workspaceRoot)) {
+        try { return await readLocalRecoveryFile(path) } catch { /* retain the session error below */ }
+      }
       if (!allowExternal || isRemoteEngine()) throw error
     }
   }
-  if (allowExternal && !isRemoteEngine()) return readExternalFileFromDisk(path)
+  if (allowExternal && !isRemoteEngine()) return readLocalRecoveryFile(path)
   return readFile(path)
 }
 
 function externalArtifactCandidates(filePath: string, workspaceRoot?: string | null): string[] {
-  const clean = filePath.replace(/^path:/, '')
-  if (/^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(clean)) {
-    // An absolute receipt path is only eligible when it is within the active
-    // task directory or its immediate sibling group. Otherwise the user must
-    // explicitly choose/drag the file into the read-only resource strip.
-    if (!workspaceRoot) return []
-    const parent = paths.dirname(workspaceRoot)
-    return paths.contains(workspaceRoot, clean) || paths.contains(parent, clean) ? [clean] : []
-  }
-  if (!workspaceRoot) return [clean]
-  const direct = paths.join(workspaceRoot, clean)
-  // A historical receipt can point at a sibling task directory (for example
-  // `compliance/...` while the selected task owns `pmo`).  The task root is a
-  // display hint, so also try its parent as a read-only local candidate.
-  const parent = paths.dirname(workspaceRoot)
-  const sibling = parent !== workspaceRoot ? paths.join(parent, clean) : ''
-  return sibling && sibling !== direct ? [direct, sibling] : [direct]
+  return workspaceRecoveryCandidates(filePath, workspaceRoot)
 }
 
 const MAX_EXTERNAL_BYTES = 32 * 1024 * 1024
@@ -156,8 +149,24 @@ function ArtifactContent({
         active = false
       }
     }
+    const readWithRetry = async (reader: () => Promise<FsFileContent>): Promise<FsFileContent> => {
+      let last: unknown
+      // Files can be in the middle of an async write when a resource tab is
+      // opened. Retry a couple of times so a transient read race never forces
+      // the user to discover and press the refresh button themselves.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          return await reader()
+        } catch (reason) {
+          last = reason
+          if (attempt < 2) await new Promise<void>(resolve => setTimeout(resolve, 120 * (attempt + 1)))
+          if (!active) throw reason
+        }
+      }
+      throw last ?? new Error('读取文件失败')
+    }
     if (externalFile) {
-      void readExternalFile(externalFile)
+      void readWithRetry(() => readExternalFile(externalFile))
         .then((result) => {
           if (active && epoch === getEngineSource()) setRead({ receipt: artifact.content, value: workArtifactReadResult(result) })
         })
@@ -166,17 +175,25 @@ function ArtifactContent({
         })
       return () => { active = false }
     }
-    const candidates = externalPath ? [externalPath] : externalArtifactCandidates(artifact.path, workspaceRoot)
+    // Always try the authenticated session path first.  A receipt can point
+    // at a valid session file outside the selected project root (for example
+    // after restoring a task or switching projects), while the local recovery
+    // candidates intentionally filter paths that are outside that root.  The
+    // session reader remains the security boundary; recovery paths are only
+    // fallbacks for a local engine whose workspace binder is not ready yet.
+    const candidates = externalPath
+      ? [externalPath]
+      : [artifact.path, ...externalArtifactCandidates(artifact.path, workspaceRoot)]
     const load = async (): Promise<FsFileContent> => {
       let last: unknown
       for (const candidate of candidates) {
         try {
-          return await readWorkFile(candidate, externalPath ? undefined : sessionId, Boolean(externalPath))
+          return await readWorkFile(candidate, externalPath ? undefined : sessionId, workspaceRoot, Boolean(externalPath))
         } catch (error) { last = error }
       }
       throw last ?? new Error('文件不在当前工作区。请使用“打开文件”或将文件拖到资源栏。')
     }
-    void load()
+    void readWithRetry(load)
       .then((result) => {
         if (active && epoch === getEngineSource()) setRead({ receipt: artifact.content, value: workArtifactReadResult(result) })
       })
@@ -236,7 +253,7 @@ function ArtifactContent({
     if (value?.isBinary && sessionId && !externalFile && !externalPath) {
       setSaving(true)
       try {
-        const saved = await saveSessionFile(sessionId, artifact.path)
+        const saved = await saveSessionFile(sessionId, artifact.path, workspaceRoot)
         if (mounted.current && epoch === getEngineSource() && saved.saved) toast.success('原文件已保存')
       } catch (reason: unknown) {
         if (mounted.current && epoch === getEngineSource()) toast.error(reason instanceof Error ? reason.message : String(reason))
@@ -275,8 +292,8 @@ function ArtifactContent({
     onAddToConversation?.({ ...artifact, content: null }, selection || undefined, selection ? value?.coverage : undefined)
   }
   return (
-    <section className="work-artifact-panel-v2" aria-label="成果预览" data-document-session={sessionId} data-document-path={artifact.path}>
-      <header className="work-artifact-panel-v2__header work-artifact-select">
+    <section className="work-artifact-panel-v2" aria-label="成果预览" data-document-session={sessionId} data-document-path={artifact.path} data-resource-tab={inResourceTab ? 'true' : 'false'}>
+      {!inResourceTab ? <header className="work-artifact-panel-v2__header work-artifact-select">
         <div className="work-artifact-panel-v2__title" title={artifact.path}>
           <FileGlyph name={artifact.name} size={17} />
           <div>
@@ -302,9 +319,9 @@ function ArtifactContent({
         <span
           className={`work-artifact-panel-v2__status work-artifact-panel-v2__status--${artifact.status}`}
         >
-          {inResourceTab ? '文件预览' : artifact.status === 'ready' ? '已生成' : '草稿'}
+          {artifact.status === 'ready' ? '已生成' : '草稿'}
         </span>
-      </header>
+      </header> : null}
       <div className="work-artifact-panel-v2__toolbar">
         {!inResourceTab && <button
           type="button"

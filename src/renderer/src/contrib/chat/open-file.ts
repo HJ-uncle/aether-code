@@ -4,7 +4,7 @@ import { getWorkspaceState } from '@renderer/core/workspace/workspace-store'
 import { getSnapshot } from '@renderer/core/engine/client'
 import { resolveChatPath } from './chat-file-path'
 import { assertEngineSource, getEngineSource, isRemoteEngine } from '@renderer/core/engine/source'
-import { paths, readExternalFile, remoteWorkspaceContext, remoteWorkspaceRelativePath, resolveSessionFilePath } from '@renderer/core/workspace/fs-client'
+import { paths, readLocalRecoveryFile, remoteWorkspaceContext, remoteWorkspaceRelativePath, resolveSessionFilePath, workspaceRecoveryCandidates } from '@renderer/core/workspace/fs-client'
 import { assertWorkspaceTarget } from '@renderer/core/workspace/connection'
 import { type ChatFileContext, type ChatLinkTarget } from './chat-link'
 import { getAppMode } from '@renderer/core/platform/app-mode'
@@ -46,10 +46,10 @@ export async function openFileFromChat(rawPath: string, context?: ChatFileContex
   const remoteMode = snapshot.mode === 'remote' || isRemoteEngine()
   if (context?.sessionId && (getAppMode() === 'work' || context.sessionId.startsWith('work-') || (!remoteMode && !context.workspaceRoot))) {
     const match = /:(\d+)(?::(\d+))?$/.exec(rawPath.trim())
-    const pathText = (match ? rawPath.trim().slice(0, match.index) : rawPath).trim().replace(/^[`'"<]+|[`'">]+$/g, '')
+    const pathText = (match ? rawPath.trim().slice(0, match.index) : rawPath).trim().replace(/^[`'"<]+|[`'">]+$/g, '').replace(/^path:/i, '')
     let resolved: Awaited<ReturnType<typeof resolveSessionFilePath>> | null = null
     try {
-      resolved = await resolveSessionFilePath(context.sessionId, pathText)
+      resolved = await resolveSessionFilePath(context.sessionId, pathText, context.workspaceRoot)
     } catch (error) {
       // A receipt may outlive its task workspace (or point at a sibling task).
       // Local users still need to inspect that file; route it to the read-only
@@ -57,18 +57,10 @@ export async function openFileFromChat(rawPath: string, context?: ChatFileContex
       if (remoteMode) throw error
       assertOpeningContext()
       if (getAppMode() === 'work') {
-        const absolute = /^(?:[/\\]|[A-Za-z]:)/.test(pathText)
-        const roots = context.workspaceRoot
-          ? [context.workspaceRoot, paths.dirname(context.workspaceRoot)]
-          : []
-        const candidates = absolute
-          ? context.workspaceRoot && (paths.contains(context.workspaceRoot, pathText) || paths.contains(paths.dirname(context.workspaceRoot), pathText))
-            ? [pathText]
-            : []
-          : roots.map(root => paths.join(root, pathText))
+        const candidates = workspaceRecoveryCandidates(pathText, context.workspaceRoot)
         for (const candidate of candidates) {
           try {
-            await readExternalFile(candidate)
+            await readLocalRecoveryFile(candidate)
             assertOpeningContext()
             openExternalWorkPathResource(candidate, context.sessionId)
             return
@@ -79,8 +71,8 @@ export async function openFileFromChat(rawPath: string, context?: ChatFileContex
         }
         throw error
       }
-      const absolute = /^(?:[/\\]|[A-Za-z]:)/.test(pathText)
-      const candidate = absolute ? pathText : context.workspaceRoot ? paths.join(context.workspaceRoot, pathText) : null
+      const candidates = workspaceRecoveryCandidates(pathText, context.workspaceRoot)
+      const candidate = candidates[0] ?? null
       if (!candidate) throw error
       await openFile(candidate, match ? Number(match[1]) : undefined, match?.[2] ? Number(match[2]) : undefined)
       assertOpeningContext()
@@ -91,6 +83,23 @@ export async function openFileFromChat(rawPath: string, context?: ChatFileContex
     assertOpeningContext()
     if (getAppMode() === 'work') {
       if (getWorkState(getEngineStorageKey()).activeTaskId !== context.sessionId) throw new Error('会话已经切换，请返回文件所属会话后重试。')
+      // The session may still expose its private scratch root even though the
+      // task's persisted outputs live under the run's company root.  A
+      // syntactically valid relative path would otherwise open a dead
+      // scratch resource and only fail after the tab is created.  Probe the
+      // bounded company candidates before handing the path to the session
+      // resource store; this keeps viewer opening read-only and avoids a
+      // viewer-side workspace rebind.
+      if (!remoteMode && context.workspaceRoot && !paths.contains(context.workspaceRoot, resolved.path)) {
+        for (const candidate of workspaceRecoveryCandidates(pathText, context.workspaceRoot)) {
+          try {
+            await readLocalRecoveryFile(candidate)
+            assertOpeningContext()
+            openExternalWorkPathResource(candidate, context.sessionId)
+            return
+          } catch { /* keep the authenticated session target as fallback */ }
+        }
+      }
       openWorkFileResource(resolved.path, resolved.target)
       return
     }

@@ -5,7 +5,7 @@ import { prepareOfficeArchive } from './office-archive'
 import { PreviewMessage, PreviewPager } from './preview-controls'
 import { SHEET_PAGE_COLUMNS, SHEET_PAGE_ROWS, type SheetPage, type SheetSummary, type SpreadsheetRequest, type SpreadsheetResponse } from './spreadsheet-preview-contract'
 
-export default function SpreadsheetDocumentPreview({ data }: { data: ArrayBuffer }): JSX.Element {
+export default function SpreadsheetDocumentPreview({ data, onRetry }: { data: ArrayBuffer; onRetry?: () => void }): JSX.Element {
   const worker = useRef<Worker | null>(null)
   const [sheets, setSheets] = useState<SheetSummary[]>([]), [sheet, setSheet] = useState(0)
   const [page, setPage] = useState(1), [columnPage, setColumnPage] = useState(0), [result, setResult] = useState<SheetPage | null>(null)
@@ -38,7 +38,7 @@ export default function SpreadsheetDocumentPreview({ data }: { data: ArrayBuffer
     if (!sheets.length || !worker.current) return
     worker.current.postMessage({ kind: 'page', sheet, row, column } satisfies SpreadsheetRequest)
   }, [sheets, sheet, row, column])
-  if (error) return <PreviewMessage error={error} />
+  if (error) return <PreviewMessage error={error} onRetry={onRetry} />
   if (!sheets.length) return <PreviewMessage />
   const selected = sheets[sheet]
   const current = result && result.sheet === sheet && result.row === row && result.column === column ? result : null

@@ -26,7 +26,7 @@ function load(name) {
   return exports
 }
 const { documentKindFor, documentBytes, spreadsheetColumn, pdfCanvasSize, DOCUMENT_LIMITS } = load('document-kind')
-const { inspectOfficeArchive, expandOfficeEntry, officeImagePixels, passiveOfficePart, passiveOfficeRelationship } = load('office-archive')
+const { inspectOfficeArchive, expandOfficeEntry, officeImagePixels, passiveOfficePart, passiveOfficeRelationship, sanitizeMergeRefs } = load('office-archive')
 const { spreadsheetDisplayValue } = load('spreadsheet-value')
 const archive = async (name = 'word/document.xml', text = '<document/>') => {
   const zip = new JSZip(); zip.file(name, text)
@@ -74,6 +74,12 @@ test('archive traversal and duplicate case aliases are rejected', async () => {
   const zip = new JSZip(); zip.file('word/a.xml', 'a'); zip.file('word/A.xml', 'b')
   const awaitable = await zip.generateAsync({ type: 'arraybuffer' })
   assert.throws(() => inspectOfficeArchive(awaitable))
+})
+test('malformed overlapping spreadsheet merges are reduced to valid non-overlapping refs', () => {
+  assert.deepEqual(sanitizeMergeRefs(['A1:B2', 'A1:B2', 'B2:C3', 'D4:E4', 'bad', 'F0:G1', 'H1:I1']), ['A1:B2', 'D4:E4', 'H1:I1'])
+  // A large range that overlaps an earlier range is dropped deterministically;
+  // preserving source order avoids changing which cell owns the displayed value.
+  assert.deepEqual(sanitizeMergeRefs(['A24:G25', 'A24:G26', 'A27:G28']), ['A24:G25', 'A27:G28'])
 })
 test('real PowerPoint chart containers retain cached chart parts while embedded workbooks and active relationships are excluded', async () => {
   const presentation = new PptxGenJS()

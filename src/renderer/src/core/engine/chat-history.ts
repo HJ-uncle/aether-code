@@ -72,7 +72,7 @@ export interface EngineHistoryRow {
   toolCall?: { id?: string; name?: string; args?: unknown } | null
   success?: boolean
   error?: unknown
-  metadata?: { contextUsageEstimated?: boolean; contextUsageProvisional?: boolean; requestInputTokenEstimate?: number; outputContinuation?: boolean; commandJob?: unknown; commandJobs?: unknown[]; subagent?: unknown; success?: boolean; error?: unknown; status?: string; outputPreview?: string; durationMs?: number; startedAt?: number; finishedAt?: number; runId?: string; turnId?: string; attachments?: Array<{ name: string; type?: string; size?: number }>; change?: import('@shared/ipc').EngineFileChange; isCompactSummary?: boolean; toolName?: string }
+  metadata?: { contextUsageEstimated?: boolean; contextUsageProvisional?: boolean; requestInputTokenEstimate?: number; outputContinuation?: boolean; commandJob?: unknown; commandJobs?: unknown[]; subagent?: unknown; success?: boolean; error?: unknown; status?: string; outputPreview?: string; durationMs?: number; startedAt?: number; finishedAt?: number; runId?: string; rootRunId?: string; turnId?: string; attachments?: Array<{ name: string; type?: string; size?: number }>; change?: import('@shared/ipc').EngineFileChange; isCompactSummary?: boolean; toolName?: string }
   isSidechain?: boolean
 }
 
@@ -152,11 +152,15 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
     const createdAt = Number(row.createdAt) || 0
 
     if (row.role === 'user') {
+      // Production history records use `rootRunId` for the parent execution
+      // identity, while older fixtures used `runId`. Preserve either identity
+      // so a restart can bind a row even when conversationId was compacted.
+      const rowRunId = row.metadata?.runId ?? row.metadata?.rootRunId
       result.push({
         id: row.id || newId(),
         role: 'user',
         conversationId: row.conversationId ?? row.metadata?.turnId,
-        runId: row.metadata?.runId,
+        runId: rowRunId,
         content: extractText(row.content),
         attachments: row.metadata?.attachments?.map(file => ({ path: file.name,
           name: file.name.replace(/\\/g, '/').split('/').at(-1) || file.name,
@@ -188,10 +192,15 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
     // 合并回一条消息，过程块收成同一个折叠块，正文只在轮末出现一次。
     const prev = result[result.length - 1]
     const turnId = row.conversationId ?? row.metadata?.turnId
+    const rowRunId = row.metadata?.runId ?? row.metadata?.rootRunId
+    // Identity is an ownership boundary.  If either side carries a turn/run
+    // identity, an unmarked row cannot be silently merged into it: legacy
+    // rows without metadata are still merged with one another, but they must
+    // never inherit a newer or older retry's error/status card by adjacency.
     const sameTurn =
       prev && prev.role === 'assistant' &&
-      (!turnId || !prev.conversationId || turnId === prev.conversationId) &&
-      (!row.metadata?.runId || !prev.runId || row.metadata.runId === prev.runId)
+      turnId === prev.conversationId &&
+      rowRunId === prev.runId
     const continueOutput = Boolean(sameTurn && outputContinuations.has(prev))
     let message: ChatMessage
     if (sameTurn) {
@@ -203,7 +212,7 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
       message = {
         id: row.id || newId(),
         role: 'assistant',
-        runId: row.metadata?.runId,
+        runId: rowRunId,
         content: '',
         thinking: '',
         tools: [],

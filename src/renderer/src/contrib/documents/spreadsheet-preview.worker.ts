@@ -10,6 +10,10 @@ onmessage = (event: MessageEvent<SpreadsheetRequest>): void => {
     const message = event.data
     if (message.kind === 'load') {
       workbook = new ExcelJS.Workbook()
+      // The archive sanitizer removes only malformed or overlapping merge
+      // ranges before this point. Keep valid merge metadata available to
+      // ExcelJS while skipping layout-heavy nodes that the cell grid cannot
+      // display.
       await workbook.xlsx.load(message.data, { ignoreNodes: ['drawing', 'picture', 'extLst', 'conditionalFormatting', 'dataValidations'] })
       const sheets = workbook.worksheets.map(sheet => ({ name: sheet.name, rows: sheet.rowCount, columns: sheet.columnCount }))
       let cells = 0

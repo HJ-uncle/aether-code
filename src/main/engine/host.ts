@@ -1,6 +1,8 @@
 /** Main-process owner of one engine instance and its authenticated transport. */
 import { EventEmitter } from 'node:events'
 import { randomBytes } from 'node:crypto'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { parseSseBlock } from './sse'
 import type { EngineSnapshot, StreamEvent } from '../../shared/ipc'
 import type { EngineHealthDiagnostics } from '../../shared/engine-diagnostics'
@@ -15,7 +17,7 @@ import { readAccountCredential } from '../account/credential-store'
 import { assertAccountTransport, ensureAccountSession, type AccountTarget } from '../account/service'
 import { prepareRemoteChatBody, validateRemoteWorkspaceRoot } from './remote-workspace'
 import { clearRemoteAttachments } from './remote-attachments'
-import { findAvailablePort } from './sdk/port-finder'
+import { reserveAvailablePort } from './sdk/port-finder'
 import { startProcess, type ProcessHandle } from './sdk/process-manager'
 import { OwnedProcessLedger } from './sdk/process-lifecycle'
 import { waitUntilReady } from './sdk/readiness-probe'
@@ -376,64 +378,81 @@ export class EngineHost extends EventEmitter {
     if (!secret.encryptedAtRest) logger.warn('系统密钥存储不可用，引擎加密密钥以明文保存')
     await migrateLegacyModels(runtime, secret.key, signal)
     if (!this.current(generation, signal)) return
-    const port = await findAvailablePort(getSettings().preferredPort || PREFERRED_PORT)
-    if (!this.current(generation, signal)) return
-    const dataDir = engineDataFile()
-    this.instanceToken = randomBytes(32).toString('hex')
-    const handle = startProcess({
-      binPath: runtime.entryPath,
-      nodePath: runtime.nodePath,
-      cwd: runtimeConfig.cwd,
-      port,
-      dataDir,
-      env: {
-        ...runtimeConfig.env,
-        ELECTRON_RUN_AS_NODE: '1',
-        AETHER_ENGINE_HOST: '127.0.0.1',
-        // Only a process started here receives the desktop-owner capability;
-        // adopted and remote transports keep their existing account boundary.
-        AETHER_DESKTOP_OWNED: '1',
-        // Embedded instances are owned by this desktop process and protected
-        // by the random instance token. Preserve an explicit operator setting.
-        AUTH_ENABLED: process.env.AUTH_ENABLED ?? 'false',
-        ENCRYPTION_KEY: secret.key,
-        AETHER_INSTANCE_TOKEN: this.instanceToken
-      },
-      onExit: (code, exitSignal) => this.onProcessExit(generation, handle, code, exitSignal)
-    })
-    this.handle = handle
-    this.ownedProcesses.register(handle, generation)
-    void handle.lifecycle.closed.then((receipt) => {
-      if (this.handle === handle) this.handle = null
-      // Records with a failed stop remain available until a later explicit
-      // retry observes this close; no stale PID lookup is used for recovery.
-      logger.info(`引擎进程关闭观测（pid=${receipt.pid ?? '-'} code=${receipt.exitCode ?? '-'} signal=${receipt.signal ?? '-'} outcome=${receipt.outcome} cleanupVerified=false）`)
-      if (receipt.outcome === 'spawn-failed' && this.current(generation)) {
-        ++this.generation
-        this.startupController?.abort()
-        this.patch({ phase: 'error', baseUrl: '', port: null, pid: null, error: `引擎进程创建失败：${receipt.spawnError}` })
-      }
-    })
-    const baseUrl = `http://127.0.0.1:${port}`
-    await waitUntilReady({ baseUrl, timeoutMs: STARTUP_TIMEOUT_MS, signal })
-    if (!this.current(generation, signal)) return
-    const meta = await this.handshake(baseUrl, signal, runtime.manifest.buildId)
-    if (!this.current(generation, signal)) return
-    this.patch({
-      phase: 'ready',
-      baseUrl,
-      port,
-      pid: handle.pid ?? null,
-      adopted: false,
-      version: meta.version,
-      buildId: meta.buildId,
-      protocolVersion: meta.protocolVersion,
-      instanceId: meta.instanceId,
-      dataDir,
-      error: null
-    })
-    logger.info(`引擎已就绪 ${baseUrl}（pid ${handle.pid ?? '未知'}）`)
-    this.startHealthWatch()
+    // Keep a cross-process lease until the child has completed its handshake.
+    // A probe that closes its socket immediately can otherwise let two desktop
+    // instances select the same port before either child binds it.
+    const reservation = await reserveAvailablePort(
+      getSettings().preferredPort || PREFERRED_PORT,
+      100,
+      // Keep the lease directory outside userData so separate --user-data-dir
+      // profiles still coordinate when they launch embedded engines together.
+      join(tmpdir(), 'aether-engine-ports')
+    )
+    try {
+      const port = reservation.port
+      if (!this.current(generation, signal)) return
+      const dataDir = engineDataFile()
+      this.instanceToken = randomBytes(32).toString('hex')
+      const handle = startProcess({
+        binPath: runtime.entryPath,
+        nodePath: runtime.nodePath,
+        cwd: runtimeConfig.cwd,
+        port,
+        dataDir,
+        env: {
+          ...runtimeConfig.env,
+          ELECTRON_RUN_AS_NODE: '1',
+          AETHER_ENGINE_HOST: '127.0.0.1',
+          // Only a process started here receives the desktop-owner capability;
+          // adopted and remote transports keep their existing account boundary.
+          AETHER_DESKTOP_OWNED: '1',
+          // Embedded instances are owned by this desktop process and protected
+          // by the random instance token. Preserve an explicit operator setting.
+          AUTH_ENABLED: process.env.AUTH_ENABLED ?? 'false',
+          ENCRYPTION_KEY: secret.key,
+          AETHER_INSTANCE_TOKEN: this.instanceToken
+        },
+        onExit: (code, exitSignal) => this.onProcessExit(generation, handle, code, exitSignal)
+      })
+      this.handle = handle
+      this.ownedProcesses.register(handle, generation)
+      void handle.lifecycle.closed.then((receipt) => {
+        if (this.handle === handle) this.handle = null
+        // Records with a failed stop remain available until a later explicit
+        // retry observes this close; no stale PID lookup is used for recovery.
+        logger.info(`引擎进程关闭观测（pid=${receipt.pid ?? '-'} code=${receipt.exitCode ?? '-'} signal=${receipt.signal ?? '-'} outcome=${receipt.outcome} cleanupVerified=false）`)
+        if (receipt.outcome === 'spawn-failed' && this.current(generation)) {
+          ++this.generation
+          this.startupController?.abort()
+          this.patch({ phase: 'error', baseUrl: '', port: null, pid: null, error: `引擎进程创建失败：${receipt.spawnError}` })
+        }
+      })
+      const baseUrl = `http://127.0.0.1:${port}`
+      // The child must own the listener, while the lease remains held so a
+      // second desktop cannot probe and reuse this port during startup.
+      await reservation.releaseSocket()
+      await waitUntilReady({ baseUrl, timeoutMs: STARTUP_TIMEOUT_MS, signal })
+      if (!this.current(generation, signal)) return
+      const meta = await this.handshake(baseUrl, signal, runtime.manifest.buildId)
+      if (!this.current(generation, signal)) return
+      this.patch({
+        phase: 'ready',
+        baseUrl,
+        port,
+        pid: handle.pid ?? null,
+        adopted: false,
+        version: meta.version,
+        buildId: meta.buildId,
+        protocolVersion: meta.protocolVersion,
+        instanceId: meta.instanceId,
+        dataDir,
+        error: null
+      })
+      logger.info(`引擎已就绪 ${baseUrl}（pid ${handle.pid ?? '未知'}）`)
+      this.startHealthWatch()
+    } finally {
+      await reservation.release()
+    }
   }
 
   private async handshake(

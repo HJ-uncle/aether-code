@@ -31,6 +31,8 @@ export interface GitChangeRowProps {
   onContextMenu?: (file: GitFileChange, event: MouseEvent) => void
   /** Work can provide session-scoped hunks; the Code fallback uses its store. */
   onLoadHunks?: (file: GitFileChange) => Promise<GitHunk[]>
+  /** Work can provide a session-scoped hunk mutation; Code keeps its store fallback. */
+  onDiscardHunk?: (file: GitFileChange, hunk: GitHunk) => void
 }
 
 function statusIconName(file: GitFileChange): IconName {
@@ -50,7 +52,8 @@ export function GitChangeRow({
   onDiscard,
   onToggleStage,
   onContextMenu,
-  onLoadHunks
+  onLoadHunks,
+  onDiscardHunk
 }: GitChangeRowProps): JSX.Element {
   const [hunksOpen, setHunksOpen] = useState(false)
   const [externalHunks, setExternalHunks] = useState<GitHunk[]>([])
@@ -178,7 +181,8 @@ export function GitChangeRow({
                   title="放弃此变更块"
                   onClick={(e) => {
                     e.stopPropagation()
-                    void discardHunk(file.path, h.id)
+                    if (onDiscardHunk) onDiscardHunk(file, h)
+                    else void discardHunk(file.path, h.id)
                   }}
                 >
                   <Icon name="restart" size={16} />

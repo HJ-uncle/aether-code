@@ -8048,6 +8048,10 @@ select.field__input {
   font-size: 13px;
 }
 
+.composer-access-picker .select__caret {
+  display: none;
+}
+
 .composer-access-picker .select__value {
   overflow: hidden;
   text-overflow: ellipsis;

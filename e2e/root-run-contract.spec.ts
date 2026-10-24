@@ -73,6 +73,53 @@ test('历史空回答缺少助手记录时仍显示中文失败说明', () => {
     error: '未收到模型的最终回答。模型服务可能返回了空内容，或响应未被正确解析；请重试，若仍失败请检查模型服务配置。'
   })
 })
+test('历史缺少助手行时错误卡紧跟所属用户消息，不会落到重试轮次之后', () => {
+  const first = run({ runId: 'run-first', turnId: 'turn-first', userMessageId: 'user-first', assistantMessageId: 'assistant-first', seq: 1,
+    createdAt: 1000, status: 'failed', error: '第一次失败' })
+  const retry = run({ runId: 'run-retry', turnId: 'turn-retry', userMessageId: 'user-retry', assistantMessageId: 'assistant-retry', seq: 2,
+    createdAt: 2000, status: 'succeeded' })
+  const restored = applyRootRuns(replayMessages([
+    { id: first.userMessageId, role: 'user', content: '第一次', conversationId: first.turnId, createdAt: first.createdAt },
+    { id: retry.userMessageId, role: 'user', content: '重新发起', conversationId: retry.turnId, createdAt: retry.createdAt }
+  ]), [first, retry])
+  expect(restored.map(message => [message.role, message.id])).toEqual([
+    ['user', first.userMessageId], ['assistant', first.assistantMessageId],
+    ['user', retry.userMessageId], ['assistant', retry.assistantMessageId]
+  ])
+  expect(restored[1]).toMatchObject({ status: 'error', error: first.error })
+  expect(restored[3]).toMatchObject({ status: 'done', runId: retry.runId })
+})
+test('旧历史助手行缺少身份时复用所属用户后的卡片，不重复插入错误卡', () => {
+  const failed = run({ runId: 'run-legacy', turnId: 'turn-legacy', userMessageId: 'user-legacy',
+    assistantMessageId: 'assistant-legacy', seq: 1, status: 'failed', error: '旧任务失败' })
+  const restored = applyRootRuns(replayMessages([
+    { id: failed.userMessageId, role: 'user', content: '旧任务', conversationId: failed.turnId, createdAt: failed.createdAt },
+    // Legacy assistant rows can have neither durable turn nor run metadata.
+    { role: 'assistant', content: '已经生成了一部分内容', createdAt: failed.createdAt + 1 }
+  ]), [failed])
+  expect(restored).toHaveLength(2)
+  expect(restored[1]).toMatchObject({ id: failed.assistantMessageId, runId: failed.runId, status: 'error', error: failed.error,
+    content: '已经生成了一部分内容' })
+})
+test('历史缺少 conversationId 时仍用 rootRunId 隔离重试轮次', () => {
+  const messages = replayMessages([
+    { id: 'old-failure', role: 'assistant', content: '旧轮次', metadata: { rootRunId: 'run-old', outputContinuation: true } },
+    { id: 'new-retry', role: 'assistant', content: '新轮次', metadata: { rootRunId: 'run-new', outputContinuation: true } }
+  ])
+  expect(messages.map(message => [message.runId, message.content])).toEqual([
+    ['run-old', '旧轮次'], ['run-new', '新轮次']
+  ])
+})
+test('有身份助手行后紧邻的无身份行不继承前一轮', () => {
+  const messages = replayMessages([
+    { id: 'identified', role: 'assistant', content: '上一轮失败内容', conversationId: 'turn-old', metadata: { runId: 'run-old' } },
+    { id: 'unmarked', role: 'assistant', content: '重试轮次内容' }
+  ])
+  expect(messages.map(message => [message.id, message.content, message.conversationId, message.runId])).toEqual([
+    ['identified', '上一轮失败内容', 'turn-old', 'run-old'],
+    ['unmarked', '重试轮次内容', undefined, undefined]
+  ])
+})
 test('EMPTY_OUTPUT 的具体诊断及其他错误原样保留', () => {
   const diagnostics: Partial<RootRun>[] = [
     { stopReason: 'empty_output', error: { code: 'EMPTY_OUTPUT', message: '未收到最终回答：本次只有推理内容，请检查模型兼容性。' } },

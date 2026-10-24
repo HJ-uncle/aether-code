@@ -82,9 +82,12 @@ function fixture(mode: 'embedded' | 'remote' = 'embedded') {
     '@renderer/core/editor/editor-activation': { activateDocument: (path: string) => activated.push(path) },
     '@renderer/core/editor/editor-store': store, '@renderer/core/workspace/workspace-store': { getWorkspaceState: () => ({ root: 'D:/code' }) },
     '@renderer/core/engine/client': { getSnapshot: () => bridge.engine.getSnapshot() },
+    '@renderer/core/platform/app-mode': { getAppMode: () => 'code' },
     './chat-file-path': { resolveChatPath: () => { throw new Error('Work must not use the Code path resolver') } },
     '@renderer/core/engine/source': engineSource, '@renderer/core/workspace/fs-client': fsClient,
-    '@renderer/core/workspace/connection': { assertWorkspaceTarget: () => { throw new Error('Work must not use the Code workspace target') } }
+    '@renderer/core/workspace/connection': { assertWorkspaceTarget: () => { throw new Error('Work must not use the Code workspace target') } },
+    '../work/work-resource-store': { openExternalWorkPathResource: () => {}, openWorkFileResource: () => {} },
+    '../work/work-state': { getWorkState: () => ({ activeTaskId: null }) }
   })
   const sync = () => load<Sync>('src/renderer/src/core/editor/document-sync.ts', { './editor-store': store, '../engine/source': engineSource }, { window: windowMock }).watchOpenDocuments()
   return { store, opener, sync, calls, writes, activated, roots, files, watches, io, snapshot,

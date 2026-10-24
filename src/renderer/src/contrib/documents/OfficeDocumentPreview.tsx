@@ -2,12 +2,12 @@ import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { DOCUMENT_LIMITS, previewErrorMessage } from './document-kind'
 import { prepareOfficeArchive } from './office-archive'
 import { documentFrame, passiveDocumentHtml } from './document-html'
-import { PreviewMessage, PreviewPager, usePreviewWidth } from './preview-controls'
+import { PreviewMessage, PreviewPager, usePreviewVisibility, usePreviewWidth } from './preview-controls'
 
-export default function OfficeDocumentPreview({ data, kind, name }: { data: ArrayBuffer; kind: 'docx' | 'pptx'; name: string }): JSX.Element {
+export default function OfficeDocumentPreview({ data, kind, name, onRetry }: { data: ArrayBuffer; kind: 'docx' | 'pptx'; name: string; onRetry?: () => void }): JSX.Element {
   const [state, setState] = useState<{ pages?: string[]; error?: string }>({})
   const [page, setPage] = useState(1), [zoom, setZoom] = useState(0)
-  const body = useRef<HTMLDivElement>(null), width = usePreviewWidth(body)
+  const body = useRef<HTMLDivElement>(null), width = usePreviewWidth(body, Boolean(state.pages)), layoutReady = usePreviewVisibility(body, Boolean(state.pages))
   useEffect(() => {
     const controller = new AbortController()
     setState({}); setPage(1)
@@ -43,13 +43,15 @@ export default function OfficeDocumentPreview({ data, kind, name }: { data: Arra
   }, [data, kind])
   const scale = zoom || Math.min(1, Math.max(0.2, (width - 24) / (kind === 'pptx' ? 960 : 840)))
   const srcDoc = useMemo(() => state.pages ? documentFrame(state.pages[page - 1] || '', name, scale) : '', [state.pages, page, name, scale])
-  if (state.error) return <PreviewMessage error={state.error} />
+  if (state.error) return <PreviewMessage error={state.error} onRetry={onRetry} />
   if (!state.pages) return <PreviewMessage />
   return <>
     <PreviewPager page={page} total={state.pages.length} onPage={setPage} zoom={zoom} onZoom={setZoom} />
     <div className="document-preview__body" ref={body}>
-      <iframe key={page} className="document-preview__frame" sandbox="" referrerPolicy="no-referrer"
-        title={`${name} · 第 ${page} 页`} srcDoc={srcDoc} data-document-page={page} />
+      {/* The resource panel can become visible after the first layout pass. Remount
+          when its measured width settles so Chromium recomputes the srcdoc viewport. */}
+      {layoutReady ? <iframe key={`${page}-${Math.round(width)}`} className="document-preview__frame" sandbox="allow-same-origin" referrerPolicy="no-referrer"
+        title={`${name} · 第 ${page} 页`} srcDoc={srcDoc} data-document-page={page} /> : <PreviewMessage />}
     </div>
   </>
 }
