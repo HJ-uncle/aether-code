@@ -2,14 +2,13 @@
  * old-engine capability absence. A controlled authenticated peer supplies real
  * HTTP responses; the companion live-engine test validates actual Node values. */
 import { _electron as electron, expect, test, type ElectronApplication } from '@playwright/test'
-import { createServer, type ServerResponse } from 'node:http'
+import { createServer } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 
 test('引擎 runtime 默认不请求，展开采样并在隐藏收起后停采，404不循环探测', async ({}, testInfo) => {
   const root = resolve(__dirname, '..'), parent = join(root, '.e2e-tmp'), token = 'p1-runtime-ui-token'
-  let app: ElectronApplication | undefined, fixture = '', reads = 0, cronReads = 0, missing = false
-  let holdNextCron = false, heldCron: ServerResponse | undefined
+  let app: ElectronApplication | undefined, fixture = '', reads = 0, cronReads = 0, metricsReads = 0, missing = false
   const errors: string[] = []
   const server = createServer((request, response) => {
     const path = new URL(request.url ?? '/', 'http://127.0.0.1').pathname
@@ -18,10 +17,8 @@ test('引擎 runtime 默认不请求，展开采样并在隐藏收起后停采�
       response.writeHead(401).end(JSON.stringify({ code: 401, message: 'Invalid or missing instance token' })); return
     }
     response.setHeader('content-type', 'application/json')
-    if (path === '/api/v1/cron') {
-      cronReads++
-      if (holdNextCron) { holdNextCron = false; heldCron = response; return }
-    }
+    if (path === '/api/v1/cron') cronReads++
+    if (path === '/api/v1/metrics') metricsReads++
     if (path === '/api/v1/performance/runtime') {
       reads++
       if (missing) { response.writeHead(404).end(JSON.stringify({ code: 404, message: 'Route not found' })); return }
@@ -76,9 +73,10 @@ test('引擎 runtime 默认不请求，展开采样并在隐藏收起后停采�
       const probe = (window as Window & { __p1NativeProbe?: { observers: Set<unknown>; timers: Set<number> } }).__p1NativeProbe!
       return [probe.observers.size, probe.timers.size]
     })
-    await pagePerformance.getByRole('button', { name: '按需采集页面性能', exact: true }).click()
-    await expect.poll(pageCounts).toEqual([1, 1])
-    await expect.poll(() => cronReads).toBe(1)
+    await expect(pagePerformance).toHaveCount(0)
+    await expect.poll(pageCounts).toEqual([0, 0])
+    expect(cronReads).toBe(0)
+    expect(metricsReads).toBe(0)
     const resource = page.getByRole('region', { name: '引擎资源与健康监控', exact: true })
     const checked = resource.locator('.engine-resource__health-facts > div').filter({ has: page.getByText('最近心跳检查', { exact: true }) }).locator('strong')
     await expect(checked).not.toHaveText('未提供')
@@ -118,52 +116,22 @@ test('引擎 runtime 默认不请求，展开采样并在隐藏收起后停采�
     await expect.poll(() => mainWindow.evaluate(window => window.isVisible())).toBe(false)
     await expect.poll(() => page.evaluate(() => window.aether.window.getVisibility())).toBe(false)
     await expect(panel.locator('[data-runtime-state]')).toHaveAttribute('data-runtime-state', 'paused')
-    await expect(pagePerformance.locator('[data-performance-state]')).toHaveAttribute('data-performance-state', 'paused')
     await expect.poll(pageCounts).toEqual([0, 0])
-    const beforeHidden = reads, beforeCron = cronReads, beforeChecked = await checked.innerText()
-    // Span the longest monitor interval, proving runtime/OS/page/cron collectors
-    // all pause while the real native window is hidden.
+    const beforeHidden = reads, beforeChecked = await checked.innerText()
+    // Span the existing age ticker interval: only resource/runtime collection
+    // remains, and the removed panels must never issue their old requests.
     await quietForInterval(beforeHidden, 32000)
-    expect(cronReads).toBe(beforeCron)
+    expect(cronReads).toBe(0)
+    expect(metricsReads).toBe(0)
     expect(await checked.innerText()).toBe(beforeChecked)
     expect(await pageCounts()).toEqual([0, 0])
     await mainWindow.evaluate(window => window.show())
     await expect.poll(() => page.evaluate(() => window.aether.window.getVisibility())).toBe(true)
     await expect.poll(() => reads).toBe(beforeHidden + 1)
-    await expect.poll(() => cronReads).toBe(beforeCron + 1)
     await expect.poll(() => checked.innerText()).not.toBe(beforeChecked)
-    await expect.poll(pageCounts).toEqual([1, 1])
+    await expect.poll(pageCounts).toEqual([0, 0])
     await page.evaluate(id => window.aether.browser.close(id), guestId)
     await summary.click(); const beforeClosed = reads; await quietForInterval(beforeClosed)
-
-    // A response owned by the previous visible effect can remain in flight
-    // across two native visibility cycles. The current effect must stay single
-    // flight, then resume immediately when that old response finally settles.
-    await mainWindow.evaluate(window => window.hide())
-    await expect.poll(() => page.evaluate(() => window.aether.window.getVisibility())).toBe(false)
-    await expect(pagePerformance.locator('[data-performance-state]')).toHaveAttribute('data-performance-state', 'paused')
-    await expect.poll(pageCounts).toEqual([0, 0])
-    const beforeHeldCron = cronReads
-    holdNextCron = true
-    await mainWindow.evaluate(window => window.show())
-    await expect.poll(() => page.evaluate(() => window.aether.window.getVisibility())).toBe(true)
-    await expect(pagePerformance.locator('[data-performance-state]')).toHaveAttribute('data-performance-state', 'sampling')
-    await expect.poll(() => cronReads).toBe(beforeHeldCron + 1)
-    expect(heldCron).toBeDefined()
-    await mainWindow.evaluate(window => window.hide())
-    await expect.poll(() => page.evaluate(() => window.aether.window.getVisibility())).toBe(false)
-    await expect(pagePerformance.locator('[data-performance-state]')).toHaveAttribute('data-performance-state', 'paused')
-    await expect.poll(pageCounts).toEqual([0, 0])
-    await mainWindow.evaluate(window => window.show())
-    await expect.poll(() => page.evaluate(() => window.aether.window.getVisibility())).toBe(true)
-    await expect(pagePerformance.locator('[data-performance-state]')).toHaveAttribute('data-performance-state', 'sampling')
-    await expect.poll(pageCounts).toEqual([1, 1])
-    expect(cronReads).toBe(beforeHeldCron + 1)
-    const releasedAt = Date.now()
-    heldCron!.end(JSON.stringify({ code: 200, message: 'OK', data: [] })); heldCron = undefined
-    await expect.poll(() => cronReads, { timeout: 5000 }).toBe(beforeHeldCron + 2)
-    expect(Date.now() - releasedAt).toBeLessThan(5000)
-    expect(reads).toBe(beforeClosed)
 
     missing = true; await summary.click()
     await expect.poll(() => reads).toBe(beforeClosed + 1)
@@ -173,9 +141,12 @@ test('引擎 runtime 默认不请求，展开采样并在隐藏收起后停采�
     await summary.click(); await summary.click(); await quietForInterval(beforeClosed + 1)
     await panel.getByRole('button', { name: '重新检测运行时指标', exact: true }).click()
     await expect.poll(() => reads).toBe(beforeClosed + 2)
+    expect(cronReads).toBe(0)
+    expect(metricsReads).toBe(0)
+    expect(await pageCounts()).toEqual([0, 0])
+    await expect(pagePerformance).toHaveCount(0)
     expect(errors).toEqual([])
   } finally {
-    heldCron?.end(JSON.stringify({ code: 200, message: 'OK', data: [] }))
     await app?.close(); server.closeAllConnections(); await new Promise<void>(done => server.close(() => done()))
     if (fixture) {
       const target = resolve(fixture)

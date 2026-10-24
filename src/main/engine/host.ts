@@ -390,6 +390,9 @@ export class EngineHost extends EventEmitter {
         ...runtimeConfig.env,
         ELECTRON_RUN_AS_NODE: '1',
         AETHER_ENGINE_HOST: '127.0.0.1',
+        // Only a process started here receives the desktop-owner capability;
+        // adopted and remote transports keep their existing account boundary.
+        AETHER_DESKTOP_OWNED: '1',
         // Embedded instances are owned by this desktop process and protected
         // by the random instance token. Preserve an explicit operator setting.
         AUTH_ENABLED: process.env.AUTH_ENABLED ?? 'false',

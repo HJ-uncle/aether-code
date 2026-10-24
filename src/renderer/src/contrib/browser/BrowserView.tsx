@@ -321,9 +321,9 @@ function LogRow({ entry, kind }: { entry: unknown; kind: Exclude<Inspector, null
   )
 }
 
-export function BrowserView({ surfaceMode = 'code' }: { surfaceMode?: AppMode } = {}): JSX.Element {
+export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId }: { surfaceMode?: AppMode; hideTabStrip?: boolean; tabId?: string } = {}): JSX.Element {
   const state = useBrowserState()
-  const tab = state.tabs.find((item) => item.tabId === state.activeTabId) ?? state.tabs[0]
+  const tab = tabId !== undefined ? state.tabs.find(item => item.tabId === tabId) : state.tabs.find((item) => item.tabId === state.activeTabId) ?? state.tabs[0]
   const [address, setAddress] = useState('')
   const addressRef = useRef<HTMLInputElement>(null)
   const [inspector, setInspector] = useState<Inspector>(null)
@@ -476,7 +476,7 @@ export function BrowserView({ surfaceMode = 'code' }: { surfaceMode?: AppMode } 
         }
       }}
     >
-      <div className="browser-tabs" role="tablist" aria-label="网页标签">
+      {!hideTabStrip && <div className="browser-tabs" role="tablist" aria-label="网页标签">
         {state.tabs.map((item, index) => (
           <div
             key={item.tabId}
@@ -549,7 +549,7 @@ export function BrowserView({ surfaceMode = 'code' }: { surfaceMode?: AppMode } 
             onClick={() => openViewToRight('browser')}
           />
         ) : null}
-      </div>
+      </div>}
       {menu && menuTab ? (
         <BrowserTabContextMenu
           tab={menuTab}
@@ -781,14 +781,22 @@ export function BrowserView({ surfaceMode = 'code' }: { surfaceMode?: AppMode } 
       {tab?.error || state.error ? (
         <div className="browser-error" role="alert">
           <Icon name="warning" size={16} />
-          <span>{tab?.error || state.error}</span>
+          <div>
+            <span>页面未能打开</span>
+            <details><summary>查看详情</summary><span>{tab?.error || state.error}</span></details>
+          </div>
           <button type="button" className="btn" onClick={() => run('reload')}>
             重试
           </button>
         </div>
       ) : null}
       {/* 同级网页和调试面板必须使用不同 key，避免更新时残留旧网页容器。 */}
-      {tab ? (
+      {tab?.error ? (
+        <div className="browser-empty" role="status">
+          <Icon name="warning" size={28} />
+          <p>当前页面加载失败。</p>
+        </div>
+      ) : tab ? (
         <BrowserSurface
           key={`surface:${tab.tabId}`}
           tab={tab}

@@ -7,6 +7,7 @@ import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { Markdown } from '../chat/Markdown'
 import { workSourceMarkdown } from './work-artifact-utils'
+import { FilePreview } from '../editor/FilePreview'
 
 /** The task owns uploaded files even when the user has not opened a project. */
 export function useWorkSourceFile(source: ChatAttachment, sessionId?: string, root?: string | null, enabled = true) {
@@ -34,8 +35,7 @@ export function useWorkSourceFile(source: ChatAttachment, sessionId?: string, ro
 export function WorkSourcePreview({ source, sessionId, root }: { source: ChatAttachment; sessionId?: string; root: string | null }): JSX.Element {
   const { file, error, retry } = useWorkSourceFile(source, sessionId, root)
   const isImage = source.type.startsWith('image/')
-  const unavailable = error || (file?.tooLarge ? '文件过大，无法在此预览，请在编辑器打开' : '') || (file && (isImage ? !file.base64 : file.isBinary)
-    ? isImage ? '图片内容无法预览' : '二进制文件暂不支持预览' : '')
+  const unavailable = error || (file?.tooLarge ? '文件超过当前预览读取上限。' : '') || (file?.isBinary && !file.base64 ? '未能读取完整文件，请重试。' : '')
   if (unavailable) return <div className="work-sources__preview-empty" role="alert">
     <Icon name="warning" size={18} />
     <span>{unavailable}</span>
@@ -45,6 +45,7 @@ export function WorkSourcePreview({ source, sessionId, root }: { source: ChatAtt
     <Spinner size={16} /><span>{isImage ? '正在读取图片…' : '正在读取文件…'}</span>
   </div>
   if (isImage) return <img className="work-sources__preview-image" src={`data:${source.type};base64,${file.base64}`} alt={source.name} />
+  if (file.isBinary && file.base64) return <FilePreview name={source.name} path={source.path} base64={file.base64} size={file.size} />
   const text = file.truncated ? `${file.content}\n\n…（内容过长已截断）` : file.content
   return <div className="work-sources__preview-text"><Markdown text={workSourceMarkdown(text, source.name)} /></div>
 }

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Frozen authority set of known rejected Office v003 identity evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "rejectedRevision", "coverage", "sources"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "office-rejected-identity-evidence-set" },
+    "rejectedRevision": { "const": "v003" },
+    "coverage": { "const": "known-v003-identities" },
+    "sources": {
+      "type": "array", "minItems": 1, "maxItems": 512,
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["scope", "path", "sha256", "kind"],
+        "properties": {
+          "scope": { "enum": ["ledger", "publication"] },
+          "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "sha256": { "type": "string", "pattern": "^(sha256:)?[a-fA-F0-9]{64}$" },
+          "kind": { "enum": ["message", "decision", "supporting"] }
+        }
+      }
+    }
+  }
+}

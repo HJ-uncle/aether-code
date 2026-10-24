@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import {
   DEFAULT_HEX_BYTES,
   base64ToBytes,
@@ -8,6 +8,9 @@ import {
   toDataUrl
 } from '@renderer/core/editor/preview'
 import { Icon } from '@renderer/workbench/icons'
+import { documentKindFor } from '../documents/document-kind'
+
+const DocumentPreview = lazy(() => import('../documents/DocumentPreview').then(module => ({ default: module.DocumentPreview })))
 
 interface FilePreviewProps {
   /** 文件名（用于判定预览方式与 MIME） */
@@ -33,7 +36,14 @@ const ZOOM_STEP = 0.2
  * 左键拖拽平移、双击或「适应窗口」复位。位移放在 transform 上，不占布局，
  * 因此可以拖出容器边界再拖回来。
  */
-export function FilePreview({ name, path, base64, size }: FilePreviewProps): JSX.Element {
+export const FilePreview = memo(function FilePreview(props: FilePreviewProps): JSX.Element {
+  if (documentKindFor(props.name)) return <Suspense fallback={<div className="doc-placeholder" role="status">正在准备文档预览…</div>}>
+    <DocumentPreview name={props.name} base64={props.base64} size={props.size} identityKey={props.path} />
+  </Suspense>
+  return <BinaryFilePreview {...props} />
+})
+
+function BinaryFilePreview({ name, path, base64, size }: FilePreviewProps): JSX.Element {
   const kind = previewKindFor(name)
 
   // 十六进制视图只解码前 16 KB：见 preview.ts 的 base64ToBytes 说明

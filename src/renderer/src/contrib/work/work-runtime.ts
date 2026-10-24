@@ -26,7 +26,6 @@ import { ATTACHMENTS_DIRECTORY } from '@shared/attachments'
 import { loadSessionThinkingMode, saveSessionThinkingMode, type SessionThinkingMode } from '../chat/session-thinking-store'
 import { loadSessionModelSelection, resolveSessionComposerModel, saveSessionModelSelection, type SessionModelSelection } from '../chat/session-model-store'
 import { requestedThinkingMode } from '../chat/session-request-config'
-import { getMemoryScopeState } from '@renderer/core/engine/memory-store'
 import type { AgentCollaborator, SubagentRun } from '@shared/subagent'
 import { pollWorkTaskStatuses } from './work-status-poller'
 import { getAppMode } from '@renderer/core/platform/app-mode'
@@ -288,11 +287,9 @@ export function useWorkController() {
       // source of truth otherwise.
       skills: task.resources?.skills?.filter(Boolean).length ? task.resources.skills : undefined,
       mcpServers: task.resources?.mcpServers?.filter(Boolean).length ? task.resources.mcpServers : undefined,
-      knowledgeBases: task.resources?.knowledgeBases?.filter(Boolean).length ? task.resources.knowledgeBases : undefined,
-      // The shared picker persists this setting in the engine by session. An
-      // unloaded UI must defer to that scope, never overwrite it with "off".
-      memoryScope: getMemoryScopeState().sessionId === task.id && getMemoryScopeState().loaded
-        ? getMemoryScopeState().scope ?? undefined : undefined
+      knowledgeBases: task.resources?.knowledgeBases?.filter(Boolean).length ? task.resources.knowledgeBases : undefined
+      // The engine resolves global preferences and this session's override at
+      // admission. A cached legacy scope must not overwrite those settings.
     }),
     [source, thinkingSelection, settings.lastModelId, settings.thinkingMode, settings.subagentModelId, settings.utilityModelId, canonicalModelId, activeId, sessionModelReady, requestModelId]
   )

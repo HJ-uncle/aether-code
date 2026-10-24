@@ -167,6 +167,94 @@ test('PUT 在途时刷新等待该请求，不能以旧服务端 GET 抹掉修�
   expect(store.getSnapshot().mode).toBe('standard')
 })
 
+test('A 写入未完成时切到 B 再切回 A，等待 PUT 后重新 GET 确认服务端权限', async () => {
+  const { store, reads, writes } = fixture()
+  const change = store.change('A', 'full-access')
+  await flushMicrotasks()
+  expect(writes).toHaveLength(1)
+
+  const b = store.refresh('B')
+  await flushMicrotasks()
+  expect(reads.map(request => request.sessionId)).toEqual(['B'])
+  reads[0].result.resolve('standard')
+  await b
+
+  const returningA = store.refresh('A')
+  await flushMicrotasks()
+  expect(reads.map(request => request.sessionId)).toEqual(['B'])
+  expect(store.getSnapshot()).toMatchObject({ sessionId: 'A', mode: null, loaded: false, loading: true })
+
+  writes[0].result.resolve()
+  await change
+  await flushMicrotasks()
+  expect(reads.map(request => request.sessionId)).toEqual(['B', 'A'])
+  expect(store.getSnapshot()).toMatchObject({ sessionId: 'A', mode: null, loaded: false, loading: true })
+  reads[1].result.resolve('full-access')
+  await returningA
+  expect(store.getSnapshot()).toMatchObject({ sessionId: 'A', mode: 'full-access', loaded: true, loading: false, error: null })
+})
+
+for (const actualServerMode of ['safe', 'full-access'] as const) {
+  test(`A 写入响应失败后切回，重新 GET 读取实际 ${actualServerMode}，不猜测 PUT 是否生效`, async () => {
+    const { store, reads, writes } = fixture()
+    const change = store.change('A', 'full-access').catch(() => undefined)
+    await flushMicrotasks()
+
+    const b = store.refresh('B')
+    await flushMicrotasks()
+    reads[0].result.resolve('standard')
+    await b
+
+    const returningA = store.refresh('A')
+    await flushMicrotasks()
+    expect(reads.map(request => request.sessionId)).toEqual(['B'])
+    writes[0].result.reject(new Error('Connection lost after PUT'))
+    await change
+    await flushMicrotasks()
+    expect(reads.map(request => request.sessionId)).toEqual(['B', 'A'])
+    expect(store.getSnapshot()).toMatchObject({ sessionId: 'A', mode: null, loaded: false, loading: true, error: null })
+
+    reads[1].result.resolve(actualServerMode)
+    await returningA
+    expect(writes).toHaveLength(1)
+    expect(store.getSnapshot()).toMatchObject({ sessionId: 'A', mode: actualServerMode, loaded: true, loading: false, error: null })
+  })
+}
+
+test('切回 A 等待旧 PUT 时更换端点，不向新连接发出旧 GET 或持久化旧权限', async () => {
+  publishEmbeddedSource()
+  const storage = localStorageFixture()
+  try {
+    const { store, reads, writes } = fixture()
+    const change = store.change('A', 'full-access')
+    await flushMicrotasks()
+    const b = store.refresh('B')
+    await flushMicrotasks()
+    reads[0].result.resolve('standard')
+    await b
+
+    const returningA = store.refresh('A')
+    await flushMicrotasks()
+    expect(reads.map(request => request.sessionId)).toEqual(['B'])
+    publishRemoteSource('https://changed-security.example.test/api')
+    store.reset()
+    const currentA = store.refresh('A')
+    await flushMicrotasks()
+    expect(reads.map(request => request.sessionId)).toEqual(['B', 'A'])
+    reads[1].result.resolve('safe')
+    await currentA
+
+    writes[0].result.resolve()
+    await Promise.all([change, returningA])
+    expect(reads.map(request => request.sessionId)).toEqual(['B', 'A'])
+    expect(storage.values.size).toBe(0)
+    expect(store.getSnapshot()).toMatchObject({ sessionId: 'A', mode: 'safe', loaded: true, loading: false, error: null })
+  } finally {
+    storage.restore()
+    publishEmbeddedSource()
+  }
+})
+
 test('显式选择会写入本地偏好；引擎重启后读取默认值会补写已记忆模式', async () => {
   publishEmbeddedSource()
   const storage = localStorageFixture()
@@ -298,6 +386,8 @@ test('用户新选择优先于在途恢复，不会被迟到的默认 GET 覆盖
   try {
     const { store, reads, writes } = fixture()
     const refresh = store.refresh('A')
+    await flushMicrotasks()
+    expect(reads).toHaveLength(1)
     const change = store.change('A', 'standard')
     await flushMicrotasks()
     expect(reads).toHaveLength(1)

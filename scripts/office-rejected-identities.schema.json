@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Frozen identities retired with rejected Office v003",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "rejectedRevision", "targetRevision", "sourceRevision", "evidenceSet", "messageIds", "messageNonces", "decisionIds", "decisionNonces"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "office-rejected-identities" },
+    "rejectedRevision": { "const": "v003" },
+    "targetRevision": { "const": "v004" },
+    "sourceRevision": { "const": "v002" },
+    "evidenceSet": {
+      "type": "object", "additionalProperties": false, "required": ["path", "sha256"],
+      "properties": { "path": { "type": "string", "minLength": 1, "maxLength": 4096 }, "sha256": { "$ref": "#/$defs/sha" } }
+    },
+    "messageIds": { "$ref": "#/$defs/identifiers" },
+    "messageNonces": { "$ref": "#/$defs/nonces" },
+    "decisionIds": { "$ref": "#/$defs/identifiers" },
+    "decisionNonces": { "$ref": "#/$defs/nonces" }
+  },
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^(sha256:)?[a-fA-F0-9]{64}$" },
+    "identifiers": {
+      "type": "array", "minItems": 1, "maxItems": 4096, "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\s\\u0000-\\u001f\\u007f](?:[^\\u0000-\\u001f\\u007f]*[^\\s\\u0000-\\u001f\\u007f])?$" }
+    },
+    "nonces": {
+      "type": "array", "minItems": 1, "maxItems": 4096, "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[A-Za-z0-9_-]{22,128}$" }
+    }
+  }
+}

@@ -17,7 +17,16 @@ const held:ServerResponse[]=[],captured:Record<string,unknown>[]=[],errors:strin
 const run={schemaVersion:1 as const,runId:'hydration-root',sessionId:target,turnId:'hydration-turn',userMessageId:'hydration-user',assistantMessageId:'hydration-assistant',version:1,seq:1,status:'succeeded' as const,modelId:requested,actualModelId:other,createdAt:1,updatedAt:2,finishedAt:2,pending:[]}
 const restored:ChatRecoverySnapshot={schemaVersion:1,source:'persisted',sessionId:target,eventId:null,finished:true,projection:[],run,runs:[run],history:[{id:run.userMessageId,role:'user',content:'Delayed model restoration',conversationId:run.turnId},{id:run.assistantMessageId,role:'assistant',content:'Persisted fallback reply',conversationId:run.turnId,modelId:other}],todos:[],changes:[],commandJobs:[]}
 let holdSnapshots=true,snapshotModel=requested,disableRequested=false,remainingSnapshotFailures=0,targetSnapshotRequests=0
-let snapshotConfig:RootRunRequestConfig|undefined,snapshotRunId=run.runId,fixtureMemoryScope:'off'|'global'|'session'='global'
+let snapshotConfig:RootRunRequestConfig|undefined,snapshotRunId=run.runId
+const fixtureMemoryOverrides=new Map<string,boolean>(),memoryWrites:Record<string,unknown>[]=[]
+let fixtureGlobalEnabled=false,fixtureSessionDefaultEnabled=true
+const memoryData=(sessionId:string)=>{
+ const sessionOverride=fixtureMemoryOverrides.get(sessionId)??null,sessionEnabled=sessionOverride??fixtureSessionDefaultEnabled
+ const memoryScope=sessionEnabled?'session':fixtureGlobalEnabled?'global':'off'
+ return{sessionId,memoryScope,effectiveScope:memoryScope,enabled:true,globalEnabled:fixtureGlobalEnabled,
+  sessionDefaultEnabled:fixtureSessionDefaultEnabled,sessionOverride,sessionEnabled,
+  effectiveScopes:[...(fixtureGlobalEnabled?['global']:[]),...(sessionEnabled?['session']:[])]}
+}
 const snapshotData=():ChatRecoverySnapshot=>({...restored,run:{...run,runId:snapshotRunId,modelId:snapshotModel,requestConfig:snapshotConfig},runs:[{...run,runId:snapshotRunId,modelId:snapshotModel,requestConfig:snapshotConfig}]})
 const envelope=(data:unknown)=>JSON.stringify({code:200,message:'ok',data})
 const server=createServer((request,response)=>{
@@ -32,6 +41,21 @@ const server=createServer((request,response)=>{
    response.end('data: [DONE]\n\n');return
   }
   response.setHeader('content-type','application/json')
+  if(path==='/api/v1/subagent/capabilities'){
+   response.end(envelope({schemaVersion:2,eventVersions:[1,2],views:['legacy','summary'],toolPagination:true,eventPagination:true,detailChunks:true,exactWatermarks:true,
+    activeDiscovery:true,lifecycleChanges:true,discoveryProtocol:1}));return
+  }
+  if(path==='/api/v1/subagent/runs'){response.end(envelope({schemaVersion:2,runs:[],listComplete:true,hasMore:false,revision:'hydration-directory'}));return}
+  if(path==='/api/v1/subagent/discovery'){
+   const mode=url.searchParams.get('mode')??'active'
+   response.end(envelope({protocolVersion:1,source:'durable-lifecycle',generation:'hydration-generation',
+    scope:{tenantId:'default',parentSessionId:url.searchParams.get('parentSessionId')??target,
+     ...(url.searchParams.has('rootSessionId')?{rootSessionId:url.searchParams.get('rootSessionId')}:{}),
+     ...(url.searchParams.has('parentConversationId')?{parentConversationId:url.searchParams.get('parentConversationId')}:{} )},
+    mode,asOfRevision:0,floorRevision:0,activeCount:0,items:[],includedCount:0,scannedCount:0,
+    ...(mode==='changes'?{nextRevision:0}:{}),hasMore:false,nextCursor:null,membershipCompleteness:'complete'}));return
+  }
+  if(path==='/api/v1/collaboration/capabilities'){response.end(envelope({userControllerMutation:false}));return}
   if(path==='/api/v1/chat/snapshot'){
    const sessionId=url.searchParams.get('sessionId')??''
    if(sessionId===target){
@@ -44,7 +68,26 @@ const server=createServer((request,response)=>{
    }
    response.end(envelope({schemaVersion:1,source:'persisted',sessionId,eventId:null,finished:true,projection:[],runs:[],history:[],todos:[],changes:[],commandJobs:[]}));return
   }
-  if(path==='/api/v1/memory/settings'){if(request.method==='PUT')fixtureMemoryScope=JSON.parse(raw).memoryScope;response.end(envelope({sessionId:url.searchParams.get('sessionId')??target,memoryScope:fixtureMemoryScope,effectiveScope:fixtureMemoryScope,enabled:true}));return}
+  if(path==='/api/v1/memory/settings'){
+   const body=request.method==='PUT'?JSON.parse(raw) as Record<string,unknown>:undefined
+   const sessionId=body?String(body.sessionId):url.searchParams.get('sessionId')??target
+   if(body){
+    memoryWrites.push(body)
+    if(body.sessionEnabled===null)fixtureMemoryOverrides.delete(sessionId)
+    else if(typeof body.sessionEnabled==='boolean')fixtureMemoryOverrides.set(sessionId,body.sessionEnabled)
+    else{response.end(JSON.stringify({code:40000,message:'Use sessionEnabled boolean or null',data:null}));return}
+   }
+   response.end(envelope(memoryData(sessionId)));return
+  }
+  if(path==='/api/v1/memory/preferences'){
+   if(request.method==='PUT'){
+    const body=JSON.parse(raw) as Record<string,unknown>
+    if(typeof body.globalEnabled==='boolean')fixtureGlobalEnabled=body.globalEnabled
+    if(typeof body.sessionDefaultEnabled==='boolean')fixtureSessionDefaultEnabled=body.sessionDefaultEnabled
+   }
+   response.end(envelope({enabled:true,globalEnabled:fixtureGlobalEnabled,sessionDefaultEnabled:fixtureSessionDefaultEnabled}));return
+  }
+  if(path==='/api/v1/security/mode'){response.end(envelope({sessionId:url.searchParams.get('sessionId')??target,mode:'standard'}));return}
   const data=path==='/health'?{status:'ok'}
    :path==='/meta'?{version:'2.0.0',buildId:'sha256:'+'c'.repeat(64),protocolVersion:1,toolProfiles:['code'],subagentSchemaVersion:1,instanceId:'composer-hydration-fixture'}
    :path==='/api/v1/models'?[other,requested,'user-chosen-sub','user-chosen-utility'].map((modelId,index)=>({id:'fixture-'+index,modelId,provider:'openai',displayName:modelId,isEnabled:!(disableRequested&&modelId===requested),capabilities:{toolCalling:true,thinking:true}}))
@@ -189,7 +232,7 @@ test.describe.serial('会话配置延迟恢复的快速发送',()=>{
   expect(errors).toEqual([])
  })
  test('回读外部run的全部安全请求参数，不能用全局默认覆盖medium或资源',async()=>{
-  snapshotModel=requested;snapshotRunId='config-run-A';fixtureMemoryScope='session'
+  snapshotModel=requested;snapshotRunId='config-run-A';fixtureMemoryOverrides.set(target,true)
   snapshotConfig={agentId:'external-agent',thinkingMode:'medium',subagentModel:'MiniMax-M2.5',utilityModel:'glm-5.3',skills:['restored-skill'],mcpServers:['restored-mcp'],knowledgeBases:['restored-kb'],memoryScope:'session'}
   await page.evaluate(()=>window.aether.settings.update({lastAgentId:'global-agent',subagentModelId:'global-sub',utilityModelId:'global-utility',thinkingMode:'off'}));await page.reload()
   await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toHaveAttribute('title','当前模型：'+requested)
@@ -201,7 +244,9 @@ test.describe.serial('会话配置延迟恢复的快速发送',()=>{
   await page.keyboard.press('Escape')
   const before=captured.length;await page.locator('.chat__input').fill('EXACT_RESTORED_CONFIG');await page.getByRole('button',{name:'发送',exact:true}).click()
   await expect.poll(()=>captured.length).toBe(before+1)
-  expect(captured.at(-1)).toMatchObject({sessionId:target,model:requested,...snapshotConfig})
+  const{memoryScope:_legacyMemoryScope,...expectedConfig}=snapshotConfig
+  expect(captured.at(-1)).toMatchObject({sessionId:target,model:requested,...expectedConfig})
+  expect(captured.at(-1)).not.toHaveProperty('memoryScope')
   expect(errors).toEqual([])
  })
  test('手选只覆盖本字段，空资源及Auto跨重载保留，外部新run替换旧手选',async()=>{
@@ -212,7 +257,8 @@ test.describe.serial('会话配置延迟恢复的快速发送',()=>{
   await expect(page.getByRole('button',{name:'移除 MCP restored-mcp',exact:true})).toBeVisible()
   const before=captured.length;await page.locator('.chat__input').fill('LOCAL_EMPTY_AND_AUTO');await page.getByRole('button',{name:'发送',exact:true}).click()
   await expect.poll(()=>captured.length).toBe(before+1)
-  expect(captured.at(-1)).toMatchObject({skills:[],mcpServers:['restored-mcp'],subagentModel:'MiniMax-M2.5',utilityModel:'glm-5.3',memoryScope:'session'})
+  expect(captured.at(-1)).toMatchObject({skills:[],mcpServers:['restored-mcp'],subagentModel:'MiniMax-M2.5',utilityModel:'glm-5.3'})
+  expect(captured.at(-1)).not.toHaveProperty('memoryScope')
   expect(captured.at(-1)).not.toHaveProperty('thinkingMode')
   snapshotRunId='config-run-B';snapshotConfig={...snapshotConfig,thinkingMode:true,skills:['external-new-skill']};await page.reload()
   await expect(page.getByRole('button',{name:'移除技能 external-new-skill',exact:true})).toBeVisible()
@@ -220,17 +266,30 @@ test.describe.serial('会话配置延迟恢复的快速发送',()=>{
   const next=captured.length;await page.locator('.chat__input').fill('EXTERNAL_NEW_CONFIG');await page.getByRole('button',{name:'发送',exact:true}).click()
   await expect.poll(()=>captured.length).toBe(next+1);expect(captured.at(-1)).toMatchObject({thinkingMode:true,skills:['external-new-skill']})
  })
- test('权威配置缺省字段保持省略；用户后改记忆设置立即用于下一请求',async()=>{
+ test('权威配置缺省字段保持省略；会话记忆独立保存且下一请求不重放旧memoryScope',async()=>{
   snapshotRunId='config-run-C';snapshotConfig={};await page.reload()
   await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toHaveAttribute('title','当前模型：'+requested)
   const before=captured.length;await page.locator('.chat__input').fill('NO_INVENTED_DEFAULTS');await page.getByRole('button',{name:'发送',exact:true}).click()
   await expect.poll(()=>captured.length).toBe(before+1)
-  for(const key of ['agentId','thinkingMode','subagentModel','utilityModel','skills','mcpServers','knowledgeBases'])expect(captured.at(-1)).not.toHaveProperty(key)
+  for(const key of ['agentId','thinkingMode','subagentModel','utilityModel','skills','mcpServers','knowledgeBases','memoryScope'])expect(captured.at(-1)).not.toHaveProperty(key)
   snapshotConfig={memoryScope:'session'};snapshotRunId='config-run-D';await page.reload()
-  await page.getByRole('button',{name:'对话偏好',exact:true}).click();await page.locator('[title="选择长期记忆范围"]').click()
-  await page.getByRole('menuitem',{name:/^关闭/}).click();await page.keyboard.press('Escape')
+  await page.getByRole('button',{name:'对话偏好',exact:true}).click()
+  const memory=page.getByRole('button',{name:/^本会话记忆：/})
+  await expect(memory).toContainText('本会话开启');await memory.click()
+  await expect(page.locator('.composer-options__dd-menu')).not.toContainText('全局记忆')
+  await page.getByRole('menuitem',{name:/^本会话关闭/}).click()
+  await expect(memory).toContainText('本会话关闭')
+  expect(memoryWrites.at(-1)).toEqual({sessionId:target,sessionEnabled:false})
+  expect(memoryData(target)).toMatchObject({sessionOverride:false,sessionEnabled:false})
+  await page.keyboard.press('Escape')
   const next=captured.length;await page.locator('.chat__input').fill('CONFIRMED_MEMORY_EDIT');await page.getByRole('button',{name:'发送',exact:true}).click()
-  await expect.poll(()=>captured.length).toBe(next+1);expect(captured.at(-1)).toHaveProperty('memoryScope','off')
+  await expect.poll(()=>captured.length).toBe(next+1);expect(captured.at(-1)).not.toHaveProperty('memoryScope')
+  await page.getByRole('button',{name:'对话偏好',exact:true}).click();await memory.click()
+  await page.getByRole('menuitem',{name:/^恢复默认/}).click()
+  await expect(memory).toContainText('跟随默认 · 开启')
+  expect(memoryWrites.at(-1)).toEqual({sessionId:target,sessionEnabled:null})
+  expect(memoryData(target)).toMatchObject({sessionOverride:null,sessionEnabled:true})
+  await page.keyboard.press('Escape')
   expect(errors).toEqual([])
  })
 

@@ -10,7 +10,7 @@ test('Work status deadline applies to both endpoint spellings, including explici
     expect(managementRequestTimeout({ method: 'GET', path })).toBe(5000)
     expect(managementRequestTimeout({ method: 'GET', path, timeoutMs: 0 })).toBe(5000)
   }
-  expect(managementRequestTimeout({ method: 'GET', path: '/chat/snapshot' })).toBe(120000)
+  expect(managementRequestTimeout({ method: 'GET', path: '/chat/snapshot' })).toBe(15000)
   expect(managementRequestTimeout({ method: 'POST', path: '/chat' })).toBe(120000)
 })
 test('connection switches abort status and management requests immediately', () => {

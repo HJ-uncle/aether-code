@@ -1,12 +1,26 @@
 import type { StreamRecoveryReason } from '@shared/stream-event'
 import type { RecoveryState } from './chat-recovery-loop'
+import type { ChatRecoverySnapshot } from './chat-recovery'
 
-export interface StreamRecoveryNotice { reason: StreamRecoveryReason; restored: boolean }
+export interface StreamRecoveryNotice { reason: StreamRecoveryReason; restored: boolean; incomplete?: boolean; executionFinished?: boolean }
+
+/** A recovered prefix can be exact without containing the whole execution. */
+export function snapshotRecoveryNotice(snapshot: ChatRecoverySnapshot, previous: StreamRecoveryNotice | null): StreamRecoveryNotice | null {
+  if (snapshot.publicationRecovery) {
+    const status = (snapshot.executionRun ?? snapshot.run)?.status
+    return { reason: 'retention-gap', restored: true, incomplete: true,
+      executionFinished: Boolean(status && ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(status)) }
+  }
+  return previous ? { ...previous, restored: true, incomplete: false } : null
+}
 
 /** A restored snapshot and a reattached live connection are different observations. */
 export function streamRecoveryNoticeText(notice: StreamRecoveryNotice | null, state: Pick<RecoveryState, 'phase' | 'failures'>): string | null {
   if (!notice) return null
   if (state.phase === 'blocked') return '实时更新同步未完成，请检查连接或登录状态后重新加载。'
+  if (notice.incomplete) return notice.executionFinished
+    ? '任务已结束，但本轮实时记录不完整。已保留确认的内容，请检查成果文件。'
+    : '部分实时记录未能同步，任务仍在执行。已保留确认的内容，完成后请检查成果文件。'
   if (state.phase === 'retrying' && state.failures > 0) return notice.restored
     ? '会话快照已恢复，实时连接中断，正在重试。'
     : '暂时无法读取恢复快照，正在重试。'

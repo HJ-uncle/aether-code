@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { Icon } from '@renderer/workbench/icons'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
-import { SettingsContent, SettingsGroup } from './SettingsGroup'
+import { useApp } from '@renderer/core/app-context'
+import { useMemoryPreferences } from '@renderer/core/engine/memory-store'
+import { SettingsContent, SettingsGroup, SettingsRow, Toggle } from './SettingsGroup'
 import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
 import {
   createMemoryRecord, deleteMemoryRecord, getMemoryRecord, listMemoryRecords, listMemorySessions, updateMemoryRecord,
@@ -23,6 +25,15 @@ export function MemorySettingsView(): JSX.Element {
 }
 
 function MemorySettingsContent({ source }: { source: number }): JSX.Element {
+  const { ready } = useApp()
+  const {
+    preferences,
+    loaded: preferencesLoaded,
+    loading: preferencesLoading,
+    error: preferencesError,
+    refresh: refreshPreferences,
+    change: changePreferences
+  } = useMemoryPreferences()
   const [scope, setScope] = useState<MemoryRecordScope>('global')
   const [sessionId, setSessionId] = useState('')
   const [sessionInput, setSessionInput] = useState('')
@@ -43,6 +54,17 @@ function MemorySettingsContent({ source }: { source: number }): JSX.Element {
   const mounted = useRef(true)
   const activeSession = scope === 'session' ? sessionId.trim() : undefined
   const isCurrent = useCallback(() => mounted.current && source === getEngineSource(), [source])
+
+  useEffect(() => {
+    if (ready && !preferencesLoaded && !preferencesLoading && !preferencesError) void refreshPreferences()
+  }, [ready, preferencesLoaded, preferencesLoading, preferencesError, refreshPreferences])
+
+  const preferencesDisabled = !ready || !preferencesLoaded || preferencesLoading
+  const changePreference = (patch: { globalEnabled?: boolean; sessionDefaultEnabled?: boolean }): void => {
+    if (!isCurrent() || preferencesDisabled) return
+    if (patch.globalEnabled === true && preferences?.enabled === false) return
+    void changePreferences(patch).catch(() => undefined)
+  }
 
   const refresh = useCallback(async (page = pagination.current): Promise<void> => {
     if (!isCurrent() || (scope === 'session' && !activeSession)) return
@@ -86,6 +108,21 @@ function MemorySettingsContent({ source }: { source: number }): JSX.Element {
   }
 
   return <div className="settings-view memory-settings">
+    <SettingsGroup title="记忆偏好" footer="记忆用于在后续回答中参考已保存的信息。关闭记忆不会删除或停用聊天历史。">
+      <SettingsRow label="全局记忆" description="默认关闭。开启后，可在不同会话中参考全局记忆。">
+        <Toggle label="全局记忆" checked={preferences?.globalEnabled ?? false} disabled={preferencesDisabled || (preferences?.enabled === false && !preferences.globalEnabled)} onChange={globalEnabled => changePreference({ globalEnabled })} />
+      </SettingsRow>
+      <SettingsRow label="默认开启会话记忆" description="未单独设置的会话使用此默认值；已单独设置的会话沿用自己的选择。会话中可随时恢复默认。">
+        <Toggle label="默认开启会话记忆" checked={preferences?.sessionDefaultEnabled ?? true} disabled={preferencesDisabled} onChange={sessionDefaultEnabled => changePreference({ sessionDefaultEnabled })} />
+      </SettingsRow>
+      {preferencesLoading || !ready || !preferencesLoaded || preferences?.enabled === false || preferencesError ? <SettingsContent>
+        <div className="memory-settings__preference-status" aria-live="polite" aria-busy={preferencesLoading}>
+          <span>{!ready ? '连接引擎后可设置记忆偏好。' : preferencesLoading ? '正在同步记忆偏好…' : preferences?.enabled === false ? '服务端已关闭长期记忆，当前无法启用。仍可关闭全局记忆或调整会话默认值；聊天历史会继续保留。' : preferencesError ? '记忆偏好未能同步，请重新读取后再试。' : '尚未确认记忆偏好。'}</span>
+          {ready && !preferencesLoading ? <button type="button" className="btn" onClick={() => void refreshPreferences()}>重新读取记忆偏好</button> : null}
+        </div>
+        {preferencesError ? <details className="memory-settings__preference-error"><summary>查看诊断信息</summary><p>{preferencesError}</p></details> : null}
+      </SettingsContent> : null}
+    </SettingsGroup>
     <SettingsGroup title="记忆范围" footer="全局记忆可被其他会话使用；会话记忆只属于所选会话。">
       <SettingsContent>
         <div className="memory-settings__scope" role="tablist" aria-label="记忆范围">

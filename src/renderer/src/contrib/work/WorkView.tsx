@@ -7,9 +7,9 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type DragEvent,
   type JSX,
-  type MouseEvent,
-  type RefObject
+  type MouseEvent
 } from 'react'
 import type { ChatAttachment, ChatMessage, ToolActivity } from '@renderer/core/engine/useChat'
 import {
@@ -26,7 +26,7 @@ import { isVisibleToolActivity } from '@renderer/core/engine/task-plan'
 import { useApp } from '@renderer/core/app-context'
 import { toast } from '@renderer/core/toast'
 import { getAppMode, useAppMode } from '@renderer/core/platform/app-mode'
-import { getEngineSource, getEngineStorageKey } from '@renderer/core/engine/source'
+import { getEngineSource, getEngineStorageKey, isRemoteEngine } from '@renderer/core/engine/source'
 import { setBrowserSessionOverride } from '@renderer/core/browser/connection'
 import { registerCommand } from '@renderer/core/platform/commands'
 import { requestOrThrow } from '@renderer/core/engine/client'
@@ -50,7 +50,7 @@ import { WorkArtifactPanel } from './WorkArtifactPanel'
 import { workArtifactSelectionQuote, type WorkArtifactContent } from './work-artifact-content'
 import { WorkSourcePreview, useWorkSourceFile } from './WorkSourcePreview'
 import { Markdown } from '../chat/Markdown'
-import { paths, resolveSessionFilePath } from '@renderer/core/workspace/fs-client'
+import { paths, readExternalFile, resolveSessionFilePath } from '@renderer/core/workspace/fs-client'
 import { WorkGitPanel } from './WorkGitPanel'
 import { WorkSubagentsPanel } from './WorkSubagentsPanel'
 import { PublishedRecoveryNotice } from '../chat/PublishedRecoveryNotice'
@@ -70,6 +70,9 @@ import { findWorkArtifact } from './work-artifact-utils'
 import { hideBrowserSurfaces, useBrowserState } from '../browser/browser-store'
 import './work.css'
 import '../chat/apple-chat-panels.css'
+import { WorkResourceTabs } from './WorkResourceTabs'
+import { openExternalWorkFileResource, openExternalWorkPathResource, resolvedWorkResourceId, selectWorkResource, useWorkResources, workResourceBrowserTabs } from './work-resource-store'
+import { changesForWorkFile, type SessionFileChange } from './work-file-changes'
 
 type WorkController = ReturnType<typeof useWorkController>
 type WorkTask = WorkController['tasks'][number]
@@ -268,6 +271,7 @@ export function WorkView(): JSX.Element {
   const set = useCallback((patch: Partial<ViewState>): void =>
     setView((previous) => ({ ...previous, ...patch })), [])
   const task = controller.activeTask
+  const workResources = useWorkResources(task?.id ?? '')
   const activeTasks = useMemo(() => controller.tasks.filter((item) => !item.archived), [controller.tasks])
   const archivedTasks = useMemo(() => controller.tasks.filter((item) => item.archived), [controller.tasks])
   const waiting = useMemo(() => activeTasks.filter((item) => item.status === 'waiting').length, [activeTasks])
@@ -277,6 +281,10 @@ export function WorkView(): JSX.Element {
   }, [activeTasks, filter, search])
   const revealRequestId = browser.revealRequest?.requestId ?? null
   const handledRevealRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!task || !workResources.reveal || appMode !== 'work') return
+    set({ page: 'home', workspace: true, tab: 'browser', pane: 'workspace' })
+  }, [task?.id, workResources.reveal, appMode, set])
   useEffect(() => {
     try {
       localStorage.setItem(VIEW_KEY, JSON.stringify(view))
@@ -290,6 +298,10 @@ export function WorkView(): JSX.Element {
     if (!revealRequestId || handledRevealRef.current === revealRequestId) return
     handledRevealRef.current = revealRequestId
     if (appMode !== 'work') return
+    if (task && browser.revealRequest) {
+      if (!workResourceBrowserTabs(browser.tabs, task.id).some(item => item.tabId === browser.revealRequest?.tabId)) return
+      selectWorkResource(task.id, `web:${browser.revealRequest.tabId}`)
+    }
     setView((previous) => !task
       ? { ...previous, page: 'browser' }
       :
@@ -304,7 +316,9 @@ export function WorkView(): JSX.Element {
       (view.page === 'browser' || (Boolean(task) &&
         view.page === 'home' && view.workspace && view.tab === 'browser'))
     if (appMode !== 'work' || ownsBrowserSurface) return
-    void hideBrowserSurfaces()
+    let current = true
+    void hideBrowserSurfaces(() => current && getAppMode() === 'work')
+    return () => { current = false }
   }, [appMode, task?.id, view.page, view.workspace, view.tab, browser.tabs.length])
   useEffect(() => {
     const element = rootRef.current
@@ -378,10 +392,39 @@ export function WorkView(): JSX.Element {
   }, [set, controller.selectTask])
   const openWorkspace = useCallback((tab: WorkspaceTab): void =>
     set({ workspace: true, tab, pane: 'workspace' }), [set])
-  const openArtifact = useCallback((id: string): void => {
+  const openArtifact = useCallback((id: string, openResource = true): void => {
     setSelectedArtifact(id)
-    openWorkspace('artifacts')
-  }, [openWorkspace])
+    if (!openResource) return
+    const artifact = controller.artifacts.find(item => item.id === id)
+    const path = artifact?.path ?? (id.startsWith('path:') ? id.slice(5) : null)
+    if (path && task) void openFileFromChat(path, { sessionId: task.id, workspaceRoot: task.workspacePath }).catch(async (reason: unknown) => {
+      // A Work receipt can legitimately reference a sibling directory or a
+      // file the user dragged in. If the session-scoped resolver rejects it,
+      // offer a read-only local resource instead of a dead "outside workspace"
+      // panel. No external fallback is attempted for remote engines.
+      if (isRemoteEngine()) { reportError(reason); return }
+      const raw = path.replace(/^path:/, '')
+      const absolute = /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(raw)
+      const candidates = absolute
+        ? task.workspacePath && (paths.contains(task.workspacePath, raw) || paths.contains(paths.dirname(task.workspacePath), raw)) ? [raw] : []
+        : task.workspacePath
+          ? [paths.join(task.workspacePath, raw), paths.join(paths.dirname(task.workspacePath), raw)]
+          : []
+      for (const candidate of candidates) {
+        try {
+          await readExternalFile(candidate)
+          openExternalWorkPathResource(candidate, task.id)
+          openWorkspace('browser')
+          return
+        } catch {
+          // Try the sibling candidate before reporting the original resolver
+          // error; the candidate probe is read-only and size-limited.
+        }
+      }
+      reportError(reason)
+    })
+    else openWorkspace('artifacts')
+  }, [controller.artifacts, task?.id, task?.workspacePath, openWorkspace])
   const setWorkspaceTab = useCallback((tab: WorkspaceTab): void => set({ tab }), [set])
   const setRatio = useCallback((ratio: number): void => set({ ratio }), [set])
   const openActivity = useCallback((toolId: string): void => {
@@ -600,7 +643,7 @@ export function WorkView(): JSX.Element {
                     tab={view.tab}
                     setTab={setWorkspaceTab}
                     selectedArtifact={selectedArtifact}
-                    selectArtifact={setSelectedArtifact}
+                    selectArtifact={openArtifact}
                     activitySelection={activitySelection?.taskId === task.id ? activitySelection : null}
                   />
                 </>
@@ -709,7 +752,7 @@ export function WorkView(): JSX.Element {
         ) : view.page === 'connections' ? (
           <Connections ready={controller.ready} />
         ) : view.page === 'monitor' ? (
-          <EngineMonitorView tasks={controller.tasks} ready={controller.ready} onSelectTask={openTask} />
+          <EngineMonitorView tasks={controller.tasks} />
         ) : view.page === 'agents' ? (
           <div className="work-page work-page--agents"><div className="work-page__inner work-page__inner--agents"><WorkAgentManager
             key={getEngineSource()}
@@ -1484,7 +1527,7 @@ function Workspace({
   tab: WorkspaceTab
   setTab: (tab: WorkspaceTab) => void
   selectedArtifact: string | null
-  selectArtifact: (id: string) => void
+  selectArtifact: (id: string, openResource?: boolean) => void
   activitySelection: ActivitySelection | null
 }): JSX.Element {
   const appMode = useAppMode()
@@ -1496,42 +1539,42 @@ function Workspace({
   const tabs: Array<[WorkspaceTab, string]> = [
     ['artifacts', '成果'],
     ['sources', '资料'],
-    ['browser', '浏览器'],
+    ['browser', '资源'],
     ['activity', '活动'],
     ['subagents', '子代理'],
     ['git', 'Git']
   ]
   return (
-    <section className="work-workspace" aria-label="任务工作区">
-      <div className="work-workspace__tabs" role="tablist" aria-label="工作区内容">
-        {tabs.map(([id, label], index) => (
+    <section className="work-workspace" aria-label="任务工作区"
+      onDragOver={(event: DragEvent<HTMLElement>) => {
+        if (event.dataTransfer.types.includes('Files')) event.preventDefault()
+      }}
+      onDrop={(event: DragEvent<HTMLElement>) => {
+        // Composer and attachment controls handle their own drops. Do not
+        // also open the same file as a read-only resource tab when the event
+        // bubbles through the workspace shell.
+        if (event.defaultPrevented) return
+        if (!event.dataTransfer.files.length) return
+        event.preventDefault()
+        const file = Array.from(event.dataTransfer.files).find(item => item.name)
+        if (!file) return
+        try {
+          openExternalWorkFileResource(file, controller.activeTask!.id)
+          setTab('browser')
+        } catch (error) {
+          reportError(error)
+        }
+      }}>
+      <WorkResourceTabs sessionId={controller.activeTask!.id} active={tab === 'browser'} onSelect={() => setTab('browser')} />
+      <div className="work-workspace__tools" role="toolbar" aria-label="工作区工具">
+        {tabs.map(([id, label]) => (
           <button
             type="button"
-            role="tab"
             id={`work-tab-${id}`}
             aria-controls={`work-panel-${id}`}
-            aria-selected={tab === id}
-            tabIndex={tab === id ? 0 : -1}
+            aria-pressed={tab === id}
             key={id}
             onClick={() => setTab(id)}
-            onKeyDown={(event) => {
-              if (
-                event.key === 'ArrowLeft' ||
-                event.key === 'ArrowRight' ||
-                event.key === 'Home' ||
-                event.key === 'End'
-              ) {
-                event.preventDefault()
-                const next =
-                  event.key === 'Home'
-                    ? 0
-                    : event.key === 'End'
-                      ? tabs.length - 1
-                      : (index + (event.key === 'ArrowLeft' ? -1 : 1) + tabs.length) % tabs.length
-                setTab(tabs[next][0])
-                document.getElementById(`work-tab-${tabs[next][0]}`)?.focus()
-              }
-            }}
           >
             {label}
             {id === 'artifacts' && controller.artifacts.length > 0 && (
@@ -1540,7 +1583,7 @@ function Workspace({
           </button>
         ))}
       </div>
-      {tabs.filter(([id]) => id === tab || visited.has(id)).map(([id]) => (
+      {tabs.filter(([id]) => id === tab || (visited.has(id) && !['artifacts', 'sources', 'browser'].includes(id))).map(([id]) => (
         <WorkspacePane
           key={id}
           id={id}
@@ -1566,7 +1609,7 @@ const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controll
   active: boolean
   controller: WorkController
   selectedArtifact: string | null
-  selectArtifact: (id: string) => void
+  selectArtifact: (id: string, openResource?: boolean) => void
   activitySelection: ActivitySelection | null
   setTab: (tab: WorkspaceTab) => void
   source: number
@@ -1589,7 +1632,7 @@ const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controll
     id={`work-panel-${id}`}
     aria-labelledby={`work-tab-${id}`}
   >
-    {id === 'artifacts' ? (
+    {!active && ['artifacts', 'sources', 'browser'].includes(id) ? null : id === 'artifacts' ? (
             <TaskArtifactPanel
               controller={controller}
               active={active}
@@ -1622,16 +1665,73 @@ const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controll
               onOpenFile={openGitFile}
             />
           ) : (
-            <WorkBrowser onReveal={revealBrowser} />
+            <WorkResourcePane controller={controller} onReveal={revealBrowser} />
           )}
   </div>
 }, (previous, next) => !previous.active && !next.active && previous.hidden === next.hidden && previous.source === next.source && previous.controller.activeTask?.id === next.controller.activeTask?.id)
+
+function WorkResourcePane({ controller, onReveal }: { controller: WorkController; onReveal: () => void }): JSX.Element {
+  const sessionId = controller.activeTask!.id
+  const resources = useWorkResources(sessionId)
+  const browser = useBrowserState()
+  const webTabs = workResourceBrowserTabs(browser.tabs, sessionId)
+  const selected = resolvedWorkResourceId(resources, webTabs.map(tab => tab.tabId), browser.activeTabId)
+  const file = resources.files.find(item => item.id === selected)
+  const web = selected?.startsWith('web:') ? webTabs.find(item => item.tabId === selected.slice(4)) : undefined
+  if (file) return <WorkResourceFile key={JSON.stringify([getEngineSource(), sessionId, file.id])} controller={controller} file={file} />
+  if (web) return <WorkBrowser tabId={web.tabId} hideTabStrip onReveal={onReveal} />
+  return <EmptyState icon="file" title="文件和网页，在同一个地方查看" description="从成果、资料或对话中打开文件，也可以拖入电脑文件或点击文件按钮；新建网页后也会显示在上方标签栏。" />
+}
+
+function WorkResourceFile({ controller, file }: { controller: WorkController; file: ReturnType<typeof useWorkResources>['files'][number] }): JSX.Element {
+  // External resources still belong to the visible Work conversation for
+  // references/drafts, while their preview deliberately carries no session
+  // file target and therefore cannot be written by the Agent.
+  const sessionId = controller.activeTask?.id ?? file.target?.sessionId
+  const [tab, setTab] = useState<'preview' | 'changes'>('preview')
+  const addExternalToConversation = async (): Promise<void> => {
+    let input = file.externalFile
+    if (!input && file.externalPath) {
+      const result = await readExternalFile(file.externalPath)
+      if (result.tooLarge || result.size > 20 * 1024 * 1024) throw new Error('文件超过 20 MB，请缩小文件后重试')
+      const bytes = result.base64
+        ? Uint8Array.from(atob(result.base64), char => char.charCodeAt(0))
+        : new TextEncoder().encode(result.content)
+      input = new File([bytes], file.name, { type: 'application/octet-stream', lastModified: Date.now() })
+    }
+    if (!input) throw new Error('外部文件已失效，请重新选择或拖拽文件')
+    await controller.addFiles([input])
+    toast.success('已加入对话资料，发送时将上传副本')
+  }
+  return <div className="work-artifacts-shell__detail work-resource-file">
+    <div className="work-artifacts-shell__tabs" role="tablist" aria-label="文件内容">
+      <button type="button" role="tab" aria-selected={tab === 'preview'} onClick={() => setTab('preview')}>预览</button>
+      <button type="button" role="tab" aria-selected={tab === 'changes'} disabled={!file.target} onClick={() => setTab('changes')} title={file.target ? '查看此文件在任务中的改动' : '电脑文件没有任务改动记录'}>文件改动</button>
+    </div>
+    {tab === 'changes' && file.target ? <WorkChangesPanel sessionId={sessionId!} workspacePath={file.target.root} filePath={file.path} ready={controller.ready} streaming={controller.streaming} /> : <WorkArtifactPanel
+    artifact={{ id: file.id, path: file.path, name: file.name, content: null, status: 'ready', createdAt: 0 }}
+    workspaceRoot={file.target?.root} sessionId={sessionId} externalFile={file.externalFile} externalPath={file.externalPath} inResourceTab
+    onAddToConversation={(item, selection, coverage) => {
+      if (selection) {
+        const draft = getWorkDraft(controller.draftSource, controller.activeTask?.id ?? null)
+        controller.setDraft(`${draft.text}${draft.text ? '\n\n' : ''}${workArtifactSelectionQuote(item.name, item.path, selection, coverage)}`, draft.mentions)
+        toast.success('已引用选中内容')
+      } else if (file.externalFile || file.externalPath) {
+        void addExternalToConversation().catch((reason: unknown) => toast.error(reason instanceof Error ? reason.message : String(reason)))
+      } else {
+        controller.addReference(item)
+        toast.success('已添加到对话')
+      }
+    }}
+  />}
+  </div>
+}
 
 function TaskArtifactPanel({ controller, ...props }: {
   controller: WorkController
   active?: boolean
   selectedId: string | null
-  onSelect: (id: string) => void
+  onSelect: (id: string, openResource?: boolean) => void
 }): JSX.Element {
   const tools = useWorkTools(controller.messages)
   return <StableArtifactPanel {...props} tools={tools} artifacts={controller.artifacts}
@@ -1665,7 +1765,7 @@ function ArtifactPanel({
   tools: ToolActivity[]
   active?: boolean
   selectedId: string | null
-  onSelect: (id: string) => void
+  onSelect: (id: string, openResource?: boolean) => void
 }): JSX.Element {
   const linkedPath = selectedId?.startsWith('path:') ? selectedId.slice(5) : null
   const artifact =
@@ -1694,7 +1794,6 @@ function ArtifactPanel({
       )
     } else addReference(item)
   }
-  const changesRef = useRef<HTMLElement>(null)
   const [detailTab, setDetailTab] = useState<'preview' | 'changes'>('preview')
   // Keep the compact list informative without exposing long workspace paths.
   // Stats come from the same diff implementation used by FileChangeCard, so the
@@ -1743,7 +1842,7 @@ function ArtifactPanel({
               aria-selected={item.id === artifact?.id}
               className={item.id === artifact?.id ? 'is-selected' : ''}
               key={item.id}
-              onClick={() => onSelect(item.id)}
+              onClick={() => onSelect(item.id, detailTab !== 'changes')}
               title={item.path}
             >
               <FileGlyph name={item.name} size={16} />
@@ -1767,9 +1866,6 @@ function ArtifactPanel({
             description="AI 创建或修改文件后，成果会出现在这里，可预览、复制或继续引用。"
           />
         )}
-        {artifacts.length ? (
-          <WorkChangesPanel sessionId={sessionId} workspacePath={workspacePath} ready={ready} streaming={streaming} sectionRef={changesRef} active={active} />
-        ) : null}
       </div>
       <div className="work-artifacts-shell__detail">
         <div className="work-artifacts-shell__tabs" role="tablist" aria-label="成果内容">
@@ -1803,7 +1899,7 @@ function ArtifactPanel({
             />
           )
         ) : (
-          <WorkChangesPanel sessionId={sessionId} workspacePath={workspacePath} ready={ready} streaming={streaming} sectionRef={changesRef} standalone active={active} />
+          <WorkChangesPanel key={JSON.stringify([getEngineSource(), sessionId, artifact?.path])} sessionId={sessionId} workspacePath={workspacePath} filePath={artifact?.path} ready={ready} streaming={streaming} active={active} />
         )}
       </div>
     </div>
@@ -1812,18 +1908,17 @@ function ArtifactPanel({
 
 const StableArtifactPanel = memo(ArtifactPanel)
 
-function WorkChangesPanel({ sessionId, workspacePath, ready, streaming, sectionRef, standalone = false, active = true }: {
+function WorkChangesPanel({ sessionId, workspacePath, filePath, ready, streaming, active = true }: {
   sessionId?: string
   workspacePath?: string | null
+  filePath?: string
   ready: boolean
   streaming: boolean
-  sectionRef?: RefObject<HTMLElement | null>
-  standalone?: boolean
   active?: boolean
 }): JSX.Element | null {
   const [changes, setChanges] = useState<EngineFileChange[]>([])
   const [error, setError] = useState('')
-  const [open, setOpen] = useState(true)
+  const [loading, setLoading] = useState(true)
   const previousStreaming = useRef(false)
   const refreshGeneration = useRef(0)
   const scopeGeneration = useRef(0)
@@ -1854,27 +1949,31 @@ function WorkChangesPanel({ sessionId, workspacePath, ready, streaming, sectionR
     const scope = captureScope()
     const targetSessionId = scope.sessionId
     const isCurrent = (): boolean => generation === refreshGeneration.current && scopeCurrent(scope)
-    if (!targetSessionId || !scope.ready) {
+    if (!targetSessionId || !scope.ready || !filePath) {
       if (isCurrent()) {
         setChanges([])
         setError('')
+        setLoading(false)
       }
       return
     }
     try {
-      const result = await requestOrThrow<EngineFileChange[]>({
+      setLoading(true)
+      const result = await requestOrThrow<SessionFileChange[]>({
         method: 'GET',
         path: '/changes',
         query: { sessionId: targetSessionId, status: 'pending', view: 'net' }
       })
       if (!isCurrent()) return
-      setChanges(Array.isArray(result) ? result : [])
+      setChanges(changesForWorkFile(Array.isArray(result) ? result : [], targetSessionId, filePath, workspacePath))
       setError('')
     } catch (reason) {
       if (!isCurrent()) return
       setError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      if (isCurrent()) setLoading(false)
     }
-  }, [ready, sessionId, source])
+  }, [ready, sessionId, source, filePath, workspacePath])
   useEffect(() => {
     if (active) void refresh()
   }, [refresh, active])
@@ -1884,32 +1983,24 @@ function WorkChangesPanel({ sessionId, workspacePath, ready, streaming, sectionR
   }, [streaming, refresh, active])
   if (!sessionId) return null
   return (
-    <section className="work-changes-panel" aria-label="文件改动" ref={sectionRef}>
-      <button
-        type="button"
-        className="work-changes-panel__heading"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <Icon name={open ? 'chevron-down' : 'chevron-right'} size={14} />
-        <strong>文件改动</strong>
-        <span>{changes.length}</span>
-      </button>
-      {open &&
-        (error ? (
-          <p className="work-changes-panel__error" role="alert">
-            {error}
-            <button type="button" onClick={() => void refresh()}>
-              重试
-            </button>
-          </p>
+    <section className="work-changes-panel" aria-label="当前文件改动" data-file-path={filePath} aria-busy={loading}>
+      <header className="work-changes-panel__heading">
+        <FileGlyph name={filePath ? filename(filePath) : ''} size={16} />
+        <strong title={filePath}>{filePath ? filename(filePath) : '请选择文件'}</strong>
+        <span>本任务改动</span>
+      </header>
+      {loading ? <p className="work-changes-panel__notice" role="status"><Spinner size={14} />正在读取文件改动…</p> : error ? (
+          <div className="work-changes-panel__error" role="alert">
+            <p>暂时无法读取此文件的改动。<button type="button" onClick={() => void refresh()}>重试</button></p>
+            <details><summary>查看详情</summary>{error}</details>
+          </div>
         ) : changes.length ? (
           <div className="work-changes-panel__list">
             {changes.map((change) => (
               <FileChangeCard key={change.id} change={change} state="done" fileContext={{ sessionId, workspaceRoot: workspacePath }} />
             ))}
           </div>
-        ) : standalone ? <EmptyState icon="file" title="还没有文件改动" description="任务创建或修改文件后，改动会显示在这里。" /> : null)}
+        ) : <EmptyState icon="file" title={ready ? '此文件暂无待查看的改动' : '引擎尚未连接'} description={ready ? '这里只显示当前文件在本任务中的改动。已保留、已撤回或未记录的改动不会显示。' : '连接恢复后，可重新打开文件改动。'} />}
     </section>
   )
 }
@@ -1937,7 +2028,10 @@ function SourcePanel({ controller }: { controller: WorkController }): JSX.Elemen
               source={source}
               root={root}
               selected={selected?.path === source.path}
-              onSelect={() => setSelectedPath(source.path)}
+              onSelect={() => {
+                setSelectedPath(source.path)
+                void openFileFromChat(source.path, { sessionId: controller.activeTask!.id, workspaceRoot: root }).catch(reportError)
+              }}
             />
           ))}
         </ul>

@@ -36,6 +36,9 @@ export function contextPresentationLimit(sample: ContextUsageSnapshot | null, mo
   const model = models.find(item => item.modelId === owner)
   const configured = model?.resolvedCapabilities?.contextWindow ?? model?.capabilities?.contextWindow
   const configuredLimit = typeof configured === 'number' && Number.isFinite(configured) && configured > 0 ? configured : undefined
+  const budget = model?.effectiveContextWindow
+  const budgetLimit = typeof budget === 'number' && Number.isFinite(budget) && budget > 0 ? budget : undefined
+  const currentLimit = budgetLimit === undefined ? configuredLimit : Math.min(budgetLimit, configuredLimit ?? budgetLimit)
   const actual = sample?.contextWindow
-  return actual && actual > 0 ? Math.min(actual, configuredLimit ?? actual) : configuredLimit ?? fallback
+  return actual && Number.isFinite(actual) && actual > 0 ? Math.min(actual, currentLimit ?? actual) : currentLimit ?? fallback
 }

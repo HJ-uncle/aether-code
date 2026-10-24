@@ -153,8 +153,9 @@ export async function refreshBrowserSettings(): Promise<void> {
 }
 
 /** Release native pages when Work's browser workspace is closed or not selected. */
-export async function hideBrowserSurfaces(): Promise<void> {
+export async function hideBrowserSurfaces(stillHidden: () => boolean = () => true): Promise<void> {
   await initializeBrowser()
+  if (!stillHidden()) return
   await Promise.all(
     state.tabs.map((tab) =>
       window.aether.browser

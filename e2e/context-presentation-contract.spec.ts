@@ -90,6 +90,16 @@ test('a current model configuration lowers the old 1M window without borrowing a
   expect(contextPresentationLimit({ ...sample, modelId: 'removed-model' }, [model(128000)], modelId, 128000)).toBe(1000000)
 })
 
+test('new and replayed sessions show the independent runtime window without changing model capabilities', () => {
+  const item = { ...model(1_000_000), effectiveContextWindow: 268_000 }
+  expect(contextPresentationLimit(null, [item], modelId, 268_000)).toBe(268_000)
+  expect(contextPresentationLimit({ used: 19_037, modelId, contextWindow: 1_000_000 }, [item], modelId, 268_000)).toBe(268_000)
+  expect(contextPresentationLimit({ used: 19_037, modelId, contextWindow: 128_000 }, [item], modelId, 268_000)).toBe(128_000)
+  expect(contextPresentationLimit(null, [{ ...item, effectiveContextWindow: 192_000 }], modelId, 268_000)).toBe(192_000)
+  expect(contextPresentationLimit(null, [], modelId, 268_000)).toBe(268_000)
+  expect(item.resolvedCapabilities?.contextWindow).toBe(1_000_000)
+})
+
 test('a single persisted estimated row restores its supplied confirmation without previous client state', () => {
   const messages = replayMessages([{ id: 'single-estimate', role: 'assistant', modelId, conversationId: 'single-turn',
     usage: { currentPromptTokens: 70001, contextWindow: 128000, contextUsageEstimated: true,

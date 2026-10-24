@@ -15,7 +15,7 @@ import {
   contextPresentation,
   contextPresentationLimit
 } from '@renderer/contrib/chat/context-presentation'
-import { DEFAULT_CONTEXT_WINDOW_TOKENS } from '@renderer/core/engine/models'
+import { DEFAULT_CONTEXT_WINDOW_BUDGET } from '@renderer/core/engine/models'
 import { ModelPicker } from '@renderer/contrib/models/ModelPicker'
 import { preserveMentions } from '@renderer/contrib/chat/mention-context'
 import { MentionRefPicker } from '@renderer/contrib/chat/MentionRefPicker'
@@ -80,7 +80,7 @@ export function WorkComposer({
     contextUsage,
     controller.models,
     controller.modelId || controller.defaultModelId,
-    DEFAULT_CONTEXT_WINDOW_TOKENS
+    DEFAULT_CONTEXT_WINDOW_BUDGET
   )
   const submit = (): void => {
     if (mentionQuery !== null || resourceQuery !== null || (!draft.trim() && !controller.attachments.length) || !controller.ready || (queueIntent ? queueBusy : taskActive || busy)) return

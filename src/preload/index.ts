@@ -247,10 +247,13 @@ const api = {
    */
   fs: {
     pickFolder: (): Promise<string | null> => ipcRenderer.invoke(IPC.invoke.fsPickFolder),
+    pickFile: (): Promise<string | null> => ipcRenderer.invoke(IPC.invoke.fsPickFile),
     allowRoot: (root: string): Promise<void> => ipcRenderer.invoke(IPC.invoke.fsAllowRoot, root),
     readDir: (dir: string): Promise<FsEntry[]> => ipcRenderer.invoke(IPC.invoke.fsReadDir, dir),
     readFile: (path: string): Promise<FsFileContent> =>
       ipcRenderer.invoke(IPC.invoke.fsReadFile, path),
+    readExternalFile: (path: string): Promise<FsFileContent> =>
+      ipcRenderer.invoke(IPC.invoke.fsReadExternalFile, path),
     writeFile: (path: string, content: string): Promise<FsStat> =>
       ipcRenderer.invoke(IPC.invoke.fsWriteFile, path, content),
     createFile: (path: string): Promise<void> => ipcRenderer.invoke(IPC.invoke.fsCreateFile, path),

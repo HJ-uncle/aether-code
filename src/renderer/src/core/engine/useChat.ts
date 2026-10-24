@@ -14,7 +14,7 @@ import type { UsageTotal } from '@renderer/contrib/chat/usage'
 import { reducePayload } from './chat-payload'
 import { restoreChatSnapshot, type ChatRecoverySnapshot } from './chat-recovery'
 import { inspectStreamCursor, parseEngineStreamCursor } from '@shared/stream-event'
-import { streamRecoveryNoticeText, type StreamRecoveryNotice } from './stream-recovery-notice'
+import { snapshotRecoveryNotice, streamRecoveryNoticeText, type StreamRecoveryNotice } from './stream-recovery-notice'
 import { preparePublishedSnapshot } from './published-snapshot-client'
 import { createPublishedHydrationBuffer } from './published-hydration-buffer'
 import { advancePublishedChild, parsePublishedUsage } from './published-child-recovery'
@@ -1301,7 +1301,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
       setCommandJobs(getCommandJobs(sessionId))
       setTodos(restored.todos)
       setHistoryError(null)
-      setRecoveryNoticeState(notice => notice ? { ...notice, restored: true } : null)
+      setRecoveryNoticeState(notice => snapshotRecoveryNotice(snapshot, notice))
       setStreaming((snapshot.executionRun ?? snapshot.run)?.status === 'running')
       restoredSessionRef.current = sessionId
       return { kind: 'restored', snapshot }

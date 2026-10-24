@@ -1,7 +1,7 @@
 /**
  * Current monitor smoke: this is intentionally independent from the legacy
  * Work/E2E suites. It seeds a bounded local Work state, opens the monitor in a
- * fresh Electron profile, verifies drill-down and checks that monitor timers
+ * fresh Electron profile, verifies the focused resource surface and checks that monitor timers
  * are released when the monitor page is hidden.
  */
 import {
@@ -116,9 +116,8 @@ async function installTimerProbe(): Promise<void> {
     const originalClear = window.clearInterval.bind(window)
     window.setInterval = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
       const id = Reflect.apply(originalSet, window, [handler, timeout, ...args]) as number
-      // EngineMonitorView owns the 15s plan refresh and 30s age ticker. Other
-      // Work timers use different cadences, so this keeps the signal specific.
-      if (timeout === 15_000 || timeout === 30_000) {
+      // Only the existing 30s snapshot age ticker belongs to this page.
+      if (timeout === 30_000) {
         active.add(id)
         probe.created += 1
       }
@@ -158,7 +157,7 @@ test.describe('当前引擎监控页', () => {
     }
   })
 
-  test('导航、列表预算、任务下钻和隐藏后采集清理', async () => {
+  test('只显示资源与实例信息，移除任务统计区域并在隐藏后清理计时器', async () => {
     const monitor = page.locator('.work-page--monitor')
     await page.getByRole('tab', { name: 'Work 办公', exact: true }).click()
     await installTimerProbe()
@@ -167,7 +166,7 @@ test.describe('当前引擎监控页', () => {
     // The resource card is a first-class monitor surface. Keep the assertions
     // on its public accessible contract so a visual refactor cannot silently
     // remove the health/usage context from keyboard and screen-reader users.
-    const resource = monitor.getByRole('region', { name: '资源与健康' })
+    const resource = monitor.getByRole('region', { name: '引擎资源与健康监控', exact: true })
     await expect(resource).toBeVisible()
     await expect(resource.getByRole('heading', { name: '资源与健康' })).toBeVisible()
     await expect(resource.getByLabel('健康检查采样')).toBeVisible()
@@ -197,25 +196,19 @@ test.describe('当前引擎监控页', () => {
     expect(visual.fontFamily).toContain('-apple-system')
     expect(visual.background).not.toBe('rgba(0, 0, 0, 0)')
 
-    const workRows = monitor.locator('section[aria-label="Work 任务"] .engine-monitor__task')
-    const automationRows = monitor.locator('section[aria-label="定时任务"] .engine-monitor__task')
-    await expect(workRows.first()).toBeVisible()
-    await expect(workRows).toHaveCount(24)
-    await expect(automationRows).toHaveCount(4)
-    await expect(monitor.getByText('仅显示前 24 项', { exact: false })).toBeVisible()
-    await expect(monitor.locator('.engine-monitor__automation')).toBeVisible()
-    const metricsButton = monitor.getByRole('button', { name: '按需加载业务统计' })
-    await metricsButton.click()
-    await expect(monitor.getByRole('button', { name: '收起业务统计' })).toHaveAttribute(
-      'aria-expanded',
-      'true'
-    )
+    await expect(monitor.getByRole('region', { name: '引擎身份', exact: true })).toBeVisible()
+    for (const name of ['Work 任务', '定时任务', '定时计划监控', '引擎业务统计', '客户端性能']) {
+      await expect(monitor.getByRole('region', { name, exact: true })).toHaveCount(0)
+    }
+    await expect(monitor.getByRole('group', { name: '任务分布控制' })).toHaveCount(0)
+    await expect(monitor.getByRole('button', { name: /业务统计|采集页面性能|身份详情/ })).toHaveCount(0)
+    await expect(monitor.getByText('子 Agent 详情沿用任务页', { exact: false })).toHaveCount(0)
 
     const opened = await timerProbe()
-    expect(opened.created).toBeLessThanOrEqual(2)
+    expect(opened.created).toBe(1)
     expect(opened.active).toBeGreaterThanOrEqual(opened.baseline)
 
-    // Leaving the monitor must release both low-frequency timers. The page is
+    // Leaving the monitor must release its snapshot age timer. The page is
     // still mounted in the Work mode surface, so this catches hidden-page leaks.
     // Use the navigation title so this remains stable when the sidebar is
     // collapsed and the visible text span is clipped.
@@ -224,10 +217,9 @@ test.describe('当前引擎监控页', () => {
     await expect.poll(async () => (await timerProbe()).active).toBe(opened.baseline)
 
     await openMonitor()
-    const firstRow = page.locator('section[aria-label="Work 任务"] .engine-monitor__task').first()
-    await expect(firstRow).toHaveAttribute('title', '打开任务，查看对话与子 Agent')
-    await firstRow.click()
-    await expect(page.locator('.work-page--monitor')).toBeHidden()
-    await expect(page.locator('.work-task-heading h1')).toContainText('监控任务 0')
+    await expect(monitor.getByRole('region', { name: '引擎身份', exact: true })).toBeVisible()
+    await expect(monitor.locator('.engine-monitor__task')).toHaveCount(0)
+    await expect.poll(async () => (await timerProbe()).active).toBe(opened.baseline + 1)
+
   })
 })

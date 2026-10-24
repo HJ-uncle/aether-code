@@ -1,0 +1,45 @@
+.document-preview {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 240px;
+  color: var(--fg);
+  background: var(--bg-surface);
+  font-family: var(--font-ui);
+}
+.document-preview__content { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
+.document-preview__toolbar { display: flex; align-items: center; gap: 8px; min-height: 42px; padding: 5px 12px; flex-wrap: wrap; }
+.document-preview__toolbar button, .document-preview__footer button {
+  min-width: 30px; min-height: 28px; border: 0; border-radius: var(--radius); background: transparent; color: var(--fg); cursor: pointer;
+}
+.document-preview__toolbar button { font-size: 22px; line-height: 1; }
+.document-preview__toolbar button:hover, .document-preview__footer button:hover { background: var(--bg-hover); }
+.document-preview__toolbar button:disabled { color: var(--fg-faint); opacity: 0.5; cursor: default; }
+.document-preview__toolbar input, .document-preview__toolbar select { min-height: 28px; border: 1px solid var(--border); border-radius: var(--radius); padding: 2px 6px; color: var(--fg); background: var(--bg-input); font: inherit; }
+.document-preview__toolbar select { max-width: min(260px, 60vw); }
+.document-preview__toolbar input { width: 55px; text-align: center; }
+.document-preview__toolbar :is(button, input, select):focus-visible, .document-preview__footer button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.document-preview__page-label { display: flex; align-items: center; gap: 6px; color: var(--fg-muted); font-size: 12px; white-space: nowrap; }
+.document-preview__body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; background: var(--bg-inset); }
+.document-preview__body--pdf { padding: 16px; text-align: center; }
+.document-preview__body--pdf canvas { display: block; margin: 0 auto; box-shadow: var(--shadow-card); }
+.document-preview__frame { width: 100%; height: 100%; min-height: 200px; display: block; border: 0; }
+.document-preview__message { display: flex; flex: 1; min-height: 180px; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; color: var(--fg-muted); font-size: 13px; text-align: center; overflow-wrap: anywhere; }
+.document-preview__message[role='alert'] { color: var(--fg); }
+.document-preview__footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 34px; padding: 4px 12px; border-top: 1px solid var(--border); font-size: 11px; color: var(--fg-muted); }
+.document-preview__footer button { font-size: 12px; white-space: nowrap; }
+.document-preview__toolbar--sheets { justify-content: space-between; border-bottom: 1px solid var(--border); font-size: 12px; }
+.document-preview__toolbar--sheets label { display: flex; align-items: center; gap: 8px; }
+.document-preview__toolbar--sheets span { color: var(--fg-muted); }
+.document-preview__table-nav { display: flex; justify-content: space-between; flex-wrap: wrap; }
+.document-preview__body--sheet { background: var(--bg-surface); }
+.document-preview__format-note { padding: 6px 12px; color: var(--fg-muted); font-size: 12px; border-bottom: 1px solid var(--border); }
+.document-preview__table { border-collapse: separate; border-spacing: 0; font-size: 12px; table-layout: fixed; }
+.document-preview__table th, .document-preview__table td { height: 30px; min-width: 110px; max-width: 280px; padding: 5px 10px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.document-preview__table th { position: sticky; background: var(--bg-elevated); color: var(--fg-muted); font-weight: 500; }
+.document-preview__table thead th { top: 0; z-index: 2; }
+.document-preview__table tr>th:first-child { left: 0; min-width: 52px; width: 52px; text-align: center; z-index: 1; }
+.document-preview__table thead tr>th:first-child { z-index: 3; }
+.document-preview__table tbody tr:hover td { background: var(--bg-hover); }

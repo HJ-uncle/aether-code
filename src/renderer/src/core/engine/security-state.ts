@@ -101,7 +101,18 @@ export function createSecurityModeStore(transport: SecurityModeTransport) {
     const requestGeneration = ++generation
     publish({ sessionId, mode: null, loaded: false, loading: true, error: null })
     const promise = Promise.resolve()
-      .then(() => {
+      .then(async () => {
+        // Switching away and back gives this session a new UI generation, but
+        // its earlier PUT still owns the server value until it settles. Read
+        // only after all queued writes, including ones whose response failed:
+        // a failed response does not prove that the server rejected the write.
+        const writeKey = JSON.stringify([source, sessionId])
+        let pendingWrite = pendingWrites.get(writeKey)
+        while (pendingWrite) {
+          await pendingWrite.catch(() => false)
+          if (getEngineSource() !== source) throw new Error('引擎连接已变化，请在当前会话重试')
+          pendingWrite = pendingWrites.get(writeKey)
+        }
         if (getEngineSource() !== source) throw new Error('引擎连接已变化，请在当前会话重试')
         return transport.read(sessionId)
       })

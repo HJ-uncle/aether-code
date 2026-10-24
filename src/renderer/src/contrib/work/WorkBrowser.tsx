@@ -12,10 +12,14 @@ import { useAppMode } from '@renderer/core/platform/app-mode'
  * both modes.
  */
 export function WorkBrowser({
-  onReveal
+  onReveal,
+  hideTabStrip = false,
+  tabId
 }: {
   /** Select Work's browser workspace before an AI operation waits for native bounds. */
   onReveal?: () => void
+  hideTabStrip?: boolean
+  tabId?: string
 }): JSX.Element {
   const browser = useBrowserState()
   const appMode = useAppMode()
@@ -33,5 +37,5 @@ export function WorkBrowser({
     onReveal?.()
   }, [appMode, browser.revealRequest?.requestId, onReveal])
 
-  return <BrowserView surfaceMode="work" />
+  return <BrowserView surfaceMode="work" hideTabStrip={hideTabStrip} tabId={tabId} />
 }

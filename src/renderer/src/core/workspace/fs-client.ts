@@ -316,6 +316,22 @@ export async function readFile(path: string, target?: SessionFileTarget): Promis
   }
 }
 
+/**
+ * Read-only local preview for a file explicitly selected by the user (native
+ * picker or OS drag-and-drop).  It deliberately bypasses workspace/session
+ * routing and exposes no write capability; remote engine files continue to
+ * use readFile/readSessionFile with their authenticated scope.
+ */
+export function readExternalFile(path: string): Promise<FsFileContent> {
+  if (isRemoteEngine()) return Promise.reject(new Error('远端引擎不能读取本机外部文件，请先下载后打开'))
+  return bridge().fs.readExternalFile(path)
+}
+
+export function pickExternalFile(): Promise<string | null> {
+  if (isRemoteEngine()) return Promise.reject(new Error('远端引擎不能选择本机文件'))
+  return bridge().fs.pickFile()
+}
+
 async function remoteStat(context: RemoteWorkspaceContext, path: string): Promise<FsStat> {
   const result = await remoteRequest<{ isDirectory: boolean; size: number; mtime?: number; mtimeMs?: number }>(context.target, {
     method: 'GET', path: '/workspace/file/info',

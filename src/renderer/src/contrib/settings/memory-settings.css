@@ -1,4 +1,9 @@
 .memory-settings .sg__row--content { display: block; min-width: 0; }
+.memory-settings__preference-status { display: flex; justify-content: space-between; align-items: center; gap: 12px; color: var(--fg-muted); font-size: 12px; line-height: 1.5; }
+.memory-settings__preference-status .btn { flex-shrink: 0; }
+.memory-settings__preference-error { margin-top: 8px; color: var(--fg-muted); font-size: 11px; overflow-wrap: anywhere; }
+.memory-settings__preference-error summary { cursor: pointer; }
+.memory-settings__preference-error p { margin: 6px 0 0; white-space: pre-wrap; }
 .memory-settings__toolbar { display: flex; gap: 8px; align-items: center; width: 100%; min-width: 0; flex-wrap: wrap; }
 .memory-settings__toolbar .field__input { flex: 1 1 180px; min-width: 120px; }
 .memory-settings__scope { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -24,6 +29,7 @@
 .memory-settings__notice { color: var(--ok-fg); font-size: 12px; margin: 8px 4px; }
 @container settings-body (max-width: 560px) {
   .memory-settings .sg__row--content { padding: 14px; }
+  .memory-settings__preference-status { align-items: flex-start; flex-direction: column; gap: 8px; }
   .memory-settings__session, .memory-settings__editor-row { grid-template-columns: 1fr; }
   .memory-settings__session small { grid-column: auto; }
   .memory-settings__item { grid-template-columns: 1fr; gap: 8px; }

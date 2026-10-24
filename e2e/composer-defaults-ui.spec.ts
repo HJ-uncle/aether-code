@@ -6,7 +6,8 @@
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createServer } from 'node:http'
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { AetherIdeApi } from '../src/preload'
@@ -26,6 +27,7 @@ for (const mode of ['embedded', 'remote'] as const) {
     let app: ElectronApplication | undefined
     let page: Page
     let remoteEngine: ChildProcess | undefined
+    let remoteEngineClosed: Promise<void> | undefined
     let storageSuffix = ''
 
     async function openPreferences(): Promise<void> {
@@ -61,8 +63,8 @@ for (const mode of ['embedded', 'remote'] as const) {
 
     async function expectLabels(memory: string, security: string, thinking = 'Low'): Promise<void> {
       await openPreferences()
-      await expect(page.getByTitle('选择长期记忆范围', { exact: true })).toContainText(memory)
-      await expect(page.getByTitle('选择安全模式', { exact: true })).toContainText(security)
+      await expect(page.getByRole('button', { name: /^本会话记忆：/ })).toContainText(memory)
+      await expect(page.getByRole('button', { name: /^切换本会话访问权限：/ })).toContainText(security)
       await expect(page.getByTitle('选择思考档位', { exact: true })).toContainText(thinking)
     }
 
@@ -75,10 +77,27 @@ for (const mode of ['embedded', 'remote'] as const) {
       await expect.poll(currentSession).toBe(id)
     }
 
-    async function choose(title: string, label: string): Promise<void> {
+    async function choose(kind: 'memory' | 'security' | 'thinking', label: string): Promise<void> {
       await openPreferences()
-      await page.getByTitle(title, { exact: true }).click()
-      await page.getByRole('menuitem').filter({ has: page.locator('.composer-options__dd-label', { hasText: new RegExp(`^${label}$`) }) }).click()
+      if (kind === 'security') {
+        await page.getByRole('button', { name: /^切换本会话访问权限：/ }).click()
+        await page.getByRole('menuitem', { name: new RegExp(`^${label}`) }).click()
+      } else {
+        if (kind === 'memory') await page.getByRole('button', { name: /^本会话记忆：/ }).click()
+        else await page.getByTitle('选择思考档位', { exact: true }).click()
+        await page.getByRole('menuitem').filter({ has: page.locator('.composer-options__dd-label', { hasText: new RegExp(`^${label}$`) }) }).click()
+      }
+    }
+
+    async function setGlobalMemory(enabled: boolean): Promise<void> {
+      await closePreferences()
+      await page.getByRole('button', { name: '设置', exact: true }).click()
+      await page.getByRole('tab', { name: '记忆', exact: true }).click()
+      const toggle = page.getByRole('switch', { name: '全局记忆', exact: true })
+      await expect(toggle).toBeEnabled()
+      if ((await toggle.getAttribute('aria-checked')) !== String(enabled)) await toggle.click()
+      await expect(toggle).toHaveAttribute('aria-checked', String(enabled))
+      await page.getByRole('button', { name: '关闭 设置', exact: true }).click()
     }
 
     test.beforeAll(async () => {
@@ -123,6 +142,9 @@ for (const mode of ['embedded', 'remote'] as const) {
           cwd: dirname(entry), windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
           env: { ...env, PORT: String(port), HOST: '127.0.0.1', ENCRYPTION_KEY: 'c'.repeat(64), AETHER_INSTANCE_TOKEN: token }
         })
+        // Windows exit can precede closure of pipes inherited by SQLite children.
+        // Observe close from spawn time so an already-exited owner is also joined.
+        remoteEngineClosed = new Promise(done => remoteEngine!.once('close', () => done()))
         remoteEngine.on('error', error => { startupError = error })
         const remember = (chunk: Buffer): void => { startupLog = (startupLog + chunk.toString()).slice(-4000) }
         remoteEngine.stdout?.on('data', remember)
@@ -167,56 +189,70 @@ for (const mode of ['embedded', 'remote'] as const) {
 
     test.afterAll(async () => {
       await app?.close()
-      if (remoteEngine && remoteEngine.exitCode === null && remoteEngine.signalCode === null) {
+      if (remoteEngine && remoteEngineClosed) {
         const child = remoteEngine
         await new Promise<void>((done, reject) => {
-          const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('Owned fixture engine did not exit')) }, 15_000)
-          child.once('exit', () => { clearTimeout(timer); done() })
-          child.kill('SIGTERM')
+          const timer = setTimeout(() => {
+            if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+            reject(new Error('Owned fixture engine did not close its process and inherited stdio'))
+          }, 15_000)
+          void remoteEngineClosed!.then(() => { clearTimeout(timer); done() })
+          if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
         })
       }
       if (!fixture) return
       const absolute = resolve(fixture)
       if (dirname(absolute) !== resolve(root, '.e2e-tmp') || !basename(absolute).startsWith(`composer-defaults-${mode}-`)) throw new Error('Unsafe composer fixture cleanup')
-      rmSync(absolute, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+      // Async retries let process/pipe close callbacks run while Windows releases
+      // directory handles; a persistent lock remains a visible teardown failure.
+      await rm(absolute, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     })
 
-    test('未保存偏好时显示仅本会话 / Low / 标准模式，且与真实引擎一致', async () => {
-      await expectLabels('仅本会话', '标准模式')
-      expect(await readPreferences(firstSession)).toEqual({
-        memory: { sessionId: firstSession, memoryScope: 'session', effectiveScope: 'session', enabled: true },
+    test('未保存偏好时会话记忆继承开启 / Low / 标准模式，且与真实引擎一致', async () => {
+      await expectLabels('跟随默认 · 开启', '标准模式')
+      expect(await readPreferences(firstSession)).toMatchObject({
+        memory: { sessionId: firstSession, enabled: true, globalEnabled: false, sessionDefaultEnabled: true,
+          sessionOverride: null, sessionEnabled: true, effectiveScopes: ['session'] },
         security: 'standard'
       })
       expect((await page.evaluate(() => window.aether.settings.get())).thinkingMode).toBe('low')
-      await expect(page.locator('.composer-options__popup')).toContainText('只在当前会话中读取和写入')
+      await expect(page.locator('.composer-options__popup')).toContainText('跟随设置中的默认值，当前开启')
+      await page.getByRole('button', { name: /^本会话记忆：/ }).click()
+      await expect(page.locator('.composer-options__dd-menu').getByRole('menuitem')).toHaveCount(3)
+      await expect(page.locator('.composer-options__dd-menu')).not.toContainText('全局记忆')
+      await page.keyboard.press('Escape')
     })
 
-    test('显式关闭/全局记忆和安全/完全访问模式在刷新、切会话后不被默认值覆盖', async () => {
-      await choose('选择长期记忆范围', '关闭记忆')
-      await choose('选择安全模式', '安全模式')
-      await expect.poll(async () => readPreferences(firstSession)).toMatchObject({ memory: { memoryScope: 'off', effectiveScope: 'off' }, security: 'safe' })
+    test('会话记忆覆盖、安全权限及思考选择在刷新与切会话后保持，全局开关只在设置中生效', async () => {
+      await choose('memory', '本会话关闭')
+      await choose('security', '安全模式')
+      await expect.poll(async () => readPreferences(firstSession)).toMatchObject({ memory: { sessionOverride: false, sessionEnabled: false, effectiveScopes: [] }, security: 'safe' })
       await page.reload()
-      await expectLabels('关闭记忆', '安全模式')
+      await expectLabels('本会话关闭', '安全模式')
 
       await selectSession('Defaults session B', secondSession)
-      await expectLabels('仅本会话', '标准模式')
-      await choose('选择长期记忆范围', '全局记忆')
-      await choose('选择安全模式', '完全访问')
-      await expect.poll(async () => readPreferences(secondSession)).toMatchObject({ memory: { memoryScope: 'global', effectiveScope: 'global' }, security: 'full-access' })
+      await expectLabels('跟随默认 · 开启', '标准模式')
+      await choose('memory', '本会话开启')
+      await choose('security', '完全访问')
+      await expect.poll(async () => readPreferences(secondSession)).toMatchObject({ memory: { sessionOverride: true, sessionEnabled: true, effectiveScopes: ['session'] }, security: 'full-access' })
+      await setGlobalMemory(true)
+      expect(await readPreferences(firstSession)).toMatchObject({ memory: { globalEnabled: true, sessionOverride: false, sessionEnabled: false, effectiveScopes: ['global'] } })
+      expect(await readPreferences(secondSession)).toMatchObject({ memory: { globalEnabled: true, sessionOverride: true, sessionEnabled: true, effectiveScopes: ['global', 'session'] } })
       await selectSession('Defaults session A', firstSession)
-      await expectLabels('关闭记忆', '安全模式')
+      await expectLabels('本会话关闭', '安全模式')
       await selectSession('Defaults session B', secondSession)
-      await expectLabels('全局记忆', '完全访问')
-      await choose('选择思考档位', 'High')
-      await expectLabels('全局记忆', '完全访问', 'High')
+      await expectLabels('本会话开启', '完全访问')
+      await choose('thinking', 'High')
+      await expectLabels('本会话开启', '完全访问', 'High')
       expect((await page.evaluate(() => window.aether.settings.get())).thinkingMode).toBe('low')
       await page.reload()
-      await expectLabels('全局记忆', '完全访问', 'High')
+      await expectLabels('本会话开启', '完全访问', 'High')
       await selectSession('Defaults session A', firstSession)
-      await expectLabels('关闭记忆', '安全模式', 'Low')
+      await expectLabels('本会话关闭', '安全模式', 'Low')
       await selectSession('Defaults session B', secondSession)
-      await expectLabels('全局记忆', '完全访问', 'High')
+      await expectLabels('本会话开启', '完全访问', 'High')
       expect((await page.evaluate(() => window.aether.settings.get())).thinkingMode).toBe('low')
+      await setGlobalMemory(false)
     })
 
     test('新建会话采用记忆、安全和全局思考默认值，不继承其他会话的手选档位', async () => {
@@ -226,14 +262,15 @@ for (const mode of ['embedded', 'remote'] as const) {
       const created = await currentSession()
       expect(created).not.toBe('')
       expect(created).not.toBe(firstSession)
-      await expectLabels('仅本会话', '标准模式', 'Low')
+      await expectLabels('跟随默认 · 开启', '标准模式', 'Low')
       expect((await page.evaluate(() => window.aether.settings.get())).thinkingMode).toBe('low')
-      expect(await readPreferences(created)).toEqual({
-        memory: { sessionId: created, memoryScope: 'session', effectiveScope: 'session', enabled: true },
+      expect(await readPreferences(created)).toMatchObject({
+        memory: { sessionId: created, enabled: true, globalEnabled: false, sessionDefaultEnabled: true,
+          sessionOverride: null, sessionEnabled: true, effectiveScopes: ['session'] },
         security: 'standard'
       })
-      expect(await readPreferences(firstSession)).toMatchObject({ memory: { memoryScope: 'off' }, security: 'safe' })
-      expect(await readPreferences(secondSession)).toMatchObject({ memory: { memoryScope: 'global' }, security: 'full-access' })
+      expect(await readPreferences(firstSession)).toMatchObject({ memory: { sessionOverride: false, sessionEnabled: false }, security: 'safe' })
+      expect(await readPreferences(secondSession)).toMatchObject({ memory: { sessionOverride: true, sessionEnabled: true }, security: 'full-access' })
     })
   })
 }

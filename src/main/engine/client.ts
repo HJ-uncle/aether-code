@@ -3,6 +3,7 @@ import { engineHost } from './host'
 import { engineIdentityOf, engineTargetError, isAccountRequestPath, normalizeEnginePath, remoteRequestError, remoteWorkspacePathError, subagentProtocolHeaders } from './protocol'
 import { prepareRemoteChatBody } from './remote-workspace'
 import { managementRequestSignal } from './request-timeout'
+import { engineTransportFailure } from './request-error'
 import type { EngineRequestInput, EngineRequestResult, EngineUploadInput } from '../../shared/ipc'
 
 function buildQuery(query: EngineRequestInput['query']): string {
@@ -51,27 +52,37 @@ export async function engineRequest<T = unknown>(
   const requestBody = snapshot.mode === 'remote' && input.method === 'POST' && path.split('?')[0] === '/api/v1/chat'
     ? await prepareRemoteChatBody(input.body, { baseUrl, headers, signal, configuredRoot: engineHost.remoteWorkspaceRoot, target: snapshot })
     : input.body
-  signal.throwIfAborted()
   // An empty DELETE with application/json is rejected by Fastify before it reaches the route.
   if (requestBody !== undefined) headers['Content-Type'] = 'application/json'
-  const res = await fetch(url, {
-    redirect: 'error',
-    method: input.method,
-    headers,
-    body: requestBody === undefined ? undefined : JSON.stringify(requestBody),
-    signal
-  })
+  const transportFailure = (error: unknown): EngineRequestResult<never> =>
+    engineTransportFailure(error, signal, input.method, engineTargetError(engineHost.getSnapshot(), expectedEngine))
+  let res: Response
+  try {
+    signal.throwIfAborted()
+    res = await fetch(url, {
+      redirect: 'error',
+      method: input.method,
+      headers,
+      body: requestBody === undefined ? undefined : JSON.stringify(requestBody),
+      signal
+    })
+  } catch (error) { return transportFailure(error) }
   let payload: unknown
   try {
     payload = await res.json()
-  } catch {
+  } catch (error) {
+    // A severed response body is a transport failure, not invalid JSON. For a
+    // mutation its outcome remains unknown even after HTTP headers arrived.
+    if (signal.aborted || !(error instanceof SyntaxError)) return transportFailure(error)
     return {
       ok: false,
       code: res.ok ? -1 : res.status,
-      message: `响应不是合法 JSON（HTTP ${res.status}）`,
+      message: `响应不是合法 JSON（HTTP ${res.status}）${input.method === 'GET' ? '' : '，操作结果尚未确认，请先检查当前状态。'}`,
       data: null
     }
   }
+  const staleResponse = engineTargetError(engineHost.getSnapshot(), expectedEngine)
+  if (staleResponse) return { ok: false, code: 409, message: staleResponse, data: null }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     return {
       ok: false,

@@ -35,6 +35,7 @@ export class NativeBrowserHostError extends Error {
   constructor(message: string, readonly status: number) { super(message) }
 }
 const identityKeys = ['rootSessionId', 'rootRunId', 'ownerRunId'] as const
+const terminalRootStatuses = new Set(['succeeded', 'failed', 'cancelled', 'interrupted'])
 export function validBrowserExecution(value: unknown): value is BrowserExecutionIdentity {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const record = value as Record<string, unknown>
@@ -264,7 +265,10 @@ export class NativeBrowserHostManager {
       while (!signal.aborted) {
         const status = await this.request<{ running: boolean; finished: boolean; run?: { runId: string; status: string } }>(host, 'GET',
           '/chat/status?sessionId=' + pathId(root.execution.rootSessionId), undefined, { signal })
-        if (!status?.run || status.run.runId !== root.execution.rootRunId || status.finished && !status.running && status.run.status !== 'waiting') {
+        // Stream publication can finish after an oversized frame while the
+        // durable producer keeps running. Only its persisted terminal status
+        // may release the browser client; the stream flags are not ownership.
+        if (!status?.run || status.run.runId !== root.execution.rootRunId || terminalRootStatuses.has(status.run.status)) {
           root.controller.abort(); return
         }
         await delay(2000, undefined, { signal })

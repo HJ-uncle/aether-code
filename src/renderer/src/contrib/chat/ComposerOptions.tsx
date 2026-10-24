@@ -3,8 +3,7 @@ import { useApp } from '@renderer/core/app-context'
 import { useModels } from '@renderer/core/engine/model-store'
 import { changeSecurityMode, useSecurityMode } from '@renderer/core/engine/security-store'
 import { MODE_DESCRIPTORS, type SecurityMode } from '@renderer/core/engine/security'
-import { changeMemoryScope, useMemoryScope } from '@renderer/core/engine/memory-store'
-import { MEMORY_SCOPE_DESCRIPTORS, type MemoryScope } from '@renderer/core/engine/memory'
+import { changeSessionMemoryEnabled, useMemoryScope } from '@renderer/core/engine/memory-store'
 import { Icon } from '@renderer/workbench/icons'
 import { Popover } from '@renderer/workbench/Popover'
 import { Select } from '@renderer/workbench/Select'
@@ -75,7 +74,9 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
   const [openMenu, setOpenMenu] = useState<'memory' | 'thinking' | 'security' | null>(null)
   const { mode: storedMode, loaded, loading, error, refresh } = useSecurityMode(sessionId)
   const {
-    scope: storedMemoryScope,
+    sessionOverride: memoryOverride,
+    sessionEnabled,
+    sessionDefaultEnabled,
     enabled: memoryEnabled,
     loaded: memoryLoaded,
     loading: memoryLoading,
@@ -112,14 +113,24 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
   const secSummary = loading
     ? '正在读取安全模式…'
     : error ?? (secDescriptor ? [secDescriptor.summary, secDescriptor.warning].filter(Boolean).join(' ') : '尚未确认引擎当前权限')
-  const memoryDescriptor = MEMORY_SCOPE_DESCRIPTORS.find((item) => item.value === storedMemoryScope)
+  const memoryChoice = !memoryLoaded ? '' : memoryOverride === null ? 'default' : memoryOverride ? 'on' : 'off'
+  const memoryLabel = !ready ? '引擎未连接' : memoryLoading ? '同步中…' : memoryEnabled === false ? '服务端已关闭'
+    : !memoryLoaded ? '尚未确认' : memoryOverride === null ? `跟随默认 · ${sessionEnabled ? '开启' : '关闭'}`
+      : `本会话${sessionEnabled ? '开启' : '关闭'}`
+  const memoryOptions = [
+    { value: 'on', label: '本会话开启', summary: '单独开启当前会话的记忆，覆盖设置中的默认值。' },
+    { value: 'off', label: '本会话关闭', summary: '单独关闭当前会话的记忆，聊天历史仍会保留。' },
+    { value: 'default', label: '恢复默认', summary: `取消本会话的单独设置，跟随默认${sessionDefaultEnabled ? '开启' : '关闭'}。` }
+  ]
   const memorySummary = memoryLoading
-    ? '正在读取记忆设置…'
+    ? '正在同步本会话记忆设置…'
     : memoryError
-      ? memoryError
+      ? memoryEnabled === false ? '服务端已关闭长期记忆。聊天历史会继续保留。' : '记忆设置未能同步，请重新读取后再试。'
       : memoryEnabled === false
-        ? '引擎未启用长期记忆；切换时会提示错误'
-        : (memoryDescriptor?.summary ?? '尚未确认引擎当前记忆范围')
+        ? '服务端已关闭长期记忆。聊天历史会继续保留。'
+        : !memoryLoaded ? '尚未确认本会话的记忆设置。'
+          : memoryOverride === null ? `跟随设置中的默认值，当前${sessionEnabled ? '开启' : '关闭'}。聊天历史会继续保留。`
+            : `已为本会话单独${sessionEnabled ? '开启' : '关闭'}记忆，可随时恢复默认。聊天历史会继续保留。`
 
   const pickThinking = (next: string): void => {
     if (!ready) return
@@ -133,8 +144,10 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
   }
 
   const pickMemory = (next: string): void => {
-    if (next === storedMemoryScope || memoryLoading || !ready || !sessionId) return
-    void changeMemoryScope(sessionId, next as MemoryScope).catch(() => undefined)
+    if (next === memoryChoice || memoryLoading || !memoryLoaded || !ready || !active || !sessionId) return
+    if (next !== 'on' && next !== 'off' && next !== 'default') return
+    if (next === 'on' && memoryEnabled === false) return
+    void changeSessionMemoryEnabled(sessionId, next === 'default' ? null : next === 'on').catch(() => undefined)
   }
 
   return (
@@ -168,7 +181,7 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
           type="button"
           className={`composer-options__trigger${isOpen ? ' is-open' : ''}`}
           disabled={!ready}
-          title="对话偏好：长期记忆 / 思考档位 / 安全模式"
+          title="对话偏好：本会话记忆 / 思考档位 / 安全模式"
           aria-label="对话偏好"
         >
           <Icon name="settings" size={16} />
@@ -179,12 +192,17 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
         <div className="composer-options__row">
           <Icon name="graph" size={16} />
           <div className="composer-options__text">
-            <div className="composer-options__title">长期记忆</div>
-            <div className="composer-options__summary">{memorySummary}</div>
+            <div className="composer-options__title">本会话记忆</div>
+            <div className="composer-options__summary">
+              {memorySummary}
+              {memoryEnabled === false && !memoryError ? (
+                <button type="button" disabled={memoryLoading} onClick={() => void refreshMemory(sessionId)}>重新读取记忆设置</button>
+              ) : null}
+            </div>
           </div>
           <Popover
             className="composer-options__dd"
-            label="长期记忆"
+            label="本会话记忆"
             placement="up"
             align="end"
             width={260}
@@ -195,23 +213,24 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
               <button
                 type="button"
                 className={`composer-options__dd-btn${isOpen ? ' is-open' : ''}`}
-                disabled={!ready || !sessionId || memoryLoading}
-                title={!sessionId ? '先发一条消息建立会话，之后才能设置长期记忆' : '选择长期记忆范围'}
+                disabled={!ready || !active || !sessionId || memoryLoading || !memoryLoaded}
+                title={!sessionId ? '建立会话后可设置本会话记忆' : memoryEnabled === false ? '服务端已关闭长期记忆，仍可关闭本会话记忆或恢复默认' : '选择本会话记忆，或恢复默认'}
+                aria-label={`本会话记忆：${memoryLabel}`}
               >
-                <span>{memoryLoading ? '读取中…' : (memoryDescriptor?.label ?? '状态未知')}</span>
+                <span>{memoryLabel}</span>
                 <span className="composer-options__dd-caret">⌄</span>
               </button>
             )}
           >
             <div className="composer-options__dd-menu">
-              {MEMORY_SCOPE_DESCRIPTORS.map((item) => (
+              {memoryOptions.map((item) => (
                 <MenuOption
                   key={item.value}
                   value={item.value}
-                  current={storedMemoryScope ?? ''}
+                  current={memoryChoice}
                   label={item.label}
                   summary={item.summary}
-                  disabled={!ready || !sessionId || memoryLoading}
+                  disabled={!ready || !active || !sessionId || memoryLoading || !memoryLoaded || (item.value === 'on' && memoryEnabled === false)}
                   onSelect={(next) => { pickMemory(next); setOpenMenu(null) }}
                 />
               ))}
@@ -221,8 +240,9 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
 
         {memoryError ? (
           <div className="composer-options__error">
-            {memoryError}
+            记忆设置未能同步。
             <button type="button" onClick={() => void refreshMemory(sessionId)}>重新读取记忆设置</button>
+            <details className="composer-options__diagnostics"><summary>查看诊断信息</summary><div>{memoryError}</div></details>
           </div>
         ) : null}
 

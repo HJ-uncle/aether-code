@@ -1,4 +1,4 @@
-import { useMemo, useState, type JSX, type KeyboardEvent } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type JSX, type KeyboardEvent } from 'react'
 import {
   PROVIDERS,
   detectCapabilities,
@@ -8,12 +8,14 @@ import {
 } from '@renderer/core/engine/models'
 import {
   initialModelForm,
+  findModelConflict,
   buildModelUpdate,
   newModelOverrides,
   parseContextWindow,
   type ModelFormState
 } from '@renderer/core/engine/model-form'
-import { addModel, saveModel } from '@renderer/core/engine/model-store'
+import { addModel, getModelState, refreshModels, saveModel, useModels } from '@renderer/core/engine/model-store'
+import { MODEL_CONFLICT_MESSAGE, ModelAlreadyExistsError } from '@renderer/core/engine/model-save-error'
 import { Dialog } from '@renderer/workbench/Dialog'
 import { Select } from '@renderer/workbench/Select'
 import { Segmented, SettingsContent, SettingsGroup, SettingsRow } from '../settings/SettingsGroup'
@@ -34,7 +36,15 @@ const MODEL_PRESETS: Record<string, string[]> = {
 }
 
 export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProps): JSX.Element {
-  const isEdit = Boolean(model)
+  const [existingToEdit, setExistingToEdit] = useState<EngineModel | undefined>()
+  const editingModel = model ?? existingToEdit
+  const isEdit = Boolean(editingModel)
+  const { models, loading } = useModels()
+  const conflictId = useId()
+  const modelIdInput = useRef<HTMLInputElement>(null)
+  const displayNameInput = useRef<HTMLInputElement>(null)
+  // State alone cannot stop two Enter/click handlers before React commits.
+  const saveInFlight = useRef(false)
 
   const [form, setForm] = useState<ModelFormState>(() => initialModelForm(model))
 
@@ -43,7 +53,16 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
   const [testResult, setTestResult] = useState<string | null>(null)
   const [testOk, setTestOk] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [serverConflict, setServerConflict] = useState<ModelAlreadyExistsError | null>(null)
   const [caps, setCaps] = useState<ModelCapabilities | null>(null)
+  const duplicate = !isEdit ? findModelConflict(models, form) : undefined
+  const hasConflict = !isEdit && Boolean(duplicate || serverConflict)
+  useEffect(() => {
+    if (serverConflict && !saving) modelIdInput.current?.focus()
+  }, [serverConflict, saving])
+  useEffect(() => {
+    if (existingToEdit) displayNameInput.current?.focus()
+  }, [existingToEdit])
 
   const providerMeta = useMemo(
     () => PROVIDERS.find((item) => item.value === form.provider),
@@ -51,13 +70,16 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
   )
 
   const patch = (next: Partial<ModelFormState>): void => {
+    if (saveInFlight.current) return
     setForm((prev) => ({ ...prev, ...next }))
     setTestResult(null)
     setError(null)
+    if (next.modelId !== undefined || next.provider !== undefined) setServerConflict(null)
   }
 
   /** 切换 Provider 时同步推荐 baseUrl（仅当当前值仍是上一个 Provider 的默认值） */
   const changeProvider = (value: string): void => {
+    if (saveInFlight.current) return
     const previousDefault = providerMeta?.baseUrl ?? ''
     const nextDefault = PROVIDERS.find((item) => item.value === value)?.baseUrl ?? ''
     setForm((prev) => ({
@@ -67,6 +89,27 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
     }))
     setTestResult(null)
     setError(null)
+    setServerConflict(null)
+  }
+
+  const editExisting = (): void => {
+    if (!duplicate || saveInFlight.current) return
+    // This explicit action opens the saved record with an empty key field.
+    // Never merge the failed create draft into the existing credentials.
+    setExistingToEdit(duplicate)
+    setForm(initialModelForm(duplicate))
+    setServerConflict(null)
+    setError(null)
+    setTestResult(null)
+    setCaps(null)
+  }
+
+  const refreshConflicts = async (): Promise<void> => {
+    if (saveInFlight.current) return
+    await refreshModels()
+    const state = getModelState()
+    if (!state.error) setServerConflict(null)
+    else setError('模型列表刷新失败，请稍后重试。')
   }
 
   // 表单校验：与服务端规则保持一致，提前拦截避免无谓请求
@@ -103,7 +146,7 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
       // 用已保存的配置测试
       setTesting(true)
       setTestResult(null)
-      const result = await testModel(model!.id)
+      const result = await testModel(editingModel!.id)
       setTesting(false)
       setTestOk(result.success)
       setTestResult(
@@ -168,15 +211,21 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
   }
 
   const save = async (): Promise<void> => {
+    if (saveInFlight.current) return
+    if (hasConflict) {
+      modelIdInput.current?.focus()
+      return
+    }
     if (validation) {
       setError(validation)
       return
     }
+    saveInFlight.current = true
     setSaving(true)
     setError(null)
     try {
       if (isEdit) {
-        const updated = await saveModel(model!.id, buildModelUpdate(model!, form))
+        const updated = await saveModel(editingModel!.id, buildModelUpdate(editingModel!, form))
         onSaved?.(updated)
       } else {
         const created = await addModel({
@@ -191,8 +240,17 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
       }
       onClose()
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      if (!isEdit && err instanceof ModelAlreadyExistsError) {
+        setServerConflict(err)
+        modelIdInput.current?.focus()
+        // A different window may have created the record after our cached list.
+        // Refresh only for recovery; this never retries or converts POST into PUT.
+        void refreshModels()
+      } else {
+        setError(err instanceof Error ? err.message : String(err))
+      }
     } finally {
+      saveInFlight.current = false
       setSaving(false)
     }
   }
@@ -208,8 +266,8 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
           <button
             type="button"
             className="btn btn--primary"
-            disabled={saving || Boolean(validation)}
-            title={validation ?? undefined}
+            disabled={saving || hasConflict || Boolean(validation)}
+            title={hasConflict ? MODEL_CONFLICT_MESSAGE : validation ?? undefined}
             onClick={() => void save()}
           >
             {saving ? '保存中…' : '保存'}
@@ -222,16 +280,20 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
         <SettingsRow label="服务商" description={providerMeta?.hint}>
           <Select
             className="sg__select-field"
+            ariaLabel="服务商"
             value={form.provider}
-            disabled={isEdit}
+            disabled={isEdit || saving}
             options={PROVIDERS.map((item) => ({ value: item.value, label: item.label }))}
             onChange={changeProvider}
           />
         </SettingsRow>
         <SettingsRow label="显示名称" description="列表中展示的名字，留空则显示模型 ID">
           <input
+            ref={displayNameInput}
             className="field__input sg__input sg__input--wide"
             value={form.displayName}
+            aria-label="显示名称"
+            disabled={saving}
             placeholder="可选"
             onChange={(event) => patch({ displayName: event.target.value })}
             onKeyDown={submitOnEnter}
@@ -239,14 +301,35 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
         </SettingsRow>
         <SettingsRow label="模型 ID">
           <input
+            ref={modelIdInput}
             className="field__input sg__input sg__input--wide"
             value={form.modelId}
             placeholder="如 deepseek-chat"
-            disabled={isEdit}
+            aria-label="模型 ID"
+            aria-invalid={hasConflict || undefined}
+            aria-describedby={hasConflict ? conflictId : undefined}
+            disabled={isEdit || saving}
             onChange={(event) => patch({ modelId: event.target.value })}
             onKeyDown={submitOnEnter}
           />
         </SettingsRow>
+        {hasConflict ? (
+          <SettingsContent>
+            <div id={conflictId} role="alert" className="notice notice--error">
+              <div>{MODEL_CONFLICT_MESSAGE}</div>
+              <span className="chip-row">
+                {duplicate ? (
+                  <button type="button" className="btn btn--sm" onClick={editExisting}>
+                    编辑已有模型
+                  </button>
+                ) : null}
+                <button type="button" className="btn btn--sm" disabled={loading || saving} onClick={() => void refreshConflicts()}>
+                  {loading ? '刷新中…' : '刷新模型列表'}
+                </button>
+              </span>
+            </div>
+          </SettingsContent>
+        ) : null}
         {MODEL_PRESETS[form.provider]?.length && !isEdit ? (
           <SettingsContent>
             <span className="chip-row">
@@ -255,6 +338,7 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
                   key={preset}
                   type="button"
                   className="chip"
+                  disabled={saving}
                   onClick={() => patch({ modelId: preset })}
                 >
                   {preset}
@@ -273,6 +357,8 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
           <input
             className="field__input sg__input sg__input--wide"
             value={form.baseUrl}
+            aria-label="接口地址"
+            disabled={saving}
             placeholder="https://api.deepseek.com"
             onChange={(event) => patch({ baseUrl: event.target.value })}
             onKeyDown={submitOnEnter}
@@ -285,9 +371,11 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
           <input
             className="field__input sg__input sg__input--wide"
             type="password"
+            aria-label="API Key"
+            disabled={saving}
             value={form.apiKey}
             placeholder={
-              isEdit ? `留空表示不修改（当前 ${model?.apiKey || '未设置'}）` : '以 sk- 开头的密钥'
+              isEdit ? `留空表示不修改（当前 ${editingModel?.apiKey || '未设置'}）` : '以 sk- 开头的密钥'
             }
             onChange={(event) => patch({ apiKey: event.target.value })}
             onKeyDown={submitOnEnter}
@@ -302,6 +390,7 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
         >
           <div role="group" aria-label="图片输入能力">
             <Segmented
+              disabled={saving}
               options={[
                 { value: 'default', label: '默认' },
                 { value: 'on', label: '开启' },
@@ -318,6 +407,7 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
         >
           <div role="group" aria-label="思考能力">
             <Segmented
+              disabled={saving}
               options={[
                 { value: 'default', label: '默认' },
                 { value: 'on', label: '开启' },
@@ -332,16 +422,14 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
         </SettingsRow>
         <SettingsRow
           label="上下文窗口"
-          description={
-            isEdit
-              ? '单位 K（1K = 1000 token），可保留三位小数；留空则跟随引擎识别结果'
-              : '新模型默认 200K（200,000 token），可按需调整；单位 K，最多三位小数'
-          }
+          description="模型能力上限，留空自动识别；实际使用还受上下文预算约束。单位 K（1K = 1000 token），最多三位小数"
         >
           <input
             className="field__input sg__input sg__input--wide"
             value={form.contextWindow}
-            placeholder={isEdit ? '如 128' : '200'}
+            aria-label="上下文窗口"
+            disabled={saving}
+            placeholder="自动识别，如需覆盖可填 128"
             inputMode="decimal"
             onChange={(event) => patch({ contextWindow: event.target.value })}
             onKeyDown={submitOnEnter}
@@ -350,10 +438,10 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
       </SettingsGroup>
 
       <div className="settings-view__actions">
-        <button type="button" className="btn" disabled={testing} onClick={() => void runTest()}>
+        <button type="button" className="btn" disabled={testing || saving} onClick={() => void runTest()}>
           {testing ? '测试中…' : '测试连接'}
         </button>
-        <button type="button" className="btn" onClick={() => void runDetect()}>
+        <button type="button" className="btn" disabled={saving} onClick={() => void runDetect()}>
           检测能力
         </button>
       </div>
@@ -382,6 +470,7 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
                 <button
                   type="button"
                   className="chip"
+                  disabled={saving}
                   title="把推断出的「图像理解」填入上方开关"
                   onClick={() => patch({ vision: true })}
                 >
@@ -392,6 +481,7 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
                 <button
                   type="button"
                   className="chip"
+                  disabled={saving}
                   title="把推断出的「推理模式」填入上方开关"
                   onClick={() => patch({ thinking: true })}
                 >
@@ -403,7 +493,7 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
         </SettingsGroup>
       ) : null}
 
-      {error ? <div className="notice notice--error">{error}</div> : null}
+      {error ? <div role="alert" className="notice notice--error">{error}</div> : null}
     </Dialog>
   )
 }

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Office v004 immutable closure evidence",
+  "type": "object",
+  "required": ["schemaVersion", "closureId", "createdAt", "authorRole", "subjectRevision", "status", "decisionId", "decisionNonce", "decisionSha256", "pmoManifestSha256", "acknowledgements", "checks", "unresolvedIssues"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "closureId": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "authorRole": { "enum": ["pmo", "compliance"] },
+    "subjectRevision": { "const": "v004" },
+    "status": { "enum": ["complete", "incomplete"] },
+    "decisionId": { "type": "string", "minLength": 1 },
+    "decisionNonce": { "$ref": "#/$defs/nonce" },
+    "decisionSha256": { "$ref": "#/$defs/sha" },
+    "pmoManifestSha256": { "$ref": "#/$defs/sha" },
+    "acknowledgements": { "type": "array", "maxItems": 5, "items": { "$ref": "#/$defs/ack" } },
+    "checks": { "type": "array", "items": { "type": "object", "required": ["id", "status", "evidence"], "properties": {
+      "id": { "type": "string", "minLength": 1 }, "status": { "enum": ["passed", "failed", "incomplete", "not-verified"] },
+      "evidence": { "type": "array", "items": { "$ref": "#/$defs/file" } }
+    } } },
+    "unresolvedIssues": { "type": "array" },
+    "pmoClosure": { "$ref": "#/$defs/file" }
+  },
+  "allOf": [
+    { "if": { "properties": { "authorRole": { "const": "compliance" } } }, "then": { "required": ["pmoClosure"] } },
+    { "if": { "properties": { "status": { "const": "complete" } } }, "then": { "properties": {
+      "acknowledgements": { "minItems": 5 }, "checks": { "minItems": 1 }, "unresolvedIssues": { "maxItems": 0 }
+    } } }
+  ],
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^(sha256:)?[a-fA-F0-9]{64}$" },
+    "nonce": { "type": "string", "pattern": "^[A-Za-z0-9_-]{22,128}$" },
+    "file": { "type": "object", "required": ["workspaceRelativePath", "sha256"], "properties": {
+      "workspaceRelativePath": { "type": "string", "minLength": 1 }, "sha256": { "$ref": "#/$defs/sha" }
+    } },
+    "manifest": { "type": "object", "required": ["role", "revision", "manifestPath", "manifestSha256"], "properties": {
+      "role": { "enum": ["finance", "people", "sales", "operations", "compliance"] }, "revision": { "const": "v004" },
+      "manifestPath": { "type": "string", "minLength": 1 }, "manifestSha256": { "$ref": "#/$defs/sha" }
+    } },
+    "ack": { "type": "object", "required": ["role", "messageId", "nonce", "messageSha256", "ackPath", "ackSha256", "appliedManifest", "appliedArtifacts"], "properties": {
+      "role": { "enum": ["finance", "people", "sales", "operations", "compliance"] },
+      "messageId": { "type": "string", "minLength": 1 }, "nonce": { "$ref": "#/$defs/nonce" },
+      "messageSha256": { "$ref": "#/$defs/sha" }, "ackPath": { "type": "string", "minLength": 1 }, "ackSha256": { "$ref": "#/$defs/sha" },
+      "appliedManifest": { "$ref": "#/$defs/manifest" }, "appliedArtifacts": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/file" } }
+    } }
+  }
+}
+

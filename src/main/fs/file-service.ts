@@ -215,8 +215,13 @@ export async function readDirectory(dir: string): Promise<FsEntry[]> {
 }
 
 /** 读取文件内容；二进制返回 base64，文本超限则截断 */
-export async function readFile(filePath: string): Promise<FsFileContent> {
-  const safePath = assertAllowed(filePath)
+/**
+ * Read a regular file for a user-visible preview.  This deliberately shares
+ * the same byte/text limits as workspace reads so opening a large video or
+ * generated log cannot pin the main process.  The caller is responsible for
+ * applying its own path policy before entering this helper.
+ */
+async function readFileContents(safePath: string): Promise<FsFileContent> {
 
   const handle = await fsp.open(safePath, 'r')
   try {
@@ -270,6 +275,39 @@ export async function readFile(filePath: string): Promise<FsFileContent> {
   } finally {
     await handle.close()
   }
+}
+
+export async function readFile(filePath: string): Promise<FsFileContent> {
+  return readFileContents(assertAllowed(filePath))
+}
+
+/**
+ * Read one explicitly user-selected local file without granting that path to
+ * the workspace/editor write surface.  This is used by the Work resource
+ * viewer for files dragged from the OS or chosen with the native file dialog.
+ * It intentionally has no matching write/rename/reveal API and never adds the
+ * path to the workspace allow-list.
+ */
+export async function readExternalFile(filePath: string): Promise<FsFileContent> {
+  if (typeof filePath !== 'string' || !filePath.trim()) throw new Error('外部文件路径无效')
+  const candidate = path.resolve(filePath)
+  const canonical = canonicalExistingTarget(candidate)
+  const stat = await fsp.stat(canonical)
+  if (!stat.isFile()) throw new Error('只能打开文件，不能预览文件夹')
+  return readFileContents(canonical)
+}
+
+/** Native file chooser for the read-only external preview surface. */
+export async function pickFile(): Promise<string | null> {
+  const result = await dialog.showOpenDialog({
+    title: '打开文件',
+    properties: ['openFile']
+  })
+  if (result.canceled || result.filePaths.length === 0) return null
+  const picked = path.resolve(result.filePaths[0])
+  const stat = await fsp.stat(picked)
+  if (!stat.isFile()) throw new Error('只能打开文件，不能预览文件夹')
+  return picked
 }
 
 /** 系统文件管理器只接受授权工作区路径，不能由渲染进程绕过文件访问边界。 */

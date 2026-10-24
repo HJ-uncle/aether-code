@@ -40,9 +40,13 @@ export const IPC = {
     settingsSaveEngine: 'settings:save-engine',
     /** 文件系统（IDE 本地实现） */
     fsPickFolder: 'fs:pick-folder',
+    /** Native file chooser for the read-only external document viewer. */
+    fsPickFile: 'fs:pick-file',
     fsAllowRoot: 'fs:allow-root',
     fsReadDir: 'fs:read-dir',
     fsReadFile: 'fs:read-file',
+    /** Read one explicitly user-selected local file without workspace access. */
+    fsReadExternalFile: 'fs:read-external-file',
     fsWriteFile: 'fs:write-file',
     fsCreateFile: 'fs:create-file',
     fsCreateFolder: 'fs:create-folder',

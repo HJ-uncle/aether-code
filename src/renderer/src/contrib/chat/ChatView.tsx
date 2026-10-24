@@ -28,10 +28,9 @@ import { toolPresentation } from './tool-presentation'
 import { useCollapseMemory } from './useCollapseMemory'
 import { registerPendingSession, requestSessionListRefresh, touchPendingSession } from '../history/pending-sessions'
 import { useModels } from '@renderer/core/engine/model-store'
-import { DEFAULT_CONTEXT_WINDOW_TOKENS } from '@renderer/core/engine/models'
+import { DEFAULT_CONTEXT_WINDOW_BUDGET } from '@renderer/core/engine/models'
 import { contextPresentation, contextPresentationLimit } from './context-presentation'
 import { changeSecurityMode } from '@renderer/core/engine/security-store'
-import { useMemoryScope } from '@renderer/core/engine/memory-store'
 import { requestOrThrow } from '@renderer/core/engine/client'
 import { utilityChat } from '@renderer/core/engine/utility-chat'
 import { openAppSettings } from '@renderer/contrib/settings/app-settings-navigation'
@@ -64,7 +63,7 @@ import { ResourcePicker, type ResourceItem } from './ResourcePicker'
 import './apple-chat-panels.css'
 
 /** Older engines/models can omit the window; use the model initialization default. */
-const CONTEXT_WINDOW_FALLBACK = DEFAULT_CONTEXT_WINDOW_TOKENS
+const CONTEXT_WINDOW_FALLBACK = DEFAULT_CONTEXT_WINDOW_BUDGET
 
 /** 消息窗口分页：只渲染尾部约 300 条消息（按轮次对齐切割），滚顶自动加载更早的 */
 const MESSAGE_PAGE_SIZE = 300
@@ -141,10 +140,6 @@ export function ChatView(): JSX.Element {
   // AppProvider 按引擎来源统一恢复或创建会话。这里提前创建会与远端选择
   // 竞争：本地设置为空的首帧会覆盖刚恢复的远端会话，使历史响应失效。
   const sessionId = settingsLoaded ? settings.lastSessionId : ''
-  const {
-    scope: memorySettingsScope,
-    loaded: memorySettingsLoaded
-  } = useMemoryScope(sessionId)
   const codegraphRoot = remoteReadOnly ? settings.remoteWorkspaceRoot.trim() || undefined : workspace.root || undefined
   const [input, setInput] = useState('')
   /** 同步记录编辑器的最新文本，避免润色请求返回时覆盖用户刚刚的修改。 */
@@ -752,11 +747,12 @@ export function ChatView(): JSX.Element {
       sessionId,
       ...composerRequest,
       model: modelId || undefined,
-      // A confirmed settings edit wins over the previous run; pending reads use its durable scope.
-      memoryScope: memorySettingsLoaded ? (memorySettingsScope ?? undefined) : composerRequest.memoryScope,
+      // Memory preferences are durable engine state. Do not replay the previous
+      // run's legacy scope over a newly changed default or session override.
+      memoryScope: undefined,
       workspacePaths: remoteReadOnly ? [] : currentWorkspacePaths()
     }),
-    [sessionId, composerRequest, modelId, memorySettingsLoaded, memorySettingsScope, remoteReadOnly]
+    [sessionId, composerRequest, modelId, remoteReadOnly]
   )
 
   const submit = useCallback(() => {

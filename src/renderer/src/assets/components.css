@@ -8039,6 +8039,12 @@ select.field__input {
 .composer-access-picker .select__trigger {
   max-width: 132px;
   min-width: 0;
+  /* 与工具条两侧图标按钮（+ 24px / 齿轮 26px）持平；
+     全局基线把 .select__trigger 撑到 --control-h-lg，这里压回 26px。 */
+  height: 26px;
+  min-height: 26px;
+  border: none;
+  background: transparent;
   font-size: 13px;
 }
 
@@ -8231,6 +8237,10 @@ select.field__input {
   text-decoration: underline;
   cursor: pointer;
 }
+
+.composer-options__diagnostics { margin-top: 6px; color: var(--fg-muted); font-size: 11px; overflow-wrap: anywhere; }
+.composer-options__diagnostics summary { cursor: pointer; }
+.composer-options__diagnostics > div { margin-top: 4px; white-space: pre-wrap; }
 
 /*
  * 窄面板紧凑形态（按输入面板实际宽度切换，与窗口大小无关）：

@@ -71,11 +71,11 @@ test('清空显示名称仍发送空串；空密钥和脱敏串不从模型拷�
     buildModelUpdate(item, { ...initialModelForm(item), apiKey: 'synthetic-replacement-key' })
   ).toEqual({ apiKey: 'synthetic-replacement-key' })
 })
-test('新增默认上下文固定为200K，其他能力仍不固化推断值', () => {
+test('新增模型不把运行预算固化为模型能力，默认由引擎推断', () => {
   const form = initialModelForm()
-  expect(form.contextWindow).toBe('200')
-  expect(newModelOverrides(form)).toEqual({ contextWindow: 200_000 })
-  expect(newModelOverrides({ ...form, vision: false })).toEqual({ contextWindow: 200_000, vision: false })
+  expect(form.contextWindow).toBe('')
+  expect(newModelOverrides(form)).toBeUndefined()
+  expect(newModelOverrides({ ...form, vision: false })).toEqual({ vision: false })
 })
 
 test('小数 K 无损换算为整数 token，并保留最大安全整数配置', () => {

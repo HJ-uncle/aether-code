@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import type { WorkArtifact } from './work-state'
-import { paths, readFile, readSessionFile, saveSessionFile } from '@renderer/core/workspace/fs-client'
+import { paths, readExternalFile as readExternalFileFromDisk, readFile, readSessionFile, saveSessionFile } from '@renderer/core/workspace/fs-client'
 import { openFileFromChat } from '@renderer/contrib/chat/open-file'
 import { Markdown } from '@renderer/contrib/chat/Markdown'
 import { Icon } from '@renderer/workbench/icons'
@@ -8,10 +8,12 @@ import { Spinner } from '@renderer/workbench/ui-primitives'
 import { Select } from '@renderer/workbench/Select'
 import { toast } from '@renderer/core/toast'
 import { workSourceMarkdown } from './work-artifact-utils'
-import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
+import { getEngineSource, isRemoteEngine, subscribeEngineSource } from '@renderer/core/engine/source'
 import { workArtifactExportName, workArtifactReadFailure, workArtifactReadResult, type WorkArtifactContent } from './work-artifact-content'
 import { FileGlyph } from '../explorer/FileGlyph'
 import './work-artifact-panel.css'
+import type { FsFileContent } from '@shared/ipc'
+import { FilePreview } from '../editor/FilePreview'
 
 export interface WorkArtifactPanelProps {
   artifact: WorkArtifact | null
@@ -21,6 +23,13 @@ export interface WorkArtifactPanelProps {
   onOpenFile?: (artifact: WorkArtifact) => void
   artifacts?: WorkArtifact[]
   onSelect?: (id: string) => void
+  inResourceTab?: boolean
+  /** File supplied by the desktop picker/drop target. It never enters the
+   * engine workspace and is read only when this panel is visible. */
+  externalFile?: File
+  /** Absolute local path for a read-only resource opened outside the current
+   * task workspace. */
+  externalPath?: string
 }
 
 function isMarkdown(name: string): boolean {
@@ -34,18 +43,67 @@ function isText(name: string): boolean {
 
 async function readWorkFile(
   path: string,
-  sessionId: string | undefined
-): Promise<{ content: string; isBinary: boolean; truncated: boolean; tooLarge?: boolean }> {
+  sessionId: string | undefined,
+  allowExternal = false
+): Promise<FsFileContent> {
+  // A normal Work receipt is always read through its authenticated session.
+  // Only a resource explicitly opened outside that session may use the
+  // read-only local bridge; this keeps model-supplied paths from becoming an
+  // implicit arbitrary-file read.
   if (sessionId) {
-    const result = await readSessionFile(sessionId, path)
-    return {
-      content: result.content,
-      isBinary: result.isBinary,
-      truncated: result.truncated,
-      tooLarge: result.tooLarge
+    try { return await readSessionFile(sessionId, path) } catch (error) {
+      if (!allowExternal || isRemoteEngine()) throw error
     }
   }
+  if (allowExternal && !isRemoteEngine()) return readExternalFileFromDisk(path)
   return readFile(path)
+}
+
+function externalArtifactCandidates(filePath: string, workspaceRoot?: string | null): string[] {
+  const clean = filePath.replace(/^path:/, '')
+  if (/^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(clean)) {
+    // An absolute receipt path is only eligible when it is within the active
+    // task directory or its immediate sibling group. Otherwise the user must
+    // explicitly choose/drag the file into the read-only resource strip.
+    if (!workspaceRoot) return []
+    const parent = paths.dirname(workspaceRoot)
+    return paths.contains(workspaceRoot, clean) || paths.contains(parent, clean) ? [clean] : []
+  }
+  if (!workspaceRoot) return [clean]
+  const direct = paths.join(workspaceRoot, clean)
+  // A historical receipt can point at a sibling task directory (for example
+  // `compliance/...` while the selected task owns `pmo`).  The task root is a
+  // display hint, so also try its parent as a read-only local candidate.
+  const parent = paths.dirname(workspaceRoot)
+  const sibling = parent !== workspaceRoot ? paths.join(parent, clean) : ''
+  return sibling && sibling !== direct ? [direct, sibling] : [direct]
+}
+
+const MAX_EXTERNAL_BYTES = 32 * 1024 * 1024
+const MAX_EXTERNAL_TEXT_BYTES = 4 * 1024 * 1024
+
+function encodeBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)))
+  }
+  return btoa(binary)
+}
+
+async function readExternalFile(file: File): Promise<FsFileContent> {
+  if (file.size > MAX_EXTERNAL_BYTES) return {
+    path: file.name, content: '', isBinary: true, size: file.size, truncated: false, tooLarge: true
+  }
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  const sample = bytes.subarray(0, Math.min(8192, bytes.length))
+  const isBinary = sample.includes(0)
+  if (isBinary) return {
+    path: file.name, content: '', base64: encodeBase64(bytes), isBinary: true, size: file.size, truncated: false
+  }
+  const truncated = bytes.length > MAX_EXTERNAL_TEXT_BYTES
+  const text = new TextDecoder().decode(truncated ? bytes.subarray(0, MAX_EXTERNAL_TEXT_BYTES) : bytes)
+    .replace(/^\uFEFF/, '')
+  return { path: file.name, content: text, isBinary: false, size: file.size, truncated }
 }
 
 /** Work's artifact surface is deliberately session-scoped: a receipt may be stale,
@@ -54,7 +112,7 @@ export function WorkArtifactPanel(props: WorkArtifactPanelProps): JSX.Element {
   const epoch = useSyncExternalStore(subscribeEngineSource, getEngineSource)
   // Remount at an identity change so old content and selections never become
   // actionable during the first render of another task or engine connection.
-  return <ArtifactContent key={JSON.stringify([epoch, props.sessionId, props.workspaceRoot, props.artifact?.id, props.artifact?.path])} {...props} epoch={epoch} />
+  return <ArtifactContent key={JSON.stringify([epoch, props.sessionId, props.workspaceRoot, props.externalPath, props.externalFile?.name, props.artifact?.id, props.artifact?.path])} {...props} epoch={epoch} />
 }
 
 function ArtifactContent({
@@ -65,6 +123,9 @@ function ArtifactContent({
   onOpenFile,
   artifacts = [],
   onSelect,
+  inResourceTab = false,
+  externalFile,
+  externalPath,
   epoch
 }: WorkArtifactPanelProps & { epoch: number }): JSX.Element {
   const [read, setRead] = useState<{ receipt: string | null | undefined; value: WorkArtifactContent | null }>({ receipt: artifact?.content, value: null })
@@ -95,12 +156,27 @@ function ArtifactContent({
         active = false
       }
     }
-    const readPath = /^(?:[A-Za-z]:[\\/]|\/)/.test(artifact.path)
-      ? artifact.path
-      : workspaceRoot
-        ? paths.join(workspaceRoot, artifact.path)
-        : artifact.path
-    void readWorkFile(readPath, sessionId)
+    if (externalFile) {
+      void readExternalFile(externalFile)
+        .then((result) => {
+          if (active && epoch === getEngineSource()) setRead({ receipt: artifact.content, value: workArtifactReadResult(result) })
+        })
+        .catch((reason: unknown) => {
+          if (active && epoch === getEngineSource()) setRead({ receipt: artifact.content, value: workArtifactReadFailure(artifact.content, reason) })
+        })
+      return () => { active = false }
+    }
+    const candidates = externalPath ? [externalPath] : externalArtifactCandidates(artifact.path, workspaceRoot)
+    const load = async (): Promise<FsFileContent> => {
+      let last: unknown
+      for (const candidate of candidates) {
+        try {
+          return await readWorkFile(candidate, externalPath ? undefined : sessionId, Boolean(externalPath))
+        } catch (error) { last = error }
+      }
+      throw last ?? new Error('文件不在当前工作区。请使用“打开文件”或将文件拖到资源栏。')
+    }
+    void load()
       .then((result) => {
         if (active && epoch === getEngineSource()) setRead({ receipt: artifact.content, value: workArtifactReadResult(result) })
       })
@@ -110,7 +186,7 @@ function ArtifactContent({
     return () => {
       active = false
     }
-  }, [artifact?.id, artifact?.path, artifact?.content, workspaceRoot, sessionId, readVersion, epoch])
+  }, [artifact?.id, artifact?.path, artifact?.content, workspaceRoot, sessionId, externalFile, externalPath, readVersion, epoch])
 
   const language = useMemo(
     () => artifact?.name.split('.').pop()?.toUpperCase() ?? 'TEXT',
@@ -157,7 +233,7 @@ function ArtifactContent({
   }
   const download = async (): Promise<void> => {
     if (saving || epoch !== getEngineSource()) return
-    if (value?.isBinary && sessionId) {
+    if (value?.isBinary && sessionId && !externalFile && !externalPath) {
       setSaving(true)
       try {
         const saved = await saveSessionFile(sessionId, artifact.path)
@@ -167,6 +243,19 @@ function ArtifactContent({
       } finally {
         if (mounted.current) setSaving(false)
       }
+      return
+    }
+    if (value?.isBinary && (externalFile || externalPath)) {
+      if (!value.base64) return
+      const bytes = Uint8Array.from(atob(value.base64), char => char.charCodeAt(0))
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }))
+      const link = document.createElement('a')
+      link.href = url
+      link.download = artifact.name
+      document.body.append(link)
+      link.click()
+      link.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
       return
     }
     if (content === null || epoch !== getEngineSource()) return
@@ -186,7 +275,7 @@ function ArtifactContent({
     onAddToConversation?.({ ...artifact, content: null }, selection || undefined, selection ? value?.coverage : undefined)
   }
   return (
-    <section className="work-artifact-panel-v2" aria-label="成果预览">
+    <section className="work-artifact-panel-v2" aria-label="成果预览" data-document-session={sessionId} data-document-path={artifact.path}>
       <header className="work-artifact-panel-v2__header work-artifact-select">
         <div className="work-artifact-panel-v2__title" title={artifact.path}>
           <FileGlyph name={artifact.name} size={17} />
@@ -213,11 +302,11 @@ function ArtifactContent({
         <span
           className={`work-artifact-panel-v2__status work-artifact-panel-v2__status--${artifact.status}`}
         >
-          {artifact.status === 'ready' ? '已生成' : '草稿'}
+          {inResourceTab ? '文件预览' : artifact.status === 'ready' ? '已生成' : '草稿'}
         </span>
       </header>
       <div className="work-artifact-panel-v2__toolbar">
-        <button
+        {!inResourceTab && <button
           type="button"
           className="work-quiet-button"
           disabled={!artifact.path}
@@ -233,8 +322,8 @@ function ArtifactContent({
           }}
         >
           <Icon name="file" size={14} />
-          在编辑器打开
-        </button>
+          打开文档标签
+        </button>}
         <button
           type="button"
           className="work-quiet-button"
@@ -268,7 +357,7 @@ function ArtifactContent({
           type="button"
           className="work-quiet-button"
           onClick={() => void download()}
-          disabled={saving || (content === null && !(value?.isBinary && sessionId))}
+          disabled={saving || (content === null && !(value?.isBinary && (externalFile || externalPath ? Boolean(value.base64) : Boolean(sessionId))))}
         >
           <Icon name="cloud-download-outline" size={14} />
           {saving ? '正在保存…' : value?.isBinary ? '下载原文件' : value?.coverage === 'partial' ? '下载片段' : value?.coverage === 'receipt' ? '下载回执' : '下载'}
@@ -301,7 +390,7 @@ function ArtifactContent({
           <button type="button" className="work-quiet-button" onClick={() => setReadVersion(version => version + 1)}>重试读取</button>
         </div>
       ) : null}
-      <div className="work-artifact-panel-v2__content work-artifact-preview" ref={previewRef}>
+      <div className={`work-artifact-panel-v2__content work-artifact-preview${value?.base64 ? ' work-artifact-panel-v2__content--document' : ''}`} ref={previewRef}>
         {loading ? (
           <div className="work-artifact-panel-v2__loading" role="status">
             <Spinner size={16} />
@@ -319,6 +408,8 @@ function ArtifactContent({
               重试
             </button>
           </div>
+        ) : value?.isBinary && value.base64 ? (
+          <FilePreview name={artifact.name} path={artifact.path} base64={value.base64} size={value.size ?? 0} />
         ) : value?.isBinary ? (
           <div className="work-artifact-panel-v2__empty" role="status">
             {language} 文件 · {value.notice}

@@ -22,6 +22,7 @@ export interface ChatRecoverySnapshot {
   eventId: string | null
   finished: boolean
   error?: string
+  publicationRecovery?: { reason: string; lastConfirmedEventId: string }
   projection: ChatSsePayload[]
   run?: RootRun
   runs: RootRun[]

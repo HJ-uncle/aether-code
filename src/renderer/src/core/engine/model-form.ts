@@ -4,10 +4,6 @@ import type {
   CapabilityOverridePatch,
   UpdateModelInput
 } from './models'
-import { DEFAULT_CONTEXT_WINDOW_K } from './models'
-
-export { DEFAULT_CONTEXT_WINDOW_K, DEFAULT_CONTEXT_WINDOW_TOKENS } from './models'
-
 export interface ModelFormState {
   provider: string
   displayName: string
@@ -18,6 +14,18 @@ export interface ModelFormState {
   thinking: boolean | null
   /** 上下文窗口（K，1K = 1000 token）文本框原样内容，空串表示不覆盖 */
   contextWindow: string
+}
+
+/** The list is already tenant-scoped. Provider/model ID, not display name or
+ * endpoint, identifies a record; retain the database's case-sensitive semantics. */
+export function findModelConflict(
+  models: readonly EngineModel[],
+  identity: Pick<ModelFormState, 'provider' | 'modelId'>,
+  excludeId?: string
+): EngineModel | undefined {
+  const modelId = identity.modelId.trim()
+  if (!modelId) return undefined
+  return models.find(model => model.id !== excludeId && model.provider === identity.provider && model.modelId === modelId)
 }
 
 function choice(value: boolean | undefined): boolean | null {
@@ -53,13 +61,13 @@ export function initialModelForm(model?: EngineModel): ModelFormState {
     apiKey: '',
     vision: choice(model?.capabilityOverrides?.vision),
     thinking: choice(model?.capabilityOverrides?.thinking),
-    // New models get an explicit, stable 200K budget. Existing models retain
-    // their manual override (or an empty field so the engine can resolve it).
+    // Runtime context budgets are applied by the engine, not written as a
+    // guessed provider capability. Preserve only deliberate manual overrides.
     contextWindow: model
       ? model.capabilityOverrides?.contextWindow
         ? contextWindowText(model.capabilityOverrides.contextWindow)
         : ''
-      : DEFAULT_CONTEXT_WINDOW_K
+      : ''
   }
 }
 

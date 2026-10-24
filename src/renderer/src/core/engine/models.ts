@@ -12,14 +12,10 @@
  */
 import { request } from './client'
 import { assertEngineSource, getEngineSource, getExpectedEngine } from './source'
+import { modelSaveError } from './model-save-error'
 
-/**
- * Newly initialized models start with a predictable 200K context budget.
- * Provider-reported capabilities still take precedence once a model has been
- * saved and the engine has resolved its actual window.
- */
-export const DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
-export const DEFAULT_CONTEXT_WINDOW_K = '200'
+/** Display fallback while model policy is loading; never persist this as a capability override. */
+export const DEFAULT_CONTEXT_WINDOW_BUDGET = 268_000
 
 export interface ModelCapabilities {
   vision?: boolean
@@ -61,6 +57,8 @@ export interface EngineModel {
   /** Effective read alias used by chat consumers. */
   capabilities?: ModelCapabilities | null
   resolvedCapabilities?: ModelCapabilities
+  /** Read-only runtime window, bounded by policy and the real model capability. */
+  effectiveContextWindow?: number
   capabilityOverrides?: ModelCapabilities | null
   createdAt: number
   updatedAt: number
@@ -134,7 +132,7 @@ export async function createModel(input: CreateModelInput): Promise<EngineModel>
   const source = getEngineSource()
   const expectedEngine = getExpectedEngine()
   const result = await request<EngineModel>({ method: 'POST', path: '/models', body: input, expectedEngine })
-  if (!result.ok) throw new Error(result.message || '添加模型失败')
+  if (!result.ok) throw modelSaveError(result, '添加模型失败，请稍后重试。')
 
   const created = result.data as EngineModel
 
@@ -152,7 +150,7 @@ export async function createModel(input: CreateModelInput): Promise<EngineModel>
 
 export async function updateModel(id: string, patch: UpdateModelInput): Promise<EngineModel> {
   const result = await request<EngineModel>({ method: 'PUT', path: `/models/${id}`, body: patch })
-  if (!result.ok || !result.data) throw new Error(result.message || '更新模型失败')
+  if (!result.ok || !result.data) throw modelSaveError(result, '更新模型失败，请稍后重试。')
   return result.data
 }
 
