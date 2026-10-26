@@ -17,6 +17,8 @@ interface FilePreviewProps {
   name: string
   /** 绝对路径（展示与排错用） */
   path: string
+  /** 编辑组内保持稳定的预览身份；分栏不能共享分页状态。 */
+  groupId?: string
   /** 磁盘内容（base64） */
   base64: string
   size: number
@@ -38,7 +40,7 @@ const ZOOM_STEP = 0.2
  */
 export const FilePreview = memo(function FilePreview(props: FilePreviewProps): JSX.Element {
   if (documentKindFor(props.name)) return <Suspense fallback={<div className="doc-placeholder" role="status">正在准备文档预览…</div>}>
-    <DocumentPreview name={props.name} base64={props.base64} size={props.size} identityKey={props.path} />
+    <DocumentPreview name={props.name} base64={props.base64} size={props.size} identityKey={`${props.path}:${props.groupId || ''}`} />
   </Suspense>
   return <BinaryFilePreview {...props} />
 })

@@ -27,7 +27,9 @@ function load(name) {
   const exports = {}
   new vm.Script('(function(require,exports){' + javascript + '\n})', { filename: name }).runInThisContext()(specifier => {
     if (specifier === './document-kind') return load('document-kind')
+    if (specifier === './spreadsheet-preview-contract') return {}
     if (specifier === 'jszip') return { default: JSZip }
+    if (specifier === '@xmldom/xmldom') return { DOMParser, XMLSerializer }
     if (specifier === 'ssf') return ssf
     throw new Error('Unexpected dependency: ' + specifier)
   }, exports)
@@ -37,6 +39,7 @@ function load(name) {
 const { documentKindFor, documentBytes, spreadsheetColumn, pdfCanvasSize, DOCUMENT_LIMITS } = load('document-kind')
 const { inspectOfficeArchive, expandOfficeEntry, officeImagePixels, passiveOfficePart, passiveOfficeRelationship, sanitizeMergeRefs, prepareOfficeArchive } = load('office-archive')
 const { spreadsheetDisplayValue } = load('spreadsheet-value')
+const { spreadsheetCellStyle, spreadsheetColor, spreadsheetThemeColors, spreadsheetLength } = load('spreadsheet-style')
 const archive = async (name = 'word/document.xml', text = '<document/>') => {
   const zip = new JSZip(); zip.file(name, text)
   return zip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' })
@@ -183,6 +186,41 @@ test('prefixed SpreadsheetML and package-absolute table targets survive the comp
   const sanitized = await JSZip.loadAsync(prepared)
   assert.doesNotMatch(await sanitized.file('xl/workbook.xml').async('string'), /<x:workbook\b/)
   assert.match(await sanitized.file(relations).async('string'), /Target="\.\.\/tables\/table1\.xml"/)
+})
+
+test('real XLSX styles become bounded CSS colors, borders, wrapping and dimensions', async () => {
+  const source = new ExcelJS.Workbook(), sheet = source.addWorksheet('项目概览')
+  sheet.getCell('A1').style = {
+    font: { bold: true, color: { argb: 'FF243247' } },
+    fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8EEF5' } },
+    border: { bottom: { style: 'hair', color: { argb: 'FFDCE3EB' } } },
+    alignment: { vertical: 'middle', wrapText: true },
+  }
+  sheet.getColumn(1).width = 20
+  sheet.getRow(1).height = 28
+  const loaded = new ExcelJS.Workbook()
+  await loaded.xlsx.load(await source.xlsx.writeBuffer())
+  const style = spreadsheetCellStyle(loaded.worksheets[0].getCell('A1').style, [])
+  assert.equal(style.background, '#e8eef5')
+  assert.equal(style.color, '#243247')
+  assert.equal(style.borders.bottom.width, 1)
+  assert.equal(style.borders.bottom.style, 'solid')
+  assert.equal(style.verticalAlign, 'middle')
+  assert.equal(style.wrap, true)
+  assert.equal(spreadsheetLength(20, 110, 7, 640), 140)
+  assert.equal(spreadsheetLength(28, 30, 1.34, 640), 38)
+  assert.equal(spreadsheetLength(Infinity, 30, 1.34, 640), 30)
+  assert.equal(spreadsheetColor({ argb: 'url(javascript:alert(1))' }), undefined)
+})
+
+test('theme and indexed spreadsheet colors apply Excel tint without accepting raw CSS', () => {
+  const theme = '<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:themeElements><a:clrScheme name="Office"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="44546A"/></a:dk2><a:lt2><a:srgbClr val="E7E6E6"/></a:lt2><a:accent1><a:srgbClr val="4472C4"/></a:accent1></a:clrScheme></a:themeElements></a:theme>'
+  const colors = spreadsheetThemeColors(theme)
+  assert.deepEqual(colors.slice(0, 5), ['ffffff', '000000', 'e7e6e6', '44546a', '4472c4'])
+  assert.equal(spreadsheetColor({ theme: 4 }, colors), '#4472c4')
+  assert.equal(spreadsheetColor({ theme: 4, tint: -1 }, colors), '#000000')
+  assert.equal(spreadsheetColor({ indexed: 2 }), '#ff0000')
+  assert.equal(spreadsheetColor({ theme: 99 }, colors), undefined)
 })
 
 test('real 1904 XLSX dates keep the absolute date returned by ExcelJS', async () => {

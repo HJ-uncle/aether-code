@@ -78,7 +78,7 @@ export function DocumentView({ filePath, groupId }: { filePath: string; groupId?
       )
     }
 
-    return <FilePreview name={doc.name} path={doc.path} base64={doc.base64} size={doc.size} />
+    return <FilePreview name={doc.name} path={doc.path} base64={doc.base64} size={doc.size} groupId={groupId} />
   }
 
   // 非激活标签也要挂载：EditorArea 只渲染激活的文档，故这里恒为激活文档。

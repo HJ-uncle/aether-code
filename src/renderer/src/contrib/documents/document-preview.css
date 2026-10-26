@@ -40,7 +40,7 @@
 .document-preview__body--sheet { background: var(--bg-surface); }
 .document-preview__format-note { padding: 6px 12px; color: var(--fg-muted); font-size: 12px; border-bottom: 1px solid var(--border); }
 .document-preview__table { border-collapse: separate; border-spacing: 0; font-size: 12px; table-layout: fixed; }
-.document-preview__table th, .document-preview__table td { height: 30px; min-width: 110px; max-width: 280px; padding: 5px 10px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.document-preview__table th, .document-preview__table td { height: 30px; padding: 5px 10px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .document-preview__table th { position: sticky; background: var(--bg-elevated); color: var(--fg-muted); font-weight: 500; }
 .document-preview__table thead th { top: 0; z-index: 2; }
 .document-preview__table tr>th:first-child { left: 0; min-width: 52px; width: 52px; text-align: center; z-index: 1; }

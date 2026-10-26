@@ -1,3 +1,5 @@
+import { DOMParser, XMLSerializer } from '@xmldom/xmldom'
+import JSZip from 'jszip'
 import { DOCUMENT_LIMITS, type DocumentKind } from './document-kind'
 
 interface ZipEntry { name: string; method: number; packed: number; unpacked: number; offset: number }
@@ -121,8 +123,11 @@ export function passiveOfficeRelationship(target: string, type: string, mode = '
 
 function cleanXml(text: string, name: string): string {
   if (/<!DOCTYPE|<!ENTITY/i.test(text)) return invalid()
-  const xml = new DOMParser().parseFromString(text, 'application/xml')
-  if (xml.getElementsByTagName('parsererror').length) return invalid()
+  let malformed = false
+  // The preview worker has no window DOM. Reject parser errors here instead
+  // of installing DOM globals or moving this unbounded work back to the UI.
+  const xml = new DOMParser({ errorHandler: { error: () => { malformed = true }, fatalError: () => { malformed = true } } }).parseFromString(text, 'application/xml')
+  if (malformed || xml.getElementsByTagName('parsererror').length) return invalid()
   // ExcelJS matches SpreadsheetML tag names literally. Prefixes are equivalent
   // in XML, so normalize only elements in that namespace for the preview copy.
   if (/^xl\//i.test(name)) {
@@ -228,7 +233,6 @@ export async function prepareOfficeArchive(buffer: ArrayBuffer, kind: Exclude<Do
   const slides = entries.filter(entry => /^ppt\/slides\/slide\d+\.xml$/.test(entry.name)).length
   const sheets = entries.filter(entry => /^xl\/worksheets\/[^/]+\.xml$/.test(entry.name)).length
   if (slides > DOCUMENT_LIMITS.pages || sheets > DOCUMENT_LIMITS.sheets) return invalid()
-  const { default: JSZip } = await import('jszip')
   const zip = new JSZip()
   let elements = 0, imagePixels = 0
   for (const [index, entry] of entries.entries()) {

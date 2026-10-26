@@ -27,7 +27,7 @@ class PreviewBoundary extends Component<{ children: ReactNode; onRetry: () => vo
   render(): ReactNode { return this.state.failed ? <PreviewMessage error="预览组件暂时无法加载。" onRetry={this.props.onRetry} /> : this.props.children }
 }
 
-function DocumentPreviewContent({ name, base64, size }: Omit<DocumentPreviewProps, 'active'>): JSX.Element {
+function DocumentPreviewContent({ name, base64, size, identityKey }: Omit<DocumentPreviewProps, 'active'>): JSX.Element {
   const [attempt, retry] = useState(0)
   const kind = documentKindFor(name)
   const input = useMemo(() => {
@@ -39,7 +39,7 @@ function DocumentPreviewContent({ name, base64, size }: Omit<DocumentPreviewProp
       {input.error || !kind || !input.data ? <PreviewMessage error={input.error || '此格式暂不支持预览。'} /> :
         <PreviewBoundary onRetry={() => retry(value => value + 1)}><Suspense fallback={<PreviewMessage />}>
           {kind === 'pdf' ? <PdfPreview data={input.data} name={name} onRetry={() => retry(value => value + 1)} /> :
-            kind === 'xlsx' ? <SpreadsheetPreview data={input.data} onRetry={() => retry(value => value + 1)} /> : <OfficePreview data={input.data} kind={kind} name={name} onRetry={() => retry(value => value + 1)} />}
+            kind === 'xlsx' ? <SpreadsheetPreview data={input.data} sessionKey={`${identityKey || name}:${attempt}`} onRetry={() => retry(value => value + 1)} /> : <OfficePreview data={input.data} kind={kind} name={name} onRetry={() => retry(value => value + 1)} />}
         </Suspense></PreviewBoundary>}
     </div>
   </section>
