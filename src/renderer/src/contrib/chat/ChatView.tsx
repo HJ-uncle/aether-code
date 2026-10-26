@@ -2,7 +2,7 @@ import { CommandJobCard } from './CommandJobCard'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { PublishedRecoveryNotice } from './PublishedRecoveryNotice'
 import { publishedVisibleWindow } from '@renderer/core/engine/published-card-memory'
-import { exportCommandJob, visibleChildCommandJobs } from '@renderer/core/engine/command-job-state'
+import { visibleChildCommandJobs } from '@renderer/core/engine/command-job-state'
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
 import { useAppMode } from '@renderer/core/platform/app-mode'
@@ -16,13 +16,11 @@ import { FileChangeCard } from './FileChangeCard'
 import { SubagentCard } from './SubagentCard'
 import { SubagentControllerContext } from './SubagentFollowup'
 import { subagentControllerScope } from './subagent-controller-scope'
-import { exportSubagentDetails, toolStatusLabel } from '@renderer/core/engine/subagent-state'
-import { exportToolDiagnostics } from '@renderer/core/engine/tool-feedback'
 import { Markdown } from './Markdown'
 import { UserMessageContent } from './UserMessageContent'
 import { getSessionMeta, subscribeSessionMeta } from '../history/session-meta'
 import type { ChatFileContext } from './chat-link'
-import { toolDisplayName, toolParamSummary } from './tool-names'
+import { toolDisplayName } from './tool-names'
 import { CompactToolRow } from './CompactToolRow'
 import { toolPresentation } from './tool-presentation'
 import { useCollapseMemory } from './useCollapseMemory'
@@ -115,6 +113,7 @@ import {
 import { MentionRefPicker } from './MentionRefPicker'
 import { buildAgentMentionMessage } from './agent-references'
 import { consumePendingMentions, subscribePendingMentions } from './pending-mentions'
+import { serializeMessages } from './message-export'
 
 function newSessionId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `session-${Date.now()}`
@@ -1619,41 +1618,6 @@ export function ChatView(): JSX.Element {
 }
 
 // ==================== 消息渲染 ====================
-
-/**
- * 把选中的消息序列化成 Markdown（复制与导出共用）。
- * 选择单位 = 一条消息：用户消息取正文；AI 消息含思考过程、工具活动与输出。
- */
-function serializeMessages(selected: ChatMessage[]): string {
-  return selected
-    .map((message) => {
-      const parts: string[] = [message.role === 'user' ? '## 用户' : '## Agent']
-
-      if (message.thinking) {
-        parts.push(`<details>\n<summary>思考过程</summary>\n\n${message.thinking}\n\n</details>`)
-      }
-
-      if (message.role !== 'user') {
-        const exportedTools = message.tools.filter((tool) => !tool.hidden)
-        if (exportedTools.length > 0) {
-          const toolLines = exportedTools.map((tool) => {
-            const state = toolStatusLabel(tool)
-            const summary = tool.args ? toolParamSummary(tool.args) : ''
-            const details = tool.commandJob ? exportCommandJob(tool.commandJob) : tool.name === 'subagent' ? exportSubagentDetails(tool) : exportToolDiagnostics(tool)
-            return `- ${toolDisplayName(tool.name)}${summary ? `：${summary}` : ''}（${state}）${details ? `\n\n${details}\n` : ''}`
-          })
-          parts.push(`\n**工具调用**\n\n${toolLines.join('\n')}`)
-        }
-      }
-
-      if (message.content) {
-        // 用户消息导出的是可读正文：引用原数据块与协议注释不进剪贴板
-        parts.push(`\n${message.role === 'user' ? userMessageText(message.content) : message.content}`)
-      }
-      return parts.join('\n')
-    })
-    .join('\n\n---\n\n')
-}
 
 const MessageItem = memo(function MessageItem({
   message,

@@ -1,24 +1,155 @@
-.work-resource-tabs { display:flex; flex:none; align-items:stretch; overflow-x:auto; min-height:38px; border-bottom:1px solid var(--border); background:var(--bg-surface); scrollbar-width:thin; }
-.work-resource-tabs.is-dragging { outline:2px dashed var(--accent); outline-offset:-3px; background:var(--bg-selected); }
-.work-resource-tab { display:flex; flex:none; max-width:220px; min-width:110px; border-right:1px solid var(--border); color:var(--fg-muted); }
-.work-resource-tab[data-active=true] { color:var(--fg); background:var(--bg-app); box-shadow:inset 0 -2px var(--accent); }
-.work-resource-tab > button { display:flex; align-items:center; gap:7px; background:transparent; color:inherit; border:0; cursor:pointer; font:inherit; }
-.work-resource-tab > button[role=tab] { flex:1; min-width:0; padding:8px 5px 8px 12px; }
-.work-resource-tab > button[role=tab] > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
-.work-resource-tab > button > svg { flex:none; }
-.work-resource-tab__close { padding:8px; }
-.work-resource-tabs__new { flex:none; align-self:center; margin:0 5px; padding:6px; border:0; border-radius:var(--radius); background:transparent; color:var(--fg-muted); cursor:pointer; }
-.work-resource-tab > button:hover, .work-resource-tabs__new:hover { background:var(--bg-hover); }
-.work-resource-tab > button:focus-visible, .work-resource-tabs__new:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
-.work-resource-tabs__hint { align-self:center; padding:0 12px; color:var(--fg-muted); font-size:12px; }
-.work-resource-tabs__file-input { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
-.work-resource-tabs__drop-hint { position:sticky; right:8px; align-self:center; margin-left:auto; padding:4px 8px; border-radius:var(--radius); background:var(--accent); color:var(--fg-on-accent, #fff); font-size:12px; white-space:nowrap; pointer-events:none; }
-.work-resource-content { min-height:0; flex:1; overflow:hidden; }
-.work-workspace__tools { display:flex; flex:none; gap:8px; align-items:center; padding:5px 8px; border-bottom:1px solid var(--border); background:var(--bg-surface); overflow-x:auto; }
-.work-workspace__tool-tabs { display:flex; min-width:0; flex:1; gap:4px; align-items:center; overflow-x:auto; scrollbar-width:thin; }
-.work-workspace__tools > button { border:0; border-radius:var(--radius); background:transparent; color:var(--fg-muted); padding:5px 9px; white-space:nowrap; font:inherit; font-size:12px; cursor:pointer; }
-.work-workspace__tool-tabs > button { border:0; border-radius:var(--radius); background:transparent; color:var(--fg-muted); padding:5px 9px; white-space:nowrap; font:inherit; font-size:12px; cursor:pointer; }
-.work-workspace__tools > button[aria-pressed=true] { color:var(--fg); background:var(--bg-hover); }
-.work-workspace__tool-tabs > button[aria-selected=true] { color:var(--fg); background:var(--bg-hover); }
-.work-workspace__tools > button:hover, .work-workspace__tool-tabs > button:hover { color:var(--fg); background:var(--bg-hover); }
-.work-workspace__tools > button:focus-visible, .work-workspace__tool-tabs > button:focus-visible { outline:2px solid var(--accent); }
+.work-resource-tabs__new {
+  flex: 0 0 auto;
+  align-self: center;
+  margin: 0 3px;
+  padding: 6px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.work-resource-tabs__new:hover { background: var(--bg-hover); color: var(--fg); }
+.work-resource-tabs__new:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.work-resource-tabs__browser {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding-inline: 8px;
+  white-space: nowrap;
+}
+.work-resource-tabs__file-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.work-resource-content { min-height: 0; flex: 1; overflow: hidden; }
+
+/* Code-style workspace chrome: one quiet row, with the overflow menu and
+ * opened surfaces sharing the same tab language. */
+.work-workspace__tab-strip {
+  display: flex;
+  flex: 0 0 var(--chrome-h);
+  align-items: stretch;
+  height: var(--chrome-h);
+  min-width: 0;
+  padding-inline: var(--space-2);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+.work-workspace__more {
+  display: flex;
+  flex: 0 0 42px;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid var(--border);
+}
+.work-workspace__more .action-menu__trigger {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius);
+}
+.work-workspace__tabs {
+  display: flex;
+  /* The list owns the remaining header width. Keeping the width at zero lets
+   * the tab strip scroll instead of pushing resource actions onto a second
+   * visual row when many files are open. */
+  flex: 1 1 auto;
+  align-items: stretch;
+  min-width: 0;
+  width: 0;
+  max-width: none;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.work-workspace__resource-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+.work-workspace__tab {
+  position: relative;
+  display: flex;
+  flex: 0 1 180px;
+  min-width: 88px;
+  max-width: 180px;
+  align-items: stretch;
+  margin: 4px 2px 0;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: var(--radius) var(--radius) 0 0;
+  color: var(--fg-muted);
+}
+.work-workspace__tab.is-active,
+.work-workspace__tab:has([aria-selected='true']) {
+  border-color: var(--border);
+  background: var(--bg-app);
+  color: var(--fg);
+  box-shadow: inset 0 -2px var(--accent);
+}
+.work-workspace__tab-button {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  padding: 0 10px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+.work-workspace__tab-button:hover { background: var(--bg-hover); color: var(--fg-strong); }
+.work-workspace__tab-button:focus-visible,
+.work-workspace__tab-close:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.work-workspace__tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+  opacity: 0;
+}
+.work-workspace__tab:hover .work-workspace__tab-close,
+.work-workspace__tab.is-active .work-workspace__tab-close,
+.work-workspace__tab-close:focus-visible { opacity: 1; }
+.work-workspace__tab-close:hover { background: var(--bg-hover); color: var(--fg-strong); }
+/* ActionMenu is portaled to body, so :has keeps this compact treatment local
+ * to the Work overflow button while leaving other menus unchanged. */
+body:has(.work-workspace__more .action-menu__trigger[aria-expanded='true']) .popover__panel:has(.action-menu__panel) {
+  width: 232px !important;
+  max-height: min(420px, calc(100vh - 24px));
+  overflow: auto;
+  border-radius: var(--radius-lg);
+}
+body:has(.work-workspace__more .action-menu__trigger[aria-expanded='true']) .popover__panel:has(.action-menu__panel) .action-menu__panel {
+  padding: 6px;
+}
+body:has(.work-workspace__more .action-menu__trigger[aria-expanded='true']) .popover__panel:has(.action-menu__panel) .action-menu__item {
+  min-height: 38px;
+  padding: 4px 10px;
+  gap: 10px;
+  border-radius: var(--radius);
+}
+body:has(.work-workspace__more .action-menu__trigger[aria-expanded='true']) .popover__panel:has(.action-menu__panel) .action-menu__item-copy {
+  gap: 2px;
+}
+body:has(.work-workspace__more .action-menu__trigger[aria-expanded='true']) .popover__panel:has(.action-menu__panel) .action-menu__item-copy > span {
+  font-size: 12px;
+  font-weight: 500;
+}
+body:has(.work-workspace__more .action-menu__trigger[aria-expanded='true']) .popover__panel:has(.action-menu__panel) .action-menu__item-copy small {
+  font-size: 10px;
+  line-height: 1.2;
+}

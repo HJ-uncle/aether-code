@@ -1,7 +1,7 @@
 /** Live office campaign controller. Real Work UI admission; read-only observers.
  * An observation failure preserves the desktop and writers for recovery. */
 import { _electron as electron, expect } from '@playwright/test'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -82,7 +82,40 @@ export async function launchOfficeCampaign() {
     roles: Object.fromEntries(plan.roles.map(role => [role.id, {name: names[role.id], workspace: role.workspace, submissions: [], sessionId: null, agentId: null}])),
     rendererErrors: [], processErrors: [], issues: [], observations: 0, sampledSixRunningMs: 0, peakRunning: 0,
     isolation: 'Shared company workspace; per-role write ownership is prompted and audited, not OS sandbox isolation'}
-  const save = () => {writeFileSync(join(root, 'state.json.tmp'), json(state)); renameSync(join(root, 'state.json.tmp'), join(root, 'state.json'))}
+  // Windows may briefly hold the destination while the desktop/AV scanner reads it.
+  // A shared state.json.tmp made the whole runner crash on EPERM; each save now uses
+  // its own temp file, retries the atomic replace, and falls back to a direct write.
+  const statePath = join(root, 'state.json')
+  const save = () => {
+    const tempPath = join(root, `state.json.tmp-${process.pid}-${randomUUID()}`)
+    const serialized = json(state)
+    writeFileSync(tempPath, serialized)
+    let lastError
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try {
+        renameSync(tempPath, statePath)
+        return
+      } catch (error) {
+        lastError = error
+        // Atomics.wait provides a synchronous, bounded yield without keeping a
+        // second timer or overlapping saves in the observer loop.
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25 * (attempt + 1))
+      }
+    }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        writeFileSync(statePath, serialized)
+        try { unlinkSync(tempPath) } catch {}
+        return
+      } catch (error) {
+        lastError = error
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 40 * (attempt + 1))
+      }
+    }
+    // Keep the newest snapshot for recovery and keep the campaign alive. The
+    // observer will report this explicitly instead of terminating the run.
+    console.error(`state-save-failed: ${lastError?.code || lastError?.message || lastError}`)
+  }
   const artifact = (name, value) => {const path = join(evidenceRoot, name); writeFileSync(path, json(value)); return path}
   const log = (event, details = {}) => {appendFileSync(join(evidenceRoot, 'events.jsonl'), json({at: new Date().toISOString(), event, ...details}).replace(/\n/g, '') + '\n'); save()}
   artifact('plan-private-oracle.json', plan)

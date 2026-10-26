@@ -199,6 +199,36 @@ function sourceContent(sessionId: string, path: string): { content: string; isBi
   const isBinary = stored.type.startsWith('image/')
   return { content: stored.bytes.toString(isBinary ? 'base64' : 'utf8'), isBinary, totalSize: stored.bytes.length, truncated: stored.truncated, tooLarge: stored.tooLarge }
 }
+
+/** Expose the small synthetic session tree through the same lazy directory
+ * contract as the real engine. Work's tree must exercise the authenticated
+ * directory request rather than relying on a renderer-only fixture shortcut. */
+function sourceDirectoryEntries(sessionId: string, requested: string): Array<{ name: string; path: string; isDirectory: boolean; size: number; mtimeMs: number }> {
+  const normalized = requested.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+  const prefix = normalized && normalized !== '.' ? `${normalized}/` : ''
+  const entries = new Map<string, { name: string; path: string; isDirectory: boolean; size: number; mtimeMs: number }>()
+  for (const [key, stored] of sourceFiles) {
+    const marker = `${sessionId}:`
+    if (!key.startsWith(marker)) continue
+    const relative = key.slice(marker.length).replace(/\\/g, '/')
+    if (!relative.startsWith(prefix)) continue
+    const rest = relative.slice(prefix.length)
+    if (!rest) continue
+    const segments = rest.split('/')
+    const name = segments[0]!
+    const childPath = `${prefix}${name}`
+    if (entries.has(childPath)) continue
+    const isDirectory = segments.length > 1
+    entries.set(childPath, {
+      name,
+      path: childPath,
+      isDirectory,
+      size: isDirectory ? 0 : stored.bytes.length,
+      mtimeMs: 1
+    })
+  }
+  return [...entries.values()].sort((a, b) => Number(b.isDirectory) - Number(a.isDirectory) || a.name.localeCompare(b.name, 'zh-CN', { numeric: true }))
+}
 const server = createServer((request, response) => {
   void (async () => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1'),
@@ -638,7 +668,7 @@ const server = createServer((request, response) => {
                   : path === '/api/v1/chat/runs'
                     ? { runs: value.run ? [value.run] : [] }
                     : path === '/api/v1/workspace/directory'
-                      ? { root: sessionRoots.get(id) ?? '/remote/work-mode-fixture', entries: [] }
+                      ? { root: sessionRoots.get(id) ?? '/remote/work-mode-fixture', entries: sourceDirectoryEntries(id, url.searchParams.get('path') ?? '.') }
                       : path === '/api/v1/workspace/bind'
                         ? { workspaceRoot: '/remote/work-mode-fixture' }
                         : []
@@ -1032,8 +1062,20 @@ test.describe.serial('Work 模式', () => {
         )
       )
       .toBeLessThanOrEqual(2)
-    await work().getByRole('button', { name: '打开工作区', exact: true }).click()
-    await work().getByRole('tab', { name: '活动', exact: true }).click()
+    // Work tasks open with the split workspace by default. Keep this check
+    // idempotent so a persisted layout does not turn the test into a stale
+    // expectation that the workspace must start closed.
+    const openWorkspace = work().getByRole('button', { name: '打开工作区', exact: true })
+    if (await openWorkspace.isVisible()) await openWorkspace.click()
+    await expect(work().locator('.work-workspace')).toBeVisible()
+    const activityTab = work().getByRole('tab', { name: '活动', exact: true })
+    if (await activityTab.isVisible()) {
+      await activityTab.click()
+    } else {
+      await work().getByRole('button', { name: '更多工作区', exact: true }).click()
+      await page.getByRole('menuitem', { name: '活动', exact: true }).click()
+    }
+    await expect(activityTab).toHaveAttribute('aria-selected', 'true')
     const steps = work().locator('.work-steps')
     await expect(steps.locator('summary')).toHaveCount(1)
     await expect(steps).not.toHaveAttribute('open', '')
@@ -1087,7 +1129,7 @@ test.describe.serial('Work 模式', () => {
       .getByRole('tab', { name: /^成果(?: \d+)?$/, exact: true })
       .click()
     await expect(work().locator('.work-artifact-preview')).toContainText('WORK_ARTIFACT_CONTENT')
-    await expect(work().locator('.work-artifact-select')).toContainText('草稿')
+    await expect(work().locator('.work-artifact-select')).toContainText('已写入')
     await page.screenshot({
       path: testInfo.outputPath('work-active-1440.png'),
       animations: 'disabled'
@@ -1204,7 +1246,19 @@ test.describe.serial('Work 模式', () => {
     frame(id, { fileChange: change })
     frame(id, { toolEnd: { id: 'coverage-write', name: 'write_file', output: '文件已写入', success: true } })
     const artifactTab = work().getByRole('tab', { name: /^成果(?: \d+)?$/, exact: true })
-    if (!await artifactTab.isVisible()) await work().getByRole('button', { name: '打开工作区', exact: true }).click()
+    if (!await artifactTab.isVisible()) {
+      // The unified 文件 surface may be in the overflow menu when a new task
+      // restores the previously selected workspace tab. Select it from the
+      // same one-line tab UI the user sees instead of toggling the whole shell.
+      const filesTab = work().getByRole('tab', { name: /^(?:文件|成果)(?: \d+)?$/, exact: true }).first()
+      if (await filesTab.isVisible()) {
+        await filesTab.click()
+      } else {
+        await work().getByRole('button', { name: '更多工作区', exact: true }).click()
+        await page.getByRole('menuitem', { name: /^成果/ }).click()
+      }
+    }
+    await expect(artifactTab).toBeVisible()
     await artifactTab.click()
     const panel = work().getByRole('region', { name: '成果预览', exact: true }), preview = panel.locator('.work-artifact-preview')
     const composer = work().getByRole('textbox', { name: '继续对话', exact: true }), sentBefore = chatRequests.length
@@ -1267,6 +1321,47 @@ test.describe.serial('Work 模式', () => {
     await expect(panel.getByRole('button', { name: '下载', exact: true })).toBeDisabled()
     await expect(panel.locator('.work-artifact-panel-v2__loading')).toHaveCount(0)
     finish(id)
+  })
+
+  test('工作区文件点击保持工作区来源并更新右侧预览', async () => {
+    const id = await startTask('WORK_WORKSPACE_PREVIEW：从会话工作区打开文件')
+    const relative = 'notes/workspace-preview.md'
+    sourceFiles.set(`${id}:${relative}`, {
+      bytes: Buffer.from('# WORKSPACE_PREVIEW_CURRENT\n\n这是会话工作区中的文件。'),
+      type: 'text/markdown',
+      name: relative
+    })
+    finish(id)
+
+    const workspace = work().getByRole('region', { name: '任务工作区', exact: true })
+    if (!await workspace.isVisible()) {
+      const open = work().getByRole('button', { name: '打开工作区', exact: true })
+      if (await open.isVisible()) await open.click()
+      else await work().locator('.work-mobile-tabs').getByRole('button', { name: /^工作区(?: · \d+)?$/, exact: true }).click()
+    }
+    await expect(workspace).toBeVisible()
+    const filesTab = workspace.getByRole('tab', { name: /^(?:文件|成果 \d+)$/, exact: true })
+    if (!await filesTab.isVisible()) await workspace.getByRole('tab', { name: '文件', exact: true }).click()
+    await expect(workspace.getByRole('tab', { name: '文件', exact: true })).toHaveAttribute('aria-selected', 'true')
+    const workspaceSource = workspace.getByRole('tab', { name: '工作区文件', exact: true })
+    await workspaceSource.click()
+    await expect(workspaceSource).toHaveAttribute('aria-selected', 'true')
+
+    const tree = workspace.getByRole('region', { name: '工作区文件', exact: true }).getByRole('tree')
+    const refresh = workspace.getByRole('button', { name: '刷新工作区文件', exact: true })
+    if (await refresh.isEnabled()) await refresh.click()
+    const directory = tree.getByRole('treeitem').filter({ hasText: 'notes' }).first()
+    await expect(directory).toBeVisible()
+    await directory.getByRole('button').click()
+    const file = tree.getByRole('treeitem').filter({ hasText: 'workspace-preview.md' }).first()
+    await expect(file).toBeVisible()
+    await file.getByRole('button').click()
+
+    await expect(workspaceSource).toHaveAttribute('aria-selected', 'true')
+    await expect(workspace.getByRole('tab', { name: '文件', exact: true })).toHaveAttribute('aria-selected', 'true')
+    const preview = workspace.getByRole('region', { name: '成果预览', exact: true })
+    await expect(preview).toContainText('WORKSPACE_PREVIEW_CURRENT')
+    await expect(preview).toContainText('这是会话工作区中的文件。')
   })
 
   test('Work 两个 scratch 任务同名成果在编辑器读取保存独立，Code 全局选择保持原值', async () => {
@@ -2781,6 +2876,12 @@ test.describe.serial('Work 模式', () => {
     const before = await scroll.evaluate(element => element.scrollTop)
     frame(id, { content: Array.from({ length: 24 }, (_, index) => `\n\n新增分析 ${index}：保持已打开的工具阅读位置。`).join('') })
     await expect(work()).toContainText('新增分析 23')
+    // Completed long answers remain readable by default. The user can still
+    // collapse the answer explicitly, but a routine run must not hide its
+    // result behind a disclosure control.
+    const latestAnswer = work().locator('.work-assistant-content-wrap').last()
+    await expect(latestAnswer.locator('.work-assistant-content')).not.toHaveClass(/is-collapsed/)
+    await expect(work().locator('.work-assistant-content.is-collapsed')).toHaveCount(0)
     expect(await scroll.evaluate(element => element.scrollTop)).toBeLessThanOrEqual(before + 2)
     await expect(group.locator('.work-process')).toHaveAttribute('aria-expanded', 'true')
     await page.screenshot({ path: testInfo.outputPath('work-inline-activity-expanded.png'), animations: 'disabled' })

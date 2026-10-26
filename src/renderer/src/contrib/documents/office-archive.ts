@@ -1,7 +1,7 @@
 import { DOCUMENT_LIMITS, type DocumentKind } from './document-kind'
 
 interface ZipEntry { name: string; method: number; packed: number; unpacked: number; offset: number }
-const invalid = (): never => { throw new Error('文件结构无法安全预览，请使用本机应用检查原件。') }
+const invalid = (): never => { throw new Error('文件结构无法安全预览，原文件已保留。') }
 
 /** Admit sizes before a general-purpose ZIP parser can allocate expanded data. */
 export function inspectOfficeArchive(buffer: ArrayBuffer): ZipEntry[] {
@@ -123,10 +123,37 @@ function cleanXml(text: string, name: string): string {
   if (/<!DOCTYPE|<!ENTITY/i.test(text)) return invalid()
   const xml = new DOMParser().parseFromString(text, 'application/xml')
   if (xml.getElementsByTagName('parsererror').length) return invalid()
+  // ExcelJS matches SpreadsheetML tag names literally. Prefixes are equivalent
+  // in XML, so normalize only elements in that namespace for the preview copy.
+  if (/^xl\//i.test(name)) {
+    const spreadsheetNamespace = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+    for (const element of Array.from(xml.getElementsByTagNameNS(spreadsheetNamespace, '*'))) {
+      if (!element.prefix) continue
+      const replacement = xml.createElementNS(spreadsheetNamespace, element.localName)
+      for (const attribute of Array.from(element.attributes)) {
+        // Chromium keeps the old prefix when its namespace declaration is
+        // inherited by the renamed node. Let the serializer emit a default
+        // SpreadsheetML namespace instead of copying that declaration.
+        if (/^xmlns(?::|$)/.test(attribute.name) && attribute.value === spreadsheetNamespace) continue
+        replacement.setAttributeNS(attribute.namespaceURI, attribute.name, attribute.value)
+      }
+      if (element === xml.documentElement) replacement.setAttributeNS('http://www.w3.org/2000/xmlns/', 'xmlns', spreadsheetNamespace)
+      while (element.firstChild) replacement.appendChild(element.firstChild)
+      element.parentNode?.replaceChild(replacement, element)
+    }
+  }
   if (name.endsWith('.rels')) {
     for (const relation of Array.from(xml.getElementsByTagNameNS('*', 'Relationship'))) {
       const target = relation.getAttribute('Target') || ''
       if (!passiveOfficeRelationship(target, relation.getAttribute('Type') || '', relation.getAttribute('TargetMode') || '')) relation.remove()
+      // ExcelJS indexes tables relative to xl/worksheets, but looks them up
+      // using the relationship verbatim. Convert package-absolute table targets
+      // to that same relative form without changing external-link filtering.
+      else if (/^xl\/worksheets\/_rels\/[^/]+\.xml\.rels$/i.test(name) &&
+        (relation.getAttribute('Type') || '').endsWith('/table')) {
+        const absolute = /^\/xl\/(.+)$/.exec(target)
+        if (absolute && !absolute[1].split('/').includes('..')) relation.setAttribute('Target', '../' + absolute[1])
+      }
     }
   }
   if (/^xl\/worksheets\/[^/]+\.xml$/i.test(name)) {

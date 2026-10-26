@@ -4,6 +4,7 @@
  */
 import type { CopyIntoWorkspaceInput, CopyIntoWorkspaceResult, EngineRequestInput, FsEntry, FsFileContent, FsStat } from '@shared/ipc'
 import { ATTACHMENTS_DIRECTORY } from '@shared/attachments'
+import { hasEncodedPathTraversal } from '@shared/path-safety'
 import { requestOrThrow } from '../engine/client'
 import { assertEngineSource, getEngineSource, getExpectedEngine, isRemoteEngine } from '../engine/source'
 import { assertWorkspaceTarget, captureWorkspaceTarget, type WorkspaceTarget } from './connection'
@@ -142,6 +143,7 @@ async function readSessionWorkspaceContext(sessionId: string, target: SessionReq
 }
 
 function sessionRelativePath(root: string, candidate: string, allowDirectoryRoot = false): string {
+  if (hasEncodedPathTraversal(candidate)) throw new Error('任务文件路径无效')
   const normalizedRoot = root.replace(/\\/g, '/').replace(/\/+$/, '')
   const normalized = candidate.replace(/\\/g, '/')
   const windows = /^(?:[A-Za-z]:(?:\/|$)|\/\/)/.test(normalizedRoot)
@@ -334,6 +336,7 @@ export async function remoteWorkspaceContext(): Promise<RemoteWorkspaceContext> 
 }
 
 export function remoteWorkspaceRelativePath(context: Pick<RemoteWorkspaceContext, 'root'>, path: string): string {
+  if (hasEncodedPathTraversal(path)) throw new Error('远程路径无效')
   if (!path || path === '.') return ''
   const from = context.root.replace(/\\/g, '/').replace(/\/+$/, '')
   const to = path.replace(/\\/g, '/').replace(/\/+$/, '')
@@ -349,7 +352,7 @@ export function remoteWorkspaceRelativePath(context: Pick<RemoteWorkspaceContext
 }
 
 function remoteEntryPath(context: RemoteWorkspaceContext, relative: string): string {
-  if (/^(?:\/|\\|[A-Za-z]:)/.test(relative) || relative.replace(/\\/g, '/').split('/').some(part => part === '..' || part === '.')) {
+  if (hasEncodedPathTraversal(relative) || /^(?:\/|\\|[A-Za-z]:)/.test(relative) || relative.replace(/\\/g, '/').split('/').some(part => part === '..' || part === '.')) {
     throw new Error('远端引擎返回了工作区外路径')
   }
   return relative ? paths.join(context.root, relative) : context.root
@@ -802,8 +805,7 @@ export const paths = {
   relative(parent: string, child: string): string {
     const from = parent.replace(/\\/g, '/').replace(/\/+$/, '')
     const to = child.replace(/\\/g, '/').replace(/\/+$/, '')
-    if (to === from) return ''
-    if (to.startsWith(`${from}/`)) return to.slice(from.length + 1)
+    if (this.contains(parent, child)) return to.slice(from.length).replace(/^\/+/, '')
     return to.replace(/^\/+/, '')
   }
 }

@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { clearRemoteAttachments, rememberRemoteAttachment, remoteAttachmentsForRequest } from '../src/main/engine/remote-attachments'
 import { prepareRemoteChatBody, selectRemoteWorkspacePaths, validateRemoteWorkspaceRoot } from '../src/main/engine/remote-workspace'
-import { remoteInstanceToken, remoteRequestError, validateRemoteInstanceToken, subagentProtocolHeaders } from '../src/main/engine/protocol'
+import { remoteInstanceToken, remoteRequestError, remoteWorkspacePathError, validateRemoteInstanceToken, subagentProtocolHeaders } from '../src/main/engine/protocol'
 import { remoteWorkspaceRelativePath } from '../src/renderer/src/core/workspace/fs-client'
 
 test('手动本机开发地址可无token，非本机仍需明确凭据', () => {
@@ -199,6 +199,17 @@ test('远端文件请求只携带会话内相对路径，不泄漏客户端绝�
   expect(remoteWorkspaceRelativePath(context, 'D:/server/project')).toBe('')
   expect(() => remoteWorkspaceRelativePath(context, 'C:/local/project/private.ts')).toThrow('超出当前工作区')
   expect(() => remoteWorkspaceRelativePath(context, 'D:/server/project/../secret.ts')).toThrow('远程路径无效')
+  for (const value of ['D:/server/project/%2e%2e/secret.ts', 'D:/server/project/%252e%252e/secret.ts', 'D:/server/project/%00secret.ts']) {
+    expect(() => remoteWorkspaceRelativePath(context, value), value).toThrow('远程路径无效')
+  }
+  expect(remoteWorkspaceRelativePath(context, 'D:/server/project/100%done.txt')).toBe('100%done.txt')
+})
+
+test('远端写入路径拒绝编码越界和 NUL，同时保留普通百分号文件名', () => {
+  for (const value of ['src/%2e%2e/secret.ts', 'src/%252e%252e/secret.ts', 'src/%00secret.ts']) {
+    expect(remoteWorkspacePathError('remote', 'POST', '/workspace/file', { path: value }), value).toContain('越界')
+  }
+  expect(remoteWorkspacePathError('remote', 'POST', '/workspace/file', { path: '100%done.txt' })).toBeNull()
 })
 
 test('远端审批只携带关联标识与回答，原始工作区交给服务端恢复', async () => {

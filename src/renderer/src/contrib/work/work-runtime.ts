@@ -255,7 +255,16 @@ export function useWorkController() {
             !(probeAuthorityRef.current.selectedId === task.id && probeAuthorityRef.current.selectedLive),
           isCurrent: () => !cancelled && epoch === getEngineSource(),
           request: id => requestOrThrow({ method: 'GET', path: '/chat/status', query: { sessionId: id } }),
-          apply: (id, status) => updateTask(id, { status, updatedAt: Date.now() })
+          apply: (id, status) => {
+            const task = getWorkState(source).tasks.find(item => item.id === id)
+            updateTask(id, {
+              status,
+              updatedAt: Date.now(),
+              ...(status === 'running' || status === 'waiting'
+                ? { runStartedAt: task?.runStartedAt ?? Date.now() }
+                : { runStartedAt: undefined })
+            })
+          }
         })
       } finally {
         syncing = false
@@ -331,7 +340,7 @@ export function useWorkController() {
       // explicitly selected project is bound. Do that before the first turn so
       // files, Git and tool output all use the task's selected workspace.
       if (task.workspacePath) await bindSessionWorkspace(task.id, task.workspacePath)
-      updateTask(task.id, { status: 'running', agentLocked: true, updatedAt: Date.now() })
+      updateTask(task.id, { status: 'running', agentLocked: true, runStartedAt: Date.now(), updatedAt: Date.now() })
       const submission = {
         source,
         text,
@@ -406,7 +415,7 @@ export function useWorkController() {
             attachments: [...task.attachments]
           })
           setError(messageOf(cause))
-          updateTask(task.id, { status: 'error' })
+          updateTask(task.id, { status: 'error', runStartedAt: undefined })
         }
         if (preserveDraft) throw cause
       }
@@ -485,7 +494,13 @@ export function useWorkController() {
     const next = workStatus(chat.messages, chat.streaming)
     const task = getWorkState(source).tasks.find((item) => item.id === observedId)
     if (next && task && next !== task.status)
-      updateTask(observedId, { status: next, updatedAt: Date.now() })
+      updateTask(observedId, {
+        status: next,
+        updatedAt: Date.now(),
+        ...(next === 'running' || next === 'waiting'
+          ? { runStartedAt: task.runStartedAt ?? Date.now() }
+          : { runStartedAt: undefined })
+      })
     const sent = submitted.current.get(observedId)
     const last = chat.messages.filter((message) => message.role === 'assistant').at(-1)
     if (
@@ -610,7 +625,14 @@ export function useWorkController() {
         activeTaskId: id,
         tasks: previous.tasks.map((item) =>
           item.id === id
-            ? { ...item, archived: false, archivedAt: undefined, status: ['done', 'error', 'stopped', 'interrupted'].includes(item.status) ? 'draft' : item.status, updatedAt: Date.now() }
+            ? {
+                ...item,
+                archived: false,
+                archivedAt: undefined,
+                status: ['done', 'error', 'stopped', 'interrupted'].includes(item.status) ? 'draft' : item.status,
+                ...(item.status === 'running' || item.status === 'waiting' ? {} : { runStartedAt: undefined }),
+                updatedAt: Date.now()
+              }
             : item
         )
       }))
@@ -730,7 +752,7 @@ export function useWorkController() {
     // start prevents the history preflight from launching it after this click.
     if (pendingStart.current?.source === source && pendingStart.current.id === activeTask.id) {
       pendingStart.current = null
-      updateTask(activeTask.id, { status: 'stopped', updatedAt: Date.now() })
+      updateTask(activeTask.id, { status: 'stopped', runStartedAt: undefined, updatedAt: Date.now() })
       return
     }
     invalidateStatusProbe(activeTask.id)
@@ -784,7 +806,7 @@ export function useWorkController() {
     try {
       await requestOrThrow({ method: 'POST', path: '/chat/cancel', body: { sessionId: id } })
       assertEngineSource(epoch)
-      updateTask(id, { status: 'stopped', updatedAt: Date.now() })
+      updateTask(id, { status: 'stopped', runStartedAt: undefined, updatedAt: Date.now() })
     } finally {
       stoppingTaskIdsRef.current.delete(id)
       invalidateStatusProbe(id)

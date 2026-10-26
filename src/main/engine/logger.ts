@@ -20,6 +20,51 @@ export type LogListener = (entry: EngineLogEntry) => void
 
 const listeners = new Set<LogListener>()
 
+const REDACTED = '[REDACTED]'
+
+/**
+ * Names which are allowed to carry credentials in an engine environment or in
+ * a diagnostic line.  Keep this list deliberately broader than the two
+ * desktop handshake variables: third-party model providers commonly use
+ * slightly different names for the same secret.
+ */
+const SECRET_FIELD = '(?:authorization|cookie|password|passwd|secret|credential|token|api[_-]?key|session|csrf|xsrf|signature|encryption[_-]?key|private[_-]?key|aether[_-]?instance[_-]?token|aether[_-]?ide[_-]?remote[_-]?(?:instance[_-]?token|api[_-]?key|bearer[_-]?token)|aether[_-]?remote[_-]?(?:api[_-]?key|bearer[_-]?token)|key|auth)'
+const SECRET_ENV_NAME = /(?:^|_)(?:authorization|cookie|password|passwd|secret|credential|token|api[_-]?key|session|csrf|xsrf|signature|encryption[_-]?key|private[_-]?key|key)(?:$|_)/i
+
+function escaped(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * Remove credentials before an engine line reaches either the terminal echo
+ * or the renderer IPC channel.  Engine code is third-party code and may log
+ * its environment while booting, so matching only intentional application
+ * log calls is insufficient.  Values from the effective child environment
+ * are scrubbed first, then common textual forms are covered as a fallback.
+ */
+export function redactEngineLogLine(
+  raw: string,
+  environment: Record<string, string | undefined> = process.env
+): string {
+  let line = String(raw)
+  const values = Object.entries(environment)
+    .filter(([name, value]) => SECRET_ENV_NAME.test(name) && typeof value === 'string' && value.length >= 8)
+    .map(([, value]) => value as string)
+    .sort((left, right) => right.length - left.length)
+  for (const value of values) line = line.replace(new RegExp(escaped(value), 'g'), REDACTED)
+
+  line = line.replace(/((?:Bearer|Basic)\s+)[A-Za-z\d+/_.=~-]+/gi, `$1${REDACTED}`)
+  line = line.replace(
+    new RegExp(`((?:^|[^A-Za-z0-9_])(?:["']?)(?:${SECRET_FIELD})(?:["']?)\\s*[:=]\\s*)(?:"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|[^\\s&,;}]+)`, 'gi'),
+    `$1${REDACTED}`
+  )
+  line = line.replace(
+    new RegExp(`([?&](?:${SECRET_FIELD})=)[^&#\\s]+`, 'gi'),
+    `$1${REDACTED}`
+  )
+  return line
+}
+
 export function onEngineLog(listener: LogListener): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
@@ -36,11 +81,12 @@ export function onEngineLog(listener: LogListener): () => void {
 const ECHO_TO_TERMINAL = process.env.AETHER_IDE_ECHO_ENGINE === '1'
 
 export function emitLog(level: LogLevel, line: string): void {
-  const entry: EngineLogEntry = { level, line, ts: Date.now() }
+  const safeLine = redactEngineLogLine(line)
+  const entry: EngineLogEntry = { level, line: safeLine, ts: Date.now() }
 
   if (ECHO_TO_TERMINAL) {
     const write = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log
-    write(`[engine] ${line}`)
+    write(`[engine] ${safeLine}`)
   }
 
   for (const listener of listeners) listener(entry)

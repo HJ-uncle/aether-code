@@ -13,6 +13,7 @@ import type { BrowserNetworkDetail, BrowserNetworkDetailOptions, BrowserNetworkL
 import type { BrowserConnectInput } from '../../shared/browser-api'
 import { browserError, clampBounds, contextsMatch, normalizeBrowserUrl, pendingBrowserEngineMatches, validateContext, validateViewport, validateZoom } from './validation'
 import { BrowserInputQueueError, OwnedBrowserInputQueue, type BrowserInputLease } from './owned-input-queue'
+import { BrowserLocalFiles, isLocalFileUrl, type LocalBrowserGrant } from './local-files'
 
 interface BrowserEntry {
   owner: BrowserWindow
@@ -34,6 +35,7 @@ interface BrowserEntry {
   visibilityWaiters: Map<string, (error?: Error) => void>
   queue: Promise<unknown>
   logId: number
+  localFile?: LocalBrowserGrant
 }
 
 interface AXNode {
@@ -145,6 +147,8 @@ export class BrowserService {
   private readonly owners = new WeakSet<BrowserWindow>()
   private readonly settings = new BrowserSettingsStore()
   private readonly temporaryPartition = `aether-browser-${randomUUID()}`
+  private readonly localPartition = `aether-local-browser-${randomUUID()}`
+  private readonly localFiles = new BrowserLocalFiles()
   private readonly inputQueue = new OwnedBrowserInputQueue()
   private disposed = false
 
@@ -156,15 +160,28 @@ export class BrowserService {
 
   list(): BrowserTabState[] { return [...this.tabs.values()].map((entry) => this.state(entry)) }
 
-  async create(input: BrowserCreateInput = {}, pendingEngine?: BrowserConnectInput['expectedEngine']): Promise<BrowserTabState> {
+  async create(input: BrowserCreateInput = {}, pendingEngine?: BrowserConnectInput['expectedEngine'], onCreated?: () => void): Promise<BrowserTabState> {
     if (this.disposed) throw new Error('浏览器服务已关闭')
     const owner = this.getWindow()
     if (!owner || owner.isDestroyed()) throw new Error('编辑器窗口尚未就绪')
     const settings = this.settings.get()
-    const url = normalizeBrowserUrl(input.url ?? settings.homeUrl)
+    const requestedUrl = input.url ?? settings.homeUrl
+    if (isLocalFileUrl(requestedUrl) && input.context) {
+      let mode: unknown
+      try { mode = JSON.parse(input.context.engineId)[0] } catch { /* Unknown transports cannot open this machine's files. */ }
+      if (mode !== 'embedded') throw new Error('远端引擎不能通过文件地址访问本机文件，请使用客户端可访问的网页地址')
+    }
+    if (isLocalFileUrl(requestedUrl) && pendingEngine?.mode === 'remote') throw new Error('远端会话不能通过文件地址访问本机文件')
+    const localFile = isLocalFileUrl(requestedUrl) ? await this.localFiles.open(requestedUrl) : undefined
+    const url = localFile?.url ?? normalizeBrowserUrl(requestedUrl)
     const context = input.context ? validateContext(input.context) : undefined
-    const partition = settings.persistSession ? 'persist:aether-browser' : this.temporaryPartition
+    const partition = localFile ? this.localPartition : settings.persistSession ? 'persist:aether-browser' : this.temporaryPartition
     const browserSession = session.fromPartition(partition)
+    if (localFile) this.localFiles.attach(browserSession, (webContentsId, target) => {
+      const owner = [...this.tabs.values()].find(tab => tab.view.webContents.id === webContentsId)
+      if (!owner?.localFile) return false
+      try { this.localFiles.normalize(target, owner.localFile); return true } catch { return false }
+    })
     this.configureSession(browserSession)
     const view = new WebContentsView({ webPreferences: {
       session: browserSession, sandbox: true, contextIsolation: true, nodeIntegration: false,
@@ -172,7 +189,7 @@ export class BrowserService {
       spellcheck: false, backgroundThrottling: false, safeDialogs: true
     } })
     const entry: BrowserEntry = {
-      owner, view, pendingEngine: !context && pendingEngine ? structuredClone(pendingEngine) : undefined,
+      owner, view, localFile, pendingEngine: !context && pendingEngine ? structuredClone(pendingEngine) : undefined,
       visible: false, bounds: { x: 0, y: 0, width: 800, height: 600 }, emulationScale: 1, console: [],
       network: new BrowserNetworkCollector(async (method, params) => { await this.ensureInitialized(entry); await this.debugger(entry); return this.command(entry, method, params) }),
       networkInterrupted: false, initialization: Promise.resolve(), initializationState: 'starting', navigationVersion: 0, closed: new AbortController(), refs: new Map(),
@@ -181,6 +198,7 @@ export class BrowserService {
         zoomFactor: settings.zoomFactor, viewport: settings.defaultViewport, navigationId: 0, ...(context ? { context } : {}) }
     }
     this.tabs.set(entry.state.tabId, entry)
+    onCreated?.()
     owner.contentView.addChildView(view)
     view.setBounds({ x: 0, y: 0, width: 800, height: 600 })
     view.setVisible(false)
@@ -255,6 +273,7 @@ export class BrowserService {
     const entry = this.tabs.get(tabId)
     if (!entry) return
     this.tabs.delete(tabId)
+    if (entry.localFile) this.localFiles.revoke(entry.localFile)
     entry.closed.abort()
     for (const resolve of [...entry.visibilityWaiters.values()]) resolve(new Error('浏览器标签已关闭'))
     if (!entry.owner.isDestroyed()) entry.owner.contentView.removeChildView(entry.view)
@@ -300,6 +319,7 @@ export class BrowserService {
     if (this.disposed) return
     this.disposed = true
     this.inputQueue.dispose()
+    this.localFiles.dispose()
     for (const id of [...this.tabs.keys()]) this.close(id)
   }
 
@@ -351,8 +371,7 @@ export class BrowserService {
       request = structuredClone(request)
       if (request.action === 'tabs') return { success: true, output: this.list().filter((tab) => contextsMatch(tab.context, context)), metadata: metadata(true) }
       if (request.action === 'open') {
-        dispatched = true
-        const tab = await this.create({ url: request.url, context })
+        const tab = await this.create({ url: request.url, context }, undefined, () => { dispatched = true })
         assertConnection()
         return tab.error ? { success: false, output: tab, error: tab.error, metadata: metadata(false) } : { success: true, output: tab, metadata: metadata(true) }
       }
@@ -502,10 +521,10 @@ export class BrowserService {
       }
     })
     wc.on('will-navigate', (event, url) => {
-      try { normalizeBrowserUrl(url); entry.navigationVersion += 1 } catch (error) { event.preventDefault(); entry.state.error = browserError(error); this.changed(entry) }
+      try { this.normalizeEntryUrl(entry, url); entry.navigationVersion += 1 } catch (error) { event.preventDefault(); entry.state.error = browserError(error); this.changed(entry) }
     })
     wc.on('will-redirect', (event, url) => {
-      try { normalizeBrowserUrl(url) } catch (error) { event.preventDefault(); entry.state.error = browserError(error); this.changed(entry) }
+      try { this.normalizeEntryUrl(entry, url) } catch (error) { event.preventDefault(); entry.state.error = browserError(error); this.changed(entry) }
     })
     wc.setWindowOpenHandler(({ url }) => {
       // Keep popup ownership explicit, including the AI session that opened the parent.
@@ -628,7 +647,8 @@ export class BrowserService {
   }
 
   private async navigate(entry: BrowserEntry, url: string): Promise<void> {
-    const target = normalizeBrowserUrl(url)
+    if (isLocalFileUrl(url) && !entry.localFile) throw new Error('请用 browser_open 为本地 HTML 新建独立文件标签')
+    const target = isLocalFileUrl(url) ? await this.localFiles.fromFile(url, entry.localFile!) : this.normalizeEntryUrl(entry, url)
     const version = ++entry.navigationVersion
     await this.ensureInitialized(entry)
     if (version !== entry.navigationVersion) return
@@ -641,6 +661,10 @@ export class BrowserService {
       if (!entry.view.webContents.isDestroyed()) { entry.state.error = browserError(error); this.changed(entry) }
       throw error
     }
+  }
+
+  private normalizeEntryUrl(entry: BrowserEntry, url: string): string {
+    return entry.localFile && url.startsWith('aether-local:') ? this.localFiles.normalize(url, entry.localFile) : normalizeBrowserUrl(url)
   }
 
   private async applyViewport(entry: BrowserEntry): Promise<void> {
@@ -1107,20 +1131,28 @@ export class BrowserService {
 
   private async scroll(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal, markDispatch = (): void => {}): Promise<void> {
     const navigationId = entry.state.navigationId
-    await this.focus(entry, assertActive, signal)
-    this.assertInputVisible(entry, assertActive)
+    const navigationVersion = entry.navigationVersion
+    // Scrolling addresses this owned document directly and never uses OS input.
+    // Requiring a visible surface would make background Work sessions compete
+    // with the user's selected document, even though their pages are isolated.
+    const assertTarget = (): void => {
+      assertActive()
+      this.entry(entry.state.tabId)
+      this.assertNavigation(entry, navigationId)
+      if (entry.navigationVersion !== navigationVersion) throw new Error('页面已经变化，请重新读取快照后操作')
+    }
+    const beforeDispatch = (): void => { assertTarget(); markDispatch() }
+    assertTarget()
     const deltaX = request.deltaX ?? 0
     const deltaY = request.deltaY ?? 600
     if (![deltaX, deltaY].every((value) => Number.isFinite(value) && Math.abs(value) <= 10000)) throw new Error('滚动距离无效')
-    this.assertNavigation(entry, navigationId)
-    markDispatch()
     if (request.ref || request.selector) {
-      await this.withElement(entry, request, `function(){this.scrollBy({left:${deltaX},top:${deltaY},behavior:'instant'});return true}`, () => this.assertInputVisible(entry, assertActive))
+      await this.withElement(entry, request, `function(){this.scrollBy({left:${deltaX},top:${deltaY},behavior:'instant'});return true}`, beforeDispatch)
     } else {
-      await this.debugger(entry)
-      this.assertInputVisible(entry, assertActive)
-      await this.evaluate(entry, `window.scrollBy({left:${deltaX},top:${deltaY},behavior:'instant'})`)
+      await this.evaluate(entry, `window.scrollBy({left:${deltaX},top:${deltaY},behavior:'instant'})`,
+        { deadline: Date.now() + 12000, assertActive: beforeDispatch, signal })
     }
+    assertTarget()
   }
 
   private async waitFor(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal): Promise<BrowserSnapshot> {

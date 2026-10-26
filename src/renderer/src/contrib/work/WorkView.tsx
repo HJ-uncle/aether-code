@@ -2,6 +2,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -9,6 +10,8 @@ import {
   type CSSProperties,
   type DragEvent,
   type JSX,
+  type KeyboardEvent,
+  type MutableRefObject,
   type MouseEvent
 } from 'react'
 import type { ChatAttachment, ChatMessage, ToolActivity } from '@renderer/core/engine/useChat'
@@ -26,17 +29,19 @@ import { isVisibleToolActivity } from '@renderer/core/engine/task-plan'
 import { useApp } from '@renderer/core/app-context'
 import { toast } from '@renderer/core/toast'
 import { getAppMode, useAppMode } from '@renderer/core/platform/app-mode'
-import { getEngineSource, getEngineStorageKey, isRemoteEngine } from '@renderer/core/engine/source'
+import { getEngineSource, getEngineStorageKey } from '@renderer/core/engine/source'
 import { setBrowserSessionOverride } from '@renderer/core/browser/connection'
 import { registerCommand } from '@renderer/core/platform/commands'
 import { requestOrThrow } from '@renderer/core/engine/client'
 import { Icon, type IconName } from '@renderer/workbench/icons'
+import { ActionMenu, type ActionMenuItem } from '@renderer/workbench/ActionMenu'
 import { IconButton, SectionHeading, Spinner } from '@renderer/workbench/ui-primitives'
 import { openAppSettings } from '../settings/app-settings-navigation'
 import { ToolResult } from '../chat/ToolResult'
 import { UserMessageContent } from '../chat/UserMessageContent'
 import { FileChangeCard } from '../chat/FileChangeCard'
 import { computeLineDiff, diffForDeletedFile, diffForNewFile, diffStats } from '../chat/diff'
+import { FileTreeRow } from '../explorer/FileTreeRow'
 import { FileGlyph } from '../explorer/FileGlyph'
 import { classifyChatLink } from '../chat/chat-link'
 import type { ChatFileContext } from '../chat/chat-link'
@@ -50,7 +55,7 @@ import { WorkArtifactPanel } from './WorkArtifactPanel'
 import { workArtifactSelectionQuote, type WorkArtifactContent } from './work-artifact-content'
 import { WorkSourcePreview, useWorkSourceFile } from './WorkSourcePreview'
 import { Markdown } from '../chat/Markdown'
-import { paths, readLocalRecoveryFile, resolveSessionFilePath, workspaceRecoveryCandidates } from '@renderer/core/workspace/fs-client'
+import { captureSessionFileTarget, paths, readLocalRecoveryFile, resolveSessionFilePath, workspaceRecoveryCandidates } from '@renderer/core/workspace/fs-client'
 import { WorkGitPanel } from './WorkGitPanel'
 import { WorkWorkspacePanel } from './WorkWorkspacePanel'
 import { WorkSubagentsPanel } from './WorkSubagentsPanel'
@@ -60,25 +65,28 @@ import { WorkAgentManager } from './WorkAgentManager'
 import { workMessageTimeline, workToolTarget } from './work-message-timeline'
 import { workSubagentName } from './work-subagents'
 import { formatActivityValue, readActivityPreview } from './work-activity-presentation'
-import { WORK_ACTIVITY_PAGE_SIZE, WORK_MESSAGE_PAGE_SIZE, WORK_TASK_PAGE_SIZE, workMessageRange, workPageRange, workPaneRatio, workToolSnapshot, type WorkToolSnapshot } from './work-view-performance'
+import { serializeMessages } from '../chat/message-export'
+import { WORK_ACTIVITY_PAGE_SIZE, WORK_MESSAGE_PAGE_SIZE, WORK_TASK_PAGE_SIZE, workMessageRange, workPageRange, workPaneRatio, workSplitRatio, workToolSnapshot, type WorkToolSnapshot } from './work-view-performance'
 import { requestedThinkingMode } from '../chat/session-request-config'
 import { AutomationsView } from '../automations/AutomationsView'
 import { subscribeAutomationEditor } from '../automations/automation-navigation'
 import { EngineMonitorView } from './EngineMonitorView'
 import { WorkErrorNotice } from './WorkErrorNotice'
-import { flushWorkDrafts, getWorkDraft, getWorkState, updateWorkState, type WorkArtifact } from './work-state'
+import { flushWorkDrafts, getWorkDraft, getWorkState, updateWorkState, workArtifactStatusLabel, type WorkArtifact } from './work-state'
 import { findWorkArtifact } from './work-artifact-utils'
-import { hideBrowserSurfaces, useBrowserState } from '../browser/browser-store'
+import { browserAction, hideBrowserSurfaces, selectBrowserTab, useBrowserState } from '../browser/browser-store'
 import './work.css'
 import '../chat/apple-chat-panels.css'
 import { WorkResourceTabs } from './WorkResourceTabs'
-import { openExternalWorkFileResource, openExternalWorkPathResource, resolvedWorkResourceId, selectWorkResource, useWorkResources, workResourceBrowserTabs } from './work-resource-store'
+import { closeWorkResource, openExternalWorkFileResource, resolvedWorkResourceId, selectWorkResource, useWorkResources, workResourceBrowserTabs } from './work-resource-store'
 import { changesForWorkFile, type SessionFileChange } from './work-file-changes'
+import { getRunningWorkTasks, WorkRunList } from './WorkRunList'
 
 type WorkController = ReturnType<typeof useWorkController>
 type WorkTask = WorkController['tasks'][number]
 type Page = 'home' | 'projects' | 'artifacts' | 'browser' | 'automations' | 'connections' | 'agents' | 'monitor'
-type WorkspaceTab = 'artifacts' | 'sources' | 'workspace' | 'browser' | 'activity' | 'subagents' | 'git'
+type WorkspaceTab = 'files' | 'workspace' | 'sources' | 'browser' | 'activity' | 'subagents' | 'git'
+type WorkspaceEntry = { kind: 'surface'; id: WorkspaceTab } | { kind: 'resource'; id: string }
 type ActivitySelection = { taskId: string; toolId: string; revision: number }
 type TaskFilter = 'all' | 'running' | 'waiting' | 'done'
 type ViewState = {
@@ -179,8 +187,10 @@ function initialView(): ViewState {
   const fallback: ViewState = {
     page: 'home',
     collapsed: false,
-    workspace: false,
-    tab: 'artifacts',
+    // Work tasks are most useful when the conversation and its files are
+    // visible together, matching Code's split workbench on first launch.
+    workspace: true,
+    tab: 'files',
     pane: 'conversation',
     // Keep the conversation as the primary surface.  The workspace is a
     // supporting inspector, so it should open at a useful but compact width.
@@ -200,9 +210,14 @@ function initialView(): ViewState {
       page: NAVIGATION.some((item) => item.id === record.page) ? (record.page as Page) : 'home',
       collapsed: record.collapsed === true,
       workspace,
-      tab: ['artifacts', 'sources', 'workspace', 'browser', 'activity', 'subagents', 'git'].includes(String(record.tab))
-        ? (record.tab as WorkspaceTab)
-        : 'artifacts',
+      tab: (() => {
+        const stored = String(record.tab)
+        // Keep old persisted layouts usable after成果/工作区合并为文件入口。
+        if (stored === 'artifacts') return 'files'
+        return ['files', 'workspace', 'sources', 'browser', 'activity', 'subagents', 'git'].includes(stored)
+          ? (stored as WorkspaceTab)
+          : 'files'
+      })(),
       pane: workspace && record.pane === 'workspace' ? 'workspace' : 'conversation',
       ratio: ratio === null ? 56 : Math.min(62, Math.max(35, ratio))
     }
@@ -271,6 +286,8 @@ export function WorkView(): JSX.Element {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<TaskFilter>('all')
   const [selectedArtifact, setSelectedArtifact] = useState<string | null>(null)
+  const conversationSelectionToggle = useRef<(() => void) | null>(null)
+  const [conversationSelectMode, setConversationSelectMode] = useState(false)
   const [activitySelection, setActivitySelection] = useState<ActivitySelection | null>(null)
   const [automationRequest, setAutomationRequest] = useState<{ jobId: string; revision: number } | null>(null)
   const automationRequestRevision = useRef(0)
@@ -280,8 +297,8 @@ export function WorkView(): JSX.Element {
   const set = useCallback((patch: Partial<ViewState>): void =>
     setView((previous) => ({ ...previous, ...patch })), [])
   const task = controller.activeTask
-  const workResources = useWorkResources(task?.id ?? '')
   const activeTasks = useMemo(() => controller.tasks.filter((item) => !item.archived), [controller.tasks])
+  const runningTasks = useMemo(() => getRunningWorkTasks(activeTasks), [activeTasks])
   const archivedTasks = useMemo(() => controller.tasks.filter((item) => item.archived), [controller.tasks])
   const waiting = useMemo(() => activeTasks.filter((item) => item.status === 'waiting').length, [activeTasks])
   const filteredTasks = useMemo(() => {
@@ -291,9 +308,11 @@ export function WorkView(): JSX.Element {
   const revealRequestId = browser.revealRequest?.requestId ?? null
   const handledRevealRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!task || !workResources.reveal || appMode !== 'work') return
-    set({ page: 'home', workspace: true, tab: 'browser', pane: 'workspace' })
-  }, [task?.id, workResources.reveal, appMode, set])
+    // Selection in the unified Files pane is session scoped. Do not carry a
+    // synthetic path from the previous task into a newly selected task.
+    setSelectedArtifact(null)
+    setConversationSelectMode(false)
+  }, [task?.id])
   useEffect(() => {
     try {
       localStorage.setItem(VIEW_KEY, JSON.stringify(view))
@@ -305,12 +324,13 @@ export function WorkView(): JSX.Element {
     // Browser tool requests can arrive while Work's workspace is closed. Open
     // the owning surface before BrowserService waits for fresh native bounds.
     if (!revealRequestId || handledRevealRef.current === revealRequestId) return
-    handledRevealRef.current = revealRequestId
     if (appMode !== 'work') return
     if (task && browser.revealRequest) {
       if (!workResourceBrowserTabs(browser.tabs, task.id).some(item => item.tabId === browser.revealRequest?.tabId)) return
       selectWorkResource(task.id, `web:${browser.revealRequest.tabId}`)
     }
+    // A request for another task is still pending if the user opens it later.
+    handledRevealRef.current = revealRequestId
     setView((previous) => !task
       ? { ...previous, page: 'browser' }
       :
@@ -360,7 +380,9 @@ export function WorkView(): JSX.Element {
   const openTask = useCallback((id: string): void => {
     controller.selectTask(id)
     setNavigationOpen(false)
-    set({ page: 'home', pane: 'conversation' })
+    // Opening a task should reveal its supporting workspace beside the
+    // conversation. The user can still collapse it with the header button.
+    set({ page: 'home', pane: 'conversation', workspace: true })
   }, [set, controller.selectTask])
   const newTask = useCallback((): void => {
     controller.showHome()
@@ -401,34 +423,13 @@ export function WorkView(): JSX.Element {
   }, [set, controller.selectTask])
   const openWorkspace = useCallback((tab: WorkspaceTab): void =>
     set({ workspace: true, tab, pane: 'workspace' }), [set])
-  const openArtifact = useCallback((id: string, openResource = true): void => {
+  const openArtifact = useCallback((id: string, _openResource = true): void => {
     setSelectedArtifact(id)
-    if (!openResource) return
-    const artifact = controller.artifacts.find(item => item.id === id)
-    const path = artifact?.path ?? (id.startsWith('path:') ? id.slice(5) : null)
-    if (path && task) void openFileFromChat(path, { sessionId: task.id, workspaceRoot: task.workspacePath }).catch(async (reason: unknown) => {
-      // A Work receipt can legitimately reference a sibling directory or a
-      // file the user dragged in. If the session-scoped resolver rejects it,
-      // offer a read-only local resource instead of a dead "outside workspace"
-      // panel. No external fallback is attempted for remote engines.
-      if (isRemoteEngine()) { reportError(reason); return }
-      const raw = path.replace(/^path:/, '')
-      const candidates = workspaceRecoveryCandidates(raw, task.workspacePath)
-      for (const candidate of candidates) {
-        try {
-          await readLocalRecoveryFile(candidate)
-          openExternalWorkPathResource(candidate, task.id)
-          openWorkspace('browser')
-          return
-        } catch {
-          // Try the sibling candidate before reporting the original resolver
-          // error; the candidate probe is read-only and size-limited.
-        }
-      }
-      reportError(reason)
-    })
-    else openWorkspace('artifacts')
-  }, [controller.artifacts, task?.id, task?.workspacePath, openWorkspace])
+    // A file selection is a view change inside Work, not an instruction to
+    // open the separate browser/resource surface. The preview resolves the
+    // session-scoped path itself and keeps the conversation context stable.
+    openWorkspace('files')
+  }, [openWorkspace])
   const setWorkspaceTab = useCallback((tab: WorkspaceTab): void => set({ tab }), [set])
   const setRatio = useCallback((ratio: number): void => set({ ratio }), [set])
   const openActivity = useCallback((toolId: string): void => {
@@ -563,81 +564,103 @@ export function WorkView(): JSX.Element {
           </button>
         </div>
       </aside>
-      <main className="work-main">
+      <main className="work-main" data-running-tasks={runningTasks.length ? 'true' : undefined}>
+        {!(view.page === 'home' && task) ? <WorkRunList
+          tasks={activeTasks}
+          activeTaskId={task?.id ?? null}
+          ready={controller.ready}
+          onSelect={openTask}
+          onStop={controller.stopTask}
+        /> : null}
         {view.page === 'home' && task ? (
           <>
-            <header className="work-task-heading">
-              <div className="work-task-heading__title">
-                <button type="button" className="work-breadcrumb" onClick={newTask}>
-                  工作台
-                </button>
-                <span aria-hidden="true">/</span>
-                <h1 title={task.title}>{task.title}</h1>
-                <span
-                  className="work-task-heading__project"
-                  title={task.workspacePath ?? undefined}
-                >
-                  {task.workspacePath ? filename(task.workspacePath) : '独立任务'}
-                </span>
-                <button
-                  type="button"
-                  className="work-task-heading__agent"
-                  aria-label="查看 Agent 配置"
-                  title={controller.agentIdentity.error
-                    ? `${controller.agentIdentity.error} · Agent ID：${controller.agentId}`
-                    : `${controller.agentIdentity.name || '正在读取 Agent'}${controller.agentLocked ? ' · 当前任务使用的 Agent 已固定' : ''}`}
-                  onClick={() => navigate('agents')}
-                >
-                  <Icon name={controller.agentId ? 'account-outline' : 'sparkles'} size={14} />
-                  <span>{controller.agentIdentity.name || (controller.agentIdentity.loading ? '正在读取 Agent…' : 'Agent 配置不可用')}</span>
-                </button>
-              </div>
-              <div className="work-task-heading__actions">
-                <TaskStatus status={task.status} ready={controller.ready} />
-                <WorkTaskActions task={task} controller={controller} compact showStop={false} />
-                <WorkRootStop key={task.id} controller={controller} />
-                <IconButton
-                  icon="layout-panel"
-                  label={view.workspace ? '收起工作区' : '打开工作区'}
-                  aria-pressed={view.workspace}
-                  onClick={() =>
-                    set({
-                      workspace: !view.workspace,
-                      pane: view.workspace ? 'conversation' : 'workspace'
-                    })
-                  }
-                />
-              </div>
-            </header>
-            <div className="work-mobile-tabs" aria-label="任务视图">
-              <button
-                type="button"
-                aria-pressed={view.pane === 'conversation'}
-                onClick={() => set({ pane: 'conversation' })}
-              >
-                协作对话
-              </button>
-              <button
-                type="button"
-                aria-pressed={view.pane === 'workspace'}
-                onClick={() => set({ workspace: true, pane: 'workspace' })}
-              >
-                工作区{controller.artifacts.length ? ` · ${controller.artifacts.length}` : ''}
-              </button>
-            </div>
             <div
               className="work-task-body"
               data-workspace={view.workspace}
               data-pane={view.pane}
               style={{ '--work-conversation-ratio': `${view.ratio}%` } as CSSProperties}
             >
-              <Conversation
-                key={`${getEngineSource()}:${task.id}`}
-                controller={controller}
-                openWorkspace={openWorkspace}
-                openActivity={openActivity}
-                openArtifact={openArtifact}
-              />
+              <div className="work-task-primary">
+                <header className="work-task-heading">
+                  <div className="work-task-heading__title">
+                    <button type="button" className="work-breadcrumb" onClick={newTask}>
+                      工作台
+                    </button>
+                    <span aria-hidden="true">/</span>
+                    <h1 title={`会话：${task.title}\n项目目录：${task.workspacePath ? filename(task.workspacePath) : '独立任务'}`}>{task.title}</h1>
+                    {controller.agentId ? (
+                      <button
+                        type="button"
+                        className="work-task-heading__agent"
+                        aria-label="查看 Agent 配置"
+                        title={controller.agentIdentity.error
+                          ? `${controller.agentIdentity.error} · Agent ID：${controller.agentId}`
+                          : `${controller.agentIdentity.name || controller.agentId}${controller.agentLocked ? ' · 当前任务使用的 Agent 已固定' : ''}`}
+                        onClick={() => navigate('agents')}
+                      >
+                        <Icon name="account-outline" size={14} />
+                        <span>{controller.agentIdentity.name || controller.agentId}</span>
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="work-task-heading__actions">
+                    <TaskStatus status={task.status} ready={controller.ready} />
+                    <WorkRunList
+                      tasks={activeTasks}
+                      activeTaskId={task.id}
+                      ready={controller.ready}
+                      onSelect={openTask}
+                      onStop={controller.stopTask}
+                      inline
+                    />
+                    <WorkTaskActions
+                      task={task}
+                      controller={controller}
+                      compact
+                      showStop={false}
+                      onSelectConversation={() => conversationSelectionToggle.current?.()}
+                      conversationSelected={conversationSelectMode}
+                      conversationDisabled={controller.messages.length === 0}
+                    />
+                    <WorkRootStop key={task.id} controller={controller} />
+                    <IconButton
+                      icon="layout-panel"
+                      label={view.workspace ? '收起工作区' : '打开工作区'}
+                      aria-pressed={view.workspace}
+                      onClick={() =>
+                        set({
+                          workspace: !view.workspace,
+                          pane: view.workspace ? 'conversation' : 'workspace'
+                        })
+                      }
+                    />
+                  </div>
+                </header>
+                <div className="work-mobile-tabs" aria-label="任务视图">
+                  <button
+                    type="button"
+                    aria-pressed={view.pane === 'conversation'}
+                    onClick={() => set({ pane: 'conversation' })}
+                  >
+                    协作对话
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={view.pane === 'workspace'}
+                    onClick={() => set({ workspace: true, pane: 'workspace' })}
+                  >
+                    工作区{controller.artifacts.length ? ` · ${controller.artifacts.length}` : ''}
+                  </button>
+                </div>
+                <Conversation
+                  key={`${getEngineSource()}:${task.id}`}
+                  controller={controller}
+                  openActivity={openActivity}
+                  openArtifact={openArtifact}
+                  selectionToggleRef={conversationSelectionToggle}
+                  onSelectionModeChange={setConversationSelectMode}
+                />
+              </div>
               {view.workspace && (
                 <>
                   <WorkDivider ratio={view.ratio} setRatio={setRatio} />
@@ -871,16 +894,64 @@ function TaskList({
   )
 }
 
+type WorkConversationGroup = {
+  id: string
+  identity?: string
+  messages: ChatMessage[]
+  startIndex: number
+  endIndex: number
+  order: number
+}
+
+/**
+ * Work exports a complete turn instead of individual message rows.  A turn
+ * normally carries the same conversationId on the user and assistant rows;
+ * older history can omit that field, so an unmarked assistant immediately
+ * following a user row is kept with that user row as a compatibility fallback.
+ */
+function workConversationGroups(messages: ChatMessage[]): WorkConversationGroup[] {
+  const groups: WorkConversationGroup[] = []
+  for (const [index, message] of messages.entries()) {
+    const identity = message.conversationId
+      ? `conversation:${message.conversationId}`
+      : message.runId
+        ? `run:${message.runId}`
+        : undefined
+    const previous = groups.at(-1)
+    const assistantBelongsToPrevious = message.role === 'assistant' && Boolean(previous?.messages.some((item) => item.role === 'user')) &&
+      (!identity || !previous?.identity || identity === previous.identity)
+    const sameIdentity = Boolean(previous && identity && previous.identity === identity)
+    if (previous && (sameIdentity || assistantBelongsToPrevious)) {
+      previous.messages.push(message)
+      previous.endIndex = index + 1
+      if (!previous.identity && identity) previous.identity = identity
+      continue
+    }
+    const id = identity ? `turn:${identity}` : `message:${message.id}`
+    groups.push({ id, identity, messages: [message], startIndex: index, endIndex: index + 1, order: groups.length + 1 })
+  }
+  return groups
+}
+
+function workConversationSummary(messages: ChatMessage[]): string {
+  const user = messages.find((message) => message.role === 'user')
+  const value = user?.content.replace(/\s+/g, ' ').trim()
+  if (!value) return '未命名对话'
+  return value.length > 72 ? `${value.slice(0, 72)}…` : value
+}
+
 function Conversation({
   controller,
-  openWorkspace,
   openArtifact,
-  openActivity
+  openActivity,
+  selectionToggleRef,
+  onSelectionModeChange
 }: {
   controller: WorkController
-  openWorkspace: (tab: WorkspaceTab) => void
   openArtifact: (id: string) => void
   openActivity: (toolId: string) => void
+  selectionToggleRef: MutableRefObject<(() => void) | null>
+  onSelectionModeChange: (active: boolean) => void
 }): JSX.Element {
   const { engine } = useApp()
   const task = controller.activeTask!
@@ -901,8 +972,19 @@ function Conversation({
   const respond = useCallback<WorkController['respond']>((...args) => controllerRef.current.respond(...args), [])
   const retryFailedTask = useCallback<WorkController['retryFailedTask']>(() => controllerRef.current.retryFailedTask(), [])
   const [firstId, setFirstId] = useState<string | null>(() => conversationPositions.get(positionKey)?.firstId ?? null)
+  // Keep selection local to a task. Work selects complete conversation turns
+  // (the user request together with the Agent response), so exporting one
+  // item never produces a contextless half of a turn.
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set())
+  const [selectionNotice, setSelectionNotice] = useState<string | null>(null)
   const expandedHistory = useRef(conversationPositions.get(positionKey)?.expanded ?? false)
   const { start, end, newer } = useMemo(() => workMessageRange(controller.messages, firstId), [controller.messages, firstId])
+  const conversationGroups = useMemo(() => workConversationGroups(controller.messages), [controller.messages])
+  const visibleConversationGroups = useMemo(
+    () => conversationGroups.filter((group) => group.endIndex > start && group.startIndex < end),
+    [conversationGroups, end, start]
+  )
   const firstIdRef = useRef(firstId)
   firstIdRef.current = controller.messages[start]?.id ?? firstId
   const prependAnchor = useRef<{ id: string; offset: number } | null>(null)
@@ -994,6 +1076,74 @@ function Conversation({
     setFollowing(false)
     void controller.loadArchive(action)
   }
+  const toggleSelectMode = useCallback(() => {
+    setSelectMode((value) => !value)
+    setSelectedIds(new Set())
+  }, [])
+  useEffect(() => {
+    selectionToggleRef.current = toggleSelectMode
+    return () => {
+      if (selectionToggleRef.current === toggleSelectMode) selectionToggleRef.current = null
+    }
+  }, [selectionToggleRef, toggleSelectMode])
+  useEffect(() => {
+    onSelectionModeChange(selectMode)
+  }, [onSelectionModeChange, selectMode])
+  const toggleConversation = useCallback((id: string) => {
+    setSelectedIds((previous) => {
+      const next = new Set(previous)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+  const allSelected = conversationGroups.length > 0 && conversationGroups.every((group) => selectedIds.has(group.id))
+  const toggleAll = useCallback(() => {
+    setSelectedIds(allSelected ? new Set() : new Set(conversationGroups.map((group) => group.id)))
+  }, [allSelected, conversationGroups])
+  const selectedGroups = useMemo(
+    () => conversationGroups.filter((group) => selectedIds.has(group.id)),
+    [conversationGroups, selectedIds]
+  )
+  const buildExportText = useCallback(() => {
+    // The conversation is windowed for performance; export still uses the
+    // complete task history so older messages are never silently omitted.
+    return serializeMessages(selectedGroups.flatMap((group) => group.messages))
+  }, [selectedGroups])
+  const copySelected = useCallback(() => {
+    const text = buildExportText()
+    if (!text) return
+    void navigator.clipboard.writeText(text).then(
+      () => {
+        setSelectionNotice(`已复制 ${selectedGroups.length} 轮对话`)
+        setSelectMode(false)
+        setSelectedIds(new Set())
+      },
+      () => setSelectionNotice('复制失败')
+    )
+  }, [buildExportText, selectedGroups.length])
+  const exportSelected = useCallback(() => {
+    const text = buildExportText()
+    if (!text) return
+    const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `aether-Work导出-${new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-')}.md`
+    // Keep the anchor attached for Chromium/Electron, where a detached click
+    // can be ignored before the download has been scheduled.
+    anchor.style.display = 'none'
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(url)
+    setSelectionNotice(`已导出 ${selectedGroups.length} 轮对话`)
+  }, [buildExportText, selectedGroups.length])
+  useEffect(() => {
+    if (!selectionNotice) return
+    const timer = window.setTimeout(() => setSelectionNotice(null), 1800)
+    return () => window.clearTimeout(timer)
+  }, [selectionNotice])
   useLayoutEffect(() => {
     const action = archiveNavigation.current
     if (!action || !controller.archivePage) return
@@ -1017,24 +1167,23 @@ function Conversation({
   return (
     <section className="work-conversation" aria-label="协作对话">
       <PublishedRecoveryNotice state={controller.publishedRecovery} onCancel={controller.cancelPublishedRecovery} onLoadBody={controller.loadPublishedBody} onRetry={controller.retryPublishedRecovery} />
-      <div className="work-conversation__toolbar">
-        <h2>协作对话</h2>
-        {controller.usageSyncNotice ? <span className="subagent-history__notice" role="status" title={controller.usageSyncNotice}>统计待同步</span> : null}
-        <div>
-          <button type="button" onClick={() => openWorkspace('sources')}>
-            资料{task.sources.length ? ` ${task.sources.length}` : ''}
-          </button>
-          <button type="button" onClick={() => openWorkspace('artifacts')}>
-            成果{controller.artifacts.length ? ` ${controller.artifacts.length}` : ''}
-          </button>
-          <button type="button" onClick={() => openWorkspace('activity')}>
-            活动
-          </button>
-          <button type="button" onClick={() => openWorkspace('subagents')}>
-            子代理
-          </button>
+      {selectMode ? (
+        <div className="work-conversation__select-bar" role="toolbar" aria-label="对话选择工具栏">
+          <div className="work-conversation__selection-leading">
+            <strong>选择对话</strong>
+            <span className="work-conversation__selection-hint">勾选完整一轮对话，可复制或导出</span>
+            <span className="work-conversation__selection-count">已选 {selectedGroups.length} 轮</span>
+            <button type="button" className="work-conversation__selection-button" onClick={toggleAll}>
+              {allSelected ? '取消全选' : '全选对话'}
+            </button>
+          </div>
+          <div className="work-conversation__selection-actions">
+            <button type="button" className="work-conversation__selection-button" disabled={selectedGroups.length === 0} onClick={copySelected}>复制</button>
+            <button type="button" className="work-conversation__selection-button" disabled={selectedGroups.length === 0} onClick={exportSelected}>导出</button>
+            <button type="button" className="work-conversation__selection-button work-conversation__selection-button--done" onClick={toggleSelectMode}>完成</button>
+          </div>
         </div>
-      </div>
+      ) : null}
       {controller.recoveryNotice ? (
         <div className="chat__notice chat__notice--info" role="status" aria-live="polite">
           <span>{controller.recoveryNotice}</span>
@@ -1074,23 +1223,46 @@ function Conversation({
               description="在下方描述目标。执行过程、需要补充的问题和最终结果都会出现在这里。"
             />
           )}
-          {controller.messages.slice(start, end).map((message) => (
-            <WorkMessage
-              key={message.id}
-              message={message}
-              fileContext={fileContext}
-              onFileLink={onFileLink}
-              openFile={openActivityFile}
-              respond={respond}
-              retryFailedTask={retryFailedTask}
-              openActivity={openActivity}
-            />
-          ))}
+          {visibleConversationGroups.map((group, index) => {
+            const selected = selectedIds.has(group.id)
+            return (
+              <section key={group.id} className={`work-conversation-turn${selectMode ? ' is-selectable' : ''}${selected ? ' is-selected' : ''}`}>
+                {selectMode ? (
+                  <header className="work-conversation-turn__header">
+                    <label className="work-conversation-turn__pick">
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => toggleConversation(group.id)}
+                        aria-label={`选择第 ${group.order ?? index + 1} 轮对话`}
+                      />
+                      <span>第 {group.order ?? index + 1} 轮对话</span>
+                      <small>{group.messages.length} 条消息</small>
+                    </label>
+                    <span className="work-conversation-turn__summary">{workConversationSummary(group.messages)}</span>
+                  </header>
+                ) : null}
+                {group.messages.map((message) => (
+                  <WorkMessage
+                    key={message.id}
+                    message={message}
+                    fileContext={fileContext}
+                    onFileLink={onFileLink}
+                    openFile={openActivityFile}
+                    respond={respond}
+                    retryFailedTask={retryFailedTask}
+                    openActivity={openActivity}
+                  />
+                ))}
+              </section>
+            )
+          })}
           {newer > 0 ? <button type="button" className="btn btn--sm work-history-load" onClick={loadNewer}>查看较新消息（{newer} 条）</button> : null}
           {newer === 0 && controller.archivePage?.unversioned && controller.archivePage.lastPage < controller.archivePage.totalPages ? <button type="button" className="btn btn--sm work-history-load" disabled={controller.archiveLoading} onClick={() => loadArchivePage('newer')}>查看较新归档页</button> : null}
           <WorkTurnFeedback controller={controller} announce={following} openActivity={openActivity} />
         </div>
       </div>
+      {selectionNotice ? <div className="chat__toast" role="status">{selectionNotice}</div> : null}
       <div className="work-conversation__footer">
         {(!following || (controller.archivePage?.unversioned && controller.archivePage.lastPage < controller.archivePage.totalPages)) && (
           <button className="work-follow-latest" type="button" disabled={controller.archiveLoading} onClick={latest}>
@@ -1308,6 +1480,31 @@ const WorkMessage = memo(function WorkMessage({
     message.interactions?.filter((item) => item.status === 'pending') ??
     (message.pending ? [message.pending] : []), [message.interactions, message.pending])
   const segments = useMemo(() => workMessageTimeline(message), [message])
+  const processTools = useMemo(() => segments.flatMap(segment => segment.kind === 'tools' ? segment.tools : []), [segments])
+  // The last prose segment is the answer users came for. Earlier prose is
+  // progress narration and belongs with the tool receipts behind the process
+  // disclosure. Keeping this split explicit prevents a collapsed process from
+  // leaking every intermediate update into the final answer area.
+  const finalContent = useMemo(
+    () => [...segments].reverse().find(segment => segment.kind === 'content'),
+    [segments]
+  )
+  const processSegments = useMemo(
+    () => processTools.length
+      ? segments.filter(segment => segment.key !== finalContent?.key)
+      : [],
+    [finalContent?.key, processTools.length, segments]
+  )
+  const [processOpen, setProcessOpen] = useState(message.status === 'streaming')
+  const wasStreaming = useRef(message.status === 'streaming')
+  const processId = `work-process-${useId().replace(/:/g, '')}`
+  useEffect(() => {
+    // Keep live operations visible, then collapse the noisy receipt stream as
+    // soon as the turn finishes. Users can reopen it from the control above
+    // the answer without losing the chronological tool/prose ordering.
+    if (wasStreaming.current && message.status !== 'streaming') setProcessOpen(false)
+    wasStreaming.current = message.status === 'streaming'
+  }, [message.status])
   return (
     <article
       className={`work-message work-message--${message.role}`}
@@ -1326,16 +1523,38 @@ const WorkMessage = memo(function WorkMessage({
           ) : null}
           <div className="message__bubble"><UserMessageContent content={message.content} /></div>
         </div>
-      ) : segments.map((segment, index) => segment.kind === 'tools' ? (
-        <WorkInlineActivity key={segment.key} tools={segment.tools} fileContext={fileContext} onOpenActivity={openActivity} onOpenFile={openFile} />
       ) : (
-        <Markdown
-          key={segment.key}
-          text={segment.text}
-          streaming={message.status === 'streaming' && index === segments.length - 1}
-          fileContext={fileContext}
-        />
-      ))}
+        <>
+          {processTools.length ? <button
+            type="button"
+            className="work-message__process-toggle"
+            aria-expanded={processOpen}
+            aria-controls={processId}
+            onClick={() => setProcessOpen(value => !value)}
+          >
+            <Icon name={processOpen ? 'chevron-down' : 'chevron-right'} size={13} />
+            <span>{processOpen ? '收起过程' : '展开过程'}</span>
+            <small>{processTools.length} 个步骤</small>
+          </button> : null}
+          <div id={processId} className="work-message__process" hidden={!processOpen}>
+            {processSegments.map((segment) => segment.kind === 'tools' ? (
+              <WorkInlineActivity key={segment.key} tools={segment.tools} fileContext={fileContext} onOpenActivity={openActivity} onOpenFile={openFile} />
+            ) : (
+              <WorkAssistantContent
+                key={segment.key}
+                text={segment.text}
+                streaming={message.status === 'streaming'}
+                fileContext={fileContext}
+              />
+            ))}
+          </div>
+          {finalContent ? <WorkAssistantContent
+            text={finalContent.text}
+            streaming={message.status === 'streaming'}
+            fileContext={fileContext}
+          /> : null}
+        </>
+      )}
       {message.error ? <WorkErrorNotice error={message.error} onRetry={retryFailedTask} retryLabel="重新发起任务" /> : null}
       {pending.map((item) => (
         <WorkPending
@@ -1348,6 +1567,24 @@ const WorkMessage = memo(function WorkMessage({
     </article>
   )
 })
+
+function WorkAssistantContent({
+  text,
+  streaming,
+  fileContext
+}: {
+  text: string
+  streaming: boolean
+  fileContext: ChatFileContext
+}): JSX.Element {
+  return (
+    <div className="work-assistant-content-wrap">
+      <div className="work-assistant-content">
+        <Markdown text={text} streaming={streaming} fileContext={fileContext} />
+      </div>
+    </div>
+  )
+}
 
 function WorkPending({
   pending,
@@ -1519,6 +1756,85 @@ function WorkDivider({
   )
 }
 
+function WorkPanelDivider({
+  ratio,
+  setRatio,
+  label,
+  min = 20,
+  max = 60
+}: {
+  ratio: number
+  setRatio: (ratio: number) => void
+  label: string
+  min?: number
+  max?: number
+}): JSX.Element {
+  const drag = useRef<{ element: HTMLDivElement; parent: HTMLElement; startX: number; startRatio: number; width: number; next: number } | null>(null)
+  const frame = useRef<number | null>(null)
+  const paint = (): void => {
+    const current = drag.current
+    if (!current) return
+    current.element.setAttribute('aria-valuenow', String(Math.round(current.next)))
+    current.parent.style.setProperty('--work-panel-split-ratio', `${current.next}%`)
+  }
+  const finish = (commit: boolean): void => {
+    if (frame.current !== null) cancelAnimationFrame(frame.current)
+    frame.current = null
+    const current = drag.current
+    if (!current) return
+    if (commit) {
+      paint()
+      setRatio(current.next)
+    } else {
+      current.parent.style.setProperty('--work-panel-split-ratio', `${current.startRatio}%`)
+      current.element.setAttribute('aria-valuenow', String(Math.round(current.startRatio)))
+    }
+    drag.current = null
+  }
+  useEffect(() => () => {
+    if (frame.current !== null) cancelAnimationFrame(frame.current)
+  }, [])
+  return (
+    <div
+      className="work-panel-divider"
+      role="separator"
+      aria-label={label}
+      aria-orientation="vertical"
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={Math.round(ratio)}
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+        event.preventDefault()
+        const delta = event.key === 'ArrowLeft' ? -2 : 2
+        setRatio(Math.max(min, Math.min(max, ratio + delta)))
+      }}
+      onPointerDown={(event) => {
+        event.preventDefault()
+        const parent = event.currentTarget.parentElement
+        if (!parent) return
+        drag.current = { element: event.currentTarget, parent, startX: event.clientX, startRatio: ratio, width: parent.clientWidth, next: ratio }
+        event.currentTarget.setPointerCapture(event.pointerId)
+      }}
+      onPointerMove={(event) => {
+        const current = drag.current
+        if (!current) return
+        current.next = workSplitRatio(current.startRatio, current.startX, event.clientX, current.width, min, max)
+        if (frame.current === null) frame.current = requestAnimationFrame(() => { frame.current = null; paint() })
+      }}
+      onPointerUp={(event) => {
+        const current = drag.current
+        if (current) current.next = workSplitRatio(current.startRatio, current.startX, event.clientX, current.width, min, max)
+        finish(true)
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+      }}
+      onPointerCancel={() => finish(false)}
+      onLostPointerCapture={() => finish(false)}
+    />
+  )
+}
+
 function Workspace({
   controller,
   tab,
@@ -1535,20 +1851,152 @@ function Workspace({
   activitySelection: ActivitySelection | null
 }): JSX.Element {
   const appMode = useAppMode()
-  const [visited, setVisited] = useState(() => new Set<WorkspaceTab>([tab]))
-  useEffect(() => setVisited(previous => {
-    if (previous.has(tab)) return previous
-    return new Set([...previous, tab])
-  }), [tab])
-  const tabs: Array<[WorkspaceTab, string]> = [
-    ['artifacts', '成果'],
-    ['sources', '资料'],
-    ['workspace', '工作区'],
-    ['browser', '资源'],
-    ['activity', '活动'],
-    ['subagents', '子代理'],
-    ['git', 'Git']
+  const sessionId = controller.activeTask!.id
+  const resources = useWorkResources(sessionId)
+  const browser = useBrowserState()
+  const webTabs = workResourceBrowserTabs(browser.tabs, sessionId)
+  const resourceCandidates = [
+    ...resources.files.map(file => ({ id: file.id, name: file.name, title: file.path, file: true })),
+    ...webTabs.map(item => ({ id: `web:${item.tabId}`, name: item.title || (item.url === 'about:blank' ? '新网页' : item.url), title: item.url, file: false }))
   ]
+  const resourceOrder = useRef<string[]>([])
+  resourceOrder.current = [
+    ...resourceOrder.current.filter(id => resourceCandidates.some(item => item.id === id)),
+    ...resourceCandidates.map(item => item.id).filter(id => !resourceOrder.current.includes(id))
+  ]
+  const orderedResources = resourceOrder.current.flatMap(id => {
+    const item = resourceCandidates.find(candidate => candidate.id === id)
+    return item ? [item] : []
+  })
+  const resourceIds = orderedResources.map(item => item.id)
+  const resourceSignature = resourceIds.join('\u0000')
+  const selectedResource = resolvedWorkResourceId(resources, webTabs.map(item => item.tabId), browser.activeTabId)
+  // A single ordered entry list is the Work equivalent of Codex's unified tab
+  // controller. Resource files/pages and built-in Work surfaces share the
+  // same activation, close, keyboard and layout path.
+  const [openEntries, setOpenEntries] = useState<WorkspaceEntry[]>(() => [{ kind: 'surface', id: tab }])
+  const activateTab = useCallback((next: WorkspaceTab): void => {
+    setOpenEntries(previous => previous.some(entry => entry.kind === 'surface' && entry.id === next)
+      ? previous
+      : [...previous, { kind: 'surface', id: next }])
+    setTab(next)
+  }, [setTab])
+  useEffect(() => {
+    setOpenEntries(previous => previous.some(entry => entry.kind === 'surface' && entry.id === tab)
+      ? previous
+      : [...previous, { kind: 'surface', id: tab }])
+  }, [tab])
+  useEffect(() => {
+    const live = new Set(resourceIds)
+    setOpenEntries(previous => {
+      const next = previous.filter(entry => entry.kind === 'surface' || live.has(entry.id))
+      const existing = new Set(next.flatMap(entry => entry.kind === 'resource' ? [entry.id] : []))
+      for (const id of resourceIds) {
+        if (!existing.has(id)) next.push({ kind: 'resource', id })
+      }
+      const unchanged = next.length === previous.length && next.every((entry, index) => {
+        const current = previous[index]
+        return current?.kind === entry.kind && current.id === entry.id
+      })
+      return unchanged ? previous : next
+    })
+  }, [resourceSignature])
+  const tabs: Array<[WorkspaceTab, string, IconName]> = [
+    ['files', `成果${controller.artifacts.length ? ` ${controller.artifacts.length}` : ''}`, 'file'],
+    ['workspace', '工作区', 'folder-outline'],
+    ['sources', '资料', 'file'],
+    ['activity', '活动', 'clock-outline'],
+    ['subagents', '子代理', 'account-outline'],
+    ['git', 'Git', 'git']
+  ]
+  const labelFor = (id: WorkspaceTab): string => tabs.find(([candidate]) => candidate === id)?.[1] ?? '成果'
+  const iconFor = (id: WorkspaceTab): IconName => tabs.find(([candidate]) => candidate === id)?.[2] ?? 'file'
+  const resourceById = new Map(orderedResources.map(item => [item.id, item]))
+  const visibleEntries = openEntries.filter(entry => {
+    // Browser is an implementation surface for resource tabs, not a second
+    // workspace destination. Keep it mounted when needed, but expose the
+    // actual web/file tabs in the same strip as Code instead of a dead
+    // "资源" placeholder tab.
+    if (entry.kind === 'surface') return entry.id !== 'browser'
+    return resourceById.has(entry.id)
+  })
+  const activateResource = useCallback((id: string): void => {
+    const resource = resourceById.get(id)
+    if (!resource) return
+    if (id.startsWith('web:')) selectBrowserTab(id.slice(4))
+    selectWorkResource(sessionId, id)
+    setOpenEntries(previous => previous.some(entry => entry.kind === 'resource' && entry.id === id)
+      ? previous
+      : [...previous, { kind: 'resource', id }])
+    setTab('browser')
+  }, [resourceById, sessionId, setTab])
+  const closeResource = useCallback((id: string): void => {
+    const resource = resourceById.get(id)
+    if (!resource) return
+    const index = orderedResources.findIndex(item => item.id === id)
+    const nextResource = orderedResources.filter(item => item.id !== id)[Math.min(Math.max(index, 0), Math.max(0, orderedResources.length - 2))]
+    const removingLastResource = orderedResources.length === 1
+    setOpenEntries(previous => previous.filter(entry =>
+      !(entry.kind === 'resource' && entry.id === id) &&
+      !(removingLastResource && entry.kind === 'surface' && entry.id === 'browser')
+    ))
+    if (nextResource && tab === 'browser' && selectedResource === id) activateResource(nextResource.id)
+    else if (!nextResource && tab === 'browser' && selectedResource === id) setTab('files')
+    if (resource.file) {
+      closeWorkResource(sessionId, id)
+      return
+    }
+    browserAction(async () => {
+      const source = getEngineSource()
+      await window.aether.browser.close(id.slice(4))
+      if (source !== getEngineSource() || getAppMode() !== 'work' || getWorkState(getEngineStorageKey()).activeTaskId !== sessionId) return
+      if (resources.selected === id) closeWorkResource(sessionId, id)
+    })
+  }, [activateResource, browserAction, getAppMode, getEngineStorageKey, orderedResources, resourceById, resources.selected, selectedResource, sessionId, setTab, tab])
+  const closeTab = useCallback((closed: WorkspaceTab): void => {
+    const index = openEntries.findIndex(entry => entry.kind === 'surface' && entry.id === closed)
+    const remaining = openEntries.filter(entry => !(entry.kind === 'surface' && entry.id === closed))
+    const nextEntries = remaining.some(entry => entry.kind === 'surface') ? remaining : [{ kind: 'surface' as const, id: 'files' as const }, ...remaining]
+    setOpenEntries(nextEntries)
+    if (tab !== closed) return
+    const fallback = nextEntries[Math.max(0, Math.min(index - 1, nextEntries.length - 1))]
+    if (!fallback) return
+    if (fallback.kind === 'resource') activateResource(fallback.id)
+    else setTab(fallback.id)
+  }, [activateResource, openEntries, setTab, tab])
+  const onTabKeyDown = useCallback((event: KeyboardEvent<HTMLButtonElement>): void => {
+    const list = event.currentTarget.closest('[role="tablist"]')
+    const buttons = list ? [...list.querySelectorAll<HTMLButtonElement>('[role="tab"]')].filter(button => !button.disabled) : []
+    const current = buttons.indexOf(event.currentTarget)
+    const next = event.key === 'ArrowRight' ? (current + 1) % buttons.length : event.key === 'ArrowLeft' ? (current - 1 + buttons.length) % buttons.length : event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : -1
+    if (next < 0 || !buttons.length) return
+    event.preventDefault()
+    buttons[next]?.click()
+    buttons[next]?.focus()
+  }, [])
+  const moreItems: ActionMenuItem[] = [
+    {
+      id: 'artifacts',
+      label: `成果${controller.artifacts.length ? ` ${controller.artifacts.length}` : ''}`,
+      icon: 'file',
+      onSelect: () => activateTab('files')
+    },
+    {
+      id: 'workspace',
+      label: '工作区',
+      icon: 'folder-outline',
+      onSelect: () => activateTab('workspace')
+    },
+    { id: 'sources', label: '资料', icon: 'file', onSelect: () => activateTab('sources') },
+    { id: 'activity', label: '活动', icon: 'clock-outline', onSelect: () => activateTab('activity') },
+    { id: 'subagents', label: '子代理', icon: 'account-outline', onSelect: () => activateTab('subagents') },
+    { id: 'git', label: 'Git', icon: 'git', onSelect: () => activateTab('git') }
+  ]
+  const tabsRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const activeEntry = tabsRef.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
+    activeEntry?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [selectedResource, tab, visibleEntries.length])
   return (
     <section className="work-workspace" aria-label="任务工作区"
       onDragOver={(event: DragEvent<HTMLElement>) => {
@@ -1565,34 +2013,50 @@ function Workspace({
         if (!file) return
         try {
           openExternalWorkFileResource(file, controller.activeTask!.id)
-          setTab('browser')
+          // External files remain read-only resources. They are opened only
+          // by an explicit drop/pick action, so this is the one path that
+          // intentionally enters the resource surface.
+          activateTab('browser')
         } catch (error) {
           reportError(error)
         }
       }}>
-      <WorkResourceTabs sessionId={controller.activeTask!.id} active={tab === 'browser'} onSelect={() => setTab('browser')} />
-      <div className="work-workspace__tools" role="toolbar" aria-label="工作区工具">
-        <div className="work-workspace__tool-tabs" role="tablist" aria-label="工作区内容">
-          {tabs.map(([id, label]) => (
-            <button
-              type="button"
-              role="tab"
-              id={`work-tab-${id}`}
-              aria-controls={`work-panel-${id}`}
-              aria-selected={tab === id}
-              aria-label={id === 'artifacts' && controller.artifacts.length > 0 ? `成果 ${controller.artifacts.length}` : label}
-              key={id}
-              onClick={() => setTab(id)}
-            >
-              {label}
-              {id === 'artifacts' && controller.artifacts.length > 0 && (
-                <span>{` ${controller.artifacts.length}`}</span>
-              )}
-            </button>
-          ))}
+      <div className="work-workspace__tab-strip" role="toolbar" aria-label="工作区标签">
+        <ActionMenu
+          className="work-workspace__more"
+          label="更多工作区"
+          items={moreItems}
+          icon={<Icon name="dots-horizontal" size={16} />}
+        />
+        <div ref={tabsRef} className="work-workspace__tabs" role="tablist" aria-label="已打开的工作区">
+          {visibleEntries.map((entry) => {
+            if (entry.kind === 'surface') {
+              const active = tab === entry.id
+              return <div className={`work-workspace__tab${active ? ' is-active' : ''}`} key={`surface:${entry.id}`}>
+                <button type="button" role="tab" id={`work-tab-${entry.id}`} aria-controls={`work-panel-${entry.id}`} aria-selected={active} tabIndex={active ? 0 : -1} className="work-workspace__tab-button" onClick={() => activateTab(entry.id)} onKeyDown={onTabKeyDown}>
+                  <Icon name={iconFor(entry.id)} size={14} />
+                  {labelFor(entry.id)}
+                </button>
+                {openEntries.length > 1 ? <button type="button" className="work-workspace__tab-close" aria-label={`关闭${labelFor(entry.id)}`} onClick={() => closeTab(entry.id)}><Icon name="close" size={12} /></button> : null}
+              </div>
+            }
+            const resource = resourceById.get(entry.id)
+            if (!resource) return null
+            const active = tab === 'browser' && selectedResource === resource.id
+            return <div className={`work-workspace__tab work-workspace__tab--resource${active ? ' is-active' : ''}`} key={`resource:${resource.id}`}>
+              <button type="button" role="tab" id={`work-resource-tab-${encodeURIComponent(resource.id)}`} aria-controls="work-panel-browser" aria-selected={active} tabIndex={active ? 0 : -1} className="work-workspace__tab-button" title={resource.title} onClick={() => activateResource(resource.id)} onKeyDown={onTabKeyDown}>
+                {resource.file ? <FileGlyph name={resource.name} size={14} /> : <Icon name="eye-outline" size={14} />}
+                {resource.name}
+              </button>
+              <button type="button" className="work-workspace__tab-close" aria-label={`关闭${resource.file ? '文档' : '网页'} ${resource.name}`} onClick={() => closeResource(resource.id)}><Icon name="close" size={12} /></button>
+            </div>
+          })}
+        </div>
+        <div className="work-workspace__resource-actions" aria-label="打开文件或网页">
+          <WorkResourceTabs sessionId={sessionId} onSelect={() => activateTab('browser')} />
         </div>
       </div>
-      {tabs.filter(([id]) => id === tab || (visited.has(id) && !['artifacts', 'sources', 'workspace', 'browser'].includes(id))).map(([id]) => (
+      {openEntries.filter((entry): entry is { kind: 'surface'; id: WorkspaceTab } => entry.kind === 'surface').map(({ id }) => (
         <WorkspacePane
           key={id}
           id={id}
@@ -1602,7 +2066,7 @@ function Workspace({
           selectedArtifact={selectedArtifact}
           selectArtifact={selectArtifact}
           activitySelection={activitySelection}
-          setTab={setTab}
+          openTab={activateTab}
           source={getEngineSource()}
         />
       ))}
@@ -1612,7 +2076,7 @@ function Workspace({
 
 /** Visited panes retain local drafts and selection, but hidden panes do not
  * rebuild message-derived diffs/activity on every incoming token. */
-const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controller, selectedArtifact, selectArtifact, activitySelection, setTab }: {
+const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controller, selectedArtifact, selectArtifact, activitySelection, openTab }: {
   id: WorkspaceTab
   hidden: boolean
   active: boolean
@@ -1620,20 +2084,26 @@ const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controll
   selectedArtifact: string | null
   selectArtifact: (id: string, openResource?: boolean) => void
   activitySelection: ActivitySelection | null
-  setTab: (tab: WorkspaceTab) => void
+  openTab: (tab: WorkspaceTab) => void
   source: number
 }): JSX.Element {
-  const revealBrowser = useCallback(() => setTab('browser'), [setTab])
-  const sessionId = controller.activeTask?.id
-  const workspacePath = controller.activeTask?.workspacePath
+  const revealBrowser = useCallback(() => openTab('browser'), [openTab])
+  const selectWorkspaceFile = useCallback((path: string): void => {
+    // Keep the workspace tree as its own tab while reusing the same preview
+    // component for the selected session-scoped file.
+    selectArtifact(`path:${path}`)
+    openTab('workspace')
+  }, [openTab, selectArtifact])
   const openGitFile = useCallback((path: string): void => {
-    void openFileFromChat(path, { sessionId: sessionId ?? '', workspaceRoot: workspacePath }).catch(reportError)
-  }, [sessionId, workspacePath])
+    selectArtifact(`path:${path}`)
+    openTab('workspace')
+  }, [openTab, selectArtifact])
   // Keep one derived tool snapshot per pane. `useChat` replaces the active
   // message object for each streamed token, while its tool receipt arrays stay
   // referentially stable until a tool actually changes. Passing this snapshot
   // lets the heavy activity/artifact/subagent panes skip text-only renders.
   const tools = useWorkTools(controller.messages)
+  const [workspaceSplitRatio, setWorkspaceSplitRatio] = useState(32)
   return <div
     className={`work-workspace__body work-workspace__body--${id}`}
     hidden={hidden}
@@ -1641,22 +2111,51 @@ const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controll
     id={`work-panel-${id}`}
     aria-labelledby={`work-tab-${id}`}
   >
-    {!active && ['artifacts', 'sources', 'workspace', 'browser'].includes(id) ? null : id === 'artifacts' ? (
+    {!active && ['files', 'workspace', 'sources', 'browser'].includes(id) ? null : id === 'files' ? (
             <TaskArtifactPanel
               controller={controller}
               active={active}
-              selectedId={selectedArtifact}
+              // A workspace-file selection belongs to the workspace tab. Do
+              // not carry its synthetic path into the generated-results tab.
+              selectedId={selectedArtifact?.startsWith('path:') ? null : selectedArtifact}
               onSelect={selectArtifact}
+              onOpenFile={(item) => {
+                void openFileFromChat(item.path, {
+                  sessionId: controller.activeTask?.id ?? '',
+                  workspaceRoot: controller.activeTask?.workspacePath
+                }).then(() => openTab('browser')).catch(reportError)
+              }}
             />
+          ) : id === 'workspace' ? (
+            <div className="work-files-workspace" style={{ '--work-panel-split-ratio': `${workspaceSplitRatio}%` } as CSSProperties}>
+              <div className="work-files-workspace__tree">
+                <WorkWorkspacePanel
+                  sessionId={controller.activeTask?.id}
+                  workspaceRoot={controller.activeTask?.workspacePath}
+                  active={active}
+                  onOpenFile={selectWorkspaceFile}
+                />
+              </div>
+              <WorkPanelDivider ratio={workspaceSplitRatio} setRatio={setWorkspaceSplitRatio} label="调整工作区文件与预览宽度" min={24} max={54} />
+              <div className="work-files-workspace__preview">
+                <TaskArtifactPanel
+                  controller={controller}
+                  active={active}
+                  selectedId={selectedArtifact}
+                  hideList
+                  hideChangesTab
+                  onSelect={selectArtifact}
+                  onOpenFile={(item) => {
+                    void openFileFromChat(item.path, {
+                      sessionId: controller.activeTask?.id ?? '',
+                      workspaceRoot: controller.activeTask?.workspacePath
+                    }).then(() => openTab('browser')).catch(reportError)
+                  }}
+                />
+              </div>
+            </div>
           ) : id === 'sources' ? (
             <SourcePanel controller={controller} />
-          ) : id === 'workspace' ? (
-            <WorkWorkspacePanel
-              sessionId={controller.activeTask?.id}
-              workspaceRoot={controller.activeTask?.workspacePath}
-              active={active}
-              onOpenFile={openGitFile}
-            />
           ) : id === 'activity' ? (
             <StableActivityPanel key={controller.activeTask?.id} tools={tools} todos={controller.todos} selection={activitySelection} workspacePath={controller.activeTask?.workspacePath} />
           ) : id === 'subagents' ? (
@@ -1789,13 +2288,26 @@ function TaskArtifactPanel({ controller, ...props }: {
   controller: WorkController
   active?: boolean
   selectedId: string | null
+  hideList?: boolean
+  hideChangesTab?: boolean
   onSelect: (id: string, openResource?: boolean) => void
+  onOpenFile?: (item: WorkArtifact) => void
 }): JSX.Element {
   const tools = useWorkTools(controller.messages)
   return <StableArtifactPanel {...props} tools={tools} artifacts={controller.artifacts}
     sessionId={controller.activeTask?.id} workspacePath={controller.activeTask?.workspacePath}
     ready={controller.ready} streaming={controller.streaming} draftSource={controller.draftSource}
     setDraft={controller.setDraft} addReference={controller.addReference} />
+}
+
+interface ArtifactTreeNode {
+  key: string
+  name: string
+  path: string
+  depth: number
+  isDirectory: boolean
+  artifact?: WorkArtifact
+  children: ArtifactTreeNode[]
 }
 
 function ArtifactPanel({
@@ -1810,7 +2322,10 @@ function ArtifactPanel({
   tools,
   active = true,
   selectedId,
-  onSelect
+  hideList = false,
+  hideChangesTab = false,
+  onSelect,
+  onOpenFile
 }: {
   artifacts: WorkArtifact[]
   sessionId?: string
@@ -1823,7 +2338,10 @@ function ArtifactPanel({
   tools: ToolActivity[]
   active?: boolean
   selectedId: string | null
+  hideList?: boolean
+  hideChangesTab?: boolean
   onSelect: (id: string, openResource?: boolean) => void
+  onOpenFile?: (item: WorkArtifact) => void
 }): JSX.Element {
   const linkedPath = selectedId?.startsWith('path:') ? selectedId.slice(5) : null
   const artifact =
@@ -1853,6 +2371,32 @@ function ArtifactPanel({
     } else addReference(item)
   }
   const [detailTab, setDetailTab] = useState<'preview' | 'changes'>('preview')
+  const [artifactSplitRatio, setArtifactSplitRatio] = useState(30)
+  // Keep every generated directory open initially so the complete receipt is
+  // visible at a glance. Users can still collapse individual folders to tame
+  // a large result set without losing the selected preview.
+  const [collapsedArtifactDirs, setCollapsedArtifactDirs] = useState<ReadonlySet<string>>(new Set())
+  const [sessionWorkspacePath, setSessionWorkspacePath] = useState<string | null>(null)
+  useEffect(() => {
+    let current = true
+    const source = getEngineSource()
+    setSessionWorkspacePath(null)
+    // 任务保存的本地目录可能尚未与引擎沙箱同步；展示相对路径必须使用会话确认的根目录。
+    if (!ready || !active || !sessionId) return () => { current = false }
+    void captureSessionFileTarget(sessionId, workspacePath).then(target => {
+      if (current && source === getEngineSource()) setSessionWorkspacePath(target.root)
+    }).catch(() => {
+      // 无法确认根目录时仍保留任务已有路径，成果列表不应因展示信息加载失败而消失。
+    })
+    return () => { current = false }
+  }, [active, ready, sessionId, workspacePath, getEngineSource()])
+  const artifactWorkspacePath = sessionWorkspacePath ?? workspacePath
+  useEffect(() => {
+    setCollapsedArtifactDirs(new Set())
+  }, [sessionId, artifactWorkspacePath])
+  useEffect(() => {
+    if (hideChangesTab && detailTab === 'changes') setDetailTab('preview')
+  }, [detailTab, hideChangesTab])
   // Keep the compact list informative without exposing long workspace paths.
   // Stats come from the same diff implementation used by FileChangeCard, so the
   // numbers shown here always match the expanded diff below.
@@ -1884,39 +2428,91 @@ function ArtifactPanel({
     }
     return result
   }, [tools])
+
+  const artifactTree = useMemo((): ArtifactTreeNode[] => {
+    const roots: ArtifactTreeNode[] = []
+    const normalize = (value: string): string => value.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+    for (const item of artifacts) {
+      const withinWorkspace = Boolean(artifactWorkspacePath && paths.contains(artifactWorkspacePath, item.path))
+      const relative = normalize(withinWorkspace && artifactWorkspacePath
+        ? paths.relative(artifactWorkspacePath, item.path)
+        : item.path)
+      const segments = relative.split('/').filter(Boolean)
+      if (!segments.length) segments.push(item.name)
+      let parentChildren = roots
+      let parentKey = ''
+      segments.forEach((segment, index) => {
+        const key = parentKey ? `${parentKey}/${segment}` : segment
+        const isFile = index === segments.length - 1
+        // 目录的悬浮地址从原始成果路径推导，不能用展示用的相对名称拼接。
+        let absolutePath = item.path
+        for (let level = segments.length - 1; level > index; level -= 1) absolutePath = paths.dirname(absolutePath)
+        let node = parentChildren.find(candidate => candidate.key === key)
+        if (!node) {
+          node = { key, name: segment, path: absolutePath, depth: index, isDirectory: !isFile, children: [] }
+          parentChildren.push(node)
+        }
+        if (isFile) node.artifact = item
+        parentChildren = node.children
+        parentKey = key
+      })
+    }
+    const sort = (nodes: ArtifactTreeNode[]): void => {
+      nodes.sort((a, b) => {
+        if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
+        return a.name.localeCompare(b.name, 'zh-CN', { numeric: true, sensitivity: 'base' })
+      })
+      nodes.forEach(node => sort(node.children))
+    }
+    sort(roots)
+    return roots
+  }, [artifacts, artifactWorkspacePath])
+  const renderArtifactNodes = (nodes: ArtifactTreeNode[]): JSX.Element[] => nodes.flatMap((node) => {
+    const collapsed = node.isDirectory && collapsedArtifactDirs.has(node.key)
+    const item = node.artifact
+    const selected = Boolean(item && item.id === artifact?.id)
+    const stats = item ? changeStats.get(item.path.replace(/\\/g, '/')) : undefined
+    const activate = (): void => {
+      if (item) onSelect(item.id, detailTab !== 'changes')
+      else setCollapsedArtifactDirs(previous => {
+        const next = new Set(previous)
+        if (next.has(node.key)) next.delete(node.key)
+        else next.add(node.key)
+        return next
+      })
+    }
+    const row = (
+      <FileTreeRow
+        key={node.key}
+        name={node.name}
+        nameContent={node.name}
+        path={node.path}
+        depth={node.depth}
+        isDirectory={node.isDirectory}
+        isExpanded={!collapsed}
+        isSelected={selected}
+        className={node.isDirectory ? 'work-artifacts-shell__tree-row--directory' : 'work-artifacts-shell__tree-row--file'}
+        trailing={stats && item?.status === 'ready' ? (
+          <span className="work-artifacts-shell__stats" title="文件改动行数"><b>+{stats.added}</b><i>−{stats.removed}</i></span>
+        ) : item ? (
+          <span className={`work-artifacts-shell__status work-artifacts-shell__status--${item.status}`}>{workArtifactStatusLabel(item.status)}</span>
+        ) : null}
+        onClick={activate}
+        onActivate={activate}
+      />
+    )
+    return collapsed ? [row] : [row, ...renderArtifactNodes(node.children)]
+  })
   return (
-    <div className="work-artifacts-shell">
-      <div className="work-artifacts-shell__list" role="listbox" aria-label="成果文件">
+    <div className={`work-artifacts-shell${hideList ? ' work-artifacts-shell--preview-only' : ''}`} style={{ '--work-panel-split-ratio': `${artifactSplitRatio}%` } as CSSProperties}>
+      {!hideList && <div className="work-artifacts-shell__list" role="tree" aria-label="成果文件">
         <div className="work-artifacts-shell__list-head">
           <h3>
             成果文件 <span>{artifacts.length}</span>
           </h3>
         </div>
         {artifacts.length ? (
-          artifacts.map((item) => (
-            <button
-              type="button"
-              role="option"
-              aria-selected={item.id === artifact?.id}
-              className={item.id === artifact?.id ? 'is-selected' : ''}
-              key={item.id}
-              onClick={() => onSelect(item.id, detailTab !== 'changes')}
-              title={item.path}
-            >
-              <FileGlyph name={item.name} size={16} />
-              <span>
-                <strong>{item.name}</strong>
-              </span>
-              {(() => {
-                const stats = changeStats.get(item.path.replace(/\\/g, '/'))
-                return stats ? (
-                  <span className="work-artifacts-shell__stats" title="文件改动行数">
-                    <b>+{stats.added}</b><i>−{stats.removed}</i>
-                  </span>
-                ) : <span className={`work-artifacts-shell__status work-artifacts-shell__status--${item.status}`}>{item.status === 'ready' ? '已生成' : '进行中'}</span>
-              })()}
-            </button>
-          ))
+          <div className="work-artifacts-shell__tree">{renderArtifactNodes(artifactTree)}</div>
         ) : (
           <EmptyState
             icon="file"
@@ -1924,12 +2520,13 @@ function ArtifactPanel({
             description="AI 创建或修改文件后，成果会出现在这里，可预览、复制或继续引用。"
           />
         )}
-      </div>
+      </div>}
+      {!hideList ? <WorkPanelDivider ratio={artifactSplitRatio} setRatio={setArtifactSplitRatio} label="调整成果文件与预览宽度" min={24} max={54} /> : null}
       <div className="work-artifacts-shell__detail">
-        <div className="work-artifacts-shell__tabs" role="tablist" aria-label="成果内容">
+        {!hideChangesTab ? <div className="work-artifacts-shell__tabs" role="tablist" aria-label="成果内容">
           <button type="button" role="tab" aria-selected={detailTab === 'preview'} onClick={() => setDetailTab('preview')}>预览</button>
           <button type="button" role="tab" aria-selected={detailTab === 'changes'} onClick={() => setDetailTab('changes')}>文件改动</button>
-        </div>
+        </div> : null}
         {detailTab === 'preview' ? (
           artifact ? (
             <WorkArtifactPanel
@@ -1942,12 +2539,7 @@ function ArtifactPanel({
                 addToConversation(item, selection, selectionCoverage)
                 toast.success(selection ? '已引用选中内容' : '已添加到对话')
               }}
-              onOpenFile={(item) =>
-                void openFileFromChat(item.path, {
-                  sessionId: sessionId ?? '',
-                  workspaceRoot: workspacePath
-                }).catch(reportError)
-              }
+              onOpenFile={onOpenFile}
             />
           ) : (
             <EmptyState

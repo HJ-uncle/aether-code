@@ -1,14 +1,10 @@
 /**
- * 改动目录树节点（移植自 wuzu-client components/code/GitChangeTreeNode.vue）
- *
- * 树形分组视图下的递归节点：目录节点可展开折叠，文件节点复用 GitChangeRow 的
- * 视觉（状态着色图标 / 增删计数 / hover 操作按钮 / 状态角标），仅多一层缩进。
- * 设计意图：目录树能让大改动按模块聚簇，比一屏平铺的路径列表更容易定位；
- * 缩进按 depth * 12px 递进，文件行比目录行多缩进 8px 以躲开 chevron 的位置。
+ * Git 改动目录树：共用文件树行展示，递归、多选、打开和暂存操作仍由这里管理。
  */
 import { useState, type JSX, type MouseEvent } from 'react'
 import type { GitFileChange } from '@shared/git-types'
 import { STATUS_COLOR, STATUS_LETTER, visualKeyOf } from '@renderer/core/git/git-status-visuals'
+import { FileTreeRow } from '@renderer/contrib/explorer/FileTreeRow'
 import { Icon, type IconName } from '@renderer/workbench/icons'
 
 function treeStatusIconName(file: GitFileChange): IconName {
@@ -57,21 +53,19 @@ export function GitChangeTreeNode({
   const [collapsed, setCollapsed] = useState(false)
 
   if (node.isDir) {
+    const toggle = (): void => setCollapsed((value) => !value)
     return (
       <div>
-        <div
+        <FileTreeRow
+          name={node.name}
+          path={node.key}
+          depth={depth}
+          isDirectory
+          isExpanded={!collapsed}
           className="git-tree__dir"
-          style={{ paddingLeft: `${depth * 12 + 8}px` }}
-          onClick={() => setCollapsed((v) => !v)}
-        >
-          <Icon
-            name="chevron"
-            size={16}
-            className={`git-tree__chevron${collapsed ? ' is-collapsed' : ''}`}
-          />
-          <Icon name="explorer" size={16} className="git-tree__folder" />
-          <span className="git-tree__name">{node.name}</span>
-        </div>
+          onClick={toggle}
+          onActivate={toggle}
+        />
         {!collapsed && node.children
           ? node.children.map((child) => (
               <GitChangeTreeNode
@@ -103,66 +97,57 @@ export function GitChangeTreeNode({
   const statusColor = STATUS_COLOR[visualKey]
   const showStats = !file.binary && (file.additions > 0 || file.deletions > 0)
 
-  const rowClass = [
-    'git-tree__file',
-    'group',
-    isSelected ? 'is-selected' : isActive ? 'is-active' : ''
-  ]
-    .filter(Boolean)
-    .join(' ')
-
   return (
-    <div
-      className={rowClass}
-      style={{ paddingLeft: `${depth * 12 + 20}px` }}
-      title={file.path}
-      onClick={(e) => onSelect?.(file, e)}
-      onDoubleClick={() => onOpen?.(file)}
-      onContextMenu={(e) => onContextMenuFile?.(file, e)}
-    >
-      {/* 图标染状态色：包一层 span 用 currentColor 上色 */}
-      <span className="git-row__icon" style={{ color: statusColor }}>
+    <FileTreeRow
+      name={node.name}
+      path={file.path}
+      depth={depth}
+      isDirectory={false}
+      isSelected={isSelected}
+      isActive={!isSelected && isActive}
+      className="git-tree__file group"
+      nameClassName={file.changeType === 'deleted' ? 'is-deleted' : ''}
+      nameStyle={{ color: statusColor }}
+      icon={<span className="git-row__icon" style={{ color: statusColor }}>
         <Icon name={treeStatusIconName(file)} size={16} />
-      </span>
-      <span
-        className={`git-row__name${file.changeType === 'deleted' ? ' is-deleted' : ''}`}
-        style={{ color: statusColor }}
-      >
-        {node.name}
-      </span>
-      {showStats ? (
-        <span className="git-row__stats">
-          {file.additions > 0 ? <span className="git-row__add">+{file.additions}</span> : null}
-          {file.deletions > 0 ? <span className="git-row__del">-{file.deletions}</span> : null}
+      </span>}
+      onClick={(event) => onSelect?.(file, event)}
+      onActivate={() => onOpen?.(file)}
+      onDoubleClick={() => onOpen?.(file)}
+      onContextMenu={(event) => onContextMenuFile?.(file, event)}
+      trailing={<>
+        {showStats ? (
+          <span className="git-row__stats">
+            {file.additions > 0 ? <span className="git-row__add">+{file.additions}</span> : null}
+            {file.deletions > 0 ? <span className="git-row__del">-{file.deletions}</span> : null}
+          </span>
+        ) : null}
+        <span className="git-row__actions">
+          <button
+            type="button"
+            className="git-row__btn"
+            title={file.staged ? '取消暂存' : '暂存'}
+            onClick={(event) => {
+              event.stopPropagation()
+              onToggleStage?.(file)
+            }}
+          >
+            <Icon name={file.staged ? 'close' : 'plus'} size={16} />
+          </button>
+          <button
+            type="button"
+            className="git-row__btn"
+            title="放弃更改"
+            onClick={(event) => {
+              event.stopPropagation()
+              onDiscard?.(file)
+            }}
+          >
+            <Icon name="restart" size={16} />
+          </button>
         </span>
-      ) : null}
-      <div className="git-row__actions">
-        <button
-          type="button"
-          className="git-row__btn"
-          title={file.staged ? '取消暂存' : '暂存'}
-          onClick={(e) => {
-            e.stopPropagation()
-            onToggleStage?.(file)
-          }}
-        >
-          <Icon name={file.staged ? 'close' : 'plus'} size={16} />
-        </button>
-        <button
-          type="button"
-          className="git-row__btn"
-          title="放弃更改"
-          onClick={(e) => {
-            e.stopPropagation()
-            onDiscard?.(file)
-          }}
-        >
-          <Icon name="restart" size={16} />
-        </button>
-      </div>
-      <span className="git-row__code" style={{ color: statusColor }}>
-        {statusLetter}
-      </span>
-    </div>
+        <span className="git-row__code" style={{ color: statusColor }}>{statusLetter}</span>
+      </>}
+    />
   )
 }

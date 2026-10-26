@@ -13,7 +13,7 @@ export default function SpreadsheetDocumentPreview({ data, onRetry }: { data: Ar
   useEffect(() => {
     const controller = new AbortController()
     setSheets([]); setSheet(0); setPage(1); setColumnPage(0); setResult(null); setError('')
-    const timer = setTimeout(() => { setError('工作簿解析时间较长，请重试或使用本机应用打开。'); controller.abort(); worker.current?.terminate(); worker.current = null }, DOCUMENT_LIMITS.parseTimeoutMs)
+    const timer = setTimeout(() => { setError('工作簿解析超时，原文件已保留。'); controller.abort(); worker.current?.terminate(); worker.current = null }, DOCUMENT_LIMITS.parseTimeoutMs)
     void (async () => {
       const buffer = await prepareOfficeArchive(data, 'xlsx', controller.signal)
       controller.signal.throwIfAborted()
@@ -43,12 +43,6 @@ export default function SpreadsheetDocumentPreview({ data, onRetry }: { data: Ar
   const selected = sheets[sheet]
   const current = result && result.sheet === sheet && result.row === row && result.column === column ? result : null
   return <>
-    <div className="document-preview__toolbar document-preview__toolbar--sheets">
-      <label>工作表 <select aria-label="工作表" value={sheet} onChange={event => { setSheet(Number(event.target.value)); setPage(1); setColumnPage(0) }}>
-        {sheets.map((item, index) => <option key={index} value={index}>{item.name}</option>)}
-      </select></label>
-      <span>{selected.rows.toLocaleString()} 行 · {selected.columns} 列</span>
-    </div>
     <div className="document-preview__table-nav">
       <PreviewPager page={page} total={Math.max(1, Math.ceil(selected.rows / SHEET_PAGE_ROWS))} onPage={setPage} />
       <div className="document-preview__toolbar" role="group" aria-label="表格列范围">
@@ -58,13 +52,31 @@ export default function SpreadsheetDocumentPreview({ data, onRetry }: { data: Ar
       </div>
     </div>
     {current && current.formatFallbacks > 0 && <div className="document-preview__format-note" role="status">部分单元格格式无法还原，已显示原始值或缺少计算结果的提示。</div>}
-    <div className="document-preview__body document-preview__body--sheet" data-document-sheet={sheet} data-document-row-start={row + 1}>
+    <div id="document-sheet-panel" className="document-preview__body document-preview__body--sheet" role="tabpanel" aria-labelledby="document-sheet-tabs" data-document-sheet={sheet} data-document-row-start={row + 1}>
       {!current ? <PreviewMessage /> : <table className="document-preview__table" aria-label={selected.name}>
         <thead><tr><th aria-label="行号" />{current.cells[0]?.map((_, index) => <th key={index} scope="col">{spreadsheetColumn(column + index + 1)}</th>)}</tr></thead>
         <tbody>{current.cells.map((cells, index) => <tr key={row + index}><th scope="row">{row + index + 1}</th>
           {cells.map((cell, cellIndex) => <td key={column + cellIndex} title={cell.text} style={{ fontWeight: cell.bold ? 600 : undefined, fontStyle: cell.italic ? 'italic' : undefined, textAlign: cell.align }}>{cell.text}</td>)}
         </tr>)}</tbody>
       </table>}
+    </div>
+    <div id="document-sheet-tabs" className="document-preview__toolbar document-preview__toolbar--sheets">
+      <div className="document-preview__sheet-tabs" role="tablist" aria-label="工作表">
+        {sheets.map((item, index) => <button key={index} type="button" role="tab" aria-selected={sheet === index} aria-controls="document-sheet-panel" tabIndex={sheet === index ? 0 : -1}
+          onClick={() => { setSheet(index); setPage(1); setColumnPage(0) }}
+          onKeyDown={event => {
+            let next = index
+            if (event.key === 'ArrowRight') next = (index + 1) % sheets.length
+            else if (event.key === 'ArrowLeft') next = (index + sheets.length - 1) % sheets.length
+            else if (event.key === 'Home') next = 0
+            else if (event.key === 'End') next = sheets.length - 1
+            else return
+            event.preventDefault()
+            setSheet(next); setPage(1); setColumnPage(0)
+            event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
+          }}>{item.name}</button>)}
+      </div>
+      <span>{selected.rows.toLocaleString()} 行 · {selected.columns} 列</span>
     </div>
   </>
 }

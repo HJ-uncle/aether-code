@@ -73,10 +73,35 @@ interface OwnedEngineStream {
 /** Renderer stream names are local to a window, never global cancellation keys. */
 const activeStreams = new Map<string, OwnedEngineStream>()
 const streamRoutes = new Map<string, OwnedEngineStream>()
+/** One lifecycle listener per renderer, even when it owns many concurrent streams. */
+const streamSenderDestroyHandlers = new Map<number, { sender: WebContents; listener: () => void }>()
 let streamGeneration = 0
 const engineStreamKey = (senderId: number, streamId: string): string => JSON.stringify([senderId, streamId])
 let runtimeImportBusy = false
 let runtimeActivationBusy = false
+
+function cleanupStreamSenderDestroyHandler(senderId: number): void {
+  if ([...activeStreams.values()].some(owner => owner.sender.id === senderId)) return
+  const owned = streamSenderDestroyHandlers.get(senderId)
+  if (!owned) return
+  owned.sender.removeListener('destroyed', owned.listener)
+  streamSenderDestroyHandlers.delete(senderId)
+}
+
+function ensureStreamSenderDestroyHandler(sender: WebContents): void {
+  if (streamSenderDestroyHandlers.has(sender.id)) return
+  const listener = (): void => {
+    for (const [key, owner] of activeStreams) {
+      if (owner.sender.id !== sender.id) continue
+      streamRoutes.delete(owner.routeId)
+      owner.controller.abort()
+      activeStreams.delete(key)
+    }
+    streamSenderDestroyHandlers.delete(sender.id)
+  }
+  streamSenderDestroyHandlers.set(sender.id, { sender, listener })
+  sender.once('destroyed', listener)
+}
 
 function ensureNotActivatingRuntime(): void {
   if (runtimeActivationBusy) throw new Error('正在切换本地引擎，请稍后再试')
@@ -351,16 +376,15 @@ export function registerIpcHandlers(): void {
     const owner: OwnedEngineStream = { controller, sender: event.sender, streamId: boundInput.streamId, routeId }
     activeStreams.set(key, owner)
     streamRoutes.set(routeId, owner)
-    const onDestroyed = (): void => controller.abort()
-    event.sender.once('destroyed', onDestroyed)
+    ensureStreamSenderDestroyHandler(event.sender)
 
     try {
       await engineHost.stream(routeId, boundInput.path, boundInput.body, controller.signal, boundInput.method, boundInput.query, boundInput.expectedEngine, boundInput.toolProfile, boundInput.subagentProtocol)
     } finally {
-      event.sender.removeListener('destroyed', onDestroyed)
       streamRoutes.delete(routeId)
       // An aborted older request may finish after its replacement started.
       if (activeStreams.get(key) === owner) activeStreams.delete(key)
+      cleanupStreamSenderDestroyHandler(event.sender.id)
     }
     return { ok: true }
   })
@@ -373,6 +397,7 @@ export function registerIpcHandlers(): void {
     streamRoutes.delete(owner.routeId)
     owner.controller.abort()
     activeStreams.delete(key)
+    cleanupStreamSenderDestroyHandler(event.sender.id)
     return { ok: true }
   })
 
@@ -835,6 +860,8 @@ export function abortAllStreams(): void {
   for (const owner of activeStreams.values()) owner.controller.abort()
   activeStreams.clear()
   streamRoutes.clear()
+  for (const { sender, listener } of streamSenderDestroyHandlers.values()) sender.removeListener('destroyed', listener)
+  streamSenderDestroyHandlers.clear()
 }
 
 /** 应用退出时停掉语言服务进程 */

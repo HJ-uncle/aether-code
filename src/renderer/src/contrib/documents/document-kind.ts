@@ -50,7 +50,7 @@ export function documentKindFor(name: string): DocumentKind | null {
 export function documentBytes(base64: string, size: number): ArrayBuffer {
   if (!Number.isSafeInteger(size) || size < 1 || size > DOCUMENT_LIMITS.inputBytes ||
     base64.length > Math.ceil(DOCUMENT_LIMITS.inputBytes / 3) * 4) {
-    throw new Error('此文件超出预览范围（最大 16 MB），请下载后使用本机应用打开。')
+    throw new Error('此文件超出 Aether 当前预览范围（最大 16 MB），原文件已保留。')
   }
   const binary = atob(base64)
   if (binary.length !== size) throw new Error('文件内容不完整，请重新读取后再试。')
@@ -69,7 +69,7 @@ export function previewErrorMessage(reason: unknown): string {
   const message = reason instanceof Error ? reason.message : ''
   // Parser diagnostics are not a user-facing recovery instruction.
   return /^(?:此文件|此文档|此 PDF|文件结构|文件内容|文档版面|工作簿超出|所选表格区域|PDF 页面)/.test(message)
-    ? message.slice(0, 240) : '文档暂时无法预览，请重试；若仍失败，请使用本机应用检查原件。'
+    ? message.slice(0, 240) : 'Aether 暂时无法解析此文档，原文件已保留。'
 }
 
 export function pdfCanvasSize(width: number, height: number, deviceScale: number): { width: number; height: number; density: number } {

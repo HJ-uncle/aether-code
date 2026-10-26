@@ -1,5 +1,6 @@
 import { toolProfileHeaders, type ToolProfile } from './tool-profile'
 import type { EngineSnapshot } from '../../shared/ipc'
+import { hasEncodedPathTraversal } from '../../shared/path-safety'
 
 export type EngineIdentity = Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>
 
@@ -266,7 +267,7 @@ export function remoteWorkspacePathError(mode: 'embedded' | 'remote', method: st
     if (value === undefined) continue
     if (typeof value !== 'string' || !value.trim()) return '远端工作区路径无效'
     const normalized = value.replace(/\\/g, '/')
-    if (/^(?:[A-Za-z]:\/|\/\/|\/)/.test(normalized) || normalized.split('/').some(segment => segment === '..')) {
+    if (hasEncodedPathTraversal(value) || /^(?:[A-Za-z]:\/|\/\/|\/)/.test(normalized) || normalized.split('/').some(segment => segment === '..')) {
       return '远端工作区不能使用本机绝对路径或越界路径'
     }
   }

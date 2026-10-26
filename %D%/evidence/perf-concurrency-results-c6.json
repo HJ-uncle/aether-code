@@ -1,0 +1,225 @@
+{
+  "runId": "53aa8db3-06ac-4310-a0cf-8826b1b788f7",
+  "generatedAt": "2026-10-24T15:37:55.313Z",
+  "cpu": "Intel(R) Core(TM) i9-14900KF",
+  "logicalCpus": 32,
+  "totalMemoryGiB": 128,
+  "concurrency": 6,
+  "note": "Concurrent isolated-instance cold start; frozen build; no engine; RSS from app.getAppMetrics().",
+  "instances": [
+    {
+      "index": 0,
+      "fixture": "D:\\dev\\aether-code\\.e2e-tmp\\perf-concurrency-0-EGn87H",
+      "startedAt": "2026-10-24T15:37:55.316Z",
+      "launchMs": 892.8745,
+      "firstWindowMs": 1331.4200999999998,
+      "readyMs": 2311.0126,
+      "workViewMs": 3726.4056,
+      "metrics": {
+        "processCount": 3,
+        "totalWorkingSetKiB": 715596,
+        "byType": [
+          {
+            "type": "Browser",
+            "workingSetKiB": 329144,
+            "peakWorkingSetKiB": 352304,
+            "cpuPercent": 0
+          },
+          {
+            "type": "Utility",
+            "workingSetKiB": 99440,
+            "peakWorkingSetKiB": 100516,
+            "cpuPercent": 0
+          },
+          {
+            "type": "Tab",
+            "workingSetKiB": 287012,
+            "peakWorkingSetKiB": 287012,
+            "cpuPercent": 0
+          }
+        ]
+      },
+      "ok": true
+    },
+    {
+      "index": 1,
+      "fixture": "D:\\dev\\aether-code\\.e2e-tmp\\perf-concurrency-1-cXOLiy",
+      "startedAt": "2026-10-24T15:37:55.317Z",
+      "launchMs": 916.3787,
+      "firstWindowMs": 1324.3382,
+      "readyMs": 2312.1522,
+      "workViewMs": 3831.9331,
+      "metrics": {
+        "processCount": 3,
+        "totalWorkingSetKiB": 719932,
+        "byType": [
+          {
+            "type": "Browser",
+            "workingSetKiB": 329144,
+            "peakWorkingSetKiB": 350556,
+            "cpuPercent": 0
+          },
+          {
+            "type": "Utility",
+            "workingSetKiB": 99544,
+            "peakWorkingSetKiB": 100568,
+            "cpuPercent": 0
+          },
+          {
+            "type": "Tab",
+            "workingSetKiB": 291244,
+            "peakWorkingSetKiB": 291244,
+            "cpuPercent": 0
+          }
+        ]
+      },
+      "ok": true
+    },
+    {
+      "index": 2,
+      "fixture": "D:\\dev\\aether-code\\.e2e-tmp\\perf-concurrency-2-452nYY",
+      "startedAt": "2026-10-24T15:37:55.318Z",
+      "launchMs": 1024.1876,
+      "firstWindowMs": 1369.1799,
+      "readyMs": 2310.5502,
+      "workViewMs": 3729.4575,
+      "metrics": {
+        "processCount": 3,
+        "totalWorkingSetKiB": 706464,
+        "byType": [
+          {
+            "type": "Browser",
+            "workingSetKiB": 326216,
+            "peakWorkingSetKiB": 348772,
+            "cpuPercent": 0
+          },
+          {
+            "type": "Utility",
+            "workingSetKiB": 99416,
+            "peakWorkingSetKiB": 100460,
+            "cpuPercent": 0
+          },
+          {
+            "type": "Tab",
+            "workingSetKiB": 280832,
+            "peakWorkingSetKiB": 280864,
+            "cpuPercent": 0
+          }
+        ]
+      },
+      "ok": true
+    },
+    {
+      "index": 3,
+      "fixture": "D:\\dev\\aether-code\\.e2e-tmp\\perf-concurrency-3-CNAFGs",
+      "startedAt": "2026-10-24T15:37:55.319Z",
+      "launchMs": 1023.0341,
+      "firstWindowMs": 1377.1291999999999,
+      "readyMs": 3571.4134,
+      "workViewMs": 3723.3657,
+      "metrics": {
+        "processCount": 3,
+        "totalWorkingSetKiB": 717652,
+        "byType": [
+          {
+            "type": "Browser",
+            "workingSetKiB": 329352,
+            "peakWorkingSetKiB": 352588,
+            "cpuPercent": 0
+          },
+          {
+            "type": "Utility",
+            "workingSetKiB": 99524,
+            "peakWorkingSetKiB": 100620,
+            "cpuPercent": 0
+          },
+          {
+            "type": "Tab",
+            "workingSetKiB": 288776,
+            "peakWorkingSetKiB": 289120,
+            "cpuPercent": 0
+          }
+        ]
+      },
+      "ok": true
+    },
+    {
+      "index": 4,
+      "fixture": "D:\\dev\\aether-code\\.e2e-tmp\\perf-concurrency-4-3hMU5l",
+      "startedAt": "2026-10-24T15:37:55.320Z",
+      "launchMs": 1015.3813,
+      "firstWindowMs": 1410.5763,
+      "readyMs": 2298.1775,
+      "workViewMs": 3721.6421,
+      "metrics": {
+        "processCount": 3,
+        "totalWorkingSetKiB": 707256,
+        "byType": [
+          {
+            "type": "Browser",
+            "workingSetKiB": 326100,
+            "peakWorkingSetKiB": 349192,
+            "cpuPercent": 0
+          },
+          {
+            "type": "Utility",
+            "workingSetKiB": 99348,
+            "peakWorkingSetKiB": 100428,
+            "cpuPercent": 0
+          },
+          {
+            "type": "Tab",
+            "workingSetKiB": 281808,
+            "peakWorkingSetKiB": 281900,
+            "cpuPercent": 0
+          }
+        ]
+      },
+      "ok": true
+    },
+    {
+      "index": 5,
+      "fixture": "D:\\dev\\aether-code\\.e2e-tmp\\perf-concurrency-5-4PCKPY",
+      "startedAt": "2026-10-24T15:37:55.321Z",
+      "launchMs": 981.6492000000001,
+      "firstWindowMs": 1321.0959,
+      "readyMs": 2344.2288,
+      "workViewMs": 3727.5258999999996,
+      "metrics": {
+        "processCount": 3,
+        "totalWorkingSetKiB": 710932,
+        "byType": [
+          {
+            "type": "Browser",
+            "workingSetKiB": 326092,
+            "peakWorkingSetKiB": 347580,
+            "cpuPercent": 0
+          },
+          {
+            "type": "Utility",
+            "workingSetKiB": 99492,
+            "peakWorkingSetKiB": 100604,
+            "cpuPercent": 0
+          },
+          {
+            "type": "Tab",
+            "workingSetKiB": 285348,
+            "peakWorkingSetKiB": 285508,
+            "cpuPercent": 0
+          }
+        ]
+      },
+      "ok": true
+    }
+  ],
+  "wallClockMs": 8779.962,
+  "summary": {
+    "launched": 6,
+    "failed": 0,
+    "readyMsMax": 3571.4134,
+    "workViewMsMax": 3831.9331,
+    "totalWorkingSetMiB": 4177.5703125,
+    "processCountTotal": 18
+  },
+  "finishedAt": "2026-10-24T15:38:04.095Z"
+}

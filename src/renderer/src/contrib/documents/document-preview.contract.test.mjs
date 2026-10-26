@@ -1,6 +1,6 @@
 /** Pure boundary checks; no Electron/window/model/engine interaction. */
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { test, after } from 'node:test'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -10,7 +10,15 @@ import JSZip from 'jszip'
 import PptxGenJS from 'pptxgenjs'
 import ExcelJS from 'exceljs'
 import ssf from 'ssf'
+import { DOMParser, XMLSerializer } from '@xmldom/xmldom'
 
+const previousParser = globalThis.DOMParser, previousSerializer = globalThis.XMLSerializer
+globalThis.DOMParser = DOMParser
+globalThis.XMLSerializer = XMLSerializer
+after(() => {
+  if (previousParser) globalThis.DOMParser = previousParser; else delete globalThis.DOMParser
+  if (previousSerializer) globalThis.XMLSerializer = previousSerializer; else delete globalThis.XMLSerializer
+})
 const directory = dirname(fileURLToPath(import.meta.url)), modules = new Map()
 function load(name) {
   if (modules.has(name)) return modules.get(name)
@@ -19,6 +27,7 @@ function load(name) {
   const exports = {}
   new vm.Script('(function(require,exports){' + javascript + '\n})', { filename: name }).runInThisContext()(specifier => {
     if (specifier === './document-kind') return load('document-kind')
+    if (specifier === 'jszip') return { default: JSZip }
     if (specifier === 'ssf') return ssf
     throw new Error('Unexpected dependency: ' + specifier)
   }, exports)
@@ -26,7 +35,7 @@ function load(name) {
   return exports
 }
 const { documentKindFor, documentBytes, spreadsheetColumn, pdfCanvasSize, DOCUMENT_LIMITS } = load('document-kind')
-const { inspectOfficeArchive, expandOfficeEntry, officeImagePixels, passiveOfficePart, passiveOfficeRelationship, sanitizeMergeRefs } = load('office-archive')
+const { inspectOfficeArchive, expandOfficeEntry, officeImagePixels, passiveOfficePart, passiveOfficeRelationship, sanitizeMergeRefs, prepareOfficeArchive } = load('office-archive')
 const { spreadsheetDisplayValue } = load('spreadsheet-value')
 const archive = async (name = 'word/document.xml', text = '<document/>') => {
   const zip = new JSZip(); zip.file(name, text)
@@ -128,4 +137,75 @@ test('real XLSX saved percentages, amounts, dates and formula caches retain thei
   }
   assert.deepEqual(spreadsheetDisplayValue({ formula: '2+3' }, '', '0'), { text: '未保存计算结果', formatFallback: true })
   assert.deepEqual(spreadsheetDisplayValue(12, '12', '0'.repeat(257)), { text: '12', formatFallback: true })
+})
+
+test('prefixed SpreadsheetML and package-absolute table targets survive the complete preview load', async () => {
+  const source = new ExcelJS.Workbook(), sheet = source.addWorksheet('银河系参数')
+  sheet.addTable({
+    name: 'MilkyWayParameters', ref: 'A1', headerRow: true, totalsRow: false,
+    columns: [{ name: '类别' }, { name: '参数' }],
+    rows: [['总体', '棒旋星系']],
+  })
+  const input = await JSZip.loadAsync(await source.xlsx.writeBuffer())
+  for (const name of Object.keys(input.files)) {
+    if (!/^xl\/.*\.xml$/.test(name)) continue
+    const xml = new DOMParser().parseFromString(await input.file(name).async('string'), 'application/xml')
+    const namespace = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+    xml.documentElement.removeAttributeNS('http://www.w3.org/2000/xmlns/', 'xmlns')
+    for (const element of Array.from(xml.getElementsByTagNameNS(namespace, '*'))) {
+      const replacement = xml.createElementNS(namespace, 'x:' + element.localName)
+      for (const attribute of Array.from(element.attributes)) replacement.setAttributeNS(attribute.namespaceURI, attribute.name, attribute.value)
+      while (element.firstChild) replacement.appendChild(element.firstChild)
+      element.parentNode.replaceChild(replacement, element)
+    }
+    input.file(name, new XMLSerializer().serializeToString(xml))
+  }
+  const relations = 'xl/worksheets/_rels/sheet1.xml.rels'
+  const xml = new DOMParser().parseFromString(await input.file(relations).async('string'), 'application/xml')
+  for (const relation of Array.from(xml.getElementsByTagNameNS('*', 'Relationship'))) {
+    if ((relation.getAttribute('Type') || '').endsWith('/table')) {
+      assert.equal(relation.getAttribute('Target'), '../tables/table1.xml')
+      relation.setAttribute('Target', '/xl/tables/table1.xml')
+    }
+  }
+  input.file(relations, new XMLSerializer().serializeToString(xml))
+
+  const original = await input.generateAsync({ type: 'arraybuffer' })
+  await assert.rejects(new ExcelJS.Workbook().xlsx.load(original))
+  const prepared = await prepareOfficeArchive(original, 'xlsx', new AbortController().signal)
+  const loaded = new ExcelJS.Workbook()
+  await loaded.xlsx.load(prepared, { ignoreNodes: ['drawing', 'picture', 'extLst', 'conditionalFormatting', 'dataValidations'] })
+  assert.equal(loaded.worksheets.length, 1)
+  assert.equal(loaded.worksheets[0].name, '银河系参数')
+  assert.equal(loaded.worksheets[0].getCell('A1').text, '类别')
+  assert.equal(loaded.worksheets[0].getCell('B2').text, '棒旋星系')
+  assert.equal(loaded.worksheets[0].getTable('MilkyWayParameters').name, 'MilkyWayParameters')
+  const sanitized = await JSZip.loadAsync(prepared)
+  assert.doesNotMatch(await sanitized.file('xl/workbook.xml').async('string'), /<x:workbook\b/)
+  assert.match(await sanitized.file(relations).async('string'), /Target="\.\.\/tables\/table1\.xml"/)
+})
+
+test('real 1904 XLSX dates keep the absolute date returned by ExcelJS', async () => {
+  const source = new ExcelJS.Workbook()
+  source.properties.date1904 = true
+  const sheet = source.addWorksheet('日期')
+  sheet.getCell('A1').value = new Date('2026-10-24T00:00:00Z')
+  sheet.getCell('A1').numFmt = 'yyyy-mm-dd'
+
+  const loaded = new ExcelJS.Workbook()
+  await loaded.xlsx.load(await source.xlsx.writeBuffer())
+  const cell = loaded.worksheets[0].getCell('A1')
+  assert.equal(loaded.properties.date1904, true)
+  assert.ok(cell.value instanceof Date)
+  // ExcelJS applies the workbook epoch while loading, so the renderer must
+  // not apply the 1904 offset a second time when formatting that Date.
+  assert.deepEqual(spreadsheetDisplayValue(cell.value, cell.text, cell.numFmt, true), {
+    text: '2026-10-24',
+    formatFallback: false,
+  })
+  // Raw numeric serials still need SSF's 1904 epoch option.
+  assert.deepEqual(spreadsheetDisplayValue(1, '1', 'yyyy-mm-dd', true), {
+    text: '1904-01-02',
+    formatFallback: false,
+  })
 })

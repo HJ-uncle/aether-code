@@ -1,7 +1,10 @@
+/* Work 的会话工作区沿用 Code Explorer 的密度与层级语义。
+ * 颜色全部来自 tokens.css，确保明暗主题和自定义强调色一致。 */
 .work-workspace-panel {
   display: flex;
   flex-direction: column;
   min-height: 100%;
+  overflow: hidden;
   background: var(--bg-surface);
   color: var(--fg);
 }
@@ -10,80 +13,84 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 16px 20px 12px;
+  flex: 0 0 var(--chrome-h);
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 var(--space-2) 0 var(--space-3);
   border-bottom: 1px solid var(--border);
 }
 
-.work-workspace-panel__header > div { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.work-workspace-panel__header strong { font-size: 14px; font-weight: 600; }
-.work-workspace-panel__header span { overflow: hidden; color: var(--fg-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-
-.work-workspace-panel__breadcrumbs {
+.work-workspace-panel__title {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 36px;
-  padding: 0 20px;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--border-subtle, var(--border));
-  color: var(--fg-muted);
-  font-size: 12px;
+  align-items: baseline;
+  min-width: 0;
+  gap: var(--space-2);
+  overflow: hidden;
+  color: var(--fg-strong);
   white-space: nowrap;
 }
-.work-workspace-panel__breadcrumbs button { padding: 2px 0; color: inherit; background: transparent; border: 0; cursor: pointer; }
-.work-workspace-panel__breadcrumbs button:hover:not(:disabled) { color: var(--accent); }
-.work-workspace-panel__breadcrumbs button:disabled { cursor: default; opacity: .6; }
 
-.work-workspace-panel__list { flex: 1; min-height: 0; padding: 8px 12px 20px; overflow: auto; }
-.work-workspace-entry {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  min-height: 38px;
-  gap: 10px;
-  padding: 6px 10px;
-  color: var(--fg);
-  text-align: left;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  cursor: pointer;
-}
-.work-workspace-entry:hover { background: var(--bg-hover); border-color: var(--border); }
-.work-workspace-entry > svg { flex: 0 0 auto; color: var(--fg-muted); }
-.work-workspace-entry.is-directory > svg { color: var(--accent); }
-.work-workspace-entry__name { min-width: 0; flex: 1; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.work-workspace-entry small { flex: 0 0 auto; color: var(--fg-muted); font-size: 11px; }
-.work-workspace-entry em { flex: 0 0 auto; color: var(--fg-muted); font-size: 10px; font-style: normal; }
-.work-workspace-entry--parent { margin-bottom: 4px; color: var(--fg-muted); }
+.work-workspace-panel__root-label { flex: 0 0 auto; color: var(--fg-muted); font-size: 11px; }
+.work-workspace-panel__title strong { min-width: 0; overflow: hidden; color: var(--fg); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.work-workspace-panel__actions { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; }
 
-.work-workspace-panel__error {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 10px 20px 2px;
-  padding: 9px 10px;
-  color: var(--danger, #c33);
-  background: var(--bg-error, color-mix(in srgb, var(--danger, #c33) 8%, transparent));
-  border: 1px solid color-mix(in srgb, var(--danger, #c33) 25%, transparent);
-  border-radius: 7px;
-  font-size: 12px;
-}
-.work-workspace-panel__error span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.work-workspace-panel__error button { padding: 2px 4px; color: inherit; background: transparent; border: 0; cursor: pointer; }
-.work-workspace-panel__empty,
-.work-workspace-panel--empty {
-  display: flex;
-  flex-direction: column;
+.work-workspace-panel__actions .work-quiet-button {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 180px;
-  gap: 9px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
   color: var(--fg-muted);
-  font-size: 12px;
-  text-align: center;
+  border-radius: var(--radius-sm);
 }
-.work-workspace-panel--empty { min-height: 100%; padding: 36px; }
+.work-workspace-panel__actions .work-quiet-button:hover:not(:disabled) { color: var(--fg-strong); background: var(--bg-hover); }
+
+.work-workspace-panel__actions .work-quiet-button:focus-visible,
+.work-workspace-panel__filter-wrap button:focus-visible { outline: 1px solid var(--list-focus-outline); outline-offset: -1px; }
+
+.work-workspace-panel__filter-wrap {
+  display: flex;
+  align-items: center;
+  flex: 0 0 var(--control-h-lg);
+  gap: var(--space-2);
+  margin: var(--space-2) var(--space-3) var(--space-1);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--fg-muted);
+  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+.work-workspace-panel__filter-wrap:focus-within { border-color: var(--accent); }
+.work-workspace-panel__filter-wrap input { min-width: 0; flex: 1; height: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: var(--fg-strong); font: inherit; font-size: 12px; }
+.work-workspace-panel__filter-wrap input:focus-visible { outline: none; box-shadow: none; border-color: transparent; }
+.work-workspace-panel__filter-wrap input::placeholder { color: var(--fg-muted); }
+.work-workspace-panel__filter-wrap button { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--radius-round); background: transparent; color: var(--fg-muted); cursor: pointer; }
+.work-workspace-panel__filter-wrap button:hover { color: var(--fg-strong); background: var(--bg-hover); }
+
+.work-workspace-panel__tree { flex: 1; min-height: 0; padding: var(--space-1) 0 var(--space-3); overflow: auto; outline: none; }
+
+.work-workspace-row.is-root { color: var(--fg-strong); }
+.work-workspace-row__meta { display: inline-flex; align-items: center; justify-content: flex-end; flex: 0 0 auto; min-width: 22px; margin-left: var(--space-1); color: var(--fg-muted); }
+.work-workspace-row__status { min-width: 14px; padding-left: var(--space-1); font-family: var(--font-mono); font-size: 11px; font-weight: 700; line-height: 1; text-align: right; }
+.work-workspace-row__status--modified { color: var(--warn); }
+.work-workspace-row__status--added, .work-workspace-row__status--untracked { color: var(--ok); }
+.work-workspace-row__status--deleted { color: var(--danger); }
+.work-workspace-row__status--renamed, .work-workspace-row__status--copied { color: var(--accent); }
+.work-workspace-row__additions, .work-workspace-row__deletions { padding-left: 3px; font-family: var(--font-mono); font-size: 10px; font-weight: 600; line-height: 1; }
+.work-workspace-row__additions { color: var(--ok); }
+.work-workspace-row__deletions { color: var(--danger); }
+.work-workspace-row__dirty { padding-left: var(--space-1); color: var(--warn); font-size: 10px; line-height: 1; }
+
+.work-workspace-panel__error { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-1) var(--space-3) var(--space-2); padding: var(--space-2); border: 1px solid color-mix(in srgb, var(--danger) 25%, transparent); border-radius: var(--radius); background: var(--danger-soft); color: var(--danger); font-size: 12px; }
+.work-workspace-panel__error span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.work-workspace-panel__error button { padding: 2px 4px; border: 0; background: transparent; color: inherit; cursor: pointer; }
+.work-workspace-panel__empty, .work-workspace-panel--empty { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 180px; gap: var(--space-2); color: var(--fg-muted); font-size: 12px; text-align: center; }
+.work-workspace-panel--empty { min-height: 100%; padding: var(--space-6); }
 .work-workspace-panel--empty strong { color: var(--fg); font-size: 14px; }
 
+@container work-workspace (max-width: 520px) {
+  .work-workspace-panel__header { padding-inline: var(--space-2); }
+  .work-workspace-panel__filter-wrap { margin-inline: var(--space-2); }
+}

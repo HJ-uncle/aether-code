@@ -342,11 +342,11 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
       {selected ? <>
         <button type="button" className="work-subagents__back" ref={backRef} onClick={backToList} aria-label="返回子代理列表" title="返回子代理列表 (Esc)"><Icon name="chevron-right" size={18} /></button>
         <span className="work-subagents__avatar"><Icon name="account-outline" size={18} /></span>
-        <div className="work-subagents__heading"><h3>{selected.label}</h3><p title={`${toolStatusLabel(selected.latest)} · 已加载 ${selected.tools.length} 轮工作 · 上下文持续保留`}><span role="status" className={`work-subagents__status work-subagents__status--${selected.latest.state}`}>{toolStatusLabel(selected.latest)}</span> · 已加载 {selected.tools.length} 轮工作 · 上下文持续保留</p></div>
+        <div className="work-subagents__heading"><h3>{selected.label}</h3><p><span role="status" className={`work-subagents__status work-subagents__status--${selected.latest.state}`}>{toolStatusLabel(selected.latest)}</span></p></div>
         <span className="work-subagents__model" title={selected.modelId}>{selected.modelId}</span>
       </> : <div className="work-subagents__heading"><h3>协作代理</h3><p>{publishedFixedChildren ? `已发布 ${groups.length} 个代理记录，按需查看详情` : discovery.state?.activeCount !== undefined
-        ? `${discovery.state.activeCount} 个运行中 · 已加载 ${groups.length} 个代理${discovery.stale ? ' · 状态待同步' : discovery.state.residentPartial ? ' · 部分已加载' : ''}`
-        : groups.length ? `已加载 ${running.length} 个运行中 · ${groups.length} 个代理${discovery.supported === false ? ' · 总数未知' : ''}`
+        ? discovery.state.activeCount > 0 ? `${discovery.state.activeCount} 个运行中` : groups.length ? `${groups.length} 个代理` : '暂无协作代理'
+        : groups.length ? `${running.length} 个运行中 · ${groups.length} 个代理`
           : discovery.loading ? '正在发现协作代理…' : '在对话中 @Agent，邀请它协作完成工作'}</p></div>}
       {!publishedFixedChildren ? <button type="button" className="work-subagents__refresh" disabled={!sessionId || !ready} onClick={() => setRefreshKey(value => value + 1)} aria-label="刷新子代理状态" title="刷新状态"><Icon name="restart" size={16} /></button> : null}
     </header>

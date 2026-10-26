@@ -116,7 +116,7 @@ test('Work 执行状态区分等待、失败、中断和停止，不能把断流
   expect(workStatus([message('done')], false)).toBe('done')
 })
 
-test('成果只来源于文件写入回执，删除、已撤销和文字中声称的文件不计入', () => {
+test('成果只来源于文件写入回执，删除标记历史成果，已撤销和文字声称不计入', () => {
   const tool = (change: EngineFileChange) => ({
     id: change.id,
     name: 'write_file',
@@ -141,7 +141,7 @@ test('成果只来源于文件写入回执，删除、已撤销和文字中声�
       path: 'D:\\work\\report.md',
       name: 'report.md',
       content: '# 实际结果',
-      status: 'ready',
+      status: 'deleted',
       createdAt: 20
     }
   ])
@@ -170,7 +170,7 @@ test('生成、失败、停止和中断时的成果可预览，但不能伪装�
     expect(artifacts[0]).toMatchObject({
       name: 'report.md',
       content: '# 实际结果',
-      status: 'draft'
+      status: status === 'streaming' ? 'draft' : 'unverified'
     })
   }
 })

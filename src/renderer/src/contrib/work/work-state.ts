@@ -12,6 +12,9 @@ export interface WorkTask {
   status: WorkTaskStatus
   createdAt: number
   updatedAt: number
+  /** Timestamp of the currently active turn. Kept separate from task age so
+   * a long-lived task does not look like it has been running for days. */
+  runStartedAt?: number
   workspacePath: string | null
   modelId: string
   attachments: ChatAttachment[]
@@ -32,7 +35,7 @@ export interface WorkArtifact {
   path: string
   name: string
   content: string | null
-  status: 'draft' | 'ready'
+  status: 'draft' | 'ready' | 'deleted' | 'unverified'
   createdAt: number
 }
 export interface WorkState {
@@ -195,6 +198,9 @@ export function normalizeWorkState(value: unknown): WorkState {
           createdAt: task.createdAt,
           draft: typeof task.draft === 'string' ? task.draft : '',
           updatedAt: typeof task.updatedAt === 'number' && Number.isFinite(task.updatedAt) ? task.updatedAt : task.createdAt,
+          ...(typeof task.runStartedAt === 'number' && Number.isFinite(task.runStartedAt) && task.runStartedAt > 0
+            ? { runStartedAt: task.runStartedAt }
+            : {}),
           status: statuses.includes(task.status) ? task.status : 'draft',
           workspacePath: typeof task.workspacePath === 'string' ? task.workspacePath : null,
           modelId: typeof task.modelId === 'string' ? task.modelId : '',
@@ -323,19 +329,49 @@ export function workStatus(messages: ChatMessage[], streaming: boolean): WorkTas
 
 /** File versions come from engine write receipts, never from guessed Markdown filenames. */
 export function workArtifacts(messages: ChatMessage[]): WorkArtifact[] {
-  const seen = new Map<string, WorkArtifact>()
+  const receipts = new Map<string, { change: NonNullable<ChatMessage['tools'][number]['change']>; status: WorkArtifact['status'] }>()
   for (const message of messages)
     for (const tool of message.tools) {
       const change = tool.change
-      if (!change || change.kind !== 'write' || change.status === 'reverted') continue
-      seen.set(change.id, {
+      if (!change) continue
+      // A later task failure does not undo a completed file write. Conversely,
+      // a completed assistant message cannot certify an unresolved tool.
+      const status = tool.state === 'done' && tool.metadata?.success !== false ? 'ready'
+        : tool.state === 'running' && message.status === 'streaming' ? 'draft' : 'unverified'
+      receipts.set(change.id, { change, status })
+    }
+  const artifacts: WorkArtifact[] = []
+  const liveWrites = new Map<string, WorkArtifact[]>()
+  const ordered = [...receipts.values()]
+  const sequenced = ordered.every(item => typeof item.change.seq === 'number')
+  ordered.sort((a, b) => sequenced
+    ? a.change.seq! - b.change.seq! : a.change.createdAt - b.change.createdAt)
+  for (const { change, status } of ordered) {
+    if (change.status === 'reverted') continue
+    const normalized = change.path.replace(/\\/g, '/')
+    const key = /^(?:[a-z]:\/|\/\/)/i.test(normalized) ? normalized.toLowerCase() : normalized
+    if (change.kind === 'delete') {
+      // Retain the historical write as evidence, but never advertise a deleted
+      // scratch document as a usable or still-running deliverable.
+      for (const artifact of liveWrites.get(key) ?? []) artifact.status = 'deleted'
+      liveWrites.delete(key)
+      continue
+    }
+    const artifact: WorkArtifact = {
         id: change.id,
         path: change.path,
-        name: change.path.replace(/\\/g, '/').split('/').at(-1) || change.path,
+        name: normalized.split('/').at(-1) || change.path,
         content: change.newContent,
-        status: message.status === 'done' ? 'ready' : 'draft',
+        status,
         createdAt: change.createdAt
-      })
     }
-  return [...seen.values()].sort((a, b) => b.createdAt - a.createdAt)
+    artifacts.push(artifact)
+    const writes = liveWrites.get(key) ?? []
+    writes.push(artifact); liveWrites.set(key, writes)
+  }
+  return artifacts.sort((a, b) => b.createdAt - a.createdAt)
+}
+
+export function workArtifactStatusLabel(status: WorkArtifact['status']): string {
+  return { ready: '已写入', draft: '写入中', deleted: '已删除', unverified: '待核验' }[status]
 }

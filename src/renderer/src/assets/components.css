@@ -6863,15 +6863,21 @@ select.field__input {
   display: flex;
   align-items: center;
   gap: 5px;
+  min-width: 0;
   height: 30px;
   /* 行高与行高一致：文字基线锁定行中心，避免图标/文字上下错位 */
   line-height: 30px;
-  margin: 0 4px;
-  padding-right: 8px;
-  border-radius: 2px;
+  margin: 0 var(--space-2);
+  padding-block: 0;
+  padding-right: var(--space-3);
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
   cursor: pointer;
   user-select: none;
   color: var(--fg);
+  font: inherit;
+  text-align: left;
   transition: background-color 0.12s ease;
   /* 缩进参考线是绝对定位的：需要行成为它们的包含块 */
   position: relative;
@@ -7050,6 +7056,7 @@ select.field__input {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12.5px;
+  font-weight: 400;
 }
 
 /* git 状态着色：文件名直接变色（对齐 wuzu-client / VSCode gitDecoration） */
@@ -9752,30 +9759,14 @@ select.field__input {
   white-space: nowrap;
 }
 
-/* 目录树节点 */
-.git-tree__dir {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  cursor: pointer;
-  color: var(--fg-muted);
+/* 树模式沿用平铺行的状态色与操作，行本身由 FileTreeRow 统一。 */
+.git-tree__file:hover .git-row__actions,
+.git-tree__file:focus-within .git-row__actions {
+  width: 70px;
 }
-.git-tree__dir:hover {
-  background: var(--bg-hover);
-}
-.git-tree__chevron.is-collapsed {
-  transform: rotate(-90deg);
-}
-.git-tree__folder {
-  color: var(--fg-faint);
-}
-.git-tree__name {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.git-tree__file .tree-row__name.is-deleted {
+  text-decoration: line-through;
+  opacity: 0.7;
 }
 
 /* 历史泳道图 */
@@ -10475,19 +10466,6 @@ select.field__input {
 
 .explorer__tree {
   padding: 8px 0 16px;
-}
-
-.tree-row {
-  height: 30px;
-  line-height: 30px;
-  margin: 0 8px;
-  padding-right: 10px;
-  border-radius: var(--radius);
-}
-
-.tree-row.is-active {
-  background: var(--accent-soft);
-  color: var(--fg-strong);
 }
 
 .editor-area {
@@ -12317,32 +12295,7 @@ select.field__input {
   padding-block: var(--space-2) var(--space-4);
 }
 
-.tree-row {
-  min-width: 0;
-  /* ExplorerView 的虚拟滚动偏移以 ROW_HEIGHT=30 计算，视觉层必须保持同一行高。 */
-  height: 30px;
-  line-height: 30px;
-  margin-inline: var(--space-2);
-  padding-right: var(--space-3);
-  border-radius: var(--radius-lg);
-}
-
-.tree-row:hover {
-  background: color-mix(in srgb, var(--bg-hover) 88%, transparent);
-}
-
-.tree-row.is-active,
-.tree-row.is-selected {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
-}
-
-.tree-row.is-active {
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg-surface));
-}
-
-.tree-row.is-selected {
-  background: color-mix(in srgb, var(--accent) 18%, var(--bg-surface));
-}
+/* 树行的尺寸、悬停、活动与选中样式统一维护在前面的 FileTreeRow 基础规则中。 */
 
 .editor-tabs {
   min-height: 40px;

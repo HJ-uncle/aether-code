@@ -254,7 +254,8 @@ test.describe.serial('相同地址多标签与浏览器激活保护', () => {
     await expectActive(b)
     expect((await probe(b)).keys).toEqual([{ key: 'Enter', trusted: true }])
     await result('scroll', { ...target(a), deltaY: 180 })
-    await expectActive(a)
+    // Direct document scrolling must not replace the user's selected tab.
+    await expectActive(b)
     expect((await probe(a)).scrollY).toBeGreaterThan(0)
     expect((await probe(b)).scrollY).toBe(0)
     const scrolledA = await probe(a)

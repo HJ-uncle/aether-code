@@ -375,7 +375,6 @@ export class EngineHost extends EventEmitter {
     logger.info(`使用引擎运行时（来源：${runtime.source}）：${runtime.entryPath}`)
     const runtimeConfig = runtimeEnvironment(runtime)
     const secret = ensureEncryptionKey()
-    if (!secret.encryptedAtRest) logger.warn('系统密钥存储不可用，引擎加密密钥以明文保存')
     await migrateLegacyModels(runtime, secret.key, signal)
     if (!this.current(generation, signal)) return
     // Keep a cross-process lease until the child has completed its handshake.

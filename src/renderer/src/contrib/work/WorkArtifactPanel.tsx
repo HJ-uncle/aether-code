@@ -5,12 +5,10 @@ import { openFileFromChat } from '@renderer/contrib/chat/open-file'
 import { Markdown } from '@renderer/contrib/chat/Markdown'
 import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
-import { Select } from '@renderer/workbench/Select'
 import { toast } from '@renderer/core/toast'
 import { workSourceMarkdown } from './work-artifact-utils'
 import { getEngineSource, isRemoteEngine, subscribeEngineSource } from '@renderer/core/engine/source'
 import { workArtifactExportName, workArtifactReadFailure, workArtifactReadResult, type WorkArtifactContent } from './work-artifact-content'
-import { FileGlyph } from '../explorer/FileGlyph'
 import './work-artifact-panel.css'
 import type { FsFileContent } from '@shared/ipc'
 import { FilePreview } from '../editor/FilePreview'
@@ -114,8 +112,6 @@ function ArtifactContent({
   sessionId,
   onAddToConversation,
   onOpenFile,
-  artifacts = [],
-  onSelect,
   inResourceTab = false,
   externalFile,
   externalPath,
@@ -143,6 +139,7 @@ function ArtifactContent({
     setRead({ receipt: artifact?.content, value: null })
     setSelection('')
     setMode(artifact && isMarkdown(artifact.name) ? 'preview' : 'source')
+    if (artifact?.status === 'deleted') return () => { active = false }
     if (!artifact || !artifact.path) {
       if (artifact) setRead({ receipt: artifact.content, value: { content: null, coverage: 'unavailable', notice: '该成果没有有效的文件路径，无法读取。' } })
       return () => {
@@ -203,7 +200,7 @@ function ArtifactContent({
     return () => {
       active = false
     }
-  }, [artifact?.id, artifact?.path, artifact?.content, workspaceRoot, sessionId, externalFile, externalPath, readVersion, epoch])
+  }, [artifact?.id, artifact?.path, artifact?.content, artifact?.status, workspaceRoot, sessionId, externalFile, externalPath, readVersion, epoch])
 
   const language = useMemo(
     () => artifact?.name.split('.').pop()?.toUpperCase() ?? 'TEXT',
@@ -237,6 +234,14 @@ function ArtifactContent({
         <span>AI 创建或修改文件后，可在此预览、复制或继续引用。</span>
       </div>
     )
+
+  if (artifact.status === 'deleted') return (
+    <section className="work-artifact-panel-v2 work-artifact-panel-v2--empty" aria-label="已删除的成果" data-document-session={sessionId} data-document-path={artifact.path}>
+      <Icon name="file" size={22} />
+      <strong>{artifact.name} 已删除</strong>
+      <span>保留生成记录，当前文件已删除。</span>
+    </section>
+  )
 
   const copy = async (): Promise<void> => {
     if (content === null || epoch !== getEngineSource()) return
@@ -293,35 +298,6 @@ function ArtifactContent({
   }
   return (
     <section className="work-artifact-panel-v2" aria-label="成果预览" data-document-session={sessionId} data-document-path={artifact.path} data-resource-tab={inResourceTab ? 'true' : 'false'}>
-      {!inResourceTab ? <header className="work-artifact-panel-v2__header work-artifact-select">
-        <div className="work-artifact-panel-v2__title" title={artifact.path}>
-          <FileGlyph name={artifact.name} size={17} />
-          <div>
-            <strong>{artifact.name}</strong>
-            <span>{artifact.path}</span>
-          </div>
-        </div>
-        {artifacts.length > 1 && onSelect ? (
-          <Select
-            className="work-artifact-panel-v2__picker"
-            value={artifact.id}
-            ariaLabel="选择成果"
-            title="选择成果"
-            width={280}
-            onChange={onSelect}
-            options={artifacts.map((item) => ({
-              value: item.id,
-              label: item.name,
-              description: item.path
-            }))}
-          />
-        ) : null}
-        <span
-          className={`work-artifact-panel-v2__status work-artifact-panel-v2__status--${artifact.status}`}
-        >
-          {artifact.status === 'ready' ? '已生成' : '草稿'}
-        </span>
-      </header> : null}
       <div className="work-artifact-panel-v2__toolbar">
         {!inResourceTab && <button
           type="button"
@@ -339,7 +315,7 @@ function ArtifactContent({
           }}
         >
           <Icon name="file" size={14} />
-          打开文档标签
+          在资源中打开
         </button>}
         <button
           type="button"
@@ -377,7 +353,7 @@ function ArtifactContent({
           disabled={saving || (content === null && !(value?.isBinary && (externalFile || externalPath ? Boolean(value.base64) : Boolean(sessionId))))}
         >
           <Icon name="cloud-download-outline" size={14} />
-          {saving ? '正在保存…' : value?.isBinary ? '下载原文件' : value?.coverage === 'partial' ? '下载片段' : value?.coverage === 'receipt' ? '下载回执' : '下载'}
+          {saving ? '正在保存…' : value?.isBinary ? '保存原文件' : value?.coverage === 'partial' ? '保存预览片段' : value?.coverage === 'receipt' ? '保存历史回执' : '保存副本'}
         </button>
         {isMarkdown(artifact.name) && (
           <div className="work-artifact-panel-v2__modes">

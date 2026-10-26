@@ -17,8 +17,18 @@ export function spreadsheetDisplayValue(value: unknown, rawText: string, numberF
   if (typeof saved === 'number' && !Number.isFinite(saved)) return fallback()
   if (typeof saved === 'string' && saved.length > 2000) return fallback()
   try {
-    const cached = saved instanceof Date ? saved.getTime() / 86400000 + 25569 - (date1904 ? 1462 : 0) : saved
-    const text = format(numberFormat || (saved instanceof Date ? 'yyyy-mm-dd' : 'General'), cached, { date1904 })
+    // ExcelJS has already converted date-formatted serials into absolute Date
+    // values using the workbook's 1904 flag. Convert that UTC Date back to an
+    // absolute serial so SSF does not reinterpret it in the renderer's local
+    // timezone. Numeric values still use the workbook serial and therefore
+    // retain the date1904 option.
+    const isDate = saved instanceof Date
+    const serial = saved instanceof Date ? saved.getTime() / 86400000 + 25569 : saved
+    const text = format(
+      numberFormat || (isDate ? 'yyyy-mm-dd' : 'General'),
+      serial,
+      isDate ? { date1904: false } : { date1904 },
+    )
     return text.length > 2000 ? fallback() : { text, formatFallback: false }
   } catch { return fallback() }
 }

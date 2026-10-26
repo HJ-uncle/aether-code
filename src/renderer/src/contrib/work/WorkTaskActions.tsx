@@ -17,12 +17,19 @@ export function WorkTaskActions({
   task,
   controller,
   compact = false,
-  showStop = true
+  showStop = true,
+  onSelectConversation,
+  conversationSelected = false,
+  conversationDisabled = false
 }: {
   task: WorkTask
   controller: Controller
   compact?: boolean
   showStop?: boolean
+  /** Opens the task's message selection mode from the overflow menu. */
+  onSelectConversation?: () => void
+  conversationSelected?: boolean
+  conversationDisabled?: boolean
 }): JSX.Element {
   const [editing, setEditing] = useState(false)
   const [title, setTitle] = useState(task.title)
@@ -67,11 +74,18 @@ export function WorkTaskActions({
         </button>
       ) : null}
       {compact ? <ActionMenu label="任务更多操作" disabled={busy} items={[
-        { id: 'rename', label: '重命名任务', onSelect: () => setEditing(true) },
-        ...(active ? showStop ? [{ id: 'stop', label: '停止任务', onSelect: () => runAction(() => controller.stopTask(task.id)) }] : []
-          : [{ id: 'continue', label: '继续任务', onSelect: () => controller.continueTask(task.id) }]),
-        { id: 'archive', label: task.archived ? '恢复任务' : '归档任务', onSelect: () => controller.archiveTask(task.id, !task.archived) },
-        { id: 'export', label: '导出任务', onSelect: () => runAction(() => controller.exportTask(task.id)) }
+        ...(onSelectConversation ? [{
+          id: 'select-conversation',
+          label: conversationSelected ? '退出选择对话' : '选择对话',
+          onSelect: onSelectConversation,
+          disabled: conversationDisabled,
+          icon: 'checkbox-multiple-marked-outline' as const
+        }] : []),
+        { id: 'rename', label: '重命名任务', icon: 'pencil', onSelect: () => setEditing(true) },
+        ...(active ? showStop ? [{ id: 'stop', label: '停止任务', icon: 'stop' as const, onSelect: () => runAction(() => controller.stopTask(task.id)) }] : []
+          : [{ id: 'continue', label: '继续任务', icon: 'play' as const, onSelect: () => controller.continueTask(task.id) }]),
+        { id: 'archive', label: task.archived ? '恢复任务' : '归档任务', icon: 'package-variant-closed', onSelect: () => controller.archiveTask(task.id, !task.archived) },
+        { id: 'export', label: '导出任务', icon: 'upload-outline', onSelect: () => runAction(() => controller.exportTask(task.id)) }
       ]} /> : <>
       {active && showStop ? (
         <button type="button" disabled={busy} onClick={() => runAction(() => controller.stopTask(task.id))} aria-label="停止任务">

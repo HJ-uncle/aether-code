@@ -16,10 +16,12 @@ import { allowRoot, paths, pickFolder, readDir, remoteWorkspaceContext } from '.
 import { rememberRecentFolder } from './recent-folders'
 import { getSettings, updateSettings } from '../engine/client'
 import { getEngineSource, isRemoteEngine, subscribeEngineSource } from '../engine/source'
-import { onWorkspaceConnectionChanged, workspaceConnectionKey } from './connection'
+import { onWorkspaceConnectionChanged, workspaceConnectionKey, captureWorkspaceTarget } from './connection'
 
 export interface WorkspaceState {
   root: string | null
+  /** 默认服务端工作区直接展示内容；用户选择的项目保留根目录。 */
+  showRoot: boolean
   /** 目录绝对路径 → 子项（仅已加载的目录） */
   children: Map<string, FsEntry[]>
   expanded: Set<string>
@@ -41,6 +43,7 @@ export interface WorkspaceState {
 
 let state: WorkspaceState = {
   root: null,
+  showRoot: false,
   children: new Map(),
   expanded: new Set(),
   loading: new Set(),
@@ -170,7 +173,7 @@ onWorkspaceConnectionChanged(() => {
   if (!changed) return
   workspaceEpoch += 1
   restorePromise = null
-  setState({ root: null, children: new Map(), expanded: new Set(), loading: new Set(), activeFilePath: null, selection: new Set(), selectionAnchor: null, error: null })
+  setState({ root: null, showRoot: false, children: new Map(), expanded: new Set(), loading: new Set(), activeFilePath: null, selection: new Set(), selectionAnchor: null, error: null })
   if (remote && nextKey !== 'remote:unavailable') void restoreLastFolder()
 })
 
@@ -330,8 +333,10 @@ export async function openFolderAt(root: string): Promise<void> {
   // 根目录默认展开：树的第一行是根节点本身（见 ExplorerView），
   // 不在 expanded 里的话打开文件夹只会看到光秃秃的一行根。
   const persisted = loadExpandedDirs(root)
+  const showRoot = !remote || Boolean(captureWorkspaceTarget().workspaceRoot.trim())
   setState({
     root,
+    showRoot,
     children: new Map(),
     // 恢复上次该项目的展开状态；首次打开只展开根
     // 其余目录在 root 成功加载后按层级恢复，避免显示「展开但未加载」的幽灵节点。
@@ -532,7 +537,7 @@ export function removeEntriesFromWorkspace(targetPaths: string[]): void {
  */
 export function collapseAll(): void {
   if (state.expanded.size === 0) return
-  setState({ expanded: new Set() })
+  setState({ expanded: new Set(!state.showRoot && state.root ? [state.root] : []) })
   persistExpandedDirs()
 }
 
@@ -549,6 +554,7 @@ export function closeFolder(): void {
   workspaceEpoch += 1
   setState({
     root: null,
+    showRoot: false,
     children: new Map(),
     expanded: new Set(),
     loading: new Set(),

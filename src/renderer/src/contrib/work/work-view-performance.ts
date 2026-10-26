@@ -32,6 +32,12 @@ export function workPaneRatio(startRatio: number, startX: number, currentX: numb
   return Math.max(35, Math.min(62, startRatio + (currentX - startX) / Math.max(1, width) * 100))
 }
 
+/** Bound a nested left/right workspace split without coupling it to the
+ * conversation/workspace divider's wider range. */
+export function workSplitRatio(startRatio: number, startX: number, currentX: number, width: number, min = 20, max = 60): number {
+  return Math.max(min, Math.min(max, startRatio + (currentX - startX) / Math.max(1, width) * 100))
+}
+
 /** Keep the oldest mounted message stable as new replies arrive while reading. */
 export function workMessageStart(messages: ReadonlyArray<{ id: string }>, firstId: string | null, size = WORK_MESSAGE_PAGE_SIZE): number {
   if (firstId) {

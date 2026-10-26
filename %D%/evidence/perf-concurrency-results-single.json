@@ -1,0 +1,55 @@
+{
+  "runId": "a1f252a1-11bd-4e9e-a4b2-4cb934cbee0f",
+  "generatedAt": "2026-10-24T15:37:42.638Z",
+  "cpu": "Intel(R) Core(TM) i9-14900KF",
+  "logicalCpus": 32,
+  "totalMemoryGiB": 128,
+  "concurrency": 1,
+  "note": "Concurrent isolated-instance cold start; frozen build; no engine; RSS from app.getAppMetrics().",
+  "instances": [
+    {
+      "index": 0,
+      "fixture": "D:\\dev\\aether-code\\.e2e-tmp\\perf-concurrency-0-HWYvu6",
+      "startedAt": "2026-10-24T15:37:42.640Z",
+      "launchMs": 561.0690000000001,
+      "firstWindowMs": 757.8313,
+      "readyMs": 2565.3385,
+      "workViewMs": 2623.82,
+      "metrics": {
+        "processCount": 3,
+        "totalWorkingSetKiB": 726696,
+        "byType": [
+          {
+            "type": "Browser",
+            "workingSetKiB": 333288,
+            "peakWorkingSetKiB": 356076,
+            "cpuPercent": 0
+          },
+          {
+            "type": "Utility",
+            "workingSetKiB": 99376,
+            "peakWorkingSetKiB": 100408,
+            "cpuPercent": 0
+          },
+          {
+            "type": "Tab",
+            "workingSetKiB": 294032,
+            "peakWorkingSetKiB": 294032,
+            "cpuPercent": 0
+          }
+        ]
+      },
+      "ok": true
+    }
+  ],
+  "wallClockMs": 5139.370000000001,
+  "summary": {
+    "launched": 1,
+    "failed": 0,
+    "readyMsMax": 2565.3385,
+    "workViewMsMax": 2623.82,
+    "totalWorkingSetMiB": 709.6640625,
+    "processCountTotal": 3
+  },
+  "finishedAt": "2026-10-24T15:37:47.779Z"
+}

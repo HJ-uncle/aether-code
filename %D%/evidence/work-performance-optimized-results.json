@@ -1,0 +1,1577 @@
+{
+  "runId": "ae71ba52-b5f0-423f-8e32-e9e9a0cdfb36",
+  "generatedAt": "2026-10-24T15:34:42.852Z",
+  "cpu": "Intel(R) Core(TM) i9-14900KF",
+  "logicalCpus": 32,
+  "totalMemoryGiB": 128,
+  "buildArtifacts": [
+    {
+      "path": "out/main/index.js",
+      "bytes": 703017,
+      "sha256": "d3bfa45388f7a021dd918a9c2d6d4970a81b744592dbab6c289f00493107b54a"
+    },
+    {
+      "path": "out/preload/index.js",
+      "bytes": 30628,
+      "sha256": "b0051b592a8ba6333671c82c0f7b4c873ddc3f12da99d95bc97f5dd1190b4f74"
+    },
+    {
+      "path": "out/renderer/index.html",
+      "bytes": 1390,
+      "sha256": "7e403bce6a4aaea1cf4ae594ab349e348608c767e74aa45f1c41eed01024a3a2"
+    },
+    {
+      "path": "out/renderer/assets/index-AM_KmfhG.js",
+      "bytes": 16085743,
+      "sha256": "9223cda9bcf2351a8f2def51834b5f8155b538fffff697e4e5dbdf597883c3c6"
+    },
+    {
+      "path": "out/renderer/assets/index-Cnbx7Boj.css",
+      "bytes": 883867,
+      "sha256": "6ba31545466d719bd225e23d9fca46ba43e388f74d1c064baf89721c774d223e"
+    },
+    {
+      "path": "out/renderer/assets/index-DXnqEKh6.js",
+      "bytes": 105608,
+      "sha256": "7a8fd0d6342af33901b119c882553496e81a7625535fc5a78e96887f23d69c03"
+    }
+  ],
+  "note": "Frozen build; no engine, no conversation history; renderer scheduling probe only.",
+  "configurations": [
+    {
+      "requestedGpu": "0",
+      "samples": [
+        {
+          "sampleIndex": 0,
+          "glass": true,
+          "glassVariant": "all",
+          "input": {
+            "rafP50Ms": 6.900000000000546,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7.100000000000364,
+            "rafGapsOver34Ms": 0,
+            "frames": 367,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": null,
+            "eventCount": 0,
+            "writes": 1,
+            "writeP95Ms": 0,
+            "maxStateCharacters": 379
+          },
+          "navigation": {
+            "rafP50Ms": 6.900000000000546,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7.099999999999454,
+            "rafGapsOver34Ms": 0,
+            "frames": 27,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": null,
+            "eventCount": 0,
+            "writes": 1,
+            "writeP95Ms": 0,
+            "maxStateCharacters": 411,
+            "clickToTwoRafP95Ms": 10.5
+          },
+          "settings": {
+            "rafP50Ms": 6.900000000000546,
+            "rafP95Ms": 7,
+            "rafMaxMs": 13.900000000000546,
+            "rafGapsOver34Ms": 0,
+            "frames": 57,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": 24,
+            "eventCount": 103,
+            "writes": 0,
+            "writeP95Ms": null,
+            "maxStateCharacters": 0,
+            "clickToTwoRafP95Ms": 20.19999998807907,
+            "clickTimesMs": [
+              20.19999998807907,
+              10.899999991059303,
+              7.200000002980232,
+              9.5,
+              8.300000011920929,
+              9.399999991059303,
+              10,
+              8.900000005960464
+            ],
+            "LayoutCount": 16,
+            "RecalcStyleCount": 94,
+            "LayoutDuration": 0.043182,
+            "RecalcStyleDuration": 0.018707,
+            "ScriptDuration": 0.013665,
+            "TaskDuration": 0.178665
+          }
+        },
+        {
+          "sampleIndex": 1,
+          "glass": false,
+          "glassVariant": "none",
+          "input": {
+            "rafP50Ms": 6.900000000000546,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7.299999999999272,
+            "rafGapsOver34Ms": 0,
+            "frames": 359,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": null,
+            "eventCount": 0,
+            "writes": 1,
+            "writeP95Ms": 0.10000000894069672,
+            "maxStateCharacters": 388
+          },
+          "navigation": {
+            "rafP50Ms": 7,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7,
+            "rafGapsOver34Ms": 0,
+            "frames": 26,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": null,
+            "eventCount": 0,
+            "writes": 1,
+            "writeP95Ms": 0,
+            "maxStateCharacters": 411,
+            "clickToTwoRafP95Ms": 10.900000005960464
+          },
+          "settings": {
+            "rafP50Ms": 6.900000000001455,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7.100000000000364,
+            "rafGapsOver34Ms": 0,
+            "frames": 58,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": 24,
+            "eventCount": 74,
+            "writes": 0,
+            "writeP95Ms": null,
+            "maxStateCharacters": 0,
+            "clickToTwoRafP95Ms": 13.400000005960464,
+            "clickTimesMs": [
+              10.5,
+              13.400000005960464,
+              8.300000011920929,
+              8.5,
+              9.199999988079071,
+              9.5,
+              8.599999994039536,
+              7.299999997019768
+            ],
+            "LayoutCount": 16,
+            "RecalcStyleCount": 96,
+            "LayoutDuration": 0.010059,
+            "RecalcStyleDuration": 0.01975,
+            "ScriptDuration": 0.012372,
+            "TaskDuration": 0.153279
+          }
+        },
+        {
+          "sampleIndex": 2,
+          "glass": false,
+          "glassVariant": "none",
+          "input": {
+            "rafP50Ms": 6.900000000001455,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7.100000000000364,
+            "rafGapsOver34Ms": 0,
+            "frames": 419,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": null,
+            "eventCount": 0,
+            "writes": 1,
+            "writeP95Ms": 0,
+            "maxStateCharacters": 366
+          },
+          "navigation": {
+            "rafP50Ms": 6.900000000001455,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7,
+            "rafGapsOver34Ms": 0,
+            "frames": 25,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": null,
+            "eventCount": 0,
+            "writes": 1,
+            "writeP95Ms": 0,
+            "maxStateCharacters": 411,
+            "clickToTwoRafP95Ms": 9.799999997019768
+          },
+          "settings": {
+            "rafP50Ms": 6.900000000001455,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7,
+            "rafGapsOver34Ms": 0,
+            "frames": 54,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": 16,
+            "eventCount": 13,
+            "writes": 0,
+            "writeP95Ms": null,
+            "maxStateCharacters": 0,
+            "clickToTwoRafP95Ms": 10.299999997019768,
+            "clickTimesMs": [
+              10.299999997019768,
+              9.600000008940697,
+              8.599999994039536,
+              8.5,
+              10.299999997019768,
+              9.799999997019768,
+              7.5,
+              10.099999994039536
+            ],
+            "LayoutCount": 16,
+            "RecalcStyleCount": 91,
+            "LayoutDuration": 0.01026,
+            "RecalcStyleDuration": 0.016456,
+            "ScriptDuration": 0.010822,
+            "TaskDuration": 0.127885
+          }
+        },
+        {
+          "sampleIndex": 3,
+          "glass": true,
+          "glassVariant": "all",
+          "input": {
+            "rafP50Ms": 6.900000000001455,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7.200000000000728,
+            "rafGapsOver34Ms": 0,
+            "frames": 403,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": null,
+            "eventCount": 0,
+            "writes": 1,
+            "writeP95Ms": 0,
+            "maxStateCharacters": 370
+          },
+          "navigation": {
+            "rafP50Ms": 6.900000000001455,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7,
+            "rafGapsOver34Ms": 0,
+            "frames": 24,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": null,
+            "eventCount": 0,
+            "writes": 1,
+            "writeP95Ms": 0.09999999403953552,
+            "maxStateCharacters": 411,
+            "clickToTwoRafP95Ms": 10.899999991059303
+          },
+          "settings": {
+            "rafP50Ms": 6.900000000001455,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7.099999999998545,
+            "rafGapsOver34Ms": 0,
+            "frames": 58,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": 16,
+            "eventCount": 74,
+            "writes": 0,
+            "writeP95Ms": null,
+            "maxStateCharacters": 0,
+            "clickToTwoRafP95Ms": 10.799999997019768,
+            "clickTimesMs": [
+              9.5,
+              6.9000000059604645,
+              8.200000002980232,
+              4.200000002980232,
+              9.299999997019768,
+              8.799999997019768,
+              10.799999997019768,
+              9.099999994039536
+            ],
+            "LayoutCount": 16,
+            "RecalcStyleCount": 94,
+            "LayoutDuration": 0.011806,
+            "RecalcStyleDuration": 0.020877,
+            "ScriptDuration": 0.012016,
+            "TaskDuration": 0.161119
+          }
+        }
+      ],
+      "errors": [],
+      "gpu": {
+        "features": {
+          "2d_canvas": "enabled",
+          "direct_rendering_display_compositor": "disabled_off_ok",
+          "gpu_compositing": "disabled_software",
+          "multiple_raster_threads": "enabled_on",
+          "opengl": "enabled_on",
+          "rasterization": "enabled",
+          "raw_draw": "disabled_off_ok",
+          "skia_graphite": "disabled_off",
+          "trees_in_viz": "disabled_off",
+          "video_decode": "enabled",
+          "video_encode": "enabled",
+          "webgl": "enabled_readback",
+          "webgl2": "enabled_readback",
+          "webgpu": "enabled_readback",
+          "webnn": "disabled_off"
+        },
+        "basic": {
+          "auxAttributes": {
+            "amdSwitchable": false,
+            "canSupportThreadedTextureMailbox": false,
+            "directMLFeatureLevel": "Not supported",
+            "dx12FeatureLevel": "Not supported",
+            "glImplementationParts": "(gl=none,angle=none)",
+            "glResetNotificationStrategy": 0,
+            "inProcessGpu": true,
+            "initializationTime": 0,
+            "isAsan": false,
+            "isClangCoverage": false,
+            "jpegDecodeAcceleratorSupported": false,
+            "optimus": false,
+            "overlayInfo": {
+              "bgra8OverlaySupport": "NONE",
+              "directComposition": false,
+              "nv12OverlaySupport": "NONE",
+              "p010OverlaySupport": "NONE",
+              "rgb10a2OverlaySupport": "NONE",
+              "supportsOverlays": false,
+              "yuy2OverlaySupport": "NONE"
+            },
+            "passthroughCmdDecoder": false,
+            "sandboxed": false,
+            "skiaBackendType": "None",
+            "subpixelFontRendering": true,
+            "supportsD3dSharedImages": false,
+            "supportsDirectML": false,
+            "supportsDx12": false,
+            "supportsVulkan": false,
+            "targetCpuBits": 64,
+            "visibilityCallbackCallCount": 0,
+            "vulkanVersion": "Not supported"
+          },
+          "gpuDevice": [
+            {
+              "active": false,
+              "deviceId": 9986,
+              "deviceString": "NVIDIA GeForce RTX 4080 SUPER",
+              "driverVersion": "32.0.16.1088",
+              "gpuPreference": 2,
+              "revision": 161,
+              "subSysId": 337254766,
+              "vendorId": 4318
+            },
+            {
+              "active": false,
+              "deviceId": 9986,
+              "deviceString": "NVIDIA GeForce RTX 4080 SUPER",
+              "driverVersion": "32.0.16.1088",
+              "gpuPreference": 0,
+              "revision": 161,
+              "subSysId": 337254766,
+              "vendorId": 4318
+            },
+            {
+              "active": false,
+              "deviceId": 9986,
+              "deviceString": "NVIDIA GeForce RTX 4080 SUPER",
+              "driverVersion": "32.0.16.1088",
+              "gpuPreference": 0,
+              "revision": 161,
+              "subSysId": 337254766,
+              "vendorId": 4318
+            },
+            {
+              "active": false,
+              "deviceId": 9986,
+              "deviceString": "NVIDIA GeForce RTX 4080 SUPER",
+              "driverVersion": "32.0.16.1088",
+              "gpuPreference": 0,
+              "revision": 161,
+              "subSysId": 337254766,
+              "vendorId": 4318
+            },
+            {
+              "active": false,
+              "deviceId": 9986,
+              "deviceString": "NVIDIA GeForce RTX 4080 SUPER",
+              "driverVersion": "32.0.16.1088",
+              "gpuPreference": 0,
+              "revision": 161,
+              "subSysId": 337254766,
+              "vendorId": 4318
+            },
+            {
+              "active": false,
+              "deviceId": 140,
+              "deviceString": "Microsoft Basic Render Driver",
+              "driverVersion": "10.0.26100.8328",
+              "gpuPreference": 0,
+              "revision": 0,
+              "subSysId": 0,
+              "vendorId": 5140
+            }
+          ]
+        },
+        "versions": {
+          "node": "22.22.1",
+          "acorn": "8.15.0",
+          "ada": "2.9.2",
+          "amaro": "1.1.5",
+          "ares": "1.34.6",
+          "brotli": "1.0.9",
+          "cjs_module_lexer": "2.2.0",
+          "cldr": "44.1",
+          "icu": "74.2",
+          "llhttp": "9.3.0",
+          "modules": "140",
+          "napi": "10",
+          "nbytes": "0.1.1",
+          "ncrypto": "0.0.1",
+          "nghttp2": "1.64.0",
+          "openssl": "0.0.0",
+          "simdjson": "4.2.4",
+          "simdutf": "7.3.3",
+          "sqlite": "3.51.2",
+          "tz": "2025b",
+          "undici": "6.23.0",
+          "unicode": "15.1",
+          "uv": "1.51.0",
+          "uvwasi": "0.0.23",
+          "v8": "14.2.231.22-electron.0",
+          "zlib": "1.3.1",
+          "zstd": "1.5.8",
+          "electron": "39.8.10",
+          "chrome": "142.0.7444.265"
+        }
+      },
+      "viewport": {
+        "width": 1800,
+        "height": 1200,
+        "dpr": 1.5,
+        "focused": true,
+        "visibility": "visible",
+        "supportedEntryTypes": [
+          "element",
+          "event",
+          "first-input",
+          "largest-contentful-paint",
+          "layout-shift",
+          "long-animation-frame",
+          "longtask",
+          "mark",
+          "measure",
+          "navigation",
+          "paint",
+          "resource",
+          "visibility-state"
+        ]
+      },
+      "graphicsPolicy": {
+        "snapshot": {
+          "configuredMode": "software",
+          "bootMode": "software",
+          "hardwareAcceleration": false,
+          "gpuCompositing": "disabled_software",
+          "environmentOverride": true,
+          "restartRequired": false,
+          "recovery": null
+        },
+        "effects": "solid"
+      },
+      "glassLayers": []
+    },
+    {
+      "requestedGpu": "1",
+      "samples": [
+        {
+          "sampleIndex": 0,
+          "glass": true,
+          "glassVariant": "all",
+          "input": {
+            "rafP50Ms": 7,
+            "rafP95Ms": 7.200000000000728,
+            "rafMaxMs": 14,
+            "rafGapsOver34Ms": 0,
+            "frames": 414,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": 16,
+            "eventCount": 136,
+            "writes": 1,
+            "writeP95Ms": 0.09999999403953552,
+            "maxStateCharacters": 370
+          },
+          "navigation": {
+            "rafP50Ms": 7,
+            "rafP95Ms": 7.100000000000364,
+            "rafMaxMs": 7.400000000000546,
+            "rafGapsOver34Ms": 0,
+            "frames": 27,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": 16,
+            "eventCount": 18,
+            "writes": 1,
+            "writeP95Ms": 0,
+            "maxStateCharacters": 411,
+            "clickToTwoRafP95Ms": 10.899999991059303
+          },
+          "settings": {
+            "rafP50Ms": 7,
+            "rafP95Ms": 13.699999999999818,
+            "rafMaxMs": 14.199999999999818,
+            "rafGapsOver34Ms": 0,
+            "frames": 59,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": 40,
+            "eventCount": 90,
+            "writes": 0,
+            "writeP95Ms": null,
+            "maxStateCharacters": 0,
+            "clickToTwoRafP95Ms": 20.599999994039536,
+            "clickTimesMs": [
+              20.599999994039536,
+              9.299999997019768,
+              7,
+              9.299999997019768,
+              8.799999997019768,
+              9.5,
+              10.599999994039536,
+              10.200000002980232
+            ],
+            "LayoutCount": 16,
+            "RecalcStyleCount": 95,
+            "LayoutDuration": 0.042503,
+            "RecalcStyleDuration": 0.021538,
+            "ScriptDuration": 0.014921,
+            "TaskDuration": 0.181084
+          }
+        },
+        {
+          "sampleIndex": 1,
+          "glass": false,
+          "glassVariant": "none",
+          "input": {
+            "rafP50Ms": 7,
+            "rafP95Ms": 7.299999999999272,
+            "rafMaxMs": 14.300000000001091,
+            "rafGapsOver34Ms": 0,
+            "frames": 393,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": 16,
+            "eventCount": 126,
+            "writes": 1,
+            "writeP95Ms": 0,
+            "maxStateCharacters": 373
+          },
+          "navigation": {
+            "rafP50Ms": 7,
+            "rafP95Ms": 7.199999999998909,
+            "rafMaxMs": 7.299999999999272,
+            "rafGapsOver34Ms": 0,
+            "frames": 22,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": null,
+            "eventCount": 0,
+            "writes": 1,
+            "writeP95Ms": 0,
+            "maxStateCharacters": 411,
+            "clickToTwoRafP95Ms": 11.100000008940697
+          },
+          "settings": {
+            "rafP50Ms": 7,
+            "rafP95Ms": 7.300000000001091,
+            "rafMaxMs": 14.100000000000364,
+            "rafGapsOver34Ms": 0,
+            "frames": 54,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": 16,
+            "eventCount": 26,
+            "writes": 0,
+            "writeP95Ms": null,
+            "maxStateCharacters": 0,
+            "clickToTwoRafP95Ms": 16.69999998807907,
+            "clickTimesMs": [
+              11.599999994039536,
+              15.200000002980232,
+              10.700000002980232,
+              16.69999998807907,
+              8.400000005960464,
+              9.5,
+              10.099999994039536,
+              9.200000002980232
+            ],
+            "LayoutCount": 16,
+            "RecalcStyleCount": 92,
+            "LayoutDuration": 0.009395,
+            "RecalcStyleDuration": 0.016692,
+            "ScriptDuration": 0.011553,
+            "TaskDuration": 0.135492
+          }
+        },
+        {
+          "sampleIndex": 2,
+          "glass": false,
+          "glassVariant": "none",
+          "input": {
+            "rafP50Ms": 7,
+            "rafP95Ms": 7.300000000001091,
+            "rafMaxMs": 14.199999999998909,
+            "rafGapsOver34Ms": 0,
+            "frames": 356,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": 16,
+            "eventCount": 146,
+            "writes": 1,
+            "writeP95Ms": 0,
+            "maxStateCharacters": 384
+          },
+          "navigation": {
+            "rafP50Ms": 7,
+            "rafP95Ms": 7.199999999998909,
+            "rafMaxMs": 7.200000000000728,
+            "rafGapsOver34Ms": 0,
+            "frames": 24,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": 16,
+            "eventCount": 11,
+            "writes": 1,
+            "writeP95Ms": 0.10000000894069672,
+            "maxStateCharacters": 411,
+            "clickToTwoRafP95Ms": 10.400000005960464
+          },
+          "settings": {
+            "rafP50Ms": 7,
+            "rafP95Ms": 7.200000000000728,
+            "rafMaxMs": 14.100000000000364,
+            "rafGapsOver34Ms": 0,
+            "frames": 49,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": 16,
+            "eventCount": 24,
+            "writes": 0,
+            "writeP95Ms": null,
+            "maxStateCharacters": 0,
+            "clickToTwoRafP95Ms": 14.700000002980232,
+            "clickTimesMs": [
+              10.800000011920929,
+              9.5,
+              10.300000011920929,
+              10.5,
+              10.600000008940697,
+              14.700000002980232,
+              12.399999991059303,
+              7.800000011920929
+            ],
+            "LayoutCount": 16,
+            "RecalcStyleCount": 86,
+            "LayoutDuration": 0.008937,
+            "RecalcStyleDuration": 0.013973,
+            "ScriptDuration": 0.01042,
+            "TaskDuration": 0.108876
+          }
+        },
+        {
+          "sampleIndex": 3,
+          "glass": true,
+          "glassVariant": "all",
+          "input": {
+            "rafP50Ms": 7,
+            "rafP95Ms": 7.299999999999272,
+            "rafMaxMs": 13.799999999999272,
+            "rafGapsOver34Ms": 0,
+            "frames": 365,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": 16,
+            "eventCount": 114,
+            "writes": 1,
+            "writeP95Ms": 0,
+            "maxStateCharacters": 387
+          },
+          "navigation": {
+            "rafP50Ms": 7,
+            "rafP95Ms": 7.100000000002183,
+            "rafMaxMs": 7.299999999999272,
+            "rafGapsOver34Ms": 0,
+            "frames": 22,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": null,
+            "eventCount": 0,
+            "writes": 1,
+            "writeP95Ms": 0,
+            "maxStateCharacters": 411,
+            "clickToTwoRafP95Ms": 11.299999997019768
+          },
+          "settings": {
+            "rafP50Ms": 7,
+            "rafP95Ms": 7.200000000000728,
+            "rafMaxMs": 7.400000000001455,
+            "rafGapsOver34Ms": 0,
+            "frames": 48,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": 16,
+            "eventCount": 16,
+            "writes": 0,
+            "writeP95Ms": null,
+            "maxStateCharacters": 0,
+            "clickToTwoRafP95Ms": 11.5,
+            "clickTimesMs": [
+              8,
+              10.5,
+              8.5,
+              9.600000008940697,
+              9.700000002980232,
+              11.5,
+              9.800000011920929,
+              9.599999994039536
+            ],
+            "LayoutCount": 16,
+            "RecalcStyleCount": 85,
+            "LayoutDuration": 0.009185,
+            "RecalcStyleDuration": 0.0133,
+            "ScriptDuration": 0.009994,
+            "TaskDuration": 0.11829200000000001
+          }
+        }
+      ],
+      "errors": [
+        "D:\\dev\\aether-code\\node_modules\\node-pty\\lib\\conpty_console_list_agent.js:13\r\nvar consoleProcessList = getConsoleProcessList(shellPid);\r\n                         ^\r\n\r\nError: AttachConsole failed\r\n    at Object.<anonymous> (D:\\dev\\aether-code\\node_modules\\node-pty\\lib\\conpty_console_list_agent.js:13:26)\r\n    at Module._compile (node:internal/modules/cjs/loader:1713:14)\r\n    at Module._extensions..js (node:internal/modules/cjs/loader:1847:10)\r\n    at Module.load (node:internal/modules/cjs/loader:1448:32)\r\n    at Module._load (node:internal/modules/cjs/loader:1270:12)\r\n    at c._load (node:electron/js2c/node_init:2:18041)\r\n    at TracingChannel.traceSync (node:diagnostics_channel:328:14)\r\n    at wrapModuleLoad (node:internal/modules/cjs/loader:244:24)\r\n    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:186:5)\r\n    at node:internal/main/run_main_module:36:49\r\n\r\nNode.js v22.22.1\r\n"
+      ],
+      "gpu": {
+        "features": {
+          "2d_canvas": "enabled",
+          "direct_rendering_display_compositor": "disabled_off_ok",
+          "gpu_compositing": "enabled",
+          "multiple_raster_threads": "enabled_on",
+          "opengl": "enabled_on",
+          "rasterization": "enabled",
+          "raw_draw": "disabled_off_ok",
+          "skia_graphite": "disabled_off",
+          "trees_in_viz": "disabled_off",
+          "video_decode": "enabled",
+          "video_encode": "enabled",
+          "webgl": "enabled",
+          "webgl2": "enabled",
+          "webgpu": "enabled",
+          "webnn": "disabled_off"
+        },
+        "basic": {
+          "auxAttributes": {
+            "amdSwitchable": false,
+            "canSupportThreadedTextureMailbox": false,
+            "directMLFeatureLevel": "Not supported",
+            "dx12FeatureLevel": "Not supported",
+            "glImplementationParts": "(gl=none,angle=none)",
+            "glResetNotificationStrategy": 0,
+            "inProcessGpu": true,
+            "initializationTime": 0,
+            "isAsan": false,
+            "isClangCoverage": false,
+            "jpegDecodeAcceleratorSupported": false,
+            "optimus": false,
+            "overlayInfo": {
+              "bgra8OverlaySupport": "NONE",
+              "directComposition": false,
+              "nv12OverlaySupport": "NONE",
+              "p010OverlaySupport": "NONE",
+              "rgb10a2OverlaySupport": "NONE",
+              "supportsOverlays": false,
+              "yuy2OverlaySupport": "NONE"
+            },
+            "passthroughCmdDecoder": false,
+            "sandboxed": false,
+            "skiaBackendType": "None",
+            "subpixelFontRendering": true,
+            "supportsD3dSharedImages": false,
+            "supportsDirectML": false,
+            "supportsDx12": false,
+            "supportsVulkan": false,
+            "targetCpuBits": 64,
+            "visibilityCallbackCallCount": 0,
+            "vulkanVersion": "Not supported"
+          },
+          "gpuDevice": [
+            {
+              "active": false,
+              "deviceId": 9986,
+              "deviceString": "NVIDIA GeForce RTX 4080 SUPER",
+              "driverVersion": "32.0.16.1088",
+              "gpuPreference": 2,
+              "revision": 161,
+              "subSysId": 337254766,
+              "vendorId": 4318
+            },
+            {
+              "active": false,
+              "deviceId": 9986,
+              "deviceString": "NVIDIA GeForce RTX 4080 SUPER",
+              "driverVersion": "32.0.16.1088",
+              "gpuPreference": 0,
+              "revision": 161,
+              "subSysId": 337254766,
+              "vendorId": 4318
+            },
+            {
+              "active": false,
+              "deviceId": 9986,
+              "deviceString": "NVIDIA GeForce RTX 4080 SUPER",
+              "driverVersion": "32.0.16.1088",
+              "gpuPreference": 0,
+              "revision": 161,
+              "subSysId": 337254766,
+              "vendorId": 4318
+            },
+            {
+              "active": false,
+              "deviceId": 9986,
+              "deviceString": "NVIDIA GeForce RTX 4080 SUPER",
+              "driverVersion": "32.0.16.1088",
+              "gpuPreference": 0,
+              "revision": 161,
+              "subSysId": 337254766,
+              "vendorId": 4318
+            },
+            {
+              "active": false,
+              "deviceId": 9986,
+              "deviceString": "NVIDIA GeForce RTX 4080 SUPER",
+              "driverVersion": "32.0.16.1088",
+              "gpuPreference": 0,
+              "revision": 161,
+              "subSysId": 337254766,
+              "vendorId": 4318
+            },
+            {
+              "active": false,
+              "deviceId": 140,
+              "deviceString": "Microsoft Basic Render Driver",
+              "driverVersion": "10.0.26100.8328",
+              "gpuPreference": 0,
+              "revision": 0,
+              "subSysId": 0,
+              "vendorId": 5140
+            }
+          ]
+        },
+        "versions": {
+          "node": "22.22.1",
+          "acorn": "8.15.0",
+          "ada": "2.9.2",
+          "amaro": "1.1.5",
+          "ares": "1.34.6",
+          "brotli": "1.0.9",
+          "cjs_module_lexer": "2.2.0",
+          "cldr": "44.1",
+          "icu": "74.2",
+          "llhttp": "9.3.0",
+          "modules": "140",
+          "napi": "10",
+          "nbytes": "0.1.1",
+          "ncrypto": "0.0.1",
+          "nghttp2": "1.64.0",
+          "openssl": "0.0.0",
+          "simdjson": "4.2.4",
+          "simdutf": "7.3.3",
+          "sqlite": "3.51.2",
+          "tz": "2025b",
+          "undici": "6.23.0",
+          "unicode": "15.1",
+          "uv": "1.51.0",
+          "uvwasi": "0.0.23",
+          "v8": "14.2.231.22-electron.0",
+          "zlib": "1.3.1",
+          "zstd": "1.5.8",
+          "electron": "39.8.10",
+          "chrome": "142.0.7444.265"
+        }
+      },
+      "viewport": {
+        "width": 1800,
+        "height": 1200,
+        "dpr": 1.5,
+        "focused": true,
+        "visibility": "visible",
+        "supportedEntryTypes": [
+          "element",
+          "event",
+          "first-input",
+          "largest-contentful-paint",
+          "layout-shift",
+          "long-animation-frame",
+          "longtask",
+          "mark",
+          "measure",
+          "navigation",
+          "paint",
+          "resource",
+          "visibility-state"
+        ]
+      },
+      "graphicsPolicy": {
+        "snapshot": {
+          "configuredMode": "software",
+          "bootMode": "software",
+          "hardwareAcceleration": true,
+          "gpuCompositing": "enabled",
+          "environmentOverride": true,
+          "restartRequired": false,
+          "recovery": null
+        },
+        "effects": "reduced"
+      },
+      "glassLayers": []
+    },
+    {
+      "requestedGpu": "default",
+      "samples": [
+        {
+          "sampleIndex": 0,
+          "glass": true,
+          "glassVariant": "all",
+          "input": {
+            "rafP50Ms": 6.900000000000546,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7.100000000000364,
+            "rafGapsOver34Ms": 0,
+            "frames": 369,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": null,
+            "eventCount": 0,
+            "writes": 1,
+            "writeP95Ms": 0,
+            "maxStateCharacters": 384
+          },
+          "navigation": {
+            "rafP50Ms": 6.900000000000546,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7.099999999999454,
+            "rafGapsOver34Ms": 0,
+            "frames": 27,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": null,
+            "eventCount": 0,
+            "writes": 1,
+            "writeP95Ms": 0,
+            "maxStateCharacters": 411,
+            "clickToTwoRafP95Ms": 11.199999988079071
+          },
+          "settings": {
+            "rafP50Ms": 6.900000000000546,
+            "rafP95Ms": 7,
+            "rafMaxMs": 13.799999999999272,
+            "rafGapsOver34Ms": 0,
+            "frames": 50,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": 24,
+            "eventCount": 92,
+            "writes": 0,
+            "writeP95Ms": null,
+            "maxStateCharacters": 0,
+            "clickToTwoRafP95Ms": 16.200000002980232,
+            "clickTimesMs": [
+              10.299999997019768,
+              16.200000002980232,
+              9.799999997019768,
+              10,
+              9.900000005960464,
+              10.700000002980232,
+              7.100000008940697,
+              10.600000008940697
+            ],
+            "LayoutCount": 16,
+            "RecalcStyleCount": 86,
+            "LayoutDuration": 0.038347,
+            "RecalcStyleDuration": 0.014866,
+            "ScriptDuration": 0.013094,
+            "TaskDuration": 0.156627
+          }
+        },
+        {
+          "sampleIndex": 1,
+          "glass": false,
+          "glassVariant": "none",
+          "input": {
+            "rafP50Ms": 6.900000000000546,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7.300000000000182,
+            "rafGapsOver34Ms": 0,
+            "frames": 412,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": null,
+            "eventCount": 0,
+            "writes": 1,
+            "writeP95Ms": 0,
+            "maxStateCharacters": 367
+          },
+          "navigation": {
+            "rafP50Ms": 6.900000000001455,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7,
+            "rafGapsOver34Ms": 0,
+            "frames": 24,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": null,
+            "eventCount": 0,
+            "writes": 1,
+            "writeP95Ms": 0,
+            "maxStateCharacters": 411,
+            "clickToTwoRafP95Ms": 11.899999991059303
+          },
+          "settings": {
+            "rafP50Ms": 6.900000000001455,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7.100000000000364,
+            "rafGapsOver34Ms": 0,
+            "frames": 66,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": 16,
+            "eventCount": 83,
+            "writes": 0,
+            "writeP95Ms": null,
+            "maxStateCharacters": 0,
+            "clickToTwoRafP95Ms": 12.100000008940697,
+            "clickTimesMs": [
+              7.800000011920929,
+              7.5,
+              6.399999991059303,
+              7,
+              6.899999991059303,
+              7.4000000059604645,
+              12.100000008940697,
+              11.600000008940697
+            ],
+            "LayoutCount": 16,
+            "RecalcStyleCount": 102,
+            "LayoutDuration": 0.012502,
+            "RecalcStyleDuration": 0.024256,
+            "ScriptDuration": 0.014717,
+            "TaskDuration": 0.177059
+          }
+        },
+        {
+          "sampleIndex": 2,
+          "glass": false,
+          "glassVariant": "none",
+          "input": {
+            "rafP50Ms": 6.900000000001455,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7.100000000000364,
+            "rafGapsOver34Ms": 0,
+            "frames": 358,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": null,
+            "eventCount": 0,
+            "writes": 1,
+            "writeP95Ms": 0,
+            "maxStateCharacters": 381
+          },
+          "navigation": {
+            "rafP50Ms": 7,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7,
+            "rafGapsOver34Ms": 0,
+            "frames": 23,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": null,
+            "eventCount": 0,
+            "writes": 1,
+            "writeP95Ms": 0,
+            "maxStateCharacters": 411,
+            "clickToTwoRafP95Ms": 11.400000005960464
+          },
+          "settings": {
+            "rafP50Ms": 6.900000000001455,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7,
+            "rafGapsOver34Ms": 0,
+            "frames": 56,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": 16,
+            "eventCount": 58,
+            "writes": 0,
+            "writeP95Ms": null,
+            "maxStateCharacters": 0,
+            "clickToTwoRafP95Ms": 11.800000011920929,
+            "clickTimesMs": [
+              8.5,
+              11.800000011920929,
+              10.200000002980232,
+              7.5,
+              8,
+              7.5,
+              9,
+              9.800000011920929
+            ],
+            "LayoutCount": 16,
+            "RecalcStyleCount": 93,
+            "LayoutDuration": 0.010309,
+            "RecalcStyleDuration": 0.019626,
+            "ScriptDuration": 0.012,
+            "TaskDuration": 0.144588
+          }
+        },
+        {
+          "sampleIndex": 3,
+          "glass": true,
+          "glassVariant": "all",
+          "input": {
+            "rafP50Ms": 6.900000000001455,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7.299999999999272,
+            "rafGapsOver34Ms": 0,
+            "frames": 400,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": null,
+            "eventCount": 0,
+            "writes": 1,
+            "writeP95Ms": 0,
+            "maxStateCharacters": 380
+          },
+          "navigation": {
+            "rafP50Ms": 6.900000000001455,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7,
+            "rafGapsOver34Ms": 0,
+            "frames": 32,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": 16,
+            "eventCount": 22,
+            "writes": 1,
+            "writeP95Ms": 0,
+            "maxStateCharacters": 411,
+            "clickToTwoRafP95Ms": 10.400000005960464
+          },
+          "settings": {
+            "rafP50Ms": 6.900000000001455,
+            "rafP95Ms": 7,
+            "rafMaxMs": 7.099999999998545,
+            "rafGapsOver34Ms": 0,
+            "frames": 67,
+            "observedTypes": [
+              "longtask",
+              "event"
+            ],
+            "observationErrors": [],
+            "longTaskCount": 0,
+            "longTaskTotalMs": 0,
+            "eventP95Ms": 16,
+            "eventCount": 74,
+            "writes": 0,
+            "writeP95Ms": null,
+            "maxStateCharacters": 0,
+            "clickToTwoRafP95Ms": 16.400000005960464,
+            "clickTimesMs": [
+              10.700000002980232,
+              16.400000005960464,
+              9.200000002980232,
+              6.200000002980232,
+              10.300000011920929,
+              7.299999997019768,
+              11.799999997019768,
+              7.899999991059303
+            ],
+            "LayoutCount": 16,
+            "RecalcStyleCount": 104,
+            "LayoutDuration": 0.013421,
+            "RecalcStyleDuration": 0.02682,
+            "ScriptDuration": 0.01456,
+            "TaskDuration": 0.19127
+          }
+        }
+      ],
+      "errors": [],
+      "gpu": {
+        "features": {
+          "2d_canvas": "enabled",
+          "direct_rendering_display_compositor": "disabled_off_ok",
+          "gpu_compositing": "disabled_software",
+          "multiple_raster_threads": "enabled_on",
+          "opengl": "enabled_on",
+          "rasterization": "enabled",
+          "raw_draw": "disabled_off_ok",
+          "skia_graphite": "disabled_off",
+          "trees_in_viz": "disabled_off",
+          "video_decode": "enabled",
+          "video_encode": "enabled",
+          "webgl": "enabled_readback",
+          "webgl2": "enabled_readback",
+          "webgpu": "enabled_readback",
+          "webnn": "disabled_off"
+        },
+        "basic": {
+          "auxAttributes": {
+            "amdSwitchable": false,
+            "canSupportThreadedTextureMailbox": false,
+            "directMLFeatureLevel": "Not supported",
+            "dx12FeatureLevel": "Not supported",
+            "glImplementationParts": "(gl=none,angle=none)",
+            "glResetNotificationStrategy": 0,
+            "inProcessGpu": true,
+            "initializationTime": 0,
+            "isAsan": false,
+            "isClangCoverage": false,
+            "jpegDecodeAcceleratorSupported": false,
+            "optimus": false,
+            "overlayInfo": {
+              "bgra8OverlaySupport": "NONE",
+              "directComposition": false,
+              "nv12OverlaySupport": "NONE",
+              "p010OverlaySupport": "NONE",
+              "rgb10a2OverlaySupport": "NONE",
+              "supportsOverlays": false,
+              "yuy2OverlaySupport": "NONE"
+            },
+            "passthroughCmdDecoder": false,
+            "sandboxed": false,
+            "skiaBackendType": "None",
+            "subpixelFontRendering": true,
+            "supportsD3dSharedImages": false,
+            "supportsDirectML": false,
+            "supportsDx12": false,
+            "supportsVulkan": false,
+            "targetCpuBits": 64,
+            "visibilityCallbackCallCount": 0,
+            "vulkanVersion": "Not supported"
+          },
+          "gpuDevice": [
+            {
+              "active": false,
+              "deviceId": 9986,
+              "deviceString": "NVIDIA GeForce RTX 4080 SUPER",
+              "driverVersion": "32.0.16.1088",
+              "gpuPreference": 2,
+              "revision": 161,
+              "subSysId": 337254766,
+              "vendorId": 4318
+            },
+            {
+              "active": false,
+              "deviceId": 9986,
+              "deviceString": "NVIDIA GeForce RTX 4080 SUPER",
+              "driverVersion": "32.0.16.1088",
+              "gpuPreference": 0,
+              "revision": 161,
+              "subSysId": 337254766,
+              "vendorId": 4318
+            },
+            {
+              "active": false,
+              "deviceId": 9986,
+              "deviceString": "NVIDIA GeForce RTX 4080 SUPER",
+              "driverVersion": "32.0.16.1088",
+              "gpuPreference": 0,
+              "revision": 161,
+              "subSysId": 337254766,
+              "vendorId": 4318
+            },
+            {
+              "active": false,
+              "deviceId": 9986,
+              "deviceString": "NVIDIA GeForce RTX 4080 SUPER",
+              "driverVersion": "32.0.16.1088",
+              "gpuPreference": 0,
+              "revision": 161,
+              "subSysId": 337254766,
+              "vendorId": 4318
+            },
+            {
+              "active": false,
+              "deviceId": 9986,
+              "deviceString": "NVIDIA GeForce RTX 4080 SUPER",
+              "driverVersion": "32.0.16.1088",
+              "gpuPreference": 0,
+              "revision": 161,
+              "subSysId": 337254766,
+              "vendorId": 4318
+            },
+            {
+              "active": false,
+              "deviceId": 140,
+              "deviceString": "Microsoft Basic Render Driver",
+              "driverVersion": "10.0.26100.8328",
+              "gpuPreference": 0,
+              "revision": 0,
+              "subSysId": 0,
+              "vendorId": 5140
+            }
+          ]
+        },
+        "versions": {
+          "node": "22.22.1",
+          "acorn": "8.15.0",
+          "ada": "2.9.2",
+          "amaro": "1.1.5",
+          "ares": "1.34.6",
+          "brotli": "1.0.9",
+          "cjs_module_lexer": "2.2.0",
+          "cldr": "44.1",
+          "icu": "74.2",
+          "llhttp": "9.3.0",
+          "modules": "140",
+          "napi": "10",
+          "nbytes": "0.1.1",
+          "ncrypto": "0.0.1",
+          "nghttp2": "1.64.0",
+          "openssl": "0.0.0",
+          "simdjson": "4.2.4",
+          "simdutf": "7.3.3",
+          "sqlite": "3.51.2",
+          "tz": "2025b",
+          "undici": "6.23.0",
+          "unicode": "15.1",
+          "uv": "1.51.0",
+          "uvwasi": "0.0.23",
+          "v8": "14.2.231.22-electron.0",
+          "zlib": "1.3.1",
+          "zstd": "1.5.8",
+          "electron": "39.8.10",
+          "chrome": "142.0.7444.265"
+        }
+      },
+      "viewport": {
+        "width": 1800,
+        "height": 1200,
+        "dpr": 1.5,
+        "focused": true,
+        "visibility": "visible",
+        "supportedEntryTypes": [
+          "element",
+          "event",
+          "first-input",
+          "largest-contentful-paint",
+          "layout-shift",
+          "long-animation-frame",
+          "longtask",
+          "mark",
+          "measure",
+          "navigation",
+          "paint",
+          "resource",
+          "visibility-state"
+        ]
+      },
+      "graphicsPolicy": {
+        "snapshot": {
+          "configuredMode": "software",
+          "bootMode": "software",
+          "hardwareAcceleration": false,
+          "gpuCompositing": "disabled_software",
+          "environmentOverride": false,
+          "restartRequired": false,
+          "recovery": null
+        },
+        "effects": "solid"
+      },
+      "glassLayers": []
+    }
+  ],
+  "finishedAt": "2026-10-24T15:35:39.550Z",
+  "verification": {
+    "budgetMs": 120,
+    "regressions": [],
+    "passed": true
+  }
+}

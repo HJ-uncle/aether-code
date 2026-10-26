@@ -27,24 +27,24 @@ export async function saveWorkspaceFile(input: EngineFileSaveInput, owner: Brows
       typeof input.path !== 'string' || !input.path.trim() || input.path.length > 4096 ||
       /[\u0000-\u001f\u007f]/.test(input.path) ||
       /^(?:[A-Za-z]:|\/|\\)/.test(input.path) || input.path.replace(/\\/g, '/').split('/').some(part => part === '..' || part === '.') ||
-      typeof input.workspaceRoot !== 'string' || !input.workspaceRoot.trim()) throw new Error('成果下载参数无效')
+      typeof input.workspaceRoot !== 'string' || !input.workspaceRoot.trim()) throw new Error('成果保存参数无效')
   const snapshot = engineHost.getSnapshot()
   const controller = new AbortController()
   const transportSignal = engineHost.requestSignal
   const assertCurrent = (): void => {
-    if (owner.isDestroyed() || owner.webContents.isDestroyed()) throw new Error('发起下载的窗口已关闭')
+    if (owner.isDestroyed() || owner.webContents.isDestroyed()) throw new Error('发起保存的窗口已关闭')
     const current = engineHost.getSnapshot()
     const changed = engineTargetError(current, input.expectedEngine)
-    if (changed || current.phase !== 'ready' || transportSignal.aborted) throw new Error(changed || '引擎连接已变化，请重新下载')
+    if (changed || current.phase !== 'ready' || transportSignal.aborted) throw new Error(changed || '引擎连接已变化，请重新保存')
   }
   assertCurrent()
   if (saves.has(owner.id)) throw new Error('当前窗口已有文件正在另存')
   saves.add(owner.id)
-  const abort = (): void => controller.abort(new Error('下载窗口已关闭'))
+  const abort = (): void => controller.abort(new Error('保存窗口已关闭'))
   owner.once('closed', abort)
   try {
     const name = basename(input.path.replace(/\\/g, '/'))
-    const result = await dialog.showSaveDialog(owner, { title: '下载原文件', defaultPath: name,
+    const result = await dialog.showSaveDialog(owner, { title: '保存原文件', defaultPath: name,
       buttonLabel: '保存', properties: ['showOverwriteConfirmation', 'createDirectory'] })
     if (result.canceled || !result.filePath) return { saved: false }
     assertCurrent()

@@ -16,7 +16,7 @@ export async function withMainGitOperation<T>(cwd: string, action:()=>Promise<T>
   const lock=physicalRepositoryLock(allowed,prepareInit)
   const current=operations.getStore()
   if(current?.lock===lock) {current.assertOwned();return action()}
-  try {return await withRepositoryLease(lock,(scope,assertOwned)=>operations.run({lock,scope,assertOwned},action),read?30_000:0)}
+  try {return await withRepositoryLease(lock,(scope,assertOwned)=>operations.run({lock,scope,assertOwned},action),read?30_000:0,undefined,read?'read':'write')}
   catch(error) {if(initializesDirectory)throw Object.assign(error instanceof Error?error:new Error(String(error)),{executionDisposition:'may_have_effects'});throw error}
 }
 export function mainGitProcessScope(): RepositoryProcessScope {

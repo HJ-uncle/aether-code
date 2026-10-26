@@ -19,7 +19,7 @@ onmessage = (event: MessageEvent<SpreadsheetRequest>): void => {
       let cells = 0
       workbook.eachSheet(sheet => sheet.eachRow(row => { cells += row.actualCellCount }))
       if (sheets.length > DOCUMENT_LIMITS.sheets || sheets.some(sheet => sheet.rows > DOCUMENT_LIMITS.rows || sheet.columns > DOCUMENT_LIMITS.columns) || cells > DOCUMENT_LIMITS.cells) {
-        workbook = null; throw new Error('工作簿超出预览范围，请使用本机应用打开。')
+        workbook = null; throw new Error('工作簿超出 Aether 当前预览范围，原文件已保留。')
       }
       reply({ kind: 'loaded', sheets })
     } else if (message.kind === 'page' && workbook) {

@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type CSSProperties,
   type JSX,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent
@@ -68,10 +67,9 @@ import { ContextMenu, type ContextMenuItem } from '@renderer/workbench/ContextMe
 import { PromptDialog } from '@renderer/workbench/PromptDialog'
 import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
-import { FileGlyph } from './FileGlyph'
+import { FileTreeRow, FILE_TREE_ROW_HEIGHT as ROW_HEIGHT } from './FileTreeRow'
 
-/** 行高，必须与最终 .tree-row 的 CSS 高度一致（虚拟滚动按它换算偏移）。 */
-const ROW_HEIGHT = 30
+/** 虚拟滚动按共用树行的固定高度换算偏移。 */
 /** 视口外多渲染的行数：留一屏缓冲，快速滚动时才不会看到空白 */
 const OVERSCAN = 10
 /**
@@ -137,8 +135,6 @@ interface Row {
  * hover 无法做到（参考线是行的子元素、行本身不随悬停改样式），
  * 因此由容器把「当前悬停行 / 活动路径」算出来，逐行决定要不要画。
  */
-const INDENT_BASE = 6
-const INDENT_STEP = 12
 /** 右键菜单的位置与目标 */
 interface MenuState {
   x: number
@@ -199,6 +195,7 @@ interface DragState {
  */
 interface WorkspaceSnapshot {
   root: string | null
+  showRoot: boolean
   children: ReadonlyMap<string, FsEntry[]>
   expanded: ReadonlySet<string>
   loading: ReadonlySet<string>
@@ -270,6 +267,7 @@ function gitCodeClass(code: string): string {
 function sameSnapshot(a: WorkspaceSnapshot, b: WorkspaceSnapshot): boolean {
   return (
     a.root === b.root &&
+    a.showRoot === b.showRoot &&
     a.error === b.error &&
     a.activeFilePath === b.activeFilePath &&
     sameChildren(a.children, b.children) &&
@@ -283,6 +281,7 @@ function sameSnapshot(a: WorkspaceSnapshot, b: WorkspaceSnapshot): boolean {
 function toSnapshot(workspace: WorkspaceState): WorkspaceSnapshot {
   return {
     root: workspace.root,
+    showRoot: workspace.showRoot,
     children: workspace.children,
     expanded: workspace.expanded,
     loading: workspace.loading,
@@ -303,6 +302,10 @@ function diffSnapshot(
 
   if (prev.root !== next.root) {
     patch.root = next.root
+    changed = true
+  }
+  if (prev.showRoot !== next.showRoot) {
+    patch.showRoot = next.showRoot
     changed = true
   }
   if (prev.error !== next.error) {
@@ -469,7 +472,7 @@ export function ExplorerView(): JSX.Element {
      * 把根滤掉等于整棵树消失，没有任何场景需要这样。
      */
     const root = workspace.root
-    if (root) {
+    if (root && workspace.showRoot) {
       const rootGitKey = root.replace(/\\/g, '/')
       const isRootExpanded = workspace.expanded.has(root)
       out.push({
@@ -585,14 +588,15 @@ export function ExplorerView(): JSX.Element {
         if (isExpanded) walk(shown.path, depth + 1, false)
       }
     }
-    // 根目录的子项从第二层（depth 1）开始：第一层是根节点行本身
-    if (root) walk(root, 1, false)
+    // 默认服务端工作区省略根节点，内容直接从第一层展示。
+    if (root) walk(root, workspace.showRoot ? 1 : 0, false)
     return out
   }, [
     childrenOf,
     workspace.expanded,
     workspace.loading,
     workspace.root,
+    workspace.showRoot,
     workspace.activeFilePath,
     workspace.selection,
     cutPaths,
@@ -1597,7 +1601,7 @@ export function ExplorerView(): JSX.Element {
       <div className="explorer__toolbar">
         <span className="explorer__root" title={workspace.root}>
           <span className="explorer__root-label">资源</span>
-          <span className="explorer__root-name">{paths.basename(workspace.root).toUpperCase()}</span>
+          <span className="explorer__root-name">{workspace.showRoot ? paths.basename(workspace.root).toUpperCase() : '工作区'}</span>
         </span>
         <div className="explorer__toolbar-spacer" />
 
@@ -1795,7 +1799,7 @@ export function ExplorerView(): JSX.Element {
           </div>
         </div>
         {/* 根行恒在：空目录 = 根已展开却没有任何子项行 */}
-        {rows.length <= 1 && workspace.root && workspace.expanded.has(workspace.root) ? (
+        {rows.length === (workspace.showRoot ? 1 : 0) && workspace.root && workspace.expanded.has(workspace.root) ? (
           <div className="explorer__hint">目录为空</div>
         ) : null}
       </div>
@@ -1964,9 +1968,7 @@ function TreeRow({
   const { entry, depth, isExpanded, isLoading, isActive, isSelected, isCut, isIgnored } = row
 
   const className = [
-    'tree-row',
     isActive ? 'is-active' : '',
-    isSelected ? 'is-selected' : '',
     isCursor ? 'is-cursor' : '',
     isCut ? 'is-cut' : '',
     isIgnored ? 'is-ignored' : '',
@@ -1976,78 +1978,41 @@ function TreeRow({
     .join(' ')
 
   return (
-    <div
-      role="treeitem"
-      aria-expanded={entry.isDirectory ? isExpanded : undefined}
-      aria-selected={isSelected}
-      aria-level={depth + 1}
+    <FileTreeRow
+      name={entry.name}
+      nameContent={highlightName(entry.name, nameFilter)}
+      path={entry.path}
+      depth={depth}
+      isDirectory={entry.isDirectory}
+      isExpanded={isExpanded}
+      isSelected={isSelected}
+      focusable={false}
       className={className}
-      data-path={entry.path}
+      nameClassName={`${row.gitCode ? `tree-row__name--${gitCodeClass(row.gitCode)}` : ''}${row.gitDirty ? ' tree-row__name--dirty' : ''}`.trim()}
+      labelSuffix={row.compactChain ? (
+        <span className="tree-row__chain" title={row.compactChain}>{row.compactChain}</span>
+      ) : undefined}
+      trailing={<>
+        {row.gitCode ? (
+          <span
+            className={`tree-row__git tree-row__git--${gitCodeClass(row.gitCode)}`}
+            title={row.gitTitle}
+            aria-label={row.gitTitle}
+          >
+            {row.gitCode}
+          </span>
+        ) : row.gitDirty ? (
+          <span className="tree-row__git tree-row__git--dirty" title="该目录下有改动" aria-hidden>●</span>
+        ) : null}
+        {isLoading ? <span className="tree-row__loading" role="status" aria-label="加载中"><Spinner size={12} /></span> : null}
+      </>}
+      indentGuides
       // 拖拽落点解析读这两个属性：目录落在自身上，文件落在其父目录
-      data-dir={entry.isDirectory ? entry.path : undefined}
-      data-parent-dir={entry.isDirectory ? undefined : paths.dirname(entry.path)}
-      style={
-        { paddingLeft: INDENT_BASE + depth * INDENT_STEP, height: ROW_HEIGHT } as CSSProperties
-      }
-      title={entry.path}
+      dataDir={entry.isDirectory ? entry.path : undefined}
+      dataParentDir={entry.isDirectory ? undefined : paths.dirname(entry.path)}
       onMouseDown={onMouseDown}
       onContextMenu={onContextMenu}
-    >
-      {/* 每往里一层就多一条竖线，画在这一层的起始缩进处。
-          depth 为 0 的顶层没有父级，自然不画。 */}
-      {Array.from({ length: depth }, (_, level) => (
-        <span
-          key={level}
-          className="explorer__indent"
-          style={{ left: INDENT_BASE + level * INDENT_STEP + 6 }}
-          aria-hidden
-        />
-      ))}
-
-      <span className={`tree-row__chevron${isExpanded ? ' is-open' : ''}`}>
-        {entry.isDirectory ? <span className="tree-row__chevron-glyph" /> : null}
-      </span>
-
-      {entry.isDirectory ? (
-        <span className={`tree-row__icon tree-row__icon--dir${isExpanded ? ' is-open' : ''}`} />
-      ) : (
-        <FileGlyph name={entry.name} />
-      )}
-
-      {/* 名字区占据整行的剩余宽度：右侧标记因它撑满而被顶到行尾，
-          长文件名则在区内收缩省略，不把标记挤出视口 */}
-      <span className="tree-row__labels">
-        <span
-          className={`tree-row__name${row.gitCode ? ` tree-row__name--${gitCodeClass(row.gitCode)}` : ''}${
-            row.gitDirty ? ' tree-row__name--dirty' : ''
-          }`}
-        >
-          {highlightName(entry.name, nameFilter)}
-        </span>
-        {/* 紧凑链条作尾注：真实名字在前、被合并掉的层级在后且淡化。
-            反过来（链条在前）会让"这一行到底是什么"要读完才知道。 */}
-        {row.compactChain ? (
-          <span className="tree-row__chain" title={row.compactChain}>
-            {row.compactChain}
-          </span>
-        ) : null}
-      </span>
-      {/* git 角标：固定在行尾右侧，状态变化在固定位置竖向扫读即可对准 */}
-      {row.gitCode ? (
-        <span
-          className={`tree-row__git tree-row__git--${gitCodeClass(row.gitCode)}`}
-          title={row.gitTitle}
-          aria-label={row.gitTitle}
-        >
-          {row.gitCode}
-        </span>
-      ) : row.gitDirty ? (
-        <span className="tree-row__git tree-row__git--dirty" title="该目录下有改动" aria-hidden>
-          ●
-        </span>
-      ) : null}
-      {isLoading ? <span className="tree-row__loading" role="status" aria-label="加载中"><Spinner size={12} /></span> : null}
-    </div>
+    />
   )
 }
 

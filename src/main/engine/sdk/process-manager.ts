@@ -11,7 +11,8 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { logger } from '../logger'
+import { StringDecoder } from 'node:string_decoder'
+import { logger, redactEngineLogLine } from '../logger'
 import { observeProcessLifecycle, type ProcessLifecycle } from './process-lifecycle'
 
 const stopTasks = new WeakMap<ChildProcess, Promise<void>>()
@@ -125,28 +126,48 @@ export function startProcess(opts: StartProcessOptions): ProcessHandle {
   })
   const lifecycle = observeProcessLifecycle(child)
 
-  child.stdout?.on('data', (chunk: Buffer) => {
-    for (const line of chunk.toString().split('\n')) {
-      if (line.trim()) logger.engine(line)
+  const stdoutDecoder = new StringDecoder('utf8')
+  const stderrDecoder = new StringDecoder('utf8')
+  let stdoutRemainder = ''
+  let stderrRemainder = ''
+  const emitStdout = (line: string): void => {
+    if (line.trim()) logger.engine(redactEngineLogLine(line, env))
+  }
+  const emitStderr = (line: string): void => {
+    // 运行时噪音过滤：punycode 的 DEP0040 弃用警告来自 Electron 的 Node
+    // 运行层（引擎与依赖用的都是用户land版 punycode），用户既修不了也不
+    // 需要关心，显示出来只会让人以为引擎出错了。警告固定三行，
+    // 中间一行只有 "userland alternative" 可匹配。
+    if (
+      line.includes('[DEP0040]') ||
+      line.includes('userland alternative') ||
+      line.includes('--trace-deprecation')
+    ) return
+    if (line.trim()) logger.engineError(redactEngineLogLine(line, env))
+  }
+  const consume = (text: string, stderr: boolean): void => {
+    const pending = stderr ? stderrRemainder : stdoutRemainder
+    const lines = (pending + text).split('\n')
+    const tail = lines.pop() ?? ''
+    if (stderr) {
+      for (const line of lines) emitStderr(line)
+      stderrRemainder = tail
+    } else {
+      for (const line of lines) emitStdout(line)
+      stdoutRemainder = tail
     }
-  })
-
-  child.stderr?.on('data', (chunk: Buffer) => {
-    for (const line of chunk.toString().split('\n')) {
-      // 运行时噪音过滤：punycode 的 DEP0040 弃用警告来自 Electron 的 Node
-      // 运行层（引擎与依赖用的都是用户land版 punycode），用户既修不了也不
-      // 需要关心，显示出来只会让人以为引擎出错了。警告固定三行，
-      // 中间一行只有 "userland alternative" 可匹配。
-      if (
-        line.includes('[DEP0040]') ||
-        line.includes('userland alternative') ||
-        line.includes('--trace-deprecation')
-      ) {
-        continue
-      }
-      if (line.trim()) logger.engineError(line)
-    }
-  })
+  }
+  const flush = (stderr: boolean): void => {
+    const decoder = stderr ? stderrDecoder : stdoutDecoder
+    const line = (stderr ? stderrRemainder : stdoutRemainder) + decoder.end()
+    if (stderr) stderrRemainder = ''
+    else stdoutRemainder = ''
+    if (line) (stderr ? emitStderr : emitStdout)(line)
+  }
+  child.stdout?.on('data', (chunk: Buffer) => consume(stdoutDecoder.write(chunk), false))
+  child.stdout?.on('end', () => flush(false))
+  child.stderr?.on('data', (chunk: Buffer) => consume(stderrDecoder.write(chunk), true))
+  child.stderr?.on('end', () => flush(true))
 
   child.on('exit', (code, signal) => {
     opts.onExit?.(code, signal)
