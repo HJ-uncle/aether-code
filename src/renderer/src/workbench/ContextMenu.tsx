@@ -95,7 +95,7 @@ export function ContextMenu({ x, y, items, onClose, anchor = null }: ContextMenu
       ) return
       // 切换标签会让 Monaco 内容区恢复滚动位置；它与标签锚点无关，
       // 不应把刚打开的标签菜单吞掉。真正滚动锚点所在容器（或页面）时仍关闭。
-      if (anchor && event.target instanceof Node && event.target !== document && !event.target.contains(anchor)) return
+      if (anchor && event.target instanceof Node && event.target !== document && !anchor.contains(event.target)) return
       onClose()
     }
 

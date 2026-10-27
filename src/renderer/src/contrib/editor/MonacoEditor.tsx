@@ -3,6 +3,7 @@ import type * as Monaco from 'monaco-editor'
 import {
   acquireModel,
   languageForPath,
+  initializeModelContent,
   monaco,
   peekModel,
   setupMonacoEnvironment
@@ -25,6 +26,8 @@ interface MonacoEditorProps {
   filePath: string
   groupId?: string
   readOnly?: boolean
+  /** 首次读取期间保留宿主，但不得把新文档绑定到上一个文件的 model。 */
+  loading?: boolean
   value: string
   onChange: (value: string) => void
   /**
@@ -36,6 +39,15 @@ interface MonacoEditorProps {
 
 // 同一模型的两个宿主会先后收到内容事件；第一栏上报触发的React更新也必须让第二栏识别为回声。
 const lastReportedModelValues = new WeakMap<Monaco.editor.ITextModel, string>()
+let monacoCreateCount = 0
+let monacoDisposeCount = 0
+/** Monaco 的 change offset 都基于事件前的文本，必须从后往前应用。 */
+export function applyModelContentChanges(previous: string, changes: readonly Monaco.editor.IModelContentChange[]): string {
+  return [...changes].sort((a, b) => b.rangeOffset - a.rangeOffset).reduce(
+    (value, change) => value.slice(0, change.rangeOffset) + change.text + value.slice(change.rangeOffset + change.rangeLength),
+    previous
+  )
+}
 
 /**
  * Monaco 宿主
@@ -46,6 +58,7 @@ export function MonacoEditor({
   filePath,
   groupId = 'main',
   readOnly = false,
+  loading = false,
   value,
   onChange,
   reveal
@@ -54,8 +67,17 @@ export function MonacoEditor({
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null)
   const decorationsRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null)
   const gitCleanupRef = useRef<(() => void) | null>(null)
+  const modelValuesRef = useRef(new WeakMap<Monaco.editor.ITextModel, string>())
+  const readOnlyRef = useRef(readOnly)
+  useEffect(() => { readOnlyRef.current = readOnly }, [readOnly])
+  /** loading 期间 React 尚未换 model，事件必须继续归属当前旧文件。 */
+  const acceptingInputRef = useRef(true)
+  useEffect(() => { acceptingInputRef.current = !loading }, [loading])
   /** 当前 model 对应的文件路径；换 model 时用它把 viewState 存回正确的文件 */
   const currentPathRef = useRef<string | null>(null)
+  /** setModel 同步触发 onDidChangeModel；事件用待切换路径认领新模型。 */
+  const nextPathRef = useRef<string | null>(null)
+  const pendingViewStateRef = useRef<{ path: string; state: unknown } | null>(null)
   /** 用 ref 持有回调，避免因 onChange 变化而重建编辑器 */
   const onChangeRef = useRef(onChange)
   useEffect(() => {
@@ -70,8 +92,20 @@ export function MonacoEditor({
     const container = containerRef.current
     if (!container) return
 
+    container.dataset.monacoCreateCount = String(++monacoCreateCount)
+    container.dataset.monacoDisposeCount = String(monacoDisposeCount)
     const displayOptions = getEditorDisplayOptions()
+    const firstLoad = !peekModel(filePath)
+    const initialValue = getDocument(filePath)?.content ?? ''
+    const initialModel = acquireModel(filePath, languageForPath(filePath), initialValue)
+    if (initialModel.getValue() !== initialValue) {
+      if (firstLoad) initializeModelContent(initialModel, initialValue)
+      else syncModelValue(initialModel, initialValue)
+    }
+    initialModel.updateOptions({ tabSize: displayOptions.tabSize })
+    modelValuesRef.current.set(initialModel, initialModel.getValue())
     const editor = monaco.editor.create(container, {
+      model: initialModel,
       theme: currentEditorThemeName(),
       automaticLayout: true,
       readOnly,
@@ -96,15 +130,17 @@ export function MonacoEditor({
       editor.getModel()?.updateOptions({ tabSize: options.tabSize })
     })
     /** 当前 model 对应的文件路径：换 model 时靠它把 viewState 存回上一个文件 */
-    currentPathRef.current = null
+    currentPathRef.current = filePath
 
     // Monaco 撤销/自动闭合会先通知光标再通知内容；React 此时仍可能提交上次输入的 props。
     // 上报前先标记本地版本，不能把自己报告过的旧值当成外部编辑再推入撤销栈。
-    const subscription = editor.onDidChangeModelContent(() => {
+    const subscription = editor.onDidChangeModelContent((event) => {
       const path = currentPathRef.current
       const model = editor.getModel()
-      if (!path || !model) return
-      const content = editor.getValue()
+      if (!path || !model || !acceptingInputRef.current) return
+      const previous = modelValuesRef.current.get(model)
+      const content = previous === undefined ? model.getValue() : applyModelContentChanges(previous, event.changes)
+      modelValuesRef.current.set(model, content)
       lastReportedModelValues.set(model, content)
       onChangeRef.current(content)
     })
@@ -114,8 +150,11 @@ export function MonacoEditor({
     // 拿不到旧 model，所以路径与 viewState 都靠 ref 兜住。
     const modelSubscription = editor.onDidChangeModel(() => {
       const previous = currentPathRef.current
-      if (previous) rememberGroupViewState(groupId, previous, editor.saveViewState())
-      currentPathRef.current = null
+      const pending = pendingViewStateRef.current
+      if (previous) rememberGroupViewState(groupId, previous,
+        pending?.path === previous ? pending.state : editor.saveViewState())
+      currentPathRef.current = nextPathRef.current
+      pendingViewStateRef.current = null
     })
 
     // 光标位置 → 状态栏；Monaco 不报列号，需要单独订阅并自行取位置
@@ -155,12 +194,11 @@ export function MonacoEditor({
       cursorSubscription.dispose()
       addToChatAction?.dispose()
       addFileToChatAction.dispose()
-      // 卸载前把当前文件的光标/滚动位置存下来。
-      // 必须在这里做：DocumentSlot 以 filePath 为 key，切标签是**整体卸载重建**
-      // （不是换 model），onDidChangeModel 不会触发，实例一销毁状态就没了 ——
-      // 于是切回来时光标被重置到第 1 行。saveViewState 必须在 dispose 之前调用。
+      // 二进制或固定视图会卸载宿主；普通文本切换只走 setModel，不经过这里。
       const path = currentPathRef.current
       if (path) rememberGroupViewState(groupId, path, editor.saveViewState())
+      ++monacoDisposeCount
+      container.dataset.monacoDisposeCount = String(monacoDisposeCount)
       editor.dispose()
       editorRef.current = null
     }
@@ -173,26 +211,28 @@ export function MonacoEditor({
   useEffect(() => {
     const editor = editorRef.current
     const document = getDocument(filePath)
-    if (!editor || !document || document.loading) return
+    if (!editor || !document || loading) return
 
     const firstLoad = !peekModel(filePath)
-    const model = acquireModel(filePath, languageForPath(filePath))
+    const model = acquireModel(filePath, languageForPath(filePath), document.content)
     model.updateOptions({ tabSize: getEditorDisplayOptions().tabSize })
+    if (model.getValue() !== document.content) {
+      if (firstLoad) initializeModelContent(model, document.content)
+      else syncModelValue(model, document.content)
+    }
+    modelValuesRef.current.set(model, model.getValue())
     if (editor.getModel() !== model) {
-      // 先存旧文件的视图状态（onDidChangeModel 的监听也做了一次，幂等），
-      // 再换 model —— 顺序反了会存成新 model 的状态
+      decorationsRef.current?.clear()
       const previous = currentPathRef.current
-      if (previous && previous !== filePath) {
-        rememberGroupViewState(groupId, previous, editor.saveViewState())
-      }
+      pendingViewStateRef.current = previous ? { path: previous, state: editor.saveViewState() } : null
+      nextPathRef.current = filePath
       editor.setModel(model)
+      nextPathRef.current = null
       currentPathRef.current = filePath
     }
 
-    if (model.getValue() !== document.content) {
-      if (firstLoad) model.setValue(document.content)
-      else syncModelValue(model, document.content)
-    }
+    if (model.getValue() !== document.content) syncModelValue(model, document.content)
+    editor.updateOptions({ readOnly: readOnlyRef.current })
 
     // 恢复该文件上次的光标与滚动位置；没有记录（首次打开）时保持 Monaco 默认
     const saved = takeGroupViewState(groupId, filePath)
@@ -208,20 +248,20 @@ export function MonacoEditor({
       const position = editor.getPosition()
       setCursor(filePath, position?.lineNumber ?? 1, position?.column ?? 1)
     }
-  }, [filePath, groupId])
+  }, [filePath, groupId, loading])
 
-  useEffect(() => { editorRef.current?.updateOptions({ readOnly }) }, [readOnly])
+  useEffect(() => { editorRef.current?.updateOptions({ readOnly }) }, [readOnly, filePath])
 
   useEffect(() => {
     const editor = editorRef.current
-    if (!editor || readOnly) return
+    if (!editor || readOnly || loading) return
     const dispose = registerSourceGitFeatures(editor, filePath)
     gitCleanupRef.current = dispose
     return () => {
       dispose()
       if (gitCleanupRef.current === dispose) gitCleanupRef.current = null
     }
-  }, [filePath, groupId, readOnly])
+  }, [filePath, groupId, readOnly, loading])
 
   // 只有仍与store一致且非自身回声的外部值可以同步；两栏共享模型时也不能让落后的一栏回灌旧稿。
   useEffect(() => {
@@ -230,6 +270,7 @@ export function MonacoEditor({
     if (!model || currentPathRef.current !== filePath || getDocument(filePath)?.content !== value) return
     if (lastReportedModelValues.get(model) === value) return
     if (model.getValue() !== value) syncModelValue(model, value)
+    else modelValuesRef.current.set(model, model.getValue())
   }, [value, filePath])
 
   // 跳行：revealLineInCenter 会自行收敛到合法范围，越界安全
@@ -240,6 +281,7 @@ export function MonacoEditor({
     // 立即 reveal 会拿到错误的滚动位置停在某一行 —— 延后一拍并强制布局后再定位。
     // 不用 requestAnimationFrame：窗口被遮挡/未合成时 rAF 会停摆，setTimeout 始终可靠
     const timer = setTimeout(() => {
+      if (currentPathRef.current !== filePath || editor.getModel()?.isDisposed()) return
       editor.layout()
       const column = reveal.column && reveal.column >= 1 ? reveal.column : 1
       const length = reveal.length && reveal.length > 0 ? reveal.length : 1
@@ -269,6 +311,7 @@ export function MonacoEditor({
 /** 同步外部版本也是可撤销的编辑；两组共享模型，第二个宿主值相同时自然跳过。 */
 function syncModelValue(model: Monaco.editor.ITextModel, value: string): void {
   if (model.getValue() === value) return
+  model.setEOL(value.includes('\r\n') ? monaco.editor.EndOfLineSequence.CRLF : monaco.editor.EndOfLineSequence.LF)
   model.pushStackElement()
   model.pushEditOperations([], [{ range: model.getFullModelRange(), text: value }], () => null)
   model.pushStackElement()

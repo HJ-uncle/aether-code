@@ -1864,10 +1864,14 @@
   display: block;
 }
 .work-sources__preview-text {
+  display: flex;
+  flex: 1;
   align-self: stretch;
   width: 100%;
-  padding: 16px 20px;
-  overflow: auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
   justify-self: flex-start;
 }
 .work-sources__preview-text .markdown {

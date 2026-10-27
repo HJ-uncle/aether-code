@@ -13,7 +13,7 @@ const operations=new AsyncLocalStorage<Operation>()
 export async function withMainGitOperation<T>(cwd: string, action:()=>Promise<T>, read=false, prepareInit=false): Promise<T> {
   const allowed=assertAllowed(cwd)
   const initializesDirectory=prepareInit && !fs.existsSync(path.join(allowed,'.git'))
-  const lock=physicalRepositoryLock(allowed,prepareInit)
+  const lock=await physicalRepositoryLock(allowed,prepareInit)
   const current=operations.getStore()
   if(current?.lock===lock) {current.assertOwned();return action()}
   try {return await withRepositoryLease(lock,(scope,assertOwned)=>operations.run({lock,scope,assertOwned},action),read?30_000:0,undefined,read?'read':'write')}
@@ -24,5 +24,5 @@ export function mainGitProcessScope(): RepositoryProcessScope {
   if(!current)throw new Error('Git command was dispatched without an operation lease')
   current.assertOwned();return current.scope
 }
-export function mainGitLeaseStatus(cwd: string) {const safe=assertAllowed(cwd);return repositoryLeaseStatus(activeCloneRepositoryLease(safe)??physicalRepositoryLock(safe))}
-export function recoverMainGitLease(cwd: string, generation: string) {const safe=assertAllowed(cwd);return recoverRepositoryLease(activeCloneRepositoryLease(safe)??physicalRepositoryLock(safe),generation)}
+export async function mainGitLeaseStatus(cwd: string) {const safe=assertAllowed(cwd);return repositoryLeaseStatus(activeCloneRepositoryLease(safe)??await physicalRepositoryLock(safe))}
+export async function recoverMainGitLease(cwd: string, generation: string) {const safe=assertAllowed(cwd);return recoverRepositoryLease(activeCloneRepositoryLease(safe)??await physicalRepositoryLock(safe),generation)}

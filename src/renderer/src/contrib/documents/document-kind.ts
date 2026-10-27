@@ -2,17 +2,28 @@ export type DocumentKind = 'pdf' | 'docx' | 'xlsx' | 'pptx'
 
 export const DOCUMENT_LIMITS = Object.freeze({
   inputBytes: 16 * 1024 * 1024,
-  expandedBytes: 32 * 1024 * 1024,
-  entryBytes: 8 * 1024 * 1024,
-  xmlBytes: 4 * 1024 * 1024,
+  expandedBytes: 64 * 1024 * 1024,
+  entryBytes: 16 * 1024 * 1024,
+  xmlBytes: 16 * 1024 * 1024,
   entries: 1200,
-  xmlElements: 100_000,
+  // XML has a base budget plus one element per stored cell. Style-heavy sheets
+  // can still use the base, while arbitrary element bombs cannot turn a cell
+  // increase into an unlimited DOM parse.
+  xmlElements: 200_000,
+  xmlElementsPerCell: 4,
   pages: 100,
   sheets: 24,
-  rows: 10_000,
+  rows: 50_000,
   columns: 256,
-  cells: 100_000,
-  htmlBytes: 16 * 1024 * 1024,
+  cells: 500_000,
+  imagePixels: 32_000_000,
+  totalImagePixels: 64_000_000,
+  previewImageEdge: 1920,
+  previewImagePixels: 4_000_000,
+  previewImageBytes: 2 * 1024 * 1024,
+  // Data URLs expand the allowed 16 MB Office input by at least 4/3. Keep a
+  // separate, bounded rendered-HTML budget instead of rejecting valid images.
+  htmlBytes: 32 * 1024 * 1024,
   domNodes: 50_000,
   canvasPixels: 8_000_000,
   parseTimeoutMs: 30_000

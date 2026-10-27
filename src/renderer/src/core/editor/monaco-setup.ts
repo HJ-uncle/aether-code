@@ -157,7 +157,7 @@ export function retainModel(filePath: string): () => void {
 }
 
 /** 取（或创建）某个文件对应的 model */
-export function acquireModel(filePath: string, language: string): monaco.editor.ITextModel {
+export function acquireModel(filePath: string, language: string, initialValue = ''): monaco.editor.ITextModel {
   const key = fileIdentity(filePath)
   pendingReleases.delete(key)
   const existing = peekModel(filePath)
@@ -169,9 +169,16 @@ export function acquireModel(filePath: string, language: string): monaco.editor.
     return existing
   }
 
-  const model = monaco.editor.createModel('', language, monaco.Uri.file(filePath))
+  const model = monaco.editor.createModel(initialValue, language, monaco.Uri.file(filePath))
   models.set(key, model)
   return model
+}
+
+/** A model created empty by a language feature still has the platform's default
+ * EOL. Preserve its undo stack while adopting the actual document's EOL. */
+export function initializeModelContent(model: monaco.editor.ITextModel, content: string): void {
+  model.setEOL(content.includes('\r\n') ? monaco.editor.EndOfLineSequence.CRLF : monaco.editor.EndOfLineSequence.LF)
+  model.setValue(content)
 }
 
 /** 关闭标签时释放 model，避免长会话下内存持续增长 */

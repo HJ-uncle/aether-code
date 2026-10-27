@@ -17,8 +17,10 @@ export interface SheetCell {
   covered?: boolean
 }
 export interface SheetLayout { columns: number[]; rows: number[] }
-export interface SheetPage { sheet: number; row: number; column: number; cells: SheetCell[][]; formatFallbacks: number; layout: SheetLayout }
-export type SpreadsheetRequest = { kind: 'load'; data: ArrayBuffer } | { kind: 'page'; sheet: number; row: number; column: number }
-export type SpreadsheetResponse = { kind: 'loaded'; sheets: SheetSummary[] } | { kind: 'page'; page: SheetPage } | { kind: 'error'; message: string }
+/** A rectangular, half-open cell range: row/column are inclusive, end* exclusive. */
+export interface SheetPage { sheet: number; row: number; column: number; endRow: number; endColumn: number; cells: SheetCell[][]; formatFallbacks: number; layout: SheetLayout }
+export type SpreadsheetRequest = { kind: 'load'; data: ArrayBuffer } | { kind: 'page'; sheet: number; row: number; column: number; endRow?: number; endColumn?: number; requestId: number }
+export type SpreadsheetResponse = { kind: 'loaded'; sheets: SheetSummary[]; layouts: SheetLayout[] } | { kind: 'page'; requestId: number; page: SheetPage } | { kind: 'error'; message: string; requestId?: number }
 export const SHEET_PAGE_ROWS = 100
 export const SHEET_PAGE_COLUMNS = 20
+export const SHEET_RANGE_CELL_LIMIT = SHEET_PAGE_ROWS * SHEET_PAGE_COLUMNS * 12

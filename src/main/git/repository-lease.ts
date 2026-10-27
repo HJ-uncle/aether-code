@@ -51,30 +51,30 @@ function readOwner(file: string, resourceFile=file): RepositoryLeaseOwner | unde
     return item as RepositoryLeaseOwner
   } catch(error) {if((error as NodeJS.ErrnoException).code==='ENOENT') return undefined;throw error}
 }
-export function recoveredRepositoryOwner(file: string, generation: string): RepositoryLeaseOwner {
+export async function recoveredRepositoryOwner(file: string, generation: string): Promise<RepositoryLeaseOwner> {
   if(!/^[0-9a-f-]{36}$/i.test(generation))throw new Error('Recovery requires the current lease generation')
   const owner=readOwner(`${file}.recovered-${generation}.json`,file)
-  if(!owner || owner.generation!==generation || !auditRepositoryJob(owner.jobName,owner.owner,owner.supervisor).verified)throw new Error('Archived Git recovery is unverified')
+  if(!owner || owner.generation!==generation || !(await auditRepositoryJob(owner.jobName,owner.owner,owner.supervisor)).verified)throw new Error('Archived Git recovery is unverified')
   if(owner.supervisor)nativeClosure(owner)
   return owner
 }
-export function repositoryLeaseStatus(file: string): RepositoryLeaseState {
+export async function repositoryLeaseStatus(file: string): Promise<RepositoryLeaseState> {
   let owner: RepositoryLeaseOwner | undefined
   try {owner=readOwner(file)} catch(error) {return{busy:true,recoverable:false,reason:error instanceof Error?error.message:String(error)}}
   if(!owner) return{busy:false,recoverable:false}
   try {
-    const native=auditRepositoryJob(owner.jobName,owner.owner,owner.supervisor)
+    const native=await auditRepositoryJob(owner.jobName,owner.owner,owner.supervisor)
     const verified=native.verified && (owner.phase==='reserved' && !owner.supervisor || !!nativeClosure(owner))
     return{busy:true,recoverable:verified,generation:owner.generation,owner,native,reason:verified?'Original owner and supervisor have ended; native closure recorded zero members and the named job no longer exists.':'The original operation is still running or its process group has not been verified closed.'}
   } catch(error) {return{busy:true,recoverable:false,generation:owner.generation,owner,reason:error instanceof Error?error.message:String(error)}}
 }
-function busy(file: string): Error {
-  const state=repositoryLeaseStatus(file)
+async function busy(file: string): Promise<Error> {
+  const state=await repositoryLeaseStatus(file)
   const error=new Error(state.recoverable?'Git operation left a verified orphan lease. Recover the interrupted operation, then retry.':`Git repository is busy. Retry after the current operation ends. ${state.reason??''}`)
   Object.assign(error,{code:'GIT_REPOSITORY_BUSY',errorCode:state.recoverable?'git-orphan':'git-busy',executionDisposition:'not_started',leaseFile:file,leaseState:state})
   return error
 }
-export function rejectBusyRepositoryLease(file:string):never {throw busy(file)}
+export async function rejectBusyRepositoryLease(file:string):Promise<never> {throw await busy(file)}
 
 /** Clone has no .git common directory yet. Its destination reservation is
  * outside the empty target, and remains visible until native audit and any
@@ -109,7 +109,7 @@ export async function acquireRepositoryLease(file: string, waitMs=0, bindingLeas
   let nextOrphanAudit=0
   for(;;) {
     if(fs.existsSync(file+'.recovery.lock')) {if(Date.now()>=deadline)throw new Error('Git recovery is in progress; retry after it completes');await new Promise(resolve=>setTimeout(resolve,25));continue}
-    const owner: RepositoryLeaseOwner={schema:3,protocol:'windows-job-v1',generation:randomUUID(),acquiredAt:new Date().toISOString(),resource:path.resolve(file),owner:{...repositoryOwnerIdentity()},jobName:'',phase:'reserved',access,...(bindingLease?{bindingLease}:{})}
+    const owner: RepositoryLeaseOwner={schema:3,protocol:'windows-job-v1',generation:randomUUID(),acquiredAt:new Date().toISOString(),resource:path.resolve(file),owner:{...(await repositoryOwnerIdentity())},jobName:'',phase:'reserved',access,...(bindingLease?{bindingLease}:{})}
     owner.jobName=`Local\\AetherGit-${owner.generation}`
     fs.mkdirSync(path.dirname(file),{recursive:true})
     let descriptor: number
@@ -123,10 +123,10 @@ export async function acquireRepositoryLease(file: string, waitMs=0, bindingLeas
       const waitingForReader=access==='write' && holder.access==='read' && holder.phase!=='quarantined'
       const until=waitingForReader?readerDeadline:deadline
       const now=Date.now()
-      if(now>=until)throw busy(file)
+      if(now>=until)throw await busy(file)
       if(now>=nextOrphanAudit) {
         nextOrphanAudit=now+250
-        if(repositoryLeaseStatus(file).recoverable)throw busy(file)
+        if((await repositoryLeaseStatus(file)).recoverable)throw await busy(file)
       }
       await new Promise(resolve=>setTimeout(resolve,Math.min(25,until-Date.now())));continue
     }
@@ -145,18 +145,18 @@ export async function acquireRepositoryLease(file: string, waitMs=0, bindingLeas
 
 /** Recovery is explicit and fenced by generation. PID absence alone cannot
  * prove a detached hook stopped: the OS must also report the named job absent. */
-export function recoverRepositoryLease(file: string, expectedGeneration: string): RepositoryLeaseState {
+export async function recoverRepositoryLease(file: string, expectedGeneration: string): Promise<RepositoryLeaseState> {
   if(!/^[0-9a-f-]{36}$/i.test(expectedGeneration)) throw new Error('Recovery requires the current lease generation')
   const recoveryFile=file+'.recovery.lock';let descriptor: number
   try {descriptor=fs.openSync(recoveryFile,'wx',0o600)} catch(error) {if((error as NodeJS.ErrnoException).code==='EEXIST')throw new Error('Git recovery is already running');throw error}
   try {
     fs.writeFileSync(descriptor,JSON.stringify({pid:process.pid,generation:expectedGeneration})+'\n');fs.fsyncSync(descriptor)
-    const state=repositoryLeaseStatus(file)
+    const state=await repositoryLeaseStatus(file)
     if(!state.busy || state.generation!==expectedGeneration || !state.owner || !state.recoverable || !state.native?.verified) throw new Error(`Git lease recovery was refused: ${state.reason??'generation changed'}`)
     // Recheck immediately before moving evidence: a newly acquired lease is
     // never removed on the strength of a previous owner's audit.
     const current=readOwner(file)
-    if(current?.generation!==expectedGeneration || !auditRepositoryJob(current.jobName,current.owner,current.supervisor).verified) throw new Error('Git lease recovery identity changed')
+    if(current?.generation!==expectedGeneration || !(await auditRepositoryJob(current.jobName,current.owner,current.supervisor)).verified) throw new Error('Git lease recovery identity changed')
     const archive=`${file}.recovered-${expectedGeneration}.json`
     if(fs.existsSync(archive))throw new Error('Recovery archive already exists')
     fs.renameSync(file,archive)
@@ -180,7 +180,7 @@ export async function withRepositoryLease<T>(file: string, action: (scope: Repos
   let cleanupFailure: unknown
   try {
     if(scope) await scope.close()
-    const proof=auditRepositoryJob(lease.owner.jobName,lease.owner.owner,lease.owner.supervisor)
+    const proof=await auditRepositoryJob(lease.owner.jobName,lease.owner.owner,lease.owner.supervisor)
     if(proof.jobExists || proof.supervisorAlive || !proof.empty) throw new Error('Git process scope cleanup is unconfirmed')
     const closure=lease.owner.supervisor?nativeClosure(lease.owner):undefined
     fs.writeFileSync(file+'.last-audit.json',JSON.stringify({generation:lease.owner.generation,finishedAt:new Date().toISOString(),scopeAudits:scope?.audits??[],proof,closure,failure:failure instanceof Error?failure.message:failure?String(failure):undefined},null,2)+'\n',{mode:0o600})
@@ -198,9 +198,9 @@ export async function withRepositoryLease<T>(file: string, action: (scope: Repos
 
 /** Read metadata rather than executing Git before taking its repository lock.
  * Linked worktrees resolve to their canonical shared common directory. */
-export function physicalRepositoryLock(cwd: string, prepareInit=false): string {
+export async function physicalRepositoryLock(cwd: string, prepareInit=false): Promise<string> {
   const canonical=fs.realpathSync(cwd)
-  const clone=activeCloneRepositoryLease(canonical);if(clone)rejectBusyRepositoryLease(clone)
+  const clone=activeCloneRepositoryLease(canonical);if(clone)await rejectBusyRepositoryLease(clone)
   if(prepareInit && !fs.existsSync(path.join(canonical,'.git'))) fs.mkdirSync(path.join(canonical,'.git'))
   let candidate=canonical
   for(;;) {

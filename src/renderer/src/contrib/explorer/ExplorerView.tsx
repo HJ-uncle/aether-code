@@ -21,7 +21,7 @@ import { useGit } from '@renderer/core/git/git-store'
 import { ipcErrorMessage } from '@renderer/core/ipc-error'
 import { setContextKey } from '@renderer/core/platform/context-keys'
 import { setLayout } from '@renderer/core/platform/layout-state'
-import { compileExclude, isExcluded } from '@renderer/core/workspace/exclude'
+import { buildFileTreeRows, FileTreeView, type FileTreeRowModel as Row } from './FileTreeView'
 import { paths } from '@renderer/core/workspace/fs-client'
 import {
   forgetRecentFolder,
@@ -67,11 +67,8 @@ import { ContextMenu, type ContextMenuItem } from '@renderer/workbench/ContextMe
 import { PromptDialog } from '@renderer/workbench/PromptDialog'
 import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
-import { FileTreeRow, FILE_TREE_ROW_HEIGHT as ROW_HEIGHT } from './FileTreeRow'
+import { FILE_TREE_ROW_HEIGHT as ROW_HEIGHT } from './FileTreeRow'
 
-/** 虚拟滚动按共用树行的固定高度换算偏移。 */
-/** 视口外多渲染的行数：留一屏缓冲，快速滚动时才不会看到空白 */
-const OVERSCAN = 10
 /**
  * 判定「这是拖拽而不是点击」的位移阈值（像素）。
  *
@@ -88,53 +85,6 @@ const DRAG_THRESHOLD = 8
  */
 const HOVER_EXPAND_MS = 700
 
-interface Row {
-  entry: FsEntry
-  depth: number
-  isExpanded: boolean
-  isLoading: boolean
-  isActive: boolean
-  isSelected: boolean
-  /**
-   * 紧凑文件夹被合并掉的中间链条（如 `utils/helpers`），末端的真实名字在 entry.name。
-   * 有值才渲染尾注；普通行不设该字段。
-   */
-  compactChain?: string
-  /**
-   * 该项已被「剪切」但尚未粘贴 —— 渲染成半透明。
-   *
-   * 状态放核心板（workspace.clipboard）而非视图里：剪贴板要跨视图、跨重新挂载存活，
-   * 放在视图 state 会在切换侧边栏视图后丢失。这里只是把它算成逐行的展示标记。
-   */
-  isCut: boolean
-  /**
-   * 被 .gitignore 忽略：整行做半透明降级（对齐 VS Code / wuzu-client）。
-   *
-   * 只影响观感——被忽略的项仍可点击、展开、拖拽、重命名。gitignore 是版本控制的
-   * 过滤规则，不是文件系统权限：node_modules 里的东西该看还得能看。
-   */
-  isIgnored: boolean
-  /**
-   * git 状态角标（M/A/D/U/R/C…），无改动时不设。
-   *
-   * 目录不显示：文件行给出确切状态，目录行在链尾用一个小圆点表示「这底下有改动」——
-   * 目录本身没有 XY 状态，硬要合并成单个字母只会误导（收起的目录里可能混着几种）。
-   */
-  gitCode?: string
-  /** 目录是否包含改动（仅在收起时提示，展开后子项自己会说明） */
-  gitDirty?: boolean
-  /** git 角标的悬浮说明（沿用版本控制视图的文案） */
-  gitTitle?: string
-}
-
-/**
- * 行内左侧的缩进参考线。
- *
- * VS Code 只有在「悬停」或「活动路径」上才把参考线显形，其余行保持透明，
- * 目的是让当前所在的层级从一屏竖直细线里凸显出来。这里用 CSS 的
- * hover 无法做到（参考线是行的子元素、行本身不随悬停改样式），
- * 因此由容器把「当前悬停行 / 活动路径」算出来，逐行决定要不要画。
- */
 /** 右键菜单的位置与目标 */
 interface MenuState {
   x: number
@@ -142,17 +92,6 @@ interface MenuState {
   entry: FsEntry | null
   /** 若右键时存在选区，则记录当时的选区快照（菜单是异步打开的） */
   selection: string[]
-}
-
-/**
- * 由根目录路径拼一个 FsEntry（树的第一行展示根目录本身）。
- *
- * readDir 只返回子项，根的路径/目录标记都有，唯独没有名字 ——
- * 名字从路径末尾取（basename 已处理结尾分隔符），不引入额外的读盘。
- */
-function rootEntryOf(root: string): FsEntry {
-  // size/mtimeMs 在目录行上不展示，占位即可（readDir 不返回根本身，无从取真值）
-  return { name: paths.basename(root), path: root, isDirectory: true, size: 0, mtimeMs: 0 }
 }
 
 /** 需要用户输入名称的操作 */
@@ -237,31 +176,6 @@ function sameChildren(
     if (b.get(dir) !== entries) return false
   }
   return true
-}
-
-/**
- * git 角标的配色分组。
- *
- * 与版本控制视图的 codeClass 同义（修改黄、新增绿、删除红、重命名/复制用强调色），
- * 但不抽到 git-format 里共用：那里是「数据 → 文案」的纯函数，
- * 而这是视觉分组，资源管理器与版本控制视图的 DOM 结构与既有类名都不同，
- * 强行共用一个返回类名的函数会让两处样式互相牵制。
- */
-function gitCodeClass(code: string): string {
-  switch (code) {
-    case 'M':
-      return 'modified'
-    case 'A':
-    case 'U':
-      return 'added'
-    case 'D':
-      return 'deleted'
-    case 'R':
-    case 'C':
-      return 'renamed'
-    default:
-      return 'other'
-  }
 }
 
 function sameSnapshot(a: WorkspaceSnapshot, b: WorkspaceSnapshot): boolean {
@@ -407,17 +321,6 @@ export function ExplorerView(): JSX.Element {
     treeRef.current?.focus({ preventScroll: true })
   }, [])
 
-  /** 排序只发生在"取子项"这一步，下游（压平、虚拟滚动、拖拽）全部无感 */
-  const childrenOf = useCallback(
-    (dir: string): FsEntry[] => {
-      const entries = workspace.children.get(dir)
-      if (!entries) return []
-      if (sortMode === 'default') return entries
-      return [...entries].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'))
-    },
-    [workspace.children, sortMode]
-  )
-
   /** 剪贴板里处于「剪切」态的路径；复制态不做视觉标记，故在此过滤掉 */
   const cutPaths = useMemo(() => [...cutPathsOf(workspace.clipboard)], [workspace.clipboard])
 
@@ -462,180 +365,13 @@ export function ExplorerView(): JSX.Element {
     return { byPath, dirtyDirs, isRepo: true }
   }, [git.status, workspace.root])
 
-  const rows = useMemo(() => {
-    const out: Row[] = []
-    const excludeRules = compileExclude(settings.filesExclude)
-
-    /**
-     * 树的第一行是根目录本身（对齐 VS Code / wuzu-client：根节点可折叠、
-     * 选中后新建/粘贴都落在它身上）。它不受 files.exclude 与树内筛选影响 ——
-     * 把根滤掉等于整棵树消失，没有任何场景需要这样。
-     */
-    const root = workspace.root
-    if (root && workspace.showRoot) {
-      const rootGitKey = root.replace(/\\/g, '/')
-      const isRootExpanded = workspace.expanded.has(root)
-      out.push({
-        entry: rootEntryOf(root),
-        depth: 0,
-        isExpanded: isRootExpanded,
-        isLoading: workspace.loading.has(root),
-        isActive: false,
-        isSelected: workspace.selection.has(root),
-        isCut: false,
-        // 根目录自己永远不是"被忽略项"：它是工作区边界，置灰它等于整棵树都灰了
-        isIgnored: false,
-        gitDirty: !isRootExpanded && gitIndex.dirtyDirs.has(rootGitKey)
-      })
-      // 根收起时整棵树只剩这一行（VS Code 同样如此）
-      if (!isRootExpanded) return out
-    }
-
-    /**
-     * 某条目（相对工作区根）是否被 files.exclude 隐藏。
-     * `parentHidden` 由调用方沿链传下来实现「父隐藏则子树全隐藏」。
-     */
-    const hidden = (entry: FsEntry, parentHidden: boolean): boolean => {
-      if (excludeRules.length === 0) return false
-      const rel = workspace.root ? paths.relative(workspace.root, entry.path) : entry.path
-      return isExcluded(excludeRules, rel, entry.name, parentHidden)
-    }
-
-    /**
-     * 紧凑文件夹（Compact Folders）：把「只有一个子目录」的链条合并成一行。
-     *
-     * src/utils/helpers/strings.ts 这种三层结构，在逐行展开的树里要占三行、
-     * 每层还要吃掉 14px 缩进 —— 纵向空间全用在"路过"上。VS Code 的做法是
-     * 合并展示为 `strings.ts  src/utils/helpers`（真实名字在前，链条作尾注），
-     * 一次点击展开到链条末端。
-     *
-     * 合并的**前提是链条每一层都没展开**（对齐 VS Code / wuzu 的 compactFolders）：
-     * 已展开的目录正是用户当前要看的层级，它必须保留成独立一行，否则点开 `.aether`
-     * 反而少掉一层、看它自己还得再点一次。所以：
-     * - 起点已展开 ⇒ 整条链不合并
-     * - 链条里某一层已展开 ⇒ 到此为止，只合并它之前的路过层
-     * - 子项一旦是文件也停，因为文件是要操作的对象，不是"路过"的层级
-     * - 子目录未被加载（children 里没有）时也停，否则会把"未知"当成"只有一个"
-     */
-    const compactChain = (start: FsEntry, startHidden: boolean): { entry: FsEntry; chain: string } | null => {
-      // 起点已展开：用户正在看它的内容，这一行不能被并进链条
-      if (workspace.expanded.has(start.path)) return null
-      let current = start
-      let chain = ''
-      let parentHidden = startHidden
-      for (;;) {
-        const kids = childrenOf(current.path)
-        // 被排除的项在链条里不算「子项」，否则会把「只有一个可见子目录」误判成两个
-        const visibleKids = kids.filter((kid) => !hidden(kid, parentHidden))
-        if (visibleKids.length !== 1) break
-        const only = visibleKids[0]
-        if (!only.isDirectory) break
-        // 子目录已展开就停：它是用户展开着要看的层级，不能再往下并
-        if (workspace.expanded.has(only.path)) break
-
-        // 链条记的是「被合并掉的中间层」的名字（current 自己），而不是后代的名字 ——
-        // 记 only.name 会把末端目录自己的名字也拼进去，显示成 `sdk sdk` 这种重复
-        chain = chain ? `${chain}/${current.name}` : current.name
-        current = only
-        parentHidden = parentHidden || hidden(only, parentHidden)
-      }
-      return chain ? { entry: current, chain } : null
-    }
-
-    const walk = (dir: string, depth: number, parentHidden: boolean): void => {
-      for (const entry of childrenOf(dir)) {
-        // files.exclude：命中的条目连同其整棵子树都不展示。
-        // 注意这里只是「不渲染」，不是「不加载」—— 目录仍可被展开、
-        // 其子项仍在缓存里，把规则去掉后立刻重新出现。
-        const entryHidden = hidden(entry, parentHidden)
-        if (entryHidden) continue
-
-        // 树内按名筛选：命中项保留，目录始终下钻（其子项可能命中）
-        if (nameFilter && !entry.name.toLowerCase().includes(nameFilter)) {
-          if (entry.isDirectory) walk(entry.path, depth + 1, entryHidden)
-          continue
-        }
-
-        const compact = nameFilter ? null : entry.isDirectory ? compactChain(entry, entryHidden) : null
-        const shown = compact?.entry ?? entry
-        const isExpanded = shown.isDirectory && workspace.expanded.has(shown.path)
-        // gitIndex 的键是正斜杠（paths.join 的产出），条目路径在 Windows 上是
-        // 反斜杠，查表前必须归一化，否则角标永远查不到
-        const gitKey = shown.path.replace(/\\/g, '/')
-        const change = gitIndex.byPath.get(gitKey)
-
-        out.push({
-          entry: shown,
-          // 紧凑行用**起点层**的深度，不用末端目录的真实深度：合并掉的中间层在缩进
-          // 网格里必须一并消失，否则 `.aether/attachments` 这一行会比同级目录多缩进
-          // 一格，看起来像是"掉进了"那一层（对齐 VS Code / wuzu 的 compactFolders）。
-          depth,
-          isExpanded,
-          isLoading: workspace.loading.has(shown.path),
-          isActive: !shown.isDirectory && shown.path === workspace.activeFilePath,
-          isSelected: workspace.selection.has(shown.path),
-          compactChain: compact?.chain,
-          // 剪切态用「祖先在剪贴板里」而非精确匹配：剪切一个目录后，
-          // 其子项若展开着，视觉上也应当一并变淡 —— 否则会像是"只剪了这一层"。
-          isCut: cutPaths.some((cutPath) => paths.contains(cutPath, shown.path)),
-          isIgnored: shown.gitignored === true,
-          gitCode: change?.code,
-          gitTitle: change?.title,
-          // 目录只在「收起」时提示有改动：展开后每个子项自己会写明状态，
-          // 父目录再挂个聚合标记纯属重复，还会跟子项的角标抢视线。
-          gitDirty: !shown.isDirectory ? undefined : !isExpanded && gitIndex.dirtyDirs.has(gitKey)
-        })
-        if (isExpanded) walk(shown.path, depth + 1, false)
-      }
-    }
-    // 默认服务端工作区省略根节点，内容直接从第一层展示。
-    if (root) walk(root, workspace.showRoot ? 1 : 0, false)
-    return out
-  }, [
-    childrenOf,
-    workspace.expanded,
-    workspace.loading,
-    workspace.root,
-    workspace.showRoot,
-    workspace.activeFilePath,
-    workspace.selection,
-    cutPaths,
-    gitIndex,
-    settings.filesExclude,
-    nameFilter
-  ])
+  const rows = useMemo(() => buildFileTreeRows({
+    snapshot: workspace, filter: nameFilter, filesExclude: settings.filesExclude,
+    sortMode, cutPaths, decorations: gitIndex
+  }), [workspace, nameFilter, settings.filesExclude, sortMode, cutPaths, gitIndex])
 
   /** 可见行的路径序列，供全选与 Shift 连选使用 */
   const visiblePaths = useMemo(() => rows.map((row) => row.entry.path), [rows])
-
-  /**
-   * 粘性父级链（Sticky Scroll）：滚动时把当前位置的祖先目录钉在树顶。
-   *
-   * 没有它，滚进深层目录后「自己在哪个目录里」就完全丢失 —— 父级行被滚出视口，
-   * 只剩缩进参考线，用户要靠心算层级（wuzu-client 与 VS Code 都把祖先钉在顶部）。
-   *
-   * 算法：取视口内第一个可见行，向前回溯收集它的各级祖先（depth 逐级减一的目录行）。
-   * 祖先的下标一定小于首个可见行（深度优先展开序），因此它们必然已滚出视口，
-   * 不会与粘性幻影重复出现，无需做占位纠正。
-   *
-   * 链高封顶在视口的 40%：深层嵌套 + 矮侧边栏时，不封顶会把整棵树盖没。
-   * 超限时保留「最深」的几级 —— 离当前位置越近的父级越能回答"我在哪"。
-   */
-  const stickyChain = useMemo(() => {
-    if (rows.length === 0 || viewportHeight === 0) return []
-    const firstVisible = Math.min(rows.length - 1, Math.floor(scrollTop / ROW_HEIGHT))
-    const chain: Row[] = []
-    let needDepth = rows[firstVisible].depth - 1
-    for (let i = firstVisible - 1; i >= 0 && needDepth >= 0; i--) {
-      const row = rows[i]
-      if (row.depth === needDepth && row.entry.isDirectory) {
-        chain.unshift(row)
-        needDepth -= 1
-      }
-    }
-    const maxSticky = Math.max(1, Math.floor((viewportHeight * 0.4) / ROW_HEIGHT))
-    return chain.length > maxSticky ? chain.slice(chain.length - maxSticky) : chain
-  }, [rows, scrollTop, viewportHeight])
 
   /**
    * 订阅工作区变更，但只在"内容真的变了"时才重渲染。
@@ -695,14 +431,6 @@ export function ExplorerView(): JSX.Element {
     observer.observe(el)
     return () => observer.disconnect()
   }, [workspace.root])
-
-  const totalHeight = rows.length * ROW_HEIGHT
-  const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
-  const endIndex = Math.min(
-    rows.length,
-    Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + OVERSCAN
-  )
-  const visibleRows = rows.slice(startIndex, endIndex)
 
   // 撤销栈在 core 层（命令与快捷键也要用），这里只订阅"栈顶标签"用于菜单文案
   useEffect(() => {
@@ -1683,15 +1411,27 @@ export function ExplorerView(): JSX.Element {
       {workspace.error ? <div className="notice notice--error">{workspace.error}</div> : null}
       {opError ? <div className="notice notice--error">{opError}</div> : null}
 
-      {/* 树区容器：粘性父级行相对它定位，工具栏/错误提示条的高度变化不会让它错位 */}
-      <div className="explorer__body">
-        <div
-          className={`explorer__tree${focused ? ' is-focused' : ''}`}
-        ref={attachTree}
-        role="tree"
-        aria-multiselectable
-        tabIndex={0}
-        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+      <FileTreeView
+        rows={rows}
+        treeRef={attachTree}
+        focused={focused}
+        viewportHeight={viewportHeight}
+        scrollTop={scrollTop}
+        cursorPath={cursorPath}
+        filter={nameFilter}
+        multiSelect
+        empty={rows.length === (workspace.showRoot ? 1 : 0) && Boolean(workspace.root && workspace.expanded.has(workspace.root))}
+        isDropTarget={entry => dropDir !== null && entry.isDirectory && paths.contains(dropDir, entry.path)}
+        onScroll={setScrollTop}
+        onRowContextMenu={openMenu}
+        onRowMouseDown={handleRowMouseDown}
+        onStickyMouseDown={(event, entry) => {
+          if (event.button !== 0) return
+          selectEntry(entry.path, 'plain', visiblePaths)
+          setCursorPath(entry.path)
+          focusTree()
+          scrollRowIntoView(entry.path)
+        }}
         onMouseDown={handleTreeMouseDown}
         onFocus={() => {
           setFocused(true)
@@ -1776,58 +1516,7 @@ export function ExplorerView(): JSX.Element {
           setDropDirState(null)
           cancelHoverExpand()
         }}
-      >
-        {/* 撑起总高度，让滚动条长度反映真实行数（而不是只渲染了可见的十几行） */}
-        <div className="explorer__rows" style={{ height: totalHeight, position: 'relative' }}>
-          {/* 把可见行整体平移到它们本应在的位置 */}
-          <div style={{ transform: `translateY(${startIndex * ROW_HEIGHT}px)` }}>
-            {visibleRows.map((row) => (
-              <TreeRow
-                key={row.entry.path}
-                row={row}
-                isCursor={row.entry.path === cursorPath}
-                nameFilter={nameFilter}
-                isDropTarget={
-                  dropDir !== null &&
-                  row.entry.isDirectory &&
-                  paths.contains(dropDir, row.entry.path)
-                }
-                onContextMenu={(event) => openMenu(event, row.entry)}
-                onMouseDown={(event) => handleRowMouseDown(event, row.entry)}
-              />
-            ))}
-          </div>
-        </div>
-        {/* 根行恒在：空目录 = 根已展开却没有任何子项行 */}
-        {rows.length === (workspace.showRoot ? 1 : 0) && workspace.root && workspace.expanded.has(workspace.root) ? (
-          <div className="explorer__hint">目录为空</div>
-        ) : null}
-      </div>
-
-      {/* 粘性父级行：钉在树顶，与树容器平级 —— 若放在滚动内容内部会跟着滚走。
-          点击语义是「定位」而不是折叠：把被滚走的原行滚回视口（与 VS Code 一致），
-          滚回原行后它进入视口，粘性链自然消失。 */}
-      {stickyChain.length > 0 ? (
-        <div className="explorer__sticky" aria-hidden>
-          {stickyChain.map((row) => (
-            <TreeRow
-              key={row.entry.path}
-              row={row}
-              isCursor={row.entry.path === cursorPath}
-              isDropTarget={false}
-              onContextMenu={(event) => openMenu(event, row.entry)}
-              onMouseDown={(event) => {
-                if (event.button !== 0) return
-                selectEntry(row.entry.path, 'plain', visiblePaths)
-                setCursorPath(row.entry.path)
-                focusTree()
-                scrollRowIntoView(row.entry.path)
-              }}
-            />
-          ))}
-        </div>
-      ) : null}
-      </div>
+      />
 
       {/* 落点提示浮层：不接收指针事件，否则会打断拖拽过程中的 pointermove */}
       {drag?.didMove ? (
@@ -1842,7 +1531,7 @@ export function ExplorerView(): JSX.Element {
       ) : null}
 
       {menu && menuItems.length > 0 ? (
-        <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />
+        <ContextMenu x={menu.x} y={menu.y} items={menuItems} anchor={treeRef.current} onClose={() => setMenu(null)} />
       ) : null}
 
       {nameAction ? (
@@ -1933,90 +1622,3 @@ function findEntry(rows: Row[], path: string): FsEntry | null {
   return rows.find((row) => row.entry.path === path)?.entry ?? null
 }
 
-/** 筛选时把命中的片段包上 <mark>（无筛选或未命中返回原名） */
-function highlightName(name: string, filter: string | undefined): JSX.Element | string {
-  if (!filter) return name
-  const index = name.toLowerCase().indexOf(filter)
-  if (index < 0) return name
-  return (
-    <>
-      {name.slice(0, index)}
-      <mark className="tree-match">{name.slice(index, index + filter.length)}</mark>
-      {name.slice(index + filter.length)}
-    </>
-  )
-}
-
-/** 文件类型矢量图标（mdi 图标集 + seti 色板，映射表见 file-icons.ts） */
-
-function TreeRow({
-  row,
-  isCursor,
-  isDropTarget,
-  nameFilter,
-  onContextMenu,
-  onMouseDown
-}: {
-  row: Row
-  isCursor: boolean
-  isDropTarget: boolean
-  nameFilter?: string
-
-  onContextMenu: (event: ReactMouseEvent) => void
-  onMouseDown: (event: ReactMouseEvent) => void
-}): JSX.Element {
-  const { entry, depth, isExpanded, isLoading, isActive, isSelected, isCut, isIgnored } = row
-
-  const className = [
-    isActive ? 'is-active' : '',
-    isCursor ? 'is-cursor' : '',
-    isCut ? 'is-cut' : '',
-    isIgnored ? 'is-ignored' : '',
-    isDropTarget ? 'is-drop-target' : ''
-  ]
-    .filter(Boolean)
-    .join(' ')
-
-  return (
-    <FileTreeRow
-      name={entry.name}
-      nameContent={highlightName(entry.name, nameFilter)}
-      path={entry.path}
-      depth={depth}
-      isDirectory={entry.isDirectory}
-      isExpanded={isExpanded}
-      isSelected={isSelected}
-      focusable={false}
-      className={className}
-      nameClassName={`${row.gitCode ? `tree-row__name--${gitCodeClass(row.gitCode)}` : ''}${row.gitDirty ? ' tree-row__name--dirty' : ''}`.trim()}
-      labelSuffix={row.compactChain ? (
-        <span className="tree-row__chain" title={row.compactChain}>{row.compactChain}</span>
-      ) : undefined}
-      trailing={<>
-        {row.gitCode ? (
-          <span
-            className={`tree-row__git tree-row__git--${gitCodeClass(row.gitCode)}`}
-            title={row.gitTitle}
-            aria-label={row.gitTitle}
-          >
-            {row.gitCode}
-          </span>
-        ) : row.gitDirty ? (
-          <span className="tree-row__git tree-row__git--dirty" title="该目录下有改动" aria-hidden>●</span>
-        ) : null}
-        {isLoading ? <span className="tree-row__loading" role="status" aria-label="加载中"><Spinner size={12} /></span> : null}
-      </>}
-      indentGuides
-      // 拖拽落点解析读这两个属性：目录落在自身上，文件落在其父目录
-      dataDir={entry.isDirectory ? entry.path : undefined}
-      dataParentDir={entry.isDirectory ? undefined : paths.dirname(entry.path)}
-      onMouseDown={onMouseDown}
-      onContextMenu={onContextMenu}
-    />
-  )
-}
-
-/**
- * 文件类型图标已抽到 file-icons.ts（mdi 矢量图标 + seti 色板，
- * 照抄 wuzu-client 的 languageMap）—— TreeRow 的 FileGlyph 使用。
- */

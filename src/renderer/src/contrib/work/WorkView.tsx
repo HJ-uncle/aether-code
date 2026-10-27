@@ -52,6 +52,8 @@ import { WorkComposer as WorkComposerV2 } from './WorkComposer'
 import { WorkNextTurnQueuePanel } from './WorkNextTurnQueue'
 import { WorkTaskActions } from './WorkTaskActions'
 import { WorkArtifactPanel } from './WorkArtifactPanel'
+import { fileContentBytes } from '@renderer/core/workspace/file-content-bytes'
+import { retainedResourceIds } from './work-resource-preview-policy'
 import { workArtifactSelectionQuote, type WorkArtifactContent } from './work-artifact-content'
 import { WorkSourcePreview, useWorkSourceFile } from './WorkSourcePreview'
 import { Markdown } from '../chat/Markdown'
@@ -2193,9 +2195,19 @@ function WorkResourcePane({ controller, onReveal }: { controller: WorkController
   const selected = resolvedWorkResourceId(resources, webTabs.map(tab => tab.tabId), browser.activeTabId)
   const file = resources.files.find(item => item.id === selected)
   const web = selected?.startsWith('web:') ? webTabs.find(item => item.tabId === selected.slice(4)) : undefined
-  if (file) return <WorkResourceFile key={JSON.stringify([getEngineSource(), sessionId, file.id])} controller={controller} file={file} />
-  if (web) return <WorkBrowser tabId={web.tabId} hideTabStrip onReveal={onReveal} />
-  return <EmptyState icon="file" title="文件和网页，在同一个地方查看" description="从成果、资料或对话中打开文件，也可以拖入电脑文件或点击文件按钮；新建网页后也会显示在上方标签栏。" />
+  const [history, setHistory] = useState<{ selected: string | null; recent: string[] }>({ selected: null, recent: [] })
+  const selectedFileId = file?.id ?? null
+  const recent = history.selected === selectedFileId ? history.recent : selectedFileId
+    ? [selectedFileId, ...history.recent.filter(id => id !== selectedFileId)].slice(0, 4)
+    : history.recent
+  if (history.selected !== selectedFileId) setHistory({ selected: selectedFileId, recent })
+  const retained = retainedResourceIds(resources.files, selectedFileId, recent)
+  return <>
+    {web ? <div hidden={Boolean(file)}><WorkBrowser tabId={web.tabId} hideTabStrip onReveal={onReveal} /></div> : null}
+    {!file && !web ? <EmptyState icon="file" title="文件和网页，在同一个地方查看" description="从成果、资料或对话中打开文件，也可以拖入电脑文件或点击文件按钮；新建网页后也会显示在上方标签栏。" /> : null}
+    {resources.files.filter(item => retained.has(item.id)).map(item => <WorkResourceFile
+      key={JSON.stringify([getEngineSource(), sessionId, item.id])} controller={controller} file={item} active={item.id === file?.id} />)}
+  </>
 }
 
 /**
@@ -2204,16 +2216,16 @@ function WorkResourcePane({ controller, onReveal }: { controller: WorkController
  * pending changes.  This keeps external files and clean workspace files from
  * showing an empty, non-actionable tab.
  */
-function usePendingResourceChanges(controller: WorkController, file: ReturnType<typeof useWorkResources>['files'][number]): boolean | null {
+function usePendingResourceChanges(controller: WorkController, file: ReturnType<typeof useWorkResources>['files'][number], active = true): boolean | null {
   const sessionId = controller.activeTask?.id ?? file.target?.sessionId
   const source = getEngineSource()
   const [pending, setPending] = useState<boolean | null>(null)
 
   useEffect(() => {
-    let active = true
-    if (!file.target || !sessionId || !controller.ready) {
+    let subscribed = true
+    if (!file.target || !sessionId || !controller.ready || !active) {
       setPending(false)
-      return () => { active = false }
+      return () => { subscribed = false }
     }
     setPending(null)
     void requestOrThrow<SessionFileChange[]>({
@@ -2221,53 +2233,49 @@ function usePendingResourceChanges(controller: WorkController, file: ReturnType<
       path: '/changes',
       query: { sessionId, status: 'pending', view: 'net' }
     }).then(result => {
-      if (!active || source !== getEngineSource()) return
+      if (!subscribed || source !== getEngineSource()) return
       const matches = changesForWorkFile(Array.isArray(result) ? result : [], sessionId, file.path, file.target?.root)
       setPending(matches.length > 0)
     }).catch(() => {
       // A failed probe must not turn into a misleading empty tab. The panel
       // can still be reopened after the next resource/engine refresh.
-      if (active && source === getEngineSource()) setPending(false)
+      if (subscribed && source === getEngineSource()) setPending(false)
     })
-    return () => { active = false }
-  }, [controller.ready, controller.streaming, file.id, file.path, file.target, sessionId, source])
+    return () => { subscribed = false }
+  }, [controller.ready, controller.streaming, file.id, file.path, file.target, sessionId, source, active])
 
   return pending
 }
 
-function WorkResourceFile({ controller, file }: { controller: WorkController; file: ReturnType<typeof useWorkResources>['files'][number] }): JSX.Element {
+function WorkResourceFile({ controller, file, active }: { controller: WorkController; file: ReturnType<typeof useWorkResources>['files'][number]; active: boolean }): JSX.Element {
   // External resources still belong to the visible Work conversation for
   // references/drafts, while their preview deliberately carries no session
   // file target and therefore cannot be written by the Agent.
   const sessionId = controller.activeTask?.id ?? file.target?.sessionId
   const [tab, setTab] = useState<'preview' | 'changes'>('preview')
-  const pendingChanges = usePendingResourceChanges(controller, file)
+  const pendingChanges = usePendingResourceChanges(controller, file, active)
   const showChangesTab = pendingChanges === true && Boolean(file.target)
-  useEffect(() => {
-    if (!showChangesTab && tab === 'changes') setTab('preview')
-  }, [showChangesTab, tab])
+  const selectedTab = tab === 'changes' && !showChangesTab ? 'preview' : tab
   const addExternalToConversation = async (): Promise<void> => {
     let input = file.externalFile
     if (!input && file.externalPath) {
       const result = await readLocalRecoveryFile(file.externalPath)
       if (result.tooLarge || result.size > 20 * 1024 * 1024) throw new Error('文件超过 20 MB，请缩小文件后重试')
-      const bytes = result.base64
-        ? Uint8Array.from(atob(result.base64), char => char.charCodeAt(0))
-        : new TextEncoder().encode(result.content)
-      input = new File([bytes], file.name, { type: 'application/octet-stream', lastModified: Date.now() })
+      const bytes = fileContentBytes(result)
+      input = new File([bytes.buffer as ArrayBuffer], file.name, { type: 'application/octet-stream', lastModified: Date.now() })
     }
     if (!input) throw new Error('外部文件已失效，请重新选择或拖拽文件')
     await controller.addFiles([input])
     toast.success('已加入对话资料，发送时将上传副本')
   }
-  return <div className="work-artifacts-shell__detail work-resource-file">
+  return <div className="work-artifacts-shell__detail work-resource-file" hidden={!active}>
     {showChangesTab ? <div className="work-artifacts-shell__tabs" role="tablist" aria-label="文件内容">
-      <button type="button" role="tab" aria-selected={tab === 'preview'} onClick={() => setTab('preview')}>预览</button>
-      <button type="button" role="tab" aria-selected={tab === 'changes'} onClick={() => setTab('changes')} title="查看此文件在任务中的改动">文件改动</button>
+      <button type="button" role="tab" aria-selected={selectedTab === 'preview'} onClick={() => setTab('preview')}>预览</button>
+      <button type="button" role="tab" aria-selected={selectedTab === 'changes'} onClick={() => setTab('changes')} title="查看此文件在任务中的改动">文件改动</button>
     </div> : null}
-    {tab === 'changes' && showChangesTab && file.target ? <WorkChangesPanel sessionId={sessionId!} workspacePath={file.target.root} filePath={file.path} ready={controller.ready} streaming={controller.streaming} /> : <WorkArtifactPanel
+    {selectedTab === 'changes' && showChangesTab && file.target ? <WorkChangesPanel sessionId={sessionId!} workspacePath={file.target.root} filePath={file.path} ready={controller.ready} streaming={controller.streaming} /> : <WorkArtifactPanel
     artifact={{ id: file.id, path: file.path, name: file.name, content: null, status: 'ready', createdAt: 0 }}
-    workspaceRoot={file.target?.root} sessionId={sessionId} externalFile={file.externalFile} externalPath={file.externalPath} inResourceTab
+    workspaceRoot={file.target?.root} sessionId={sessionId} externalFile={file.externalFile} externalPath={file.externalPath} inResourceTab active={active}
     onAddToConversation={(item, selection, coverage) => {
       if (selection) {
         const draft = getWorkDraft(controller.draftSource, controller.activeTask?.id ?? null)

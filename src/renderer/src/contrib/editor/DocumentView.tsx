@@ -1,7 +1,7 @@
-import { useRef, useState, type JSX } from 'react'
-import { isDirty, reloadDocumentFromDisk, setDocumentContent, useEditor } from '@renderer/core/editor/editor-store'
+import { useRef, useState, useSyncExternalStore, type JSX } from 'react'
+import { isDirty, reloadDocumentFromDisk, setDocumentContent, useEditorSelector } from '@renderer/core/editor/editor-store'
 import { formatSize } from '@renderer/core/editor/preview'
-import { useEditorGroups } from '@renderer/core/editor/editor-groups'
+import { getEditorGroups, onEditorGroupsChanged } from '@renderer/core/editor/editor-groups'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { Icon } from '@renderer/workbench/icons'
 import { toast } from '@renderer/core/toast'
@@ -10,6 +10,7 @@ import { MonacoEditor } from './MonacoEditor'
 import { EditorToolbar } from './EditorToolbar'
 import { EditorOutline } from './EditorOutline'
 import { EditorBlameStatus } from './EditorBlameStatus'
+import { TextPreview } from '@renderer/core/editor/TextPreview'
 import { SourcePreview, type SourcePreviewHandle } from './SourcePreview'
 import { useEditorPreviewScroll } from './useEditorPreviewScroll'
 
@@ -28,10 +29,10 @@ const PREVIEW_MODES: { mode: PreviewMode; label: string; title: string }[] = [
  * 超限的二进制给出明确说明而不是硬读（见主进程 MAX_BINARY_BYTES）。
  */
 export function DocumentView({ filePath, groupId }: { filePath: string; groupId?: string }): JSX.Element {
-  const editor = useEditor()
-  const doc = editor.docs.get(filePath)
-  const cursor = editor.cursor
-  const { focusedGroupId } = useEditorGroups()
+  const doc = useEditorSelector(state => state.docs.get(filePath))
+  const cursor = useEditorSelector(state => state.cursor)
+  const reveal = useEditorSelector(state => state.reveals[filePath])
+  const focusedGroupId = useSyncExternalStore(onEditorGroupsChanged, () => getEditorGroups().focusedGroupId)
   const [previewMode, setPreviewMode] = useState<PreviewMode>('edit')
   const [outlineVisible, setOutlineVisible] = useState(false)
   const sourceContainer = useRef<HTMLDivElement>(null)
@@ -48,14 +49,6 @@ export function DocumentView({ filePath, groupId }: { filePath: string; groupId?
     )
   }
 
-  if (doc.loading) {
-    return (
-      <div className="doc-placeholder">
-        <p>正在读取 {doc.name} …</p>
-      </div>
-    )
-  }
-
   if (doc.error && !isDirty(doc)) {
     return (
       <div className="doc-placeholder">
@@ -66,7 +59,7 @@ export function DocumentView({ filePath, groupId }: { filePath: string; groupId?
 
   if (doc.isBinary) {
     // 超过读取上限：主进程没有返回内容，别装作能预览
-    if (doc.tooLarge || !doc.base64) {
+    if (doc.tooLarge || !doc.base64 && !doc.bytes) {
       return (
         <div className="doc-placeholder">
           <p>
@@ -78,7 +71,7 @@ export function DocumentView({ filePath, groupId }: { filePath: string; groupId?
       )
     }
 
-    return <FilePreview name={doc.name} path={doc.path} base64={doc.base64} size={doc.size} groupId={groupId} />
+    return <FilePreview name={doc.name} path={doc.path} base64={doc.base64 ?? undefined} bytes={doc.bytes ?? undefined} size={doc.size} groupId={groupId} />
   }
 
   // 非激活标签也要挂载：EditorArea 只渲染激活的文档，故这里恒为激活文档。
@@ -120,17 +113,18 @@ export function DocumentView({ filePath, groupId }: { filePath: string; groupId?
           文件较大，仅载入了前 4 MB，当前为只读预览。请用外部工具编辑完整文件。
         </div>
       ) : null}
-      <div className="doc-view__workspace">
+      {doc.loading ? <div className="doc-view__loading" role="status">正在读取 {doc.name} …</div> : null}
+      <div className="doc-view__workspace" hidden={doc.loading}>
         <div className="doc-view__panes">
           <div className="doc-view__source" ref={sourceContainer} hidden={Boolean(previewKind && previewMode === 'preview')}>
-            <MonacoEditor
+            {doc.truncated ? <TextPreview content={doc.content} name={doc.name} /> : <MonacoEditor
               filePath={doc.path}
               groupId={groupId}
-              readOnly={doc.truncated}
+              loading={doc.loading}
               value={doc.content}
               onChange={(value) => setDocumentContent(doc.path, value)}
-              reveal={editor.reveals[doc.path]}
-            />
+              reveal={reveal}
+            />}
           </div>
           {previewKind && previewMode !== 'edit' ? <SourcePreview ref={previewRef}
             filePath={doc.path} content={doc.content} kind={previewKind} onScroll={onPreviewScroll} /> : null}

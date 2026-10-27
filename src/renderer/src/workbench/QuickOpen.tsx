@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type JSX, type MutableRefObject } from 'react'
 import { documentKey, getEditorState, openFile } from '@renderer/core/editor/editor-store'
+import { activateGroupTab, getEditorGroups } from '@renderer/core/editor/editor-groups'
 import { getRecentFiles } from '@renderer/core/editor/recent-files'
 import { executeCommand, isCommandEnabled, registerCommand } from '@renderer/core/platform/commands'
 import { recordCommandRun } from '@renderer/core/platform/commands-history'
 import { registerKeybinding } from '@renderer/core/platform/keybindings'
-import { getLayout, setLayout } from '@renderer/core/platform/layout-state'
+import { getLayout } from '@renderer/core/platform/layout-state'
 import { listAllFiles, paths } from '@renderer/core/workspace/fs-client'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { buildCommandItems, type CommandItem } from './command-filter'
@@ -237,8 +238,10 @@ function QuickOverlay({
     if (!root) return
     close(true)
     const filePath = paths.join(root, item.rel)
+    const group = getEditorGroups()
+    // openFile 同步登记 loading 文档后再激活；新文档尚未登记时激活会被组校验拒绝。
     void openFile(filePath, parsed.line, parsed.column)
-    setLayout({ activeEditorView: documentKey(filePath) })
+    activateGroupTab(group.focusedGroupId, documentKey(filePath))
   }
 
   /** 纯 `:行号`：跳当前激活编辑器的指定行 */

@@ -16,7 +16,9 @@ import {
   getDocument,
   isDirty,
   saveDocument,
-  useEditor
+  useEditorSelector,
+  type EditorState,
+  type OpenDocument
 } from '@renderer/core/editor/editor-store'
 import { toast } from '@renderer/core/toast'
 import { confirmDocumentClose } from '@renderer/core/editor/close-confirmation'
@@ -58,6 +60,27 @@ import {
 } from '@renderer/workbench/view-registry'
 import './editor-groups.css'
 
+interface DocumentTabState {
+  name: string
+  dirty: boolean
+}
+
+function selectDocumentTabs(docs: ReadonlyMap<string, OpenDocument>, paths: readonly string[]): Map<string, DocumentTabState> {
+  const result = new Map<string, DocumentTabState>()
+  for (const path of paths) {
+    const doc = docs.get(path)
+    if (doc) result.set(path, { name: doc.name, dirty: isDirty(doc) })
+  }
+  return result
+}
+
+function sameDocumentTabs(a: ReadonlyMap<string, DocumentTabState>, b: ReadonlyMap<string, DocumentTabState>): boolean {
+  return a.size === b.size && [...a].every(([path, value]) => {
+    const other = b.get(path)
+    return other?.name === value.name && other.dirty === value.dirty
+  })
+}
+
 interface Tab {
   key: string
   title: string
@@ -97,13 +120,27 @@ function workspaceRelativePath(filePath: string, root: string | null): string {
  * 标签来自两个来源，统一在一处合并：
  *   - 固定视图（模型、安全）：由视图注册表提供，不可关闭
  *   - 已打开文件：由编辑器 store 提供，可关闭、可带脏标记
- * 当前激活项统一由 layout-state 的 activeEditorView 持有（'doc:<path>' 或视图 ID）。
+ * 当前激活项由 editor-groups 持有；layout-state 的 activeEditorView 是兼容同步目标。
  * 对话在右侧 ChatPanel，不占主区标签。
  */
 export function EditorArea(): JSX.Element {
   const { groups, focusedGroupId } = useEditorGroups()
   const containerRef = useRef<HTMLDivElement>(null)
   const [ratio, setRatio] = useState(0.5)
+  // 高频 pointermove 每帧最多提交一次 React render，键盘仍走即时更新。
+  const ratioFrame = useRef<number | null>(null)
+  const pendingRatio = useRef(ratio)
+  const commitRatio = (value: number): void => {
+    pendingRatio.current = value
+    if (ratioFrame.current !== null) return
+    ratioFrame.current = requestAnimationFrame(() => {
+      ratioFrame.current = null
+      setRatio(pendingRatio.current)
+    })
+  }
+  useEffect(() => () => {
+    if (ratioFrame.current !== null) cancelAnimationFrame(ratioFrame.current)
+  }, [])
   const focused = groups.find((group) => group.id === focusedGroupId) ?? groups[0]
   useEffect(() => {
     setContextKey('editorTabsCount', focused.paths.length)
@@ -128,7 +165,13 @@ export function EditorArea(): JSX.Element {
               onKeyDown={(event) => {
                 if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
                 event.preventDefault()
-                setRatio((current) => Math.min(0.8, Math.max(0.2, current + (event.key === 'ArrowLeft' ? -0.05 : 0.05))))
+                if (ratioFrame.current !== null) {
+                  cancelAnimationFrame(ratioFrame.current)
+                  ratioFrame.current = null
+                }
+                const next = Math.min(0.8, Math.max(0.2, pendingRatio.current + (event.key === 'ArrowLeft' ? -0.05 : 0.05)))
+                pendingRatio.current = next
+                setRatio(next)
               }}
               onPointerDown={(event) => {
                 event.preventDefault()
@@ -137,7 +180,7 @@ export function EditorArea(): JSX.Element {
               onPointerMove={(event) => {
                 if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
                 const rect = containerRef.current?.getBoundingClientRect()
-                if (rect?.width) setRatio(Math.min(0.8, Math.max(0.2, (event.clientX - rect.left) / rect.width)))
+                if (rect?.width) commitRatio(Math.min(0.8, Math.max(0.2, (event.clientX - rect.left) / rect.width)))
               }}
               onPointerUp={(event) => {
                 if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
@@ -159,7 +202,9 @@ function EditorGroupView({ group, first, focused, split }: {
 }): JSX.Element {
   const layout = useLayout()
   const { ready } = useApp()
-  const editor = useEditor()
+  const paths = group.paths
+  const selectTabs = useCallback((state: EditorState) => selectDocumentTabs(state.docs, paths), [paths])
+  const documents = useEditorSelector(selectTabs, sameDocumentTabs)
   const workspace = useWorkspace()
   const git = useGit()
   const views = useSyncExternalStore(onViewsChanged, () => getViews('editor'))
@@ -185,20 +230,20 @@ function EditorGroupView({ group, first, focused, split }: {
       icon: view.icon as IconName
     }))
     const docTabs: Tab[] = group.paths.map((filePath) => {
-      const doc = editor.docs.get(filePath)
+      const doc = documents.get(filePath)
       const relativePath = workspaceRelativePath(filePath, workspace.root)
       const change = git.files.find((item) => item.path.replace(/\\/g, '/').toLowerCase() === relativePath.toLowerCase())
       return {
         key: documentKey(filePath),
         title: doc?.name ?? filePath,
-        dirty: doc ? isDirty(doc) : false,
+        dirty: doc?.dirty ?? false,
         closable: true,
         filePath,
         status: change ? visualKeyOf(change) : null
       }
     })
     return [...staticTabs, ...docTabs]
-  }, [visibleViews, group.id, group.paths, editor.docs, first, split, workspace.root, git.files])
+  }, [visibleViews, group.id, group.paths, documents, first, split, workspace.root, git.files])
 
   const [menu, setMenu] = useState<{ x: number; y: number; key: string; anchor: Element } | null>(null)
 
@@ -414,8 +459,8 @@ function EditorGroupView({ group, first, focused, split }: {
 }
 
 /**
- * 文档渲染槽。渲染器来自订阅的注册表引用：渲染器被替换时组件类型改变，
- * React 会自然卸载重建文档实例（等价于旧的 version remount 方案）。
+ * 文档渲染槽。组件身份按编辑组稳定，普通文本切换由 Monaco 自己换 model；
+ * 渲染器注册被替换时，组件类型变化仍会自然卸载重建。
  */
 function DocumentSlot({
   filePath,
@@ -427,7 +472,7 @@ function DocumentSlot({
   Renderer: DocumentRenderer | null
 }): JSX.Element {
   if (!Renderer) return <div className="doc-placeholder">未注册文档渲染器。</div>
-  return <Renderer key={filePath} filePath={filePath} groupId={groupId} />
+  return <Renderer key={groupId} filePath={filePath} groupId={groupId} />
 }
 
 function renderStaticView(views: ViewRegistration[], activeKey: string): JSX.Element {

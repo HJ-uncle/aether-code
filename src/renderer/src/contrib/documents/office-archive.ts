@@ -4,6 +4,7 @@ import { DOCUMENT_LIMITS, type DocumentKind } from './document-kind'
 
 interface ZipEntry { name: string; method: number; packed: number; unpacked: number; offset: number }
 const invalid = (): never => { throw new Error('文件结构无法安全预览，原文件已保留。') }
+const overLimit = (detail: string): never => { throw new Error(`此文档超出预览预算（${detail}），原文件已保留。`) }
 
 /** Admit sizes before a general-purpose ZIP parser can allocate expanded data. */
 export function inspectOfficeArchive(buffer: ArrayBuffer): ZipEntry[] {
@@ -70,7 +71,7 @@ export async function expandOfficeEntry(buffer: ArrayBuffer, entry: ZipEntry, si
 }
 
 /** Image headers are checked before a browser decoder allocates pixel buffers. */
-export function officeImagePixels(bytes: Uint8Array): number {
+export function officeImageDimensions(bytes: Uint8Array): { width: number; height: number } {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   let width = 0, height = 0
   const ascii = (start: number, end: number): string => String.fromCharCode(...bytes.subarray(start, end))
@@ -108,8 +109,34 @@ export function officeImagePixels(bytes: Uint8Array): number {
   } else if (bytes.length >= 26 && ascii(0, 2) === 'BM') {
     width = Math.abs(view.getInt32(18, true)); height = Math.abs(view.getInt32(22, true))
   }
-  if (width < 1 || height < 1 || width > 16384 || height > 16384 || width * height > 8_000_000) return invalid()
+  if (width < 1 || height < 1 || width > 16384 || height > 16384 || width * height > DOCUMENT_LIMITS.imagePixels) return overLimit('单张图片像素过大')
+  return { width, height }
+}
+
+export function officeImagePixels(bytes: Uint8Array): number {
+  const { width, height } = officeImageDimensions(bytes)
   return width * height
+}
+
+export async function prepareOfficeImage(bytes: Uint8Array, name: string, signal: AbortSignal): Promise<Uint8Array> {
+  const { width, height } = officeImageDimensions(bytes)
+  if (width * height <= DOCUMENT_LIMITS.previewImagePixels && width <= DOCUMENT_LIMITS.previewImageEdge && height <= DOCUMENT_LIMITS.previewImageEdge && bytes.byteLength <= DOCUMENT_LIMITS.previewImageBytes) return bytes
+  signal.throwIfAborted()
+  const scale = Math.min(1, DOCUMENT_LIMITS.previewImageEdge / Math.max(width, height), Math.sqrt(DOCUMENT_LIMITS.previewImagePixels / (width * height)))
+  const targetWidth = Math.max(1, Math.round(width * scale)), targetHeight = Math.max(1, Math.round(height * scale))
+  const mime = /\.png$/i.test(name) ? 'image/png' : 'image/jpeg'
+  const copy = bytes.slice().buffer as ArrayBuffer
+  const source = await createImageBitmap(new Blob([copy], { type: mime }), { resizeWidth: targetWidth, resizeHeight: targetHeight, resizeQuality: 'high' })
+  try {
+    signal.throwIfAborted()
+    const canvas = new OffscreenCanvas(targetWidth, targetHeight)
+    const context = canvas.getContext('2d', { alpha: true })
+    if (!context) throw new Error('文档图片无法准备预览。')
+    context.drawImage(source, 0, 0, targetWidth, targetHeight)
+    const result = new Uint8Array(await (await canvas.convertToBlob({ type: mime, quality: mime === 'image/jpeg' ? 0.88 : undefined })).arrayBuffer())
+    if (result.byteLength > DOCUMENT_LIMITS.previewImageBytes * 4) return overLimit('预览图片编码过大')
+    return result
+  } finally { source.close() }
 }
 
 export function passiveOfficePart(name: string): boolean {
@@ -121,6 +148,16 @@ export function passiveOfficeRelationship(target: string, type: string, mode = '
     passiveOfficePart(target.replaceAll('\\', '/')) && !/\/(?:vbaProject|vbaData|oleObject|package|control|activeX|aFChunk)$/i.test(type)
 }
 
+function stripSpreadsheetPrefix(text: string, prefix: string): string {
+  // A single pass preserves comments, CDATA, processing instructions and text.
+  // Only element markup is rewritten; attribute values and cell text stay intact.
+  return text.replace(/<(?:!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|[^>]+)>/g, markup => {
+    if (markup.startsWith('<!--') || markup.startsWith('<![CDATA[') || markup.startsWith('<?')) return markup
+    return markup.replace(new RegExp(`(<\\/?)${prefix}:`, 'g'), '$1')
+      .replace(new RegExp(`\\sxmlns:${prefix}=(["'])http://schemas\\.openxmlformats\\.org/spreadsheetml/2006/main\\1`), ' xmlns=$1http://schemas.openxmlformats.org/spreadsheetml/2006/main$1')
+  })
+}
+
 function cleanXml(text: string, name: string): string {
   if (/<!DOCTYPE|<!ENTITY/i.test(text)) return invalid()
   let malformed = false
@@ -130,8 +167,14 @@ function cleanXml(text: string, name: string): string {
   if (malformed || xml.getElementsByTagName('parsererror').length) return invalid()
   // ExcelJS matches SpreadsheetML tag names literally. Prefixes are equivalent
   // in XML, so normalize only elements in that namespace for the preview copy.
-  if (/^xl\//i.test(name)) {
-    const spreadsheetNamespace = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+  const spreadsheetNamespace = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+  const allElements = /^xl\//i.test(name) ? Array.from(xml.getElementsByTagName('*')) : []
+  const spreadsheetPrefix = xml.documentElement.prefix
+  const lexicalPrefix = Boolean(/^xl\//i.test(name) && spreadsheetPrefix && allElements.length &&
+    allElements.every(element => element.prefix === spreadsheetPrefix || (!element.prefix && element.namespaceURI === spreadsheetNamespace)) &&
+    !allElements.some(element => !element.prefix && element.namespaceURI !== spreadsheetNamespace) &&
+    !xml.documentElement.hasAttribute('xmlns'))
+  if (/^xl\//i.test(name) && !lexicalPrefix) {
     for (const element of Array.from(xml.getElementsByTagNameNS(spreadsheetNamespace, '*'))) {
       if (!element.prefix) continue
       const replacement = xml.createElementNS(spreadsheetNamespace, element.localName)
@@ -147,23 +190,24 @@ function cleanXml(text: string, name: string): string {
       element.parentNode?.replaceChild(replacement, element)
     }
   }
+  let modified = false
   if (name.endsWith('.rels')) {
     for (const relation of Array.from(xml.getElementsByTagNameNS('*', 'Relationship'))) {
       const target = relation.getAttribute('Target') || ''
-      if (!passiveOfficeRelationship(target, relation.getAttribute('Type') || '', relation.getAttribute('TargetMode') || '')) relation.remove()
+      if (!passiveOfficeRelationship(target, relation.getAttribute('Type') || '', relation.getAttribute('TargetMode') || '')) { relation.remove(); modified = true }
       // ExcelJS indexes tables relative to xl/worksheets, but looks them up
       // using the relationship verbatim. Convert package-absolute table targets
       // to that same relative form without changing external-link filtering.
       else if (/^xl\/worksheets\/_rels\/[^/]+\.xml\.rels$/i.test(name) &&
         (relation.getAttribute('Type') || '').endsWith('/table')) {
         const absolute = /^\/xl\/(.+)$/.exec(target)
-        if (absolute && !absolute[1].split('/').includes('..')) relation.setAttribute('Target', '../' + absolute[1])
+        if (absolute && !absolute[1].split('/').includes('..')) { relation.setAttribute('Target', '../' + absolute[1]); modified = true }
       }
     }
   }
   if (/^xl\/worksheets\/[^/]+\.xml$/i.test(name)) {
     const rows = xml.getElementsByTagNameNS('*', 'row'), cells = xml.getElementsByTagNameNS('*', 'c')
-    if (rows.length > DOCUMENT_LIMITS.rows || cells.length > DOCUMENT_LIMITS.cells) return invalid()
+    if (rows.length > DOCUMENT_LIMITS.rows || cells.length > DOCUMENT_LIMITS.cells) return overLimit('工作表行列或单元格过多')
     for (const row of Array.from(rows)) if (Number(row.getAttribute('r')) > DOCUMENT_LIMITS.rows) return invalid()
     for (const cell of Array.from(cells)) {
       const match = /^([A-Z]+)([1-9]\d*)$/.exec(cell.getAttribute('r') || '')
@@ -182,10 +226,15 @@ function cleanXml(text: string, name: string): string {
     for (const cell of mergeCells) {
       const ref = cell.getAttribute('ref') || ''
       if (accepted[acceptedIndex] === ref) acceptedIndex += 1
-      else cell.parentNode?.removeChild(cell)
+      else { cell.parentNode?.removeChild(cell); modified = true }
     }
   }
-  return new XMLSerializer().serializeToString(xml)
+  // Prefix-only SpreadsheetML needs no 200k-node create/replace cycle. The
+  // complete DOM was still parsed and checked above; mixed namespaces retain
+  // the conservative DOM normalization path. If sanitization removed a merge,
+  // normalize the modified serialization rather than returning the original.
+  const output = modified ? new XMLSerializer().serializeToString(xml) : text
+  return lexicalPrefix ? stripSpreadsheetPrefix(output, spreadsheetPrefix!) : modified ? output : new XMLSerializer().serializeToString(xml)
 }
 
 interface MergeRange { startColumn: number; endColumn: number; startRow: number; endRow: number }
@@ -226,7 +275,8 @@ export function sanitizeMergeRefs(refs: string[]): string[] {
 
 /** A fresh STORE archive removes external relationships and unneeded executable
  * payloads. Every deflate stream has an actual byte cap, not only a ZIP header cap. */
-export async function prepareOfficeArchive(buffer: ArrayBuffer, kind: Exclude<DocumentKind, 'pdf'>, signal: AbortSignal): Promise<ArrayBuffer> {
+export async function prepareOfficeArchive(buffer: ArrayBuffer, kind: Exclude<DocumentKind, 'pdf'>, signal: AbortSignal,
+  options: { imageProcessor?: (bytes: Uint8Array, name: string, signal: AbortSignal) => Promise<Uint8Array> } = {}): Promise<ArrayBuffer> {
   const entries = inspectOfficeArchive(buffer)
   const main = kind === 'docx' ? 'word/document.xml' : kind === 'xlsx' ? 'xl/workbook.xml' : 'ppt/presentation.xml'
   if (!entries.some(entry => entry.name === main) || !entries.some(entry => entry.name === '[Content_Types].xml')) return invalid()
@@ -234,7 +284,7 @@ export async function prepareOfficeArchive(buffer: ArrayBuffer, kind: Exclude<Do
   const sheets = entries.filter(entry => /^xl\/worksheets\/[^/]+\.xml$/.test(entry.name)).length
   if (slides > DOCUMENT_LIMITS.pages || sheets > DOCUMENT_LIMITS.sheets) return invalid()
   const zip = new JSZip()
-  let elements = 0, imagePixels = 0
+  let elements = 0, totalCells = 0, imagePixels = 0
   for (const [index, entry] of entries.entries()) {
     signal.throwIfAborted()
     if (entry.name.endsWith('/') || !passiveOfficePart(entry.name)) continue
@@ -242,17 +292,24 @@ export async function prepareOfficeArchive(buffer: ArrayBuffer, kind: Exclude<Do
     // Fonts, HTML altChunks, linked workbooks, OLE and unsupported vector media
     // are not needed for a passive preview and never enter the renderer.
     if (!xml && !/\.(?:png|jpe?g|webp|bmp)$/i.test(entry.name)) continue
-    if (xml && entry.unpacked > DOCUMENT_LIMITS.xmlBytes) return invalid()
+    if (xml && entry.unpacked > DOCUMENT_LIMITS.xmlBytes) return overLimit('单个 XML 部件过大')
     const bytes = await expandOfficeEntry(buffer, entry, signal)
     if (xml) {
       const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
       elements += (text.match(/<[A-Za-z_]/g) || []).length
-      if (elements > DOCUMENT_LIMITS.xmlElements) return invalid()
+      if (/^xl\/worksheets\/[^/]+\.xml$/i.test(entry.name)) {
+        totalCells += (text.match(/<(?:[A-Za-z_][\w.-]*:)?c(?:\s|\/?>)/g) || []).length
+        if (totalCells > DOCUMENT_LIMITS.cells) return overLimit('工作簿单元格过多')
+      }
+      if (elements > DOCUMENT_LIMITS.xmlElements + totalCells * DOCUMENT_LIMITS.xmlElementsPerCell) return overLimit('XML 元素过多')
       zip.file(entry.name, cleanXml(text, entry.name))
     } else {
       imagePixels += officeImagePixels(bytes)
-      if (imagePixels > 16_000_000) return invalid()
-      zip.file(entry.name, bytes)
+      if (imagePixels > DOCUMENT_LIMITS.totalImagePixels) return overLimit('图片总像素过大')
+      // A 6K source is decoded and downsampled here in the Worker, not as a
+      // multi-megabyte data URL and image decode on the renderer main thread.
+      // XLSX cell previews do not render drawings and retain the original part.
+      zip.file(entry.name, kind === 'xlsx' ? bytes : options.imageProcessor ? await options.imageProcessor(bytes, entry.name, signal) : bytes)
     }
     // Let close/tab-switch handlers abort between bounded parts.
     if (index % 8 === 0) await new Promise<void>(resolve => setTimeout(resolve, 0))

@@ -1,14 +1,17 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
-import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { StringDecoder } from 'node:string_decoder'
+import { promisify } from 'node:util'
 import nativeSupervisorPath from './assets/repository-supervisor.exe?asset'
 
 const packagedExecutable = nativeSupervisorPath
 const packagedSha256 = "3d1e0c4a6b08bd260ff82b4585545376cf4e8b02e0f9ee649c0d07f30243679c"
 let executable: string | undefined
 let identity: ProcessIdentity | undefined
+let identityQuery: Promise<ProcessIdentity> | undefined
+const execFileAsync = promisify(execFile)
 export interface ProcessIdentity { pid: number; birth: string; alive: boolean }
 export interface NativeAudit { ownerAlive: boolean; supervisorAlive: boolean; jobExists: boolean; activeProcesses: number; empty: boolean; verified: boolean }
 export interface RunAudit { jobName: string; empty: boolean; activeProcesses: number; killed: boolean; members: ProcessIdentity[][] }
@@ -30,20 +33,22 @@ function supervisorExecutable(): string {
   return executable = packagedExecutable
 }
 
-function nativeQuery<T>(args: string[]): T {
-  const output = execFileSync(supervisorExecutable(), args, { windowsHide:true, encoding:'utf8', timeout:15_000, maxBuffer:128*1024 })
-  return JSON.parse(output.trim()) as T
+async function nativeQuery<T>(args: string[]): Promise<T> {
+  const { stdout } = await execFileAsync(supervisorExecutable(), args, { windowsHide:true, encoding:'utf8', timeout:15_000, maxBuffer:128*1024 })
+  return JSON.parse(stdout.trim()) as T
 }
-export function repositoryOwnerIdentity(): Readonly<ProcessIdentity> {
-  return identity ??= nativeQuery<ProcessIdentity>(['identity', String(process.pid)])
+export function repositoryOwnerIdentity(): Promise<Readonly<ProcessIdentity>> {
+  if(identity)return Promise.resolve(identity)
+  identityQuery ??= nativeQuery<ProcessIdentity>(['identity', String(process.pid)]).then(value=>identity=value,error=>{identityQuery=undefined;throw error})
+  return identityQuery
 }
-export function auditRepositoryJob(jobName: string, owner: ProcessIdentity, supervisor?: ProcessIdentity): NativeAudit {
+export function auditRepositoryJob(jobName: string, owner: ProcessIdentity, supervisor?: ProcessIdentity): Promise<NativeAudit> {
   if (!/^Local\\AetherGit-[0-9a-f-]{36}$/i.test(jobName) || !Number.isSafeInteger(owner.pid) || !/^\d{15,20}$/.test(owner.birth)) throw new Error('Untrusted Git lease process identity')
   return nativeQuery<NativeAudit>(['audit',jobName,String(owner.pid),owner.birth,String(supervisor?.pid ?? 0),supervisor?.birth ?? '0'])
 }
 
 export async function openRepositoryProcessScope(jobName: string, receipt: string, onReady: (supervisor: ProcessIdentity) => void): Promise<RepositoryProcessScope> {
-  const owner = repositoryOwnerIdentity()
+  const owner = await repositoryOwnerIdentity()
   // The helper must survive Node's own kill-on-close child job long enough to
   // audit and persist closure. Its parent birth handle is the watchdog gate.
   const child: ChildProcessWithoutNullStreams = spawn(supervisorExecutable(), ['serve',jobName,String(owner.pid),owner.birth,receipt], {windowsHide:true,detached:true,stdio:'pipe'})
@@ -135,7 +140,7 @@ export async function openRepositoryProcessScope(jobName: string, receipt: strin
       const deadline=setTimeout(()=>child.kill(),12_000)
       let completionDeadline: ReturnType<typeof setTimeout> | undefined
       await Promise.race([exited,new Promise<void>((_,reject)=>{completionDeadline=setTimeout(()=>reject(new Error('Git supervisor exit was not confirmed')),15_000)})]).finally(()=>{clearTimeout(deadline);clearTimeout(completionDeadline)})
-      const final=auditRepositoryJob(jobName,owner,supervisor)
+      const final=await auditRepositoryJob(jobName,owner,supervisor)
       if(final.jobExists || final.supervisorAlive || !final.empty) throw new Error('Git process group remains unverified; repository lease is retained')
       const receiptStat=fs.lstatSync(receipt)
       if(receiptStat.isSymbolicLink() || receiptStat.size>16*1024)throw new Error('Native Git closure receipt is untrusted')

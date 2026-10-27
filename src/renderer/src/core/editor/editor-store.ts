@@ -8,7 +8,7 @@
  *
  * 「哪个标签是激活的」由 layout-state 统一持有，本模块只负责文档本身。
  */
-import { useSyncExternalStore } from 'react'
+import { useCallback, useRef, useSyncExternalStore } from 'react'
 import { ipcErrorMessage } from '../ipc-error'
 import { refreshGit } from '../git/git-store'
 import { diagnoseDocument, clearDocumentDiagnostics } from '../lsp/diagnostics'
@@ -28,6 +28,7 @@ export interface OpenDocument {
   savedContent: string
   isBinary: boolean
   base64: string | null
+  bytes?: ArrayBuffer | null
   truncated: boolean
   /** 二进制文件超过预览上限（主进程未返回内容） */
   tooLarge: boolean
@@ -287,6 +288,7 @@ export async function openFile(
       savedContent: file.content,
       isBinary: file.isBinary,
       base64: file.base64 ?? null,
+      bytes: file.bytes ?? null,
       truncated: file.truncated,
       tooLarge: Boolean(file.tooLarge),
       size: file.size,
@@ -491,6 +493,7 @@ export async function reloadDocuments(filePaths: string[]): Promise<void> {
         savedContent: file.content,
         isBinary: file.isBinary,
         base64: file.base64 ?? null,
+      bytes: file.bytes ?? null,
         tooLarge: Boolean(file.tooLarge),
         truncated: file.truncated,
         size: file.size,
@@ -523,7 +526,8 @@ export async function reloadDocumentFromDisk(filePath: string): Promise<void> {
   if (!latest || !sameDocument(doc.path, identity) || latest.content !== doc.content || latest.savedContent !== doc.savedContent || state.saving.has(doc.path)) throw new Error('读取期间文档已修改或重新打开，请重新选择要保留的版本。')
   const docs = new Map(state.docs)
   docs.set(doc.path, { ...latest, content: file.content, savedContent: file.content,
-    isBinary: file.isBinary, base64: file.base64 ?? null, truncated: file.truncated,
+    isBinary: file.isBinary, base64: file.base64 ?? null,
+      bytes: file.bytes ?? null, truncated: file.truncated,
     tooLarge: Boolean(file.tooLarge), size: file.size, externalChange: undefined, diskContent: undefined, error: null })
   markDocumentEdited(doc.path)
   setState({ docs })
@@ -574,4 +578,21 @@ export function renameDocument(oldPath: string, newPath: string): void {
 /** 订阅编辑器状态（store 内部整体替换 state，引用稳定可作快照） */
 export function useEditor(): EditorState {
   return useSyncExternalStore(onEditorChanged, getEditorState)
+}
+
+/**
+ * 投影快照必须在 store 通知时同步计算：若在 effect 里补算，commit 仍可能拿到旧
+ * 文档，React 随后又因投影相等而跳过后续更新，导致标签切换后 Monaco 不换 model。
+ */
+export function useEditorSelector<T>(selector: (state: EditorState) => T, isEqual: (a: T, b: T) => boolean = Object.is): T {
+  const getSnapshot = useCallback(() => selector(getEditorState()), [selector])
+  const cache = useRef<{ source: EditorState; selected: T } | undefined>(undefined)
+  const getSelected = (): T => {
+    const source = getEditorState()
+    if (!cache.current || cache.current.source !== source || !isEqual(cache.current.selected, getSnapshot())) {
+      cache.current = { source, selected: getSnapshot() }
+    }
+    return cache.current.selected
+  }
+  return useSyncExternalStore(onEditorChanged, getSelected, getSelected)
 }

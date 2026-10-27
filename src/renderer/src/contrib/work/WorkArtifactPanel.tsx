@@ -6,12 +6,14 @@ import { Markdown } from '@renderer/contrib/chat/Markdown'
 import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { toast } from '@renderer/core/toast'
-import { workSourceMarkdown } from './work-artifact-utils'
 import { getEngineSource, isRemoteEngine, subscribeEngineSource } from '@renderer/core/engine/source'
 import { workArtifactExportName, workArtifactReadFailure, workArtifactReadResult, type WorkArtifactContent } from './work-artifact-content'
 import './work-artifact-panel.css'
 import type { FsFileContent } from '@shared/ipc'
+import { hasBinaryFileSignature, hasOfficeFileSignature } from '@shared/file-signature'
 import { FilePreview } from '../editor/FilePreview'
+import { WorkTextPreview, isLargeWorkText } from './WorkTextPreview'
+import { readWorkFileCached } from './work-file-read-cache'
 
 export interface WorkArtifactPanelProps {
   artifact: WorkArtifact | null
@@ -22,6 +24,8 @@ export interface WorkArtifactPanelProps {
   artifacts?: WorkArtifact[]
   onSelect?: (id: string) => void
   inResourceTab?: boolean
+  /** Retained Work previews stay mounted but stop background interaction work. */
+  active?: boolean
   /** File supplied by the desktop picker/drop target. It never enters the
    * engine workspace and is read only when this panel is visible. */
   externalFile?: File
@@ -87,9 +91,11 @@ async function readExternalFile(file: File): Promise<FsFileContent> {
   }
   const bytes = new Uint8Array(await file.arrayBuffer())
   const sample = bytes.subarray(0, Math.min(8192, bytes.length))
-  const isBinary = sample.includes(0)
+  const isBinary = hasBinaryFileSignature(sample)
   if (isBinary) return {
-    path: file.name, content: '', base64: encodeBase64(bytes), isBinary: true, size: file.size, truncated: false
+    path: file.name, content: '',
+    ...(hasOfficeFileSignature(sample, file.name) ? { bytes: bytes.buffer as ArrayBuffer } : { base64: encodeBase64(bytes) }),
+    isBinary: true, size: file.size, truncated: false
   }
   const truncated = bytes.length > MAX_EXTERNAL_TEXT_BYTES
   const text = new TextDecoder().decode(truncated ? bytes.subarray(0, MAX_EXTERNAL_TEXT_BYTES) : bytes)
@@ -113,12 +119,18 @@ function ArtifactContent({
   onAddToConversation,
   onOpenFile,
   inResourceTab = false,
+  active = true,
   externalFile,
   externalPath,
   epoch
 }: WorkArtifactPanelProps & { epoch: number }): JSX.Element {
-  const [read, setRead] = useState<{ receipt: string | null | undefined; value: WorkArtifactContent | null }>({ receipt: artifact?.content, value: null })
-  const value = read.receipt === artifact?.content ? read.value : null
+  const [readVersion, setReadVersion] = useState(0)
+  const previousReadVersion = useRef(-1)
+  const readKey = `${artifact?.content ?? ''}:${readVersion}`
+  const [read, setRead] = useState<{ receipt: string; value: WorkArtifactContent | null }>({ receipt: readKey, value: null })
+  const value = artifact && !artifact.path
+    ? { content: null, coverage: 'unavailable' as const, notice: '该成果没有有效的文件路径，无法读取。' }
+    : read.receipt === readKey ? read.value : null
   const content = value?.content ?? null
   const loading = Boolean(artifact && !value)
   const error = value?.coverage === 'unavailable' && !value.isBinary ? value.notice : ''
@@ -126,7 +138,6 @@ function ArtifactContent({
   const mounted = useRef(true)
   const [mode, setMode] = useState<'preview' | 'source'>('preview')
   const [selection, setSelection] = useState('')
-  const [readVersion, setReadVersion] = useState(0)
   const previewRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -136,12 +147,8 @@ function ArtifactContent({
 
   useEffect(() => {
     let active = true
-    setRead({ receipt: artifact?.content, value: null })
-    setSelection('')
-    setMode(artifact && isMarkdown(artifact.name) ? 'preview' : 'source')
     if (artifact?.status === 'deleted') return () => { active = false }
     if (!artifact || !artifact.path) {
-      if (artifact) setRead({ receipt: artifact.content, value: { content: null, coverage: 'unavailable', notice: '该成果没有有效的文件路径，无法读取。' } })
       return () => {
         active = false
       }
@@ -162,13 +169,16 @@ function ArtifactContent({
       }
       throw last ?? new Error('读取文件失败')
     }
+    const cacheKey = JSON.stringify([epoch, sessionId, workspaceRoot, externalPath, externalFile?.name, externalFile?.size, externalFile?.lastModified, artifact?.id, artifact?.path, artifact?.content])
+    const refresh = readVersion > 0 && readVersion > previousReadVersion.current
+    previousReadVersion.current = readVersion
     if (externalFile) {
-      void readWithRetry(() => readExternalFile(externalFile))
+      void readWorkFileCached(cacheKey, () => readWithRetry(() => readExternalFile(externalFile)), refresh)
         .then((result) => {
-          if (active && epoch === getEngineSource()) setRead({ receipt: artifact.content, value: workArtifactReadResult(result) })
+          if (active && epoch === getEngineSource()) setRead({ receipt: readKey, value: workArtifactReadResult(result) })
         })
         .catch((reason: unknown) => {
-          if (active && epoch === getEngineSource()) setRead({ receipt: artifact.content, value: workArtifactReadFailure(artifact.content, reason) })
+          if (active && epoch === getEngineSource()) setRead({ receipt: readKey, value: workArtifactReadFailure(artifact.content, reason) })
         })
       return () => { active = false }
     }
@@ -190,12 +200,12 @@ function ArtifactContent({
       }
       throw last ?? new Error('文件不在当前工作区。请使用“打开文件”或将文件拖到资源栏。')
     }
-    void readWithRetry(load)
+    void readWorkFileCached(cacheKey, () => readWithRetry(load), refresh)
       .then((result) => {
-        if (active && epoch === getEngineSource()) setRead({ receipt: artifact.content, value: workArtifactReadResult(result) })
+        if (active && epoch === getEngineSource()) setRead({ receipt: readKey, value: workArtifactReadResult(result) })
       })
       .catch((reason: unknown) => {
-        if (active && epoch === getEngineSource()) setRead({ receipt: artifact.content, value: workArtifactReadFailure(artifact.content, reason) })
+        if (active && epoch === getEngineSource()) setRead({ receipt: readKey, value: workArtifactReadFailure(artifact.content, reason) })
       })
     return () => {
       active = false
@@ -208,6 +218,7 @@ function ArtifactContent({
   )
 
   useEffect(() => {
+    if (!active) return
     const update = (): void => {
       const current = window.getSelection()
       if (
@@ -224,7 +235,7 @@ function ArtifactContent({
     }
     document.addEventListener('selectionchange', update)
     return () => document.removeEventListener('selectionchange', update)
-  }, [artifact?.id])
+  }, [artifact?.id, active])
 
   if (!artifact)
     return (
@@ -268,8 +279,8 @@ function ArtifactContent({
       return
     }
     if (value?.isBinary && (externalFile || externalPath)) {
-      if (!value.base64) return
-      const bytes = Uint8Array.from(atob(value.base64), char => char.charCodeAt(0))
+      if (!value.base64 && !value.bytes) return
+      const bytes = value.bytes ? new Uint8Array(value.bytes.slice(0)) : Uint8Array.from(atob(value.base64!), char => char.charCodeAt(0))
       const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }))
       const link = document.createElement('a')
       link.href = url
@@ -350,7 +361,7 @@ function ArtifactContent({
           type="button"
           className="work-quiet-button"
           onClick={() => void download()}
-          disabled={saving || (content === null && !(value?.isBinary && (externalFile || externalPath ? Boolean(value.base64) : Boolean(sessionId))))}
+          disabled={saving || (content === null && !(value?.isBinary && (externalFile || externalPath ? Boolean(value.base64 || value.bytes) : Boolean(sessionId))))}
         >
           <Icon name="cloud-download-outline" size={14} />
           {saving ? '正在保存…' : value?.isBinary ? '保存原文件' : value?.coverage === 'partial' ? '保存预览片段' : value?.coverage === 'receipt' ? '保存历史回执' : '保存副本'}
@@ -383,7 +394,7 @@ function ArtifactContent({
           <button type="button" className="work-quiet-button" onClick={() => setReadVersion(version => version + 1)}>重试读取</button>
         </div>
       ) : null}
-      <div className={`work-artifact-panel-v2__content work-artifact-preview${value?.base64 ? ' work-artifact-panel-v2__content--document' : ''}`} ref={previewRef}>
+      <div className={`work-artifact-panel-v2__content work-artifact-preview${value?.base64 || value?.bytes ? ' work-artifact-panel-v2__content--document' : ''}`} ref={previewRef}>
         {loading ? (
           <div className="work-artifact-panel-v2__loading" role="status">
             <Spinner size={16} />
@@ -401,8 +412,8 @@ function ArtifactContent({
               重试
             </button>
           </div>
-        ) : value?.isBinary && value.base64 ? (
-          <FilePreview name={artifact.name} path={artifact.path} base64={value.base64} size={value.size ?? 0} />
+        ) : value?.isBinary && (value.base64 || value.bytes) ? (
+          <FilePreview name={artifact.name} path={artifact.path} base64={value.base64} bytes={value.bytes} size={value.size ?? 0} active={active} />
         ) : value?.isBinary ? (
           <div className="work-artifact-panel-v2__empty" role="status">
             {language} 文件 · {value.notice}
@@ -411,6 +422,8 @@ function ArtifactContent({
           <div className="work-artifact-panel-v2__empty">
             文件已生成，当前没有可读回执。可以添加到对话，让 AI 继续处理。
           </div>
+        ) : isLargeWorkText(content) ? (
+          <WorkTextPreview key={`${artifact.id}:${readVersion}`} content={content} name={artifact.name} />
         ) : mode === 'preview' && isMarkdown(artifact.name) ? (
           <div className="work-artifact-panel-v2__markdown">
             <Markdown
@@ -421,11 +434,9 @@ function ArtifactContent({
             />
           </div>
         ) : isText(artifact.name) ? (
-          <div className="work-artifact-panel-v2__markdown work-artifact-panel-v2__source-markdown">
-            <Markdown text={workSourceMarkdown(content, artifact.name)} />
-          </div>
+          <WorkTextPreview key={`${artifact.id}:${readVersion}`} content={content} name={artifact.name} />
         ) : (
-          <pre className="work-artifact-panel-v2__source">{content}</pre>
+          <WorkTextPreview key={`${artifact.id}:${readVersion}`} content={content} name={artifact.name} />
         )}
       </div>
     </section>

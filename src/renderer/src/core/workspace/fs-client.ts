@@ -34,6 +34,7 @@ export interface RemoteWorkspaceContext {
 export interface SessionWorkspaceContext {
   sessionId: string
   root: string
+  epoch?: string
 }
 
 /**
@@ -84,6 +85,7 @@ export async function bindSessionWorkspace(sessionId: string, workspaceRoot: str
       path: '/workspace/bind',
       body: { sessionId: id, workspaceRoot: root }
     })
+    sessionTargetRequests.delete(JSON.stringify([target.source, target.expectedEngine, id]))
     assertEngineSource(target.source)
     return readSessionWorkspaceContext(id, target, root)
   })()
@@ -104,6 +106,7 @@ interface SessionRequestTarget {
 export interface SessionFileTarget extends SessionRequestTarget {
   readonly sessionId: string
   readonly root: string
+  readonly bindingEpoch?: string
   readonly key: string
 }
 
@@ -121,6 +124,11 @@ async function sessionRequest<T>(sessionId: string, target: SessionRequestTarget
 }
 
 async function readSessionWorkspaceContext(sessionId: string, target: SessionRequestTarget, workspaceRoot?: string | null): Promise<SessionWorkspaceContext> {
+  return readSessionWorkspaceContextWithEntries(sessionId, target, workspaceRoot).then(context => ({ sessionId: context.sessionId, root: context.root, epoch: context.bindingEpoch }))
+}
+
+const sessionDirectoryRequests = new Map<string, Promise<DirectoryResponse>>()
+async function readSessionWorkspaceContextWithEntries(sessionId: string, target: SessionRequestTarget, workspaceRoot?: string | null): Promise<SessionWorkspaceContext & { entries: FsEntry[]; bindingEpoch?: string }> {
   assertEngineSource(target.source)
   const id = sessionId.trim()
   if (!id) throw new Error('工作区会话无效')
@@ -128,9 +136,18 @@ async function readSessionWorkspaceContext(sessionId: string, target: SessionReq
   // a desktop task hint and may be stale after a restart; binding while merely
   // previewing would silently move a session to the wrong root.
   void workspaceRoot
-  const result = await sessionRequest<DirectoryResponse>(id, target, {
-    method: 'GET', path: '/workspace/directory', query: { sessionId: id, path: '.' }
-  })
+  const key = JSON.stringify([target.source, target.expectedEngine, id])
+  let request = sessionDirectoryRequests.get(key)
+  if (!request) {
+    // Binding verification and the root listing are the same server operation.
+    // Reuse its in-flight response instead of serializing two identical leases.
+    request = sessionRequest<DirectoryResponse>(id, target, {
+      method: 'GET', path: '/workspace/directory', query: { sessionId: id, path: '.' }
+    })
+    sessionDirectoryRequests.set(key, request)
+  }
+  let result: DirectoryResponse
+  try { result = await request } finally { if (sessionDirectoryRequests.get(key) === request) sessionDirectoryRequests.delete(key) }
   assertEngineSource(target.source)
   const root = result?.root
   const isAbsoluteRoot = typeof root === 'string' &&
@@ -139,7 +156,8 @@ async function readSessionWorkspaceContext(sessionId: string, target: SessionReq
   if (!root || !isAbsoluteRoot || /[\u0000-\u001f\u007f]/.test(root) || root.replace(/\\/g, '/').split('/').some(part => part === '.' || part === '..')) {
     throw new Error('引擎未提供任务工作区，请重试')
   }
-  return { sessionId: id, root }
+  if (!Array.isArray(result.entries)) throw new Error('任务目录响应无效，请升级引擎')
+  return { sessionId: id, root, entries: result.entries, bindingEpoch: typeof result.bindingEpoch === 'string' ? result.bindingEpoch : undefined }
 }
 
 function sessionRelativePath(root: string, candidate: string, allowDirectoryRoot = false): string {
@@ -203,13 +221,9 @@ function sessionAbsolutePath(root: string, relative: string): string {
 
 /** Both embedded scratch and remote files remain under the engine's session allow-list. */
 export async function resolveSessionFilePath(sessionId: string, candidate: string, workspaceRoot?: string | null): Promise<{ path: string; root: string; target: SessionFileTarget }> {
-  const target = { source: getEngineSource(), expectedEngine: getExpectedEngine() }
-  const context = await readSessionWorkspaceContext(sessionId, target, workspaceRoot)
-  const relative = sessionRelativePathForHint(context.root, candidate, workspaceRoot)
-  assertEngineSource(target.source)
-  const owner: SessionFileTarget = Object.freeze({ ...target, ...context,
-    key: JSON.stringify([target.source, target.expectedEngine, context.sessionId, context.root]) })
-  return { path: sessionAbsolutePath(context.root, relative), root: context.root, target: owner }
+  const target = await sessionFileTarget(sessionId, { source: getEngineSource(), expectedEngine: getExpectedEngine() }, workspaceRoot)
+  const relative = sessionRelativePathForHint(target.root, candidate, workspaceRoot)
+  return { path: sessionAbsolutePath(target.root, relative), root: target.root, target }
 }
 
 /**
@@ -219,23 +233,45 @@ export async function resolveSessionFilePath(sessionId: string, candidate: strin
  * bridge, even when the task has a stale local workspace hint.
  */
 export async function captureSessionFileTarget(sessionId: string, workspaceRoot?: string | null): Promise<SessionFileTarget> {
-  const target = { source: getEngineSource(), expectedEngine: getExpectedEngine() }
-  const context = await readSessionWorkspaceContext(sessionId, target, workspaceRoot)
-  assertEngineSource(target.source)
-  return Object.freeze({
-    ...target,
-    ...context,
-    key: JSON.stringify([target.source, target.expectedEngine, context.sessionId, context.root])
-  })
+  return sessionFileTarget(sessionId, { source: getEngineSource(), expectedEngine: getExpectedEngine() }, workspaceRoot)
 }
 
 async function verifySessionBinding(target: SessionFileTarget): Promise<void> {
   assertSessionFileTarget(target)
   const context = await readSessionWorkspaceContext(target.sessionId, target)
-  if (context.root !== target.root) throw new Error('任务工作区已变化，请关闭旧文档后重新打开')
+  if (context.root !== target.root || (context.epoch && target.bindingEpoch && context.epoch !== target.bindingEpoch)) throw new Error('任务工作区已变化，请关闭旧文档后重新打开')
 }
 
-interface SessionContentResponse { content: string; isBinary: boolean; totalSize: number; originalLength?: number; truncated?: boolean; tooLarge?: boolean }
+
+const sessionTargetRequests = new Map<string, Promise<SessionFileTarget>>()
+
+async function sessionFileTarget(sessionId: string, target: SessionRequestTarget, workspaceRoot?: string | null): Promise<SessionFileTarget> {
+  const key = JSON.stringify([target.source, target.expectedEngine, sessionId])
+  let pending = sessionTargetRequests.get(key)
+  if (!pending) {
+    pending = readSessionWorkspaceContext(sessionId, target, workspaceRoot).then(context => Object.freeze({
+      ...target, ...context, bindingEpoch: context.epoch,
+      key: JSON.stringify([target.source, target.expectedEngine, context.sessionId, context.root, context.epoch])
+    }))
+    sessionTargetRequests.set(key, pending)
+    void pending.catch(() => { if (sessionTargetRequests.get(key) === pending) sessionTargetRequests.delete(key) })
+  }
+  return pending
+}
+
+function readQuery(target: SessionFileTarget, path: string): EngineRequestInput['query'] {
+  return { sessionId: target.sessionId, path,
+    ...(target.bindingEpoch ? { expectedRoot: target.root, bindingEpoch: target.bindingEpoch } : {}) }
+}
+
+function assertSessionContentTarget(target: SessionFileTarget, result: SessionContentResponse): void {
+  assertSessionFileTarget(target)
+  if (result.root && result.root !== target.root) throw new Error('任务工作区已变化，请关闭旧文档后重新打开')
+  if (result.bindingEpoch && target.bindingEpoch && result.bindingEpoch !== target.bindingEpoch) throw new Error('任务工作区已变化，请关闭旧文档后重新打开')
+}
+
+
+interface SessionContentResponse { content: string; isBinary: boolean; totalSize: number; root?: string; bindingEpoch?: string; originalLength?: number; truncated?: boolean; tooLarge?: boolean }
 function sessionFileContent(path: string, result: SessionContentResponse): FsFileContent {
   return { path, content: result.isBinary ? '' : result.content,
     ...(result.isBinary ? { base64: result.content } : {}), isBinary: result.isBinary,
@@ -244,21 +280,19 @@ function sessionFileContent(path: string, result: SessionContentResponse): FsFil
 }
 
 export async function readSessionFile(sessionId: string, candidate: string, workspaceRoot?: string | null): Promise<FsFileContent> {
-  // Resolving a root and reading its bytes must use the same endpoint identity.
-  // A connection change between the two requests cannot authorize the new one.
-  const target = { source: getEngineSource(), expectedEngine: getExpectedEngine() }
-  const context = await readSessionWorkspaceContext(sessionId, target, workspaceRoot)
-  const relatives = sessionRelativePathsForHint(context.root, candidate, workspaceRoot)
+  // The first target capture reads the root once. Subsequent file opens pin the
+  // request to that session binding rather than repeating a root listing.
+  const target = await sessionFileTarget(sessionId, { source: getEngineSource(), expectedEngine: getExpectedEngine() }, workspaceRoot)
+  const relatives = sessionRelativePathsForHint(target.root, candidate, workspaceRoot)
   let lastError: unknown
   for (let index = 0; index < relatives.length; index += 1) {
     const relative = relatives[index]!
     try {
-      const result = await sessionRequest<SessionContentResponse>(context.sessionId, target, {
-        method: 'GET', path: '/workspace/file/content',
-        query: { sessionId: context.sessionId, path: relative }, expectedEngine: target.expectedEngine
+      const result = await sessionRequest<SessionContentResponse>(target.sessionId, target, {
+        method: 'GET', path: '/workspace/file/content', query: readQuery(target, relative)
       })
-      assertEngineSource(target.source)
-      return sessionFileContent(sessionAbsolutePath(context.root, relative), result)
+      assertSessionContentTarget(target, result)
+      return sessionFileContent(sessionAbsolutePath(target.root, relative), result)
     } catch (error) {
       lastError = error
       // A stale receipt can produce several syntactically valid aliases. Only
@@ -273,16 +307,15 @@ export async function readSessionFile(sessionId: string, candidate: string, work
 /** Original binary bytes bypass renderer text previews and retain this session's
  * binding across the save dialog and the complete authenticated transfer. */
 export async function saveSessionFile(sessionId: string, candidate: string, workspaceRoot?: string | null): Promise<import('@shared/ipc').EngineFileSaveResult> {
-  const target = { source: getEngineSource(), expectedEngine: getExpectedEngine() }
-  const context = await readSessionWorkspaceContext(sessionId, target, workspaceRoot)
-  const relatives = sessionRelativePathsForHint(context.root, candidate, workspaceRoot)
+  const target = await sessionFileTarget(sessionId, { source: getEngineSource(), expectedEngine: getExpectedEngine() }, workspaceRoot)
+  const relatives = sessionRelativePathsForHint(target.root, candidate, workspaceRoot)
   let lastError: unknown
   for (let index = 0; index < relatives.length; index += 1) {
     const relative = relatives[index]!
     try {
-      assertEngineSource(target.source)
-      const result = await bridge().engine.saveWorkspaceFile({ sessionId: context.sessionId, path: relative,
-        workspaceRoot: context.root, expectedEngine: target.expectedEngine })
+      assertSessionFileTarget(target)
+      const result = await bridge().engine.saveWorkspaceFile({ sessionId: target.sessionId, path: relative,
+        workspaceRoot: target.root, expectedEngine: getExpectedEngine() })
       assertEngineSource(target.source)
       return result
     } catch (error) {
@@ -293,7 +326,7 @@ export async function saveSessionFile(sessionId: string, candidate: string, work
   throw lastError ?? new Error('任务文件保存失败')
 }
 
-interface DirectoryResponse { root: string; entries: FsEntry[] }
+interface DirectoryResponse { root: string; bindingEpoch?: string; entries: FsEntry[] }
 let remoteContextCache: { key: string; promise: Promise<RemoteWorkspaceContext> } | null = null
 
 function scope(target: WorkspaceTarget): { sessionId: string; workspaceRoot?: string } {
@@ -371,11 +404,17 @@ export function pickFolder(): Promise<string | null> {
 export async function readDir(dir: string, target?: SessionFileTarget): Promise<FsEntry[]> {
   if (target) {
     const relative = sessionRelativePath(target.root, dir, true)
-    await verifySessionBinding(target)
+    if (!relative) {
+      const context = await readSessionWorkspaceContextWithEntries(target.sessionId, target)
+      assertSessionFileTarget(target)
+      if (context.root !== target.root) throw new Error('任务工作区已变化，请关闭旧文档后重新打开')
+      return context.entries.map(entry => ({ ...entry, path: sessionAbsolutePath(target.root, sessionRelativePath(target.root, entry.path)) }))
+    }
     const result = await sessionRequest<DirectoryResponse>(target.sessionId, target, { method: 'GET', path: '/workspace/directory',
-      query: { sessionId: target.sessionId, path: relative || '.' }, expectedEngine: target.expectedEngine })
+      query: { sessionId: target.sessionId, path: relative }, expectedEngine: target.expectedEngine })
     assertSessionFileTarget(target)
     if (!Array.isArray(result?.entries)) throw new Error('任务目录响应无效，请升级引擎')
+    if (result.root !== target.root) throw new Error('任务工作区已变化，请关闭旧文档后重新打开')
     return result.entries.map(entry => ({ ...entry, path: sessionAbsolutePath(target.root, sessionRelativePath(target.root, entry.path)) }))
   }
   if (!isRemoteEngine()) return bridge().fs.readDir(dir)
@@ -433,10 +472,9 @@ export async function listAllFiles(root: string): Promise<string[]> {
 export async function readFile(path: string, target?: SessionFileTarget): Promise<FsFileContent> {
   if (target) {
     const relative = sessionRelativePath(target.root, path)
-    await verifySessionBinding(target)
     const result = await sessionRequest<SessionContentResponse>(target.sessionId, target, { method: 'GET', path: '/workspace/file/content',
-      query: { sessionId: target.sessionId, path: relative }, expectedEngine: target.expectedEngine })
-    assertSessionFileTarget(target)
+      query: readQuery(target, relative) })
+    assertSessionContentTarget(target, result)
     return sessionFileContent(path, result)
   }
   if (!isRemoteEngine()) return bridge().fs.readFile(path)

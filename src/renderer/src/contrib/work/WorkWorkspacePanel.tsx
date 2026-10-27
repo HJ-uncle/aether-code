@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import type { FsEntry } from '@shared/ipc'
 import { bindSessionWorkspace, captureSessionFileTarget, paths, readDir, type SessionFileTarget } from '@renderer/core/workspace/fs-client'
 import { captureSessionGitTarget } from '@renderer/core/git/git-target'
@@ -7,7 +7,7 @@ import { changeCode, changeCodeClass, changeTitle, normalizeGitPath } from '@ren
 import { getEngineSource } from '@renderer/core/engine/source'
 import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
-import { FileTreeRow } from '@renderer/contrib/explorer/FileTreeRow'
+import { buildFileTreeRows, FileTreeView } from '@renderer/contrib/explorer/FileTreeView'
 import './work-workspace-panel.css'
 
 export interface WorkWorkspacePanelProps {
@@ -18,15 +18,6 @@ export interface WorkWorkspacePanelProps {
 }
 
 interface GitDecoration { code: string; className: string; title: string; additions: number; deletions: number }
-interface WorkTreeRow {
-  entry: FsEntry
-  depth: number
-  isRoot?: boolean
-  isExpanded: boolean
-  isLoading: boolean
-  git?: GitDecoration
-  gitDirty?: boolean
-}
 
 function sortEntries(entries: FsEntry[]): FsEntry[] {
   return [...entries].sort((a, b) => {
@@ -42,9 +33,6 @@ function pathKey(path: string): string {
   return /^(?:[A-Za-z]:\/|\/\/)/.test(normalized) ? normalized.toLowerCase() : normalized
 }
 
-function rootEntryOf(root: string): FsEntry {
-  return { name: paths.basename(root), path: root, isDirectory: true, size: 0, mtimeMs: 0 }
-}
 
 /**
  * Work 的文件树和 Code Explorer 保持同一套交互语义，但所有读取仍走
@@ -64,6 +52,24 @@ export function WorkWorkspacePanel({ sessionId, workspaceRoot, active = true, on
   const [gitDecorations, setGitDecorations] = useState<Record<string, GitDecoration>>({})
   const [gitDirtyDirs, setGitDirtyDirs] = useState<ReadonlySet<string>>(new Set())
   const generation = useRef(0)
+  const treeRef = useRef<HTMLDivElement>(null)
+  const [focused, setFocused] = useState(false)
+  const [scrollTop, setScrollTop] = useState(0)
+  const [viewportHeight, setViewportHeight] = useState(0)
+  const [cursorPath, setCursorPath] = useState<string | null>(null)
+  useLayoutEffect(() => {
+    const element = treeRef.current
+    if (!element) return
+    setViewportHeight(element.clientHeight)
+    const observer = new ResizeObserver(() => setViewportHeight(element.clientHeight))
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [target?.root])
+  useEffect(() => {
+    setScrollTop(0)
+    setCursorPath(null)
+    if (treeRef.current) treeRef.current.scrollTop = 0
+  }, [target?.root])
 
   const loadDirectory = useCallback(async (nextTarget: SessionFileTarget, directory: string, requestGeneration: number): Promise<void> => {
     if (entriesRef.current[directory]) return
@@ -160,65 +166,97 @@ export function WorkWorkspacePanel({ sessionId, workspaceRoot, active = true, on
   }, [active, sessionId, workspaceRoot, loadDirectory, loadGitStatus, getEngineSource()])
 
   const nameFilter = nameFilterRaw.trim().toLowerCase()
-  // Filtering is a user-facing search affordance, so it must not depend on
-  // whether the user happened to expand every parent directory first. Load
-  // known child directories progressively while a filter is active; the tree
-  // itself remains collapsed and only matching paths are revealed.
-  useEffect(() => {
-    if (!nameFilter || !target) return
-    const requestGeneration = generation.current
-    const directories = Object.values(entriesByDir)
-      .flat()
-      .filter(entry => entry.isDirectory)
-    for (const directory of directories) {
-      if (!entriesRef.current[directory.path] && !loadingDirs.has(directory.path)) {
-        void loadDirectory(target, directory.path, requestGeneration)
-      }
-    }
-  }, [entriesByDir, loadDirectory, loadingDirs, nameFilter, target])
-  const rows = useMemo((): WorkTreeRow[] => {
-    if (!target) return []
-    const output: WorkTreeRow[] = []
-    const rootKey = pathKey(target.root)
-    const rootExpanded = expanded.has(target.root)
-    if (workspaceRoot) output.push({
-      entry: rootEntryOf(target.root), depth: 0, isRoot: true,
-      isExpanded: rootExpanded, isLoading: loadingDirs.has(target.root),
-      gitDirty: !rootExpanded && gitDirtyDirs.has(rootKey)
-    })
-    if (!rootExpanded) return output
-
-    const walk = (directory: string, depth: number): void => {
-      for (const entry of entriesByDir[directory] ?? []) {
-        const matches = !nameFilter || entry.name.toLowerCase().includes(nameFilter)
-        if (!matches) {
-          if (entry.isDirectory) walk(entry.path, depth + 1)
-          continue
-        }
-        const isExpanded = entry.isDirectory && expanded.has(entry.path)
-        const git = gitDecorations[pathKey(entry.path)]
-        output.push({
-          entry, depth, isExpanded,
-          isLoading: entry.isDirectory && loadingDirs.has(entry.path),
-          git,
-          gitDirty: entry.isDirectory && !isExpanded && gitDirtyDirs.has(pathKey(entry.path))
-        })
-        if (isExpanded) walk(entry.path, depth + 1)
-      }
-    }
-    walk(target.root, workspaceRoot ? 1 : 0)
-    return output
-  }, [entriesByDir, expanded, gitDecorations, gitDirtyDirs, loadingDirs, nameFilter, target, workspaceRoot])
+  const snapshot = useMemo(() => ({
+    root: target?.root ?? null,
+    showRoot: Boolean(workspaceRoot),
+    children: new Map(Object.entries(entriesByDir)),
+    expanded,
+    loading: loadingDirs,
+    selection: new Set<string>(),
+    activeFilePath
+  }), [target, workspaceRoot, entriesByDir, expanded, loadingDirs, activeFilePath])
+  const decorations = useMemo(() => ({
+    byPath: new Map(Object.entries(gitDecorations).map(([key, value]) => [key, { code: value.code, title: value.title, className: value.className }])),
+    dirtyDirs: gitDirtyDirs
+  }), [gitDecorations, gitDirtyDirs])
+  const rows = useMemo(() => buildFileTreeRows({ snapshot, filter: nameFilter, decorations }).map(row => {
+    const status = gitDecorations[pathKey(row.entry.path)]
+    return status ? { ...row, gitCode: undefined, trailing: <span className="work-workspace-row__meta">
+      <span className={`work-workspace-row__status work-workspace-row__status--${status.className}`} title={status.title}>{status.code}</span>
+      {status.additions > 0 ? <span className="work-workspace-row__additions">+{status.additions}</span> : null}
+      {status.deletions > 0 ? <span className="work-workspace-row__deletions">-{status.deletions}</span> : null}
+    </span> } : row
+  }), [snapshot, nameFilter, decorations, gitDecorations])
 
   const toggleDirectory = (directory: string): void => {
     if (!target) return
+    if (expanded.has(directory)) {
+      const next = new Set(expanded)
+      next.delete(directory)
+      setExpanded(next)
+      return
+    }
+    if (!paths.contains(target.root, directory)) return
+    const chain: string[] = []
+    let current = directory
+    while (current !== target.root && paths.contains(target.root, current)) {
+      chain.unshift(current)
+      const parent = paths.dirname(current)
+      if (parent === current) break
+      current = parent
+    }
     const next = new Set(expanded)
-    if (next.has(directory)) next.delete(directory)
-    else {
-      next.add(directory)
-      void loadDirectory(target, directory, generation.current)
+    for (const path of chain) {
+      if (next.has(path)) continue
+      next.add(path)
+      void loadDirectory(target, path, generation.current)
     }
     setExpanded(next)
+  }
+
+  const revealRow = (path: string): void => {
+    const index = rows.findIndex(row => row.entry.path === path)
+    const element = treeRef.current
+    if (!element || index < 0) return
+    const top = index * 30, bottom = top + 30
+    if (top < element.scrollTop) element.scrollTop = top
+    else if (bottom > element.scrollTop + element.clientHeight) element.scrollTop = bottom - element.clientHeight
+  }
+
+  const activateRow = (path: string): void => {
+    const row = rows.find(item => item.entry.path === path)
+    if (!row) return
+    setCursorPath(path)
+    treeRef.current?.focus({ preventScroll: true })
+    if (row.entry.isDirectory) toggleDirectory(path)
+    else {
+      setActiveFilePath(path)
+      onOpenFile?.(path)
+    }
+  }
+
+  const onTreeKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (!rows.length) return
+    const index = Math.max(0, rows.findIndex(row => row.entry.path === cursorPath))
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      const next = rows[Math.min(rows.length - 1, Math.max(0, index + (event.key === 'ArrowDown' ? 1 : -1)))]
+      setCursorPath(next.entry.path)
+      revealRow(next.entry.path)
+    } else if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+      event.preventDefault()
+      const row = rows[index]
+      if (row.entry.isDirectory && ((event.key === 'ArrowRight') !== row.isExpanded)) toggleDirectory(row.entry.path)
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      activateRow(rows[index].entry.path)
+    } else if (event.key === 'Escape') setCursorPath(null)
+    else if (!event.ctrlKey && !event.metaKey && !event.altKey && event.key.length === 1) {
+      event.preventDefault()
+      const prefix = event.key.toLowerCase()
+      const match = [...rows.slice(index + 1), ...rows.slice(0, index + 1)].find(row => row.entry.name.toLowerCase().startsWith(prefix))
+      if (match) { setCursorPath(match.entry.path); revealRow(match.entry.path) }
+    }
   }
 
   const refresh = (): void => {
@@ -236,7 +274,7 @@ export function WorkWorkspacePanel({ sessionId, workspaceRoot, active = true, on
     return <div className="work-workspace-panel work-workspace-panel--empty"><Icon name="folder-outline" size={24} /><strong>任务工作区尚未就绪</strong><span>选择一个 Work 任务后，可以查看它的独立文件。</span></div>
   }
 
-  return <section className="work-workspace-panel" aria-label="工作区文件">
+  return <section className="work-workspace-panel" aria-label="工作区文件" data-session-id={sessionId}>
     <header className="work-workspace-panel__header">
       <div className="work-workspace-panel__title" title={target?.root ?? workspaceRoot ?? ''}>
         <span className="work-workspace-panel__root-label">资源</span>
@@ -253,38 +291,12 @@ export function WorkWorkspacePanel({ sessionId, workspaceRoot, active = true, on
       {nameFilterRaw ? <button type="button" aria-label="清除筛选" onClick={() => setNameFilterRaw('')}><Icon name="close" size={13} /></button> : null}
     </div>
     {error ? <div className="work-workspace-panel__error" role="alert"><Icon name="warning" size={15} /><span>{error}</span><button type="button" onClick={refresh}>重试</button></div> : null}
-    <div className="work-workspace-panel__tree" role="tree" aria-busy={loadingDirs.size > 0}>
-      {rows.map(row => {
-        const isDirectory = row.entry.isDirectory
-        const status = row.git
-        const isActive = !isDirectory && row.entry.path === activeFilePath
-        const activate = (): void => {
-          if (isDirectory) toggleDirectory(row.entry.path)
-          else {
-            setActiveFilePath(row.entry.path)
-            onOpenFile?.(row.entry.path)
-          }
-        }
-        return <FileTreeRow
-          key={row.entry.path}
-          name={row.entry.name}
-          path={row.entry.path}
-          title={status?.title ?? row.entry.path}
-          depth={row.depth}
-          isDirectory={isDirectory}
-          isExpanded={row.isExpanded}
-          isActive={isActive}
-          className={`work-workspace-row${row.isRoot ? ' is-root' : ''}`}
-          nameClassName={status ? `tree-row__name--${status.className}` : ''}
-          onClick={activate}
-          onActivate={activate}
-          trailing={<span className="work-workspace-row__meta">
-            {row.isLoading ? <Spinner size={13} /> : null}
-            {status ? <><span className={`work-workspace-row__status work-workspace-row__status--${status.className}`} title={status.title}>{status.code}</span>{status.additions > 0 ? <span className="work-workspace-row__additions">+{status.additions}</span> : null}{status.deletions > 0 ? <span className="work-workspace-row__deletions">-{status.deletions}</span> : null}</> : row.gitDirty ? <span className="work-workspace-row__dirty" title="目录中有改动">•</span> : null}
-          </span>}
-        />
-      })}
-      {!loadingDirs.size && !rows.some(row => !row.isRoot) && target && expanded.has(target.root) ? <div className="work-workspace-panel__empty"><Icon name="folder-outline" size={20} /><span>{nameFilter ? '没有匹配的文件' : '此目录为空'}</span></div> : null}
-    </div>
+    <FileTreeView rows={rows} treeRef={treeRef} focused={focused} viewportHeight={viewportHeight} scrollTop={scrollTop}
+      cursorPath={cursorPath} filter={nameFilter} onScroll={setScrollTop} aria-busy={loadingDirs.size > 0}
+      empty={!loadingDirs.size && rows.length === (workspaceRoot ? 1 : 0) && Boolean(target && expanded.has(target.root))}
+      emptyText={nameFilter ? '没有匹配的文件（仅筛选已加载目录）' : '此目录为空'}
+      onRowMouseDown={(event: ReactMouseEvent, entry) => { if (event.button === 0) activateRow(entry.path) }}
+      onStickyMouseDown={(_event, entry) => { setCursorPath(entry.path); revealRow(entry.path) }}
+      onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} onKeyDown={onTreeKeyDown} />
   </section>
 }

@@ -561,8 +561,8 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC.invoke.gitInit, (_e, cwd: string) => guard(() => gitService.init(cwd)))
   ipcMain.handle(IPC.invoke.gitStatus, (_e, cwd: string) => guard(() => gitService.status(cwd)))
-  ipcMain.handle(IPC.invoke.gitLeaseStatus, (_e, cwd: string) => guard(async () => ({success:true,lease:mainGitLeaseStatus(cwd)})))
-  ipcMain.handle(IPC.invoke.gitRecoverLease, (_e, cwd: string, generation: string) => guard(async () => ({success:true,lease:recoverMainGitLease(cwd,generation)})))
+  ipcMain.handle(IPC.invoke.gitLeaseStatus, (_e, cwd: string) => guard(async () => ({success:true,lease:await mainGitLeaseStatus(cwd)})))
+  ipcMain.handle(IPC.invoke.gitRecoverLease, (_e, cwd: string, generation: string) => guard(async () => ({success:true,lease:await recoverMainGitLease(cwd,generation)})))
   ipcMain.handle(IPC.invoke.gitDiff, (_e, cwd: string, path: string, staged: boolean, base?: 'index' | 'head') =>
     guard(() => gitService.diff(cwd, path, staged, base))
   )

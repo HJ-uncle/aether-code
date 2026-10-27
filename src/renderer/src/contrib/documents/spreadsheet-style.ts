@@ -81,8 +81,9 @@ export function spreadsheetThemeColors(themeXml: unknown): string[] {
   // ExcelJS's theme indexes are dk1, lt1, dk2, lt2, accents, links. The two
   // light/dark pairs are swapped relative to DrawingML's document order.
   for (const name of ['lt1', 'dk1', 'lt2', 'dk2', 'accent1', 'accent2', 'accent3', 'accent4', 'accent5', 'accent6', 'hlink', 'folHlink']) {
-    const color = found.get(name)
-    if (color) colors.push(color)
+    // Preserve indexes when a producer omits an optional theme slot. Pushing
+    // only present colors shifts every later accent onto the wrong theme.
+    colors.push(found.get(name) || (name === 'lt1' || name === 'lt2' ? 'ffffff' : '000000'))
   }
   return colors
 }

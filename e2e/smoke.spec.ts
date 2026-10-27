@@ -161,6 +161,8 @@ async function ensureDirExpanded(dir: string): Promise<void> {
   if ((await row.getAttribute('aria-expanded')) === 'true') return
   await row.click()
   await expect(row).toHaveAttribute('aria-expanded', 'true', { timeout: 15_000 })
+  // 展开状态先于目录 IPC 完成；等待真实子项进入行模型再扫描虚拟窗口。
+  await expect(page.locator(descendantSelector(dir)).first()).toBeAttached({ timeout: 15_000 })
 }
 function prepareFixtures(): void {
   rmSync(FIXTURE_DIR, { recursive: true, force: true })
@@ -362,8 +364,9 @@ test('工作台骨架渲染：菜单栏、活动栏、侧边栏、主区、对�
 test('资源管理器：恢复上次打开的文件夹并列出文件', async () => {
   await expect(page.locator('.explorer__root')).toContainText('AETHER-CODE')
 
-  // 根目录条目应该被加载出来（package.json 必然存在）
-  const packageRow = page.locator('.tree-row[title$="package.json"]')
+  // 根目录条目应该被加载出来（package.json 必然存在）；虚拟列表需先滚动到目标。
+  await revealTreeRow(join(APP_ROOT, 'package.json'))
+  const packageRow = page.locator(rowSelector(join(APP_ROOT, 'package.json')))
   await expect(packageRow).toBeVisible()
   await expect(page.locator('.tree-row').first()).toBeVisible()
 })
@@ -498,7 +501,8 @@ test('输出面板：中文经 IPC 保持完整（终端乱码并非数据损坏
 })
 
 test('资源管理器右键菜单：列出可用操作，Esc 可关闭', async () => {
-  await page.locator('.tree-row', { hasText: 'package.json' }).first().click({ button: 'right' })
+  await revealTreeRow(join(APP_ROOT, 'package.json'))
+  await page.locator(rowSelector(join(APP_ROOT, 'package.json'))).click({ button: 'right' })
 
   const menu = page.locator('.context-menu')
   await expect(menu).toBeVisible()
@@ -1556,7 +1560,7 @@ test('资源管理器：git 徽章只在仓库内出现且与仓库信息一致'
   }
 
   const status = await page.evaluate((cwd) => window.aether.git.status(cwd), WORKSPACE_DIR)
-  expect(status.success).toBe(true)
+  expect(status.success, status.error).toBe(true)
   expect(status.isRepo).toBe(true)
   const changedPaths = (status.files ?? []).map((file) =>
     join(WORKSPACE_DIR, file.path).replace(/\\/g, '/')

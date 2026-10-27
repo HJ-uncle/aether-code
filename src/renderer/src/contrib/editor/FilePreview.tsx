@@ -17,10 +17,13 @@ interface FilePreviewProps {
   name: string
   /** 绝对路径（展示与排错用） */
   path: string
+  /** Work may keep a hidden preview alive without rebuilding its parser. */
+  active?: boolean
   /** 编辑组内保持稳定的预览身份；分栏不能共享分页状态。 */
   groupId?: string
-  /** 磁盘内容（base64） */
-  base64: string
+  /** 磁盘内容（base64）；Office/PDF 也可直接传 bytes。 */
+  base64?: string
+  bytes?: ArrayBuffer
   size: number
 }
 
@@ -40,12 +43,12 @@ const ZOOM_STEP = 0.2
  */
 export const FilePreview = memo(function FilePreview(props: FilePreviewProps): JSX.Element {
   if (documentKindFor(props.name)) return <Suspense fallback={<div className="doc-placeholder" role="status">正在准备文档预览…</div>}>
-    <DocumentPreview name={props.name} base64={props.base64} size={props.size} identityKey={`${props.path}:${props.groupId || ''}`} />
+    <DocumentPreview name={props.name} base64={props.base64} data={props.bytes} size={props.size} identityKey={`${props.path}:${props.groupId || ''}`} active={props.active ?? true} />
   </Suspense>
   return <BinaryFilePreview {...props} />
 })
 
-function BinaryFilePreview({ name, path, base64, size }: FilePreviewProps): JSX.Element {
+function BinaryFilePreview({ name, path, base64 = '', size }: FilePreviewProps): JSX.Element {
   const kind = previewKindFor(name)
 
   // 十六进制视图只解码前 16 KB：见 preview.ts 的 base64ToBytes 说明

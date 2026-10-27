@@ -91,6 +91,23 @@ async function getIgnore(dir: string, root: string): Promise<Ignore | null> {
 }
 
 /**
+ * 供递归索引复用的目录匹配器。相对路径基于工作区根，与 ignore 库的约定一致；
+ * 目录锚定规则同时尝试尾斜杠形式，失败时保守地保留文件。
+ */
+export async function createGitignoreMatcher(dir: string, root: string): Promise<(relativePath: string) => boolean> {
+  try {
+    const ig = await getIgnore(dir, root)
+    if (!ig) return () => false
+    return (relativePath) => {
+      const rel = relativePath.replace(/\\/g, '/').replace(/^\/+/, '')
+      return rel !== '' && (ig.ignores(rel) || ig.ignores(`${rel}/`))
+    }
+  } catch {
+    return () => false
+  }
+}
+
+/**
  * 给一层目录的子项打上「被 .gitignore 忽略」标记。
  *
  * 任何异常都吞掉并把标记留成 undefined（渲染层当未忽略处理）——列目录是主路径，

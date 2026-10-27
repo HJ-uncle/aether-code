@@ -3,6 +3,8 @@
 .work-workspace-panel {
   display: flex;
   flex-direction: column;
+  position: relative;
+  height: 100%;
   min-height: 100%;
   overflow: hidden;
   background: var(--bg-surface);

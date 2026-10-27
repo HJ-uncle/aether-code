@@ -1,4 +1,4 @@
-import { useEffect, useState, type JSX, type RefObject } from 'react'
+import { useEffect, useRef, useState, type JSX, type RefObject } from 'react'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { Icon } from '@renderer/workbench/icons'
 
@@ -10,31 +10,41 @@ export function PreviewMessage({ error, onRetry }: { error?: string; onRetry?: (
   </div>
 }
 
-export function PreviewPager({ page, total, onPage, zoom, onZoom }: {
-  page: number; total: number; onPage: (page: number) => void; zoom?: number; onZoom?: (zoom: number) => void
-}): JSX.Element {
-  return <div className="document-preview__toolbar" role="group" aria-label="文档翻页">
-    <button type="button" aria-label="上一页" title="上一页" disabled={page <= 1} onClick={() => onPage(page - 1)}><Icon name="chevron-left" size={16} /></button>
-    <label className="document-preview__page-label">第 <input aria-label="页码" type="number" min={1} max={total} value={page}
-      onChange={event => { const next = Number(event.target.value); if (Number.isInteger(next) && next >= 1 && next <= total) onPage(next) }} /> / {total} 页</label>
-    <button type="button" aria-label="下一页" title="下一页" disabled={page >= total} onClick={() => onPage(page + 1)}><Icon name="chevron-right" size={16} /></button>
-    {onZoom && <select aria-label="缩放" value={zoom} onChange={event => onZoom(Number(event.target.value))}>
+export function PreviewZoom({ zoom, onZoom }: { zoom: number; onZoom: (zoom: number) => void }): JSX.Element {
+  return <div className="document-preview__toolbar document-preview__toolbar--zoom" role="group" aria-label="文档缩放">
+    <select aria-label="缩放" value={zoom} onChange={event => onZoom(Number(event.target.value))}>
       <option value={0}>适应宽度</option>{[0.5, 0.75, 1, 1.25, 1.5, 2].map(value => <option key={value} value={value}>{Math.round(value * 100)}%</option>)}
-    </select>}
+    </select>
   </div>
 }
 
 export function usePreviewWidth(ref: RefObject<HTMLDivElement | null>, enabled = true): number {
-  const [width, setWidth] = useState(800)
+  const [width, setWidth] = useState(0)
   useEffect(() => {
     if (!enabled) return
     const element = ref.current
     if (!element) return
-    const observer = new ResizeObserver(entries => { const next = Math.round(entries[0]?.contentRect.width || 800); setWidth(previous => previous === next ? previous : next) })
+    const observer = new ResizeObserver(entries => { const next = Math.max(0, Math.round(entries[0]?.contentRect.width || 0)); setWidth(previous => previous === next ? previous : next) })
     observer.observe(element)
     return () => observer.disconnect()
   }, [ref, enabled])
   return width
+}
+
+/** Keep the previous painted surface during a resize gesture. Only the first
+ * real layout width and a settled later width trigger expensive repainting. */
+export function useStablePreviewWidth(width: number, delayMs = 160): number {
+  const [stable, setStable] = useState(width > 0 ? width : 0)
+  const stableRef = useRef(stable)
+  useEffect(() => {
+    if (width <= 0 || stableRef.current === width) return
+    const timer = setTimeout(() => {
+      stableRef.current = width
+      setStable(width)
+    }, stableRef.current === 0 ? 0 : delayMs)
+    return () => clearTimeout(timer)
+  }, [width, delayMs])
+  return stable
 }
 
 /**
@@ -44,20 +54,26 @@ export function usePreviewWidth(ref: RefObject<HTMLDivElement | null>, enabled =
  * the document surface so the first paint uses the final dimensions.
  */
 export function usePreviewVisibility(ref: RefObject<HTMLDivElement | null>, enabled = true): boolean {
-  const [visible, setVisible] = useState(false)
+  const [visibility, setVisibility] = useState({ enabled, visible: false })
+  if (visibility.enabled !== enabled) setVisibility({ enabled, visible: false })
+  const enabledRef = useRef(enabled)
   useEffect(() => {
-    if (!enabled) { setVisible(false); return }
+    enabledRef.current = enabled
+    if (!enabled) return
     const element = ref.current
     if (!element) return
     const update = (): void => {
+      if (!enabledRef.current) return
       const rect = element.getBoundingClientRect()
-      setVisible(rect.width > 0 && rect.height > 0)
+      // Window resizing can transiently report a zero box. Once mounted, keep
+      // the painted surface; hidden previews are unmounted by their active prop.
+      if (rect.width > 0 && rect.height > 0) setVisibility({ enabled: true, visible: true })
     }
-    update()
+    const frame = requestAnimationFrame(update)
     const observer = new ResizeObserver(update)
     observer.observe(element)
     window.addEventListener('resize', update)
-    return () => { observer.disconnect(); window.removeEventListener('resize', update) }
+    return () => { cancelAnimationFrame(frame); observer.disconnect(); window.removeEventListener('resize', update) }
   }, [ref, enabled])
-  return visible
+  return enabled && visibility.enabled && visibility.visible
 }

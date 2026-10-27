@@ -13,8 +13,9 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
-import { markGitignored } from './gitignore-matcher'
+import { createGitignoreMatcher, markGitignored } from './gitignore-matcher'
 import { ATTACHMENTS_DIRECTORY } from '../../shared/attachments'
+import { hasBinaryFileSignature, hasOfficeFileSignature } from '../../shared/file-signature'
 import type {
   CopyIntoWorkspaceInput,
   CopyIntoWorkspaceResult,
@@ -71,10 +72,14 @@ export async function listAllFiles(root: string): Promise<string[]> {
 
   const walk = async (relative: string): Promise<void> => {
     if (files.length >= MAX_LIST_FILES) return
-    const entries = await fsp.readdir(path.join(safeRoot, relative), { withFileTypes: true })
+    const directory = path.join(safeRoot, relative)
+    const entries = await fsp.readdir(directory, { withFileTypes: true })
+    // 与资源管理器共用 ignore 解析/缓存，不启动 git，也不过滤 .github 等有效点目录。
+    const isGitignored = await createGitignoreMatcher(directory, safeRoot)
     for (const entry of entries) {
       if (files.length >= MAX_LIST_FILES) return
       const rel = relative ? `${relative}/${entry.name}` : entry.name
+      if (isGitignored(rel)) continue
       if (entry.isDirectory()) {
         if (!LIST_SKIP_DIRS.has(entry.name)) await walk(rel)
       } else if (entry.isFile()) {
@@ -237,8 +242,7 @@ async function readFileContents(safePath: string): Promise<FsFileContent> {
     const sample = Buffer.alloc(sampleSize)
     if (sampleSize > 0) await handle.read(sample, 0, sampleSize, 0)
 
-    const isBinary = sample.includes(0)
-
+    const isBinary = hasBinaryFileSignature(sample)
     if (isBinary) {
       // 超限不读：见 MAX_BINARY_BYTES 的说明
       if (stat.size > MAX_BINARY_BYTES) {
@@ -253,10 +257,12 @@ async function readFileContents(safePath: string): Promise<FsFileContent> {
       }
 
       const buffer = await fsp.readFile(safePath)
+      const bytes = hasOfficeFileSignature(sample, safePath)
+        ? buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer : undefined
       return {
         path: safePath,
         content: '',
-        base64: buffer.toString('base64'),
+        ...(bytes ? { bytes } : { base64: buffer.toString('base64') }),
         isBinary: true,
         size: stat.size,
         truncated: false

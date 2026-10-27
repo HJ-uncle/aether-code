@@ -1,4 +1,4 @@
-import { acquireModel, languageForPath, monaco } from './monaco-setup'
+import { acquireModel, initializeModelContent, languageForPath, monaco } from './monaco-setup'
 import { activateDocument } from './editor-activation'
 import { assertDocumentConnection, getDocument, isDirty, onEditorChanged, openFile, resolveDocumentPath, setDocumentContent } from './editor-store'
 import { fileIdentity } from './file-identity'
@@ -31,7 +31,7 @@ function synchronizeDocument(model: monaco.editor.ITextModel, filePath: string):
     if (model.getValue() !== doc.content) {
       synchronizing = true
       try {
-        if (!initialized) model.setValue(doc.content)
+        if (!initialized) initializeModelContent(model, doc.content)
         else {
           model.pushStackElement()
           model.pushEditOperations([], [{ range: model.getFullModelRange(), text: doc.content }], () => null)
@@ -68,7 +68,7 @@ export function ensureWorkspaceModel(resource: monaco.Uri, target?: SessionFileT
 
     // URI aliases must reuse the existing buffer instead of creating a second
     // Monaco model; the document store keeps both edits and the saved baseline.
-    const model = acquireModel(filePath, languageForPath(filePath))
+    const model = acquireModel(filePath, languageForPath(filePath), doc.content)
     synchronizeDocument(model, filePath)
     return model
   })()

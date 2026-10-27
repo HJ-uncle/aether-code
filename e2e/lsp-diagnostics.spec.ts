@@ -73,6 +73,46 @@ let page: Page
 /** 收集渲染进程的错误，供用例结束时断言 */
 const consoleErrors: string[] = []
 
+/** gitignored 夹具不出现在 Ctrl+P，但仍可从资源管理器显式打开。 */
+async function openFixtureFromExplorer(filePath: string): Promise<void> {
+  if (!await page.locator('.explorer__tree').isVisible()) {
+    await page.locator('.activity-bar button[title="资源管理器"]').click()
+  }
+  await expect(page.locator('.explorer__tree')).toBeVisible()
+  const revealRow = async (paths: string[]): Promise<void> => {
+    await expect.poll(async () => page.locator('.explorer__tree').evaluate((element, targetPaths) => {
+      const row = [...element.querySelectorAll<HTMLElement>('.tree-row')].find(item => targetPaths.includes(item.dataset.path ?? ''))
+      if (row) { row.scrollIntoView({ block: 'center' }); return true }
+      const bottom = Math.max(0, element.scrollHeight - element.clientHeight)
+      element.scrollTop = Math.min(bottom, element.scrollTop + Math.max(1, element.clientHeight * 0.8))
+      return false
+    }, paths)).toBe(true)
+  }
+  await page.locator('.explorer__tree').evaluate(element => { element.scrollTop = 0 })
+  const parentPath = FIXTURE_DIR.slice(0, FIXTURE_DIR.lastIndexOf(sep))
+  // 单子目录链可以只显示末端目录；只有父目录有独立行时才需要先展开它。
+  try {
+    await expect.poll(async () => page.locator('.tree-row').evaluateAll((rows, path) =>
+      rows.some(row => row.getAttribute('data-path') === path), parentPath), { timeout: 1500 }).toBe(true)
+    await revealRow([parentPath])
+    const parentRow = page.locator(`.tree-row[data-path="${parentPath.replace(/\\/g, '\\\\')}"]`)
+    if (await parentRow.getAttribute('aria-expanded') !== 'true') await parentRow.click()
+    await expect(parentRow).toHaveAttribute('aria-expanded', 'true')
+  } catch {
+    await page.locator('.explorer__tree').evaluate(element => { element.scrollTop = 0 })
+  }
+  await revealRow([FIXTURE_DIR])
+  const fixtureRow = page.locator(`.tree-row[data-path="${FIXTURE_DIR.replace(/\\/g, '\\\\')}"]`)
+  await expect(fixtureRow).toBeVisible()
+  if (await fixtureRow.getAttribute('aria-expanded') !== 'true') await fixtureRow.click()
+  await expect(fixtureRow).toHaveAttribute('aria-expanded', 'true')
+  const fileRow = page.locator(`.tree-row[data-path="${filePath.replace(/\\/g, '\\\\')}"]`)
+  await expect(fileRow).toBeVisible()
+  // 后台目录刷新可能短暂替换虚拟行，让点击在新的稳定节点上重试。
+  await fileRow.click({ timeout: 60_000 })
+  await expect(page.locator('.is-focused-group .editor-tab.is-active')).toContainText(filePath.slice(filePath.lastIndexOf(sep) + 1))
+}
+
 test.beforeAll(async () => {
   if (!existsSync(join(APP_ROOT, 'out', 'main', 'index.js'))) {
     throw new Error('缺少构建产物，请先执行 npm run build')
@@ -82,7 +122,7 @@ test.beforeAll(async () => {
   prepareFixtures()
 
   app = await electron.launch({
-    args: ['.', `--user-data-dir=${userDataDir}`],
+    args: [process.env.AETHER_E2E_MAIN || '.', `--user-data-dir=${userDataDir}`],
     cwd: APP_ROOT,
     env: { ...process.env, AETHER_IDE_ENGINE_ENTRY: join(APP_ROOT, '../ai-agent-engine/dist/main.js'),
       AETHER_GLOBAL_DIR: join(userDataDir, 'global'), WORKSPACE_ROOT: join(userDataDir, 'sandboxes'),
@@ -110,19 +150,15 @@ test('引擎：自动启动并进入就绪状态', async () => {
   await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
 })
 
+test('快速打开索引跳过 gitignored 产物但保留有效点目录', async () => {
+  const files = await page.evaluate(root => window.aether.fs.listAll(root), APP_ROOT)
+  expect(files).toContain('.vscode/settings.json')
+  expect(files.some(file => file.startsWith('.e2e-tmp/'))).toBe(false)
+  expect(files.some(file => file.startsWith('node_modules/'))).toBe(false)
+})
+
 test('LSP 诊断：保存触发引擎诊断，问题面板可见且点击可跳转', async () => {
-  // 快速打开夹具文件（应用启动前已落盘）。
-  // 注意 Ctrl+P 的首帧可能早于文件索引构建完成：此时面板会显示
-  // 「没有匹配的文件。」，回车自然什么都不会打开。所以必须先等索引就绪 ——
-  // 用「填入关键字后目标条目出现」作为信号，而不是盲等固定时长。
-  await page.keyboard.press('Control+p')
-  const palette = page.locator('.palette[aria-label="快速打开文件"]')
-  await expect(palette).toBeVisible()
-  await page.locator('.palette__input').fill('diagnostic-broken')
-  await expect(palette.locator('.palette__item').first()).toContainText('diagnostic-broken.ts', {
-    timeout: 30_000
-  })
-  await page.keyboard.press('Enter')
+  await openFixtureFromExplorer(BROKEN_FILE)
 
   await expect(page.locator('.editor-tab', { hasText: 'diagnostic-broken.ts' })).toBeVisible()
   await expect(page.locator('.monaco-editor').first()).toBeVisible({ timeout: 30_000 })
@@ -158,19 +194,7 @@ test('LSP 诊断：保存触发引擎诊断，问题面板可见且点击可跳�
 })
 
 test('不支持的文件不会被显示为诊断通过，关闭后清除状态', async () => {
-  await page.keyboard.press('Control+p')
-  const palette = page.locator('.palette[aria-label="快速打开文件"]')
-  await expect(palette).toBeVisible()
-  await page.locator('.palette__input').fill('diagnostic-unsupported')
-  const unsupportedItem = palette.locator('.palette__item').filter({ hasText: 'diagnostic-unsupported.aetherunknown' }).first()
-  await expect(unsupportedItem).toBeVisible()
-  // Click the resolved candidate instead of sending Enter to the global
-  // capture listener. Under a loaded renderer the listener can observe Enter
-  // during the same render that replaces the candidate list, leaving the
-  // previous editor tab active even though the picker showed the new file.
-  await unsupportedItem.click()
-  await expect(page.locator('.editor-tab.is-active')).toContainText('diagnostic-unsupported.aetherunknown')
-  await expect(palette).toBeHidden()
+  await openFixtureFromExplorer(UNSUPPORTED_FILE)
   await page.keyboard.press('Control+Shift+p')
   await page.getByRole('textbox', { name: '过滤命令', exact: true }).fill('诊断当前文件')
   await page.locator('.palette__item', { hasText: '诊断当前文件' }).click()

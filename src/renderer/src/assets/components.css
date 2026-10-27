@@ -1495,6 +1495,13 @@
   background: var(--bg-surface);
 }
 
+/* Binary document previews bypass .doc-view. Give their host a bounded flex
+ * viewport instead of letting the entire document grow beyond this clipping area. */
+.editor-area__body:has(> .document-preview-host) {
+  display: flex;
+  flex-direction: column;
+}
+
 /* ==================== 面板 ==================== */
 
 .panel {
@@ -2736,48 +2743,48 @@
 }
 
 /* highlight.js 配色（基于 tokens 语义色，深浅主题通用） */
-:is(.md-code, .diff-row__text) .hljs-keyword,
-:is(.md-code, .diff-row__text) .hljs-selector-tag,
-:is(.md-code, .diff-row__text) .hljs-built_in {
+:is(.md-code, .diff-row__text, .text-preview) .hljs-keyword,
+:is(.md-code, .diff-row__text, .text-preview) .hljs-selector-tag,
+:is(.md-code, .diff-row__text, .text-preview) .hljs-built_in {
   color: var(--syntax-keyword);
 }
 
-:is(.md-code, .diff-row__text) .hljs-string,
-:is(.md-code, .diff-row__text) .hljs-attr,
-:is(.md-code, .diff-row__text) .hljs-template-string {
+:is(.md-code, .diff-row__text, .text-preview) .hljs-string,
+:is(.md-code, .diff-row__text, .text-preview) .hljs-attr,
+:is(.md-code, .diff-row__text, .text-preview) .hljs-template-string {
   color: var(--syntax-string);
 }
 
-:is(.md-code, .diff-row__text) .hljs-number,
-:is(.md-code, .diff-row__text) .hljs-literal {
+:is(.md-code, .diff-row__text, .text-preview) .hljs-number,
+:is(.md-code, .diff-row__text, .text-preview) .hljs-literal {
   color: var(--syntax-number);
 }
 
-:is(.md-code, .diff-row__text) .hljs-comment,
-:is(.md-code, .diff-row__text) .hljs-quote {
+:is(.md-code, .diff-row__text, .text-preview) .hljs-comment,
+:is(.md-code, .diff-row__text, .text-preview) .hljs-quote {
   color: var(--fg-faint);
   font-style: italic;
 }
 
-:is(.md-code, .diff-row__text) .hljs-title,
-:is(.md-code, .diff-row__text) .hljs-title.function_,
-:is(.md-code, .diff-row__text) .hljs-name {
+:is(.md-code, .diff-row__text, .text-preview) .hljs-title,
+:is(.md-code, .diff-row__text, .text-preview) .hljs-title.function_,
+:is(.md-code, .diff-row__text, .text-preview) .hljs-name {
   color: var(--syntax-title);
 }
 
-:is(.md-code, .diff-row__text) .hljs-title.class_,
-:is(.md-code, .diff-row__text) .hljs-type {
+:is(.md-code, .diff-row__text, .text-preview) .hljs-title.class_,
+:is(.md-code, .diff-row__text, .text-preview) .hljs-type {
   color: var(--syntax-type);
 }
 
-:is(.md-code, .diff-row__text) .hljs-variable,
-:is(.md-code, .diff-row__text) .hljs-template-variable {
+:is(.md-code, .diff-row__text, .text-preview) .hljs-variable,
+:is(.md-code, .diff-row__text, .text-preview) .hljs-template-variable {
   color: var(--syntax-variable);
 }
 
-:is(.md-code, .diff-row__text) .hljs-symbol,
-:is(.md-code, .diff-row__text) .hljs-regexp,
-:is(.md-code, .diff-row__text) .hljs-meta {
+:is(.md-code, .diff-row__text, .text-preview) .hljs-symbol,
+:is(.md-code, .diff-row__text, .text-preview) .hljs-regexp,
+:is(.md-code, .diff-row__text, .text-preview) .hljs-meta {
   color: var(--syntax-meta);
 }
 

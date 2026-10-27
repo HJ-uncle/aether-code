@@ -751,8 +751,10 @@ export interface FsFileContent {
   path: string
   /** 文本文件为原文；二进制文件为空（用 base64 字段） */
   content: string
-  /** 二进制文件的内容（base64） */
+  /** 二进制文件的内容（base64）；Office/PDF 可改用 transferable bytes。 */
   base64?: string
+  /** 预览专用二进制内容，避免 base64 在主线程反复编码/解码。 */
+  bytes?: ArrayBuffer
   isBinary: boolean
   size: number
   /** 文本超过阈值被截断 */

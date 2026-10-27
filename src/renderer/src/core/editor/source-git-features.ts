@@ -23,6 +23,42 @@ const snapshots = new Map<string, SourceGitSnapshot>()
 const listeners = new Map<string, Set<(snapshot: SourceGitSnapshot) => void>>()
 const owners = new Map<string, number>()
 
+interface SourceGitWarmState {
+  model: editor.ITextModel
+  baseline: string
+  blame: readonly GitBlameLine[]
+  changes: editor.ILineChange[]
+  computedVersion: number
+  conflicts: readonly DocumentMergeConflict[]
+  gitState: ReturnType<typeof getGitState>
+  modelDisposable: IDisposable
+}
+const warmStates = new Map<string, SourceGitWarmState>()
+const WARM_STATE_LIMIT = 20
+
+function cacheWarmState(key: string, state: Omit<SourceGitWarmState, 'modelDisposable'>): void {
+  warmStates.get(key)?.modelDisposable.dispose()
+  const cached: SourceGitWarmState = { ...state, modelDisposable: state.model.onWillDispose(() => {
+    if (warmStates.get(key) === cached) warmStates.delete(key)
+  }) }
+  warmStates.delete(key)
+  warmStates.set(key, cached)
+  while (warmStates.size > WARM_STATE_LIMIT) {
+    const oldest = warmStates.keys().next().value
+    if (oldest === undefined) break
+    warmStates.get(oldest)?.modelDisposable.dispose()
+    warmStates.delete(oldest)
+  }
+}
+
+function takeWarmState(key: string, model: editor.ITextModel): SourceGitWarmState | undefined {
+  const cached = warmStates.get(key)
+  if (!cached || cached.model !== model) return
+  warmStates.delete(key)
+  cached.modelDisposable.dispose()
+  return cached
+}
+
 export function watchSourceGit(filePath: string, listener: (snapshot: SourceGitSnapshot) => void): () => void {
   const key = fileIdentity(filePath)
   let bucket = listeners.get(key)
@@ -54,11 +90,15 @@ export function registerSourceGitFeatures(instance: editor.IStandaloneCodeEditor
   const key = fileIdentity(filePath)
   owners.set(key, (owners.get(key) ?? 0) + 1)
   let disposed = false
-  let baseline = ''
-  let baselineReady = false
-  let blame: readonly GitBlameLine[] = []
-  let changes: editor.ILineChange[] = []
-  let computedVersion = 0
+  const cached = takeWarmState(key, model)
+  const gitState = getGitState()
+  const warm = cached?.gitState === gitState ? cached : undefined
+  let baseline = warm?.baseline ?? ''
+  let baselineReady = Boolean(warm)
+  let blame: readonly GitBlameLine[] = warm?.blame ?? []
+  let changes: editor.ILineChange[] = warm?.changes ?? []
+  let computedVersion = warm?.computedVersion ?? 0
+  let conflictSnapshot: readonly DocumentMergeConflict[] = warm?.conflicts ?? []
   let snapshotVersion = 0
   let diffOriginalVersion = 0
   let diffModifiedVersion = 0
@@ -217,7 +257,9 @@ export function registerSourceGitFeatures(instance: editor.IStandaloneCodeEditor
   }
 
   const recompute = (): void => {
-    if (!valid() || !baselineReady || !diff || !original || !modified) return
+    if (!valid() || !baselineReady) return
+    ensureDiff()
+    if (!diff || !original || !modified) return
     snapshotVersion = model.getVersionId()
     const value = model.getValue()
     if (value === baseline) {
@@ -290,10 +332,10 @@ export function registerSourceGitFeatures(instance: editor.IStandaloneCodeEditor
     apply(minimalReplacement(before, resolveConflictText(before, conflict, side)))
   }
 
-  const renderConflicts = (): void => {
+  const renderConflicts = (conflicts: readonly DocumentMergeConflict[] = scanConflicts(model.getValue())): void => {
     if (!valid()) return
+    conflictSnapshot = conflicts
     const version = model.getVersionId()
-    const conflicts = scanConflicts(model.getValue())
     for (const dispose of conflictZones) dispose()
     conflictZones = conflicts.map((conflict) => {
         const node = document.createElement('div')
@@ -352,12 +394,24 @@ export function registerSourceGitFeatures(instance: editor.IStandaloneCodeEditor
   // Decoration colors are resolved to concrete hex values for Monaco. Repaint them
   // when the user switches dark/light appearance or accent-related Git tokens.
   const unsubscribeTheme = watchTheme(renderChanges)
-  renderConflicts()
-  void reloadBaseline()
+  if (warm) {
+    if (current()) {
+      renderChanges()
+      renderConflicts(warm.conflicts)
+    }
+    else {
+      renderConflicts()
+      recompute()
+    }
+  } else {
+    renderConflicts()
+    void reloadBaseline()
+  }
   return () => {
     if (disposed) return
     disposed = true
     request++
+    if (baselineReady && !model.isDisposed()) cacheWarmState(key, { model, baseline, blame, changes, computedVersion, conflicts: conflictSnapshot, gitState: getGitState() })
     clearTimeout(timer); clearTimeout(refreshTimer)
     unsubscribeGit()
     unsubscribeTheme()
