@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseSseBlock } from './sse'
 import type { EngineSnapshot, StreamEvent } from '../../shared/ipc'
+import { isExplicitRequestRejection } from '../../shared/stream-event'
 import type { EngineHealthDiagnostics } from '../../shared/engine-diagnostics'
 import { getSettings } from '../settings-store'
 import { logger } from './logger'
@@ -689,21 +690,22 @@ export class EngineHost extends EventEmitter {
     const snapshot = this.snapshot
     const boundExpectedEngine = expectedEngine ?? engineIdentityOf(snapshot)
     if (isAccountRequestPath(path)) {
-      this.emit('stream', { streamId, type: 'error', message: '请通过账号入口操作认证。' } satisfies StreamEvent)
+      this.emit('stream', { streamId, type: 'error', message: '请通过账号入口操作认证。', requestRejected: true } satisfies StreamEvent)
       return
     }
     const unsupported = engineTargetError(snapshot, boundExpectedEngine) ?? remoteRequestError(snapshot.mode, method, path) ?? remoteWorkspacePathError(snapshot.mode, method, path, body)
     if (unsupported) {
-      this.emit('stream', { streamId, type: 'error', message: unsupported } satisfies StreamEvent)
+      this.emit('stream', { streamId, type: 'error', message: unsupported, requestRejected: true } satisfies StreamEvent)
       return
     }
     const baseUrl = this.baseUrl
     const requestSignal = AbortSignal.any([signal, this.requestSignal])
     if (!baseUrl) {
-      this.emit('stream', { streamId, type: 'error', message: '引擎未就绪' } satisfies StreamEvent)
+      this.emit('stream', { streamId, type: 'error', message: '引擎未就绪', requestRejected: true } satisfies StreamEvent)
       return
     }
 
+    let dispatched = false
     try {
       const normalizedPath = normalizeEnginePath(path)
       const headers = { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...subagentProtocolHeaders(subagentProtocol), ...await this.prepareRequestHeaders(baseUrl, toolProfile) }
@@ -715,6 +717,7 @@ export class EngineHost extends EventEmitter {
       if (query && Object.keys(query).length > 0) {
         url += `?${new URLSearchParams(query).toString()}`
       }
+      dispatched = true
       const res = await fetch(url, {
         redirect: 'error',
         method,
@@ -730,7 +733,8 @@ export class EngineHost extends EventEmitter {
           return
         }
         this.emit('stream', { streamId, type: 'error', status: res.status, code: envelope.code,
-          message: envelope.message || `SSE 请求失败：HTTP ${res.status}` } satisfies StreamEvent)
+          message: envelope.message || `SSE 请求失败：HTTP ${res.status}`,
+          requestRejected: isExplicitRequestRejection(res.status, envelope.code) } satisfies StreamEvent)
         return
       }
 
@@ -748,7 +752,8 @@ export class EngineHost extends EventEmitter {
         } catch {
           if (text) message = text.slice(0, 500)
         }
-        this.emit('stream', { streamId, type: 'error', status: res.status, code, message } satisfies StreamEvent)
+        this.emit('stream', { streamId, type: 'error', status: res.status, code, message,
+          requestRejected: isExplicitRequestRejection(res.status, code) } satisfies StreamEvent)
         return
       }
 
@@ -785,6 +790,10 @@ export class EngineHost extends EventEmitter {
     } catch (err) {
       // 用户主动中断不算错误
       if (requestSignal.aborted) {
+        if (!dispatched) {
+          this.emit('stream', { streamId, type: 'error', message: '发送已取消，消息尚未发出', requestRejected: true } satisfies StreamEvent)
+          return
+        }
         this.emit('stream', { streamId, type: 'done' } satisfies StreamEvent)
         return
       }
@@ -796,7 +805,8 @@ export class EngineHost extends EventEmitter {
       this.emit('stream', {
         streamId,
         type: 'error',
-        message
+        message,
+        requestRejected: !dispatched
       } satisfies StreamEvent)
     }
   }

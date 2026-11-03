@@ -28,10 +28,10 @@ const PREVIEW_MODES: { mode: PreviewMode; label: string; title: string }[] = [
  * 二进制**不提供编辑与保存** —— 用文本编辑器改二进制必然损坏文件。
  * 超限的二进制给出明确说明而不是硬读（见主进程 MAX_BINARY_BYTES）。
  */
-export function DocumentView({ filePath, groupId }: { filePath: string; groupId?: string }): JSX.Element {
+export function DocumentView({ filePath, groupId, active = true }: { filePath: string; groupId?: string; active?: boolean }): JSX.Element {
   const doc = useEditorSelector(state => state.docs.get(filePath))
-  const cursor = useEditorSelector(state => state.cursor)
-  const reveal = useEditorSelector(state => state.reveals[filePath])
+  const cursor = useEditorSelector(state => active ? state.cursor : null)
+  const reveal = useEditorSelector(state => active ? state.reveals[filePath] : undefined)
   const focusedGroupId = useSyncExternalStore(onEditorGroupsChanged, () => getEditorGroups().focusedGroupId)
   const [previewMode, setPreviewMode] = useState<PreviewMode>('edit')
   const [outlineVisible, setOutlineVisible] = useState(false)
@@ -71,10 +71,10 @@ export function DocumentView({ filePath, groupId }: { filePath: string; groupId?
       )
     }
 
-    return <FilePreview name={doc.name} path={doc.path} base64={doc.base64 ?? undefined} bytes={doc.bytes ?? undefined} size={doc.size} groupId={groupId} />
+    return <FilePreview name={doc.name} path={doc.path} base64={doc.base64 ?? undefined} bytes={doc.bytes ?? undefined} size={doc.size} groupId={groupId} active={active} />
   }
 
-  // 非激活标签也要挂载：EditorArea 只渲染激活的文档，故这里恒为激活文档。
+  // 文本仍只挂载当前标签；Office/PDF 的保留宿主已在上方分流。
   // 但光标读数仍要按「光标报告的是哪个文件」过滤：切标签的瞬间 cursor 可能
   // 还停在上一个文件，直接显示会闪出错文件的行列号。
   return (

@@ -1,6 +1,6 @@
 import { useMemo, useState, type JSX } from 'react'
 import { Icon } from '@renderer/workbench/icons'
-import { presentWorkError, workErrorStatusLabel, type WorkErrorPresentation } from './work-error-presenter'
+import { presentWorkError, workErrorStatusLabel, type WorkErrorContext, type WorkErrorPresentation } from './work-error-presenter'
 import './work-error-notice.css'
 
 export type { WorkErrorPresentation }
@@ -8,14 +8,15 @@ export { presentWorkError }
 
 type WorkErrorNoticeProps = {
   error: string
+  context?: WorkErrorContext
   className?: string
   /** A real recovery operation owned by the caller (replay, reload, or read). */
   onRetry?: () => void | Promise<void>
   retryLabel?: string
 }
 
-export function WorkErrorNotice({ error, className = '', onRetry, retryLabel = '重试任务' }: WorkErrorNoticeProps): JSX.Element | null {
-  const presentation = useMemo(() => presentWorkError(error), [error])
+export function WorkErrorNotice({ error, context, className = '', onRetry, retryLabel = '重试任务' }: WorkErrorNoticeProps): JSX.Element | null {
+  const presentation = useMemo(() => presentWorkError(error, context), [error, context])
   const [open, setOpen] = useState(false)
   const [retrying, setRetrying] = useState(false)
   const [actionError, setActionError] = useState('')

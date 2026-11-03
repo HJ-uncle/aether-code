@@ -41,7 +41,7 @@ function DocumentPreviewContent({ name, base64, data, size, identityKey, active 
       {input.error || !kind || !input.data ? <PreviewMessage error={input.error || '此格式暂不支持预览。'} /> :
         <PreviewBoundary onRetry={() => retry(value => value + 1)}><Suspense fallback={<PreviewMessage />}>
           {kind === 'pdf' ? <PdfPreview data={input.data} name={name} sessionKey={identityKey || name} active={active} onRetry={() => retry(value => value + 1)} /> :
-            kind === 'xlsx' ? <SpreadsheetPreview data={input.data} sessionKey={`${identityKey || name}:${attempt}`} onRetry={() => retry(value => value + 1)} /> : <OfficePreview data={input.data} kind={kind} name={name} sessionKey={identityKey || name} onRetry={() => retry(value => value + 1)} />}
+            kind === 'xlsx' ? <SpreadsheetPreview data={input.data} sessionKey={`${identityKey || name}:${attempt}`} onRetry={() => retry(value => value + 1)} /> : <OfficePreview data={input.data} kind={kind} name={name} sessionKey={identityKey || name} active={active} onRetry={() => retry(value => value + 1)} />}
         </Suspense></PreviewBoundary>}
     </div>
   </section>

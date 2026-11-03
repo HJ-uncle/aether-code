@@ -1,0 +1,194 @@
+{
+  "generatedAt": "2026-11-03T08:54:50.595Z",
+  "candidate": "D:\\dev\\aether-code\\.e2e-tmp\\ecosystem-build\\main\\index.js",
+  "clickTimeoutMs": 20000,
+  "responseBudgetMs": 2500,
+  "tickIntervalMs": 50,
+  "initialChildCount": 5,
+  "root": {
+    "runId": "root-work-home-82103094-bd22-42e7-a6c5-6ef652081463",
+    "status": "succeeded",
+    "ticks": 32,
+    "frames": 186,
+    "bytes": 248362,
+    "sequence": 186
+  },
+  "children": [
+    {
+      "runId": "child-work-home-82103094-bd22-42e7-a6c5-6ef652081463-0",
+      "status": "succeeded",
+      "lastSeq": 13,
+      "archiveRows": 61
+    },
+    {
+      "runId": "child-work-home-82103094-bd22-42e7-a6c5-6ef652081463-1",
+      "status": "succeeded",
+      "lastSeq": 13,
+      "archiveRows": 61
+    },
+    {
+      "runId": "child-work-home-82103094-bd22-42e7-a6c5-6ef652081463-2",
+      "status": "succeeded",
+      "lastSeq": 13,
+      "archiveRows": 61
+    },
+    {
+      "runId": "child-work-home-82103094-bd22-42e7-a6c5-6ef652081463-3",
+      "status": "succeeded",
+      "lastSeq": 13,
+      "archiveRows": 61
+    },
+    {
+      "runId": "child-work-home-82103094-bd22-42e7-a6c5-6ef652081463-4",
+      "status": "succeeded",
+      "lastSeq": 34,
+      "archiveRows": 69
+    }
+  ],
+  "receipts": [
+    {
+      "label": "open-workspace-menu-成果",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "clickMs": 47.73730000000069,
+      "responseMs": 52.58089999999902,
+      "tickBefore": 32,
+      "tickAfter": 32,
+      "sequence": 186
+    },
+    {
+      "label": "open-成果",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "clickMs": 46.01059999999961,
+      "responseMs": 58.32619999999952,
+      "tickBefore": 32,
+      "tickAfter": 32,
+      "sequence": 186
+    }
+  ],
+  "archiveReads": [
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "current": 1,
+      "pageSize": 1,
+      "total": 73,
+      "revision": "archive-73-append-73"
+    },
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "current": 2,
+      "pageSize": 50,
+      "total": 73,
+      "revision": "archive-73-append-73"
+    },
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "current": 1,
+      "pageSize": 1,
+      "total": 75,
+      "revision": "archive-75-append-75"
+    },
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "current": 2,
+      "pageSize": 50,
+      "total": 75,
+      "revision": "archive-75-append-75"
+    },
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "current": 1,
+      "pageSize": 1,
+      "total": 82,
+      "revision": "archive-82-append-82"
+    },
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "current": 2,
+      "pageSize": 50,
+      "total": 82,
+      "revision": "archive-82-append-82"
+    },
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "current": 1,
+      "pageSize": 1,
+      "total": 86,
+      "revision": "archive-86-append-86"
+    },
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "current": 2,
+      "pageSize": 50,
+      "total": 86,
+      "revision": "archive-86-append-86"
+    }
+  ],
+  "archiveRefreshes": [
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "rowId": "append-75",
+      "watermark": 75,
+      "total": 75,
+      "tick": 52,
+      "readIndex": 2
+    },
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "viewport": {
+        "width": 1102,
+        "height": 760
+      },
+      "rowId": "append-81",
+      "watermark": 81,
+      "total": 81,
+      "tick": 75,
+      "readIndex": 4
+    },
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "viewport": {
+        "width": 940,
+        "height": 640
+      },
+      "rowId": "append-86",
+      "watermark": 86,
+      "total": 86,
+      "tick": 90,
+      "readIndex": 6
+    }
+  ],
+  "cancellations": [
+    "work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f"
+  ],
+  "childCancellations": [
+    "child-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4"
+  ],
+  "metrics": {
+    "longTaskSupported": true,
+    "longTasks": [],
+    "longTaskCount": 0,
+    "longTaskTotalMs": 0,
+    "domNodes": 2177,
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    }
+  },
+  "errors": [],
+  "cpu": {
+    "requested": false,
+    "samplingIntervalUs": 2000,
+    "maximumDurationMs": 120000,
+    "captured": false
+  }
+}

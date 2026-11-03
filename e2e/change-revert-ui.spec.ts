@@ -88,7 +88,7 @@ test.describe.serial('D2 文件回退真机闭环', () => {
     if (!seeded) throw new Error(`D2 seed failed: ${output}`)
     keptId = JSON.parse(seeded.slice('D2_SEEDED '.length)).keptId
     app = await electron.launch({
-      args: ['.', `--user-data-dir=${fixture}`], cwd: root,
+      args: [process.env.AETHER_E2E_APP_ENTRY || '.', `--user-data-dir=${fixture}`], cwd: root,
       env: {
         ...process.env, AETHER_IDE_ENGINE_ENTRY: join(engineRoot, 'dist/main.js'), AUTH_ENABLED: 'false', HISTORY_BACKEND: 'jsonl',
         AETHER_GLOBAL_DIR: join(fixture, 'global'), WORKSPACE_ROOT: join(fixture, 'workspace'),

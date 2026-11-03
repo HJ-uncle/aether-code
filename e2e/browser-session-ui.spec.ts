@@ -16,7 +16,7 @@ const root = resolve(__dirname, '..')
 const instanceToken = 'browser-session-fixture-token'
 type Registration = { clientId: string; clientToken: string; sessionId: string }
 type Command = { requestId: string; sessionId: string; action: BrowserToolRequest['action']; args: object; expiresAt: number }
-type Reply = { success: boolean; output: string; error?: string }
+type Reply = { success: boolean; output: string; error?: string; metadata?: { code: string; operationPerformed: boolean | 'unknown' } }
 type Guest = { tab: BrowserTabState; webContentsId: number; token: string }
 let fixture = '', origin = '', sessionId = ''
 let app: ElectronApplication | undefined, page: Page
@@ -45,12 +45,13 @@ const server = createServer((request, response) => {
     if (url.pathname.startsWith('/api/') && request.headers['x-aether-instance-token'] !== instanceToken) { send({}, 401); return }
     let raw = ''; for await (const chunk of request) raw += String(chunk)
     const body = raw ? JSON.parse(raw) as Record<string, unknown> : {}
+    const requestedSession = String(body.sessionId ?? url.searchParams.get('sessionId') ?? '')
     if (url.pathname === '/health') { send({ status: 'ok' }); return }
     if (url.pathname === '/meta') { send({ version: '2.0.0', buildId: `sha256:${'c'.repeat(64)}`, protocolVersion: 1, toolProfiles: ['code', 'general'], subagentSchemaVersion: 1, instanceId: 'browser-session-remote' }); return }
     if (url.pathname === '/api/v1/browser/clients') {
       client = { clientId: String(body.clientId ?? randomUUID()), clientToken: String(body.clientToken ?? randomUUID()), sessionId: String(body.sessionId) }
       registrations.set(client.clientId, client)
-      send({ ...client, pollTimeoutMs: 20000, leaseMs: 65000 }); return
+      send({ ...client, pollTimeoutMs: 20000, leaseMs: 65000, capabilities: { resultMetadata: 1 } }); return
     }
     const clientPath = /^\/api\/v1\/browser\/clients\/([^/]+)(?:\/(commands|results))?$/.exec(url.pathname)
     if (clientPath) {
@@ -80,6 +81,17 @@ const server = createServer((request, response) => {
       return
     }
     if (url.pathname === '/api/v1/chat/snapshot') { send({ schemaVersion: 1, sessionId: url.searchParams.get('sessionId'), source: 'persisted', finished: true, eventId: null, projection: [], runs: [], history: [], todos: [], changes: [], commandJobs: [] }); return }
+    // The current client resolves the subagent protocol before accepting a
+    // history snapshot. An HTTP 200 [] here means malformed protocol, not an
+    // empty session; keep this fixture on the real negotiated contract.
+    if (url.pathname === '/api/v1/subagent/capabilities') { send({ schemaVersion: 2, eventVersions: [1, 2], views: ['legacy', 'summary'], toolPagination: true, eventPagination: true, detailChunks: true, exactWatermarks: true }); return }
+    if (url.pathname === '/api/v1/subagent/runs') { send({ schemaVersion: 2, runs: [], listComplete: true, hasMore: false, revision: 'fixture' }); return }
+    if (url.pathname === '/api/v1/chat/status') { send({ running: false, finished: true }); return }
+    if (url.pathname === '/api/v1/chat/stream') { response.writeHead(200, { 'content-type': 'text/event-stream' }).end('data: [DONE]\n\n'); return }
+    if (url.pathname === '/api/v1/chat/admission/context') { send({ protocolVersion: 1, tenantId: 'fixture', sessionId: requestedSession,
+      namespace: { id: 'browser-session', generation: 'one' }, transport: { toolProfile: request.headers['x-aether-tool-profile'] === 'general' ? 'general' : 'code', runLifetime: 'durable', subagentProtocol: 2 }, root: null, predecessor: null }); return }
+    if (url.pathname === '/api/v1/security/mode') { send({ sessionId: requestedSession, mode: 'standard' }); return }
+    if (url.pathname === '/api/v1/workbench/clients' || url.pathname === '/api/v1/cron/capabilities') { send({}, 404); return }
     if (url.pathname === '/api/v1/chat/runs') { send({ runs: [] }); return }
     if (url.pathname === '/api/v1/workspace/file' && request.method === 'GET') { fileReads.push(url.searchParams.get('path') ?? ''); send({ content: 'UNEXPECTED_FILE_REFERENCE', encoding: 'utf8' }); return }
     if (url.pathname === '/api/v1/models') { send([{ id: 'browser-session-model', modelId: 'browser-session-model', displayName: '浏览器会话测试', provider: 'openai', isEnabled: true, capabilities: { toolCalling: true, contextWindow: 128000 } }]); return }
@@ -149,7 +161,7 @@ test.describe.serial('手动浏览器标签的会话可见性与右键菜单', (
     writeFileSync(join(fixture, 'settings.json'), JSON.stringify({ engineMode: 'remote', remoteBaseUrl: origin, autoStartEngine: false, lastSessionId: '', lastFolder: '' }))
     const env: NodeJS.ProcessEnv = { ...process.env, AETHER_IDE_REMOTE_INSTANCE_TOKEN: instanceToken, AETHER_GLOBAL_DIR: join(fixture, 'global') }
     for (const key of Object.keys(env)) if (['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL', 'AETHER_IDE_REMOTE_API_KEY', 'AETHER_IDE_REMOTE_BEARER_TOKEN', 'AETHER_IDE_REMOTE_AUTH_URL'].includes(key.toUpperCase())) delete env[key]
-    app = await electron.launch({ args: ['.', `--user-data-dir=${fixture}`], cwd: root, env })
+    app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || '.', `--user-data-dir=${fixture}`], cwd: root, env })
     await app.evaluate(({ clipboard }) => {
       // Keep the user's clipboard in the main process; no clipboard contents
       // belong in Playwright results, traces, or failed assertion messages.
@@ -181,6 +193,7 @@ test.describe.serial('手动浏览器标签的会话可见性与右键菜单', (
     sessionId = connected.sessionId ?? ''
     expect(sessionId).not.toBe('')
     await expect.poll(() => client?.sessionId).toBe(sessionId)
+    await expect(page.getByTitle('新建会话（开一条全新对话）', { exact: true })).toBeEnabled()
   })
   test.afterEach(() => { expect(pageErrors).toEqual([]); health?.assertHealthy() })
   test.afterAll(async ({}, testInfo) => {
@@ -212,6 +225,9 @@ test.describe.serial('手动浏览器标签的会话可见性与右键菜单', (
     const snapshot = await result<BrowserSnapshot>('snapshot', { tabId: original.tab.tabId })
     expect(snapshot.tab.tabId).toBe(original.tab.tabId)
     expect(snapshot.text).toContain('会话网页 original')
+    const observation = await command('tabs')
+    expect(observation.metadata).toEqual({ code: 'BROWSER_OBSERVATION_COMPLETE', operationPerformed: false })
+    expect(snapshot.tab.availability).toMatchObject({ window: 'visible', initialization: 'ready' })
     expect(await probe(original)).toEqual(before)
   })
 
@@ -230,6 +246,8 @@ test.describe.serial('手动浏览器标签的会话可见性与右键菜单', (
     expect(isolated.some(tab => tab.tabId === original.tab.tabId)).toBe(false)
     const rejected = await command('snapshot', { tabId: original.tab.tabId, navigationId: original.tab.navigationId })
     expect(rejected.success).toBe(false)
+    expect(rejected.metadata).toEqual({ code: 'BROWSER_OPERATION_NOT_PERFORMED', operationPerformed: false })
+    expect(JSON.parse(rejected.output)).toBeNull()
     expect(rejected.error).toMatch(/尚未添加到当前会话|其他会话|会话/)
     const stale = await page.evaluate(async ({ tabId, oldContext }) => {
       try { await window.aether.browser.share(tabId, oldContext); return '' }
@@ -350,8 +368,16 @@ test.describe.serial('手动浏览器标签的会话可见性与右键菜单', (
     await codeInput.fill('Code 草稿保持原样')
     await page.getByRole('tab', { name: 'Work 办公', exact: true }).click()
     const work = page.locator('.mode-surface[data-mode="work"]')
+    const navigateWork = async (name: '工作台' | '浏览器'): Promise<void> => {
+      const button = work.locator('.work-navigation').getByRole('button', { name, exact: true })
+      if (!await button.isVisible()) await work.getByRole('button', { name: '展开 Work 导航', exact: true }).click()
+      await button.click()
+    }
+    // Switching from an open Code browser may preserve the browser surface in
+    // Work. Enter the actual home page before testing its editable draft.
+    await navigateWork('工作台')
     await work.getByRole('textbox', { name: '任务目标', exact: true }).fill('Work 草稿已有要求')
-    await work.locator('.work-navigation').getByRole('button', { name: '浏览器', exact: true }).click()
+    await navigateWork('浏览器')
     await expect.poll(async () => {
       const connection = await page.evaluate(() => window.aether.browser.getConnection())
       return connection.status === 'connected' && Boolean(connection.sessionId?.startsWith('work-'))
@@ -363,7 +389,7 @@ test.describe.serial('手动浏览器标签的会话可见性与右键菜单', (
     await menuOn(original.tab.tabId)
     await choose('添加到当前会话')
     await expect.poll(tabs).toContainEqual(expect.objectContaining({ tabId: original.tab.tabId, context: expect.objectContaining({ sessionId: workSessionId }) }))
-    await work.locator('.work-navigation').getByRole('button', { name: '工作台', exact: true }).click()
+    await navigateWork('工作台')
     const workInput = work.getByRole('textbox', { name: '任务目标', exact: true })
     await expect(workInput).toContainText('Work 草稿已有要求')
     await expect(workInput.locator('.mention-chip--browser')).toContainText('会话网页 original')

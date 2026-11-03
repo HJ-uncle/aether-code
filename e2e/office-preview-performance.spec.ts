@@ -47,7 +47,7 @@ test.afterAll(async () => {
 test('真实 12000 行 XLSX 在后台解析，首末行可见且结构错误不会出现', async () => {
   test.setTimeout(120_000)
   await open('04_Excel_大型_12000行数据.xlsx')
-  const preview = page.locator('[data-document-preview="xlsx"]')
+  const preview = page.locator('[data-document-preview="xlsx"]:visible')
   await expect(preview.locator('table, [role="alert"]')).toBeVisible({ timeout: 60_000 })
   await expect(preview.getByRole('alert')).toHaveCount(0)
   await expect(preview.locator('table')).toContainText('TEST-')
@@ -56,43 +56,52 @@ test('真实 12000 行 XLSX 在后台解析，首末行可见且结构错误不�
   await expect(page.locator('.palette[aria-label="快速打开文件"]')).toBeVisible({ timeout: 5000 })
   await page.keyboard.press('Escape')
   expect(Date.now() - started).toBeLessThan(5000)
-  await preview.locator('.document-preview__table-nav input').fill('121')
+  await preview.locator('.document-preview__body--sheet').evaluate(element => { element.scrollTop = element.scrollHeight })
   await expect(preview.locator('table')).toContainText('TEST-012000')
-  await expect(preview.locator('.document-preview__body--sheet')).toHaveAttribute('data-document-row-start', '12001')
+  await expect.poll(() => preview.locator('.document-preview__body--sheet').evaluate(element =>
+    element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2)
 })
 
 for (const [name, kind, marker] of [
   ['02_Word_大型_图文报告.docx', 'docx', 'section.docx'],
-  ['06_PPT_中型_图文演示.pptx', 'pptx', 'slide-container'],
-  ['07_PPT_大型_高清图册.pptx', 'pptx', 'slide-container'],
+  ['06_PPT_中型_图文演示.pptx', 'pptx', '.slide-container'],
+  ['07_PPT_大型_高清图册.pptx', 'pptx', '.slide-container'],
 ] as const) {
-  test(`真实 ${name} 可显示首屏，容器 resize 不重建 iframe`, async () => {
+  test(`真实 ${name} 可显示首屏，容器 resize 保留 iframe 子文档`, async () => {
     test.setTimeout(120_000)
     await open(name)
-    const preview = page.locator(`[data-document-preview="${kind}"]`)
-    await expect(preview.locator('iframe, [role="alert"]')).toBeVisible({ timeout: 60_000 })
+    const preview = page.locator(`[data-document-preview="${kind}"]:visible`)
+    await expect(preview.locator('iframe, [role="alert"]').first()).toBeVisible({ timeout: 60_000 })
     await expect(preview.getByRole('alert')).toHaveCount(0)
-    const frame = preview.locator('iframe')
-    await expect(frame).toHaveAttribute('srcdoc', new RegExp(marker.replace('.', '\\.')))
+    const frame = preview.locator('iframe').first()
+    const content = frame.contentFrame().locator(marker).first()
+    await expect(content).toBeVisible({ timeout: 30_000 })
     const original = await frame.getAttribute('srcdoc')
-    await frame.evaluate(element => Object.assign(element, { officePreviewMarker: 'same-frame' }))
+    const originalZoom = await frame.evaluate((element: HTMLIFrameElement) => {
+      Object.assign(element, { officePreviewDocument: element.contentDocument })
+      return element.contentDocument?.querySelector<HTMLElement>('main.document-page')?.style.zoom
+    })
     await preview.evaluate(element => { element.style.flex = 'none'; element.style.width = '640px' })
-    expect(await frame.evaluate(element => Reflect.get(element, 'officePreviewMarker'))).toBe('same-frame')
-    await expect.poll(() => frame.getAttribute('srcdoc'), { timeout: 5000 }).not.toBe(original)
-    expect(await frame.evaluate(element => Reflect.get(element, 'officePreviewMarker'))).toBe('same-frame')
-    await expect(frame).toHaveAttribute('srcdoc', new RegExp(marker.replace('.', '\\.')))
+    await expect.poll(() => frame.evaluate((element: HTMLIFrameElement) => element.contentDocument?.querySelector<HTMLElement>('main.document-page')?.style.zoom), { timeout: 5000 }).not.toBe(originalZoom)
+    expect(await frame.evaluate((element: HTMLIFrameElement) => element.contentDocument === Reflect.get(element, 'officePreviewDocument'))).toBe(true)
+    expect(await frame.getAttribute('srcdoc')).toBe(original)
+    await expect(content).toBeVisible()
+    const resizedZoom = await frame.evaluate((element: HTMLIFrameElement) => element.contentDocument?.querySelector<HTMLElement>('main.document-page')?.style.zoom)
     await preview.evaluate(element => { element.style.width = '720px' })
-    expect(await frame.evaluate(element => Reflect.get(element, 'officePreviewMarker'))).toBe('same-frame')
+    await expect.poll(() => frame.evaluate((element: HTMLIFrameElement) => element.contentDocument?.querySelector<HTMLElement>('main.document-page')?.style.zoom), { timeout: 5000 }).not.toBe(resizedZoom)
+    expect(await frame.evaluate((element: HTMLIFrameElement) => element.contentDocument === Reflect.get(element, 'officePreviewDocument'))).toBe(true)
+    expect(await frame.getAttribute('srcdoc')).toBe(original)
+    await expect(content).toBeVisible()
   })
 }
 
 test('PDF resize 保留画布，并在稳定后重新绘制', async () => {
   test.setTimeout(120_000)
   await open('08_PDF_小型_测试说明.pdf')
-  const preview = page.locator('[data-document-preview="pdf"]')
-  await expect(preview.locator('canvas, [role="alert"]')).toBeVisible({ timeout: 60_000 })
+  const preview = page.locator('[data-document-preview="pdf"]:visible')
+  await expect(preview.locator('canvas, [role="alert"]').first()).toBeVisible({ timeout: 60_000 })
   await expect(preview.getByRole('alert')).toHaveCount(0)
-  const canvas = preview.locator('canvas')
+  const canvas = preview.locator('canvas').first()
   await expect(canvas).toHaveAttribute('data-rendered-page', '1', { timeout: 30_000 })
   const original = await canvas.evaluate(element => element.width)
   await canvas.evaluate(element => Object.assign(element, { pdfPreviewMarker: 'same-canvas' }))

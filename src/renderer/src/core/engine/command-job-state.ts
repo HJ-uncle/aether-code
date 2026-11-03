@@ -1,6 +1,7 @@
 import type { CommandJobOutput, CommandJobSnapshot, CommandJobStatus, CommandOutputEntry } from '@shared/command-job'
 import type { ChatMessage, ToolActivity } from './useChat'
 import { commandInvocation } from './tool-feedback'
+import { mergeFileChanges } from './tool-file-changes'
 
 const statuses: CommandJobStatus[] = ['running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'timed_out', 'interrupted']
 export const commandStatusLabels: Record<CommandJobStatus, string> = {
@@ -49,9 +50,13 @@ export function commandToolState(job: CommandJobSnapshot): ToolActivity['state']
   return commandJobActive(job) ? 'running' : job.status === 'succeeded' ? 'done' : job.status === 'cancelled' ? 'cancelled' : job.status === 'interrupted' ? 'interrupted' : 'error'
 }
 /** Retained diagnostics must not recreate cards after their owning conversation turn is deleted. */
+function ownsMessage(job: CommandJobSnapshot, message: ChatMessage): boolean {
+  if (job.runId && message.runId) return job.runId === message.runId && (!job.turnId || !message.conversationId || job.turnId === message.conversationId)
+  return Boolean(job.turnId && job.turnId === message.conversationId)
+}
 export function visibleChildCommandJobs(messages: ChatMessage[], jobs: CommandJobSnapshot[], sessionId: string): CommandJobSnapshot[] {
   return jobs.filter(job => job.background && job.sessionId === sessionId && job.ownerSessionId !== sessionId &&
-    messages.some(message => (job.runId && job.runId === message.runId) || (job.turnId && job.turnId === message.conversationId)))
+    messages.some(message => ownsMessage(job, message)))
 }
 export function attachCommandJobs(messages: ChatMessage[], jobs: CommandJobSnapshot[], sessionId: string): ChatMessage[] {
   let changed = false
@@ -60,12 +65,12 @@ export function attachCommandJobs(messages: ChatMessage[], jobs: CommandJobSnaps
     const tools = message.tools.map(tool => {
       if (tool.name !== 'execute_cmd') return tool
       const incoming = jobs.find(job => job.background && job.sessionId === sessionId && job.ownerSessionId === sessionId &&
-        job.toolCallId === tool.id && ((job.runId && job.runId === message.runId) || (job.turnId && job.turnId === message.conversationId)))
+        job.toolCallId === tool.id && ownsMessage(job, message))
       if (!incoming) return tool
       const commandJob = mergeCommandJob(tool.commandJob, incoming)
       if (commandJob === tool.commandJob) return tool
       messageChanged = changed = true
-      return { ...tool, commandJob, state: commandToolState(commandJob), error: commandJob.error?.message,
+      return { ...tool, commandJob, changes: mergeFileChanges(tool.change, tool.changes, commandJob.changes), state: commandToolState(commandJob), error: commandJob.error?.message,
         finishedAt: commandJob.finishedAt, metadata: { ...tool.metadata, commandJob } }
     })
     return messageChanged ? { ...message, tools } : message

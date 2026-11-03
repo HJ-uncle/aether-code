@@ -24,6 +24,28 @@ export interface SpreadsheetPageSource {
   getRow: (row: number) => { height?: number }
 }
 
+/** ExcelJS's model getter serializes every row/cell, and columnCount scans all
+ * rows. Capture immutable workbook metadata once before serving viewport reads. */
+export function prepareSpreadsheetPageSource(source: SpreadsheetPageSource): SpreadsheetPageSource {
+  return {
+    rowCount: source.rowCount,
+    columnCount: source.columnCount,
+    model: { merges: [...source.model.merges] },
+    getCell: (row, column) => source.getCell(row, column),
+    getColumn: column => source.getColumn(column),
+    getRow: row => source.getRow(row),
+  }
+}
+
+/** A few rows/columns of stable buffer avoid rebuilding almost identical ranges
+ * at every cell boundary. The buffer remains one rectangle for merge ownership. */
+export function bufferedSpreadsheetRange(row: number, column: number, endRow: number, endColumn: number, rows: number, columns: number): { row: number; column: number; endRow: number; endColumn: number } {
+  const range = { row: Math.floor(row / 16) * 16, column: Math.floor(column / 4) * 4,
+    endRow: Math.min(rows, Math.ceil(endRow / 16) * 16), endColumn: Math.min(columns, Math.ceil(endColumn / 4) * 4) }
+  return (range.endRow - range.row) * (range.endColumn - range.column) <= SHEET_RANGE_CELL_LIMIT
+    ? range : { row, column, endRow, endColumn }
+}
+
 function columnNumber(letters: string): number {
   return Array.from(letters).reduce((value, letter) => value * 26 + letter.charCodeAt(0) - 64, 0)
 }

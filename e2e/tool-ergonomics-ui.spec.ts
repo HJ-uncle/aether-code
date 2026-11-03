@@ -1,4 +1,4 @@
-/** Real Electron + engine + local provider: context, write/edit versions, quoted argv, failed assertions,
+/** Real Electron + engine + local provider: automatic environment, write/edit versions, quoted argv, failed assertions,
  * unsupported HTML diagnostics, native copy and history replay. Only model replies are fixtures. */
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { createServer, type ServerResponse } from 'node:http'
@@ -8,17 +8,22 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 type Message = { role: string; content?: unknown; tool_call_id?: string }
-type Body = { stream?: boolean; tools?: Array<{ function: { name: string } }>; messages: Message[] }
+type Body = { stream?: boolean; tools?: Array<{ function: { name: string; parameters?: Record<string, unknown> } }>; messages: Message[] }
 const root = resolve(__dirname, '..'), engineRoot = resolve(root, '..', 'ai-agent-engine')
+const engineEntry = process.env.AETHER_E2E_ENGINE_ENTRY || join(engineRoot, 'dist/main.js')
+const engineDist = dirname(engineEntry)
 const model = 'tool-ergonomics-fixture', sessionId = 'tool-ergonomics-session', encryptionKey = 'e'.repeat(64)
 const promptMarker = '[tool-ergonomics-regression]', finalText = '工具链验收完成；断言失败和 HTML 静态诊断限制均已如实保留。'
 const scriptPath = '.ae/tmp/verify-gomoku.mjs'
 const originalScript = 'console.log("WRITE_VERSION");\n', updatedScript = 'console.log("EDIT_VERSION");\n'
 const commandScript = 'console.log(\'ERGONOMICS_QUOTED_OUTPUT "hello"\'); require("node:assert/strict").equal(4, 5, "winning line must contain five stones")'
-const steps = ['get_current_context', 'write_file', 'edit_file', 'execute_cmd', 'code_diagnose']
+const steps = ['read_file', 'write_file', 'edit_file', 'execute_cmd', 'code_diagnose']
+const retiredTools = ['get_current_context', 'get_tool_details', 'install_package', 'list_packages', 'calculate', 'get_time']
 let fixture = '', baseUrl = '', app: ElectronApplication | undefined, page: Page
 const received = new Map<string, string>(), errors: string[] = [], advertisedTools = new Set<string>()
+const advertisedSchemas = new Map<string, Record<string, unknown> | undefined>()
 const sentSteps: string[] = []
+let initialSystemPrompt = ''
 
 function respond(response: ServerResponse, body: Body, step?: number, args?: unknown): void {
   const calls = step === undefined ? [] : [{ id: `ergonomics-${step}`, type: 'function', function: { name: steps[step], arguments: JSON.stringify(args) } }]
@@ -39,9 +44,12 @@ const provider = createServer((incoming, response) => {
   void (async () => {
     let raw = ''; for await (const chunk of incoming) raw += chunk.toString()
     const body = JSON.parse(raw) as Body
-    if (!body.tools?.some(tool => tool.function.name === 'get_current_context') ||
-      !body.messages.some(message => message.role === 'user' && JSON.stringify(message.content).includes(promptMarker))) { respond(response, body); return }
-    for (const tool of body.tools ?? []) advertisedTools.add(tool.function.name)
+    if (!body.messages.some(message => message.role === 'user' && JSON.stringify(message.content).includes(promptMarker))) { respond(response, body); return }
+    if (!initialSystemPrompt) initialSystemPrompt = body.messages.filter(message => message.role === 'system').map(message => typeof message.content === 'string' ? message.content : JSON.stringify(message.content)).join('\n')
+    for (const tool of body.tools ?? []) {
+      advertisedTools.add(tool.function.name)
+      advertisedSchemas.set(tool.function.name, tool.function.parameters)
+    }
     for (const message of body.messages) {
       if (message.role === 'tool' && message.tool_call_id?.startsWith('ergonomics-')) {
         received.set(message.tool_call_id, typeof message.content === 'string' ? message.content : JSON.stringify(message.content))
@@ -51,7 +59,7 @@ const provider = createServer((incoming, response) => {
     while (received.has(`ergonomics-${step}`)) step++
     if (step >= steps.length) { respond(response, body); return }
     let args: unknown
-    if (step === 0) args = { includeTools: true }
+    if (step === 0) args = { path: 'index.html' }
     else if (step === 1) args = { path: scriptPath, data: originalScript }
     else if (step === 2) {
       const expectedHash = received.get('ergonomics-1')?.match(/^expectedHash: (sha256:[a-f0-9]{64})$/m)?.[1]
@@ -65,7 +73,7 @@ const provider = createServer((incoming, response) => {
 })
 
 function environment(): NodeJS.ProcessEnv {
-  return { ...process.env, AETHER_IDE_ENGINE_ENTRY: join(engineRoot, 'dist/main.js'), AUTH_ENABLED: 'false', HISTORY_BACKEND: 'jsonl',
+  return { ...process.env, AETHER_IDE_ENGINE_ENTRY: engineEntry, AUTH_ENABLED: 'false', HISTORY_BACKEND: 'jsonl',
     LLM_PROVIDER: 'openai', LLM_PRIMARY_MODEL: model, LLM_MODEL: model, LLM_FALLBACK_MODEL: '', OPENAI_API_KEY: 'ergonomics-local-key',
     OPENAI_BASE_URL: baseUrl, DEFAULT_SECURITY_MODE: 'standard', OSM_MODE: 'methodology', MAX_ITERATIONS: '10',
     ENABLE_LONG_TERM_MEMORY: 'false', AETHER_GLOBAL_DIR: join(fixture, 'global'), WORKSPACE_ROOT: join(fixture, 'sandboxes'),
@@ -107,7 +115,7 @@ test.describe.serial('工具执行与诊断真实闭环', () => {
     writeFileSync(join(fixture, 'engine', 'secrets', 'engine-secrets.json'), JSON.stringify({ encrypted: false, encryptionKey }))
     writeFileSync(join(fixture, 'settings.json'), JSON.stringify({ engineMode: 'embedded', preferredPort: 12457, autoStartEngine: true,
       lastSessionId: sessionId, lastModelId: model, lastFolder: join(fixture, 'workspace'), thinkingMode: 'off' }))
-    const url = (name: string) => pathToFileURL(join(engineRoot, 'dist', name)).href
+    const url = (name: string) => pathToFileURL(join(engineDist, name)).href
     const config = Object.fromEntries(Object.entries(environment()).filter(([name]) => ['LLM_PRIMARY_MODEL', 'LLM_MODEL', 'LLM_PROVIDER',
       'LLM_FALLBACK_MODEL', 'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'DEFAULT_SECURITY_MODE', 'OSM_MODE', 'MAX_ITERATIONS', 'HISTORY_BACKEND'].includes(name)))
     const seed = `const {initDb,getDb}=await import(${JSON.stringify(url('storage/sqlite/db.js'))});
@@ -119,7 +127,7 @@ test.describe.serial('工具执行与诊断真实闭环', () => {
       for(const[name,value]of Object.entries(${JSON.stringify(config)}))await systemConfigStore.set(name,value,name==='OPENAI_API_KEY');getDb().close();`
     execFileSync(process.execPath, ['--input-type=module', '-e', seed], { encoding: 'utf8', windowsHide: true, timeout: 30000,
       env: { ...environment(), DATA_DIR: join(fixture, 'engine', 'state', 'agent.db'), ENCRYPTION_KEY: encryptionKey } })
-    app = await electron.launch({ args: ['.', `--user-data-dir=${fixture}`], cwd: root, env: environment() })
+    app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || '.', `--user-data-dir=${fixture}`], cwd: root, env: environment() })
     page = await app.firstWindow(); page.on('pageerror', error => errors.push(String(error)))
     await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90000 })
     const security = await page.evaluate(sessionId => window.aether.engine.request({ method: 'PUT', path: '/security/mode', body: { sessionId, mode: 'standard' } }), sessionId)
@@ -144,8 +152,21 @@ test.describe.serial('工具执行与诊断真实闭环', () => {
     expect(errors).toEqual([])
     expect(sentSteps).toEqual(steps)
     expect([...advertisedTools]).toEqual(expect.arrayContaining(steps))
-    if (advertisedTools.has('browser_tabs')) expect(received.get('ergonomics-0')).toContain('已注册 browser_tabs')
-    else expect(received.get('ergonomics-0')).toContain('本次未注册 browser_tabs')
+    expect([...advertisedTools]).toEqual(expect.arrayContaining(['glob', 'grep']))
+    expect(advertisedTools.has('glob_search') || advertisedTools.has('grep_search')).toBe(false)
+    expect(advertisedSchemas.get('edit_file')).toMatchObject({ type: 'object', properties: { expectedHash: { type: 'string' }, edits: { type: 'array' } } })
+    expect(advertisedSchemas.get('execute_cmd')).toMatchObject({ type: 'object', properties: { command: { type: 'string' }, args: { type: 'array' } } })
+    for (const name of retiredTools) expect(advertisedTools.has(name), `${name} must not be advertised`).toBe(false)
+    const environmentLine = initialSystemPrompt.split('## 本次模型请求环境\n')[1]?.split('\n').find(line => line.startsWith('{'))
+    expect(environmentLine, 'The first model request receives its host environment without a discovery call').toBeTruthy()
+    const runtimeEnvironment = JSON.parse(environmentLine!) as { environment: { platform: string; node: { version: string; executable: string }; shell: string }; clock: { currentTime: string } }
+    expect(runtimeEnvironment.environment.platform).toBe(process.platform)
+    expect(runtimeEnvironment.environment.node.executable).toBeTruthy()
+    expect(runtimeEnvironment.environment.node.version).toMatch(/^v\d+\./)
+    expect(runtimeEnvironment.environment.shell).toBe('not-probed')
+    expect(Date.parse(runtimeEnvironment.clock.currentTime)).toBeGreaterThan(Date.now() - 120000)
+    expect(environmentLine!.replaceAll('\\\\', '/')).toContain(join(fixture, 'workspace').replaceAll('\\', '/'))
+    expect(received.get('ergonomics-0')).toContain('<canvas>')
     expect(received.get('ergonomics-2')).toMatch(/^Edited /)
     expect(readFileSync(join(fixture, 'workspace', scriptPath), 'utf8')).toBe(updatedScript)
     const commandOutput = received.get('ergonomics-3')!
@@ -185,7 +206,7 @@ test.describe.serial('工具执行与诊断真实闭环', () => {
   test('真实历史微压缩后重启仍可查看和复制原始诊断，用量环只展示信息', async () => {
     await app!.close()
     app = undefined
-    const moduleUrl = (name: string): string => pathToFileURL(join(engineRoot, 'dist', name)).href
+    const moduleUrl = (name: string): string => pathToFileURL(join(engineDist, name)).href
     // Compact the same persisted fixture through the production history API. The
     // engine is stopped so another process cannot retain a stale JSONL cache.
     const compact = `const {initDb,getDb}=await import(${JSON.stringify(moduleUrl('storage/sqlite/db.js'))});
@@ -197,7 +218,7 @@ test.describe.serial('工具执行与诊断真实闭环', () => {
       getDb().close();`
     execFileSync(process.execPath, ['--input-type=module', '-e', compact], { encoding: 'utf8', windowsHide: true, timeout: 30000,
       env: { ...environment(), DATA_DIR: join(fixture, 'engine', 'state', 'agent.db'), ENCRYPTION_KEY: encryptionKey } })
-    app = await electron.launch({ args: ['.', `--user-data-dir=${fixture}`], cwd: root, env: environment() })
+    app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || '.', `--user-data-dir=${fixture}`], cwd: root, env: environment() })
     page = await app.firstWindow()
     page.on('pageerror', error => errors.push(String(error)))
     await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90000 })

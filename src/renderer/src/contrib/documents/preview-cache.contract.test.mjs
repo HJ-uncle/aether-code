@@ -98,21 +98,47 @@ test('PDF bitmap snapshots survive detached pages and bounded eviction', () => {
 test('five Office documents survive a complete tab tour within the byte budget', () => {
   const sources = Array.from({ length: 5 }, (_, index) => bytes([index + 11]))
   for (let round = 0; round < 2; round++) for (const [index, source] of sources.entries()) {
-    assert.deepEqual(getOfficePreview(`tour:${index}`, source), round ? [`page:${index}`] : null)
+    assert.deepEqual(getOfficePreview(`tour:${index}`, source), round ? { pages: [`page:${index}`] } : null)
     cacheOfficePreview(`tour:${index}`, source, [`page:${index}`])
   }
 })
 
-test('Office cache reuses only the same content and bounds retained HTML', async () => {
-  const source = bytes([4])
-  cacheOfficePreview(key('office'), source, ['first', 'second'])
-  assert.deepEqual(getOfficePreview(key('office'), source), ['first', 'second'])
-  // A newly read buffer is a new generation even when its sampled bytes match.
-  cacheOfficePreview(key('office'), bytes([4]), ['new'])
-  assert.deepEqual(getOfficePreview(key('office'), source), null)
-  assert.deepEqual(getOfficePreview(key('office'), bytes([4])), null)
-  cacheOfficePreview(key('office-large'), source, ['x'.repeat(26 * 1024 * 1024)])
-  cacheOfficePreview(key('office-other'), source, ['small'])
+test('Office cache validates every byte and retains notes across decoded buffers', () => {
+  const source = bytes([4, 2, 3, 4, 5, 6, 7])
+  const notes = { notes: [{ text: 'Speaker notes', truncated: false }] }
+  cacheOfficePreview(key('office'), source, ['first', 'second'], notes)
+  const expected = { pages: ['first', 'second'], ...notes }
+  assert.deepEqual(getOfficePreview(key('office'), source), expected)
+  assert.deepEqual(getOfficePreview(key('office'), bytes([4, 2, 3, 4, 5, 6, 7])), expected)
+  assert.equal(getOfficePreview(key('office'), bytes([4, 2, 9, 4, 5, 6, 7])), null)
+  assert.equal(getOfficePreview(key('office'), bytes([4, 2, 3, 4, 5, 6, 9])), null)
+  assert.equal(getOfficePreview(key('office'), bytes([4, 2, 3, 4, 5, 6])), null)
+  cacheOfficePreview(key('office'), bytes([5]), ['new'], { notesError: 'Notes unavailable' })
   assert.equal(getOfficePreview(key('office'), source), null)
+  assert.deepEqual(getOfficePreview(key('office'), bytes([5])), { pages: ['new'], notesError: 'Notes unavailable' })
+})
+
+test('Office cache budgets source bytes and notes as well as HTML', () => {
+  const source = new ArrayBuffer(16 * 1024 * 1024)
+  cacheOfficePreview(key('office-large'), source, ['x'.repeat(17 * 1024 * 1024)])
+  assert.equal(getOfficePreview(key('office-large'), source), null)
+  cacheOfficePreview(key('office-notes-large'), source, ['x'.repeat(15 * 1024 * 1024)], {
+    notes: [{ text: 'x'.repeat(2 * 1024 * 1024), truncated: false }],
+  })
+  assert.equal(getOfficePreview(key('office-notes-large'), source), null)
+  for (let index = 0; index < 10; index++) cacheOfficePreview(key(`bounded:${index}`), bytes([index]), ['small'])
+  assert.equal(getOfficePreview(key('bounded:0'), bytes([0])), null)
+  assert.ok(officePreviewCacheStats().entries <= 8)
   assert.ok(officePreviewCacheStats().bytes <= 48 * 1024 * 1024)
+})
+
+test('expired Office cache entries release their accounting on read', () => {
+  const clock = Date.now
+  const now = clock()
+  cacheOfficePreview(key('expiry'), bytes([1]), ['expired'])
+  try {
+    Date.now = () => now + 61_000
+    assert.equal(getOfficePreview(key('expiry'), bytes([1])), null)
+    assert.deepEqual(officePreviewCacheStats(), { entries: 0, bytes: 0 })
+  } finally { Date.now = clock }
 })

@@ -9,11 +9,12 @@
  * 「哪个标签是激活的」由 layout-state 统一持有，本模块只负责文档本身。
  */
 import { useCallback, useRef, useSyncExternalStore } from 'react'
+import type { FsFileContent, FsStat } from '@shared/ipc'
 import { ipcErrorMessage } from '../ipc-error'
 import { refreshGit } from '../git/git-store'
 import { diagnoseDocument, clearDocumentDiagnostics } from '../lsp/diagnostics'
 import { rememberRecent } from './recent-files'
-import { assertSessionFileTarget, paths, readFile, writeFile, type SessionFileTarget } from '../workspace/fs-client'
+import { assertSessionFileTarget, paths, readFile, stat, writeFile, type SessionFileTarget } from '../workspace/fs-client'
 import { getWorkspaceState } from '../workspace/workspace-store'
 import { activateDocument } from './editor-activation'
 import { fileIdentity } from './file-identity'
@@ -81,6 +82,33 @@ export interface DocumentIdentity {
 }
 let nextDocumentInstance = 1
 const documentIdentities = new Map<string, DocumentIdentity>()
+// Focus and watcher registration revisit every open path. Keep the stat that
+// preceded a binary read so unchanged Office/PDF files avoid another full IPC
+// payload. A genuine watcher event bypasses this fast path (mtime can repeat).
+const binaryDiskVersions = new WeakMap<OpenDocument, FsStat>()
+
+function isDocumentPreview(name: string): boolean { return /\.(pdf|docx|xlsx|pptx)$/i.test(name) }
+
+function sameBytes(left: ArrayBuffer | null | undefined, right: ArrayBuffer | null | undefined): boolean {
+  if (left === right || !left && !right) return true
+  if (!left || !right || left.byteLength !== right.byteLength) return false
+  const words = Math.floor(left.byteLength / 4)
+  const a = new Uint32Array(left, 0, words), b = new Uint32Array(right, 0, words)
+  for (let index = 0; index < words; index++) if (a[index] !== b[index]) return false
+  const tailA = new Uint8Array(left, words * 4), tailB = new Uint8Array(right, words * 4)
+  for (let index = 0; index < tailA.length; index++) if (tailA[index] !== tailB[index]) return false
+  return true
+}
+
+function sameBinaryContent(doc: OpenDocument, file: FsFileContent): boolean {
+  return doc.isBinary && file.isBinary && doc.size === file.size && doc.truncated === file.truncated &&
+    doc.tooLarge === Boolean(file.tooLarge) && doc.content === file.content &&
+    (doc.base64 ?? null) === (file.base64 ?? null) && sameBytes(doc.bytes, file.bytes)
+}
+
+function rememberBinaryDiskVersion(doc: OpenDocument, version: FsStat | undefined): void {
+  if (doc.isBinary && version && !version.isDirectory && version.size === doc.size && version.mtimeMs > 0) binaryDiskVersions.set(doc, version)
+}
 
 /** 内容相同也可能是关闭后重新打开的新文档，异步回包不能只靠路径和字符串认领。 */
 export function getDocumentIdentity(filePath: string): DocumentIdentity | undefined {
@@ -275,6 +303,9 @@ export async function openFile(
   setState({ docs: nextDocs, order: [...state.order, filePath] })
 
   try {
+    const diskVersion = isDocumentPreview(placeholder.name) ? await stat(filePath, placeholder.sessionFileTarget).catch(() => undefined) : undefined
+    if (state.docs.get(filePath) !== placeholder) return
+    assertDocumentConnection(placeholder)
     const file = await readFile(filePath, placeholder.sessionFileTarget)
     if (state.docs.get(filePath) !== placeholder) return
     assertDocumentConnection(placeholder)
@@ -297,6 +328,7 @@ export async function openFile(
       workspaceKey: placeholder.workspaceKey,
       sessionFileTarget: placeholder.sessionFileTarget
     }
+    rememberBinaryDiskVersion(loaded, diskVersion)
     const withLoaded = new Map(state.docs)
     withLoaded.set(filePath, loaded)
     setState({ docs: withLoaded })
@@ -464,19 +496,26 @@ export async function saveAllDocuments(): Promise<void> {
  * 从磁盘重载已打开的文档（全局替换后调用）。
  * 有未保存修改的文档跳过 —— 不能拿磁盘内容盖掉用户正在编辑的内容。
  */
-export async function reloadDocuments(filePaths: string[]): Promise<void> {
+export async function reloadDocuments(filePaths: string[], forceBinaryPaths: ReadonlySet<string> = new Set()): Promise<void> {
   for (const requestedPath of filePaths) {
     const filePath = resolveDocumentPath(requestedPath)
     const doc = state.docs.get(filePath)
-    if (!doc || doc.isBinary || doc.loading || state.saving.has(filePath) || !isDocumentConnectionCurrent(doc)) continue
+    if (!doc || doc.isBinary && !isDocumentPreview(doc.name) || doc.loading || state.saving.has(filePath) || !isDocumentConnectionCurrent(doc)) continue
     const identity = getDocumentIdentity(filePath)
     try {
+      const diskVersion = doc.isBinary ? await stat(filePath, doc.sessionFileTarget) : undefined
+      assertDocumentConnection(doc)
+      if (!sameDocument(filePath, identity) || state.saving.has(filePath)) continue
+      const previousDiskVersion = binaryDiskVersions.get(doc)
+      if (diskVersion && previousDiskVersion && !forceBinaryPaths.has(filePath) && !doc.error && !doc.externalChange &&
+        !diskVersion.isDirectory && diskVersion.size === previousDiskVersion.size && diskVersion.mtimeMs === previousDiskVersion.mtimeMs) continue
       const file = await readFile(filePath, doc.sessionFileTarget)
       assertDocumentConnection(doc)
       const latest = state.docs.get(filePath)
-      if (!latest || !sameDocument(filePath, identity) || latest.content !== doc.content || latest.savedContent !== doc.savedContent || state.saving.has(filePath)) continue
+      if (!latest || !sameDocument(filePath, identity) || latest.content !== doc.content || latest.savedContent !== doc.savedContent ||
+        latest.isBinary !== doc.isBinary || latest.bytes !== doc.bytes || latest.base64 !== doc.base64 || state.saving.has(filePath)) continue
       const nextDocs = new Map(state.docs)
-      if (isDirty(latest) && file.content !== latest.content) {
+      if (isDirty(latest) && (file.isBinary || file.content !== latest.content)) {
         if (file.content === latest.savedContent && !file.isBinary && !file.truncated) {
           if (!latest.externalChange) continue
           nextDocs.set(filePath, { ...latest, externalChange: undefined, diskContent: undefined })
@@ -486,21 +525,29 @@ export async function reloadDocuments(filePaths: string[]): Promise<void> {
         setState({ docs: nextDocs })
         continue
       }
-      if (file.content === latest.content && file.content === latest.savedContent && !latest.externalChange && file.truncated === latest.truncated) continue
-      nextDocs.set(filePath, {
+      const unchangedBinary = sameBinaryContent(latest, file)
+      const unchangedText = !latest.isBinary && !file.isBinary && file.content === latest.content && file.content === latest.savedContent && file.truncated === latest.truncated
+      if ((unchangedBinary || unchangedText) && !latest.externalChange && !latest.error) {
+        rememberBinaryDiskVersion(latest, diskVersion)
+        continue
+      }
+      const updated: OpenDocument = {
         ...latest,
         content: file.content,
         savedContent: file.content,
         isBinary: file.isBinary,
         base64: file.base64 ?? null,
-      bytes: file.bytes ?? null,
+        bytes: unchangedBinary ? latest.bytes : file.bytes ?? null,
         tooLarge: Boolean(file.tooLarge),
         truncated: file.truncated,
         size: file.size,
         externalChange: undefined,
         diskContent: undefined,
         error: null
-      })
+      }
+      rememberBinaryDiskVersion(updated, diskVersion)
+      nextDocs.set(filePath, updated)
+      if (latest.isBinary || file.isBinary) markDocumentEdited(filePath)
       setState({ docs: nextDocs })
     } catch (error) {
       const latest = state.docs.get(filePath)

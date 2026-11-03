@@ -648,6 +648,10 @@ export interface ChatSsePayload {
  * 老内容/新内容用于渲染 git 风格 diff；内容过大或二进制时两者为 null（truncated=true）。
  */
 export interface EngineFileChange {
+  sessionId?: string
+  source?: 'command-observation'
+  commandJobId?: string
+  requiresExplicitRevert?: boolean
   /** Net pending rows retain every source operation for keep/revert actions. */
   changeIds?: string[]
   projectionIssue?: 'discontinuous-history' | 'later-change' | 'disk-diverged' | 'path-changed' | 'snapshot-unavailable' | 'unreadable'
@@ -678,7 +682,7 @@ export interface EngineFileChange {
 }
 
 /** Shared envelope for both SSE and HTTP replay-recovery signals. */
-export type { StreamEvent } from './stream-event'
+export type { StreamEvent, StreamStartResult } from './stream-event'
 
 export interface StreamStartInput {
   /** Resume and initial streams must use the same negotiated event contract. */

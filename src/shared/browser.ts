@@ -41,6 +41,15 @@ export interface BrowserTabState {
   navigationId: number
   context?: BrowserContext
   error?: string
+  /** Live host conditions, distinct from page loading and ownership. */
+  availability?: BrowserAvailability
+}
+
+export interface BrowserAvailability {
+  window: 'visible' | 'hidden' | 'minimized' | 'closed'
+  surface: 'visible' | 'hidden'
+  initialization: 'starting' | 'ready' | 'failed'
+  interaction: 'ready' | 'needs_reveal' | 'needs_user' | 'unavailable'
 }
 
 export interface BrowserCreateInput {

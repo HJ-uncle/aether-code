@@ -14,6 +14,7 @@ import { hasBinaryFileSignature, hasOfficeFileSignature } from '@shared/file-sig
 import { FilePreview } from '../editor/FilePreview'
 import { WorkTextPreview, isLargeWorkText } from './WorkTextPreview'
 import { readWorkFileCached } from './work-file-read-cache'
+import { subscribeWorkPreview, workPreviewRevision } from '@renderer/core/workbench/preview-request'
 
 export interface WorkArtifactPanelProps {
   artifact: WorkArtifact | null
@@ -126,7 +127,9 @@ function ArtifactContent({
 }: WorkArtifactPanelProps & { epoch: number }): JSX.Element {
   const [readVersion, setReadVersion] = useState(0)
   const previousReadVersion = useRef(-1)
-  const readKey = `${artifact?.content ?? ''}:${readVersion}`
+  const requestRevision = useSyncExternalStore(subscribeWorkPreview, () => workPreviewRevision(epoch, sessionId, artifact?.path))
+  const previousRequestRevision = useRef(0)
+  const readKey = `${artifact?.content ?? ''}:${readVersion}:${requestRevision}`
   const [read, setRead] = useState<{ receipt: string; value: WorkArtifactContent | null }>({ receipt: readKey, value: null })
   const value = artifact && !artifact.path
     ? { content: null, coverage: 'unavailable' as const, notice: '该成果没有有效的文件路径，无法读取。' }
@@ -170,8 +173,9 @@ function ArtifactContent({
       throw last ?? new Error('读取文件失败')
     }
     const cacheKey = JSON.stringify([epoch, sessionId, workspaceRoot, externalPath, externalFile?.name, externalFile?.size, externalFile?.lastModified, artifact?.id, artifact?.path, artifact?.content])
-    const refresh = readVersion > 0 && readVersion > previousReadVersion.current
+    const refresh = (readVersion > 0 && readVersion > previousReadVersion.current) || requestRevision > previousRequestRevision.current
     previousReadVersion.current = readVersion
+    previousRequestRevision.current = requestRevision
     if (externalFile) {
       void readWorkFileCached(cacheKey, () => readWithRetry(() => readExternalFile(externalFile)), refresh)
         .then((result) => {
@@ -210,7 +214,7 @@ function ArtifactContent({
     return () => {
       active = false
     }
-  }, [artifact?.id, artifact?.path, artifact?.content, artifact?.status, workspaceRoot, sessionId, externalFile, externalPath, readVersion, epoch])
+  }, [artifact?.id, artifact?.path, artifact?.content, artifact?.status, workspaceRoot, sessionId, externalFile, externalPath, readVersion, requestRevision, epoch])
 
   const language = useMemo(
     () => artifact?.name.split('.').pop()?.toUpperCase() ?? 'TEXT',
@@ -308,7 +312,7 @@ function ArtifactContent({
     onAddToConversation?.({ ...artifact, content: null }, selection || undefined, selection ? value?.coverage : undefined)
   }
   return (
-    <section className="work-artifact-panel-v2" aria-label="成果预览" data-document-session={sessionId} data-document-path={artifact.path} data-resource-tab={inResourceTab ? 'true' : 'false'}>
+    <section className="work-artifact-panel-v2" aria-label="成果预览" data-document-session={sessionId} data-document-path={artifact.path} data-document-active={active ? 'true' : 'false'} data-workbench-request={requestRevision} data-file-read-status={loading ? 'loading' : value?.coverage ?? 'unavailable'} data-resource-tab={inResourceTab ? 'true' : 'false'}>
       <div className="work-artifact-panel-v2__toolbar">
         {!inResourceTab && <button
           type="button"

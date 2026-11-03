@@ -1,0 +1,34 @@
+{
+  "date": "2026-11-03",
+  "checks": [
+    "JSON 可解析",
+    "引擎76个唯一工具/48个Code候选",
+    "总览76个名称与引擎目录一致",
+    "Codex本地66定义/153RPC",
+    "OSS35形态及24源文件内容一致",
+    "客户端计数一致",
+    "128条会话操作和状态总数一致",
+    "Markdown本地链接存在/行号有效"
+  ],
+  "localLinksChecked": 1192,
+  "officialDocuments": {
+    "attempted": 34,
+    "fetched": 31,
+    "unavailable": [
+      {
+        "name": "chatgpt-work",
+        "error": "HTTP Error 404: Not Found"
+      },
+      {
+        "name": "environments-security",
+        "error": "HTTP Error 404: Not Found"
+      },
+      {
+        "name": "environments-local",
+        "error": "HTTP Error 404: Not Found"
+      }
+    ]
+  },
+  "errors": [],
+  "runtimeTests": "未执行，本轮为静态调研和文档交付"
+}

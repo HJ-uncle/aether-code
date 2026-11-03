@@ -7,7 +7,7 @@ export const independentScenarioVersion = 'independent-six-tasks-v1-protected-br
 export const collaborationEnabled = false
 export const independentBoundary = '六个任务完全独立。只操作本任务工作区及本父任务明确选择的实现/审查子Agent；不得读取、调用或向其他lane的工作区、根会话、Agent或child交接。允许用subagent启动本任务所选子Agent，并按resumeBoundary在本父任务内续跑。'
 export const independentLanes = ['code-a', 'code-b', 'work-a', 'work-b', 'cron-a', 'cron-b']
-export const independentTools = ['read_file', 'write_file', 'edit_file', 'list_files', 'grep_search', 'glob_search', 'execute_cmd', 'command_output', 'cancel_command', 'subagent', 'get_current_context', 'plan_update']
+export const independentTools = ['read_file', 'write_file', 'edit_file', 'list_files', 'grep', 'glob', 'execute_cmd', 'command_output', 'cancel_command', 'subagent', 'plan_update']
 const hash = value => createHash('sha256').update(value).digest('hex')
 const hashPattern = /^[a-f0-9]{64}$/
 const nonempty = value => typeof value === 'string' && value.trim().length > 0

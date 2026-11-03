@@ -77,6 +77,11 @@ export function CommandJobCard({ job: initial, sessionId }: { job: CommandJobSna
     {remoteReadOnly ? <div className="command-job-card__meta">远端命令任务</div> : null}
     <div className="command-job-card__meta" title={job.cwd}>工作目录：{job.cwd}{cancelledByStop || job.exitCode === null ? '' : ` · 退出码 ${job.exitCode}`}{!cancelledByStop && job.signal ? ` · ${job.signal}` : ''}</div>
     {job.ownerSessionId !== sessionId ? <div className="command-job-card__meta">子代理任务：{job.ownerRunId ?? job.ownerSessionId}</div> : null}
+    {job.changeTracking ? <div className="command-job-card__meta" role="note" title={job.changeTracking.note}>
+      {job.changeTracking.status === 'observing' ? '正在记录工作区文件变化' : `已记录 ${job.changeTracking.recordedCount ?? 0} 项文件变化`}
+      {job.changeTracking.status === 'partial' ? ' · 部分文件未纳入记录' : job.changeTracking.status === 'unavailable' ? ' · 记录不可用' : ''}
+      {(job.changeTracking.recordedCount ?? 0) > 0 ? ' · 请在改动中逐项确认回退' : ''}
+    </div> : null}
     {stopMessage ? <div className="command-job-card__stop-reason" role="note">{stopMessage}</div> : null}
     {cancelledByStop ? <details className="command-job-card__diagnostics">
       <summary>停止详情</summary>

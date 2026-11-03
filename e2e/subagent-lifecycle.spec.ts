@@ -328,7 +328,7 @@ test.describe.serial('子代理：真实引擎 / HTTP / IPC 生命周期', () =>
     const listedNames = (tools.data ?? []).map(tool => tool.name)
     assertCodeProfile(listedNames)
     expect(listedNames).toEqual(expect.arrayContaining([
-      'read_file', 'write_file', 'execute_cmd', 'grep_search', 'subagent',
+      'read_file', 'write_file', 'execute_cmd', 'grep', 'subagent',
       'web_fetch', 'ask_user', 'list_skills'
     ]))
 
@@ -341,7 +341,7 @@ test.describe.serial('子代理：真实引擎 / HTTP / IPC 生命周期', () =>
     const parentTools = dispatchedToolNames(probes.round)
     assertCodeProfile(parentTools)
     expect(parentTools).toEqual(expect.arrayContaining([
-      'subagent', 'read_file', 'grep_search', 'execute_cmd'
+      'subagent', 'read_file', 'grep', 'execute_cmd'
     ]))
     for (const marker of [probes.success, probes.failure]) {
       const childTools = dispatchedToolNames(marker)

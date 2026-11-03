@@ -70,6 +70,7 @@ test.describe.serial('终端右键菜单与恢复连接', () => {
       let raw = ''
       for await (const chunk of request) raw += String(chunk)
       const body = raw ? JSON.parse(raw) as Record<string, unknown> : {}
+      const requestedSession = String(body.sessionId ?? url.searchParams.get('sessionId') ?? sessionId)
       const reply = (data: unknown, status = 200, message = 'ok'): void => {
         response.writeHead(status, { 'content-type': 'application/json' })
         response.end(JSON.stringify({ code: status, message, data }))
@@ -79,10 +80,19 @@ test.describe.serial('终端右键菜单与恢复连接', () => {
       if (url.pathname === '/meta') return reply({ version: '1.0.0', buildId: 'sha256:' + 'd'.repeat(64), protocolVersion: 1, toolProfiles: ['code'], subagentSchemaVersion: 1, instanceId: 'terminal-actions-fixture' })
       if (url.pathname === '/auth/account/providers') return reply({ providers: [], registrationEnabled: true })
       if (url.pathname === '/api/v1/chat/snapshot') {
-        const requestedSession = url.searchParams.get('sessionId') ?? sessionId
         snapshotSessions.push(requestedSession)
-        return reply({ schemaVersion: 1, source: 'persisted', sessionId: requestedSession, finished: true, projection: [], runs: [], history: [], todos: [], changes: [], commandJobs: [] })
+        return reply({ schemaVersion: 1, source: 'persisted', sessionId: requestedSession, finished: true, eventId: null, projection: [], runs: [], history: [], todos: [], changes: [], commandJobs: [] })
       }
+      // Session restoration negotiates child protocol before accepting history.
+      // Unsupported optional endpoints must not pretend to succeed with [].
+      if (url.pathname === '/api/v1/subagent/capabilities') return reply({ schemaVersion: 2, eventVersions: [1, 2], views: ['legacy', 'summary'], toolPagination: true, eventPagination: true, detailChunks: true, exactWatermarks: true })
+      if (url.pathname === '/api/v1/subagent/runs') return reply({ schemaVersion: 2, runs: [], listComplete: true, hasMore: false, revision: 'fixture' })
+      if (url.pathname === '/api/v1/chat/status') return reply({ running: false, finished: true })
+      if (url.pathname === '/api/v1/chat/stream') { response.writeHead(200, { 'content-type': 'text/event-stream' }).end('data: [DONE]\n\n'); return }
+      if (url.pathname === '/api/v1/chat/admission/context') return reply({ protocolVersion: 1, tenantId: 'fixture', sessionId: requestedSession,
+        namespace: { id: 'terminal-actions', generation: 'one' }, transport: { toolProfile: 'code', runLifetime: 'durable', subagentProtocol: 2 }, root: null, predecessor: null })
+      if (url.pathname === '/api/v1/security/mode') return reply({ sessionId: requestedSession, mode: 'standard' })
+      if (url.pathname === '/api/v1/workbench/clients' || url.pathname === '/api/v1/cron/capabilities') return reply(null, 404, 'Unsupported fixture capability')
       if (url.pathname === '/api/v1/chat/runs') return reply({ runs: [] })
       if (url.pathname === '/api/v1/workspace/directory') return reply({ root: '/terminal/workspace', entries: [] })
       if (url.pathname === '/api/v1/workspace/file/info') {
@@ -146,12 +156,13 @@ test.describe.serial('终端右键菜单与恢复连接', () => {
     for (const key of Object.keys(environment)) {
       if (['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL', 'AETHER_IDE_REMOTE_API_KEY', 'AETHER_IDE_REMOTE_BEARER_TOKEN', 'AETHER_IDE_REMOTE_AUTH_URL', 'AETHER_IDE_REMOTE_INSTANCE_TOKEN'].includes(key.toUpperCase())) delete environment[key]
     }
-    app = await electron.launch({ args: ['.', '--user-data-dir=' + fixture], cwd: root, env: environment })
+    app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || '.', '--user-data-dir=' + fixture], cwd: root, env: environment })
     page = await app.firstWindow()
     page.on('pageerror', error => pageErrors.push(error.message))
     await expect(page.locator('.status-bar')).toBeVisible()
     const snapshot = await page.evaluate(() => window.aether.engine.start())
     expect(snapshot.phase, snapshot.error ?? '').toBe('ready')
+    await expect(page.getByTitle('新建会话（开一条全新对话）', { exact: true })).toBeEnabled()
     await page.keyboard.press('Control+`')
     await expect(page.locator('.terminal-view .xterm-screen')).toBeVisible()
     await expect(page.locator('.terminal-view__item')).toHaveCount(1)

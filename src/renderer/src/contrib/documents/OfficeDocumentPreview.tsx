@@ -1,67 +1,80 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { DOCUMENT_LIMITS, previewErrorMessage } from './document-kind'
 import { prepareOfficeArchiveOffThread } from './office-archive-client'
-import { cacheOfficePreview, getOfficePreview } from './office-preview-cache'
+import { cacheOfficePreview, getOfficePreview, type CachedOfficePreview } from './office-preview-cache'
 import { documentFrame, passiveDocumentHtml } from './document-html'
-import { PreviewMessage, PreviewZoom, usePreviewVisibility, usePreviewWidth, useStablePreviewWidth } from './preview-controls'
+import { PreviewMessage, PreviewZoom, usePreviewWidth, useStablePreviewWidth } from './preview-controls'
 import { readPptxNotesForPreview, type PptxNotesPreview } from './pptx-notes'
 
-function ContinuousPage({ html, name, index, scale, onSize }: { html: string; name: string; index: number; scale: number; onSize: (index: number, height: number) => void }): JSX.Element {
+const PAGE_GAP = 16
+const RECENT_PAGES = 3
+const pageHeight = (height: number, scale: number): number => Math.max(200, Math.ceil(height * scale + 2))
+
+function ContinuousPage({ html, name, index, scale, height, retained, active, onSize }: {
+  html: string; name: string; index: number; scale: number; height: number; retained: boolean; active: boolean
+  onSize: (index: number, intrinsicHeight: number) => void
+}): JSX.Element {
   const frame = useRef<HTMLIFrameElement>(null)
-  const placeholder = useRef<HTMLDivElement>(null)
-  const [near, setNear] = useState(index < 2)
-  const [height, setHeight] = useState(0)
-  const estimatedHeight = name.toLowerCase().endsWith('.pptx') ? 540 * scale : 1100 * scale
-  const srcDoc = useMemo(() => near ? documentFrame(html, name, scale) : '', [html, name, scale, near])
-  useEffect(() => {
-    const element = placeholder.current
-    if (!element) return
-    const observer = new IntersectionObserver(entries => {
-      for (const entry of entries) setNear(entry.isIntersecting)
-    }, { root: element.closest('.document-preview__body'), rootMargin: '800px 0px' })
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [])
+  const latest = useRef({ scale, onSize })
+  latest.current = { scale, onSize }
+  const resize = useRef<(() => void) | null>(null)
+  // Changing srcdoc navigates the child document and decodes every image again.
+  // Only this trusted parent changes zoom; the sandbox never enables scripts.
+  const srcDoc = useMemo(() => documentFrame(html, name, 1), [html, name])
   useEffect(() => {
     const child = frame.current
-    if (!child || !near) return
+    if (!child || !retained || !active) return
+    let lastHeight = 0
     const update = (): void => {
-      const body = child.contentDocument?.body
-      if (!body) return
-      const next = Math.max(200, Math.ceil((body.querySelector('main')?.getBoundingClientRect().height ?? body.getBoundingClientRect().height) + 2))
-      if (Math.abs(next - height) < 2) return
-      setHeight(next)
-      onSize(index, next)
+      const main = child.contentDocument?.querySelector<HTMLElement>('main.document-page')
+      if (!main) return
+      const zoom = latest.current.scale
+      if (main.style.zoom !== String(zoom)) main.style.zoom = String(zoom)
+      const next = main.getBoundingClientRect().height / zoom
+      if (next <= 0 || Math.abs(next - lastHeight) < 0.5) return
+      lastHeight = next
+      latest.current.onSize(index, next)
     }
     const observer = new ResizeObserver(update)
-    child.addEventListener('load', update)
-    if (child.contentDocument?.body) observer.observe(child.contentDocument.body)
-    update()
-    return () => { child.removeEventListener('load', update); observer.disconnect() }
-  }, [near, srcDoc, index, height, onSize])
-  return <div ref={placeholder} className="document-preview__continuous-page" data-document-page={index + 1} style={{ height: height || Math.max(200, Math.ceil(estimatedHeight)) }}>
-    {near ? <iframe ref={frame} className="document-preview__frame" sandbox="allow-same-origin" referrerPolicy="no-referrer"
+    const loaded = (): void => {
+      observer.disconnect()
+      const main = child.contentDocument?.querySelector('main.document-page')
+      if (main) observer.observe(main)
+      update()
+    }
+    resize.current = update
+    child.addEventListener('load', loaded)
+    loaded()
+    return () => { resize.current = null; child.removeEventListener('load', loaded); observer.disconnect() }
+  }, [retained, active, srcDoc, index])
+  useLayoutEffect(() => { resize.current?.() }, [scale])
+  return <div className="document-preview__continuous-page" data-document-page={index + 1} style={{ height }}>
+    {retained ? <iframe ref={frame} className="document-preview__frame" sandbox="allow-same-origin" referrerPolicy="no-referrer"
       title={`${name} · 第 ${index + 1} 页`} srcDoc={srcDoc} /> : null}
   </div>
 }
 
-export default function OfficeDocumentPreview({ data, kind, name, sessionKey, onRetry }: { data: ArrayBuffer; kind: 'docx' | 'pptx'; name: string; sessionKey: string; onRetry?: () => void }): JSX.Element {
-  const cachedPages = useMemo(() => getOfficePreview(sessionKey, data), [sessionKey, data])
-  const [state, setState] = useState<{ pages?: string[]; error?: string } & PptxNotesPreview>(() => cachedPages ? { pages: [...cachedPages] } : {})
+export default function OfficeDocumentPreview({ data, kind, name, sessionKey, active = true, onRetry }: { data: ArrayBuffer; kind: 'docx' | 'pptx'; name: string; sessionKey: string; active?: boolean; onRetry?: () => void }): JSX.Element {
+  const cacheKey = JSON.stringify([sessionKey, kind])
+  const cachedPreview = useMemo(() => getOfficePreview(cacheKey, data), [cacheKey, data])
+  const [state, setState] = useState<Partial<CachedOfficePreview> & { error?: string }>(() => cachedPreview ?? {})
   const [zoom, setZoom] = useState(0)
   const [notesOpen, setNotesOpen] = useState(false)
   const [visiblePage, setVisiblePage] = useState(1)
   const [pageHeights, setPageHeights] = useState<Record<number, number>>({})
-  const [source, setSource] = useState({ data, kind })
-  if (source.data !== data || source.kind !== kind) {
-    const pages = getOfficePreview(sessionKey, data)
+  const [pageRetention, setPageRetention] = useState({ near: [0, 1], recent: [] as number[] })
+  const [source, setSource] = useState({ data, cacheKey })
+  if (source.data !== data || source.cacheKey !== cacheKey) {
     setPageHeights({})
-    setSource({ data, kind }); setState(pages ? { pages: [...pages] } : {}); setVisiblePage(1); setNotesOpen(false)
+    setPageRetention({ near: [0, 1], recent: [] })
+    setSource({ data, cacheKey }); setState(cachedPreview ?? {}); setVisiblePage(1); setNotesOpen(false)
   }
-  const body = useRef<HTMLDivElement>(null), width = usePreviewWidth(body, Boolean(state.pages)), layoutReady = usePreviewVisibility(body, Boolean(state.pages))
+  const body = useRef<HTMLDivElement>(null), width = usePreviewWidth(body, active && Boolean(state.pages))
   const stableWidth = useStablePreviewWidth(width)
+  // Hidden retained previews keep their last nonzero layout and their frames.
+  const layoutReady = stableWidth > 0
   useEffect(() => {
-    if (cachedPages) return
+    if (cachedPreview) return
     const controller = new AbortController()
     const timer = setTimeout(() => { setState({ error: '此文档预览准备超时，请重试预览；若仍失败，请让 Aether 检查文件完整性。' }); controller.abort() }, DOCUMENT_LIMITS.parseTimeoutMs)
     void (async () => {
@@ -89,6 +102,7 @@ export default function OfficeDocumentPreview({ data, kind, name, sessionKey, on
       clearTimeout(timer)
       let htmlBytes = 0
       const sanitized: string[] = []
+      let notesReady: Promise<PptxNotesPreview> = Promise.resolve({})
       for (const [index, html] of pages.entries()) {
         controller.signal.throwIfAborted()
         const safe = passiveDocumentHtml(html)
@@ -98,51 +112,80 @@ export default function OfficeDocumentPreview({ data, kind, name, sessionKey, on
         if (index === 0) {
           setState(previous => ({ ...previous, pages: [safe] }))
           if (kind === 'pptx') {
-            void readPptxNotesForPreview(buffer, pages.length, controller.signal).then(notes => {
+            notesReady = readPptxNotesForPreview(buffer, pages.length, controller.signal).then(notes => {
               if (!controller.signal.aborted) setState(previous => ({ ...previous, ...notes }))
-            }).catch(() => { /* Abort belongs to the disposed preview. */ })
+              return notes
+            }).catch(() => ({})) // Abort belongs to the disposed preview.
           }
         }
         if (index === 0 || index % 4 === 3) await new Promise<void>(resolve => setTimeout(resolve, 0))
       }
       if (!controller.signal.aborted) {
-        cacheOfficePreview(sessionKey, data, sanitized)
         setState(previous => ({ ...previous, pages: sanitized }))
+        const notes = await notesReady
+        if (!controller.signal.aborted) cacheOfficePreview(cacheKey, data, sanitized, notes)
       }
     })().catch((error: unknown) => { clearTimeout(timer); if (!controller.signal.aborted) setState({ error: previewErrorMessage(error) }) })
     return () => { clearTimeout(timer); controller.abort() }
-  }, [data, kind, sessionKey, cachedPages])
+  }, [data, kind, cacheKey, cachedPreview])
   const scale = zoom || Math.min(1, Math.max(0.2, (stableWidth - 24) / (kind === 'pptx' ? 960 : 840)))
   const pages = state.pages ?? []
-  const totalHeight = useMemo(() => pages.reduce((sum, _page, index) => sum + (pageHeights[index + 1] ?? (kind === 'pptx' ? 540 * scale + 18 : 1100)), 0), [pages, kind, scale, pageHeights])
+  const estimatedHeight = kind === 'pptx' ? 540 : 1100
+  const totalHeight = useMemo(() => pages.reduce((sum, _page, index) => sum + pageHeight(pageHeights[index] ?? estimatedHeight, scale) + (index ? PAGE_GAP : 0), 0), [pages, estimatedHeight, scale, pageHeights])
   const rememberHeight = useCallback((page: number, height: number) => {
     setPageHeights(previous => previous[page] === height ? previous : { ...previous, [page]: height })
   }, [])
+  const retainedPages = useMemo(() => new Set([...pageRetention.near,
+    ...pageRetention.recent.filter(index => !pageRetention.near.includes(index)).slice(0, RECENT_PAGES)]), [pageRetention])
+  useEffect(() => {
+    const element = body.current
+    if (!element || !active || !layoutReady) return
+    const observer = new IntersectionObserver(entries => {
+      setPageRetention(previous => {
+        const near = new Set(previous.near)
+        let recent = previous.recent
+        for (const entry of entries) {
+          const index = Number((entry.target as HTMLElement).dataset.documentPage) - 1
+          if (entry.isIntersecting) {
+            near.add(index)
+            recent = [index, ...recent.filter(page => page !== index)]
+          } else {
+            if (near.delete(index)) recent = [index, ...recent.filter(page => page !== index)]
+          }
+        }
+        return { near: [...near], recent: recent.slice(0, near.size + RECENT_PAGES) }
+      })
+    }, { root: element, rootMargin: '800px 0px' })
+    for (const page of element.querySelectorAll('[data-document-page]')) observer.observe(page)
+    return () => observer.disconnect()
+  }, [active, layoutReady, pages.length, data, cacheKey])
   const note = state.notes?.[visiblePage - 1]
   useEffect(() => {
     const element = body.current
-    if (!element || pages.length < 2) return
+    if (!element || !active || pages.length < 2) return
     let frame = 0
     const update = (): void => {
       frame = 0
       const center = element.scrollTop + element.clientHeight * 0.35
-      let accumulated = 0
+      let accumulated = PAGE_GAP
       for (let index = 0; index < pages.length; index++) {
-        accumulated += pageHeights[index + 1] ?? (kind === 'pptx' ? 540 * scale + 18 : 1100)
+        accumulated += pageHeight(pageHeights[index] ?? estimatedHeight, scale) + PAGE_GAP
         if (accumulated >= center) { setVisiblePage(index + 1); break }
       }
     }
     const scroll = (): void => { if (!frame) frame = requestAnimationFrame(update) }
     element.addEventListener('scroll', scroll, { passive: true })
+    scroll()
     return () => { element.removeEventListener('scroll', scroll); cancelAnimationFrame(frame) }
-  }, [pages, kind, scale, pageHeights])
+  }, [pages, estimatedHeight, scale, pageHeights, active])
   if (state.error) return <PreviewMessage error={state.error} onRetry={onRetry} />
   if (!pages.length) return <PreviewMessage />
   return <>
     <PreviewZoom zoom={zoom} onZoom={setZoom} />
     <div className="document-preview__body document-preview__body--continuous" ref={body} data-document-pages={pages.length}>
       {layoutReady ? <div className="document-preview__continuous-content" style={{ minHeight: totalHeight }}>
-        {pages.map((html, index) => <ContinuousPage key={index} html={html} name={name} index={index} scale={scale} onSize={rememberHeight} />)}
+        {pages.map((html, index) => <ContinuousPage key={index} html={html} name={name} index={index} scale={scale}
+          height={pageHeight(pageHeights[index] ?? estimatedHeight, scale)} retained={retainedPages.has(index)} active={active} onSize={rememberHeight} />)}
       </div> : <PreviewMessage />}
     </div>
     {state.notesError || note && (note.text || note.truncated) ? <details className="document-preview__notes" open={notesOpen}

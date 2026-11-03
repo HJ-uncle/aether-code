@@ -15,6 +15,7 @@ export type IconName =
   | 'play'
   | 'stop'
   | 'restart'
+  | 'undo'
   | 'send'
   | 'close'
   | 'trash'
@@ -129,6 +130,7 @@ const PATHS: Record<IconName, JSX.Element> = {
   play: <path d="M8 5l11 7-11 7V5z" fill="currentColor" />,
   stop: <path d="M6 6h12v12H6z" fill="currentColor" />,
   restart: <path d="M12 5V2L7 6l5 4V7a5 5 0 11-5 5H5a7 7 0 107-7z" fill="currentColor" />,
+  undo: <path d="M9 4 3 10l6 6v-4h6a4 4 0 0 1 0 8h-4v2h4a6 6 0 0 0 0-12H9V4z" fill="currentColor" />,
   send: (
     <path d="M3 3l18 9-18 9 4-9-4-9zm6.5 9L5.6 8.6 15 12l-9.4 3.4L9.5 12z" fill="currentColor" />
   ),

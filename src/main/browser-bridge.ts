@@ -15,7 +15,7 @@ interface Registration {
   clientId: string
   clientToken: string
   sessionId: string
-  capabilities?: { requestWatch?: boolean }
+  capabilities?: { requestWatch?: boolean; resultMetadata?: number }
 }
 interface Connection {
   input: BrowserConnectInput
@@ -227,7 +227,8 @@ export class BrowserEngineBridge {
       return this.service.execute({ ...command.args, action: command.action }, connection.context, lifetime)
     }
     if (!await this.requestState(connection, command, false, lifetime)) {
-      return { success: false, error: '浏览器操作已取消或结束，尚未执行页面操作' }
+      return { success: false, error: '浏览器操作已取消或结束，尚未执行页面操作',
+        metadata: { code: 'BROWSER_REQUEST_CANCELLED', operationPerformed: false } }
     }
     const operation = new AbortController()
     const monitoring = new AbortController()
@@ -253,7 +254,8 @@ export class BrowserEngineBridge {
     })()
     try {
       const result = await this.service.execute({ ...command.args, action: command.action }, connection.context, signal)
-      return watchFailure ? { success: false, error: watchFailure } : result
+      return watchFailure ? { ...result, success: false, error: watchFailure,
+        metadata: { code: 'BROWSER_MONITOR_INTERRUPTED', operationPerformed: result.metadata?.operationPerformed === false ? false : 'unknown' } } : result
     } finally {
       monitoring.abort()
       await watch
@@ -273,18 +275,21 @@ export class BrowserEngineBridge {
           let result: BrowserToolResult
           if (command.sessionId !== connection.context.sessionId ||
             (typeof command.expiresAt === 'number' && (!Number.isFinite(command.expiresAt) || command.expiresAt <= Date.now()))) {
-            result = { success: false, error: '浏览器操作已过期或会话不匹配，未执行' }
+            result = { success: false, error: '浏览器操作已过期或会话不匹配，未执行',
+              metadata: { code: 'BROWSER_REQUEST_EXPIRED', operationPerformed: false } }
           } else {
             try {
               result = await this.executeCommand(connection, command)
             }
-            catch (error) { result = { success: false, error: error instanceof Error ? error.message : String(error) } }
+            catch (error) { result = { success: false, error: error instanceof Error ? error.message : String(error),
+              metadata: { code: 'BROWSER_OPERATION_UNCONFIRMED', operationPerformed: 'unknown' } } }
           }
           if (!this.owns(connection)) return
           await this.request(connection.baseUrl, await this.authorizedHeaders(connection), connection.controller.signal, 'POST',
             `/browser/clients/${encodeURIComponent(connection.registration.clientId)}/results`, {
               requestId: command.requestId, success: result.success,
-              output: typeof result.output === 'string' ? result.output : JSON.stringify(result.output ?? null), error: result.error
+              output: typeof result.output === 'string' ? result.output : JSON.stringify(result.output ?? null), error: result.error,
+              ...(connection.registration.capabilities?.resultMetadata === 1 && result.metadata ? { metadata: result.metadata } : {})
             })
         }
       } catch (error) {

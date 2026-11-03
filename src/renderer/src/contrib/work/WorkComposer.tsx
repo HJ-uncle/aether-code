@@ -46,6 +46,7 @@ export function WorkComposer({
   home?: boolean
 }): JSX.Element {
   const filesRef = useRef<HTMLInputElement>(null)
+  const addingFilesRef = useRef(false)
   const inputRef = useRef<MentionInputHandle>(null)
   const composerRef = useRef<HTMLDivElement>(null)
   const draftState = useWorkDraft(controller.draftSource, controller.activeTask?.id ?? null)
@@ -71,10 +72,20 @@ export function WorkComposer({
   taskLiveRef.current = controller.activeTask?.id ?? 'home'
   const awaitingAnswer = controller.pending.length > 0
   const taskActive = !home && (controller.streaming || controller.launching || awaitingAnswer || ['running', 'waiting'].includes(controller.activeTask?.status ?? ''))
-  const busy = controller.streaming || controller.uploading || controller.loading || !controller.historyReady || awaitingAnswer
+  const busy = controller.streaming || controller.uploading || controller.loading || !controller.historyReady || awaitingAnswer || controller.messageActionBusy
   const queueIntent = !home && (taskActive || controller.nextTurnQueue.pendingCount > 0 || controller.nextTurnQueue.state?.entries.some(entry => ['dispatching', 'admission-unknown', 'accepted'].includes(entry.phase))) && !controller.pendingInitialStart
   const queueBusy = controller.uploading || controller.loading || !controller.historyReady || controller.nextTurnQueue.saving || !controller.nextTurnQueue.ready
-  const historyRecovering = controller.historyRecovery && ['connecting', 'retrying'].includes(controller.historyRecovery.phase)
+  const canAddFiles = controller.ready && !(queueIntent ? queueBusy : taskActive || busy)
+  const addFiles = (files: File[]): void => {
+    if (!files.length) return
+    if (!canAddFiles || addingFilesRef.current) {
+      toast.info(controller.uploading || addingFilesRef.current ? '资料正在添加，请稍候。'
+        : !controller.ready ? '连接恢复后可添加资料，草稿会保留。' : '正在准备任务，请稍后添加资料。')
+      return
+    }
+    addingFilesRef.current = true
+    void controller.addFiles(files).catch(reportError).finally(() => { addingFilesRef.current = false })
+  }
   const contextDisplay = useMemo(
     () => contextPresentation(controller.messages),
     [controller.messages]
@@ -118,6 +129,10 @@ export function WorkComposer({
     userDraftRef.current = null
     inputRef.current?.setDraft(draftState.text, draftState.mentions)
   }, [draftState])
+  useEffect(() => {
+    const request = controller.draftFocusRequest
+    if (request?.source === controller.draftSource && request.taskId === controller.activeTask?.id) inputRef.current?.focus()
+  }, [controller.draftFocusRequest])
   useEffect(
     () =>
       subscribeEngineSource(() => {
@@ -189,37 +204,26 @@ export function WorkComposer({
       className={`work-composer-wrap${home ? ' work-composer-wrap--home' : ''}`}
       onBlurCapture={() => flushWorkDrafts(controller.draftSource)}
     >
-      {controller.error ? (
+      {controller.actionError ? (
         <div className="work-error" role="alert">
           <Icon name="warning" size={15} />
-          <span>
-            {controller.error}
-            {historyRecovering ? <><br /><span role="status" aria-live="polite">{controller.pendingInitialStart ? '正在自动重新连接，恢复后继续任务。' : '正在自动重新连接并读取任务历史。'}</span></> : null}
-          </span>
-          {!historyRecovering && controller.activeTask ? (
-            <button
-              type="button"
-              className="work-quiet-button"
-              disabled={!controller.ready || (controller.streaming && controller.historyRecovery?.phase !== 'blocked')}
-              onClick={() => void controller.retryHistory()}
-            >
-              重新加载
-            </button>
-          ) : !controller.activeTask ? (
-            <IconButton icon="close" label="关闭错误提示" onClick={controller.clearError} />
-          ) : null}
+          <span>{controller.actionError}</span>
+          <IconButton icon="close" label="关闭错误提示" onClick={controller.clearError} />
         </div>
       ) : null}
       <InputComposer
         ref={composerRef}
         className="work-composer"
         onDragOver={(event) => {
-          if (event.dataTransfer.types.includes('Files')) event.preventDefault()
+          if (event.dataTransfer.types.includes('Files')) {
+            event.preventDefault()
+            event.dataTransfer.dropEffect = canAddFiles ? 'copy' : 'none'
+          }
         }}
         onDrop={(event) => {
           if (event.dataTransfer.files.length) {
             event.preventDefault()
-            void controller.addFiles(Array.from(event.dataTransfer.files)).catch(reportError)
+            addFiles(Array.from(event.dataTransfer.files))
           }
         }}
       >
@@ -295,9 +299,7 @@ export function WorkComposer({
             controller.setDraft(text, mentions)
           }}
           onSubmit={submit}
-          onPasteFiles={(files) => {
-            void controller.addFiles(files).catch(reportError)
-          }}
+          onPasteFiles={addFiles}
           onMentionQuery={(query) => {
             setMentionQuery(query)
             if (query !== null) setResourceQuery(null)
@@ -327,7 +329,7 @@ export function WorkComposer({
                     onChange={(event) => {
                       const files = Array.from(event.target.files ?? [])
                       event.target.value = ''
-                      if (files.length) void controller.addFiles(files).catch(reportError)
+                      addFiles(files)
                     }}
                   />
                   <button
@@ -336,7 +338,8 @@ export function WorkComposer({
                     aria-label="添加资料"
                     title="添加资料"
                     onClick={() => filesRef.current?.click()}
-                    disabled={controller.uploading || controller.streaming}
+                    disabled={!canAddFiles}
+                    aria-busy={controller.uploading}
                   >
                     {controller.uploading ? <Spinner /> : <Icon name="plus" size={16} />}
                   </button>
@@ -436,7 +439,8 @@ export function WorkComposer({
               <ComposerSend
                 className="work-send"
                 label={queueIntent ? '排到下一轮' : home ? '开始任务' : '发送'}
-                loading={!taskActive && controller.loading}
+                loading={queueIntent ? controller.nextTurnQueue.saving : !taskActive && controller.loading}
+                loadingLabel={queueIntent ? '正在加入下一轮…' : '正在发送…'}
                 onClick={submit}
                 disabled={
                   (queueIntent ? queueBusy : taskActive || busy) || !controller.ready || (!draft.trim() && !controller.attachments.length)
@@ -508,7 +512,7 @@ export function WorkComposer({
           {!controller.ready
             ? '引擎尚未就绪，草稿会保留。'
             : queueIntent
-              ? 'Enter 加入待执行队列 · 可调整顺序、编辑或暂停'
+              ? 'Enter 排到下一轮 · 当前执行不变 · 可编辑或暂停待发'
               : taskActive
                 ? '任务正在准备或等待处理，草稿会保留。'
                 : controller.workspacePath

@@ -1,0 +1,74 @@
+Source: https://learn.chatgpt.com/docs/features
+Retrieved: 2026-11-03
+
+Features
+Explore workflows, capabilities, commands, and settings for working in ChatGPT.
+Explore projects and chats
+A
+Codex
+New chat
+Pinned
+Review pull request
+Projects
+developers-website
+Recents
+Refresh UI illustrations
+Add
+Files and folders
+Attach Google Chrome
+GoalSet a goal to keep pursuing
+Plan modeTurn plan mode on
+Plugins
+DocumentsCreate and edit document artifacts
+PDFRead, create, and verify PDF files
+SpreadsheetsCreate and edit spreadsheet files
+PresentationsCreate and edit presentations
+Template CreatorCreate or update templates for documents, spreadsheets, and presentations
+ChatGPT brings projects and long-running chats together with web browsing, files, images, and plugins. Commands, settings, and troubleshooting references round out these workflows, from choosing the right workflow to giving each chat the context and tools it needs.
+Workflows Ways to organize, delegate, and review work.
+Projects and chats
+Codex on mobile
+Build plugins
+Visualizations
+Scheduled tasks
+Long-running work
+Notifications
+Pets
+Codex Micro
+Capabilities Tools ChatGPT can use to understand, create, and take action.
+Browser
+Computer use
+ChatGPT Voice
+Composer Predictions
+Plugins
+Sign in with ChatGPT
+Web search
+Image generation
+Image inputs
+Appshots
+Browser extension
+Work with files
+Sites Build, connect, publish, and manage websites in ChatGPT.
+Overview
+Create a site
+Data and connections
+Publish and share
+Manage a site
+ChatGPT dots Set up your dot and manage its ongoing work.
+Overview
+Getting started
+Messaging
+Tasks and memory
+Computers and apps
+Controls
+ChatGPT Space Develop shared work in Pages with ChatGPT and collaborators.
+Space overview
+Getting started
+Pages
+Work with the agent
+Collaboration
+Reference Find commands and settings for the ChatGPT desktop app.
+Commands
+Slash commands
+Settings
+Troubleshooting

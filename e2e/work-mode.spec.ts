@@ -63,6 +63,9 @@ const toolResponses: Array<{
 }> = []
 const cancellations: string[] = [],
   errors: string[] = []
+const cancellationBodies: Array<{ sessionId: string; runId: unknown }> = []
+const heldWorkCancellations: Array<{ id: string; runId: unknown; response: ServerResponse }> = []
+let holdWorkCancellation = false
 const fixtureAgents = new Map<string, Record<string, unknown>>()
 const fixtureSubagents = new Map<string, SubagentRun>()
 let modernDiscovery = false, modernRevision = 1000
@@ -96,7 +99,7 @@ const fixtureKnowledgeBases = [
     createdAt: Date.now()
   }
 ]
-const fixtureTools = [
+const fixtureTools: Array<{ name: string; displayName: string; description: string; defaultEnabled?: boolean }> = [
   { name: 'read_file', displayName: '读取文件', description: '读取工作区文件' },
   { name: 'write_file', displayName: '写入文件', description: '写入工作区文件' },
   { name: 'run_command', displayName: '运行命令', description: '执行受控命令' }
@@ -569,6 +572,11 @@ const server = createServer((request, response) => {
     if (path === '/api/v1/chat/cancel' && request.method === 'POST') {
       const id = String(body.sessionId ?? '')
       cancellations.push(id)
+      cancellationBodies.push({ sessionId: id, runId: body.runId })
+      if (holdWorkCancellation) {
+        heldWorkCancellations.push({ id, runId: body.runId, response })
+        return
+      }
       finish(id, 'cancelled')
       response
         .writeHead(200, { 'content-type': 'application/json' })
@@ -790,6 +798,7 @@ test.describe.serial('Work 模式', () => {
   })
   test.afterEach(() => health?.assertHealthy())
   test.afterAll(async ({}, testInfo) => {
+    for (const held of heldWorkCancellations.splice(0)) held.response.destroy()
     for (const value of sessions.values()) value.response?.destroy()
     try {
       if (health) await health.closeAndAssert(testInfo)
@@ -929,6 +938,18 @@ test.describe.serial('Work 模式', () => {
 
   test('最新消息反馈与阅读历史时的固定反馈互斥，窗口缩小和返回最新保留真实任务', async ({}, testInfo) => {
     const id = await startTask('WORK_FEEDBACK：持续执行时检查反馈位置')
+    const elapsedSeconds = (text: string): number => {
+      const match = /^(?:(\d+) 分 )?(\d+) 秒$/.exec(text.trim())
+      if (!match) throw new Error(`Unexpected elapsed text: ${text}`)
+      return Number(match[1] ?? 0) * 60 + Number(match[2])
+    }
+    const readClocks = async (): Promise<{ inline: number; fixed: number }> => {
+      const texts = await work().evaluate(element => ({
+        inline: element.querySelector('.work-turn-feedback__elapsed')?.textContent ?? '',
+        fixed: element.querySelector('.work-run-status__elapsed')?.textContent ?? ''
+      }))
+      return { inline: elapsedSeconds(texts.inline), fixed: elapsedSeconds(texts.fixed) }
+    }
     try {
       await expect(work().locator('.work-turn-feedback')).toBeVisible()
       await expect(work().locator('.work-conversation__footer .work-run-status')).toHaveCount(0)
@@ -944,19 +965,44 @@ test.describe.serial('Work 模式', () => {
         await expect(runStatus()).toHaveCount(1)
         await expect(fixed.getByRole('status', { name: '任务运行状态', exact: true })).toHaveText('正在生成回复…')
         await expect(work().locator('.work-turn-feedback [role="status"]')).toHaveAttribute('aria-live', 'off')
+        const before = await readClocks(), sequence = session(id).sequence
+        // No SSE frame arrives: looking at history must silence announcements,
+        // not freeze the still-mounted inline clock.
+        await expect.poll(async () => {
+          const clocks = await readClocks()
+          return Math.min(clocks.inline - before.inline, clocks.fixed - before.fixed)
+        }, { timeout: 5_000 }).toBeGreaterThanOrEqual(2)
+        const after = await readClocks()
+        expect(Math.abs(after.inline - after.fixed)).toBeLessThanOrEqual(1)
+        expect(session(id).sequence).toBe(sequence)
         await page.screenshot({ path: testInfo.outputPath(`feedback-history-${width}-${height}.png`) })
         await work().getByRole('button', { name: '回到最新', exact: true }).click()
         await expect(fixed).toHaveCount(0)
         await expect(runStatus()).toHaveCount(1)
         await expect(work().locator('.work-turn-feedback [role="status"]')).toHaveAttribute('aria-live', 'polite')
-        await expect(work().getByRole('button', { name: '停止任务', exact: true })).toBeEnabled()
+        await expect(work().locator('.work-task-heading').getByRole('button', { name: '停止任务', exact: true })).toBeEnabled()
+        await expect.poll(async () => elapsedSeconds(await work().locator('.work-turn-feedback__elapsed').innerText()), { timeout: 3_000 })
+          .toBeGreaterThan(after.inline)
         await page.screenshot({ path: testInfo.outputPath(`feedback-latest-${width}-${height}.png`) })
       }
+      await switchTo('code')
+      const hiddenAt = Date.now(), sequence = session(id).sequence
+      // The Work clock may stop while its whole surface is hidden, then must
+      // catch up from the original run timestamp as soon as Work is shown.
+      await expect.poll(() => Date.now() - hiddenAt).toBeGreaterThanOrEqual(3_000)
+      await switchTo('work')
+      await expect.poll(async () => {
+        const run = session(id).run!
+        const expected = Math.max(0, Math.floor((Date.now() - (run.startedAt ?? run.createdAt)) / 1000))
+        return Math.abs(elapsedSeconds(await work().locator('.work-turn-feedback__elapsed').innerText()) - expected)
+      }, { timeout: 500, intervals: [50] }).toBeLessThanOrEqual(1)
+      expect(session(id).sequence).toBe(sequence)
     } finally {
       finish(id)
       await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 900))
     }
     await expect(runStatus()).toHaveCount(0)
+    await expect(work().locator('.work-turn-feedback__elapsed, .work-run-status__elapsed')).toHaveCount(0)
   })
 
   test('会话准备时显示反馈，停止后迟到的历史响应不能启动任务', async () => {
@@ -968,7 +1014,7 @@ test.describe.serial('Work 模式', () => {
     await work().getByRole('button', { name: '开始任务', exact: true }).click()
     await expect(work().locator('.work-turn-feedback')).toHaveAttribute('data-phase', 'preparing')
     await expect.poll(() => heldWorkSnapshots.length).toBeGreaterThan(0)
-    await work().getByRole('button', { name: '停止任务', exact: true }).click()
+    await work().locator('.work-task-heading').getByRole('button', { name: '停止任务', exact: true }).click()
     const held = heldWorkSnapshots.shift()!
     held.response.writeHead(200, { 'content-type': 'application/json' }).end(
       envelope({
@@ -1002,10 +1048,10 @@ test.describe.serial('Work 模式', () => {
     frame(id, { content: 'WORK_STOP_PROGRESS：任务正在处理中。' })
     await expect(work()).toContainText('WORK_STOP_PROGRESS')
     await expect(runStatus()).toBeVisible()
-    const rootStop = work().getByRole('button', { name: '停止任务', exact: true })
+    const rootStop = work().locator('.work-task-heading').getByRole('button', { name: '停止任务', exact: true })
     await expect(rootStop).toBeEnabled()
     await expect(work().locator('.input-composer').getByRole('button', { name: '停止生成', exact: true })).toHaveCount(0)
-    // An active task offers a next-turn queue; cancellation belongs to its heading.
+    // The composer keeps next-turn submission separate from cancellation controls.
     await expect(work().locator('.input-composer').getByRole('button', { name: '排到下一轮', exact: true })).toBeDisabled()
     await rootStop.click()
     await expect.poll(() => cancellations).toContain(id)
@@ -1019,6 +1065,95 @@ test.describe.serial('Work 模式', () => {
     expect(cancellations.slice(beforeCancels)).toEqual([id])
     expect([...sessions.entries()].filter(([key]) => key !== id).map(([key, value]) => [key, value.run?.status])).toEqual(otherStatuses)
   })
+
+  for (const entry of ['inline', 'footer'] as const) {
+    test(`${entry === 'inline' ? '执行反馈卡片' : '输入框上方状态栏'}停止当前任务，三处同步忙态，失败可重试且保留草稿`, async ({}, testInfo) => {
+      if (entry === 'footer') {
+        await switchTo('code')
+        await page.getByRole('tab', { name: '外观', exact: true }).click()
+        await page.getByRole('radio', { name: '浅色', exact: true }).click()
+        await expect(page.locator('html')).toHaveAttribute('data-appearance', 'light')
+      }
+      const id = await startTask(`WORK_STOP_${entry.toUpperCase()}：检查就近停止入口`)
+      const expectedRunId = session(id).run!.runId
+      const beforeCancels = cancellationBodies.length, beforeSends = chatRequests.length
+      const otherStatuses = [...sessions.entries()].filter(([key]) => key !== id).map(([key, value]) => [key, value.run?.status])
+      const scroll = work().locator('.work-conversation__scroll')
+      const controls = work().getByRole('button', { name: /^(?:停止任务|正在停止任务)$/ })
+      const target = () => work().locator(entry === 'inline' ? '.work-turn-feedback' : '.work-run-status')
+        .getByRole('button', { name: '停止任务', exact: true })
+      const draft = '停止后继续保留的补充要求'
+      frame(id, { content: Array.from({ length: 65 }, (_, i) => `第 ${i + 1} 步：这是隔离任务的持续执行记录。`).join('\n\n') })
+      await expect.poll(() => scroll.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(600)
+      await work().getByRole('textbox', { name: '继续对话', exact: true }).fill(draft)
+      holdWorkCancellation = true
+      try {
+        if (entry === 'footer') await app!.evaluate(({ BrowserWindow }) => {
+          const window = BrowserWindow.getAllWindows()[0]
+          window.setMinimumSize(0, 0)
+          window.setContentSize(760, 520)
+        })
+        if (entry === 'footer') await scroll.evaluate(element => { element.scrollTop = 0 })
+        await expect(target()).toBeEnabled()
+        await page.screenshot({ path: testInfo.outputPath(`stop-${entry}-ready.png`), animations: 'disabled' })
+        await target().click()
+        await expect.poll(() => heldWorkCancellations.length).toBe(1)
+        expect(cancellationBodies.slice(beforeCancels)).toEqual([{ sessionId: id, runId: expectedRunId }])
+        await scroll.evaluate(element => { element.scrollTop = 0 })
+        await expect(controls).toHaveCount(3)
+        for (const button of await controls.all()) {
+          await expect(button).toHaveAttribute('aria-label', '正在停止任务')
+          await expect(button).toHaveAttribute('aria-busy', 'true')
+          await expect(button).toBeDisabled()
+        }
+        // Native clicks on every disabled entry must not dispatch a second cancel.
+        await controls.evaluateAll(buttons => buttons.forEach(button => { if (button instanceof HTMLButtonElement) button.click() }))
+        expect(cancellationBodies).toHaveLength(beforeCancels + 1)
+        expect(session(id).run?.status).toBe('running')
+        await expect(work().getByRole('textbox', { name: '继续对话', exact: true })).toHaveText(draft)
+        await page.screenshot({ path: testInfo.outputPath(`stop-${entry}-waiting.png`), animations: 'disabled' })
+
+        const refused = heldWorkCancellations.shift()!
+        refused.response.writeHead(503, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ code: 50300, message: 'WORK_STOP_REJECTED：停止暂时失败，请重试', data: null }))
+        await expect(work()).toContainText('WORK_STOP_REJECTED')
+        await expect(controls).toHaveCount(3)
+        for (const button of await controls.all()) {
+          await expect(button).toHaveAttribute('aria-label', '停止任务')
+          await expect(button).toBeEnabled()
+        }
+        expect(session(id).run?.status).toBe('running')
+        await expect(work().getByRole('textbox', { name: '继续对话', exact: true })).toHaveText(draft)
+        if (entry === 'inline') await work().getByRole('button', { name: '回到最新', exact: true }).click()
+        await target().click()
+        await expect.poll(() => heldWorkCancellations.length).toBe(1)
+        expect(cancellationBodies.slice(beforeCancels)).toEqual([
+          { sessionId: id, runId: expectedRunId }, { sessionId: id, runId: expectedRunId }
+        ])
+        const accepted = heldWorkCancellations.shift()!
+        finish(id, 'cancelled')
+        accepted.response.writeHead(200, { 'content-type': 'application/json' })
+          .end(envelope({ sessionId: id, runId: expectedRunId, cancelled: true, settled: true }))
+        await expect(work()).toContainText('已停止')
+        await expect(controls).toHaveCount(0)
+        await expect(work().locator('.work-turn-feedback, .work-run-status')).toHaveCount(0)
+        await expect(work().getByRole('textbox', { name: '继续对话', exact: true })).toHaveText(draft)
+        expect(chatRequests.length).toBe(beforeSends)
+        expect([...sessions.entries()].filter(([key]) => key !== id).map(([key, value]) => [key, value.run?.status])).toEqual(otherStatuses)
+      } finally {
+        holdWorkCancellation = false
+        for (const held of heldWorkCancellations.splice(0)) held.response.destroy()
+        if (session(id).run?.status === 'running') finish(id, 'cancelled')
+        await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 900))
+        if (entry === 'footer') {
+          await switchTo('code')
+          await page.getByRole('tab', { name: '外观', exact: true }).click()
+          await page.getByRole('radio', { name: '深色', exact: true }).click()
+          await switchTo('work')
+        }
+      }
+    })
+  }
 
   test('执行失败如实呈现，可继续输入，不伪装成完成', async () => {
     const id = await startTask('WORK_FAILURE：验证服务端失败提示')
@@ -1537,7 +1672,7 @@ test.describe.serial('Work 模式', () => {
       await work().getByRole('button', { name: '开始任务', exact: true }).click()
       await expect(work().getByRole('alert')).toContainText(code === 503 ? 'WORK_HISTORY_UNAVAILABLE' : 'WORK_HISTORY_FORBIDDEN')
       if (code === 503) await expect.poll(() => failedWorkSnapshotReads - readsBefore).toBeGreaterThanOrEqual(2)
-      const rootStop = work().getByRole('button', { name: '停止任务', exact: true })
+      const rootStop = work().locator('.work-task-heading').getByRole('button', { name: '停止任务', exact: true })
       await expect(rootStop).toHaveCount(1)
       await expect(rootStop).toBeEnabled()
       if (code === 503) holdNextWorkSnapshot = true
@@ -2422,6 +2557,70 @@ test.describe.serial('Work 模式', () => {
     await expect(page.getByTitle('选择思考档位', { exact: true })).toHaveText(/Off/)
     await expect(page.getByTitle('选择长期记忆范围', { exact: true })).toHaveText(/全局记忆/)
     await page.keyboard.press('Escape')
+  })
+
+  test('Agent 工具目录保留按需能力，新建采用默认选择，手动启用与既有绑定均持久保留', async ({}, testInfo) => {
+    let createdId: string | undefined
+    extraFixtureTools = [
+      { name: 'task_list', displayName: '查看后台任务', description: '按需查看旧版后台任务', defaultEnabled: false },
+      { name: 'agent_list', displayName: '查看 Agent 列表', description: '按需管理 Agent', defaultEnabled: false },
+      { name: 'workbench_context', displayName: '读取工作台状态', description: '读取当前工作台状态', defaultEnabled: true }
+    ]
+    try {
+      await switchTo('work')
+      await work().getByRole('button', { name: '新任务', exact: true }).click()
+      await work().getByRole('button', { name: '管理与选择 Agent', exact: true }).click()
+      await agentCreateEntry('dialog').click()
+      await page.getByLabel('名称', { exact: true }).fill('按需工具 Agent')
+      await page.getByRole('tab', { name: /^工具权限/ }).click()
+      const group = page.locator('fieldset.work-agent-manager__binding').filter({ has: page.locator('legend', { hasText: '工具权限' }) })
+      const choice = (label: string) => group.getByRole('checkbox', { name: new RegExp('^' + label) })
+      await expect(group.getByRole('checkbox')).toHaveCount(6)
+      // Omitted flags retain compatibility with older engines; false only changes
+      // the initial selection, never whether the capability can be selected.
+      for (const tool of fixtureTools) await expect(choice(tool.displayName)).toBeChecked()
+      await expect(choice('读取工作台状态')).toBeChecked()
+      await expect(choice('查看后台任务')).not.toBeChecked()
+      await expect(choice('查看 Agent 列表')).not.toBeChecked()
+      await expect(group.getByText(/按需启用/)).toHaveCount(2)
+      await expect(group.getByRole('checkbox', { name: /calculate|list_packages|install_package|get_time|get_current_context|get_tool_details/ })).toHaveCount(0)
+      await choice('读取工作台状态').scrollIntoViewIfNeeded()
+      await page.screenshot({ path: testInfo.outputPath('agent-tool-defaults.png'), animations: 'disabled' })
+      await choice('查看后台任务').check()
+      await page.getByRole('button', { name: '保存 Agent', exact: true }).click()
+      await expect.poll(() => [...fixtureAgents.entries()].find(([, value]) => value.name === '按需工具 Agent')?.[0]).toBeTruthy()
+      createdId = [...fixtureAgents.entries()].find(([, value]) => value.name === '按需工具 Agent')![0]
+      expect(fixtureAgents.get(createdId)?.allowedTools).toEqual([...fixtureTools.map(tool => tool.name), 'workbench_context', 'task_list'])
+      await page.getByRole('button', { name: '编辑 Agent 按需工具 Agent', exact: true }).click()
+      await page.getByRole('tab', { name: /^工具权限/ }).click()
+      await expect(choice('查看后台任务')).toBeChecked()
+      await expect(choice('查看 Agent 列表')).not.toBeChecked()
+      await page.getByRole('button', { name: '保存 Agent', exact: true }).click()
+
+      // Explicit selections remain separate from the engine's new-agent defaults.
+      fixtureAgents.set(createdId, { ...fixtureAgents.get(createdId), allowedTools: ['agent_list'] })
+      await page.getByRole('button', { name: '编辑 Agent 按需工具 Agent', exact: true }).click()
+      await page.getByRole('tab', { name: /^工具权限/ }).click()
+      await expect(group.getByRole('checkbox')).toHaveCount(6)
+      await expect(choice('查看 Agent 列表')).toBeChecked()
+      await expect(choice('查看后台任务')).not.toBeChecked()
+      await expect(choice('读取文件')).not.toBeChecked()
+      await choice('查看 Agent 列表').scrollIntoViewIfNeeded()
+      await page.screenshot({ path: testInfo.outputPath('agent-explicit-tool-selection.png'), animations: 'disabled' })
+      await page.getByRole('tab', { name: /^基础配置/ }).click()
+      await page.getByLabel('用途', { exact: true }).fill('保留显式工具选择')
+      await page.getByRole('button', { name: '保存 Agent', exact: true }).click()
+      await expect.poll(() => fixtureAgents.get(createdId!)?.description).toBe('保留显式工具选择')
+      expect(fixtureAgents.get(createdId)?.allowedTools).toEqual(['agent_list'])
+      await page.getByRole('button', { name: '删除 Agent 按需工具 Agent', exact: true }).click()
+      await page.getByRole('button', { name: '确认删除', exact: true }).click()
+      await expect.poll(() => fixtureAgents.has(createdId!)).toBe(false)
+      await page.getByRole('button', { name: '完成', exact: true }).click()
+      expect(errors).toEqual([])
+    } finally {
+      extraFixtureTools = []
+      if (createdId) fixtureAgents.delete(createdId)
+    }
   })
 
   test('Agent 独立管理页支持模型、温度与技能/MCP/知识库/工具绑定，保存后可恢复并参与任务', async () => {
@@ -3460,7 +3659,7 @@ test.describe.serial('Work 模式', () => {
       frame(id, { toolStart: { id: `visual-list-${index}`, name: 'list_files', args: { path: `source-${index}` } } })
       frame(id, { toolEnd: { id: `visual-list-${index}`, name: 'list_files', output: `目录 ${index}`, success: true } })
     }
-    await expect(work().getByRole('button', { name: '停止任务', exact: true })).toBeVisible()
+    await expect(work().locator('.work-task-heading').getByRole('button', { name: '停止任务', exact: true })).toBeVisible()
     if (!await work().locator('.work-workspace').count()) await work().getByRole('button', { name: '打开工作区', exact: true }).click()
     if (!await work().locator('.work-workspace').isVisible()) await work().getByRole('button', { name: /^工作区(?: · \d+)?$/, exact: true }).click()
     await work().getByRole('tab', { name: /^活动(?: \d+)?$/, exact: true }).click()
@@ -3482,7 +3681,7 @@ test.describe.serial('Work 模式', () => {
           for (const reducedMotion of ['no-preference', 'reduce'] as const) {
             await page.emulateMedia({ reducedMotion })
             const context = `${appearance}/${size.width}/${reducedMotion}`
-            await expect(work().getByRole('button', { name: '停止任务', exact: true }), context).toBeInViewport()
+            await expect(work().locator('.work-task-heading').getByRole('button', { name: '停止任务', exact: true }), context).toBeInViewport()
             await expect(activities.locator('.work-steps')).not.toHaveAttribute('open', '')
             await list.locator('[role="option"]').first().click()
             await expect(detail.locator('h4').first()).toHaveText('文件内容')
@@ -3522,9 +3721,9 @@ test.describe.serial('Work 模式', () => {
       await expect(list.getByRole('option')).toHaveCount(2)
       await expect(list.getByRole('group', { name: '活动分页', exact: true })).toContainText('2 / 2')
       const previousCancellations = cancellations.length
-      await work().getByRole('button', { name: '停止任务', exact: true }).click()
+      await work().locator('.work-task-heading').getByRole('button', { name: '停止任务', exact: true }).click()
       await expect.poll(() => cancellations.slice(previousCancellations)).toEqual([id])
-      await expect(work().getByRole('button', { name: '停止任务', exact: true })).toHaveCount(0)
+      await expect(work().locator('.work-task-heading').getByRole('button', { name: '停止任务', exact: true })).toHaveCount(0)
     } finally {
       if (session(id).run?.status === 'running') finish(id, 'cancelled')
       await page.emulateMedia({ reducedMotion: 'no-preference' })

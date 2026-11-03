@@ -18,7 +18,7 @@ export interface SpreadsheetSession {
   subscribe: (notify: () => void) => () => void
   select: (sheet: number, row: number, column: number) => void
   getRange: (sheet: number, row: number, column: number, endRow: number, endColumn: number) => SheetPage | null
-  requestRange: (sheet: number, row: number, column: number, endRow: number, endColumn: number) => void
+  requestRange: (sheet: number, row: number, column: number, endRow: number, endColumn: number, consumer?: object) => void
 }
 
 export interface Lease {
@@ -47,7 +47,10 @@ export class SpreadsheetPreviewSession {
   private ranges = new Map<string, SheetPage>()
   private rangeErrors = new Map<string, string>()
   private rangeCells = 0
-  private pendingRanges = new Map<string, PageRequest>()
+  private rangeInFlight: PageRequest | null = null
+  // Distinct mounted views may share a parser. Coalesce per view so one view's
+  // rapid scroll cannot discard another view's only outstanding rectangle.
+  private queuedRanges = new Map<object, PageRequest>()
   private rangeRequestKeys = new Map<number, string>()
   private pageRequestKeys = new Map<number, string>()
 
@@ -63,15 +66,16 @@ export class SpreadsheetPreviewSession {
         if (!this.sheets.length) { this.fail('工作簿中没有可预览的工作表。'); return }
         if (this.request) this.target.postMessage(this.request)
         for (const request of this.pendingPages.values()) this.target.postMessage(request)
-        for (const request of this.pendingRanges.values()) this.target.postMessage(request)
+        this.flushRange()
       } else if (event.data.kind === 'page') {
         const { requestId, page } = event.data
         const rangeKey = this.rangeRequestKeys.get(requestId)
         if (rangeKey) {
           this.rangeRequestKeys.delete(requestId)
-          this.pendingRanges.delete(rangeKey)
+          this.rangeInFlight = null
           this.rememberRange(rangeKey, page)
           this.rangeErrors.delete(rangeKey)
+          this.flushRange()
         } else {
           const key = this.pageKey(page.sheet, page.row, page.column)
           this.pendingPages.delete(key)
@@ -91,9 +95,10 @@ export class SpreadsheetPreviewSession {
         const rangeKey = this.rangeRequestKeys.get(requestId)
         if (rangeKey) {
           this.rangeRequestKeys.delete(requestId)
-          this.pendingRanges.delete(rangeKey)
+          this.rangeInFlight = null
           this.rangeErrors.set(rangeKey, message)
           while (this.rangeErrors.size > PAGE_CACHE_LIMIT) this.rangeErrors.delete(this.rangeErrors.keys().next().value!)
+          this.flushRange()
         } else if (this.pageRequestKeys.has(requestId)) {
           const key = this.pageRequestKeys.get(requestId)!
           this.pageRequestKeys.delete(requestId)
@@ -151,7 +156,8 @@ export class SpreadsheetPreviewSession {
     this.pageErrors.clear()
     this.ranges.clear()
     this.rangeErrors.clear()
-    this.pendingRanges.clear()
+    this.rangeInFlight = null
+    this.queuedRanges.clear()
     this.rangeRequestKeys.clear()
     this.pageRequestKeys.clear()
     this.rangeCells = 0
@@ -181,18 +187,45 @@ export class SpreadsheetPreviewSession {
   getRange(sheet: number, row: number, column: number, endRow: number, endColumn: number): SheetPage | null {
     const key = this.rangeKey(sheet, row, column, endRow, endColumn)
     const range = this.ranges.get(key)
-    if (range) this.rememberRange(key, range)
-    return range || null
+    if (range) { this.rememberRange(key, range); return range }
+    // Return the complete cached rectangle. Cropping cells would detach a merge
+    // from its owner; the view renders this rectangle at its original offsets.
+    for (const [cachedKey, cached] of this.ranges) {
+      if (cached.sheet === sheet && cached.row <= row && cached.column <= column && cached.endRow >= endRow && cached.endColumn >= endColumn) {
+        this.rememberRange(cachedKey, cached)
+        return cached
+      }
+    }
+    return null
   }
 
-  requestRange(sheet: number, row: number, column: number, endRow: number, endColumn: number): void {
+  requestRange(sheet: number, row: number, column: number, endRow: number, endColumn: number, consumer: object = this): void {
     if (this.closed || this.failed || ![sheet, row, column, endRow, endColumn].every(Number.isSafeInteger) || row < 0 || column < 0 || endRow <= row || endColumn <= column) return
-    const key = this.rangeKey(sheet, row, column, endRow, endColumn)
-    if (this.ranges.has(key) || this.pendingRanges.has(key)) return
+    if (this.getRange(sheet, row, column, endRow, endColumn)) { this.queuedRanges.delete(consumer); return }
+    const current = this.rangeInFlight
+    if (current && current.sheet === sheet && current.row <= row && current.column <= column && current.endRow! >= endRow && current.endColumn! >= endColumn) {
+      this.queuedRanges.delete(consumer)
+      return
+    }
+    const queued = this.queuedRanges.get(consumer)
+    if (queued?.sheet === sheet && queued.row === row && queued.column === column && queued.endRow === endRow && queued.endColumn === endColumn) return
     const request: PageRequest = { kind: 'page', sheet, row, column, endRow, endColumn, requestId: ++this.nextRequestId }
-    this.pendingRanges.set(key, request)
-    this.rangeRequestKeys.set(request.requestId, key)
-    if (this.loaded) this.target.postMessage(request)
+    this.queuedRanges.set(consumer, request)
+    this.flushRange()
+  }
+
+  cancelRangeRequests(consumer: object): void { this.queuedRanges.delete(consumer) }
+
+  private flushRange(): void {
+    if (!this.loaded || this.closed || this.failed || this.rangeInFlight) return
+    for (const [consumer, request] of this.queuedRanges) {
+      this.queuedRanges.delete(consumer)
+      if (this.getRange(request.sheet, request.row, request.column, request.endRow!, request.endColumn!)) continue
+      this.rangeInFlight = request
+      this.rangeRequestKeys.set(request.requestId, this.rangeKey(request.sheet, request.row, request.column, request.endRow!, request.endColumn!))
+      this.target.postMessage(request)
+      break
+    }
   }
 
   getRangeError(sheet: number, row: number, column: number, endRow: number, endColumn: number): string {

@@ -302,7 +302,9 @@ async function createSession(cwd?: string, replacing?: TerminalSession): Promise
       return
     }
     // 后台创建用默认尺寸，首次挂载时由 fit 修正
-    let sessionId: string | undefined
+    // Capture ownership for local PTYs too; later model reads must not infer it
+    // from whichever conversation happens to be selected at read time.
+    let sessionId: string | undefined = replacing?.sessionId ?? (settings.lastSessionId.trim() || undefined)
     if (remote) {
       sessionId = settings.lastSessionId.trim()
       const source = getEngineStorageKey()

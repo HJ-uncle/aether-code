@@ -120,7 +120,7 @@ test('还原 Excel 背景、字体、边框与行列尺寸，切换文件不重�
     expect(workerLoads).toHaveLength(2)
     await expect(header).toBeVisible()
     await header.click()
-    await expect(page.locator('.document-preview__body--sheet')).toHaveAttribute('data-document-sheet', '0')
+    await expect(page.locator('.document-preview__body--sheet:visible')).toHaveAttribute('data-document-sheet', '0')
   } finally {
     await app.close()
     app = undefined
@@ -173,9 +173,10 @@ test('大表在后台解析时仍可操作界面，并完成首尾行预览', as
     await page.keyboard.press('Escape')
     expect(Date.now() - started).toBeLessThan(5_000)
     await expect(page.getByRole('table', { name: '大表', exact: true })).toContainText('参数-1-1', { timeout: 35_000 })
-    const input = page.locator('.document-preview__table-nav input')
-    await input.fill('50')
-    await input.press('Enter')
+    await page.locator('.document-preview__body--sheet:visible').evaluate(element => {
+      element.scrollTop = element.scrollHeight
+      element.scrollLeft = element.scrollWidth
+    })
     await expect(page.getByRole('table', { name: '大表', exact: true })).toContainText('参数-5000-10')
     await expect(page.getByText('Aether 暂时无法解析此文档，原文件已保留。', { exact: true })).toHaveCount(0)
   } finally {

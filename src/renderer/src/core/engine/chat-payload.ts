@@ -3,6 +3,7 @@ import type { ChatMessage, TimelineItem } from './useChat'
 import { finishTool, normalizeTool } from './chat-history'
 import { mergePending, normalizePending } from './pending'
 import { retainConfirmedContext } from './context-input'
+import { mergeFileChanges } from './tool-file-changes'
 function newId(): string { return globalThis.crypto.randomUUID() }
 
 function appendTimeline(items: TimelineItem[], kind: 'thinking' | 'content', text: string): void {
@@ -109,7 +110,8 @@ export function reducePayload(message: ChatMessage, payload: ChatSsePayload,
     const tools = [...message.tools]
     const index = tools.findIndex((tool) => tool.id === fileChange.toolCallId)
     if (index >= 0) {
-      tools[index] = { ...tools[index], change: fileChange }
+      tools[index] = { ...tools[index], change: tools[index].change ?? fileChange,
+        changes: mergeFileChanges(tools[index].change, tools[index].changes, fileChange) }
       return { ...message, tools }
     }
   }

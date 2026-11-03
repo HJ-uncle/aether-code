@@ -21,6 +21,7 @@ interface BrowserEntry {
   state: BrowserTabState
   pendingEngine?: BrowserConnectInput['expectedEngine']
   visible: boolean
+  layoutVersion: number
   bounds: { x: number; y: number; width: number; height: number }
   emulationScale: number
   console: BrowserConsoleEntry[]
@@ -190,7 +191,7 @@ export class BrowserService {
     } })
     const entry: BrowserEntry = {
       owner, view, localFile, pendingEngine: !context && pendingEngine ? structuredClone(pendingEngine) : undefined,
-      visible: false, bounds: { x: 0, y: 0, width: 800, height: 600 }, emulationScale: 1, console: [],
+      visible: false, layoutVersion: 0, bounds: { x: 0, y: 0, width: 800, height: 600 }, emulationScale: 1, console: [],
       network: new BrowserNetworkCollector(async (method, params) => { await this.ensureInitialized(entry); await this.debugger(entry); return this.command(entry, method, params) }),
       networkInterrupted: false, initialization: Promise.resolve(), initializationState: 'starting', navigationVersion: 0, closed: new AbortController(), refs: new Map(),
       queue: Promise.resolve(), logId: 0, visibilityWaiters: new Map(),
@@ -258,14 +259,25 @@ export class BrowserService {
 
   setBounds(input: BrowserBoundsInput): void {
     const entry = this.entry(input.tabId)
+    const layoutVersion = ++entry.layoutVersion
     const [width, height] = entry.owner.getContentSize()
     const bounds = clampBounds(input.bounds, { width, height })
     if (bounds.width > 0 && bounds.height > 0) entry.bounds = bounds
     entry.visible = input.visible === true && bounds.width > 0 && bounds.height > 0
     entry.view.setVisible(entry.visible)
-    if (entry.visible && input.revealRequestId) entry.visibilityWaiters.get(input.revealRequestId)?.()
     if (bounds.width > 0 && bounds.height > 0) {
-      this.applyViewport(entry).catch((error: unknown) => this.log(entry, 'error', browserError(error)))
+      // A visible flag is not an acknowledgement until native geometry and
+      // emulation have settled. Never dispatch input against the previous layout.
+      this.applyViewport(entry).then(() => {
+        if (entry.layoutVersion === layoutVersion && entry.visible && input.revealRequestId) {
+          entry.visibilityWaiters.get(input.revealRequestId)?.()
+        }
+      }).catch((error: unknown) => {
+        this.log(entry, 'error', browserError(error))
+        if (entry.layoutVersion === layoutVersion && input.revealRequestId) {
+          entry.visibilityWaiters.get(input.revealRequestId)?.(new Error(`浏览器显示区域未准备完成，尚未执行页面操作：${browserError(error)}`))
+        }
+      })
     }
   }
 
@@ -354,6 +366,7 @@ export class BrowserService {
   async execute(request: BrowserToolRequest, context: BrowserContext, signal?: AbortSignal,
     owner?: { execution: Readonly<BrowserExecutionIdentity>; requestId: string }): Promise<BrowserToolResult> {
     let dispatched = false
+    let targetEntry: BrowserEntry | undefined
     const metadata = (success: boolean): NonNullable<BrowserToolResult['metadata']> => ({
       code: success ? dispatched ? 'BROWSER_OPERATION_COMPLETE' : 'BROWSER_OBSERVATION_COMPLETE' : dispatched ? 'BROWSER_OPERATION_UNCONFIRMED' : 'BROWSER_OPERATION_NOT_PERFORMED',
       operationPerformed: success ? dispatched : dispatched ? 'unknown' : false
@@ -378,6 +391,7 @@ export class BrowserService {
       if (!request.tabId) throw new Error('必须指定 browser_open 或 browser_tabs 返回的 tabId')
       const entry = this.entry(request.tabId)
       if (!contextsMatch(entry.state.context, context)) throw new Error('这个浏览器标签尚未添加到当前会话，请让用户在标签右键菜单中选择“添加到当前会话”，无需重新打开网页')
+      targetEntry = entry
       const assertActive = (): void => {
         assertConnection()
         if (!this.settings.get().aiEnabled) throw new Error('内置浏览器的 AI 操作已在设置中关闭')
@@ -408,7 +422,9 @@ export class BrowserService {
       assertActive()
       return { success: true, output, metadata: metadata(true) }
     } catch (error) {
-      return { success: false, error: browserError(error), metadata: error instanceof BrowserInputQueueError
+      // Ownership may change while awaiting native work. Recheck it before
+      // disclosing state, including when a user explicitly shares the tab away.
+      return { success: false, error: browserError(error), ...(targetEntry && contextsMatch(targetEntry.state.context, context) ? { output: this.state(targetEntry) } : {}), metadata: error instanceof BrowserInputQueueError
         ? { code: error.operationPerformed === false ? 'BROWSER_INPUT_NOT_PERFORMED' : 'BROWSER_INPUT_UNCONFIRMED', operationPerformed: error.operationPerformed }
         : metadata(false) }
     }
@@ -420,7 +436,15 @@ export class BrowserService {
     return entry
   }
 
-  private state(entry: BrowserEntry): BrowserTabState { return structuredClone(entry.state) }
+  private state(entry: BrowserEntry): BrowserTabState {
+    const window = entry.owner.isDestroyed() ? 'closed' : entry.owner.isMinimized() ? 'minimized'
+      : entry.owner.isVisible() ? 'visible' : 'hidden'
+    const visible = !entry.view.webContents.isDestroyed() && entry.visible && entry.view.getVisible()
+    const interaction = entry.initializationState === 'failed' || window === 'closed' ? 'unavailable'
+      : window !== 'visible' ? 'needs_user' : visible ? 'ready' : 'needs_reveal'
+    return { ...structuredClone(entry.state), availability: { window, surface: visible ? 'visible' : 'hidden',
+      initialization: entry.initializationState, interaction } }
+  }
 
   private async initialize(entry: BrowserEntry, settings: BrowserSettings): Promise<void> {
     // Chromium needs a document before Runtime.enable. Navigations wait for this
@@ -797,10 +821,10 @@ export class BrowserService {
       if (!isCurrent(await this.evaluate<BrowserPageFrame>(entry, PAGE_FRAME_EXPRESSION, budget))) return undefined
       // Capture the whole guest surface: Electron already applies native density,
       // page zoom and device fit scaling. Multiplying these again would crop the view.
-      const timeout = this.readTimeout(budget, 3000)
-      const image = await this.withLifetime(entry, wc.capturePage(undefined, { stayHidden: true, stayAwake: true }), '页面位置图', timeout, budget?.signal)
-      if (image.isEmpty() || !isCurrent(await this.evaluate<BrowserPageFrame>(entry, PAGE_FRAME_EXPRESSION, budget))) return undefined
-      let png = image.toPNG()
+      const captureBudget = { deadline: Math.min(budget?.deadline ?? Infinity, Date.now() + 3000),
+        assertActive: budget?.assertActive ?? (() => {}), signal: budget?.signal }
+      let png = await this.capturePng(entry, captureBudget)
+      if (!isCurrent(await this.evaluate<BrowserPageFrame>(entry, PAGE_FRAME_EXPRESSION, budget))) return undefined
       if (png.length < 24 || !png.subarray(0, 8).equals(PNG_SIGNATURE)) return undefined
       let width = png.readUInt32BE(16), height = png.readUInt32BE(20)
       if (!width || !height) return undefined
@@ -836,16 +860,42 @@ export class BrowserService {
     } catch { return true }
   }
 
-  private async screenshot(entry: BrowserEntry): Promise<BrowserScreenshot> {
+  private async capturePng(entry: BrowserEntry, budget?: BrowserReadBudget): Promise<Buffer> {
+    try {
+      const image = await this.withLifetime(entry, entry.view.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true }),
+        '页面截图', this.readTimeout(budget, 3000), budget?.signal)
+      if (!image.isEmpty()) return image.toPNG()
+    } catch (error) {
+      budget?.assertActive()
+      if (entry.closed.signal.aborted || budget?.signal?.aborted || entry.view.webContents.isDestroyed()) throw error
+    }
+    // Electron's native capture can lack a display surface in a hidden tab.
+    // CDP captures that same page without showing a window or replaying input.
+    try {
+      this.readTimeout(budget)
+      await this.debugger(entry)
+      const { data } = await this.command<{ data: string }>(entry, 'Page.captureScreenshot',
+        { format: 'png', fromSurface: true, captureBeyondViewport: false }, budget)
+      if (typeof data !== 'string' || data.length > 12 * 1024 * 1024) throw new Error('截图内容无效或过大')
+      const png = Buffer.from(data, 'base64')
+      if (png.length < 24 || !png.subarray(0, 8).equals(PNG_SIGNATURE)) throw new Error('截图内容不是有效 PNG')
+      return png
+    } catch (error) {
+      budget?.assertActive()
+      if (entry.closed.signal.aborted || budget?.signal?.aborted) throw error
+      throw new Error(`浏览器截图表面不可用；可继续读取页面快照，恢复窗口后再截图。${browserError(error)}`)
+    }
+  }
+
+  private async screenshot(entry: BrowserEntry, budget?: BrowserReadBudget): Promise<BrowserScreenshot> {
     await this.ensureInitialized(entry)
     const navigationId = entry.state.navigationId
-    const viewport = await this.evaluate<BrowserScreenshot['viewport']>(entry, '({width:innerWidth,height:innerHeight,deviceScaleFactor:devicePixelRatio})')
-    const image = await entry.view.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })
+    const viewport = await this.evaluate<BrowserScreenshot['viewport']>(entry, '({width:innerWidth,height:innerHeight,deviceScaleFactor:devicePixelRatio})', budget)
+    const png = await this.capturePng(entry, budget)
     if (entry.state.navigationId !== navigationId) throw new Error('页面正在导航，请重新截图')
-    if (image.isEmpty()) throw new Error('页面尚未完成绘制，请稍后重试截图')
-    const size = image.getSize()
-    const png = image.toPNG()
-    return { tab: this.state(entry), dataUrl: `data:image/png;base64,${png.toString('base64')}`, mimeType: 'image/png', filename: `browser-${entry.state.tabId}.png`, size: png.byteLength, width: size.width, height: size.height, viewport }
+    if (png.length < 24 || !png.subarray(0, 8).equals(PNG_SIGNATURE)) throw new Error('页面尚未完成绘制，请稍后重试截图')
+    return { tab: this.state(entry), dataUrl: `data:image/png;base64,${png.toString('base64')}`, mimeType: 'image/png', filename: `browser-${entry.state.tabId}.png`, size: png.byteLength,
+      width: png.readUInt32BE(16), height: png.readUInt32BE(20), viewport }
   }
 
   private async executeEntry(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal, markDispatch = (): void => {}): Promise<unknown> {
@@ -854,7 +904,9 @@ export class BrowserService {
       assertActive()
     }
     switch (request.action) {
-      case 'snapshot': case 'screenshot': case 'console': return this.readEntry(entry, request.action)
+      case 'snapshot': return this.snapshot(entry, { deadline: Infinity, assertActive, signal })
+      case 'screenshot': return this.screenshot(entry, { deadline: Infinity, assertActive, signal })
+      case 'console': return this.readEntry(entry, request.action)
       case 'network': return this.network(entry.state.tabId, request.query)
       case 'network_detail': return this.networkRequest(entry.state.tabId, request.requestId ?? '', { bodyTarget: request.bodyTarget, bodyOffset: request.bodyOffset, bodyLimit: request.bodyLimit })
       case 'close': markDispatch(); this.close(entry.state.tabId); return { tabId: entry.state.tabId, closed: true }

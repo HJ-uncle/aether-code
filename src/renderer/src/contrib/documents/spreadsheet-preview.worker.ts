@@ -3,9 +3,11 @@ import { DOCUMENT_LIMITS } from './document-kind'
 import { prepareOfficeArchive } from './office-archive'
 import { type SpreadsheetRequest, type SpreadsheetResponse } from './spreadsheet-preview-contract'
 import { spreadsheetThemeColors } from './spreadsheet-style'
-import { buildSpreadsheetLayout, buildSpreadsheetPage, spreadsheetRequestValid } from './spreadsheet-page'
+import { buildSpreadsheetLayout, buildSpreadsheetPage, prepareSpreadsheetPageSource, spreadsheetRequestValid, type SpreadsheetPageSource } from './spreadsheet-page'
 
 let workbook: Workbook | null = null
+let sources: SpreadsheetPageSource[] = []
+let themeColors: string[] = []
 const reply = (message: SpreadsheetResponse): void => { postMessage(message) }
 onmessage = (event: MessageEvent<SpreadsheetRequest>): void => {
   const message = event.data
@@ -25,13 +27,14 @@ onmessage = (event: MessageEvent<SpreadsheetRequest>): void => {
       }
       // Offsets are computed from the real dimensions for the whole sheet once;
       // scrolling never has to guess positions from the currently loaded cells.
-      const layouts = next.worksheets.map(sheet => buildSpreadsheetLayout(sheet))
+      sources = next.worksheets.map(prepareSpreadsheetPageSource)
+      themeColors = spreadsheetThemeColors((next as Workbook & { _themes?: { theme1?: unknown } })._themes?.theme1)
+      const layouts = sources.map(buildSpreadsheetLayout)
       reply({ kind: 'loaded', sheets, layouts })
     } else if (message.kind === 'page' && workbook) {
       const { sheet: index, row, column, endRow, endColumn, requestId } = message
-      const sheet = workbook.worksheets[index]
+      const sheet = sources[index]
       if (!sheet || !spreadsheetRequestValid(index, row, column, sheet, endRow, endColumn)) throw new Error('所选表格区域无效。')
-      const themeColors = spreadsheetThemeColors((workbook as Workbook & { _themes?: { theme1?: unknown } })._themes?.theme1)
       const page = buildSpreadsheetPage(sheet, index, row, column, themeColors, workbook.properties.date1904 === true, endRow, endColumn)
       reply({ kind: 'page', requestId, page })
     }

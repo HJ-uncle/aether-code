@@ -862,6 +862,7 @@
   flex: 1 1 auto;
 }
 .work-conversation {
+  --work-content-width: 880px;
   --work-content-inset: var(--space-5);
   --work-scrollbar-width: 6px;
   display: flex;
@@ -913,7 +914,8 @@
 }
 .work-conversation__content {
   width: 100%;
-  margin: 0;
+  max-width: var(--work-content-width);
+  margin-inline: auto;
   padding: 24px var(--work-content-inset) 18px;
 }
 .work-conversation__scroll::-webkit-scrollbar { width: var(--work-scrollbar-width); height: var(--work-scrollbar-width); }
@@ -1163,6 +1165,26 @@
   gap: 6px;
   max-width: 100%;
 }
+.work-message__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.work-message--user:hover .work-message__actions,
+.work-message__actions:focus-within,
+.work-message__actions[aria-busy="true"] { opacity: 1; }
+.work-message__actions .message__action { width: 28px; height: 28px; }
+@media (hover: none) { .work-message__actions { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .work-message__actions { transition: none; } }
+.work-message__recovery {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
 /* Queued (not yet sent) messages read as dimmer, signalling they are pending. */
 .work-message--queued {
   opacity: 0.72;
@@ -1212,7 +1234,9 @@
 .work-turn-feedback__heading { display: flex; align-items: center; flex-wrap: wrap; column-gap: 8px; row-gap: 4px; font-size: 12px; line-height: 1.5; }
 .work-turn-feedback__heading > strong { min-width: 0; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .work-turn-feedback__heading > span:not(.work-turn-feedback__elapsed) { color: var(--fg-muted); }
-.work-turn-feedback__elapsed { margin-left: auto; color: var(--fg-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.work-turn-feedback__controls { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
+.work-turn-feedback__elapsed { color: var(--fg-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.work-view .work-run-stop { min-width: 72px; min-height: 28px; padding: 3px 8px; flex-shrink: 0; font-size: 12px; white-space: nowrap; }
 .work-turn-feedback__body > p { margin: 5px 0 0; color: var(--fg-muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 .work-view .work-turn-feedback__activity {
   display: flex;
@@ -1238,6 +1262,10 @@
 .work-conversation__footer {
   position: relative;
   flex-shrink: 0;
+  width: 100%;
+  /* Match the centered scroll content, including its reserved scrollbar gutter. */
+  max-width: calc(var(--work-content-width) + var(--work-scrollbar-width));
+  margin-inline: auto;
   padding-inline-end: var(--work-scrollbar-width);
 }
 .work-run-status {
@@ -2456,6 +2484,10 @@
   padding-right: 10px;
 }
 @container work (max-width: 990px) {
+  /* The header and pane switcher stay above the selected full-width surface. */
+  .work-task-body {
+    flex-direction: column;
+  }
   .work-page {
     padding-left: 28px;
     padding-right: 28px;
@@ -2483,6 +2515,9 @@
   }
   .work-task-body[data-workspace='true'] .work-task-primary {
     flex: 1 1 auto;
+  }
+  .work-task-body[data-pane='workspace'][data-workspace='true'] .work-task-primary {
+    flex: 0 0 auto;
   }
   .work-conversation__toolbar { display: none; }
   .work-conversation__select-toggle--mobile {

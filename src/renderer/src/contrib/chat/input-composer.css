@@ -88,6 +88,20 @@
   padding: 0;
   align-self: center;
 }
+.input-composer__trailing > .input-composer__stop {
+  color: var(--fg-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+}
+.input-composer__trailing > .input-composer__stop:hover:not(:disabled) {
+  color: var(--fg-strong);
+  background: var(--bg-hover);
+}
+.input-composer__trailing > .input-composer__stop:disabled {
+  color: var(--fg-faint);
+  border-color: var(--border);
+  background: transparent;
+}
 .input-composer .model-picker {
   min-width: 0;
   max-width: 190px;

@@ -2,6 +2,15 @@ export type CommandJobStatus = 'running' | 'cancelling' | 'succeeded' | 'failed'
 
 /** Engine-owned identity and status; accepting dispatch or cancel is not process completion. */
 export interface CommandJobSnapshot {
+  changes?: import('./ipc').EngineFileChange[]
+  changeTracking?: {
+    status: 'observing' | 'complete' | 'partial' | 'unavailable'
+    root: string
+    recordedCount?: number
+    skippedCount?: number
+    concurrentChangesExcluded?: number
+    note?: string
+  }
   schemaVersion: 1
   jobId: string
   sessionId: string

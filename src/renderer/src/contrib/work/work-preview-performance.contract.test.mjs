@@ -23,7 +23,8 @@ function load(name, extension = 'ts') {
 }
 const { readWorkFileCached, invalidateWorkFileReadCache, clearWorkFileReadCache, workFileReadCacheStats } = load('work-file-read-cache')
 const { isLargeWorkText } = load('WorkTextPreview', 'tsx')
-const { retainedResourceIds } = load('work-resource-preview-policy')
+const { resourcePreviewEntries } = load('work-resource-preview-policy')
+const { retainPreviewEntries, PREVIEW_RETENTION_LIMITS } = load('../../core/editor/preview-retention')
 const byteSource = readFileSync(join(directory, '../../core/workspace/file-content-bytes.ts'), 'utf8')
 const byteExports = {}
 new vm.Script('(function(exports){' + ts.transpileModule(byteSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText + '\n})').runInThisContext()(byteExports)
@@ -87,8 +88,55 @@ test('binary and text content retain every byte across attachment and URL conver
   await assert.rejects(fetch(resource.url))
 })
 
-test('retained Work previews stay bounded to current and recent across a large working set', () => {
+test('retained Work previews reuse a five-file round trip and bound a larger working set', () => {
   const files = Array.from({ length: 20 }, (_, index) => ({ id: `file:${index}`, externalFile: { size: 1024 * 1024 } }))
-  assert.deepEqual([...retainedResourceIds(files, 'file:8', ['file:2', 'file:4'])], ['file:8', 'file:2'])
-  assert.deepEqual([...retainedResourceIds(files, null, [])], [])
+  const entries = resourcePreviewEntries(files)
+  let retained = []
+  for (const index of [0, 1, 2, 3, 4, 0]) retained = retainPreviewEntries(entries, `file:${index}`, retained)
+  assert.deepEqual(retained.map(entry => entry.id), ['file:0', 'file:4', 'file:3', 'file:2', 'file:1'])
+  for (let index = 5; index < 20; index++) retained = retainPreviewEntries(entries, `file:${index}`, retained)
+  assert.equal(retained.length, PREVIEW_RETENTION_LIMITS.entries)
+  assert.deepEqual(retained.map(entry => entry.id), ['file:19', 'file:18', 'file:17', 'file:16', 'file:15', 'file:14'])
+  assert.deepEqual(retainPreviewEntries(entries, null, []), [])
+})
+
+test('retention accounts for byte size and charges unknown files conservatively', () => {
+  const entries = [
+    { id: 'small', size: 1024 * 1024 },
+    { id: 'large', size: 40 * 1024 * 1024 },
+    { id: 'unknown-a' }, { id: 'unknown-b' }, { id: 'unknown-c' }
+  ]
+  assert.deepEqual(retainPreviewEntries(entries, 'large', entries).map(entry => entry.id), ['large', 'small'])
+  assert.deepEqual(retainPreviewEntries(entries, 'unknown-c', entries.slice(2)).map(entry => entry.id), ['unknown-c', 'unknown-a'])
+  const oversized = { id: 'oversized', size: 100 * 1024 * 1024 }
+  assert.deepEqual(retainPreviewEntries([...entries, oversized], oversized.id, entries), [oversized])
+})
+
+test('close, reopen and background content replacement evict old preview generations', () => {
+  const first = { id: 'file-a', version: new ArrayBuffer(10), size: 10 }
+  const second = { id: 'file-b', version: new ArrayBuffer(10), size: 10 }
+  const previous = [first, second]
+  assert.deepEqual(retainPreviewEntries([second], second.id, previous), [second])
+  const changed = { ...first, version: new ArrayBuffer(10) }
+  assert.deepEqual(retainPreviewEntries([changed, second], second.id, previous), [second])
+  assert.deepEqual(retainPreviewEntries([changed, second], changed.id, previous), [changed, second])
+  const reopened = { ...first, id: 'file-a:instance-2' }
+  assert.deepEqual(retainPreviewEntries([reopened, second], second.id, previous), [second])
+})
+
+test('hidden panes keep only visited unchanged surfaces and never mount newly selected resources', () => {
+  const files = [{ id: 'old', externalFile: { size: 1 } }, { id: 'new', externalFile: { size: 1 } }]
+  const entries = resourcePreviewEntries(files)
+  const visited = retainPreviewEntries(entries, 'old', [])
+  assert.deepEqual(retainPreviewEntries(entries, null, visited).map(entry => entry.id), ['old'])
+  const replaced = resourcePreviewEntries([{ ...files[0] }, files[1]])
+  assert.deepEqual(retainPreviewEntries(replaced, null, visited), [])
+  // An empty history is also the input after a workspace/session scope reset.
+  assert.deepEqual(retainPreviewEntries(entries, 'new', []).map(entry => entry.id), ['new'])
+})
+
+test('retention ignores duplicate and removed history entries without spending their byte budget', () => {
+  const entries = [{ id: 'a', size: 32 * 1024 * 1024 }, { id: 'b', size: 32 * 1024 * 1024 }]
+  const history = [entries[0], entries[0], { id: 'closed', size: 64 * 1024 * 1024 }, entries[1]]
+  assert.deepEqual(retainPreviewEntries(entries, null, history).map(entry => entry.id), ['a', 'b'])
 })

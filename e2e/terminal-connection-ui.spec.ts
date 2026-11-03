@@ -64,7 +64,7 @@ test.describe.serial('远端终端连接就绪', () => {
     for (const key of Object.keys(environment)) {
       if (['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL', 'AETHER_IDE_REMOTE_API_KEY', 'AETHER_IDE_REMOTE_BEARER_TOKEN', 'AETHER_IDE_REMOTE_AUTH_URL', 'AETHER_IDE_REMOTE_INSTANCE_TOKEN'].includes(key.toUpperCase())) delete environment[key]
     }
-    app = await electron.launch({ args: ['.', `--user-data-dir=${fixture}`], cwd: root, env: environment })
+    app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || '.', `--user-data-dir=${fixture}`], cwd: root, env: environment })
     app.process().stderr?.on('data', chunk => { mainErrors += chunk.toString() })
     page = await app.firstWindow()
     page.on('pageerror', error => pageErrors.push(error.message))

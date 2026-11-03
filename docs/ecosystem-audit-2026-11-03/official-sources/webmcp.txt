@@ -1,0 +1,152 @@
+Source: https://learn.chatgpt.com/docs/webmcp
+Retrieved: 2026-11-03
+
+Copy Page
+Site tools
+Copy Page
+Use WebMCP to give AI agents a direct way to work with your website
+Site tools are ChatGPT’s implementation of the proposed
+WebMCP standard. With WebMCP,
+a website can offer useful actions directly to an AI agent alongside the
+interface people already use. You and the agent can work with the same live
+page and signed-in session.
+In the built-in browser in the ChatGPT desktop app, ChatGPT
+Work and Codex can discover and use these tools when they are available.
+Site tools require a supported model and a page that provides tools. Your
+account or your managed workspace’s browser policy can grant access. Your
+browser settings and site permissions still apply.
+WebMCP vs. MCP
+Model Context Protocol (MCP)
+connects an AI application to a local or remote server. Its tools can work
+independently of an open webpage, such as searching a service or managing
+records through an API.
+WebMCP lets a website make its
+capabilities available to an agent as a set of predefined tools. The agent can
+discover them when it visits, so people don’t need to install a separate MCP
+server or set up another connection to use those capabilities.
+This approach is useful when you and the agent need to see the same thing, such as
+when editing a canvas or exploring a dashboard. A plugin with an MCP server can provide an integration
+that works independently of an open page. A website can support both.
+How it works in the browser
+Open a website in the built-in browser and ask ChatGPT Work or Codex to help
+with a task. If the page offers site tools, the agent can discover and use the
+relevant actions in the website you’re viewing. For example, a document
+editor might let the agent find a section or leave a comment for you to review.
+Select Site tools in the browser’s address bar to see what the website
+provides. Choose Available site tools to inspect the individual tools. The
+browser checks each request before the website carries it out, and the agent
+can inspect the page to see what changed. When recent activity is available,
+choose Recently used to open Sources and review those calls.
+In this example, expand Available site tools to inspect the tools provided
+by Margin.
+Margin — Local-first writing with comments
+margin-local-docs.openai.chatgpt.site
+Welcome to Margin
+TextBI•••12
+Welcome to Margin
+Margin is a quiet place for notes, drafts, and decisions.
+Site tools
+Site tools help ChatGPT use this website to complete tasks more accurately and with fewer steps. Learn more
+Available site tools (10)3 read, 7 write tools
+Tools belong to the page that provides them. Closing or navigating away from a
+page can make its tools unavailable. If no suitable tool is available, the
+agent may still be able to use its regular browser capabilities.
+Example: Explore OpenAI documentation
+ChatGPT Learn and OpenAI Developers offer site tools for finding and reading
+documentation. Select Open in ChatGPT in the composer to open Learn in the
+desktop app’s browser beside a new chat with this prompt ready to send.
+The agent can use these tools to search, read, and open the relevant page:
+Tool
+What it does
+search_openai_docs
+Searches OpenAI documentation.
+lookup_page
+Reads a documentation page by path or URL.
+lookup_context
+Reads the current docs route and selected text.
+navigate_to_page
+Opens a matching page on the current documentation site.
+generate_custom_guide
+Starts a custom build or learning guide and returns its status and link.
+Docs Agent generates a custom guide asynchronously. Receiving its link doesn’t
+mean generation has finished.
+Security and user controls
+Website-provided tool definitions and results are untrusted content. A tool’s
+name or claim that it only reads data isn’t proof of what it does. Website
+instructions don’t give the agent permission to share unrelated information or
+take sensitive actions.
+In the built-in browser, each tool invocation receives a safety review before
+it runs. Normal website-access and confirmation policies still apply, including
+for consequential actions such as sending messages, making purchases, deleting
+data, or changing permissions. The browser ties each invocation to its
+originating page and tool registration. These checks reduce risk; they don’t
+make a website or its output trustworthy.
+You can turn off Enable site tools in Settings > Browser > Permissions.
+Review the site, requested action, and result before sharing sensitive
+information or relying on a change.
+Report security vulnerabilities through OpenAI’s
+Security Bug Bounty program. For AI
+safety risks, see the
+Safety Bug Bounty program. Follow
+each program’s scope and submission instructions.
+Limitations
+Site tools currently run only in the ChatGPT desktop app’s built-in browser.
+Add WebMCP to your website
+You can ask Codex to add WebMCP support to the web app or
+Site you’re working on. Describe what an agent should be able
+to do, and ask Codex to reuse the application’s existing logic and permissions.
+Register a tool with JavaScript or add WebMCP attributes to an HTML form. The
+built-in browser can discover tools in the top-level page and in same-origin
+and cross-origin iframes. Each frame must use a secure context. The browser
+checks access for the origin that provides the tool. You can omit exposedTo
+for agent discovery.
+Start with an operation your application already supports. For example:
+A dashboard that lets the agent set a date range and inspect the data behind
+a chart.
+A document editor that lets the agent find a section, suggest an edit, or
+leave a comment for you to review.
+A travel planner that lets the agent compare options and update an itinerary
+while you inspect the map.
+You can also write the code yourself. In your page’s JavaScript module, check
+for browser support and register a tool. This read-only example returns the
+current page’s title:
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13if (typeof document.modelContext?.registerTool === "function") {
+await document.modelContext.registerTool({
+name: "get_page_title",
+description: "Read the title of the current page.",
+inputSchema: {
+type: "object",
+properties: {},
+additionalProperties: false,
+},
+annotations: { readOnlyHint: true },
+execute: async () => ({ title: document.title }),
+});
+}
+A compatible agent can discover get_page_title and receive the page’s
+current title. For a tool that accepts arguments, describe them in the input
+schema and use them in the execute handler to call your application’s
+existing logic.
+Keep inputs narrow, describe side effects, and return enough information to
+verify the result. Use your application’s existing authentication,
+authorization, and input validation. Preserve the normal interface for people
+and browsers that don’t support WebMCP.
+For API details and examples, see the
+WebMCP specification and
+Chrome’s developer guide.
+Previous
+Build skills
+Next
+Annotations Extensibility

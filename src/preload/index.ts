@@ -38,6 +38,7 @@ import type {
   SearchOutcome,
   StreamEvent,
   StreamStartInput,
+  StreamStartResult,
   TerminalCreateInput,
   TerminalDataEvent,
   TerminalExitInfo,
@@ -182,7 +183,7 @@ const api = {
       ipcRenderer.invoke(IPC.invoke.engineCancelAttachmentUpload, requestId),
 
     stream: {
-      start: (input: StreamStartInput): Promise<{ ok: boolean }> =>
+      start: (input: StreamStartInput): Promise<StreamStartResult> =>
         ipcRenderer.invoke(IPC.invoke.engineStreamStart, input),
       abort: (streamId: string): Promise<{ ok: boolean }> =>
         ipcRenderer.invoke(IPC.invoke.engineStreamAbort, streamId)

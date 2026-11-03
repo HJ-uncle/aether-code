@@ -34,19 +34,20 @@ test('补齐历史检索、记忆、代理执行和内置技能工具', () => {
   expect(toolDisplayName('agent_do_create')).toBe('执行创建代理')
   expect(toolDisplayName('agent_do_update')).toBe('执行更新代理')
   expect(toolDisplayName('agent_do_delete')).toBe('执行删除代理')
-  expect(toolDisplayName('calculate')).toBe('计算器')
-  expect(toolDisplayName('get_time')).toBe('获取时间')
 })
 
 test('旧历史别名仍显示中文，不改变未知名称或原型属性', () => {
   expect(toolDisplayName('run_command')).toBe('执行命令')
   expect(toolDisplayName('smart_read')).toBe('读取文件')
-  expect(toolDisplayName('glob')).toBe('查找文件')
-  expect(toolDisplayName('grep')).toBe('搜索内容')
   expect(toolDisplayName('')).toBe('未命名工具')
   for (const name of ['custom_tool', 'Browser_Screenshot', 'constructor', 'toString', '__proto__']) {
     expect(toolDisplayName(name)).toBe(name)
   }
+})
+
+test('文件搜索使用简洁的 glob 和 grep 名称', () => {
+  expect(toolDisplayName('glob')).toBe('查找文件')
+  expect(toolDisplayName('grep')).toBe('搜索内容')
 })
 
 test('MCP 保留服务身份；不凭有歧义的下划线猜测第三方工具', () => {

@@ -39,6 +39,7 @@ interface ResourceChoice {
   id: string
   label: string
   description?: string
+  defaultEnabled?: boolean
 }
 type ResourceKey = 'skills' | 'mcpServers' | 'knowledgeBases' | 'allowedTools'
 type EditorTab = 'basics' | 'resources' | 'tools'
@@ -308,13 +309,13 @@ export function WorkAgentManager({
             [key]: { options, loading: false, error: '' }
           }))
           // Empty allowedTools disables execution in the engine. A new assistant starts
-          // with the current Work catalogue; existing or explicitly edited limits stay intact.
+          // with the engine's defaults; existing or explicitly edited limits stay intact.
           if (key === 'allowedTools')
             setDraft((previous) =>
               previous && !previous.id && !previous.toolsInitialized
                 ? {
                     ...previous,
-                    allowedTools: options.map((option) => option.id),
+                    allowedTools: options.filter((option) => option.defaultEnabled !== false).map((option) => option.id),
                     toolsInitialized: true
                   }
                 : previous
@@ -379,13 +380,14 @@ export function WorkAgentManager({
     load(
       'allowedTools',
       requestOrThrow<
-        | Array<{ name: string; displayName?: string; description?: string; source?: string }>
+        | Array<{ name: string; displayName?: string; description?: string; source?: string; defaultEnabled?: boolean }>
         | {
             list?: Array<{
               name: string
               displayName?: string
               description?: string
               source?: string
+              defaultEnabled?: boolean
             }>
           }
       >({
@@ -397,7 +399,8 @@ export function WorkAgentManager({
         listResult(result).filter(item => !isTaskPlanControl(item.name)).map((item) => ({
           id: item.name,
           label: item.displayName || item.name,
-          description: `${item.name.startsWith('mcp_') ? 'MCP' : item.source === 'skill' ? '技能' : '内置'} · ${item.description || item.name}`
+          description: `${item.name.startsWith('mcp_') ? 'MCP' : item.source === 'skill' ? '技能' : '内置'}${item.defaultEnabled === false ? ' · 按需启用' : ''} · ${item.description || item.name}`,
+          defaultEnabled: item.defaultEnabled
         }))
       )
     )
@@ -722,8 +725,7 @@ export function WorkAgentManager({
             <div className="work-agent-manager__section-title">
               <h2>执行能力</h2>
               <p>
-                新建 Agent 默认选择当前 Work
-                可用工具。可缩小范围；实际执行仍受安全模式与引擎权限限制。
+                新建 Agent 使用引擎推荐的默认工具，其余可按需启用。实际执行仍受安全模式与引擎权限限制。
               </p>
             </div>
             <div className="work-agent-manager__tool-actions">

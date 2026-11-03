@@ -1,0 +1,81 @@
+Source: https://learn.chatgpt.com/docs/web-search
+Retrieved: 2026-11-03
+
+ChatGPT desktop app
+Copy Page
+Web search
+Copy Page
+Search the web while you work in ChatGPT
+ChatGPT desktop app
+ChatGPT includes a first-party web search tool. Treat all web results as
+untrusted input.
+In the ChatGPT desktop app, ask for current information in a chat. ChatGPT records
+search activity with the other tool calls in the transcript.
+Research a topic in Work
+Use the Deep research plugin in the desktop app for an investigation across
+multiple sources and a report you can review.
+Switch to Work and open Plugins.
+Select Deep research. Install or enable it if needed, then select
+Try now to start a Work chat.
+Describe the question, scope, and result you need. Include relevant files
+or connected app context.
+Review the report and its sources, then ask follow-up questions in the chat.
+Plugin availability depends on your account and workspace settings.
+In ChatGPT web, ask for current information or sources. Search results and
+citations appear in the chat when ChatGPT uses web search. Workspace
+settings can limit whether search is available.
+Research a topic in Work
+Use deep research in Work for a question that needs investigation across
+multiple sources and a report you can review.
+Start a chat in Work.
+Open the + menu and select Deep research, if it’s available for
+your account and workspace.
+Describe the question, scope, and result you need. Include relevant files
+or connected app context.
+Review the report and its sources, then ask follow-up questions in the chat.
+For example: “Research three approaches to reducing food waste in office
+cafeterias. Compare the evidence, costs, and implementation requirements.”
+In the CLI, pass --search to fetch live results for one run:
+codex --search "Summarize the latest release notes for this dependency"
+Searches appear as web_search items in the interactive transcript and in
+codex exec --json output.
+In the IDE extension, ask Codex to search while you work in the editor. The
+extension uses the connected Codex host’s search mode. Search activity appears
+in the chat transcript.
+Configure local web search
+For local Codex chats, Codex enables cached search by default. Cached mode uses
+an OpenAI-maintained index instead of fetching arbitrary pages live, which
+lowers—but doesn’t remove—prompt injection risk.
+Web search is a hosted tool, separate from sandboxed local command networking.
+It does not use the permission profile’s network proxy or domain allowlist, and
+it can remain available when command network access is disabled. Configure
+search with web_search, tools.web_search.allowed_domains, and managed
+allowed_web_search_modes as appropriate. Search-domain filters do not restrict
+local command traffic, apps, connectors, or MCP servers.
+Use live search when your task depends on the latest information. Set
+web_search = "live" in config.toml. Set web_search = "disabled" to turn
+the tool off. The "indexed" mode permits external web access only when the
+search index gates the request. When Codex runs with full access, web search
+defaults to live results. See Config basics
+for config file locations and precedence.
+Search with a custom model provider
+A custom model provider can opt in to standalone web search when it supports
+a compatible search endpoint:
+model_provider = "custom"
+web_search = "live"
+[model_providers.custom]
+name = "Custom Responses provider"
+base_url = "https://example.com/v1"
+env_key = "CUSTOM_RESPONSES_API_KEY"
+supports_standalone_web_search = true
+Custom providers default to supports_standalone_web_search = false.
+Standalone web search remains under development and is off by default.
+Setting this provider capability doesn’t enable the feature: the provider,
+selected model, and runtime must also support standalone search. Workspace and
+managed search restrictions still apply.
+For network boundaries that apply to Codex cloud environments, see Internet
+access.
+Previous
+Sign in with ChatGPT
+Next
+Image generation

@@ -878,7 +878,7 @@ for(const lane of config.sessions){
  const shared={skills:[],mcpServers:[],knowledgeBases:[],temperature:0.25};
  const rootAgent=await agents.create('default',{...shared,name:lane.title,model:config.primary,systemPrompt:lane.systemPrompt,allowedTools:config.tools});
  const actor=await agents.create('default',{...shared,name:lane.lane+' 实现工程师',systemPrompt:lane.systemPrompt+'\\n你负责实现，不扩展文件范围。'+config.actorBoundary+'\\n'+config.domainBoundary,allowedTools:config.tools.filter(x=>x!=='subagent')});
- const reviewer=await agents.create('default',{...shared,name:lane.lane+' 质量审查员',systemPrompt:lane.systemPrompt+'\\n你只读审查，不能写文件或运行命令。'+config.reviewBoundary+'\\n'+config.domainBoundary,allowedTools:['read_file','list_files','grep_search','glob_search','get_current_context','plan_update']});
+ const reviewer=await agents.create('default',{...shared,name:lane.lane+' 质量审查员',systemPrompt:lane.systemPrompt+'\\n你只读审查，不能写文件或运行命令。'+config.reviewBoundary+'\\n'+config.domainBoundary,allowedTools:['read_file','list_files','grep','glob','plan_update']});
  lane.agentId=rootAgent.id;lane.actorId=actor.id;lane.reviewerId=reviewer.id;
  await sessions.bindAgent(lane.sessionId,'default',rootAgent.id,{title:lane.title,workspacePath:lane.workspacePath});
  workspaceManager.bind({tenantId:'default',sessionId:lane.sessionId},lane.workspacePath);
@@ -950,7 +950,7 @@ export async function prepare(opts) {
     lane.systemPrompt = `你在隔离持续开发测试工程 ${lane.workspacePath} 工作。${writeScope(lane)}其他会话同时开发，绝对不能改其他lane、contracts、package.json或隐藏测试。禁止联网、安装依赖、启动长期服务或修改工作区外文件。用内建plan_update静默维护计划。不得虚报验证结果；当前contract每轮变化，旧通过不计本轮通过。${resumeBoundary}\n${independentBoundary}`
   }
   const config = { runId, minutes: opts.minutes, port: opts.port, securityMode: opts.securityMode, thinkingMode: opts.thinkingMode, thinkingPolicy: { codeWork: opts.thinkingMode, preflight: 'off', cron: opts.thinkingMode === 'auto' ? 'scheduler-default-omitted' : opts.thinkingMode }, allowLaneDiagnostics: Boolean(opts['allow-lane-diagnostics']), primary: opts.primary, qwen: opts.qwen, sourceEngineRoot: engineRoot, sourceRuntimeRoot: runtimeRoot, expectedBuildId: manifest.buildId,
-    distDigest: before, nodeDigest: sha(fs.readFileSync(node)), bootstrapDigest: sha(bootstrapSource), node, dbFile, sessions, scenarioVersion, collaborationEnabled, independentBoundary, domainBoundary, reviewBoundary, actorBoundary, resumeBoundary, tools: ['read_file', 'write_file', 'edit_file', 'list_files', 'grep_search', 'glob_search', 'execute_cmd', 'command_output', 'cancel_command', 'subagent', 'get_current_context', 'plan_update'] }
+    distDigest: before, nodeDigest: sha(fs.readFileSync(node)), bootstrapDigest: sha(bootstrapSource), node, dbFile, sessions, scenarioVersion, collaborationEnabled, independentBoundary, domainBoundary, reviewBoundary, actorBoundary, resumeBoundary, tools: ['read_file', 'write_file', 'edit_file', 'list_files', 'grep', 'glob', 'execute_cmd', 'command_output', 'cancel_command', 'subagent', 'plan_update'] }
   if (opts.clientMain) { config.clientMain = path.resolve(opts.clientMain); if (!fs.existsSync(config.clientMain)) throw new Error('Client main artifact missing') }
   for (const lane of sessions) lane.prompt = writeChallenge(root, lane, 1, node).prompt
   json(configFile, config); fs.writeFileSync(path.join(root, 'bootstrap.mjs'), bootstrapSource)
@@ -2016,7 +2016,7 @@ export async function contractTest(opts = {}) {
   assert.doesNotThrow(() => assertScenarioCompatibility(scene))
   for (const field of Object.keys(scene)) assert.throws(() => assertScenarioCompatibility({ ...scene, [field]: undefined }))
   assert.match(bootstrapSource, /config\.actorBoundary/); assert.doesNotMatch(bootstrapSource, /阅读当前contract/)
-  assert.match(bootstrapSource, /allowedTools:\['read_file','list_files','grep_search','glob_search','get_current_context','plan_update'\]/)
+  assert.match(bootstrapSource, /allowedTools:\['read_file','list_files','grep','glob','plan_update'\]/)
   const cronLane = { lane: 'cron-a', jobId: 'owned-job' }, cronRun = { userMessageId: 'current-user', request: { cronJobId: 'owned-job' } }
   const cronHistory = [{ id: 'old-user', role: 'user', content: 'STRESS_CHALLENGE cron-a 2' }, { id: 'current-user', role: 'user', content: 'STRESS_CHALLENGE cron-a 3' }]
   assert.equal(cronChallengeRound(cronLane, cronRun, cronHistory), 3)

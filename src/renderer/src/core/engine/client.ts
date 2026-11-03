@@ -16,7 +16,8 @@ import type {
   RemoteAttachmentResult,
   RemoteAuthCredential,
   StreamEvent,
-  StreamStartInput
+  StreamStartInput,
+  StreamStartResult
 } from '@shared/ipc'
 import type {
   SubagentRun, SubagentRunsPage, SubagentToolsPage, SubagentToolDetailPage, SubagentEventsPage,
@@ -359,7 +360,7 @@ export async function listSubagentEvents(runId: string, options: SubagentScope &
 
 // ==================== 流式 ====================
 
-export function startStream(input: StreamStartInput): Promise<{ ok: boolean }> {
+export function startStream(input: StreamStartInput): Promise<StreamStartResult> {
   return bridge().engine.stream.start({
     ...input,
     toolProfile: input.toolProfile ?? (getAppMode() === 'work' ? 'general' : 'code'),

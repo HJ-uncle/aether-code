@@ -18,7 +18,7 @@ import {
 } from '@renderer/core/engine/client'
 import { allowRoot, bindSessionWorkspace, copyIntoWorkspace, pickFolder } from '@renderer/core/workspace/fs-client'
 import { isSupportedFile } from '@renderer/contrib/chat/useAttachments'
-import { mentionToken, type Mention } from '@renderer/contrib/chat/mention-context'
+import { mentionToken, userMessageDraft, type Mention } from '@renderer/contrib/chat/mention-context'
 import { buildWorkAgentMessage } from './work-agent-collaboration'
 import { queuedDraft, useWorkNextTurnQueue } from './work-next-turn-queue'
 import type { WorkQueueDraft } from '@shared/work-next-turn-api'
@@ -28,6 +28,9 @@ import { loadSessionModelSelection, resolveSessionComposerModel, saveSessionMode
 import { requestedThinkingMode } from '../chat/session-request-config'
 import type { AgentCollaborator, SubagentRun } from '@shared/subagent'
 import { pollWorkTaskStatuses } from './work-status-poller'
+import { cancelWorkTask } from './work-task-cancel'
+import { recoverWorkTurn } from './work-turn-recovery'
+import { restoreMessageDraft } from '../chat/message-draft-merge'
 import { getAppMode } from '@renderer/core/platform/app-mode'
 import { useWorkAgentIdentity } from './work-agent-identity'
 import {
@@ -45,6 +48,8 @@ import {
 
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
+
+export type WorkUserMessageAction = 'add' | 'retry' | 'edit' | 'revert' | 'delete'
 
 interface WorkDefaultModelSelection { anchorRunId?: string; clientDefault: boolean }
 const WORK_DEFAULT_MODELS_KEY = 'aether:workDefaultModelSelections'
@@ -110,6 +115,9 @@ export function useWorkController() {
   const canonicalModelId = useCallback((value: string): string => models.find(model => model.id === value || model.modelId === value)?.modelId ?? value, [models])
   const activeTask = state.tasks.find((task) => task.id === state.activeTaskId) ?? null
   const activeId = activeTask?.id ?? null
+  const selectedView = useMemo(() => ({ epoch, activeId }), [epoch, activeId])
+  const selectedViewRef = useRef(selectedView)
+  selectedViewRef.current = selectedView
   const nextTurnQueue = useWorkNextTurnQueue(activeId, epoch, engineReady)
   const [nextModel, setNextModel] = useState<{ source: string; taskId: string; modelId: string } | null>(null)
   const [selectedModel, setSelectedModel] = useState<{ source: string; id: string; selection: SessionModelSelection | null; defaultSelection: WorkDefaultModelSelection | null } | null>(null)
@@ -148,6 +156,9 @@ export function useWorkController() {
   const [error, setError] = useState<string | null>(null)
   const [uploadCount, setUploadCount] = useState(0)
   const [historyAttempt, setHistoryAttempt] = useState(0)
+  const [draftFocusRequest, setDraftFocusRequest] = useState<{ source: string; taskId: string; token: number } | null>(null)
+  const messageActionRef = useRef<{ source: string; taskId: string; action: WorkUserMessageAction } | null>(null)
+  const [messageAction, setMessageAction] = useState<{ source: string; taskId: string; action: WorkUserMessageAction } | null>(null)
   const pendingStart = useRef<{ source: string; id: string; text: string; mentions: Mention[] } | null>(null)
   const submitted = useRef(
     new Map<
@@ -155,13 +166,8 @@ export function useWorkController() {
       { source: string; text: string; mentions: Mention[]; attachments: ChatAttachment[]; createdAt: number; preserveDraft: boolean }
     >()
   )
-  // Keep the exact failed turn separate from the editable draft. A user may
-  // type a new draft while an error card is visible; retry must replay the
-  // failed request the card refers to, including its captured attachments.
-  const failedSubmissions = useRef(
-    new Map<string, { text: string; mentions: Mention[]; attachments: ChatAttachment[] }>()
-  )
   const stoppingTaskIdsRef = useRef(new Set<string>())
+  const [stoppingTaskIds, setStoppingTaskIds] = useState<ReadonlySet<string>>(() => new Set())
   const taskRevisionsRef = useRef(new Map<string, number>())
   const invalidateStatusProbe = (id: string): void => {
     taskRevisionsRef.current.set(id, (taskRevisionsRef.current.get(id) ?? 0) + 1)
@@ -328,7 +334,7 @@ export function useWorkController() {
   }
 
   const sendTask = useCallback(
-    async (task: WorkTask, text: string, mentions: Mention[] = task.mentions ?? [], preserveDraft = false, collaborators?: AgentCollaborator[]): Promise<void> => {
+    async (task: WorkTask, text: string, mentions: Mention[] = task.mentions ?? [], mode: 'composer' | 'follow-up' | 'replay' = 'composer', collaborators?: AgentCollaborator[]): Promise<void> => {
       assertEngineSource(epoch)
       // The stream IPC resolves after its reader closes, possibly after an
       // authoritative terminal snapshot or a later task has been selected.
@@ -341,25 +347,25 @@ export function useWorkController() {
       // files, Git and tool output all use the task's selected workspace.
       if (task.workspacePath) await bindSessionWorkspace(task.id, task.workspacePath)
       updateTask(task.id, { status: 'running', agentLocked: true, runStartedAt: Date.now(), updatedAt: Date.now() })
+      const preserveDraft = mode !== 'composer'
+      const sentAttachments = mode === 'follow-up' ? [] : [...task.attachments]
       const submission = {
         source,
         text,
         mentions: [...mentions],
-        attachments: preserveDraft ? [] : task.attachments,
+        attachments: sentAttachments,
         createdAt: Date.now(),
         preserveDraft
       }
       submitted.current.set(task.id, submission)
-      if (!preserveDraft) failedSubmissions.current.delete(task.id)
       try {
         const prepared = buildWorkAgentMessage(text, mentions)
         const delegation = collaborators ?? prepared.collaborators
-        const sendOptions = optionsFor(preserveDraft ? { ...task, attachments: [] } : task)
+        const sendOptions = optionsFor({ ...task, attachments: sentAttachments })
         // Clear the input box the moment the request is dispatched (not after the
         // stream finishes). Attachments/mentions are captured in sendOptions first,
         // so wiping the live store does not drop them from the outgoing request.
         if (!preserveDraft) {
-          const sentAttachments = task.attachments
           updateWorkState(source, (previous) => ({
             ...previous,
             tasks: previous.tasks.map((item) =>
@@ -384,7 +390,7 @@ export function useWorkController() {
         if (epoch !== getEngineSource()) return
         // A follow-up from the Agent panel is independent of an unsent composer
         // draft. Its attachments and mention offsets must stay untouched.
-        if (preserveDraft) return
+        if (mode === 'follow-up') return
         updateWorkState(source, (previous) => ({
           ...previous,
           tasks: previous.tasks.map((item) => {
@@ -392,7 +398,7 @@ export function useWorkController() {
             // Draft/attachments were already cleared on dispatch; here we only fold
             // the sent attachments into sources and refresh the title. Any text the
             // user typed while the request was in flight is preserved as-is.
-            const combined = [...item.sources, ...task.attachments]
+            const combined = [...item.sources, ...sentAttachments]
             return {
               ...item,
               title:
@@ -409,11 +415,6 @@ export function useWorkController() {
         }))
       } catch (cause) {
         if (epoch === getEngineSource() && submitted.current.get(task.id) === submission) {
-          if (!preserveDraft) failedSubmissions.current.set(task.id, {
-            text,
-            mentions: [...mentions],
-            attachments: [...task.attachments]
-          })
           setError(messageOf(cause))
           updateTask(task.id, { status: 'error', runStartedAt: undefined })
         }
@@ -464,13 +465,22 @@ export function useWorkController() {
     ? activeTask.status !== 'draft' || activeTask.attachments.length || preparing
     : state.homeAttachments.length)
   const streaming = Boolean((restored || previewReady) && chat.streaming)
+  useEffect(() => {
+    // A retry's history mutation is over once the new stream starts. Its IPC
+    // promise lasts until completion; that must not lock normal running actions.
+    const operation = messageActionRef.current
+    if (streaming && operation?.action === 'retry' && operation.source === source && operation.taskId === activeId) {
+      messageActionRef.current = null
+      setMessageAction(null)
+    }
+  }, [streaming, source, activeId])
   // Streaming text replaces the active message object on every token. File
   // receipts do not change during those frames, so keep the derived artifact
   // array stable until a receipt, task scope, or source actually changes.
   const artifactCache = useRef<{ scope: string; value: WorkArtifact[] }>({ scope: '', value: [] })
   const artifacts = useMemo(() => {
     const scope = `${source}\0${activeId ?? ''}`
-    const next = workArtifacts(messages)
+    const next = workArtifacts(messages, chat.commandJobs, activeId ?? undefined)
     const previous = artifactCache.current
     if (previous.scope === scope && previous.value.length === next.length && previous.value.every((item, index) => {
       const candidate = next[index]
@@ -479,7 +489,7 @@ export function useWorkController() {
     })) return previous.value
     artifactCache.current = { scope, value: next }
     return next
-  }, [activeId, messages, source])
+  }, [activeId, messages, source, chat.commandJobs])
   const pending = useMemo(
     () =>
       messages
@@ -491,7 +501,10 @@ export function useWorkController() {
   useEffect(() => {
     const observedId = chat.sessionModel?.sessionId
     if (!observedId || chat.sessionModel?.source !== epoch) return
-    const next = workStatus(chat.messages, chat.streaming)
+    const next = workStatus(chat.messages, chat.streaming) ?? (
+      isHistoryReady(observedId) && !chat.messages.length && !chat.streaming && pendingStart.current?.id !== observedId
+        ? 'draft' : null
+    )
     const task = getWorkState(source).tasks.find((item) => item.id === observedId)
     if (next && task && next !== task.status)
       updateTask(observedId, {
@@ -510,14 +523,10 @@ export function useWorkController() {
       !chat.streaming
     ) {
       if (last.status === 'error' && task && !sent.preserveDraft) {
+        const draft = getWorkDraft(source, observedId)
         const attachments = [...task.attachments, ...sent.attachments]
-        failedSubmissions.current.set(observedId, {
-          text: sent.text,
-          mentions: [...sent.mentions],
-          attachments: [...sent.attachments]
-        })
         updateTask(observedId, {
-          draft: task.draft || sent.text,
+          ...(!draft.text ? { draft: sent.text, mentions: [...sent.mentions] } : {}),
           attachments: attachments.filter(
             (item, index) => attachments.findIndex((other) => other.path === item.path) === index
           )
@@ -526,7 +535,7 @@ export function useWorkController() {
       if (['done', 'error', 'aborted', 'interrupted'].includes(last.status))
         submitted.current.delete(observedId)
     }
-  }, [epoch, chat.messages, chat.streaming, chat.sessionModel, source, updateTask])
+  }, [epoch, chat.messages, chat.streaming, chat.sessionModel, source, updateTask, isHistoryReady])
 
   const createTask = useCallback(
     async (text?: string, mentions: Mention[] = []): Promise<void> => {
@@ -697,7 +706,7 @@ export function useWorkController() {
     async (text?: string, mentions: Mention[] = []): Promise<void> => {
       flushWorkDrafts(source)
       const currentTaskSending = activeTask ? hasSessionWork(activeTask.id) : false
-      if (!engineReady || streaming || currentTaskSending || pending.length || uploadCount > 0) return
+      if (!engineReady || streaming || currentTaskSending || pending.length || uploadCount > 0 || messageActionRef.current?.taskId === activeId) return
       if (!activeTask) {
         const home = getWorkDraft(source, null)
         await createTask(text ?? home.text, mentions.length ? mentions : home.mentions)
@@ -728,7 +737,9 @@ export function useWorkController() {
   )
 
   /** Replay the exact failed user turn from a Work error card. */
-  const retryFailedTask = useCallback(async (): Promise<void> => {
+  const retryFailedTask = useCallback(async (taskId: string, assistantId: string): Promise<void> => {
+    assertEngineSource(epoch)
+    if (activeId !== taskId || getWorkState(source).activeTaskId !== taskId) throw new Error('任务已切换，请在原任务中重试')
     if (!activeTask || !engineReady) throw new Error('引擎尚未就绪，请稍后重试')
     if (streaming || pending.length || uploadCount > 0 || hasSessionWork(activeTask.id))
       throw new Error('当前任务仍在执行，请等待本轮结束后重试')
@@ -738,16 +749,84 @@ export function useWorkController() {
     }
     const latest = getWorkState(source).tasks.find(task => task.id === activeTask.id)
     if (!latest) throw new Error('任务已不存在，请重新打开任务')
-    const failed = failedSubmissions.current.get(activeTask.id)
-    const text = failed?.text ?? latest.draft
-    const attachments = failed?.attachments ?? latest.attachments
-    if (!text.trim() && !attachments.length) throw new Error('没有可重试的原始指令，请在输入框中重新描述任务')
-    await sendTaskRef.current({ ...latest, attachments }, text, failed?.mentions ?? latest.mentions ?? [])
-    failedSubmissions.current.delete(activeTask.id)
-  }, [activeTask, engineReady, streaming, pending.length, uploadCount, hasSessionWork, restored, isHistoryReady, source])
+    const original = recoverWorkTurn(messages, assistantId)
+    if (!original || original.status !== 'error') throw new Error('原始指令不可用，请回到最新消息后重试')
+    await sendTaskRef.current({ ...latest, attachments: original.attachments }, original.text, original.mentions, 'replay')
+  }, [activeTask, activeId, epoch, engineReady, streaming, pending.length, uploadCount, hasSessionWork, restored, isHistoryReady, source, messages])
+
+  const editSettledTurn = useCallback((taskId: string, assistantId: string): void => {
+    if (epoch !== getEngineSource() || activeId !== taskId || getWorkState(source).activeTaskId !== taskId || hasSessionWork(taskId) || messageActionRef.current) return
+    const original = recoverWorkTurn(messages, assistantId)
+    if (!original) { setError('原始指令不可用，请回到最新消息后编辑'); return }
+    const draft = restoreMessageDraft(getWorkDraft(source, taskId), original)
+    updateWorkDraft(source, taskId, draft.text, draft.mentions)
+    updateWorkState(source, previous => ({ ...previous, tasks: previous.tasks.map(task => {
+      if (task.id !== taskId) return task
+      const attachments = [...task.attachments, ...original.attachments]
+      return { ...task, attachments: attachments.filter((file, index) => attachments.findIndex(other => other.path === file.path) === index) }
+    }) }))
+    setDraftFocusRequest(previous => ({ source, taskId, token: (previous?.token ?? 0) + 1 }))
+  }, [activeId, epoch, source, hasSessionWork, messages])
+
+  const userMessageAction = useCallback(async (taskId: string, messageId: string, action: WorkUserMessageAction): Promise<boolean> => {
+    const current = (): boolean => selectedViewRef.current === selectedView && epoch === getEngineSource() && activeId === taskId && getWorkState(source).activeTaskId === taskId
+    if (!current()) return false
+    const message = messages.find(item => item.id === messageId && item.role === 'user')
+    const task = getWorkState(source).tasks.find(item => item.id === taskId)
+    if (!message || !task) throw new Error('这条消息已不可用，请重新加载会话')
+    if (messageActionRef.current) throw new Error('正在处理消息，请稍候')
+    const draft = userMessageDraft(message.content)
+    const refill = (): void => {
+      // Read again after the server operation: typing during a slow request wins.
+      const merged = restoreMessageDraft(getWorkDraft(source, taskId), draft)
+      updateWorkDraft(source, taskId, merged.text, merged.mentions)
+      updateWorkState(source, previous => ({ ...previous, tasks: previous.tasks.map(item => {
+        if (item.id !== taskId) return item
+        const files = [...item.attachments, ...(message.attachments ?? [])]
+        return { ...item, attachments: files.filter((file, index) => files.findIndex(other => other.path === file.path) === index) }
+      }) }))
+      setDraftFocusRequest(previous => ({ source, taskId, token: (previous?.token ?? 0) + 1 }))
+    }
+    if (action === 'add') { refill(); return true }
+    if (!engineReady || !restored || !isHistoryReady(taskId)) throw new Error('会话历史尚未就绪，请稍后重试')
+    if (streaming || pending.length || uploadCount || hasSessionWork(taskId) || pendingStart.current?.id === taskId)
+      throw new Error('任务仍在执行，请先停止后再操作历史消息')
+    const operation = { source, taskId, action }
+    messageActionRef.current = operation
+    setMessageAction(operation)
+    try {
+      if (action === 'retry') {
+        const prepared = buildWorkAgentMessage(draft.text, draft.mentions)
+        await chat.retryFrom(message, { ...optionsFor(task), attachments: message.attachments,
+          ...(prepared.collaborators.length ? { collaborators: prepared.collaborators } : {}) })
+      } else if (action === 'delete') await chat.deleteTurn(taskId, message)
+      else {
+        if (action === 'revert') await chat.revertFrom(taskId, message)
+        else await chat.truncateFrom(taskId, message)
+        if (!current()) return false
+        refill()
+      }
+      if (!current()) return false
+      setError(null)
+      return true
+    } catch (cause) {
+      if (!current()) return false
+      throw cause
+    } finally {
+      if (messageActionRef.current === operation) {
+        messageActionRef.current = null
+        setMessageAction(null)
+      }
+      // Leaving and returning to the same task is a different view. A server
+      // mutation may have completed after that view loaded its old history.
+      if (selectedViewRef.current !== selectedView && epoch === getEngineSource() && getWorkState(source).activeTaskId === taskId)
+        setHistoryAttempt(attempt => attempt + 1)
+    }
+  }, [activeId, selectedView, epoch, source, messages, engineReady, restored, isHistoryReady, streaming, pending.length, uploadCount,
+    hasSessionWork, chat.retryFrom, chat.deleteTurn, chat.revertFrom, chat.truncateFrom, optionsFor])
 
   const stop = useCallback(async (): Promise<void> => {
-    if (!activeTask || !engineReady) return
+    if (!activeTask || !engineReady || stoppingTaskIdsRef.current.has(activeTask.id)) return
     // The user can stop before the first stream exists. Clearing the queued
     // start prevents the history preflight from launching it after this click.
     if (pendingStart.current?.source === source && pendingStart.current.id === activeTask.id) {
@@ -757,22 +836,25 @@ export function useWorkController() {
     }
     invalidateStatusProbe(activeTask.id)
     stoppingTaskIdsRef.current.add(activeTask.id)
+    setStoppingTaskIds(new Set(stoppingTaskIdsRef.current))
     setError(null)
     try {
       if (chat.streaming) await abort()
       else {
-        await requestOrThrow({
-          method: 'POST',
-          path: '/chat/cancel',
-          body: { sessionId: activeTask.id }
+        await cancelWorkTask({
+          sessionId: activeTask.id,
+          readStatus: () => requestOrThrow({ method: 'GET', path: '/chat/status', query: { sessionId: activeTask.id } }),
+          cancel: body => requestOrThrow({ method: 'POST', path: '/chat/cancel', body }),
+          isCurrent: () => epoch === getEngineSource() && getWorkState(source).tasks.some(task => task.id === activeTask.id)
         })
         assertEngineSource(epoch)
-        await resumeStream(activeTask.id)
+        if (getWorkState(source).activeTaskId === activeTask.id) await resumeStream(activeTask.id)
       }
     } catch (cause) {
-      setError(messageOf(cause))
+      if (epoch === getEngineSource() && getWorkState(source).activeTaskId === activeTask.id) setError(messageOf(cause))
     } finally {
       stoppingTaskIdsRef.current.delete(activeTask.id)
+      setStoppingTaskIds(new Set(stoppingTaskIdsRef.current))
       invalidateStatusProbe(activeTask.id)
     }
   }, [activeTask, engineReady, chat.streaming, abort, epoch, resumeStream, source, updateTask])
@@ -791,24 +873,34 @@ export function useWorkController() {
       throw new Error('当前任务正在执行或等待确认，请完成后再继续子代理')
     if (['queued', 'running', 'cancelling'].includes(current.status)) throw new Error('这个子代理仍在运行，请等待本轮结束')
     if (hasSessionWork(activeTask.id)) throw new Error('当前任务已有请求正在发送')
-    await sendTaskRef.current(task, instruction.trim(), [], true, [{ resumeRunId: current.runId }])
+    await sendTaskRef.current(task, instruction.trim(), [], 'follow-up', [{ resumeRunId: current.runId }])
   }, [activeTask, engineReady, restored, isHistoryReady, streaming, pending.length, uploadCount, epoch, source, hasSessionWork, sendTask])
 
   const stopTask = useCallback(async (id: string): Promise<void> => {
-    invalidateStatusProbe(id)
     const task = getWorkState(source).tasks.find((item) => item.id === id)
-    if (!task || !engineReady) return
+    if (!task || !engineReady || stoppingTaskIdsRef.current.has(id)) return
     if (activeTask?.id === id) {
       await stop()
       return
     }
+    invalidateStatusProbe(id)
+    const revision = taskRevisionsRef.current.get(id)
     stoppingTaskIdsRef.current.add(id)
+    setStoppingTaskIds(new Set(stoppingTaskIdsRef.current))
     try {
-      await requestOrThrow({ method: 'POST', path: '/chat/cancel', body: { sessionId: id } })
-      assertEngineSource(epoch)
-      updateTask(id, { status: 'stopped', runStartedAt: undefined, updatedAt: Date.now() })
+      const status = await cancelWorkTask({
+        sessionId: id,
+        readStatus: () => requestOrThrow({ method: 'GET', path: '/chat/status', query: { sessionId: id } }),
+        cancel: body => requestOrThrow({ method: 'POST', path: '/chat/cancel', body }),
+        isCurrent: () => epoch === getEngineSource() && getWorkState(source).tasks.some(item => item.id === id)
+      })
+      // A newer selected-session event takes precedence over this background read.
+      if (taskRevisionsRef.current.get(id) === revision) updateTask(id, {
+        status, ...(!['running', 'waiting'].includes(status) ? { runStartedAt: undefined } : {}), updatedAt: Date.now()
+      })
     } finally {
       stoppingTaskIdsRef.current.delete(id)
+      setStoppingTaskIds(new Set(stoppingTaskIdsRef.current))
       invalidateStatusProbe(id)
     }
   }, [source, engineReady, activeTask?.id, stop, epoch, updateTask])
@@ -859,7 +951,7 @@ export function useWorkController() {
               createdAt: message.createdAt,
               attachments: message.attachments
             })),
-      artifacts: workArtifacts(exportedMessages)
+      artifacts: workArtifacts(exportedMessages, snapshot ? snapshot.commandJobs ?? [] : activeId === id ? chat.commandJobs : [], id)
     }, null, 2)
     if (typeof document !== 'undefined') {
       const blob = new Blob([payload], { type: 'application/json' })
@@ -877,7 +969,7 @@ export function useWorkController() {
       URL.revokeObjectURL(url)
     }
     return payload
-  }, [source, epoch, activeId, messages])
+  }, [source, epoch, activeId, messages, chat.commandJobs])
   const respond = useCallback(
     async (requestId: string, values: string[]): Promise<void> => {
       if (!activeTask || !restored) return
@@ -1138,12 +1230,19 @@ export function useWorkController() {
     loadArchive: (action: ArchivePageAction = 'older') => activeId ? chat.loadArchive(activeId, action) : Promise.resolve(),
     uploading: uploadCount > 0,
     error: error ?? (activeId ? chat.historyError : null),
+    actionError: error,
+    historyError: activeId ? chat.historyError : null,
     createTask,
     selectTask,
     showHome,
     setDraft,
+    draftFocusRequest,
+    editSettledTurn,
+    userMessageAction,
+    messageActionBusy: messageAction?.source === source && messageAction.taskId === activeId,
     send,
     stop,
+    stopping: Boolean(activeId && stoppingTaskIds.has(activeId)) || Boolean(restored && chat.stopping),
     stopTask,
     renameTask,
     archiveTask,

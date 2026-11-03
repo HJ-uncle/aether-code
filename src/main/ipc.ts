@@ -23,6 +23,7 @@ import type {
   SearchOptions,
   StreamEvent,
   StreamStartInput,
+  StreamStartResult,
   TerminalCreateInput
 } from '../shared/ipc'
 import { engineRequest, engineUpload } from './engine/client'
@@ -69,10 +70,13 @@ interface OwnedEngineStream {
   sender: WebContents
   streamId: string
   routeId: string
+  rejection?: StreamStartResult['rejection']
 }
 /** Renderer stream names are local to a window, never global cancellation keys. */
 const activeStreams = new Map<string, OwnedEngineStream>()
 const streamRoutes = new Map<string, OwnedEngineStream>()
+/** Invoke completion still needs non-admission evidence after a viewer detaches. */
+const streamResults = new Map<string, OwnedEngineStream>()
 /** One lifecycle listener per renderer, even when it owns many concurrent streams. */
 const streamSenderDestroyHandlers = new Map<number, { sender: WebContents; listener: () => void }>()
 let streamGeneration = 0
@@ -180,6 +184,8 @@ export function registerIpcHandlers(): void {
     broadcast(IPC.event.engineSnapshot, snapshot)
   })
   engineHost.on('stream', (event: StreamEvent) => {
+    const completion = streamResults.get(event.streamId)
+    if (completion && event.type === 'error' && event.requestRejected) completion.rejection = { message: event.message, status: event.status, code: event.code }
     const owner = streamRoutes.get(event.streamId)
     if (!owner) return
     if (owner.sender.isDestroyed()) {
@@ -376,17 +382,19 @@ export function registerIpcHandlers(): void {
     const owner: OwnedEngineStream = { controller, sender: event.sender, streamId: boundInput.streamId, routeId }
     activeStreams.set(key, owner)
     streamRoutes.set(routeId, owner)
+    streamResults.set(routeId, owner)
     ensureStreamSenderDestroyHandler(event.sender)
 
     try {
       await engineHost.stream(routeId, boundInput.path, boundInput.body, controller.signal, boundInput.method, boundInput.query, boundInput.expectedEngine, boundInput.toolProfile, boundInput.subagentProtocol)
     } finally {
       streamRoutes.delete(routeId)
+      streamResults.delete(routeId)
       // An aborted older request may finish after its replacement started.
       if (activeStreams.get(key) === owner) activeStreams.delete(key)
       cleanupStreamSenderDestroyHandler(event.sender.id)
     }
-    return { ok: true }
+    return owner.rejection ? { ok: false, rejection: owner.rejection } : { ok: true }
   })
 
   ipcMain.handle(IPC.invoke.engineStreamAbort, (event, streamId: string) => {

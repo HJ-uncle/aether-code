@@ -1,0 +1,535 @@
+{
+  "generatedAt": "2026-11-03T08:54:48.157Z",
+  "candidate": "D:\\dev\\aether-code\\.e2e-tmp\\ecosystem-build\\main\\index.js",
+  "clickTimeoutMs": 20000,
+  "responseBudgetMs": 2500,
+  "tickIntervalMs": 50,
+  "initialChildCount": 5,
+  "root": {
+    "runId": "root-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f",
+    "status": "cancelled",
+    "ticks": 130,
+    "frames": 375,
+    "bytes": 411553,
+    "sequence": 375
+  },
+  "children": [
+    {
+      "runId": "child-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-0",
+      "status": "succeeded",
+      "lastSeq": 13,
+      "archiveRows": 61
+    },
+    {
+      "runId": "child-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-1",
+      "status": "succeeded",
+      "lastSeq": 13,
+      "archiveRows": 61
+    },
+    {
+      "runId": "child-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-2",
+      "status": "succeeded",
+      "lastSeq": 13,
+      "archiveRows": 61
+    },
+    {
+      "runId": "child-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-3",
+      "status": "succeeded",
+      "lastSeq": 13,
+      "archiveRows": 61
+    },
+    {
+      "runId": "child-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "status": "cancelled",
+      "lastSeq": 124,
+      "archiveRows": 96
+    }
+  ],
+  "receipts": [
+    {
+      "label": "open-workspace-menu-活动",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "clickMs": 71.04370000000017,
+      "responseMs": 75.82240000000002,
+      "tickBefore": 39,
+      "tickAfter": 41,
+      "sequence": 201
+    },
+    {
+      "label": "open-活动",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "clickMs": 74.02400000000034,
+      "responseMs": 86.94509999999991,
+      "tickBefore": 41,
+      "tickAfter": 43,
+      "sequence": 205
+    },
+    {
+      "label": "select-completed-child-activity",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "clickMs": 50.98819999999978,
+      "responseMs": 58.41949999999997,
+      "tickBefore": 43,
+      "tickAfter": 44,
+      "sequence": 207
+    },
+    {
+      "label": "open-成果",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "clickMs": 85.0034999999998,
+      "responseMs": 93.29290000000037,
+      "tickBefore": 44,
+      "tickAfter": 46,
+      "sequence": 211
+    },
+    {
+      "label": "open-workspace-menu-子代理",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "clickMs": 43.18319999999949,
+      "responseMs": 53.34270000000015,
+      "tickBefore": 46,
+      "tickAfter": 47,
+      "sequence": 213
+    },
+    {
+      "label": "open-子代理",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "clickMs": 66.34259999999995,
+      "responseMs": 75.80499999999938,
+      "tickBefore": 47,
+      "tickAfter": 48,
+      "sequence": 215
+    },
+    {
+      "label": "open-live-child-detail",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "clickMs": 65.70600000000013,
+      "responseMs": 74.23430000000008,
+      "tickBefore": 49,
+      "tickAfter": 50,
+      "sequence": 219
+    },
+    {
+      "label": "open-live-child-transcript",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "clickMs": 65.17260000000078,
+      "responseMs": 98.59230000000025,
+      "tickBefore": 50,
+      "tickAfter": 52,
+      "sequence": 223
+    },
+    {
+      "label": "refresh-appending-child-transcript",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "clickMs": 69.10590000000047,
+      "responseMs": 109.01670000000013,
+      "tickBefore": 52,
+      "tickAfter": 54,
+      "sequence": 227
+    },
+    {
+      "label": "open-活动",
+      "viewport": {
+        "width": 1102,
+        "height": 760
+      },
+      "clickMs": 128.60680000000048,
+      "responseMs": 136.45370000000003,
+      "tickBefore": 59,
+      "tickAfter": 62,
+      "sequence": 243
+    },
+    {
+      "label": "select-completed-child-activity",
+      "viewport": {
+        "width": 1102,
+        "height": 760
+      },
+      "clickMs": 61.694400000000314,
+      "responseMs": 74.05670000000009,
+      "tickBefore": 62,
+      "tickAfter": 63,
+      "sequence": 245
+    },
+    {
+      "label": "open-成果",
+      "viewport": {
+        "width": 1102,
+        "height": 760
+      },
+      "clickMs": 90.69350000000031,
+      "responseMs": 123.83190000000013,
+      "tickBefore": 63,
+      "tickAfter": 66,
+      "sequence": 251
+    },
+    {
+      "label": "open-子代理",
+      "viewport": {
+        "width": 1102,
+        "height": 760
+      },
+      "clickMs": 171.55209999999988,
+      "responseMs": 187.4431999999997,
+      "tickBefore": 66,
+      "tickAfter": 70,
+      "sequence": 259
+    },
+    {
+      "label": "open-live-child-detail",
+      "viewport": {
+        "width": 1102,
+        "height": 760
+      },
+      "clickMs": 68.5581000000002,
+      "responseMs": 80.0619999999999,
+      "tickBefore": 71,
+      "tickAfter": 73,
+      "sequence": 265
+    },
+    {
+      "label": "open-live-child-transcript",
+      "viewport": {
+        "width": 1102,
+        "height": 760
+      },
+      "clickMs": 70.2533999999996,
+      "responseMs": 99.92450000000008,
+      "tickBefore": 73,
+      "tickAfter": 75,
+      "sequence": 269
+    },
+    {
+      "label": "refresh-appending-child-transcript",
+      "viewport": {
+        "width": 1102,
+        "height": 760
+      },
+      "clickMs": 74.1260000000002,
+      "responseMs": 116.98250000000007,
+      "tickBefore": 75,
+      "tickAfter": 77,
+      "sequence": 273
+    },
+    {
+      "label": "open-活动",
+      "viewport": {
+        "width": 940,
+        "height": 640
+      },
+      "clickMs": 66.40110000000004,
+      "responseMs": 75.72589999999946,
+      "tickBefore": 81,
+      "tickAfter": 82,
+      "sequence": 283
+    },
+    {
+      "label": "select-completed-child-activity",
+      "viewport": {
+        "width": 940,
+        "height": 640
+      },
+      "clickMs": 51.82049999999981,
+      "responseMs": 60.64609999999993,
+      "tickBefore": 82,
+      "tickAfter": 84,
+      "sequence": 287
+    },
+    {
+      "label": "open-成果",
+      "viewport": {
+        "width": 940,
+        "height": 640
+      },
+      "clickMs": 38.460000000000036,
+      "responseMs": 48.949899999999616,
+      "tickBefore": 84,
+      "tickAfter": 85,
+      "sequence": 289
+    },
+    {
+      "label": "open-子代理",
+      "viewport": {
+        "width": 940,
+        "height": 640
+      },
+      "clickMs": 57.10689999999977,
+      "responseMs": 63.407099999999446,
+      "tickBefore": 85,
+      "tickAfter": 86,
+      "sequence": 291
+    },
+    {
+      "label": "open-live-child-detail",
+      "viewport": {
+        "width": 940,
+        "height": 640
+      },
+      "clickMs": 77.88439999999991,
+      "responseMs": 84.20439999999962,
+      "tickBefore": 87,
+      "tickAfter": 89,
+      "sequence": 297
+    },
+    {
+      "label": "open-live-child-transcript",
+      "viewport": {
+        "width": 940,
+        "height": 640
+      },
+      "clickMs": 59.19930000000022,
+      "responseMs": 76.51429999999982,
+      "tickBefore": 89,
+      "tickAfter": 90,
+      "sequence": 299
+    },
+    {
+      "label": "refresh-appending-child-transcript",
+      "viewport": {
+        "width": 940,
+        "height": 640
+      },
+      "clickMs": 68.6248999999998,
+      "responseMs": 103.54089999999997,
+      "tickBefore": 90,
+      "tickAfter": 92,
+      "sequence": 303
+    },
+    {
+      "label": "narrow-switch-to-conversation",
+      "viewport": {
+        "width": 940,
+        "height": 640
+      },
+      "clickMs": 134.10270000000037,
+      "responseMs": 175.48270000000048,
+      "tickBefore": 94,
+      "tickAfter": 97,
+      "sequence": 313
+    },
+    {
+      "label": "narrow-switch-back-to-workspace",
+      "viewport": {
+        "width": 940,
+        "height": 640
+      },
+      "clickMs": 83.60779999999977,
+      "responseMs": 117.57039999999961,
+      "tickBefore": 99,
+      "tickAfter": 102,
+      "sequence": 323
+    },
+    {
+      "label": "open-成果",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "clickMs": 71.42609999999968,
+      "responseMs": 77.22649999999976,
+      "tickBefore": 104,
+      "tickAfter": 105,
+      "sequence": 329
+    },
+    {
+      "label": "add-latest-artifact-reference",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "clickMs": 243.60039999999935,
+      "responseMs": 286.65580000000045,
+      "tickBefore": 108,
+      "tickAfter": 113,
+      "sequence": 346
+    },
+    {
+      "label": "open-子代理",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "clickMs": 66.90730000000076,
+      "responseMs": 72.33500000000095,
+      "tickBefore": 119,
+      "tickAfter": 120,
+      "sequence": 360
+    },
+    {
+      "label": "cancel-only-live-child",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "clickMs": 148.2417000000005,
+      "responseMs": 314.34120000000075,
+      "tickBefore": 121,
+      "tickAfter": 126,
+      "sequence": 369
+    },
+    {
+      "label": "cancel-only-selected-root",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "clickMs": 75.45150000000103,
+      "responseMs": 431.15220000000045,
+      "tickBefore": 129,
+      "tickAfter": 130,
+      "sequence": 375
+    }
+  ],
+  "archiveReads": [
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "current": 1,
+      "pageSize": 1,
+      "total": 73,
+      "revision": "archive-73-append-73"
+    },
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "current": 2,
+      "pageSize": 50,
+      "total": 73,
+      "revision": "archive-73-append-73"
+    },
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "current": 1,
+      "pageSize": 1,
+      "total": 75,
+      "revision": "archive-75-append-75"
+    },
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "current": 2,
+      "pageSize": 50,
+      "total": 75,
+      "revision": "archive-75-append-75"
+    },
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "current": 1,
+      "pageSize": 1,
+      "total": 82,
+      "revision": "archive-82-append-82"
+    },
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "current": 2,
+      "pageSize": 50,
+      "total": 82,
+      "revision": "archive-82-append-82"
+    },
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "current": 1,
+      "pageSize": 1,
+      "total": 86,
+      "revision": "archive-86-append-86"
+    },
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "current": 2,
+      "pageSize": 50,
+      "total": 86,
+      "revision": "archive-86-append-86"
+    }
+  ],
+  "archiveRefreshes": [
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "rowId": "append-75",
+      "watermark": 75,
+      "total": 75,
+      "tick": 52,
+      "readIndex": 2
+    },
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "viewport": {
+        "width": 1102,
+        "height": 760
+      },
+      "rowId": "append-81",
+      "watermark": 81,
+      "total": 81,
+      "tick": 75,
+      "readIndex": 4
+    },
+    {
+      "childSessionId": "context-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4",
+      "viewport": {
+        "width": 940,
+        "height": 640
+      },
+      "rowId": "append-86",
+      "watermark": 86,
+      "total": 86,
+      "tick": 90,
+      "readIndex": 6
+    }
+  ],
+  "cancellations": [
+    "work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f"
+  ],
+  "childCancellations": [
+    "child-work-home-42a03ab2-d4dc-4b89-b50c-4470a4abc25f-4"
+  ],
+  "metrics": {
+    "longTaskSupported": true,
+    "longTasks": [
+      {
+        "startTime": 8815.899999976158,
+        "duration": 59
+      }
+    ],
+    "longTaskCount": 1,
+    "longTaskTotalMs": 59,
+    "domNodes": 2711,
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    }
+  },
+  "errors": [],
+  "cpu": {
+    "requested": false,
+    "samplingIntervalUs": 2000,
+    "maximumDurationMs": 120000,
+    "captured": false
+  }
+}

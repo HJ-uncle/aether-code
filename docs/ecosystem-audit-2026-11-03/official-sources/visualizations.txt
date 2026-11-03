@@ -1,0 +1,186 @@
+Source: https://learn.chatgpt.com/docs/visualizations
+Retrieved: 2026-11-03
+
+ChatGPT desktop app
+Copy Page
+Visualizations
+Copy Page
+Turn ideas and information into interactive visual explanations in ChatGPT
+ChatGPT desktop app
+Visualizations turn questions, ideas, and information into charts, maps,
+diagrams, calculators, simulations, and interactive explanations you can explore
+in a ChatGPT chat. Use one when adjusting inputs or seeing a
+relationship would make an answer easier to understand, compare, practice, or
+act on.
+The Visualizations preview is rolling out. Availability can depend on your
+plan, platform, account, and workspace settings.
+The Visualizations preview is rolling out in the ChatGPT desktop app. When
+Visualize is available, type @ in the composer, start entering
+Visualize, and select Visualize under Plugins. The composer adds a
+Visualize tag before your request.
+If Visualize doesn’t appear, use ChatGPT on the web or try again after the
+preview reaches your account.
+In a supported Chat or ChatGPT Work chat, type @ in the composer,
+start entering Visualize, and select Visualize under Plugins. Its
+description is Create visualizations and interactive tools. The composer
+adds a Visualize tag before your request.
+You can also type @Visualize and select the matching suggestion.
+Codex CLI doesn’t render Visualizations. Open the same source material in
+ChatGPT on the web or the ChatGPT desktop app, then tag @Visualize there.
+The Codex IDE extension doesn’t render Visualizations. Use ChatGPT on the web
+or the ChatGPT desktop app for this workflow.
+Check availability
+Surface
+Current availability
+ChatGPT on the web
+Available to supported accounts in Chat and ChatGPT Work
+ChatGPT desktop app
+Rolling out in preview
+ChatGPT mobile apps
+Rolling out to eligible accounts; composer controls can differ by app version
+Codex CLI and IDE extension
+Visualization rendering isn’t supported
+The Visualize suggestion is the reliable sign that the preview is enabled
+for your account. During the rollout, availability can differ across accounts,
+workspaces, and app versions, even on the same plan.
+Choose when a visualization helps
+ChatGPT can choose a visual format when it materially improves the answer. You
+can also tag @Visualize when you specifically want an interactive result.
+Ask for the smallest format that fits the job:
+Use a diagram for labeled relationships or a process.
+Use a chart or plot for named numeric data and comparisons.
+Use a map for geographic information.
+Use an interactive visualization when inputs, time, motion, or spatial
+relationships should change.
+Use a Site when you need a durable hosted application with a
+shareable URL, permissions, or persistent data.
+Prompt with an outcome and controls
+A strong request names the outcome, source material, question, and useful
+interactions. Try this example:
+Tell ChatGPT which information to use, such as content already in the
+chat, pasted data, an attached file, or an available connected source.
+For complex requests, choose a higher reasoning setting when one is available.
+Explore interactive examples
+These examples reproduce three visualizations from the GPT-5.6 launch page.
+Use their controls to see how a focused prompt can become an interactive
+explanation, lab, or teaching tool.
+SpirographWave interferenceTokenizer explainer
+Slide 1 of 3 · Spirograph
+Create an interactive spirograph to explain how it works.
+Worked for 1m 12s
+Drag the radii and pen distance to see how the rolling circle turns into the traced curve.
+Curve closes after 12 turnsRatio 93:36
+Fixed ring radius93
+Rolling circle radius36
+Pen distance from center88
+Animation speed60%
+PauseRestartx=(R-r)cos(t)+d cos(((R-r)/r)t)
+y=(R-r)sin(t)-d sin(((R-r)/r)t)
+Traced pen path
+Fixed ring
+Rolling circle
+Adjust the radii, pen distance, and speed to see how a rolling circle traces the curve.
+Create an interactive wave interference lab worksheet.
+Worked for 1m 11s
+Adjust the sources, then move the probe through the interference field.
+Wavelength2.0 cm
+Source spacing7.3 cm
+Phase offset100°Nodal guide
+Path difference1.1 cm0.55 wavelengths
+Probe resultDestructiveCrest meets trough
+Central spacing5.5 cmEstimated bright-band gap
+screen position
+S1 wave
+S2 wave
+Sum
+Distance to S14.3 cm
+Distance to S23.2 cm
+Net amplitude-0.86Lab worksheetFirst bright band positionFirst nodal line positionPattern change after phase shiftCentral bright band shiftsBands move closerBands move farther apart
+Change the sources and phase, move the probe, and record observations in the worksheet.
+Can you interactively explain how a GPT tokenizer works?
+Worked for 2m 11s
+Edit the text and step through the tokenization process.
+GPT tokenization is roughly: text → UTF-8 bytes → ranked byte-pair merges → integer token IDs
+Edit the text and step through the process. ·Show spaces as centered dots makes spaces visible. The demo uses a tiny teaching vocabulary; real vocabularies, merge ranks, preprocessing rules, and IDs vary by model.
+TextA token is a token
+1 UTF-8 bytes2 Ranked merges3 Token IDs
+Start with the input's UTF-8 byte sequenceStep 1 of 12 · 18 pieces
+A41
+20
+t74
+o6F
+k6B
+e65
+n6E
+20
+i69
+s73
+20
+a61
+20
+t74
+o6F
+k6B
+e65
+n6E
+18 bytes are always representable—even for emoji and uncommon scripts.
+Tiny teaching vocabulary · model-specific IDs differ
+PreviousNext step
+Tokens are not necessarily words: they can represent common words, word fragments, punctuation, spaces, or individual bytes. Byte fallback ensures any Unicode text can be encoded. Special tokens, such as message boundaries, are handled separately.
+Edit the text and move from UTF-8 bytes through ranked merges to the final token IDs.
+The examples remain readable without JavaScript, but their controls and animated state require JavaScript.
+Refine and continue
+Continue in the same chat and describe the change you want. Useful
+follow-ups include:
+Add or remove a control, filter, comparison, or annotation.
+Correct the source data, units, labels, or assumptions.
+Simplify a slow result by aggregating, binning, or sampling the data.
+Add a concise text summary and a data table.
+Make every control keyboard accessible and add visible focus states.
+Use labels or patterns as well as color, and remove looping motion.
+Turn the result into a Site when it should be hosted and revisited.
+A follow-up can create a replacement visualization instead of editing the
+original result in place. Review the new version before relying on it.
+Share or reuse a result
+Add a visualization to a page in Space
+You can also create a visualization inside a page in ChatGPT Space. While
+editing the page, type /visualize followed by your request and choose the
+matching menu option. Use this to place an interactive explanation alongside
+your notes, research, or project plan. See
+Add interactive visualizations to a page
+for an example.
+Share from a chat
+Use the chat’s standard Share action when it’s available. Review
+the entire shared chat first, including its source data and earlier
+messages. A visualization is generally a snapshot of the information available
+when ChatGPT created it, not a live dashboard that stays synchronized with a
+connected source.
+Generated download controls and export formats can vary by result. If an export
+doesn’t work, ask ChatGPT for the underlying data in a simpler format or ask it
+to turn the visualization into a Site.
+Improve accessibility
+Generated visualizations aim to use semantic controls, visible focus, readable
+contrast, and reduced motion, but the result can vary. Check the visualization
+before sharing it. Ask ChatGPT to add a text summary and data table, label axes
+and units, avoid relying on color alone, and make controls work from a keyboard.
+Recover from a failed result
+Visualizations can take a minute or longer to generate. If the result is blank
+or missing, wait for the response to finish, reload the chat once, and
+then retry. If it still fails:
+Ask for a smaller or simpler visualization.
+Aggregate or bin data, sample fewer points, or reduce precision in a large dataset.
+Remove a generated control or library that isn’t working.
+Verify important values, geographic boundaries, and source assumptions.
+Ask for a chart, diagram, table, or Site instead.
+Use the same data-handling judgment you use for any ChatGPT chat. Only
+include sensitive information when your organization permits it, and review
+the full chat before you share it.
+Related docs
+Sites
+Projects and chats
+Work with files
+Image generation
+Previous
+Build plugins
+Next
+Scheduled tasks

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import * as ts from 'typescript'
-import type { FsFileContent } from '../src/shared/ipc'
+import type { FsFileContent, FsStat } from '../src/shared/ipc'
 
 type EditorStore = typeof import('../src/renderer/src/core/editor/editor-store')
 type Recovery = typeof import('../src/renderer/src/core/editor/editor-recovery')
@@ -44,6 +44,7 @@ function fixture() {
   const persisted: string[] = []
   const io = {
     read: async (_path: string): Promise<FsFileContent> => file('disk'),
+    stat: async (path: string): Promise<FsStat> => ({ path, isDirectory: false, size: 0, mtimeMs: 0 }),
     write: async (_path: string, _content: string): Promise<void> => {}
   }
   const workspace = { getWorkspaceState: () => ({ root: 'D:/workspace' }), onWorkspaceChanged: () => () => {} }
@@ -56,6 +57,7 @@ function fixture() {
     '../workspace/fs-client': {
       paths: { basename: (value: string) => value.split('/').pop() },
       readFile: (value: string) => io.read(value),
+      stat: (value: string) => io.stat(value),
       writeFile: async (value: string, content: string) => { writes.push({ path: value, content }); await io.write(value, content) }
     },
     '../workspace/workspace-store': workspace,
@@ -223,4 +225,102 @@ test('StrictMode同步初始化清理再初始化，只恢复一次且不覆盖�
   } finally { stopSecond() }
   expect(persisted.length).toBeGreaterThan(0)
   expect(JSON.parse(persisted[persisted.length - 1]).tabs[0].draft.content).toBe('old recovered draft')
+})
+
+function binaryFile(path: string, values: number[]): FsFileContent {
+  return { path, content: '', bytes: Uint8Array.from(values).buffer, isBinary: true, size: values.length, truncated: false }
+}
+
+test('Office/PDF焦点及新增标签复查只读stat，真实watch事件比较字节并保留未变buffer', async () => {
+  for (const extension of ['docx', 'pptx', 'xlsx', 'pdf']) {
+    const { store, io } = fixture()
+    const documentPath = `D:/workspace/preview.${extension}`
+    let reads = 0, mtime = 1, values = [0, 1, 2, 3, 4]
+    io.stat = async () => ({ path: documentPath, isDirectory: false, size: values.length, mtimeMs: mtime })
+    io.read = async () => { reads++; return binaryFile(documentPath, values) }
+    await store.openFile(documentPath)
+    const original = store.getDocument(documentPath)!
+    await store.reloadDocuments([documentPath])
+    await store.reloadDocuments([documentPath])
+    expect(reads).toBe(1)
+    expect(store.getDocument(documentPath)).toBe(original)
+    await store.reloadDocuments([documentPath], new Set([documentPath]))
+    expect(reads).toBe(2)
+    expect(store.getDocument(documentPath)).toBe(original)
+    mtime++
+    await store.reloadDocuments([documentPath])
+    expect(reads).toBe(3)
+    expect(store.getDocument(documentPath)).toBe(original)
+    await store.reloadDocuments([documentPath])
+    expect(reads).toBe(3)
+    // Equal size and mtime must not hide a genuine change notification. The
+    // last byte also verifies the non-word-aligned comparison tail.
+    values = [0, 1, 2, 3, 9]
+    await store.reloadDocuments([documentPath], new Set([documentPath]))
+    const changed = store.getDocument(documentPath)!
+    expect(changed).not.toBe(original)
+    expect([...new Uint8Array(changed.bytes!)]).toEqual(values)
+    expect(store.getDocumentIdentity(documentPath)?.revision).toBe(1)
+    expect(store.isDirty(changed)).toBe(false)
+  }
+})
+
+test('二进制监听的迟到回包不能覆盖后完成的新版本或关闭后重开的实例', async () => {
+  const { store, io } = fixture()
+  const documentPath = 'D:/workspace/race.docx'
+  io.stat = async () => ({ path: documentPath, isDirectory: false, size: 3, mtimeMs: 1 })
+  io.read = async () => binaryFile(documentPath, [0, 1, 1])
+  await store.openFile(documentPath)
+  const read = deferred<FsFileContent>(), started = deferred<void>()
+  io.read = () => { started.resolve(); return read.promise }
+  const first = store.reloadDocuments([documentPath], new Set([documentPath]))
+  await started.promise
+  io.read = async () => binaryFile(documentPath, [0, 3, 3])
+  await store.reloadDocuments([documentPath], new Set([documentPath]))
+  read.resolve(binaryFile(documentPath, [0, 2, 2]))
+  await first
+  expect([...new Uint8Array(store.getDocument(documentPath)!.bytes!)]).toEqual([0, 3, 3])
+  const staleRead = deferred<FsFileContent>(), staleStarted = deferred<void>()
+  io.read = () => { staleStarted.resolve(); return staleRead.promise }
+  const stale = store.reloadDocuments([documentPath], new Set([documentPath]))
+  await staleStarted.promise
+  store.closeFile(documentPath)
+  io.read = async () => binaryFile(documentPath, [0, 5, 5])
+  await store.openFile(documentPath)
+  staleRead.resolve(binaryFile(documentPath, [0, 4, 4]))
+  await stale
+  expect([...new Uint8Array(store.getDocument(documentPath)!.bytes!)]).toEqual([0, 5, 5])
+})
+
+test('二进制刷新保留连接边界，旧工作区回包不替换已打开的内容', async () => {
+  const { store, io, switchConnection } = fixture()
+  const documentPath = 'D:/workspace/scoped.pdf'
+  io.stat = async () => ({ path: documentPath, isDirectory: false, size: 3, mtimeMs: 1 })
+  io.read = async () => binaryFile(documentPath, [0, 1, 1])
+  await store.openFile(documentPath)
+  const original = store.getDocument(documentPath)!.bytes
+  const read = deferred<FsFileContent>(), started = deferred<void>()
+  io.read = () => { started.resolve(); return read.promise }
+  const refreshing = store.reloadDocuments([documentPath], new Set([documentPath]))
+  await started.promise
+  switchConnection('remote:new-session')
+  read.resolve(binaryFile(documentPath, [0, 2, 2]))
+  await refreshing
+  expect(store.getDocument(documentPath)!.bytes).toBe(original)
+})
+
+test('二进制磁盘结果不覆盖空的未保存文本，其他媒体仍跳过自动整文件重读', async () => {
+  const { store, io } = fixture()
+  const documentPath = 'D:/workspace/text.docx'
+  await store.openFile(documentPath)
+  store.setDocumentContent(documentPath, '')
+  io.read = async () => binaryFile(documentPath, [0, 1, 2])
+  await store.reloadDocuments([documentPath])
+  expect(store.getDocument(documentPath)).toMatchObject({ isBinary: false, content: '', savedContent: 'disk', externalChange: 'modified' })
+  const imagePath = 'D:/workspace/image.png'
+  let reads = 0
+  io.read = async () => { reads++; return binaryFile(imagePath, [0, 1, 2]) }
+  await store.openFile(imagePath)
+  await store.reloadDocuments([imagePath], new Set([imagePath]))
+  expect(reads).toBe(1)
 })

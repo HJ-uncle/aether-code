@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path'
 import vm from 'node:vm'
 import ts from 'typescript'
 import ssf from 'ssf'
+import ExcelJS from 'exceljs'
 
 const directory = dirname(fileURLToPath(import.meta.url)), modules = new Map()
 function load(name) {
@@ -23,7 +24,7 @@ function load(name) {
   modules.set(name, exports)
   return exports
 }
-const { buildSpreadsheetPage, buildSpreadsheetAxis, spreadsheetAxisIndex, spreadsheetRequestValid } = load('spreadsheet-page')
+const { buildSpreadsheetPage, buildSpreadsheetAxis, spreadsheetAxisIndex, spreadsheetRequestValid, prepareSpreadsheetPageSource, bufferedSpreadsheetRange } = load('spreadsheet-page')
 const { spreadsheetThemeColors, spreadsheetColor } = load('spreadsheet-style')
 const { SpreadsheetPreviewSession, acquireSpreadsheetSession, releaseSpreadsheetSession } = load('spreadsheet-preview-session')
 
@@ -200,6 +201,77 @@ test('range cache uses a cell budget and LRU rather than retaining every viewpor
   assert.equal(session.getRange(0, 0, 0, 20, 12), null)
   assert.equal(session.getRange(0, 2580, 0, 2600, 12).cells[0][0].text, '129')
   session.close()
+})
+
+test('rapid viewport changes keep one in-flight range and only the latest request per mounted view', () => {
+  const worker = new FakeWorker(), session = new SpreadsheetPreviewSession(worker, bytes([1]))
+  const firstView = {}, otherView = {}
+  worker.emit({ kind: 'loaded', sheets: [{ name: '数据', rows: 12000, columns: 20 }], layouts: [] })
+  for (let row = 0; row < 100; row++) session.requestRange(0, row, 0, row + 40, 12, firstView)
+  assert.equal(worker.messages.filter(message => message.kind === 'page').length, 1)
+  session.requestRange(0, 500, 0, 540, 12, otherView)
+  const first = worker.messages.at(-1)
+  worker.emit({ kind: 'page', requestId: first.requestId, page: { ...page(0, 0, 0), endRow: 40, endColumn: 12 } })
+  const latest = worker.messages.at(-1)
+  assert.deepEqual([latest.row, latest.endRow], [99, 139])
+  assert.equal(worker.messages.filter(message => message.kind === 'page').length, 2)
+  // Even a failed older range must allow the other view to finish loading.
+  worker.emit({ kind: 'error', requestId: latest.requestId, message: '所选表格区域无效。' })
+  assert.equal(worker.messages.at(-1).row, 500)
+  session.requestRange(0, 600, 0, 640, 12, firstView)
+  session.cancelRangeRequests(firstView)
+  const last = worker.messages.at(-1)
+  worker.emit({ kind: 'page', requestId: last.requestId, page: { ...page(0, 500, 0), endRow: 540, endColumn: 12 } })
+  assert.equal(worker.messages.filter(message => message.kind === 'page').length, 3)
+  session.close()
+})
+
+test('covering range cache keeps original merge anchors and a return to cached content cancels obsolete queued work', () => {
+  const worker = new FakeWorker(), session = new SpreadsheetPreviewSession(worker, bytes([1]))
+  worker.emit({ kind: 'loaded', sheets: [{ name: '数据', rows: 12000, columns: 20 }], layouts: [] })
+  session.requestRange(0, 0, 0, 48, 12)
+  const request = worker.messages.at(-1)
+  const cached = { ...page(0, 0, 0, '合并首格'), endRow: 48, endColumn: 12 }
+  cached.cells[0][0].rowSpan = 3
+  worker.emit({ kind: 'page', requestId: request.requestId, page: cached })
+  assert.equal(session.getRange(0, 1, 1, 40, 9), cached)
+  session.requestRange(0, 100, 0, 140, 12)
+  const pending = worker.messages.at(-1)
+  session.requestRange(0, 200, 0, 240, 12)
+  session.requestRange(0, 1, 1, 40, 9)
+  worker.emit({ kind: 'page', requestId: pending.requestId, page: { ...page(0, 100, 0), endRow: 140, endColumn: 12 } })
+  assert.equal(worker.messages.filter(message => message.kind === 'page').length, 2)
+  assert.equal(session.getRange(0, 1, 1, 40, 9).cells[0][0].rowSpan, 3)
+  session.close()
+})
+
+test('real ExcelJS viewport reads do not revisit full-sheet metadata after preparation', () => {
+  const book = new ExcelJS.Workbook(), sheet = book.addWorksheet('真实工作表')
+  for (let row = 1; row <= 12000; row++) sheet.addRow(Array.from({ length: 20 }, (_, column) => row * 20 + column))
+  sheet.mergeCells('A99:C101'); sheet.getCell('A99').value = '合并值'; sheet.getColumn(1).width = 20
+  const prototype = Object.getPrototypeOf(sheet), reads = { model: 0, rowCount: 0, columnCount: 0 }
+  for (const key of Object.keys(reads)) {
+    const getter = Object.getOwnPropertyDescriptor(prototype, key).get
+    Object.defineProperty(sheet, key, { get() { reads[key]++; return getter.call(this) } })
+  }
+  const source = prepareSpreadsheetPageSource(sheet)
+  assert.deepEqual(reads, { model: 1, rowCount: 1, columnCount: 1 })
+  for (let row = 90; row < 110; row++) {
+    assert.equal(spreadsheetRequestValid(0, row, 0, source, row + 40, 12), true)
+    const result = buildSpreadsheetPage(source, 0, row, 0, [], false, row + 40, 12)
+    if (row === 90) {
+      assert.equal(result.cells[8][0].text, '合并值')
+      assert.deepEqual([result.cells[8][0].rowSpan, result.cells[8][0].colSpan], [3, 3])
+    }
+    if (row === 99) assert.equal(result.cells[0][0].text, '')
+  }
+  assert.deepEqual(reads, { model: 1, rowCount: 1, columnCount: 1 })
+})
+
+test('viewport buffering is stable across nearby scroll positions, bounded at edges and never exceeds the cell budget', () => {
+  assert.deepEqual(bufferedSpreadsheetRange(17, 5, 55, 11, 12000, 20), bufferedSpreadsheetRange(18, 6, 56, 12, 12000, 20))
+  assert.deepEqual(bufferedSpreadsheetRange(11990, 17, 12000, 20, 12000, 20), { row: 11984, column: 16, endRow: 12000, endColumn: 20 })
+  assert.deepEqual(bufferedSpreadsheetRange(1, 0, 94, 256, 50000, 256), { row: 1, column: 0, endRow: 94, endColumn: 256 })
 })
 
 test('a rectangular viewport preserves merges across both legacy page boundaries and real dimensions', () => {

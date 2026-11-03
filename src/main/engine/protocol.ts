@@ -176,6 +176,9 @@ const REMOTE_READ_ROUTES = [
 ]
 
 const REMOTE_CHAT_ROUTES = [
+  // Tokens and exact execution identity remain in the authenticated POST body.
+  /^\/api\/v1\/workbench\/clients$/,
+  /^\/api\/v1\/workbench\/clients\/[a-zA-Z0-9_-]+\/(?:poll|state|results|disconnect)$/,
   /^\/api\/v1\/chat\/admission\/receipt$/,
   /^\/api\/v1\/chat(?:\/cancel)?$/,
   /^\/api\/v1\/utility\/chat$/,

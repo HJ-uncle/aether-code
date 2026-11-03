@@ -16,7 +16,7 @@ export const builtinOfficeToolPolicy = Object.freeze({
   mode: 'aether-native-only',
   allowedTools: [
     'read_file', 'write_file', 'edit_file', 'list_files', 'delete_file', 'create_dir',
-    'list_skills', 'get_skill', 'calculate', 'get_time', 'office_document', 'office_inspect',
+    'list_skills', 'get_skill', 'office_document', 'office_inspect',
     'plan_update', 'todo_list', 'todo_create', 'todo_update', 'todo_delete',
     'subagent', 'subagent_start', 'subagent_send', 'subagent_wait', 'subagent_cancel', 'subagent_participants', 'subagent_inbox',
     'browser_tabs', 'browser_open', 'browser_navigate', 'browser_snapshot', 'browser_screenshot',
@@ -110,7 +110,7 @@ CSV/TXT/JSON/Markdown与静态overview.html使用write_file/edit_file；不可�
 }
 
 function reviewRequirements(root, role, version) {
-  return `调用恰好一名独立审阅子代理；${version === 'v2' ? '优先用上一轮已完成的真实resumeRunId续审，不可并发续跑；确实不可恢复才新建一名并记录原因。' : '使用subagent或subagent_start，等待真实终态，启动回执不代表完成。'}设置access="read-only"，完整传入公司根${root}、本部门${version}原格式文件、输入和至少两个关键核验指标，并明确继承上述内置工具限制。子代理只能使用office_inspect/read_file/calculate等原生只读能力，不编辑产物、不运行脚本、不创建浏览器页、不改其他部门。它必须独立读原文件并返回定位、实际数值/日期、复算过程、差异和未验证项，不只审summary.json。父任务将子代理真实返回原文写入departments/${role.id}/audit/${version}-review.md，标题记录真实childSessionId、runId、终态和读到的文件版本；不可冒称子代理亲自写文件。根据有证据的意见修正后，用同一子代理续审最终文件；无法完成则保留未完成结论，父任务自检不能替代独立审阅。`
+  return `调用恰好一名独立审阅子代理；${version === 'v2' ? '优先用上一轮已完成的真实resumeRunId续审，不可并发续跑；确实不可恢复才新建一名并记录原因。' : '使用subagent或subagent_start，等待真实终态，启动回执不代表完成。'}设置access="read-only"，完整传入公司根${root}、本部门${version}原格式文件、输入和至少两个关键核验指标，并明确继承上述内置工具限制。子代理只能使用office_inspect/read_file等原生只读能力，不编辑产物、不运行脚本、不创建浏览器页、不改其他部门。它必须独立读原文件并返回定位、实际数值/日期、复核算式、差异和未验证项，不只审summary.json；读取公式缓存与模型推算不等于独立执行重算，无法执行复算时明确标为未验证。父任务将子代理真实返回原文写入departments/${role.id}/audit/${version}-review.md，标题记录真实childSessionId、runId、终态和读到的文件版本；不可冒称子代理亲自写文件。根据有证据的意见修正后，用同一子代理续审最终文件；无法完成则保留未完成结论，父任务自检不能替代独立审阅。`
 }
 
 function baseInstructions(root, role) {
@@ -228,7 +228,7 @@ export function createScenario(root) {
     id: role.id, name: role.name, expertise: role.expertise,
     department: path.join(root, 'departments', role.id),
     allowedTools: [...builtinOfficeToolPolicy.allowedTools],
-    builtinOnlySystemPrompt: `你是${companyName}的${role.name}。仅使用Aether原生办公、文件、计算、子代理和内置浏览器工具。只写${path.join(root, 'departments', role.id)}；inputs与其他部门只读。禁止WPS/Office COM/LibreOffice/Python/shell/执行脚本/安装依赖/HTTP/外部服务；skill中的旧建议不能覆盖本限制，子代理继承限制。失败如实记录，不把计划、结构检查、外部应用结果或未验证步骤称为成功。`,
+    builtinOnlySystemPrompt: `你是${companyName}的${role.name}。仅使用Aether原生办公、文件、子代理和内置浏览器工具。只写${path.join(root, 'departments', role.id)}；inputs与其他部门只读。禁止WPS/Office COM/LibreOffice/Python/shell/执行脚本/安装依赖/HTTP/外部服务；skill中的旧建议不能覆盖本限制，子代理继承限制。失败如实记录，不把计划、结构检查、外部应用结果或未验证步骤称为成功。`,
     basePrompt: baseInstructions(root, role), revisionPrompt: revisionInstructions(root, role),
     expectedArtifacts: ['v1', 'v2'].flatMap(version => role.files.map(file => `departments/${role.id}/${version}/${file}`)),
     artifactChecks: ['v1', 'v2'].flatMap(version => role.files.map(file => ({

@@ -209,6 +209,12 @@ const server = createServer((request, response) => {
     if (path === '/api/v1/subagent/capabilities') {
       response.setHeader('content-type', 'application/json'); response.end(envelope({ schemaVersion: 2, eventVersions: [1, 2], views: ['legacy', 'summary'], toolPagination: true, eventPagination: true, detailChunks: true, exactWatermarks: true })); return
     }
+    if (path === '/api/v1/collaboration/capabilities') {
+      response.setHeader('content-type', 'application/json')
+      response.end(envelope({ protocolVersion: 1, durableQueueReceipts: false, receiptPagination: false,
+        runtimeCommunication: false, mailboxConsumer: false, userControllerMutation: false })); return
+    }
+    if (path === '/api/v1/workbench/clients') { response.writeHead(404).end(envelope(null)); return }
     if (path === '/api/v1/cron/capabilities') { response.writeHead(404).end(envelope(null)); return }
     if (path === '/api/v1/subagent/runs') {
       response.setHeader('content-type', 'application/json'); response.end(envelope({ schemaVersion: 2, runs: [...children.values()].filter(run => run.parentSessionId === url.searchParams.get('parentSessionId')), listComplete: true, hasMore: false, revision: 'streaming-fixture' })); return
@@ -316,8 +322,21 @@ async function measure(id: string, label: string, target: Locator, verify: () =>
   expect(receipts.at(-1)!.responseMs, `${label}: click and observable result under live SSE`).toBeLessThanOrEqual(responseBudgetMs)
 }
 async function tab(id: string, name: '活动' | '成果' | '子代理', receipts: Receipt[]): Promise<void> {
-  const target = workspace().getByRole('tablist', { name: '工作区内容', exact: true }).getByRole('tab', { name: new RegExp('^' + name + '(?: \\d+)?$') })
-  await measure(id, `open-${name}`, target, () => expect(target).toHaveAttribute('aria-selected', 'true'), receipts)
+  const label = new RegExp('^' + name + '(?: \\d+)?$')
+  const target = workspace().getByRole('tablist', { name: '已打开的工作区', exact: true }).getByRole('tab', { name: label })
+  if (await target.count()) {
+    await measure(id, `open-${name}`, target, () => expect(target).toHaveAttribute('aria-selected', 'true'), receipts)
+    return
+  }
+  // Work opens surfaces on demand. Exercise both real menu clicks under the
+  // same SSE response budget, rather than assuming every tab already exists.
+  const item = page.getByRole('menuitem', { name: label })
+  await measure(id, `open-workspace-menu-${name}`, workspace().getByRole('button', { name: '更多工作区', exact: true }),
+    () => expect(item).toBeVisible(), receipts)
+  await measure(id, `open-${name}`, item, async () => {
+    await expect(page.getByRole('menu')).toHaveCount(0)
+    await expect(target).toHaveAttribute('aria-selected', 'true')
+  }, receipts)
 }
 async function installProbe(): Promise<void> {
   await page.evaluate(() => {
@@ -397,7 +416,11 @@ test.describe.serial('Work 持续子Agent事件中的真实点击与数据保留
     await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
     await page.getByRole('tab', { name: 'Work 办公', exact: true }).click()
   })
-  test.afterEach(() => { health?.assertHealthy(); expect(errors).toEqual([]) })
+  test.afterEach(async () => {
+    health?.assertHealthy(); expect(errors).toEqual([])
+    await expect(page.locator('.work-next-turn__error')).toHaveCount(0)
+    await expect(page.getByText(/Admission response is not an object|协作能力响应无效/)).toHaveCount(0)
+  })
   test.afterAll(async ({}, testInfo) => {
     stopLoad()
     if (cpuProbe) { await stopCpuProbe(cpuProbe); cpuProbe = undefined }
@@ -427,7 +450,23 @@ test.describe.serial('Work 持续子Agent事件中的真实点击与数据保留
           return Math.abs(actual.width - size.width) <= 2 && Math.abs(actual.height - size.height) <= 2
         }).toBe(true)
         await openWorkspace()
-        expect(await workspace().evaluate(element => element.scrollWidth - element.clientWidth), `${size.width}: workspace horizontal overflow`).toBeLessThanOrEqual(2)
+        const layout = await workspace().evaluate(element => {
+          const root = element.getBoundingClientRect()
+          return { viewport: { width: innerWidth, height: innerHeight }, width: element.clientWidth, scrollWidth: element.scrollWidth,
+            overflow: element.scrollWidth - element.clientWidth,
+            elements: [element, ...element.querySelectorAll<HTMLElement>('*')].flatMap(item => {
+              const bounds = item.getBoundingClientRect(), style = getComputedStyle(item)
+              if (!bounds.width || !bounds.height || bounds.right <= root.right + 2) return []
+              return [{ tag: item.tagName, className: item.className, role: item.getAttribute('role'), width: bounds.width,
+                right: bounds.right - root.right, minWidth: style.minWidth, maxWidth: style.maxWidth, display: style.display,
+                overflowX: style.overflowX, grid: style.gridTemplateColumns, flex: style.flex }]
+            }).slice(0, 100) }
+        })
+        const layoutPath = testInfo.outputPath(`workspace-layout-${size.width}.json`)
+        writeFileSync(layoutPath, JSON.stringify(layout, null, 2))
+        await testInfo.attach(`workspace-layout-${size.width}`, { path: layoutPath, contentType: 'application/json' })
+        if (layout.overflow > 2) await page.screenshot({ path: testInfo.outputPath(`workspace-overflow-${size.width}.png`), animations: 'disabled' })
+        expect(layout.overflow, `${size.width}: workspace horizontal overflow`).toBeLessThanOrEqual(2)
         await tab(id, '活动', receipts)
         const completed = workspace().getByRole('listbox', { name: '工具活动列表', exact: true }).getByRole('option').filter({ hasText: childName(0) })
         await measure(id, 'select-completed-child-activity', completed, () => expect(workspace().locator('.work-activity-detail')).toContainText(childName(0)), receipts)
@@ -459,6 +498,25 @@ test.describe.serial('Work 持续子Agent事件中的真实点击与数据保留
           await expect(transcript.getByRole('alert')).toHaveCount(0)
         }, receipts)
         await page.screenshot({ path: testInfo.outputPath(`streaming-child-${size.width}.png`), animations: 'disabled' })
+        if (size.width === 940) {
+          const paneToggle = work().locator('.work-mobile-tabs')
+          const conversation = work().getByRole('region', { name: '协作对话', exact: true })
+          await measure(id, 'narrow-switch-to-conversation', paneToggle.getByRole('button', { name: '协作对话', exact: true }), async () => {
+            await expect(conversation).toBeVisible()
+            await expect(workspace()).toBeHidden()
+            await expect(conversation.getByRole('textbox', { name: '继续对话', exact: true })).toBeVisible()
+            const bounds = await conversation.evaluate(element => ({ width: element.clientWidth, height: element.clientHeight, overflow: element.scrollWidth - element.clientWidth }))
+            expect(bounds.width).toBeGreaterThanOrEqual(layout.width - 2)
+            expect(bounds.height).toBeGreaterThan(200)
+            expect(bounds.overflow).toBeLessThanOrEqual(2)
+          }, receipts)
+          await page.screenshot({ path: testInfo.outputPath('streaming-conversation-940.png'), animations: 'disabled' })
+          await measure(id, 'narrow-switch-back-to-workspace', paneToggle.getByRole('button', { name: /^工作区(?: · \d+)?$/ }), async () => {
+            await expect(conversation).toBeHidden()
+            await expect(workspace()).toBeVisible()
+            await expect(transcript).toBeVisible()
+          }, receipts)
+        }
       }
       // Use the wide view for the composer's public draft input. Changing this
       // independently of the preview catches memoized closures over old drafts.
@@ -494,13 +552,13 @@ test.describe.serial('Work 持续子Agent事件中的真实点击与数据保留
         await expect(panel().locator('.work-subagents__heading [role="status"]')).toHaveText('已取消')
       }, receipts)
       expect(value(id).run.status, 'Child stop does not stop its root').toBe('running')
-      await expect(work().getByRole('button', { name: '停止任务', exact: true })).toBeVisible()
+      await expect(work().locator('.work-task-heading').getByRole('button', { name: '停止任务', exact: true })).toBeVisible()
       await expect.poll(() => value(id).ticks).toBeGreaterThanOrEqual(80)
       const marker = `STREAM_FINAL_ROOT_${value(id).seq}`
       emit(id, { content: `\n\n${marker}` })
       await expect(work().getByRole('region', { name: '协作对话', exact: true })).toContainText(marker)
       const beforeRootCancels = cancellations.length
-      await measure(id, 'cancel-only-selected-root', work().getByRole('button', { name: '停止任务', exact: true }), async () => {
+      await measure(id, 'cancel-only-selected-root', work().locator('.work-task-heading').getByRole('button', { name: '停止任务', exact: true }), async () => {
         await expect.poll(() => cancellations.slice(beforeRootCancels)).toEqual([id])
         await expect(work().locator('.work-task-heading')).toContainText('已停止')
         await expect(work().locator('[data-current-run-feedback="true"]')).toHaveCount(0)

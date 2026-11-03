@@ -9,18 +9,22 @@ export function watchOpenDocuments(): () => void {
   let disposed = false
   let chain = Promise.resolve()
   let reloading = false
-  const pending = new Set<string>()
+  const pending = new Map<string, boolean>()
   const drain = async (): Promise<void> => {
     if (disposed || reloading) return
-    const paths = [...pending].filter((path) => !getEditorState().saving.has(path))
+    const paths = [...pending.keys()].filter((path) => !getEditorState().saving.has(path))
     if (!paths.length) return
+    const forceBinaryPaths = new Set(paths.filter(path => pending.get(path)))
     paths.forEach((path) => pending.delete(path))
     reloading = true
-    try { await reloadDocuments(paths) }
+    try { await reloadDocuments(paths, forceBinaryPaths) }
     finally { reloading = false; void drain() }
   }
-  const enqueue = (paths: string[]): void => {
-    paths.forEach((path) => pending.add(resolveDocumentPath(path)))
+  const enqueue = (paths: string[], changed = false): void => {
+    paths.forEach((path) => {
+      const canonical = resolveDocumentPath(path)
+      pending.set(canonical, changed || pending.get(canonical) === true)
+    })
     void drain()
   }
   const synchronize = (): void => {
@@ -41,7 +45,7 @@ export function watchOpenDocuments(): () => void {
       }
     }).catch((error: unknown) => console.error('[editor] 文件监听启动失败', error))
   }
-  const unsubscribe = window.aether.fs.onDocumentsChanged(enqueue)
+  const unsubscribe = window.aether.fs.onDocumentsChanged(paths => enqueue(paths, true))
   const unsubscribeEditor = onEditorChanged(() => { synchronize(); void drain() })
   const unsubscribeSource = subscribeEngineSource(synchronize)
   const refresh = (): void => enqueue([...getEditorState().docs.keys()])

@@ -29,8 +29,10 @@ import { isVisibleToolActivity } from '@renderer/core/engine/task-plan'
 import { useApp } from '@renderer/core/app-context'
 import { toast } from '@renderer/core/toast'
 import { getAppMode, useAppMode } from '@renderer/core/platform/app-mode'
-import { getEngineSource, getEngineStorageKey } from '@renderer/core/engine/source'
+import { getEngineSource, getEngineStorageKey, isEngineReady } from '@renderer/core/engine/source'
 import { setBrowserSessionOverride } from '@renderer/core/browser/connection'
+import { useWorkbenchClient, waitForWorkPreview } from '@renderer/core/workbench/client'
+import { requestWorkPreview } from '@renderer/core/workbench/preview-request'
 import { registerCommand } from '@renderer/core/platform/commands'
 import { requestOrThrow } from '@renderer/core/engine/client'
 import { Icon, type IconName } from '@renderer/workbench/icons'
@@ -53,7 +55,8 @@ import { WorkNextTurnQueuePanel } from './WorkNextTurnQueue'
 import { WorkTaskActions } from './WorkTaskActions'
 import { WorkArtifactPanel } from './WorkArtifactPanel'
 import { fileContentBytes } from '@renderer/core/workspace/file-content-bytes'
-import { retainedResourceIds } from './work-resource-preview-policy'
+import { resourcePreviewEntries } from './work-resource-preview-policy'
+import { useRetainedPreviews } from '@renderer/core/editor/useRetainedPreviews'
 import { workArtifactSelectionQuote, type WorkArtifactContent } from './work-artifact-content'
 import { WorkSourcePreview, useWorkSourceFile } from './WorkSourcePreview'
 import { Markdown } from '../chat/Markdown'
@@ -62,6 +65,7 @@ import { WorkGitPanel } from './WorkGitPanel'
 import { WorkWorkspacePanel } from './WorkWorkspacePanel'
 import { WorkSubagentsPanel } from './WorkSubagentsPanel'
 import { PublishedRecoveryNotice } from '../chat/PublishedRecoveryNotice'
+import { SessionConnectionNotice } from '../chat/SessionConnectionNotice'
 import { WorkInlineActivity } from './WorkInlineActivity'
 import { WorkAgentManager } from './WorkAgentManager'
 import { workMessageTimeline, workToolTarget } from './work-message-timeline'
@@ -74,6 +78,8 @@ import { AutomationsView } from '../automations/AutomationsView'
 import { subscribeAutomationEditor } from '../automations/automation-navigation'
 import { EngineMonitorView } from './EngineMonitorView'
 import { WorkErrorNotice } from './WorkErrorNotice'
+import { recoverWorkTurn } from './work-turn-recovery'
+import { WorkUserMessageActions } from './WorkUserMessageActions'
 import { flushWorkDrafts, getWorkDraft, getWorkState, updateWorkState, workArtifactStatusLabel, type WorkArtifact } from './work-state'
 import { findWorkArtifact } from './work-artifact-utils'
 import { browserAction, hideBrowserSurfaces, selectBrowserTab, useBrowserState } from '../browser/browser-store'
@@ -189,9 +195,8 @@ function initialView(): ViewState {
   const fallback: ViewState = {
     page: 'home',
     collapsed: false,
-    // Work tasks are most useful when the conversation and its files are
-    // visible together, matching Code's split workbench on first launch.
-    workspace: true,
+    // Start with the conversation; files open when explicitly requested.
+    workspace: false,
     tab: 'files',
     pane: 'conversation',
     // Keep the conversation as the primary surface.  The workspace is a
@@ -375,21 +380,19 @@ export function WorkView(): JSX.Element {
     setSelectedArtifact(next)
   }, [controller.artifacts, selectedArtifact])
   const navigate = useCallback((page: Page): void => {
-    set({ page })
+    set(page === 'home' ? { page, workspace: false, pane: 'conversation' } : { page })
     setNavigationOpen(false)
     if (page === 'home') controller.showHome()
   }, [set, controller.showHome])
   const openTask = useCallback((id: string): void => {
     controller.selectTask(id)
     setNavigationOpen(false)
-    // Opening a task should reveal its supporting workspace beside the
-    // conversation. The user can still collapse it with the header button.
-    set({ page: 'home', pane: 'conversation', workspace: true })
+    set({ page: 'home', pane: 'conversation' })
   }, [set, controller.selectTask])
   const newTask = useCallback((): void => {
     controller.showHome()
     setNavigationOpen(false)
-    set({ page: 'home', pane: 'conversation' })
+    set({ page: 'home', pane: 'conversation', workspace: false })
     setSearch('')
     setFilter('all')
   }, [set, controller.showHome])
@@ -430,8 +433,17 @@ export function WorkView(): JSX.Element {
     // A file selection is a view change inside Work, not an instruction to
     // open the separate browser/resource surface. The preview resolves the
     // session-scoped path itself and keeps the conversation context stable.
-    openWorkspace('files')
+    openWorkspace(id.startsWith('path:') ? 'workspace' : 'files')
   }, [openWorkspace])
+  useWorkbenchClient(controller.securitySessionId, appMode === 'work' && isEngineReady(), {
+    context: () => ({ mode: 'work', selectedArtifact, files: controller.artifacts.slice(0, 100).map(item => ({ path: item.path, name: item.name, status: item.status })), hasMoreFiles: controller.artifacts.length > 100 }),
+    open: async (path, _line, current) => {
+      if (!current() || !controller.activeTask || controller.activeTask.id !== controller.securitySessionId) throw new Error('请先打开此任务的工作区。')
+      const revision = requestWorkPreview(getEngineSource(), controller.securitySessionId, path)
+      openArtifact(`path:${path}`)
+      return waitForWorkPreview(controller.securitySessionId, path, current, revision)
+    }
+  })
   const setWorkspaceTab = useCallback((tab: WorkspaceTab): void => set({ tab }), [set])
   const setRatio = useCallback((ratio: number): void => set({ ratio }), [set])
   const openActivity = useCallback((toolId: string): void => {
@@ -972,7 +984,14 @@ function Conversation({
     openArtifact(artifact?.id ?? `path:${path}`)
   }, [openArtifact])
   const respond = useCallback<WorkController['respond']>((...args) => controllerRef.current.respond(...args), [])
-  const retryFailedTask = useCallback<WorkController['retryFailedTask']>(() => controllerRef.current.retryFailedTask(), [])
+  const retryFailedTask = useCallback<WorkController['retryFailedTask']>((...args) => controllerRef.current.retryFailedTask(...args), [])
+  const editSettledTurn = useCallback<WorkController['editSettledTurn']>((...args) => controllerRef.current.editSettledTurn(...args), [])
+  const userMessageAction = useCallback<WorkController['userMessageAction']>((...args) => controllerRef.current.userMessageAction(...args), [])
+  const recoverableMessageId = useMemo(() => {
+    if (controller.streaming || controller.launching || controller.messageActionBusy || controller.pending.length || ['running', 'waiting'].includes(task.status)) return null
+    const last = controller.messages.at(-1)
+    return last && recoverWorkTurn(controller.messages, last.id) ? last.id : null
+  }, [controller.messages, controller.streaming, controller.launching, controller.messageActionBusy, controller.pending.length, task.status])
   const [firstId, setFirstId] = useState<string | null>(() => conversationPositions.get(positionKey)?.firstId ?? null)
   // Keep selection local to a task. Work selects complete conversation turns
   // (the user request together with the Agent response), so exporting one
@@ -1253,6 +1272,14 @@ function Conversation({
                     openFile={openActivityFile}
                     respond={respond}
                     retryFailedTask={retryFailedTask}
+                    editSettledTurn={editSettledTurn}
+                    userMessageAction={userMessageAction}
+                    showUserActions={!selectMode}
+                    messageActionBusy={controller.messageActionBusy}
+                    canMutateMessage={controller.ready && controller.historyReady && !controller.uploading && !controller.streaming && !controller.launching && !controller.pending.length && !['running', 'waiting'].includes(task.status)}
+                    taskId={task.id}
+                    canRecover={message.id === recoverableMessageId}
+                    canRetry={controller.ready && controller.historyReady && !controller.uploading}
                     openActivity={openActivity}
                   />
                 ))}
@@ -1274,6 +1301,10 @@ function Conversation({
         )}
         {!following && <WorkRunStatus controller={controller} />}
         <WorkNextTurnQueuePanel key={`${controller.draftSource}:${task.id}`} scopeKey={`${controller.draftSource}:${task.id}`} queue={controller.nextTurnQueue} />
+        <SessionConnectionNotice key={`${controller.draftSource}:${task.id}`} ready={controller.ready} sessionId={task.id}
+          source={getEngineSource()} connection={controller.historyRecovery}
+          active={controller.streaming || ['running', 'waiting'].includes(task.status)}
+          error={controller.historyError} onRetry={controller.retryHistory} />
         <WorkComposerV2 controller={controller} />
       </div>
     </section>
@@ -1281,13 +1312,16 @@ function Conversation({
 }
 
 /** Only real engine events change the phase; elapsed time never invents progress. */
-function useWorkRunFeedback(controller: WorkController, tick = true) {
+function useWorkRunFeedback(controller: WorkController) {
   const mode = useAppMode()
   const [now, setNow] = useState(Date.now)
   const waiting = controller.pending.length > 0
-  const active = controller.streaming || controller.launching || waiting
+  const recovering = !controller.ready || Boolean(controller.historyRecovery &&
+    (controller.historyRecovery.phase === 'blocked' || controller.historyRecovery.failures > 0 &&
+      ['connecting', 'retrying'].includes(controller.historyRecovery.phase)))
+  const active = !recovering && (controller.streaming || controller.launching || controller.stopping || waiting)
   const message = controller.messages.findLast((item) => item.role === 'assistant')
-  const current = message && ['streaming', 'waiting'].includes(message.status) ? message : null
+  const current = message && (controller.stopping || ['streaming', 'waiting'].includes(message.status)) ? message : null
   const startedAt = current?.run?.startedAt ?? current?.startedAt ?? current?.createdAt
     ?? (controller.launching ? controller.activeTask?.createdAt : undefined)
   const running = current
@@ -1295,7 +1329,9 @@ function useWorkRunFeedback(controller: WorkController, tick = true) {
     : null
   const compacting = current?.run?.compaction?.phase === 'running'
   const thinking = current?.items?.at(-1)?.kind === 'thinking' || Boolean(current && !current.items?.length && current.thinking && !current.content && !running)
-  const phase = controller.launching
+  const phase = controller.stopping
+    ? 'stopping'
+    : controller.launching
     ? 'preparing'
     : waiting
       ? 'waiting'
@@ -1308,7 +1344,9 @@ function useWorkRunFeedback(controller: WorkController, tick = true) {
             : current?.content
               ? 'generating'
               : 'processing'
-  const label = controller.launching
+  const label = controller.stopping
+    ? '正在停止任务…'
+    : controller.launching
     ? '正在准备任务…'
     : waiting
       ? controller.pending.some((item) => item.kind === 'permission')
@@ -1325,10 +1363,11 @@ function useWorkRunFeedback(controller: WorkController, tick = true) {
               : '等待 Agent 响应…'
 
   useEffect(() => {
-    if (!active || mode !== 'work' || !tick) return
+    if (!active || mode !== 'work') return
+    setNow(Date.now())
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
-  }, [active, mode, tick])
+  }, [active, mode])
 
   const seconds = Math.max(0, Math.floor((now - (startedAt ?? now)) / 1000))
   const elapsed =
@@ -1343,14 +1382,17 @@ function WorkTurnFeedback({ controller, announce, openActivity }: {
   announce: boolean
   openActivity: (toolId: string) => void
 }): JSX.Element | null {
-  // A historical inline card stays quiet; only the visible status owns a clock.
-  const feedback = useWorkRunFeedback(controller, announce)
+  // Scrolling changes which status is announced, not whether this live card's
+  // elapsed time advances: it can remain visible beside the fixed status.
+  const feedback = useWorkRunFeedback(controller)
   if (!feedback.active) return null
   const target = feedback.running ? workToolTarget(feedback.running, controller.workspacePath) : ''
   const agentName = feedback.running && (feedback.running.name === 'subagent' || feedback.running.subagent)
     ? workSubagentName(feedback.running)
     : controller.agentIdentity.name || 'Agent'
-  const detail = feedback.phase === 'preparing'
+  const detail = feedback.phase === 'stopping'
+    ? '正在停止当前任务，已生成的内容会保留。'
+    : feedback.phase === 'preparing'
     ? '正在连接任务会话，准备开始执行。'
     : feedback.phase === 'waiting'
       ? '请回复上方的问题或确认请求，任务会继续执行。'
@@ -1374,7 +1416,10 @@ function WorkTurnFeedback({ controller, announce, openActivity }: {
         <div className="work-turn-feedback__heading">
           <strong title={agentName}>{agentName}</strong>
           <span role="status" aria-live={announce ? 'polite' : 'off'} aria-label="任务运行状态">{feedback.label}</span>
-          <span className="work-turn-feedback__elapsed" title="本轮累计用时（含等待）">{feedback.elapsed}</span>
+          <div className="work-turn-feedback__controls">
+            <WorkRootStop controller={controller} compact />
+            <span className="work-turn-feedback__elapsed" title="本轮累计用时（含等待）">{feedback.elapsed}</span>
+          </div>
         </div>
         {feedback.running ? (
           <button type="button" className="work-turn-feedback__activity" aria-label="查看正在执行的活动" onClick={() => openActivity(feedback.running!.id)}>
@@ -1387,17 +1432,18 @@ function WorkTurnFeedback({ controller, announce, openActivity }: {
 }
 
 /** Root cancellation stays discoverable when the conversation pane is hidden. */
-function WorkRootStop({ controller }: { controller: WorkController }): JSX.Element | null {
-  const [stopping, setStopping] = useState(false)
-  const active = controller.pendingInitialStart || controller.streaming || controller.launching || controller.pending.length > 0 || ['running', 'waiting'].includes(controller.activeTask?.status ?? '')
+function WorkRootStop({ controller, compact = false }: { controller: WorkController; compact?: boolean }): JSX.Element | null {
+  const stopping = controller.stopping
+  const active = controller.pendingInitialStart || controller.streaming || controller.launching || stopping || controller.pending.length > 0 || ['running', 'waiting'].includes(controller.activeTask?.status ?? '')
   if (!active) return null
-  return <button className="btn btn--sm" type="button" aria-label={stopping ? '正在停止任务' : '停止任务'} disabled={!controller.ready || stopping} onClick={() => {
+  return <button className={compact ? 'work-quiet-button work-run-stop' : 'btn btn--sm'} type="button"
+    aria-label={stopping ? '正在停止任务' : '停止任务'} aria-busy={stopping} title={stopping ? '正在停止任务' : '停止当前任务'}
+    disabled={!controller.ready || stopping} onClick={() => {
     if (stopping) return
-    setStopping(true)
-    void controller.stop().catch(reportError).finally(() => setStopping(false))
+    void controller.stop().catch(reportError)
   }}>
     {stopping ? <Spinner size={13} /> : <Icon name="stop" size={13} />}
-    {stopping ? '正在停止…' : '停止任务'}
+    {compact ? stopping ? '停止中' : '停止' : stopping ? '正在停止…' : '停止任务'}
   </button>
 }
 
@@ -1422,6 +1468,7 @@ function WorkRunStatus({ controller }: { controller: WorkController }): JSX.Elem
         {waiting ? <Icon name="chat" size={14} /> : <Spinner size={13} />}
         <span>{feedback.label}</span>
       </div>
+      <WorkRootStop controller={controller} compact />
       <span className="work-run-status__elapsed" title="本轮累计用时（含等待）">
         {elapsed}
       </span>
@@ -1468,6 +1515,14 @@ const WorkMessage = memo(function WorkMessage({
   openFile,
   respond,
   retryFailedTask,
+  editSettledTurn,
+  userMessageAction,
+  showUserActions,
+  messageActionBusy,
+  canMutateMessage,
+  taskId,
+  canRecover,
+  canRetry,
   openActivity
 }: {
   message: ChatMessage
@@ -1476,6 +1531,14 @@ const WorkMessage = memo(function WorkMessage({
   openFile: (path: string) => void
   respond: WorkController['respond']
   retryFailedTask: WorkController['retryFailedTask']
+  editSettledTurn: WorkController['editSettledTurn']
+  userMessageAction: WorkController['userMessageAction']
+  showUserActions: boolean
+  messageActionBusy: boolean
+  canMutateMessage: boolean
+  taskId: string
+  canRecover: boolean
+  canRetry: boolean
   openActivity: (toolId: string) => void
 }): JSX.Element {
   const pending = useMemo(() =>
@@ -1524,6 +1587,8 @@ const WorkMessage = memo(function WorkMessage({
             </div>
           ) : null}
           <div className="message__bubble"><UserMessageContent content={message.content} /></div>
+          {showUserActions ? <WorkUserMessageActions taskId={taskId} messageId={message.id} content={message.content}
+            canMutate={canMutateMessage} busy={messageActionBusy} onAction={userMessageAction} /> : null}
         </div>
       ) : (
         <>
@@ -1557,7 +1622,15 @@ const WorkMessage = memo(function WorkMessage({
           /> : null}
         </>
       )}
-      {message.error ? <WorkErrorNotice error={message.error} onRetry={retryFailedTask} retryLabel="重新发起任务" /> : null}
+      {message.error ? <WorkErrorNotice error={message.error} context={message.run}
+        onRetry={canRecover && canRetry && message.status === 'error' ? () => retryFailedTask(taskId, message.id) : undefined}
+        retryLabel="重试这条指令" /> : null}
+      {canRecover ? <div className="work-message__recovery">
+        <button type="button" className="btn btn--sm" onClick={() => editSettledTurn(taskId, message.id)}
+          title="将原指令与附件带回输入框，保留已有草稿">
+          <Icon name="pencil" size={13} />{message.status === 'error' ? '编辑后重试' : '编辑后继续'}
+        </button>
+      </div> : null}
       {pending.map((item) => (
         <WorkPending
           key={item.requestId || item.toolCallId}
@@ -2113,7 +2186,7 @@ const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controll
     id={`work-panel-${id}`}
     aria-labelledby={`work-tab-${id}`}
   >
-    {!active && ['files', 'workspace', 'sources', 'browser'].includes(id) ? null : id === 'files' ? (
+    {!active && ['files', 'workspace', 'sources'].includes(id) ? null : id === 'files' ? (
             <TaskArtifactPanel
               controller={controller}
               active={active}
@@ -2182,12 +2255,12 @@ const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controll
               onOpenFile={openGitFile}
             />
           ) : (
-            <WorkResourcePane controller={controller} onReveal={revealBrowser} />
+            <WorkResourcePane key={JSON.stringify([getEngineSource(), controller.activeTask?.id, controller.activeTask?.workspacePath])} controller={controller} onReveal={revealBrowser} active={active} />
           )}
   </div>
-}, (previous, next) => !previous.active && !next.active && previous.hidden === next.hidden && previous.source === next.source && previous.controller.activeTask?.id === next.controller.activeTask?.id)
+}, (previous, next) => !previous.active && !next.active && previous.hidden === next.hidden && previous.source === next.source && previous.controller.activeTask?.id === next.controller.activeTask?.id && previous.controller.activeTask?.workspacePath === next.controller.activeTask?.workspacePath)
 
-function WorkResourcePane({ controller, onReveal }: { controller: WorkController; onReveal: () => void }): JSX.Element {
+function WorkResourcePane({ controller, onReveal, active }: { controller: WorkController; onReveal: () => void; active: boolean }): JSX.Element {
   const sessionId = controller.activeTask!.id
   const resources = useWorkResources(sessionId)
   const browser = useBrowserState()
@@ -2195,18 +2268,16 @@ function WorkResourcePane({ controller, onReveal }: { controller: WorkController
   const selected = resolvedWorkResourceId(resources, webTabs.map(tab => tab.tabId), browser.activeTabId)
   const file = resources.files.find(item => item.id === selected)
   const web = selected?.startsWith('web:') ? webTabs.find(item => item.tabId === selected.slice(4)) : undefined
-  const [history, setHistory] = useState<{ selected: string | null; recent: string[] }>({ selected: null, recent: [] })
   const selectedFileId = file?.id ?? null
-  const recent = history.selected === selectedFileId ? history.recent : selectedFileId
-    ? [selectedFileId, ...history.recent.filter(id => id !== selectedFileId)].slice(0, 4)
-    : history.recent
-  if (history.selected !== selectedFileId) setHistory({ selected: selectedFileId, recent })
-  const retained = retainedResourceIds(resources.files, selectedFileId, recent)
+  const retained = useRetainedPreviews(resourcePreviewEntries(resources.files), active ? selectedFileId : null,
+    JSON.stringify([getEngineSource(), sessionId, controller.activeTask?.workspacePath]))
+  const retainedIds = new Set(retained.map(entry => entry.id))
   return <>
-    {web ? <div hidden={Boolean(file)}><WorkBrowser tabId={web.tabId} hideTabStrip onReveal={onReveal} /></div> : null}
+    {/* Native browser bounds are released on hide; only file previews stay mounted. */}
+    {active && web ? <div><WorkBrowser tabId={web.tabId} hideTabStrip onReveal={onReveal} /></div> : null}
     {!file && !web ? <EmptyState icon="file" title="文件和网页，在同一个地方查看" description="从成果、资料或对话中打开文件，也可以拖入电脑文件或点击文件按钮；新建网页后也会显示在上方标签栏。" /> : null}
-    {resources.files.filter(item => retained.has(item.id)).map(item => <WorkResourceFile
-      key={JSON.stringify([getEngineSource(), sessionId, item.id])} controller={controller} file={item} active={item.id === file?.id} />)}
+    {resources.files.filter(item => retainedIds.has(item.id)).map(item => <WorkResourceFile
+      key={JSON.stringify([getEngineSource(), sessionId, item.id])} controller={controller} file={item} active={active && item.id === file?.id} />)}
   </>
 }
 
@@ -2273,7 +2344,7 @@ function WorkResourceFile({ controller, file, active }: { controller: WorkContro
       <button type="button" role="tab" aria-selected={selectedTab === 'preview'} onClick={() => setTab('preview')}>预览</button>
       <button type="button" role="tab" aria-selected={selectedTab === 'changes'} onClick={() => setTab('changes')} title="查看此文件在任务中的改动">文件改动</button>
     </div> : null}
-    {selectedTab === 'changes' && showChangesTab && file.target ? <WorkChangesPanel sessionId={sessionId!} workspacePath={file.target.root} filePath={file.path} ready={controller.ready} streaming={controller.streaming} /> : <WorkArtifactPanel
+    {selectedTab === 'changes' && showChangesTab && file.target ? <WorkChangesPanel sessionId={sessionId!} workspacePath={file.target.root} filePath={file.path} ready={controller.ready} streaming={controller.streaming} active={active} /> : <WorkArtifactPanel
     artifact={{ id: file.id, path: file.path, name: file.name, content: null, status: 'ready', createdAt: 0 }}
     workspaceRoot={file.target?.root} sessionId={sessionId} externalFile={file.externalFile} externalPath={file.externalPath} inResourceTab active={active}
     onAddToConversation={(item, selection, coverage) => {

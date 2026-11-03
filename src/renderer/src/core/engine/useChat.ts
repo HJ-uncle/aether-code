@@ -38,7 +38,9 @@ import { createIdleRootDiscovery } from './idle-root-discovery'
 import { createHistoryMutationGuard } from './history-mutation'
 import { getAppMode, onAppModeChanged } from '@renderer/core/platform/app-mode'
 import { createQueuedChatEntry, editQueuedChatEntry, type QueuedChatEntry } from './chat-queue-entry'
-import { dispatchChatRequest } from './chat-send-request'
+import { ChatRequestRejectedError, dispatchChatRequest } from './chat-send-request'
+import { sessionQueue, takeSessionQueue, restoreSessionQueue, clearSessionQueue,
+  moveSessionQueue, updateSessionQueue, removeSessionQueue } from './chat-session-queue'
 
 // ==================== 模型 ====================
 
@@ -68,6 +70,7 @@ export interface ToolActivity {
   hidden?: boolean
   /** 引擎下发的文件改动记录（write_file/delete_file 后），供 diff 卡片渲染 */
   change?: EngineFileChange
+  changes?: EngineFileChange[]
   /** 工具开始执行的时间戳（ms，本机时钟），子代理卡片运行中耗时跳动用 */
   startedAt?: number
 }
@@ -232,6 +235,9 @@ export function useChat(options: { commandOwner?: string } = {}): {
   commandJobs: CommandJobSnapshot[]
   sessionModel: ChatSessionModelContext | null
   streaming: boolean
+  stopping: boolean
+  stopError: string | null
+  dismissStopError: () => void
   /** Transport recovery is independent of the durable execution outcome. */
   connection: RecoveryState
   historyError: string | null
@@ -273,6 +279,8 @@ export function useChat(options: { commandOwner?: string } = {}): {
   deleteTurn: (sessionId: string, message: ChatMessage) => Promise<void>
   /** 从某条用户消息处截断重发（重新发送 / 重新生成共用） */
   retryFrom: (userMessage: ChatMessage, options: SendOptions) => Promise<void>
+  /** 删除该用户消息及后续历史，保留文件，不自动重发。 */
+  truncateFrom: (sessionId: string, userMessage: ChatMessage) => Promise<void>
   /** 消息级回退：恢复该消息之后的所有文件改动（含 kept）并截断对话，不自动重发 */
   revertFrom: (sessionId: string, userMessage: ChatMessage) => Promise<void>
   /** 合并发送：把排队中的消息与本条合并成一条立即发出（流中时合并全部队列） */
@@ -434,6 +442,12 @@ export function useChat(options: { commandOwner?: string } = {}): {
   const viewEpochRef = useRef(0)
   const mountedRef = useRef(true)
   const stoppingRef = useRef<RecoveryScope | null>(null)
+  const stoppingFlightRef = useRef<{ scope: RecoveryScope; promise: Promise<void> } | null>(null)
+  const outgoingSendRef = useRef<{ scope: RecoveryScope; streamId: string } | null>(null)
+  const rejectedSendScopeRef = useRef<RecoveryScope | null>(null)
+  const [stopping, setStopping] = useState(false)
+  const [stopError, setStopError] = useState<string | null>(null)
+  const dismissStopError = useCallback((): void => setStopError(null), [])
   const recoveryAttemptRef = useRef<(lease: RecoveryLease) => Promise<RecoveryOutcome>>(async () => 'retry')
   const [connection, setConnection] = useState<RecoveryState>({ scope: null, phase: 'idle', failures: 0 })
   const [snapshotReads] = useState(() => createRecoverySingleFlight<RecoveryRestoreResult<ChatRecoverySnapshot>>())
@@ -464,6 +478,10 @@ export function useChat(options: { commandOwner?: string } = {}): {
     if (mountedRef.current) setPublishedRecovery(null)
     if (mountedRef.current) setRecoveryNoticeState(null)
     stoppingRef.current = null
+    stoppingFlightRef.current = null
+    outgoingSendRef.current = null
+    rejectedSendScopeRef.current = null
+    if (mountedRef.current) { setStopping(false); setStopError(null) }
   }, [recoveryLoop, snapshotReads, idleRootDiscovery])
   const hasSessionWork = useCallback((sessionId = viewSessionRef.current): boolean => {
     if (!sessionId || sessionId !== viewSessionRef.current) return false
@@ -474,6 +492,18 @@ export function useChat(options: { commandOwner?: string } = {}): {
       (stoppingRef.current && sameRecoveryScope(scope, stoppingRef.current)) ||
       (recovery.scope && sameRecoveryScope(scope, recovery.scope) && ['connecting', 'retrying'].includes(recovery.phase)))
   }, [recoveryLoop, recoveryScope])
+  const rejectOutgoingSend = useCallback((streamId: string, message: string): boolean => {
+    const submission = outgoingSendRef.current
+    if (!submission || submission.streamId !== streamId || !scopeIsCurrent(submission.scope) || activeRunIdRef.current) return false
+    flushStreamPatches()
+    rejectedSendScopeRef.current = submission.scope
+    activeStreamRef.current = null
+    setStreaming(false)
+    setHistoryError(message)
+    const receivedAt = Date.now()
+    setMessages(previous => patchLastAssistant(previous, assistant => finishTransport(assistant, message, receivedAt)), { message, receivedAt })
+    return true
+  }, [flushStreamPatches, scopeIsCurrent])
   const recoverRef = useRef<(sessionId: string) => Promise<boolean>>(async () => false)
   const [publishedUsageRefresh] = useState(() => createPublishedUsageRefresh({
     current: scope => scopeIsCurrent(scope) && scope.historyEpoch === historyRequestRef.current &&
@@ -575,60 +605,53 @@ export function useChat(options: { commandOwner?: string } = {}): {
   type QueuedEntry = QueuedChatEntry
   const [queue, setQueue] = useState<QueuedEntry[]>([])
   const queueRef = useRef<QueuedEntry[]>([])
+  const pausedQueueSessionsRef = useRef(new Set<string>())
   const syncQueue = useCallback((next: QueuedEntry[]) => {
     queueRef.current = next
     setQueue(next)
   }, [])
 
-  /** 队列调度：当前无活动流时按模式发出 —— serial 只发队首，batch 全队列合并成一条 */
+  const dispatchQueued = useCallback(async (): Promise<void> => {
+    const source = sourceRef.current
+    const taken = takeSessionQueue(queueRef.current, viewSessionRef.current, queueSendModeRef.current)
+    const [first] = taken.selected
+    if (!first) return
+    syncQueue(taken.remaining)
+    const pending = taken.selected
+    const sending = pending.length === 1 ? sendInternalRef.current(first.text, first.options)
+      : sendInternalRef.current(pending.map((item, index) => `${index + 1}. ${item.text}`).join('\n\n'), {
+        ...first.options,
+        model: pending[pending.length - 1].options.model,
+        attachments: pending.flatMap(item => item.attachments)
+      })
+    try {
+      await sending
+    } catch (error) {
+      // Queues belong to an engine source and session, not the selected view.
+      // A late refusal must return A's input even while the user is viewing B.
+      if (error instanceof ChatRequestRejectedError && mountedRef.current &&
+        source === getEngineSource() && sourceRef.current === source) {
+        pausedQueueSessionsRef.current.add(first.options.sessionId)
+        syncQueue(restoreSessionQueue(queueRef.current, taken))
+      }
+      throw error
+    }
+  }, [syncQueue])
+
+  /** Automatic sends only consume this view's queue and pause after a confirmed rejection. */
   const drainQueue = useCallback(async (): Promise<void> => {
     if (!isEngineReady() || sourceRef.current !== getEngineSource() || hasSessionWork()) return
-    if (queueSendModeRef.current === 'batch' && queueRef.current.length > 1) {
-      const pending = [...queueRef.current]
-      syncQueue([])
-      const text = pending.map((item, index) => `${index + 1}. ${item.text}`).join('\n\n')
-      const attachments = pending.flatMap((item) => item.attachments)
-      // 模型取最后一条（更贴近当前意图），其余沿用队首的会话/工作区参数
-      const last = pending[pending.length - 1]
-      await sendInternalRef.current(text, {
-        ...pending[0].options,
-        model: last.options.model,
-        attachments
-      })
-      return
-    }
-    const [next, ...rest] = queueRef.current
-    if (!next) return
-    syncQueue(rest)
-    await sendInternalRef.current(next.text, next.options)
-  }, [syncQueue, hasSessionWork])
+    if (viewSessionRef.current && pausedQueueSessionsRef.current.has(viewSessionRef.current)) return
+    if (rejectedSendScopeRef.current && scopeIsCurrent(rejectedSendScopeRef.current)) return
+    await dispatchQueued()
+  }, [hasSessionWork, scopeIsCurrent, dispatchQueued])
 
   /** 手动发出队列（托盘「发送」按钮）：与 drainQueue 同逻辑，仅供空闲时调用 */
   const flushQueue = useCallback(async (): Promise<void> => {
     if (!isEngineReady() || sourceRef.current !== getEngineSource() || hasSessionWork()) return
-    if (queueSendModeRef.current === 'batch') {
-      const pending = [...queueRef.current]
-      if (pending.length === 0) return
-      syncQueue([])
-      if (pending.length === 1) {
-        await sendInternalRef.current(pending[0].text, pending[0].options)
-        return
-      }
-      const text = pending.map((item, index) => `${index + 1}. ${item.text}`).join('\n\n')
-      const attachments = pending.flatMap((item) => item.attachments)
-      const last = pending[pending.length - 1]
-      await sendInternalRef.current(text, {
-        ...pending[0].options,
-        model: last.options.model,
-        attachments
-      })
-      return
-    }
-    const [next, ...rest] = queueRef.current
-    if (!next) return
-    syncQueue(rest)
-    await sendInternalRef.current(next.text, next.options)
-  }, [syncQueue, hasSessionWork])
+    if (viewSessionRef.current) pausedQueueSessionsRef.current.delete(viewSessionRef.current)
+    await dispatchQueued()
+  }, [hasSessionWork, dispatchQueued])
 
   /**
    * send 的实际执行体（不含排队判断）。由 send（带排队）与 drainQueue 共用。
@@ -665,6 +688,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
     if (throttleTimerRef.current) clearTimeout(throttleTimerRef.current)
     throttleTimerRef.current = null
     syncQueue([])
+    pausedQueueSessionsRef.current.clear()
     setStreaming(false)
     setMessages([])
     commitUsageAnchor(null)
@@ -741,6 +765,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
       const scope = recoveryScope(sessionId)
       const current = (): boolean => scopeIsCurrent(scope) && isEngineReady() && getAppMode() === commandOwner &&
         restoredSessionRef.current === sessionId && !activeStreamRef.current && !stoppingRef.current &&
+        !(rejectedSendScopeRef.current && sameRecoveryScope(rejectedSendScopeRef.current, scope)) &&
         !historyMutationGuard.blocked(scope) && !approvalRefreshRef.current && answeringRef.current.size === 0 && recoveryLoop.state().phase === 'idle'
       if (!current()) return
       // Finishing one root detaches its SSE, but does not freeze the selected
@@ -853,6 +878,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
 
     function applyEvent(event: StreamEvent): void {
       const eventScope = recoveryScope(viewSessionRef.current ?? '')
+      if (event.type === 'error' && event.requestRejected && rejectOutgoingSend(event.streamId, event.message)) return
       if (event.type === 'snapshot-required' || (event.type === 'payload' && (event.payload as { code?: string }).code === 'snapshot_required')) {
         setRecoveryNoticeState({ reason: event.type === 'snapshot-required' ? event.reason ?? 'retention-gap' : 'retention-gap', restored: false })
         const sessionId = activeSessionRef.current
@@ -886,7 +912,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
         reconcileChildren(true)
         reconcile()
         if (run && run.status !== 'running') recoveryLoop.cancel()
-        if (run?.status === 'succeeded') void drainQueueRef.current()
+        if (run?.status === 'succeeded') void drainQueueRef.current().catch(() => {})
         else if (!run && event.type === 'done' && activeSessionRef.current === viewSessionRef.current) {
           // A remote proxy may close the SSE stream just after the payloads and
           // before the terminal run frame is observed locally. Recover the
@@ -961,7 +987,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
         }))
       }, { payload, receipt, ownerRunId, eventScope })
     }
-  }, [flushStreamPatches, scheduleStreamPatch, recoveryLoop, recoveryScope, scopeIsCurrent, commandOwner, idleRootDiscovery, historyMutationGuard, publishedUsageRefresh])
+  }, [flushStreamPatches, scheduleStreamPatch, recoveryLoop, recoveryScope, scopeIsCurrent, commandOwner, idleRootDiscovery, historyMutationGuard, publishedUsageRefresh, rejectOutgoingSend])
 
   /** 统一起流：设置激活流 ID 并发出请求 */
   const runStream = useCallback(async (body: Record<string, unknown>) => {
@@ -973,10 +999,17 @@ export function useChat(options: { commandOwner?: string } = {}): {
     consumedEventIdRef.current = null
     activeSessionRef.current = typeof body.sessionId === 'string' ? body.sessionId : null
     viewSessionRef.current = activeSessionRef.current
+    const newSubmission = typeof body.message === 'string' && !body.toolResponse
+    if (newSubmission) outgoingSendRef.current = { streamId, scope }
+    let dispatched = false
     try {
     const protocol = await engine.getSubagentProtocol()
-    if (!scopeIsCurrent(scope) || activeStreamRef.current !== streamId) return
-    await engine.startStream({
+    if (!scopeIsCurrent(scope) || activeStreamRef.current !== streamId) {
+      if (newSubmission) throw new ChatRequestRejectedError('会话已切换或发送已取消，消息尚未发出')
+      return
+    }
+    dispatched = true
+    const result = await engine.startStream({
       ...(protocol === 2 ? { subagentProtocol: 2 as const } : {}),
       streamId,
       path: '/chat',
@@ -985,7 +1018,15 @@ export function useChat(options: { commandOwner?: string } = {}): {
       // derive the profile from the hook owner so a mode switch cannot turn a
       // general-profile run into a Code-profile resume.
       toolProfile: commandOwner === 'work' ? 'general' : 'code'
-    }) } catch (error) {
+    })
+    if (result?.rejection) throw new ChatRequestRejectedError(result.rejection.message)
+    } catch (error) {
+      if (error instanceof ChatRequestRejectedError || newSubmission && !dispatched) {
+        const rejection = error instanceof ChatRequestRejectedError ? error
+          : new ChatRequestRejectedError(error instanceof Error ? error.message : '请求未能发出，请重试')
+        rejectOutgoingSend(streamId, rejection.message)
+        throw rejection
+      }
       if (!scopeIsCurrent(scope) || activeStreamRef.current !== streamId) return
       activeStreamRef.current = null
       setHistoryError(error instanceof Error ? error.message : '连接中断，正在重新连接')
@@ -995,7 +1036,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
       }
       throw error
     }
-  }, [commandOwner, renderSource, invalidateRecovery, recoveryLoop, recoveryScope, scopeIsCurrent])
+  }, [commandOwner, renderSource, invalidateRecovery, recoveryLoop, recoveryScope, scopeIsCurrent, rejectOutgoingSend])
 
   const send = useCallback(
     async (text: string, options: SendOptions) => {
@@ -1032,20 +1073,28 @@ export function useChat(options: { commandOwner?: string } = {}): {
   const mergeAndSend = useCallback(
     async (text: string, options: SendOptions): Promise<void> => {
       assertEngineSource(renderSource)
+      const source = sourceRef.current
       const trimmed = text.trim()
-      const pending = [...queueRef.current]
-      syncQueue([])
+      const taken = takeSessionQueue(queueRef.current, options.sessionId, 'batch')
+      const pending = taken.selected
       const parts = [trimmed, ...pending.map((item) => item.text)].filter(Boolean)
-      const mergedAttachments = pending.flatMap((item) => item.attachments)
-      if (parts.length === 0 && mergedAttachments.length === 0) return
+      const attachments = [...(options.attachments ?? []), ...pending.flatMap((item) => item.attachments)]
+      if (parts.length === 0 && attachments.length === 0) return
+      pausedQueueSessionsRef.current.delete(options.sessionId)
       if (hasSessionWork(options.sessionId)) {
-        syncQueue([createQueuedChatEntry(newId(), parts.join('\n\n'), options, [...(options.attachments ?? []), ...mergedAttachments])])
+        syncQueue([...taken.remaining, createQueuedChatEntry(newId(), parts.join('\n\n'), options, attachments)])
         return
       }
-      await sendInternalRef.current(parts.join('\n\n'), {
-        ...options,
-        attachments: [...(options.attachments ?? []), ...mergedAttachments]
-      })
+      syncQueue(taken.remaining)
+      const sending = sendInternalRef.current(parts.join('\n\n'), { ...options, attachments })
+      try { await sending } catch (error) {
+        if (error instanceof ChatRequestRejectedError && mountedRef.current &&
+          source === getEngineSource() && sourceRef.current === source) {
+          if (pending.length) pausedQueueSessionsRef.current.add(options.sessionId)
+          syncQueue(restoreSessionQueue(queueRef.current, taken))
+        }
+        throw error
+      }
     },
     [syncQueue, renderSource, hasSessionWork]
   )
@@ -1053,24 +1102,20 @@ export function useChat(options: { commandOwner?: string } = {}): {
   /** 从队列移除一条（用户在托盘里点删除） */
   const removeQueued = useCallback(
     (id: string): void => {
-      syncQueue(queueRef.current.filter((item) => item.id !== id))
+      syncQueue(removeSessionQueue(queueRef.current, viewSessionRef.current, id))
     },
     [syncQueue]
   )
 
   /** 清空队列（不影响正在跑的回合） */
   const clearQueue = useCallback((): void => {
-    syncQueue([])
+    syncQueue(clearSessionQueue(queueRef.current, viewSessionRef.current))
   }, [syncQueue])
 
   /** 编辑队列中一条消息（正文 / 附件），其余字段（options、id）保持不动 */
   const updateQueued = useCallback(
     (id: string, text: string, attachments: ChatAttachment[]): void => {
-      syncQueue(
-        queueRef.current.map((item) =>
-          item.id === id ? editQueuedChatEntry(item, text, attachments) : item
-        )
-      )
+      syncQueue(updateSessionQueue(queueRef.current, viewSessionRef.current, id, item => editQueuedChatEntry(item, text, attachments)))
     },
     [syncQueue]
   )
@@ -1078,18 +1123,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
   /** 拖拽排序：把 fromIndex 的消息挪到 toIndex */
   const moveQueued = useCallback(
     (fromIndex: number, toIndex: number): void => {
-      const list = [...queueRef.current]
-      if (
-        fromIndex < 0 ||
-        fromIndex >= list.length ||
-        toIndex < 0 ||
-        toIndex >= list.length ||
-        fromIndex === toIndex
-      )
-        return
-      const [moved] = list.splice(fromIndex, 1)
-      list.splice(toIndex, 0, moved)
-      syncQueue(list)
+      syncQueue(moveSessionQueue(queueRef.current, viewSessionRef.current, fromIndex, toIndex))
     },
     [syncQueue]
   )
@@ -1476,48 +1510,83 @@ export function useChat(options: { commandOwner?: string } = {}): {
     }, [messages, runStream, renderSource, recoveryScope, scopeIsCurrent]
   )
 
-  const abort = useCallback(async (): Promise<void> => {
-    const source = getEngineSource()
+  const abort = useCallback((): Promise<void> => {
     assertEngineSource(renderSource)
     const streamId = activeStreamRef.current
     const sessionId = viewSessionRef.current ?? activeSessionRef.current
-    if (!sessionId || stoppingRef.current) return
+    if (!sessionId) return Promise.resolve()
+    const pending = stoppingFlightRef.current
+    if (pending && scopeIsCurrent(pending.scope)) return pending.promise
     const knownRun = activeRunIdRef.current ? rootRunsRef.current.get(activeRunIdRef.current) : undefined
-    if (!streamId && !durableCancelBody(sessionId, knownRun) && !hasSessionWork(sessionId)) return
+    if (!streamId && !durableCancelBody(sessionId, knownRun) && !hasSessionWork(sessionId)) return Promise.resolve()
     flushStreamPatches()
     invalidateRecovery()
     const scope = recoveryScope(sessionId)
     stoppingRef.current = scope
+    setStopping(true)
+    setStopError(null)
     activeStreamRef.current = null
-    syncQueue([])
-    try {
-      let body = durableCancelBody(sessionId, knownRun)
-      if (!body) {
-        // Admission may have succeeded before the first run frame reached this
-        // client. Read the durable identity rather than cancelling a later run.
+    const promise = (async (): Promise<void> => {
+      try {
+        let body = durableCancelBody(sessionId, knownRun)
+        if (!body) {
+          // Admission may have succeeded before the first run frame reached this
+          // client. Read its durable identity; never fall back to session-wide stop.
+          const restored = await restoreSession(sessionId)
+          if (!scopeIsCurrent(scope)) return
+          if (restored.kind !== 'restored') throw new Error('未能确认要停止的运行，请稍后重试')
+          const run = restored.snapshot.executionRun ?? restored.snapshot.run
+          body = durableCancelBody(sessionId, run)
+          if (!body) {
+            if (!run) throw new Error('尚未确认运行是否已接收，请等待连接恢复后重试停止')
+            return
+          }
+        }
+        const acknowledgement = await engine.requestOrThrow<{
+          sessionId: string; runId?: string; cancelled: boolean; settled?: boolean
+        }>({ method: 'POST', path: '/chat/cancel', body })
+        if (!scopeIsCurrent(scope)) return
+        if (!acknowledgement || acknowledgement.sessionId !== body.sessionId ||
+          (acknowledgement.runId !== undefined && acknowledgement.runId !== body.runId) || typeof acknowledgement.cancelled !== 'boolean' ||
+          (acknowledgement.settled !== undefined && typeof acknowledgement.settled !== 'boolean')) {
+          throw new Error('停止回执与当前运行不匹配，请重试')
+        }
+        // An accepted cancellation is not a renderer terminal state. A false
+        // acknowledgement may also mean this precise run finished naturally.
         const restored = await restoreSession(sessionId)
         if (!scopeIsCurrent(scope)) return
-        if (restored.kind !== 'restored') throw new Error('未能确认要停止的运行，正在恢复连接，请稍后重试')
-        body = durableCancelBody(sessionId, restored.snapshot.executionRun ?? restored.snapshot.run)
+        if (restored.kind !== 'restored') throw new Error('已请求停止，但未能确认运行结果，请稍后重试')
+        const snapshot = restored.snapshot
+        const run = [snapshot.executionRun, snapshot.run, ...snapshot.runs]
+          .find(candidate => candidate?.sessionId === body.sessionId && candidate.runId === body.runId)
+        if (!run || run.status === 'running' || run.status === 'waiting') {
+          throw new Error(acknowledgement.cancelled && acknowledgement.settled
+            ? '引擎已确认停止，但运行状态尚未同步，请稍后重试'
+            : '停止未确认，任务仍可能在运行，请重试')
+        }
+        // Preserve queued user intent after failure or a naturally finished run.
+        if (run.status === 'cancelled') syncQueue(queueRef.current.filter(entry => entry.options.sessionId !== sessionId))
+      } catch (error) {
+        if (!scopeIsCurrent(scope)) return
+        setStopError(error instanceof Error ? error.message : String(error))
+        throw error
+      } finally {
+        if (streamId) void engine.abortStream(streamId).catch(() => {})
+        if (stoppingRef.current === scope) {
+          stoppingRef.current = null
+          stoppingFlightRef.current = null
+          if (scopeIsCurrent(scope)) {
+            setStopping(false)
+            // Reattach after either outcome so failure does not hide a still-live
+            // run. Recovery classifies permanent access failures and stops retrying.
+            void resumeStream(sessionId).catch(() => {})
+          }
+        }
       }
-      if (body) await engine.requestOrThrow({ method: 'POST', path: '/chat/cancel', body })
-      if (!scopeIsCurrent(scope)) return
-      stoppingRef.current = null
-      if (streamId) void engine.abortStream(streamId).catch(() => {})
-      // Only the next authoritative snapshot can mark the run cancelled.
-      await loadHistory(sessionId)
-    } catch (error) {
-      if (source === getEngineSource() && scopeIsCurrent(scope)) {
-        stoppingRef.current = null
-        setHistoryError(error instanceof Error ? error.message : String(error))
-        recoveryLoop.retry(scope)
-        void resumeStream(sessionId)
-      }
-    } finally {
-      if (stoppingRef.current === scope) stoppingRef.current = null
-      if (streamId) void engine.abortStream(streamId).catch(() => {})
-    }
-  }, [syncQueue, flushStreamPatches, loadHistory, renderSource, hasSessionWork, invalidateRecovery, recoveryScope, scopeIsCurrent, restoreSession, recoveryLoop, resumeStream])
+    })()
+    stoppingFlightRef.current = { scope, promise }
+    return promise
+  }, [syncQueue, flushStreamPatches, renderSource, hasSessionWork, invalidateRecovery, recoveryScope, scopeIsCurrent, restoreSession, resumeStream])
 
   /**
    * 清空当前会话。
@@ -1623,6 +1692,38 @@ export function useChat(options: { commandOwner?: string } = {}): {
     [restoreSession, resolveEngineRow, renderSource, hasSessionWork, invalidateRecovery, recoveryScope, scopeIsCurrent, historyMutationGuard]
   )
 
+  const truncateFrom = useCallback(
+    async (sessionId: string, userMessage: ChatMessage): Promise<void> => {
+      const source = getEngineSource()
+      assertEngineSource(renderSource)
+      if (hasSessionWork(sessionId)) throw new Error('会话运行中，请先停止再重新编辑')
+      if (viewSessionRef.current !== sessionId) throw new Error('会话已切换，请在原会话重新编辑')
+      if (userMessage.role !== 'user') throw new Error('只能从用户消息开始重新编辑')
+      if (historyMutationGuard.blocked(recoveryScope(sessionId))) throw new Error('会话历史正在更新，请稍后重试')
+      invalidateRecovery()
+      const scope = recoveryScope(sessionId)
+      const mutation = historyMutationGuard.begin(scope)
+      try {
+        const row = await resolveEngineRow(sessionId, userMessage)
+        assertEngineSource(source)
+        if (!scopeIsCurrent(scope)) throw new Error('会话状态已变化，请重新加载后再编辑')
+        if (!row?.id || row.role !== 'user') throw new Error('未能定位该用户消息的稳定记录，请重新加载会话')
+        const result = await engine.request({
+          method: 'POST', path: '/conversation/truncate', body: { sessionId, messageId: row.id }
+        })
+        assertEngineSource(source)
+        if (!result.ok) throw new Error(result.message || '引擎侧截断失败')
+        if (!scopeIsCurrent(scope)) throw new Error('历史已截断，但会话状态已变化，请重新加载后查看')
+        const refreshed = await restoreSession(sessionId)
+        if (!scopeIsCurrent(scope)) throw new Error('历史已截断，但会话状态已变化，请重新加载后查看')
+        if (refreshed.kind !== 'restored') throw new Error('历史已截断，但未能重新加载会话，请刷新后查看')
+      } finally {
+        historyMutationGuard.release(mutation)
+      }
+    },
+    [resolveEngineRow, restoreSession, renderSource, hasSessionWork, invalidateRecovery, recoveryScope, scopeIsCurrent, historyMutationGuard]
+  )
+
   /**
    * 从某条用户消息处重试：删除该消息及其后的所有历史（引擎侧 + 界面），
    * 再以原内容重新发送。重新发送（用户消息）与重新生成（取其前一条
@@ -1714,6 +1815,9 @@ export function useChat(options: { commandOwner?: string } = {}): {
     commandJobs,
     sessionModel,
     streaming,
+    stopping,
+    stopError,
+    dismissStopError,
     hasSessionWork,
     connection,
     historyError,
@@ -1734,9 +1838,10 @@ export function useChat(options: { commandOwner?: string } = {}): {
     loadHistory,
     deleteTurn,
     retryFrom,
+    truncateFrom,
     revertFrom,
     mergeAndSend,
-    queue,
+    queue: sessionQueue(queue, viewSessionRef.current),
     removeQueued,
     clearQueue,
     flushQueue,

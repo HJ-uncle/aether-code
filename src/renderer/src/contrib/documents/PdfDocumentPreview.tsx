@@ -1,7 +1,8 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type JSX } from 'react'
+import { memo, useCallback, useEffect, useRef, useState, type CSSProperties, type JSX } from 'react'
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist'
 import { acquirePdfDocument, type PdfLease } from './pdf-preview-session'
 import { cachePdfPageSize, cachedPdfPageSize, retainPdfPageBitmap, restorePdfPageBitmap } from './pdf-page-bitmap-cache'
+import { pdfPreviewRenderIdentity } from './pdf-preview-render'
 import { DOCUMENT_LIMITS, ensureMapGetOrInsertComputed, pdfCanvasSize, previewErrorMessage } from './document-kind'
 import { PreviewMessage, PreviewZoom, usePreviewVisibility, usePreviewWidth, useStablePreviewWidth } from './preview-controls'
 
@@ -14,8 +15,7 @@ const PdfPage = memo(function PdfPage({ pdf, name, page, zoom, width, active, on
   const shell = useRef<HTMLDivElement>(null), canvas = useRef<HTMLCanvasElement>(null)
   const pageRequest = useRef(0)
   const [near, setNear] = useState(page <= 2), [natural, setNatural] = useState(() => cachedPdfPageSize(pdf, page) ?? { width: 0, height: 0 }), [rendered, setRendered] = useState(0)
-  const renderKey = `${zoom}:${width}`
-  const snapshotKey = useRef('')
+  const { scale, key: renderKey } = pdfPreviewRenderIdentity(zoom, width, natural.width, natural.height, devicePixelRatio || 1)
   const renderedKey = useRef('')
   useEffect(() => {
     const element = shell.current
@@ -42,23 +42,16 @@ const PdfPage = memo(function PdfPage({ pdf, name, page, zoom, width, active, on
     }).catch((reason: unknown) => { if (!disposed) onFailure(previewErrorMessage(reason)) })
     return () => { disposed = true; pageRequest.current++; renderedKey.current = '' }
   }, [pdf, page, onFailure, natural.width])
-  useLayoutEffect(() => {
-    const target = canvas.current
-    if (!target || !renderedKey.current || !near || snapshotKey.current === renderedKey.current) return
-    snapshotKey.current = renderedKey.current
-    retainPdfPageBitmap(pdf, page, target, renderedKey.current)
-  })
   useEffect(() => {
-    if (!active || !near || !natural.width || (!zoom && !width)) return
+    if (!active || !near || !renderKey || renderedKey.current === renderKey) return
     const target = canvas.current
-    const scale = zoom || Math.min(2, Math.max(32, width - 32) / natural.width)
     if (target && restorePdfPageBitmap(pdf, page, target, renderKey)) {
       renderedKey.current = renderKey
       target.style.width = `${natural.width * scale}px`
       target.style.height = `${natural.height * scale}px`
       setRendered(page)
     }
-  }, [active, near, pdf, page, natural.width, natural.height, zoom, width, renderKey])
+  }, [active, near, pdf, page, natural.width, natural.height, scale, renderKey])
   useEffect(() => {
     const target = canvas.current
     if (near || !target) return
@@ -69,13 +62,12 @@ const PdfPage = memo(function PdfPage({ pdf, name, page, zoom, width, active, on
   }, [near])
   useEffect(() => {
     const target = canvas.current
-    if (!active || !near || !natural.width || (!zoom && !width) || !target || renderedKey.current === renderKey) return
+    if (!active || !near || !renderKey || !target || renderedKey.current === renderKey) return
     let disposed = false, rendering: RenderTask | undefined
     const timer = setTimeout(() => { disposed = true; rendering?.cancel(); onFailure('PDF 页面绘制超时，原文件已保留。') }, DOCUMENT_LIMITS.parseTimeoutMs)
     void (async () => {
       const documentPage = await pdf.getPage(page)
       if (disposed) return
-      const scale = zoom || Math.min(2, Math.max(32, width - 32) / natural.width)
       const viewport = documentPage.getViewport({ scale })
       const pixels = pdfCanvasSize(viewport.width, viewport.height, devicePixelRatio || 1)
       const renderViewport = documentPage.getViewport({ scale: scale * pixels.density })
@@ -85,13 +77,18 @@ const PdfPage = memo(function PdfPage({ pdf, name, page, zoom, width, active, on
       if (!context) throw new Error('无法准备 PDF 画布。')
       rendering = documentPage.render({ canvas: target, canvasContext: context, viewport: renderViewport })
       await rendering.promise
-      if (!disposed) { renderedKey.current = renderKey; setRendered(page) }
+      if (!disposed) {
+        renderedKey.current = renderKey
+        // Snapshot only completed paints, outside React's blocking layout phase.
+        // A restored or unchanged canvas never needs another full pixel copy.
+        retainPdfPageBitmap(pdf, page, target, renderKey)
+        setRendered(page)
+      }
     })().catch((reason: unknown) => {
       if (!disposed && (!(reason instanceof Error) || reason.name !== 'RenderingCancelledException')) onFailure(previewErrorMessage(reason))
     }).finally(() => clearTimeout(timer))
     return () => { disposed = true; clearTimeout(timer); rendering?.cancel() }
-  }, [pdf, page, zoom, width, natural.width, natural.height, near, active, renderKey, onFailure])
-  const scale = natural.width ? zoom || Math.min(2, Math.max(32, width - 32) / natural.width) : 1
+  }, [pdf, page, scale, near, active, renderKey, onFailure])
   const size = { width: natural.width * scale, height: natural.height * scale }
   const shellStyle: CSSProperties = { width: size.width || undefined, height: size.height || undefined }
   return <div className="document-preview__pdf-shell" ref={shell} style={shellStyle} data-document-page={page}>

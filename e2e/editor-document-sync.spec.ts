@@ -25,7 +25,7 @@ async function open(name: string): Promise<void> {
   await expect(palette.locator('.palette__item').first()).toContainText(name)
   await page.keyboard.press('Enter')
   await expect(page.locator('.editor-tab.is-active')).toContainText(name)
-  await expect(page.locator('.monaco-editor').first()).toBeVisible()
+  await expect(page.locator('.monaco-editor:visible, .text-preview:visible').first()).toBeVisible()
 }
 async function replace(text: string): Promise<void> {
   await page.locator('.monaco-editor .view-lines').first().click()
@@ -110,10 +110,14 @@ test.describe.serial('编辑文档同步与恢复', () => {
   test('截断预览只读，键盘输入和保存不会丢掉文件尾部', async () => {
     await open('huge.txt')
     await expect(page.locator('.doc-view__banner')).toContainText('只读')
-    await replace('must not overwrite')
+    const before = readFileSync(join(workspace, 'huge.txt'), 'utf8')
+    await page.getByRole('grid', { name: 'huge.txt 文本预览', exact: true }).focus()
+    await page.keyboard.press('Control+a')
+    await page.keyboard.insertText('must not overwrite')
     await page.keyboard.press('Control+s')
     await expect(page.locator('.doc-view__dirty')).toHaveCount(0)
     const content = readFileSync(join(workspace, 'huge.txt'), 'utf8')
+    expect(content).toBe(before)
     expect(content.endsWith('KEEP_FILE_TAIL')).toBe(true)
     expect(content.length).toBeGreaterThan(4 * 1024 * 1024)
   })

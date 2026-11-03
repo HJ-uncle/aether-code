@@ -1,0 +1,843 @@
+{
+  "source": "C:\\Users\\wb.xielin02\\.codex\\attachments\\4ee1868b-5bc0-40bc-8481-fa0a836fbcc7\\已粘贴的文本.txt",
+  "lines": 7525,
+  "bytes": 402108,
+  "scope": "仅计导出记录的工具调用段，不把思考或正文提到工具当作实际调用；导出缺少完整输入schema/环境初始context，不能据此证明模型没有收到说明。",
+  "actionCount": 128,
+  "byCategory": {
+    "列出文件": 1,
+    "获取当前上下文": 1,
+    "写入文件": 14,
+    "执行命令": 24,
+    "编辑文件": 33,
+    "读取文件": 11,
+    "打开浏览器页面": 4,
+    "浏览器截图": 2,
+    "读取浏览器页面": 3,
+    "浏览器导航": 13,
+    "点击浏览器元素": 4,
+    "浏览器标签": 1,
+    "读取浏览器控制台": 3,
+    "调整浏览器视口": 5,
+    "等待浏览器状态": 6,
+    "搜索内容": 2,
+    "删除文件": 1
+  },
+  "byStatus": {
+    "成功": 100,
+    "命令退出码 1": 14,
+    "失败": 14
+  },
+  "errors": {
+    "BROWSER_OPERATION_NOT_PERFORMED": 3,
+    "BROWSER_TAB_NOT_VISIBLE": 4,
+    "BROWSER_OPERATION_UNCONFIRMED": 3
+  },
+  "actions": [
+    {
+      "line": 5334,
+      "action": "列出文件",
+      "category": "列出文件",
+      "status": "成功"
+    },
+    {
+      "line": 5335,
+      "action": "获取当前上下文",
+      "category": "获取当前上下文",
+      "status": "成功"
+    },
+    {
+      "line": 5336,
+      "action": "写入文件：go-h5/js/rules.js",
+      "category": "写入文件",
+      "status": "成功"
+    },
+    {
+      "line": 5337,
+      "action": "写入文件：go-h5/test/test-rules.cjs",
+      "category": "写入文件",
+      "status": "成功"
+    },
+    {
+      "line": 5338,
+      "action": "执行命令：node go-h5/test/test-rules.cjs",
+      "category": "执行命令",
+      "status": "命令退出码 1",
+      "error": "命令退出码 1（COMMAND_EXIT_FAILED）：Command exited with code 1"
+    },
+    {
+      "line": 5418,
+      "action": "编辑文件：go-h5/js/rules.js",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 5419,
+      "action": "写入文件：go-h5/test/test-rules.cjs",
+      "category": "写入文件",
+      "status": "成功"
+    },
+    {
+      "line": 5420,
+      "action": "执行命令：node go-h5/test/test-rules.cjs",
+      "category": "执行命令",
+      "status": "命令退出码 1",
+      "error": "命令退出码 1（COMMAND_EXIT_FAILED）：Command exited with code 1"
+    },
+    {
+      "line": 5543,
+      "action": "读取文件：go-h5/js/rules.js",
+      "category": "读取文件",
+      "status": "成功"
+    },
+    {
+      "line": 5544,
+      "action": "编辑文件：go-h5/js/rules.js",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 5545,
+      "action": "编辑文件：go-h5/test/test-rules.cjs",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 5546,
+      "action": "执行命令：node go-h5/test/test-rules.cjs",
+      "category": "执行命令",
+      "status": "命令退出码 1",
+      "error": "命令退出码 1（COMMAND_EXIT_FAILED）：Command exited with code 1"
+    },
+    {
+      "line": 5670,
+      "action": "读取文件：go-h5/test/test-rules.cjs",
+      "category": "读取文件",
+      "status": "成功"
+    },
+    {
+      "line": 5671,
+      "action": "编辑文件：go-h5/test/test-rules.cjs",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 5672,
+      "action": "执行命令：node go-h5/test/test-rules.cjs",
+      "category": "执行命令",
+      "status": "命令退出码 1",
+      "error": "命令退出码 1（COMMAND_EXIT_FAILED）：Command exited with code 1"
+    },
+    {
+      "line": 5799,
+      "action": "编辑文件：go-h5/test/test-rules.cjs",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 5800,
+      "action": "执行命令：node go-h5/test/test-rules.cjs",
+      "category": "执行命令",
+      "status": "成功"
+    },
+    {
+      "line": 5925,
+      "action": "写入文件：go-h5/js/sgf.js",
+      "category": "写入文件",
+      "status": "成功"
+    },
+    {
+      "line": 5926,
+      "action": "写入文件：go-h5/js/ai.js",
+      "category": "写入文件",
+      "status": "成功"
+    },
+    {
+      "line": 5927,
+      "action": "编辑文件：go-h5/js/ai.js",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 5928,
+      "action": "写入文件：go-h5/test/test-ai-sgf.cjs",
+      "category": "写入文件",
+      "status": "成功"
+    },
+    {
+      "line": 5929,
+      "action": "执行命令：node go-h5/test/test-ai-sgf.cjs",
+      "category": "执行命令",
+      "status": "命令退出码 1",
+      "error": "命令退出码 1（COMMAND_EXIT_FAILED）：Command exited with code 1"
+    },
+    {
+      "line": 6032,
+      "action": "编辑文件：go-h5/js/sgf.js",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 6033,
+      "action": "编辑文件：go-h5/test/test-ai-sgf.cjs",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 6034,
+      "action": "执行命令：node go-h5/test/test-ai-sgf.cjs",
+      "category": "执行命令",
+      "status": "命令退出码 1",
+      "error": "命令退出码 1（COMMAND_EXIT_FAILED）：Command exited with code 1"
+    },
+    {
+      "line": 6138,
+      "action": "写入文件：go-h5/js/ai.js",
+      "category": "写入文件",
+      "status": "成功"
+    },
+    {
+      "line": 6139,
+      "action": "编辑文件：go-h5/test/test-ai-sgf.cjs",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 6140,
+      "action": "执行命令：node go-h5/test/test-ai-sgf.cjs",
+      "category": "执行命令",
+      "status": "命令退出码 1",
+      "error": "命令退出码 1（COMMAND_EXIT_FAILED）：Command exited with code 1"
+    },
+    {
+      "line": 6246,
+      "action": "编辑文件：go-h5/js/ai.js",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 6247,
+      "action": "编辑文件：go-h5/test/test-ai-sgf.cjs",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 6248,
+      "action": "执行命令：node go-h5/test/test-ai-sgf.cjs",
+      "category": "执行命令",
+      "status": "命令退出码 1",
+      "error": "命令退出码 1（COMMAND_EXIT_FAILED）：Command exited with code 1"
+    },
+    {
+      "line": 6354,
+      "action": "编辑文件：go-h5/test/test-ai-sgf.cjs",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 6355,
+      "action": "执行命令：node go-h5/test/test-ai-sgf.cjs",
+      "category": "执行命令",
+      "status": "命令退出码 1",
+      "error": "命令退出码 1（COMMAND_EXIT_FAILED）：Command exited with code 1"
+    },
+    {
+      "line": 6463,
+      "action": "编辑文件：go-h5/js/ai.js",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 6464,
+      "action": "执行命令：node go-h5/test/test-ai-sgf.cjs",
+      "category": "执行命令",
+      "status": "命令退出码 1",
+      "error": "命令退出码 1（COMMAND_EXIT_FAILED）：Command exited with code 1"
+    },
+    {
+      "line": 6572,
+      "action": "编辑文件：go-h5/test/test-ai-sgf.cjs",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 6573,
+      "action": "执行命令：node go-h5/test/test-ai-sgf.cjs",
+      "category": "执行命令",
+      "status": "命令退出码 1",
+      "error": "命令退出码 1（COMMAND_EXIT_FAILED）：Command exited with code 1"
+    },
+    {
+      "line": 6683,
+      "action": "编辑文件：go-h5/js/ai.js",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 6684,
+      "action": "执行命令：node go-h5/test/test-ai-sgf.cjs",
+      "category": "执行命令",
+      "status": "成功"
+    },
+    {
+      "line": 6791,
+      "action": "写入文件：go-h5/js/renderer.js",
+      "category": "写入文件",
+      "status": "成功"
+    },
+    {
+      "line": 6792,
+      "action": "写入文件：go-h5/index.html",
+      "category": "写入文件",
+      "status": "成功"
+    },
+    {
+      "line": 6793,
+      "action": "写入文件：go-h5/css/style.css",
+      "category": "写入文件",
+      "status": "成功"
+    },
+    {
+      "line": 6794,
+      "action": "写入文件：go-h5/js/app.js",
+      "category": "写入文件",
+      "status": "成功"
+    },
+    {
+      "line": 6795,
+      "action": "执行命令：node -e \"const fs=require('fs');const files=['go-h5/js/rules.js','go-h5/js/sgf.js','go-h5/js/ai.…",
+      "category": "执行命令",
+      "status": "成功"
+    },
+    {
+      "line": 6812,
+      "action": "打开浏览器页面：file:///D:/trust-test/%E6%B5%8B%E8%AF%95/go-h5/index.html",
+      "category": "打开浏览器页面",
+      "status": "成功"
+    },
+    {
+      "line": 6813,
+      "action": "浏览器截图",
+      "category": "浏览器截图",
+      "status": "失败",
+      "error": "Current display surface not available for capture",
+      "errorCode": "BROWSER_OPERATION_NOT_PERFORMED"
+    },
+    {
+      "line": 6822,
+      "action": "读取浏览器页面",
+      "category": "读取浏览器页面",
+      "status": "成功"
+    },
+    {
+      "line": 6823,
+      "action": "编辑文件：go-h5/css/style.css",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 6824,
+      "action": "浏览器导航：file:///D:/trust-test/%E6%B5%8B%E8%AF%95/go-h5/index.html",
+      "category": "浏览器导航",
+      "status": "成功"
+    },
+    {
+      "line": 6825,
+      "action": "点击浏览器元素",
+      "category": "点击浏览器元素",
+      "status": "失败",
+      "error": "目标浏览器标签未能显示，尚未执行页面操作；请关闭遮挡窗口或恢复编辑器后重试",
+      "errorCode": "BROWSER_TAB_NOT_VISIBLE"
+    },
+    {
+      "line": 6834,
+      "action": "浏览器标签",
+      "category": "浏览器标签",
+      "status": "成功"
+    },
+    {
+      "line": 6835,
+      "action": "读取浏览器控制台",
+      "category": "读取浏览器控制台",
+      "status": "成功"
+    },
+    {
+      "line": 6836,
+      "action": "写入文件：go-h5/test/test-dom.cjs",
+      "category": "写入文件",
+      "status": "成功"
+    },
+    {
+      "line": 6837,
+      "action": "执行命令：node go-h5/test/test-dom.cjs",
+      "category": "执行命令",
+      "status": "命令退出码 1",
+      "error": "命令退出码 1（COMMAND_EXIT_FAILED）：Command exited with code 1"
+    },
+    {
+      "line": 6923,
+      "action": "编辑文件：go-h5/js/app.js",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 6924,
+      "action": "编辑文件：go-h5/test/test-dom.cjs",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 6925,
+      "action": "执行命令：node go-h5/test/test-dom.cjs",
+      "category": "执行命令",
+      "status": "命令退出码 1",
+      "error": "命令退出码 1（COMMAND_EXIT_FAILED）：Command exited with code 1"
+    },
+    {
+      "line": 7015,
+      "action": "编辑文件：go-h5/test/test-dom.cjs",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 7016,
+      "action": "执行命令：node go-h5/test/test-dom.cjs",
+      "category": "执行命令",
+      "status": "命令退出码 1",
+      "error": "命令退出码 1（COMMAND_EXIT_FAILED）：Command exited with code 1"
+    },
+    {
+      "line": 7107,
+      "action": "编辑文件：go-h5/test/test-dom.cjs",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 7108,
+      "action": "执行命令：node go-h5/test/test-dom.cjs",
+      "category": "执行命令",
+      "status": "成功"
+    },
+    {
+      "line": 7198,
+      "action": "调整浏览器视口",
+      "category": "调整浏览器视口",
+      "status": "成功"
+    },
+    {
+      "line": 7199,
+      "action": "编辑文件：go-h5/js/app.js",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 7200,
+      "action": "浏览器导航：file:///D:/trust-test/%E6%B5%8B%E8%AF%95/go-h5/index.html",
+      "category": "浏览器导航",
+      "status": "成功"
+    },
+    {
+      "line": 7201,
+      "action": "浏览器截图",
+      "category": "浏览器截图",
+      "status": "失败",
+      "error": "Current display surface not available for capture",
+      "errorCode": "BROWSER_OPERATION_NOT_PERFORMED"
+    },
+    {
+      "line": 7210,
+      "action": "点击浏览器元素",
+      "category": "点击浏览器元素",
+      "status": "失败",
+      "error": "目标浏览器标签未能显示，尚未执行页面操作；请关闭遮挡窗口或恢复编辑器后重试",
+      "errorCode": "BROWSER_TAB_NOT_VISIBLE"
+    },
+    {
+      "line": 7219,
+      "action": "调整浏览器视口",
+      "category": "调整浏览器视口",
+      "status": "成功"
+    },
+    {
+      "line": 7220,
+      "action": "编辑文件：go-h5/css/style.css",
+      "category": "编辑文件",
+      "status": "失败",
+      "error": "EDIT_VERSION_CONFLICT"
+    },
+    {
+      "line": 7229,
+      "action": "读取文件：go-h5/css/style.css",
+      "category": "读取文件",
+      "status": "成功"
+    },
+    {
+      "line": 7230,
+      "action": "读取文件：go-h5/css/style.css",
+      "category": "读取文件",
+      "status": "成功"
+    },
+    {
+      "line": 7231,
+      "action": "编辑文件：go-h5/css/style.css",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 7232,
+      "action": "浏览器导航：file:///D:/trust-test/%E6%B5%8B%E8%AF%95/go-h5/index.html",
+      "category": "浏览器导航",
+      "status": "成功"
+    },
+    {
+      "line": 7233,
+      "action": "编辑文件：go-h5/css/style.css",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 7234,
+      "action": "浏览器导航：file:///D:/trust-test/%E6%B5%8B%E8%AF%95/go-h5/index.html",
+      "category": "浏览器导航",
+      "status": "成功"
+    },
+    {
+      "line": 7235,
+      "action": "编辑文件：go-h5/js/app.js",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 7236,
+      "action": "浏览器导航：file:///D:/trust-test/%E6%B5%8B%E8%AF%95/go-h5/index.html",
+      "category": "浏览器导航",
+      "status": "成功"
+    },
+    {
+      "line": 7237,
+      "action": "调整浏览器视口",
+      "category": "调整浏览器视口",
+      "status": "成功"
+    },
+    {
+      "line": 7238,
+      "action": "点击浏览器元素",
+      "category": "点击浏览器元素",
+      "status": "失败",
+      "error": "目标浏览器标签未能显示，尚未执行页面操作；请关闭遮挡窗口或恢复编辑器后重试",
+      "errorCode": "BROWSER_TAB_NOT_VISIBLE"
+    },
+    {
+      "line": 7247,
+      "action": "浏览器导航：javascript:(function(){var g=window.__go.game;var r=window.__go.renderer;var ev=new PointerEvent…",
+      "category": "浏览器导航",
+      "status": "失败",
+      "error": "浏览器地址不能包含空白或控制字符",
+      "errorCode": "BROWSER_OPERATION_UNCONFIRMED"
+    },
+    {
+      "line": 7256,
+      "action": "浏览器导航：javascript:(function(){var%20g=window.__go.game;var%20r=window.__go.renderer;var%20b=document.ge…",
+      "category": "浏览器导航",
+      "status": "失败",
+      "error": "内置浏览器仅支持 HTTP、HTTPS 和 about:blank 地址",
+      "errorCode": "BROWSER_OPERATION_UNCONFIRMED"
+    },
+    {
+      "line": 7265,
+      "action": "写入文件：go-h5/test/selftest.html",
+      "category": "写入文件",
+      "status": "成功"
+    },
+    {
+      "line": 7266,
+      "action": "打开浏览器页面：file:///D:/trust-test/%E6%B5%8B%E8%AF%95/go-h5/test/selftest.html",
+      "category": "打开浏览器页面",
+      "status": "成功"
+    },
+    {
+      "line": 7267,
+      "action": "读取浏览器页面",
+      "category": "读取浏览器页面",
+      "status": "成功"
+    },
+    {
+      "line": 7268,
+      "action": "等待浏览器状态",
+      "category": "等待浏览器状态",
+      "status": "失败",
+      "error": "等待页面条件超时 (20000ms)",
+      "errorCode": "BROWSER_OPERATION_NOT_PERFORMED"
+    },
+    {
+      "line": 7277,
+      "action": "读取浏览器页面",
+      "category": "读取浏览器页面",
+      "status": "成功"
+    },
+    {
+      "line": 7278,
+      "action": "读取浏览器控制台",
+      "category": "读取浏览器控制台",
+      "status": "成功"
+    },
+    {
+      "line": 7279,
+      "action": "执行命令：node -e \"const fs=require('fs');let s=fs.readFileSync('go-h5/test/selftest.html','utf8');s=s.spl…",
+      "category": "执行命令",
+      "status": "失败"
+    },
+    {
+      "line": 7290,
+      "action": "执行命令：node -e \"const fs=require('fs');let s=fs.readFileSync('go-h5/test/selftest.html','utf8');s=s.spl…",
+      "category": "执行命令",
+      "status": "成功"
+    },
+    {
+      "line": 7303,
+      "action": "浏览器导航：file:///D:/trust-test/%E6%B5%8B%E8%AF%95/go-h5/selftest.html",
+      "category": "浏览器导航",
+      "status": "失败",
+      "error": "此文件不属于当前网页目录，请用 browser_open 新建本地文件标签",
+      "errorCode": "BROWSER_OPERATION_UNCONFIRMED"
+    },
+    {
+      "line": 7312,
+      "action": "打开浏览器页面：file:///D:/trust-test/%E6%B5%8B%E8%AF%95/go-h5/selftest.html",
+      "category": "打开浏览器页面",
+      "status": "成功"
+    },
+    {
+      "line": 7313,
+      "action": "等待浏览器状态",
+      "category": "等待浏览器状态",
+      "status": "成功"
+    },
+    {
+      "line": 7314,
+      "action": "编辑文件：go-h5/js/ai.js",
+      "category": "编辑文件",
+      "status": "失败",
+      "error": "EDIT_VERSION_CONFLICT"
+    },
+    {
+      "line": 7323,
+      "action": "搜索内容：go-h5/js/ai.js",
+      "category": "搜索内容",
+      "status": "成功"
+    },
+    {
+      "line": 7324,
+      "action": "读取文件：go-h5/js/ai.js",
+      "category": "读取文件",
+      "status": "成功"
+    },
+    {
+      "line": 7325,
+      "action": "读取文件：go-h5/js/ai.js",
+      "category": "读取文件",
+      "status": "成功"
+    },
+    {
+      "line": 7326,
+      "action": "编辑文件：go-h5/js/ai.js",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 7327,
+      "action": "读取文件：go-h5/selftest.html",
+      "category": "读取文件",
+      "status": "成功"
+    },
+    {
+      "line": 7328,
+      "action": "编辑文件：go-h5/selftest.html",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 7329,
+      "action": "浏览器导航：file:///D:/trust-test/%E6%B5%8B%E8%AF%95/go-h5/selftest.html",
+      "category": "浏览器导航",
+      "status": "成功"
+    },
+    {
+      "line": 7330,
+      "action": "等待浏览器状态",
+      "category": "等待浏览器状态",
+      "status": "成功"
+    },
+    {
+      "line": 7331,
+      "action": "读取文件：go-h5/selftest.html",
+      "category": "读取文件",
+      "status": "成功"
+    },
+    {
+      "line": 7332,
+      "action": "编辑文件：go-h5/selftest.html",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 7333,
+      "action": "读取文件：go-h5/selftest.html",
+      "category": "读取文件",
+      "status": "成功"
+    },
+    {
+      "line": 7334,
+      "action": "读取文件：go-h5/selftest.html",
+      "category": "读取文件",
+      "status": "成功"
+    },
+    {
+      "line": 7335,
+      "action": "编辑文件：go-h5/selftest.html",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 7336,
+      "action": "浏览器导航：file:///D:/trust-test/%E6%B5%8B%E8%AF%95/go-h5/selftest.html",
+      "category": "浏览器导航",
+      "status": "成功"
+    },
+    {
+      "line": 7337,
+      "action": "等待浏览器状态",
+      "category": "等待浏览器状态",
+      "status": "成功"
+    },
+    {
+      "line": 7338,
+      "action": "编辑文件：go-h5/selftest.html",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 7339,
+      "action": "浏览器导航：file:///D:/trust-test/%E6%B5%8B%E8%AF%95/go-h5/selftest.html",
+      "category": "浏览器导航",
+      "status": "成功"
+    },
+    {
+      "line": 7340,
+      "action": "等待浏览器状态",
+      "category": "等待浏览器状态",
+      "status": "成功"
+    },
+    {
+      "line": 7341,
+      "action": "执行命令：node -e \"const{execSync}=require('child_process');const files=['go-h5/test/test-rules.cjs','go-h…",
+      "category": "执行命令",
+      "status": "成功"
+    },
+    {
+      "line": 7356,
+      "action": "打开浏览器页面：file:///D:/trust-test/%E6%B5%8B%E8%AF%95/go-h5/index.html",
+      "category": "打开浏览器页面",
+      "status": "成功"
+    },
+    {
+      "line": 7357,
+      "action": "读取浏览器控制台",
+      "category": "读取浏览器控制台",
+      "status": "成功"
+    },
+    {
+      "line": 7358,
+      "action": "调整浏览器视口",
+      "category": "调整浏览器视口",
+      "status": "成功"
+    },
+    {
+      "line": 7359,
+      "action": "编辑文件：go-h5/js/app.js",
+      "category": "编辑文件",
+      "status": "失败",
+      "error": "EDIT_VERSION_CONFLICT"
+    },
+    {
+      "line": 7368,
+      "action": "搜索内容：go-h5/js/app.js",
+      "category": "搜索内容",
+      "status": "成功"
+    },
+    {
+      "line": 7369,
+      "action": "读取文件：go-h5/js/app.js",
+      "category": "读取文件",
+      "status": "成功"
+    },
+    {
+      "line": 7370,
+      "action": "编辑文件：go-h5/js/app.js",
+      "category": "编辑文件",
+      "status": "成功"
+    },
+    {
+      "line": 7371,
+      "action": "浏览器导航：file:///D:/trust-test/%E6%B5%8B%E8%AF%95/go-h5/index.html",
+      "category": "浏览器导航",
+      "status": "成功"
+    },
+    {
+      "line": 7372,
+      "action": "调整浏览器视口",
+      "category": "调整浏览器视口",
+      "status": "成功"
+    },
+    {
+      "line": 7373,
+      "action": "点击浏览器元素",
+      "category": "点击浏览器元素",
+      "status": "失败",
+      "error": "目标浏览器标签未能显示，尚未执行页面操作；请关闭遮挡窗口或恢复编辑器后重试",
+      "errorCode": "BROWSER_TAB_NOT_VISIBLE"
+    },
+    {
+      "line": 7382,
+      "action": "写入文件：go-h5/README.md",
+      "category": "写入文件",
+      "status": "成功"
+    },
+    {
+      "line": 7383,
+      "action": "执行命令：node -e \"const{execSync}=require('child_process');const fs=require('fs');\\nconst files=['go-h5/t…",
+      "category": "执行命令",
+      "status": "成功"
+    },
+    {
+      "line": 7414,
+      "action": "浏览器导航：file:///D:/trust-test/%E6%B5%8B%E8%AF%95/go-h5/selftest.html",
+      "category": "浏览器导航",
+      "status": "成功"
+    },
+    {
+      "line": 7415,
+      "action": "等待浏览器状态",
+      "category": "等待浏览器状态",
+      "status": "成功"
+    },
+    {
+      "line": 7416,
+      "action": "执行命令：node -e \"const fs=require('fs'),p=require('path');const root='go-h5';const all=[];function walk(…",
+      "category": "执行命令",
+      "status": "成功"
+    },
+    {
+      "line": 7443,
+      "action": "删除文件：go-h5/test/selftest.html",
+      "category": "删除文件",
+      "status": "成功"
+    },
+    {
+      "line": 7444,
+      "action": "执行命令：node -e \"const{execSync}=require('child_process');const fs=require('fs');let bad=0;\\nfor(const f…",
+      "category": "执行命令",
+      "status": "成功"
+    }
+  ]
+}

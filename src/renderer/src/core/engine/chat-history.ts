@@ -1,5 +1,6 @@
 import { normalizeCommandJob, mergeCommandJob, commandToolState } from './command-job-state'
 import { retainConfirmedContext } from './context-input'
+import { mergeFileChanges } from './tool-file-changes'
 import { normalizePublishedChildReference } from './published-child-recovery'
 import type { ChatMessage, TimelineItem, ToolActivity } from './useChat'
 import {
@@ -72,7 +73,7 @@ export interface EngineHistoryRow {
   toolCall?: { id?: string; name?: string; args?: unknown } | null
   success?: boolean
   error?: unknown
-  metadata?: { contextUsageEstimated?: boolean; contextUsageProvisional?: boolean; requestInputTokenEstimate?: number; outputContinuation?: boolean; commandJob?: unknown; commandJobs?: unknown[]; subagent?: unknown; success?: boolean; error?: unknown; status?: string; outputPreview?: string; durationMs?: number; startedAt?: number; finishedAt?: number; runId?: string; rootRunId?: string; turnId?: string; attachments?: Array<{ name: string; type?: string; size?: number }>; change?: import('@shared/ipc').EngineFileChange; isCompactSummary?: boolean; toolName?: string }
+  metadata?: { contextUsageEstimated?: boolean; contextUsageProvisional?: boolean; requestInputTokenEstimate?: number; outputContinuation?: boolean; commandJob?: unknown; commandJobs?: unknown[]; subagent?: unknown; success?: boolean; error?: unknown; status?: string; outputPreview?: string; durationMs?: number; startedAt?: number; finishedAt?: number; runId?: string; rootRunId?: string; turnId?: string; attachments?: Array<{ name: string; type?: string; size?: number }>; change?: import('@shared/ipc').EngineFileChange; changes?: import('@shared/ipc').EngineFileChange[]; isCompactSummary?: boolean; toolName?: string }
   isSidechain?: boolean
 }
 
@@ -396,6 +397,7 @@ export function finishTool(previous: ToolActivity, raw: unknown): ToolActivity {
     finishedAt: normalized.finishedAt ?? previous.finishedAt,
     metadata: normalized.metadata ?? previous.metadata,
     change: (normalized.metadata?.change as ToolActivity['change']) ?? previous.change,
+    changes: mergeFileChanges(previous.change, previous.changes, normalized.metadata?.change, normalized.metadata?.changes, normalized.commandJob?.changes),
     subagent,
     commandJob,
     subagentRef: normalized.subagentRef ?? previous.subagentRef

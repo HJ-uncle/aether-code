@@ -1,11 +1,13 @@
 import { CommandJobCard } from './CommandJobCard'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { PublishedRecoveryNotice } from './PublishedRecoveryNotice'
+import { SessionConnectionNotice } from './SessionConnectionNotice'
 import { publishedVisibleWindow } from '@renderer/core/engine/published-card-memory'
 import { visibleChildCommandJobs } from '@renderer/core/engine/command-job-state'
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
 import { useAppMode } from '@renderer/core/platform/app-mode'
+import { codeWorkbenchAdapter, useWorkbenchClient } from '@renderer/core/workbench/client'
 import { useChat, type ChatMessage, type ToolActivity } from '@renderer/core/engine/useChat'
 import { isVisibleToolActivity } from '@renderer/core/engine/task-plan'
 import { engineConnectionKey, engineStorageKey, getEngineSource } from '@renderer/core/engine/source'
@@ -87,6 +89,7 @@ function sameTurnUsage(previous: TurnUsageInfo | undefined, next: TurnUsageInfo)
 }
 
 type ComposerResources = { skills: string[]; mcpServers: string[]; knowledgeBases: string[] }
+type RejectedDraft = { text: string; mentions: Mention[]; attachments: ChatAttachment[]; root: string | null }
 function loadLegacyComposerResources(sessionId: string, source: string): RootRunRequestConfig {
   try {
     const raw = localStorage.getItem(`aether:composer-resources:${source || 'embedded'}:${sessionId}`)
@@ -103,7 +106,7 @@ import {
   type AttachmentPreview
 } from './AttachmentChip'
 import { type Mention, type MentionInputHandle } from './MentionInput'
-import { InputComposer, ComposerInput, ComposerPolish, ComposerToolbar, ComposerSend } from './InputComposer'
+import { InputComposer, ComposerInput, ComposerPolish, ComposerToolbar, ComposerSend, ComposerStop } from './InputComposer'
 import { loadChatDraftState, saveChatDraft } from './draft-store'
 import {
   preserveMentions,
@@ -114,6 +117,7 @@ import { MentionRefPicker } from './MentionRefPicker'
 import { buildAgentMentionMessage } from './agent-references'
 import { consumePendingMentions, subscribePendingMentions } from './pending-mentions'
 import { serializeMessages } from './message-export'
+import { appendMessageDraft, restoreMessageDraft } from './message-draft-merge'
 
 function newSessionId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `session-${Date.now()}`
@@ -133,14 +137,16 @@ export function ChatView(): JSX.Element {
   const connectionKey = engineConnectionKey(engine.snapshot)
   const storageSource = engineStorageKey(engine.snapshot)
   const sourceEpoch = getEngineSource()
-  const { messages, sessionUsage, usageSyncNotice, publishedRecovery, cancelPublishedRecovery, loadPublishedBody, retryPublishedRecovery, commandJobs, sessionModel, streaming, connection, historyError, recoveryNotice, dismissRecoveryNotice, historyCompacted, archiveRemaining, archivePage, archiveLoading, archiveError, loadArchive, todos, send, respond, abort, resumeStream, deleteTurn, retryFrom, revertFrom, queue, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, queueSendMode, setQueueSendMode, retargetQueuedModel } = useChat()
+  const { messages, sessionUsage, usageSyncNotice, publishedRecovery, cancelPublishedRecovery, loadPublishedBody, retryPublishedRecovery, commandJobs, sessionModel, streaming, stopping, stopError, dismissStopError, hasSessionWork, connection, historyError, recoveryNotice, dismissRecoveryNotice, historyCompacted, archiveRemaining, archivePage, archiveLoading, archiveError, loadArchive, todos, send, respond, abort, resumeStream, deleteTurn, retryFrom, truncateFrom, revertFrom, queue, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, queueSendMode, setQueueSendMode, retargetQueuedModel } = useChat()
   const { models, loaded: modelsLoaded } = useModels()
   const workspace = useWorkspace()
   // AppProvider 按引擎来源统一恢复或创建会话。这里提前创建会与远端选择
   // 竞争：本地设置为空的首帧会覆盖刚恢复的远端会话，使历史响应失效。
   const sessionId = settingsLoaded ? settings.lastSessionId : ''
+  useWorkbenchClient(sessionId, ready && appMode === 'code', codeWorkbenchAdapter(sessionId))
   const codegraphRoot = remoteReadOnly ? settings.remoteWorkspaceRoot.trim() || undefined : workspace.root || undefined
   const [input, setInput] = useState('')
+  const [rejectedDrafts, setRejectedDrafts] = useState<Record<string, RejectedDraft>>({})
   /** 同步记录编辑器的最新文本，避免润色请求返回时覆盖用户刚刚的修改。 */
   const inputValueRef = useRef('')
   useEffect(() => {
@@ -167,6 +173,7 @@ export function ChatView(): JSX.Element {
     defaultModelId: settings.lastModelId
   })
   const canExecute = ready && sessionModelReady
+  const taskActive = streaming || stopping || hasSessionWork(sessionId)
   const storedThinkingMode = useMemo(() => loadSessionThinkingMode(sessionId, storageSource), [sessionId, storageSource])
   const storedRequestSelection = useMemo(() => loadSessionRequestSelection(sessionId, storageSource), [sessionId, storageSource])
   const legacyResources = useMemo(() => loadLegacyComposerResources(sessionId, storageSource), [sessionId, storageSource])
@@ -422,8 +429,18 @@ export function ChatView(): JSX.Element {
   }, [sessionId])
 
   const sourceSessionKey = JSON.stringify([connectionKey, sourceEpoch, sessionId])
+  const draftRecoveryKey = JSON.stringify([storageSource, sessionId])
+  const rejectedDraft = rejectedDrafts[draftRecoveryKey]
+  const attachmentRoot = remoteReadOnly ? null : workspace.root
+  const draftScopeRef = useRef({ key: sourceSessionKey, root: attachmentRoot })
+  if (draftScopeRef.current.key !== sourceSessionKey || draftScopeRef.current.root !== attachmentRoot) {
+    draftScopeRef.current = { key: sourceSessionKey, root: attachmentRoot }
+  }
   const displayedSessionRef = useRef(sourceSessionKey)
   useLayoutEffect(() => { displayedSessionRef.current = sourceSessionKey }, [sourceSessionKey])
+  const historyEditRef = useRef<{ key: string } | null>(null)
+  const [historyEdit, setHistoryEdit] = useState<{ key: string } | null>(null)
+  const historyEditBusy = historyEdit?.key === sourceSessionKey
 
   useEffect(() => {
     if (!sessionId) return
@@ -754,6 +771,26 @@ export function ChatView(): JSX.Element {
     [sessionId, composerRequest, modelId, remoteReadOnly]
   )
 
+  const recoverRejectedDraft = useCallback((draft: RejectedDraft): void => {
+    if (draft.attachments.length && draft.root !== attachmentRoot) return
+    // A later draft belongs to the user too. Append recovered content instead
+    // of overwriting edits made while the rejected request was in flight.
+    const current = inputValueRef.current
+    const recovered = preserveMentions(current.trim() ? `${current}\n\n${draft.text}` : draft.text,
+      [...mentionsRef.current, ...draft.mentions])
+    inputValueRef.current = recovered.text
+    mentionsRef.current = recovered.mentions
+    setInput(recovered.text)
+    inputRef.current?.setDraft(recovered.text, recovered.mentions)
+    attach.restore(draft.attachments)
+    window.clearTimeout(draftTimerRef.current)
+    pendingDraftSaveRef.current = null
+    saveChatDraft(sessionId, recovered.text, storageSource, recovered.mentions)
+    setRejectedDrafts(previous => {
+      const next = { ...previous }; delete next[draftRecoveryKey]; return next
+    })
+  }, [attach.restore, attachmentRoot, draftRecoveryKey, sessionId, storageSource])
+
   const submit = useCallback(() => {
     // When the slash palette is open, Enter belongs to palette selection;
     // ResourcePicker's document listener consumes it after this guard.
@@ -761,13 +798,17 @@ export function ChatView(): JSX.Element {
     const text = input.trim()
     // 允许「只发附件」：丢张截图直接问，是视觉模型的常见用法
     const files = attach.attachments
-    if ((!text && files.length === 0) || attach.uploading || !canExecute || !sessionId || sourceEpoch !== getEngineSource()) return
+    if ((!text && files.length === 0) || stopping || attach.uploading || !canExecute || !sessionId || sourceEpoch !== getEngineSource() || historyEditRef.current?.key === sourceSessionKey) return
     // 流式进行中不再拦截：send 内部会入队，当前流结束后自动按序发出
     // Mentions are workspace-relative.  They are safe for remote sessions;
     // the main-process remote adapter strips local paths and resolves them
     // against the session-bound server workspace.
     const { message, collaborators } = buildAgentMentionMessage(input, mentionsRef.current)
+    const original: RejectedDraft = { text: input, mentions: [...mentionsRef.current], attachments: files, root: attachmentRoot }
+    const sentScope = draftScopeRef.current
+    const restoreAttachments = attach.restore
     setInput('')
+    inputValueRef.current = ''
     mentionsRef.current = []
     // Clearing the editor after a send is not a user deletion. Keep the
     // session-scoped resource bindings and only reset the edge detector.
@@ -790,15 +831,35 @@ export function ChatView(): JSX.Element {
       ...buildSendOptions(),
       ...(collaborators.length ? { collaborators } : {}),
       attachments: files.length > 0 ? files : undefined
+    }).catch(cause => {
+      const current = sourceEpoch === getEngineSource() && displayedSessionRef.current === sourceSessionKey && draftScopeRef.current === sentScope
+      if (cause && typeof cause === 'object' && 'requestRejected' in cause && cause.requestRejected === true) {
+        if (current && !inputValueRef.current.trim()) {
+          inputValueRef.current = original.text
+          mentionsRef.current = original.mentions
+          setInput(original.text)
+          inputRef.current?.setDraft(original.text, original.mentions)
+          restoreAttachments(files)
+          window.clearTimeout(draftTimerRef.current)
+          pendingDraftSaveRef.current = null
+          saveChatDraft(sessionId, original.text, storageSource, original.mentions)
+        } else {
+          setRejectedDrafts(previous => ({ ...previous, [draftRecoveryKey]: original }))
+        }
+        // The failed turn already shows the reason. Do not cover the restored
+        // draft with a duplicate toast while the user is correcting it.
+        return
+      }
+      if (current) setToast(cause instanceof Error ? cause.message : String(cause))
     })
     scrollToBottom(true)
-  }, [attach, buildSendOptions, input, canExecute, sourceEpoch, storageSource, send, sessionId, resumeFollowBottom, scrollToBottom, resourceQuery, mentionQuery, manualPalette])
+  }, [attach, attachmentRoot, buildSendOptions, input, canExecute, stopping, sourceEpoch, sourceSessionKey, draftRecoveryKey, storageSource, send, sessionId, resumeFollowBottom, scrollToBottom, resourceQuery, mentionQuery, manualPalette])
 
   /** 托盘的「发送」：空闲时按当前模式（逐条/合并）立即发出队列 */
   const flushQueueFromTray = useCallback(() => {
-    if (!canExecute || !sessionId || sourceEpoch !== getEngineSource()) return
-    void flushQueue()
-  }, [flushQueue, canExecute, sessionId, sourceEpoch])
+    if (!canExecute || !sessionId || sourceEpoch !== getEngineSource() || historyEditRef.current?.key === sourceSessionKey) return
+    void flushQueue().catch(cause => setToast(cause instanceof Error ? cause.message : String(cause)))
+  }, [flushQueue, canExecute, sessionId, sourceEpoch, sourceSessionKey])
 
   /**
    * 授权卡片上的「一路放行」入口。
@@ -821,17 +882,16 @@ export function ChatView(): JSX.Element {
    *
    * 不引入会话对象：sessionId 本就跟随 settings.lastSessionId，换 ID 后
    * 上面的回放 effect 会重新取历史（新 ID 无记录 → 空对话）。
-   * 若正有流在跑先中止，避免把上一会话的输出写进新会话里。
+   * 仅切换视图；旧会话由引擎继续执行，useChat 的会话边界隔离后续输出。
    */
   const createSession = useCallback(() => {
     if (!canExecute || sourceEpoch !== getEngineSource()) return
-    if (streaming) abort()
     const generated = newSessionId()
     // 引擎只列举「有对话记录」的会话，空会话不出现在列表里；
     // 先登记本地占位条目，让新建的会话在侧栏立刻可见
     registerPendingSession(generated)
     void updateSettings({ lastSessionId: generated })
-  }, [abort, streaming, updateSettings, canExecute, sourceEpoch])
+  }, [updateSettings, canExecute, sourceEpoch])
 
   // 回合结束（流式停止）时通知会话列表重新拉取：首条消息落库后引擎才开始
   // 返回该会话，此时 lastSessionId 没变、列表页的刷新 effect 不会触发，
@@ -910,7 +970,7 @@ export function ChatView(): JSX.Element {
   /** 删除引擎侧该消息之后的历史并重新发送（重新发送 / 重新生成共用） */
   const retryTurn = useCommittedCallback(
     (message: ChatMessage) => {
-      if (!canExecute || sourceEpoch !== getEngineSource()) return
+      if (!canExecute || sourceEpoch !== getEngineSource() || historyEditRef.current) return
       // 重新生成（助手消息）等价于从它前面的用户提问处重发
       const index = messages.findIndex((m) => m.id === message.id)
       const userMessage =
@@ -921,7 +981,7 @@ export function ChatView(): JSX.Element {
         body: message.role === 'user' ? '删除此后的对话并重新发送？' : '删除本轮回答并重新生成？',
         danger: true
       }).then((confirmed) => {
-        if (!confirmed || sourceEpoch !== getEngineSource()) return
+        if (!confirmed || sourceEpoch !== getEngineSource() || historyEditRef.current) return
         void retryFrom(userMessage, buildSendOptions()).catch(showError)
       })
     }
@@ -929,46 +989,94 @@ export function ChatView(): JSX.Element {
 
   const deleteTurnById = useCommittedCallback(
     (message: ChatMessage) => {
-      if (!canExecute || sourceEpoch !== getEngineSource()) return
+      if (!canExecute || sourceEpoch !== getEngineSource() || historyEditRef.current) return
       void confirmDialog({
         title: '删除本轮',
         body: '删除这一轮问答（含引擎侧历史）？',
         danger: true,
         confirmText: '删除'
       }).then((confirmed) => {
-        if (!confirmed || sourceEpoch !== getEngineSource()) return
+        if (!confirmed || sourceEpoch !== getEngineSource() || historyEditRef.current) return
         void deleteTurn(sessionId, message).catch((err) => showError(err))
       })
     }
   )
 
   /**
-   * 「添加到对话」：把一条用户消息恢复成输入框里的「正文 + 引用 chip」。
+   * 「添加到对话」：在现有草稿后追加历史正文、引用 chip 和附件。
    *
    * 正文里的引用原数据（代码块 / 终端输出）会换回 `@路径` token，chip 按 token 下标重建，
-   * 所以能原样改完再发。messagesRef 同步一份，避免把整轮消息列表塞进这个回调的依赖里。
+   * 所以能原样改完再发，当前尚未发送的内容也会保留。
    */
   const refillFromMessage = useCallback((message: ChatMessage) => {
-    const draft = userMessageDraft(message.content)
+    if (sourceEpoch !== getEngineSource() || displayedSessionRef.current !== sourceSessionKey || historyEditRef.current) return
+    const draft = appendMessageDraft({ text: inputValueRef.current, mentions: mentionsRef.current }, userMessageDraft(message.content))
+    inputValueRef.current = draft.text
     mentionsRef.current = draft.mentions
     resourceTextRef.current = draft.text
     inputRef.current?.setDraft(draft.text, draft.mentions)
     setInput(draft.text)
+    attach.restore(message.attachments ?? [])
+    window.clearTimeout(draftTimerRef.current)
+    pendingDraftSaveRef.current = null
     saveChatDraft(sessionId, draft.text, storageSource, draft.mentions)
     inputRef.current?.focus()
-  }, [sessionId, storageSource])
+  }, [attach.restore, sessionId, storageSource, sourceEpoch, sourceSessionKey])
+
+  const editFromMessage = useCommittedCallback((message: ChatMessage) => {
+    if (!canExecute || taskActive || sourceEpoch !== getEngineSource() || displayedSessionRef.current !== sourceSessionKey || historyEditRef.current) return
+    const operation = { key: sourceSessionKey }
+    const operationScope = draftScopeRef.current
+    const isCurrentScope = (): boolean => sourceEpoch === getEngineSource()
+      && displayedSessionRef.current === sourceSessionKey && draftScopeRef.current === operationScope
+    historyEditRef.current = operation
+    setHistoryEdit(operation)
+    void (async () => {
+      try {
+        const confirmed = await confirmDialog({
+          title: '从此处重新编辑',
+          body: '删除这条消息及后续对话，并将原指令和附件带回输入框。已生成的文件保持不变，当前草稿会保留；编辑后由你发送。',
+          danger: true,
+          confirmText: '重新编辑'
+        })
+        if (!confirmed || !isCurrentScope()) return
+        await truncateFrom(sessionId, message)
+        if (!isCurrentScope()) return
+        // Read the live draft after the server settles: text typed while the
+        // request was pending belongs to the user and must survive recovery.
+        const draft = restoreMessageDraft({ text: inputValueRef.current, mentions: mentionsRef.current }, userMessageDraft(message.content))
+        inputValueRef.current = draft.text
+        mentionsRef.current = draft.mentions
+        resourceTextRef.current = draft.text
+        inputRef.current?.setDraft(draft.text, draft.mentions)
+        setInput(draft.text)
+        attach.restore(message.attachments ?? [])
+        window.clearTimeout(draftTimerRef.current)
+        pendingDraftSaveRef.current = null
+        saveChatDraft(sessionId, draft.text, storageSource, draft.mentions)
+        inputRef.current?.focus()
+      } catch (error) {
+        if (isCurrentScope()) showError(error)
+      } finally {
+        if (historyEditRef.current === operation) {
+          historyEditRef.current = null
+          setHistoryEdit(null)
+        }
+      }
+    })()
+  })
 
   /** 消息级回退（对齐 wuzu revert-files）：恢复该消息后全部文件改动（含已保留）并截断对话，原文回填输入框 */
   const revertToMessage = useCommittedCallback(
     (message: ChatMessage) => {
-      if (!canExecute || sourceEpoch !== getEngineSource()) return
+      if (!canExecute || sourceEpoch !== getEngineSource() || historyEditRef.current) return
       void confirmDialog({
         title: '回退到此处',
         body: '按轮次回退此消息及后续改动（包含已保留）。文件版本有冲突或缺少快照时将保留并报告；仅全部文件回退完成后删除对应对话。',
         danger: true,
         confirmText: '回退'
       }).then((confirmed) => {
-        if (!confirmed || sourceEpoch !== getEngineSource()) return
+        if (!confirmed || sourceEpoch !== getEngineSource() || historyEditRef.current) return
         // 引用 chip 一并还原：当初能改「这段代码」再发，回退后也应该能
         const draft = userMessageDraft(message.content)
         void revertFrom(sessionId, message)
@@ -1230,7 +1338,7 @@ export function ChatView(): JSX.Element {
           sessionId={sessionId}
           turns={navTurns}
           containerRef={scrollRef}
-          disabled={!canExecute || streaming || selectMode}
+          disabled={!canExecute || streaming || selectMode || Boolean(historyEdit)}
           onCopy={copyMessage}
           onRetry={retryTurn}
           onRevert={revertToMessage}
@@ -1305,9 +1413,10 @@ export function ChatView(): JSX.Element {
                   onCopy={copyMessage}
                   onRetryFrom={retryTurn}
                   onRefill={refillFromMessage}
+                  onEditFrom={editFromMessage}
                   onRevertFiles={revertToMessage}
                   onDeleteTurn={deleteTurnById}
-                  canAct={canExecute && !streaming && !selectMode}
+                  canAct={canExecute && !streaming && !selectMode && !historyEdit}
                   workspaceRoot={workspace.root}
                   onPreviewImage={previewAttachment}
                 />
@@ -1371,12 +1480,18 @@ export function ChatView(): JSX.Element {
           onClearQueue={clearQueue}
           onMergeQueue={flushQueueFromTray}
         />
-        {connection.scope?.sessionId === sessionId && ['connecting', 'retrying', 'blocked'].includes(connection.phase) ? (
-          <div className="chat__notice" role="status" aria-live="polite" title={historyError ?? undefined}>
-            {connection.phase === 'blocked' ? connection.reason : connection.failures > 0 ? messages.some(message => message.run?.status === 'running') ? '连接已中断，正在重新连接；任务仍由引擎继续执行' : '正在重新连接并读取会话…' : '正在读取会话…'}
-            {connection.phase === 'blocked' ? <button type="button" className="chat__toolbar-btn" onClick={() => { void resumeStream(sessionId) }}>重新加载</button> : null}
-          </div>
-        ) : null}
+        <SessionConnectionNotice key={sourceSessionKey} ready={ready} sessionId={sessionId} source={sourceEpoch}
+          connection={connection} active={streaming || messages.some(message => message.run?.status === 'running')}
+          error={historyError} onRetry={() => resumeStream(sessionId)} />
+        {stopError ? <div className="chat__notice" role="alert">
+          <span>{stopError}</span>
+          <button type="button" className="chat__toolbar-btn" aria-label="关闭停止提示" onClick={dismissStopError}>关闭</button>
+        </div> : null}
+        {rejectedDraft ? <div className="chat__notice" role="status">
+          <span>{rejectedDraft.attachments.length > 0 && rejectedDraft.root !== attachmentRoot ? '未发送内容已保留，请切回原工作区后找回。' : '有一条消息未发送成功，内容已保留。'}</span>
+          <button type="button" className="chat__toolbar-btn" disabled={rejectedDraft.attachments.length > 0 && rejectedDraft.root !== attachmentRoot}
+            onClick={() => recoverRejectedDraft(rejectedDraft)}>找回未发送内容</button>
+        </div> : null}
         {recoveryNotice ? (
           <div className="chat__notice chat__notice--info" role="status" aria-live="polite">
             <span>{recoveryNotice}</span>
@@ -1428,7 +1543,7 @@ export function ChatView(): JSX.Element {
             value={input}
             disabled={!settingsLoaded}
             placeholder={
-              ready ? '输入消息，Enter 发送，Shift+Enter 换行；@ 引用文件或协作 Agent，/ 选择资源' : '可先准备问题和代码引用，引擎就绪后发送'
+              ready ? taskActive ? '补充要求，Enter 排到下一轮，Shift+Enter 换行；@ 引用文件或协作 Agent，/ 选择资源' : '输入消息，Enter 发送，Shift+Enter 换行；@ 引用文件或协作 Agent，/ 选择资源' : '可先准备问题和代码引用，引擎就绪后发送'
             }
             onChange={(text, mentions) => {
               mentionsRef.current = mentions
@@ -1603,7 +1718,8 @@ export function ChatView(): JSX.Element {
               onManage={() => openAppSettings('models')}
             />
 
-            <ComposerSend stopping={streaming} disabled={streaming ? !canExecute : !canExecute || attach.uploading || (!input.trim() && attach.attachments.length === 0)} onClick={streaming ? abort : submit} />
+            {taskActive ? <ComposerStop loading={stopping} disabled={!ready} onClick={() => { void abort().catch(() => {}) }} /> : null}
+            <ComposerSend label={historyEditBusy ? '正在重新编辑…' : taskActive ? '排到下一轮' : '发送'} disabled={historyEditBusy || !canExecute || stopping || attach.uploading || (!input.trim() && attach.attachments.length === 0)} onClick={submit} />
           </>} />
         </InputComposer>
       </div>
@@ -1633,6 +1749,7 @@ const MessageItem = memo(function MessageItem({
   onCopy,
   onRetryFrom,
   onRefill,
+  onEditFrom,
   onRevertFiles,
   onDeleteTurn,
   canAct,
@@ -1659,6 +1776,8 @@ const MessageItem = memo(function MessageItem({
   onRetryFrom: (message: ChatMessage) => void
   /** 把这条用户消息（含引用 chip）放回输入框，改完再发 */
   onRefill: (message: ChatMessage) => void
+  /** 截断这条用户消息及后续历史，再回填草稿，不自动发送或回退文件。 */
+  onEditFrom: (message: ChatMessage) => void
   /** 消息级回退：恢复该消息后所有文件改动（含已保留）并截断对话 */
   onRevertFiles: (message: ChatMessage) => void
   /** 删除该消息所在的一整轮对话 */
@@ -1713,6 +1832,16 @@ const MessageItem = memo(function MessageItem({
             onClick={() => onRefill(message)}
           >
             <Icon name="pencil" size={16} />
+          </button>
+          <button
+            type="button"
+            className="message__action"
+            title="从此处重新编辑：删除这条消息及后续对话，保留文件并将原指令带回输入框"
+            aria-label="从此处重新编辑"
+            disabled={!canAct}
+            onClick={() => onEditFrom(message)}
+          >
+            <Icon name="file-edit-outline" size={16} />
           </button>
           <button
             type="button"

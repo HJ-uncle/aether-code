@@ -1,0 +1,73 @@
+Source: https://learn.chatgpt.com/docs/space
+Retrieved: 2026-11-03
+
+Copy Page
+ChatGPT Space
+Copy Page
+A home for your pages, slides, files, and shared work with ChatGPT
+ChatGPT Space brings your pages, slides, files, and shared work into one place.
+Write and edit alongside ChatGPT, then invite other people to work with you.
+Welcome to Space
+Your new home for creating, sharing, and collaborating with ChatGPT and your team
+ChatGPT
+Maya Patel
+Henry Caldwell
+Eric Thompson
+ChatGPT
+YouPause animation
+Open Space in ChatGPT.
+Workspaces and spaces
+Your ChatGPT workspace is the personal or organization environment you’re
+signed in to. It determines your membership, settings, and available apps.
+Space holds the work you can access in that environment.
+Within Space, a space groups pages around a topic or team, such as a design
+studio or a research project. Share the space to give collaborators access to
+its pages. You can also create a page on its own.
+Space
+New page
+All
+Pages
+Sites
+Images
+Google Drive
+Recents
+studio-notes-preview.png
+Studio notes
+Project task tracker
+Spaces
+Your Personal Scratchpad
+My Meetings
+Design studio
+Trash
+All
+SearchNew
+SuggestedFavoritesYour itemsShared with you
+NameSourceLast activity
+studio-notes-preview.png—8h
+Studio notes—2d
+Project task tracker—2d
+Pages and other content
+A page is a document you and ChatGPT can edit together.
+It can hold notes, a plan, or a team handbook, with child pages for related work.
+You can write directly, ask ChatGPT for revisions, and leave comments for
+collaborators.
+Space also brings together:
+ChatGPT Slides:
+Build a presentation from a conversation, files, or a template. Edit the same
+deck with your team and ChatGPT, then present or export it.
+Spreadsheets: Create and edit tables and calculations with ChatGPT.
+Sites: Websites and tools you build with ChatGPT.
+Images and files: Uploaded files and saved work you can open and reuse.
+Connect your sources
+Connected apps, such as Google Drive, let ChatGPT use files you already have
+access to. Add source links or files to a page, then ask ChatGPT to turn that
+context into a summary, comparison, or update. Available sources depend on your
+connected apps and workspace settings.
+Linked files keep their original permissions. Content you copy or summarize
+onto a page is visible to people who can access that page. Sharing a page
+doesn’t share your private chats or saved memory.
+To create your first page or slide deck, see
+Getting started.
+For workspace controls, see Manage ChatGPT Space.
+Next
+Getting started

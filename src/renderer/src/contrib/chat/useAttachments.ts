@@ -169,6 +169,8 @@ export interface UseAttachmentsResult {
   remove: (path: string) => void
   /** 清空（发送后调用） */
   clear: () => void
+  /** 明确拒收后恢复已上传附件；捕获的回调仅能恢复到原工作区与会话。 */
+  restore: (files: readonly ChatAttachment[]) => void
   /** 接收来自拖拽 / 粘贴的 File 列表 */
   accept: (files: File[]) => void
   /** 拖拽进入 / 离开输入区 */
@@ -186,7 +188,20 @@ export function useAttachments(root: string | null, sessionId = ''): UseAttachme
   const inputRef = useRef<HTMLInputElement | null>(null)
   const renderSource = getEngineSource()
   const generationRef = useRef(0)
+  // Sending clears the upload generation, but rejection may still restore the
+  // completed attachments in that same scope. Scope identity therefore has a
+  // separate lifetime, including A→B→A navigation and unmounts.
+  const scopeRef = useRef({ root, sessionId, source: renderSource, active: true })
+  if (scopeRef.current.root !== root || scopeRef.current.sessionId !== sessionId || scopeRef.current.source !== renderSource) {
+    scopeRef.current = { root, sessionId, source: renderSource, active: true }
+  }
+  const scope = scopeRef.current
   const pendingUploadsRef = useRef(new Map<string, PendingUpload>())
+
+  useEffect(() => {
+    scope.active = true
+    return () => { scope.active = false }
+  }, [scope])
 
   const syncPendingUploads = useCallback(() => {
     setPendingUploads([...pendingUploadsRef.current.values()].map(({ id, file }) => ({ id, fileName: file.name })))
@@ -208,6 +223,24 @@ export function useAttachments(root: string | null, sessionId = ''): UseAttachme
     setDragging(false)
     setError(null)
   }, [abortUploads])
+
+  const restore = useCallback((files: readonly ChatAttachment[]): void => {
+    const isCurrent = (): boolean => scope.active && scope === scopeRef.current && scope.source === getEngineSource()
+    if (!files.length || !isCurrent()) return
+    setAttachments(previous => {
+      if (!isCurrent()) return previous
+      const paths = new Set(previous.map(file => file.path))
+      const uploadIds = new Set(previous.flatMap(file => file.remoteUploadId ? [file.remoteUploadId] : []))
+      const restored: ChatAttachment[] = []
+      for (const file of files) {
+        if (paths.has(file.path) || file.remoteUploadId && uploadIds.has(file.remoteUploadId)) continue
+        paths.add(file.path)
+        if (file.remoteUploadId) uploadIds.add(file.remoteUploadId)
+        restored.push(file)
+      }
+      return restored.length ? [...previous, ...restored] : previous
+    })
+  }, [scope])
 
   useEffect(() => {
     const generation = generationRef.current
@@ -332,6 +365,7 @@ export function useAttachments(root: string | null, sessionId = ''): UseAttachme
     pick,
     remove,
     clear,
+    restore,
     accept,
     setDragging,
     error,

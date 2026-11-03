@@ -223,7 +223,7 @@ test.describe.serial('P1 Work 长历史固定渲染窗口', () => {
     await send.click()
     await expect.poll(() => sentBodies.length).toBe(1)
     await expect(messages().last()).toContainText('P1_LIVE_TAIL_START')
-    await expect(page.getByRole('button', { name: '停止任务', exact: true })).toBeVisible()
+    await expect(page.locator('.work-task-heading').getByRole('button', { name: '停止任务', exact: true })).toBeVisible()
     const draft = 'P1_UNSENT_DRAFT_WHILE_READING_AND_STREAMING'
     await composer().fill(draft)
     await expect.poll(persistedDraft).toBe(draft)

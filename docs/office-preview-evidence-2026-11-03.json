@@ -1,0 +1,1175 @@
+{
+  "date": "2026-11-03",
+  "scope": "Local isolated Electron Office previews; no engine or model calls",
+  "reports": {
+    "optimizedWork": {
+      "label": "optimized-work",
+      "mode": "work",
+      "output": "D:\\dev\\aether-code\\.e2e-tmp\\office-preview-optimized-work-1793674772906",
+      "source": "D:/trust-test/办公文档测试",
+      "generatedAt": "2026-11-03T02:59:33.35Z",
+      "buildHash": "04f864c22355b43dbde0a016af6925e6f6279a5214a17f6a60f77f552a154d6a",
+      "rendererHashes": {
+        "index-9awsRZbu.css": "848cdbc33c00dbbdcbe6030926a24f04c837633a0a3be7cddfcf0df32649543f",
+        "index-BVYtwaO3.js": "4414a1bd614992e1d8048a2ef73ab39ce2c09a46df29647af3e5d7febf504805",
+        "index-D-t7M__r.js": "247969893f38ba404383e9b931219d78e52906e0bf25461019b00c37bb3f9a20",
+        "OfficeDocumentPreview-C1DYKJ38.js": "184e081978c52bbd18aa0ba4b23fd8f0382de02dcadb3b96f1638fc746b54273",
+        "PdfDocumentPreview-BBt4MFrK.js": "3ee2eeb208c12c66f334f543776eec760d290316eab2716b936954fe0c184bfc",
+        "spreadsheet-preview.worker-DR-VwyO0.js": "c73a9cfea8d9aca6380124dd6bf87dc996e5f9e2dab5a904984bd8907d778ac6",
+        "SpreadsheetDocumentPreview-H31XV4x3.js": "f1e6a983f6284c299982e56c8fce1bf04ea869073161a1d3a8e2d45fb83d2389"
+      },
+      "measurements": [
+        {
+          "phase": "cold",
+          "name": "01_Word_小型_会议纪要.docx",
+          "ms": 820,
+          "longTasks": [],
+          "frames": 1,
+          "previews": 1
+        },
+        {
+          "phase": "cold",
+          "name": "02_Word_大型_图文报告.docx",
+          "ms": 447,
+          "longTasks": [],
+          "frames": 4,
+          "previews": 2
+        },
+        {
+          "phase": "cold",
+          "name": "03_Excel_小型_任务清单.xlsx",
+          "ms": 946,
+          "longTasks": [],
+          "frames": 4,
+          "previews": 3
+        },
+        {
+          "phase": "cold",
+          "name": "04_Excel_大型_12000行数据.xlsx",
+          "ms": 1984,
+          "longTasks": [],
+          "frames": 4,
+          "previews": 4
+        },
+        {
+          "phase": "cold",
+          "name": "05_PPT_小型_文字演示.pptx",
+          "ms": 178,
+          "longTasks": [],
+          "frames": 6,
+          "previews": 5
+        },
+        {
+          "phase": "cold",
+          "name": "06_PPT_中型_图文演示.pptx",
+          "ms": 981,
+          "longTasks": [],
+          "frames": 11,
+          "previews": 6
+        },
+        {
+          "phase": "cold",
+          "name": "07_PPT_大型_高清图册.pptx",
+          "ms": 2030,
+          "longTasks": [],
+          "frames": 15,
+          "previews": 6
+        },
+        {
+          "phase": "cold",
+          "name": "08_PDF_小型_测试说明.pdf",
+          "ms": 1945,
+          "longTasks": [],
+          "frames": 12,
+          "previews": 6
+        },
+        {
+          "phase": "cold",
+          "name": "09_PDF_大型_图文手册.pdf",
+          "ms": 312,
+          "longTasks": [],
+          "frames": 12,
+          "previews": 6
+        },
+        {
+          "phase": "switch-1",
+          "name": "02_Word_大型_图文报告.docx",
+          "ms": 91,
+          "longTasks": [],
+          "frames": 15,
+          "previews": 6
+        },
+        {
+          "phase": "switch-1",
+          "name": "04_Excel_大型_12000行数据.xlsx",
+          "ms": 78,
+          "longTasks": [],
+          "frames": 13,
+          "previews": 6
+        },
+        {
+          "phase": "switch-1",
+          "name": "06_PPT_中型_图文演示.pptx",
+          "ms": 44,
+          "longTasks": [],
+          "frames": 13,
+          "previews": 6
+        },
+        {
+          "phase": "switch-1",
+          "name": "07_PPT_大型_高清图册.pptx",
+          "ms": 48,
+          "longTasks": [],
+          "frames": 13,
+          "previews": 6
+        },
+        {
+          "phase": "switch-1",
+          "name": "09_PDF_大型_图文手册.pdf",
+          "ms": 45,
+          "longTasks": [],
+          "frames": 13,
+          "previews": 6
+        },
+        {
+          "phase": "switch-2",
+          "name": "02_Word_大型_图文报告.docx",
+          "ms": 61,
+          "longTasks": [],
+          "frames": 13,
+          "previews": 6
+        },
+        {
+          "phase": "switch-2",
+          "name": "04_Excel_大型_12000行数据.xlsx",
+          "ms": 48,
+          "longTasks": [],
+          "frames": 13,
+          "previews": 6
+        },
+        {
+          "phase": "switch-2",
+          "name": "06_PPT_中型_图文演示.pptx",
+          "ms": 45,
+          "longTasks": [],
+          "frames": 13,
+          "previews": 6
+        },
+        {
+          "phase": "switch-2",
+          "name": "07_PPT_大型_高清图册.pptx",
+          "ms": 48,
+          "longTasks": [],
+          "frames": 13,
+          "previews": 6
+        },
+        {
+          "phase": "switch-2",
+          "name": "09_PDF_大型_图文手册.pdf",
+          "ms": 43,
+          "longTasks": [],
+          "frames": 13,
+          "previews": 6
+        },
+        {
+          "phase": "resize",
+          "name": "02_Word_大型_图文报告.docx",
+          "ms": 316,
+          "longTasks": [],
+          "frames": 13,
+          "previews": 6,
+          "frame": {
+            "loads": 0,
+            "sameDocument": true
+          }
+        },
+        {
+          "phase": "resize",
+          "name": "07_PPT_大型_高清图册.pptx",
+          "ms": 311,
+          "longTasks": [],
+          "frames": 13,
+          "previews": 6,
+          "frame": {
+            "loads": 0,
+            "sameDocument": true
+          }
+        },
+        {
+          "phase": "sheet-scroll-bottom",
+          "name": "04_Excel_大型_12000行数据.xlsx",
+          "ms": 134,
+          "longTasks": [],
+          "frames": 13,
+          "previews": 6
+        }
+      ],
+      "errors": [],
+      "originalsUnchanged": true,
+      "boundary": "Real Electron UI, copied local files, isolated profile, engine disabled. File first-content waits for decoded visible images/canvas/cells and two rAF; timing is not OS presented-frame timing.",
+      "graphics": {
+        "2d_canvas": "enabled",
+        "direct_rendering_display_compositor": "disabled_off_ok",
+        "gpu_compositing": "disabled_software",
+        "multiple_raster_threads": "enabled_on",
+        "opengl": "enabled_on",
+        "rasterization": "enabled",
+        "raw_draw": "disabled_off_ok",
+        "skia_graphite": "disabled_off",
+        "trees_in_viz": "disabled_off",
+        "video_decode": "enabled",
+        "video_encode": "enabled",
+        "webgl": "enabled_readback",
+        "webgl2": "enabled_readback",
+        "webgpu": "enabled_readback",
+        "webnn": "disabled_off"
+      },
+      "metrics": [
+        {
+          "type": "Browser",
+          "memory": {
+            "workingSetSize": 335712,
+            "peakWorkingSetSize": 369040,
+            "privateBytes": 239640
+          }
+        },
+        {
+          "type": "Utility",
+          "memory": {
+            "workingSetSize": 57492,
+            "peakWorkingSetSize": 57540,
+            "privateBytes": 15104
+          }
+        },
+        {
+          "type": "Tab",
+          "memory": {
+            "workingSetSize": 1032652,
+            "peakWorkingSetSize": 1059356,
+            "privateBytes": 786028
+          }
+        }
+      ]
+    },
+    "baselineCode": {
+      "label": "baseline-verified",
+      "output": "D:\\dev\\aether-code\\.e2e-tmp\\office-preview-baseline-verified-1793672783948",
+      "source": "D:/trust-test/办公文档测试",
+      "generatedAt": "2026-11-03T02:26:24.146Z",
+      "buildHash": "04f864c22355b43dbde0a016af6925e6f6279a5214a17f6a60f77f552a154d6a",
+      "measurements": [
+        {
+          "phase": "cold",
+          "name": "01_Word_小型_会议纪要.docx",
+          "ms": 862,
+          "longTasks": [
+            62
+          ],
+          "frames": 1,
+          "previews": 1
+        },
+        {
+          "phase": "cold",
+          "name": "02_Word_大型_图文报告.docx",
+          "ms": 444,
+          "longTasks": [],
+          "frames": 2,
+          "previews": 1
+        },
+        {
+          "phase": "cold",
+          "name": "03_Excel_小型_任务清单.xlsx",
+          "ms": 944,
+          "longTasks": [],
+          "frames": 0,
+          "previews": 1
+        },
+        {
+          "phase": "cold",
+          "name": "04_Excel_大型_12000行数据.xlsx",
+          "ms": 1945,
+          "longTasks": [],
+          "frames": 0,
+          "previews": 1
+        },
+        {
+          "phase": "cold",
+          "name": "05_PPT_小型_文字演示.pptx",
+          "ms": 177,
+          "longTasks": [],
+          "frames": 2,
+          "previews": 1
+        },
+        {
+          "phase": "cold",
+          "name": "06_PPT_中型_图文演示.pptx",
+          "ms": 598,
+          "longTasks": [],
+          "frames": 4,
+          "previews": 1
+        },
+        {
+          "phase": "cold",
+          "name": "07_PPT_大型_高清图册.pptx",
+          "ms": 1781,
+          "longTasks": [],
+          "frames": 4,
+          "previews": 1
+        },
+        {
+          "phase": "cold",
+          "name": "08_PDF_小型_测试说明.pdf",
+          "ms": 945,
+          "longTasks": [],
+          "frames": 0,
+          "previews": 1
+        },
+        {
+          "phase": "cold",
+          "name": "09_PDF_大型_图文手册.pdf",
+          "ms": 228,
+          "longTasks": [],
+          "frames": 0,
+          "previews": 1
+        },
+        {
+          "phase": "switch-1",
+          "name": "02_Word_大型_图文报告.docx",
+          "ms": 148,
+          "longTasks": [],
+          "frames": 2,
+          "previews": 1
+        },
+        {
+          "phase": "switch-1",
+          "name": "04_Excel_大型_12000行数据.xlsx",
+          "ms": 63,
+          "longTasks": [],
+          "frames": 0,
+          "previews": 1
+        },
+        {
+          "phase": "switch-1",
+          "name": "06_PPT_中型_图文演示.pptx",
+          "ms": 147,
+          "longTasks": [],
+          "frames": 4,
+          "previews": 1
+        },
+        {
+          "phase": "switch-1",
+          "name": "07_PPT_大型_高清图册.pptx",
+          "ms": 829,
+          "longTasks": [],
+          "frames": 4,
+          "previews": 1
+        },
+        {
+          "phase": "switch-1",
+          "name": "09_PDF_大型_图文手册.pdf",
+          "ms": 167,
+          "longTasks": [],
+          "frames": 0,
+          "previews": 1
+        },
+        {
+          "phase": "switch-2",
+          "name": "02_Word_大型_图文报告.docx",
+          "ms": 146,
+          "longTasks": [],
+          "frames": 2,
+          "previews": 1
+        },
+        {
+          "phase": "switch-2",
+          "name": "04_Excel_大型_12000行数据.xlsx",
+          "ms": 45,
+          "longTasks": [],
+          "frames": 0,
+          "previews": 1
+        },
+        {
+          "phase": "switch-2",
+          "name": "06_PPT_中型_图文演示.pptx",
+          "ms": 196,
+          "longTasks": [],
+          "frames": 4,
+          "previews": 1
+        },
+        {
+          "phase": "switch-2",
+          "name": "07_PPT_大型_高清图册.pptx",
+          "ms": 865,
+          "longTasks": [],
+          "frames": 4,
+          "previews": 1
+        },
+        {
+          "phase": "switch-2",
+          "name": "09_PDF_大型_图文手册.pdf",
+          "ms": 166,
+          "longTasks": [],
+          "frames": 0,
+          "previews": 1
+        },
+        {
+          "phase": "resize",
+          "name": "02_Word_大型_图文报告.docx",
+          "ms": 333,
+          "longTasks": [],
+          "frames": 3,
+          "previews": 1,
+          "frame": {
+            "loads": 1,
+            "sameDocument": false
+          }
+        },
+        {
+          "phase": "resize",
+          "name": "07_PPT_大型_高清图册.pptx",
+          "ms": 761,
+          "longTasks": [],
+          "frames": 5,
+          "previews": 1,
+          "frame": {
+            "loads": 1,
+            "sameDocument": false
+          }
+        },
+        {
+          "phase": "sheet-scroll-bottom",
+          "name": "04_Excel_大型_12000行数据.xlsx",
+          "ms": 101,
+          "longTasks": [],
+          "frames": 0,
+          "previews": 1
+        }
+      ],
+      "errors": [],
+      "originalsUnchanged": true,
+      "boundary": "Real Electron UI, copied local files, isolated profile, engine disabled. File first-content waits for decoded visible images/canvas/cells and two rAF; timing is not OS presented-frame timing.",
+      "graphics": {
+        "2d_canvas": "enabled",
+        "direct_rendering_display_compositor": "disabled_off_ok",
+        "gpu_compositing": "disabled_software",
+        "multiple_raster_threads": "enabled_on",
+        "opengl": "enabled_on",
+        "rasterization": "enabled",
+        "raw_draw": "disabled_off_ok",
+        "skia_graphite": "disabled_off",
+        "trees_in_viz": "disabled_off",
+        "video_decode": "enabled",
+        "video_encode": "enabled",
+        "webgl": "enabled_readback",
+        "webgl2": "enabled_readback",
+        "webgpu": "enabled_readback",
+        "webnn": "disabled_off"
+      },
+      "metrics": [
+        {
+          "type": "Browser",
+          "memory": {
+            "workingSetSize": 322940,
+            "peakWorkingSetSize": 374592,
+            "privateBytes": 212872
+          }
+        },
+        {
+          "type": "Utility",
+          "memory": {
+            "workingSetSize": 57432,
+            "peakWorkingSetSize": 57572,
+            "privateBytes": 14916
+          }
+        },
+        {
+          "type": "Tab",
+          "memory": {
+            "workingSetSize": 1219576,
+            "peakWorkingSetSize": 1321968,
+            "privateBytes": 862120
+          }
+        }
+      ],
+      "rendererHashes": {
+        "index-D1ccktlg.js": "5cd82ceacfe6f91dc082e06ce41ad7e1011ded9805c87a170d267a66fce6ff1a",
+        "SpreadsheetDocumentPreview-C_z_4EsS.js": "33b719d05a04ed5a209a39ccea29105c70cda8a746a67c133956d1a8b0477f5c",
+        "OfficeDocumentPreview-CreB_t-B.js": "6aeda885cc495f629c99e1521cd056ff97b84a107a50331c266fcb86b391cfd9",
+        "index-_fu-3zxz.css": "02567d66cedef5305a7f86d31b6598339ec52fc096cdf4c55dfe1f0c4776c2a1",
+        "index-C_Z25l7Q.js": "edcee07752aeb12a9701765e032cab5654c8e9774cbcbdc67fc01e11b92d7f28",
+        "PdfDocumentPreview-yKuzqxSF.js": "cad4660a02090d59ece564ddae54ef9ed40d2fde68895543b20b57fce7c4d89f",
+        "spreadsheet-preview.worker-BeQUUzxm.js": "0c0adf200566e1fecfc111c70c1a0e6d6b18531f3788b69db4554f0f4c96510b"
+      }
+    },
+    "spreadsheetCpu": {
+      "timestamp": "2026-11-03T02:50:41.003Z",
+      "runtime": {
+        "node": "v24.20.0",
+        "platform": "win32",
+        "architecture": "x64",
+        "cpu": "Intel(R) Core(TM) i9-14900KF",
+        "exceljs": "4.4.0"
+      },
+      "scenario": {
+        "rowCount": 12000,
+        "columnCount": 20,
+        "viewportRows": 40,
+        "viewportColumns": 12,
+        "samples": 45,
+        "warmups": 3,
+        "values": "row * 20 + zero-based column",
+        "traversal": "45 adjacent viewports starting at rows 0 through 44"
+      },
+      "scope": "In-memory Node CPU microbenchmark. Same installed ExcelJS worksheet and actual product buildSpreadsheetPage helper. Preparation excludes workbook construction. No ZIP decoding, worker transfer, browser layout, or GUI latency is measured. Local timings are not a frame-rate guarantee.",
+      "preparation": {
+        "elapsedMs": 15.901,
+        "getterReads": {
+          "model": 1,
+          "rowCount": 1,
+          "columnCount": 1
+        }
+      },
+      "baseline": {
+        "route": "Worksheet directly passed to buildSpreadsheetPage",
+        "samples": 45,
+        "medianMs": 6.426,
+        "p95Ms": 8.161,
+        "totalMs": 306.126,
+        "getterReads": {
+          "model": 45,
+          "rowCount": 45,
+          "columnCount": 45
+        },
+        "sampleMs": [
+          9.044,
+          17.552,
+          7.384,
+          7.293,
+          7.041,
+          6.464,
+          6.408,
+          7.016,
+          6.301,
+          6.345,
+          6.512,
+          6.627,
+          6.327,
+          6.908,
+          6.33,
+          6.026,
+          5.792,
+          6.759,
+          6.094,
+          7.478,
+          6.517,
+          6.084,
+          6.302,
+          5.756,
+          5.848,
+          7.192,
+          5.657,
+          6.808,
+          5.832,
+          5.673,
+          6.66,
+          6.692,
+          6.401,
+          5.978,
+          5.453,
+          8.161,
+          5.62,
+          7.738,
+          6.163,
+          5.796,
+          6.68,
+          5.887,
+          7.927,
+          7.175,
+          6.426
+        ]
+      },
+      "optimized": {
+        "route": "prepareSpreadsheetPageSource snapshot passed to buildSpreadsheetPage",
+        "samples": 45,
+        "medianMs": 0.124,
+        "p95Ms": 0.146,
+        "totalMs": 5.799,
+        "getterReads": {
+          "model": 0,
+          "rowCount": 0,
+          "columnCount": 0
+        },
+        "sampleMs": [
+          0.24,
+          0.126,
+          0.124,
+          0.125,
+          0.124,
+          0.124,
+          0.126,
+          0.124,
+          0.141,
+          0.159,
+          0.127,
+          0.124,
+          0.144,
+          0.13,
+          0.125,
+          0.122,
+          0.122,
+          0.122,
+          0.121,
+          0.129,
+          0.146,
+          0.125,
+          0.122,
+          0.142,
+          0.119,
+          0.12,
+          0.121,
+          0.118,
+          0.118,
+          0.127,
+          0.12,
+          0.119,
+          0.122,
+          0.12,
+          0.121,
+          0.121,
+          0.122,
+          0.123,
+          0.122,
+          0.137,
+          0.136,
+          0.123,
+          0.124,
+          0.131,
+          0.122
+        ]
+      },
+      "equality": {
+        "passed": true,
+        "comparedViewports": 45,
+        "comparedCells": 21600,
+        "baselineSha256": "e673d895ba8f571ce3f82b1d7f8e0f6045876e66949ac1ce7d4b621834e83975",
+        "optimizedSha256": "e673d895ba8f571ce3f82b1d7f8e0f6045876e66949ac1ce7d4b621834e83975",
+        "differences": []
+      },
+      "sourceHashes": {
+        "src/renderer/src/contrib/documents/spreadsheet-page.ts": "81b25aa8d7cb8736aa2e95a22bcc78818643cfeef04f53026bd0d2da92ba4fcf",
+        "src/renderer/src/contrib/documents/document-kind.ts": "1a093f1b3f50545c7d63b409ab7afb02299fb5740063f14607f0cddd4e38bd6c",
+        "src/renderer/src/contrib/documents/spreadsheet-preview-contract.ts": "43e120d58a33d7e7942f5449ee047691eb1a44f0d31fac36ec53ac05cf22dad7",
+        "src/renderer/src/contrib/documents/spreadsheet-value.ts": "c982b4aecb076698c6d6da212937d77eaf3a5e70a9e31a2623f1ad9ec4b4670b",
+        "src/renderer/src/contrib/documents/spreadsheet-style.ts": "59750c9f20f72137633ce939a4e48164f4d4f25ab4e9a6fa17d7b21adc33b0e2"
+      }
+    },
+    "baselineWork": {
+      "label": "baseline-work",
+      "mode": "work",
+      "output": "D:\\dev\\aether-code\\.e2e-tmp\\office-preview-baseline-work-1793673650185",
+      "source": "D:/trust-test/办公文档测试",
+      "generatedAt": "2026-11-03T02:40:50.667Z",
+      "buildHash": "04f864c22355b43dbde0a016af6925e6f6279a5214a17f6a60f77f552a154d6a",
+      "rendererHashes": {
+        "index-C_Z25l7Q.js": "edcee07752aeb12a9701765e032cab5654c8e9774cbcbdc67fc01e11b92d7f28",
+        "index-D1ccktlg.js": "5cd82ceacfe6f91dc082e06ce41ad7e1011ded9805c87a170d267a66fce6ff1a",
+        "index-_fu-3zxz.css": "02567d66cedef5305a7f86d31b6598339ec52fc096cdf4c55dfe1f0c4776c2a1",
+        "OfficeDocumentPreview-CreB_t-B.js": "6aeda885cc495f629c99e1521cd056ff97b84a107a50331c266fcb86b391cfd9",
+        "PdfDocumentPreview-yKuzqxSF.js": "cad4660a02090d59ece564ddae54ef9ed40d2fde68895543b20b57fce7c4d89f",
+        "spreadsheet-preview.worker-BeQUUzxm.js": "0c0adf200566e1fecfc111c70c1a0e6d6b18531f3788b69db4554f0f4c96510b",
+        "SpreadsheetDocumentPreview-C_z_4EsS.js": "33b719d05a04ed5a209a39ccea29105c70cda8a746a67c133956d1a8b0477f5c"
+      },
+      "measurements": [
+        {
+          "phase": "cold",
+          "name": "01_Word_小型_会议纪要.docx",
+          "ms": 822,
+          "longTasks": [],
+          "frames": 1,
+          "previews": 1
+        },
+        {
+          "phase": "cold",
+          "name": "02_Word_大型_图文报告.docx",
+          "ms": 445,
+          "longTasks": [],
+          "frames": 3,
+          "previews": 2
+        },
+        {
+          "phase": "cold",
+          "name": "03_Excel_小型_任务清单.xlsx",
+          "ms": 948,
+          "longTasks": [],
+          "frames": 0,
+          "previews": 2
+        },
+        {
+          "phase": "cold",
+          "name": "04_Excel_大型_12000行数据.xlsx",
+          "ms": 1963,
+          "longTasks": [],
+          "frames": 0,
+          "previews": 2
+        },
+        {
+          "phase": "cold",
+          "name": "05_PPT_小型_文字演示.pptx",
+          "ms": 199,
+          "longTasks": [],
+          "frames": 2,
+          "previews": 2
+        },
+        {
+          "phase": "cold",
+          "name": "06_PPT_中型_图文演示.pptx",
+          "ms": 637,
+          "longTasks": [],
+          "frames": 5,
+          "previews": 2
+        },
+        {
+          "phase": "cold",
+          "name": "07_PPT_大型_高清图册.pptx",
+          "ms": 2323,
+          "longTasks": [
+            66,
+            71
+          ],
+          "frames": 5,
+          "previews": 2
+        },
+        {
+          "phase": "cold",
+          "name": "08_PDF_小型_测试说明.pdf",
+          "ms": 1948,
+          "longTasks": [],
+          "frames": 0,
+          "previews": 2
+        },
+        {
+          "phase": "cold",
+          "name": "09_PDF_大型_图文手册.pdf",
+          "ms": 298,
+          "longTasks": [],
+          "frames": 0,
+          "previews": 2
+        },
+        {
+          "phase": "switch-1",
+          "name": "02_Word_大型_图文报告.docx",
+          "ms": 126,
+          "longTasks": [],
+          "frames": 3,
+          "previews": 2
+        },
+        {
+          "phase": "switch-1",
+          "name": "04_Excel_大型_12000行数据.xlsx",
+          "ms": 63,
+          "longTasks": [],
+          "frames": 0,
+          "previews": 2
+        },
+        {
+          "phase": "switch-1",
+          "name": "06_PPT_中型_图文演示.pptx",
+          "ms": 263,
+          "longTasks": [],
+          "frames": 5,
+          "previews": 2
+        },
+        {
+          "phase": "switch-1",
+          "name": "07_PPT_大型_高清图册.pptx",
+          "ms": 1180,
+          "longTasks": [],
+          "frames": 5,
+          "previews": 2
+        },
+        {
+          "phase": "switch-1",
+          "name": "09_PDF_大型_图文手册.pdf",
+          "ms": 164,
+          "longTasks": [],
+          "frames": 0,
+          "previews": 2
+        },
+        {
+          "phase": "switch-2",
+          "name": "02_Word_大型_图文报告.docx",
+          "ms": 156,
+          "longTasks": [],
+          "frames": 3,
+          "previews": 2
+        },
+        {
+          "phase": "switch-2",
+          "name": "04_Excel_大型_12000行数据.xlsx",
+          "ms": 79,
+          "longTasks": [],
+          "frames": 0,
+          "previews": 2
+        },
+        {
+          "phase": "switch-2",
+          "name": "06_PPT_中型_图文演示.pptx",
+          "ms": 410,
+          "longTasks": [],
+          "frames": 5,
+          "previews": 2
+        },
+        {
+          "phase": "switch-2",
+          "name": "07_PPT_大型_高清图册.pptx",
+          "ms": 877,
+          "longTasks": [
+            58
+          ],
+          "frames": 5,
+          "previews": 2
+        },
+        {
+          "phase": "switch-2",
+          "name": "09_PDF_大型_图文手册.pdf",
+          "ms": 166,
+          "longTasks": [],
+          "frames": 0,
+          "previews": 2
+        },
+        {
+          "phase": "resize",
+          "name": "02_Word_大型_图文报告.docx",
+          "ms": 279,
+          "longTasks": [],
+          "frames": 3,
+          "previews": 2,
+          "frame": {
+            "loads": 1,
+            "sameDocument": false
+          }
+        },
+        {
+          "phase": "resize",
+          "name": "07_PPT_大型_高清图册.pptx",
+          "ms": 762,
+          "longTasks": [],
+          "frames": 5,
+          "previews": 2,
+          "frame": {
+            "loads": 1,
+            "sameDocument": false
+          }
+        },
+        {
+          "phase": "sheet-scroll-bottom",
+          "name": "04_Excel_大型_12000行数据.xlsx",
+          "ms": 84,
+          "longTasks": [],
+          "frames": 0,
+          "previews": 2
+        }
+      ],
+      "errors": [],
+      "originalsUnchanged": true,
+      "boundary": "Real Electron UI, copied local files, isolated profile, engine disabled. File first-content waits for decoded visible images/canvas/cells and two rAF; timing is not OS presented-frame timing.",
+      "graphics": {
+        "2d_canvas": "enabled",
+        "direct_rendering_display_compositor": "disabled_off_ok",
+        "gpu_compositing": "disabled_software",
+        "multiple_raster_threads": "enabled_on",
+        "opengl": "enabled_on",
+        "rasterization": "enabled",
+        "raw_draw": "disabled_off_ok",
+        "skia_graphite": "disabled_off",
+        "trees_in_viz": "disabled_off",
+        "video_decode": "enabled",
+        "video_encode": "enabled",
+        "webgl": "enabled_readback",
+        "webgl2": "enabled_readback",
+        "webgpu": "enabled_readback",
+        "webnn": "disabled_off"
+      },
+      "metrics": [
+        {
+          "type": "Browser",
+          "memory": {
+            "workingSetSize": 314296,
+            "peakWorkingSetSize": 363144,
+            "privateBytes": 225824
+          }
+        },
+        {
+          "type": "Utility",
+          "memory": {
+            "workingSetSize": 57312,
+            "peakWorkingSetSize": 57492,
+            "privateBytes": 14856
+          }
+        },
+        {
+          "type": "Tab",
+          "memory": {
+            "workingSetSize": 1365616,
+            "peakWorkingSetSize": 1406388,
+            "privateBytes": 973440
+          }
+        }
+      ]
+    },
+    "optimizedCode": {
+      "label": "optimized-code",
+      "mode": "code",
+      "output": "D:\\dev\\aether-code\\.e2e-tmp\\office-preview-optimized-code-1793674719207",
+      "source": "D:/trust-test/办公文档测试",
+      "generatedAt": "2026-11-03T02:58:39.634Z",
+      "buildHash": "04f864c22355b43dbde0a016af6925e6f6279a5214a17f6a60f77f552a154d6a",
+      "rendererHashes": {
+        "index-9awsRZbu.css": "848cdbc33c00dbbdcbe6030926a24f04c837633a0a3be7cddfcf0df32649543f",
+        "index-BVYtwaO3.js": "4414a1bd614992e1d8048a2ef73ab39ce2c09a46df29647af3e5d7febf504805",
+        "index-D-t7M__r.js": "247969893f38ba404383e9b931219d78e52906e0bf25461019b00c37bb3f9a20",
+        "OfficeDocumentPreview-C1DYKJ38.js": "184e081978c52bbd18aa0ba4b23fd8f0382de02dcadb3b96f1638fc746b54273",
+        "PdfDocumentPreview-BBt4MFrK.js": "3ee2eeb208c12c66f334f543776eec760d290316eab2716b936954fe0c184bfc",
+        "spreadsheet-preview.worker-DR-VwyO0.js": "c73a9cfea8d9aca6380124dd6bf87dc996e5f9e2dab5a904984bd8907d778ac6",
+        "SpreadsheetDocumentPreview-H31XV4x3.js": "f1e6a983f6284c299982e56c8fce1bf04ea869073161a1d3a8e2d45fb83d2389"
+      },
+      "measurements": [
+        {
+          "phase": "cold",
+          "name": "01_Word_小型_会议纪要.docx",
+          "ms": 883,
+          "longTasks": [
+            74
+          ],
+          "frames": 1,
+          "previews": 1
+        },
+        {
+          "phase": "cold",
+          "name": "02_Word_大型_图文报告.docx",
+          "ms": 513,
+          "longTasks": [],
+          "frames": 3,
+          "previews": 2
+        },
+        {
+          "phase": "cold",
+          "name": "03_Excel_小型_任务清单.xlsx",
+          "ms": 948,
+          "longTasks": [],
+          "frames": 3,
+          "previews": 3
+        },
+        {
+          "phase": "cold",
+          "name": "04_Excel_大型_12000行数据.xlsx",
+          "ms": 1994,
+          "longTasks": [],
+          "frames": 3,
+          "previews": 4
+        },
+        {
+          "phase": "cold",
+          "name": "05_PPT_小型_文字演示.pptx",
+          "ms": 193,
+          "longTasks": [],
+          "frames": 5,
+          "previews": 5
+        },
+        {
+          "phase": "cold",
+          "name": "06_PPT_中型_图文演示.pptx",
+          "ms": 996,
+          "longTasks": [],
+          "frames": 9,
+          "previews": 6
+        },
+        {
+          "phase": "cold",
+          "name": "07_PPT_大型_高清图册.pptx",
+          "ms": 2079,
+          "longTasks": [
+            70,
+            65
+          ],
+          "frames": 12,
+          "previews": 6
+        },
+        {
+          "phase": "cold",
+          "name": "08_PDF_小型_测试说明.pdf",
+          "ms": 1996,
+          "longTasks": [],
+          "frames": 10,
+          "previews": 6
+        },
+        {
+          "phase": "cold",
+          "name": "09_PDF_大型_图文手册.pdf",
+          "ms": 545,
+          "longTasks": [],
+          "frames": 10,
+          "previews": 6
+        },
+        {
+          "phase": "switch-1",
+          "name": "02_Word_大型_图文报告.docx",
+          "ms": 114,
+          "longTasks": [],
+          "frames": 12,
+          "previews": 6
+        },
+        {
+          "phase": "switch-1",
+          "name": "04_Excel_大型_12000行数据.xlsx",
+          "ms": 93,
+          "longTasks": [],
+          "frames": 10,
+          "previews": 6
+        },
+        {
+          "phase": "switch-1",
+          "name": "06_PPT_中型_图文演示.pptx",
+          "ms": 47,
+          "longTasks": [],
+          "frames": 10,
+          "previews": 6
+        },
+        {
+          "phase": "switch-1",
+          "name": "07_PPT_大型_高清图册.pptx",
+          "ms": 46,
+          "longTasks": [],
+          "frames": 10,
+          "previews": 6
+        },
+        {
+          "phase": "switch-1",
+          "name": "09_PDF_大型_图文手册.pdf",
+          "ms": 50,
+          "longTasks": [],
+          "frames": 10,
+          "previews": 6
+        },
+        {
+          "phase": "switch-2",
+          "name": "02_Word_大型_图文报告.docx",
+          "ms": 42,
+          "longTasks": [],
+          "frames": 10,
+          "previews": 6
+        },
+        {
+          "phase": "switch-2",
+          "name": "04_Excel_大型_12000行数据.xlsx",
+          "ms": 64,
+          "longTasks": [],
+          "frames": 10,
+          "previews": 6
+        },
+        {
+          "phase": "switch-2",
+          "name": "06_PPT_中型_图文演示.pptx",
+          "ms": 45,
+          "longTasks": [],
+          "frames": 10,
+          "previews": 6
+        },
+        {
+          "phase": "switch-2",
+          "name": "07_PPT_大型_高清图册.pptx",
+          "ms": 47,
+          "longTasks": [],
+          "frames": 10,
+          "previews": 6
+        },
+        {
+          "phase": "switch-2",
+          "name": "09_PDF_大型_图文手册.pdf",
+          "ms": 56,
+          "longTasks": [],
+          "frames": 10,
+          "previews": 6
+        },
+        {
+          "phase": "resize",
+          "name": "02_Word_大型_图文报告.docx",
+          "ms": 326,
+          "longTasks": [],
+          "frames": 11,
+          "previews": 6,
+          "frame": {
+            "loads": 0,
+            "sameDocument": true
+          }
+        },
+        {
+          "phase": "resize",
+          "name": "07_PPT_大型_高清图册.pptx",
+          "ms": 479,
+          "longTasks": [],
+          "frames": 12,
+          "previews": 6,
+          "frame": {
+            "loads": 0,
+            "sameDocument": true
+          }
+        },
+        {
+          "phase": "sheet-scroll-bottom",
+          "name": "04_Excel_大型_12000行数据.xlsx",
+          "ms": 116,
+          "longTasks": [],
+          "frames": 12,
+          "previews": 6
+        }
+      ],
+      "errors": [],
+      "originalsUnchanged": true,
+      "boundary": "Real Electron UI, copied local files, isolated profile, engine disabled. File first-content waits for decoded visible images/canvas/cells and two rAF; timing is not OS presented-frame timing.",
+      "graphics": {
+        "2d_canvas": "enabled",
+        "direct_rendering_display_compositor": "disabled_off_ok",
+        "gpu_compositing": "disabled_software",
+        "multiple_raster_threads": "enabled_on",
+        "opengl": "enabled_on",
+        "rasterization": "enabled",
+        "raw_draw": "disabled_off_ok",
+        "skia_graphite": "disabled_off",
+        "trees_in_viz": "disabled_off",
+        "video_decode": "enabled",
+        "video_encode": "enabled",
+        "webgl": "enabled_readback",
+        "webgl2": "enabled_readback",
+        "webgpu": "enabled_readback",
+        "webnn": "disabled_off"
+      },
+      "metrics": [
+        {
+          "type": "Browser",
+          "memory": {
+            "workingSetSize": 355672,
+            "peakWorkingSetSize": 383176,
+            "privateBytes": 228120
+          }
+        },
+        {
+          "type": "Utility",
+          "memory": {
+            "workingSetSize": 57464,
+            "peakWorkingSetSize": 57464,
+            "privateBytes": 14984
+          }
+        },
+        {
+          "type": "Tab",
+          "memory": {
+            "workingSetSize": 1016180,
+            "peakWorkingSetSize": 1018088,
+            "privateBytes": 744804
+          }
+        }
+      ]
+    }
+  }
+}

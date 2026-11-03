@@ -1,5 +1,8 @@
 import { useCallback, useSyncExternalStore } from 'react'
 import type { ChatAttachment, ChatMessage } from '@renderer/core/engine/useChat'
+import type { CommandJobSnapshot } from '@shared/command-job'
+import { visibleChildCommandJobs } from '../../core/engine/command-job-state'
+import { mergeFileChanges } from '../../core/engine/tool-file-changes'
 import { isStoredMention, type Mention } from '@renderer/contrib/chat/mention-context'
 import { createDraftPersistenceScheduler } from './work-draft-persistence'
 
@@ -328,18 +331,33 @@ export function workStatus(messages: ChatMessage[], streaming: boolean): WorkTas
 }
 
 /** File versions come from engine write receipts, never from guessed Markdown filenames. */
-export function workArtifacts(messages: ChatMessage[]): WorkArtifact[] {
+export function workArtifacts(messages: ChatMessage[], commandJobs: CommandJobSnapshot[] = [], sessionId?: string): WorkArtifact[] {
   const receipts = new Map<string, { change: NonNullable<ChatMessage['tools'][number]['change']>; status: WorkArtifact['status'] }>()
   for (const message of messages)
     for (const tool of message.tools) {
-      const change = tool.change
-      if (!change) continue
-      // A later task failure does not undo a completed file write. Conversely,
-      // a completed assistant message cannot certify an unresolved tool.
-      const status = tool.state === 'done' && tool.metadata?.success !== false ? 'ready'
-        : tool.state === 'running' && message.status === 'streaming' ? 'draft' : 'unverified'
-      receipts.set(change.id, { change, status })
+      const changes = new Map([...(tool.change ? [tool.change] : []), ...(tool.changes ?? [])].map(change => [change.id, change]))
+      for (const change of changes.values()) {
+        // A later task failure does not undo a completed file write. Conversely,
+        // a completed assistant message cannot certify an unresolved tool.
+        const status = tool.state === 'done' && tool.metadata?.success !== false ? 'ready'
+          : tool.state === 'running' && message.status === 'streaming' ? 'draft' : 'unverified'
+        receipts.set(change.id, { change, status })
+      }
     }
+  // Child commands belong to the root conversation, but deliberately cannot
+  // attach to its execute_cmd card. Only a visible owning run/turn may expose
+  // their receipts; retained diagnostics must not revive a deleted turn.
+  for (const job of sessionId ? visibleChildCommandJobs(messages, commandJobs, sessionId) : []) {
+    const status: WorkArtifact['status'] = job.status === 'succeeded' ? 'ready' : job.status === 'running' ? 'draft' : 'unverified'
+    for (const change of mergeFileChanges(job.changes)) {
+      if (change.sessionId && change.sessionId !== sessionId) continue
+      const previous = receipts.get(change.id)
+      if (previous && (previous.change.path !== change.path || previous.change.kind !== change.kind ||
+        previous.change.sessionId && change.sessionId && previous.change.sessionId !== change.sessionId)) continue
+      const merged = mergeFileChanges(previous?.change, change)[0]
+      receipts.set(change.id, { change: merged, status })
+    }
+  }
   const artifacts: WorkArtifact[] = []
   const liveWrites = new Map<string, WorkArtifact[]>()
   const ordered = [...receipts.values()]

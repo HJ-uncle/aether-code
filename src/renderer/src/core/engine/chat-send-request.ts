@@ -1,4 +1,12 @@
 import type { SendOptions } from './useChat'
+import { clientCapabilities } from '../workbench/capabilities'
+import { getEngineSource } from './source'
+import { getAppMode } from '../platform/app-mode'
+
+export class ChatRequestRejectedError extends Error {
+  readonly requestRejected = true
+  constructor(message: string) { super(message); this.name = 'ChatRequestRejectedError' }
+}
 
 /** Keep request serialization on the same boundary for direct and queued turns. */
 export async function dispatchChatRequest(
@@ -22,6 +30,7 @@ export async function dispatchChatRequest(
     subagentModel: options.subagentModel,
     utilityModel: options.utilityModel,
     memoryScope: options.memoryScope,
+    clientCapabilities: clientCapabilities(getEngineSource(), options.sessionId, getAppMode()),
     attachments: attachments.length > 0
       ? remote
         ? attachments.map(file => file.remoteUploadId

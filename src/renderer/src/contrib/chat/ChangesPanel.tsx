@@ -247,7 +247,7 @@ function ChangesPanelContent({
 
   const revertOneWithConfirm = (change: EngineFileChange): Promise<void> =>
     confirmRevert(
-      `撤回对 ${change.displayPath || change.path} 的改动？文件将按快照恢复到改动前。`,
+      `撤回对 ${change.displayPath || change.path} 的改动？文件将按快照恢复到改动前。${change.requiresExplicitRevert ? '\n此记录来自命令运行前后的文件比较，可能包含同期手动编辑，请确认这些改动都需要撤回。' : ''}`,
       () => revertOne(change)
     )
 
@@ -362,6 +362,7 @@ function ChangesPanelContent({
                 <span className="changes-panel__dir" title={dir}>
                   {dir ? <span>{dir}</span> : null}
                   {timeOf(change) ? <span className="changes-panel__time">{timeOf(change)}</span> : null}
+                  {change.requiresExplicitRevert ? <span title="命令运行前后检测到的变化，可能包含同期手动编辑；请逐项确认回退。">命令期间变化 · 逐项回退</span> : null}
                 </span>
               </button>
               {/* Keep the diagnostic column mounted even when a row has no issue;

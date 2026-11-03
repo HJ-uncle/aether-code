@@ -29,7 +29,7 @@ const capabilityBody = () => envelope({ schemaVersion: 2, eventVersions: [1, 2],
 const summary = (index: number): SubagentToolSummary => ({ id: `tool-${index}`, name: 'read_file', args: { path: `file-${index}.ts` }, status: 'succeeded', ordinal: index, revisionSeq: index, detailRef: `detail-${index}`, detailTruncated: true })
 const rawDetail = Buffer.from(JSON.stringify({ args: { path: 'file-1.ts' }, output: `FIRST_CHUNK_${'x'.repeat(40000)}SECOND_CHUNK_${'y'.repeat(40000)}FINAL_CHUNK` }), 'utf8')
 function child(parentId: string, rootRun: RootRun): SubagentRunView {
-  const latest = { ...summary(4100), name: 'grep_search' }
+  const latest = { ...summary(4100), name: 'grep' }
   return { schemaVersion: 2, view: 'summary', runId: `child-${parentId}`, tenantId: 'fixture', rootSessionId: parentId, parentSessionId: parentId,
     parentConversationId: rootRun.turnId, parentMessageId: rootRun.assistantMessageId, parentToolCallId: `delegate-${parentId}`, childSessionId: `context-${parentId}`,
     task: '检查长任务', description: '耐久测试代理', agentName: '耐久测试代理', modelId, status: 'running', lastSeq: 5000, createdAt: Date.now(), updatedAt: Date.now(),

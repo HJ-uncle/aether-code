@@ -8,7 +8,19 @@ export type StreamEventBody =
   | { type: 'payload'; payload: ChatSsePayload }
   | { type: 'done' }
   | { type: 'snapshot-required'; reason?: StreamRecoveryReason }
-  | { type: 'error'; message: string; status?: number; code?: number }
+  | { type: 'error'; message: string; status?: number; code?: number; requestRejected?: boolean }
+
+/** Only transport-confirmed non-admission can be returned as a safe-to-edit send failure. */
+export interface StreamRequestRejection { message: string; status?: number; code?: number }
+export interface StreamStartResult { ok: boolean; rejection?: StreamRequestRejection }
+
+export function isExplicitRequestRejection(status?: number, code?: number): boolean {
+  // Server faults and lost connections may happen after admission. Never infer
+  // non-execution from those, even when the response did not contain SSE data.
+  if (status !== undefined && status >= 500) return false
+  const statusCode = code === undefined ? status : code >= 10_000 ? Math.trunc(code / 100) : code
+  return statusCode !== undefined && [400, 401, 403, 404, 405, 409, 413, 415, 422, 429].includes(statusCode)
+}
 
 /** One envelope for HTTP admission failures, SSE data, terminal frames and replay recovery. */
 export type StreamEvent = { streamId: string; eventId?: string } & StreamEventBody

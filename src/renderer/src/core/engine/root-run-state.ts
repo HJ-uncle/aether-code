@@ -73,7 +73,7 @@ export function applyRootRun(
           ? (message.usage as { modelId: string }).modelId : undefined) || message.modelId || run.modelId,
       startedAt: run.startedAt ?? message.startedAt ?? run.createdAt,
       endedAt: run.finishedAt,
-      error: error || (run.status === 'interrupted' ? '运行已中断，未自动重试' : run.status === 'cancelled' ? '已停止' : undefined),
+      error: error || (run.status === 'interrupted' ? '运行已中断，未自动重试' : undefined),
       interactions,
       pending,
       answered: undefined,

@@ -1,0 +1,377 @@
+[
+  {
+    "path": "codex-rs/core/src/tools/handlers/apply_patch.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/apply_patch.rs",
+    "bytes": 23023
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/apply_patch_spec.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/apply_patch_spec.rs",
+    "bytes": 1253
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/current_time.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/current_time.rs",
+    "bytes": 4741
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/dynamic.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/dynamic.rs",
+    "bytes": 8655
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/extension_tools.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/extension_tools.rs",
+    "bytes": 26816
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/get_context_remaining.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/get_context_remaining.rs",
+    "bytes": 3310
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/get_context_remaining_spec.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/get_context_remaining_spec.rs",
+    "bytes": 1402
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/list_available_plugins_to_install.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/list_available_plugins_to_install.rs",
+    "bytes": 6337
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/list_available_plugins_to_install_spec.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/list_available_plugins_to_install_spec.rs",
+    "bytes": 2608
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/mcp.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/mcp.rs",
+    "bytes": 36306
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/mcp_resource.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/mcp_resource.rs",
+    "bytes": 14363
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/mcp_resource/list_mcp_resource_templates.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/mcp_resource/list_mcp_resource_templates.rs",
+    "bytes": 3559
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/mcp_resource/list_mcp_resources.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/mcp_resource/list_mcp_resources.rs",
+    "bytes": 3385
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/mcp_resource/read_mcp_resource.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/mcp_resource/read_mcp_resource.rs",
+    "bytes": 3066
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/mcp_resource_spec.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/mcp_resource_spec.rs",
+    "bytes": 3953
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/mod.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/mod.rs",
+    "bytes": 25301
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/multi_agents.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/multi_agents.rs",
+    "bytes": 3594
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/multi_agents/close_agent.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/multi_agents/close_agent.rs",
+    "bytes": 4481
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/multi_agents/resume_agent.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/multi_agents/resume_agent.rs",
+    "bytes": 5713
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/multi_agents/send_input.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/multi_agents/send_input.rs",
+    "bytes": 6311
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/multi_agents/spawn.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/multi_agents/spawn.rs",
+    "bytes": 9044
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/multi_agents/wait.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/multi_agents/wait.rs",
+    "bytes": 12209
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/multi_agents_common.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/multi_agents_common.rs",
+    "bytes": 6974
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/multi_agents_spec.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/multi_agents_spec.rs",
+    "bytes": 37769
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/multi_agents_v2.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/multi_agents_v2.rs",
+    "bytes": 2321
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/multi_agents_v2/analytics.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/multi_agents_v2/analytics.rs",
+    "bytes": 2109
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/multi_agents_v2/followup_task.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/multi_agents_v2/followup_task.rs",
+    "bytes": 1722
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/multi_agents_v2/interrupt_agent.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/multi_agents_v2/interrupt_agent.rs",
+    "bytes": 3335
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/multi_agents_v2/list_agents.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/multi_agents_v2/list_agents.rs",
+    "bytes": 3102
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/multi_agents_v2/message_tool.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/multi_agents_v2/message_tool.rs",
+    "bytes": 3557
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/multi_agents_v2/send_message.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/multi_agents_v2/send_message.rs",
+    "bytes": 1714
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs",
+    "bytes": 8702
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/multi_agents_v2/wait.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/multi_agents_v2/wait.rs",
+    "bytes": 6415
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/new_context_window.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/new_context_window.rs",
+    "bytes": 2296
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/new_context_window_spec.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/new_context_window_spec.rs",
+    "bytes": 838
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/plan.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/plan.rs",
+    "bytes": 3334
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/plan_spec.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/plan_spec.rs",
+    "bytes": 1740
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/request_permissions.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/request_permissions.rs",
+    "bytes": 9690
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/request_plugin_install.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/request_plugin_install.rs",
+    "bytes": 20088
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/request_plugin_install_spec.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/request_plugin_install_spec.rs",
+    "bytes": 9298
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/request_user_input.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/request_user_input.rs",
+    "bytes": 6154
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/request_user_input_async.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/request_user_input_async.rs",
+    "bytes": 6204
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/request_user_input_spec.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/request_user_input_spec.rs",
+    "bytes": 4661
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/send_message_to_user_async.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/send_message_to_user_async.rs",
+    "bytes": 4249
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/shell_spec.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/shell_spec.rs",
+    "bytes": 13034
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/sleep.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/sleep.rs",
+    "bytes": 6085
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/tool_search.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/tool_search.rs",
+    "bytes": 24001
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/tool_search_spec.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/tool_search_spec.rs",
+    "bytes": 9540
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/unified_exec.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/unified_exec.rs",
+    "bytes": 5602
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs",
+    "bytes": 14824
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/unified_exec/preparation.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/unified_exec/preparation.rs",
+    "bytes": 13778
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/unified_exec/write_stdin.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/unified_exec/write_stdin.rs",
+    "bytes": 5364
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/view_image.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/view_image.rs",
+    "bytes": 19781
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/view_image_spec.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/view_image_spec.rs",
+    "bytes": 2712
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/wait_for_environment.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/wait_for_environment.rs",
+    "bytes": 7176
+  },
+  {
+    "path": "codex-rs/core/src/tools/registry.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/registry.rs",
+    "bytes": 42264
+  },
+  {
+    "path": "codex-rs/core/src/tools/spec_plan.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/spec_plan.rs",
+    "bytes": 67858
+  },
+  {
+    "path": "codex-rs/code-mode/src/lib.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/code-mode/src/lib.rs",
+    "bytes": 298
+  },
+  {
+    "path": "codex-rs/core/src/tools/handlers/test_sync_spec.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/handlers/test_sync_spec.rs",
+    "bytes": 2214
+  },
+  {
+    "path": "codex-rs/code-mode-protocol/src/description.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/code-mode-protocol/src/description.rs",
+    "bytes": 42084
+  },
+  {
+    "path": "codex-rs/code-mode-protocol/src/grpc/codex.code_mode.v1.proto",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/code-mode-protocol/src/grpc/codex.code_mode.v1.proto",
+    "bytes": 8444
+  },
+  {
+    "path": "codex-rs/code-mode-protocol/src/grpc/mod.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/code-mode-protocol/src/grpc/mod.rs",
+    "bytes": 475
+  },
+  {
+    "path": "codex-rs/code-mode-protocol/src/host/codec.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/code-mode-protocol/src/host/codec.rs",
+    "bytes": 5307
+  },
+  {
+    "path": "codex-rs/code-mode-protocol/src/host/error.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/code-mode-protocol/src/host/error.rs",
+    "bytes": 682
+  },
+  {
+    "path": "codex-rs/code-mode-protocol/src/host/message.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/code-mode-protocol/src/host/message.rs",
+    "bytes": 8548
+  },
+  {
+    "path": "codex-rs/code-mode-protocol/src/host/mod.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/code-mode-protocol/src/host/mod.rs",
+    "bytes": 2900
+  },
+  {
+    "path": "codex-rs/code-mode-protocol/src/host/payload.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/code-mode-protocol/src/host/payload.rs",
+    "bytes": 17189
+  },
+  {
+    "path": "codex-rs/code-mode-protocol/src/host/types.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/code-mode-protocol/src/host/types.rs",
+    "bytes": 6780
+  },
+  {
+    "path": "codex-rs/code-mode-protocol/src/json_schema_types.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/code-mode-protocol/src/json_schema_types.rs",
+    "bytes": 19236
+  },
+  {
+    "path": "codex-rs/code-mode-protocol/src/lib.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/code-mode-protocol/src/lib.rs",
+    "bytes": 2320
+  },
+  {
+    "path": "codex-rs/code-mode-protocol/src/process_metrics.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/code-mode-protocol/src/process_metrics.rs",
+    "bytes": 841
+  },
+  {
+    "path": "codex-rs/code-mode-protocol/src/response.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/code-mode-protocol/src/response.rs",
+    "bytes": 689
+  },
+  {
+    "path": "codex-rs/code-mode-protocol/src/runtime.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/code-mode-protocol/src/runtime.rs",
+    "bytes": 7385
+  },
+  {
+    "path": "codex-rs/code-mode-protocol/src/session.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/code-mode-protocol/src/session.rs",
+    "bytes": 9846
+  },
+  {
+    "path": "codex-rs/core/src/tools/code_mode/mod.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/616cab3a3529f572c3385098c12698278770ea98/codex-rs/core/src/tools/code_mode/mod.rs",
+    "bytes": 20257
+  }
+]

@@ -181,7 +181,9 @@ test.describe.serial('D4 快照和消费游标真机验收',()=>{
     try {
       await expect.poll(async()=>(await snapshot()).run?.runId,{timeout:15000}).not.toBe(before.run?.runId)
       const next=await snapshot();expect(next.run?.status).toBe('running');expect(next.run?.modelId).toBe(model)
-      expect(next.run?.userMessageId).toBeTruthy();expect(external).toBeDefined()
+      expect(next.run?.userMessageId).toBeTruthy()
+      // Admission publishes a running identity before the provider connection exists.
+      await expect.poll(() => Boolean(external)).toBe(true)
       await expect(page.locator(`.message--user[data-message-id="${next.run!.userMessageId}"]`)).toContainText('[d4:external] second task',{timeout:15000})
       await expect(page.locator(`.message--assistant[data-message-id="${next.run!.assistantMessageId}"]`)).toContainText('D4_EXTERNAL_RUNNING')
       await expect(page.locator('.mode-surface[data-mode="code"] .model-picker .select__trigger')).toHaveAttribute('title',`当前模型：${model}`)
@@ -206,7 +208,12 @@ test.describe.serial('D4 快照和消费游标真机验收',()=>{
       await expect(oldUser).toHaveCount(1)
       await releaseMutation()
       await expect.poll(async()=>{
-        const run=(await snapshot()).run;return Boolean(run&&run.runId!==target.runId&&run.status==='running')
+        const response=await page.evaluate(()=>window.aether.engine.request<ChatRecoverySnapshot>({method:'GET',path:'/chat/snapshot',query:{sessionId:'d4-recovery'}}))
+        // Releasing the HTTP gate lets the mutation begin; its durable fence
+        // can still reject reads until the transaction has actually settled.
+        if(!response.ok&&response.message?.includes('ADMISSION_HISTORY_MUTATING'))return false
+        expect(response.ok,response.message).toBe(true)
+        const run=response.data?.run;return Boolean(run&&run.runId!==target.runId&&run.status==='running')
       }).toBe(true)
       const retried=await snapshot();expect(retried.run?.status).toBe('running')
       expect(retried.run?.userMessageId).not.toBe(target.userMessageId)

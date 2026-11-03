@@ -54,7 +54,7 @@ export function WorkNextTurnQueuePanel({ queue, scopeKey }: { queue: WorkNextTur
           return <li key={entry.id} className="work-next-turn__item">
             <div className="work-next-turn__row"><span className="work-next-turn__number">{canEdit ? index + 1 : '•'}</span><div className="work-next-turn__body">
               <p className="work-next-turn__text" title={entry.envelope.draft.text}>{entry.envelope.draft.text || '附件任务'}</p>
-              <span className="work-next-turn__meta">{entry.phase === 'accepted' ? '已接纳，正在执行' : entry.phase === 'pending' ? '本地已保存，等待上一轮成功' : '接纳结果待核对'}{entry.envelope.attachments.length ? ` · ${entry.envelope.attachments.length} 个附件` : ''}</span>
+              <span className="work-next-turn__meta">{entry.phase === 'accepted' ? '已接纳，正在执行' : entry.phase === 'pending' ? queue.state?.paused ? '已保存，恢复待发后继续' : '已保存，上一轮成功后发送' : '接纳结果待核对'}{entry.envelope.attachments.length ? ` · ${entry.envelope.attachments.length} 个附件` : ''}</span>
             </div>
             {canEdit ? <div className="work-next-turn__actions">
               <IconButton icon="chevron-up" label="上移待发消息" disabled={queue.saving || index === 0} onClick={() => void run(() => queue.mutate({ kind: 'move', id: entry.id, beforeId: pending[index - 1].id }))} />

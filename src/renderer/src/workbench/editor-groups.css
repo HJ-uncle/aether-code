@@ -42,3 +42,14 @@
 }
 
 .editor-group-action:hover { color: var(--fg-strong); background: var(--bg-hover); }
+
+.editor-document-slot {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.editor-document-slot[hidden] { display: none; }

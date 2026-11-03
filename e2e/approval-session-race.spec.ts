@@ -10,6 +10,9 @@ import type { ChatMessage } from '../src/renderer/src/core/engine/useChat'
 import type { RootRun, RootRunStatus } from '../src/shared/root-run'
 import type { StreamEvent } from '../src/shared/ipc'
 import { parseSseBlock } from '../src/main/engine/sse'
+import { ChatRequestRejectedError } from '../src/renderer/src/core/engine/chat-send-request'
+import { sameRecoveryScope, type RecoveryScope } from '../src/renderer/src/core/engine/chat-recovery-loop'
+import type { StreamStartResult } from '../src/shared/stream-event'
 
 // Execute the production callbacks, rather than a copy of their validation.
 const filename = resolve(__dirname, '../src/renderer/src/core/engine/useChat.ts')
@@ -35,7 +38,7 @@ function functionDeclaration(name: string): string {
   return declaration.getText(source)
 }
 const callbacks = ts.transpileModule(
-  `${callbackDeclaration('runStream')}\n${callbackDeclaration('respond')}\n` +
+  `${callbackDeclaration('rejectOutgoingSend')}\n${callbackDeclaration('runStream')}\n${callbackDeclaration('respond')}\n` +
   ['patchLastAssistant', 'recover', 'refreshWaitingRun', 'isApprovalConflict', 'applyEvent'].map(functionDeclaration).join('\n') +
   '\nglobalThis.respond = respond; globalThis.applyEvent = applyEvent;',
   { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }
@@ -59,6 +62,9 @@ function harness(start?: (input: StartInput) => Promise<void>, recovery?: (sessi
   const calls: StartInput[] = []
   const recoveries: string[] = []
   const streaming: boolean[] = []
+  const historyErrors: Array<string | null> = []
+  let signalStarted!: () => void
+  const started = new Promise<void>(resolveStart => { signalStarted = resolveStart })
   let messageState = [message]
   const refs = {
     activeStreamRef: { current: null as string | null },
@@ -70,7 +76,8 @@ function harness(start?: (input: StartInput) => Promise<void>, recovery?: (sessi
     answeringRef: { current: new Set<string>() },
     approvalRefreshRef: { current: null as { sessionId: string; source: number } | null },
     consumedEventIdRef: { current: null },
-    recoveryAttemptsRef: { current: 0 },
+    outgoingSendRef: { current: null as { scope: RecoveryScope; streamId: string } | null },
+    rejectedSendScopeRef: { current: null as RecoveryScope | null },
     recoverRef: { current: async (sessionId: string): Promise<boolean> => {
       recoveries.push(sessionId)
       return recovery ? recovery(sessionId) : false
@@ -78,28 +85,48 @@ function harness(start?: (input: StartInput) => Promise<void>, recovery?: (sessi
     drainQueueRef: { current: async () => {} }
   }
   let engineSource = 1
+  let viewEpoch = 0
   let ids = 0
   const context = {
-    ...refs, Error, messages: [message], renderSource: engineSource,
+    ...refs, Error, ChatRequestRejectedError, messages: [message], renderSource: engineSource, commandOwner: 'code',
     useCallback: <T>(callback: T): T => callback,
     getEngineSource: () => engineSource,
     assertEngineSource: (expected: number) => { if (expected !== engineSource) throw new Error('Engine changed') },
+    recoveryScope: (sessionId: string): RecoveryScope => ({ source: engineSource, sessionId, viewEpoch }),
+    scopeIsCurrent: (scope: RecoveryScope) => sameRecoveryScope(scope, context.recoveryScope(refs.viewSessionRef.current ?? '')),
+    invalidateRecovery: () => {
+      viewEpoch++
+      refs.outgoingSendRef.current = null
+      refs.rejectedSendScopeRef.current = null
+    },
+    recoveryLoop: { retry: () => {}, cancel: () => {} },
     newId: () => `stream-${++ids}`,
     setStreaming: (value: boolean) => { streaming.push(value) },
+    setHistoryError: (value: string | null) => { historyErrors.push(value) },
     setMessages: (update: (previous: ChatMessage[]) => ChatMessage[]) => {
       messageState = update(messageState)
       context.messages = messageState
     },
     flushStreamPatches: () => {},
     reconcile: () => {},
+    reconcileChildren: () => {},
     finishTransport,
     buildToolResponse,
-    engine: { startStream: async (input: StartInput) => { calls.push(input); await start?.(input) } },
+    engine: {
+      getSubagentProtocol: async () => 1,
+      startStream: async (input: StartInput): Promise<StreamStartResult> => {
+        // These assertions own approval identity; profile negotiation has its own contract tests.
+        calls.push({ streamId: input.streamId, path: input.path, body: input.body })
+        signalStarted()
+        await start?.(input)
+        return { ok: true }
+      }
+    },
     respond: undefined as unknown as (requestId: string, values: string[], options: { sessionId: string }) => Promise<void>,
     applyEvent: undefined as unknown as (event: StreamEvent) => void
   }
   runInNewContext(callbacks, context)
-  return { ...refs, run, message, calls, streaming, recoveries,
+  return { ...refs, run, message, calls, streaming, recoveries, historyErrors, started,
     messages: () => messageState,
     applySnapshot: (next: RootRun) => {
       refs.rootRunsRef.current.set(next.runId, next)
@@ -179,6 +206,7 @@ test('A的启动拒绝晚于切换到B，不清理B的新流和加载状态', as
   let rejectStart: (reason: Error) => void = () => { throw new Error('Start was not reached') }
   const state = harness(() => new Promise<void>((_resolve, reject) => { rejectStart = reject }))
   const response = state.respond()
+  await state.started
   state.viewSessionRef.current = 'session-b'
   state.activeStreamRef.current = 'stream-b'
   state.answeringRef.current.clear()
@@ -193,6 +221,7 @@ test('同会话已经启动的新流不会被旧提交的失败清理', async ()
   let rejectStart: (reason: Error) => void = () => { throw new Error('Start was not reached') }
   const state = harness(() => new Promise<void>((_resolve, reject) => { rejectStart = reject }))
   const response = state.respond()
+  await state.started
   state.activeStreamRef.current = 'newer-stream-a'
   rejectStart(new Error('late IPC failure'))
   await response
@@ -294,7 +323,10 @@ test('普通暂时网络错误不把真实pending请求归档，原请求可重�
     expect(state.recoveries).toEqual([])
     expect(state.messages()[0].run?.status).toBe('waiting')
     expect(state.messages()[0].interactions?.[0].status).toBe('pending')
-    expect(state.messages()[0].error).toBe('Temporary network error')
+    // The durable waiting outcome owns this message. A failed transport must
+    // leave its pending request retryable rather than invent a business error.
+    expect(state.messages()[0].error).toBeUndefined()
+    expect(state.historyErrors).toEqual([])
     await state.respond()
     expect(state.calls).toHaveLength(2)
   }

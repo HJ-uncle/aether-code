@@ -94,7 +94,7 @@ export function onViewsChanged(listener: () => void): () => void {
  * workbench 层只应认识「ID + 组件」这种元数据，不该依赖 contrib 里的具体功能，
  * 否则布局代码会被功能拖住，新增/替换编辑器实现都要改 workbench。
  */
-export type DocumentRenderer = ComponentType<{ filePath: string; groupId?: string }>
+export type DocumentRenderer = ComponentType<{ filePath: string; groupId?: string; active?: boolean }>
 
 let documentRenderer: DocumentRenderer | null = null
 

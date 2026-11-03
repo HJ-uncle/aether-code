@@ -50,12 +50,12 @@ import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { Icon, type IconName } from '@renderer/workbench/icons'
 import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
 import { WelcomeView } from '@renderer/workbench/WelcomeView'
+import { DocumentSlots } from './DocumentSlots'
 import { useLayout } from '@renderer/workbench/useLayout'
 import {
   getDocumentRenderer,
   getViews,
   onViewsChanged,
-  type DocumentRenderer,
   type ViewRegistration
 } from '@renderer/workbench/view-registry'
 import './editor-groups.css'
@@ -442,9 +442,8 @@ function EditorGroupView({ group, first, focused, split }: {
       </header>
 
       <div className="editor-area__body">
-        {activeKey.startsWith('doc:') ? (
-          <DocumentSlot filePath={activeKey.slice(4)} groupId={group.id} Renderer={DocumentRenderer} />
-        ) : activeKey ? (
+        <DocumentSlots paths={paths} filePath={activeFilePath} groupId={group.id} workspaceRoot={workspace.root} Renderer={DocumentRenderer} />
+        {activeFilePath ? null : activeKey ? (
           renderStaticView(visibleViews, activeKey)
         ) : (
           <WelcomeView />
@@ -456,23 +455,6 @@ function EditorGroupView({ group, first, focused, split }: {
       ) : null}
     </section>
   )
-}
-
-/**
- * 文档渲染槽。组件身份按编辑组稳定，普通文本切换由 Monaco 自己换 model；
- * 渲染器注册被替换时，组件类型变化仍会自然卸载重建。
- */
-function DocumentSlot({
-  filePath,
-  groupId,
-  Renderer
-}: {
-  filePath: string
-  groupId: string
-  Renderer: DocumentRenderer | null
-}): JSX.Element {
-  if (!Renderer) return <div className="doc-placeholder">未注册文档渲染器。</div>
-  return <Renderer key={groupId} filePath={filePath} groupId={groupId} />
 }
 
 function renderStaticView(views: ViewRegistration[], activeKey: string): JSX.Element {
