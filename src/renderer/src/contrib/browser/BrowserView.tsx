@@ -18,6 +18,7 @@ import { NetworkInspector } from './NetworkInspector'
 import { isBrowserSurfaceOccluded } from './browser-occlusion'
 import { openViewToRight } from '@renderer/core/editor/editor-groups'
 import { getAppMode, onAppModeChanged, type AppMode } from '@renderer/core/platform/app-mode'
+import { getBrowserSurfaceOwner } from '@renderer/core/browser/presentation'
 import { openAppSettings } from '../settings/app-settings-navigation'
 import {
   browserAction,
@@ -114,6 +115,7 @@ export function BrowserSurface({
           : null
       const input: BrowserBoundsInput = {
         tabId: tab.tabId,
+        surface: getBrowserSurfaceOwner(),
         revealRequestId,
         bounds: { x, y, width, height },
         visible:
@@ -183,6 +185,7 @@ export function BrowserSurface({
         void window.aether.browser
           .setBounds({
             tabId: tab.tabId,
+            surface: getBrowserSurfaceOwner(),
             bounds: { x: 0, y: 0, width: 0, height: 0 },
             visible: false
           })

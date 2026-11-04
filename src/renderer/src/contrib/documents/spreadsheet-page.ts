@@ -13,10 +13,12 @@ export interface SpreadsheetPageSource {
     value: Parameters<typeof spreadsheetDisplayValue>[0]
     text: string
     numFmt: string
+    model?: { result?: unknown }
     master: {
       value: Parameters<typeof spreadsheetDisplayValue>[0]
       text: string
       numFmt: string
+      model?: { result?: unknown }
     }
     style: SpreadsheetCellStyle
   }
@@ -85,7 +87,7 @@ export function buildSpreadsheetPage(source: SpreadsheetPageSource, sheet: numbe
       const valueCell = cell.isMerged && !continuation.has(position) ? cell.master : cell
       const display = continuation.has(position)
         ? { text: '', formatFallback: false }
-        : spreadsheetDisplayValue(valueCell.value, valueCell.text, valueCell.numFmt, date1904)
+        : spreadsheetDisplayValue(valueCell.value, valueCell.text, valueCell.numFmt, date1904, valueCell.model)
       if (display.formatFallback) formatFallbacks++
       return {
         text: display.text,

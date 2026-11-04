@@ -77,7 +77,7 @@ export class CollaborationController {
     if (hash !== receipt.payloadHash) throw new Error('排队回执的正文校验不符；已保留原要求，请核对结果')
     return receipt
   }
-  async supported(connection: ControllerConnection): Promise<boolean> {
+  async supported(connection: ControllerConnection, kind: 'child' | 'root' = 'child'): Promise<boolean> {
     this.env.current(connection)
     const response = await this.env.request({ method: 'GET', path: '/collaboration/capabilities',
       expectedEngine: connection.expectedEngine, toolProfile: connection.toolProfile })
@@ -86,27 +86,27 @@ export class CollaborationController {
       if ([404, 501].includes(response.code)) return false
       throw new Error(response.message || '暂时无法核对协作能力')
     }
-    return parseControllerCapability(response.data)
+    return parseControllerCapability(response.data, kind)
   }
   private async context(connection: ControllerConnection, target: ControllerTarget, selected: () => void): Promise<ReturnType<typeof parseControllerContext>> {
     validateControllerTarget(target)
     this.env.current(connection); selected()
     const response = await this.env.request({ method: 'GET', path: `/collaboration/roots/${encodeURIComponent(target.rootRunId)}/controller-context`,
-      query: { rootSessionId: target.rootSessionId, recipientParticipantId: `child:${target.childSessionId}` },
+      query: { rootSessionId: target.rootSessionId, ...(target.kind === 'root' ? {} : { recipientParticipantId: `child:${target.childSessionId}` }) },
       expectedEngine: connection.expectedEngine, toolProfile: connection.toolProfile })
     this.env.current(connection); selected()
-    if (!response.ok) throw new Error(response.message || '无法获取当前子代理的协作上下文')
+    if (!response.ok) throw new Error(response.message || '无法获取当前任务的协作上下文')
     return parseControllerContext(response.data, target)
   }
   private async prepare(connection: ControllerConnection, target: ControllerTarget, message: string, selected: () => void): Promise<ControllerPending> {
     validateControllerMessage(message)
     if (!connection.expectedEngine.instanceId) throw new Error('引擎实例尚未确认，请等待连接完成')
-    if (!await this.supported(connection)) throw new Error('当前引擎尚未启用运行中补充要求')
+    if (!await this.supported(connection, target.kind ?? 'child')) throw new Error('当前引擎尚未启用运行中补充要求')
     selected()
     const context = await this.context(connection, target, selected)
     const pending: ControllerPending = {
       version: 1, expectedEngine: { ...connection.expectedEngine }, storageIdentity: controllerStorageIdentity(connection.expectedEngine),
-      ...context.scope, childSessionId: target.childSessionId, recipientParticipantId: context.recipient.participantId,
+      ...context.scope, ...(target.kind === 'root' ? { targetKind: 'root' as const } : { childSessionId: target.childSessionId }), recipientParticipantId: context.recipient.participantId,
       recipientInvocationRunId: context.recipient.invocationRunId, requestKey: this.env.uuid(), message,
       payloadBytes: utf8Bytes(message), createdAt: this.env.now()
     }
@@ -114,6 +114,7 @@ export class CollaborationController {
     await this.update(records => {
       this.env.current(connection); selected()
       if (records.some(item => item.storageIdentity === pending.storageIdentity && item.rootSessionId === pending.rootSessionId
+        && (item.targetKind ?? 'child') === (pending.targetKind ?? 'child')
         && item.childSessionId === pending.childSessionId)) throw new Error('此代理还有一条结果待核对的补充要求，请先核对原请求')
       return appendControllerPending(records, pending)
     })
@@ -189,10 +190,12 @@ export class CollaborationController {
       throw new Error('引擎实例已变化，原请求只能核对，不能重新发送')
     const receipt = await this.reconcile(connection, pending, selected)
     if (receipt.outcome !== 'not_found') return receipt
-    if (!await this.supported(connection)) throw new Error('当前引擎尚未启用运行中补充要求，原要求已保留')
-    const context = await this.context(connection, { rootRunId: pending.rootRunId, rootSessionId: pending.rootSessionId,
-      childSessionId: pending.childSessionId, invocationRunId: pending.recipientInvocationRunId }, selected)
+    if (!await this.supported(connection, pending.targetKind ?? 'child')) throw new Error('当前引擎尚未启用运行中补充要求，原要求已保留')
+    const target: ControllerTarget = { rootRunId: pending.rootRunId, rootSessionId: pending.rootSessionId,
+      ...(pending.targetKind === 'root' ? { kind: 'root' as const } : { childSessionId: pending.childSessionId! }), invocationRunId: pending.recipientInvocationRunId }
+    const context = await this.context(connection, target, selected)
     if (context.scope.rootAttemptId !== pending.rootAttemptId) throw new Error('主任务已切换工作轮次，不能重发原要求；请保留记录核对')
+    if (context.recipient.participantId !== pending.recipientParticipantId) throw new Error('原接收者已变化，不能重发原要求；请保留记录核对')
     return this.post(connection, pending, selected)
   }
   async inspectHistory(connection: ControllerConnection, saved: ControllerSavedRecord, selected: () => void): Promise<ControllerSavedRecord> {
@@ -225,6 +228,7 @@ export class CollaborationController {
       // Removing the newest record must not unexpectedly refill the editor
       // with an older requirement. The older texts remain discoverable here.
       const sameScope = (item: ControllerSavedRecord): boolean => item.storageIdentity === saved.storageIdentity && item.rootSessionId === saved.rootSessionId
+        && (item.targetKind ?? 'child') === (saved.targetKind ?? 'child')
         && item.childSessionId === saved.childSessionId && item.rootRunId === saved.rootRunId && item.recipientInvocationRunId === saved.recipientInvocationRunId
       const newest = [...records].reverse().find(sameScope)
       return records.filter(item => item.requestKey !== saved.requestKey).map(item => newest?.requestKey === saved.requestKey && sameScope(item) ? { ...item, draftDismissed: true } : item)

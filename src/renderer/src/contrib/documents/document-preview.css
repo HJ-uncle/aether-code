@@ -58,6 +58,30 @@
 
 .document-preview__pdf-shell { position: relative; display: block; margin: 0 auto; }
 .document-preview__pdf-shell canvas { position: absolute; inset: 0; margin: 0; }
+/* Minimal pdf.js 6 text geometry, scoped to our preview. The full viewer CSS
+   also installs annotation/editor UI and unrelated global rules. */
+.document-preview__pdf-text {
+  position: absolute; inset: 0; z-index: 1; overflow: clip; text-align: initial;
+  line-height: 1; letter-spacing: normal; word-spacing: normal; text-size-adjust: none;
+  forced-color-adjust: none; transform-origin: 0 0; user-select: text;
+  --scale-round-x: 1px; --scale-round-y: 1px; --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+.document-preview__pdf-text :is(span, br) { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0 0; user-select: text; }
+.document-preview__pdf-text > :not(.markedContent), .document-preview__pdf-text .markedContent span:not(.markedContent) {
+  z-index: 1; --font-height: 0; --scale-x: 1; --rotate: 0deg;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.document-preview__pdf-text .markedContent { display: contents; }
+.document-preview__pdf-text span[role='img'] { user-select: none; cursor: default; }
+.document-preview__pdf-text ::selection { color: transparent; background: color-mix(in srgb, var(--accent), transparent 65%); }
+.document-preview__pdf-text br::selection { background: transparent; }
+.document-preview__pdf-text[data-main-rotation='90'] { transform: rotate(90deg) translateY(-100%); }
+.document-preview__pdf-text[data-main-rotation='180'] { transform: rotate(180deg) translate(-100%, -100%); }
+.document-preview__pdf-text[data-main-rotation='270'] { transform: rotate(270deg) translateX(-100%); }
+.document-preview__pdf-text-notice { position: absolute; right: 8px; bottom: 8px; z-index: 2; padding: 3px 6px; border-radius: var(--radius); background: var(--bg-surface); color: var(--fg-muted); font-size: 12px; pointer-events: none; }
 .document-preview__toolbar--zoom { justify-content: flex-end; min-height: 36px; padding-block: 3px; }
 .document-preview__toolbar--pdf-tools { justify-content: space-between; gap: 8px; min-width: 0; }
 .document-preview__body--continuous { padding: 16px; overflow: auto; overscroll-behavior: contain; }

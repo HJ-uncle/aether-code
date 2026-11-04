@@ -145,6 +145,7 @@ export function ModelPicker({
         value={selectedValue}
         options={options}
         triggerLabel={label}
+        compactTriggerLabel="模型"
         title={selectedDescription}
         ariaLabel={ariaLabel}
         placement="up"

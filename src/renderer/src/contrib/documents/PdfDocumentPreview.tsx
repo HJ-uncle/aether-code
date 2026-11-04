@@ -3,6 +3,7 @@ import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist'
 import { acquirePdfDocument, type PdfLease } from './pdf-preview-session'
 import { cachePdfPageSize, cachedPdfPageSize, retainPdfPageBitmap, restorePdfPageBitmap } from './pdf-page-bitmap-cache'
 import { pdfPreviewRenderIdentity } from './pdf-preview-render'
+import { startPdfTextLayer, type PdfTextStatus } from './pdf-preview-text'
 import { DOCUMENT_LIMITS, ensureMapGetOrInsertComputed, pdfCanvasSize, previewErrorMessage } from './document-kind'
 import { PreviewMessage, PreviewZoom, usePreviewVisibility, usePreviewWidth, useStablePreviewWidth } from './preview-controls'
 
@@ -12,8 +13,9 @@ const PdfPage = memo(function PdfPage({ pdf, name, page, zoom, width, active, on
   pdf: PDFDocumentProxy; name: string; page: number; zoom: number; width: number; active: boolean
   onFailure: (error: string) => void; onActive: (page: number) => void
 }): JSX.Element {
-  const shell = useRef<HTMLDivElement>(null), canvas = useRef<HTMLCanvasElement>(null)
+  const shell = useRef<HTMLDivElement>(null), canvas = useRef<HTMLCanvasElement>(null), textLayer = useRef<HTMLDivElement>(null)
   const pageRequest = useRef(0)
+  const [visible, setVisible] = useState(false), [textStatus, setTextStatus] = useState<PdfTextStatus>('loading')
   const [near, setNear] = useState(page <= 2), [natural, setNatural] = useState(() => cachedPdfPageSize(pdf, page) ?? { width: 0, height: 0 }), [rendered, setRendered] = useState(0)
   const { scale, key: renderKey } = pdfPreviewRenderIdentity(zoom, width, natural.width, natural.height, devicePixelRatio || 1)
   const renderedKey = useRef('')
@@ -26,8 +28,14 @@ const PdfPage = memo(function PdfPage({ pdf, name, page, zoom, width, active, on
         if (entry.isIntersecting && entry.intersectionRatio >= 0.4) onActive(page)
       }
     }, { root: element.closest('.document-preview__body'), rootMargin: '700px 0px', threshold: [0, 0.4] })
+    // Bitmap prefetch keeps scrolling smooth. Text nodes exist only for pages
+    // actually in view, so long PDFs and hidden tabs do not retain every glyph.
+    const textObserver = new IntersectionObserver(entries => {
+      for (const entry of entries) setVisible(entry.isIntersecting)
+    }, { root: element.closest('.document-preview__body') })
     observer.observe(element)
-    return () => observer.disconnect()
+    textObserver.observe(element)
+    return () => { observer.disconnect(); textObserver.disconnect(); setVisible(false) }
   }, [page, onActive, active])
   useEffect(() => {
     if (natural.width) return
@@ -89,10 +97,26 @@ const PdfPage = memo(function PdfPage({ pdf, name, page, zoom, width, active, on
     }).finally(() => clearTimeout(timer))
     return () => { disposed = true; clearTimeout(timer); rendering?.cancel() }
   }, [pdf, page, scale, near, active, renderKey, onFailure])
+  useEffect(() => {
+    const target = textLayer.current
+    if (!active || !visible || !renderKey || !target) return
+    return startPdfTextLayer(target, async () => {
+      const [documentPage, library] = await Promise.all([pdf.getPage(page), import('pdfjs-dist/legacy/build/pdf.mjs')])
+      const viewport = documentPage.getViewport({ scale })
+      // pdf.js uses logical page units for its text geometry; canvas DPR must
+      // not multiply this overlay a second time.
+      return () => {
+        target.style.setProperty('--total-scale-factor', String(viewport.scale * viewport.userUnit))
+        return new library.TextLayer({ textContentSource: documentPage.streamTextContent(), container: target, viewport })
+      }
+    }, setTextStatus, DOCUMENT_LIMITS.parseTimeoutMs)
+  }, [pdf, page, scale, active, visible, renderKey])
   const size = { width: natural.width * scale, height: natural.height * scale }
   const shellStyle: CSSProperties = { width: size.width || undefined, height: size.height || undefined }
   return <div className="document-preview__pdf-shell" ref={shell} style={shellStyle} data-document-page={page}>
     <canvas aria-label={`${name} · 第 ${page} 页`} data-rendered-page={rendered} ref={canvas} />
+    <div className="document-preview__pdf-text textLayer" ref={textLayer} data-text-status={active && visible ? textStatus : 'inactive'} aria-label={`第 ${page} 页文字`} />
+    {active && visible && textStatus === 'unavailable' ? <span className="document-preview__pdf-text-notice" role="status">此页文字暂时无法选择</span> : null}
   </div>
 })
 

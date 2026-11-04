@@ -1,12 +1,13 @@
 import { useEffect, useRef } from 'react'
 import { request } from '../engine/client'
 import { getEngineSource, getExpectedEngine, getEngineStorageKey } from '../engine/source'
-import { getAppMode } from '../platform/app-mode'
+import { getAppMode, onAppModeChanged, type AppMode } from '../platform/app-mode'
 import { documentKey, getEditorState, getDocument, getDocumentIdentity, isDirty, isDocumentConnectionCurrent, onEditorChanged, openFile, type OpenDocument } from '../editor/editor-store'
 import { activateGroupTab, getEditorGroups } from '../editor/editor-groups'
 import { captureSessionFileTarget, type SessionFileTarget } from '../workspace/fs-client'
 import { getTerminalState, getSessionStatus } from '../../contrib/terminal/terminal-store'
 import { PREVIEW_FORMATS, WORKBENCH_ACTIONS, setWorkbenchConnected } from './capabilities'
+import { deferredWorkPreview, isWorkbenchOwnerCurrent } from './connection-scope'
 
 export interface WorkbenchCommand {
   requestId: string; sessionId: string; action: typeof WORKBENCH_ACTIONS[number]; args: { path?: string; line?: number; terminalId?: string; maxLines?: number }
@@ -100,7 +101,8 @@ export function codeWorkbenchAdapter(sessionId: string): WorkbenchAdapter {
       if (!current()) throw new Error('会话或引擎已切换，请重新读取工作台状态。')
       activateGroupTab(getEditorGroups().focusedGroupId, documentKey(doc.path))
       if (getEditorState().activePath !== doc.path) throw new Error('文件尚未激活，请重新读取工作台状态。')
-      return { path: doc.path, opened: true, dirty: isDirty(doc), contentSource: 'editor-buffer', readStatus: doc.tooLarge ? 'too-large' : doc.truncated ? 'partial' : 'ready', renderStatus: 'preview-requested', visualVerification: false }
+      const foreground = getAppMode() === 'code'
+      return { path: doc.path, opened: true, foreground, dirty: isDirty(doc), contentSource: 'editor-buffer', readStatus: doc.tooLarge ? 'too-large' : doc.truncated ? 'partial' : 'ready', renderStatus: foreground ? 'preview-requested' : 'deferred-until-visible', visualVerification: false }
     }
   }
 }
@@ -111,30 +113,33 @@ export function waitForWorkPreview(sessionId: string, path: string, current: () 
     let settled = false
     const finish = (value?: Record<string, unknown>, error?: Error) => {
       if (settled) return
-      settled = true; observer.disconnect(); clearTimeout(timer)
+      settled = true; observer.disconnect(); unsubscribeMode(); clearTimeout(timer)
       if (error) reject(error); else resolve(value!)
     }
     const check = () => {
       if (!current()) return finish(undefined, new Error('会话或引擎已切换，请重新查询工作台。'))
+      // Hidden Work panes intentionally suspend document reads. Keep the
+      // requested selection without stealing focus or claiming it was rendered.
+      if (getAppMode() !== 'work') return finish(deferredWorkPreview(path))
       const panel = [...document.querySelectorAll<HTMLElement>('[data-document-path][data-file-read-status]')]
         .find(item => item.dataset.documentSession === sessionId && item.dataset.documentPath === path && item.getClientRects().length > 0 && item.dataset.documentActive !== 'false'
           && (revision === undefined || item.dataset.workbenchRequest === String(revision)))
       if (!panel || panel.dataset.fileReadStatus === 'loading') return
       const readStatus = panel.dataset.fileReadStatus
       if (readStatus === 'unavailable' || readStatus === 'receipt') return finish(undefined, new Error('已打开预览位置，但无法读取当前文件。请检查文件路径或文件是否已变化。'))
-      finish({ path, opened: true, readStatus, renderStatus: 'preview-requested', visualVerification: false })
+      finish({ path, opened: true, foreground: true, readStatus, renderStatus: 'preview-requested', visualVerification: false })
     }
     const observer = new MutationObserver(check)
+    const unsubscribeMode = onAppModeChanged(check)
     const timer = setTimeout(() => finish(undefined, new Error('预览未及时确认。请查询工作台状态，不要把请求发出当作内容已显示。')), 10_000)
     observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-file-read-status', 'data-document-path', 'data-document-active', 'data-workbench-request', 'style', 'class'] })
     check()
   })
 }
 
-/** A connection is tied to one engine generation, foreground mode and selected session. */
-export function useWorkbenchClient(sessionId: string | null, enabled: boolean, adapter: WorkbenchAdapter): void {
+/** Each mounted mode retains its own session bridge while the other mode is visible. */
+export function useWorkbenchClient(sessionId: string | null, enabled: boolean, mode: AppMode, adapter: WorkbenchAdapter): void {
   const source = getEngineSource()
-  const mode = getAppMode()
   const latest = useRef({ adapter, sessionId, source, mode, enabled })
   latest.current = { adapter, sessionId, source, mode, enabled }
   useEffect(() => {
@@ -146,7 +151,7 @@ export function useWorkbenchClient(sessionId: string | null, enabled: boolean, a
     const owner = crypto.randomUUID()
     let retryDelay = 3000
     let unsupported = false
-    const current = () => !disposed && source === getEngineSource() && mode === getAppMode() && latest.current.sessionId === sessionId && latest.current.enabled
+    const current = () => isWorkbenchOwnerCurrent({ source, sessionId, mode, enabled }, latest.current, getEngineSource(), disposed)
     const send = async <T,>(path: string, body: unknown): Promise<T> => {
       const result = await request<T>({ method: 'POST', path, body, expectedEngine, toolProfile: mode === 'work' ? 'general' : 'code' })
       if (!result.ok) {
@@ -177,7 +182,7 @@ export function useWorkbenchClient(sessionId: string | null, enabled: boolean, a
             let result: { success: boolean; output: string; metadata: { code: string; operationPerformed: boolean | 'unknown' } }
             try {
               const data = command.action === 'workspace.context'
-                ? { ...await latest.current.adapter.context(), ...terminalSnapshot(sessionId), previewFormats: PREVIEW_FORMATS, actions: WORKBENCH_ACTIONS }
+                ? { ...await latest.current.adapter.context(), foreground: mode === getAppMode(), ...terminalSnapshot(sessionId), previewFormats: PREVIEW_FORMATS, actions: WORKBENCH_ACTIONS }
                 : command.action === 'terminal.read'
                   ? terminalSnapshot(sessionId, command.args.terminalId, command.args.maxLines)
                   : command.action === 'artifact.open' && typeof command.args.path === 'string'

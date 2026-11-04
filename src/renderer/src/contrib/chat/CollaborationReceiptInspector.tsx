@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type JSX } from 'react'
 import { request } from '@renderer/core/engine/client'
 import { captureControllerConnection } from '@renderer/core/engine/collaboration-controller'
-import { controllerConnectionIdentity, type ControllerTarget } from '@renderer/core/engine/collaboration-contract'
+import { controllerConnectionIdentity, type ControllerChildTarget } from '@renderer/core/engine/collaboration-contract'
 import { collaborationReceiptState, loadCollaborationInspection, type CollaborationInspection } from '@renderer/core/engine/collaboration-inspection'
 import { getEngineSource, getExpectedEngine } from '@renderer/core/engine/source'
 import { Spinner } from '@renderer/workbench/ui-primitives'
@@ -9,7 +9,7 @@ import './subagent-followup.css'
 
 /** No timer or background discovery: the user chooses which scoped page to inspect. */
 export function CollaborationReceiptInspector({ target, source, ready, visible }: {
-  target: ControllerTarget; source: number; ready: boolean; visible: boolean
+  target: ControllerChildTarget; source: number; ready: boolean; visible: boolean
 }): JSX.Element {
   const identity = JSON.stringify([source, target.rootRunId, target.rootSessionId, target.childSessionId, target.invocationRunId])
   const identityRef = useRef(identity), mounted = useRef(true), pending = useRef(false)

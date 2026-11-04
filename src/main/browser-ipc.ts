@@ -1,6 +1,6 @@
 import { ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { BROWSER_IPC, type BrowserConnectInput } from '../shared/browser-api'
-import type { BrowserAction, BrowserBoundsInput, BrowserContext, BrowserCreateInput, BrowserReadKind, BrowserSettings } from '../shared/browser'
+import type { BrowserAction, BrowserBoundsInput, BrowserContext, BrowserCreateInput, BrowserReadKind, BrowserSettings, BrowserSurfaceOwner } from '../shared/browser'
 import type { BrowserNetworkQuery, BrowserNetworkDetailOptions } from '../shared/browser-network'
 import { BrowserService } from './browser/service'
 import { BrowserEngineBridge } from './browser-bridge'
@@ -46,6 +46,7 @@ export function registerBrowserIpc(window: BrowserWindow): () => void {
     if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(channel, value)
   }
   const service = new BrowserService(() => window.isDestroyed() ? undefined : window, event => send(BROWSER_IPC.event, event))
+  service.resetSurface()
   const bridge = new BrowserEngineBridge(service, state => send(BROWSER_IPC.connection, state))
   const nativeHost = new NativeBrowserHostManager(service, () => engineHost.nativeBrowserHostTransports())
   const refreshNativeHost = (): void => { void nativeHost.refresh().catch(() => { /* Transport handshakes remain unavailable until their owner is ready. */ }) }
@@ -64,6 +65,7 @@ export function registerBrowserIpc(window: BrowserWindow): () => void {
         case 'list': value = service.list(); break
         case 'create': value = await service.create({ url: (args[0] as BrowserCreateInput | undefined)?.url, context: bridge.getContext() }, pendingBrowserEngine()); break
         case 'action': value = await service.action(args[0] as BrowserAction); break
+        case 'activateSurface': value = service.activateSurface(args[0] as BrowserSurfaceOwner); break
         case 'setBounds': {
           const input = args[0] as BrowserBoundsInput
           const zoom = event.sender.getZoomFactor()
@@ -117,7 +119,7 @@ export function registerBrowserIpc(window: BrowserWindow): () => void {
   // Reload removes the DOM geometry and its selected session until bootstrap completes again.
   window.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
     if (!isMainFrame || isInPlace) return
-    for (const tab of service.list()) service.setBounds({ tabId: tab.tabId, bounds: { x: 0, y: 0, width: 0, height: 0 }, visible: false })
+    service.resetSurface()
     bridge.disconnect()
   })
   return dispose

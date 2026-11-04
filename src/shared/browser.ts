@@ -64,8 +64,15 @@ export type BrowserEvent =
   | { type: 'focus-address'; tabId: string }
   | { type: 'focused'; tabId: string }
 
+export interface BrowserSurfaceOwner {
+  mode: 'code' | 'work'
+  /** Renderer-lifetime generation; a mode round trip never reuses old bounds. */
+  generation: number
+}
+
 export interface BrowserBoundsInput {
   tabId: string
+  surface?: BrowserSurfaceOwner
   bounds: { x: number; y: number; width: number; height: number }
   visible: boolean
   /** A fresh layout acknowledgement for a requested AI-visible tab. */

@@ -5,6 +5,8 @@ import { cacheOfficePreview, getOfficePreview, type CachedOfficePreview } from '
 import { documentFrame, passiveDocumentHtml } from './document-html'
 import { PreviewMessage, PreviewZoom, usePreviewWidth, useStablePreviewWidth } from './preview-controls'
 import { readPptxNotesForPreview, type PptxNotesPreview } from './pptx-notes'
+import { bridgeFrameSelection } from './document-selection'
+import { officeVisiblePage } from './office-visible-page'
 
 const PAGE_GAP = 16
 const RECENT_PAGES = 3
@@ -21,6 +23,9 @@ function ContinuousPage({ html, name, index, scale, height, retained, active, on
   // Changing srcdoc navigates the child document and decodes every image again.
   // Only this trusted parent changes zoom; the sandbox never enables scripts.
   const srcDoc = useMemo(() => documentFrame(html, name, 1), [html, name])
+  useEffect(() => {
+    return frame.current && retained && active ? bridgeFrameSelection(frame.current) : undefined
+  }, [retained, active, srcDoc])
   useEffect(() => {
     const child = frame.current
     if (!child || !retained || !active) return
@@ -49,7 +54,7 @@ function ContinuousPage({ html, name, index, scale, height, retained, active, on
   }, [retained, active, srcDoc, index])
   useLayoutEffect(() => { resize.current?.() }, [scale])
   return <div className="document-preview__continuous-page" data-document-page={index + 1} style={{ height }}>
-    {retained ? <iframe ref={frame} className="document-preview__frame" sandbox="allow-same-origin" referrerPolicy="no-referrer"
+    {retained ? <iframe ref={frame} className="document-preview__frame" sandbox="allow-same-origin" referrerPolicy="no-referrer" data-document-selection-frame="true"
       title={`${name} · 第 ${index + 1} 页`} srcDoc={srcDoc} /> : null}
   </div>
 }
@@ -78,14 +83,18 @@ export default function OfficeDocumentPreview({ data, kind, name, sessionKey, ac
     const controller = new AbortController()
     const timer = setTimeout(() => { setState({ error: '此文档预览准备超时，请重试预览；若仍失败，请让 Aether 检查文件完整性。' }); controller.abort() }, DOCUMENT_LIMITS.parseTimeoutMs)
     void (async () => {
-      const buffer = await prepareOfficeArchiveOffThread(data, kind, controller.signal)
+      let buffer: ArrayBuffer
       let pages: string[]
       if (kind === 'pptx') {
-        const { pptxToHtml } = await import('@jvmr/pptx-to-html')
+        const [prepared, { pptxToHtml }] = await Promise.all([
+          prepareOfficeArchiveOffThread(data, kind, controller.signal), import('@jvmr/pptx-to-html')])
+        buffer = prepared
         controller.signal.throwIfAborted()
         pages = await pptxToHtml(buffer, { width: 960, height: 540, scaleToFit: true, letterbox: false })
       } else {
-        const { parseAsync, renderDocument } = await import('docx-preview')
+        const [prepared, { parseAsync, renderDocument }] = await Promise.all([
+          prepareOfficeArchiveOffThread(data, kind, controller.signal), import('docx-preview')])
+        buffer = prepared
         const options = { inWrapper: false, ignoreFonts: true, useBase64URL: true, renderAltChunks: false,
           renderComments: false, experimental: false, breakPages: true, ignoreLastRenderedPageBreak: false }
         controller.signal.throwIfAborted()
@@ -166,12 +175,8 @@ export default function OfficeDocumentPreview({ data, kind, name, sessionKey, ac
     let frame = 0
     const update = (): void => {
       frame = 0
-      const center = element.scrollTop + element.clientHeight * 0.35
-      let accumulated = PAGE_GAP
-      for (let index = 0; index < pages.length; index++) {
-        accumulated += pageHeight(pageHeights[index] ?? estimatedHeight, scale) + PAGE_GAP
-        if (accumulated >= center) { setVisiblePage(index + 1); break }
-      }
+      setVisiblePage(officeVisiblePage(element.scrollTop, element.clientHeight, element.scrollHeight,
+        pages.map((_page, index) => pageHeight(pageHeights[index] ?? estimatedHeight, scale)), PAGE_GAP))
     }
     const scroll = (): void => { if (!frame) frame = requestAnimationFrame(update) }
     element.addEventListener('scroll', scroll, { passive: true })

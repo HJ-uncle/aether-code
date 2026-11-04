@@ -181,7 +181,7 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
           type="button"
           className={`composer-options__trigger${isOpen ? ' is-open' : ''}`}
           disabled={!ready}
-          title="对话偏好：本会话记忆 / 思考档位 / 安全模式"
+          title={`对话偏好：${secDescriptor?.label ?? '访问权限尚未确认'} / 本会话记忆 / 思考档位`}
           aria-label="对话偏好"
         >
           <Icon name="settings" size={16} />
@@ -189,6 +189,13 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
       )}
     >
       <div className="composer-options__popup">
+        <div className="composer-options__row composer-options__model-summary">
+          <Icon name="brain" size={16} />
+          <div className="composer-options__text">
+            <div className="composer-options__title">当前模型</div>
+            <div className="composer-options__summary">{currentModel?.displayName || currentModel?.modelId || modelId || '跟随引擎配置'}</div>
+          </div>
+        </div>
         <div className="composer-options__row">
           <Icon name="graph" size={16} />
           <div className="composer-options__text">

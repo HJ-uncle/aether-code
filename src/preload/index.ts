@@ -107,6 +107,7 @@ const browserApi: BrowserApi = {
   list: () => invokeBrowser('list'),
   create: input => invokeBrowser('create', input),
   action: input => invokeBrowser('action', input),
+  activateSurface: owner => invokeBrowser('activateSurface', owner),
   setBounds: input => invokeBrowser('setBounds', input),
   close: tabId => invokeBrowser('close', tabId),
   share: (tabId, expectedContext) => invokeBrowser('share', tabId, expectedContext),

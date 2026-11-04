@@ -13,7 +13,11 @@ export interface ControllerParticipant {
   participantId: string; parentParticipantId?: string; kind: 'root' | 'child'
   sessionId: string; invocationRunId: string; admittedSeq: number; admittedAt: number
 }
-export interface ControllerTarget { rootRunId: string; rootSessionId: string; childSessionId: string; invocationRunId: string }
+export type ControllerTarget = { rootRunId: string; rootSessionId: string } & (
+  { kind?: 'child'; childSessionId: string; invocationRunId: string }
+  | { kind: 'root'; invocationRunId?: string }
+)
+export type ControllerChildTarget = Extract<ControllerTarget, { kind?: 'child' }>
 export interface ControllerContext { scope: ControllerScope; recipient: ControllerParticipant }
 export interface ControllerReceipt {
   messageId: string; rootRunId: string; rootAttemptId: string; senderParticipantId: string; senderInvocationRunId: string
@@ -22,7 +26,7 @@ export interface ControllerReceipt {
 }
 export interface ControllerPending extends ControllerScope {
   version: 1; expectedEngine: NonNullable<EngineRequestInput['expectedEngine']>; storageIdentity: string
-  childSessionId: string; recipientParticipantId: string; recipientInvocationRunId: string
+  targetKind?: 'root' | 'child'; childSessionId?: string; recipientParticipantId: string; recipientInvocationRunId: string
   requestKey: string; message: string; payloadBytes: number; createdAt: number
 }
 export type ControllerSavedRecord = ControllerPending & { draftDismissed?: boolean } & (
@@ -42,15 +46,22 @@ function scope(value: unknown): value is ControllerScope {
   return record(value) && identifier(value.rootRunId) && identifier(value.rootAttemptId) && identifier(value.rootSessionId)
 }
 export function validateControllerTarget(value: ControllerTarget): void {
-  if (![value.rootRunId, value.rootSessionId, value.childSessionId, value.invocationRunId].every(identifier))
+  if (![value.rootRunId, value.rootSessionId].every(identifier)
+    || (value.kind === 'root' ? value.invocationRunId !== undefined && !identifier(value.invocationRunId)
+      : (value.kind !== undefined && value.kind !== 'child') || !identifier(value.childSessionId) || !identifier(value.invocationRunId)))
     throw new Error('协作代理标识无效，请刷新代理状态')
 }
 export function validateControllerMessage(value: string): void {
   if (!value.trim() || utf8Bytes(value) > CONTROLLER_MESSAGE_BYTES) throw new Error('补充要求不能为空，且不能超过 32 KB')
 }
-export function parseControllerCapability(value: unknown): boolean {
-  if (!record(value) || typeof value.userControllerMutation !== 'boolean') throw new Error('协作能力响应无效')
-  return value.userControllerMutation
+export function parseControllerCapability(value: unknown, kind: 'child' | 'root' = 'child'): boolean {
+  if (!record(value)) throw new Error('协作能力响应无效')
+  const capability = kind === 'root' ? value.rootUserControllerMutation : value.userControllerMutation
+  // Older engines expose child capability only. They must not implicitly opt
+  // the main composer into root delivery.
+  if (kind === 'root' && capability === undefined) return false
+  if (typeof capability !== 'boolean') throw new Error('协作能力响应无效')
+  return capability
 }
 function participant(value: unknown): value is ControllerParticipant {
   return record(value) && identifier(value.participantId) && (value.parentParticipantId === undefined || identifier(value.parentParticipantId))
@@ -67,10 +78,13 @@ export function parseControllerContext(value: unknown, target: ControllerTarget)
     || (value.participants.nextCursor !== undefined && (typeof value.participants.nextCursor !== 'string' || value.participants.nextCursor.length > 8192))
     || !participant(value.recipient)) throw new Error('协作上下文响应无效，请刷新代理状态')
   const result = { scope: value.scope, recipient: value.recipient }
-  if (result.scope.rootRunId !== target.rootRunId || result.scope.rootSessionId !== target.rootSessionId
-    || result.recipient.kind !== 'child' || result.recipient.participantId !== `child:${target.childSessionId}`
-    || result.recipient.sessionId !== target.childSessionId || result.recipient.invocationRunId !== target.invocationRunId)
-    throw new Error('子代理已切换工作轮次，请刷新后重新确认补充要求')
+  const recipientMatches = target.kind === 'root'
+    ? result.recipient.kind === 'root' && result.recipient.sessionId === target.rootSessionId
+      && (target.invocationRunId === undefined || result.recipient.invocationRunId === target.invocationRunId)
+    : result.recipient.kind === 'child' && result.recipient.participantId === `child:${target.childSessionId}`
+      && result.recipient.sessionId === target.childSessionId && result.recipient.invocationRunId === target.invocationRunId
+  if (result.scope.rootRunId !== target.rootRunId || result.scope.rootSessionId !== target.rootSessionId || !recipientMatches)
+    throw new Error(`${target.kind === 'root' ? '主任务' : '子代理'}已切换工作轮次，请刷新后重新确认补充要求`)
   return result
 }
 /** Public receipt reads contain immutable acceptance evidence, never message bodies. */
@@ -110,7 +124,8 @@ export function parseControllerPending(value: unknown): ControllerPending {
     || typeof value.expectedEngine.baseUrl !== 'string' || value.expectedEngine.baseUrl.length > 4096
     || (value.expectedEngine.instanceId !== undefined && !identifier(value.expectedEngine.instanceId))
     || (value.expectedEngine.accountId !== undefined && value.expectedEngine.accountId !== null && !identifier(value.expectedEngine.accountId))
-    || !identifier(value.childSessionId) || value.recipientParticipantId !== `child:${value.childSessionId}`
+    || (value.targetKind === 'root' ? value.childSessionId !== undefined
+      : (value.targetKind !== undefined && value.targetKind !== 'child') || !identifier(value.childSessionId) || value.recipientParticipantId !== `child:${value.childSessionId}`)
     || !identifier(value.recipientParticipantId) || !identifier(value.recipientInvocationRunId) || !identifier(value.requestKey)
     || typeof value.message !== 'string' || !value.message.trim() || utf8Bytes(value.message) > CONTROLLER_MESSAGE_BYTES
     || value.payloadBytes !== utf8Bytes(value.message) || !integer(value.createdAt)
@@ -163,6 +178,7 @@ export function parseControllerHistory(raw: string | null): ControllerSavedRecor
 
 export function sameControllerPending(a: ControllerPending, b: ControllerPending): boolean {
   return controllerConnectionIdentity(a.expectedEngine) === controllerConnectionIdentity(b.expectedEngine)
+    && (a.targetKind ?? 'child') === (b.targetKind ?? 'child')
     && (['version', 'storageIdentity', 'rootRunId', 'rootAttemptId', 'rootSessionId', 'childSessionId', 'recipientParticipantId',
       'recipientInvocationRunId', 'requestKey', 'message', 'payloadBytes', 'createdAt'] as const).every(key => a[key] === b[key])
 }

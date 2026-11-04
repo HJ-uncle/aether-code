@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import type {
   BrowserAction, BrowserBoundsInput, BrowserClickInteraction, BrowserConsoleEntry, BrowserContext, BrowserCreateInput,
   BrowserElement, BrowserEvent, BrowserExecutionIdentity, BrowserReadKind, BrowserScreenshot,
-  BrowserSettings, BrowserSnapshot, BrowserTabState, BrowserToolRequest, BrowserToolResult, BrowserUnavailableSnapshot, BrowserViewportScreenshot
+  BrowserSettings, BrowserSnapshot, BrowserSurfaceOwner, BrowserTabState, BrowserToolRequest, BrowserToolResult, BrowserUnavailableSnapshot, BrowserViewportScreenshot
 } from '../../shared/browser'
 import { BrowserSettingsStore } from './settings'
 import { BrowserNetworkCollector } from './network-collector'
@@ -14,6 +14,7 @@ import type { BrowserConnectInput } from '../../shared/browser-api'
 import { browserError, clampBounds, contextsMatch, normalizeBrowserUrl, pendingBrowserEngineMatches, validateContext, validateViewport, validateZoom } from './validation'
 import { BrowserInputQueueError, OwnedBrowserInputQueue, type BrowserInputLease } from './owned-input-queue'
 import { BrowserLocalFiles, isLocalFileUrl, type LocalBrowserGrant } from './local-files'
+import { BrowserSurfaceOwnership } from './surface-ownership'
 
 interface BrowserEntry {
   owner: BrowserWindow
@@ -151,6 +152,7 @@ export class BrowserService {
   private readonly localPartition = `aether-local-browser-${randomUUID()}`
   private readonly localFiles = new BrowserLocalFiles()
   private readonly inputQueue = new OwnedBrowserInputQueue()
+  private readonly surfaceOwnership = new BrowserSurfaceOwnership()
   private disposed = false
 
   constructor(private readonly getWindow: () => BrowserWindow | undefined, private readonly emit: (event: BrowserEvent) => void) {}
@@ -257,7 +259,27 @@ export class BrowserService {
     return this.state(entry)
   }
 
+  activateSurface(owner: BrowserSurfaceOwner): void {
+    if (this.surfaceOwnership.activate(owner)) this.hideSurfaces()
+  }
+
+  resetSurface(): void {
+    this.surfaceOwnership.reset()
+    this.hideSurfaces()
+  }
+
+  private hideSurfaces(): void {
+    for (const entry of this.tabs.values()) {
+      entry.layoutVersion++
+      entry.visible = false
+      entry.view.setVisible(false)
+    }
+  }
+
   setBounds(input: BrowserBoundsInput): void {
+    // Old RAFs and async hide requests cannot show the previous mode's page or
+    // hide a page after the user has switched back to a newer generation.
+    if (!this.surfaceOwnership.accepts(input.surface)) return
     const entry = this.entry(input.tabId)
     const layoutVersion = ++entry.layoutVersion
     const [width, height] = entry.owner.getContentSize()

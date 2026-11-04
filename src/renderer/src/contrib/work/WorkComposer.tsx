@@ -17,7 +17,9 @@ import {
 } from '@renderer/contrib/chat/context-presentation'
 import { DEFAULT_CONTEXT_WINDOW_BUDGET } from '@renderer/core/engine/models'
 import { ModelPicker } from '@renderer/contrib/models/ModelPicker'
-import { preserveMentions } from '@renderer/contrib/chat/mention-context'
+import { preserveMentions, userMessageDraft } from '@renderer/contrib/chat/mention-context'
+import { RootFollowupDelivery, RootFollowupFeedback, useRootFollowup } from '@renderer/contrib/chat/RootFollowup'
+import { rootFollowupLimitation, rootFollowupMessage, rootFollowupRun } from '@renderer/contrib/chat/root-followup'
 import { MentionRefPicker } from '@renderer/contrib/chat/MentionRefPicker'
 import { ResourcePicker, type ResourceItem } from '@renderer/contrib/chat/ResourcePicker'
 import { WorkComposerPreferences } from './WorkComposerPreferences'
@@ -28,7 +30,7 @@ import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/so
 import { WorkAgentManager } from './WorkAgentManager'
 import { CompletionPopover } from '@renderer/workbench/CompletionPopover'
 import type { useWorkController } from './work-runtime'
-import { flushWorkDrafts, useWorkDraft, type WorkDraft } from './work-state'
+import { flushWorkDrafts, getWorkDraft, useWorkDraft, type WorkDraft } from './work-state'
 import {
   AttachmentChip,
   AttachmentPreviewDialog,
@@ -72,8 +74,13 @@ export function WorkComposer({
   taskLiveRef.current = controller.activeTask?.id ?? 'home'
   const awaitingAnswer = controller.pending.length > 0
   const taskActive = !home && (controller.streaming || controller.launching || awaitingAnswer || ['running', 'waiting'].includes(controller.activeTask?.status ?? ''))
+  const followupRun = useMemo(() => rootFollowupRun(controller.messages, controller.activeTask?.id ?? null, controller.workspaceRunId), [controller.messages, controller.activeTask?.id, controller.workspaceRunId])
+  const rootAccepting = taskActive && !controller.stopping && Boolean(followupRun && ['running', 'waiting'].includes(followupRun.status))
+  const rootFollowup = useRootFollowup({ sessionId: controller.activeTask?.id ?? null, rootRunId: followupRun?.runId,
+    source: getEngineSource(), active: rootAccepting, ready: controller.ready && controller.historyReady && appMode === 'work', toolProfile: 'general' })
+  const immediateIntent = taskActive && rootFollowup.delivery === 'current'
   const busy = controller.streaming || controller.uploading || controller.loading || !controller.historyReady || awaitingAnswer || controller.messageActionBusy
-  const queueIntent = !home && (taskActive || controller.nextTurnQueue.pendingCount > 0 || controller.nextTurnQueue.state?.entries.some(entry => ['dispatching', 'admission-unknown', 'accepted'].includes(entry.phase))) && !controller.pendingInitialStart
+  const queueIntent = !home && !immediateIntent && (taskActive || controller.nextTurnQueue.pendingCount > 0 || controller.nextTurnQueue.state?.entries.some(entry => ['dispatching', 'admission-unknown', 'accepted'].includes(entry.phase))) && !controller.pendingInitialStart
   const queueBusy = controller.uploading || controller.loading || !controller.historyReady || controller.nextTurnQueue.saving || !controller.nextTurnQueue.ready
   const canAddFiles = controller.ready && !(queueIntent ? queueBusy : taskActive || busy)
   const addFiles = (files: File[]): void => {
@@ -97,7 +104,30 @@ export function WorkComposer({
     controller.modelId || controller.defaultModelId,
     DEFAULT_CONTEXT_WINDOW_BUDGET
   )
+  const resolveRootFollowup = (operation: () => Promise<boolean>, sentMessage: string): void => {
+    const sessionId = controller.activeTask?.id
+    if (!sessionId) return
+    const source = getEngineSource(), original = getWorkDraft(controller.draftSource, sessionId), revision = draftRevisionRef.current
+    let sameDraft = false
+    try { sameDraft = rootFollowupMessage(original.text, original.mentions, controller.attachments) === sentMessage } catch { /* Keep later attachment edits. */ }
+    flushWorkDrafts(controller.draftSource)
+    void operation().then(accepted => {
+      if (!accepted || !sameDraft || source !== getEngineSource() || taskLiveRef.current !== sessionId || draftRevisionRef.current !== revision
+        || getWorkDraft(controller.draftSource, sessionId) !== original) return
+      controller.setDraft('', []); inputRef.current?.clear(); mentionsRef.current = []; draftLiveRef.current = ''
+      flushWorkDrafts(controller.draftSource)
+    })
+  }
   const submit = (): void => {
+    if (rootFollowup.busy || rootFollowup.pending || controller.stopping) return
+    if (immediateIntent) {
+      if (mentionQuery !== null || resourceQuery !== null || !draft.trim() || !controller.ready || controller.uploading || controller.loading || !controller.historyReady || !rootAccepting || !rootFollowup.capability) return
+      let message: string
+      try { message = rootFollowupMessage(draft, mentionsRef.current, controller.attachments) }
+      catch (cause) { reportError(cause); return }
+      resolveRootFollowup(() => rootFollowup.send(message), message)
+      return
+    }
     if (mentionQuery !== null || resourceQuery !== null || (!draft.trim() && !controller.attachments.length) || !controller.ready || (queueIntent ? queueBusy : taskActive || busy)) return
     flushWorkDrafts(controller.draftSource)
     void (
@@ -428,6 +458,7 @@ export function WorkComposer({
                 onChange={queueIntent ? controller.setNextQueueModel : controller.setModel}
                 disabled={
                   !controller.ready ||
+                  immediateIntent ||
                   !controller.modelReady ||
                   (!queueIntent && controller.streaming) ||
                   controller.loading ||
@@ -435,20 +466,31 @@ export function WorkComposer({
                 }
                 onManage={() => openAppSettings('models')}
               />
+              {taskActive ? <RootFollowupDelivery controller={rootFollowup} disabled={controller.stopping || !controller.ready} /> : null}
               {/* The task heading owns cancellation; this action only submits the saved draft. */}
               <ComposerSend
                 className="work-send"
-                label={queueIntent ? '排到下一轮' : home ? '开始任务' : '发送'}
-                loading={queueIntent ? controller.nextTurnQueue.saving : !taskActive && controller.loading}
-                loadingLabel={queueIntent ? '正在加入下一轮…' : '正在发送…'}
+                label={immediateIntent ? '立即补充' : queueIntent ? '排到下一轮' : home ? '开始任务' : '发送'}
+                loading={rootFollowup.busy || (queueIntent ? controller.nextTurnQueue.saving : !taskActive && controller.loading)}
+                loadingLabel={immediateIntent ? '正在提交补充…' : queueIntent ? '正在加入下一轮…' : '正在发送…'}
                 onClick={submit}
                 disabled={
-                  (queueIntent ? queueBusy : taskActive || busy) || !controller.ready || (!draft.trim() && !controller.attachments.length)
+                  controller.stopping || Boolean(rootFollowup.pending) || (immediateIntent
+                    ? controller.uploading || controller.loading || !controller.historyReady || !rootAccepting || !rootFollowup.capability || Boolean(rootFollowupLimitation(mentionsRef.current, controller.attachments))
+                    : queueIntent ? queueBusy : taskActive || busy) || !controller.ready || (!draft.trim() && !controller.attachments.length)
                 }
               />
             </>
           }
         />
+        <RootFollowupFeedback controller={rootFollowup} active={taskActive} limitation={!rootAccepting && taskActive ? '正在确认当前任务是否可接收补充，草稿已保留。' : rootFollowupLimitation(mentionsRef.current, controller.attachments)}
+          onResolve={resolveRootFollowup}
+          canRestore={!draft.trim() && !controller.attachments.length} onRestore={message => {
+            if (draftLiveRef.current.trim()) return
+            const recovered = userMessageDraft(message)
+            draftRevisionRef.current += 1; draftLiveRef.current = recovered.text; mentionsRef.current = recovered.mentions
+            controller.setDraft(recovered.text, recovered.mentions); inputRef.current?.setDraft(recovered.text, recovered.mentions)
+          }} />
         {mentionQuery !== null && appMode === 'work' ? (
           <CompletionPopover
             anchorRef={composerRef}
@@ -511,6 +553,8 @@ export function WorkComposer({
         <span>
           {!controller.ready
             ? '引擎尚未就绪，草稿会保留。'
+            : immediateIntent
+              ? 'Shift + Enter 换行 · 立即补充沿用当前任务的模型和配置'
             : queueIntent
               ? 'Enter 排到下一轮 · 当前执行不变 · 可编辑或暂停待发'
               : taskActive

@@ -1,7 +1,7 @@
 import type { EngineRequestInput, EngineRequestResult } from '@shared/ipc'
 import { checkCursorPage, type CheckedCursorPage } from './history-page'
 import { parseControllerContext, parseControllerReceiptEvidence, record, validateControllerTarget,
-  type ControllerScope, type ControllerTarget, type ControllerReceipt } from './collaboration-contract'
+  type ControllerScope, type ControllerChildTarget, type ControllerReceipt } from './collaboration-contract'
 
 export const COLLABORATION_RECEIPT_PAGE_SIZE = 24
 export interface CollaborationInspectionCapabilities {
@@ -13,7 +13,7 @@ export interface CollaborationInspectionCapabilities {
   userControllerMutation: boolean
 }
 export interface CollaborationInspection {
-  target: ControllerTarget
+  target: ControllerChildTarget
   capabilities: CollaborationInspectionCapabilities
   scope: ControllerScope
   page: CheckedCursorPage<ControllerReceipt>
@@ -40,7 +40,7 @@ export function parseCollaborationReceiptPage(raw: unknown, scope: ControllerSco
 }
 
 /** An explicit read pins the attempt once. Later pages retain its immutable prefix. */
-export async function loadCollaborationInspection(target: ControllerTarget, request: CollaborationInspectionRequest,
+export async function loadCollaborationInspection(target: ControllerChildTarget, request: CollaborationInspectionRequest,
   verify: () => void, previous?: CollaborationInspection): Promise<CollaborationInspection> {
   validateControllerTarget(target)
   const checkedRequest = async (input: EngineRequestInput): Promise<EngineRequestResult<unknown>> => {

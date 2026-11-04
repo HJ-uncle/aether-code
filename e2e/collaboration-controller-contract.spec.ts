@@ -421,3 +421,118 @@ test('history cannot be queried by a different account or applied after selectio
   await expect(f.controller.inspectHistory(connection, saved, f.selected)).rejects.toThrow('stale selection')
   expect(f.controller.history()[0]).toMatchObject({ receipt: { state: 'queued' } })
 })
+
+const rootTarget: ControllerTarget = { kind: 'root', rootRunId: 'root', rootSessionId: 'parent' }
+function rootContext(invocationRunId = 'root-invocation', rootAttemptId = 'attempt', participantId = 'root:root'): unknown {
+  return { outcome: 'ready', scope: { rootRunId: 'root', rootSessionId: 'parent', rootAttemptId },
+    participants: { entries: [], revision: 4, hasMore: false },
+    recipient: { participantId, kind: 'root', sessionId: 'parent', invocationRunId, admittedSeq: 1, admittedAt: 1 } }
+}
+function rootFixture() {
+  const f = fixture()
+  f.setRequest(async input => {
+    if (input.path.endsWith('/capabilities')) return ok({ userControllerMutation: false, rootUserControllerMutation: true, rootControllerDelivery: 'next-model-iteration' })
+    if (input.path.endsWith('/controller-context')) return ok(rootContext())
+    if (input.method === 'POST') return ok({ outcome: 'accepted', receipt: receipt(f.controller.records().find(item => item.requestKey === (input.body as { requestKey: string }).requestKey)!) })
+    return { ok: false, code: 404, message: '', data: { outcome: 'not_found', requestKey: input.path.split('/').at(-1) } }
+  })
+  return f
+}
+
+test('root capability is separate, strict, and defaults off for an older child-only engine', () => {
+  expect(parseControllerCapability({ userControllerMutation: true }, 'root')).toBe(false)
+  expect(parseControllerCapability({ userControllerMutation: true, rootUserControllerMutation: false }, 'root')).toBe(false)
+  expect(parseControllerCapability({ userControllerMutation: false, rootUserControllerMutation: true }, 'root')).toBe(true)
+  for (const rootUserControllerMutation of [null, 1, 'true']) expect(() => parseControllerCapability({ rootUserControllerMutation }, 'root')).toThrow('能力响应无效')
+})
+
+test('Code and Work root sends discover the exact server receiver without guessing its invocation', async () => {
+  for (const toolProfile of ['code', 'general'] as const) {
+    const f = rootFixture(), conn = { ...connection, toolProfile }; f.setConnection(conn)
+    expect(await f.controller.supported(conn)).toBe(false)
+    expect(await f.controller.submit(conn, rootTarget, '补充当前任务', f.selected)).toMatchObject({ outcome: 'accepted', receipt: { state: 'queued' } })
+    expect(f.calls.find(input => input.path.endsWith('/controller-context'))?.query).toEqual({ rootSessionId: 'parent' })
+    const posts = f.calls.filter(input => input.method === 'POST')
+    expect(posts).toHaveLength(1)
+    expect(posts[0]).toMatchObject({ query: { rootSessionId: 'parent', rootAttemptId: 'attempt' }, toolProfile,
+      body: { recipientParticipantId: 'root:root', recipientInvocationRunId: 'root-invocation', message: '补充当前任务', requestKey: 'key-1' } })
+    expect(Object.keys(posts[0].body as object).sort()).toEqual(['message', 'recipientInvocationRunId', 'recipientParticipantId', 'requestKey'])
+    const saved = new CollaborationController(f.env).history()[0]
+    expect(saved).toMatchObject({ kind: 'accepted', targetKind: 'root', rootRunId: 'root', recipientInvocationRunId: 'root-invocation' })
+    expect(saved).not.toHaveProperty('childSessionId'); expect(saved.receipt).not.toHaveProperty('consumed')
+    expect(f.controller.records()).toEqual([])
+  }
+})
+
+test('root context rejects a child, another session, another root or a changed exact invocation', () => {
+  expect(parseControllerContext(rootContext(), rootTarget).recipient.invocationRunId).toBe('root-invocation')
+  for (const invalid of [context(), { ...(rootContext() as object), recipient: { participantId: 'root:root', kind: 'root', sessionId: 'other', invocationRunId: 'root-invocation', admittedSeq: 1, admittedAt: 1 } },
+    { ...(rootContext() as object), scope: { rootRunId: 'other', rootSessionId: 'parent', rootAttemptId: 'attempt' } }])
+    expect(() => parseControllerContext(invalid, rootTarget)).toThrow('切换工作轮次')
+  expect(() => parseControllerContext(rootContext('next-invocation'), { ...rootTarget, invocationRunId: 'root-invocation' })).toThrow('切换工作轮次')
+})
+
+test('ambiguous root acceptance survives restart and resolves its original key with GET only', async () => {
+  const f = rootFixture()
+  f.setRequest(async input => input.method === 'POST' ? { ok: false, code: 503, message: 'unknown', data: { outcome: 'unknown' } }
+    : input.path.endsWith('/controller-context') ? ok(rootContext()) : ok({ userControllerMutation: false, rootUserControllerMutation: true }))
+  expect(await f.controller.submit(connection, rootTarget, '追加原文', f.selected)).toMatchObject({ outcome: 'unknown' })
+  const restarted = new CollaborationController(f.env), original = restarted.records()[0]
+  expect(original).toMatchObject({ targetKind: 'root', message: '追加原文', requestKey: 'key-1', recipientInvocationRunId: 'root-invocation' })
+  expect(original).not.toHaveProperty('childSessionId')
+  f.setRequest(async () => ok({ outcome: 'accepted', receipt: receipt(original) }))
+  expect(await restarted.reconcile(connection, original, f.selected)).toMatchObject({ outcome: 'accepted' })
+  expect(f.calls.filter(input => input.method === 'POST')).toHaveLength(1)
+  expect(f.calls.at(-1)?.path).toBe('/collaboration/roots/root/controller-receipts/key-1')
+})
+
+test('root retry cannot retarget a new invocation, attempt or recipient after an explicit not-found', async () => {
+  for (const changed of [rootContext('next-invocation'), rootContext('root-invocation', 'next-attempt'), rootContext('root-invocation', 'attempt', 'different-root-participant')]) {
+    const f = rootFixture()
+    f.setRequest(async input => input.method === 'POST' ? { ok: false, code: 503, message: 'unknown', data: null }
+      : input.path.endsWith('/controller-context') ? ok(rootContext()) : ok({ rootUserControllerMutation: true }))
+    await f.controller.submit(connection, rootTarget, '追加原文', f.selected)
+    const original = f.controller.records()[0]
+    f.setRequest(async input => input.path.endsWith('/controller-context') ? ok(changed) : input.path.endsWith('/capabilities') ? ok({ rootUserControllerMutation: true })
+      : { ok: false, code: 404, message: '', data: { outcome: 'not_found', requestKey: original.requestKey } })
+    await expect(f.controller.retry(connection, original, f.selected)).rejects.toThrow()
+    expect(f.calls.filter(input => input.method === 'POST')).toHaveLength(1)
+    expect(f.controller.records()).toEqual([original])
+    expect(f.calls.filter(input => input.path.endsWith('/controller-context')).every(input => !('recipientParticipantId' in (input.query ?? {})))).toBe(true)
+  }
+})
+
+test('root unknown blocks duplicate root sends without preventing an independent child delivery', async () => {
+  const f = rootFixture()
+  f.setRequest(async input => {
+    if (input.path.endsWith('/capabilities')) return ok({ userControllerMutation: true, rootUserControllerMutation: true })
+    if (input.path.endsWith('/controller-context')) return ok(input.query?.recipientParticipantId ? context() : rootContext())
+    return { ok: false, code: 503, message: 'unknown', data: null }
+  })
+  await f.controller.submit(connection, rootTarget, '主任务追加', f.selected)
+  await expect(f.controller.submit(connection, rootTarget, '不能重复发送', f.selected)).rejects.toThrow('先核对原请求')
+  await f.controller.submit(connection, target, '子任务追加', f.selected)
+  expect(f.controller.records().map(item => item.targetKind ?? 'child')).toEqual(['root', 'child'])
+  expect(f.calls.filter(input => input.method === 'POST')).toHaveLength(2)
+})
+
+test('root selection changes and an older capability never dispatch or clear a draft', async () => {
+  const f = rootFixture()
+  f.setRequest(async input => {
+    if (input.path.endsWith('/controller-context')) { f.setSelected(false); return ok(rootContext()) }
+    return ok({ rootUserControllerMutation: true })
+  })
+  await expect(f.controller.submit(connection, rootTarget, '保留原文', f.selected)).rejects.toThrow('stale selection')
+  expect(f.controller.records()).toEqual([]); expect(f.calls.filter(input => input.method === 'POST')).toHaveLength(0)
+  const old = fixture()
+  await expect(old.controller.submit(connection, rootTarget, '保留原文', old.selected)).rejects.toThrow('尚未启用')
+  expect(old.calls).toHaveLength(1)
+})
+
+test('root journals cannot masquerade as a legacy child or retain conflicting child identity', async () => {
+  const f = rootFixture(); await f.controller.submit(connection, rootTarget, '原文', f.selected)
+  const saved = f.controller.history()[0]
+  for (const invalid of [{ ...saved, targetKind: 'unexpected' }, { ...saved, targetKind: undefined }, { ...saved, childSessionId: 'child' }])
+    expect(() => parseControllerHistory(JSON.stringify([invalid]))).toThrow('损坏')
+  expect(parseControllerOutbox(JSON.stringify([pending()]))).toEqual([pending()])
+})

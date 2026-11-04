@@ -7,6 +7,7 @@ import {
 } from '@shared/browser'
 import { showEditorView } from '@renderer/core/platform/layout-state'
 import { toast } from '@renderer/core/toast'
+import { getBrowserSurfaceOwner } from '@renderer/core/browser/presentation'
 
 interface BrowserState {
   tabs: BrowserTabState[]
@@ -154,13 +155,15 @@ export async function refreshBrowserSettings(): Promise<void> {
 
 /** Release native pages when Work's browser workspace is closed or not selected. */
 export async function hideBrowserSurfaces(stillHidden: () => boolean = () => true): Promise<void> {
+  const surface = getBrowserSurfaceOwner()
   await initializeBrowser()
-  if (!stillHidden()) return
+  if (!stillHidden() || surface !== getBrowserSurfaceOwner()) return
   await Promise.all(
     state.tabs.map((tab) =>
       window.aether.browser
         .setBounds({
           tabId: tab.tabId,
+          surface,
           bounds: { x: 0, y: 0, width: 0, height: 0 },
           visible: false
         })

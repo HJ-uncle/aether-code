@@ -10,6 +10,7 @@ import { restoreLastFolder } from './core/workspace/workspace-store'
 import { wireWorkspaceLiveSync } from './core/workspace/live-sync'
 import { wireGitLiveSync } from './core/git/live-sync'
 import { wireBrowserConnection } from './core/browser/connection'
+import { wireBrowserPresentation } from './core/browser/presentation'
 import { wireTsLsp } from './core/lsp/lifecycle'
 
 /**
@@ -28,6 +29,7 @@ function installMonacoCancellationGuard(): () => void {
 }
 
 export function bootstrapRenderer(): () => void {
+  const disposeBrowserPresentation = wireBrowserPresentation()
   const disposeMonacoCancellationGuard = installMonacoCancellationGuard()
   const disposeContributions = registerContributions()
   const disposeKeybindings = installKeybindingDispatcher()
@@ -41,6 +43,7 @@ export function bootstrapRenderer(): () => void {
   void restoreLastFolder()
 
   return () => {
+    disposeBrowserPresentation()
     disposeMonacoCancellationGuard()
     disposeContributions()
     disposeKeybindings()

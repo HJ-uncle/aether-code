@@ -2,7 +2,7 @@ import type { EngineSnapshot } from './ipc'
 import type { BrowserNetworkQuery, BrowserNetworkList, BrowserNetworkDetail, BrowserNetworkDetailOptions } from './browser-network'
 import type {
   BrowserAction, BrowserBoundsInput, BrowserContext, BrowserCreateInput, BrowserEvent,
-  BrowserReadKind, BrowserSettings, BrowserTabState, BrowserToolResult
+  BrowserReadKind, BrowserSettings, BrowserSurfaceOwner, BrowserTabState, BrowserToolResult
 } from './browser'
 
 export const BROWSER_IPC = { invoke: 'browser:invoke', event: 'browser:event', connection: 'browser:connection' } as const
@@ -24,6 +24,7 @@ export interface BrowserApi {
   list(): Promise<BrowserTabState[]>
   create(input?: BrowserCreateInput): Promise<BrowserTabState>
   action(input: BrowserAction): Promise<BrowserTabState>
+  activateSurface(owner: BrowserSurfaceOwner): Promise<void>
   setBounds(input: BrowserBoundsInput): Promise<void>
   close(tabId: string): Promise<void>
   share(tabId: string, expectedContext: BrowserContext): Promise<BrowserTabState>

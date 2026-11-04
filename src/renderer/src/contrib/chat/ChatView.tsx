@@ -61,6 +61,8 @@ import type { ChatAttachment } from '@renderer/core/engine/useChat'
 import { knowledgeBindingKey, saveKnowledgeBinding } from '@renderer/core/engine/knowledge'
 import { ResourcePicker, type ResourceItem } from './ResourcePicker'
 import './apple-chat-panels.css'
+import { RootFollowupDelivery, RootFollowupFeedback, useRootFollowup } from './RootFollowup'
+import { rootFollowupLimitation, rootFollowupMessage, rootFollowupRun } from './root-followup'
 
 /** Older engines/models can omit the window; use the model initialization default. */
 const CONTEXT_WINDOW_FALLBACK = DEFAULT_CONTEXT_WINDOW_BUDGET
@@ -143,12 +145,13 @@ export function ChatView(): JSX.Element {
   // AppProvider 按引擎来源统一恢复或创建会话。这里提前创建会与远端选择
   // 竞争：本地设置为空的首帧会覆盖刚恢复的远端会话，使历史响应失效。
   const sessionId = settingsLoaded ? settings.lastSessionId : ''
-  useWorkbenchClient(sessionId, ready && appMode === 'code', codeWorkbenchAdapter(sessionId))
+  useWorkbenchClient(sessionId, ready, 'code', codeWorkbenchAdapter(sessionId))
   const codegraphRoot = remoteReadOnly ? settings.remoteWorkspaceRoot.trim() || undefined : workspace.root || undefined
   const [input, setInput] = useState('')
   const [rejectedDrafts, setRejectedDrafts] = useState<Record<string, RejectedDraft>>({})
   /** 同步记录编辑器的最新文本，避免润色请求返回时覆盖用户刚刚的修改。 */
   const inputValueRef = useRef('')
+  const draftEditRevision = useRef(0)
   useEffect(() => {
     inputValueRef.current = input
   }, [input])
@@ -174,6 +177,11 @@ export function ChatView(): JSX.Element {
   })
   const canExecute = ready && sessionModelReady
   const taskActive = streaming || stopping || hasSessionWork(sessionId)
+  const followupRun = useMemo(() => rootFollowupRun(messages, sessionId, sessionModelReady ? sessionModel.runId : undefined), [messages, sessionId, sessionModelReady, sessionModel])
+  const rootAccepting = taskActive && !stopping && Boolean(followupRun && ['running', 'waiting'].includes(followupRun.status))
+  const rootFollowup = useRootFollowup({ sessionId, rootRunId: followupRun?.runId, source: sourceEpoch,
+    active: rootAccepting, ready: canExecute && appMode === 'code', toolProfile: 'code' })
+  const immediateIntent = taskActive && rootFollowup.delivery === 'current'
   const storedThinkingMode = useMemo(() => loadSessionThinkingMode(sessionId, storageSource), [sessionId, storageSource])
   const storedRequestSelection = useMemo(() => loadSessionRequestSelection(sessionId, storageSource), [sessionId, storageSource])
   const legacyResources = useMemo(() => loadLegacyComposerResources(sessionId, storageSource), [sessionId, storageSource])
@@ -791,6 +799,21 @@ export function ChatView(): JSX.Element {
     })
   }, [attach.restore, attachmentRoot, draftRecoveryKey, sessionId, storageSource])
 
+  const resolveRootFollowup = useCallback((operation: () => Promise<boolean>, sentMessage: string): void => {
+    const original = inputValueRef.current, originalMentions = mentionsRef.current, revision = draftEditRevision.current, sentScope = draftScopeRef.current
+    let sameDraft = false
+    try { sameDraft = rootFollowupMessage(original, originalMentions, attach.attachments) === sentMessage } catch { /* Later attachment edits belong to the user. */ }
+    void operation().then(accepted => {
+      if (!accepted || !sameDraft || sourceEpoch !== getEngineSource() || displayedSessionRef.current !== sourceSessionKey || draftScopeRef.current !== sentScope
+        || inputValueRef.current !== original || mentionsRef.current !== originalMentions || draftEditRevision.current !== revision) return
+      inputValueRef.current = ''; mentionsRef.current = []; setInput('')
+      suppressResourceReconcileRef.current = true; inputRef.current?.clear(); suppressResourceReconcileRef.current = false
+      resourceTextRef.current = ''
+      window.clearTimeout(draftTimerRef.current); pendingDraftSaveRef.current = null
+      saveChatDraft(sessionId, '', storageSource)
+    })
+  }, [attach.attachments, sourceEpoch, sourceSessionKey, sessionId, storageSource])
+
   const submit = useCallback(() => {
     // When the slash palette is open, Enter belongs to palette selection;
     // ResourcePicker's document listener consumes it after this guard.
@@ -798,7 +821,15 @@ export function ChatView(): JSX.Element {
     const text = input.trim()
     // 允许「只发附件」：丢张截图直接问，是视觉模型的常见用法
     const files = attach.attachments
-    if ((!text && files.length === 0) || stopping || attach.uploading || !canExecute || !sessionId || sourceEpoch !== getEngineSource() || historyEditRef.current?.key === sourceSessionKey) return
+    if ((!text && files.length === 0) || stopping || rootFollowup.busy || rootFollowup.pending || attach.uploading || !canExecute || !sessionId || sourceEpoch !== getEngineSource() || historyEditRef.current?.key === sourceSessionKey) return
+    if (immediateIntent) {
+      if (!rootAccepting || !rootFollowup.capability) return
+      let message: string
+      try { message = rootFollowupMessage(input, mentionsRef.current, files) }
+      catch (cause) { setToast(cause instanceof Error ? cause.message : String(cause)); return }
+      resolveRootFollowup(() => rootFollowup.send(message), message)
+      return
+    }
     // 流式进行中不再拦截：send 内部会入队，当前流结束后自动按序发出
     // Mentions are workspace-relative.  They are safe for remote sessions;
     // the main-process remote adapter strips local paths and resolves them
@@ -853,7 +884,7 @@ export function ChatView(): JSX.Element {
       if (current) setToast(cause instanceof Error ? cause.message : String(cause))
     })
     scrollToBottom(true)
-  }, [attach, attachmentRoot, buildSendOptions, input, canExecute, stopping, sourceEpoch, sourceSessionKey, draftRecoveryKey, storageSource, send, sessionId, resumeFollowBottom, scrollToBottom, resourceQuery, mentionQuery, manualPalette])
+  }, [attach, attachmentRoot, buildSendOptions, input, canExecute, stopping, sourceEpoch, sourceSessionKey, draftRecoveryKey, storageSource, send, sessionId, resumeFollowBottom, scrollToBottom, resourceQuery, mentionQuery, manualPalette, rootFollowup, rootAccepting, immediateIntent, resolveRootFollowup])
 
   /** 托盘的「发送」：空闲时按当前模式（逐条/合并）立即发出队列 */
   const flushQueueFromTray = useCallback(() => {
@@ -1543,9 +1574,10 @@ export function ChatView(): JSX.Element {
             value={input}
             disabled={!settingsLoaded}
             placeholder={
-              ready ? taskActive ? '补充要求，Enter 排到下一轮，Shift+Enter 换行；@ 引用文件或协作 Agent，/ 选择资源' : '输入消息，Enter 发送，Shift+Enter 换行；@ 引用文件或协作 Agent，/ 选择资源' : '可先准备问题和代码引用，引擎就绪后发送'
+              ready ? taskActive ? `补充要求，Enter ${immediateIntent ? '立即补充' : '排到下一轮'}，Shift+Enter 换行；@ 引用文件，/ 选择资源` : '输入消息，Enter 发送，Shift+Enter 换行；@ 引用文件或协作 Agent，/ 选择资源' : '可先准备问题和代码引用，引擎就绪后发送'
             }
             onChange={(text, mentions) => {
+              draftEditRevision.current += 1
               mentionsRef.current = mentions
               reconcileComposerResources(text)
               inputValueRef.current = text
@@ -1713,14 +1745,25 @@ export function ChatView(): JSX.Element {
               active={appMode === 'code'}
               scopeKey={sessionId}
               value={modelId}
-              disabled={!sessionModelReady || !ready}
+              disabled={!sessionModelReady || !ready || immediateIntent}
               onChange={selectModel}
               onManage={() => openAppSettings('models')}
             />
 
             {taskActive ? <ComposerStop loading={stopping} disabled={!ready} onClick={() => { void abort().catch(() => {}) }} /> : null}
-            <ComposerSend label={historyEditBusy ? '正在重新编辑…' : taskActive ? '排到下一轮' : '发送'} disabled={historyEditBusy || !canExecute || stopping || attach.uploading || (!input.trim() && attach.attachments.length === 0)} onClick={submit} />
+            {taskActive ? <RootFollowupDelivery controller={rootFollowup} disabled={stopping || !canExecute} /> : null}
+            <ComposerSend label={historyEditBusy ? '正在重新编辑…' : immediateIntent ? '立即补充' : taskActive ? '排到下一轮' : '发送'} loading={rootFollowup.busy} loadingLabel="正在提交补充…"
+              disabled={historyEditBusy || !canExecute || stopping || Boolean(rootFollowup.pending) || attach.uploading || (!input.trim() && attach.attachments.length === 0)
+                || (immediateIntent && (!rootAccepting || !rootFollowup.capability || Boolean(rootFollowupLimitation(mentionsRef.current, attach.attachments))))} onClick={submit} />
           </>} />
+          <RootFollowupFeedback controller={rootFollowup} active={taskActive} limitation={!rootAccepting && taskActive ? '正在确认当前任务是否可接收补充，草稿已保留。' : rootFollowupLimitation(mentionsRef.current, attach.attachments)}
+            onResolve={resolveRootFollowup}
+            canRestore={!input.trim() && !attach.attachments.length} onRestore={message => {
+              if (inputValueRef.current.trim()) return
+              const recovered = userMessageDraft(message)
+              draftEditRevision.current += 1; inputValueRef.current = recovered.text; mentionsRef.current = recovered.mentions
+              setInput(recovered.text); inputRef.current?.setDraft(recovered.text, recovered.mentions); scheduleDraftSave(recovered.text)
+            }} />
         </InputComposer>
       </div>
 

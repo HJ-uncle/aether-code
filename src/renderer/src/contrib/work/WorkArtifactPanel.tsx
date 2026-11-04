@@ -15,6 +15,7 @@ import { FilePreview } from '../editor/FilePreview'
 import { WorkTextPreview, isLargeWorkText } from './WorkTextPreview'
 import { readWorkFileCached } from './work-file-read-cache'
 import { subscribeWorkPreview, workPreviewRevision } from '@renderer/core/workbench/preview-request'
+import { observePreviewSelection } from '@renderer/contrib/documents/document-selection'
 
 export interface WorkArtifactPanelProps {
   artifact: WorkArtifact | null
@@ -222,24 +223,9 @@ function ArtifactContent({
   )
 
   useEffect(() => {
-    if (!active) return
-    const update = (): void => {
-      const current = window.getSelection()
-      if (
-        !current?.anchorNode ||
-        !current.focusNode ||
-        !previewRef.current?.contains(current.anchorNode) ||
-        !previewRef.current.contains(current.focusNode)
-      ) {
-        setSelection('')
-        return
-      }
-      const value = current.toString().trim()
-      setSelection(value)
-    }
-    document.addEventListener('selectionchange', update)
-    return () => document.removeEventListener('selectionchange', update)
-  }, [artifact?.id, active])
+    setSelection('')
+    return active && previewRef.current ? observePreviewSelection(previewRef.current, setSelection) : undefined
+  }, [artifact?.id, active, readKey, mode])
 
   if (!artifact)
     return (
@@ -306,7 +292,7 @@ function ArtifactContent({
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
   const addReference = (): void => {
-    if (epoch !== getEngineSource()) return
+    if (!active || epoch !== getEngineSource()) return
     // A whole-file reference resolves its path at the next send. Never inject
     // the receipt bytes as though they were the successfully read version.
     onAddToConversation?.({ ...artifact, content: null }, selection || undefined, selection ? value?.coverage : undefined)
@@ -346,8 +332,9 @@ function ArtifactContent({
         <button
           type="button"
           className="work-quiet-button"
+          onPointerDown={event => { if (selection) event.preventDefault() }}
           onClick={addReference}
-          disabled={!onAddToConversation || !artifact.path}
+          disabled={!active || !onAddToConversation || !artifact.path}
         >
           <Icon name="chat" size={14} />
           {selection ? '引用选中内容' : '添加到对话'}

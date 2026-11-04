@@ -16,6 +16,7 @@ function load(name, extension = 'ts') {
     if (specifier === 'react/jsx-runtime') return { jsx: () => null, jsxs: () => null }
     if (specifier === '@renderer/core/editor/TextPreview') return load('../../core/editor/TextPreview', 'tsx')
     if (specifier === './source-highlight-language') return { sourceLanguage: () => undefined }
+    if (specifier === '../documents/document-kind') return load('../documents/document-kind')
     if (specifier.endsWith('.css')) return {}
     throw new Error(`Unexpected dependency: ${specifier}`)
   }, exports)
@@ -89,7 +90,7 @@ test('binary and text content retain every byte across attachment and URL conver
 })
 
 test('retained Work previews reuse a five-file round trip and bound a larger working set', () => {
-  const files = Array.from({ length: 20 }, (_, index) => ({ id: `file:${index}`, externalFile: { size: 1024 * 1024 } }))
+  const files = Array.from({ length: 20 }, (_, index) => ({ id: `file:${index}`, name: `report-${index}.docx`, externalFile: { size: 1024 * 1024 } }))
   const entries = resourcePreviewEntries(files)
   let retained = []
   for (const index of [0, 1, 2, 3, 4, 0]) retained = retainPreviewEntries(entries, `file:${index}`, retained)
@@ -125,7 +126,7 @@ test('close, reopen and background content replacement evict old preview generat
 })
 
 test('hidden panes keep only visited unchanged surfaces and never mount newly selected resources', () => {
-  const files = [{ id: 'old', externalFile: { size: 1 } }, { id: 'new', externalFile: { size: 1 } }]
+  const files = [{ id: 'old', name: 'old.pdf', externalFile: { size: 1 } }, { id: 'new', name: 'new.pdf', externalFile: { size: 1 } }]
   const entries = resourcePreviewEntries(files)
   const visited = retainPreviewEntries(entries, 'old', [])
   assert.deepEqual(retainPreviewEntries(entries, null, visited).map(entry => entry.id), ['old'])
@@ -139,4 +140,16 @@ test('retention ignores duplicate and removed history entries without spending t
   const entries = [{ id: 'a', size: 32 * 1024 * 1024 }, { id: 'b', size: 32 * 1024 * 1024 }]
   const history = [entries[0], entries[0], { id: 'closed', size: 64 * 1024 * 1024 }, entries[1]]
   assert.deepEqual(retainPreviewEntries(entries, null, history).map(entry => entry.id), ['a', 'b'])
+})
+
+test('a mixed ten-file tour retains four decoded Office surfaces without charging text as a heavy preview', () => {
+  const files = ['requirements.md', 'plan.xlsx', 'review.pptx', 'guide.pdf', 'checklist.md', 'list.csv', 'list.tsv', 'delivery.txt', 'index.html', 'requirements.docx']
+    .map(name => ({ id: name, name, externalFile: { size: 20480 } }))
+  const entries = resourcePreviewEntries(files)
+  let retained = []
+  for (let round = 0; round < 3; round++) for (const file of files) retained = retainPreviewEntries(entries, file.id, retained)
+  assert.deepEqual(new Set(retained.map(entry => entry.id)), new Set(['plan.xlsx', 'review.pptx', 'guide.pdf', 'requirements.docx']))
+  assert.ok(retained.length <= PREVIEW_RETENTION_LIMITS.entries)
+  const changed = files.map(file => file.name === 'plan.xlsx' ? { ...file } : file)
+  assert.equal(retainPreviewEntries(resourcePreviewEntries(changed), null, retained).some(entry => entry.id === 'plan.xlsx'), false)
 })

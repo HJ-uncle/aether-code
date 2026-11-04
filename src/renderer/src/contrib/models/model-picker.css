@@ -1,4 +1,8 @@
 /* The model control follows the same quiet geometry in Code and Work. */
+.model-picker .select__compact-value {
+  display: none;
+}
+
 .model-picker.select {
   display: inline-flex;
   flex: 0 1 auto;

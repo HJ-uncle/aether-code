@@ -249,6 +249,31 @@ test.describe.serial('Work 工作台模型工具的真实客户端闭环', () =>
     await page.screenshot({ path: info.outputPath('workbench-code-dirty-buffer.png'), animations: 'disabled' })
   })
 
+  test('模式切换保留后台工作台；后台预览回执不冒充已经显示', async () => {
+    await expect(page.locator('#mode-code')).toHaveAttribute('aria-hidden', 'false')
+    await expect.poll(() => Boolean(currentClient(secondSession))).toBe(true)
+    const context = await reply(enqueue(secondSession, 'workspace.context'))
+    expect(context.success, context.output).toBe(true)
+    expect(JSON.parse(context.output)).toMatchObject({ mode: 'work', foreground: false })
+    const path = 'background-preview.txt', content = '后台工作台保留的真实文件'
+    files.set(`${secondSession}:${path}`, content)
+    const result = await reply(enqueue(secondSession, 'artifact.open', { path }))
+    expect(result.success, result.output).toBe(true)
+    expect(JSON.parse(result.output)).toMatchObject({ opened: true, foreground: false, readStatus: 'not-confirmed', renderStatus: 'deferred-until-visible', visualVerification: false })
+    expect(reads.some(read => read.sessionId === secondSession && read.path === path)).toBe(false)
+    await expect(page.locator('#mode-code')).toHaveAttribute('aria-hidden', 'false')
+    await page.getByRole('tab', { name: 'Work 办公', exact: true }).click()
+    await expect(preview(path)).toBeVisible(); await expect(preview(path)).toContainText(content)
+    const codeContext = await reply(enqueue(codeSession, 'workspace.context'))
+    expect(codeContext.success, codeContext.output).toBe(true)
+    expect(JSON.parse(codeContext.output)).toMatchObject({ mode: 'code', foreground: false, activePath: codePath })
+    const codeOpen = await reply(enqueue(codeSession, 'artifact.open', { path: codePath }))
+    expect(codeOpen.success, codeOpen.output).toBe(true)
+    expect(JSON.parse(codeOpen.output)).toMatchObject({ foreground: false, dirty: true, readStatus: 'ready', renderStatus: 'deferred-until-visible' })
+    await expect(page.locator('#mode-work')).toHaveAttribute('aria-hidden', 'false')
+    await page.getByRole('tab', { name: 'Code 开发', exact: true }).click()
+  })
+
   test('Code 新会话上下文排除旧会话文档，拒绝打开旧会话路径', async () => {
     await page.getByTitle('新建会话（开一条全新对话）').click()
     await expect.poll(() => [...clients.values()].filter(client => client.active && !client.sessionId.startsWith('work-') && client.sessionId !== codeSession).length).toBeGreaterThan(0)

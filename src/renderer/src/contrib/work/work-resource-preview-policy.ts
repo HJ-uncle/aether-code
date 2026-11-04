@@ -1,10 +1,10 @@
 import type { PreviewRetentionEntry } from '@renderer/core/editor/preview-retention'
+import { documentKindFor } from '../documents/document-kind'
 
-export interface ResourcePreviewSize { id: string; externalFile?: { size: number } }
+export interface ResourcePreviewSize { id: string; name: string; externalFile?: { size: number } }
 
-/** Retain only the active and most recently used document surfaces. Other open
- * files keep lightweight tabs and the separate bounded read cache. This bounds
- * iframe/canvas/worker memory even after every resource has been opened. */
+/** Plain text has a cheap viewport and a separate read cache. Counting it as a
+ * live Office surface would evict decoded iframes during a mixed-file tour. */
 export function resourcePreviewEntries(files: readonly ResourcePreviewSize[]): PreviewRetentionEntry[] {
-  return files.map(file => ({ id: file.id, size: file.externalFile?.size, version: file }))
+  return files.filter(file => documentKindFor(file.name)).map(file => ({ id: file.id, size: file.externalFile?.size, version: file }))
 }

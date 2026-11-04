@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import {
   DEFAULT_HEX_BYTES,
   base64ToBytes,
@@ -9,8 +9,7 @@ import {
 } from '@renderer/core/editor/preview'
 import { Icon } from '@renderer/workbench/icons'
 import { documentKindFor } from '../documents/document-kind'
-
-const DocumentPreview = lazy(() => import('../documents/DocumentPreview').then(module => ({ default: module.DocumentPreview })))
+import { DocumentPreview } from '../documents/DocumentPreview'
 
 interface FilePreviewProps {
   /** 文件名（用于判定预览方式与 MIME） */
@@ -42,9 +41,7 @@ const ZOOM_STEP = 0.2
  * 因此可以拖出容器边界再拖回来。
  */
 export const FilePreview = memo(function FilePreview(props: FilePreviewProps): JSX.Element {
-  if (documentKindFor(props.name)) return <Suspense fallback={<div className="doc-placeholder" role="status">正在准备文档预览…</div>}>
-    <DocumentPreview name={props.name} base64={props.base64} data={props.bytes} size={props.size} identityKey={`${props.path}:${props.groupId || ''}`} active={props.active ?? true} />
-  </Suspense>
+  if (documentKindFor(props.name)) return <DocumentPreview name={props.name} base64={props.base64} data={props.bytes} size={props.size} identityKey={`${props.path}:${props.groupId || ''}`} active={props.active ?? true} />
   return <BinaryFilePreview {...props} />
 })
 

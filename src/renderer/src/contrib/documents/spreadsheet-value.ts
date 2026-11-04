@@ -1,11 +1,13 @@
 import { format } from 'ssf'
 
 /** Format saved values only. SSF is a number formatter, never a formula engine. */
-export function spreadsheetDisplayValue(value: unknown, rawText: string, numberFormat: string | undefined, date1904 = false): { text: string; formatFallback: boolean } {
+export function spreadsheetDisplayValue(value: unknown, rawText: string, numberFormat: string | undefined, date1904 = false, model?: { result?: unknown }): { text: string; formatFallback: boolean } {
   let saved = value
   const fallback = (): { text: string; formatFallback: boolean } => ({ text: rawText.slice(0, 2000), formatFallback: true })
   if (value && typeof value === 'object' && ('formula' in value || 'sharedFormula' in value)) {
-    saved = 'result' in value ? value.result : undefined
+    // ExcelJS's value getter drops falsy formula results; its cell model retains
+    // the OOXML cache. Never calculate formulas or turn an absent cache into 0.
+    saved = 'result' in value ? value.result : model && Object.hasOwn(model, 'result') ? model.result : undefined
     if (saved === undefined || saved === null) return { text: '未保存计算结果', formatFallback: true }
   }
   if (saved === null || saved === undefined) return { text: '', formatFallback: false }

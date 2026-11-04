@@ -44,6 +44,29 @@ const archive = async (name = 'word/document.xml', text = '<document/>') => {
   const zip = new JSZip(); zip.file(name, text)
   return zip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' })
 }
+
+test('real ExcelJS formula cells retain cached zero and false through XLSX reload', async () => {
+  const original = new ExcelJS.Workbook(), sheet = original.addWorksheet('cached')
+  const expected = [[0, '0'], [false, 'FALSE']]
+  for (const [index, [result]] of expected.entries()) sheet.getCell(index + 1, 1).value = { formula: '1-1', result }
+  sheet.getCell(4, 1).value = { formula: '1-1' }
+  const restored = new ExcelJS.Workbook()
+  await restored.xlsx.load(await original.xlsx.writeBuffer())
+  for (const [index, [result, text]] of expected.entries()) {
+    const cell = restored.worksheets[0].getCell(index + 1, 1)
+    assert.equal(cell.model.result, result)
+    assert.deepEqual(spreadsheetDisplayValue(cell.value, cell.text, cell.numFmt, false, cell.model), { text, formatFallback: false })
+  }
+  const missing = restored.worksheets[0].getCell(4, 1)
+  assert.deepEqual(spreadsheetDisplayValue(missing.value, missing.text, missing.numFmt, false, missing.model), { text: '未保存计算结果', formatFallback: true })
+})
+
+test('an explicitly present empty-string formula cache displays empty rather than missing', () => {
+  const workbook = new ExcelJS.Workbook(), cell = workbook.addWorksheet('blank').getCell('A1')
+  cell.value = { formula: 'IF(TRUE,"","no")', result: '' }
+  assert.equal(cell.model.result, '')
+  assert.deepEqual(spreadsheetDisplayValue(cell.value, cell.text, cell.numFmt, false, cell.model), { text: '', formatFallback: false })
+})
 test('document dispatch excludes macro/legacy/unknown formats and handles uppercase extensions', () => {
   for (const kind of ['pdf', 'docx', 'xlsx', 'pptx']) assert.equal(documentKindFor('report.' + kind.toUpperCase()), kind)
   for (const name of ['readme', 'report.docm', 'report.xlsm', 'report.pptm', 'report.xls', 'report.doc', 'report.pdf.exe']) assert.equal(documentKindFor(name), null)

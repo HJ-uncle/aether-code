@@ -435,7 +435,7 @@ export function WorkView(): JSX.Element {
     // session-scoped path itself and keeps the conversation context stable.
     openWorkspace(id.startsWith('path:') ? 'workspace' : 'files')
   }, [openWorkspace])
-  useWorkbenchClient(controller.securitySessionId, appMode === 'work' && isEngineReady(), {
+  useWorkbenchClient(controller.securitySessionId, isEngineReady(), 'work', {
     context: () => ({ mode: 'work', selectedArtifact, files: controller.artifacts.slice(0, 100).map(item => ({ path: item.path, name: item.name, status: item.status })), hasMoreFiles: controller.artifacts.length > 100 }),
     open: async (path, _line, current) => {
       if (!current() || !controller.activeTask || controller.activeTask.id !== controller.securitySessionId) throw new Error('请先打开此任务的工作区。')
@@ -1300,8 +1300,8 @@ function Conversation({
           </button>
         )}
         {!following && <WorkRunStatus controller={controller} />}
-        <WorkNextTurnQueuePanel key={`${controller.draftSource}:${task.id}`} scopeKey={`${controller.draftSource}:${task.id}`} queue={controller.nextTurnQueue} />
-        <SessionConnectionNotice key={`${controller.draftSource}:${task.id}`} ready={controller.ready} sessionId={task.id}
+        <WorkNextTurnQueuePanel key={`queue:${controller.draftSource}:${task.id}`} scopeKey={`${controller.draftSource}:${task.id}`} queue={controller.nextTurnQueue} />
+        <SessionConnectionNotice key={`connection:${controller.draftSource}:${task.id}`} ready={controller.ready} sessionId={task.id}
           source={getEngineSource()} connection={controller.historyRecovery}
           active={controller.streaming || ['running', 'waiting'].includes(task.status)}
           error={controller.historyError} onRetry={controller.retryHistory} />
@@ -2272,6 +2272,7 @@ function WorkResourcePane({ controller, onReveal, active }: { controller: WorkCo
   const retained = useRetainedPreviews(resourcePreviewEntries(resources.files), active ? selectedFileId : null,
     JSON.stringify([getEngineSource(), sessionId, controller.activeTask?.workspacePath]))
   const retainedIds = new Set(retained.map(entry => entry.id))
+  if (active && selectedFileId) retainedIds.add(selectedFileId)
   return <>
     {/* Native browser bounds are released on hide; only file previews stay mounted. */}
     {active && web ? <div><WorkBrowser tabId={web.tabId} hideTabStrip onReveal={onReveal} /></div> : null}
