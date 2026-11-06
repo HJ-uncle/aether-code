@@ -1328,6 +1328,12 @@
   margin-inline: auto;
   padding-inline-end: var(--work-scrollbar-width);
 }
+/* 共享提示条在 Chat 中自带居中宽度；Work 需跟随输入框的内容边界。 */
+.work-conversation__footer > .session-connection-notice {
+  max-width: none;
+  margin-inline: var(--work-content-inset);
+  width: auto;
+}
 .work-run-status {
   display: flex;
   align-items: center;
