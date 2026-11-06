@@ -55,7 +55,7 @@ export function BrowserTabContextMenu({
   useLayoutEffect(() => {
     host.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus()
   }, [tab.tabId])
-  const close = (): void => {
+  const restoreFocus = (): void => {
     // Escape/selection return keyboard focus to the originating tab. A mouse
     // click outside can then focus its own destination normally.
     if (host.current?.contains(document.activeElement) && anchor instanceof HTMLElement) {
@@ -64,8 +64,8 @@ export function BrowserTabContextMenu({
         : anchor.querySelector<HTMLElement>('[role="tab"]')
       focusTarget?.focus({ preventScroll: true })
     }
-    onClose()
   }
+  const close = (): void => { restoreFocus(); onClose() }
   const navigate = (event: KeyboardEvent): void => {
     const items = [
       ...(host.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ??
@@ -103,13 +103,13 @@ export function BrowserTabContextMenu({
       disabled: !tab.loading,
       onSelect: onStop
     },
-    { id: 'copy-address', label: '复制网页地址', onSelect: onCopyAddress },
-    { id: 'devtools', label: '开发者工具', onSelect: onDevtools },
+    { id: 'copy-address', label: tab.localFile ? '复制文件路径' : '复制网页地址', onSelect: onCopyAddress },
+    { id: 'devtools', label: '开发者工具', disabled: !!tab.localFile && tab.localFile.kind !== 'html', onSelect: onDevtools },
     {
       id: 'add-to-chat',
       label: '添加到当前会话',
       hint: addToChatHint,
-      disabled: addToChatDisabled,
+      disabled: !!tab.localFile || addToChatDisabled,
       onSelect: onAddToChat
     },
     { id: 'close', label: '关闭标签页', hint: 'Ctrl+W', onSelect: onCloseTab },
@@ -131,7 +131,7 @@ export function BrowserTabContextMenu({
   // needs viewport coordinates and must also cover the native page surface.
   return createPortal(
     <div ref={host} className="browser-tab-menu-host" onKeyDownCapture={navigate}>
-      <ContextMenu x={x} y={y} anchor={anchor} items={items} onClose={close} />
+      <ContextMenu x={x} y={y} anchor={anchor} items={items} onClose={onClose} onDismiss={restoreFocus} inline />
     </div>,
     document.body
   )

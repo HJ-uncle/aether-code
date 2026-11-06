@@ -693,7 +693,7 @@ export class EngineHost extends EventEmitter {
       this.emit('stream', { streamId, type: 'error', message: '请通过账号入口操作认证。', requestRejected: true } satisfies StreamEvent)
       return
     }
-    const unsupported = engineTargetError(snapshot, boundExpectedEngine) ?? remoteRequestError(snapshot.mode, method, path) ?? remoteWorkspacePathError(snapshot.mode, method, path, body)
+    const unsupported = engineTargetError(snapshot, boundExpectedEngine) ?? remoteRequestError(snapshot.mode, method, path, body) ?? remoteWorkspacePathError(snapshot.mode, method, path, body)
     if (unsupported) {
       this.emit('stream', { streamId, type: 'error', message: unsupported, requestRejected: true } satisfies StreamEvent)
       return

@@ -2,6 +2,12 @@ import type { RootRun } from '../../../../shared/root-run'
 import type { ChatMessage, ChatAttachment } from '../../core/engine/useChat'
 import { buildMentionMessage, type Mention } from './mention-context'
 
+/** An unresolved capability probe is not a refusal. Submit performs its own
+ * authoritative check before posting, so an early Enter must not disappear. */
+export function rootFollowupCanSubmit(active: boolean, capability: boolean | undefined): boolean {
+  return active && capability !== false
+}
+
 /** The composer may only target the run independently bound to this session. */
 export function rootFollowupRun(messages: readonly Pick<ChatMessage, 'run' | 'runId'>[], sessionId: string | null, runId: string | undefined): RootRun | undefined {
   if (!sessionId || !runId) return undefined

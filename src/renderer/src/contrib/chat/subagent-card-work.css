@@ -1,0 +1,189 @@
+/* Work treats agents as a disclosure list; the detailed Code cards keep their chrome. */
+.subagent-card.subagent-card--work {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.subagent-card.subagent-card--work > :is(summary, .subagent-card__header) {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: var(--chrome-h);
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  font: 12px/20px var(--font-ui);
+  text-align: left;
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+
+.subagent-card.subagent-card--work > :is(summary, .subagent-card__header):hover {
+  background: var(--bg-hover);
+}
+
+.subagent-card.subagent-card--work > :is(summary, .subagent-card__header):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.subagent-card.subagent-card--work .subagent-card__dot {
+  flex: 0 0 14px;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-muted);
+}
+
+.subagent-card.subagent-card--work .subagent-card__dot--fail,
+.subagent-card.subagent-card--work .subagent-card__fail {
+  color: var(--danger);
+}
+
+.subagent-card.subagent-card--work .subagent-card__name {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(200px, 40%);
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.subagent-card.subagent-card--work .subagent-card__task {
+  flex: 1 1 0;
+  min-width: 0;
+  color: var(--fg-muted);
+}
+
+.subagent-card.subagent-card--work :is(.subagent-card__stopped, .subagent-card__fail) {
+  flex: 0 0 auto;
+  margin-left: auto;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.subagent-card.subagent-card--work .subagent-card__stopped {
+  color: var(--fg-muted);
+}
+
+.subagent-card.subagent-card--work .subagent-card__chevron {
+  flex: 0 0 14px;
+  color: var(--fg-faint);
+  transform: rotate(-90deg);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.subagent-card.subagent-card--work[open] .subagent-card__chevron {
+  transform: rotate(0deg);
+}
+
+.subagent-card.subagent-card--work .subagent-card__stop {
+  width: var(--control-h-compact);
+  height: var(--control-h-compact);
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.subagent-card.subagent-card--work .subagent-card__stop:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.subagent-card.subagent-card--work .subagent-card__stop:focus-visible,
+.subagent-card.subagent-card--work .subagent-card__tools-header:focus-visible,
+.subagent-card.subagent-card--work .subagent-card__goal-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Indentation and space give expanded content a hierarchy without nested boxes. */
+.subagent-card.subagent-card--work :is(.subagent-card__goal-block, .subagent-card__tools-block, .subagent-card__result-block) {
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--control-h);
+}
+
+.subagent-card.subagent-card--work :is(.subagent-card__goal-label, .subagent-card__result-label) {
+  margin-bottom: var(--space-1);
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.subagent-card.subagent-card--work :is(.subagent-card__goal-inner, .subagent-card__result-inner) {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.subagent-card.subagent-card--work .subagent-card__goal-text {
+  font: 12px/1.6 var(--font-ui);
+}
+
+.subagent-card.subagent-card--work .subagent-card__tools-header {
+  min-height: var(--control-h);
+  font-size: 12px;
+}
+
+.subagent-card.subagent-card--work .subagent-card__running {
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--control-h);
+}
+
+.subagent-card.subagent-card--work .subagent-card__footer {
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-1) var(--space-2) var(--space-3) var(--control-h);
+  border: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* A round belongs to a dedicated reading pane, so its content shares that
+   pane's scroll position instead of trapping the wheel in nested results. */
+.subagent-card.subagent-card--round > :is(summary, .subagent-card__header) {
+  min-height: 36px;
+  padding: 6px 0;
+  gap: 8px;
+}
+.subagent-card.subagent-card--round .subagent-card__name {
+  flex: 1;
+  max-width: none;
+  font-size: 12px;
+}
+.subagent-card__round-time {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.subagent-card.subagent-card--round :is(.subagent-card__stopped, .subagent-card__fail) { margin-left: 0; }
+.subagent-card.subagent-card--round :is(.subagent-card__goal-block, .subagent-card__tools-block, .subagent-card__result-block) {
+  padding: 8px 0;
+}
+.subagent-card.subagent-card--round :is(.subagent-card__running, .subagent-card__footer) { padding-inline: 0; }
+.subagent-card.subagent-card--round :is(.subagent-card__result-inner, .subagent-card__tools-list, .subagent-history__detail, .subagent-card__call-pre) {
+  max-height: none;
+  overflow: visible;
+}
+.subagent-card.subagent-card--round .subagent-card__goal-text:not(.subagent-card__goal-text--clamp) {
+  max-height: none;
+  overflow: visible;
+}
+.subagent-card.subagent-card--round .subagent-card__result-markdown { min-width: 0; }
+.subagent-card.subagent-card--round .md :is(pre, .md-code, .md-table-wrap) { max-width: 100%; box-sizing: border-box; }
+.subagent-card.subagent-card--round .md :is(pre, .md-table-wrap) { overflow-x: auto; }
+
+@media (prefers-reduced-motion: reduce) {
+  .subagent-card.subagent-card--work > :is(summary, .subagent-card__header),
+  .subagent-card.subagent-card--work .subagent-card__chevron { transition: none; }
+}

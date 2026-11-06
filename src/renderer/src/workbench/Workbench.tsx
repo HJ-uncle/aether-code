@@ -24,6 +24,7 @@ import { Sidebar } from './Sidebar'
 import { StatusBar } from './StatusBar'
 import { useLayout } from './useLayout'
 import { codePaneBudget } from './code-pane-budget'
+import { useMotionPresence } from './MotionPresence'
 
 /**
  * 工作台骨架（对标 VS Code 布局）
@@ -45,6 +46,9 @@ export function Workbench(): JSX.Element {
   useEffect(watchOpenDocuments, [])
   useEffect(startEditorRecovery, [])
   const layout = useLayout()
+  const sidebarMotion = useMotionPresence(layout.sidebarVisible)
+  const chatMotion = useMotionPresence(layout.chatPanelVisible)
+  const panelMotion = useMotionPresence(layout.panelVisible)
   const { settings } = useApp()
   const mode = useAppMode()
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -95,10 +99,12 @@ export function Workbench(): JSX.Element {
           <div ref={bodyRef} className="workbench__body">
             <ActivityBar />
 
-            {layout.sidebarVisible ? (
+            {sidebarMotion.present ? (
               <>
                 <div
                   ref={sidebarRef}
+                  {...sidebarMotion.motionProps}
+                  data-motion-axis="x"
                   className="workbench__sidebar"
                   style={{ width: codePanes.sidebarWidth }}
                 >
@@ -118,10 +124,12 @@ export function Workbench(): JSX.Element {
             ) : null}
 
             {/* 对话面板换位：夹在侧边栏与主区之间（与 wuzu-client 的「交换对话区与源码区」一致） */}
-            {layout.chatPanelVisible && layout.chatOnLeft ? (
+            {chatMotion.present && layout.chatOnLeft ? (
               <>
                 <div
                   ref={chatRef}
+                  {...chatMotion.motionProps}
+                  data-motion-axis="x"
                   className="workbench__chat workbench__chat--left"
                   style={{ width: codePanes.chatPanelWidth }}
                 >
@@ -160,17 +168,19 @@ export function Workbench(): JSX.Element {
               重建 DOM 会丢掉 xterm 的画面与会话绑定 */}
               <div
                 ref={panelRef}
+                {...panelMotion.motionProps}
+                data-motion-axis="y"
                 className="workbench__panel"
                 style={{
-                  height: layout.panelVisible ? layout.panelHeight : 0,
-                  display: layout.panelVisible ? undefined : 'none'
+                  height: panelMotion.present ? layout.panelHeight : 0,
+                  display: panelMotion.present ? undefined : 'none'
                 }}
               >
                 <PanelArea />
               </div>
             </div>
 
-            {layout.chatPanelVisible && !layout.chatOnLeft ? (
+            {chatMotion.present && !layout.chatOnLeft ? (
               <>
                 <Resizer
                   orientation="vertical"
@@ -185,6 +195,8 @@ export function Workbench(): JSX.Element {
                 />
                 <div
                   ref={chatRef}
+                  {...chatMotion.motionProps}
+                  data-motion-axis="x"
                   className="workbench__chat"
                   style={{ width: codePanes.chatPanelWidth }}
                 >

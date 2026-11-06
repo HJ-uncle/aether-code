@@ -19,30 +19,9 @@
 }
 .mode-surface.is-active {
   z-index: 1;
-  animation: mode-enter 220ms ease-out;
 }
 .mode-surface.is-exiting {
   pointer-events: none;
-  animation: mode-exit 220ms ease-out forwards;
-}
-@keyframes mode-enter {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-@keyframes mode-exit {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
 }
 .app-mode-switch {
   display: inline-flex;

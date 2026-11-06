@@ -14,6 +14,14 @@ import { getAppMode, onAppModeChanged } from '../platform/app-mode'
 let sessionOverride: string | null = null
 let overrideSource = -1
 let scheduleOverride: (() => void) | null = null
+const identityListeners = new Set<() => void>()
+export function onBrowserSessionChanged(listener: () => void): () => void {
+  identityListeners.add(listener)
+  return () => { identityListeners.delete(listener) }
+}
+export function getBrowserSessionId(mode = getAppMode()): string | null {
+  return mode === 'work' ? overrideSource === getEngineSource() ? sessionOverride : null : getAppSettings().lastSessionId || null
+}
 
 export function setBrowserSessionOverride(
   sessionId?: string | null,
@@ -23,6 +31,7 @@ export function setBrowserSessionOverride(
   if (sessionOverride === next && overrideSource === source) return
   sessionOverride = next
   overrideSource = source
+  for (const listener of identityListeners) listener()
   scheduleOverride?.()
 }
 
@@ -33,25 +42,19 @@ export function wireBrowserConnection(): () => void {
   let lastKey = ''
   const sync = (): void => {
     if (disposed) return
-    const settings = getAppSettings()
     const expectedEngine = getExpectedEngine()
     // A missing/pending Work identity must never attach its pages to Code's
     // remembered session. Generation guards prevent a hidden view's old account
     // identity from being reused during an engine/source transition.
-    const sessionId =
-      getAppMode() === 'work'
-        ? overrideSource === getEngineSource()
-          ? sessionOverride
-          : null
-        : settings.lastSessionId
-    const key = isEngineReady() && sessionId ? JSON.stringify([expectedEngine, sessionId]) : ''
+    const mode = getAppMode(), sessionId = getBrowserSessionId(mode)
+    const key = isEngineReady() && sessionId ? JSON.stringify([expectedEngine, sessionId, mode]) : ''
     if (key === lastKey) return
     lastKey = key
     if (!key || !sessionId) {
       void window.aether.browser.disconnect().catch(() => {})
       return
     }
-    void window.aether.browser.connect({ sessionId, expectedEngine }).catch(() => {
+    void window.aether.browser.connect({ sessionId, expectedEngine, presentationMode: mode }).catch(() => {
       if (lastKey === key) lastKey = ''
     })
   }

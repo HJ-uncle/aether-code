@@ -470,7 +470,8 @@ async function resourceSwitching(lease) {
   const before = await snapshot(lease), document = before.tabs.find(tab => sameResourcePath(tab.title, sample.path, lease.initial.proof.expectedTargets[role].workspacePath)); assert.ok(document);
   const intent = { beforeIds: before.tabs.map(tab => tab.id), createdId: null };
   if (!lease.webIntents.has(role)) lease.webIntents.set(role, []); lease.webIntents.get(role).push(intent);
-  await click(lease, list(lease).getByRole('button', { name: '新建网页', exact: true }), 'new built-in webpage');
+  await click(lease, lease.c.page.getByRole('button', { name: '更多工作区', exact: true }), 'workspace resource menu');
+  await click(lease, lease.c.page.getByRole('menuitem', { name: '新建网页', exact: true }), 'new built-in webpage');
   await waitDom(lease, newResourceWebSelected, intent.beforeIds, 'new web tab selected');
   const webUi = await snapshot(lease), created = webUi.tabs.filter(tab => !intent.beforeIds.includes(tab.id) && tab.id.startsWith('web:'));
   assert.equal(created.length, 1, 'NEW_WEB_TAB_AMBIGUOUS'); intent.createdId = created[0].id;

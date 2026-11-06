@@ -1083,6 +1083,10 @@ export function WorkAgentManager({
       title={draft ? (draft.id ? '编辑 Agent' : '新建 Agent') : '自定义 Agent'}
       width={720}
       className={`work-agent-manager${draft ? ' work-agent-manager--editing' : ''}`}
+      // A draft close first reveals the discard confirmation inside this same
+      // dialog; it must stay visible until that existing flow actually closes.
+      open={draft ? true : undefined}
+      closeDisabled={busy}
       onClose={close}
       footer={footer}
     >

@@ -24,6 +24,7 @@ const malformedPayload = 'data:image/png;base64,' + '%invalid%'.repeat(3000)
 let fixture = '', app: ElectronApplication | undefined, page: Page
 let heldStream: ServerResponse | undefined, run: RootRun | undefined, sequence = 0, persisted = false
 const rendererErrors: string[] = [], serverErrors: string[] = [], chatBodies: Record<string, unknown>[] = []
+const admissionReceipts = new Map<string, { admission: Record<string, unknown>; run: RootRun }>()
 const projection: Record<string, unknown>[] = []
 const history: EngineHistoryRow[] = [
   { id: 'seed-user', role: 'user', content: '图片工具回归会话', conversationId: 'seed-turn', createdAt: 1 },
@@ -39,7 +40,7 @@ const child: SubagentRun = {
     output: JSON.stringify({ name: '子代理截图.png', dataUrl, width: 1, height: 1 }) }]
 }
 let childVisible = false
-const envelope = (data: unknown): string => JSON.stringify({ code: 200, message: 'ok', data })
+const envelope = (data: unknown, code = 200, message = 'ok'): string => JSON.stringify({ code, message, data })
 function frame(payload: Record<string, unknown>): void {
   if (!heldStream || heldStream.writableEnded) throw new Error('No open image fixture stream')
   projection.push(structuredClone(payload)); sequence++
@@ -60,12 +61,45 @@ const server = createServer((request, response) => {
       response.writeHead(401, { 'content-type': 'application/json' }).end(envelope(null)); return
     }
     let raw = ''; for await (const chunk of request) raw += String(chunk)
+    const body = raw ? JSON.parse(raw) as Record<string, unknown> : {}
+    const requestedSession = String(body.sessionId ?? url.searchParams.get('sessionId') ?? url.searchParams.get('parentSessionId') ?? sessionId)
+    const ownsSession = requestedSession === sessionId
+    // This suite intentionally exercises persisted v1 child results. A missing
+    // optional capability must negotiate legacy support, not return malformed [] success.
+    if (['/api/v1/subagent/capabilities', '/api/v1/cron/capabilities', '/api/v1/workbench/clients'].includes(path)) {
+      response.writeHead(404, { 'content-type': 'application/json' }).end(envelope(null, 404, 'Unsupported fixture capability')); return
+    }
+    if (path === '/api/v1/chat/admission/context' && request.method === 'GET') {
+      const root = ownsSession && run ? { ...run, attemptId: `attempt-${run.runId}` } : null
+      response.setHeader('content-type', 'application/json')
+      response.end(envelope({ protocolVersion: 1, tenantId: 'default', sessionId: requestedSession,
+        namespace: { id: 'tool-result-images-db', generation: 'one' },
+        transport: { toolProfile: 'code', runLifetime: 'durable', subagentProtocol: 2 }, root,
+        predecessor: root ? { runId: root.runId, attemptId: root.attemptId, version: root.version } : null })); return
+    }
+    if (path === '/api/v1/chat/admission/receipt' && request.method === 'POST') {
+      const accepted = admissionReceipts.get(String(body.requestKey))
+      const current = accepted && (accepted.run.runId === run?.runId ? run : accepted.run)
+      response.setHeader('content-type', 'application/json')
+      response.end(envelope(accepted && current ? { protocolVersion: 1, status: 'accepted',
+        receipt: { ...accepted.admission, sessionId: current.sessionId, rootRunId: current.runId,
+          turnId: current.turnId, userMessageId: current.userMessageId, assistantMessageId: current.assistantMessageId },
+        run: current, projection: { rootVersion: current.version, rootAttemptId: `attempt-${current.runId}`,
+          user: { messageId: current.userMessageId, state: 'projected' },
+          assistant: { anchorMessageId: current.assistantMessageId, state: 'unwritten' } }
+      } : { protocolVersion: 1, status: 'absent', namespace: body.namespace, sessionId: requestedSession, requestKey: body.requestKey })); return
+    }
     if (path === '/api/v1/chat' && request.method === 'POST') {
-      const body = JSON.parse(raw) as Record<string, unknown>
       if (body.sessionId !== sessionId) throw new Error('Wrong image fixture session')
+      const admission = body.admission as Record<string, unknown> | undefined
+      // An idle Code composer sends directly; only durable queued turns carry
+      // an admission envelope. Validate it when present, as the timeline fixture does.
+      if (admission !== undefined && (!admission || typeof admission !== 'object' || Array.isArray(admission) ||
+        admission.protocolVersion !== 1 || admission.owner !== 'code' || typeof admission.requestKey !== 'string')) throw new Error('Invalid Code image fixture admission')
       chatBodies.push(body)
       run = { schemaVersion: 1, runId: 'image-live-run', sessionId, turnId: 'image-live-turn', userMessageId: 'image-live-user',
-        assistantMessageId: 'image-live-assistant', seq: 1, version: 1, status: 'running', modelId, pending: [], createdAt: Date.now(), updatedAt: Date.now() }
+        assistantMessageId: 'image-live-assistant', seq: 1, version: 1, status: 'running', modelId, pending: [], workspacePaths: [], createdAt: Date.now(), updatedAt: Date.now() }
+      if (admission && typeof admission.requestKey === 'string') admissionReceipts.set(admission.requestKey, { admission, run })
       heldStream = response; response.writeHead(200, { 'content-type': 'text/event-stream' })
       const user: EngineHistoryRow = { id: run.userMessageId, role: 'user', content: String(body.message), conversationId: run.turnId, createdAt: run.createdAt }
       history.push(user); frame({ run }); frame({ userMessage: user }); return
@@ -79,11 +113,15 @@ const server = createServer((request, response) => {
       : path === '/auth/account/providers' ? { providers: [], registrationEnabled: true }
       : path === '/api/v1/models' ? [{ id: modelId, modelId, provider: 'openai', isEnabled: true, capabilities: { toolCalling: true, thinking: true, contextWindow: 128000 } }]
       : path === '/api/v1/conversation/sessions' ? [{ sessionId, title: '图片工具回归会话', lastAt: 2, messageCount: history.length }]
-      : path === '/api/v1/chat/snapshot' ? { schemaVersion: 1, source: run && !persisted ? 'live' : 'persisted', sessionId,
-        eventId: run && !persisted ? 'image-live-run:' + sequence : null, finished: !run || run.status !== 'running',
-        run, runs: run ? [run] : [], history, projection: persisted ? [] : projection, todos: [], changes: [], commandJobs: [] }
-      : path === '/api/v1/chat/runs' ? { runs: run ? [run] : [] }
-      : path === '/api/v1/subagent/runs' ? childVisible ? [child] : []
+      : path === '/api/v1/chat/snapshot' ? { schemaVersion: 1, source: ownsSession && run && !persisted ? 'live' : 'persisted', sessionId: requestedSession,
+        eventId: ownsSession && run && !persisted ? 'image-live-run:' + sequence : null, finished: !ownsSession || !run || run.status !== 'running',
+        run: ownsSession ? run : undefined, runs: ownsSession && run ? [run] : [], history: ownsSession ? history : [],
+        projection: ownsSession && !persisted ? projection : [], todos: [], changes: [], commandJobs: [] }
+      : path === '/api/v1/conversation/history' ? ownsSession ? history : []
+      : path === '/api/v1/chat/runs' ? { runs: ownsSession && run ? [run] : [] }
+      : path === '/api/v1/chat/status' ? { running: ownsSession && run?.status === 'running', finished: !ownsSession || run?.status !== 'running' }
+      : path === '/api/v1/command-jobs' ? { jobs: [] }
+      : path === '/api/v1/subagent/runs' ? ownsSession && childVisible ? [child] : []
       : path === '/api/v1/subagent/runs/' + child.runId ? child
       : path === '/api/v1/memory/settings' ? { sessionId: url.searchParams.get('sessionId'), memoryScope: 'session', effectiveScope: 'session', enabled: true }
       : path === '/api/v1/security/mode' ? { sessionId: url.searchParams.get('sessionId'), mode: 'standard' }
@@ -113,9 +151,11 @@ test.describe.serial('工具图片输出与中文名称真机回归', () => {
     writeFileSync(join(fixture, 'settings.json'), JSON.stringify({ engineMode: 'remote', remoteBaseUrl: 'http://127.0.0.1:' + address.port, autoStartEngine: true, lastSessionId: '', lastModelId: modelId, appearance: 'dark' }))
     const env: NodeJS.ProcessEnv = { ...process.env, AETHER_IDE_REMOTE_INSTANCE_TOKEN: token, AETHER_GLOBAL_DIR: join(fixture, 'global') }
     for (const key of Object.keys(env)) if (['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL', 'AETHER_IDE_REMOTE_API_KEY', 'AETHER_IDE_REMOTE_BEARER_TOKEN', 'AETHER_IDE_REMOTE_AUTH_URL'].includes(key.toUpperCase())) delete env[key]
-    app = await electron.launch({ args: ['.', '--user-data-dir=' + fixture], cwd: root, env })
+    app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || '.', '--user-data-dir=' + fixture], cwd: root, env })
     page = await app.firstWindow(); page.on('pageerror', error => rendererErrors.push(error.message))
     await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90000 })
+    await page.getByRole('tab', { name: 'Code 开发', exact: true }).click()
+    await expect(page.getByRole('tab', { name: 'Code 开发', exact: true })).toHaveAttribute('aria-selected', 'true')
     await page.getByRole('button', { name: '会话历史', exact: true }).click()
     await page.locator(`.history-view__item[data-session-id="${sessionId}"]`).click()
     await expect(page.locator('.message--user').first()).toContainText('图片工具回归会话')

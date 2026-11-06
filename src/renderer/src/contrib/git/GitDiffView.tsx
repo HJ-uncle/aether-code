@@ -54,6 +54,7 @@ export function GitDiffView(): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const diffRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null)
   const [sideBySide, setSideBySide] = useState(true)
+  const sideBySideRef = useRef(sideBySide)
   const [error, setError] = useState<string | null>(null)
   const absolute = paths.join(comparison.cwd, comparison.path)
   const doc = documents.docs.get(absolute) ?? getDocument(absolute)
@@ -83,7 +84,9 @@ export function GitDiffView(): JSX.Element {
       const releaseModifiedContext = editable ? () => {} : registerSnapshotContext(modified, absolute)
       const editor = monaco.editor.createDiffEditor(container, {
         ...toMonacoEditorOptions(getEditorDisplayOptions()),
-        theme: currentEditorThemeName(), automaticLayout: true, renderSideBySide: sideBySide,
+        theme: currentEditorThemeName(), automaticLayout: true, renderSideBySide: sideBySideRef.current,
+        // Honor the toolbar selection even below Monaco's 900px auto-inline threshold.
+        useInlineViewWhenSpaceIsLimited: false,
         readOnly: !editable, originalEditable: false, scrollBeyondLastLine: false,
         renderOverviewRuler: true, renderIndicators: true
       })
@@ -120,7 +123,11 @@ export function GitDiffView(): JSX.Element {
     // 布局选项独立更新，不因每次输入或切 inline 重建差异模型。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [comparison.version, comparison.diff, editable, absolute, documentClosed])
-  useEffect(() => { diffRef.current?.updateOptions({ renderSideBySide: sideBySide }) }, [sideBySide])
+  useEffect(() => {
+    // Model loading can finish after a toolbar click; creation reads this latest choice.
+    sideBySideRef.current = sideBySide
+    diffRef.current?.updateOptions({ renderSideBySide: sideBySide })
+  }, [sideBySide])
   return (
     <section className="git-diff-view" aria-label="文件差异编辑器">
       <header className="git-diff-view__toolbar">

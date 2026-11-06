@@ -5,9 +5,9 @@ import { build } from 'esbuild'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { BrowserWindow, WebContents } from 'electron'
+import type { BrowserWindow, NativeImage, WebContents } from 'electron'
 import type { BrowserService } from '../src/main/browser/service'
-import type { BrowserContext, BrowserEvent, BrowserScreenshot, BrowserTabState, BrowserToolRequest, BrowserToolResult } from '../src/shared/browser'
+import type { BrowserContext, BrowserEvent, BrowserScreenshot, BrowserSnapshot, BrowserTabState, BrowserToolRequest, BrowserToolResult } from '../src/shared/browser'
 
 type RecoveryHost = {
   service: BrowserService
@@ -116,16 +116,85 @@ test.describe.serial('浏览器宿主恢复与真实执行回执', () => {
       }
       try {
         const failed = await host.service.execute({ action: 'screenshot', tabId: tab.tabId }, context)
+        const snapshot = await host.service.execute({ action: 'snapshot', tabId: tab.tabId }, context)
         const controller = new AbortController()
         wc.capturePage = async () => { controller.abort(); throw new Error('Capture cancelled') }
         const cancelled = await host.service.execute({ action: 'screenshot', tabId: tab.tabId }, context, controller.signal)
-        return { failed, cancelled, fallbackCalls }
+        return { failed, snapshot, cancelled, fallbackCalls }
       } finally { wc.capturePage = capture; wc.debugger.sendCommand = command }
     }, { tab, context })
     expect(result.failed).toMatchObject({ success: false, metadata: { operationPerformed: false } })
     expect(result.failed.error).toContain('截图表面不可用')
+    expect(result.snapshot.success, result.snapshot.error).toBe(true)
+    const snapshot = result.snapshot.output as BrowserSnapshot
+    expect(snapshot.text).toContain('一次提交')
+    expect(snapshot.screenshot).toBeUndefined()
+    expect(snapshot.screenshotUnavailable).toContain('截图表面不可用')
     expect(result.cancelled).toMatchObject({ success: false, metadata: { operationPerformed: false } })
+    expect(result.fallbackCalls).toBe(2)
+  })
+
+  test('原生捕获超时仍给页面快照保留后备预算，返回真实像素且不显示窗口', async ({}, testInfo) => {
+    const result = await app.evaluate(async ({ webContents, nativeImage }, { tab, context }) => {
+      const host = (globalThis as Host).browserRecovery
+      const wc = webContents.getAllWebContents().find(wc => wc.getTitle() === 'Browser recovery fixture')!
+      const capture = wc.capturePage, command = wc.debugger.sendCommand.bind(wc.debugger)
+      const reveals = host.events.filter(event => event.type === 'reveal').length
+      let fallbackCalls = 0
+      wc.capturePage = () => new Promise<NativeImage>(() => {})
+      wc.debugger.sendCommand = async (method, ...args) => {
+        if (method === 'Page.captureScreenshot') fallbackCalls++
+        return command(method, ...args)
+      }
+      try {
+        const result = await host.service.execute({ action: 'snapshot', tabId: tab.tabId }, context)
+        const snapshot = result.output as BrowserSnapshot | undefined
+        if (!result.success || !snapshot?.screenshot) return { result, fallbackCalls }
+        const png = Buffer.from(snapshot.screenshot.dataUrl.split(',')[1], 'base64')
+        const bitmap = nativeImage.createFromBuffer(png).toBitmap()
+        const width = png.readUInt32BE(16), height = png.readUInt32BE(20)
+        const offset = (Math.floor(height / 2) * width + Math.floor(width / 2)) * 4
+        return { result, fallbackCalls, color: [bitmap[offset + 2], bitmap[offset + 1], bitmap[offset]],
+          actual: { width, height }, visible: host.owner.isVisible(),
+          reveals: host.events.filter(event => event.type === 'reveal').length - reveals,
+          clicks: await wc.executeJavaScript('window.clicks') }
+      } finally { wc.capturePage = capture; wc.debugger.sendCommand = command }
+    }, { tab, context })
+    expect(result.result.success, result.result.error).toBe(true)
+    expect(result).toMatchObject({ fallbackCalls: 1, color: [26, 160, 92], visible: false, reveals: 0, clicks: 0 })
+    const snapshot = result.result.output as BrowserSnapshot
+    expect(snapshot.screenshotUnavailable).toBeUndefined()
+    expect({ width: snapshot.screenshot!.width, height: snapshot.screenshot!.height }).toEqual(result.actual)
+    await testInfo.attach('snapshot-after-native-timeout.png', { body: Buffer.from(snapshot.screenshot!.dataUrl.split(',')[1], 'base64'), contentType: 'image/png' })
+  })
+
+  test('两种捕获均不返回时有界结束，外层取消仍阻止后备捕获', async () => {
+    const result = await app.evaluate(async ({ webContents }, { tab, context }) => {
+      const host = (globalThis as Host).browserRecovery
+      const wc = webContents.getAllWebContents().find(wc => wc.getTitle() === 'Browser recovery fixture')!
+      const capture = wc.capturePage, command = wc.debugger.sendCommand.bind(wc.debugger)
+      let fallbackCalls = 0
+      wc.capturePage = () => new Promise<NativeImage>(() => {})
+      wc.debugger.sendCommand = async (method, ...args) => {
+        if (method === 'Page.captureScreenshot') { fallbackCalls++; return new Promise(() => {}) }
+        return command(method, ...args)
+      }
+      try {
+        const started = Date.now()
+        const snapshot = await host.service.execute({ action: 'snapshot', tabId: tab.tabId }, context)
+        const elapsed = Date.now() - started
+        const cancelled = await host.service.execute({ action: 'snapshot', tabId: tab.tabId }, context, AbortSignal.timeout(100))
+        return { snapshot, elapsed, cancelled, fallbackCalls }
+      } finally { wc.capturePage = capture; wc.debugger.sendCommand = command }
+    }, { tab, context })
+    expect(result.snapshot.success, result.snapshot.error).toBe(true)
+    const snapshot = result.snapshot.output as BrowserSnapshot
+    expect(snapshot.text).toContain('一次提交')
+    expect(snapshot.screenshot).toBeUndefined()
+    expect(snapshot.screenshotUnavailable).toContain('超时')
+    expect(result.elapsed).toBeLessThan(10_000)
     expect(result.fallbackCalls).toBe(1)
+    expect(result.cancelled).toMatchObject({ success: false, metadata: { operationPerformed: false } })
   })
 
   test('等待布局配置完成后只点击一次，不把旧可见状态当作显示确认', async () => {

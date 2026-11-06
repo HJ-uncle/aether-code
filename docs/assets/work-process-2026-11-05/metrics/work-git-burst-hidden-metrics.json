@@ -1,0 +1,31 @@
+{
+  "burstFiles": 125,
+  "controlledResponseHoldMs": 650,
+  "burstConvergenceLatencyMs": 6443,
+  "mountedRows": 32,
+  "afterBurst": {
+    "reads": 16,
+    "statusStarted": 2,
+    "activeStatus": 0,
+    "maxActiveStatus": 1,
+    "held": false,
+    "durationsMs": [
+      3176,
+      533
+    ]
+  },
+  "hiddenReadDelta": 0,
+  "reopenLatencyMs": 3669,
+  "transport": {
+    "reads": 28,
+    "statusStarted": 3,
+    "activeStatus": 0,
+    "maxActiveStatus": 1,
+    "held": false,
+    "durationsMs": [
+      3176,
+      533,
+      702
+    ]
+  }
+}

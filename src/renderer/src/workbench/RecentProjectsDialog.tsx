@@ -13,12 +13,14 @@ import { openFolderAt } from '@renderer/core/workspace/workspace-store'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { Dialog } from './Dialog'
 import { Icon } from './icons'
+import { useMotionDismiss } from './MotionPresence'
 
 export function RecentProjectsDialog({
-  onClose
+  onClose: dismiss
 }: {
   onClose: () => void
 }): JSX.Element {
+  const { show, close: onClose } = useMotionDismiss(dismiss)
   const workspace = useWorkspace()
   const [all, setAll] = useState<string[]>([])
   useEffect(() => {
@@ -38,6 +40,7 @@ export function RecentProjectsDialog({
 
   return (
     <Dialog
+      open={show}
       title={`最近打开（共 ${all.length} 个）`}
       onClose={onClose}
       footer={

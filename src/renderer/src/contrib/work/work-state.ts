@@ -5,9 +5,23 @@ import { visibleChildCommandJobs } from '../../core/engine/command-job-state'
 import { mergeFileChanges } from '../../core/engine/tool-file-changes'
 import { isStoredMention, type Mention } from '@renderer/contrib/chat/mention-context'
 import { createDraftPersistenceScheduler } from './work-draft-persistence'
+import type { RootRun, RootRunStatus } from '@shared/root-run'
+import { normalizeWorkTaskActivity, workTaskStatusFromRun } from './work-status-poller'
 
 export type WorkTaskStatus =
   'draft' | 'running' | 'waiting' | 'done' | 'error' | 'stopped' | 'interrupted'
+export type WorkTaskLabelColor = 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple'
+export const WORK_TASK_LABEL_COLORS: readonly WorkTaskLabelColor[] = ['red', 'orange', 'yellow', 'green', 'blue', 'purple']
+/** Only the execution watermark and waiting counts belong in the task list. */
+export interface WorkTaskActivity {
+  runId: string
+  seq: number
+  version: number
+  status: RootRunStatus
+  updatedAt: number
+  pendingAsk: number
+  pendingPermission: number
+}
 export interface WorkTask {
   id: string
   title: string
@@ -15,6 +29,9 @@ export interface WorkTask {
   status: WorkTaskStatus
   createdAt: number
   updatedAt: number
+  pinned?: boolean
+  labelColor?: WorkTaskLabelColor
+  activity?: WorkTaskActivity
   /** Timestamp of the currently active turn. Kept separate from task age so
    * a long-lived task does not look like it has been running for days. */
   runStartedAt?: number
@@ -201,6 +218,9 @@ export function normalizeWorkState(value: unknown): WorkState {
           createdAt: task.createdAt,
           draft: typeof task.draft === 'string' ? task.draft : '',
           updatedAt: typeof task.updatedAt === 'number' && Number.isFinite(task.updatedAt) ? task.updatedAt : task.createdAt,
+          ...(task.pinned === true ? { pinned: true } : {}),
+          ...(WORK_TASK_LABEL_COLORS.includes(task.labelColor!) ? { labelColor: task.labelColor } : {}),
+          ...(normalizeWorkTaskActivity(task.activity) ? { activity: normalizeWorkTaskActivity(task.activity) } : {}),
           ...(typeof task.runStartedAt === 'number' && Number.isFinite(task.runStartedAt) && task.runStartedAt > 0
             ? { runStartedAt: task.runStartedAt }
             : {}),
@@ -320,8 +340,12 @@ export function useWorkState(source: string): WorkState {
   )
 }
 
-export function workStatus(messages: ChatMessage[], streaming: boolean): WorkTaskStatus | null {
+export function workStatus(messages: ChatMessage[], streaming: boolean, root?: RootRun): WorkTaskStatus | null {
   const last = messages.filter((message) => message.role === 'assistant').at(-1)
+  // A transport can remain attached after the engine has published its terminal
+  // root. Its lifetime must not turn a confirmed failure/completion into running.
+  const authoritative = root ?? last?.run
+  if (authoritative) return workTaskStatusFromRun({ run: authoritative }, 'interrupted')
   if (!last) return null
   if (last.status === 'waiting') return 'waiting'
   if (streaming || last.status === 'streaming') return 'running'
@@ -335,13 +359,17 @@ export function workArtifacts(messages: ChatMessage[], commandJobs: CommandJobSn
   const receipts = new Map<string, { change: NonNullable<ChatMessage['tools'][number]['change']>; status: WorkArtifact['status'] }>()
   for (const message of messages)
     for (const tool of message.tools) {
-      const changes = new Map([...(tool.change ? [tool.change] : []), ...(tool.changes ?? [])].map(change => [change.id, change]))
-      for (const change of changes.values()) {
+      const changes = mergeFileChanges(tool.changes, tool.change)
+      for (const change of changes) {
+        if (sessionId && change.sessionId && change.sessionId !== sessionId) continue
+        const previous = receipts.get(change.id)
+        if (previous && (previous.change.path !== change.path || previous.change.kind !== change.kind ||
+          previous.change.sessionId && change.sessionId && previous.change.sessionId !== change.sessionId)) continue
         // A later task failure does not undo a completed file write. Conversely,
         // a completed assistant message cannot certify an unresolved tool.
         const status = tool.state === 'done' && tool.metadata?.success !== false ? 'ready'
           : tool.state === 'running' && message.status === 'streaming' ? 'draft' : 'unverified'
-        receipts.set(change.id, { change, status })
+        receipts.set(change.id, { change: mergeFileChanges(previous?.change, change)[0], status })
       }
     }
   // Child commands belong to the root conversation, but deliberately cannot

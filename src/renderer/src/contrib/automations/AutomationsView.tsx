@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type JS
 import type { CronAutomationRun, CronCapabilities, CronThinkingMode } from '@shared/automation'
 import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
 import { Dialog } from '@renderer/workbench/Dialog'
+import { useMotionPresence, useMotionValue } from '@renderer/workbench/MotionPresence'
 import { ActionMenu } from '@renderer/workbench/ActionMenu'
 import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
@@ -116,6 +117,18 @@ export function AutomationsView(props: {
       </article>)}</div> : <div className="automation-empty"><Icon name="clock-outline" size={28} /><h3>{jobs.length ? '没有匹配的自动化' : '还没有自动化'}</h3><p>{jobs.length ? '换一个名称或关键词试试。' : capabilities?.targets.includes('standalone') ? '写下重复任务，选择时间即可开始，无需先打开项目。' : '从已有聊天创建定时计划。'}</p></div>}
     </>}
     {editor && currentScope ? <AutomationEditor key={`${source}:${editor.key}`} job={editor.job} capabilities={capabilities} sessions={sessions} currentSessionId={currentSessionId} currentAgentId={currentAgentId} thinkingMode={thinkingMode} initialTab={editor.tab} onClose={() => setEditor(null)} onSaved={updateJob} onOpenRun={onOpenRun} onManageAgent={() => { setEditor(null); onManageAgent() }} /> : null}
-    {removing && currentScope ? <Dialog title="删除自动化" onClose={() => { if (!busy) setRemoving(null) }} footer={<><button className="btn" type="button" disabled={Boolean(busy)} onClick={() => setRemoving(null)}>取消</button><button className="btn btn--danger" type="button" disabled={Boolean(busy)} onClick={() => void mutate(removing, true)}>{busy ? <Spinner size={14} /> : null}删除计划</button></>}><p>删除“{removing.name}”后不再按计划触发。已有运行与记录保留，停止当前运行请在运行记录中操作。</p></Dialog> : null}
+    {currentScope ? <AutomationRemovalDialog key={source} job={removing} busy={Boolean(busy)} onClose={() => setRemoving(null)} onRemove={job => mutate(job, true)} /> : null}
   </section>
+}
+
+function AutomationRemovalDialog({ job, busy, onClose, onRemove }: {
+  job: AutomationJob | null; busy: boolean; onClose: () => void; onRemove: (job: AutomationJob) => Promise<void>
+}): JSX.Element | null {
+  const retained = useMotionValue(job)
+  const motion = useMotionPresence(Boolean(job))
+  if (!motion.present || !retained) return null
+  return <Dialog open={Boolean(job)} title="删除自动化" closeDisabled={busy} onClose={() => { if (!busy) onClose() }} footer={<>
+    <button className="btn" type="button" disabled={busy} onClick={onClose}>取消</button>
+    <button className="btn btn--danger" type="button" disabled={busy} onClick={() => void onRemove(retained)}>{busy ? <Spinner size={14} /> : null}删除计划</button>
+  </>}><p>删除“{retained.name}”后不再按计划触发。已有运行与记录保留，停止当前运行请在运行记录中操作。</p></Dialog>
 }

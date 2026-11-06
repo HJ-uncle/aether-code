@@ -476,7 +476,7 @@ const PATHS: Record<IconName, JSX.Element> = {
     />
   ),
   file: (
-    <path d="M13 3H7v18h10V8l-4-5zm0 2.4L15.6 8H13V5.4zM9 18V8h2v6h4v4H9z" fill="currentColor" />
+    <path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm0 2v16h12V9h-5V4H6zm9 .8V7h2.2L15 4.8z" fill="currentColor" />
   ),
   paperclip: (
     <path

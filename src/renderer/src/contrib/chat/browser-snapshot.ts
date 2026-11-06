@@ -9,8 +9,9 @@ export interface ToolBrowserSnapshot {
   loading?: boolean
   viewport?: { width: number; height: number }
   screenshot?: BrowserSnapshot['screenshot']
+  screenshotUnavailable?: string
   snapshotUnavailable?: string
-  interaction?: BrowserSnapshot['interaction']
+  interaction?: NonNullable<BrowserSnapshot['interaction']> & { screenshotUnavailable?: string }
   truncated: boolean
 }
 
@@ -58,6 +59,17 @@ function finiteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
+/** A stream budget marker is missing evidence, not corrupt pixels. Keep it
+ * distinct from a failed page snapshot and never infer an image from its size. */
+export function browserScreenshotOmission(value: unknown): string | undefined {
+  const source = record(value)
+  if (!source || Object.hasOwn(source, 'dataUrl') || source.retainedForDisplay !== true ||
+      source.omittedFromStream !== true || source.retainedInHistory !== true || source.reason !== 'stream-byte-budget' ||
+      !finiteNumber(source.width) || !Number.isInteger(source.width) || source.width < 1 || source.width > 1600 ||
+      !finiteNumber(source.height) || !Number.isInteger(source.height) || source.height < 1 || source.height > 1600) return undefined
+  return '此记录未附截图'
+}
+
 // This bounds untrusted display geometry, not browser tool execution. Finite doubles can still
 // overflow coordinate formatting or SVG's numeric representation when restored from history.
 const MAX_DRAW_COORDINATE = 2 ** 31 - 1
@@ -81,7 +93,7 @@ function parseElementBounds(value: unknown): BrowserElement['bounds'] {
 }
 
 /** Click coordinates belong to the viewport before the click, which may navigate to a new page. */
-function parseClickInteraction(value: unknown): BrowserSnapshot['interaction'] | undefined {
+function parseClickInteraction(value: unknown): ToolBrowserSnapshot['interaction'] {
   const source = record(value)
   const viewport = record(source?.viewport)
   if (!source || source.type !== 'click' || !viewport ||
@@ -116,6 +128,8 @@ function parseClickInteraction(value: unknown): BrowserSnapshot['interaction'] |
   }
 
   const screenshot = viewportScreenshot(source.screenshot)
+  const screenshotUnavailable = browserScreenshotOmission(source.screenshot) ??
+    (typeof source.screenshotUnavailable === 'string' && source.screenshotUnavailable.trim() ? source.screenshotUnavailable.slice(0, 1000) : undefined)
   return {
     type: 'click', x: source.x, y: source.y,
     navigationId: source.navigationId, pageUrl: source.pageUrl,
@@ -124,7 +138,8 @@ function parseClickInteraction(value: unknown): BrowserSnapshot['interaction'] |
       scrollX: viewport.scrollX, scrollY: viewport.scrollY
     },
     ...(target ? { target } : {}),
-    ...(screenshot ? { screenshot } : {})
+    ...(screenshot ? { screenshot } : {}),
+    ...(screenshotUnavailable ? { screenshotUnavailable } : {})
   }
 }
 
@@ -162,6 +177,8 @@ export function parseBrowserSnapshot(value: unknown): ToolBrowserSnapshot | null
   }
   const interaction = parseClickInteraction(source.interaction)
   const screenshot = viewportScreenshot(source.screenshot)
+  const screenshotUnavailable = browserScreenshotOmission(source.screenshot) ??
+    (typeof source.screenshotUnavailable === 'string' && source.screenshotUnavailable.trim() ? source.screenshotUnavailable.slice(0, 1000) : undefined)
 
   return {
     title: tab.title,
@@ -172,6 +189,7 @@ export function parseBrowserSnapshot(value: unknown): ToolBrowserSnapshot | null
     ...(viewport ? { viewport } : {}),
     ...(interaction ? { interaction } : {}),
     ...(screenshot ? { screenshot } : {}),
+    ...(screenshotUnavailable ? { screenshotUnavailable } : {}),
     ...(typeof source.snapshotUnavailable === 'string' ? { snapshotUnavailable: source.snapshotUnavailable.slice(0, 1000) } : {}),
     truncated: source.truncated === true
   }

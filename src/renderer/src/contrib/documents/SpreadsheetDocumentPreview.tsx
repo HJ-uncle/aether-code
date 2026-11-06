@@ -129,7 +129,7 @@ export default function SpreadsheetDocumentPreview({ data, sessionKey, onRetry }
       {rangeError ? <PreviewMessage error={rangeError} onRetry={onRetry} /> : session.pageError ? <PreviewMessage error={session.pageError} onRetry={onRetry} /> : null}
     </div>
     <div className="document-preview__toolbar document-preview__toolbar--sheets">
-      <div className="document-preview__sheet-tabs" role="tablist" aria-label="工作表">
+      <div className="document-preview__sheet-tabs" data-scroll-axis="x" role="tablist" aria-label="工作表">
         {sheets.map((item, index) => <button key={index} id={`${panelId}-tab-${index}`} type="button" role="tab" aria-selected={sheet === index} aria-controls={panelId} tabIndex={sheet === index ? 0 : -1}
           onClick={() => { setSelection({ key: sessionKey, sheet: index }); if (body.current) { body.current.scrollTop = 0; body.current.scrollLeft = 0 } }}
           onKeyDown={event => {

@@ -10,6 +10,7 @@ import { getWorkDraft, getWorkState, updateWorkDraft, flushWorkDrafts } from '..
 
 /** Sharing grants access to the exact page; the reference separately tells the composer which page the user selected. */
 export async function addBrowserTabToChat(tab: BrowserTabState, connection: BrowserConnectionState, mode: AppMode): Promise<void> {
+  if (tab.localFile) throw new Error('本地文件仅供本机预览，如需交给 AI，请通过会话附件添加。')
   const { sessionId, engineId } = connection
   if (connection.status !== 'connected' || !sessionId || !engineId) throw new Error('请先连接引擎并打开一个会话')
   const source = getEngineSource()

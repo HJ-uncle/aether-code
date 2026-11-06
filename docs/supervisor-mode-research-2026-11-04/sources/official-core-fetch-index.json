@@ -1,0 +1,22 @@
+[
+  {
+    "name": "openai-app-server-current",
+    "url": "https://learn.chatgpt.com/docs/app-server.md",
+    "finalUrl": "https://learn.chatgpt.com/docs/app-server.md",
+    "status": 200,
+    "contentType": "text/markdown; charset=utf-8",
+    "chars": 105857,
+    "sha256": "bb74cd23b269d7e5f9d179221a0083850edff4eef76fa8657bacbf85e0db080c",
+    "retrievedAt": "2026-11-04T02:32:49.051Z"
+  },
+  {
+    "name": "claude-code-agent-teams-current",
+    "url": "https://code.claude.com/docs/en/agent-teams.md",
+    "finalUrl": "https://code.claude.com/docs/en/agent-teams.md",
+    "status": 200,
+    "contentType": "text/markdown; charset=utf-8",
+    "chars": 43877,
+    "sha256": "84dd2779615f2b2c8954e4aa39af9ad11bfeb2a9f4d8d72f78bd5a03eecd118f",
+    "retrievedAt": "2026-11-04T02:32:48.577Z"
+  }
+]

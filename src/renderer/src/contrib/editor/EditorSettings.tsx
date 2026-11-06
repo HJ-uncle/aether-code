@@ -38,7 +38,7 @@ export function EditorSettings(): JSX.Element {
         onChange={(enabled) => setEditorDisplayOptions({ wordWrap: enabled ? 'on' : 'off' })} />
       <SettingSwitch label="显示小地图" checked={options.minimapEnabled}
         onChange={(minimapEnabled) => setEditorDisplayOptions({ minimapEnabled })} />
-      <pre className="editor-settings__preview" style={{
+      <pre className="editor-settings__preview" data-scroll-axis="x" style={{
         fontFamily: options.fontFamily,
         fontSize: options.fontSize,
         lineHeight: `${options.lineHeight}px`,

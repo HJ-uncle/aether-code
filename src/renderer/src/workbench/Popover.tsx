@@ -8,6 +8,7 @@ import {
   type ReactNode
 } from 'react'
 import { createPortal } from 'react-dom'
+import { useMotionPresence } from './MotionPresence'
 
 /** 浮层展开方向 */
 export type PopoverPlacement = 'up' | 'down'
@@ -85,6 +86,7 @@ export function Popover({
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
   const requestedOpen = controlledOpen ?? uncontrolledOpen
   const open = requestedOpen && !disabled
+  const motion = useMotionPresence(open)
   const setOpen = useCallback(
     (next: boolean): void => {
       if (controlledOpen === undefined) setUncontrolledOpen(next)
@@ -96,12 +98,12 @@ export function Popover({
   const triggerRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
 
-  // 关闭时清掉上一次的定位（React 官方「渲染时调整 state」模式），
+  // 打开时清掉上一次的定位，关闭则保留坐标供退出动画使用。
   // 避免在 effect 里同步 setState 触发级联渲染
   const [prevOpen, setPrevOpen] = useState(open)
   if (open !== prevOpen) {
     setPrevOpen(open)
-    if (!open) setPos(null)
+    if (open) setPos(null)
   }
 
   /**
@@ -228,10 +230,12 @@ export function Popover({
         {trigger({ open })}
       </div>
 
-      {open
+      {motion.present
         ? createPortal(
             <div
               ref={panelRef}
+              {...motion.motionProps}
+              data-motion-axis="y"
               className={`popover__panel popover__panel--${pos?.placement ?? placement} popover__panel--${align}${
                 flush ? ' popover__panel--flush' : ''
               }${pos ? ' is-positioned' : ''}${panelClassName ? ` ${panelClassName}` : ''}`}

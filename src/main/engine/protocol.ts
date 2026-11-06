@@ -139,7 +139,7 @@ const REMOTE_READ_ROUTES = [
   /^\/api\/v1\/performance\/runtime$/,
   /^\/api\/v1\/(models|models\/capability-defs|tools|system-tools|external-skills|changes|todos)$/,
   /^\/api\/v1\/agents(?:\/[a-zA-Z0-9_-]+)?$/,
-  /^\/api\/v1\/conversation\/(sessions|history|archive)$/,
+  /^\/api\/v1\/conversation\/(sessions|history|archive|display|result-asset)$/,
   /^\/api\/v1\/(mcp\/servers(?:\/[a-zA-Z0-9_-]+)?|skills(?:\/[a-zA-Z0-9_.-]+)?|knowledge\/(?:formats|documents(?:\/[a-zA-Z0-9_-]+)?|bases(?:\/[a-zA-Z0-9_-]+)?|status))$/,
   /^\/api\/v1\/skills\/imports(?:\/[a-zA-Z0-9_-]+)?(?:\/chunks)?$/,
   /^\/api\/v1\/chat\/(snapshot|status|runs|stream)$/,
@@ -197,7 +197,7 @@ const REMOTE_CHAT_ROUTES = [
 ]
 
 /** Conversation execution uses server-side workspace paths, never the local IDE root. */
-export function remoteRequestError(mode: 'embedded' | 'remote', method: string, path: string): string | null {
+export function remoteRequestError(mode: 'embedded' | 'remote', method: string, path: string, body?: unknown): string | null {
   if (mode !== 'remote') return null
   const pathname = normalizeEnginePath(path).split('?')[0]
   // Reserved automation endpoints must not fall through as a generic job ID.
@@ -214,6 +214,17 @@ export function remoteRequestError(mode: 'embedded' | 'remote', method: string, 
   }
   if (method === 'GET' && REMOTE_READ_ROUTES.some(route => route.test(pathname))) return null
   if (method === 'POST' && REMOTE_CHAT_ROUTES.some(route => route.test(pathname))) return null
+  // Only this exposed setting may be changed remotely. The engine still
+  // checks administrator permissions; other deployment settings stay gated.
+  if (pathname === '/api/v1/settings') {
+    if (method === 'GET') return null
+    if (method === 'PUT' && body && typeof body === 'object' && !Array.isArray(body)) {
+      const values = body as Record<string, unknown>
+      const limit = values.SUBAGENT_CONCURRENCY_LIMIT
+      if (Object.keys(values).length === 1 && typeof limit === 'number' && Number.isInteger(limit) && limit >= 1 && limit <= 16) return null
+    }
+    return '远端设置仅支持读取，或将子代理并发数量设为 1–16 的整数。'
+  }
   // Custom agents are tenant-scoped engine records, with a narrow CRUD API.
   if (method === 'POST' && pathname === '/api/v1/agents') return null
   if ((method === 'PUT' || method === 'DELETE') && /^\/api\/v1\/agents\/[a-zA-Z0-9_-]+$/.test(pathname)) return null

@@ -7,6 +7,7 @@
  */
 import { useState, type JSX } from 'react'
 import { Dialog } from '@renderer/workbench/Dialog'
+import { useMotionPresence } from '@renderer/workbench/MotionPresence'
 import {
   closeCloneDialog,
   resetCloneProgress,
@@ -24,23 +25,23 @@ const URL_SHAPE =
   /^(?:(?:https?|ssh|git|file):\/\/|git@)[^\s]+$|^[A-Za-z]:[\\/][^\s]+$|^[\\/][^\s]+$/
 
 export function GitCloneDialog(): JSX.Element | null {
-  const { dialogVisible } = useGitCloneFlow()
+  const { dialogVisible, stage } = useGitCloneFlow()
   const [url, setUrl] = useState('')
   const [validationError, setValidationError] = useState('')
   const [busy, setBusy] = useState(false)
+  const motion = useMotionPresence(dialogVisible, { onExited: () => { setUrl(''); setValidationError('') } })
 
-  if (!dialogVisible) return null
+  if (!motion.present) return null
 
   const cleaned = cleanUrl(url)
   const canSubmit = URL_SHAPE.test(cleaned) && !busy
 
   const close = (): void => {
-    setUrl('')
-    setValidationError('')
     closeCloneDialog()
   }
 
   const handleConfirm = async (): Promise<void> => {
+    if (busy || stage !== 'idle') return
     if (!cleaned) {
       setValidationError('请输入仓库地址')
       return
@@ -54,7 +55,6 @@ export function GitCloneDialog(): JSX.Element | null {
     resetCloneProgress()
     try {
       await runCloneFlow(cleaned)
-      setUrl('')
     } finally {
       setBusy(false)
     }
@@ -62,12 +62,14 @@ export function GitCloneDialog(): JSX.Element | null {
 
   return (
     <Dialog
+      open={dialogVisible}
+      closeDisabled={busy || stage !== 'idle'}
       title="克隆仓库"
       width={440}
       onClose={close}
       footer={
         <>
-          <button type="button" className="btn" onClick={close}>
+          <button type="button" className="btn" disabled={busy || stage !== 'idle'} onClick={close}>
             取消
           </button>
           <button

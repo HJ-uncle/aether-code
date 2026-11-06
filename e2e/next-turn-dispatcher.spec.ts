@@ -4,7 +4,7 @@ import { join, resolve, sep } from 'node:path'
 import { NextTurnQueueStore } from '../src/main/next-turn-queue-store'
 import { NextTurnQueueMutationService, type TrustedQueueAuthorityLease } from '../src/main/next-turn-queue-service'
 import { NextTurnDispatcher, type QueueDispatchGateway } from '../src/main/next-turn-dispatcher'
-import { WORK_QUEUE_TRANSPORT, canonicalAdmissionJson, freezeQueueRequest, assertFrozenQueueRequest, parseAdmissionContext, parseExactAdmission, type AdmissionContext, type AdmissionRoot, type ExactAdmission } from '../src/main/next-turn-admission-protocol'
+import { WORK_QUEUE_TRANSPORT, queueTransport, canonicalAdmissionJson, freezeQueueRequest, assertFrozenQueueRequest, parseAdmissionContext, parseExactAdmission, type AdmissionContext, type AdmissionRoot, type ExactAdmission } from '../src/main/next-turn-admission-protocol'
 import { NextTurnQueueError, type NextTurnQueueEnvelope, type NextTurnQueueScope, type NextTurnQueueEntry } from '../src/shared/next-turn-queue'
 import type { WorkQueueDraft } from '../src/shared/work-next-turn-api'
 import { queuedDraft } from '../src/renderer/src/contrib/work/work-next-turn-queue'
@@ -14,15 +14,16 @@ const baseScope: NextTurnQueueScope = { source: { mode: 'embedded', endpoint: ''
 const initialRoot = (): AdmissionRoot => ({ runId: 'initial', attemptId: 'attempt-initial', version: 1, status: 'running', workspacePaths: [], modelId: 'synthetic-model' })
 const draft = (text = 'synthetic instruction'): WorkQueueDraft => ({ draft: { text, revision: 1, mentions: [] }, model: { kind: 'explicit', modelId: 'synthetic-model' }, resources: { skills: { kind: 'inherit' }, mcpServers: { kind: 'none' }, knowledgeBases: { kind: 'inherit' } }, thinking: { kind: 'off' }, attachments: [] })
 class Gateway implements QueueDispatchGateway {
+  constructor(readonly owner: NextTurnQueueScope['owner'] = 'work') {}
   current = true; generation = 'one'; preparations = 0; envelopes = 0; posts: string[] = []; failPost = false; absent = false; malformedReceipt = false
   roots = new Map<string, AdmissionRoot | null>(); admitted = new Map<string, ExactAdmission>()
   prepareGate?: Promise<void>; captureGate?: Promise<void>; envelopeGate?: Promise<void>
-  async capture(taskId: string) { await this.captureGate; return { scope: { ...structuredClone(baseScope), taskId, namespace: { ...baseScope.namespace, generation: this.generation } }, generation: this.generation } }
+  async capture(taskId: string) { await this.captureGate; return { scope: { ...structuredClone(baseScope), owner: this.owner, taskId, namespace: { ...baseScope.namespace, generation: this.generation } }, generation: this.generation } }
   assertCurrent(lease: TrustedQueueAuthorityLease) { if (!this.current || lease.generation !== this.generation) throw new NextTurnQueueError('AUTHORITY', 'synthetic authority changed') }
   async context(scope: NextTurnQueueScope): Promise<AdmissionContext> {
     if (!this.current || scope.namespace.generation !== this.generation) throw new NextTurnQueueError('AUTHORITY', 'synthetic authority changed')
     const root = this.roots.has(scope.taskId) ? this.roots.get(scope.taskId)! : initialRoot()
-    return { protocolVersion: 1, tenantId: scope.tenantId, sessionId: scope.taskId, namespace: scope.namespace, transport: WORK_QUEUE_TRANSPORT,
+    return { protocolVersion: 1, tenantId: scope.tenantId, sessionId: scope.taskId, namespace: scope.namespace, transport: queueTransport(scope.owner),
       root, predecessor: root ? { runId: root.runId, attemptId: root.attemptId, version: root.version } : null }
   }
   async envelope(scope: NextTurnQueueScope, input: WorkQueueDraft): Promise<NextTurnQueueEnvelope> {
@@ -62,6 +63,91 @@ async function enqueue(driver: NextTurnDispatcher, text = 'one', id = 'item-one'
 async function phase(driver: NextTurnDispatcher, expected: string, task = baseScope.taskId) {
   await expect.poll(async () => (await driver.read(task)).state.entries[0]?.phase).toBe(expected)
 }
+test('Code replaces and retargets pending messages atomically, preserves order and replays edit ACK without restaging', async () => {
+  const { driver, gateway } = create(new Gateway('code')), task = 'code-edit'
+  for (const id of ['a', 'b', 'c']) await driver.enqueue(task, (await driver.read(task)).state.revision, 'enqueue-' + id, id, { ...draft(id), code: {} })
+  let state = (await driver.read(task)).state
+  const replaced = { ...draft('edited a'), code: {}, thinking: { kind: 'on' as const } }
+  const action = { kind: 'replace-submission' as const, id: 'a', entryRevision: 1, expectedRevision: state.revision, operationId: 'replace-a', submission: replaced }
+  const result = await driver.changePending(task, action), replay = await driver.changePending(task, action)
+  expect(replay.replayed).toBe(true); expect(replay.receipt).toEqual(result.receipt); expect(gateway.envelopes).toBe(4)
+  state = (await driver.read(task)).state
+  const retarget = { kind: 'retarget-model' as const, entries: [{ id: 'a', entryRevision: 2 }, { id: 'c', entryRevision: 1 }], expectedRevision: state.revision, operationId: 'retarget-a-c', model: { kind: 'explicit' as const, modelId: 'another-model' } }
+  const retargeted = await driver.changePending(task, retarget)
+  expect(retargeted.state.entries.map(entry => entry.id)).toEqual(['a', 'b', 'c'])
+  expect(retargeted.state.entries.map(entry => entry.envelope.model)).toEqual([retarget.model, draft().model, retarget.model])
+  await expect(driver.changePending(task, { ...retarget, operationId: 'stale-edit' })).rejects.toMatchObject({ code: 'CAS' })
+  const defaults = await driver.changePending(task, { kind: 'retarget-model', entries: [{ id: 'b', entryRevision: 1 }], expectedRevision: retargeted.state.revision,
+    operationId: 'retarget-default', model: { kind: 'engine-default' } })
+  expect(defaults.state.entries.find(entry => entry.id === 'b')?.envelope.model).toEqual({ kind: 'engine-default', observedModelId: 'synthetic-model' })
+  expect(gateway.posts).toHaveLength(0)
+})
+test('Code durable merge uses stored text, appends composer text, and preserves incompatible pending entries on rejection', async () => {
+  const { driver, gateway } = create(new Gateway('code')), task = 'code-merge'
+  for (const id of ['a', 'b']) await driver.enqueue(task, (await driver.read(task)).state.revision, 'enqueue-' + id, id, { ...draft(id), code: {} })
+  const state = (await driver.read(task)).state
+  const action = { kind: 'merge-pending' as const, entries: state.entries.map(entry => ({ id: entry.id, entryRevision: entry.revision })), id: 'merged', expectedRevision: state.revision, operationId: 'merge', submission: { ...draft('composer addition'), code: {} } }
+  const merged = await driver.changePending(task, action)
+  expect(merged.state.entries).toHaveLength(1); expect(merged.state.entries[0].envelope.draft.text).toBe('a\n\nb\n\ncomposer addition')
+  expect(merged.state.removed.map(entry => entry.id)).toEqual(['a', 'b'])
+  expect((await driver.changePending(task, action)).replayed).toBe(true)
+  await driver.enqueue(task, merged.state.revision, 'enqueue-different', 'different', { ...draft('different'), code: {}, thinking: { kind: 'on' } })
+  const before = (await driver.read(task)).state
+  await expect(driver.changePending(task, { kind: 'merge-pending', id: 'invalid-merge', entries: before.entries.map(entry => ({ id: entry.id, entryRevision: entry.revision })), expectedRevision: before.revision, operationId: 'invalid-merge' })).rejects.toMatchObject({ code: 'CONFLICT' })
+  expect((await driver.read(task)).state).toEqual(before); expect(gateway.posts).toHaveLength(0)
+})
+test('Code pause survives repository restart and unknown recovery only queries the original frozen request', async () => {
+  const { driver, gateway } = create(new Gateway('code')), task = 'code-restart'
+  await driver.enqueue(task, 0, 'enqueue-code', 'code-item', { ...draft('durable code'), code: {} })
+  let state = (await driver.read(task)).state
+  await driver.mutate(task, state.revision, 'pause-code', { kind: 'mutate', expectedRevision: state.revision, operationId: 'pause-code', operation: { kind: 'pause', reason: '用户停止' } })
+  await driver.close()
+  const restarted = create(new Gateway('code')); restarted.gateway.roots.set(task, { ...initialRoot(), status: 'succeeded' })
+  await restarted.driver.reconcile(task); state = (await restarted.driver.read(task)).state
+  expect(state.paused).toBe(true); expect(state.entries[0].envelope.draft.text).toBe('durable code'); expect(restarted.gateway.posts).toHaveLength(0)
+  restarted.gateway.absent = true
+  await restarted.driver.mutate(task, state.revision, 'resume-code', { kind: 'mutate', expectedRevision: state.revision, operationId: 'resume-code', operation: { kind: 'resume' } })
+  await phase(restarted.driver, 'admission-unknown', task)
+  const frozen = (await restarted.driver.read(task)).state.entries[0]
+  await restarted.driver.close()
+  const again = create(new Gateway('code')); again.gateway.absent = true
+  await again.driver.reconcile(task); await again.driver.reconcile(task)
+  expect(again.gateway.posts).toHaveLength(0); expect((await again.driver.read(task)).state.entries[0]).toEqual(frozen)
+  expect(gateway.posts).toHaveLength(0)
+})
+test('Code resume ACK replay retains the original predecessor after the root has advanced', async () => {
+  const { driver, gateway } = create(new Gateway('code')), task = 'code-resume-ack'
+  await driver.enqueue(task, 0, 'enqueue-resume', 'pending-resume', { ...draft('pending'), code: {} })
+  let state = (await driver.read(task)).state
+  await driver.mutate(task, state.revision, 'pause-resume', { kind: 'mutate', expectedRevision: state.revision, operationId: 'pause-resume', operation: { kind: 'pause', reason: '用户暂停' } })
+  state = (await driver.read(task)).state
+  const action = { kind: 'mutate' as const, expectedRevision: state.revision, operationId: 'resume-exact', operation: { kind: 'resume' as const } }
+  const first = await driver.mutate(task, action.expectedRevision, action.operationId, action)
+  gateway.roots.set(task, { ...initialRoot(), runId: 'new-predecessor', attemptId: 'new-attempt', version: 3, status: 'running' })
+  const replay = await driver.mutate(task, action.expectedRevision, action.operationId, action)
+  expect(replay.replayed).toBe(true); expect(replay.receipt).toEqual(first.receipt)
+  expect(replay.state.resumeAnchor).toEqual(first.state.resumeAnchor); expect(gateway.posts).toHaveLength(0)
+})
+test('Code concurrent enqueue recovery joins the exact original staging operation before its commit', async () => {
+  const { driver, gateway } = create(new Gateway('code')), task = 'code-enqueue-inflight'
+  let release!: () => void
+  gateway.envelopeGate = new Promise<void>(resolve => { release = resolve })
+  const input = { ...draft('one authored draft'), code: {} }
+  const first = driver.enqueue(task, 0, 'same-operation', 'same-entry', input)
+  try {
+    await expect.poll(() => gateway.envelopes).toBe(1)
+    await expect(driver.enqueue(task, 0, 'same-operation', 'same-entry', { ...input, thinking: { kind: 'on' } })).rejects.toMatchObject({ code: 'CONFLICT' })
+    const replay = driver.enqueue(task, 0, 'same-operation', 'same-entry', structuredClone(input))
+    await expect.poll(() => driver.diagnostics().ownedOperations).toBe(2)
+    expect(gateway.envelopes).toBe(1)
+    release()
+    const results = await Promise.all([first, replay])
+    expect(results[1].receipt).toEqual(results[0].receipt)
+    expect((await driver.read(task)).state.entries).toHaveLength(1)
+    expect(gateway.envelopes).toBe(1); expect(gateway.posts).toHaveLength(0)
+  } finally { release(); await first.catch(() => {}) }
+})
+
 test('running predecessor retains pending; succeeded predecessor durably claims before exactly one POST', async () => {
   const { driver, gateway, store } = create(); await enqueue(driver); await expect.poll(() => gateway.posts.length).toBe(0)
   gateway.roots.set(baseScope.taskId, { ...initialRoot(), status: 'succeeded' }); await driver.reconcile(baseScope.taskId)
@@ -278,7 +364,9 @@ test('authored mention offsets survive editing; pasted @text is ordinary text', 
 })
 test('new queue CSS only references declared theme tokens', async () => {
   const tokens = await fs.readFile('src/renderer/src/assets/tokens.css', 'utf8'), css = await fs.readFile('src/renderer/src/contrib/work/work-next-turn-queue.css', 'utf8')
-  const declared = new Set([...tokens.matchAll(/(--[a-zA-Z0-9-]+)\s*:/g)].map(match => match[1]))
+  const parentCss = await fs.readFile('src/renderer/src/contrib/work/work.css', 'utf8')
+  const parentVariables = [...parentCss.matchAll(/\.work-conversation\s*\{([^}]+)\}/g)].map(match => match[1]).join('\n')
+  const declared = new Set([...(tokens + parentVariables).matchAll(/(--[a-zA-Z0-9-]+)\s*:/g)].map(match => match[1]))
   expect([...css.matchAll(/var\((--[a-zA-Z0-9-]+)/g)].map(match => match[1]).filter(name => !declared.has(name))).toEqual([])
   expect(css).toContain('max-height: 120px'); expect(css).toContain('scrollbar-gutter: stable')
 })

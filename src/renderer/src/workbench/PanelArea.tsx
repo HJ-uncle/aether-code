@@ -62,7 +62,9 @@ export function PanelArea(): JSX.Element | null {
             <div
               key={item.id}
               className="panel__view"
-              style={{ display: active ? 'block' : 'none' }}
+              hidden={!active}
+              inert={!active}
+              aria-hidden={!active}
             >
               <Component />
             </div>

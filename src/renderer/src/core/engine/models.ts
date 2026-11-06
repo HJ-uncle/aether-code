@@ -36,8 +36,10 @@ export interface ModelCapabilities {
 export type CapabilityOverridePatch = {
   [Key in keyof ModelCapabilities]?: ModelCapabilities[Key] | null
 }
+export type ModelApiFormat = 'auto' | 'openai' | 'anthropic'
+
 export type UpdateModelInput = Partial<
-  Pick<EngineModel, 'isEnabled' | 'displayName' | 'baseUrl'>
+  Pick<EngineModel, 'isEnabled' | 'displayName' | 'baseUrl' | 'apiFormat'>
 > & {
   apiKey?: string
   capabilityOverrides?: CapabilityOverridePatch | null
@@ -51,6 +53,8 @@ export interface EngineModel {
   /** 脱敏后的 key，形如 `...abcd` */
   apiKey: string
   baseUrl: string
+  /** Explicit wire format takes priority over provider and URL inference. */
+  apiFormat?: ModelApiFormat
   displayName?: string
   isEnabled: boolean
   version?: string
@@ -77,6 +81,7 @@ export interface CreateModelInput {
   modelId: string
   apiKey: string
   baseUrl: string
+  apiFormat?: ModelApiFormat
   displayName?: string
   capabilityOverrides?: ModelCapabilities
 }
@@ -93,7 +98,7 @@ export const PROVIDERS: Array<{ value: string; label: string; hint: string; base
   {
     value: 'deepseek',
     label: 'DeepSeek',
-    hint: '推理与工具调用均衡，国内直连；接口地址以 /anthropic 结尾时自动按 Anthropic 协议请求',
+    hint: '推理与工具调用均衡，国内直连',
     baseUrl: 'https://api.deepseek.com'
   },
   {
@@ -169,7 +174,7 @@ export async function deleteModel(id: string): Promise<void> {
  */
 export async function testModel(
   id: string,
-  temp?: { provider?: string; modelId?: string; apiKey?: string; baseUrl?: string }
+  temp?: { provider?: string; modelId?: string; apiKey?: string; baseUrl?: string; apiFormat?: ModelApiFormat }
 ): Promise<TestResult> {
   const result = await request<TestResult>({
     method: 'POST',
@@ -186,6 +191,7 @@ export async function detectCapabilities(input: {
   provider?: string
   modelId: string
   baseUrl?: string
+  apiFormat?: ModelApiFormat
 }): Promise<ModelCapabilities> {
   const result = await request<ModelCapabilities>({
     method: 'POST',

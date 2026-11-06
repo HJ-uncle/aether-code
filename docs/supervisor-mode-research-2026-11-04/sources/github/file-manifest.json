@@ -1,0 +1,236 @@
+[
+  {
+    "repo": "paperclipai__paperclip",
+    "file": "docs/guides/board-operator/costs-and-budgets.md",
+    "url": "https://raw.githubusercontent.com/paperclipai/paperclip/a194166017597860a0e53c0c1314e95c597d75cc/docs/guides/board-operator/costs-and-budgets.md",
+    "bytes": 1918
+  },
+  {
+    "repo": "paperclipai__paperclip",
+    "file": "packages/db/src/schema/issues.ts",
+    "url": "https://raw.githubusercontent.com/paperclipai/paperclip/a194166017597860a0e53c0c1314e95c597d75cc/packages/db/src/schema/issues.ts",
+    "bytes": 12570
+  },
+  {
+    "repo": "paperclipai__paperclip",
+    "file": "docs/guides/agent-developer/heartbeat-protocol.md",
+    "url": "https://raw.githubusercontent.com/paperclipai/paperclip/a194166017597860a0e53c0c1314e95c597d75cc/docs/guides/agent-developer/heartbeat-protocol.md",
+    "bytes": 5484
+  },
+  {
+    "repo": "paperclipai__paperclip",
+    "file": "docs/api/issues.md",
+    "url": "https://raw.githubusercontent.com/paperclipai/paperclip/a194166017597860a0e53c0c1314e95c597d75cc/docs/api/issues.md",
+    "bytes": 13554
+  },
+  {
+    "repo": "paperclipai__paperclip",
+    "file": "server/src/services/required-quality-review.ts",
+    "url": "https://raw.githubusercontent.com/paperclipai/paperclip/a194166017597860a0e53c0c1314e95c597d75cc/server/src/services/required-quality-review.ts",
+    "bytes": 10128
+  },
+  {
+    "repo": "paperclipai__paperclip",
+    "file": "packages/db/src/schema/agent_wakeup_requests.ts",
+    "url": "https://raw.githubusercontent.com/paperclipai/paperclip/a194166017597860a0e53c0c1314e95c597d75cc/packages/db/src/schema/agent_wakeup_requests.ts",
+    "bytes": 4414
+  },
+  {
+    "repo": "paperclipai__paperclip",
+    "file": "server/src/routes/issues.ts",
+    "url": "https://raw.githubusercontent.com/paperclipai/paperclip/a194166017597860a0e53c0c1314e95c597d75cc/server/src/routes/issues.ts",
+    "bytes": 739853
+  },
+  {
+    "repo": "paperclipai__paperclip",
+    "file": "server/src/services/issues.ts",
+    "url": "https://raw.githubusercontent.com/paperclipai/paperclip/a194166017597860a0e53c0c1314e95c597d75cc/server/src/services/issues.ts",
+    "bytes": 531875
+  },
+  {
+    "repo": "gastownhall__gastown",
+    "file": "internal/nudge/queue.go",
+    "url": "https://raw.githubusercontent.com/gastownhall/gastown/466aa41c83ee73b1fa0eb79eb9d172fb1eca9476/internal/nudge/queue.go",
+    "bytes": 13502
+  },
+  {
+    "repo": "gastownhall__gastown",
+    "file": "internal/formula/formulas/mol-polecat-code-review.formula.toml",
+    "url": "https://raw.githubusercontent.com/gastownhall/gastown/466aa41c83ee73b1fa0eb79eb9d172fb1eca9476/internal/formula/formulas/mol-polecat-code-review.formula.toml",
+    "bytes": 8848
+  },
+  {
+    "repo": "gastownhall__gastown",
+    "file": "internal/mail/types.go",
+    "url": "https://raw.githubusercontent.com/gastownhall/gastown/466aa41c83ee73b1fa0eb79eb9d172fb1eca9476/internal/mail/types.go",
+    "bytes": 19691
+  },
+  {
+    "repo": "gastownhall__gastown",
+    "file": "internal/cmd/mail_send.go",
+    "url": "https://raw.githubusercontent.com/gastownhall/gastown/466aa41c83ee73b1fa0eb79eb9d172fb1eca9476/internal/cmd/mail_send.go",
+    "bytes": 10238
+  },
+  {
+    "repo": "paperclipai__paperclip",
+    "file": "doc/experimental/issue-worktree-support.md",
+    "url": "https://raw.githubusercontent.com/paperclipai/paperclip/a194166017597860a0e53c0c1314e95c597d75cc/doc/experimental/issue-worktree-support.md",
+    "bytes": 5290
+  },
+  {
+    "repo": "gastownhall__gastown",
+    "file": "docs/design/mail-protocol.md",
+    "url": "https://raw.githubusercontent.com/gastownhall/gastown/466aa41c83ee73b1fa0eb79eb9d172fb1eca9476/docs/design/mail-protocol.md",
+    "bytes": 18514
+  },
+  {
+    "repo": "crewAIInc__crewAI",
+    "file": "docs/edge/en/concepts/checkpointing.mdx",
+    "url": "https://raw.githubusercontent.com/crewAIInc/crewAI/dd21ecce11aa008d5ef0325e6802a3962ce4d443/docs/edge/en/concepts/checkpointing.mdx",
+    "bytes": 19446
+  },
+  {
+    "repo": "crewAIInc__crewAI",
+    "file": "docs/edge/en/learn/hierarchical-process.mdx",
+    "url": "https://raw.githubusercontent.com/crewAIInc/crewAI/dd21ecce11aa008d5ef0325e6802a3962ce4d443/docs/edge/en/learn/hierarchical-process.mdx",
+    "bytes": 5525
+  },
+  {
+    "repo": "crewAIInc__crewAI",
+    "file": "lib/crewai/src/crewai/tools/agent_tools/delegate_work_tool.py",
+    "url": "https://raw.githubusercontent.com/crewAIInc/crewAI/dd21ecce11aa008d5ef0325e6802a3962ce4d443/lib/crewai/src/crewai/tools/agent_tools/delegate_work_tool.py",
+    "bytes": 860
+  },
+  {
+    "repo": "langchain-ai__langgraph-swarm-py",
+    "file": "langgraph_swarm/handoff.py",
+    "url": "https://raw.githubusercontent.com/langchain-ai/langgraph-swarm-py/8956b138bbb475b00c98d040176dbb8da667c612/langgraph_swarm/handoff.py",
+    "bytes": 3931
+  },
+  {
+    "repo": "crewAIInc__crewAI",
+    "file": "lib/crewai/src/crewai/tools/agent_tools/ask_question_tool.py",
+    "url": "https://raw.githubusercontent.com/crewAIInc/crewAI/dd21ecce11aa008d5ef0325e6802a3962ce4d443/lib/crewai/src/crewai/tools/agent_tools/ask_question_tool.py",
+    "bytes": 850
+  },
+  {
+    "repo": "microsoft__magentic-ui",
+    "file": "src/magentic_ui/teams/omniagent/_user_interjection.py",
+    "url": "https://raw.githubusercontent.com/microsoft/magentic-ui/d3c9d13c39288257286a66daabf7c5b5fb72ee69/src/magentic_ui/teams/omniagent/_user_interjection.py",
+    "bytes": 2162
+  },
+  {
+    "repo": "crewAIInc__crewAI",
+    "file": "lib/crewai/src/crewai/crew.py",
+    "url": "https://raw.githubusercontent.com/crewAIInc/crewAI/dd21ecce11aa008d5ef0325e6802a3962ce4d443/lib/crewai/src/crewai/crew.py",
+    "bytes": 99495
+  },
+  {
+    "repo": "microsoft__agent-framework",
+    "file": "python/samples/03-workflows/checkpoint/checkpoint_with_human_in_the_loop.py",
+    "url": "https://raw.githubusercontent.com/microsoft/agent-framework/dc6617aa96f26407cfbb2486941e8c3b069cfbe6/python/samples/03-workflows/checkpoint/checkpoint_with_human_in_the_loop.py",
+    "bytes": 13006
+  },
+  {
+    "repo": "microsoft__agent-framework",
+    "file": "python/packages/orchestrations/agent_framework_orchestrations/_magentic.py",
+    "url": "https://raw.githubusercontent.com/microsoft/agent-framework/dc6617aa96f26407cfbb2486941e8c3b069cfbe6/python/packages/orchestrations/agent_framework_orchestrations/_magentic.py",
+    "bytes": 79050
+  },
+  {
+    "repo": "microsoft__agent-framework",
+    "file": "python/packages/core/agent_framework/_workflows/_checkpoint.py",
+    "url": "https://raw.githubusercontent.com/microsoft/agent-framework/dc6617aa96f26407cfbb2486941e8c3b069cfbe6/python/packages/core/agent_framework/_workflows/_checkpoint.py",
+    "bytes": 42517
+  },
+  {
+    "repo": "OpenBMB__ChatDev",
+    "file": "workflow/executor/dag_executor.py",
+    "url": "https://raw.githubusercontent.com/OpenBMB/ChatDev/464a681ba7bda869db97a50c5fa707c9a0fb57a0/workflow/executor/dag_executor.py",
+    "bytes": 1914
+  },
+  {
+    "repo": "OpenBMB__ChatDev",
+    "file": "yaml_instance/general_problem_solving_team.yaml",
+    "url": "https://raw.githubusercontent.com/OpenBMB/ChatDev/464a681ba7bda869db97a50c5fa707c9a0fb57a0/yaml_instance/general_problem_solving_team.yaml",
+    "bytes": 10630
+  },
+  {
+    "repo": "OpenBMB__ChatDev",
+    "file": "server/services/workflow_run_service.py",
+    "url": "https://raw.githubusercontent.com/OpenBMB/ChatDev/464a681ba7bda869db97a50c5fa707c9a0fb57a0/server/services/workflow_run_service.py",
+    "bytes": 11353
+  },
+  {
+    "repo": "microsoft__magentic-ui",
+    "file": "docs/limitations.md",
+    "url": "https://raw.githubusercontent.com/microsoft/magentic-ui/d3c9d13c39288257286a66daabf7c5b5fb72ee69/docs/limitations.md",
+    "bytes": 1424
+  },
+  {
+    "repo": "OpenBMB__ChatDev",
+    "file": "workflow/executor/parallel_executor.py",
+    "url": "https://raw.githubusercontent.com/OpenBMB/ChatDev/464a681ba7bda869db97a50c5fa707c9a0fb57a0/workflow/executor/parallel_executor.py",
+    "bytes": 4906
+  },
+  {
+    "repo": "FoundationAgents__MetaGPT",
+    "file": "metagpt/team.py",
+    "url": "https://raw.githubusercontent.com/FoundationAgents/MetaGPT/11cdf466d042aece04fc6cfd13b28e1a70341b1f/metagpt/team.py",
+    "bytes": 4844
+  },
+  {
+    "repo": "microsoft__magentic-ui",
+    "file": "src/magentic_ui/teams/omniagent/_state_io.py",
+    "url": "https://raw.githubusercontent.com/microsoft/magentic-ui/d3c9d13c39288257286a66daabf7c5b5fb72ee69/src/magentic_ui/teams/omniagent/_state_io.py",
+    "bytes": 2747
+  },
+  {
+    "repo": "microsoft__magentic-ui",
+    "file": "src/magentic_ui/teams/omniagent/_verifier.py",
+    "url": "https://raw.githubusercontent.com/microsoft/magentic-ui/d3c9d13c39288257286a66daabf7c5b5fb72ee69/src/magentic_ui/teams/omniagent/_verifier.py",
+    "bytes": 15281
+  },
+  {
+    "repo": "microsoft__autogen",
+    "file": "LICENSE-CODE",
+    "url": "https://raw.githubusercontent.com/microsoft/autogen/d07c667a3239ea4ab7af62a53b0f4ff205a1f23d/LICENSE-CODE",
+    "bytes": 1141
+  },
+  {
+    "repo": "microsoft__autogen",
+    "file": "LICENSE",
+    "url": "https://raw.githubusercontent.com/microsoft/autogen/d07c667a3239ea4ab7af62a53b0f4ff205a1f23d/LICENSE",
+    "bytes": 18650
+  },
+  {
+    "repo": "FoundationAgents__MetaGPT",
+    "file": "metagpt/environment/base_env.py",
+    "url": "https://raw.githubusercontent.com/FoundationAgents/MetaGPT/11cdf466d042aece04fc6cfd13b28e1a70341b1f/metagpt/environment/base_env.py",
+    "bytes": 9145
+  },
+  {
+    "repo": "FoundationAgents__MetaGPT",
+    "file": "metagpt/roles/di/team_leader.py",
+    "url": "https://raw.githubusercontent.com/FoundationAgents/MetaGPT/11cdf466d042aece04fc6cfd13b28e1a70341b1f/metagpt/roles/di/team_leader.py",
+    "bytes": 3832
+  },
+  {
+    "repo": "OpenHands__OpenHands",
+    "file": "src/hooks/use-send-message.ts",
+    "url": "https://raw.githubusercontent.com/OpenHands/OpenHands/01d1970b8f96d576d8b42aad48fee5aa117f1cb8/src/hooks/use-send-message.ts",
+    "bytes": 2242
+  },
+  {
+    "repo": "OpenHands__OpenHands",
+    "file": "LICENSE",
+    "url": "https://raw.githubusercontent.com/OpenHands/OpenHands/01d1970b8f96d576d8b42aad48fee5aa117f1cb8/LICENSE",
+    "bytes": 1096
+  },
+  {
+    "repo": "OpenHands__OpenHands",
+    "file": "src/components/features/conversation/conversation-tabs/conversation-planner-build-bar.tsx",
+    "url": "https://raw.githubusercontent.com/OpenHands/OpenHands/01d1970b8f96d576d8b42aad48fee5aa117f1cb8/src/components/features/conversation/conversation-tabs/conversation-planner-build-bar.tsx",
+    "bytes": 2277
+  }
+]

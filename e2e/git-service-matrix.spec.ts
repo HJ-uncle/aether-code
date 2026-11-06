@@ -16,6 +16,7 @@ let app: ElectronApplication
 let page: Page
 let scratch: string
 const appRoot = resolve(__dirname, '..')
+const fixtureRoot = join(appRoot, '.e2e-tmp')
 let sequence = 0
 
 function git(cwd: string, ...args: string[]): string {
@@ -62,11 +63,15 @@ function commitFile(root: string, name: string, text: string, message: string): 
 }
 
 test.beforeAll(async () => {
-  scratch = mkdtempSync(join(tmpdir(), 'aether-git-matrix-'))
+  mkdirSync(fixtureRoot, { recursive: true })
+  scratch = mkdtempSync(join(fixtureRoot, 'aether-git-matrix-'))
   writeFileSync(join(scratch, 'empty-gitconfig'), '')
+  // An owned bare boundary prevents nested plain-directory probes and native
+  // lease discovery from reaching the developer's enclosing working tree.
+  git(scratch, 'init', '--bare', join(scratch, '.git'))
   const profile = join(scratch, 'profile'); mkdirSync(profile)
   writeFileSync(join(profile, 'settings.json'), JSON.stringify({ autoStartEngine: false, lastFolder: scratch, lastSessionId: 'git-matrix', engineMode: 'embedded' }))
-  app = await electron.launch({ cwd: appRoot, args: ['.', `--user-data-dir=${profile}`], env: {
+  app = await electron.launch({ cwd: appRoot, args: [process.env.AETHER_E2E_APP_ENTRY || '.', `--user-data-dir=${profile}`], env: {
     ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: join(scratch, 'empty-gitconfig'), GIT_EDITOR: 'true'
   } })
   page = await app.firstWindow()
@@ -76,7 +81,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await app?.close()
   if (!scratch) return
-  const suffix = relative(tmpdir(), scratch)
+  const suffix = relative(fixtureRoot, scratch)
   if (suffix.startsWith('aether-git-matrix-') && !isAbsolute(suffix) && !suffix.includes('..')) rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
 })
 
@@ -100,17 +105,24 @@ test('nested workspace status excludes changes outside the opened folder', async
   const root = await repo()
   const nested = join(root, 'packages', 'client')
   mkdirSync(nested, { recursive: true })
+  write(nested, 'tracked.txt', 'nested baseline\n')
+  git(root, 'add', 'packages/client/tracked.txt'); git(root, 'commit', '-m', 'nested baseline')
+  // A repository preference must not change the workspace-facing path contract.
+  git(root, 'config', 'status.relativePaths', 'false')
   // The repository lives above the opened folder. Git would otherwise report
   // this parent change as ../../../outside.txt, which must never escape the
   // workspace-scoped status response.
   write(root, 'outside.txt', 'parent change\n')
-  write(nested, 'inside.txt', 'nested change\n')
+  write(root, 'a.txt', 'parent tracked change\nmore\n')
+  write(nested, 'tracked.txt', 'nested changed\nsecond\n')
+  write(nested, 'inside.txt', 'nested new\nfile\n')
 
   const status = await ok('status', nested)
   expect(status.isRepo).toBe(true)
-  expect(status.files).toEqual([
-    expect.objectContaining({ path: 'inside.txt', changeType: 'untracked' })
-  ])
+  expect(status.files).toHaveLength(2)
+  expect(status.files?.find(file => file.path === 'inside.txt')).toMatchObject({ changeType: 'untracked', additions: 2, deletions: 0, unstagedAdditions: 2 })
+  expect(status.files?.find(file => file.path === 'tracked.txt')).toMatchObject({ additions: 2, deletions: 1, unstagedAdditions: 2, unstagedDeletions: 1 })
+  expect(status.files?.reduce((sum, file) => sum + file.additions, 0)).toBe(4)
   expect(status.files?.some(file => file.path.includes('..'))).toBe(false)
 })
 
@@ -188,6 +200,46 @@ test('branch create/checkout/rename/delete and lightweight/annotated tags', asyn
   expect(git(root, 'cat-file', '-t', 'v2')).toBe('tag')
   expect((await call('createTag', root, 'v1')).success).toBe(false)
   await ok('deleteTag', root, 'v1'); expect((await ok('listTags', root)).tags).toEqual(['v2'])
+})
+
+test('history and incoming keep parents after children despite rewritten commit dates', async () => {
+  const root = await repo()
+  const base = git(root, 'rev-parse', 'HEAD')
+  const tree = git(root, 'rev-parse', 'HEAD^{tree}')
+  const datedCommit = (message: string, parents: string[], date: string): string =>
+    execFileSync('git', ['-c', 'commit.gpgsign=false', 'commit-tree', tree,
+      ...parents.flatMap(parent => ['-p', parent]), '-m', message], {
+      cwd: root, encoding: 'utf8', windowsHide: true,
+      env: { ...process.env, GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date }
+    }).trim()
+  const common = datedCommit('common parent', [base], '2030-01-01T00:00:00Z')
+  const left = datedCommit('left child', [common], '2021-01-01T00:00:00Z')
+  const right = datedCommit('right child', [common], '2020-01-01T00:00:00Z')
+  const merge = datedCommit('merge children', [left, right], '2031-01-01T00:00:00Z')
+  git(root, 'update-ref', 'refs/heads/main', merge)
+  const assertParentOrder = (commits: NonNullable<Result<'log'>['commits']>): void => {
+    const positions = new Map(commits.map((commit, index) => [commit.hash, index]))
+    for (const [index, commit] of commits.entries()) {
+      for (const parent of commit.parents ?? []) {
+        if (positions.has(parent)) expect(positions.get(parent)).toBeGreaterThan(index)
+      }
+    }
+  }
+  const history = (await ok('log', root, 10)).commits!
+  expect(history).toHaveLength(5)
+  expect(history[0].hash).toBe(merge)
+  assertParentOrder(history)
+  const firstPage = (await ok('log', root, 2, 0)).commits!
+  const secondPage = (await ok('log', root, 3, 2)).commits!
+  expect([...firstPage, ...secondPage].map(commit => commit.hash)).toEqual(history.map(commit => commit.hash))
+
+  git(root, 'update-ref', 'refs/heads/main', base)
+  git(root, 'remote', 'add', 'origin', root)
+  git(root, 'update-ref', 'refs/remotes/origin/main', merge)
+  git(root, 'branch', '--set-upstream-to=origin/main', 'main')
+  const incoming = (await ok('incoming', root, 10)).commits!
+  expect(incoming).toHaveLength(4)
+  assertParentOrder(incoming)
 })
 
 test('stash push/pop/apply/drop/batch/clear and staged-only preservation', async () => {

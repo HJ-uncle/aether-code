@@ -1,0 +1,82 @@
+[
+  {
+    "name": "claude-sdk-subagents-current",
+    "url": "https://code.claude.com/docs/en/agent-sdk/subagents.md",
+    "finalUrl": "https://code.claude.com/docs/en/agent-sdk/subagents.md",
+    "status": 200,
+    "contentType": "text/markdown; charset=utf-8",
+    "chars": 42519,
+    "sha256": "9db0458e43e56fd472b94af95e6eb9c1b00052a250eb91bc540da930b77cc4cd",
+    "retrievedAt": "2026-11-04T02:24:16.574Z"
+  },
+  {
+    "name": "claude-sdk-streaming-current",
+    "url": "https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode.md",
+    "finalUrl": "https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode.md",
+    "status": 200,
+    "contentType": "text/markdown; charset=utf-8",
+    "chars": 9193,
+    "sha256": "34ed5851eab41e13cfa48cbc5cf21ca226016d8f3b25e999dce2db014bff4cc6",
+    "retrievedAt": "2026-11-04T02:24:16.573Z"
+  },
+  {
+    "name": "claude-sdk-sessions",
+    "url": "https://code.claude.com/docs/en/agent-sdk/sessions.md",
+    "finalUrl": "https://code.claude.com/docs/en/agent-sdk/sessions.md",
+    "status": 200,
+    "contentType": "text/markdown; charset=utf-8",
+    "chars": 22703,
+    "sha256": "456f033eff0db40bef3d41724e8ee7260cd156256727d73859c4ee108c7e35d8",
+    "retrievedAt": "2026-11-04T02:24:16.579Z"
+  },
+  {
+    "name": "claude-sdk-permissions",
+    "url": "https://code.claude.com/docs/en/agent-sdk/permissions.md",
+    "finalUrl": "https://code.claude.com/docs/en/agent-sdk/permissions.md",
+    "status": 200,
+    "contentType": "text/markdown; charset=utf-8",
+    "chars": 33325,
+    "sha256": "cd80c876908e97488b102938922c947035a2c831c6417bb6bb3e36b45f2b2d8a",
+    "retrievedAt": "2026-11-04T02:24:16.591Z"
+  },
+  {
+    "name": "claude-cross-session",
+    "url": "https://code.claude.com/docs/en/cross-session-messaging.md",
+    "finalUrl": "https://code.claude.com/docs/en/cross-session-messaging.md",
+    "status": 200,
+    "contentType": "text/markdown; charset=utf-8",
+    "chars": 36477,
+    "sha256": "331034bbc03022b04f8c8af308ad080f85654778a2adc4b2ab6e31b62aa1e0e7",
+    "retrievedAt": "2026-11-04T02:24:16.575Z"
+  },
+  {
+    "name": "claude-sdk-overview",
+    "url": "https://code.claude.com/docs/en/agent-sdk/overview.md",
+    "finalUrl": "https://code.claude.com/docs/en/agent-sdk/overview.md",
+    "status": 200,
+    "contentType": "text/markdown; charset=utf-8",
+    "chars": 7382,
+    "sha256": "6bf994e5897cbf228f19e17b177036fe23cdbd02b790944f72a090f07e80258d",
+    "retrievedAt": "2026-11-04T02:24:16.571Z"
+  },
+  {
+    "name": "openai-subagents",
+    "url": "https://learn.chatgpt.com/docs/agent-configuration/subagents.md",
+    "finalUrl": "https://learn.chatgpt.com/docs/agent-configuration/subagents.md",
+    "status": 200,
+    "contentType": "text/markdown; charset=utf-8",
+    "chars": 22907,
+    "sha256": "e7469d41c5a18a4ee66ee40ca4a9a2617a697e42554a0198ac4481e1e597357f",
+    "retrievedAt": "2026-11-04T02:24:16.741Z"
+  },
+  {
+    "name": "openai-worktrees",
+    "url": "https://learn.chatgpt.com/docs/environments/git-worktrees.md",
+    "finalUrl": "https://learn.chatgpt.com/docs/environments/git-worktrees.md",
+    "status": 200,
+    "contentType": "text/markdown; charset=utf-8",
+    "chars": 12664,
+    "sha256": "a40b85b40e9166a59043f62251565500c35c4376e23261f6cb94fdace0824ef6",
+    "retrievedAt": "2026-11-04T02:24:17.161Z"
+  }
+]

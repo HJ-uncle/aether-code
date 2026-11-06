@@ -1,4 +1,4 @@
-/** On-demand OS measurements. No timer, database query or renderer process sampling. */
+/** On-demand host measurements; SQLite inspection runs in an isolated read-only child. */
 import { execFile } from 'node:child_process'
 import { lstat, opendir, statfs } from 'node:fs/promises'
 import { freemem, homedir, totalmem } from 'node:os'
@@ -9,8 +9,10 @@ import type {
   EngineProcessDetail,
   EngineProcessTreeSnapshot,
   EngineResourceSnapshot,
-  EngineStorageSnapshot
+  EngineStorageSnapshot,
+  EngineSqliteStorageSnapshot
 } from '../../shared/engine-diagnostics'
+import { readSqliteStorage } from './storage-sqlite-diagnostics'
 
 const RESOURCE_COOLDOWN_MS = 5_000
 // The root process sample is cheap and drives the live card. Enumerating the
@@ -61,6 +63,7 @@ export interface EngineDiagnosticsDependencies {
   monotonic?: () => number
   readProcess?: (pid: number) => Promise<EngineProcessSample>
   readProcessTree?: (pid: number) => Promise<EngineProcessTreeSample>
+  readSqlite?: (snapshot: EngineSnapshot) => Promise<EngineSqliteStorageSnapshot>
   storageLimits?: Partial<StorageLimits>
 }
 
@@ -288,9 +291,13 @@ function remember<T>(cache: Map<string, T>, key: string, value: T): void {
 function engineKey(snapshot: EngineSnapshot): string {
   return JSON.stringify([
     snapshot.mode,
+    snapshot.baseUrl,
     snapshot.instanceId ?? null,
+    snapshot.accountId ?? null,
     snapshot.pid,
-    snapshot.dataDir
+    snapshot.dataDir,
+    snapshot.entryPath,
+    snapshot.runtimeSource
   ])
 }
 
@@ -539,12 +546,19 @@ export function calculateProcessTreeMetrics(
 
 function categoryFor(relative: string[], databaseName: string): string {
   const first = relative[0].toLowerCase()
-  if (
-    relative.length === 1 &&
-    (first === databaseName || first === `${databaseName}-wal` || first === `${databaseName}-shm`)
-  )
-    return 'database'
-  if (first === 'sessions') return 'conversations'
+  const file = relative.at(-1)!.toLowerCase()
+  if (relative.length === 1 && first === databaseName) return 'database'
+  if (relative.length === 1 && first === `${databaseName}-wal`) return 'database-wal'
+  if (relative.length === 1 && first === `${databaseName}-shm`) return 'database-shm'
+  if (first === 'sessions') {
+    if (file.endsWith('.bak')) return 'history-backups'
+    if (file.endsWith('.migrated') || file.endsWith('.cleared')) return 'history-markers'
+    if (file.endsWith('.jsonl')) return 'history-jsonl'
+    return 'history-other'
+  }
+  if (first === 'blobs') return 'blobs'
+  if (first === 'audit-archive') return 'audit-archive'
+  if (first === 'history-cold') return 'history-cold'
   if (first === 'memory') return 'memory'
   if (first === 'change-snapshots') return 'snapshots'
   if (first === 'backups' || first === 'backup') return 'backups'
@@ -559,6 +573,7 @@ export class EngineDiagnosticsCollector {
   private readonly monotonic: () => number
   private readonly processReader: (pid: number) => Promise<EngineProcessSample>
   private readonly processTreeReader: (pid: number) => Promise<EngineProcessTreeSample>
+  private readonly sqliteReader: (snapshot: EngineSnapshot) => Promise<EngineSqliteStorageSnapshot>
   private readonly limits: StorageLimits
   private readonly resources = new Map<string, EngineResourceSnapshot>()
   private readonly baselines = new Map<string, ProcessBaseline>()
@@ -573,10 +588,11 @@ export class EngineDiagnosticsCollector {
     this.monotonic = dependencies.monotonic ?? (() => performance.now())
     this.processReader = dependencies.readProcess ?? readProcess
     this.processTreeReader = dependencies.readProcessTree ?? readProcessTree
+    this.sqliteReader = dependencies.readSqlite ?? readSqliteStorage
     this.limits = { ...DEFAULT_STORAGE_LIMITS, ...dependencies.storageLimits }
   }
 
-  getResources(snapshot: EngineSnapshot): Promise<EngineResourceSnapshot> {
+  getResources(snapshot: EngineSnapshot, refreshRequested = false): Promise<EngineResourceSnapshot> {
     if (snapshot.mode !== 'embedded')
       return Promise.resolve(unavailableResources(snapshot, this.now(), '远端引擎尚未提供资源遥测'))
     if (
@@ -588,9 +604,11 @@ export class EngineDiagnosticsCollector {
       return Promise.resolve(unavailableResources(snapshot, this.now(), '本地引擎进程未就绪'))
     }
     const key = engineKey(snapshot)
+    const pending = this.resourcePending.get(key)
+    if (pending) return pending
     const prior = this.resources.get(key)
     const age = prior ? this.now() - prior.sampledAt : Infinity
-    if (prior && age >= 0 && age < RESOURCE_COOLDOWN_MS)
+    if (!refreshRequested && prior && age >= 0 && age < RESOURCE_COOLDOWN_MS)
       return Promise.resolve({
         ...prior,
         processTree: {
@@ -599,9 +617,7 @@ export class EngineDiagnosticsCollector {
         },
         collection: { ...prior.collection, cached: true }
       })
-    const pending = this.resourcePending.get(key)
-    if (pending) return pending
-    const request = this.collectResources(snapshot, key)
+    const request = this.collectResources(snapshot, key, refreshRequested)
       .then((value) => {
         remember(this.resources, key, value)
         return value
@@ -615,13 +631,14 @@ export class EngineDiagnosticsCollector {
 
   private async collectResources(
     snapshot: EngineSnapshot,
-    key: string
+    key: string,
+    refreshRequested: boolean
   ): Promise<EngineResourceSnapshot> {
     const started = this.monotonic()
     const previousTree = this.processTrees.get(key)
     const treeAge = previousTree?.sampledAt == null ? Infinity : this.now() - previousTree.sampledAt
     const cachedTree =
-      previousTree && treeAge >= 0 && treeAge < PROCESS_TREE_COOLDOWN_MS
+      !refreshRequested && previousTree && treeAge >= 0 && treeAge < PROCESS_TREE_COOLDOWN_MS
         ? {
             ...previousTree,
             collection: { ...previousTree.collection, cached: true }
@@ -766,22 +783,17 @@ export class EngineDiagnosticsCollector {
     }
   }
 
-  /** refresh is an intent marker; the same 60s cooldown protects repeated IPC clicks. */
+  /** Explicit refresh bypasses cached samples; concurrent requests share one scan. */
   getStorage(snapshot: EngineSnapshot, refreshRequested = false): Promise<EngineStorageSnapshot> {
-    // The request flag is intentionally advisory: the 60s cooldown remains a
-    // hard lower bound even when a user presses Refresh repeatedly.
-    void refreshRequested
     if (snapshot.mode !== 'embedded')
       return Promise.resolve(unavailableStorage('远端引擎尚未提供存储遥测'))
-    const key = snapshot.dataDir ?? ''
-    const previous = this.storage.get(key)
-    const age = previous ? this.now() - previous.at : Infinity
-    // Explicit refresh is also subject to the cooldown; repeated clicks must not
-    // turn an on-demand directory scan into continuous filesystem activity.
-    if (previous && age >= 0 && age < STORAGE_COOLDOWN_MS)
-      return Promise.resolve({ ...previous.value, cached: true })
+    const key = engineKey(snapshot)
     const pending = this.storagePending.get(key)
     if (pending) return pending
+    const previous = this.storage.get(key)
+    const age = previous ? this.now() - previous.at : Infinity
+    if (!refreshRequested && previous && age >= 0 && age < STORAGE_COOLDOWN_MS)
+      return Promise.resolve({ ...previous.value, cached: true })
     const request = this.scanStorage(snapshot)
       .then((value) => {
         remember(this.storage, key, { at: this.now(), value })
@@ -809,12 +821,19 @@ export class EngineDiagnosticsCollector {
       files = 0,
       totalBytes = 0,
       partial = false
+    const partialReasons = new Set<string>()
+    const sqlite = this.sqliteReader(snapshot).catch((): EngineSqliteStorageSnapshot => ({
+      state: 'unavailable', reason: 'SQLite 明细采集失败，文件统计仍可使用', sampledAt: null, durationMs: 0,
+      partial: true, partialReasons: [], pageSize: null, pageCount: null, freelistPages: null,
+      freeBytes: null, objects: [], maintenance: null
+    }))
     const categories = new Map<string, { category: string; bytes: number; files: number }>()
     const overBudget = (): boolean =>
       entries >= this.limits.entries || this.monotonic() - started >= this.limits.durationMs
     const walk = async (relative: string[]): Promise<void> => {
       if (overBudget() || relative.length > this.limits.depth) {
         partial = true
+        partialReasons.add(relative.length > this.limits.depth ? '目录层级达到上限' : entries >= this.limits.entries ? '文件条目达到采集上限' : '文件扫描达到时间预算')
         return
       }
       try {
@@ -822,6 +841,7 @@ export class EngineDiagnosticsCollector {
         for await (const entry of directory) {
           if (overBudget()) {
             partial = true
+            partialReasons.add(entries >= this.limits.entries ? '文件条目达到采集上限' : '文件扫描达到时间预算')
             break
           }
           entries += 1
@@ -834,6 +854,7 @@ export class EngineDiagnosticsCollector {
             info = await lstat(join(root, ...parts))
           } catch {
             partial = true
+            partialReasons.add('部分文件已变化或不可读')
             continue
           }
           if (info.isSymbolicLink()) continue
@@ -850,9 +871,11 @@ export class EngineDiagnosticsCollector {
         }
       } catch {
         partial = true
+        partialReasons.add('部分目录不可读')
       }
     }
     await walk([])
+    const sqliteSnapshot = await sqlite
     return {
       state: 'available',
       path: root,
@@ -864,16 +887,19 @@ export class EngineDiagnosticsCollector {
       partial,
       scannedAt: this.now(),
       durationMs: Math.max(0, this.monotonic() - started),
-      cached: false
+      cached: false,
+      partialReasons: [...partialReasons],
+      sqlite: sqliteSnapshot
     }
   }
 }
 
 const collector = new EngineDiagnosticsCollector()
 export function getEngineResourceSnapshot(
-  snapshot: EngineSnapshot
+  snapshot: EngineSnapshot,
+  refresh = false
 ): Promise<EngineResourceSnapshot> {
-  return collector.getResources(snapshot)
+  return collector.getResources(snapshot, refresh)
 }
 export function getEngineStorageSnapshot(
   snapshot: EngineSnapshot,

@@ -6,8 +6,7 @@
  * 父组件把选项列表经 items 传入，用户点击条目后回调 onPick，由父组件负责关闭。
  *
  * 与源的差异：
- * - v-model 显隐改为「挂载即显示」：React 里条件渲染 <GitPickDialog/> 即打开，
- *   onClose 负责卸载，不再维护 modelValue 布尔。
+ * - open 由父层控制，父层在退出期间保留选项；onPick/onClose 立即结算选择。
  * - 行首图标从 iconify 字符串换成 IconName（aether 内置图标集），
  *   不引入新的图标依赖。
  */
@@ -28,6 +27,7 @@ export interface GitPickItem {
 }
 
 interface GitPickDialogProps {
+  open?: boolean
   title: string
   /** 顶部说明文字（可选） */
   description?: string
@@ -40,6 +40,7 @@ interface GitPickDialogProps {
 }
 
 export function GitPickDialog({
+  open = true,
   title,
   description,
   items,
@@ -90,7 +91,7 @@ export function GitPickDialog({
   }
 
   return (
-    <Dialog title={title} width={480} className="git-pickdlg" onClose={onClose}>
+    <Dialog open={open} title={title} width={480} className="git-pickdlg" onClose={onClose}>
       <div className="git-pickdlg__body">
         {description ? <div className="git-pickdlg__description">{description}</div> : null}
 
@@ -126,10 +127,10 @@ export function GitPickDialog({
                 <div className="git-pickdlg__item-main">
                   <div className="git-pickdlg__item-row">
                     <span className="git-pickdlg__item-label">{item.label ?? item.id}</span>
-                    {item.hint ? <span className="git-pickdlg__item-hint">{item.hint}</span> : null}
+                    {item.hint ? <span className="git-pickdlg__item-hint" title={item.hint}>{item.hint}</span> : null}
                   </div>
                   {item.description ? (
-                    <div className="git-pickdlg__item-desc">{item.description}</div>
+                    <div className="git-pickdlg__item-desc" title={item.description}>{item.description}</div>
                   ) : null}
                 </div>
               </div>

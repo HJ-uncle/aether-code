@@ -1,4 +1,4 @@
-import type { JSX } from 'react'
+import type { CSSProperties, JSX } from 'react'
 import type { ToolBrowserSnapshot } from './browser-snapshot'
 import { BrowserPositionPreview } from './BrowserPositionPreview'
 
@@ -7,21 +7,27 @@ const coordinate = (value: number): string => String(Math.round(value * 10) / 10
 const label = (value: string): string => value.length > 200 ? `${value.slice(0, 200)}…` : value
 
 /** Coordinates belong to the viewport captured before dispatch, even if the click navigated away. */
-export function BrowserClickPosition({ click }: { click: Click }): JSX.Element {
+export function BrowserClickPosition({ click, compact = false }: { click: Click; compact?: boolean }): JSX.Element {
   const { width, height } = click.viewport
   const unit = Math.max(width, height) / 100
   const bounds = click.target?.bounds
   const locator = click.target?.selector || click.target?.ref
+  // Match ordinary Work screenshots without stretching the SVG across the row;
+  // its viewport remains unchanged so the click overlays keep their coordinates.
+  const previewStyle = compact ? {
+    '--browser-preview-width': `${click.screenshot?.width ?? width}px`,
+    '--browser-preview-ratio': width / height
+  } as CSSProperties : undefined
   return (
-    <div className="tool-browser-click">
+    <div className={`tool-browser-click${compact ? ' tool-browser-click--compact' : ''}`} style={previewStyle}>
       <div className="tool-browser-click__heading">
         <strong>点击位置</strong>
         <span className="tool-browser-click__coords">X {coordinate(click.x)} · Y {coordinate(click.y)}</span>
       </div>
-      {click.target ? (
+      {click.target && (click.target.name || !compact && locator) ? (
         <div className="tool-browser-click__target">
           {click.target.name ? <span>{label(click.target.name)}</span> : null}
-          {locator ? <span className="tool-browser-click__locator">{label(locator)}</span> : null}
+          {!compact && locator ? <span className="tool-browser-click__locator">{label(locator)}</span> : null}
         </div>
       ) : null}
       <BrowserPositionPreview screenshot={click.screenshot} viewport={click.viewport} title="点击前页面截图" className="tool-browser-click__map"
@@ -31,7 +37,7 @@ export function BrowserClickPosition({ click }: { click: Click }): JSX.Element {
         <circle className="tool-browser-click__halo" cx={click.x} cy={click.y} r={unit * 3} />
         <circle className="tool-browser-click__point" cx={click.x} cy={click.y} r={unit * 1.2} />
       </BrowserPositionPreview>
-      <div className="tool-browser-click__caption">{click.screenshot ? '点击前画面' : '点击时视口'} · {width} × {height} · 左上角为原点</div>
+      <div className="tool-browser-click__caption">{click.screenshot ? '点击前画面' : '点击时视口'}{compact ? '' : ` · ${width} × ${height} · 左上角为原点`}</div>
     </div>
   )
 }

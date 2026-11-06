@@ -210,7 +210,7 @@ export class NextTurnQueueMutationService {
       if (
         !captured ||
         typeof captured !== 'object' ||
-        !['enqueue', 'edit', 'move', 'remove', 'clear-pending', 'pause', 'resume'].includes(
+        !['enqueue', 'edit', 'replace-pending', 'move', 'remove', 'clear-pending', 'pause', 'resume'].includes(
           captured.kind
         )
       )

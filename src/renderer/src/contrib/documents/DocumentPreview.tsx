@@ -9,6 +9,8 @@ const SpreadsheetPreview = lazy(() => import('./SpreadsheetDocumentPreview'))
 
 export interface DocumentPreviewProps {
   name: string
+  /** Parser identity is independent of the user-visible delivery name. */
+  formatName?: string
   base64?: string
   /** Direct preview bytes avoid a base64 round trip for Office and PDF. */
   data?: ArrayBuffer
@@ -20,7 +22,7 @@ export interface DocumentPreviewProps {
 }
 
 export function DocumentPreview({ active = true, ...props }: DocumentPreviewProps): JSX.Element | null {
-  return <div className="document-preview-host" hidden={!active}><DocumentPreviewContent key={JSON.stringify([props.identityKey, props.name])} {...props} active={active} /></div>
+  return <div className="document-preview-host" hidden={!active}><DocumentPreviewContent key={JSON.stringify([props.identityKey, props.name, props.formatName])} {...props} active={active} /></div>
 }
 
 class PreviewBoundary extends Component<{ children: ReactNode; onRetry: () => void }, { failed: boolean }> {
@@ -29,9 +31,9 @@ class PreviewBoundary extends Component<{ children: ReactNode; onRetry: () => vo
   render(): ReactNode { return this.state.failed ? <PreviewMessage error="预览组件暂时无法加载。" onRetry={this.props.onRetry} /> : this.props.children }
 }
 
-function DocumentPreviewContent({ name, base64, data, size, identityKey, active }: Omit<DocumentPreviewProps, 'active'> & { active: boolean }): JSX.Element {
+function DocumentPreviewContent({ name, formatName = name, base64, data, size, identityKey, active }: Omit<DocumentPreviewProps, 'active'> & { active: boolean }): JSX.Element {
   const [attempt, retry] = useState(0)
-  const kind = documentKindFor(name)
+  const kind = documentKindFor(formatName)
   const input = useMemo(() => {
     try { return data ? { data } : base64 !== undefined ? { data: documentBytes(base64, size) } : { error: '文件内容不完整，请重新读取后再试。' } }
     catch (reason: unknown) { return { error: previewErrorMessage(reason) } }

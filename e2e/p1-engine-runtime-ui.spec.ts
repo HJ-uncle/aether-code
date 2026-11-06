@@ -6,9 +6,12 @@ import { createServer } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 
-test('引擎 runtime 默认不请求，展开采样并在隐藏收起后停采，404不循环探测', async ({}, testInfo) => {
+test('引擎 runtime 首次展开读取一次，后续只手动刷新，隐藏恢复与404均不轮询', async ({}, testInfo) => {
   const root = resolve(__dirname, '..'), parent = join(root, '.e2e-tmp'), token = 'p1-runtime-ui-token'
   let app: ElectronApplication | undefined, fixture = '', reads = 0, cronReads = 0, metricsReads = 0, missing = false
+  let holdRuntime = false, releaseRuntime: (() => void) | undefined
+  const runtimeQueries: Array<string | null> = []
+  let sampleClock = Date.now()
   const errors: string[] = []
   const server = createServer((request, response) => {
     const path = new URL(request.url ?? '/', 'http://127.0.0.1').pathname
@@ -21,15 +24,19 @@ test('引擎 runtime 默认不请求，展开采样并在隐藏收起后停采�
     if (path === '/api/v1/metrics') metricsReads++
     if (path === '/api/v1/performance/runtime') {
       reads++
+      runtimeQueries.push(new URL(request.url ?? '/', 'http://127.0.0.1').searchParams.get('refresh'))
       if (missing) { response.writeHead(404).end(JSON.stringify({ code: 404, message: 'Route not found' })); return }
       const warming = reads === 1
-      response.end(JSON.stringify({ code: 200, message: 'OK', data: {
-        schemaVersion: 1, instanceId: 'p1-runtime-ui', pid: 6789, sampledAt: Date.now(), uptimeMs: 120000,
-        collection: { minIntervalMs: 5000, idleTimeoutMs: 15000, delayResolutionMs: 20 },
-        memory: { rssBytes: 128 * 1024 ** 2, heapUsedBytes: 32 * 1024 ** 2, heapTotalBytes: 64 * 1024 ** 2, heapLimitBytes: 2048 * 1024 ** 2, externalBytes: 8 * 1024 ** 2, arrayBuffersBytes: 4 * 1024 ** 2 },
+      sampleClock = Math.max(Date.now(), sampleClock + 1)
+      const sendRuntime = (): void => { response.end(JSON.stringify({ code: 200, message: 'OK', data: {
+        schemaVersion: 1, instanceId: 'p1-runtime-ui', pid: 6789, sampledAt: sampleClock, uptimeMs: 120000,
+        collection: { minIntervalMs: 5000, idleTimeoutMs: 15000, delayResolutionMs: 20, ...(!warming ? { sampleWindowMs: 200 } : {}) },
+        memory: { rssBytes: 128 * 1024 ** 2, heapUsedBytes: (31 + reads) * 1024 ** 2, heapTotalBytes: 64 * 1024 ** 2, heapLimitBytes: 2048 * 1024 ** 2, externalBytes: 8 * 1024 ** 2, arrayBuffersBytes: 4 * 1024 ** 2 },
         eventLoop: { state: warming ? 'warming' : 'available', intervalMs: warming ? null : 5000, utilization: warming ? null : 0.125,
           delay: warming ? null : { meanMs: 21, p95Ms: 24, maxMs: 40 } }
-      } })); return
+      } })) }
+      if (holdRuntime) { holdRuntime = false; releaseRuntime = sendRuntime } else sendRuntime()
+      return
     }
     const data = path === '/health' ? { status: 'ok' }
       : path === '/meta' ? { version: '2.0.0', buildId: `sha256:${'c'.repeat(64)}`, protocolVersion: 1, toolProfiles: ['code', 'general'], subagentSchemaVersion: 1, instanceId: 'p1-runtime-ui' }
@@ -46,7 +53,7 @@ test('引擎 runtime 默认不请求，展开采样并在隐藏收起后停采�
     writeFileSync(join(fixture, 'settings.json'), JSON.stringify({ engineMode: 'remote', remoteBaseUrl: `http://127.0.0.1:${address.port}`, autoStartEngine: true, lastFolder: '', lastSessionId: '', appearance: 'dark' }))
     const env = { ...process.env, AETHER_IDE_REMOTE_INSTANCE_TOKEN: token, AETHER_GLOBAL_DIR: join(fixture, 'global') }
     delete env.ELECTRON_RUN_AS_NODE
-    app = await electron.launch({ args: ['.', `--user-data-dir=${fixture}`], cwd: root, env })
+    app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || '.', `--user-data-dir=${fixture}`], cwd: root, env })
     const page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message))
     const mainWindow = await app.browserWindow(page)
     // Release Playwright's default focus override. Native visibility remains
@@ -78,6 +85,7 @@ test('引擎 runtime 默认不请求，展开采样并在隐藏收起后停采�
     expect(cronReads).toBe(0)
     expect(metricsReads).toBe(0)
     const resource = page.getByRole('region', { name: '引擎资源与健康监控', exact: true })
+    const refresh = resource.getByRole('button', { name: '刷新监控数据', exact: true })
     const checked = resource.locator('.engine-resource__health-facts > div').filter({ has: page.getByText('最近心跳检查', { exact: true }) }).locator('strong')
     await expect(checked).not.toHaveText('未提供')
     await expect(summary).toContainText('运行时指标能力')
@@ -93,13 +101,52 @@ test('引擎 runtime 默认不请求，展开采样并在隐藏收起后停采�
     await expect.poll(() => reads).toBe(1)
     const value = (label: string) => panel.locator('dt').filter({ hasText: new RegExp(`^${label}$`) }).locator('..').locator('dd')
     await expect(value('引擎 V8 Heap')).toHaveText('32 MiB')
-    await expect(value('事件循环利用率')).toHaveText('建立采样基线')
-    await expect(value('事件循环延迟 P95')).toHaveText('建立采样基线')
+    await expect(value('事件循环利用率')).toHaveText('需再次刷新')
+    await expect(value('事件循环延迟 P95')).toHaveText('需再次刷新')
+    await expect(panel).toContainText('旧引擎至少缓存 5 秒')
+    const sampleTime = () => panel.locator('[data-sampled-at]').getAttribute('data-sampled-at').then(Number)
+    const firstSampleTime = await sampleTime()
+    const outerSample = await resource.locator('.engine-resource__footer').innerText()
+    await quietForInterval(1)
+    const runtimeRefresh = panel.getByRole('button', { name: '刷新运行时指标', exact: true })
+    await expect(runtimeRefresh.locator('svg[aria-hidden="true"]')).toHaveCount(1)
+    await expect(runtimeRefresh).toHaveText('')
+    await expect(runtimeRefresh).toHaveAttribute('title', '刷新运行时指标')
+    holdRuntime = true
+    await runtimeRefresh.click()
     await expect.poll(() => reads).toBe(2)
+    await expect(panel).toHaveAttribute('open', '')
+    await expect(runtimeRefresh).toBeDisabled()
+    await expect(refresh).toBeDisabled()
+    await expect(runtimeRefresh.locator('.ui-spinner')).toBeVisible()
+    await expect(runtimeRefresh).toHaveText('')
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    expect(await runtimeRefresh.locator('.ui-spinner').evaluate(element => getComputedStyle(element).animationName)).toBe('none')
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    expect(await runtimeRefresh.locator('.ui-spinner').evaluate(element => getComputedStyle(element).animationName)).toBe('ui-spinner-rotate')
+    releaseRuntime!()
+    await expect(runtimeRefresh).toBeEnabled()
+    await expect.poll(sampleTime).toBeGreaterThan(firstSampleTime)
+    await expect(value('引擎 V8 Heap')).toHaveText('33 MiB')
+    expect(await resource.locator('.engine-resource__footer').innerText()).toBe(outerSample)
     await expect(value('事件循环利用率')).toHaveText('12.5%')
     await expect(value('事件循环延迟 P95')).toHaveText('24.0 ms')
     await expect(panel).toContainText('读数包含约 20 ms 的采样基线')
-    await expect(panel).toContainText('15 秒无读取后自动停用采集')
+    await expect(panel).toContainText('本次按需窗口 200 ms；采样结束即停止采集')
+    const mouseSampleTime = await sampleTime()
+    await runtimeRefresh.focus()
+    await runtimeRefresh.press('Enter')
+    await expect.poll(() => reads).toBe(3)
+    await expect.poll(sampleTime).toBeGreaterThan(mouseSampleTime)
+    await expect(value('引擎 V8 Heap')).toHaveText('34 MiB')
+    await expect(panel).toHaveAttribute('open', '')
+    expect(await resource.locator('.engine-resource__footer').innerText()).toBe(outerSample)
+    const keyboardSampleTime = await sampleTime()
+    await refresh.click()
+    await expect.poll(() => reads).toBe(4)
+    await expect.poll(sampleTime).toBeGreaterThan(keyboardSampleTime)
+    await expect(value('引擎 V8 Heap')).toHaveText('35 MiB')
+    await expect(resource.locator('.engine-resource__footer')).not.toHaveText(outerSample)
     await expect(panel).toContainText('PID 6789')
     await panel.screenshot({ path: testInfo.outputPath('p1-runtime-ui-dark.png') })
 
@@ -120,13 +167,16 @@ test('引擎 runtime 默认不请求，展开采样并在隐藏收起后停采�
     const beforeHidden = reads, beforeChecked = await checked.innerText()
     // Span the existing age ticker interval: only resource/runtime collection
     // remains, and the removed panels must never issue their old requests.
-    await quietForInterval(beforeHidden, 32000)
+    await quietForInterval(beforeHidden)
     expect(cronReads).toBe(0)
     expect(metricsReads).toBe(0)
     expect(await checked.innerText()).toBe(beforeChecked)
     expect(await pageCounts()).toEqual([0, 0])
     await mainWindow.evaluate(window => window.show())
     await expect.poll(() => page.evaluate(() => window.aether.window.getVisibility())).toBe(true)
+    await quietForInterval(beforeHidden)
+    expect(await checked.innerText()).toBe(beforeChecked)
+    await resource.getByRole('button', { name: '手动刷新监控数据', exact: true }).click()
     await expect.poll(() => reads).toBe(beforeHidden + 1)
     await expect.poll(() => checked.innerText()).not.toBe(beforeChecked)
     await expect.poll(pageCounts).toEqual([0, 0])
@@ -134,18 +184,51 @@ test('引擎 runtime 默认不请求，展开采样并在隐藏收起后停采�
     await summary.click(); const beforeClosed = reads; await quietForInterval(beforeClosed)
 
     missing = true; await summary.click()
+    await quietForInterval(beforeClosed)
+    await refresh.click()
     await expect.poll(() => reads).toBe(beforeClosed + 1)
     await expect(panel).toContainText('此引擎未提供运行时指标接口。')
     await expect(panel.locator('[data-runtime-state]')).toHaveAttribute('data-runtime-state', 'unsupported')
     await quietForInterval(beforeClosed + 1)
     await summary.click(); await summary.click(); await quietForInterval(beforeClosed + 1)
-    await panel.getByRole('button', { name: '重新检测运行时指标', exact: true }).click()
+    await refresh.click()
     await expect.poll(() => reads).toBe(beforeClosed + 2)
+
+    // Hold only the isolated app's diagnostics IPC. Runtime has its own real
+    // HTTP reader and must stay usable after its part of Refresh All finishes.
+    missing = false
+    await expect(refresh).toBeEnabled()
+    const heldDiagnostics = await page.evaluate(() => window.aether.engine.diagnostics())
+    await app.evaluate(({ ipcMain }, diagnostics) => {
+      const control = { reads: 0, release: undefined as (() => void) | undefined }
+      Object.assign(globalThis, { __monitorDiagnosticsHold: control })
+      ipcMain.removeHandler('engine:diagnostics')
+      ipcMain.handle('engine:diagnostics', () => {
+        control.reads++
+        return new Promise(resolve => { control.release = () => resolve(diagnostics) })
+      })
+    }, heldDiagnostics)
+    const beforeHold = reads
+    await refresh.click()
+    await expect.poll(() => reads).toBe(beforeHold + 1)
+    await expect(panel.locator('[data-runtime-state]')).toHaveAttribute('data-runtime-state', 'sample')
+    await expect(runtimeRefresh).toBeEnabled()
+    await expect(refresh).toBeDisabled()
+    const completedRuntimeTime = await sampleTime()
+    await runtimeRefresh.click()
+    await expect.poll(() => reads).toBe(beforeHold + 2)
+    await expect.poll(sampleTime).toBeGreaterThan(completedRuntimeTime)
+    await expect(panel).toHaveAttribute('open', '')
+    await expect(refresh).toBeDisabled()
+    expect(await app.evaluate(() => (globalThis as typeof globalThis & { __monitorDiagnosticsHold: { reads: number } }).__monitorDiagnosticsHold.reads)).toBe(1)
+    await app.evaluate(() => (globalThis as typeof globalThis & { __monitorDiagnosticsHold: { release?: () => void } }).__monitorDiagnosticsHold.release?.())
+    await expect(refresh).toBeEnabled()
     expect(cronReads).toBe(0)
     expect(metricsReads).toBe(0)
     expect(await pageCounts()).toEqual([0, 0])
     await expect(pagePerformance).toHaveCount(0)
     expect(errors).toEqual([])
+    expect(runtimeQueries.every(value => value === 'true')).toBe(true)
   } finally {
     await app?.close(); server.closeAllConnections(); await new Promise<void>(done => server.close(() => done()))
     if (fixture) {

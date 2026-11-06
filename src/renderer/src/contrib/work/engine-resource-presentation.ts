@@ -116,6 +116,17 @@ export function presentResourceHealth(
 
 const STORAGE_LABELS: Readonly<Record<string, string>> = {
   database: '数据库',
+  'database-wal': '数据库写入日志（WAL）',
+  'database-shm': '数据库共享索引（SHM）',
+  'history-jsonl': '会话正文（JSONL）',
+  'history-backups': '历史备份（.bak）',
+  'history-markers': '历史迁移与清空标记',
+  'history-other': '其他历史文件',
+  'audit-archive': '审计冷档',
+  'history-cold': '已清空历史冷档',
+  blobs: '共享正文与附件（磁盘）',
+  snapshots: '文件变更快照',
+  backups: '备份文件',
   databases: '数据库',
   sqlite: '数据库',
   logs: '日志',
@@ -132,7 +143,7 @@ const STORAGE_LABELS: Readonly<Record<string, string>> = {
   caches: '缓存',
   runtime: '引擎运行时',
   runtimes: '引擎运行时',
-  memory: '长期记忆',
+  memory: '长期记忆（磁盘）',
   config: '配置',
   other: '其他文件',
   unknown: '未分类文件'

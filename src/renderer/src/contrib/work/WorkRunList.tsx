@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { Icon } from '@renderer/workbench/icons'
+import { MotionPresence, useMotionPresence } from '@renderer/workbench/MotionPresence'
 import { toast } from '@renderer/core/toast'
 import type { WorkTask } from './work-state'
 import { getRunningWorkTasks } from './work-run-list'
@@ -49,15 +50,17 @@ export function WorkRunList({
   const [stoppingId, setStoppingId] = useState<string | null>(null)
   const [now, setNow] = useState(Date.now)
   const rootRef = useRef<HTMLDivElement>(null)
+  const shown = runs.length > 0 && !(inline && runs.length === 1 && runs[0]?.id === activeTaskId)
+  const presence = useMotionPresence(shown)
 
   useEffect(() => {
-    if (!runs.length) return
+    if (!shown) return
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
-  }, [runs.length])
+  }, [shown])
 
   useEffect(() => {
-    if (!open) return
+    if (!open || !shown) return
     const onPointerDown = (event: PointerEvent): void => {
       if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false)
     }
@@ -70,12 +73,12 @@ export function WorkRunList({
       document.removeEventListener('pointerdown', onPointerDown)
       document.removeEventListener('keydown', onKeyDown)
     }
-  }, [open])
+  }, [open, shown])
 
   // The active task already exposes its running status and stop action in the
   // heading. Keep the switcher for parallel work (or a background task) where
   // it provides an actual task-switching affordance.
-  if (!runs.length || (inline && runs.length === 1 && runs[0]?.id === activeTaskId)) return null
+  if (!presence.present) return null
 
   const stop = (id: string): void => {
     if (!onStop || !ready || stoppingId) return
@@ -88,7 +91,7 @@ export function WorkRunList({
   }
 
   return (
-    <div className={`work-run-list${inline ? ' work-run-list--inline' : ''}`} ref={rootRef}>
+    <div className={`work-run-list${inline ? ' work-run-list--inline' : ''}`} ref={rootRef} {...presence.motionProps}>
       <button
         type="button"
         className="work-run-list__trigger"
@@ -103,7 +106,7 @@ export function WorkRunList({
         <b className="work-run-list__count" aria-live="polite" aria-atomic="true">{runs.length}</b>
         <Icon name={open ? 'chevron-up' : 'chevron-down'} size={13} />
       </button>
-      {open && (
+      <MotionPresence show={open && shown} asChild>
         <section className="work-run-list__popover" role="dialog" aria-label="运行列表">
           <header className="work-run-list__header">
             <strong>运行列表</strong>
@@ -155,7 +158,7 @@ export function WorkRunList({
             ))}
           </ul>
         </section>
-      )}
+      </MotionPresence>
     </div>
   )
 }

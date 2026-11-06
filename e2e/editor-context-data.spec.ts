@@ -166,12 +166,15 @@ test('草稿保留引用文本、位置与未保存快照，兼容旧纯文本�
   } })
   try {
     storage.set('aether:chatDrafts', JSON.stringify({ old: '旧草稿' }))
-    expect(loadChatDraftState('old', '')).toEqual({ text: '旧草稿', mentions: [] })
+    expect(loadChatDraftState('old', '')).toMatchObject({ text: '旧草稿', mentions: [] })
+    expect(Number.isSafeInteger(loadChatDraftState('old', '').revision)).toBe(true)
     saveChatDraft('new', '解释 @src/hello.ts:2-3', '', [selection])
     expect(loadChatDraftState('new', '').mentions).toEqual([selection])
     expect(loadChatDraftState('old', '').text).toBe('旧草稿')
+    const previousRevision = loadChatDraftState('new', '').revision
     saveChatDraft('new', '', '')
-    expect(loadChatDraftState('new', '')).toEqual({ text: '', mentions: [] })
+    expect(loadChatDraftState('new', '')).toMatchObject({ text: '', mentions: [] })
+    expect(loadChatDraftState('new', '').revision).toBeGreaterThan(previousRevision)
   } finally {
     if (original) Object.defineProperty(globalThis, 'localStorage', original)
     else Reflect.deleteProperty(globalThis, 'localStorage')

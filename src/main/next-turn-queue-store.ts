@@ -60,7 +60,11 @@ export interface NextTurnQueueStoreOptions {
   limits?: NextTurnQueueLimits
   /** Trusted construction/test seam, never an IPC parameter or renderer callback. */
   testHook?: (context: QueueJournalTestHookContext) => Promise<void>
+  bootstrapTestHook?: (context: { phase: 'after-directory-create' | 'after-marker-write'; bucket: string }) => Promise<void>
 }
+// Reads can race the first mutation even through a different store/service in
+// the same main process. Wait for its known owner rather than inventing damage.
+const bootstraps = new Map<string, Set<Promise<void>>>()
 const sha = (value: string): string => createHash('sha256').update(value).digest('hex')
 function canonical(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value)
@@ -180,6 +184,43 @@ export class NextTurnQueueStore {
       return undefined
     }
   }
+  private async bucketNames(bucket: string): Promise<string[]> {
+    const local = bootstraps.get(bucket)
+    if (local?.size) await Promise.allSettled([...local])
+    let names = await fs.readdir(bucket)
+    if (names.some(name => /^r\d{10}\.json$/.test(name))) return names
+    // A different process may be between mkdir and exclusive r0 publication.
+    // This is observation only: never publish from staging or rebuild a bucket.
+    for (let attempt = 0; attempt < 25; attempt++) {
+      await new Promise<void>(done => setTimeout(done, 10))
+      names = await fs.readdir(bucket)
+      if (names.some(name => /^r\d{10}\.json$/.test(name))) return names
+    }
+    for (const name of names) {
+      if (!/^(stage|ready|initializing)-[a-f0-9-]+\.json$/.test(name) && !/^error-\d+-[a-f0-9-]+\.json$/.test(name))
+        throw new NextTurnQueueError('CORRUPT', 'Unrecognized journal filename; no earlier prefix is silently substituted')
+      let stat: Awaited<ReturnType<typeof fs.lstat>>
+      try { stat = await fs.lstat(join(bucket, name)) }
+      catch (error) { if (isMissing(error)) continue; throw error }
+      if (!stat.isFile() || stat.isSymbolicLink()) throw new NextTurnQueueError('CORRUPT', 'Queue auxiliary evidence is not an ordinary file')
+    }
+    for (const name of names.filter(name => /^initializing-[a-f0-9-]+\.json$/.test(name))) {
+      try {
+        const file = join(bucket, name), stat = await fs.lstat(file)
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4096) continue
+        const marker: unknown = JSON.parse(await fs.readFile(file, 'utf8'))
+        if (marker && typeof marker === 'object' && !Array.isArray(marker)
+          && Object.keys(marker).every(key => ['schemaVersion', 'processId', 'at'].includes(key))
+          && 'schemaVersion' in marker && marker.schemaVersion === 1
+          && 'processId' in marker && Number.isSafeInteger(marker.processId) && Number(marker.processId) > 0
+          && 'at' in marker && Number.isSafeInteger(marker.at) && Number(marker.at) >= 0)
+          throw new NextTurnQueueError('CAS', 'Queue bootstrap publication is still unconfirmed; retry the read without reconstructing the retained bucket')
+      } catch (error) { if (error instanceof NextTurnQueueError) throw error }
+    }
+    names = await fs.readdir(bucket)
+    if (names.some(name => /^r\d{10}\.json$/.test(name))) return names
+    throw new NextTurnQueueError('CORRUPT', 'Existing queue bucket has no committed bootstrap; auxiliary evidence is retained')
+  }
   private async records(scope: NextTurnQueueScope): Promise<{
     records: JournalRecord[]
     auxiliaryFiles: string[]
@@ -192,12 +233,14 @@ export class NextTurnQueueStore {
       const stat = await fs.lstat(bucket)
       if (!stat.isDirectory() || stat.isSymbolicLink())
         throw new NextTurnQueueError('SCOPE', 'Queue bucket is not an ordinary directory')
-      names = await fs.readdir(bucket)
     } catch (error) {
       if (isMissing(error))
         return { records: [], auxiliaryFiles: [], journalBytes: 0, auxiliaryBytes: 0 }
       throw error
     }
+    // Only an absent bucket is an empty queue. An auxiliary-file race or read
+    // failure inside a present bucket must never manufacture empty state.
+    names = await this.bucketNames(bucket)
     const revisions = names.filter((name) => /^r\d{10}\.json$/.test(name)).sort()
     if (
       names.some(
@@ -418,7 +461,7 @@ export class NextTurnQueueStore {
     const scopes: NextTurnQueueScope[] = []
     for (const item of buckets) {
       if (!item.isDirectory() || item.isSymbolicLink()) throw new NextTurnQueueError('SCOPE', 'Queue restoration found an unowned link')
-      const bucket = join(this.root, item.name), names = (await fs.readdir(bucket)).filter(name => /^r\d{10}\.json$/.test(name)).sort()
+      const bucket = join(this.root, item.name), names = (await this.bucketNames(bucket)).filter(name => /^r\d{10}\.json$/.test(name)).sort()
       if (!names.length) throw new NextTurnQueueError('CORRUPT', 'Retained queue bucket has no committed bootstrap')
       const file = join(bucket, names[0]), stat = await fs.lstat(file)
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > this.limits.maxStateBytes + 8192) throw new NextTurnQueueError('CORRUPT', 'Queue scope record is not an ordinary bounded file')
@@ -510,6 +553,14 @@ export class NextTurnQueueStore {
     }
   }
   private async bootstrap(scope: NextTurnQueueScope, assertAuthority: () => void): Promise<void> {
+    const bucket = this.bucketPath(scope), operation = this.initializeBootstrap(scope, assertAuthority)
+    let active = bootstraps.get(bucket)
+    if (!active) { active = new Set(); bootstraps.set(bucket, active) }
+    active.add(operation)
+    try { await operation }
+    finally { active.delete(operation); if (!active.size && bootstraps.get(bucket) === active) bootstraps.delete(bucket) }
+  }
+  private async initializeBootstrap(scope: NextTurnQueueScope, assertAuthority: () => void): Promise<void> {
     const bucket = this.bucketPath(scope)
     let created = false
     try {
@@ -544,6 +595,7 @@ export class NextTurnQueueStore {
         'Existing queue bucket lacks bootstrap; it cannot be reconstructed by a mutation'
       )
     }
+    await this.options.bootstrapTestHook?.({ phase: 'after-directory-create', bucket })
     const marker = join(bucket, 'initializing-' + randomUUID() + '.json')
     const record = makeRecord(
       scope,
@@ -564,6 +616,7 @@ export class NextTurnQueueStore {
         'Queue bootstrap exceeds the configured journal/staging budget'
       )
     await fs.writeFile(marker, markerData, { flag: 'wx' })
+    await this.options.bootstrapTestHook?.({ phase: 'after-marker-write', bucket })
     await this.publish(scope, record, assertAuthority, false)
     await fs.unlink(marker)
   }

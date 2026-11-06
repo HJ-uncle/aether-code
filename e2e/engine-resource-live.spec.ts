@@ -40,9 +40,10 @@ test.beforeAll(async () => {
     })
   )
   app = await electron.launch({
-    args: ['.', `--user-data-dir=${fixture}`],
+    args: [process.env.AETHER_E2E_APP_ENTRY || '.', `--user-data-dir=${fixture}`],
     cwd: root,
-    env: { ...process.env, AETHER_GLOBAL_DIR: join(fixture, 'global') }
+    env: { ...process.env, AETHER_GLOBAL_DIR: join(fixture, 'global'),
+      ...(process.env.AETHER_E2E_APP_ENTRY ? { AETHER_IDE_ENGINE_ENTRY: process.env.AETHER_IDE_ENGINE_ENTRY || resolve(root, '..', 'ai-agent-engine', 'dist', 'main.js') } : {}) }
   })
   page = await app.firstWindow()
   page.on('pageerror', (error) => pageErrors.push(error.message))
@@ -73,6 +74,7 @@ test('真实 PID 资源、存储分类、采样缓存与健康探针', async ({}
   expect(snapshot.pid).toBeGreaterThan(0)
   const first = await diagnostics()
   if (first.resources.state === 'available') {
+    expect(first.resources.cpu.percent).toBeNull()
     expect(first.resources.pid).toBe(snapshot.pid)
     expect(first.resources.memory.rssBytes).toBeGreaterThan(0)
     expect(first.resources.memory.privateBytes).toBeGreaterThan(0)
@@ -95,16 +97,24 @@ test('真实 PID 资源、存储分类、采样缓存与健康探针', async ({}
   expect(first.storage.categories.reduce((sum, item) => sum + item.bytes, 0)).toBe(
     first.storage.totalBytes
   )
+  expect(first.storage.categories.some(item => item.category === 'database')).toBe(true)
+  if (first.storage.sqlite?.state === 'available') {
+    expect(first.storage.sqlite.pageSize).toBeGreaterThan(0)
+    expect(first.storage.sqlite.pageCount).toBeGreaterThan(0)
+    expect(first.storage.sqlite.objects.every(item => item.kind === 'table' || item.kind === 'index')).toBe(true)
+  } else expect(first.storage.sqlite?.reason).toBeTruthy()
   const cached = await diagnostics()
   expect(cached.resources.sampledAt).toBe(first.resources.sampledAt)
   expect(cached.resources.collection.cached).toBe(true)
   expect(cached.storage.scannedAt).toBe(first.storage.scannedAt)
   expect(cached.storage.cached).toBe(true)
   const refreshed = await page.evaluate(() =>
-    window.aether.engine.diagnostics({ refreshStorage: true })
+    window.aether.engine.diagnostics({ refresh: true })
   )
-  expect(refreshed.storage.scannedAt).toBe(first.storage.scannedAt)
-  expect(refreshed.storage.cached).toBe(true)
+  expect(refreshed.storage.scannedAt).toBeGreaterThan(first.storage.scannedAt!)
+  expect(refreshed.storage.cached).toBe(false)
+  expect(refreshed.resources.collection.cached).toBe(false)
+  expect(refreshed.resources.processTree.collection.cached).toBe(false)
 
   let second = first
   if (first.resources.state === 'available') {
@@ -125,11 +135,12 @@ test('真实 PID 资源、存储分类、采样缓存与健康探针', async ({}
     .poll(
       async () => {
         second = await diagnostics()
-        return second.health.lastCheckedAt
+        return second.health.lastLatencyMs ?? -1
       },
       { timeout: 15_000, intervals: [1000] }
     )
-    .toBeGreaterThan(0)
+    .toBeGreaterThanOrEqual(0)
+  expect(second.health.lastCheckedAt).toBeGreaterThan(0)
   expect(second.health.lastSuccessAt).toBeGreaterThan(0)
   expect(second.health.lastLatencyMs).toBeGreaterThanOrEqual(0)
   expect(second.health.consecutiveFailures).toBe(0)
@@ -139,7 +150,7 @@ test('真实 PID 资源、存储分类、采样缓存与健康探针', async ({}
   })
 })
 
-test('资源页面可见、离开后释放采样、浅色与深色显示', async ({}, testInfo) => {
+test('资源页面仅进入读取、手动更新真实数据、隐藏恢复不轮询、深浅显示', async ({}, testInfo) => {
   await page.getByRole('tab', { name: 'Work 办公', exact: true }).click()
   await page.evaluate(() => {
     const target = window as Window & { __resourceTimers?: Set<number> }
@@ -160,24 +171,78 @@ test('资源页面可见、离开后释放采样、浅色与深色显示', async
   await page.locator('button.work-navigation__item[title="引擎监控"]').click()
   const monitor = page.locator('.work-page--monitor')
   await expect(monitor).toBeVisible()
-  await expect(monitor.getByText('CPU', { exact: true })).toBeVisible()
-  await expect(monitor.getByText('工作集 RSS', { exact: false })).toBeVisible()
-  await expect(monitor.getByText('私有内存', { exact: false })).toBeVisible()
+  await expect(monitor.locator('.engine-resource__metrics').getByText('CPU', { exact: true })).toBeVisible()
+  await expect(monitor.locator('.engine-resource__metrics').getByText('工作集 RSS', { exact: false })).toBeVisible()
+  await expect(monitor.locator('.engine-resource__metrics').getByText('私有内存', { exact: false })).toBeVisible()
   await expect(monitor.getByLabel('引擎进程树')).toBeVisible()
   await expect(monitor.getByText('最多显示 24 项', { exact: false })).toBeVisible()
-  await expect(monitor.locator('section[aria-label="引擎数据存储"] button')).toBeVisible()
-  await page.screenshot({ path: testInfo.outputPath('engine-resource-light.png'), fullPage: true })
+  const refresh = monitor.getByRole('button', { name: '刷新监控数据', exact: true })
+  await expect(refresh).toBeEnabled()
+  await expect(refresh.locator('svg[aria-hidden="true"]')).toHaveCount(1)
+  const storageRefresh = monitor.getByRole('button', { name: '刷新存储用量', exact: true })
+  const footerRefresh = monitor.getByRole('button', { name: '手动刷新监控数据', exact: true })
+  await expect(storageRefresh).toBeEnabled()
+  await expect(storageRefresh.locator('svg[aria-hidden="true"]')).toHaveCount(1)
+  await expect(footerRefresh.locator('svg[aria-hidden="true"]')).toHaveCount(1)
+  for (const button of [refresh, storageRefresh, footerRefresh]) {
+    await expect(button).toHaveText('')
+    expect(await button.getAttribute('title')).toBe(await button.getAttribute('aria-label'))
+    const size = await button.boundingBox()
+    expect(size?.width).toBe(size?.height)
+    expect(size?.width).toBeGreaterThanOrEqual(24)
+  }
+  const headingBox = await monitor.locator('.engine-resource__heading').boundingBox()
+  const refreshBox = await refresh.boundingBox()
+  const statusBox = await monitor.locator('.engine-resource__heading-actions .engine-resource__health').boundingBox()
+  expect(headingBox && refreshBox && statusBox).toBeTruthy()
+  expect(Math.abs(refreshBox!.x + refreshBox!.width - headingBox!.x - headingBox!.width)).toBeLessThan(1)
+  expect(refreshBox!.x - statusBox!.x - statusBox!.width).toBeGreaterThanOrEqual(0)
+  expect(refreshBox!.x - statusBox!.x - statusBox!.width).toBeLessThanOrEqual(12)
+  await monitor.locator('.engine-resource__heading').screenshot({ path: testInfo.outputPath('manual-monitor-heading.png') })
+  const storageDetails = monitor.locator('.engine-resource__sqlite')
+  await storageDetails.locator('summary').click()
+  await expect(storageDetails).toHaveAttribute('open', '')
+  const storageSample = (await diagnostics()).storage
+  if (storageSample.sqlite?.state === 'available') {
+    await expect(storageDetails.getByText('空闲页（可复用）', { exact: true })).toBeVisible()
+    if (storageSample.sqlite.objects.length) await expect(storageDetails.getByRole('table')).toBeVisible()
+  } else await expect(storageDetails.getByText(storageSample.sqlite!.reason!, { exact: true })).toBeVisible()
+  await expect(monitor.getByText('文件数不代表会话数', { exact: false })).toBeVisible()
+  await storageDetails.scrollIntoViewIfNeeded()
+  await monitor.getByLabel('引擎数据存储').screenshot({ path: testInfo.outputPath('engine-resource-light.png') })
   await page.evaluate(() => {
     document.documentElement.dataset.appearance = 'dark'
   })
-  await page.screenshot({ path: testInfo.outputPath('engine-resource-dark.png'), fullPage: true })
+  await monitor.getByLabel('引擎数据存储').screenshot({ path: testInfo.outputPath('engine-resource-dark.png') })
+  await monitor.locator('.engine-resource__footer').screenshot({ path: testInfo.outputPath('manual-monitor-footer.png') })
   await expect
     .poll(() =>
       page.evaluate(
         () => (window as Window & { __resourceTimers?: Set<number> }).__resourceTimers?.size
       )
     )
-    .toBe(1)
+    .toBe(0)
+  const before = await monitor.locator('.engine-resource__footer').innerText()
+  const observation = Date.now()
+  await expect.poll(() => Date.now() - observation, { timeout: 9000 }).toBeGreaterThanOrEqual(5500)
+  expect(await monitor.locator('.engine-resource__footer').innerText()).toBe(before)
+  const nativeSession = await page.context().newCDPSession(page)
+  await nativeSession.send('Emulation.setFocusEmulationEnabled', { enabled: false })
+  const mainWindow = await app!.browserWindow(page)
+  await mainWindow.evaluate(window => window.hide())
+  await expect.poll(() => page.evaluate(() => window.aether.window.getVisibility())).toBe(false)
+  await mainWindow.evaluate(window => window.show())
+  await expect.poll(() => page.evaluate(() => window.aether.window.getVisibility())).toBe(true)
+  expect(await monitor.locator('.engine-resource__footer').innerText()).toBe(before)
+  writeFileSync(join(fixture, 'engine', 'state', 'cache', 'manual-refresh.bin'), Buffer.alloc(2 * 1024 ** 2))
+  await storageRefresh.click()
+  await expect(refresh).toBeDisabled()
+  await expect(storageRefresh).toBeDisabled()
+  await expect(footerRefresh).toBeDisabled()
+  await expect(refresh).toBeEnabled()
+  await expect(monitor.locator('.engine-resource__footer')).not.toHaveText(before)
+  await expect(monitor.locator('.engine-resource__storage-legend li').filter({ hasText: '缓存' })).toContainText('2.01 MiB')
+  await expect(monitor.getByLabel('引擎数据存储')).toContainText('新采样')
   await page.locator('button.work-navigation__item[title="工作台"]').click()
   await expect(monitor).toBeHidden()
   await expect

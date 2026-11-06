@@ -6,6 +6,7 @@ import { promisify } from 'node:util'
 import { parseEngineManifest, type EngineManifest } from './protocol'
 import { selectRuntimeEntry } from './runtime-location'
 import { preparePackagedRuntime } from './packaged-runtime'
+import { developmentRuntimeEnvironment } from './development-runtime'
 import { getActiveRuntimeId, getLocalRuntimeRoot } from './local-runtime-store'
 
 export interface ResolvedRuntime {
@@ -70,7 +71,7 @@ export function resolveRuntime(): ResolvedRuntime | null {
 export function runtimeEnvironment(runtime: ResolvedRuntime): { cwd: string; env: Record<string, string> } {
   return runtime.source === 'bundled' || runtime.source === 'imported'
     ? preparePackagedRuntime(runtime.root, app.getPath('userData'), process.env.PATH)
-    : { cwd: dirname(runtime.entryPath), env: {} }
+    : developmentRuntimeEnvironment(runtime.entryPath, app.getPath('userData'), process.env.WORKSPACE_ROOT)
 }
 
 /** The engine owns the schema and success marker; retrying never imports conversation history. */

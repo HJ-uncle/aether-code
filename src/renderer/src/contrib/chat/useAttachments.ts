@@ -167,6 +167,7 @@ export interface UseAttachmentsResult {
   pick: () => void
   /** 移除一个已上传附件 */
   remove: (path: string) => void
+  removeSubmitted: (submitted: readonly ChatAttachment[]) => void
   /** 清空（发送后调用） */
   clear: () => void
   /** 明确拒收后恢复已上传附件；捕获的回调仅能恢复到原工作区与会话。 */
@@ -352,6 +353,9 @@ export function useAttachments(root: string | null, sessionId = ''): UseAttachme
   const remove = useCallback((path: string) => {
     setAttachments((prev) => prev.filter((item) => item.path !== path))
   }, [])
+  const removeSubmitted = useCallback((submitted: readonly ChatAttachment[]) => {
+    setAttachments(prev => prev.filter(item => !submitted.includes(item)))
+  }, [])
   const clearError = useCallback(() => setError(null), [])
 
   return {
@@ -364,6 +368,7 @@ export function useAttachments(root: string | null, sessionId = ''): UseAttachme
     fileInputRef: inputRef,
     pick,
     remove,
+    removeSubmitted,
     clear,
     restore,
     accept,

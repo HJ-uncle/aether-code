@@ -36,6 +36,7 @@ import { Icon } from '@renderer/workbench/icons'
 import { ContextMenu, type ContextMenuItem } from '@renderer/workbench/ContextMenu'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { Dialog } from '@renderer/workbench/Dialog'
+import { useMotionPresence, useMotionValue } from '@renderer/workbench/MotionPresence'
 import {
   SESSION_TAG_COLORS,
   getSessionMetaTable,
@@ -640,36 +641,26 @@ export function SessionHistoryView(): JSX.Element {
         </>
       ) : null}
 
-      {renaming ? (
-        <Dialog
-          title="重命名会话"
-          onClose={() => setRenaming(null)}
-          footer={
-            <>
-              <button type="button" className="btn btn--sm" onClick={() => setRenaming(null)}>
-                取消
-              </button>
-              <button type="button" className="btn btn--primary btn--sm" onClick={commitRename}>
-                确定
-              </button>
-            </>
-          }
-        >
-          <input
-            type="text"
-            className="history-view__rename-input"
-            maxLength={60}
-            autoFocus
-            value={renaming.value}
-            placeholder="留空则恢复默认标题"
-            onChange={(event) => setRenaming({ ...renaming, value: event.target.value })}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') commitRename()
-              if (event.key === 'Escape') setRenaming(null)
-            }}
-          />
-        </Dialog>
-      ) : null}
+      <SessionRenameDialog key={source} value={renaming} onChange={setRenaming} onClose={() => setRenaming(null)} onCommit={commitRename} />
     </div>
   )
+}
+
+function SessionRenameDialog({ value, onChange, onClose, onCommit }: {
+  value: { sessionId: string; value: string } | null
+  onChange: (value: { sessionId: string; value: string }) => void
+  onClose: () => void
+  onCommit: () => void
+}): JSX.Element | null {
+  const retained = useMotionValue(value)
+  const motion = useMotionPresence(Boolean(value))
+  if (!motion.present || !retained) return null
+  return <Dialog open={Boolean(value)} title="重命名会话" onClose={onClose} footer={<>
+    <button type="button" className="btn btn--sm" onClick={onClose}>取消</button>
+    <button type="button" className="btn btn--primary btn--sm" onClick={onCommit}>确定</button>
+  </>}>
+    <input type="text" className="history-view__rename-input" maxLength={60} autoFocus value={retained.value}
+      placeholder="留空则恢复默认标题" onChange={event => onChange({ ...retained, value: event.target.value })}
+      onKeyDown={event => { if (event.key === 'Enter') onCommit(); if (event.key === 'Escape') { event.stopPropagation(); onClose() } }} />
+  </Dialog>
 }

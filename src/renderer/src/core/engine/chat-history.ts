@@ -1,7 +1,9 @@
 import { normalizeCommandJob, mergeCommandJob, commandToolState } from './command-job-state'
 import { retainConfirmedContext } from './context-input'
 import { mergeFileChanges } from './tool-file-changes'
+import { normalizeFinalResult } from '@shared/final-result'
 import { normalizePublishedChildReference } from './published-child-recovery'
+import { normalizeRootFollowupMessage } from './root-followup-message'
 import type { ChatMessage, TimelineItem, ToolActivity } from './useChat'
 import {
   errorText,
@@ -73,7 +75,7 @@ export interface EngineHistoryRow {
   toolCall?: { id?: string; name?: string; args?: unknown } | null
   success?: boolean
   error?: unknown
-  metadata?: { contextUsageEstimated?: boolean; contextUsageProvisional?: boolean; requestInputTokenEstimate?: number; outputContinuation?: boolean; commandJob?: unknown; commandJobs?: unknown[]; subagent?: unknown; success?: boolean; error?: unknown; status?: string; outputPreview?: string; durationMs?: number; startedAt?: number; finishedAt?: number; runId?: string; rootRunId?: string; turnId?: string; attachments?: Array<{ name: string; type?: string; size?: number }>; change?: import('@shared/ipc').EngineFileChange; changes?: import('@shared/ipc').EngineFileChange[]; isCompactSummary?: boolean; toolName?: string }
+  metadata?: { finalResult?: unknown; contextUsageEstimated?: boolean; contextUsageProvisional?: boolean; requestInputTokenEstimate?: number; outputContinuation?: boolean; commandJob?: unknown; commandJobs?: unknown[]; subagent?: unknown; success?: boolean; error?: unknown; status?: string; outputPreview?: string; durationMs?: number; startedAt?: number; finishedAt?: number; runId?: string; rootRunId?: string; turnId?: string; collaborationDelivery?: unknown; attachments?: Array<{ name: string; type?: string; size?: number }>; change?: import('@shared/ipc').EngineFileChange; changes?: import('@shared/ipc').EngineFileChange[]; isCompactSummary?: boolean; toolName?: string }
   isSidechain?: boolean
 }
 
@@ -162,6 +164,7 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
         role: 'user',
         conversationId: row.conversationId ?? row.metadata?.turnId,
         runId: rowRunId,
+        rootFollowup: normalizeRootFollowupMessage(row),
         content: extractText(row.content),
         attachments: row.metadata?.attachments?.map(file => ({ path: file.name,
           name: file.name.replace(/\\/g, '/').split('/').at(-1) || file.name,
@@ -225,6 +228,10 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
         ...(turnId ? { conversationId: turnId } : {})
       }
       result.push(message)
+    }
+    const finalResult = normalizeFinalResult(row.metadata?.finalResult)
+    if (finalResult && finalResult.runId === rowRunId && finalResult.turnId === turnId && finalResult.assistantMessageId === row.id) {
+      message.finalResult = finalResult
     }
     if (row.modelId) message.modelId = row.modelId
     if (row.usage) {

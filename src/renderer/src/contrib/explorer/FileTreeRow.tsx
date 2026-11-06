@@ -11,6 +11,7 @@ interface FileTreeRowProps {
   path: string
   title?: string
   depth: number
+  rowHeight?: number
   isDirectory: boolean
   isExpanded?: boolean
   isSelected?: boolean
@@ -39,6 +40,7 @@ export function FileTreeRow({
   path,
   title = path,
   depth,
+  rowHeight = FILE_TREE_ROW_HEIGHT,
   isDirectory,
   isExpanded = false,
   isSelected = false,
@@ -64,7 +66,7 @@ export function FileTreeRow({
   ].filter(Boolean).join(' ')
   const style = {
     paddingLeft: FILE_TREE_INDENT_BASE + depth * FILE_TREE_INDENT_STEP,
-    height: FILE_TREE_ROW_HEIGHT
+    height: rowHeight
   } as CSSProperties
 
   return (

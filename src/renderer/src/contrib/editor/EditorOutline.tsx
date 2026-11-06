@@ -17,6 +17,7 @@ import {
   findDocumentSymbolPath
 } from '@renderer/core/editor/document-symbol-utils'
 import { Icon } from '@renderer/workbench/icons'
+import { MotionPresence } from '@renderer/workbench/MotionPresence'
 import './editor-outline.css'
 
 export interface EditorOutlineProps {
@@ -157,7 +158,9 @@ export function EditorOutline({
                 </span>
               </button>
             </div>
-            {hasChildren && branchExpanded ? renderSymbols(symbol.children ?? [], depth + 1) : null}
+            {hasChildren ? <MotionPresence show={branchExpanded}>
+              {branchExpanded ? renderSymbols(symbol.children ?? [], depth + 1) : null}
+            </MotionPresence> : null}
           </li>
         )
       })}
@@ -176,7 +179,7 @@ export function EditorOutline({
           <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={12} />
           <span>大纲</span>
         </button>
-        {expanded ? (
+        <MotionPresence show={expanded} asChild>
           <div className="editor-outline__actions">
             <button
               type="button"
@@ -216,9 +219,9 @@ export function EditorOutline({
               <Icon name="restart" size={14} />
             </button>
           </div>
-        ) : null}
+        </MotionPresence>
       </header>
-      {expanded ? (
+      <MotionPresence show={expanded} className="editor-outline__body">
         <>
           <input
             className="editor-outline__filter"
@@ -251,7 +254,7 @@ export function EditorOutline({
             ) : null}
           </div>
         </>
-      ) : null}
+      </MotionPresence>
     </section>
   )
 }

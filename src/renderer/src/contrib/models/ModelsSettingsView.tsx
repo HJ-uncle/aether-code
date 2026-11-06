@@ -6,6 +6,7 @@ import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { Select } from '@renderer/workbench/Select'
 import { SettingsContent, SettingsGroup, SettingsRow } from '../settings/SettingsGroup'
 import { ModelFormDialog } from './ModelFormDialog'
+import { SubagentConcurrencySetting } from './SubagentConcurrencySetting'
 import '../settings/settings-pages.css'
 
 /**
@@ -163,6 +164,8 @@ export function ModelsSettingsView(): JSX.Element {
           />
         </SettingsRow>
       </SettingsGroup>
+
+      <SubagentConcurrencySetting />
 
       <SettingsGroup title="说明">
         <SettingsContent>

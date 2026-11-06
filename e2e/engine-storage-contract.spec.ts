@@ -144,6 +144,7 @@ test('握手拒绝错误构建、旧协议、缺少code范围和伪健康信封'
 test('普通HTTP与恢复SSE共用实例头和根路径规则', () => {
   expect(engineHeaders('synthetic-token')).toEqual({
     'X-Aether-Tool-Profile': 'code',
+    'X-Aether-Run-Lifetime': 'durable',
     'X-Aether-Instance-Token': 'synthetic-token'
   })
   expect(normalizeEnginePath('/meta')).toBe('/meta')

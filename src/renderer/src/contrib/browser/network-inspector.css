@@ -232,10 +232,13 @@
   padding: 0 var(--space-2);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
+  overflow-y: hidden;
 }
 .network-detail__tabs > button[role='tab'] {
   position: relative;
   flex-shrink: 0;
+  min-width: var(--horizontal-option-min-width);
+  white-space: nowrap;
   height: 26px;
   padding: 0 var(--space-2);
   border: 0;

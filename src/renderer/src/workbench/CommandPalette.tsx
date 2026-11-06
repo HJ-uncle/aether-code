@@ -12,6 +12,7 @@ import { getKeybindingHint, registerKeybinding } from '@renderer/core/platform/k
 import { buildCommandItems } from './command-filter'
 import { FuzzyText } from './FuzzyText'
 import { useAppMode } from '@renderer/core/platform/app-mode'
+import { useMotionPresence } from './MotionPresence'
 
 const TOGGLE_COMMAND = 'aether.commandPalette.toggle'
 
@@ -28,15 +29,25 @@ const TOGGLE_COMMAND = 'aether.commandPalette.toggle'
  */
 export function CommandPalette(): JSX.Element | null {
   const [open, setOpen] = useState(false)
+  const [generation, setGeneration] = useState(0)
+  const openRef = useRef(false)
+  const motion = useMotionPresence(open)
   const mode = useAppMode()
-  useEffect(() => { setOpen(false) }, [mode])
+  useEffect(() => { openRef.current = false; setOpen(false) }, [mode])
 
   useEffect(() => {
     const disposeCommand = registerCommand({
       id: TOGGLE_COMMAND,
       title: '命令面板',
       category: '视图',
-      run: () => setOpen((value) => !value)
+      run: () => {
+        const next = !openRef.current
+        openRef.current = next
+        // Reopening during exit is still a new invocation: reset its query and
+        // autofocus without letting the previous unmount timer close it.
+        if (next) setGeneration(value => value + 1)
+        setOpen(next)
+      }
     })
     const disposeKeybinding = registerKeybinding({
       key: 'ctrl+shift+p',
@@ -48,11 +59,11 @@ export function CommandPalette(): JSX.Element | null {
     }
   }, [])
 
-  if (!open) return null
-  return <PaletteOverlay onClose={() => setOpen(false)} />
+  if (!motion.present) return null
+  return <PaletteOverlay key={generation} motionProps={motion.motionProps} onClose={() => { openRef.current = false; setOpen(false) }} />
 }
 
-function PaletteOverlay({ onClose }: { onClose: () => void }): JSX.Element {
+function PaletteOverlay({ onClose, motionProps }: { onClose: () => void; motionProps: ReturnType<typeof useMotionPresence>['motionProps'] }): JSX.Element {
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
@@ -90,7 +101,7 @@ function PaletteOverlay({ onClose }: { onClose: () => void }): JSX.Element {
   }, [active, query, items])
 
   return (
-    <div className="palette-overlay" onMouseDown={onClose}>
+    <div className="palette-overlay" {...motionProps} data-motion-axis="y" onMouseDown={onClose}>
       <div
         className="palette"
         role="dialog"

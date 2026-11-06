@@ -1,0 +1,32 @@
+.work-conversation__body {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.work-conversation__body > .work-conversation__scroll {
+  min-width: 0;
+}
+
+.work-message-nav.chat__nav--adaptive { margin-inline: 2px; }
+
+.work-history-notice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  margin: 0 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+.work-history-status {
+  margin: 0 0 var(--space-2);
+  color: var(--fg-muted);
+  font-size: 12px;
+}

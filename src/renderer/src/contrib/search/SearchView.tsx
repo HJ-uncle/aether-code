@@ -3,10 +3,13 @@ import {
   useMemo,
   useRef,
   type JSX,
+  type ReactNode,
   type KeyboardEvent as ReactKeyboardEvent
 } from 'react'
+import { createPortal } from 'react-dom'
 import type { SearchHit } from '@shared/ipc'
 import { Icon } from '@renderer/workbench/icons'
+import { MotionPresence } from '@renderer/workbench/MotionPresence'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { openAppSettings } from '@renderer/contrib/settings/app-settings-navigation'
 import {
@@ -22,12 +25,44 @@ import {
   selectHit,
   setAllCollapsed,
   toggleCollapse,
-  useSearch
+  useSearch,
+  type SearchState
 } from './search-store'
 
 interface FileGroup {
   path: string
   hits: SearchHit[]
+}
+
+export type SearchPanelSnapshot = SearchState & { optionsKey: string }
+
+/** A host owns scope, state and navigation; the shared panel owns only the UI. */
+export interface SearchPanelActions {
+  clearSearch: typeof clearSearch
+  closeReplacePreview: typeof closeReplacePreview
+  confirmReplacePreview: typeof confirmReplacePreview
+  moveSelection: typeof moveSelection
+  navigateHistory: typeof navigateHistory
+  openReplacePreview: typeof openReplacePreview
+  patchSearch: typeof patchSearch
+  runSearch: typeof runSearch
+  scheduleSearch: typeof scheduleSearch
+  selectHit: typeof selectHit
+  setAllCollapsed: typeof setAllCollapsed
+  toggleCollapse: typeof toggleCollapse
+}
+
+export interface SearchPanelProps {
+  root: string | null
+  search: SearchPanelSnapshot
+  actions: SearchPanelActions
+  active?: boolean
+  embedded?: boolean
+}
+
+const codeSearchActions: SearchPanelActions = {
+  clearSearch, closeReplacePreview, confirmReplacePreview, moveSelection, navigateHistory,
+  openReplacePreview, patchSearch, runSearch, scheduleSearch, selectHit, setAllCollapsed, toggleCollapse
 }
 
 /**
@@ -40,14 +75,48 @@ interface FileGroup {
  */
 export function SearchView(): JSX.Element {
   const workspace = useWorkspace()
-  const root = workspace.root
   const search = useSearch()
+  return <SearchPanel root={workspace.root} search={search} actions={codeSearchActions} />
+}
+
+export function SearchPanel({ root, search, actions, active = true, embedded = false }: SearchPanelProps): JSX.Element {
+  const {
+    clearSearch, closeReplacePreview, confirmReplacePreview, moveSelection, navigateHistory,
+    openReplacePreview, patchSearch, runSearch, scheduleSearch, selectHit, setAllCollapsed, toggleCollapse
+  } = actions
 
   const inputRef = useRef<HTMLInputElement>(null)
+  const cancelRef = useRef<HTMLButtonElement>(null)
   const lastFocusSeq = useRef(0)
+
+  useEffect(() => {
+    if (!embedded || !search.previewVisible) return
+    const previous = document.activeElement
+    cancelRef.current?.focus()
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeReplacePreview() }
+      if (event.key === 'Tab') {
+        const buttons = Array.from(cancelRef.current?.closest('[role="dialog"]')?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])
+        if (buttons.length) {
+          event.preventDefault()
+          const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
+          buttons[(index + (event.shiftKey ? buttons.length - 1 : 1)) % buttons.length]?.focus()
+        }
+      }
+    }
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true)
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus()
+    }
+  }, [embedded, search.previewVisible, closeReplacePreview])
+
+  // Replacement diffs need readable width even when the host is a narrow tree.
+  const overlay = (node: ReactNode): ReactNode => embedded ? createPortal(node, document.body) : node
 
   // 打开视图即聚焦输入框（VS Code 行为）；Ctrl+Shift+F 重复触发时夺回焦点
   useEffect(() => {
+    if (!active) return
     if (search.focusSeq !== lastFocusSeq.current) {
       lastFocusSeq.current = search.focusSeq
     }
@@ -56,14 +125,17 @@ export function SearchView(): JSX.Element {
       inputRef.current?.select()
     }, 0)
     return () => clearTimeout(timer)
-  }, [search.focusSeq])
+  }, [active, search.focusSeq])
 
   // 输入或任一选项变化 → 防抖重搜
   useEffect(() => {
-    scheduleSearch(root)
-  }, [root, search.optionsKey])
+    if (active) scheduleSearch(root)
+  }, [active, root, search.optionsKey, scheduleSearch])
 
   const groups = useMemo<FileGroup[]>(() => {
+    // Results from a previous query must not be selectable while their new
+    // scope/options are being searched.
+    if (search.searching) return []
     const byPath = new Map<string, SearchHit[]>()
     for (const hit of search.hits) {
       const list = byPath.get(hit.path)
@@ -71,7 +143,7 @@ export function SearchView(): JSX.Element {
       else byPath.set(hit.path, [hit])
     }
     return [...byPath.entries()].map(([path, hits]) => ({ path, hits }))
-  }, [search.hits])
+  }, [search.hits, search.searching])
 
   const allPaths = useMemo(() => groups.map((group) => group.path), [groups])
   const allCollapsed = allPaths.length > 0 && allPaths.every((path) => search.collapsed[path])
@@ -79,11 +151,13 @@ export function SearchView(): JSX.Element {
   // 键盘选中项跟随滚动（ref 操作，无状态更新）
   const resultsRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
+    if (!active) return
     resultsRef.current?.querySelector('.is-selected')?.scrollIntoView({ block: 'nearest' })
-  }, [search.selectedKey])
+  }, [active, search.selectedKey])
 
   /** 结果区键盘导航：↑↓ 移动选中，Enter 打开（焦点保持在结果区） */
   const onResultsKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (!active || search.searching) return
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
       moveSelection(groups, event.key === 'ArrowDown' ? 1 : -1)
@@ -95,7 +169,7 @@ export function SearchView(): JSX.Element {
   }
 
   return (
-    <div className="search-view" aria-label="搜索">
+    <div className={`search-view${embedded ? ' search-view--embedded' : ''}`} aria-label="搜索">
       <div className="search-view__widget">
         {/* ── 搜索行 ── */}
         <div className="search-view__row">
@@ -108,7 +182,7 @@ export function SearchView(): JSX.Element {
           >
             <Icon name="chevron-right" size={16} />
           </button>
-          <div className="search-view__field">
+          <div className="search-view__field search-view__field--query">
             <input
               ref={inputRef}
               className="search-view__input"
@@ -175,7 +249,7 @@ export function SearchView(): JSX.Element {
         </div>
 
         {/* ── 替换行 ── */}
-        {search.replaceVisible ? (
+        <MotionPresence show={search.replaceVisible}>
           <div className="search-view__row">
             <span className="search-view__row-spacer" />
             <div className="search-view__field">
@@ -200,7 +274,7 @@ export function SearchView(): JSX.Element {
               </button>
             </div>
           </div>
-        ) : null}
+        </MotionPresence>
 
         {/* ── 工具行：过滤开关 + 刷新 / 折叠 / 清空 ── */}
         <div className="search-view__row search-view__tools">
@@ -255,7 +329,7 @@ export function SearchView(): JSX.Element {
         </div>
 
         {/* ── 包含 / 排除过滤 ── */}
-        {search.filtersVisible ? (
+        <MotionPresence show={search.filtersVisible}>
           <div className="search-view__filters">
             <label className="search-view__filter">
               <span>包含</span>
@@ -288,12 +362,12 @@ export function SearchView(): JSX.Element {
               编辑搜索排除设置…
             </button>
           </div>
-        ) : null}
+        </MotionPresence>
       </div>
 
       {/* ── 结果区 ── */}
       {!root ? (
-        <div className="notice">尚未打开文件夹。</div>
+        <div className="notice">{embedded ? '工作区尚未就绪，请稍后重试。' : '尚未打开文件夹。'}</div>
       ) : !search.query.trim() ? (
         <div className="search-view__hint">输入关键词，在工作区内搜索文件内容。</div>
       ) : (
@@ -312,7 +386,7 @@ export function SearchView(): JSX.Element {
             ) : (
               <>
                 {groups.length} 个文件 {search.hits.length} 处命中
-                {search.strategy === 'scan' ? '（非 git 仓库，遍历搜索）' : ''}
+                {!embedded && search.strategy === 'scan' ? '（非 git 仓库，遍历搜索）' : ''}
                 {search.truncated ? '，结果已达上限' : ''}
                 {search.replaceMessage ? (
                   <span className="search-view__replace-note">{search.replaceMessage}</span>
@@ -320,6 +394,10 @@ export function SearchView(): JSX.Element {
               </>
             )}
           </div>
+
+          {!search.searching && !search.errorMessage && groups.length === 0 ? (
+            <div className="search-view__hint">没有匹配的内容。试试其他关键词，或调整包含、排除条件。</div>
+          ) : null}
 
           {groups.map((group) => {
             const collapsed = Boolean(search.collapsed[group.path])
@@ -329,6 +407,7 @@ export function SearchView(): JSX.Element {
                   type="button"
                   className={`search-view__file${collapsed ? ' is-collapsed' : ''}`}
                   title={group.path}
+                  aria-expanded={!collapsed}
                   onClick={() => toggleCollapse(group.path)}
                 >
                   <Icon name={collapsed ? 'chevron-right' : 'chevron'} size={16} />
@@ -338,6 +417,7 @@ export function SearchView(): JSX.Element {
                   </span>
                   <span className="search-view__file-count">{group.hits.length}</span>
                 </button>
+                <MotionPresence show={!collapsed}>
                 {!collapsed
                   ? group.hits.map((hit) => {
                       const key = `${hit.path}:${hit.line}`
@@ -361,6 +441,7 @@ export function SearchView(): JSX.Element {
                       )
                     })
                   : null}
+                </MotionPresence>
               </div>
             )
           })}
@@ -368,11 +449,12 @@ export function SearchView(): JSX.Element {
       )}
 
       {/* ── 替换预览（照搬 VS Code Replace Preview：确认后才真正写盘）── */}
-      {search.previewVisible ? (
-        <div className="replace-preview-overlay" onMouseDown={closeReplacePreview}>
+      {overlay(<MotionPresence show={search.previewVisible} asChild>
+        <div className={`replace-preview-overlay${embedded ? ' replace-preview-overlay--embedded' : ''}`} onMouseDown={closeReplacePreview}>
           <div
             className="replace-preview"
             role="dialog"
+            aria-modal={embedded || undefined}
             aria-label="替换预览"
             onMouseDown={(event) => event.stopPropagation()}
           >
@@ -391,7 +473,8 @@ export function SearchView(): JSX.Element {
                 type="button"
                 className="replace-preview__apply"
                 disabled={
-                  search.previewBusy || !search.previewOutcome || search.previewOutcome.total === 0
+                  search.previewBusy || !search.previewOutcome || search.previewOutcome.total === 0 ||
+                  Boolean(search.previewOutcome.error) || (embedded && search.previewOutcome.truncated)
                 }
                 onClick={() => root && void confirmReplacePreview(root)}
               >
@@ -400,6 +483,7 @@ export function SearchView(): JSX.Element {
               <button
                 type="button"
                 className="replace-preview__cancel"
+                ref={cancelRef}
                 onClick={closeReplacePreview}
               >
                 取消
@@ -433,7 +517,7 @@ export function SearchView(): JSX.Element {
             </div>
           </div>
         </div>
-      ) : null}
+      </MotionPresence>)}
     </div>
   )
 }

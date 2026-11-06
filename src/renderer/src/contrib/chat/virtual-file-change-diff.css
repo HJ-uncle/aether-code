@@ -1,0 +1,13 @@
+/* The parent inspector owns the available height. Chat previews keep their
+   existing max-height and paging; only the embedded inspector fills its pane. */
+.diff-card.diff-card--embedded { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; min-height: 0; height: 100%; margin: 0; overflow: hidden; }
+.diff-card--embedded > .diff-card__metadata, .diff-card--embedded > .diff-card__notice { flex-shrink: 0; }
+.diff-card--embedded > .diff-card__body { flex: 1 1 0; min-height: 0; max-height: none; }
+.diff-card--embedded .virtual-file-change-diff { position: relative; overflow: auto; overflow-anchor: none; overscroll-behavior: contain; line-height: var(--file-change-row-height); }
+.virtual-file-change-diff__track { position: relative; width: max-content; }
+.virtual-file-change-diff__window { position: absolute; left: 0; width: 100%; }
+.virtual-file-change-diff .diff-row, .virtual-file-change-diff .diff-card__gap { box-sizing: border-box; height: var(--file-change-row-height); min-height: var(--file-change-row-height); max-height: var(--file-change-row-height); padding-block: 0; line-height: var(--file-change-row-height); white-space: nowrap; }
+.virtual-file-change-diff .diff-row { align-items: center; }
+.virtual-file-change-diff .diff-row__no { min-width: var(--file-change-number-width); }
+.virtual-file-change-diff .diff-row__text { flex: none; }
+.virtual-file-change-diff .diff-card__gap > span { padding-left: calc(var(--file-change-number-width) + 24px); }

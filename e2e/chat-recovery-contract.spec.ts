@@ -58,6 +58,36 @@ test('projected stable user survives snapshot/history first append race',()=>{
   const result=restoreChatSnapshot(snapshot({history:[],projection:[{userMessage:{id:'user',role:'user',content:'task',conversationId:'turn'}},{content:'live'}]}))
   expect(result.messages.map(message=>message.id)).toEqual(['user','assistant'])
 })
+
+test('five supplements replay once with their own IDs and the original root/turn in both live and persisted snapshots', () => {
+  const supplements = Array.from({ length: 5 }, (_, index) => ({ id: `controller-${index}`, role: 'user', content: `追加要求 ${index + 1}`,
+    createdAt: index * 2 + 3, conversationId: run.turnId, metadata: { rootRunId: run.runId, turnId: run.turnId } }))
+  const history = [
+    { id: run.userMessageId, role: 'user', content: '初始要求', conversationId: run.turnId, metadata: { rootRunId: run.runId } },
+    ...supplements.flatMap((row, index) => [
+      { id: `segment-${index}`, role: 'assistant', content: `处理进展 ${index}`, createdAt: index * 2 + 2, conversationId: run.turnId,
+        metadata: { rootRunId: run.runId }, toolCall: { id: `tool-${index}`, name: 'read_file', args: { path: `part-${index}.txt` } } },
+      { id: `result-${index}`, role: 'tool', toolCallId: `tool-${index}`, content: `工具结果 ${index}`, metadata: { success: true, rootRunId: run.runId } }, row
+    ]),
+    { id: run.assistantMessageId, role: 'assistant', content: '最终交付', createdAt: 14, conversationId: run.turnId, metadata: { rootRunId: run.runId } }
+  ]
+  for (const source of ['live', 'persisted'] as const) {
+    const state = snapshot({ source, history, projection: source === 'live' ? [{ content: '完整投影' }] : [] })
+    const first = restoreChatSnapshot(state).messages, second = restoreChatSnapshot(state).messages
+    const users = first.filter(message => message.role === 'user')
+    expect(users.map(message => message.id)).toEqual([run.userMessageId, ...supplements.map(row => row.id)])
+    expect(users.map(message => message.content)).toEqual(['初始要求', ...supplements.map(row => row.content)])
+    expect(new Set(first.map(message => message.id)).size).toBe(first.length)
+    expect(new Set(first.map(message => message.runId))).toEqual(new Set([run.runId]))
+    expect(new Set(first.map(message => message.conversationId))).toEqual(new Set([run.turnId]))
+    expect(second.map(message => message.id)).toEqual(first.map(message => message.id))
+    if (source === 'persisted') {
+      expect(first.map(message => message.content)).toEqual(history.filter(row => row.role !== 'tool').map(row => row.content))
+      expect(first.flatMap(message => message.tools).map(tool => [tool.id, tool.result, tool.state])).toEqual(
+        Array.from({ length: 5 }, (_, index) => [`tool-${index}`, `工具结果 ${index}`, 'done']))
+    }
+  }
+})
 test('same provider toolCallId in two root runs cannot overwrite the older owner',()=>{
   const first=restoreChatSnapshot(snapshot({projection:[{toolStart:{toolCallId:'reused',name:'read_file'}}]})).messages[1]
   const second={...first,id:'next',runId:'next-run',tools:first.tools.map(tool=>({...tool}))}

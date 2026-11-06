@@ -1,0 +1,19 @@
+.git-multipick__selection {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.git-multipick__selection > span {
+  flex: 1;
+  color: var(--fg-muted);
+}
+
+.git-push-result {
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  color: var(--fg);
+}

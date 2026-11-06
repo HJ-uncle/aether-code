@@ -1,11 +1,13 @@
-import { ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
-import { BROWSER_IPC, type BrowserConnectInput } from '../shared/browser-api'
+import { dialog, ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { BROWSER_IPC, type BrowserConnectInput, type BrowserFileOpenOptions } from '../shared/browser-api'
 import type { BrowserAction, BrowserBoundsInput, BrowserContext, BrowserCreateInput, BrowserReadKind, BrowserSettings, BrowserSurfaceOwner } from '../shared/browser'
 import type { BrowserNetworkQuery, BrowserNetworkDetailOptions } from '../shared/browser-network'
 import { BrowserService } from './browser/service'
-import { BrowserEngineBridge } from './browser-bridge'
+import { BrowserEngineBridge, browserEngineId } from './browser-bridge'
 import { contextsMatch, validateContext } from './browser/validation'
 import { BrowserPreviewServer } from './browser-preview'
+import { sessionPreviewAccess } from './browser-workspace-preview'
+import { engineIdentityOf } from './engine/protocol'
 import { engineHost } from './engine/host'
 import { readAccountCredential } from './account/credential-store'
 import { NativeBrowserHostManager } from './browser/native-host-manager'
@@ -55,6 +57,11 @@ export function registerBrowserIpc(window: BrowserWindow): () => void {
   refreshNativeHost()
   bridges.add(bridge)
   const preview = new BrowserPreviewServer()
+  const creationScope = () => {
+    const presentation = service.currentPresentation(), context = bridge.getContext()
+    return { presentation, pendingEngine: pendingBrowserEngine(),
+      context: context && presentation?.sessionId === context.sessionId && presentation.engineId === context.engineId ? context : undefined }
+  }
   const handler = async (event: IpcMainInvokeEvent, method: string, ...args: unknown[]): Promise<unknown> => {
     try {
       if (window.isDestroyed() || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) {
@@ -63,9 +70,16 @@ export function registerBrowserIpc(window: BrowserWindow): () => void {
       let value: unknown
       switch (method) {
         case 'list': value = service.list(); break
-        case 'create': value = await service.create({ url: (args[0] as BrowserCreateInput | undefined)?.url, context: bridge.getContext() }, pendingBrowserEngine()); break
+        case 'create': {
+          const scope = creationScope()
+          value = await service.create({ url: (args[0] as BrowserCreateInput | undefined)?.url, context: scope.context }, scope.pendingEngine, undefined, scope.presentation); break
+        }
         case 'action': value = await service.action(args[0] as BrowserAction); break
-        case 'activateSurface': value = service.activateSurface(args[0] as BrowserSurfaceOwner); break
+        case 'duplicate': value = await service.duplicate(String(args[0])); break
+        case 'activateSurface': {
+          const surface = args[0] as BrowserSurfaceOwner, current = engineHost.getSnapshot()
+          value = service.activateSurface(surface, current.phase === 'ready' && surface.engineId === browserEngineId(current) ? current : undefined); break
+        }
         case 'setBounds': {
           const input = args[0] as BrowserBoundsInput
           const zoom = event.sender.getZoomFactor()
@@ -88,10 +102,51 @@ export function registerBrowserIpc(window: BrowserWindow): () => void {
         case 'read': value = await service.read(String(args[0]), args[1] as BrowserReadKind); break
         case 'network': value = await service.network(String(args[0]), args[1] as BrowserNetworkQuery | undefined); break
         case 'networkRequest': value = await service.networkRequest(String(args[0]), String(args[1]), args[2] as BrowserNetworkDetailOptions | undefined); break
+        case 'openLocalFile':
+        case 'openLocalDirectory': {
+          const presentation = service.currentPresentation()
+          const localPresentationEngine = pendingBrowserEngine()
+          let path = args[0]
+          if (path === undefined) {
+            const selected = await dialog.showOpenDialog(window, {
+              title: method === 'openLocalDirectory' ? '打开本地目录' : '打开本地文件',
+              properties: [method === 'openLocalDirectory' ? 'openDirectory' : 'openFile']
+            })
+            if (selected.canceled || !selected.filePaths[0]) { value = null; break }
+            path = selected.filePaths[0]
+          }
+          if (typeof path !== 'string' || !path.trim()) throw new Error('请选择有效的本机文件')
+          value = await service.openLocalFile(path, presentation, localPresentationEngine, method === 'openLocalDirectory'); break
+        }
+        case 'readLocalFile': value = await service.readLocalFile(String(args[0])); break
+        case 'openLocalEntry': {
+          if (typeof args[1] !== 'string') throw new Error('目录条目路径无效')
+          value = await service.openLocalEntry(String(args[0]), args[1]); break
+        }
         case 'openFile': {
           if (engineHost.getSnapshot().mode === 'remote') throw new Error('远端项目请启动开发服务器，并使用本机可访问的预览地址')
-          const url = await preview.open(String(args[0]), String(args[1]))
-          value = await service.create({ url, context: bridge.getContext() }, pendingBrowserEngine()); break
+          const options = args[2] as BrowserFileOpenOptions | undefined
+          const assertOwner = (): void => {
+            if (options !== undefined && (!options?.owner || !service.acceptsSurface(options.owner))) {
+              throw new Error('会话或引擎已切换，请在当前工作区重新运行')
+            }
+          }
+          assertOwner()
+          const scope = creationScope()
+          let access
+          if (options?.sessionId !== undefined) {
+            const snapshot = engineHost.getSnapshot()
+            if (typeof options.sessionId !== 'string' || !options.sessionId.trim() ||
+                options.owner.mode !== 'work' || options.owner.sessionId !== options.sessionId ||
+                options.owner.engineId !== browserEngineId(snapshot) || snapshot.phase !== 'ready') {
+              throw new Error('当前会话的工作区已变化，请重新打开文件')
+            }
+            access = await sessionPreviewAccess(options.sessionId, engineIdentityOf(snapshot))
+          }
+          assertOwner()
+          const url = await preview.open(String(args[0]), String(args[1]), access)
+          assertOwner()
+          value = await service.create({ url, context: scope.context }, scope.pendingEngine, undefined, scope.presentation); break
         }
         case 'connect': value = await bridge.connect(args[0] as BrowserConnectInput); break
         case 'disconnect': bridge.disconnect(); break

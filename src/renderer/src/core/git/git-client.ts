@@ -32,6 +32,7 @@ import {
   captureCodeGitTarget,
   gitRead,
   gitAction,
+  gitFailure,
   gitLocal,
   gitFilePath,
   type GitTarget
@@ -39,6 +40,17 @@ import {
 const REMOTE_COMMIT_CONTEXT_LIMIT = 12_000
 const REMOTE_COMMIT_FILE_DIFF_LIMIT = 2_000
 const REMOTE_COMMIT_MAX_FILES = 80
+
+/** Older engines included the record separator's newline in commit hashes.
+ * Normalize identity fields only; subjects and bodies are user-authored text. */
+function normalizeLogIdentities(result: GitLogResult): GitLogResult {
+  if (!result.commits) return result
+  return { ...result, commits: result.commits.map(commit => ({
+    ...commit,
+    hash: commit.hash.trim(),
+    ...(commit.parents ? { parents: commit.parents.map(parent => parent.trim()) } : {})
+  })) }
+}
 
 function changeLabel(change: GitFileChange): string {
   if (change.stagedChange) return change.stagedChange
@@ -144,6 +156,10 @@ export function createGitClient(target: GitTarget) {
   }
 
   const client = {
+    gitCloneRepository: (url: string): Promise<GitCloneResult> =>
+      target.route === 'session'
+        ? gitAction<GitCloneResult>(target, 'clone', { url })
+        : Promise.resolve({ success: false, error: '请使用 Code 的克隆对话框选择目标目录' }),
     gitLeaseStatus: (): Promise<GitLeaseResult> =>
       target.route === 'session'
         ? gitRead<GitLeaseResult>(target, 'lease')
@@ -256,10 +272,19 @@ export function createGitClient(target: GitTarget) {
       target.route === 'session'
         ? gitAction(target, 'pull')
         : gitLocal(target, (api) => api.pull(target.cwd)),
-    gitPush: (): Promise<GitResult> =>
-      target.route === 'session'
-        ? gitAction(target, 'push')
-        : gitLocal(target, (api) => api.push(target.cwd)),
+    gitPush: async (): Promise<GitResult> => {
+      if (target.route === 'local') return gitLocal(target, (api) => api.push(target.cwd))
+      let result: GitResult
+      try { result = await gitAction<GitResult>(target, 'push') }
+      catch (error) { result = gitFailure(error) }
+      if (result.success || !/no upstream|has no upstream|set-upstream/i.test(result.error || '')) return result
+      const current = await gitRead<GitBranchInfoResult>(target, 'branch-info')
+      if (!current.success) return current
+      const branch = current.info?.branch.trim()
+      if (!branch || branch === 'HEAD' || branch === '(detached)')
+        return { success: false, executionDisposition: 'not_started', error: '当前不在任何分支上，无法推送。' }
+      return gitAction(target, 'publish-branch')
+    },
     gitDivergence: (): Promise<GitDivergenceResult> =>
       target.route === 'session'
         ? gitRead<GitDivergenceResult>(target, 'divergence')
@@ -296,10 +321,31 @@ export function createGitClient(target: GitTarget) {
       target.route === 'session'
         ? gitAction(target, 'pull-from', { remote, branch })
         : gitLocal(target, (api) => api.pullFrom(target.cwd, remote, branch)),
-    gitPushTo: (remote: string, branch?: string): Promise<GitResult> =>
-      target.route === 'session'
-        ? gitAction(target, 'push-to', { remote, branch })
-        : gitLocal(target, (api) => api.pushTo(target.cwd, remote, branch)),
+    gitPushTo: async (remote: string, branch?: string): Promise<GitResult> => {
+      if (target.route === 'local') return gitLocal(target, (api) => api.pushTo(target.cwd, remote, branch))
+      let selected = branch?.trim()
+      if (!selected) {
+        const current = await gitRead<GitBranchInfoResult>(target, 'branch-info')
+        if (!current.success) return current
+        selected = current.info?.branch.trim()
+        if (!selected || selected === 'HEAD' || selected === '(detached)')
+          return { success: false, executionDisposition: 'not_started', error: '当前不在任何分支上，无法推送。' }
+      }
+      return gitAction(target, 'push-to', { remote, branch: selected })
+    },
+    gitPushToBranch: async (remote: string, dstBranch: string): Promise<GitResult> => {
+      const destination = dstBranch.trim()
+      if (!remote.trim() || !destination)
+        return { success: false, executionDisposition: 'not_started', error: '远程和目标分支不能为空' }
+      const current = await client.gitBranchInfo()
+      if (!current.success) return current
+      const branch = current.info?.branch.trim()
+      if (!branch || branch === 'HEAD' || branch === '(detached)')
+        return { success: false, executionDisposition: 'not_started', error: '当前处于分离 HEAD 状态，没有可推送的分支' }
+      return target.route === 'session'
+        ? gitAction(target, 'push-to-branch', { remote: remote.trim(), branch: destination })
+        : gitLocal(target, api => api.pushTo(target.cwd, remote.trim(), `HEAD:refs/heads/${destination}`))
+    },
     gitListRemoteBranches: (): Promise<GitRemoteBranchListResult> =>
       target.route === 'session'
         ? gitRead<GitRemoteBranchListResult>(target, 'list-remote-branches')
@@ -328,14 +374,49 @@ export function createGitClient(target: GitTarget) {
       target.route === 'session'
         ? gitRead<GitBranchListResult>(target, 'list-branches')
         : gitLocal(target, (api) => api.listBranches(target.cwd)),
-    gitCheckout: (branch: string): Promise<GitResult> =>
-      target.route === 'session'
-        ? gitAction(target, 'checkout', { branch })
-        : gitLocal(target, (api) => api.checkout(target.cwd, branch)),
-    gitCreateBranch: (name: string, startPoint?: string): Promise<GitResult> =>
-      target.route === 'session'
-        ? gitAction(target, 'create-branch', { branch: name, ref: startPoint })
-        : gitLocal(target, (api) => api.createBranch(target.cwd, name, startPoint)),
+    gitCheckout: async (branch: string): Promise<GitResult> => {
+      if (target.route === 'local') return gitLocal(target, (api) => api.checkout(target.cwd, branch))
+      if (branch.includes('/')) {
+        const remote = await gitRead<GitRemoteBranchListResult>(target, 'list-remote-branches')
+        if (!remote.success) return remote
+        if (remote.branches?.includes(branch)) {
+          const localName = branch.split('/').slice(1).join('/')
+          if (!localName || localName === 'HEAD')
+            return { success: false, executionDisposition: 'not_started', error: '请选择具体的远程分支' }
+          const local = await gitRead<GitBranchListResult>(target, 'list-branches')
+          if (!local.success) return local
+          if (!Array.isArray(local.branches)) return { success: false, error: '未获得本地分支列表，请刷新后重试' }
+          // Checking out a remote ref directly detaches HEAD. Match Code by
+          // selecting its existing local branch or creating one at that ref.
+          if (!local.branches.includes(localName)) return client.gitCreateBranch(localName, branch)
+          return gitAction(target, 'checkout', { branch: localName })
+        }
+      }
+      return gitAction(target, 'checkout', { branch })
+    },
+    gitCreateBranch: async (name: string, startPoint?: string): Promise<GitResult> => {
+      if (target.route === 'local')
+        return gitLocal(target, (api) => api.createBranch(target.cwd, name, startPoint))
+      const created = await gitAction<GitResult>(target, 'create-branch', { branch: name, ref: startPoint })
+      if (!created.success) return created
+      // The engine creates the ref; the shared panel promises to also switch to
+      // it. Both steps keep this frozen binding, and a partial success must not
+      // authorize replaying branch creation after a checkout admission failure.
+      let failure: GitResult
+      try {
+        const checkedOut = await gitAction<GitResult>(target, 'checkout', { branch: name })
+        if (checkedOut.success) return checkedOut
+        failure = checkedOut
+      } catch (error) {
+        failure = gitFailure(error)
+      }
+      return {
+        ...failure,
+        success: false,
+        executionDisposition: 'may_have_effects',
+        error: `分支“${name}”已创建，但切换失败：${failure.error || '请核对当前分支后重试切换'}`
+      }
+    },
     gitDeleteBranch: (name: string, force?: boolean): Promise<GitResult> =>
       target.route === 'session'
         ? gitAction(target, 'delete-branch', { branch: name, force })
@@ -402,7 +483,7 @@ export function createGitClient(target: GitTarget) {
         : gitLocal(target, (api) => api.stashDrop(target.cwd, index)),
     gitStashDropBatch: (indexes: number[]): Promise<GitResult> =>
       target.route === 'session'
-        ? gitAction(target, 'stash-drop-batch', { indexes })
+        ? gitAction(target, 'stash-drop-batch', { indexes: [...new Set(indexes)].sort((a, b) => b - a) })
         : gitLocal(target, (api) => api.stashDropBatch(target.cwd, indexes)),
     gitStashClear: (): Promise<GitResult> =>
       target.route === 'session'
@@ -428,8 +509,8 @@ export function createGitClient(target: GitTarget) {
       target.route === 'session'
         ? gitAction(target, 'delete-tag', { name })
         : gitLocal(target, (api) => api.deleteTag(target.cwd, name)),
-    gitLog: (limit?: number, skip?: number, query?: GitLogQuery): Promise<GitLogResult> =>
-      target.route === 'session'
+    gitLog: async (limit?: number, skip?: number, query?: GitLogQuery): Promise<GitLogResult> =>
+      normalizeLogIdentities(await (target.route === 'session'
         ? gitRead<GitLogResult>(target, 'log', {
             limit: limit === undefined ? undefined : String(limit),
             skip: skip === undefined ? undefined : String(skip),
@@ -442,13 +523,13 @@ export function createGitClient(target: GitTarget) {
                   ? 'all'
                   : undefined
           })
-        : gitLocal(target, (api) => api.log(target.cwd, limit, skip, query)),
-    gitIncoming: (limit?: number): Promise<GitLogResult> =>
-      target.route === 'session'
+        : gitLocal(target, (api) => api.log(target.cwd, limit, skip, query)))),
+    gitIncoming: async (limit?: number): Promise<GitLogResult> =>
+      normalizeLogIdentities(await (target.route === 'session'
         ? gitRead<GitLogResult>(target, 'incoming', {
             limit: limit === undefined ? undefined : String(limit)
           })
-        : gitLocal(target, (api) => api.incoming(target.cwd, limit)),
+        : gitLocal(target, (api) => api.incoming(target.cwd, limit)))),
     gitCommitShow: (hash: string): Promise<GitCommitInfoResult> =>
       target.route === 'session'
         ? gitRead<GitCommitInfoResult>(target, 'commit-show', { hash })

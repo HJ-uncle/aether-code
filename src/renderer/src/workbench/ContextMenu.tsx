@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react'
 import { createPortal } from 'react-dom'
+import { useMotionDismiss, useMotionPresence, useMotionValue } from './MotionPresence'
 
 export interface ContextMenuItem {
   id: string
@@ -22,8 +23,12 @@ interface ContextMenuProps {
   y: number
   items: ContextMenuItem[]
   onClose: () => void
+  /** Restore owned focus before the exiting menu becomes inert. */
+  onDismiss?: () => void
   /** 菜单锚点；仅锚点所在的可滚动祖先滚动时关闭，避免激活标签时编辑器恢复视图误关菜单。 */
   anchor?: Element | null
+  /** Already-portaled hosts may own menu focus and keyboard navigation via DOM containment. */
+  inline?: boolean
 }
 
 /** 把矩形钳制进视口（四周留 margin），返回修正后的 left/top */
@@ -53,7 +58,12 @@ function clampToViewport(
  * 二级菜单：item 带 children 时，hover/点击该入口在右侧展开子面板
  * （右侧空间不足则翻到左侧）；子面板里的项都是叶子，不再嵌套。
  */
-export function ContextMenu({ x, y, items, onClose, anchor = null }: ContextMenuProps): JSX.Element {
+export function ContextMenu({ x, y, items, onClose: dismiss, onDismiss, anchor = null, inline = false }: ContextMenuProps): JSX.Element {
+  const motion = useMotionDismiss(dismiss, `${x}:${y}`)
+  const onClose = useCallback(() => {
+    onDismiss?.()
+    motion.close()
+  }, [onDismiss, motion.close])
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState({ left: x, top: y })
   /** 当前展开的子菜单：父项 id + 锚点矩形（决定子面板摆放边） */
@@ -66,6 +76,8 @@ export function ContextMenu({ x, y, items, onClose, anchor = null }: ContextMenu
   }, [x, y])
 
   useEffect(() => {
+    if (!motion.show) return
+    const openedAt = performance.now()
     // 右键标签时，激活非焦点编辑组会同步 Monaco 视图并让标签栏自动滚动。
     // 这次滚动发生在菜单挂载之后，但并不表示用户已经滚动了锚点；忽略这
     // 一小段同步窗口，否则菜单会在首帧被自己的激活动作卸载。
@@ -87,6 +99,10 @@ export function ContextMenu({ x, y, items, onClose, anchor = null }: ContextMenu
     }
     // 滚动后菜单位置就不再对应目标行，直接关闭比留在原地更不容易误点
     const onScroll = (event: Event): void => {
+      // Focusing/revealing the clicked row can queue a scroll before this
+      // menu exists, then deliver it after mounting. Only subsequent scrolls
+      // invalidate the coordinates captured by the contextmenu event.
+      if (event.type === 'scroll' && event.timeStamp < openedAt) return
       if (
         anchorTabBar &&
         performance.now() < ignoreAnchorScrollUntil &&
@@ -115,7 +131,7 @@ export function ContextMenu({ x, y, items, onClose, anchor = null }: ContextMenu
       window.removeEventListener('blur', onScroll)
       document.removeEventListener('scroll', onScroll, true)
     }
-  }, [onClose, anchor])
+  }, [onClose, anchor, motion.show, x, y])
 
   const openSubmenu = (item: ContextMenuItem, anchor: DOMRect): void => {
     if (!item.children || item.disabled) return
@@ -125,10 +141,14 @@ export function ContextMenu({ x, y, items, onClose, anchor = null }: ContextMenu
   const activeChildren = submenu
     ? (items.find((item) => item.id === submenu.id)?.children ?? null)
     : null
+  const submenuMotion = useMotionPresence(Boolean(submenu && activeChildren))
+  const lastSubmenu = useMotionValue(submenu && activeChildren ? { anchor: submenu.anchor, items: activeChildren } : null)
 
-  return (
+  const content = (
     <div
       className="context-menu"
+      {...motion.motionProps}
+      data-motion-axis="y"
       role="menu"
       ref={ref}
       style={{ left: pos.left, top: pos.top }}
@@ -178,27 +198,32 @@ export function ContextMenu({ x, y, items, onClose, anchor = null }: ContextMenu
           </button>
         )
       )}
-      {submenu && activeChildren ? (
+      {submenuMotion.present && lastSubmenu ? (
         // portal 到 body：父菜单的 backdrop-filter 会让它成为 fixed 后代的包含块，
         // 子菜单不挪出去就会按「父菜单盒子 + 视口坐标」双重偏移，飞到屏幕远处
         createPortal(
-          <SubmenuPanel anchor={submenu.anchor} items={activeChildren} onClose={onClose} />,
+          <SubmenuPanel anchor={lastSubmenu.anchor} items={lastSubmenu.items} onClose={onClose} motionState={motion.show ? submenuMotion.state : 'closing'} />,
           document.body
         )
       ) : null}
     </div>
   )
+  // Animated workspaces create fixed-position containing blocks. An existing
+  // portal host may keep DOM ownership for keyboard navigation and focus.
+  return inline ? content : createPortal(content, document.body)
 }
 
 /** 二级面板：贴父项右侧展开，空间不足翻到左侧；只做叶子项，不再嵌套 */
 function SubmenuPanel({
   anchor,
   items,
-  onClose
+  onClose,
+  motionState
 }: {
   anchor: DOMRect
   items: ContextMenuItem[]
   onClose: () => void
+  motionState: 'entering' | 'open' | 'closing'
 }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
@@ -217,6 +242,10 @@ function SubmenuPanel({
   return (
     <div
       ref={ref}
+      data-motion-state={motionState}
+      data-motion-axis="x"
+      inert={motionState === 'closing' || undefined}
+      aria-hidden={motionState === 'closing' || undefined}
       className="context-menu context-menu--submenu"
       role="menu"
       style={pos ?? { left: anchor.right + 2, top: anchor.top - 4, visibility: 'hidden' }}

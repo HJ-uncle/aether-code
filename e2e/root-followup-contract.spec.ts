@@ -1,10 +1,17 @@
 /** Pure composer contracts. Does not launch Electron or claim mailbox delivery. */
 import { expect, test } from '@playwright/test'
 import type { RootRun } from '../src/shared/root-run'
-import { rootFollowupLimitation, rootFollowupMessage, rootFollowupRun } from '../src/renderer/src/contrib/chat/root-followup'
+import { rootFollowupCanSubmit, rootFollowupLimitation, rootFollowupMessage, rootFollowupRun } from '../src/renderer/src/contrib/chat/root-followup'
 import { userMessageDraft } from '../src/renderer/src/contrib/chat/mention-context'
 
 const run: RootRun = { schemaVersion: 1, runId: 'run-1', sessionId: 'session-1', turnId: 'turn-1', userMessageId: 'u', assistantMessageId: 'a', version: 1, seq: 1, status: 'running', createdAt: 1, updatedAt: 1, pending: [] }
+test('an early Enter can start the authoritative capability check, while inactive or unsupported roots remain blocked', () => {
+  expect(rootFollowupCanSubmit(true, undefined)).toBe(true)
+  expect(rootFollowupCanSubmit(true, true)).toBe(true)
+  expect(rootFollowupCanSubmit(true, false)).toBe(false)
+  expect(rootFollowupCanSubmit(false, undefined)).toBe(false)
+  expect(rootFollowupCanSubmit(false, true)).toBe(false)
+})
 test('current composer uses the independently bound run and newest status, never an older active run', () => {
   const history = [{ run }, { run: { ...run, version: 3, status: 'cancelled' as const } }, { run: { ...run, version: 2 } }]
   expect(rootFollowupRun(history, 'session-1', 'run-1')?.status).toBe('cancelled')

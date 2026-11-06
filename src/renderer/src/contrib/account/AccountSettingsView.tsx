@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type JSX } from 'react'
 import type { AccountProfileInput, AccountProvider, AccountSession, AccountState, AccountUser } from '@shared/account'
 import { Dialog } from '@renderer/workbench/Dialog'
+import { useMotionDismiss } from '@renderer/workbench/MotionPresence'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { Icon } from '@renderer/workbench/icons'
 import { SettingsContent, SettingsDisclosure, SettingsGroup, SettingsRow } from '../settings/SettingsGroup'
@@ -212,12 +213,21 @@ export function AccountSettingsView(): JSX.Element {
       </SettingsDisclosure>
     </SettingsGroup> : null}
 
-    {onboarding && user && authenticated ? <Dialog title="完善个人资料" width={480} className="account-onboarding" onClose={() => { if (!busy) dismissAccountOnboarding() }} footer={<>
-      <button type="button" className="btn" disabled={!!busy} onClick={dismissAccountOnboarding}>暂时跳过</button>
-      <button type="submit" form="account-onboarding-form" className="btn btn--primary" disabled={blocked}>{busy === 'profile' ? '保存中…' : '保存并继续'}</button>
-    </>}><p className="account-onboarding__intro">账号已准备好。你可以补充资料，也可以稍后在个人账号中修改。</p>
-      <ProfileForm user={user} busy={blocked} onboarding onSave={(input) => void perform('profile', () => window.aether.account.updateProfile(input), '个人资料已保存。').then(next => { if (next) dismissAccountOnboarding() })} />
-      {error ? <p className="account-message account-message--error" role="alert">{error}</p> : null}
-    </Dialog> : null}
+    {onboarding && user && authenticated ? <AccountOnboardingDialog key={accountIdentity} user={user} busy={busy} blocked={blocked} error={error}
+      onSave={input => perform('profile', () => window.aether.account.updateProfile(input), '个人资料已保存。')} /> : null}
   </div>
+}
+
+function AccountOnboardingDialog({ user, busy, blocked, error, onSave }: {
+  user: AccountUser; busy: string; blocked: boolean; error: string
+  onSave: (input: AccountProfileInput) => Promise<AccountState | null>
+}): JSX.Element {
+  const { show, close } = useMotionDismiss(dismissAccountOnboarding)
+  return <Dialog open={show} title="完善个人资料" width={480} className="account-onboarding" closeDisabled={Boolean(busy)} onClose={() => { if (!busy) close() }} footer={<>
+    <button type="button" className="btn" disabled={!!busy} onClick={close}>暂时跳过</button>
+    <button type="submit" form="account-onboarding-form" className="btn btn--primary" disabled={blocked}>{busy === 'profile' ? '保存中…' : '保存并继续'}</button>
+  </>}><p className="account-onboarding__intro">账号已准备好。你可以补充资料，也可以稍后在个人账号中修改。</p>
+    <ProfileForm user={user} busy={blocked} onboarding onSave={input => void onSave(input).then(next => { if (next) close() })} />
+    {error ? <p className="account-message account-message--error" role="alert">{error}</p> : null}
+  </Dialog>
 }

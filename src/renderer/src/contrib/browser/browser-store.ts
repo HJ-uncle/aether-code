@@ -7,7 +7,9 @@ import {
 } from '@shared/browser'
 import { showEditorView } from '@renderer/core/platform/layout-state'
 import { toast } from '@renderer/core/toast'
-import { getBrowserSurfaceOwner } from '@renderer/core/browser/presentation'
+import { getBrowserPresentationScope, getBrowserSurfaceOwner, onBrowserPresentationChanged } from '@renderer/core/browser/presentation'
+import { BrowserScopeRegistry, browserScopeKey, browserTabInScope } from '@renderer/core/browser/scope'
+import type { AppMode } from '@renderer/core/platform/app-mode'
 
 interface BrowserState {
   tabs: BrowserTabState[]
@@ -28,90 +30,70 @@ let state: BrowserState = {
   addressFocusRequest: 0,
   revealRequest: null
 }
+const registry = new BrowserScopeRegistry()
 const listeners = new Set<() => void>()
+const snapshots = new Map<string, { source: BrowserState; value: BrowserState }>()
+onBrowserPresentationChanged(() => { for (const listener of listeners) listener() })
 let starting: Promise<void> | undefined
 let unsubscribe: (() => void) | undefined
 function publish(patch: Partial<BrowserState>): void {
   state = { ...state, ...patch }
   for (const listener of listeners) listener()
 }
-export function getBrowserState(): BrowserState {
-  return state
+export function getBrowserState(mode?: AppMode): BrowserState {
+  const scope = mode ? getBrowserPresentationScope(mode) : getBrowserSurfaceOwner()
+  const key = browserScopeKey(scope), cached = snapshots.get(key)
+  if (cached?.source === state) return cached.value
+  const value = { ...state, ...registry.view(scope) }
+  snapshots.delete(key); snapshots.set(key, { source: state, value })
+  while (snapshots.size > 128) snapshots.delete(snapshots.keys().next().value!)
+  return value
 }
 export function onBrowserState(listener: () => void): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
 }
-export function useBrowserState(): BrowserState {
-  return useSyncExternalStore(onBrowserState, getBrowserState)
+export function useBrowserState(mode?: AppMode): BrowserState {
+  return useSyncExternalStore(onBrowserState, () => getBrowserState(mode))
 }
 
 function receive(event: BrowserEvent): void {
-  if (event.type === 'reveal') {
-    // Even an already selected tab must report fresh layout: an earlier native
-    // visibility flag may belong to the frame before a modal or tab switch.
-    publish({
-      activeTabId: event.tabId,
-      revealRequest: { tabId: event.tabId, requestId: event.requestId },
-      tabs: state.tabs.some((tab) => tab.tabId === event.tabId)
-        ? state.tabs.map((tab) => (tab.tabId === event.tabId ? event.tab : tab))
-        : [...state.tabs, event.tab]
-    })
-    showEditorView('browser')
-    return
-  }
-  if (event.type === 'focused') {
-    if (state.activeTabId !== event.tabId) publish({ activeTabId: event.tabId })
-    // The native page cannot bubble pointer events into EditorGroupView. Route
-    // the editor ownership through layout without moving Chromium's input focus.
-    showEditorView('browser')
-    return
-  }
-  if (event.type === 'focus-address') {
-    publish({ activeTabId: event.tabId, addressFocusRequest: state.addressFocusRequest + 1 })
-    showEditorView('browser')
-    return
-  }
-  if (event.type === 'closed') {
-    const index = state.tabs.findIndex((tab) => tab.tabId === event.tabId)
-    const tabs = state.tabs.filter((tab) => tab.tabId !== event.tabId)
-    publish({
-      tabs,
-      ...(state.revealRequest?.tabId === event.tabId ? { revealRequest: null } : {}),
-      activeTabId:
-        state.activeTabId === event.tabId
-          ? (tabs[Math.min(index, tabs.length - 1)]?.tabId ?? null)
-          : state.activeTabId
-    })
-    return
-  }
-  const exists = state.tabs.some((tab) => tab.tabId === event.tabId)
-  publish({
-    tabs: exists
-      ? state.tabs.map((tab) => (tab.tabId === event.tabId ? event.tab : tab))
-      : [...state.tabs, event.tab]
-  })
-  if (event.type === 'created') {
-    publish({ activeTabId: event.tabId })
-    // An AI-created page must become the same visible page the user can inspect.
-    showEditorView('browser')
-  }
+  const tab = registry.receive(event)
+  publish({})
+  const scope = getBrowserSurfaceOwner()
+  if (scope.mode === 'code' && tab && browserTabInScope(tab, scope) &&
+    ['created', 'reveal', 'focused', 'focus-address'].includes(event.type)) showEditorView('browser')
+}
+
+/** A completed open may precede event delivery. Ingest the result without
+ * replaying a foreground reveal after its originating action was superseded. */
+export function acceptBrowserTab(tab: BrowserTabState): void {
+  registry.receive({ type: 'created', tabId: tab.tabId, tab })
+  publish({})
+}
+
+/** User-run files use the same reveal path as browser tool requests, so Work
+ * opens its owning resource pane without modifying Code's hidden layout. */
+export function revealBrowserTab(tabId: string): void {
+  const tab = getBrowserState().tabs.find(tab => tab.tabId === tabId)
+  if (!tab) return
+  receive({ type: 'reveal', tabId, tab, requestId: `ui:${crypto.randomUUID()}` })
 }
 
 export function initializeBrowser(): Promise<void> {
   if (starting) return starting
-  let eventRevision = 0
+  const observed = new Set<string>()
   unsubscribe = window.aether.browser.onEvent((event) => {
-    eventRevision++
+    observed.add(event.tabId)
     receive(event)
   })
   starting = Promise.all([window.aether.browser.list(), window.aether.browser.getSettings()])
     .then(([tabs, settings]) => {
+      registry.replace(tabs, observed)
       publish({
         settings,
         ready: true,
-        error: '',
-        ...(eventRevision === 0 ? { tabs, activeTabId: tabs[0]?.tabId ?? null } : {})
+        error: ''
       })
     })
     .catch((error: unknown) => {
@@ -124,18 +106,46 @@ export function initializeBrowser(): Promise<void> {
 }
 
 export function selectBrowserTab(tabId: string): void {
-  publish({ activeTabId: tabId })
+  if (registry.select(tabId, getBrowserSurfaceOwner())) publish({})
 }
 
 export async function openBrowser(url?: string, options: { reveal?: boolean } = {}): Promise<void> {
+  const scope = browserScopeKey(getBrowserSurfaceOwner())
   await initializeBrowser()
+  if (scope !== browserScopeKey(getBrowserSurfaceOwner())) return
   // Work owns its browser surface inside WorkView. Revealing the editor view
   // here would silently switch the hidden Code workbench and steal its layout.
-  if (options.reveal !== false) showEditorView('browser')
-  if (url !== undefined || state.tabs.length === 0) {
+  if (options.reveal !== false && getBrowserSurfaceOwner().mode === 'code') showEditorView('browser')
+  if (url !== undefined || getBrowserState().tabs.length === 0) {
     const tab = await window.aether.browser.create(url ? { url } : {})
-    receive({ type: 'created', tabId: tab.tabId, tab })
+    acceptBrowserTab(tab)
   }
+}
+
+async function openLocalBrowser(operation: () => Promise<BrowserTabState | null>): Promise<void> {
+  const scope = browserScopeKey(getBrowserSurfaceOwner())
+  await initializeBrowser()
+  if (scope !== browserScopeKey(getBrowserSurfaceOwner())) return
+  const tab = await operation()
+  if (!tab) return
+  acceptBrowserTab(tab)
+  // The file picker can outlive a mode/session change; retain the initiating owner.
+  if (scope !== browserScopeKey(getBrowserSurfaceOwner())) return
+  selectBrowserTab(tab.tabId)
+  revealBrowserTab(tab.tabId)
+  if (getBrowserSurfaceOwner().mode === 'code') showEditorView('browser')
+}
+
+export function openLocalBrowserFile(path?: string): Promise<void> {
+  return openLocalBrowser(() => window.aether.browser.openLocalFile(path))
+}
+
+export function openLocalBrowserDirectory(path?: string): Promise<void> {
+  return openLocalBrowser(() => window.aether.browser.openLocalDirectory(path))
+}
+
+export function openLocalBrowserEntry(tabId: string, path: string): Promise<void> {
+  return openLocalBrowser(() => window.aether.browser.openLocalEntry(tabId, path))
 }
 
 export async function updateBrowserSettings(patch: Partial<BrowserSettings>): Promise<void> {
@@ -159,7 +169,7 @@ export async function hideBrowserSurfaces(stillHidden: () => boolean = () => tru
   await initializeBrowser()
   if (!stillHidden() || surface !== getBrowserSurfaceOwner()) return
   await Promise.all(
-    state.tabs.map((tab) =>
+    getBrowserState().tabs.map((tab) =>
       window.aether.browser
         .setBounds({
           tabId: tab.tabId,

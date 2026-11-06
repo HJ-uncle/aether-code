@@ -3,8 +3,9 @@ import { captureControllerConnection, createCollaborationController, subscribeCo
 import type { CollaborationController } from './collaboration-controller-core'
 import { controllerConnectionIdentity, controllerStorageIdentity, controllerSavedStatus, isControllerDraft, type ControllerTarget, type ControllerSavedRecord } from './collaboration-contract'
 import { getEngineSource } from './source'
+import { controllerDeliveryRecords, startControllerDeliveryRefresh } from './controller-delivery-refresh'
 
-interface ControllerView { identity: string; capability?: boolean; busy?: boolean; notFound?: string; notice?: string; error?: string }
+interface ControllerView { identity: string; capability?: boolean; busy?: boolean; notFound?: string; notice?: string; error?: string; receiptError?: string }
 interface Input {
   kind?: 'root' | 'child'
   sessionId: string | null; rootRunId?: string; childSessionId?: string; invocationRunId?: string
@@ -60,16 +61,39 @@ export function useCollaborationController(input: Input): {
     })
     return () => { alive = false }
   }, [controller, identity, input.ready, input.refreshKey])
+  useEffect(() => {
+    if (!input.ready || !input.sessionId) return
+    const records = () => controllerDeliveryRecords(controller.history(), {
+      storageIdentity: controllerStorageIdentity(connection.expectedEngine), rootSessionId: input.sessionId!,
+      kind: input.kind ?? 'child', childSessionId: input.childSessionId
+    })
+    const currentRoot = (item: ControllerSavedRecord) => item.rootRunId === input.rootRunId
+      && (input.kind === 'root' || item.recipientInvocationRunId === input.invocationRunId)
+    return startControllerDeliveryRefresh({
+      records, current, busy: () => submitting.current === identity,
+      inspect: (record, selected) => controller.inspectHistory(connection, record, selected),
+      onResult: record => {
+        const latest = records().filter(currentRoot).at(-1)
+        setView(previous => previous.identity !== identity ? previous : { ...previous, receiptError: undefined,
+          ...(latest?.requestKey === record.requestKey && record.kind === 'accepted' && (record.receipt.state !== 'queued' || record.receipt.delivery?.state !== 'pending') && submitting.current !== identity
+            ? { notice: controllerSavedStatus(record) + (record.receipt.delivery?.state === 'integrated' ? '；不代表已执行完成' : '') } : {}) })
+      },
+      onError: () => setView(previous => previous.identity !== identity ? previous : { ...previous, receiptError: '暂未更新投递状态；原接纳记录已保留，可查询原回执。' })
+    })
+  }, [controller, identity, input.ready])
   const apply = (result: ControllerOutcome, originalMessage?: string): boolean => {
     assertCurrent()
     if (result.outcome === 'accepted') {
-      if (result.receipt.state !== 'queued' && originalMessage) input.onUnacceptedDraft?.(originalMessage)
-      const notice = result.receipt.state === 'queued' ? `${input.kind === 'root' ? '已接纳，将在下一次模型调用前读取' : '补充要求已排队；可查看此代理的后续进展'}${result.localRecordRetained ? '；本地记录尚未清除，可再次核对' : ''}` : result.receipt.state === 'interrupted'
+      const accepted = result.receipt.state === 'queued' && result.receipt.delivery?.state !== 'suppressed'
+      if (!accepted && originalMessage) input.onUnacceptedDraft?.(originalMessage)
+      const notice = result.receipt.delivery?.state === 'integrated' ? '已加入上下文；不代表已执行完成'
+        : result.receipt.delivery?.state === 'suppressed' ? result.receipt.delivery.integratedAt !== undefined ? '已从上下文移除；原文已保留' : '未读取，原文保留'
+        : result.receipt.state === 'queued' ? `${input.kind === 'root' ? '已接纳，将在下一次模型调用前读取' : '补充要求已排队；可查看此代理的后续进展'}${result.localRecordRetained ? '；本地记录尚未清除，可再次核对' : ''}` : result.receipt.state === 'interrupted'
         ? result.receipt.reason === 'target_invocation_finished_before_consumption'
           ? '此代理本轮已结束，补充要求未读取；原文已保留'
           : '原要求已中断，未确认执行；原文已保留' : '原要求未被接受；原文已保留，请检查后再发送'
       setView(previous => ({ ...previous, identity, busy: false, notFound: undefined, notice, error: undefined }))
-      return result.receipt.state === 'queued'
+      return accepted
     }
     if (result.outcome === 'not_found') setView(previous => ({ ...previous, identity, busy: false, notFound: pending?.requestKey,
       notice: '尚未找到排队记录；已保留原要求。可再次核对，或在原实例和原工作轮次中重试原请求。', error: undefined }))
@@ -92,7 +116,7 @@ export function useCollaborationController(input: Input): {
   const sameInstance = pending && controllerConnectionIdentity(connection.expectedEngine) === controllerConnectionIdentity(pending.expectedEngine)
   const sameInvocation = pending?.rootRunId === input.rootRunId && (input.kind === 'root' || pending?.recipientInvocationRunId === input.invocationRunId)
   return {
-    pending, restoredDraft, history, capability: visible.capability, busy: Boolean(visible.busy), error: stored.error || visible.error || '',
+    pending, restoredDraft, history, capability: visible.capability, busy: Boolean(visible.busy), error: stored.error || visible.error || visible.receiptError || '',
     notice: visible.notice || (pending ? sameInstance ? '上次补充要求的结果待核对，原文已保存' : '引擎实例已变化；原要求已保存，只能核对，不能重发' : restoredDraft ? '上次补充要求已结束，已恢复原文草稿；不会自动重发' : ''),
     canRetry: Boolean(pending && visible.notFound === pending.requestKey && sameInstance && sameInvocation && input.active && !history.some(item => item.requestKey === pending.requestKey && item.kind === 'refused')),
     send: message => perform(async () => {

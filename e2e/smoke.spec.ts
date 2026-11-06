@@ -75,6 +75,17 @@ async function ensureExplorerVisible(): Promise<void> {
   await expect(page.locator('.explorer__root')).toBeVisible({ timeout: 15_000 })
 }
 
+async function readGitStatusReady(cwd: string) {
+  let status = await page.evaluate((directory) => window.aether.git.status(directory), cwd)
+  // Startup can be recovering a verified interrupted reader. A visible panel
+  // is not a readiness signal for the native repository lease.
+  await expect.poll(async () => {
+    if (!status.success) status = await page.evaluate((directory) => window.aether.git.status(directory), cwd)
+    return status.success ? 'ready' : status.error ?? 'Git status failed'
+  }, { timeout: 30_000 }).toBe('ready')
+  return status
+}
+
 /** 虚拟滚动夹具的条目数：要远大于一屏能渲染的行数，否则测不出虚拟化 */
 const BIG_DIR_SIZE = 400
 
@@ -315,7 +326,7 @@ test.beforeAll(async () => {
   prepareBigDir()
 
   app = await electron.launch({
-    args: ['.', `--user-data-dir=${userDataDir}`],
+    args: [process.env.AETHER_E2E_APP_ENTRY || '.', `--user-data-dir=${userDataDir}`],
     cwd: APP_ROOT
   })
 
@@ -553,7 +564,7 @@ test('文件排除：设置里的规则即时生效，且重开窗口后仍然�
   // 窗口里跑：本用例会重启应用，全局的 page 也随之换新，必须让它先发生。
   await app.close()
   app = await electron.launch({
-    args: ['.', `--user-data-dir=${USER_DATA_DIR}`],
+    args: [process.env.AETHER_E2E_APP_ENTRY || '.', `--user-data-dir=${USER_DATA_DIR}`],
     cwd: APP_ROOT
   })
   page = await app.firstWindow()
@@ -1028,7 +1039,7 @@ test('版本控制：状态栏入口打开侧边栏视图并给出仓库信息',
     // be nested inside another repository; the Git service deliberately
     // filters parent-repository paths, so the panel may truthfully show zero
     // changes instead of inventing a dirty entry.
-    const status = await page.evaluate((cwd) => window.aether.git.status(cwd), WORKSPACE_DIR)
+    const status = await readGitStatusReady(WORKSPACE_DIR)
     expect(status.success).toBe(true)
     if ((status.files ?? []).length > 0) await expect(gitPanel).toContainText('变更')
     else await expect(gitPanel).toContainText('工作空间干净')
@@ -1559,7 +1570,7 @@ test('资源管理器：git 徽章只在仓库内出现且与仓库信息一致'
     return
   }
 
-  const status = await page.evaluate((cwd) => window.aether.git.status(cwd), WORKSPACE_DIR)
+  const status = await readGitStatusReady(WORKSPACE_DIR)
   expect(status.success, status.error).toBe(true)
   expect(status.isRepo).toBe(true)
   const changedPaths = (status.files ?? []).map((file) =>

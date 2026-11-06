@@ -27,6 +27,22 @@ test('远端令牌在保存和环境变量入口使用同一请求头边界', ()
   }
 })
 
+test('当前远程引擎仅开放并发数量1至16的单字段写入，其他设置仍受限', () => {
+  for (const path of ['/settings', '/api/v1/settings']) {
+    expect(remoteRequestError('remote', 'GET', path)).toBeNull()
+    for (const limit of [1, 5, 16]) expect(remoteRequestError('remote', 'PUT', path, { SUBAGENT_CONCURRENCY_LIMIT: limit })).toBeNull()
+    for (const body of [undefined, null, [], {}, { TOOL_CONCURRENCY_LIMIT: 5 }, { SUBAGENT_CONCURRENCY_LIMIT: 5, WORKSPACE_ROOT: 'other' },
+      ...[0, 17, -1, 1.5, '5', true, null, NaN].map(limit => ({ SUBAGENT_CONCURRENCY_LIMIT: limit }))]) {
+      expect(remoteRequestError('remote', 'PUT', path, body)).not.toBeNull()
+    }
+    for (const method of ['POST', 'PATCH', 'DELETE']) expect(remoteRequestError('remote', method, path)).not.toBeNull()
+  }
+  for (const path of ['/settings/extra', '/settings/../models', '/settings%2fextra']) {
+    expect(remoteRequestError('remote', 'GET', path)).not.toBeNull()
+    expect(remoteRequestError('remote', 'PUT', path)).not.toBeNull()
+  }
+})
+
 test('子 Agent 新协议只允许显式版本2，分页详情遵守窄路由', () => {
   expect(subagentProtocolHeaders(undefined)).toEqual({})
   expect(subagentProtocolHeaders(2)).toEqual({ 'X-Aether-Subagent-Protocol': '2' })
@@ -64,6 +80,7 @@ test('远端开放已接入的管理与会话接口，仍拒绝未接入路径',
   const reads = [
     '/health', '/meta', '/metrics', '/models', '/tools', '/system-tools', '/external-skills',
     '/conversation/sessions', '/conversation/archive?sessionId=fixture',
+    '/conversation/result-asset?sessionId=fixture&runId=run&assetId=asset',
     '/api/v1/chat/snapshot', '/chat/status', '/chat/runs', '/chat/stream',
     '/changes', '/todos', '/subagent/runs', '/subagent/runs/run-1', '/subagent/runs/run-1/events',
     '/command-jobs', '/command-jobs/job-1', '/command-jobs/job-1/output',

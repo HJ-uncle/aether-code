@@ -12,10 +12,10 @@
  * 与源组件的差异：源没有 hunk 展开；按移植要求保留 hunks 级操作入口
  * （showHunks 时展开 hunksMap 里的 hunk 列表，逐条支持 discardHunk）。
  */
-import { useMemo, useState, type JSX, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type JSX, type MouseEvent } from 'react'
 import type { GitFileChange, GitHunk } from '@shared/git-types'
 import { STATUS_COLOR, STATUS_LETTER, visualKeyOf } from '@renderer/core/git/git-status-visuals'
-import { discardHunk, hunksOf, loadHunksFor } from '@renderer/core/git/git-store'
+import { useGitActions } from '@renderer/core/git/git-context'
 import { Icon, type IconName } from '@renderer/workbench/icons'
 
 export interface GitChangeRowProps {
@@ -24,6 +24,8 @@ export interface GitChangeRowProps {
   active: boolean
   /** 处于多选集合中（Ctrl/Shift 点选命中） */
   selected?: boolean
+  /** A moved row can appear before the originating mutation finishes refreshing. */
+  writeBusy?: boolean
   onSelect?: (file: GitFileChange, event: MouseEvent) => void
   onOpen?: (file: GitFileChange) => void
   onDiscard?: (file: GitFileChange) => void
@@ -33,6 +35,7 @@ export interface GitChangeRowProps {
   onLoadHunks?: (file: GitFileChange) => Promise<GitHunk[]>
   /** Work can provide a session-scoped hunk mutation; Code keeps its store fallback. */
   onDiscardHunk?: (file: GitFileChange, hunk: GitHunk) => void
+  onHunksOpenChange?: (open: boolean) => void
 }
 
 function statusIconName(file: GitFileChange): IconName {
@@ -47,16 +50,28 @@ export function GitChangeRow({
   file,
   active,
   selected,
+  writeBusy = false,
   onSelect,
   onOpen,
   onDiscard,
   onToggleStage,
   onContextMenu,
   onLoadHunks,
-  onDiscardHunk
+  onDiscardHunk,
+  onHunksOpenChange
 }: GitChangeRowProps): JSX.Element {
+  const { discardHunk, readClient } = useGitActions()
   const [hunksOpen, setHunksOpen] = useState(false)
   const [externalHunks, setExternalHunks] = useState<GitHunk[]>([])
+  const [hunkError, setHunkError] = useState('')
+  const [hunkLoading, setHunkLoading] = useState(false)
+  const generation = useRef(0)
+  useEffect(
+    () => () => {
+      generation.current += 1
+    },
+    [file.path, file.staged]
+  )
   const fileName = file.path.split('/').pop() ?? file.path
   const dirName = useMemo(() => {
     const parts = file.path.split('/')
@@ -71,7 +86,28 @@ export function GitChangeRow({
   /** 二进制没有行数概念，全 0 时也不占位，免得一排 +0 -0 干扰视线 */
   const showStats = !file.binary && (file.additions > 0 || file.deletions > 0)
 
-  const hunks = hunksOpen ? (onLoadHunks ? externalHunks : hunksOf(file.path)) : []
+  const hunks = hunksOpen ? externalHunks : []
+
+  const loadHunks = async (): Promise<void> => {
+    const request = ++generation.current
+    setHunkLoading(true)
+    setHunkError('')
+    try {
+      const next = onLoadHunks
+        ? await onLoadHunks(file)
+        : await readClient(async (client) => {
+            const result = await client.gitDiff(file.path, file.staged)
+            if (!result.success) throw new Error(result.error ?? '读取变更块失败')
+            return result.diff?.hunks ?? []
+          })
+      if (request === generation.current) setExternalHunks(next)
+    } catch (error) {
+      if (request === generation.current)
+        setHunkError(error instanceof Error ? error.message : String(error))
+    } finally {
+      if (request === generation.current) setHunkLoading(false)
+    }
+  }
 
   const rowClass = ['git-row', 'group', selected ? 'is-selected' : active ? 'is-active' : '']
     .filter(Boolean)
@@ -82,7 +118,19 @@ export function GitChangeRow({
       <div
         className={rowClass}
         title={file.path}
+        role="button"
+        tabIndex={0}
+        aria-label={`${file.path} ${file.staged ? '已暂存' : '未暂存'}`}
         onClick={(e) => onSelect?.(file, e)}
+        onKeyDown={(event) => {
+          if (
+            event.target === event.currentTarget &&
+            (event.key === 'Enter' || event.key === ' ')
+          ) {
+            event.preventDefault()
+            event.currentTarget.click()
+          }
+        }}
         onDoubleClick={() => onOpen?.(file)}
         onContextMenu={(e) => onContextMenu?.(file, e)}
       >
@@ -110,6 +158,7 @@ export function GitChangeRow({
               type="button"
               className="git-row__btn"
               title="标记为已解决（暂存该文件）"
+              disabled={writeBusy}
               onClick={(e) => {
                 e.stopPropagation()
                 onToggleStage?.(file)
@@ -123,6 +172,7 @@ export function GitChangeRow({
                 type="button"
                 className="git-row__btn"
                 title={file.staged ? '取消暂存' : '暂存'}
+                disabled={writeBusy}
                 onClick={(e) => {
                   e.stopPropagation()
                   onToggleStage?.(file)
@@ -134,6 +184,7 @@ export function GitChangeRow({
                 type="button"
                 className="git-row__btn"
                 title="放弃更改"
+                disabled={writeBusy}
                 onClick={(e) => {
                   e.stopPropagation()
                   onDiscard?.(file)
@@ -149,10 +200,8 @@ export function GitChangeRow({
                   e.stopPropagation()
                   const next = !hunksOpen
                   setHunksOpen(next)
-                  if (next) {
-                    if (onLoadHunks) void onLoadHunks(file).then(setExternalHunks)
-                    else void loadHunksFor(file.path)
-                  }
+                  onHunksOpenChange?.(next)
+                  if (next) void loadHunks()
                 }}
               >
                 <Icon name={hunksOpen ? 'chevron' : 'chevron-right'} size={16} />
@@ -166,7 +215,15 @@ export function GitChangeRow({
       </div>
       {hunksOpen ? (
         <div className="git-row__hunks">
-          {hunks.length === 0 ? (
+          {hunkError ? (
+            <div className="git-row__hunk git-row__hunk--empty" role="alert">
+              {hunkError}
+            </div>
+          ) : hunkLoading ? (
+            <div className="git-row__hunk git-row__hunk--empty" role="status">
+              正在读取变更块…
+            </div>
+          ) : hunks.length === 0 ? (
             <div className="git-row__hunk git-row__hunk--empty">无变更块（或尚未加载）</div>
           ) : (
             hunks.map((h) => (
@@ -175,18 +232,25 @@ export function GitChangeRow({
                   @@ -{h.oldStart},{h.oldLines} +{h.newStart},{h.newLines} @@
                 </span>
                 {h.heading ? <span className="git-row__hunk-heading">{h.heading}</span> : null}
-                <button
-                  type="button"
-                  className="git-row__btn"
-                  title="放弃此变更块"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    if (onDiscardHunk) onDiscardHunk(file, h)
-                    else void discardHunk(file.path, h.id)
-                  }}
-                >
-                  <Icon name="restart" size={16} />
-                </button>
+                {!file.staged ? (
+                  <button
+                    type="button"
+                    className="git-row__btn"
+                    title="放弃此变更块"
+                    disabled={writeBusy}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (onDiscardHunk) onDiscardHunk(file, h)
+                      else
+                        void discardHunk(file.path, h.id).then((result) => {
+                          if (result.success) void loadHunks()
+                          else setHunkError(result.error ?? '放弃变更块失败')
+                        })
+                    }}
+                  >
+                    <Icon name="restart" size={16} />
+                  </button>
+                ) : null}
               </div>
             ))
           )}

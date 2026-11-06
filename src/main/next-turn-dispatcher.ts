@@ -1,12 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { NextTurnQueueError, type NextTurnQueueEnvelope, type NextTurnQueueScope, type NextTurnQueueState } from '../shared/next-turn-queue'
+import { NextTurnQueueError, type NextTurnQueueEnvelope, type NextTurnQueueScope, type NextTurnQueueState, type QueueCommitResult } from '../shared/next-turn-queue'
 import { queueScopeIdentity, sameQueueScope } from '../shared/next-turn-queue-state'
 import type { WorkQueueDraft, WorkQueueRead } from '../shared/work-next-turn-api'
+import type { CodeQueueAction } from '../shared/code-next-turn-api'
 import { NextTurnQueueMutationService, type QueueOwnerCapability, type TrustedQueueAuthority } from './next-turn-queue-service'
 import type { AdmissionContext, ExactAdmission } from './next-turn-admission-protocol'
 import { freezeQueueRequest, assertFrozenQueueRequest, canonicalAdmissionJson } from './next-turn-admission-protocol'
 
 export interface QueueDispatchGateway extends TrustedQueueAuthority {
+  setConnected?(taskId: string, sender: { isDestroyed(): boolean }, connected: boolean): Promise<void>
   close?(): void
   context(scope: NextTurnQueueScope): Promise<AdmissionContext>
   prepare(scope: NextTurnQueueScope, envelope: NextTurnQueueEnvelope, context: AdmissionContext): Promise<Record<string, unknown>>
@@ -22,6 +24,7 @@ export class NextTurnDispatcher {
   private readonly binding = new Map<string, Promise<Job>>()
   private readonly controller = new AbortController()
   private readonly operations = new Set<Promise<unknown>>()
+  private readonly pendingEnqueues = new Map<string, { id: string; expectedRevision: number; inputDigest: string; result: Promise<QueueCommitResult> }>()
   private readonly retainedTasks = new Map<string, number>()
   private eviction?: Promise<boolean>
   private evictions = 0
@@ -149,15 +152,27 @@ export class NextTurnDispatcher {
     return { state: current.state, ...(job.error ? { dispatchError: job.error } : {}) }
   }
   enqueue(taskId: string, expectedRevision: number, operationId: string, id: string, submission: WorkQueueDraft) {
-    return this.owned(async () => {
-      if (this.enqueues >= 2) throw new NextTurnQueueError('CAPACITY', '队列正在准备附件，请稍后重试')
-      this.enqueues++
-      try { return await this.enqueueOnce(taskId, expectedRevision, operationId, id, submission) } finally { this.enqueues-- }
-    }, taskId)
+    return this.owned(() => this.enqueueOnce(taskId, expectedRevision, operationId, id, submission), taskId)
   }
   private async enqueueOnce(taskId: string, expectedRevision: number, operationId: string, id: string, submission: WorkQueueDraft) {
     const captured = structuredClone(submission), job = await this.bind(taskId)
     const inputDigest = createHash('sha256').update(canonicalAdmissionJson(captured)).digest('hex')
+    const key = JSON.stringify([queueScopeIdentity(job.scope), operationId]), pending = this.pendingEnqueues.get(key)
+    if (pending) {
+      if (pending.id !== id || pending.expectedRevision !== expectedRevision || pending.inputDigest !== inputDigest)
+        throw new NextTurnQueueError('CONFLICT', 'Queue operation ID was already used for another draft')
+      return pending.result
+    }
+    if (this.enqueues >= 2) throw new NextTurnQueueError('CAPACITY', '队列正在准备附件，请稍后重试')
+    this.enqueues++
+    const result = this.commitEnqueue(job, expectedRevision, operationId, id, captured, inputDigest)
+    this.pendingEnqueues.set(key, { id, expectedRevision, inputDigest, result })
+    try { return await result } finally {
+      if (this.pendingEnqueues.get(key)?.result === result) this.pendingEnqueues.delete(key)
+      this.enqueues--
+    }
+  }
+  private async commitEnqueue(job: Job, expectedRevision: number, operationId: string, id: string, captured: WorkQueueDraft, inputDigest: string): Promise<QueueCommitResult> {
     const prior = await this.service.findCommitted(job.capability, operationId)
     // An ACK-loss replay must return the original local commit, without re-reading files or preparing collaborators.
     if (prior) {
@@ -178,6 +193,72 @@ export class NextTurnDispatcher {
   editDraft(taskId: string, expectedRevision: number, operationId: string, id: string, entryRevision: number, draft: WorkQueueDraft['draft']) {
     return this.owned(() => this.editDraftOnce(taskId, expectedRevision, operationId, id, entryRevision, draft), taskId)
   }
+  changePending(taskId: string, action: Extract<CodeQueueAction, { kind: 'replace-submission' | 'retarget-model' | 'merge-pending' }>) {
+    return this.owned(async () => {
+      const stagesAttachments = action.kind === 'replace-submission' || action.kind === 'merge-pending' && !!action.submission
+      if (stagesAttachments && this.enqueues >= 2) throw new NextTurnQueueError('CAPACITY', '队列正在准备附件，请稍后重试')
+      if (stagesAttachments) this.enqueues++
+      try {
+        const input = structuredClone(action), job = await this.bind(taskId)
+        if (job.scope.owner !== 'code') throw new NextTurnQueueError('AUTHORITY', 'Code queue mutation requires Code ownership')
+        const digest = createHash('sha256').update(canonicalAdmissionJson(input)).digest('hex')
+        const prior = await this.service.findCommitted(job.capability, input.operationId)
+        const outputIds = input.kind === 'retarget-model' ? input.entries.map(item => item.id) : [input.id]
+        if (prior) {
+          if (prior.state.revision !== input.expectedRevision + 1 || outputIds.some(id => prior.state.entries.find(entry => entry.id === id)?.envelope.submissionDigest !== digest))
+            throw new NextTurnQueueError('CONFLICT', 'Queue operation ID was already used for another edit')
+          const current = await this.service.read(job.capability); this.observe(job, current.state)
+          return { state: current.state, receipt: prior.receipt, replayed: true, durabilityWarnings: [] }
+        }
+        const state = (await this.service.read(job.capability)).state
+        if (state.revision !== input.expectedRevision) throw new NextTurnQueueError('CAS', 'Queue revision changed')
+        const selectors = input.kind === 'replace-submission' ? [{ id: input.id, entryRevision: input.entryRevision }] : input.entries
+        if (!selectors.length || new Set(selectors.map(item => item.id)).size !== selectors.length) throw new NextTurnQueueError('INVALID', 'Select distinct pending messages')
+        const selected = selectors.map(selector => {
+          const entry = state.entries.find(item => item.id === selector.id)
+          if (!entry || entry.phase !== 'pending') throw new NextTurnQueueError('CONFLICT', 'Only pending messages can be edited')
+          if (entry.revision !== selector.entryRevision) throw new NextTurnQueueError('CAS', 'Entry revision changed')
+          return entry
+        }).sort((a, b) => state.entries.indexOf(a) - state.entries.indexOf(b))
+        let replacements: { id: string; envelope: NextTurnQueueEnvelope }[]
+        if (input.kind === 'replace-submission') replacements = [{ id: input.id, envelope: await this.gateway.envelope(job.scope, input.submission) }]
+        else if (input.kind === 'retarget-model') {
+          const model = structuredClone(input.model)
+          if (model.kind !== 'explicit' && !model.observedModelId) {
+            const context = await this.gateway.context(job.scope)
+            if (!context.root) throw new NextTurnQueueError('AUTHORITY', '任务绑定已变化，请刷新后重新选择模型')
+            if (context.root.modelId) model.observedModelId = context.root.modelId
+          }
+          replacements = selected.map(entry => ({ id: entry.id, envelope: { ...entry.envelope, model } }))
+        }
+        else {
+          if (state.entries.some(entry => entry.id === input.id) || state.removed.some(entry => entry.id === input.id)) throw new NextTurnQueueError('CONFLICT', 'Merged message requires a new identity')
+          const envelopes = selected.map(entry => entry.envelope)
+          if (input.submission) envelopes.push(await this.gateway.envelope(job.scope, input.submission))
+          const configuration = (envelope: NextTurnQueueEnvelope) => {
+            const { draft: _draft, attachments: _attachments, submissionDigest: _digest, ...config } = envelope
+            return canonicalAdmissionJson(config)
+          }
+          const base = envelopes[0]
+          if (envelopes.some(envelope => configuration(envelope) !== configuration(base)))
+            throw new NextTurnQueueError('CONFLICT', '所选消息的模型、工作区或协作配置不同，请逐条发送或统一配置后合并')
+          let text = ''; const mentions: NextTurnQueueEnvelope['draft']['mentions'] = [], attachments: NextTurnQueueEnvelope['attachments'] = []
+          for (const envelope of envelopes) {
+            if (text && envelope.draft.text) text += '\n\n'
+            const offset = text.length; text += envelope.draft.text
+            mentions.push(...envelope.draft.mentions.map(mention => ({ ...mention, textOffset: mention.textOffset + offset })))
+            for (const file of envelope.attachments) if (!attachments.some(item => item.receiptId === file.receiptId)) attachments.push(file)
+          }
+          replacements = [{ id: input.id, envelope: { ...this.gateway.editDraft(base, { text, mentions, revision: Math.max(...envelopes.map(envelope => envelope.draft.revision)) + 1 }), attachments } }]
+        }
+        for (const replacement of replacements) replacement.envelope.submissionDigest = digest
+        const result = await this.service.mutate(job.capability, input.expectedRevision, input.operationId,
+          { kind: 'replace-pending', entries: selectors, replacements, at: Date.now() })
+        this.observe(job, result.state); this.publish(result.state.scope, result.state.revision); this.wake(job)
+        return result
+      } finally { if (stagesAttachments) this.enqueues-- }
+    }, taskId)
+  }
   private async editDraftOnce(taskId: string, expectedRevision: number, operationId: string, id: string, entryRevision: number, draft: WorkQueueDraft['draft']) {
     const job = await this.bind(taskId), state = (await this.service.read(job.capability)).state
     const entry = state.entries.find(item => item.id === id)
@@ -192,8 +273,13 @@ export class NextTurnDispatcher {
   }
   private async mutateOnce(taskId: string, expectedRevision: number, operationId: string, operation: import('../shared/work-next-turn-api').WorkQueueAction & { kind: 'mutate' }) {
     const job = await this.bind(taskId)
+    // A resumed queue may already have advanced its root by the time its ACK is
+    // recovered. Rebuild the original payload from the committed snapshot; the
+    // repository still verifies operation ID + revision + exact payload.
+    const resumed = operation.operation.kind === 'resume' ? await this.service.findCommitted(job.capability, operationId) : null
     const result = operation.operation.kind === 'resume'
-      ? await this.service.transition(job.capability, expectedRevision, operationId, { kind: 'confirm-resume', anchor: (await this.gateway.context(job.scope)).predecessor })
+      ? await this.service.transition(job.capability, expectedRevision, operationId, { kind: 'confirm-resume',
+        anchor: resumed ? resumed.state.resumeAnchor ?? null : (await this.gateway.context(job.scope)).predecessor })
       : await this.service.mutate(job.capability, expectedRevision, operationId, operation.operation)
     this.observe(job, result.state)
     this.publish(result.state.scope, result.state.revision); this.wake(job); return result

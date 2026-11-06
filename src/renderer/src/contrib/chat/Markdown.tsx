@@ -7,9 +7,11 @@ import { useApp } from '@renderer/core/app-context'
 import { toast } from '@renderer/core/toast'
 import { classifyChatLink, type ChatFileContext } from './chat-link'
 import { revealText, tokenSources, useStreamReveal, type SourceRange, type StreamReveal } from './stream-reveal'
+import { ChatImage } from './ChatImage'
 
 /** Nested Markdown links inherit their message's workspace instead of the active editor's. */
 const FileContext = createContext<ChatFileContext | undefined>(undefined)
+const RenderImages = createContext(true)
 
 /**
  * Markdown 渲染（助手正文专用）
@@ -87,6 +89,11 @@ function ChatLink({ token, prefix, source, reveal }: { token: Tokens.Link; prefi
   const { engine } = useApp()
   const context = useContext(FileContext)
   const href = token.href ?? ''
+  // Linked thumbnails use the same preview as ordinary images, without nesting
+  // a button inside a link or navigating away when the preview is opened.
+  if (token.tokens.length === 1 && token.tokens[0].type === 'image') {
+    return <ReplyImage token={token.tokens[0] as Tokens.Image} />
+  }
   const target = classifyChatLink(href, context?.sessionId, engine.snapshot.baseUrl)
   if (target.kind === 'artifact' || target.kind === 'invalid') {
     return <a href={href} title={target.kind === 'artifact' ? `在编辑器中打开 ${target.path}` : target.message} onClick={(event) => {
@@ -108,12 +115,14 @@ function ChatLink({ token, prefix, source, reveal }: { token: Tokens.Link; prefi
   return <a href={href} title={token.title ?? undefined} target="_blank" rel="noreferrer noopener">{renderInline(token.tokens, prefix, source, reveal)}</a>
 }
 
-function ChatImage({ token }: { token: Tokens.Image }): JSX.Element {
-  const { engine } = useApp()
-  if (engine.snapshot.mode === 'remote' && !/^(?:https?:|data:image\/)/i.test(token.href)) {
-    return <span title={`远端图片路径（尚未映射）：${token.href}`}>{token.text || '远端图片'}（未加载）</span>
-  }
-  return <img src={token.href} alt={token.text} title={token.title ?? undefined} />
+function ReplyImage({ token }: { token: Tokens.Image }): JSX.Element | null {
+  const context = useContext(FileContext)
+  const renderImages = useContext(RenderImages)
+  // Explicit delivery surfaces render their saved image assets separately;
+  // reopening a Markdown path here could show a later version or a process image.
+  if (!renderImages) return null
+  return <ChatImage key={`${context?.sessionId ?? ''}:${context?.workspaceRoot ?? ''}`}
+    href={token.href} alt={token.text} title={token.title} context={context} />
 }
 
 function renderInline(tokens: Token[] | undefined, keyPrefix: string, parent: SourceRange | undefined, reveal: StreamReveal): React.ReactNode {
@@ -140,7 +149,7 @@ function renderInline(tokens: Token[] | undefined, keyPrefix: string, parent: So
       case 'link':
         return <ChatLink key={key} token={token as Tokens.Link} prefix={key} source={source} reveal={reveal} />
       case 'image':
-        return <ChatImage key={key} token={token as Tokens.Image} />
+        return <ReplyImage key={key} token={token as Tokens.Image} />
       case 'br':
         return <br key={key} />
       case 'escape':
@@ -151,7 +160,7 @@ function renderInline(tokens: Token[] | undefined, keyPrefix: string, parent: So
   })
 }
 
-function renderBlock(tokens: Token[], keyPrefix: string, parent: SourceRange | undefined, reveal: StreamReveal): React.ReactNode {
+function renderBlock(tokens: Token[], keyPrefix: string, parent: SourceRange | undefined, reveal: StreamReveal, inlineFirstText = false): React.ReactNode {
   const sources = tokenSources(tokens.map(token => token.raw), parent, reveal)
   return tokens.map((token, index) => {
     const key = `${keyPrefix}-${index}`
@@ -165,6 +174,11 @@ function renderBlock(tokens: Token[], keyPrefix: string, parent: SourceRange | u
             {renderInline(token.tokens, key, source, reveal)}
           </HeadingBlock>
         )
+      case 'text':
+        // Tight list items keep their first line inline, but later blocks must
+        // retain their own keys and source ranges instead of being discarded.
+        if (inlineFirstText && index === 0) return renderInline(token.tokens, keyPrefix, source, reveal)
+        return <p key={key}>{token.tokens ? renderInline(token.tokens, key, source, reveal) : revealText(token.text, key, source, reveal)}</p>
       case 'paragraph':
         return <p key={key}>{renderInline(token.tokens, key, source, reveal)}</p>
       case 'code':
@@ -266,7 +280,7 @@ function CodeBlock({ token, source, reveal }: { token: Tokens.Code; source?: Sou
         </button>
       </div>
       {/* Keep highlight spans while revealing only new text, including code appends. */}
-      <pre>
+      <pre data-scroll-axis="x">
         <code>{renderHighlight(parts, 'code', body, reveal)}</code>
       </pre>
     </div>
@@ -280,10 +294,7 @@ function ListBlock({ token, prefix, source, reveal }: { token: Tokens.List; pref
       {item.task ? (
         <input type="checkbox" checked={item.checked ?? false} disabled readOnly />
       ) : null}
-      {item.tokens.length > 0 && item.tokens[0].type === 'text'
-        ? // 松散列表项的段落会拆成多段；首段若是纯文本就内联渲染，避免多一层 <p> 的上下边距
-          renderInline((item.tokens[0] as Tokens.Text).tokens, `${prefix}-${index}`, sources[index], reveal)
-        : renderBlock(item.tokens, `${prefix}-${index}`, sources[index], reveal)}
+      {renderBlock(item.tokens, `${prefix}-${index}`, sources[index], reveal, true)}
     </li>
   ))
   return token.ordered ? (
@@ -298,7 +309,7 @@ function ListBlock({ token, prefix, source, reveal }: { token: Tokens.List; pref
 function TableBlock({ token, prefix, source, reveal }: { token: Tokens.Table; prefix: string; source?: SourceRange; reveal: StreamReveal }): JSX.Element {
   const sources = tokenSources([...token.header, ...token.rows.flat()].map(cell => cell.text), source, reveal)
   return (
-    <div className="md-table-wrap">
+    <div className="md-table-wrap" data-scroll-axis="x">
       <table>
         <thead>
           <tr>
@@ -406,8 +417,8 @@ function tokenizeIncremental(text: string): Token[] {
   return [...head, ...tailTokens]
 }
 
-export const Markdown = memo(function Markdown({ text, fileContext, streaming = false }: { text: string; fileContext?: ChatFileContext; streaming?: boolean }): JSX.Element {
+export const Markdown = memo(function Markdown({ text, fileContext, streaming = false, renderImages = true }: { text: string; fileContext?: ChatFileContext; streaming?: boolean; renderImages?: boolean }): JSX.Element {
   const tokens = useMemo(() => tokenizeIncremental(text), [text])
   const reveal = useStreamReveal(text, streaming)
-  return <FileContext.Provider value={fileContext}><div className="md">{renderBlock(tokens, 'md', { start: 0, end: text.length }, reveal)}</div></FileContext.Provider>
+  return <FileContext.Provider value={fileContext}><RenderImages.Provider value={renderImages}><div className="md">{renderBlock(tokens, 'md', { start: 0, end: text.length }, reveal)}</div></RenderImages.Provider></FileContext.Provider>
 })

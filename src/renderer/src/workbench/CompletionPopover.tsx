@@ -1,18 +1,25 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
+import { useMotionPresence, useMotionValue } from './MotionPresence'
 
 /** Completion keeps focus in its editor, but its menu must escape editor/scroll clipping. */
-export function CompletionPopover({ anchorRef, children, onClose, className = '' }: {
+export function CompletionPopover({ anchorRef, children, onClose, className = '', open }: {
   anchorRef: RefObject<HTMLElement | null>
   children: ReactNode
   onClose: () => void
   className?: string
+  open?: boolean
 }) {
+  const [dismissed, setDismissed] = useState(false)
+  const show = open ?? !dismissed
+  const motion = useMotionPresence(show, { onExited: () => { if (open === undefined) onClose() } })
+  const shownChildren = useMotionValue(show ? children : null)
   const panelRef = useRef<HTMLDivElement>(null)
   const closeRef = useRef(onClose)
-  closeRef.current = onClose
+  closeRef.current = () => { if (open === undefined) setDismissed(true); else onClose() }
   const [position, setPosition] = useState<CSSProperties>({ visibility: 'hidden' })
   useLayoutEffect(() => {
+    if (!show) return
     const anchor = anchorRef.current
     const panel = panelRef.current
     if (!anchor || !panel) return
@@ -88,6 +95,7 @@ export function CompletionPopover({ anchorRef, children, onClose, className = ''
       document.removeEventListener('scroll', scroll, true)
       window.removeEventListener('resize', place)
     }
-  }, [anchorRef])
-  return createPortal(<div ref={panelRef} className={`completion-popover ${className}`} style={position}>{children}</div>, document.body)
+  }, [anchorRef, show])
+  if (!motion.present) return null
+  return createPortal(<div ref={panelRef} {...motion.motionProps} data-motion-axis="y" className={`completion-popover ${className}`} style={position}>{shownChildren}</div>, document.body)
 }

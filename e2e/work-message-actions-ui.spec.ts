@@ -24,6 +24,7 @@ let app: ElectronApplication | undefined, page: Page, health: Awaited<ReturnType
 let fixture = '', source = '', scenario = 0, rejectTruncate = false, revertConflict = false
 let historyMutationGate: Promise<void> | undefined
 let releaseHistoryMutation = (): void => {}
+let snapshotGate: { sessionId: string; entered: boolean; promise: Promise<void>; release: () => void } | undefined
 const envelope = (data: unknown) => JSON.stringify({ code: 200, message: 'ok', data })
 const latest = (session: Session | undefined) => session?.turns.at(-1)
 const active = (session: Session | undefined) => latest(session)?.run.status === 'running'
@@ -32,7 +33,7 @@ function turn(id: string, index: number, prompt: string, status: RootRun['status
   return { prompt, response: `已完成：${prompt}`, attachments, run: {
     schemaVersion: 1, runId: `run-${id}-${index}`, sessionId: id, turnId: `turn-${id}-${index}`,
     userMessageId: `user-${id}-${index}`, assistantMessageId: `assistant-${id}-${index}`,
-    status, seq: 1, version: 1, modelId: model, pending: [], workspacePaths: [], createdAt: now, updatedAt: now,
+    status, seq: index, version: 1, modelId: model, pending: [], workspacePaths: [], createdAt: now, updatedAt: now,
     ...(status === 'running' ? {} : { finishedAt: now + 100 })
   } }
 }
@@ -78,6 +79,8 @@ const server = createServer((request, response) => {
     if (path === '/api/v1/chat' && method === 'POST') {
       if (!session) throw new Error(`Unknown fixture session: ${id}`)
       const value = turn(id, 100 + calls.length, String(body.message), 'running', (body.attachments ?? []) as Turn['attachments'])
+      value.run = { ...value.run, seq: Math.max(0, ...session.turns.map(item => item.run.seq)) + 1,
+        createdAt: Date.now(), updatedAt: Date.now(), startedAt: Date.now() }
       session.turns.push(value); attach(session, response)
       emit(session, { run: value.run }); emit(session, { userMessage: user(value) }); emit(session, { content: value.response }); return
     }
@@ -118,6 +121,10 @@ const server = createServer((request, response) => {
     if (path === '/api/v1/subagent/capabilities') { response.end(envelope({ schemaVersion: 2, eventVersions: [1, 2], views: ['legacy', 'summary'], toolPagination: true, eventPagination: true, detailChunks: true, exactWatermarks: true })); return }
     if (path === '/api/v1/subagent/runs') { response.end(envelope({ schemaVersion: 2, runs: [], listComplete: true, hasMore: false, revision: 'fixture' })); return }
     if (path === '/api/v1/cron/capabilities') { response.writeHead(404).end(); return }
+    if (path === '/api/v1/chat/snapshot' && snapshotGate?.sessionId === id) {
+      snapshotGate.entered = true
+      await snapshotGate.promise
+    }
     const data = path === '/health' ? { status: 'ok' }
       : path === '/meta' ? { version: '2.0.0', buildId: 'sha256:' + 'a'.repeat(64), protocolVersion: 1, toolProfiles: ['general', 'code'], subagentSchemaVersion: 1, instanceId: 'work-message-actions' }
       : path === '/api/v1/models' ? [{ id: model, modelId: model, provider: 'openai', displayName: '消息操作测试模型', isEnabled: true, capabilities: { toolCalling: true } }]
@@ -137,6 +144,11 @@ const work = () => page.locator('.work-view')
 const input = () => work().getByRole('textbox', { name: '继续对话', exact: true })
 const message = (value: Turn) => work().locator(`[data-message-id="${value.run.userMessageId}"]`)
 const actions = (value: Turn) => message(value).getByRole('group', { name: '用户消息操作', exact: true })
+const sidebarStatus = (id: string) => work().locator(`.work-sidebar__task-row[data-task-id="${id}"] [data-task-status]`)
+const storedTask = (id: string) => page.evaluate(({ key, id }) => {
+  const state = JSON.parse(localStorage.getItem(key) ?? '{}') as { tasks?: Array<{ id: string; status: string; activity?: { runId: string; seq: number } }> }
+  return state.tasks?.find(task => task.id === id)
+}, { key: 'aether.work.state.v1:' + encodeURIComponent(source), id })
 const mutations = () => calls.filter(call => call.path === '/api/v1/chat' || call.path === '/api/v1/conversation/truncate'
   || call.path === '/api/v1/changes/revert-batch' || call.path.startsWith('/api/v1/conversation/turns/'))
 async function confirm(value: Turn, name: typeof mutationNames[number], accept = true) {
@@ -146,12 +158,12 @@ async function confirm(value: Turn, name: typeof mutationNames[number], accept =
   await (accept ? dialog.locator('button.btn--primary') : dialog.getByRole('button', { name: '取消', exact: true })).click()
   await expect(dialog).toHaveCount(0)
 }
-async function installScenario(options: { running?: boolean; draft?: string } = {}) {
+async function installScenario(options: { running?: boolean; draft?: string; failedLast?: boolean } = {}) {
   const id = `work-message-actions-${++scenario}`
   const turns = [turn(id, 1, '保留最早的要求'), turn(id, 2, '修改目标项目并检查结果', 'succeeded', [originalAttachment]),
-    turn(id, 3, '保留后续的讨论', options.running ? 'running' : 'succeeded')]
+    turn(id, 3, '保留后续的讨论', options.running ? 'running' : options.failedLast ? 'failed' : 'succeeded')]
   const session: Session = { id, turns, seq: 1, readers: new Set() }; sessions.set(id, session)
-  const task = { id, title: '消息操作测试', status: options.running ? 'running' : 'done', draft: options.draft ?? '尚未发送的新草稿',
+  const task = { id, title: '消息操作测试', status: options.running ? 'running' : options.failedLast ? 'error' : 'done', draft: options.draft ?? '尚未发送的新草稿',
     createdAt: Date.now(), updatedAt: Date.now(), workspacePath: null, modelId: model, attachments: [laterAttachment], sources: [] }
   await page.evaluate(({ key, task }) => localStorage.setItem(key, JSON.stringify({ tasks: [task], activeTaskId: task.id })),
     { key: 'aether.work.state.v1:' + encodeURIComponent(source), task })
@@ -178,9 +190,10 @@ test.describe('Work 用户消息操作', () => {
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 900))
     await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
   })
-  test.beforeEach(() => { calls.length = 0; errors.length = 0; rejectTruncate = false; revertConflict = false; historyMutationGate = undefined })
+  test.beforeEach(() => { calls.length = 0; errors.length = 0; rejectTruncate = false; revertConflict = false; historyMutationGate = undefined; snapshotGate = undefined })
   test.afterEach(() => {
     releaseHistoryMutation()
+    snapshotGate?.release()
     for (const session of sessions.values()) {
       if (active(session)) finish(session)
       for (const response of session.readers) response.destroy()
@@ -234,9 +247,14 @@ test.describe('Work 用户消息操作', () => {
     await expect(message(first)).toBeVisible(); await expect(message(target)).toHaveCount(0); await expect(message(last)).toHaveCount(0)
     await expect(input()).toHaveText(task.draft)
     const replacement = latest(session)!
+    expect(replacement.run.seq).toBe(first.run.seq + 1)
+    expect(replacement.run.seq).toBeLessThan(last.run.seq)
+    await expect(sidebarStatus(session.id)).toHaveAttribute('data-task-status', 'running')
+    await expect.poll(async () => (await storedTask(session.id))?.activity?.runId).toBe(replacement.run.runId)
     await expect(actions(first).getByRole('button', { name: '添加到对话', exact: true })).toBeEnabled()
     for (const name of mutationNames) await expect(actions(first).getByRole('button', { name, exact: true })).toBeDisabled()
     finish(session)
+    await expect(sidebarStatus(session.id)).toHaveAttribute('data-task-status', 'done')
     await expect(page.getByRole('button', { name: '停止任务', exact: true })).toHaveCount(0)
     await page.reload()
     await expect(message(replacement)).toBeVisible(); await expect(message(first)).toBeVisible()
@@ -283,6 +301,35 @@ test.describe('Work 用户消息操作', () => {
     await expect(message(target)).toHaveCount(0)
     for (const value of [first, last]) await expect(message(value)).toBeVisible()
     expect(session.turns.map(value => value.run.turnId)).toEqual([first.run.turnId, last.run.turnId])
+  })
+
+  test('删除失败末轮时延迟恢复不重建旧状态，较低序号恢复完成且删空后回草稿', async ({}, info) => {
+    const { session, first, target, last, task } = await installScenario({ failedLast: true })
+    await expect(sidebarStatus(session.id)).toHaveAttribute('data-task-status', 'error')
+    await expect.poll(async () => (await storedTask(session.id))?.activity?.seq).toBe(last.run.seq)
+    let release!: () => void
+    snapshotGate = { sessionId: session.id, entered: false, promise: new Promise<void>(done => { release = done }), release: () => release() }
+    await confirm(last, '删除本轮')
+    await expect.poll(() => snapshotGate?.entered).toBe(true)
+    expect(session.turns.map(item => item.run.seq)).toEqual([1, 2])
+    await expect.poll(async () => (await storedTask(session.id))?.activity).toBeUndefined()
+    // The server keeps recovery pending across a painted render. Old transcript
+    // rows may remain visible, but cannot rebuild the deleted root watermark.
+    await page.evaluate(() => new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done()))))
+    expect((await storedTask(session.id))?.activity).toBeUndefined()
+    snapshotGate.release(); snapshotGate = undefined
+    await expect(sidebarStatus(session.id)).toHaveAttribute('data-task-status', 'done')
+    await expect.poll(async () => (await storedTask(session.id))?.activity).toMatchObject({ runId: target.run.runId, seq: 2 })
+    await expect(message(last)).toHaveCount(0)
+    await confirm(target, '删除本轮')
+    await expect.poll(async () => (await storedTask(session.id))?.activity).toMatchObject({ runId: first.run.runId, seq: 1 })
+    await expect(sidebarStatus(session.id)).toHaveAttribute('data-task-status', 'done')
+    await confirm(first, '删除本轮')
+    await expect.poll(() => session.turns.length).toBe(0)
+    await expect(sidebarStatus(session.id)).toHaveAttribute('data-task-status', 'draft')
+    expect((await storedTask(session.id))?.activity).toBeUndefined()
+    await expect(input()).toHaveText(task.draft)
+    await page.screenshot({ path: info.outputPath('work-history-empty-draft.png') })
   })
 
   test('回退文件遇到冲突不截断；成功后按目标轮回退再截断并恢复草稿', async () => {

@@ -294,6 +294,7 @@ test.describe.serial('引擎与客户端操作反馈', () => {
     await page.getByRole('tab', { name: 'Work 办公', exact: true }).click()
     const card = page.locator('.work-error-notice').filter({ hasText: '模型输出达到上限' })
     await expect(card).toBeVisible()
+    await expect(card).toHaveAttribute('role', 'alert')
     await expect(card).toContainText('模型本轮输出达到上限，已保留现有内容')
     await expect(card.locator('pre')).toHaveCount(0)
     await card.getByText('查看诊断详情', { exact: true }).click()

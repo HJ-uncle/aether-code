@@ -1,14 +1,21 @@
-.work-artifact-panel-v2 { display:flex; flex-direction:column; min-width:0; min-height:0; height:100%; background:var(--bg-app); color:var(--fg); }
+.work-artifact-panel-v2 { display:flex; flex-direction:column; min-width:0; min-height:0; height:100%; background:var(--bg-app); color:var(--fg); container-type:inline-size; }
 .work-resource-file[hidden] { display:none !important; }
-.work-artifact-panel-v2__toolbar { display:flex; align-items:center; gap:var(--space-2); flex-wrap:wrap; padding:var(--space-2) var(--space-4); border-bottom:1px solid var(--border); background:var(--bg-surface); }
-.work-artifact-panel-v2__toolbar .work-quiet-button { white-space:nowrap; }
+.work-artifact-panel-v2__toolbar { display:flex; flex:none; align-items:center; gap:var(--space-1); min-width:0; min-height:var(--chrome-h); padding:var(--space-1) var(--space-2); box-sizing:border-box; border-bottom:1px solid var(--border); background:var(--bg-app); }
+.work-artifact-panel-v2__action { display:inline-flex; flex:none; align-items:center; justify-content:center; gap:var(--space-1); width:var(--control-h); min-width:0; height:var(--control-h); min-height:var(--control-h); padding:0; border:0; border-radius:var(--radius); background:transparent; color:var(--fg-muted); font:12px/1 var(--font-ui); white-space:nowrap; cursor:pointer; transition:background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
+.work-artifact-panel-v2__action--primary { width:auto; padding:0 var(--space-2); color:var(--fg); }
+.work-artifact-panel-v2__action:hover:not(:disabled), .work-artifact-panel-v2__modes button:hover:not(:disabled) { background:var(--bg-hover); color:var(--fg); }
+.work-artifact-panel-v2__action:active:not(:disabled) { background:var(--bg-active); }
+.work-artifact-panel-v2__action:focus-visible, .work-artifact-panel-v2__modes button:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+.work-artifact-panel-v2__action:disabled { opacity:.45; cursor:default; }
+.work-artifact-panel-v2__file-actions { display:flex; flex:none; align-items:center; gap:var(--space-1); margin-left:auto; }
+.work-artifact-panel-v2__file-actions .ui-icon-button { min-width:0; min-height:var(--control-h); border-radius:var(--radius); background:transparent; }
 .work-artifact-panel-v2__notice { display:flex; align-items:center; gap:var(--space-2); padding:var(--space-2) var(--space-4); border-bottom:1px solid var(--border); background:var(--bg-surface); color:var(--fg-muted); font-size:12px; line-height:1.5; }
 .work-artifact-panel-v2__notice > svg { flex:none; }
 .work-artifact-panel-v2__notice > span { flex:1; min-width:0; overflow-wrap:anywhere; }
 .work-artifact-panel-v2__notice > button { flex:none; }
-.work-artifact-panel-v2__modes { display:flex; margin-left:auto; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
-.work-artifact-panel-v2__modes button { min-height:26px; padding:0 var(--space-3); border:0; background:transparent; color:var(--fg-muted); cursor:pointer; font:inherit; font-size:11px; }
-.work-artifact-panel-v2__modes button[aria-pressed=true] { color:var(--fg); background:var(--bg-selected); }
+.work-artifact-panel-v2__modes { display:flex; flex:none; align-items:center; padding:2px; gap:2px; border-radius:var(--radius); background:var(--bg-hover); }
+.work-artifact-panel-v2__modes button { display:inline-flex; align-items:center; justify-content:center; gap:var(--space-1); min-width:var(--control-h-compact); height:var(--control-h-compact); padding:0 var(--space-2); border:0; border-radius:var(--radius-sm); background:transparent; color:var(--fg-muted); cursor:pointer; font:11px/1 var(--font-ui); }
+.work-artifact-panel-v2__modes button[aria-pressed=true] { color:var(--fg); background:var(--bg-elevated); box-shadow:var(--shadow-control); }
 .work-artifact-panel-v2__content { min-height:0; flex:1; overflow:auto; padding:var(--space-4); overscroll-behavior:contain; }
 .work-artifact-panel-v2__content--document { display:flex; flex-direction:column; padding:0; overflow:hidden; }
 /* Resource tabs already identify the file above the preview. Keep the
@@ -33,4 +40,17 @@
 .work-artifact-panel-v2--empty { align-items:center; justify-content:center; gap:var(--space-2); color:var(--fg-muted); }
 .work-artifact-panel-v2--empty strong { color:var(--fg); }
 .work-artifact-panel-v2--empty span { font-size:12px; }
-@media (max-width:640px) { .work-artifact-panel-v2__content { padding:var(--space-3); } .work-artifact-panel-v2__modes { margin-left:0; } }
+/* The detail pane can be narrow in a wide window. Its own width owns label
+   disclosure; every action remains a directly reachable button. */
+@container (max-width:420px) {
+  .work-artifact-panel-v2__action-label, .work-artifact-panel-v2__mode-label { display:none; }
+  .work-artifact-panel-v2__action--primary { width:var(--control-h); padding:0; }
+  .work-artifact-panel-v2__modes button { padding:0 var(--space-1); }
+}
+@container (max-width:280px) {
+  .work-artifact-panel-v2__toolbar { padding-inline:var(--space-1); gap:2px; }
+  .work-artifact-panel-v2__file-actions { gap:2px; }
+  .work-artifact-panel-v2__action { width:var(--control-h-compact); }
+}
+@media (max-width:640px) { .work-artifact-panel-v2__content { padding:var(--space-3); } }
+@media (prefers-reduced-motion:reduce) { .work-artifact-panel-v2__action { transition:none; } }

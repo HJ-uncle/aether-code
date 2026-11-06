@@ -1,0 +1,8 @@
+.work-tool-outcome { padding: var(--space-1) 0; color: var(--fg-muted); font: 12px/1.6 var(--font-ui); }
+.work-tool-outcome__summary { display: flex; align-items: baseline; gap: var(--space-3); }
+.work-tool-outcome__summary > span { min-width: 0; overflow-wrap: anywhere; }
+.work-tool-outcome__diagnostic summary { width: fit-content; padding: var(--space-1) 0; cursor: pointer; }
+.work-tool-outcome__diagnostic pre { margin: 0; max-height: 200px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.6 var(--font-mono); user-select: text; }
+.work-tool-outcome button { display: inline-flex; align-items: center; gap: var(--space-1); flex: none; margin-left: auto; padding: 2px var(--space-1); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--fg-muted); font: inherit; font-size: 11px; cursor: pointer; }
+.work-tool-outcome button:hover { background: var(--bg-hover); color: var(--fg); }
+.work-tool-outcome button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

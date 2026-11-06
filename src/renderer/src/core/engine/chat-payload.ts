@@ -4,6 +4,7 @@ import { finishTool, normalizeTool } from './chat-history'
 import { mergePending, normalizePending } from './pending'
 import { retainConfirmedContext } from './context-input'
 import { mergeFileChanges } from './tool-file-changes'
+import { applyFinalResult } from './final-result'
 function newId(): string { return globalThis.crypto.randomUUID() }
 
 function appendTimeline(items: TimelineItem[], kind: 'thinking' | 'content', text: string): void {
@@ -18,6 +19,7 @@ function appendTimeline(items: TimelineItem[], kind: 'thinking' | 'content', tex
 
 export function reducePayload(message: ChatMessage, payload: ChatSsePayload,
   receipt?: { now: number; fallbackId: string }): ChatMessage {
+  if (payload.finalResult) return applyFinalResult(message, payload.finalResult)
   const payloadError = (payload as { error?: unknown }).error
   if (typeof payloadError === 'string' && payloadError) {
     return {

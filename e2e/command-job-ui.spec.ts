@@ -14,6 +14,7 @@ import type { ChatRecoverySnapshot } from '../src/renderer/src/core/engine/chat-
 declare global { interface Window { aether: AetherIdeApi } }
 type Body = { stream?: boolean; tools?: Array<{ function: { name: string; parameters: { properties: Record<string, unknown> } } }>; messages: Array<{ role: string; content?: unknown }> }
 const root = resolve(__dirname, '..'), engineRoot = resolve(root, '..', 'ai-agent-engine'), model = 'd7-command-fixture', key = '7'.repeat(64)
+const engineEntry = process.env.AETHER_E2E_ENGINE_ENTRY ? resolve(process.env.AETHER_E2E_ENGINE_ENTRY) : join(engineRoot, 'dist/main.js')
 let fixture = '', baseUrl = '', app: ElectronApplication | undefined, page: Page
 const requests: Array<{ scenario: string; body: Body }> = [], errors: string[] = []
 let callSequence = 0
@@ -64,8 +65,8 @@ const timer=setInterval(()=>{
  if(fs.existsSync('release-'+name)){clearInterval(timer);fs.writeFileSync('finished-'+name,'done');process.stdout.write('D7_END_'+name+'\\n');process.exit(0)}
 },30);
 setTimeout(()=>process.exit(9),60000).unref();`
-function env(): NodeJS.ProcessEnv { return { ...process.env, AETHER_IDE_ENGINE_ENTRY: join(engineRoot, 'dist/main.js'), AUTH_ENABLED: 'false', HISTORY_BACKEND: 'jsonl', LLM_PROVIDER: 'openai', LLM_PRIMARY_MODEL: model, LLM_MODEL: model, LLM_FALLBACK_MODEL: '', OPENAI_API_KEY: 'd7-local-key', OPENAI_BASE_URL: baseUrl, DEFAULT_SECURITY_MODE: 'safe', OSM_MODE: 'methodology', MAX_ITERATIONS: '6', ENABLE_LONG_TERM_MEMORY: 'false', AETHER_GLOBAL_DIR: join(fixture, 'global'), WORKSPACE_ROOT: join(fixture, 'sandboxes'), MCP_CONFIG_PATH: join(fixture, 'mcp.json'), SKILLS_ROOT: join(fixture, 'skills') } }
-async function launch() { app = await electron.launch({ args: ['.', `--user-data-dir=${fixture}`], cwd: root, env: env() }); page = await app.firstWindow(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90000 }) }
+function env(): NodeJS.ProcessEnv { return { ...process.env, AETHER_IDE_ENGINE_ENTRY: engineEntry, AUTH_ENABLED: 'false', HISTORY_BACKEND: 'jsonl', LLM_PROVIDER: 'openai', LLM_PRIMARY_MODEL: model, LLM_MODEL: model, LLM_FALLBACK_MODEL: '', OPENAI_API_KEY: 'd7-local-key', OPENAI_BASE_URL: baseUrl, DEFAULT_SECURITY_MODE: 'safe', OSM_MODE: 'methodology', MAX_ITERATIONS: '6', ENABLE_LONG_TERM_MEMORY: 'false', AETHER_GLOBAL_DIR: join(fixture, 'global'), WORKSPACE_ROOT: join(fixture, 'sandboxes'), MCP_CONFIG_PATH: join(fixture, 'mcp.json'), SKILLS_ROOT: join(fixture, 'skills') } }
+async function launch() { app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || '.', `--user-data-dir=${fixture}`], cwd: root, env: env() }); page = await app.firstWindow(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90000 }) }
 async function select(scenario: string) { await page.evaluate(lastSessionId => window.aether.settings.update({ lastSessionId }), `d7-${scenario}`); await page.reload(); await expect(page.locator('.chat__input')).toHaveAttribute('contenteditable', 'true') }
 async function send(scenario: string) { await page.locator('.chat__input').fill(`[d7:${scenario}]`); await page.getByRole('button', { name: '发送', exact: true }).click() }
 async function setSecurityMode(sessionId: string, mode: 'safe' | 'standard' | 'full-access'): Promise<void> {
@@ -120,7 +121,7 @@ test.describe.serial('D7 后台命令真实进程闭环', () => {
     writeFileSync(marker('d7-worker.cjs'), worker)
     writeFileSync(join(fixture, 'engine', 'secrets', 'engine-secrets.json'), JSON.stringify({ encrypted: false, encryptionKey: key }))
     writeFileSync(join(fixture, 'settings.json'), JSON.stringify({ engineMode: 'embedded', preferredPort: 12427, autoStartEngine: true, lastSessionId: 'd7-success', lastModelId: model, lastFolder: join(fixture, 'workspace'), thinkingMode: 'off' }))
-    const url = (name: string) => pathToFileURL(join(engineRoot, 'dist', name)).href
+    const url = (name: string) => pathToFileURL(join(dirname(engineEntry), name)).href
     const config = Object.fromEntries(Object.entries(env()).filter(([name]) => ['LLM_PRIMARY_MODEL', 'LLM_MODEL', 'LLM_PROVIDER', 'LLM_FALLBACK_MODEL', 'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'DEFAULT_SECURITY_MODE', 'OSM_MODE', 'MAX_ITERATIONS', 'HISTORY_BACKEND'].includes(name)))
     const seed = `const {initDb,getDb}=await import(${JSON.stringify(url('storage/sqlite/db.js'))});const {ModelsStore}=await import(${JSON.stringify(url('storage/sqlite/models.js'))});const {systemConfigStore}=await import(${JSON.stringify(url('storage/sqlite/system-config.js'))});const {policyEngine}=await import(${JSON.stringify(url('security/policy-engine.js'))});await initDb();await new ModelsStore().createModel({tenantId:'default',provider:'openai',modelId:${JSON.stringify(model)},apiKey:'d7-local-key',baseUrl:${JSON.stringify(baseUrl)},displayName:'D7 local fixture',isEnabled:true,capabilities:{toolCalling:true,parallelTools:true,streamUsage:true,contextWindow:128000}});await policyEngine.listRules();await policyEngine.upsertRule({name:'allow-d7-fixture',command:'*',argPattern:'d7-worker\\\\.cjs',action:'allow',priority:1,enabled:true});for(const[name,value]of Object.entries(${JSON.stringify(config)}))await systemConfigStore.set(name,value,name==='OPENAI_API_KEY');
 const {rootRunStore}=await import(${JSON.stringify(url('storage/root-runs/index.js'))});const {JSONLConversationHistory}=await import(${JSON.stringify(url('storage/conversation/jsonl-history.js'))});const run=await rootRunStore.create('default','d7-expired',${JSON.stringify(model)},[${JSON.stringify(join(fixture, 'workspace'))}],{});await rootRunStore.update('default',run.runId,{status:'succeeded'});const history=new JSONLConversationHistory();const job={schemaVersion:1,jobId:'expired-d7-job',sessionId:'d7-expired',ownerSessionId:'d7-expired',runId:run.runId,turnId:run.turnId,toolCallId:'expired-cmd',version:1,status:'running',command:'node',args:['expired-worker.cjs'],cwd:${JSON.stringify(join(fixture, 'workspace'))},background:true,createdAt:1,updatedAt:1,exitCode:null,signal:null,cursor:0,earliestCursor:0};for(const row of [{id:run.userMessageId,role:'user',content:'D7_EXPIRED_HISTORY'},{id:run.assistantMessageId,role:'assistant',content:'',toolCall:{id:'expired-cmd',name:'execute_cmd',args:{background:true}}},{role:'tool',toolCallId:'expired-cmd',content:'Previously launched',metadata:{success:true,commandJob:job}}])await history.append({...row,conversationId:run.turnId,createdAt:Date.now()},{tenantId:'default',sessionId:'d7-expired'});getDb().close();`
@@ -150,14 +151,19 @@ const {rootRunStore}=await import(${JSON.stringify(url('storage/root-runs/index.
     await select('cancel'); await send('cancel'); await finished('cancel'); const job = (await jobs('cancel'))[0]
     const commandToggle = card(job.jobId).getByRole('button', { name: '展开完整命令', exact: true })
     await expect(commandToggle).toHaveAttribute('aria-expanded', 'false')
-    await expect(card(job.jobId).locator('.command-job-card__command')).not.toContainText('D7_LONG_COMMAND_END')
+    const commandBox = card(job.jobId).locator('.command-job-card__command code')
+    await expect.poll(() => commandBox.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(1)
+    await expect(commandBox).toHaveCSS('overflow', 'hidden')
+    const collapsedHeight = await commandBox.evaluate(element => element.clientHeight)
     await commandToggle.click()
     await expect(card(job.jobId).locator('.command-job-card__command')).toContainText('D7_LONG_COMMAND_END')
-    const commandBox = card(job.jobId).locator('.command-job-card__command code')
-    expect(await commandBox.evaluate(element => element.scrollHeight - element.clientHeight)).toBeLessThanOrEqual(1)
+    await expect.poll(() => commandBox.evaluate(element => element.clientHeight)).toBeGreaterThan(collapsedHeight)
+    await expect.poll(() => commandBox.evaluate(element => element.scrollHeight - element.clientHeight)).toBeLessThanOrEqual(1)
     await card(job.jobId).getByRole('button', { name: '收起命令详情', exact: true }).click()
     await expect(card(job.jobId).getByLabel('命令输出')).toContainText('D7_START_cancel'); await card(job.jobId).getByRole('button', { name: '停止命令', exact: true }).click()
     await expect(card(job.jobId)).toHaveAttribute('data-status', 'cancelled'); expect((await jobs('cancel'))[0].status).toBe('cancelled')
+    await expect(card(job.jobId)).toHaveAttribute('data-surface', 'code')
+    await expect(page.locator(`[data-command-presence="${job.jobId}"]`)).toHaveCount(0)
     await expect(card(job.jobId).getByRole('status', { name: '命令状态' })).toHaveText('已停止')
     await expect(card(job.jobId).locator('.command-job-card__stop-reason')).toHaveText('已按你的请求停止命令。')
     await expect(card(job.jobId).getByRole('alert')).toHaveCount(0)
@@ -210,7 +216,7 @@ const {rootRunStore}=await import(${JSON.stringify(url('storage/root-runs/index.
     await select('restart'); await send('restart'); await finished('restart'); const job = (await jobs('restart'))[0]
     await expect(card(job.jobId).getByLabel('命令输出')).toContainText('D7_START_restart')
     const engine = await page.evaluate(() => window.aether.engine.getSnapshot())
-    expect(engine.entryPath).toBe(join(engineRoot, 'dist/main.js')); expect(engine.dataDir).toBe(join(fixture, 'engine/state/agent.db')); expect(engine.pid).toBeGreaterThan(0)
+    expect(engine.entryPath).toBe(engineEntry); expect(engine.dataDir).toBe(join(fixture, 'engine/state/agent.db')); expect(engine.pid).toBeGreaterThan(0)
     process.kill(engine.pid!, 'SIGKILL')
     // The host may also reap descendants on engine exit. Release any surviving fixture worker
     // without assuming that a killed process can execute a final side effect.

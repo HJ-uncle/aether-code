@@ -237,8 +237,12 @@ export interface SearchHit {
   path: string
   /** 1 起始行号 */
   line: number
-  /** 命中行文本（原始行，未去缩进） */
+  /** 命中行文本；长行可截取匹配附近的片段，仅用于展示。 */
   text: string
+  /** 完整原始行中的 1 起始列号，不能从截断片段反推。 */
+  column?: number
+  /** 首个匹配的 UTF-16 长度，与编辑器列号保持一致。 */
+  length?: number
 }
 
 /** 搜索选项（与 VS Code 搜索视图的开关一一对应） */
@@ -619,6 +623,7 @@ export interface EngineTodo {
  * 同一帧只会出现其中一个字段，用可选字段而非联合类型以便透传未知帧。
  */
 export interface ChatSsePayload {
+  finalResult?: import('./final-result').FinalResult
   publishedChild?: import('./published-child').PublishedChildReference
   userMessage?: unknown
   run?: import('./root-run').RootRun

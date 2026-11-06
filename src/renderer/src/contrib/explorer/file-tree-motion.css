@@ -1,0 +1,7 @@
+/* Collapsed children leave the DOM immediately. Only the actual following
+ * rows settle into place, so old labels cannot overlap the new list. */
+.explorer__tree .tree-row--branch-settle { animation: file-tree-branch-settle 120ms ease-out both; }
+@keyframes file-tree-branch-settle { from { translate: 0 4px; } to { translate: 0 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .explorer__tree .tree-row--branch-settle { animation: none; }
+}

@@ -209,9 +209,9 @@ export function registerIpcHandlers(): void {
     ])
     const identity = identityOf(snapshot)
     const refresh = input !== null && typeof input === 'object' &&
-      'refreshStorage' in input && input.refreshStorage === true
+      (('refresh' in input && input.refresh === true) || ('refreshStorage' in input && input.refreshStorage === true))
     const [resources, storage] = await Promise.all([
-      getEngineResourceSnapshot(snapshot), getEngineStorageSnapshot(snapshot, refresh)
+      getEngineResourceSnapshot(snapshot, refresh), getEngineStorageSnapshot(snapshot, refresh)
     ])
     if (identity !== identityOf(engineHost.getSnapshot())) throw new Error('引擎连接已变化，正在重新读取资源指标。')
     return { identity, resources, storage, health: { ...engineHost.getHealthDiagnostics(), activeStreams: activeStreams.size } }

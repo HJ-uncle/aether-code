@@ -367,7 +367,7 @@ export function NetworkRequestDetails({
   }
   return (
     <section className="network-detail" aria-label="网络请求详情">
-      <div className="network-detail__tabs" role="tablist" aria-label="请求详情">
+      <div className="network-detail__tabs" data-scroll-axis="x" role="tablist" aria-label="请求详情">
         {TABS.map((item, index) => (
           <button
             key={item.id}

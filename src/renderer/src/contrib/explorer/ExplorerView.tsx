@@ -68,6 +68,10 @@ import { PromptDialog } from '@renderer/workbench/PromptDialog'
 import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { FILE_TREE_ROW_HEIGHT as ROW_HEIGHT } from './FileTreeRow'
+import { createFileTreeScope } from '@renderer/core/workspace/file-tree-memory'
+import { getEngineStorageKey } from '@renderer/core/engine/source'
+import { onWorkspaceConnectionChanged, workspaceConnectionKey } from '@renderer/core/workspace/connection'
+import { useFileTreeMemory, useFileTreeViewport } from './use-file-tree-memory'
 
 /**
  * 判定「这是拖拽而不是点击」的位移阈值（像素）。
@@ -138,6 +142,7 @@ interface WorkspaceSnapshot {
   children: ReadonlyMap<string, FsEntry[]>
   expanded: ReadonlySet<string>
   loading: ReadonlySet<string>
+  restoring: boolean
   error: string | null
   activeFilePath: string | null
   selection: ReadonlySet<string>
@@ -184,6 +189,7 @@ function sameSnapshot(a: WorkspaceSnapshot, b: WorkspaceSnapshot): boolean {
     a.showRoot === b.showRoot &&
     a.error === b.error &&
     a.activeFilePath === b.activeFilePath &&
+    a.restoring === b.restoring &&
     sameChildren(a.children, b.children) &&
     sameSet(a.expanded, b.expanded) &&
     sameSet(a.loading, b.loading) &&
@@ -199,6 +205,7 @@ function toSnapshot(workspace: WorkspaceState): WorkspaceSnapshot {
     children: workspace.children,
     expanded: workspace.expanded,
     loading: workspace.loading,
+    restoring: workspace.restoring,
     error: workspace.error,
     activeFilePath: workspace.activeFilePath,
     selection: workspace.selection,
@@ -228,6 +235,10 @@ function diffSnapshot(
   }
   if (prev.activeFilePath !== next.activeFilePath) {
     patch.activeFilePath = next.activeFilePath
+    changed = true
+  }
+  if (prev.restoring !== next.restoring) {
+    patch.restoring = next.restoring
     changed = true
   }
   if (!sameChildren(prev.children, next.children)) {
@@ -284,8 +295,6 @@ export function ExplorerView(): JSX.Element {
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [nameAction, setNameAction] = useState<NameAction | null>(null)
   const [opError, setOpError] = useState<string | null>(null)
-  const [scrollTop, setScrollTop] = useState(0)
-  const [viewportHeight, setViewportHeight] = useState(0)
   const [drag, setDrag] = useState<DragState | null>(null)
   const [dropDir, setDropDir] = useState<string | null>(null)
   const [undoLabel, setUndoLabel] = useState<string | null>(null)
@@ -298,7 +307,13 @@ export function ExplorerView(): JSX.Element {
    */
   const [focused, setFocused] = useState(false)
   /** 键盘移动到的行（VS Code 的 "cursor"），与鼠标多选集合相互独立 */
-  const [cursorPath, setCursorPath] = useState<string | null>(null)
+  const connectionKey = useSyncExternalStore(onWorkspaceConnectionChanged, workspaceConnectionKey)
+  const treeScope = useMemo(() => workspace.root
+    ? createFileTreeScope('code', getEngineStorageKey(), connectionKey, workspace.root)
+    : null, [workspace.root, connectionKey])
+  const { memory: treeMemory, updateMemory: updateTreeMemory } = useFileTreeMemory(treeScope)
+  const cursorPath = treeMemory.cursorPath
+  const setCursorPath = useCallback((path: string | null) => updateTreeMemory({ cursorPath: path }), [updateTreeMemory])
   /**
    * 排序方式。VS Code 默认「文件夹在前」，且是目录树，这里提供两种：
    *   - default：目录在前，同类按名称（与 readDir 的返回顺序一致）
@@ -369,7 +384,11 @@ export function ExplorerView(): JSX.Element {
     snapshot: workspace, filter: nameFilter, filesExclude: settings.filesExclude,
     sortMode, cutPaths, decorations: gitIndex
   }), [workspace, nameFilter, settings.filesExclude, sortMode, cutPaths, gitIndex])
-
+  const treeReady = Boolean(workspace.root && workspace.children.has(workspace.root) && !workspace.restoring && !workspace.loading.size)
+  const { scrollTop, viewportHeight, onScroll } = useFileTreeViewport({
+    scopeKey: treeScope?.key, treeRef, memory: treeMemory, updateMemory: updateTreeMemory,
+    ready: treeReady, rowCount: rows.length
+  })
   /** 可见行的路径序列，供全选与 Shift 连选使用 */
   const visiblePaths = useMemo(() => rows.map((row) => row.entry.path), [rows])
 
@@ -418,19 +437,6 @@ export function ExplorerView(): JSX.Element {
     dropDirRef.current = next
     setDropDir(next)
   }, [])
-
-  // ── 虚拟滚动 ──
-  // ResizeObserver 而不是 window.resize：侧边栏拖宽、面板收起都会改变高度，
-  // 这些变化不会触发 window 的 resize 事件。
-  useLayoutEffect(() => {
-    const el = treeRef.current
-    if (!el) return
-
-    setViewportHeight(el.clientHeight)
-    const observer = new ResizeObserver(() => setViewportHeight(el.clientHeight))
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [workspace.root])
 
   // 撤销栈在 core 层（命令与快捷键也要用），这里只订阅"栈顶标签"用于菜单文案
   useEffect(() => {
@@ -613,20 +619,25 @@ export function ExplorerView(): JSX.Element {
    *
    * 只认「新增的展开项」：否则折叠任意目录也会触发滚动，把视口顶走。
    */
-  const expandedRef = useRef(workspace.expanded)
+  const expandedRef = useRef({ root: workspace.root, paths: workspace.expanded, restoring: workspace.restoring })
   useEffect(() => {
     const previous = expandedRef.current
-    expandedRef.current = workspace.expanded
+    expandedRef.current = { root: workspace.root, paths: workspace.expanded, restoring: workspace.restoring }
 
-    // 换根目录意味着整棵树重建：此时还去补滚动，会和"新工作区从头看起"的预期打架
-    if (previous.size === 0) return
+    // Restoring remembered descendants also adds expanded paths. That is not
+    // a user expansion: revealing its first child would run after the saved
+    // viewport restore and immediately overwrite it with the tree's top.
+    if (previous.root !== workspace.root || previous.restoring || workspace.restoring || previous.paths.size === 0) {
+      revealDirRef.current = null
+      return
+    }
 
     for (const dir of workspace.expanded) {
-      if (previous.has(dir)) continue
+      if (previous.paths.has(dir)) continue
       revealDirRef.current = dir
       break
     }
-  }, [workspace.expanded])
+  }, [workspace.root, workspace.expanded, workspace.restoring])
 
   /**
    * 把「刚展开目录」的首个子项亮出来。
@@ -646,33 +657,6 @@ export function ExplorerView(): JSX.Element {
   }, [rows, scrollRowIntoView])
 
   /**
-   * 换文件夹后把滚动条归零。
-   *
-   * 树节点是复用的：换了根目录时滚动位置还停在上一个工作区留下的地方，
-   * 而新树的行数可能完全不同——用户打开新目录，第一眼看到的却是半空中
-   * 若干行，开头的内容全在视口之上。与 VS Code 打开文件夹的行为一致。
-   *
-   * 用回调 ref 而不是 effect：回调 ref 可以带依赖，根目录一变就会重跑，
-   * 正好是"重新绑定到新工作区"的时机；在渲染期读写 ref 则被 React 明确禁止。
-   */
-  const { root } = workspace
-  const attachTree = useCallback(
-    (el: HTMLDivElement | null) => {
-      treeRef.current = el
-      if (!el) return
-
-      // 挂载/换根时归零。但"刚展开子目录"要的是把子项亮出来，方向正好相反：
-      // 这里不参与，交给 revealDir 那条链路（它在挂载时本来就没有待办）。
-      // 换根后残留的 revealDir 会被同一次 commit 里跑的那个 effect 消费掉，
-      // 而那时 rows 已换成新树、旧目录名匹配不到，自然什么都不做。
-      el.scrollTop = 0
-    },
-    // root 是依赖（而非被读取的变量）：它变化时让 React 重跑回调 ref。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [root]
-  )
-
-  /**
    * 激活文件换人时把它滚进视口，但每次激活只滚一次。
    *
    * 虚拟滚动只挂载可见的那十几行，落在窗口外的行根本不在 DOM 里；
@@ -686,6 +670,11 @@ export function ExplorerView(): JSX.Element {
    * 行还没加载出来时（父目录尚未展开）先记账不动，等 rows 里出现再补滚。
    */
   const revealedFileRef = useRef<string | null>(null)
+  useLayoutEffect(() => {
+    // An existing viewport is intentional; remounting a pane must not reveal
+    // the same editor file again and overwrite the user's remembered scroll.
+    revealedFileRef.current = treeMemory.scrollTop > 0 ? workspace.activeFilePath : null
+  }, [treeScope?.key])
   useEffect(() => {
     const path = workspace.activeFilePath
     if (!path) {
@@ -1413,7 +1402,8 @@ export function ExplorerView(): JSX.Element {
 
       <FileTreeView
         rows={rows}
-        treeRef={attachTree}
+        motionScope={treeScope?.key}
+        treeRef={treeRef}
         focused={focused}
         viewportHeight={viewportHeight}
         scrollTop={scrollTop}
@@ -1422,7 +1412,7 @@ export function ExplorerView(): JSX.Element {
         multiSelect
         empty={rows.length === (workspace.showRoot ? 1 : 0) && Boolean(workspace.root && workspace.expanded.has(workspace.root))}
         isDropTarget={entry => dropDir !== null && entry.isDirectory && paths.contains(dropDir, entry.path)}
-        onScroll={setScrollTop}
+        onScroll={onScroll}
         onRowContextMenu={openMenu}
         onRowMouseDown={handleRowMouseDown}
         onStickyMouseDown={(event, entry) => {

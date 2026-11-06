@@ -149,6 +149,14 @@ export function useWorkbenchClient(sessionId: string | null, enabled: boolean, m
     let registration: Registration | undefined
     let retry: ReturnType<typeof setTimeout> | undefined
     const owner = crypto.randomUUID()
+    const markConnected = (value: boolean) => {
+      if (!setWorkbenchConnected(source, sessionId, owner, value, mode)) return
+      if (mode === 'code' && source === getEngineSource()) {
+        // The dispatcher outlives this renderer and cannot read its capability map.
+        void window.aether.codeQueue.invoke({ taskId: sessionId, expectedEngine,
+          action: { kind: 'set-connected', connected: value } }).catch(() => {})
+      }
+    }
     let retryDelay = 3000
     let unsupported = false
     const current = () => isWorkbenchOwnerCurrent({ source, sessionId, mode, enabled }, latest.current, getEngineSource(), disposed)
@@ -168,7 +176,7 @@ export function useWorkbenchClient(sessionId: string | null, enabled: boolean, m
         const client = await send<Registration>('/workbench/clients', { sessionId, actions: WORKBENCH_ACTIONS })
         if (!client || typeof client.clientId !== 'string' || typeof client.clientToken !== 'string') throw new Error('工作台连接响应无效。')
         if (!current()) { await disconnect(client); return }
-        registration = client; retryDelay = 3000; setWorkbenchConnected(source, sessionId, owner, true)
+        registration = client; retryDelay = 3000; markConnected(true)
         while (current()) {
           const batch = await send<{ commands: WorkbenchCommand[] }>(`/workbench/clients/${client.clientId}/poll`, { clientToken: client.clientToken })
           if (!Array.isArray(batch?.commands)) throw new Error('工作台操作响应无效。')
@@ -199,7 +207,7 @@ export function useWorkbenchClient(sessionId: string | null, enabled: boolean, m
         }
       } catch { /* Older engines do not expose this optional bridge; retry without blocking chat. */ }
       finally {
-        setWorkbenchConnected(source, sessionId, owner, false)
+        markConnected(false)
         const previous = registration; registration = undefined
         if (previous) await disconnect(previous)
         if (current() && !unsupported) {
@@ -210,7 +218,7 @@ export function useWorkbenchClient(sessionId: string | null, enabled: boolean, m
     }
     void run()
     return () => {
-      disposed = true; clearTimeout(retry); setWorkbenchConnected(source, sessionId, owner, false)
+      disposed = true; clearTimeout(retry); markConnected(false)
       if (registration) void disconnect(registration)
     }
   }, [sessionId, enabled, source, mode])

@@ -288,6 +288,8 @@ export interface GitCommitFileChange {
   /** A/M/D/R/C/U/T */
   code: string
   path: string
+  /** Parent-side path for rename/copy history comparisons. */
+  oldPath?: string
 }
 
 /** 单条提交记录 */

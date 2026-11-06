@@ -29,13 +29,16 @@ export class CollaborationController {
   history(): ControllerSavedRecord[] { return parseControllerHistory(this.env.storage.getItem(CONTROLLER_HISTORY_KEY)) }
   drafts(): ControllerSavedRecord[] { return this.history().filter(isControllerDraft) }
   private async updateHistory(change: (records: ControllerSavedRecord[]) => ControllerSavedRecord[]): Promise<void> {
+    let changed = false
     await this.env.lock(() => {
       const serialized = JSON.stringify(change(this.history()))
       parseControllerHistory(serialized)
+      if (this.env.storage.getItem(CONTROLLER_HISTORY_KEY) === serialized) return
       this.env.storage.setItem(CONTROLLER_HISTORY_KEY, serialized)
       if (this.env.storage.getItem(CONTROLLER_HISTORY_KEY) !== serialized) throw new Error('无法保存补充要求的结果；原发送记录仍保留')
+      changed = true
     })
-    this.env.notify()
+    if (changed) this.env.notify()
   }
   private async update(change: (records: ControllerPending[]) => ControllerPending[]): Promise<void> {
     await this.env.lock(() => {

@@ -79,6 +79,25 @@ export interface EngineStorageSnapshot {
   scannedAt: number | null
   durationMs: number
   cached: boolean
+  /** Older desktop/runtime combinations may only provide file measurements. */
+  partialReasons?: string[]
+  sqlite?: EngineSqliteStorageSnapshot
+}
+
+export interface EngineSqliteStorageSnapshot {
+  state: 'available' | 'unavailable'
+  reason?: string
+  sampledAt: number | null
+  durationMs: number
+  partial: boolean
+  partialReasons: string[]
+  pageSize: number | null
+  pageCount: number | null
+  freelistPages: number | null
+  freeBytes: number | null
+  /** Physical page allocation, including indexes; never an estimate per agent. */
+  objects: Array<{ name: string; kind: 'table' | 'index'; tableName: string; bytes: number; payloadBytes: number; unusedBytes: number }>
+  maintenance: { pending: number; committed: number; invalidated: number; other: number } | null
 }
 
 export interface EngineHealthDiagnostics {
@@ -96,6 +115,8 @@ export interface EngineHealthDiagnostics {
 }
 
 export interface EngineDiagnosticsInput {
+  /** Explicit user action: bypass cached samples, while sharing in-flight work. */
+  refresh?: boolean
   refreshStorage?: boolean
 }
 

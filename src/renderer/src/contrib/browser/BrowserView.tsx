@@ -9,6 +9,7 @@ import {
 } from 'react'
 import type { BrowserBoundsInput, BrowserTabState, BrowserViewport } from '@shared/browser'
 import type { BrowserConnectionState } from '@shared/browser-api'
+import { localBrowserInput } from '@shared/browser-local-file'
 import { Icon, type IconName } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { Select } from '@renderer/workbench/Select'
@@ -18,19 +19,23 @@ import { NetworkInspector } from './NetworkInspector'
 import { isBrowserSurfaceOccluded } from './browser-occlusion'
 import { openViewToRight } from '@renderer/core/editor/editor-groups'
 import { getAppMode, onAppModeChanged, type AppMode } from '@renderer/core/platform/app-mode'
-import { getBrowserSurfaceOwner } from '@renderer/core/browser/presentation'
+import { getBrowserSurfaceOwner, onBrowserPresentationChanged } from '@renderer/core/browser/presentation'
 import { openAppSettings } from '../settings/app-settings-navigation'
 import {
   browserAction,
   getBrowserState,
   initializeBrowser,
   openBrowser,
+  openLocalBrowserFile,
+  openLocalBrowserDirectory,
   refreshBrowserSettings,
   selectBrowserTab,
   useBrowserState
 } from './browser-store'
 import { addBrowserTabToChat } from './browser-chat'
 import { BrowserTabContextMenu, openBrowserTabContextMenu } from './BrowserTabContextMenu'
+import { BrowserLocalPreview } from './BrowserLocalPreview'
+import { BrowserDisplayMenu } from './BrowserDisplayMenu'
 import './browser.css'
 import {
   PHONE_VIEWPORT as PHONE,
@@ -148,6 +153,7 @@ export function BrowserSurface({
     }
     const resize = new ResizeObserver(schedule)
     const disposeMode = onAppModeChanged(schedule)
+    const disposePresentation = onBrowserPresentationChanged(schedule)
     resize.observe(element)
     const mutation = new MutationObserver(schedule)
     mutation.observe(document.body, {
@@ -168,6 +174,7 @@ export function BrowserSurface({
     return () => {
       disposed = true
       disposeMode()
+      disposePresentation()
       cancelAnimationFrame(frame)
       resize.disconnect()
       mutation.disconnect()
@@ -325,8 +332,9 @@ function LogRow({ entry, kind }: { entry: unknown; kind: Exclude<Inspector, null
 }
 
 export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId }: { surfaceMode?: AppMode; hideTabStrip?: boolean; tabId?: string } = {}): JSX.Element {
-  const state = useBrowserState()
+  const state = useBrowserState(surfaceMode)
   const tab = tabId !== undefined ? state.tabs.find(item => item.tabId === tabId) : state.tabs.find((item) => item.tabId === state.activeTabId) ?? state.tabs[0]
+  const localPreview = !!tab?.localFile && tab.localFile.kind !== 'html'
   const [address, setAddress] = useState('')
   const addressRef = useRef<HTMLInputElement>(null)
   const [inspector, setInspector] = useState<Inspector>(null)
@@ -335,23 +343,28 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
   const [height, setHeight] = useState('800')
   const [connection, setConnection] = useState<BrowserConnectionState>({ status: 'disconnected' })
   const [menu, setMenu] = useState<{
+    invocation: number
     tabId: string
     x: number
     y: number
     anchor: HTMLElement
   } | null>(null)
+  const menuInvocation = useRef(0)
   const [addingToChat, setAddingToChat] = useState(false)
   const addingToChatRef = useRef(false)
   const menuTab = state.tabs.find((item) => item.tabId === menu?.tabId)
   useEffect(() => {
     void initializeBrowser().then(refreshBrowserSettings)
   }, [])
-  const locationKey = `${tab?.tabId ?? ''}:${tab?.url ?? ''}`
+  const locationKey = `${tab?.tabId ?? ''}:${tab?.localFile?.path ?? ''}:${tab?.url ?? ''}`
   const [observedLocation, setObservedLocation] = useState('')
   if (observedLocation !== locationKey) {
     setObservedLocation(locationKey)
-    setAddress(tab?.url === 'about:blank' ? '' : (tab?.url ?? ''))
+    setAddress(tab?.localFile?.path ?? (tab?.url === 'about:blank' ? '' : (tab?.url ?? '')))
   }
+  useEffect(() => {
+    if (localPreview) { setInspector(null); setCustom(false) }
+  }, [localPreview])
   useEffect(() => {
     if (!state.addressFocusRequest) return
     const frame = requestAnimationFrame(() => {
@@ -383,7 +396,7 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
   ): void => {
     openBrowserTabContextMenu(event, (x, y, anchor) => {
       if (item.tabId !== tab?.tabId) selectBrowserTab(item.tabId)
-      setMenu({ tabId: item.tabId, x, y, anchor })
+      setMenu({ invocation: ++menuInvocation.current, tabId: item.tabId, x, y, anchor })
     })
   }
   const addToChat = (item: BrowserTabState): void => {
@@ -417,20 +430,7 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
     })
   }
   const duplicateTab = (item: BrowserTabState): void => {
-    browserAction(async () => {
-      const duplicate = await window.aether.browser.create({ url: item.url })
-      await window.aether.browser.action({
-        tabId: duplicate.tabId,
-        action: 'viewport',
-        viewport: item.viewport
-      })
-      if (duplicate.zoomFactor !== item.zoomFactor)
-        await window.aether.browser.action({
-          tabId: duplicate.tabId,
-          action: 'zoom',
-          zoomFactor: item.zoomFactor
-        })
-    })
+    browserAction(() => window.aether.browser.duplicate(item.tabId))
   }
   const viewport = (value: BrowserViewport | null): void => {
     if (tab)
@@ -440,7 +440,10 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
   }
   const navigate = (): void => {
     if (!address.trim()) return
-    if (tab)
+    const localPath = localBrowserInput(address)
+    if (localPath !== null) {
+      browserAction(() => openLocalBrowserFile(localPath))
+    } else if (tab && !tab.localFile)
       browserAction(() =>
         window.aether.browser.action({ tabId: tab.tabId, action: 'navigate', url: address.trim() })
       )
@@ -448,6 +451,7 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
   }
   const mode = viewportPreset(tab?.viewport)
   const aiReady =
+    !tab?.localFile &&
     state.settings.aiEnabled &&
     connection.status === 'connected' &&
     tab?.context?.sessionId === connection.sessionId &&
@@ -456,6 +460,7 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
   return (
     <section
       className="browser-view"
+      data-browser-surface-mode={surfaceMode}
       aria-label="内置浏览器"
       onKeyDown={(event) => {
         if (!(event.ctrlKey || event.metaKey)) return
@@ -479,7 +484,7 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
         }
       }}
     >
-      {!hideTabStrip && <div className="browser-tabs" role="tablist" aria-label="网页标签">
+      {!hideTabStrip && <div className="browser-tabs" data-scroll-axis="x" role="tablist" aria-label="网页标签">
         {state.tabs.map((item, index) => (
           <div
             key={item.tabId}
@@ -500,7 +505,7 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
               aria-expanded={menu?.tabId === item.tabId}
               aria-selected={item.tabId === tab?.tabId}
               tabIndex={item.tabId === tab?.tabId ? 0 : -1}
-              title={`${item.url} · 右键查看更多操作`}
+              title={`${item.localFile?.path ?? item.url} · 右键查看更多操作`}
               onClick={() => selectBrowserTab(item.tabId)}
               onKeyDown={(event) => {
                 if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
@@ -526,7 +531,7 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
                 target?.focus()
               }}
             >
-              {item.loading ? <Spinner size={12} /> : <Icon name="eye-outline" size={14} />}
+              {item.loading ? <Spinner size={12} /> : <Icon name={item.localFile ? 'file' : 'eye-outline'} size={14} />}
               <span>{item.title || (item.url === 'about:blank' ? '新标签页' : item.url)}</span>
             </button>
             <button
@@ -555,12 +560,15 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
       </div>}
       {menu && menuTab ? (
         <BrowserTabContextMenu
+          // A same-position right-click during exit is a new invocation. Its
+          // predecessor's delayed dismissal must not close this fresh menu.
+          key={menu.invocation}
           tab={menuTab}
           tabs={state.tabs}
           x={menu.x}
           y={menu.y}
           anchor={menu.anchor}
-          onClose={() => setMenu(null)}
+          onClose={() => setMenu(current => current?.invocation === menu.invocation ? null : current)}
           onNew={() => browserAction(() => window.aether.browser.create({}))}
           onDuplicate={() => duplicateTab(menuTab)}
           onReload={() =>
@@ -580,22 +588,24 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
           }
           onCopyAddress={() =>
             browserAction(async () => {
-              await navigator.clipboard.writeText(menuTab.url)
-              toast.success('网页地址已复制')
+              await navigator.clipboard.writeText(menuTab.localFile?.path ?? menuTab.url)
+              toast.success(menuTab.localFile ? '文件路径已复制' : '网页地址已复制')
             })
           }
           onAddToChat={() => addToChat(menuTab)}
           addToChatDisabled={
-            addingToChat || !state.settings.aiEnabled || connection.status !== 'connected'
+            !!menuTab.localFile || addingToChat || !state.settings.aiEnabled || connection.status !== 'connected'
           }
           addToChatHint={
-            addingToChat
-              ? '正在添加…'
-              : !state.settings.aiEnabled
-                ? '请先启用 AI 浏览器'
-                : connection.status !== 'connected'
-                  ? '请先连接引擎并选择会话'
-                  : '引用此标签页，允许 AI 读取和操作'
+            menuTab.localFile
+              ? '本地文件仅供本机预览'
+              : addingToChat
+                ? '正在添加…'
+                : !state.settings.aiEnabled
+                  ? '请先启用 AI 浏览器'
+                  : connection.status !== 'connected'
+                    ? '请先连接引擎并选择会话'
+                    : '引用此标签页，允许 AI 读取和操作'
           }
           onCloseTab={() => closeTabs([menuTab.tabId])}
           onCloseOthers={() =>
@@ -645,18 +655,28 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
           ref={addressRef}
           className="browser-address field__input"
           aria-label="网页地址"
-          placeholder="输入网址或 localhost:端口"
+          placeholder="输入网址、localhost:端口或本地路径"
           value={address}
           spellCheck={false}
           onChange={(event) => setAddress(event.target.value)}
           onFocus={(event) => event.currentTarget.select()}
         />
-        <button type="submit" className="browser-tool" aria-label="打开网址" title="打开网址">
+        <button type="submit" className="browser-tool" aria-label="打开地址" title="打开地址">
           <Icon name="play" size={15} />
         </button>
+        <ToolButton label="打开本地文件" icon="explorer" onClick={() => browserAction(() => openLocalBrowserFile())} />
+        {surfaceMode === 'work' && tab && !localPreview ? <BrowserDisplayMenu key={tab.tabId} tab={tab} inspector={inspector}
+          onViewport={viewport} onInspector={setInspector}
+          onZoom={zoomFactor => browserAction(() => window.aether.browser.action({ tabId: tab.tabId, action: 'zoom', zoomFactor }))} /> : null}
         <ActionMenu
           label="浏览器更多操作"
           items={[
+            {
+              id: 'open-directory',
+              label: '打开本地目录',
+              icon: 'explorer',
+              onSelect: () => browserAction(() => openLocalBrowserDirectory())
+            },
             {
               id: 'settings',
               label: '浏览器设置',
@@ -667,14 +687,14 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
               id: 'devtools',
               label: '开发者工具',
               icon: 'terminal',
-              disabled: !tab,
+              disabled: !tab || localPreview,
               onSelect: () => run('devtools')
             }
           ]}
         />
       </form>
-      {tab ? (
-        <div className="browser-options">
+      {surfaceMode !== 'work' && tab && !localPreview ? (
+        <div className="browser-options" data-scroll-axis="x">
           <Select
             value={custom ? 'custom' : mode}
             title="网页视口"
@@ -736,7 +756,7 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
           </button>
         </div>
       ) : null}
-      {custom ? (
+      {surfaceMode !== 'work' && custom && !localPreview ? (
         <form
           className="browser-viewport-form"
           onSubmit={(event) => {
@@ -799,6 +819,8 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
           <Icon name="warning" size={28} />
           <p>当前页面加载失败。</p>
         </div>
+      ) : tab && localPreview ? (
+        <BrowserLocalPreview key={`local:${tab.tabId}`} tab={tab} />
       ) : tab ? (
         <BrowserSurface
           key={`surface:${tab.tabId}`}
@@ -811,8 +833,8 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
       ) : (
         <div className="browser-empty">
           <Icon name="eye-outline" size={36} />
-          <h2>在编辑器旁打开网页</h2>
-          <p>运行项目后，输入开发服务地址，即可操作和检查页面。</p>
+          <h2>打开网页、文件或目录</h2>
+          <p>输入开发服务地址、文件或目录路径，即可在这里查看。</p>
           <button
             type="button"
             className="btn btn--primary"
@@ -822,15 +844,17 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
           >
             {state.ready ? '打开新标签页' : '正在准备…'}
           </button>
+          <button type="button" className="btn" onClick={() => browserAction(() => openLocalBrowserFile())}>选择本地文件</button>
+          <button type="button" className="btn" onClick={() => browserAction(() => openLocalBrowserDirectory())}>选择本地目录</button>
         </div>
       )}
-      {tab && inspector === 'network' ? (
+      {tab && !localPreview && inspector === 'network' ? (
         <NetworkInspector
           key={`network:${tab.tabId}`}
           tab={tab}
           onClose={() => setInspector(null)}
         />
-      ) : tab && inspector === 'console' ? (
+      ) : tab && !localPreview && inspector === 'console' ? (
         <InspectorDrawer
           key={`${tab.tabId}:${inspector}`}
           tab={tab}
@@ -840,20 +864,22 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
       ) : null}
       <footer className="browser-status">
         <span className={`browser-status__dot${aiReady ? ' is-ready' : ''}`} />
-        <span title={connection.message}>
-          {!state.settings.aiEnabled
-            ? 'AI 浏览器已关闭'
-            : aiReady
-              ? 'AI 可操作当前网页'
-              : connection.status === 'connecting'
-                ? '正在连接 AI…'
-                : connection.status === 'error'
-                  ? `AI 连接失败${connection.message ? `：${connection.message}` : ''}`
-                  : connection.status === 'connected'
-                    ? '网页尚未交给当前对话'
-                    : '打开对话并连接引擎后，AI 可操作网页'}
+        <span title={tab?.localFile ? '文件仅在本机预览' : connection.message}>
+          {tab?.localFile
+            ? '本地文件预览'
+            : !state.settings.aiEnabled
+              ? 'AI 浏览器已关闭'
+              : aiReady
+                ? 'AI 可操作当前网页'
+                : connection.status === 'connecting'
+                  ? '正在连接 AI…'
+                  : connection.status === 'error'
+                    ? `AI 连接失败${connection.message ? `：${connection.message}` : ''}`
+                    : connection.status === 'connected'
+                      ? '网页尚未交给当前对话'
+                      : '打开对话并连接引擎后，AI 可操作网页'}
         </span>
-        {tab && state.settings.aiEnabled && connection.status === 'connected' ? (
+        {tab && !tab.localFile && state.settings.aiEnabled && connection.status === 'connected' ? (
           <button
             type="button"
             className="browser-text-tool"
@@ -865,7 +891,7 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
           </button>
         ) : null}
         <div className="browser-spacer" />
-        {tab?.viewport ? (
+        {localPreview ? <span>本机</span> : tab?.viewport ? (
           <span>
             {tab.viewport.width} × {tab.viewport.height}
           </span>

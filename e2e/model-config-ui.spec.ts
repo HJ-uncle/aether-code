@@ -39,6 +39,7 @@ async function saved(): Promise<EngineModel> {
   return model
 }
 async function edit() {
+  await expect(page.locator('.modal--model-form')).toHaveCount(0)
   await page.locator('.settings-view').getByRole('button', { name: '编辑', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: '编辑模型' })
   await expect(dialog).toBeVisible()
@@ -157,7 +158,7 @@ test.describe.serial('D1 模型配置无损编辑', () => {
   })
   test('小数 K 编辑精确保存整数 token，并在重新打开时保留值', async () => {
     const dialog = await edit()
-    const context = dialog.getByPlaceholder('如 128', { exact: true })
+    const context = dialog.getByLabel('上下文窗口', { exact: true })
     await expect(context).toHaveValue('123.456')
     await context.fill('123.789')
     await save()
@@ -165,7 +166,7 @@ test.describe.serial('D1 模型配置无损编辑', () => {
       contextWindow: 123789, parallelTools: false, toolCalling: false, thinking: false
     })
     const reopened = await edit()
-    await expect(reopened.getByPlaceholder('如 128', { exact: true })).toHaveValue('123.789')
+    await expect(reopened.getByLabel('上下文窗口', { exact: true })).toHaveValue('123.789')
     await reopened.getByRole('button', { name: '取消', exact: true }).click()
   })
 })

@@ -248,7 +248,7 @@ test.describe.serial('内置浏览器与远端工具通道', () => {
     await page.evaluate(tabId => window.aether.browser.action({ tabId, action: 'zoom', zoomFactor: 1 }), tabId)
   })
 
-  test('截图等待期间滚动或目标移动拒绝旧坐标，单独截图失败仍可正常点击', async () => {
+  test('截图等待期间滚动或目标移动拒绝旧坐标，原生失败恢复图片而双失败如实说明缺图', async () => {
     const raceUrl = `${origin}/capture-race`
     await assertTool('navigate', { tabId, url: raceUrl })
     const count = (): Promise<number> => app!.evaluate(({ webContents }, url) => {
@@ -256,17 +256,32 @@ test.describe.serial('内置浏览器与远端工具通道', () => {
       if (!guest) throw new Error('Missing owned capture-race fixture')
       return guest.executeJavaScript('Number(sessionStorage.getItem("clickCount")||0)')
     }, raceUrl)
-    const inject = (fault: 'scroll' | 'move' | 'capture-error'): Promise<void> => app!.evaluate(({ webContents }, { url, fault }) => {
+    const inject = (fault: 'scroll' | 'move' | 'capture-error' | 'all-capture-error'): Promise<void> => app!.evaluate(({ webContents }, { url, fault }) => {
       const guest = webContents.getAllWebContents().find(wc => wc.getURL() === url)
       if (!guest) throw new Error('Missing owned capture-race fixture')
-      const owned = guest as typeof guest & { fixtureOriginalCapture?: typeof guest.capturePage }
-      if (owned.fixtureOriginalCapture) throw new Error('Previous fixture capture wrapper was not consumed')
+      const owned = guest as typeof guest & {
+        fixtureOriginalCapture?: typeof guest.capturePage
+        fixtureOriginalCaptureCommand?: typeof guest.debugger.sendCommand
+      }
+      if (owned.fixtureOriginalCapture || owned.fixtureOriginalCaptureCommand) throw new Error('Previous fixture capture wrapper was not consumed')
       const original = guest.capturePage
       owned.fixtureOriginalCapture = original
+      if (fault === 'all-capture-error') {
+        const command = guest.debugger.sendCommand
+        owned.fixtureOriginalCaptureCommand = command
+        guest.debugger.sendCommand = async (method, ...args) => {
+          if (method === 'Page.captureScreenshot') {
+            guest.debugger.sendCommand = command
+            delete owned.fixtureOriginalCaptureCommand
+            throw new Error('Fixture CDP screenshot unavailable')
+          }
+          return command.call(guest.debugger, method, ...args)
+        }
+      }
       guest.capturePage = async (...args) => {
         guest.capturePage = original
         delete owned.fixtureOriginalCapture
-        if (fault === 'capture-error') throw new Error('Fixture screenshot decoder unavailable')
+        if (fault === 'capture-error' || fault === 'all-capture-error') throw new Error('Fixture screenshot decoder unavailable')
         const image = await original.apply(guest, args)
         await guest.executeJavaScript(fault === 'scroll'
           ? 'window.scrollBy(0,80)'
@@ -290,13 +305,29 @@ test.describe.serial('内置浏览器与远端工具通道', () => {
       const result = JSON.parse((await assertTool('click', { tabId, selector: '#go' })).output) as BrowserSnapshot
       expect(await count()).toBe(before + 1)
       expect(await expectActualClick(result)).toMatchObject({ id: 'go', trusted: true })
-      expect(result.interaction?.screenshot).toBeUndefined()
+      await expectViewportPixels(result.interaction!)
+      expect(result.interaction?.screenshotUnavailable).toBeUndefined()
+
+      const beforeMissing = await count()
+      await inject('all-capture-error')
+      const missing = JSON.parse((await assertTool('click', { tabId, selector: '#go' })).output) as BrowserSnapshot
+      expect(await count()).toBe(beforeMissing + 1)
+      expect(await expectActualClick(missing)).toMatchObject({ id: 'go', trusted: true })
+      expect(missing.interaction?.screenshot).toBeUndefined()
+      expect(missing.interaction?.screenshotUnavailable).toContain('截图表面不可用')
+      // Faults belong to the pre-click capture only; the new page observation
+      // must still contain its own pixels after both wrappers are consumed.
+      await expectViewportPixels(missing)
     } finally {
       await app!.evaluate(({ webContents }, url) => {
         const guest = webContents.getAllWebContents().find(wc => wc.getURL() === url)
         if (!guest) return
-        const owned = guest as typeof guest & { fixtureOriginalCapture?: typeof guest.capturePage }
+        const owned = guest as typeof guest & {
+          fixtureOriginalCapture?: typeof guest.capturePage
+          fixtureOriginalCaptureCommand?: typeof guest.debugger.sendCommand
+        }
         if (owned.fixtureOriginalCapture) { guest.capturePage = owned.fixtureOriginalCapture; delete owned.fixtureOriginalCapture }
+        if (owned.fixtureOriginalCaptureCommand) { guest.debugger.sendCommand = owned.fixtureOriginalCaptureCommand; delete owned.fixtureOriginalCaptureCommand }
       }, raceUrl)
       await assertTool('navigate', { tabId, url: `${origin}/demo` })
     }
@@ -506,7 +537,7 @@ test.describe.serial('内置浏览器与远端工具通道', () => {
   test('关闭网页销毁WebContents，错误协议不创建页面', async () => {
     const count = await page.evaluate(() => window.aether.browser.list().then(tabs => tabs.length))
     const blocked = await page.evaluate(async () => { try { await window.aether.browser.create({ url: 'file:///C:/Windows/win.ini' }); return '' } catch (error) { return String(error) } })
-    expect(blocked).toContain('仅支持')
+    expect(blocked).toContain('不能通过文件地址访问本机文件')
     expect(await page.evaluate(() => window.aether.browser.list().then(tabs => tabs.length))).toBe(count)
     await page.evaluate(tabId => window.aether.browser.close(tabId), tabId)
     expect(await app!.evaluate(({ webContents }, url) => webContents.getAllWebContents().some(wc => wc.getURL() === url), `${origin}/demo`)).toBe(false)

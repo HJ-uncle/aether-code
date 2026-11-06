@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { requestOrThrow } from '@renderer/core/engine/client'
 import { getEngineSource } from '@renderer/core/engine/source'
 import { listKnowledgeBases, type KnowledgeBase } from '@renderer/core/engine/knowledge'
+import { isMotionInteractive } from '@renderer/workbench/motion'
 import './resource-picker.css'
 
 export type ResourceKind = 'skill' | 'mcp' | 'kb'
@@ -81,6 +82,7 @@ export function ResourcePicker({ query, projectPath, source, onSelect, onClose }
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
+      if (!isMotionInteractive(rootRef.current)) return
       if (event.isComposing) return
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return }
       if ((event.key === 'Enter' || event.key === 'Tab') && event.target instanceof HTMLButtonElement && event.target.classList.contains('resource-picker__retry')) return
@@ -102,11 +104,13 @@ export function ResourcePicker({ query, projectPath, source, onSelect, onClose }
   // composer after focus moved to a message, toolbar control, or another pane.
   useEffect(() => {
     const onPointerDown = (event: PointerEvent): void => {
+      if (!isMotionInteractive(rootRef.current)) return
       if (rootRef.current?.contains(event.target as Node)) return
       onClose()
     }
-    const onViewportChange = (): void => onClose()
+    const onViewportChange = (): void => { if (isMotionInteractive(rootRef.current)) onClose() }
     const onScroll = (event: Event): void => {
+      if (!isMotionInteractive(rootRef.current)) return
       // Scrolling the suggestions (including keyboard scrollIntoView) is part of
       // selection, not a dismissal. Only a moving ancestor invalidates the anchor.
       if (event.target instanceof Node && rootRef.current?.contains(event.target)) return
@@ -124,7 +128,9 @@ export function ResourcePicker({ query, projectPath, source, onSelect, onClose }
     }
   }, [onClose])
 
-  useEffect(() => { rootRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' }) }, [active])
+  useEffect(() => {
+    if (isMotionInteractive(rootRef.current)) rootRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
+  }, [active])
 
   return <div ref={rootRef} className="resource-picker" role="listbox" aria-label="选择 MCP、技能或知识库">
     <div className="resource-picker__title">添加资源 <span>/skill、/mcp、/kb</span></div>

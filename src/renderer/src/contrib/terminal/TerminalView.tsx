@@ -187,7 +187,7 @@ export function TerminalView(): JSX.Element {
             <Icon name="plus" size={16} />
           </button>
         </div>
-        <div className="terminal-view__list" role="tablist" aria-label="终端标签">
+        <div className="terminal-view__list" data-scroll-axis="x" role="tablist" aria-label="终端标签">
           {state.sessions.map((session) => (
             <Item key={session.id} session={session} active={session.id === state.activeId} onMenu={openMenu} />
           ))}

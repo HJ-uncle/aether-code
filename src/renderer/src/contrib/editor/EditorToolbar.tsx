@@ -1,10 +1,11 @@
-import { useEffect, useState, type JSX, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type JSX, type ReactNode } from 'react'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { fileIdentity } from '@renderer/core/editor/file-identity'
 import { getDocument, isDirty, saveDocument, useEditor } from '@renderer/core/editor/editor-store'
-import { openViewToRight, useEditorGroups } from '@renderer/core/editor/editor-groups'
+import { useEditorGroups } from '@renderer/core/editor/editor-groups'
 import { isRemoteEngine } from '@renderer/core/engine/source'
-import { browserAction, initializeBrowser } from '../browser/browser-store'
+import { browserAction } from '../browser/browser-store'
+import { runHtmlFile } from './run-html'
 import { watchDocumentSymbols, type DocumentSymbolsSnapshot } from '@renderer/core/editor/document-symbols'
 import { documentSymbolKey, documentSymbolKindLabel, findDocumentSymbolPath } from '@renderer/core/editor/document-symbol-utils'
 import { openWorkspaceResource } from '@renderer/core/editor/monaco-workspace'
@@ -30,6 +31,8 @@ export function EditorToolbar({ filePath, groupId, children }: {
   const { focusedGroupId } = useEditorGroups()
   const [symbols, setSymbols] = useState<DocumentSymbolsSnapshot>({ status: 'loading', symbols: [] })
   const [pathPicker, setPathPicker] = useState<{ directory: string; anchor: DOMRect } | null>(null)
+  const [running, setRunning] = useState(false)
+  const runningRef = useRef(false)
   useEffect(() => watchDocumentSymbols(filePath, setSymbols), [filePath])
   const symbolPath = cursor && (!groupId || groupId === focusedGroupId) && fileIdentity(cursor.filePath) === fileIdentity(filePath) && symbols.status === 'ready'
     ? findDocumentSymbolPath(symbols.symbols, { lineNumber: cursor.line, column: cursor.column })
@@ -71,14 +74,19 @@ export function EditorToolbar({ filePath, groupId, children }: {
       </nav>
       <div className="editor-toolbar__actions">
         {children}
-        {/\.html?$/i.test(filePath) && root && !doc?.sessionFileTarget && !isRemoteEngine() ? <button type="button" className="editor-toolbar__button" aria-label="保存并在浏览器中运行" title="保存并在右侧浏览器中运行 HTML"
+        {/\.html?$/i.test(filePath) && root && !doc?.sessionFileTarget && !isRemoteEngine() ? <button type="button" className="editor-toolbar__button" aria-label="保存并在浏览器中运行" title="保存并在右侧浏览器中运行 HTML" disabled={running || doc?.loading}
           onClick={() => browserAction(async () => {
-            const doc = getDocument(filePath)
-            if (doc && isDirty(doc)) await saveDocument(filePath)
-            await initializeBrowser()
-            openViewToRight('browser')
-            await window.aether.browser.openFile(filePath, root)
-          })}><Icon name="play" size={14} /><span>运行</span></button> : null}
+            if (runningRef.current) return
+            runningRef.current = true
+            setRunning(true)
+            try {
+              await runHtmlFile({ path: filePath, root }, async () => {
+                const current = getDocument(filePath)
+                if (!current || current.loading) throw new Error('文件尚未就绪，请稍后重试。')
+                if (isDirty(current)) await saveDocument(filePath)
+              })
+            } finally { runningRef.current = false; setRunning(false) }
+          })}><Icon name="play" size={14} /><span>{running ? '正在打开…' : '运行'}</span></button> : null}
         <button type="button" className="editor-toolbar__button editor-toolbar__button--accent" aria-label="将当前文件添加到对话"
           title="将当前文件添加到对话" onClick={() => addFilesToChat([{ path: filePath, kind: 'file' }])}>
           <Icon name="chat" size={14} />

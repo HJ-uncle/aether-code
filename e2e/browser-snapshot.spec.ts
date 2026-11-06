@@ -30,6 +30,76 @@ function clickInteraction() {
 
 const snapshotPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aDdwAAAAASUVORK5CYII='
 const screenshot = { dataUrl: snapshotPng, width: 1, height: 1 }
+const omittedScreenshot = { width: 1, height: 1, retainedForDisplay: true, omittedFromStream: true,
+  retainedInHistory: true, reason: 'stream-byte-budget' }
+
+test('capture failure reasons survive parsing separately from page text and click evidence', () => {
+  const reason = '截图暂不可用：显示表面未准备好'
+  const input = { ...snapshot(), screenshotUnavailable: reason,
+    interaction: { ...clickInteraction(), screenshot, screenshotUnavailable: reason } }
+  const parsed = parseToolResult(JSON.stringify(input)).browserSnapshots?.[0]
+  expect(parsed?.screenshot).toBeUndefined()
+  expect(parsed?.screenshotUnavailable).toBe(reason)
+  expect(parsed?.text).toBe(snapshot().text)
+  expect(parsed?.interaction?.screenshot).toEqual(screenshot)
+  expect(parsed?.interaction?.screenshotUnavailable).toBe(reason)
+  expect(parseBrowserSnapshot({ ...snapshot(), screenshotUnavailable: 'x'.repeat(1500) })?.screenshotUnavailable).toHaveLength(1000)
+  for (const value of [null, 5, {}, '   ']) expect(parseBrowserSnapshot({ ...snapshot(), screenshotUnavailable: value })?.screenshotUnavailable).toBeUndefined()
+})
+
+test('stream-omitted page and click screenshots expose a notice without losing their original markers', () => {
+  const input = { ...snapshot(), screenshot: omittedScreenshot,
+    interaction: { ...clickInteraction(), screenshot: omittedScreenshot } }
+  const original = JSON.stringify(input)
+  const raw = `  ${JSON.stringify(input, null, 4)}\n`
+  const expected = parseBrowserSnapshot(input)
+  expect(expected?.screenshotUnavailable).toBe('此记录未附截图')
+  expect(expected?.interaction?.screenshotUnavailable).toBe('此记录未附截图')
+  expect(expected?.screenshot).toBeUndefined()
+  expect(expected?.interaction?.screenshot).toBeUndefined()
+  expect(expected?.snapshotUnavailable).toBeUndefined()
+  expect(expected?.text).toBe(snapshot().text)
+  for (const value of [input, raw, JSON.stringify(raw), { content: [{ type: 'text', text: raw }] }]) {
+    const parsed = parseToolResult(value)
+    expect(parsed.browserSnapshots).toEqual([expected])
+    expect(parsed.images).toEqual([])
+    expect(parsed.text).not.toContain('[图片数据无效或格式不支持]')
+    expect(parsed.text).toContain('omittedFromStream')
+    expect(parsed.text).toContain('retainedInHistory')
+  }
+  expect(parseToolResult(raw).text).toBe(raw)
+  expect(JSON.parse(parseToolResult(input).text).screenshot).toEqual(omittedScreenshot)
+  expect(JSON.stringify(input)).toBe(original)
+})
+
+test('a missing page screenshot does not hide a real pre-click image or invent a page failure', () => {
+  const input = { ...snapshot(), screenshot: omittedScreenshot, interaction: { ...clickInteraction(), screenshot } }
+  const parsed = parseToolResult(input)
+  expect(parsed.browserSnapshots?.[0].screenshotUnavailable).toBe('此记录未附截图')
+  expect(parsed.browserSnapshots?.[0].interaction?.screenshot).toEqual(screenshot)
+  expect(parsed.browserSnapshots?.[0].interaction?.screenshotUnavailable).toBeUndefined()
+  expect(parsed.browserSnapshots?.[0].snapshotUnavailable).toBeUndefined()
+  expect(JSON.parse(parsed.text).screenshot).toEqual(omittedScreenshot)
+  expect(parsed.images).toEqual([])
+})
+
+test('incomplete or unknown screenshot markers never become pixels or verified omission notices', () => {
+  for (const marker of [undefined, null, {}, { width: 1, height: 1 }, { retainedForDisplay: true },
+    { ...omittedScreenshot, omittedFromStream: false }, { ...omittedScreenshot, retainedInHistory: 'true' },
+    { ...omittedScreenshot, reason: 'unknown' }, { ...omittedScreenshot, width: 0 },
+    { ...omittedScreenshot, height: 1601 }, { ...omittedScreenshot, dataUrl: 'invalid' }]) {
+    const parsed = parseToolResult({ ...snapshot(), screenshot: marker, interaction: { ...clickInteraction(), screenshot: marker } })
+    expect(parsed.images).toEqual([])
+    expect(parsed.browserSnapshots?.[0].screenshot).toBeUndefined()
+    expect(parsed.browserSnapshots?.[0].screenshotUnavailable).toBeUndefined()
+    expect(parsed.browserSnapshots?.[0].interaction?.screenshot).toBeUndefined()
+    expect(parsed.browserSnapshots?.[0].interaction?.screenshotUnavailable).toBeUndefined()
+  }
+  const pixels = { ...omittedScreenshot, ...screenshot }
+  const parsed = parseBrowserSnapshot({ ...snapshot(), screenshot: pixels })
+  expect(parsed?.screenshot).toEqual(screenshot)
+  expect(parsed?.screenshotUnavailable).toBeUndefined()
+})
 
 test('viewport screenshots stay with page and pre-click geometry through nested history', () => {
   const input = { ...snapshot(), screenshot, interaction: { ...clickInteraction(), screenshot } }

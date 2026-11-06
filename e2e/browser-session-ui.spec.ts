@@ -7,6 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { AetherIdeApi } from '../src/preload'
 import type { BrowserSnapshot, BrowserTabState, BrowserToolRequest } from '../src/shared/browser'
+import type { RootRun } from '../src/shared/root-run'
 import { parseMentionContent } from '../src/renderer/src/contrib/chat/mention-context'
 import { monitorElectronHealth } from './helpers/electron-health'
 
@@ -14,6 +15,7 @@ declare global { interface Window { aether: AetherIdeApi } }
 
 const root = resolve(__dirname, '..')
 const instanceToken = 'browser-session-fixture-token'
+const initialSessionId = 'browser-session-code-initial'
 type Registration = { clientId: string; clientToken: string; sessionId: string }
 type Command = { requestId: string; sessionId: string; action: BrowserToolRequest['action']; args: object; expiresAt: number }
 type Reply = { success: boolean; output: string; error?: string; metadata?: { code: string; operationPerformed: boolean | 'unknown' } }
@@ -26,6 +28,16 @@ const registrations = new Map<string, Registration>()
 const queue: Array<{ clientId: string; command: Command }> = []
 const replies = new Map<string, Reply>()
 const chatRequests: Record<string, unknown>[] = []
+const chatTurns = new Map<string, { run: RootRun; prompt: string }>()
+const admissionReceipts = new Map<string, { admission: Record<string, unknown>; run: RootRun }>()
+const chatAnswer = '已收到浏览器引用。'
+const chatHistory = (sessionId: string) => {
+  const turn = chatTurns.get(sessionId)
+  return turn ? [
+    { id: turn.run.userMessageId, role: 'user', content: turn.prompt, conversationId: turn.run.turnId, createdAt: turn.run.createdAt, metadata: { rootRunId: turn.run.runId } },
+    { id: turn.run.assistantMessageId, role: 'assistant', content: chatAnswer, conversationId: turn.run.turnId, createdAt: turn.run.updatedAt, metadata: { rootRunId: turn.run.runId } }
+  ] : []
+}
 const fileReads: string[] = []
 const pageErrors: string[] = []
 const html = (name: string): string => `<!doctype html><html lang="zh"><meta charset="utf-8"><title>会话网页 ${name}</title>
@@ -77,22 +89,56 @@ const server = createServer((request, response) => {
     }
     if (url.pathname === '/api/v1/chat' && request.method === 'POST') {
       chatRequests.push(body)
-      response.writeHead(200, { 'content-type': 'text/event-stream;charset=utf-8' }).end(`data: ${JSON.stringify({ content: '已收到浏览器引用。' })}\n\nevent: done\ndata: [DONE]\n\n`)
+      const now = Date.now(), id = randomUUID()
+      const running: RootRun = { schemaVersion: 1, runId: `browser-run-${id}`, sessionId: requestedSession,
+        turnId: `browser-turn-${id}`, userMessageId: `browser-user-${id}`, assistantMessageId: `browser-answer-${id}`,
+        status: 'running', seq: 1, version: 1, modelId: 'browser-session-model', pending: [],
+        workspacePaths: ['/remote/browser-session'], createdAt: now, updatedAt: now }
+      const run: RootRun = { ...running, status: 'succeeded', seq: 4, version: 2, updatedAt: now + 1, finishedAt: now + 1 }
+      chatTurns.set(requestedSession, { run, prompt: String(body.message) })
+      if (body.admission && typeof body.admission === 'object' && !Array.isArray(body.admission)) {
+        const admission = body.admission as Record<string, unknown>
+        if (admission.protocolVersion !== 1 || admission.owner !== 'code' || typeof admission.requestKey !== 'string') throw new Error('Invalid Code browser fixture admission')
+        admissionReceipts.set(admission.requestKey, { admission, run })
+      }
+      // A content frame is not proof of admission. The production composer
+      // releases its authored draft only for a new validated root on this SSE.
+      const frames = [{ run: running }, { userMessage: chatHistory(requestedSession)[0] }, { content: chatAnswer }, { run }]
+      response.writeHead(200, { 'content-type': 'text/event-stream;charset=utf-8' }).end(
+        frames.map((payload, index) => `id: ${run.runId}:${index + 1}\ndata: ${JSON.stringify(payload)}\n\n`).join('') + 'data: [DONE]\n\n')
       return
     }
-    if (url.pathname === '/api/v1/chat/snapshot') { send({ schemaVersion: 1, sessionId: url.searchParams.get('sessionId'), source: 'persisted', finished: true, eventId: null, projection: [], runs: [], history: [], todos: [], changes: [], commandJobs: [] }); return }
+    if (url.pathname === '/api/v1/chat/snapshot') {
+      const turn = chatTurns.get(requestedSession)
+      send({ schemaVersion: 1, sessionId: requestedSession, source: 'persisted', finished: true,
+        eventId: turn ? `${turn.run.runId}:4` : null, projection: [], runs: turn ? [turn.run] : [],
+        ...(turn ? { run: turn.run } : {}), history: chatHistory(requestedSession), todos: [], changes: [], commandJobs: [] }); return
+    }
+    if (url.pathname === '/api/v1/conversation/history') { send(chatHistory(requestedSession)); return }
     // The current client resolves the subagent protocol before accepting a
     // history snapshot. An HTTP 200 [] here means malformed protocol, not an
     // empty session; keep this fixture on the real negotiated contract.
     if (url.pathname === '/api/v1/subagent/capabilities') { send({ schemaVersion: 2, eventVersions: [1, 2], views: ['legacy', 'summary'], toolPagination: true, eventPagination: true, detailChunks: true, exactWatermarks: true }); return }
     if (url.pathname === '/api/v1/subagent/runs') { send({ schemaVersion: 2, runs: [], listComplete: true, hasMore: false, revision: 'fixture' }); return }
-    if (url.pathname === '/api/v1/chat/status') { send({ running: false, finished: true }); return }
+    if (url.pathname === '/api/v1/chat/status') { send({ running: false, finished: true, run: chatTurns.get(requestedSession)?.run }); return }
     if (url.pathname === '/api/v1/chat/stream') { response.writeHead(200, { 'content-type': 'text/event-stream' }).end('data: [DONE]\n\n'); return }
-    if (url.pathname === '/api/v1/chat/admission/context') { send({ protocolVersion: 1, tenantId: 'fixture', sessionId: requestedSession,
-      namespace: { id: 'browser-session', generation: 'one' }, transport: { toolProfile: request.headers['x-aether-tool-profile'] === 'general' ? 'general' : 'code', runLifetime: 'durable', subagentProtocol: 2 }, root: null, predecessor: null }); return }
+    if (url.pathname === '/api/v1/chat/admission/context') {
+      const run = chatTurns.get(requestedSession)?.run, root = run ? { ...run, attemptId: `attempt-${run.runId}` } : null
+      send({ protocolVersion: 1, tenantId: 'fixture', sessionId: requestedSession,
+        namespace: { id: 'browser-session', generation: 'one' }, transport: { toolProfile: request.headers['x-aether-tool-profile'] === 'general' ? 'general' : 'code', runLifetime: 'durable', subagentProtocol: 2 },
+        root, predecessor: root ? { runId: root.runId, attemptId: root.attemptId, version: root.version } : null }); return
+    }
+    if (url.pathname === '/api/v1/chat/admission/receipt') {
+      const accepted = admissionReceipts.get(String(body.requestKey)), run = accepted?.run.sessionId === requestedSession ? accepted.run : undefined
+      send(accepted && run ? { protocolVersion: 1, status: 'accepted', receipt: { ...accepted.admission, sessionId: requestedSession,
+        rootRunId: run.runId, turnId: run.turnId, userMessageId: run.userMessageId, assistantMessageId: run.assistantMessageId },
+        run, projection: { rootVersion: run.version, rootAttemptId: `attempt-${run.runId}`,
+          user: { messageId: run.userMessageId, state: 'projected' }, assistant: { anchorMessageId: run.assistantMessageId, state: 'persisted', messageId: run.assistantMessageId } } }
+        : { protocolVersion: 1, status: 'absent', namespace: body.namespace, sessionId: requestedSession, requestKey: body.requestKey }); return
+    }
     if (url.pathname === '/api/v1/security/mode') { send({ sessionId: requestedSession, mode: 'standard' }); return }
     if (url.pathname === '/api/v1/workbench/clients' || url.pathname === '/api/v1/cron/capabilities') { send({}, 404); return }
-    if (url.pathname === '/api/v1/chat/runs') { send({ runs: [] }); return }
+    if (url.pathname === '/api/v1/chat/runs') { const turn = chatTurns.get(requestedSession); send({ runs: turn ? [turn.run] : [] }); return }
     if (url.pathname === '/api/v1/workspace/file' && request.method === 'GET') { fileReads.push(url.searchParams.get('path') ?? ''); send({ content: 'UNEXPECTED_FILE_REFERENCE', encoding: 'utf8' }); return }
     if (url.pathname === '/api/v1/models') { send([{ id: 'browser-session-model', modelId: 'browser-session-model', displayName: '浏览器会话测试', provider: 'openai', isEnabled: true, capabilities: { toolCalling: true, contextWindow: 128000 } }]); return }
     if (url.pathname === '/api/v1/workspace/bind') { send({ workspaceRoot: '/remote/browser-session' }); return }
@@ -140,9 +186,10 @@ async function probe(target: Guest): Promise<{ token: string; clicks: number; tr
   return app!.evaluate(({ webContents }, id) => webContents.fromId(id)!.executeJavaScript('({...window.__browserSession,value:document.querySelector("#name").value})'), target.webContentsId)
 }
 async function openPage(name: string): Promise<Guest> {
-  await page.getByRole('button', { name: '新建网页标签（Ctrl+T）', exact: true }).click()
-  await page.getByLabel('网页地址', { exact: true }).fill(`${origin}/page/${name}`)
-  await page.getByLabel('网页地址', { exact: true }).press('Enter')
+  const browser = page.locator('.browser-view:visible')
+  await browser.getByRole('button', { name: '新建网页标签（Ctrl+T）', exact: true }).click()
+  await browser.getByLabel('网页地址', { exact: true }).fill(`${origin}/page/${name}`)
+  await browser.getByLabel('网页地址', { exact: true }).press('Enter')
   await expect.poll(tabs).toContainEqual(expect.objectContaining({ url: `${origin}/page/${name}`, title: `会话网页 ${name}`, loading: false }))
   return guest((await tabs()).find(tab => tab.url === `${origin}/page/${name}`)!)
 }
@@ -158,7 +205,7 @@ test.describe.serial('手动浏览器标签的会话可见性与右键菜单', (
     origin = `http://127.0.0.1:${address.port}`
     mkdirSync(join(root, '.e2e-tmp'), { recursive: true })
     fixture = mkdtempSync(join(root, '.e2e-tmp/browser-session-ui-'))
-    writeFileSync(join(fixture, 'settings.json'), JSON.stringify({ engineMode: 'remote', remoteBaseUrl: origin, autoStartEngine: false, lastSessionId: '', lastFolder: '' }))
+    writeFileSync(join(fixture, 'settings.json'), JSON.stringify({ engineMode: 'remote', remoteBaseUrl: origin, autoStartEngine: false, lastSessionId: initialSessionId, lastFolder: '' }))
     const env: NodeJS.ProcessEnv = { ...process.env, AETHER_IDE_REMOTE_INSTANCE_TOKEN: instanceToken, AETHER_GLOBAL_DIR: join(fixture, 'global') }
     for (const key of Object.keys(env)) if (['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL', 'AETHER_IDE_REMOTE_API_KEY', 'AETHER_IDE_REMOTE_BEARER_TOKEN', 'AETHER_IDE_REMOTE_AUTH_URL'].includes(key.toUpperCase())) delete env[key]
     app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || '.', `--user-data-dir=${fixture}`], cwd: root, env })
@@ -176,6 +223,12 @@ test.describe.serial('手动浏览器标签的会话可见性与右键菜单', (
     page = await app.firstWindow()
     page.on('pageerror', error => pageErrors.push(String(error)))
     await expect(page.locator('.status-bar')).toBeVisible()
+    // A pending page belongs to the selected conversation even before engine
+    // startup. The endpoint-local selection must restore that same identity;
+    // inventing a new session would correctly leave the old page isolated.
+    await page.evaluate(({ origin, id }) => {
+      localStorage.setItem(`aether:lastSessionId:${encodeURIComponent(`remote:${origin}`)}`, id)
+    }, { origin, id: initialSessionId })
     await page.keyboard.press('Control+Alt+b')
     await page.getByLabel('网页地址', { exact: true }).fill(`${origin}/page/original`)
     await page.getByLabel('网页地址', { exact: true }).press('Enter')
@@ -185,13 +238,14 @@ test.describe.serial('手动浏览器标签的会话可见性与右键菜单', (
     // Opening the page before engine startup reproduces the missing-tab bug:
     // a later connection must adopt this same page without a second navigation.
     expect(original.tab.context).toBeUndefined()
+    expect(original.tab.presentation).toMatchObject({ mode: 'code', sessionId: initialSessionId })
     await expect.poll(() => page.evaluate(() => window.aether.browser.getConnection())).toMatchObject({ status: 'disconnected' })
     const started = await page.evaluate(() => window.aether.engine.start())
     expect(started.phase, started.error ?? '').toBe('ready')
     await expect.poll(() => page.evaluate(() => window.aether.browser.getConnection())).toMatchObject({ status: 'connected' })
     const connected = await page.evaluate(() => window.aether.browser.getConnection())
     sessionId = connected.sessionId ?? ''
-    expect(sessionId).not.toBe('')
+    expect(sessionId).toBe(initialSessionId)
     await expect.poll(() => client?.sessionId).toBe(sessionId)
     await expect(page.getByTitle('新建会话（开一条全新对话）', { exact: true })).toBeEnabled()
   })
@@ -224,7 +278,7 @@ test.describe.serial('手动浏览器标签的会话可见性与右键菜单', (
     expect(visible[0].context?.sessionId).toBe(sessionId)
     const snapshot = await result<BrowserSnapshot>('snapshot', { tabId: original.tab.tabId })
     expect(snapshot.tab.tabId).toBe(original.tab.tabId)
-    expect(snapshot.text).toContain('会话网页 original')
+    expect(snapshot.text).toContain(original.tab.title)
     const observation = await command('tabs')
     expect(observation.metadata).toEqual({ code: 'BROWSER_OBSERVATION_COMPLETE', operationPerformed: false })
     expect(snapshot.tab.availability).toMatchObject({ window: 'visible', initialization: 'ready' })
@@ -233,6 +287,7 @@ test.describe.serial('手动浏览器标签的会话可见性与右键菜单', (
 
   test('会话切换不会偷偷迁移标签，过期添加请求不能污染新会话', async () => {
     const oldContext = (await tabs()).find(tab => tab.tabId === original.tab.tabId)!.context!
+    const before = await probe(original)
     const oldSession = sessionId
     await page.getByTitle('新建会话（开一条全新对话）', { exact: true }).click()
     await expect.poll(async () => {
@@ -256,7 +311,16 @@ test.describe.serial('手动浏览器标签的会话可见性与右键菜单', (
     expect(stale).toMatch(/会话|变化/)
     expect((await tabs()).find(tab => tab.tabId === original.tab.tabId)?.context).toEqual(oldContext)
     expect((await result<BrowserTabState[]>('tabs')).map(tab => tab.tabId)).not.toContain(original.tab.tabId)
+    await expect(page.locator(`.browser-view:visible .browser-tab[data-browser-tab-id="${original.tab.tabId}"]`)).toHaveCount(0)
+    expect(await probe(original)).toEqual(before)
     sessionId = nextSession
+    // The remaining menu tests operate on a page owned by the new session.
+    // Retire the old native fixture only after proving its context and DOM
+    // survived the switch; the UI must never expose a foreign session's tab.
+    await page.evaluate(id => window.aether.browser.close(id), original.tab.tabId)
+    await expectDestroyed(original)
+    original = await openPage('original-current')
+    expect(original.tab.context?.sessionId).toBe(sessionId)
   })
 
   test('右键添加把原网页和准确标签引用交给当前会话，不重开网页也不自动发送', async ({}, testInfo) => {
@@ -264,6 +328,10 @@ test.describe.serial('手动浏览器标签的会话可见性与右键菜单', (
     const hideChat = page.getByRole('button', { name: '关闭对话面板', exact: true })
     if (await hideChat.isVisible()) await hideChat.click()
     await menuOn(original.tab.tabId, true)
+    await expect(page.getByRole('menuitem', { name: '新建标签页', exact: true })).toBeFocused()
+    await page.keyboard.press('ArrowDown')
+    await expect(page.getByRole('menuitem', { name: '复制标签页', exact: true })).toBeFocused()
+    await page.keyboard.press('ArrowUp')
     await expect(page.getByRole('menuitem', { name: '新建标签页', exact: true })).toBeFocused()
     await page.keyboard.press('End')
     await expect(page.getByRole('menuitem', { name: '关闭全部标签页', exact: true })).toBeFocused()
@@ -279,13 +347,13 @@ test.describe.serial('手动浏览器标签的会话可见性与右键菜单', (
     await expect(page.getByRole('menuitem', { name: /^添加到当前会话/ })).toBeVisible()
     await choose('添加到当前会话')
     await expect(page.locator('.mention-input')).toBeVisible()
-    await expect(page.locator('.mention-input .mention-chip--browser')).toContainText('会话网页 original')
+    await expect(page.locator('.mention-input .mention-chip--browser')).toContainText(original.tab.title)
     const visible = await result<BrowserTabState[]>('tabs')
     expect(visible.map(tab => tab.tabId)).toEqual([original.tab.tabId])
     expect(visible[0].context?.sessionId).toBe(sessionId)
     const snapshot = await result<BrowserSnapshot>('snapshot', { tabId: original.tab.tabId })
     expect(snapshot.tab.tabId).toBe(original.tab.tabId)
-    expect(snapshot.text).toContain('会话网页 original')
+    expect(snapshot.text).toContain(original.tab.title)
     expect(await probe(original)).toEqual(before)
     expect(chatRequests).toHaveLength(beforeChatRequests)
 
@@ -309,7 +377,7 @@ test.describe.serial('手动浏览器标签的会话可见性与右键菜单', (
     const reference = /<reference type="browser"[^>]*>\n`{3,}(?:json)?\n([\s\S]*?)\n`{3,}\n<\/reference>/.exec(message)
     expect(reference).not.toBeNull()
     const context = (await tabs()).find(tab => tab.tabId === original.tab.tabId)!.context!
-    expect(JSON.parse(reference![1])).toMatchObject({ tabId: original.tab.tabId, url: original.tab.url, title: '会话网页 original', ...context })
+    expect(JSON.parse(reference![1])).toMatchObject({ tabId: original.tab.tabId, url: original.tab.url, title: original.tab.title, ...context })
     expect(parseMentionContent(message).refs).toContainEqual(expect.objectContaining({ t: 'browser' }))
     expect(fileReads.slice(readCount)).toEqual([])
     await expect(input.locator('.mention-chip--browser')).toHaveCount(0)
@@ -334,6 +402,37 @@ test.describe.serial('手动浏览器标签的会话可见性与右键菜单', (
     await (await tabButton(original.tab.tabId)).click()
     const beforeOriginal = await probe(original)
     await menuOn(target.tab.tabId)
+    const reopening = await page.evaluate(async tabId => {
+      const selector = '.browser-tab-menu-host .context-menu'
+      const old = document.querySelector<HTMLElement>(selector)
+      const button = document.querySelector<HTMLElement>(`.browser-view .browser-tab[data-browser-tab-id="${tabId}"] [role="tab"]`)
+      if (!old || !button) throw new Error('Missing menu or target for rapid reopen')
+      const bounds = button.getBoundingClientRect(), started = performance.now()
+      return await new Promise<{ closingInert: boolean; reopened: boolean; survived: boolean }>(resolve => {
+        let closingInert = false, reopened = false
+        const observer = new MutationObserver(() => {
+          if (reopened || old.dataset.motionState !== 'closing') return
+          closingInert = old.inert && old.getAttribute('aria-hidden') === 'true'
+          reopened = true
+          // Reinvoke at the identical pointer coordinates during the first
+          // closing frame, without waiting for the 120 ms exit to finish.
+          button.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2,
+            clientX: bounds.x + bounds.width / 2, clientY: bounds.y + bounds.height / 2 }))
+        })
+        observer.observe(old, { attributes: true, attributeFilter: ['data-motion-state', 'inert', 'aria-hidden'] })
+        const tick = (): void => {
+          const current = document.querySelector<HTMLElement>(selector)
+          if (performance.now() - started >= 260) {
+            observer.disconnect()
+            resolve({ closingInert, reopened, survived: Boolean(current && current !== old && current.dataset.motionState === 'open' && !current.inert) })
+          } else requestAnimationFrame(tick)
+        }
+        old.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+        requestAnimationFrame(tick)
+      })
+    }, target.tab.tabId)
+    expect(reopening).toEqual({ closingInert: true, reopened: true, survived: true })
+    await expect(page.getByRole('menuitem', { name: '新建标签页', exact: true })).toBeFocused()
     await choose('复制网页地址')
     await expect(page.getByText('网页地址已复制', { exact: true })).toBeVisible()
     await expect.poll(() => app!.evaluate(({ clipboard }, expected) => clipboard.readText() === expected, target.tab.url), { message: '复制网页地址应在写入完成后更新系统剪贴板' }).toBe(true)
@@ -386,21 +485,35 @@ test.describe.serial('手动浏览器标签的会话可见性与右键菜单', (
     expect(workSessionId).not.toBe(sessionId)
     await expect.poll(() => client?.sessionId).toBe(workSessionId)
     expect((await result<BrowserTabState[]>('tabs')).map(tab => tab.tabId)).not.toContain(original.tab.tabId)
-    await menuOn(original.tab.tabId)
+    await expect(work.locator(`.browser-tab[data-browser-tab-id="${original.tab.tabId}"]`)).toHaveCount(0)
+    const codeBefore = await probe(original)
+    const rejected = await command('snapshot', { tabId: original.tab.tabId })
+    expect(rejected.success).toBe(false)
+    expect(rejected.metadata).toEqual({ code: 'BROWSER_OPERATION_NOT_PERFORMED', operationPerformed: false })
+    const workPage = await openPage('work-own')
+    expect(workPage.tab.presentation).toMatchObject({ mode: 'work', sessionId: workSessionId })
+    const workBefore = await probe(workPage)
+    await menuOn(workPage.tab.tabId)
     await choose('添加到当前会话')
-    await expect.poll(tabs).toContainEqual(expect.objectContaining({ tabId: original.tab.tabId, context: expect.objectContaining({ sessionId: workSessionId }) }))
+    await expect.poll(tabs).toContainEqual(expect.objectContaining({ tabId: workPage.tab.tabId, context: expect.objectContaining({ sessionId: workSessionId }) }))
     await navigateWork('工作台')
     const workInput = work.getByRole('textbox', { name: '任务目标', exact: true })
     await expect(workInput).toContainText('Work 草稿已有要求')
-    await expect(workInput.locator('.mention-chip--browser')).toContainText('会话网页 original')
+    await expect(workInput.locator('.mention-chip--browser')).toContainText('会话网页 work-own')
     expect(chatRequests).toHaveLength(chatCount)
+    expect(await probe(workPage)).toEqual(workBefore)
+    expect(await probe(original)).toEqual(codeBefore)
 
     await page.getByRole('tab', { name: 'Code 开发', exact: true }).click()
     await expect(codeInput).toContainText('Code 草稿保持原样')
     await expect(codeInput.locator('.mention-chip--browser')).toHaveCount(0)
     await expect.poll(() => page.evaluate(() => window.aether.browser.getConnection())).toMatchObject({ status: 'connected', sessionId })
     await expect.poll(() => client?.sessionId).toBe(sessionId)
-    expect((await result<BrowserTabState[]>('tabs')).map(tab => tab.tabId)).not.toContain(original.tab.tabId)
+    expect((await result<BrowserTabState[]>('tabs')).map(tab => tab.tabId)).toEqual([original.tab.tabId])
+    await expect(page.locator(`.mode-surface[data-mode="code"] .browser-tab[data-browser-tab-id="${workPage.tab.tabId}"]`)).toHaveCount(0)
+    expect((await tabs()).find(tab => tab.tabId === original.tab.tabId)?.context?.sessionId).toBe(sessionId)
+    await page.evaluate(id => window.aether.browser.close(id), workPage.tab.tabId)
+    await expectDestroyed(workPage)
   })
 
   test('关闭右侧、其他与全部标签精确保留目标并销毁对应原生页面', async () => {

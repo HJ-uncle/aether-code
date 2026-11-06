@@ -1,0 +1,25 @@
+.work-change-review { min-width: 0; color: var(--fg); font: 12px/1.5 var(--font-ui); }
+.work-change-review__actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-2); min-height: var(--control-h); }
+.work-change-review__count { margin-right: auto; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.work-change-review__hint { color: var(--fg-muted); }
+.work-change-review button { display: inline-flex; align-items: center; gap: var(--space-1); min-height: var(--control-h); padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius); background: var(--bg-elevated); box-shadow: inset 0 0 0 1px var(--border); color: inherit; font: inherit; cursor: pointer; transition: background var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
+.work-change-review button > svg { color: var(--fg-muted); }
+.work-change-review button:hover:not(:disabled) { background: var(--bg-hover); }
+.work-change-review button:disabled { opacity: 0.5; cursor: default; }
+/* Background polling blocks writes without flashing the retained toolbar. */
+.work-change-review__actions.is-refreshing button:disabled { opacity: 1; }
+.work-change-review button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.work-change-review--single { padding: var(--space-1) 0; }
+.work-change-review__error,
+.work-change-review__notice { margin: var(--space-1) 0; overflow-wrap: anywhere; }
+.work-change-review__error { color: var(--danger); }
+.work-change-review__notice { color: var(--fg-muted); }
+.work-change-review__report { margin-top: var(--space-2); padding: var(--space-3); border: 0; border-radius: var(--radius-lg); background: var(--bg-inset); overflow-wrap: anywhere; }
+.work-change-review__report > p { margin: var(--space-1) 0; }
+.work-change-review__report summary { padding: var(--space-1) 0; color: var(--fg-muted); cursor: pointer; }
+.work-change-review__report ul { list-style: none; margin: 0; padding: 0; }
+.work-change-review__report li { padding: var(--space-2) 0; }
+.work-change-review__report li + li { border-top: 1px solid var(--border); }
+.work-change-review__report li p { margin: var(--space-1) 0; color: var(--fg-muted); }
+.work-change-review__statuses { display: block; color: var(--fg-muted); }
+@media (prefers-reduced-motion: reduce) { .work-change-review button { transition: none; } }

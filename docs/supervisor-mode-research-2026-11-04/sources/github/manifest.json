@@ -1,0 +1,112 @@
+[
+  {
+    "repo": "gastownhall/gastown",
+    "sha": "466aa41c83ee73b1fa0eb79eb9d172fb1eca9476",
+    "commitDate": "2026-10-28T05:20:19Z",
+    "archived": false,
+    "license": "MIT",
+    "stars": 18687,
+    "readmeFile": "README.md",
+    "readmeBytes": 30506
+  },
+  {
+    "repo": "paperclipai/paperclip",
+    "sha": "a194166017597860a0e53c0c1314e95c597d75cc",
+    "commitDate": "2026-11-04T02:17:08Z",
+    "archived": false,
+    "license": "MIT",
+    "stars": 110846,
+    "readmeFile": "README.md",
+    "readmeBytes": 35773
+  },
+  {
+    "repo": "OpenBMB/ChatDev",
+    "sha": "464a681ba7bda869db97a50c5fa707c9a0fb57a0",
+    "commitDate": "2026-10-30T12:36:43Z",
+    "archived": false,
+    "license": "Apache-2.0",
+    "stars": 34647,
+    "readmeFile": "README.md",
+    "readmeBytes": 24370
+  },
+  {
+    "repo": "crewAIInc/crewAI",
+    "sha": "dd21ecce11aa008d5ef0325e6802a3962ce4d443",
+    "commitDate": "2026-11-03T18:25:07Z",
+    "archived": false,
+    "license": "MIT",
+    "stars": 60463,
+    "readmeFile": "README.md",
+    "readmeBytes": 32755
+  },
+  {
+    "repo": "FoundationAgents/MetaGPT",
+    "sha": "11cdf466d042aece04fc6cfd13b28e1a70341b1f",
+    "commitDate": "2026-01-21T10:12:32Z",
+    "archived": false,
+    "license": "MIT",
+    "stars": 71152,
+    "readmeFile": "README.md",
+    "readmeBytes": 8215
+  },
+  {
+    "repo": "OpenHands/OpenHands",
+    "sha": "01d1970b8f96d576d8b42aad48fee5aa117f1cb8",
+    "commitDate": "2026-11-03T23:13:28Z",
+    "archived": false,
+    "license": "MIT",
+    "stars": 92596,
+    "readmeFile": "README.md",
+    "readmeBytes": 13268
+  },
+  {
+    "repo": "langchain-ai/langgraph-swarm-py",
+    "sha": "8956b138bbb475b00c98d040176dbb8da667c612",
+    "commitDate": "2026-10-28T17:30:06Z",
+    "archived": false,
+    "license": "MIT",
+    "stars": 1588,
+    "readmeFile": "README.md",
+    "readmeBytes": 10041
+  },
+  {
+    "repo": "langchain-ai/langgraph-supervisor-py",
+    "sha": "88859b34017ac3569bbd4a3092c7e77593a0a960",
+    "commitDate": "2026-07-15T06:32:51Z",
+    "archived": true,
+    "license": "MIT",
+    "stars": 1655,
+    "readmeFile": "README.md",
+    "readmeBytes": 13928
+  },
+  {
+    "repo": "microsoft/magentic-ui",
+    "sha": "d3c9d13c39288257286a66daabf7c5b5fb72ee69",
+    "commitDate": "2026-07-23T18:10:53Z",
+    "archived": false,
+    "license": "MIT",
+    "stars": 10111,
+    "readmeFile": "README.md",
+    "readmeBytes": 5292
+  },
+  {
+    "repo": "microsoft/autogen",
+    "sha": "d07c667a3239ea4ab7af62a53b0f4ff205a1f23d",
+    "commitDate": "2026-10-28T14:45:27Z",
+    "archived": false,
+    "license": "CC-BY-4.0",
+    "stars": 61694,
+    "readmeFile": "README.md",
+    "readmeBytes": 21521
+  },
+  {
+    "repo": "microsoft/agent-framework",
+    "sha": "dc6617aa96f26407cfbb2486941e8c3b069cfbe6",
+    "commitDate": "2026-11-03T18:26:09Z",
+    "archived": false,
+    "license": "MIT",
+    "stars": 14525,
+    "readmeFile": "README.md",
+    "readmeBytes": 14051
+  }
+]

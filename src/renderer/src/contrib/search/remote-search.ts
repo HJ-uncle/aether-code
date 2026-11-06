@@ -53,12 +53,17 @@ function matches(path: string, pattern: string): boolean {
   return parts.some((_, index) => regex.test(parts.slice(0, index + 1).join('/')))
 }
 
+/** Directory traversal can prune exclusions, but must never prune by an include glob. */
+export function remoteSearchPathExcluded(path: string, options: SearchOptions, excludes: FilesExclude): boolean {
+  const excluded = options.exclude.split(',').map(value => value.trim()).filter(Boolean)
+  return excluded.some(pattern => matches(path, pattern)) ||
+    Object.entries(excludes).some(([pattern, enabled]) => enabled && matches(path, pattern))
+}
+
 function selected(path: string, options: SearchOptions, excludes: FilesExclude): boolean {
   const includes = options.include.split(',').map(value => value.trim()).filter(Boolean)
-  const excluded = options.exclude.split(',').map(value => value.trim()).filter(Boolean)
   return (!includes.length || includes.some(pattern => matches(path, pattern))) &&
-    !excluded.some(pattern => matches(path, pattern)) &&
-    !Object.entries(excludes).some(([pattern, enabled]) => enabled && matches(path, pattern))
+    !remoteSearchPathExcluded(path, options, excludes)
 }
 
 /** Ignore the root label; retain every directory level in relative API paths. */
@@ -117,10 +122,16 @@ export async function searchRemoteWorkspace(transport: RemoteSearchTransport, qu
   for (const path of await filesFor(transport, options, excludes)) {
     const content = await readSelected(transport, path, issues)
     if (content === null) continue
-    const lines = content.split(/\r?\n/)
+    const lines = content.split(/\r\n|\r|\n/)
     for (let index = 0; index < lines.length; index += 1) {
-      if (!regex.test(lines[index])) continue
-      hits.push({ path, line: index + 1, text: lines[index].slice(0, MAX_LINE_CHARS) })
+      const found = regex.exec(lines[index])
+      if (!found) continue
+      // Navigation uses the full source coordinates. The bounded snippet is
+      // centered on the match so a long prefix cannot hide why this row matched.
+      const context = Math.floor(Math.max(0, MAX_LINE_CHARS - found[0].length) / 2)
+      const start = Math.max(0, Math.min(found.index - context, lines[index].length - MAX_LINE_CHARS))
+      hits.push({ path, line: index + 1, text: lines[index].slice(start, start + MAX_LINE_CHARS),
+        column: found.index + 1, length: found[0].length })
       if (hits.length >= MAX_HITS) return { hits, truncated: true, strategy: 'scan', error: issueSummary(issues) }
     }
   }
@@ -133,6 +144,35 @@ function replaced(content: string, regex: RegExp, replacement: string, literal: 
   return literal ? content.replace(regex, () => replacement) : content.replace(regex, replacement)
 }
 
+function replaceSourceLines(content: string, regex: RegExp, replacement: string, literal: boolean): {
+  content: string
+  changes: { line: number; before: string; after: string; count: number }[]
+} {
+  // Search is line-based. Applying the same expressions to the whole file
+  // would change the meaning of ^/$ and replacement tokens such as $` and $'.
+  // Keep each separator intact, including mixed CRLF/LF files and final newlines.
+  const parts = content.split(/(\r\n|\r|\n)/)
+  const changes: { line: number; before: string; after: string; count: number }[] = []
+  for (let index = 0; index < parts.length; index += 2) {
+    const before = parts[index]
+    const count = before.match(regex)?.length ?? 0
+    if (!count) continue
+    const after = replaced(before, regex, replacement, literal)
+    if (after === before) continue
+    changes.push({ line: index / 2 + 1, before, after, count })
+    parts[index] = after
+  }
+  return { content: parts.join(''), changes }
+}
+
+function hasCrossLineMatch(content: string, regex: RegExp): boolean {
+  // A preview must not silently approve a regex whose whole-file matches need
+  // context across line endings; this surface only presents individual lines.
+  regex.lastIndex = 0
+  for (const found of content.matchAll(regex)) if (/[\r\n]/.test(found[0])) return true
+  return false
+}
+
 export async function previewRemoteReplace(transport: RemoteSearchTransport, query: string, options: SearchOptions, replacement: string, excludes: FilesExclude): Promise<ReplacePreviewOutcome> {
   const regex = remoteSearchRegExp(query, options, true)
   if (!regex) return { files: [], total: 0, truncated: false, error: '正则表达式无效' }
@@ -142,20 +182,16 @@ export async function previewRemoteReplace(transport: RemoteSearchTransport, que
   for (const path of await filesFor(transport, options, excludes)) {
     const content = await readSelected(transport, path, issues)
     if (content === null) continue
-    const lines = content.split(/\r?\n/)
-    const previews: ReplacePreviewOutcome['files'][number]['lines'] = []
-    for (let index = 0; index < lines.length; index += 1) {
-      const count = lines[index].match(regex)?.length ?? 0
-      if (!count) continue
-      const after = replaced(lines[index], regex, replacement, !options.useRegex)
-      if (after === lines[index]) continue
-      result.total += count
-      if (rows++ < MAX_HITS) previews.push({ line: index + 1, before: lines[index].slice(0, MAX_LINE_CHARS), after: after.slice(0, MAX_LINE_CHARS) })
-      else result.truncated = true
-    }
-    // The line-based preview cannot truthfully represent a cross-line match.
-    if ((content.match(regex)?.length ?? 0) > lines.reduce((count, line) => count + (line.match(regex)?.length ?? 0), 0)) {
+    if (hasCrossLineMatch(content, regex)) {
       issues.push(`${path}（跨行正则替换需要在编辑器中确认）`)
+      continue
+    }
+    const changed = replaceSourceLines(content, regex, replacement, !options.useRegex)
+    const previews: ReplacePreviewOutcome['files'][number]['lines'] = []
+    for (const row of changed.changes) {
+      result.total += row.count
+      if (rows++ < MAX_HITS) previews.push({ line: row.line, before: row.before.slice(0, MAX_LINE_CHARS), after: row.after.slice(0, MAX_LINE_CHARS) })
+      else result.truncated = true
     }
     if (previews.length) result.files.push({ path, lines: previews })
   }
@@ -173,15 +209,17 @@ export async function replaceRemoteWorkspace(transport: RemoteSearchTransport, q
     for (const path of await filesFor(transport, options, excludes)) {
       const content = await readSelected(transport, path, issues)
       if (content === null) continue
-      const count = content.match(regex)?.length ?? 0
-      if (!count) continue
-      const updated = replaced(content, regex, replacement, !options.useRegex)
-      if (updated === content) continue
+      if (hasCrossLineMatch(content, regex)) {
+        issues.push(`${path}（跨行正则替换需要在编辑器中确认）`)
+        continue
+      }
+      const updated = replaceSourceLines(content, regex, replacement, !options.useRegex)
+      if (!updated.changes.length) continue
       try {
         transport.assertCurrent()
-        await transport.writeFile(path, updated)
+        await transport.writeFile(path, updated.content)
         result.files.push(path)
-        result.replacements += count
+        result.replacements += updated.changes.reduce((count, row) => count + row.count, 0)
         transport.assertCurrent()
       } catch (error) {
         issues.push(`${path}（${message(error)}）`)

@@ -36,7 +36,7 @@ export async function engineRequest<T = unknown>(
   if (snapshot.mode === 'remote' && input.method === 'POST' && /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(String((input.body as Record<string, unknown> | undefined)?.path ?? '')) && /\/workspace\/file(?:\/|$)/.test(input.path)) {
     return { ok: false, code: 409, message: '远端工作区请求必须使用相对路径，不能携带本机绝对路径', data: null }
   }
-  const unsupported = engineTargetError(snapshot, expectedEngine) ?? remoteRequestError(snapshot.mode, input.method, input.path) ?? remoteWorkspacePathError(snapshot.mode, input.method, input.path, input.body)
+  const unsupported = engineTargetError(snapshot, expectedEngine) ?? remoteRequestError(snapshot.mode, input.method, input.path, input.body) ?? remoteWorkspacePathError(snapshot.mode, input.method, input.path, input.body)
   if (unsupported) return { ok: false, code: 409, message: unsupported, data: null }
   const baseUrl = engineHost.baseUrl
   if (!baseUrl) return { ok: false, code: -1, message: '引擎未就绪', data: null }

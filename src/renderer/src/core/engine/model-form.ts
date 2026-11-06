@@ -2,6 +2,7 @@ import type {
   EngineModel,
   ModelCapabilities,
   CapabilityOverridePatch,
+  ModelApiFormat,
   UpdateModelInput
 } from './models'
 export interface ModelFormState {
@@ -9,6 +10,7 @@ export interface ModelFormState {
   displayName: string
   modelId: string
   baseUrl: string
+  apiFormat: ModelApiFormat
   apiKey: string
   vision: boolean | null
   thinking: boolean | null
@@ -58,16 +60,17 @@ export function initialModelForm(model?: EngineModel): ModelFormState {
     displayName: model?.displayName ?? '',
     modelId: model?.modelId ?? '',
     baseUrl: model?.baseUrl ?? 'https://api.deepseek.com',
+    apiFormat: model?.apiFormat ?? 'auto',
     apiKey: '',
     vision: choice(model?.capabilityOverrides?.vision),
     thinking: choice(model?.capabilityOverrides?.thinking),
-    // Runtime context budgets are applied by the engine, not written as a
-    // guessed provider capability. Preserve only deliberate manual overrides.
+    // The default applies only to new records; editing must preserve existing
+    // overrides (including automatic inference) without silently replacing them.
     contextWindow: model
       ? model.capabilityOverrides?.contextWindow
         ? contextWindowText(model.capabilityOverrides.contextWindow)
         : ''
-      : ''
+      : '256'
   }
 }
 
@@ -76,6 +79,7 @@ export function buildModelUpdate(model: EngineModel, form: ModelFormState): Upda
   if (form.displayName.trim() !== (model.displayName ?? ''))
     patch.displayName = form.displayName.trim()
   if (form.baseUrl.trim() !== model.baseUrl) patch.baseUrl = form.baseUrl.trim()
+  if (form.apiFormat !== (model.apiFormat ?? 'auto')) patch.apiFormat = form.apiFormat
   if (form.apiKey.trim()) patch.apiKey = form.apiKey.trim()
   const capabilities: CapabilityOverridePatch = {}
   for (const key of ['vision', 'thinking'] as const) {

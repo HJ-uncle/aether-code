@@ -5,6 +5,7 @@
  * No real model, business profile, product click injection or force click. */
 import { _electron as electron, expect, test, type CDPSession, type ElectronApplication, type Locator, type Page, type TestInfo } from '@playwright/test'
 import { createServer, type ServerResponse } from 'node:http'
+import { createHash } from 'node:crypto'
 import { performance } from 'node:perf_hooks'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -22,6 +23,7 @@ const sessions = new Map<string, Session>(), children = new Map<string, Subagent
 const childVersions = new Map<string, Map<number, SubagentRunView>>()
 const archives = new Map<string, EngineHistoryRow[]>(), files = new Map<string, string>()
 const requests: Array<{ sessionId: string; message: string }> = [], cancellations: string[] = [], childCancellations: string[] = []
+const admissionReceipts = new Map<string, { admission: Record<string, unknown>; run: RootRun }>()
 const archiveReads: Array<{ childSessionId: string; current: number; pageSize: number; total: number; revision: string }> = []
 const archiveRefreshes: Array<{ childSessionId: string; viewport: { width: number; height: number }; rowId: string; watermark: number; total: number; tick: number; readIndex: number }> = []
 const errors: string[] = []
@@ -109,8 +111,10 @@ function completeChild(id: string, run: SubagentRunView, status: 'succeeded' | '
     coverage: { ...run.coverage, asOfSeq: seq, activeToolCount: 0, includedActiveToolCount: 0 } })
 }
 function change(id: string, version: number): EngineFileChange {
-  return { id: 'streaming-report-receipt', toolCallId: 'write-report', path: `${workspaceRoot}/report.md`, displayPath: 'report.md', kind: 'write',
-    oldContent: version === 1 ? null : files.get('report.md') ?? null, newContent: `# STREAM_ARTIFACT_VERSION_${version}\n\nLATEST_ARTIFACT_CONTENT_${version}\n\n持续流式任务的当前成果。`,
+  const newContent = `# STREAM_ARTIFACT_VERSION_${version}\n\nLATEST_ARTIFACT_CONTENT_${version}\n\n持续流式任务的当前成果。`
+  return { id: 'streaming-report-receipt', sessionId: id, turnId: value(id).run.turnId, seq: version,
+    toolCallId: 'write-report', path: `${workspaceRoot}/report.md`, displayPath: 'report.md', kind: 'write',
+    oldContent: version === 1 ? null : files.get('report.md') ?? null, newContent, newHash: createHash('sha256').update(newContent).digest('hex'),
     isNew: version === 1, truncated: false, status: 'kept', createdAt: value(id).startedAt }
 }
 function appendArchive(childSessionId: string, marker: string): { rowId: string; watermark: number; total: number } {
@@ -177,12 +181,32 @@ const server = createServer((request, response) => {
         predecessor: root ? { runId: root.runId, attemptId: root.attemptId, version: root.version } : null }))
       return
     }
+    if (path === '/api/v1/chat/admission/receipt' && request.method === 'POST') {
+      const accepted = admissionReceipts.get(String(body.requestKey)), latest = accepted && sessions.get(accepted.run.sessionId)?.run
+      const current = accepted && (latest?.runId === accepted.run.runId ? latest : accepted.run)
+      response.setHeader('content-type', 'application/json')
+      response.end(envelope(accepted && current ? { protocolVersion: 1, status: 'accepted',
+        receipt: { ...accepted.admission, sessionId: current.sessionId, rootRunId: current.runId,
+          turnId: current.turnId, userMessageId: current.userMessageId, assistantMessageId: current.assistantMessageId },
+        run: current, projection: { rootVersion: current.version, rootAttemptId: `fixture-attempt-${current.runId}`,
+          user: { messageId: current.userMessageId, state: 'projected' },
+          assistant: { anchorMessageId: current.assistantMessageId, state: 'unwritten' } }
+      } : { protocolVersion: 1, status: 'absent', namespace: body.namespace, sessionId: body.sessionId, requestKey: body.requestKey }))
+      return
+    }
     if (path === '/api/v1/chat' && request.method === 'POST') {
       const id = String(body.sessionId), now = Date.now()
       if (!id.startsWith('work-')) throw new Error('Fixture received a non-Work task')
       requests.push({ sessionId: id, message: String(body.message) })
       const run: RootRun = { schemaVersion: 1, runId: `root-${id}`, sessionId: id, turnId: `turn-${id}`, userMessageId: `user-${id}`, assistantMessageId: `assistant-${id}`,
         seq: 1, version: 1, status: 'running', modelId, pending: [], workspacePaths: [], createdAt: now, updatedAt: now }
+      if (body.admission !== undefined) {
+        const admission = body.admission
+        if (!admission || typeof admission !== 'object' || Array.isArray(admission)) throw new Error('Invalid streaming fixture admission')
+        const input = admission as Record<string, unknown>
+        if (input.protocolVersion !== 1 || input.owner !== 'work' || typeof input.requestKey !== 'string') throw new Error('Invalid streaming fixture admission')
+        admissionReceipts.set(input.requestKey, { admission: input, run })
+      }
       const user: EngineHistoryRow = { id: run.userMessageId, role: 'user', content: String(body.message), createdAt: now, conversationId: run.turnId }
       sessions.set(id, { run, response, seq: 0, ticks: 0, frames: 0, bytes: 0, startedAt: now, content: '', history: [user], projection: [], changes: [] })
       response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
@@ -270,6 +294,11 @@ const server = createServer((request, response) => {
       response.end(envelope({ started: sessions.has(decodeURIComponent(binding[1])), agentId: null, metadata: null, agent: null })); return
     }
     const id = url.searchParams.get('sessionId') ?? '', session = sessions.get(id)
+    if (path === '/api/v1/changes') {
+      const status = url.searchParams.get('status')
+      response.setHeader('content-type', 'application/json')
+      response.end(envelope((session?.changes ?? []).filter(receipt => !status || receipt.status === status))); return
+    }
     const data = path === '/health' ? { status: 'ok' }
       // The host manifest remains v1; v2 child views are separately negotiated
       // by /subagent/capabilities, as on the real embedded engine.
@@ -321,7 +350,7 @@ async function measure(id: string, label: string, target: Locator, verify: () =>
   }
   expect(receipts.at(-1)!.responseMs, `${label}: click and observable result under live SSE`).toBeLessThanOrEqual(responseBudgetMs)
 }
-async function tab(id: string, name: '活动' | '成果' | '子代理', receipts: Receipt[]): Promise<void> {
+async function tab(id: string, name: '成果' | '子代理', receipts: Receipt[]): Promise<void> {
   const label = new RegExp('^' + name + '(?: \\d+)?$')
   const target = workspace().getByRole('tablist', { name: '已打开的工作区', exact: true }).getByRole('tab', { name: label })
   if (await target.count()) {
@@ -436,8 +465,9 @@ test.describe.serial('Work 持续子Agent事件中的真实点击与数据保留
     }
   })
 
-  test('三种视口持续流中活动、成果、子对话响应预算与引用新鲜度；取消只停止指定范围', async ({}, testInfo) => {
-    const id = await startTask('STREAMING_CLICK_REGRESSION：持续协作中查看活动与成果'), receipts: Receipt[] = []
+  test('三种视口持续流中协作记录、成果、子对话响应预算与引用新鲜度；取消只停止指定范围', async ({}, testInfo) => {
+    const id = await startTask('STREAMING_CLICK_REGRESSION：持续协作中查看协作记录与成果'), receipts: Receipt[] = []
+    const completedChild = [...children.values()].find(run => run.parentSessionId === id && run.parentToolCallId === 'dispatch-0')!
     const runningChild = [...children.values()].find(run => run.parentSessionId === id && run.parentToolCallId === 'dispatch-4')!
     await installProbe()
     try {
@@ -467,9 +497,19 @@ test.describe.serial('Work 持续子Agent事件中的真实点击与数据保留
         await testInfo.attach(`workspace-layout-${size.width}`, { path: layoutPath, contentType: 'application/json' })
         if (layout.overflow > 2) await page.screenshot({ path: testInfo.outputPath(`workspace-overflow-${size.width}.png`), animations: 'disabled' })
         expect(layout.overflow, `${size.width}: workspace horizontal overflow`).toBeLessThanOrEqual(2)
-        await tab(id, '活动', receipts)
-        const completed = workspace().getByRole('listbox', { name: '工具活动列表', exact: true }).getByRole('option').filter({ hasText: childName(0) })
-        await measure(id, 'select-completed-child-activity', completed, () => expect(workspace().locator('.work-activity-detail')).toContainText(childName(0)), receipts)
+        await tab(id, '子代理', receipts)
+        const back = panel().getByRole('button', { name: '返回子代理列表', exact: true })
+        if (await back.count()) await measure(id, 'return-to-child-directory', back, () => expect(back).toHaveCount(0), receipts)
+        const completed = panel().locator(`.work-subagents__row[data-child-session-id="${completedChild.childSessionId}"]`)
+        await expect(completed).toHaveAccessibleName(`查看 ${childName(0)} 子代理详情`)
+        await expect(completed).toContainText('成功')
+        await measure(id, 'select-completed-child-record', completed, async () => {
+          await expect(panel().locator('.work-subagents__heading h3')).toHaveText(childName(0))
+          const record = panel().locator(`.work-subagents__round[data-run-id="${completedChild.runId}"] .subagent-card`)
+          await expect(record).toHaveAttribute('data-status', 'succeeded')
+          await expect(record.locator('summary')).toContainText('已完成')
+          await expect(record.locator('.subagent-card__result-inner')).toContainText('CHILD_RESULT_0_0')
+        }, receipts)
         await tab(id, '成果', receipts)
         await expect(workspace().locator('.work-artifact-preview')).toContainText('STREAM_ARTIFACT_VERSION_1')
         await tab(id, '子代理', receipts)

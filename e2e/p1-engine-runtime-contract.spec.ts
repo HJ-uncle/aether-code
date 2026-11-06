@@ -12,13 +12,36 @@ export function runtimeFixture(patch: Partial<EngineRuntimeDiagnostics> = {}): E
 }
 const target = { instanceId: 'p1-runtime-instance', pid: 1234 }
 const ok = (data: unknown) => ({ ok: true, code: 200, message: 'OK', data })
-const turn = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() }
+const turn = async () => { for (let i = 0; i < 8; i++) await Promise.resolve() }
 
 test('runtime reads only the exact authorized GET route and has a bounded transport deadline', () => {
   expect(remoteRequestError('remote', 'GET', '/performance/runtime')).toBeNull()
+  expect(remoteRequestError('remote', 'GET', '/performance/runtime?refresh=true')).toBeNull()
   expect(remoteRequestError('remote', 'POST', '/performance/runtime')).not.toBeNull()
   expect(remoteRequestError('remote', 'GET', '/performance/stats')).not.toBeNull()
   expect(managementRequestTimeout({ method: 'GET', path: '/performance/runtime' })).toBe(5000)
+  expect(managementRequestTimeout({ method: 'GET', path: '/performance/runtime?refresh=true' })).toBe(5000)
+})
+
+test('short on-demand window is preserved while missing fields remain compatible with legacy engines', () => {
+  const legacy = runtimeFixture()
+  expect(parseEngineRuntimeDiagnostics(legacy, target).collection).not.toHaveProperty('sampleWindowMs')
+  const current = runtimeFixture({ collection: { ...legacy.collection, sampleWindowMs: 200 } })
+  expect(parseEngineRuntimeDiagnostics(current, target).collection.sampleWindowMs).toBe(200)
+  for (const invalid of [0, -1, NaN, Infinity, '200', null]) {
+    expect(() => parseEngineRuntimeDiagnostics({ ...current, collection: { ...current.collection, sampleWindowMs: invalid } }, target)).toThrow()
+  }
+})
+
+test('same-time legacy cache is reported distinctly from a new runtime sample', async () => {
+  let sampledAt = 1700000000000
+  const states: EngineRuntimeState[] = []
+  const sampler = createEngineRuntimeSampler({ target, current: () => true, publish: state => states.push(state),
+    read: async () => ok(runtimeFixture({ sampledAt })) })
+  sampler.setActive(true); await turn(); expect(states.at(-1)?.cached).toBe(false)
+  await sampler.retry(); expect(states.at(-1)?.cached).toBe(true)
+  sampledAt += 200; await sampler.retry(); expect(states.at(-1)?.cached).toBe(false)
+  sampler.dispose()
 })
 test('parser reconstructs the real engine schema and keeps a true zero utilization', () => {
   const data = runtimeFixture({ eventLoop: { ...runtimeFixture().eventLoop, utilization: 0 } })
@@ -48,39 +71,38 @@ test('numeric strings, non-finite values and impossible heap/delay data are reje
   for (const value of values) expect(() => parseEngineRuntimeDiagnostics(value, target)).toThrow('未提供可验证')
 })
 test('sampler starts on demand, serializes reads and discards a hidden completion', async () => {
-  const states: EngineRuntimeState[] = [], scheduled: Array<{ callback: () => void; delay: number }> = []
+  const states: EngineRuntimeState[] = []
   let reads = 0, complete!: (value: ReturnType<typeof ok>) => void
   const sampler = createEngineRuntimeSampler({ target, current: () => true, publish: state => states.push(state),
-    read: () => { reads++; return new Promise(done => { complete = done }) },
-    schedule: (callback, delay) => { const timer = { callback, delay }; scheduled.push(timer); return timer }, cancel: () => {} })
+    read: () => { reads++; return new Promise(done => { complete = done }) } })
   expect(reads).toBe(0)
-  sampler.setActive(true); sampler.setActive(false); sampler.setActive(true)
+  sampler.setActive(true); await turn(); sampler.setActive(false); sampler.setActive(true)
   expect(reads).toBe(1)
   complete(ok(runtimeFixture())); await turn()
   expect(states.some(state => state.phase === 'sample')).toBe(false)
-  expect(scheduled.at(-1)?.delay).toBe(0)
-  scheduled.at(-1)!.callback(); expect(reads).toBe(2)
+  expect(reads).toBe(1)
+  const refresh = sampler.retry(); expect(sampler.retry()).toBe(refresh); await turn(); expect(reads).toBe(2)
   sampler.dispose(); complete(ok(runtimeFixture())); await turn()
   expect(states.some(state => state.phase === 'sample')).toBe(false)
 })
 test('404 capability absence stops automatic and collapse/reopen retries', async () => {
-  let reads = 0, timers = 0
+  let reads = 0
   const states: EngineRuntimeState[] = []
   const sampler = createEngineRuntimeSampler({ target, current: () => true, publish: state => states.push(state),
-    read: async () => { reads++; return { ok: false, code: 404, message: 'missing', data: null } }, schedule: () => { timers++; return 1 }, cancel: () => {} })
-  sampler.setActive(true); await turn(); sampler.setActive(false); sampler.setActive(true); await turn()
-  expect(reads).toBe(1); expect(timers).toBe(0)
+    read: async () => { reads++; return { ok: false, code: 404, message: 'missing', data: null } } })
+  sampler.setActive(true); await turn()
+  expect(reads).toBe(1)
   expect(states.at(-1)).toMatchObject({ phase: 'unsupported', sample: null, message: '此引擎未提供运行时指标接口。' })
+  sampler.setActive(false); sampler.setActive(true); await turn(); expect(reads).toBe(1)
   sampler.retry(); await turn(); expect(reads).toBe(2); sampler.dispose()
 })
 test('remote PID is pinned after the first sample; an identity switch rejects late reads', async () => {
-  let current = true, reads = 0, callback: (() => void) | undefined
+  let current = true, reads = 0
   const states: EngineRuntimeState[] = []
   const sampler = createEngineRuntimeSampler({ target: { ...target, pid: null }, current: () => current, publish: state => states.push(state),
-    read: async () => ok(runtimeFixture({ pid: ++reads === 1 ? 1234 : 4321, sampledAt: 1700000000000 + reads })),
-    schedule: (next, delay) => { expect(delay).toBe(5000); callback = next; return 1 }, cancel: () => {} })
+    read: async () => ok(runtimeFixture({ pid: ++reads === 1 ? 1234 : 4321, sampledAt: 1700000000000 + reads })) })
   sampler.setActive(true); await turn(); expect(states.at(-1)?.sample?.pid).toBe(1234)
-  callback!(); await turn(); expect(states.at(-1)).toMatchObject({ phase: 'error', sample: null })
-  current = false; const count = states.length; callback!(); await turn(); expect(states).toHaveLength(count)
+  await sampler.retry(); expect(states.at(-1)).toMatchObject({ phase: 'error', sample: null })
+  current = false; const count = states.length; await sampler.retry(); expect(states).toHaveLength(count)
   sampler.dispose()
 })

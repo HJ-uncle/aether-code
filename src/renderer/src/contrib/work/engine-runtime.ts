@@ -6,7 +6,7 @@ export interface EngineRuntimeDiagnostics {
   pid: number
   sampledAt: number
   uptimeMs: number
-  collection: { minIntervalMs: number; idleTimeoutMs: number; delayResolutionMs: number }
+  collection: { minIntervalMs: number; idleTimeoutMs: number; delayResolutionMs: number; sampleWindowMs?: number }
   memory: { rssBytes: number; heapUsedBytes: number; heapTotalBytes: number; heapLimitBytes: number; externalBytes: number; arrayBuffersBytes: number }
   eventLoop: { state: 'warming' | 'available'; intervalMs: number | null; utilization: number | null; delay: { meanMs: number; p95Ms: number; maxMs: number } | null }
 }
@@ -27,6 +27,7 @@ export function parseEngineRuntimeDiagnostics(value: unknown, target: EngineRunt
   if (!positive(collection.minIntervalMs) || !positive(collection.idleTimeoutMs) || collection.idleTimeoutMs < collection.minIntervalMs * 2 ||
     !positive(collection.delayResolutionMs) || !['rssBytes', 'heapUsedBytes', 'heapTotalBytes', 'heapLimitBytes', 'externalBytes', 'arrayBuffersBytes'].every(key => bytes(memory[key])) ||
     Number(memory.heapUsedBytes) > Number(memory.heapTotalBytes) || Number(memory.heapTotalBytes) > Number(memory.heapLimitBytes) || memory.heapLimitBytes === 0) fail()
+  if (collection.sampleWindowMs !== undefined && !positive(collection.sampleWindowMs)) fail()
   if (loop.state !== 'warming' && loop.state !== 'available' || loop.intervalMs !== null && !positive(loop.intervalMs) ||
     loop.utilization !== null && (!finite(loop.utilization) || loop.utilization > 1)) fail()
   const delay = loop.delay === null ? null : record(loop.delay)
@@ -34,7 +35,8 @@ export function parseEngineRuntimeDiagnostics(value: unknown, target: EngineRunt
   if (loop.state === 'available' && (loop.intervalMs === null || loop.utilization === null || delay === null)) fail()
   return {
     schemaVersion: 1, instanceId: data.instanceId, pid: data.pid, sampledAt: data.sampledAt, uptimeMs: data.uptimeMs,
-    collection: { minIntervalMs: collection.minIntervalMs, idleTimeoutMs: collection.idleTimeoutMs, delayResolutionMs: collection.delayResolutionMs },
+    collection: { minIntervalMs: collection.minIntervalMs, idleTimeoutMs: collection.idleTimeoutMs, delayResolutionMs: collection.delayResolutionMs,
+      ...(collection.sampleWindowMs === undefined ? {} : { sampleWindowMs: Number(collection.sampleWindowMs) }) },
     memory: { rssBytes: Number(memory.rssBytes), heapUsedBytes: Number(memory.heapUsedBytes), heapTotalBytes: Number(memory.heapTotalBytes), heapLimitBytes: Number(memory.heapLimitBytes), externalBytes: Number(memory.externalBytes), arrayBuffersBytes: Number(memory.arrayBuffersBytes) },
     eventLoop: { state: loop.state, intervalMs: loop.intervalMs as number | null, utilization: loop.utilization as number | null,
       delay: delay ? { meanMs: Number(delay.meanMs), p95Ms: Number(delay.p95Ms), maxMs: Number(delay.maxMs) } : null }
@@ -45,31 +47,32 @@ export interface EngineRuntimeState {
   phase: 'idle' | 'loading' | 'sample' | 'unsupported' | 'error'
   sample: EngineRuntimeDiagnostics | null
   message?: string
+  cached?: boolean
 }
 
-/** One in-flight read and one retained sample; toggling visibility invalidates
- * late completions without starting a competing request. A 404 is capability
- * absence, so only an explicit retry can probe that engine again. */
+/** One initial opt-in read and explicit refreshes only. Visibility/collapse
+ * invalidates late completions without polling or refreshing on return. */
 export function createEngineRuntimeSampler(options: {
   target: EngineRuntimeTarget
   read: () => Promise<{ ok: boolean; code: number; message: string; data: unknown }>
   current: () => boolean
   publish: (state: EngineRuntimeState) => void
-  schedule: (callback: () => void, delayMs: number) => unknown
-  cancel: (timer: unknown) => void
+  busy?: (value: boolean) => void
 }) {
-  let active = false, disposed = false, pending = false, terminal = false, generation = 0
-  let timer: unknown, sample: EngineRuntimeDiagnostics | null = null, pinnedPid = options.target.pid
-  const clear = () => { if (timer !== undefined) options.cancel(timer); timer = undefined }
+  let active = false, disposed = false, attempted = false, terminal = false, generation = 0
+  let pending: Promise<void> | undefined
+  let sample: EngineRuntimeDiagnostics | null = null, pinnedPid = options.target.pid
   const live = () => !disposed && active && options.current()
   const publish = (state: EngineRuntimeState) => { if (live()) options.publish(state) }
-  const schedule = (delayMs = 5000) => { clear(); if (live() && !terminal) timer = options.schedule(() => { timer = undefined; void read() }, delayMs) }
-  const read = async (): Promise<void> => {
-    if (!live() || pending || terminal) return
-    pending = true
+  const read = (): Promise<void> => {
+    if (!live() || terminal) return Promise.resolve()
+    if (pending) return pending
+    attempted = true
     const epoch = generation
     publish({ phase: 'loading', sample })
-    try {
+    options.busy?.(true)
+    pending = Promise.resolve().then(async () => { try {
+      if (!live() || epoch !== generation) return
       const result = await options.read()
       if (!live() || epoch !== generation) return
       if (!result.ok) {
@@ -81,18 +84,25 @@ export function createEngineRuntimeSampler(options: {
       }
       const parsed = parseEngineRuntimeDiagnostics(result.data, { ...options.target, pid: pinnedPid })
       if (sample && parsed.sampledAt < sample.sampledAt) fail()
+      const cached = sample?.sampledAt === parsed.sampledAt
       pinnedPid = parsed.pid; sample = parsed
-      publish({ phase: 'sample', sample })
+      publish({ phase: 'sample', sample, cached })
     } catch (cause) {
       if (live() && epoch === generation) { sample = null; publish({ phase: 'error', sample: null, message: cause instanceof Error ? cause.message : '无法读取引擎运行时指标。' }) }
     } finally {
-      pending = false
-      if (live()) schedule(epoch === generation ? 5000 : 0)
-    }
+      pending = undefined
+      if (!disposed) options.busy?.(false)
+    } })
+    return pending
   }
   return {
-    setActive(value: boolean) { if (active === value || disposed) return; active = value; generation++; clear(); if (active) void read() },
-    retry() { if (!live()) return; terminal = false; clear(); void read() },
-    dispose() { disposed = true; active = false; generation++; clear() }
+    setActive(value: boolean) {
+      if (active === value || disposed) return
+      active = value; generation++
+      if (active && !attempted) void read()
+      else if (!active && pending && options.current()) options.publish({ phase: 'idle', sample })
+    },
+    retry(): Promise<void> { if (!live()) return Promise.resolve(); terminal = false; return read() },
+    dispose() { disposed = true; active = false; generation++; options.busy?.(false) }
   }
 }

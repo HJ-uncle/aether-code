@@ -12,6 +12,7 @@ import { buildCommandItems, type CommandItem } from './command-filter'
 import { FuzzyText } from './FuzzyText'
 import { fuzzyMatch } from '@renderer/core/platform/fuzzy'
 import { useAppMode } from '@renderer/core/platform/app-mode'
+import { useMotionPresence } from './MotionPresence'
 
 const TOGGLE_COMMAND = 'aether.quickOpen.toggle'
 const MAX_ITEMS = 50
@@ -64,9 +65,6 @@ interface FileItem {
   score: number
 }
 
-/** 关闭动画时长：与 app.css 的 .palette-overlay 过渡一致 */
-const LAZY_START_MS = 160
-
 /**
  * 另一个 palette 是否开着（命令面板）。
  *
@@ -76,12 +74,13 @@ const LAZY_START_MS = 160
  * 否则本组件的捕获监听会把 Esc 吞掉，命令面板再也关不上。
  */
 function isOtherPaletteOpen(): boolean {
-  return document.querySelector('.palette[aria-label="命令面板"]') !== null
+  return document.querySelector('.palette-overlay:not([inert]) .palette[aria-label="命令面板"]') !== null
 }
 
 export function QuickOpen(): JSX.Element | null {
   const appMode = useAppMode()
   const [open, setOpen] = useState(false)
+  const motion = useMotionPresence(open)
   const [generation, setGeneration] = useState(0)
   const generationRef = useRef(0)
   // 主动让位（切去了命令面板）：这次关闭不当作"用户关掉了面板"
@@ -96,7 +95,7 @@ export function QuickOpen(): JSX.Element | null {
       run: () => {
         closedRef.current = false
         // A second Ctrl+P can arrive before the previous overlay finishes fading out.
-        // Remount it so its query, leaving state and close timer belong to one opening.
+        // Remount the query and selection; presence cancels the previous exit.
         setGeneration(++generationRef.current)
         setOpen(true)
       }
@@ -108,10 +107,12 @@ export function QuickOpen(): JSX.Element | null {
     }
   }, [])
 
-  if (!open) return null
+  if (!motion.present) return null
   return (
     <QuickOverlay
       key={generation}
+      open={open}
+      motionProps={motion.motionProps}
       closedRef={closedRef}
       onClose={(lazy) => {
         if (generationRef.current !== generation) return
@@ -124,23 +125,23 @@ export function QuickOpen(): JSX.Element | null {
 
 function QuickOverlay({
   onClose,
-  closedRef
+  closedRef,
+  open,
+  motionProps
 }: {
   onClose: (lazy?: boolean) => void
   /** 主动让位标记：置真后本组件的捕获监听立即停止抢键 */
   closedRef: MutableRefObject<boolean>
+  open: boolean
+  motionProps: ReturnType<typeof useMotionPresence>['motionProps']
 }): JSX.Element {
   const workspace = useWorkspace()
   const root = workspace.root
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const [files, setFiles] = useState<string[] | null>(null)
-  const [leaving, setLeaving] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const closeTimer = useRef<number | undefined>(undefined)
-
-  useEffect(() => () => window.clearTimeout(closeTimer.current), [])
 
   const parsed = parseQuery(query)
 
@@ -214,24 +215,14 @@ function QuickOverlay({
   /**
    * 关闭面板。
    *
-   * lazy=true 时先给遮罩挂上 is-leaving 展示淡出，稍后再真正卸载 ——
-   * 直接从 DOM 摘掉会让整个面板瞬间消失，观感上是"一闪"。
-   * 同时把 closedRef 置真，让上面那个捕获监听立刻停止拦截按键：
-   * 实测卸载后监听仍会收到同一次按键（clearTimeout 也无济于事），
-   * 只靠"少渲染一次"无法保证下一个面板的 Esc 不被吞掉。
+   * 退出动画由父层 presence 保留；先把 closedRef 置真，立即停止捕获监听。
+   * lazy=true 标记向编辑器或另一个面板让位，避免吞掉对方首个按键。
    */
   const close = (lazy = false): void => {
     // The editor already receives focus while the overlay fades out. Stop the
     // capture listener now so it cannot swallow the editor's first arrow key.
     closedRef.current = true
-    if (lazy) {
-      setLeaving(true)
-      window.clearTimeout(closeTimer.current)
-      closeTimer.current = window.setTimeout(() => onClose(true), LAZY_START_MS)
-      return
-    }
-    window.clearTimeout(closeTimer.current)
-    onClose(false)
+    onClose(lazy)
   }
 
   const openFileItem = (item: FileItem): void => {
@@ -293,7 +284,7 @@ function QuickOverlay({
     const onKey = (event: KeyboardEvent): void => {
       // 面板关闭或已让位给命令面板后，这个监听仍在（捕获阶段且不判断状态），
       // 会把发给别人的 Esc 一并 stopPropagation 掉。必须在捕获阶段先自查。
-      if (closedRef.current || isOtherPaletteOpen()) return
+      if (!open || closedRef.current || isOtherPaletteOpen()) return
 
       if (event.key === 'Escape') {
         event.preventDefault()
@@ -330,7 +321,7 @@ function QuickOverlay({
         : '输入文件名打开文件，支持 `文件:行:列` 精确跳转…'
 
   return (
-    <div className={`palette-overlay${leaving ? ' is-leaving' : ''}`} onMouseDown={() => close()}>
+    <div className="palette-overlay" {...motionProps} data-motion-axis="y" onMouseDown={() => close()}>
       <div
         className="palette"
         role="dialog"

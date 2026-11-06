@@ -780,6 +780,67 @@ test('two real first owners initialize one journal without overwrite or empty re
   expect(state.entries).toHaveLength(1)
 })
 
+for (const separateStore of [false, true]) for (const phase of ['after-directory-create', 'after-marker-write'] as const) {
+  test(`first bootstrap read waits for its ${separateStore ? 'other store' : 'same store'} owner at ${phase}`, async () => {
+    let arrived!: () => void, release!: () => void
+    const entered = new Promise<void>(resolve => { arrived = resolve }), gate = new Promise<void>(resolve => { release = resolve })
+    const writer = new NextTurnQueueStore(fixture, { bootstrapTestHook: async context => {
+      if (context.phase === phase) { arrived(); await gate }
+    } })
+    const writing = writer.mutate(scope, 0, 'first-with-read', { kind: 'enqueue', id: 'first', envelope: envelope(), at: 1 }, () => {})
+    await entered
+    const reader = separateStore ? new NextTurnQueueStore(fixture) : writer, bucket = writer.bucketPath(scope)
+    expect((await fs.readdir(bucket)).some(name => /^r\d{10}\.json$/.test(name))).toBe(false)
+    let outcome: 'pending' | 'read' | 'error' = 'pending'
+    const reading = reader.read(scope).then(value => { outcome = 'read'; return value }, error => { outcome = 'error'; throw error })
+    const receiptRead = reader.findReceipt(scope, '__bootstrap__')
+    const scopeRead = reader.listScopes()
+    // Deliberately exceed the cross-process grace period. A known local owner
+    // is still alive behind the deterministic barrier and must not be timed out.
+    await new Promise(resolve => setTimeout(resolve, 300))
+    expect(outcome).toBe('pending')
+    release()
+    try {
+      const [written, read, bootstrap] = await Promise.all([writing, reading, receiptRead, scopeRead])
+      expect(written.state.revision).toBe(1)
+      expect(read.receipt?.revision).toBe(read.state.revision)
+      expect(bootstrap?.revision).toBe(0)
+      expect((await reader.read(scope)).state.entries.map(entry => entry.id)).toEqual(['first'])
+      expect((await fs.readdir(bucket)).filter(name => name.startsWith('error-'))).toEqual([])
+    } finally { release() }
+  })
+}
+
+test('a separate process may publish bootstrap while a reader observes its new directory', async () => {
+  const first = worker({ expectedRevision: 0, operationId: 'first-owner', holdBootstrapAt: 'after-marker-write',
+    operation: { kind: 'enqueue', id: 'first', envelope: envelope(), at: 1 } })
+  await first.wait('bootstrap-barrier')
+  const reader = new NextTurnQueueStore(fixture), bucket = reader.bucketPath(scope)
+  expect((await fs.readdir(bucket)).some(name => name === 'r0000000000.json')).toBe(false)
+  const read = reader.read(scope)
+  await new Promise(resolve => setTimeout(resolve, 30))
+  first.release()
+  const [state, result] = await Promise.all([read, first.wait('result')]); await first.completion
+  expect(result.ok).toBe(true)
+  expect(state.receipt?.revision).toBe(state.state.revision)
+  expect((await reader.read(scope)).state.entries.map(entry => entry.id)).toEqual(['first'])
+  expect((await fs.readdir(bucket)).filter(name => name.startsWith('error-'))).toEqual([])
+})
+
+test('unconfirmed valid initialization is retryable, while missing bootstrap with corrupt auxiliary evidence remains corrupt', async () => {
+  const reader = new NextTurnQueueStore(fixture), bucket = reader.bucketPath(scope)
+  await fs.mkdir(bucket)
+  const marker = join(bucket, 'initializing-00000000-0000-0000-0000-000000000000.json')
+  const original = JSON.stringify({ schemaVersion: 1, processId: process.pid, at: Date.now() })
+  await fs.writeFile(marker, original)
+  await expect(reader.read(scope)).rejects.toMatchObject({ code: 'CAS' })
+  expect(await fs.readFile(marker, 'utf8')).toBe(original)
+  await expect(fs.stat(join(bucket, 'r0000000000.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+  await fs.writeFile(join(bucket, 'unknown.json'), 'evidence')
+  await expect(reader.read(scope)).rejects.toMatchObject({ code: 'CORRUPT' })
+  expect(await fs.readFile(join(bucket, 'unknown.json'), 'utf8')).toBe('evidence')
+})
+
 test('unacknowledged initialization marker blocks mutation without assuming a crashed creator is dead', async () => {
   const store = new NextTurnQueueStore(fixture),
     bucket = store.bucketPath(scope)

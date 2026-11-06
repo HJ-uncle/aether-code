@@ -1,4 +1,4 @@
-import { parseBrowserSnapshot, type ToolBrowserSnapshot } from './browser-snapshot'
+import { browserScreenshotOmission, parseBrowserSnapshot, type ToolBrowserSnapshot } from './browser-snapshot'
 import { rasterDataUrl, viewportScreenshot } from './tool-image'
 
 export interface ToolResultImage {
@@ -91,6 +91,9 @@ export function parseToolResult(value: unknown): ParsedToolResult {
       const isImage = record.type === 'image' || (typeof mime === 'string' && mime.startsWith('image/'))
       return Object.fromEntries(Object.entries(record).map(([key, child]) => {
         if (key === 'screenshot' && backgroundOwners.has(record)) {
+          // Keep the original recovery marker. It describes omitted bytes,
+          // while the parsed snapshot supplies a readable missing-image notice.
+          if (browserScreenshotOmission(child)) return [key, visit(child, depth + 1, nextLabel)]
           replacements++
           const background = viewportScreenshot(child)
           return [key, background ? { ...background, dataUrl: '[页面截图，见位置示意图]' } : INVALID_IMAGE]

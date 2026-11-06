@@ -1,0 +1,4814 @@
+{
+  "sessionId": "work-tree-memory-populated",
+  "artifacts": 400,
+  "operationRecords": 401,
+  "longDocumentLines": 1500,
+  "phases": [
+    {
+      "name": "first-populated-files",
+      "layout": {
+        "clicks": [
+          {
+            "target": "work-panel-files",
+            "at": 0,
+            "firstCorrectLayoutMs": 253.60000002384186,
+            "superseded": false
+          }
+        ],
+        "frames": [
+          {
+            "at": 20.5,
+            "gap": 20.5,
+            "active": "work-panel-files",
+            "sized": 2,
+            "topOffset": 455,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0,
+            "hiddenSized": 1,
+            "hiddenFocusable": 12,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 82,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 537,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 32.60000002384186,
+            "gap": 12.100000023841858,
+            "active": "work-panel-files",
+            "sized": 2,
+            "topOffset": 456.484130859375,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0.371028,
+            "hiddenSized": 1,
+            "hiddenFocusable": 12,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 80.5158920288086,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 538.484130859375,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 44.60000002384186,
+            "gap": 12,
+            "active": "work-panel-files",
+            "sized": 2,
+            "topOffset": 457.60101318359375,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0.650245,
+            "hiddenSized": 1,
+            "hiddenFocusable": 12,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 79.39901733398438,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 539.6010131835938,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 61.10000002384186,
+            "gap": 16.5,
+            "active": "work-panel-files",
+            "sized": 2,
+            "topOffset": 458.21453857421875,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0.803629,
+            "hiddenSized": 1,
+            "hiddenFocusable": 12,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 78.78548431396484,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 540.2145385742188,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 77.70000004768372,
+            "gap": 16.600000023841858,
+            "active": "work-panel-files",
+            "sized": 2,
+            "topOffset": 458.54150390625,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0.88538,
+            "hiddenSized": 1,
+            "hiddenFocusable": 12,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 78.45848083496094,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 540.54150390625,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 101,
+            "gap": 23.299999952316284,
+            "active": "work-panel-files",
+            "sized": 2,
+            "topOffset": 458.73162841796875,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0.932902,
+            "hiddenSized": 1,
+            "hiddenFocusable": 12,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 78.26839447021484,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 540.7316284179688,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 200.40000009536743,
+            "gap": 99.40000009536743,
+            "active": "work-panel-files",
+            "sized": 2,
+            "topOffset": 458.846435546875,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0.961605,
+            "hiddenSized": 1,
+            "hiddenFocusable": 12,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 78.15357971191406,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 540.846435546875,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 253.60000002384186,
+            "gap": 53.199999928474426,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 274.60000002384186,
+            "gap": 21,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 278.2000000476837,
+            "gap": 3.600000023841858,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 294.8000000715256,
+            "gap": 16.600000023841858,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 311.10000002384186,
+            "gap": 16.299999952316284,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 327.40000009536743,
+            "gap": 16.300000071525574,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 344.90000009536743,
+            "gap": 17.5,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 361.40000009536743,
+            "gap": 16.5,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 377.5,
+            "gap": 16.09999990463257,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 395,
+            "gap": 17.5,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 411.10000002384186,
+            "gap": 16.100000023841858,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          }
+        ],
+        "timedOut": false
+      },
+      "requests": {
+        "GET /api/v1/changes": 1,
+        "GET /api/v1/changes?view=net": 1
+      }
+    },
+    {
+      "name": "populated-1-to-workspace",
+      "layout": {
+        "clicks": [
+          {
+            "target": "work-panel-workspace",
+            "at": 0,
+            "firstCorrectLayoutMs": 238.39999997615814,
+            "superseded": false
+          }
+        ],
+        "frames": [
+          {
+            "at": 56.299999952316284,
+            "gap": 56.299999952316284,
+            "active": "work-panel-workspace",
+            "sized": 2,
+            "topOffset": -4,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0,
+            "hiddenSized": 1,
+            "hiddenFocusable": 405,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 78,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 541,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 84.89999997615814,
+            "gap": 28.600000023841858,
+            "active": "work-panel-workspace",
+            "sized": 2,
+            "topOffset": -4,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0,
+            "hiddenSized": 1,
+            "hiddenFocusable": 405,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 78,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 541,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 86.79999995231628,
+            "gap": 1.899999976158142,
+            "active": "work-panel-workspace",
+            "sized": 2,
+            "topOffset": -2.5224456787109375,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0.369387,
+            "hiddenSized": 1,
+            "hiddenFocusable": 405,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 79.47755432128906,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 539.5224609375,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 105.29999995231628,
+            "gap": 18.5,
+            "active": "work-panel-workspace",
+            "sized": 2,
+            "topOffset": -1.3979644775390625,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0.650508,
+            "hiddenSized": 1,
+            "hiddenFocusable": 405,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 80.60203552246094,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 538.39794921875,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 121.79999995231628,
+            "gap": 16.5,
+            "active": "work-panel-workspace",
+            "sized": 2,
+            "topOffset": -0.45816802978515625,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0.885457,
+            "hiddenSized": 1,
+            "hiddenFocusable": 405,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 81.54183197021484,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 537.4581909179688,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 139.39999997615814,
+            "gap": 17.600000023841858,
+            "active": "work-panel-workspace",
+            "sized": 2,
+            "topOffset": -0.2682037353515625,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0.932948,
+            "hiddenSized": 1,
+            "hiddenFocusable": 405,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 81.73179626464844,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 537.2681884765625,
+                "height": 459.00006103515625,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 155.39999997615814,
+            "gap": 16,
+            "active": "work-panel-workspace",
+            "sized": 2,
+            "topOffset": -0.15346527099609375,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0.961633,
+            "hiddenSized": 1,
+            "hiddenFocusable": 405,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 81.8465347290039,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 537.1535034179688,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 172.19999992847443,
+            "gap": 16.799999952316284,
+            "active": "work-panel-workspace",
+            "sized": 2,
+            "topOffset": -0.08205413818359375,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0.979486,
+            "hiddenSized": 1,
+            "hiddenFocusable": 405,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 81.9179458618164,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 537.0820922851562,
+                "height": 458.9999694824219,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 188.29999995231628,
+            "gap": 16.100000023841858,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": -0.0386810302734375,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 0.99033,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 81.96131896972656,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 207.69999992847443,
+            "gap": 19.399999976158142,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": -0.01416015625,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 0.996461,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 81.98583984375,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 224,
+            "gap": 16.300000071525574,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": -0.0024871826171875,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 0.999378,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 81.99751281738281,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 238.39999997615814,
+            "gap": 14.399999976158142,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 256.1999999284744,
+            "gap": 17.799999952316284,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 272.1999999284744,
+            "gap": 16,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 288.5,
+            "gap": 16.300000071525574,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 304.6999999284744,
+            "gap": 16.199999928474426,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 322.2999999523163,
+            "gap": 17.600000023841858,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 338.89999997615814,
+            "gap": 16.600000023841858,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 355,
+            "gap": 16.100000023841858,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 371.59999990463257,
+            "gap": 16.59999990463257,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 389.09999990463257,
+            "gap": 17.5,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 405.1999999284744,
+            "gap": 16.100000023841858,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          }
+        ],
+        "timedOut": false
+      },
+      "requests": {
+        "GET /api/v1/chat/status": 1
+      }
+    },
+    {
+      "name": "populated-1-to-files",
+      "layout": {
+        "clicks": [
+          {
+            "target": "work-panel-files",
+            "at": 0,
+            "firstCorrectLayoutMs": 259.60000002384186,
+            "superseded": false
+          }
+        ],
+        "frames": [
+          {
+            "at": 73.60000002384186,
+            "gap": 73.60000002384186,
+            "active": "work-panel-files",
+            "sized": 2,
+            "topOffset": 455,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0,
+            "hiddenSized": 1,
+            "hiddenFocusable": 12,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 82,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 537,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 136.89999997615814,
+            "gap": 63.299999952316284,
+            "active": "work-panel-files",
+            "sized": 2,
+            "topOffset": 455,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0,
+            "hiddenSized": 1,
+            "hiddenFocusable": 12,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 82,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 537,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 202.39999997615814,
+            "gap": 65.5,
+            "active": "work-panel-files",
+            "sized": 2,
+            "topOffset": 458.211181640625,
+            "heightError": -459.0000305175781,
+            "slotHeight": 918,
+            "activeHeight": 458.9999694824219,
+            "opacity": 0.802785,
+            "hiddenSized": 1,
+            "hiddenFocusable": 12,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 78.78886413574219,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 540.211181640625,
+                "height": 458.9999694824219,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 206.29999995231628,
+            "gap": 3.899999976158142,
+            "active": "work-panel-files",
+            "sized": 2,
+            "topOffset": 458.91778564453125,
+            "heightError": -458.99993896484375,
+            "slotHeight": 918,
+            "activeHeight": 459.00006103515625,
+            "opacity": 0.979444,
+            "hiddenSized": 1,
+            "hiddenFocusable": 12,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 78.08222961425781,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 540.9177856445312,
+                "height": 459.00006103515625,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 213.79999995231628,
+            "gap": 7.5,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": -0.0387725830078125,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 0.990305,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 81.96122741699219,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 228.70000004768372,
+            "gap": 14.900000095367432,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": -0.01409912109375,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 0.996474,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 81.98590087890625,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 252.10000002384186,
+            "gap": 23.399999976158142,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": -0.00250244140625,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 0.999373,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 81.99749755859375,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 259.60000002384186,
+            "gap": 7.5,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 277.2000000476837,
+            "gap": 17.600000023841858,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 293.7999999523163,
+            "gap": 16.59999990463257,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 309.89999997615814,
+            "gap": 16.100000023841858,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 326.5,
+            "gap": 16.600000023841858,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 344.10000002384186,
+            "gap": 17.600000023841858,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 360.2999999523163,
+            "gap": 16.199999928474426,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 377,
+            "gap": 16.700000047683716,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 392.89999997615814,
+            "gap": 15.899999976158142,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 409.7000000476837,
+            "gap": 16.800000071525574,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          }
+        ],
+        "timedOut": false
+      },
+      "requests": {
+        "GET /api/v1/changes": 1,
+        "POST /api/v1/workbench/clients": 1,
+        "GET /api/v1/changes?view=net": 1
+      }
+    },
+    {
+      "name": "populated-2-to-workspace",
+      "layout": {
+        "clicks": [
+          {
+            "target": "work-panel-workspace",
+            "at": 0,
+            "firstCorrectLayoutMs": 241.29999995231628,
+            "superseded": false
+          }
+        ],
+        "frames": [
+          {
+            "at": 56,
+            "gap": 56,
+            "active": "work-panel-workspace",
+            "sized": 2,
+            "topOffset": -4,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0,
+            "hiddenSized": 1,
+            "hiddenFocusable": 405,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 78,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 541,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 84.89999997615814,
+            "gap": 28.899999976158142,
+            "active": "work-panel-workspace",
+            "sized": 2,
+            "topOffset": -4,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0,
+            "hiddenSized": 1,
+            "hiddenFocusable": 405,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 78,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 541,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 86.60000002384186,
+            "gap": 1.7000000476837158,
+            "active": "work-panel-workspace",
+            "sized": 2,
+            "topOffset": -2.517791748046875,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0.370551,
+            "hiddenSized": 1,
+            "hiddenFocusable": 405,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 79.48220825195312,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 539.517822265625,
+                "height": 458.9999694824219,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 103.70000004768372,
+            "gap": 17.100000023841858,
+            "active": "work-panel-workspace",
+            "sized": 2,
+            "topOffset": -1.400177001953125,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0.649956,
+            "hiddenSized": 1,
+            "hiddenFocusable": 405,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 80.59982299804688,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 538.4002075195312,
+                "height": 459.00006103515625,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 108,
+            "gap": 4.299999952316284,
+            "active": "work-panel-workspace",
+            "sized": 2,
+            "topOffset": -0.7860794067382812,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0.803479,
+            "hiddenSized": 1,
+            "hiddenFocusable": 405,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 81.21392059326172,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 537.7861328125,
+                "height": 459.00006103515625,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 124.10000002384186,
+            "gap": 16.100000023841858,
+            "active": "work-panel-workspace",
+            "sized": 2,
+            "topOffset": -0.4588165283203125,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0.885296,
+            "hiddenSized": 1,
+            "hiddenFocusable": 405,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 81.54118347167969,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 537.4588623046875,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 140.79999995231628,
+            "gap": 16.699999928474426,
+            "active": "work-panel-workspace",
+            "sized": 2,
+            "topOffset": -0.26859283447265625,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0.932852,
+            "hiddenSized": 1,
+            "hiddenFocusable": 405,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 81.73140716552734,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 537.2686157226562,
+                "height": 458.9999694824219,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 158.39999997615814,
+            "gap": 17.600000023841858,
+            "active": "work-panel-workspace",
+            "sized": 2,
+            "topOffset": -0.1537017822265625,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0.961574,
+            "hiddenSized": 1,
+            "hiddenFocusable": 405,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 81.84629821777344,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 537.1536865234375,
+                "height": 458.9999694824219,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 174.5,
+            "gap": 16.100000023841858,
+            "active": "work-panel-workspace",
+            "sized": 2,
+            "topOffset": -0.0821990966796875,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0.979449,
+            "hiddenSized": 1,
+            "hiddenFocusable": 405,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 81.91780090332031,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 537.0822143554688,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 191.10000002384186,
+            "gap": 16.600000023841858,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": -0.03876495361328125,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 0.990308,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 81.96123504638672,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 212.10000002384186,
+            "gap": 21,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": -0.01409912109375,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 0.996475,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 81.98590087890625,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 226.60000002384186,
+            "gap": 14.5,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": -0.00250244140625,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 0.999374,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 81.99749755859375,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 241.29999995231628,
+            "gap": 14.699999928474426,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 257.39999997615814,
+            "gap": 16.100000023841858,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 274,
+            "gap": 16.600000023841858,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 291.39999997615814,
+            "gap": 17.399999976158142,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 307.7000000476837,
+            "gap": 16.300000071525574,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 324.2999999523163,
+            "gap": 16.59999990463257,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 341.7000000476837,
+            "gap": 17.40000009536743,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 357.89999997615814,
+            "gap": 16.199999928474426,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 374.2999999523163,
+            "gap": 16.399999976158142,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 391.89999997615814,
+            "gap": 17.600000023841858,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          },
+          {
+            "at": 408,
+            "gap": 16.100000023841858,
+            "active": "work-panel-workspace",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              }
+            ]
+          }
+        ],
+        "timedOut": false
+      },
+      "requests": {
+        "POST /api/v1/browser/clients": 1
+      }
+    },
+    {
+      "name": "populated-2-to-files",
+      "layout": {
+        "clicks": [
+          {
+            "target": "work-panel-files",
+            "at": 0,
+            "firstCorrectLayoutMs": 263.1999999284744,
+            "superseded": false
+          }
+        ],
+        "frames": [
+          {
+            "at": 71,
+            "gap": 71,
+            "active": "work-panel-files",
+            "sized": 2,
+            "topOffset": 455,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0,
+            "hiddenSized": 1,
+            "hiddenFocusable": 12,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 82,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 537,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 132.19999992847443,
+            "gap": 61.199999928474426,
+            "active": "work-panel-files",
+            "sized": 2,
+            "topOffset": 455,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0,
+            "hiddenSized": 1,
+            "hiddenFocusable": 12,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 82,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 537,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 190.69999992847443,
+            "gap": 58.5,
+            "active": "work-panel-files",
+            "sized": 2,
+            "topOffset": 458.214599609375,
+            "heightError": -459.0000305175781,
+            "slotHeight": 918,
+            "activeHeight": 458.9999694824219,
+            "opacity": 0.803636,
+            "hiddenSized": 1,
+            "hiddenFocusable": 12,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 78.78546142578125,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 540.214599609375,
+                "height": 458.9999694824219,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 199.59999990463257,
+            "gap": 8.899999976158142,
+            "active": "work-panel-files",
+            "sized": 2,
+            "topOffset": 458.91790771484375,
+            "heightError": -459,
+            "slotHeight": 918,
+            "activeHeight": 459,
+            "opacity": 0.979469,
+            "hiddenSized": 1,
+            "hiddenFocusable": 12,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 78.08212280273438,
+                "height": 459,
+                "width": 537.5625
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 540.9179077148438,
+                "height": 459,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 211,
+            "gap": 11.400000095367432,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": -0.03871917724609375,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 0.99032,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 81.9612808227539,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 227,
+            "gap": 16,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": -0.0141754150390625,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 0.996455,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 81.98582458496094,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 251.19999992847443,
+            "gap": 24.199999928474426,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": -0.0024871826171875,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 0.999376,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 81.99751281738281,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 263.1999999284744,
+            "gap": 12,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 283.59999990463257,
+            "gap": 20.399999976158142,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 293.59999990463257,
+            "gap": 10,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 309.6999999284744,
+            "gap": 16.100000023841858,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 326.1999999284744,
+            "gap": 16.5,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 343.7999999523163,
+            "gap": 17.600000023841858,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 359.89999997615814,
+            "gap": 16.100000023841858,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 376.5,
+            "gap": 16.600000023841858,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 392.59999990463257,
+            "gap": 16.09999990463257,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          },
+          {
+            "at": 410.7999999523163,
+            "gap": 18.200000047683716,
+            "active": "work-panel-files",
+            "sized": 1,
+            "topOffset": 0,
+            "heightError": 0,
+            "slotHeight": 918,
+            "activeHeight": 918,
+            "opacity": 1,
+            "hiddenSized": 0,
+            "hiddenFocusable": 0,
+            "hiddenPointerHits": 0,
+            "panes": [
+              {
+                "id": "work-panel-workspace",
+                "hidden": true,
+                "top": 0,
+                "height": 0,
+                "width": 0
+              },
+              {
+                "id": "work-panel-files",
+                "hidden": false,
+                "top": 82,
+                "height": 918,
+                "width": 537.5625
+              }
+            ]
+          }
+        ],
+        "timedOut": false
+      },
+      "requests": {
+        "GET /api/v1/changes": 2,
+        "GET /api/v1/changes?view=net": 1
+      }
+    }
+  ],
+  "dataReady": {
+    "elapsedMs": 182.5,
+    "files": 400
+  },
+  "memoryBefore": {
+    "tree": 1200,
+    "diff": 11000
+  },
+  "memories": [
+    {
+      "phase": "cycle-1",
+      "tree": 6572.66650390625,
+      "diff": 11000,
+      "search": "report-",
+      "selected": "populated-220"
+    },
+    {
+      "phase": "cycle-2",
+      "tree": 6572.66650390625,
+      "diff": 11000,
+      "search": "report-",
+      "selected": "populated-220"
+    }
+  ],
+  "refreshLayout": {
+    "width": 531.5625,
+    "height": 36,
+    "selectors": 2
+  },
+  "refresh": {
+    "requestsBefore": {
+      "GET /api/v1/changes": 7,
+      "GET /api/v1/chat/admission/context": 3,
+      "POST /api/v1/workbench/clients": 3,
+      "POST /api/v1/browser/clients": 4,
+      "GET /api/v1/security/mode": 2,
+      "GET /api/v1/memory/settings": 2,
+      "GET /api/v1/chat/snapshot": 3,
+      "POST /api/v1/workspace/bind": 2,
+      "GET /api/v1/workspace/directory": 8,
+      "GET /api/v1/git/binding": 6,
+      "GET /api/v1/git/status": 2,
+      "GET /api/v1/workspace/file/content": 1,
+      "GET /api/v1/changes?view=net": 3,
+      "GET /api/v1/chat/status": 2
+    },
+    "requestsAfter": {
+      "GET /api/v1/changes": 8,
+      "GET /api/v1/chat/admission/context": 3,
+      "POST /api/v1/workbench/clients": 3,
+      "POST /api/v1/browser/clients": 4,
+      "GET /api/v1/security/mode": 2,
+      "GET /api/v1/memory/settings": 2,
+      "GET /api/v1/chat/snapshot": 3,
+      "POST /api/v1/workspace/bind": 2,
+      "GET /api/v1/workspace/directory": 8,
+      "GET /api/v1/git/binding": 6,
+      "GET /api/v1/git/status": 2,
+      "GET /api/v1/workspace/file/content": 1,
+      "GET /api/v1/changes?view=net": 4,
+      "GET /api/v1/chat/status": 2
+    },
+    "frames": [
+      {
+        "at": 0.2999999523162842,
+        "busy": false,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": false,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1337,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1292,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1361,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 5.100000023841858,
+        "busy": false,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": false,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1337,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1292,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1361,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 21.399999976158142,
+        "busy": false,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": false,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1337,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1292,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1361,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 38.89999997615814,
+        "busy": false,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": false,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1337,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1292,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1361,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 55.5,
+        "busy": false,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": false,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1337,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1292,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1361,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 71.70000004768372,
+        "busy": false,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": false,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1337,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1292,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1361,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 124.60000002384186,
+        "busy": false,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": false,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1337,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1292,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1361,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 126.89999997615814,
+        "busy": false,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": false,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1337,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1292,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1361,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 157.20000004768372,
+        "busy": true,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": true,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1229,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1184,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1253,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 159.5,
+        "busy": true,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": true,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1229,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1184,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1253,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 203.79999995231628,
+        "busy": true,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": true,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1229,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1184,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1253,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 206.20000004768372,
+        "busy": true,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": true,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1229,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1184,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1253,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 221.60000002384186,
+        "busy": true,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": true,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1229,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1184,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1253,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 253.89999997615814,
+        "busy": true,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": true,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1229,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1184,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1253,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 256.2999999523163,
+        "busy": true,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": true,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1229,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1184,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1253,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 296.7999999523163,
+        "busy": true,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": true,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1229,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1184,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1253,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 297.89999997615814,
+        "busy": true,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": true,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1229,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1184,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1253,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 314.10000002384186,
+        "busy": true,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": true,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1229,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1184,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1253,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 345.2000000476837,
+        "busy": true,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": true,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1229,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1184,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1253,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 346,
+        "busy": true,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": true,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1229,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1184,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1253,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 355.39999997615814,
+        "busy": true,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": true,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1229,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1184,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1253,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 371.5,
+        "busy": true,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": true,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1229,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1184,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1253,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 388.39999997615814,
+        "busy": true,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": true,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1229,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1184,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1253,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 421.5,
+        "busy": true,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": true,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1229,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1184,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1253,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 423.7999999523163,
+        "busy": true,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": true,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1229,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1184,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1253,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 442,
+        "busy": true,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": true,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1229,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1184,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1253,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 455.60000002384186,
+        "busy": true,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": true,
+        "contentRows": 49,
+        "stats": "增加 1500 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1229,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1184,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 0.5,
+            "disabled": true,
+            "left": 1253,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 500.60000002384186,
+        "busy": false,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": false,
+        "contentRows": 49,
+        "stats": "增加 1501 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1337,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1292,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1361,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 505,
+        "busy": false,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": false,
+        "contentRows": 49,
+        "stats": "增加 1501 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1337,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1292,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1361,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 522.2999999523163,
+        "busy": false,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": false,
+        "contentRows": 49,
+        "stats": "增加 1501 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1337,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1292,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1361,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 538.1000000238419,
+        "busy": false,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": false,
+        "contentRows": 49,
+        "stats": "增加 1501 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1337,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1292,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1361,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      },
+      {
+        "at": 555.8999999761581,
+        "busy": false,
+        "boxes": {
+          "toolbar": {
+            "top": 82,
+            "height": 48
+          },
+          "batch": {
+            "top": 130,
+            "height": 36.66666793823242
+          },
+          "scope": {
+            "top": 404.66668701171875,
+            "height": 36
+          },
+          "diff": {
+            "top": 440.66668701171875,
+            "height": 559.3333740234375
+          }
+        },
+        "taskHint": false,
+        "contentRows": 49,
+        "stats": "增加 1501 行，删除 0 行",
+        "buttons": [
+          {
+            "label": "批量改动操作",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1337,
+            "top": 130,
+            "width": 81,
+            "height": 28
+          },
+          {
+            "label": "保留此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1292,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          },
+          {
+            "label": "撤回此改动",
+            "opacity": 1,
+            "disabled": false,
+            "left": 1361,
+            "top": 404.66668701171875,
+            "width": 57,
+            "height": 28
+          }
+        ]
+      }
+    ]
+  },
+  "memoryAfterRefresh": {
+    "tree": 6572.66650390625,
+    "diff": 11000
+  }
+}

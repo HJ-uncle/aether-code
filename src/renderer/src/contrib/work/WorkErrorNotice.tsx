@@ -1,5 +1,6 @@
 import { useMemo, useState, type JSX } from 'react'
 import { Icon } from '@renderer/workbench/icons'
+import { useMotionPresence } from '@renderer/workbench/MotionPresence'
 import { presentWorkError, workErrorStatusLabel, type WorkErrorContext, type WorkErrorPresentation } from './work-error-presenter'
 import './work-error-notice.css'
 
@@ -18,6 +19,7 @@ type WorkErrorNoticeProps = {
 export function WorkErrorNotice({ error, context, className = '', onRetry, retryLabel = '重试任务' }: WorkErrorNoticeProps): JSX.Element | null {
   const presentation = useMemo(() => presentWorkError(error, context), [error, context])
   const [open, setOpen] = useState(false)
+  const presence = useMotionPresence(open)
   const [retrying, setRetrying] = useState(false)
   const [actionError, setActionError] = useState('')
   const [copied, setCopied] = useState(false)
@@ -65,7 +67,7 @@ export function WorkErrorNotice({ error, context, className = '', onRetry, retry
       ) : null}
       <details open={open} onToggle={event => setOpen(event.currentTarget.open)}>
         <summary>{open ? '收起诊断详情' : '查看诊断详情'}</summary>
-        {open ? <pre>{presentation.detail}</pre> : null}
+        {presence.present ? <pre {...presence.motionProps}>{presentation.detail}</pre> : null}
       </details>
       <div className="work-error-notice__actions" role="group" aria-label="错误操作">
         {onRetry && presentation.retryable ? (

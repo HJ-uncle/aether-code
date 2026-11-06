@@ -36,11 +36,15 @@ import type { MemoryScope } from './memory'
 import { ARCHIVE_PAGE_SIZE, loadArchiveWindow, archiveDisplayHistory, type ArchiveWindow, type ArchivePageAction, type ArchivePageInfo } from './archive-pages'
 import { createIdleRootDiscovery } from './idle-root-discovery'
 import { createHistoryMutationGuard } from './history-mutation'
+import { cacheDisplayHistory, checkDisplayHistory, mergeDisplayHistory, type DisplayHistoryCache, type DisplayHistoryCompleteness, type DisplayHistoryTurn } from './display-history'
+import { normalizeRootFollowupMessage, type RootFollowupMessage } from './root-followup-message'
+import { applyProjectedFinalResult } from './final-result'
 import { getAppMode, onAppModeChanged } from '@renderer/core/platform/app-mode'
-import { createQueuedChatEntry, editQueuedChatEntry, type QueuedChatEntry } from './chat-queue-entry'
+import { useCodeNextTurnQueue } from './useCodeNextTurnQueue'
+import { codeQueueSubmission } from './code-queue-entry'
+import { applyProjectedUserMessage, bindProjectedAssistantId, applyProjectedUsage } from './chat-timeline'
 import { ChatRequestRejectedError, dispatchChatRequest } from './chat-send-request'
-import { sessionQueue, takeSessionQueue, restoreSessionQueue, clearSessionQueue,
-  moveSessionQueue, updateSessionQueue, removeSessionQueue } from './chat-session-queue'
+
 
 // ==================== 模型 ====================
 
@@ -89,12 +93,14 @@ export type TimelineItem =
   | { kind: 'interaction' }
 
 export interface ChatMessage {
+  finalResult?: import('@shared/final-result').FinalResult
   publishedChildFence?: import('@shared/published-child').PublishedChildFence
   runId?: string
   run?: RootRun
   interactions?: PendingInteraction[]
   id: string
   role: 'user' | 'assistant'
+  rootFollowup?: RootFollowupMessage
   content: string
   thinking: string
   tools: ToolActivity[]
@@ -152,22 +158,18 @@ export interface QueuedMessage {
   id: string
   text: string
   attachments: ChatAttachment[]
+  phase?: 'pending' | 'dispatching' | 'admission-unknown' | 'accepted' | 'terminal'
+  reason?: string
 }
 
 /** 队列发送模式：serial 按序逐条 / batch 合并成一条；localStorage 持久化 */
 export type QueueSendMode = 'serial' | 'batch'
-const QUEUE_SEND_MODE_KEY = 'aether:queueSendMode'
 
-function loadQueueSendMode(): QueueSendMode {
-  try {
-    return localStorage.getItem(QUEUE_SEND_MODE_KEY) === 'batch' ? 'batch' : 'serial'
-  } catch {
-    return 'serial'
-  }
-}
 
 export interface SendOptions {
   sessionId: string
+  /** Authored chips for durable queue editing; the direct wire message is already serialized. */
+  queueDraft?: import('@shared/next-turn-queue').NextTurnQueueEnvelope['draft']
   agentId?: string
   collaborators?: import('@shared/subagent').AgentCollaborator[]
   model?: string
@@ -253,9 +255,16 @@ export function useChat(options: { commandOwner?: string } = {}): {
   archiveError: string | null
   /** Expand the explicit transcript archive into the visible chat timeline. */
   loadArchive: (sessionId: string, action?: ArchivePageAction) => Promise<void>
+  displayTurns: DisplayHistoryTurn[] | null
+  displayLoadedTurnIds: string[]
+  displayHistoryLoading: boolean
+  displayHistoryError: string | null
+  displayHistoryCompleteness: DisplayHistoryCompleteness | null
+  loadDisplayTurn: (sessionId: string, userMessageId?: string) => Promise<boolean>
   /** 会话待办清单（引擎 todo 工具维护，随 \x00__todo__ 帧整表下发） */
   todos: EngineTodo[]
-  send: (text: string, options: SendOptions) => Promise<void>
+  /** onAdmitted releases the composer; the returned promise still owns the full stream. */
+  send: (text: string, options: SendOptions, onAdmitted?: () => void) => Promise<void>
   /** Exact selected-session admission gate, including synchronous dispatch and recovery. */
   hasSessionWork: (sessionId?: string | null) => boolean
   /**
@@ -276,35 +285,36 @@ export function useChat(options: { commandOwner?: string } = {}): {
   /** 清空当前会话；传入 sessionId 时同步删除引擎侧历史；失败时抛错且不清理界面 */
   clear: (sessionId?: string) => Promise<void>
   /** 删除一整轮对话（引擎侧 + 界面） */
-  deleteTurn: (sessionId: string, message: ChatMessage) => Promise<void>
+  deleteTurn: (sessionId: string, message: ChatMessage, onHistoryChanged?: () => void) => Promise<void>
   /** 从某条用户消息处截断重发（重新发送 / 重新生成共用） */
-  retryFrom: (userMessage: ChatMessage, options: SendOptions) => Promise<void>
+  retryFrom: (userMessage: ChatMessage, options: SendOptions, onHistoryChanged?: () => void) => Promise<void>
   /** 删除该用户消息及后续历史，保留文件，不自动重发。 */
-  truncateFrom: (sessionId: string, userMessage: ChatMessage) => Promise<void>
+  truncateFrom: (sessionId: string, userMessage: ChatMessage, onHistoryChanged?: () => void) => Promise<void>
   /** 消息级回退：恢复该消息之后的所有文件改动（含 kept）并截断对话，不自动重发 */
-  revertFrom: (sessionId: string, userMessage: ChatMessage) => Promise<void>
+  revertFrom: (sessionId: string, userMessage: ChatMessage, onHistoryChanged?: () => void) => Promise<void>
   /** 合并发送：把排队中的消息与本条合并成一条立即发出（流中时合并全部队列） */
   mergeAndSend: (text: string, options: SendOptions) => Promise<void>
   /** 当前排队中的消息（供队列托盘渲染） */
   queue: QueuedMessage[]
   /** 从队列移除一条 */
-  removeQueued: (id: string) => void
+  removeQueued: (id: string) => Promise<void>
   /** 清空队列（不影响正在跑的回合） */
-  clearQueue: () => void
+  clearQueue: () => Promise<void>
   /** 编辑队列中一条消息的正文与附件 */
-  updateQueued: (id: string, text: string, attachments: ChatAttachment[]) => void
+  updateQueued: (id: string, text: string, attachments: ChatAttachment[]) => Promise<void>
   /** 拖拽排序：把 fromIndex 的消息挪到 toIndex */
-  moveQueued: (fromIndex: number, toIndex: number) => void
+  moveQueued: (fromIndex: number, toIndex: number) => Promise<void>
   /** 手动发出队列：空闲时按当前模式（serial 发队首 / batch 合并全部）立即发送 */
   flushQueue: () => Promise<void>
-  /** 队列发送模式（serial 按序逐条 / batch 合并成一条），持久化到 localStorage */
-  queueSendMode: QueueSendMode
-  setQueueSendMode: (mode: QueueSendMode) => void
+  mergeQueued: () => Promise<void>
+  queueState: { ready: boolean; saving: boolean; paused: boolean; unknown: boolean; error: string | null }
+  pauseQueue: () => Promise<void>
+  reconcileQueue: (retryIfAbsent?: boolean) => Promise<void>
   /**
    * 运行中切换模型时，把队列里所有待发消息的模型改写为新模型
    * （已发出的回合不受影响，避免出现「正在运行的模型显示成后选的模型」）
    */
-  retargetQueuedModel: (model: string, sessionId: string) => void
+  retargetQueuedModel: (model: string, sessionId: string) => Promise<void>
   /**
    * 恢复断开的流（刷新页面 / 切回会话后调用）。
    * 返回 true 表示该会话确有进行中的流且已成功挂接；false 表示无需恢复。
@@ -356,6 +366,27 @@ export function useChat(options: { commandOwner?: string } = {}): {
   const [archiveError, setArchiveError] = useState<string | null>(null)
   const archiveWindowRef = useRef<ArchiveWindow | undefined>(undefined)
   const archiveLoadingRef = useRef<object | null>(null)
+  // Display history is a read-only overlay. Keeping it outside messages prevents
+  // old archive bodies from changing live patches, recovery cursors or billing.
+  const [displayHistory, setDisplayHistory] = useState<DisplayHistoryCache | null>(null)
+  const displayHistoryRef = useRef<DisplayHistoryCache | null>(null)
+  const displayLiveTurnIdsRef = useRef(new Set<string>())
+  const displayReadQueueRef = useRef<Promise<unknown>>(Promise.resolve())
+  const displayReadTokenRef = useRef<object | null>(null)
+  const [displayHistoryLoading, setDisplayHistoryLoading] = useState(false)
+  const [displayHistoryError, setDisplayHistoryError] = useState<string | null>(null)
+  const [displayRefreshVersion, setDisplayRefreshVersion] = useState(0)
+  const displayUnsupportedRef = useRef(false)
+  const resetDisplayHistory = useCallback((): void => {
+    displayHistoryRef.current = null
+    displayLiveTurnIdsRef.current.clear()
+    displayReadQueueRef.current = Promise.resolve()
+    displayReadTokenRef.current = null
+    displayUnsupportedRef.current = false
+    setDisplayHistory(null)
+    setDisplayHistoryLoading(false)
+    setDisplayHistoryError(null)
+  }, [])
 
   /**
    * 流式帧节流（对齐 wuzu-client 的 80ms 快照方案）：
@@ -432,6 +463,8 @@ export function useChat(options: { commandOwner?: string } = {}): {
   const activeSessionRef = useRef<string | null>(null)
   /** Viewing a session outlives its parent stream; child results must still reach its dispatch card. */
   const viewSessionRef = useRef<string | null>(null)
+  const [queueSessionId, setQueueSessionId] = useState<string | null>(null)
+  const durableQueue = useCodeNextTurnQueue(commandOwner === 'code' ? queueSessionId : null, renderSource, isEngineReady() && commandOwner === 'code')
   const rootRunsRef = useRef(new Map<string, RootRun>())
   const activeRunIdRef = useRef<string | null>(null)
   const optimisticIdsRef = useRef<{ userId?: string; assistantId?: string }>({})
@@ -443,7 +476,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
   const mountedRef = useRef(true)
   const stoppingRef = useRef<RecoveryScope | null>(null)
   const stoppingFlightRef = useRef<{ scope: RecoveryScope; promise: Promise<void> } | null>(null)
-  const outgoingSendRef = useRef<{ scope: RecoveryScope; streamId: string } | null>(null)
+  const outgoingSendRef = useRef<{ scope: RecoveryScope; streamId: string; knownRunIds: Set<string>; admitted: boolean; onAdmitted?: () => void } | null>(null)
   const rejectedSendScopeRef = useRef<RecoveryScope | null>(null)
   const [stopping, setStopping] = useState(false)
   const [stopError, setStopError] = useState<string | null>(null)
@@ -504,6 +537,15 @@ export function useChat(options: { commandOwner?: string } = {}): {
     setMessages(previous => patchLastAssistant(previous, assistant => finishTransport(assistant, message, receivedAt)), { message, receivedAt })
     return true
   }, [flushStreamPatches, scopeIsCurrent])
+  const acknowledgeOutgoingSend = useCallback((streamId: string, run: RootRun): void => {
+    const submission = outgoingSendRef.current
+    if (!submission || submission.admitted || submission.streamId !== streamId || !scopeIsCurrent(submission.scope)
+      || run.sessionId !== submission.scope.sessionId || submission.knownRunIds.has(run.runId)) return
+    // Only a new, validated root on this submission's stream proves admission.
+    // Keep stream completion separate so callers that await execution still do.
+    submission.admitted = true
+    submission.onAdmitted?.()
+  }, [scopeIsCurrent])
   const recoverRef = useRef<(sessionId: string) => Promise<boolean>>(async () => false)
   const [publishedUsageRefresh] = useState(() => createPublishedUsageRefresh({
     current: scope => scopeIsCurrent(scope) && scope.historyEpoch === historyRequestRef.current &&
@@ -551,6 +593,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
     const oldStream = activeStreamRef.current
     invalidateRecovery()
     viewSessionRef.current = sessionId
+    setQueueSessionId(sessionId)
     restoredSessionRef.current = null
     setHistoryError(null)
     consumedEventIdRef.current = null
@@ -571,6 +614,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
     setCommandJobs([])
     setTodos([])
     setHistoryCompacted(false)
+    resetDisplayHistory()
     setArchiveExpanded(false)
     archiveWindowRef.current = undefined
     archiveLoadingRef.current = null
@@ -580,7 +624,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
     setArchiveError(null)
     // Detach only this client. The server owns the old run's eventual outcome.
     if (oldStream) void engine.abortStream(oldStream)
-  }, [commandOwner, invalidateRecovery, commitUsageAnchor])
+  }, [commandOwner, invalidateRecovery, commitUsageAnchor, resetDisplayHistory])
   useEffect(() => () => deactivateCommandSession(commandOwner), [commandOwner])
   useEffect(() => {
     mountedRef.current = true
@@ -594,80 +638,14 @@ export function useChat(options: { commandOwner?: string } = {}): {
     }
   }, [invalidateRecovery])
 
-  /**
-   * 连续发送队列：流式进行中用户继续发的消息先进队列，
-   * 当前流结束（完成/出错/中止）后按序自动发出。
-   *
-   * 队列本体放 state 而非 ref：托盘 UI 要实时渲染排队消息
-   * （预览/删除/清空），ref 变更不触发重渲染。
-   * 发送逻辑在事件回调里读队列，用 queueRef 镜像一份保证拿到最新值。
-   */
-  type QueuedEntry = QueuedChatEntry
-  const [queue, setQueue] = useState<QueuedEntry[]>([])
-  const queueRef = useRef<QueuedEntry[]>([])
-  const pausedQueueSessionsRef = useRef(new Set<string>())
-  const syncQueue = useCallback((next: QueuedEntry[]) => {
-    queueRef.current = next
-    setQueue(next)
-  }, [])
-
-  const dispatchQueued = useCallback(async (): Promise<void> => {
-    const source = sourceRef.current
-    const taken = takeSessionQueue(queueRef.current, viewSessionRef.current, queueSendModeRef.current)
-    const [first] = taken.selected
-    if (!first) return
-    syncQueue(taken.remaining)
-    const pending = taken.selected
-    const sending = pending.length === 1 ? sendInternalRef.current(first.text, first.options)
-      : sendInternalRef.current(pending.map((item, index) => `${index + 1}. ${item.text}`).join('\n\n'), {
-        ...first.options,
-        model: pending[pending.length - 1].options.model,
-        attachments: pending.flatMap(item => item.attachments)
-      })
-    try {
-      await sending
-    } catch (error) {
-      // Queues belong to an engine source and session, not the selected view.
-      // A late refusal must return A's input even while the user is viewing B.
-      if (error instanceof ChatRequestRejectedError && mountedRef.current &&
-        source === getEngineSource() && sourceRef.current === source) {
-        pausedQueueSessionsRef.current.add(first.options.sessionId)
-        syncQueue(restoreSessionQueue(queueRef.current, taken))
-      }
-      throw error
-    }
-  }, [syncQueue])
-
-  /** Automatic sends only consume this view's queue and pause after a confirmed rejection. */
-  const drainQueue = useCallback(async (): Promise<void> => {
-    if (!isEngineReady() || sourceRef.current !== getEngineSource() || hasSessionWork()) return
-    if (viewSessionRef.current && pausedQueueSessionsRef.current.has(viewSessionRef.current)) return
-    if (rejectedSendScopeRef.current && scopeIsCurrent(rejectedSendScopeRef.current)) return
-    await dispatchQueued()
-  }, [hasSessionWork, scopeIsCurrent, dispatchQueued])
-
-  /** 手动发出队列（托盘「发送」按钮）：与 drainQueue 同逻辑，仅供空闲时调用 */
-  const flushQueue = useCallback(async (): Promise<void> => {
-    if (!isEngineReady() || sourceRef.current !== getEngineSource() || hasSessionWork()) return
-    if (viewSessionRef.current) pausedQueueSessionsRef.current.delete(viewSessionRef.current)
-    await dispatchQueued()
-  }, [hasSessionWork, dispatchQueued])
-
-  /**
-   * send 的实际执行体（不含排队判断）。由 send（带排队）与 drainQueue 共用。
-   * useCallback 初始化顺序：drainQueue 引用它，因此声明在其之前。
-   */
-  const sendInternalRef = useRef<(text: string, options: SendOptions) => Promise<void>>(async () => {})
-  const drainQueueRef = useRef<() => Promise<void>>(async () => {})
+  // Queued requests are dispatched by main even while another session is visible.
+  // No renderer drain remains that could bypass the durable admission claim.
+  const sendInternalRef = useRef<(text: string, options: SendOptions, onAdmitted?: () => void) => Promise<void>>(async () => {})
   useEffect(() => {
-    const scope = connection.scope
-    const run = activeRunIdRef.current ? rootRunsRef.current.get(activeRunIdRef.current) : undefined
-    // A task can finish while the client is disconnected. A recovered terminal
-    // snapshot must release its queue just as an observed terminal frame does.
-    if (connection.phase === 'idle' && scope && scopeIsCurrent(scope) && run?.status === 'succeeded') {
-      void drainQueueRef.current().catch(() => {})
-    }
-  }, [connection, scopeIsCurrent])
+    if (!queueSessionId || commandOwner !== 'code' || activeStreamRef.current || stoppingRef.current) return
+    const accepted = durableQueue.state?.entries.find(entry => entry.phase === 'accepted')
+    if (accepted?.phase === 'accepted' && activeRunIdRef.current !== accepted.receipt.runId) void recoverRef.current(queueSessionId).catch(() => {})
+  }, [queueSessionId, commandOwner, durableQueue.state, streaming])
 
   useEffect(() => subscribeEngineSource(() => {
     const oldStream = activeStreamRef.current
@@ -676,6 +654,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
     activeStreamRef.current = null
     activeSessionRef.current = null
     viewSessionRef.current = null
+    setQueueSessionId(null)
     restoredSessionRef.current = null
     setHistoryError(null)
     activeRunIdRef.current = null
@@ -687,17 +666,17 @@ export function useChat(options: { commandOwner?: string } = {}): {
     pendingPatchesRef.current = []
     if (throttleTimerRef.current) clearTimeout(throttleTimerRef.current)
     throttleTimerRef.current = null
-    syncQueue([])
-    pausedQueueSessionsRef.current.clear()
+
     setStreaming(false)
     setMessages([])
     commitUsageAnchor(null)
     setSessionModel(null)
     setCommandJobs([])
     setTodos([])
+    resetDisplayHistory()
     // Detach only: POST cancel would target the new server.
     if (oldStream) void engine.abortStream(oldStream)
-  }), [syncQueue, invalidateRecovery, commitUsageAnchor])
+  }), [invalidateRecovery, commitUsageAnchor, resetDisplayHistory])
 
   useEffect(() => {
     const offCommands = subscribeCommandJobs(() => {
@@ -912,8 +891,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
         reconcileChildren(true)
         reconcile()
         if (run && run.status !== 'running') recoveryLoop.cancel()
-        if (run?.status === 'succeeded') void drainQueueRef.current().catch(() => {})
-        else if (!run && event.type === 'done' && activeSessionRef.current === viewSessionRef.current) {
+        if (!run && event.type === 'done' && activeSessionRef.current === viewSessionRef.current) {
           // A remote proxy may close the SSE stream just after the payloads and
           // before the terminal run frame is observed locally. Recover the
           // durable snapshot so the message gets its real status instead of
@@ -940,20 +918,36 @@ export function useChat(options: { commandOwner?: string } = {}): {
         flushStreamPatches()
         const merged = mergeRootRun(rootRunsRef.current.get(run.runId), run)
         rootRunsRef.current.set(run.runId, merged)
+        displayLiveTurnIdsRef.current.add(merged.userMessageId)
         activeRunIdRef.current = run.runId
         setSessionModel({ source: sourceRef.current, sessionId: merged.sessionId, runId: merged.runId, modelId: merged.modelId, requestConfig: merged.requestConfig, compaction: merged.compaction })
         const optimistic = { ...optimisticIdsRef.current }
         setMessages((prev) => scopeIsCurrent(eventScope) ? applyRootRun(prev, merged, optimistic) : prev, { merged, optimistic, eventScope })
+        acknowledgeOutgoingSend(event.streamId, merged)
+        return
+      }
+      if (event.payload.userMessage) {
+        const currentRun = activeRunIdRef.current ? rootRunsRef.current.get(activeRunIdRef.current) : undefined
+        if (currentRun) {
+          flushStreamPatches()
+          const row = event.payload.userMessage as EngineHistoryRow
+          const followup = normalizeRootFollowupMessage(row)
+          if (row.id) displayLiveTurnIdsRef.current.add(followup?.rootRunId === currentRun.runId && followup.turnId === currentRun.turnId
+            ? currentRun.userMessageId : row.id)
+          setMessages(prev => scopeIsCurrent(eventScope) ? applyProjectedUserMessage(prev, row, currentRun) : prev, { row, currentRun, eventScope })
+        }
         return
       }
       if (event.payload.userMsgId || event.payload.assistantMsgId) {
+        if (event.payload.userMsgId) displayLiveTurnIdsRef.current.add(event.payload.userMsgId)
         const ids = { ...optimisticIdsRef.current }
         const activeRunId = activeRunIdRef.current
-        setMessages((prev) => !scopeIsCurrent(eventScope) ? prev : prev.map(message => {
-          if (event.payload.userMsgId && message.id === ids.userId) return { ...message, id: event.payload.userMsgId }
-          if (event.payload.assistantMsgId && message.role === 'assistant' && (message.id === ids.assistantId || message.runId === activeRunId)) return { ...message, id: event.payload.assistantMsgId }
-          return message
-        }), { event, ids, activeRunId, eventScope })
+        flushStreamPatches()
+        setMessages((prev) => {
+          if (!scopeIsCurrent(eventScope)) return prev
+          const updated = prev.map(message => event.payload.userMsgId && message.id === ids.userId ? { ...message, id: event.payload.userMsgId } : message)
+          return event.payload.assistantMsgId && activeRunId ? bindProjectedAssistantId(updated, activeRunId, event.payload.assistantMsgId) : updated
+        }, { event, ids, activeRunId, eventScope })
         // React may apply these queued updaters after subsequent SSE frames. Never mutate a captured ID map.
         optimisticIdsRef.current = {
           ...ids,
@@ -976,6 +970,8 @@ export function useChat(options: { commandOwner?: string } = {}): {
       // 流式数据帧走节流队列：高频 content/thinking delta 攒 80ms 合并一次渲染
       scheduleStreamPatch((prev) => {
         if (!scopeIsCurrent(eventScope)) return prev
+        if (payload.finalResult) return applyProjectedFinalResult(prev, payload.finalResult)
+        if (payload.usage && ownerRunId) return applyProjectedUsage(prev, payload.usage, ownerRunId)
         const result = payload.toolEnd ?? payload.toolResult
         // Approval frames can also carry tool results; preserve their pending interaction first.
         const updated = result && !normalizePending(payload) ? applyToolResult(prev, result, ownerRunId) : prev
@@ -987,10 +983,10 @@ export function useChat(options: { commandOwner?: string } = {}): {
         }))
       }, { payload, receipt, ownerRunId, eventScope })
     }
-  }, [flushStreamPatches, scheduleStreamPatch, recoveryLoop, recoveryScope, scopeIsCurrent, commandOwner, idleRootDiscovery, historyMutationGuard, publishedUsageRefresh, rejectOutgoingSend])
+  }, [flushStreamPatches, scheduleStreamPatch, recoveryLoop, recoveryScope, scopeIsCurrent, commandOwner, idleRootDiscovery, historyMutationGuard, publishedUsageRefresh, rejectOutgoingSend, acknowledgeOutgoingSend])
 
   /** 统一起流：设置激活流 ID 并发出请求 */
-  const runStream = useCallback(async (body: Record<string, unknown>) => {
+  const runStream = useCallback(async (body: Record<string, unknown>, onAdmitted?: () => void) => {
     assertEngineSource(renderSource)
     invalidateRecovery()
     const scope = recoveryScope(typeof body.sessionId === 'string' ? body.sessionId : '')
@@ -1000,7 +996,8 @@ export function useChat(options: { commandOwner?: string } = {}): {
     activeSessionRef.current = typeof body.sessionId === 'string' ? body.sessionId : null
     viewSessionRef.current = activeSessionRef.current
     const newSubmission = typeof body.message === 'string' && !body.toolResponse
-    if (newSubmission) outgoingSendRef.current = { streamId, scope }
+    const submission = newSubmission ? { streamId, scope, knownRunIds: new Set(rootRunsRef.current.keys()), admitted: false, onAdmitted } : null
+    if (submission) outgoingSendRef.current = submission
     let dispatched = false
     try {
     const protocol = await engine.getSubagentProtocol()
@@ -1020,6 +1017,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
       toolProfile: commandOwner === 'work' ? 'general' : 'code'
     })
     if (result?.rejection) throw new ChatRequestRejectedError(result.rejection.message)
+    if (submission && !submission.admitted) throw new Error('尚未取得这条消息的接纳确认，原稿已保留，请先核对任务状态')
     } catch (error) {
       if (error instanceof ChatRequestRejectedError || newSubmission && !dispatched) {
         const rejection = error instanceof ChatRequestRejectedError ? error
@@ -1039,7 +1037,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
   }, [commandOwner, renderSource, invalidateRecovery, recoveryLoop, recoveryScope, scopeIsCurrent, rejectOutgoingSend])
 
   const send = useCallback(
-    async (text: string, options: SendOptions) => {
+    async (text: string, options: SendOptions, onAdmitted?: () => void) => {
       assertEngineSource(renderSource)
       const trimmed = text.trim()
       // Remote attachments are uploaded into the server session workspace by
@@ -1054,16 +1052,20 @@ export function useChat(options: { commandOwner?: string } = {}): {
         patchSessionMeta(options.sessionId, { workspacePath })
       }
 
-      // 流式进行中不抢占（引擎对同会话新请求是 abort 旧流，不是排队）：
-      // 入队等待，当前流结束后由 drainQueue 按序发出
-      if (hasSessionWork(options.sessionId)) {
-        syncQueue([...queueRef.current, createQueuedChatEntry(newId(), trimmed, options, attachments)])
-        return
+      if (commandOwner === 'code' && queueSessionId === options.sessionId) {
+        const saved = await durableQueue.refresh()
+        if (!saved) throw new ChatRequestRejectedError('队列尚未同步，草稿已保留，请重试')
+        if (durableQueue.consumeConfirmedEnqueue(codeQueueSubmission(trimmed, options))) { onAdmitted?.(); return }
+        if (hasSessionWork(options.sessionId) || saved.state.entries.some(entry => entry.phase !== 'terminal')) {
+          await durableQueue.enqueue(codeQueueSubmission(trimmed, options))
+          onAdmitted?.()
+          return
+        }
       }
-
-      await sendInternalRef.current(trimmed, options)
+      if (hasSessionWork(options.sessionId)) throw new ChatRequestRejectedError('当前任务正在运行，请使用本轮补充或待发队列')
+      await sendInternalRef.current(trimmed, options, onAdmitted)
     },
-    [syncQueue, renderSource, hasSessionWork]
+    [commandOwner, queueSessionId, durableQueue, renderSource, hasSessionWork]
   )
 
   /**
@@ -1073,90 +1075,20 @@ export function useChat(options: { commandOwner?: string } = {}): {
   const mergeAndSend = useCallback(
     async (text: string, options: SendOptions): Promise<void> => {
       assertEngineSource(renderSource)
-      const source = sourceRef.current
-      const trimmed = text.trim()
-      const taken = takeSessionQueue(queueRef.current, options.sessionId, 'batch')
-      const pending = taken.selected
-      const parts = [trimmed, ...pending.map((item) => item.text)].filter(Boolean)
-      const attachments = [...(options.attachments ?? []), ...pending.flatMap((item) => item.attachments)]
-      if (parts.length === 0 && attachments.length === 0) return
-      pausedQueueSessionsRef.current.delete(options.sessionId)
-      if (hasSessionWork(options.sessionId)) {
-        syncQueue([...taken.remaining, createQueuedChatEntry(newId(), parts.join('\n\n'), options, attachments)])
-        return
-      }
-      syncQueue(taken.remaining)
-      const sending = sendInternalRef.current(parts.join('\n\n'), { ...options, attachments })
-      try { await sending } catch (error) {
-        if (error instanceof ChatRequestRejectedError && mountedRef.current &&
-          source === getEngineSource() && sourceRef.current === source) {
-          if (pending.length) pausedQueueSessionsRef.current.add(options.sessionId)
-          syncQueue(restoreSessionQueue(queueRef.current, taken))
-        }
-        throw error
-      }
+      if (commandOwner !== 'code' || queueSessionId !== options.sessionId) throw new ChatRequestRejectedError('会话已变化，请重新选择待发消息')
+      const submission = text.trim() || options.attachments?.length ? codeQueueSubmission(text, options) : undefined
+      await durableQueue.merge(submission)
+      if (!hasSessionWork(options.sessionId)) await durableQueue.resume()
     },
-    [syncQueue, renderSource, hasSessionWork]
+    [commandOwner, queueSessionId, durableQueue, renderSource, hasSessionWork]
   )
 
-  /** 从队列移除一条（用户在托盘里点删除） */
-  const removeQueued = useCallback(
-    (id: string): void => {
-      syncQueue(removeSessionQueue(queueRef.current, viewSessionRef.current, id))
-    },
-    [syncQueue]
-  )
-
-  /** 清空队列（不影响正在跑的回合） */
-  const clearQueue = useCallback((): void => {
-    syncQueue(clearSessionQueue(queueRef.current, viewSessionRef.current))
-  }, [syncQueue])
-
-  /** 编辑队列中一条消息（正文 / 附件），其余字段（options、id）保持不动 */
-  const updateQueued = useCallback(
-    (id: string, text: string, attachments: ChatAttachment[]): void => {
-      syncQueue(updateSessionQueue(queueRef.current, viewSessionRef.current, id, item => editQueuedChatEntry(item, text, attachments)))
-    },
-    [syncQueue]
-  )
-
-  /** 拖拽排序：把 fromIndex 的消息挪到 toIndex */
-  const moveQueued = useCallback(
-    (fromIndex: number, toIndex: number): void => {
-      syncQueue(moveSessionQueue(queueRef.current, viewSessionRef.current, fromIndex, toIndex))
-    },
-    [syncQueue]
-  )
-
-  /** 队列发送模式（serial 按序逐条 / batch 合并成一条），localStorage 持久化 */
-  const [queueSendMode, setQueueSendModeState] = useState<QueueSendMode>(loadQueueSendMode)
-  const queueSendModeRef = useRef<QueueSendMode>(queueSendMode)
-  const setQueueSendMode = useCallback((mode: QueueSendMode): void => {
-    queueSendModeRef.current = mode
-    setQueueSendModeState(mode)
-    try {
-      localStorage.setItem(QUEUE_SEND_MODE_KEY, mode)
-    } catch {
-      /* 私密模式等场景写不进就保持内存值 */
-    }
-  }, [])
-
-  /**
-   * 运行中切换模型时，把队列里所有待发消息的 options.model 改写为新模型。
-   * 已发出的回合不受影响（它显示的是自己启动时的 modelId），
-   * 避免出现「正在运行的回合显示成输入框后选的模型」这类错标。
-   */
-  const retargetQueuedModel = useCallback(
-    (model: string, sessionId: string): void => {
-      const list = queueRef.current
-      if (!sessionId || list.length === 0) return
-      syncQueue(list.map((item) => item.options.sessionId === sessionId ? { ...item, options: { ...item.options, model } } : item))
-    },
-    [syncQueue]
-  )
+  const flushQueue = useCallback(async () => {
+    await durableQueue.resume()
+  }, [durableQueue])
 
   const sendInternal = useCallback(
-    async (text: string, options: SendOptions) => {
+    async (text: string, options: SendOptions, onAdmitted?: () => void) => {
       assertEngineSource(renderSource)
       const trimmed = text.trim()
       const attachments = options.attachments ?? []
@@ -1191,22 +1123,19 @@ export function useChat(options: { commandOwner?: string } = {}): {
 
       activeRunIdRef.current = null
       optimisticIdsRef.current = { userId: userMessage.id, assistantId: assistantMessage.id }
+      displayLiveTurnIdsRef.current.add(userMessage.id)
       setMessages((prev) => [...prev, userMessage, assistantMessage], [userMessage, assistantMessage])
       setStreaming(true)
 
-      await dispatchChatRequest(runStream, trimmed, options, isRemoteEngine())
+      await dispatchChatRequest(body => runStream(body, onAdmitted), trimmed, options, isRemoteEngine())
     },
     [runStream, renderSource, hasSessionWork, selectView]
   )
 
-  // sendInternal 定义晚于 drainQueue/send：用 ref 桥接，首次渲染后立即可用。
-  // 渲染期写 ref 违反 React 规则（react-hooks/refs），挪进 effect 同步。
+  // Bridge the later declaration without writing the ref during render.
   /* eslint-disable react-hooks/immutability */
   useEffect(() => {
-    // drainQueue 的 useCallback 依赖链引用了这两个 ref，react-hooks/immutability 会误报
-    // 「修改了传给 hook 的值」；桥接语义本来就是渲染后同步最新回调，行为不变。
     sendInternalRef.current = sendInternal
-    drainQueueRef.current = drainQueue
   })
   /* eslint-enable react-hooks/immutability */
 
@@ -1272,6 +1201,71 @@ export function useChat(options: { commandOwner?: string } = {}): {
     if (hydration && hydration.source === source && hydration.sessionId === snapshot.sessionId &&
       hydration.snapshotId === snapshot.publishedUsage?.snapshotId) hydration.activate()
   }, [])
+  const loadDisplayTurn = useCallback((sessionId: string, userMessageId?: string): Promise<boolean> => {
+    if (commandOwner !== 'work' || !sessionId || !isEngineReady() || renderSource !== getEngineSource() ||
+      viewSessionRef.current !== sessionId) return Promise.resolve(false)
+    const scope = recoveryScope(sessionId)
+    const current = (): boolean => scopeIsCurrent(scope) && !historyMutationGuard.blocked(scope)
+    const read = async (): Promise<boolean> => {
+      if (!current()) return false
+      const token = {}
+      displayReadTokenRef.current = token
+      setDisplayHistoryLoading(true)
+      setDisplayHistoryError(null)
+      let anchor = userMessageId, missingAnchor = false
+      try {
+        // Only a destructive mutation needs a second tail read. Ordinary appends
+        // keep old complete bodies and can refresh the index in a single request.
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const result = await engine.request<unknown>({ method: 'GET', path: '/conversation/display',
+            query: { sessionId, limit: '2', groupRootFollowups: 'true', ...(anchor ? { anchorMessageId: anchor } : {}) } })
+          if (!current() || displayReadTokenRef.current !== token) return false
+          if (!result.ok) {
+            if (anchor && result.code === 40400 && attempt === 0) { anchor = undefined; missingAnchor = true; continue }
+            if (result.code === 404 || result.code === 405 || result.code === 501 || result.code === 50101) {
+              displayUnsupportedRef.current = true
+              throw new Error('当前引擎暂不支持完整对话浏览，当前显示的是可恢复记录；请更新引擎后重新加载')
+            }
+            throw new Error(result.message || '加载完整对话失败，请重试')
+          }
+          const page = checkDisplayHistory(result.data, anchor)
+          displayUnsupportedRef.current = false
+          const previous = displayHistoryRef.current
+          const mutated = previous?.sessionId === sessionId && previous.page.mutationRevision !== page.mutationRevision
+          const cache = cacheDisplayHistory(sessionId, page, previous)
+          if (mutated) {
+            // An externally edited/deleted old turn cannot stay authoritative
+            // merely because this viewer observed it before the mutation.
+            const running = activeRunIdRef.current ? rootRunsRef.current.get(activeRunIdRef.current) : undefined
+            for (const turn of previous.page.turns) if (turn.userMessageId !== running?.userMessageId ||
+              !['running', 'waiting'].includes(running.status)) displayLiveTurnIdsRef.current.delete(turn.userMessageId)
+          }
+          displayHistoryRef.current = cache
+          setDisplayHistory(cache)
+          if (mutated && anchor && attempt === 0) { anchor = undefined; continue }
+          if (missingAnchor) setDisplayHistoryError('这轮对话已被删除或回退，已刷新对话列表')
+          return !missingAnchor && (!userMessageId || cache.bodies.has(userMessageId))
+        }
+        return false
+      } catch (cause) {
+        if (current() && displayReadTokenRef.current === token) setDisplayHistoryError(cause instanceof Error ? cause.message : '加载完整对话失败，请重试')
+        return false
+      } finally {
+        if (displayReadTokenRef.current === token) { displayReadTokenRef.current = null; setDisplayHistoryLoading(false) }
+      }
+    }
+    // Serialize display reads only. They never hold up stream attachment or use
+    // historyRequestRef, whose generation belongs to the recovery protocol.
+    const result = displayReadQueueRef.current.then(read, read)
+    displayReadQueueRef.current = result
+    return result
+  }, [commandOwner, renderSource, recoveryScope, scopeIsCurrent, historyMutationGuard])
+  const latestUserId = [...messages].reverse().find(message => message.role === 'user')?.id
+  useEffect(() => {
+    const sessionId = viewSessionRef.current
+    if (commandOwner !== 'work' || !sessionId || restoredSessionRef.current !== sessionId || displayUnsupportedRef.current) return
+    void loadDisplayTurn(sessionId)
+  }, [commandOwner, latestUserId, streaming, displayRefreshVersion, loadDisplayTurn])
   const restoreSession = useCallback((sessionId: string): Promise<RecoveryRestoreResult<ChatRecoverySnapshot>> => {
     if (!sessionId || !isEngineReady() || renderSource !== getEngineSource()) return Promise.resolve({ kind: 'stale' })
     selectView(sessionId)
@@ -1303,6 +1297,8 @@ export function useChat(options: { commandOwner?: string } = {}): {
         : result.data
       if (!current()) return { kind: 'stale' }
       const restored = restoreChatSnapshot(snapshot)
+      displayLiveTurnIdsRef.current.clear()
+      if (snapshot.source !== 'persisted' && snapshot.run) displayLiveTurnIdsRef.current.add(snapshot.run.userMessageId)
       setHistoryCompacted(Boolean(snapshot.historyCompacted) || snapshot.history.some(row =>
         row.role === 'system' && row.metadata?.isCompactSummary === true))
       setArchiveExpanded(false)
@@ -1338,6 +1334,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
       setRecoveryNoticeState(notice => snapshotRecoveryNotice(snapshot, notice))
       setStreaming((snapshot.executionRun ?? snapshot.run)?.status === 'running')
       restoredSessionRef.current = sessionId
+      setDisplayRefreshVersion(value => value + 1)
       return { kind: 'restored', snapshot }
     } catch (cause) {
       if (!current()) return { kind: 'stale' }
@@ -1564,8 +1561,9 @@ export function useChat(options: { commandOwner?: string } = {}): {
             ? '引擎已确认停止，但运行状态尚未同步，请稍后重试'
             : '停止未确认，任务仍可能在运行，请重试')
         }
-        // Preserve queued user intent after failure or a naturally finished run.
-        if (run.status === 'cancelled') syncQueue(queueRef.current.filter(entry => entry.options.sessionId !== sessionId))
+        // Stop the run, not the user's unsent requirements. Keep the queue
+        // paused until an explicit queue send, just like the Work composer.
+        if (run.status === 'cancelled' && commandOwner === 'code') void durableQueue.refresh()
       } catch (error) {
         if (!scopeIsCurrent(scope)) return
         setStopError(error instanceof Error ? error.message : String(error))
@@ -1586,7 +1584,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
     })()
     stoppingFlightRef.current = { scope, promise }
     return promise
-  }, [syncQueue, flushStreamPatches, renderSource, hasSessionWork, invalidateRecovery, recoveryScope, scopeIsCurrent, restoreSession, resumeStream])
+  }, [commandOwner, durableQueue, flushStreamPatches, renderSource, hasSessionWork, invalidateRecovery, recoveryScope, scopeIsCurrent, restoreSession, resumeStream])
 
   /**
    * 清空当前会话。
@@ -1628,14 +1626,16 @@ export function useChat(options: { commandOwner?: string } = {}): {
         setStreaming(false)
         setHistoryError(null)
         setMessages([])
+        resetDisplayHistory()
         commitUsageAnchor(null)
         setCommandJobs([])
         setTodos([])
       } finally {
         historyMutationGuard.release(mutation)
+        if (scopeIsCurrent(scope)) setDisplayRefreshVersion(value => value + 1)
       }
     },
-    [renderSource, hasSessionWork, invalidateRecovery, recoveryScope, scopeIsCurrent, historyMutationGuard, commitUsageAnchor]
+    [renderSource, hasSessionWork, invalidateRecovery, recoveryScope, scopeIsCurrent, historyMutationGuard, commitUsageAnchor, resetDisplayHistory]
   )
 
   /**
@@ -1653,14 +1653,19 @@ export function useChat(options: { commandOwner?: string } = {}): {
       })
       if (!result.ok || !Array.isArray(result.data)) return null
       const rows = result.data
-      return rows.find((row) => row.id === message.id) ?? null
+      const row = rows.find((item) => item.id === message.id)
+      if (!row && commandOwner === 'work' && displayHistoryRef.current?.sessionId === sessionId &&
+        displayHistoryRef.current.page.turns.some(turn => turn.userMessageId === message.id)) {
+        throw new Error('较早归档当前仅支持查看，请从最近对话执行此操作')
+      }
+      return row ?? null
     },
-    []
+    [commandOwner]
   )
 
   /** 删除一整轮对话（该消息所在轮：从轮首用户消息到下一个用户消息之前），同步删引擎侧历史 */
   const deleteTurn = useCallback(
-    async (sessionId: string, message: ChatMessage): Promise<void> => {
+    async (sessionId: string, message: ChatMessage, onHistoryChanged?: () => void): Promise<void> => {
       const source = getEngineSource()
       assertEngineSource(renderSource)
       if (hasSessionWork(sessionId)) return
@@ -1681,19 +1686,23 @@ export function useChat(options: { commandOwner?: string } = {}): {
         })
         assertEngineSource(source)
         if (!result.ok) throw new Error(result.message || '引擎侧删除失败')
+        if (scopeIsCurrent(scope)) setSessionModel(null)
+        onHistoryChanged?.()
         if (!scopeIsCurrent(scope)) return
+        resetDisplayHistory()
         const refreshed = await restoreSession(sessionId)
         if (!scopeIsCurrent(scope)) return
         if (refreshed.kind !== 'restored') throw new Error('本轮已删除，但未能重新加载会话，请刷新后查看')
       } finally {
         historyMutationGuard.release(mutation)
+        if (scopeIsCurrent(scope)) setDisplayRefreshVersion(value => value + 1)
       }
     },
-    [restoreSession, resolveEngineRow, renderSource, hasSessionWork, invalidateRecovery, recoveryScope, scopeIsCurrent, historyMutationGuard]
+    [restoreSession, resolveEngineRow, renderSource, hasSessionWork, invalidateRecovery, recoveryScope, scopeIsCurrent, historyMutationGuard, resetDisplayHistory]
   )
 
   const truncateFrom = useCallback(
-    async (sessionId: string, userMessage: ChatMessage): Promise<void> => {
+    async (sessionId: string, userMessage: ChatMessage, onHistoryChanged?: () => void): Promise<void> => {
       const source = getEngineSource()
       assertEngineSource(renderSource)
       if (hasSessionWork(sessionId)) throw new Error('会话运行中，请先停止再重新编辑')
@@ -1713,15 +1722,19 @@ export function useChat(options: { commandOwner?: string } = {}): {
         })
         assertEngineSource(source)
         if (!result.ok) throw new Error(result.message || '引擎侧截断失败')
+        if (scopeIsCurrent(scope)) setSessionModel(null)
+        onHistoryChanged?.()
         if (!scopeIsCurrent(scope)) throw new Error('历史已截断，但会话状态已变化，请重新加载后查看')
+        resetDisplayHistory()
         const refreshed = await restoreSession(sessionId)
         if (!scopeIsCurrent(scope)) throw new Error('历史已截断，但会话状态已变化，请重新加载后查看')
         if (refreshed.kind !== 'restored') throw new Error('历史已截断，但未能重新加载会话，请刷新后查看')
       } finally {
         historyMutationGuard.release(mutation)
+        if (scopeIsCurrent(scope)) setDisplayRefreshVersion(value => value + 1)
       }
     },
-    [resolveEngineRow, restoreSession, renderSource, hasSessionWork, invalidateRecovery, recoveryScope, scopeIsCurrent, historyMutationGuard]
+    [resolveEngineRow, restoreSession, renderSource, hasSessionWork, invalidateRecovery, recoveryScope, scopeIsCurrent, historyMutationGuard, resetDisplayHistory]
   )
 
   /**
@@ -1730,7 +1743,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
    * 用户消息）都走这里。
    */
   const retryFrom = useCallback(
-    async (userMessage: ChatMessage, options: SendOptions): Promise<void> => {
+    async (userMessage: ChatMessage, options: SendOptions, onHistoryChanged?: () => void): Promise<void> => {
       const source = getEngineSource()
       assertEngineSource(renderSource)
       if (hasSessionWork(options.sessionId)) return
@@ -1751,10 +1764,13 @@ export function useChat(options: { commandOwner?: string } = {}): {
           })
           assertEngineSource(source)
           if (!result.ok) throw new Error(result.message || '引擎侧截断失败')
+          if (scopeIsCurrent(scope)) setSessionModel(null)
+          onHistoryChanged?.()
         }
         if (!scopeIsCurrent(scope)) return
         // Truncation changes authoritative lifetime billing. Re-anchor before the
         // retry stream instead of subtracting only the visible portion locally.
+        resetDisplayHistory()
         const refreshed = await restoreSession(options.sessionId)
         if (!scopeIsCurrent(scope)) return
         if (refreshed.kind !== 'restored') throw new Error('历史已截断，但未能重新加载会话，请刷新后重试')
@@ -1764,9 +1780,10 @@ export function useChat(options: { commandOwner?: string } = {}): {
         })
       } finally {
         historyMutationGuard.release(mutation)
+        if (scopeIsCurrent(scope)) setDisplayRefreshVersion(value => value + 1)
       }
     },
-    [resolveEngineRow, restoreSession, send, renderSource, hasSessionWork, invalidateRecovery, recoveryScope, scopeIsCurrent, historyMutationGuard]
+    [resolveEngineRow, restoreSession, send, renderSource, hasSessionWork, invalidateRecovery, recoveryScope, scopeIsCurrent, historyMutationGuard, resetDisplayHistory]
   )
 
   /**
@@ -1775,7 +1792,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
    * 再截断该消息及之后的对话历史。不自动重发，由调用方决定回填输入框。
    */
   const revertFrom = useCallback(
-    async (sessionId: string, userMessage: ChatMessage): Promise<void> => {
+    async (sessionId: string, userMessage: ChatMessage, onHistoryChanged?: () => void): Promise<void> => {
       const source = getEngineSource()
       assertEngineSource(renderSource)
       if (hasSessionWork(sessionId)) throw new Error('会话运行中，请先停止再回退')
@@ -1791,20 +1808,27 @@ export function useChat(options: { commandOwner?: string } = {}): {
           return result
         }, sessionId, userMessage)
         assertEngineSource(source)
+        if (scopeIsCurrent(scope)) setSessionModel(null)
+        onHistoryChanged?.()
         // A slow rollback may finish after navigation. Do not remove another session's messages.
         if (!scopeIsCurrent(scope)) return
+        resetDisplayHistory()
         const refreshed = await restoreSession(sessionId)
         if (!scopeIsCurrent(scope)) return
         if (refreshed.kind !== 'restored') throw new Error('回退已完成，但未能重新加载会话，请刷新后查看')
       } finally {
         historyMutationGuard.release(mutation)
+        if (scopeIsCurrent(scope)) setDisplayRefreshVersion(value => value + 1)
       }
     },
-    [restoreSession, renderSource, hasSessionWork, invalidateRecovery, recoveryScope, scopeIsCurrent, historyMutationGuard]
+    [restoreSession, renderSource, hasSessionWork, invalidateRecovery, recoveryScope, scopeIsCurrent, historyMutationGuard, resetDisplayHistory]
   )
 
+  const displayMessages = useMemo(() => mergeDisplayHistory(displayHistory, messages,
+    displayLiveTurnIdsRef.current, [...rootRunsRef.current.values()]), [displayHistory, messages])
+
   return {
-    messages,
+    messages: commandOwner === 'work' ? displayMessages : messages,
     sessionUsage,
     usageSyncNotice,
     publishedRecovery,
@@ -1830,6 +1854,12 @@ export function useChat(options: { commandOwner?: string } = {}): {
     archiveLoading,
     archiveError,
     loadArchive,
+    displayTurns: displayHistory?.page.turns ?? null,
+    displayLoadedTurnIds: displayHistory?.page.turns.filter(turn => displayHistory.bodies.has(turn.userMessageId)).map(turn => turn.userMessageId) ?? [],
+    displayHistoryLoading,
+    displayHistoryError,
+    displayHistoryCompleteness: displayHistory?.page.completeness ?? null,
+    loadDisplayTurn,
     todos,
     send,
     respond,
@@ -1841,15 +1871,17 @@ export function useChat(options: { commandOwner?: string } = {}): {
     truncateFrom,
     revertFrom,
     mergeAndSend,
-    queue: sessionQueue(queue, viewSessionRef.current),
-    removeQueued,
-    clearQueue,
+    queue: durableQueue.queue,
+    queueState: { ready: durableQueue.ready, saving: durableQueue.saving, paused: durableQueue.paused, unknown: durableQueue.unknown, error: durableQueue.error },
+    removeQueued: durableQueue.remove,
+    clearQueue: durableQueue.clear,
     flushQueue,
-    updateQueued,
-    moveQueued,
-    queueSendMode,
-    setQueueSendMode,
-    retargetQueuedModel,
+    updateQueued: (id, text, attachments) => durableQueue.edit(id, text, attachments).then(() => {}),
+    moveQueued: durableQueue.move,
+    mergeQueued: () => durableQueue.merge(),
+    pauseQueue: durableQueue.pause,
+    reconcileQueue: durableQueue.reconcile,
+    retargetQueuedModel: durableQueue.retarget,
     resumeStream
   }
 }

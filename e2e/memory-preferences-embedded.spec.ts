@@ -145,7 +145,7 @@ test.describe.serial('记忆偏好与会话覆盖：真实嵌入引擎', () => {
     for (const [key, value] of Object.entries(process.env)) {
       if (value !== undefined && !['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL'].includes(key.toUpperCase())) env[key] = value
     }
-    app = await electron.launch({ args: ['.', `--user-data-dir=${fixture}`], cwd: root,
+    app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || '.', `--user-data-dir=${fixture}`], cwd: root,
       env: { ...env, AETHER_IDE_ENGINE_ENTRY: resolve(root, '..', 'ai-agent-engine', 'dist', 'main.js'),
         AETHER_GLOBAL_DIR: join(fixture, 'global'), WORKSPACE_ROOT: join(fixture, 'workspace'),
         DEFAULT_SECURITY_MODE: 'safe', AUTH_ENABLED: 'false', ENABLE_LONG_TERM_MEMORY: 'true', HISTORY_BACKEND: 'jsonl',

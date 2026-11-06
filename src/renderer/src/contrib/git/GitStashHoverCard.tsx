@@ -9,6 +9,7 @@ import { useLayoutEffect, useMemo, useRef, type JSX } from 'react'
 import { createPortal } from 'react-dom'
 import type { GitStashEntry } from '@shared/git-types'
 import { Icon } from '@renderer/workbench/icons'
+import { useMotionPresence, useMotionValue } from '@renderer/workbench/MotionPresence'
 
 export interface GitStashHoverCardProps {
   stash: GitStashEntry | null
@@ -44,13 +45,16 @@ function fullDate(iso: string): string {
 }
 
 export function GitStashHoverCard({
-  stash,
+  stash: currentStash,
   visible,
-  anchor,
+  anchor: currentAnchor,
   onKeep,
   onLeave
 }: GitStashHoverCardProps): JSX.Element | null {
   const cardRef = useRef<HTMLDivElement>(null)
+  const motion = useMotionPresence(visible && Boolean(currentStash))
+  const retained = useMotionValue(visible && currentStash ? { stash: currentStash, anchor: currentAnchor } : null)
+  const stash = retained?.stash, anchor = retained?.anchor
 
   /** 展示用消息：去掉「On <branch>:」前缀 */
   const message = useMemo(() => {
@@ -78,9 +82,8 @@ export function GitStashHoverCard({
     if (!visible || !anchor) return
     const margin = 8
     const gap = 6
-    const rect = el.getBoundingClientRect()
-    const w = rect.width || 420
-    const h = rect.height || 120
+    const w = el.offsetWidth || 420
+    const h = el.offsetHeight || 120
     const rowH = anchor.bottom - anchor.top
     let y = anchor.top + (rowH - h) / 2
     y = Math.min(Math.max(margin, y), window.innerHeight - h - margin)
@@ -92,7 +95,7 @@ export function GitStashHoverCard({
     el.style.top = `${y}px`
   }, [visible, anchor, anchor?.left, anchor?.top, anchor?.bottom, stash?.index])
 
-  if (!visible || !stash) return null
+  if (!motion.present || !stash) return null
 
   const copyHash = (): void => {
     if (!stash.hash) return
@@ -107,7 +110,7 @@ export function GitStashHoverCard({
   }
 
   return createPortal(
-    <div ref={cardRef} className="git-stashcard" onMouseEnter={onKeep} onMouseLeave={onLeave}>
+    <div ref={cardRef} className="git-stashcard" {...motion.motionProps} onMouseEnter={onKeep} onMouseLeave={onLeave}>
       <div className="git-stashcard__body">
         <div className="git-stashcard__title">
           <div className="git-stashcard__message">

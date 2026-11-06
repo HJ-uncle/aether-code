@@ -1,6 +1,7 @@
-import { useEffect, useRef, type JSX, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from './icons'
+import { useMotionPresence } from './MotionPresence'
 
 interface DialogProps {
   /** 标题栏文案 */
@@ -14,6 +15,10 @@ interface DialogProps {
   /** 附加到面板的类名（比如 modal--prompt 这类宽度/形态微调） */
   className?: string
   onClose: () => void
+  /** Keep the component mounted while controlled visibility animates out. */
+  open?: boolean
+  /** Preserve a caller's pending-operation guard before starting dismissal. */
+  closeDisabled?: boolean
 }
 
 /**
@@ -36,20 +41,32 @@ export function Dialog({
   footer,
   width = 520,
   className,
-  onClose
-}: DialogProps): JSX.Element {
+  onClose,
+  open,
+  closeDisabled = false
+}: DialogProps): JSX.Element | null {
   const panelRef = useRef<HTMLDivElement>(null)
+  const [dismissed, setDismissed] = useState(false)
+  const show = open ?? !dismissed
+  const motion = useMotionPresence(show, { onExited: () => { if (open === undefined) onClose() } })
+  const close = (): void => {
+    if (closeDisabled) return
+    if (open === undefined) setDismissed(true)
+    else onClose()
+  }
 
   useEffect(() => {
+    if (!show) return
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape') close()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, show, open, closeDisabled])
 
   // 打开时把焦点移进面板，避免焦点留在背后的页面上导致 Esc / Tab 行为错乱
   useEffect(() => {
+    if (!show) return
     const panel = panelRef.current
     if (!panel) return
     // 在移入焦点前记录触发元素，否则关闭时会尝试聚焦已卸载的关闭按钮。
@@ -69,7 +86,7 @@ export function Dialog({
         }
       }
     }
-  }, [])
+  }, [show])
 
   // 焦点陷阱：Tab / Shift+Tab 在弹窗内的可聚焦元素之间循环，不逃到背后界面
   const onPanelKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
@@ -107,8 +124,9 @@ export function Dialog({
     }
   }
 
+  if (!motion.present) return null
   return createPortal(
-    <div className="modal-overlay" onMouseDown={onClose}>
+    <div className="modal-overlay" {...motion.motionProps} data-motion-axis="y" onMouseDown={close}>
       <div
         ref={panelRef}
         className={`modal${className ? ` ${className}` : ''}`}
@@ -122,7 +140,7 @@ export function Dialog({
       >
         <header className="modal__header">
           <span>{title}</span>
-          <button type="button" className="modal__close" aria-label="关闭" onClick={onClose}>
+          <button type="button" className="modal__close" aria-label="关闭" disabled={closeDisabled} onClick={close}>
             <Icon name="close" size={16} />
           </button>
         </header>

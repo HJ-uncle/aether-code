@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { createPortal } from 'react-dom'
+import { useMotionPresence, useMotionValue } from './MotionPresence'
 import { executeCommand, registerCommands } from '@renderer/core/platform/commands'
 import { setAppMode, useAppMode, type AppMode } from '@renderer/core/platform/app-mode'
 import { getKeybindingHint } from '@renderer/core/platform/keybindings'
@@ -223,6 +224,8 @@ function WindowControls(): JSX.Element | null {
 export function MenuBar(): JSX.Element {
   // open 持有触发按钮的矩形：下拉 portal 到 body 后靠它定位（见下方说明）
   const [open, setOpen] = useState<{ label: string; anchor: DOMRect; keyboard?: boolean } | null>(null)
+  const dropdownMotion = useMotionPresence(Boolean(open))
+  const shownMenu = useMotionValue(open)
   const ref = useRef<HTMLElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
@@ -311,13 +314,15 @@ export function MenuBar(): JSX.Element {
       {/* 下拉 portal 到 body：菜单栏自身带 backdrop-filter，是 backdrop root，
           嵌在里面的模糊浮层采不到栏下方的真实内容（只能采到栏自己的半透明底色），
           磨砂直接失效。挂到 body 后采样恢复正常 —— 与 ContextMenu 子菜单同理。 */}
-      {open
+      {dropdownMotion.present && shownMenu
         ? createPortal(
             <div
               ref={dropdownRef}
+              {...dropdownMotion.motionProps}
+              data-motion-axis="y"
               className="menu-bar__dropdown"
               role="menu"
-              aria-label={open.label}
+              aria-label={shownMenu.label}
               onKeyDown={event => {
                 const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
                 const index = items.indexOf(document.activeElement as HTMLButtonElement)
@@ -331,12 +336,12 @@ export function MenuBar(): JSX.Element {
               }}
               style={{
                 position: 'fixed',
-                top: open.anchor.bottom + 2,
-                left: Math.max(8, Math.min(open.anchor.left, window.innerWidth - 352))
+                top: shownMenu.anchor.bottom + 2,
+                left: Math.max(8, Math.min(shownMenu.anchor.left, window.innerWidth - 352))
               }}
             >
-              {(open.label === COMPACT_MENU ? menus : menus.filter(menu => menu.label === open.label)).map(menu => <div key={menu.label} role="group" aria-label={menu.label}>
-              {open.label === COMPACT_MENU ? <div className="menu-bar__group-label" aria-hidden="true">{menu.label}</div> : null}
+              {(shownMenu.label === COMPACT_MENU ? menus : menus.filter(menu => menu.label === shownMenu.label)).map(menu => <div key={menu.label} role="group" aria-label={menu.label}>
+              {shownMenu.label === COMPACT_MENU ? <div className="menu-bar__group-label" aria-hidden="true">{menu.label}</div> : null}
               {menu.items.map((item) => (
                 <button
                   key={item.command}

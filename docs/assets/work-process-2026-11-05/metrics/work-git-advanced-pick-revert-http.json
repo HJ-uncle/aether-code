@@ -1,0 +1,28 @@
+[
+  {
+    "op": "checkout",
+    "sessionId": "work-git-panel-advanced-c3f502bf-90ba-4e15-9f4a-9d7bd1327654",
+    "expectedRoot": "D:\\dev\\aether-code\\.e2e-tmp\\work-git-panel-mZeuix\\repositories\\advanced",
+    "cwd": ".",
+    "bindingEpoch": "f4845f51-71ae-4831-a289-c495231b23b6",
+    "profile": "general"
+  },
+  {
+    "op": "cherry-pick",
+    "sessionId": "work-git-panel-advanced-c3f502bf-90ba-4e15-9f4a-9d7bd1327654",
+    "expectedRoot": "D:\\dev\\aether-code\\.e2e-tmp\\work-git-panel-mZeuix\\repositories\\advanced",
+    "cwd": ".",
+    "bindingEpoch": "f4845f51-71ae-4831-a289-c495231b23b6",
+    "profile": "general",
+    "hash": "871b7a63a12d4abaf98bd986da18f784ae21f781"
+  },
+  {
+    "op": "revert-commit",
+    "sessionId": "work-git-panel-advanced-c3f502bf-90ba-4e15-9f4a-9d7bd1327654",
+    "expectedRoot": "D:\\dev\\aether-code\\.e2e-tmp\\work-git-panel-mZeuix\\repositories\\advanced",
+    "cwd": ".",
+    "bindingEpoch": "f4845f51-71ae-4831-a289-c495231b23b6",
+    "profile": "general",
+    "hash": "13f7f3523d06cb6c1cae167ad2d369c61c055fbb"
+  }
+]

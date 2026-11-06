@@ -55,6 +55,11 @@ process.on('message', async (message) => {
       }
     }
     const store = new NextTurnQueueStore(message.root, {
+      bootstrapTestHook: async context => {
+        if (context.phase !== message.holdBootstrapAt) return
+        process.send({ type: 'bootstrap-barrier', phase: context.phase, bucket: context.bucket })
+        await new Promise(resolve => { release = resolve })
+      },
       testHook: async (context) => {
         if (message.fault === 'rename-target-is-directory' && context.phase === 'after-stage-fsync')
           await fs.promises.mkdir(context.ready)

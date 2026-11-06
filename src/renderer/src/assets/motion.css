@@ -1,0 +1,148 @@
+/* A single motion contract for Code and Work. Positioning transforms remain
+ * untouched: translate is independent of transforms used by portals/editors. */
+:root [data-motion-state] {
+  --motion-offset-x: 0px;
+  --motion-offset-y: calc(-1 * var(--motion-distance));
+  opacity: 1;
+  /* A settled surface must not become a containing block for its fixed menus. */
+  translate: none;
+  transition: opacity var(--motion-enter) var(--motion-ease),
+    translate var(--motion-enter) var(--motion-ease);
+}
+:root [data-motion-axis='x'] {
+  --motion-offset-x: var(--motion-distance);
+  --motion-offset-y: 0px;
+}
+:root [data-motion-state='entering'],
+:root [data-motion-state='closing'] {
+  opacity: 0;
+  translate: var(--motion-offset-x) var(--motion-offset-y);
+}
+:root [data-motion-state='closing'] {
+  pointer-events: none;
+  transition-duration: var(--motion-exit);
+}
+:root .ui-motion-collapse {
+  display: grid;
+  grid-template-rows: 1fr;
+  min-width: 0;
+  transition: grid-template-rows var(--motion-enter) var(--motion-ease),
+    opacity var(--motion-enter) var(--motion-ease), translate var(--motion-enter) var(--motion-ease);
+}
+:root .ui-motion-collapse:is([data-motion-state='entering'], [data-motion-state='closing']) {
+  grid-template-rows: 0fr;
+}
+:root .ui-motion-collapse[data-motion-state='closing'] { transition-duration: var(--motion-exit); }
+.ui-motion-collapse__content { min-width: 0; min-height: 0; overflow: clip; }
+.ui-motion-collapse[data-motion-state='open'] > .ui-motion-collapse__content { overflow: visible; }
+
+/* Backdrops fade in place; only their bounded content slides. Moving a full
+ * window overlay would uncover an edge and makes the whole desktop wobble. */
+:root :is(.modal-overlay, .palette-overlay, .replace-preview-overlay)[data-motion-state] { translate: none; }
+:root :is(.modal-overlay, .palette-overlay, .replace-preview-overlay)[data-motion-state] > :is(.modal, .palette, .replace-preview) {
+  translate: none;
+  transition: translate var(--motion-enter) var(--motion-ease);
+}
+:root :is(.modal-overlay, .palette-overlay, .replace-preview-overlay):is([data-motion-state='entering'], [data-motion-state='closing']) > :is(.modal, .palette, .replace-preview) {
+  translate: 0 var(--motion-distance);
+}
+:root :is(.modal-overlay, .palette-overlay, .replace-preview-overlay)[data-motion-state='closing'] > :is(.modal, .palette, .replace-preview) { transition-duration: var(--motion-exit); }
+:root :is(.palette-overlay.is-leaving, .toast-host__item)[data-motion-state] { animation: none; }
+
+/* Chromium's native details content supplies both directions without keeping
+ * expensive receipts active or measuring their height on every frame. */
+@supports (interpolate-size: allow-keywords) {
+  details { interpolate-size: allow-keywords; }
+  details::details-content {
+    block-size: 0;
+    opacity: 0;
+    translate: 0 -4px;
+    overflow: clip;
+    transition: block-size var(--motion-exit) var(--motion-ease),
+      opacity var(--motion-exit) var(--motion-ease), translate var(--motion-exit) var(--motion-ease),
+      content-visibility var(--motion-exit) allow-discrete;
+  }
+  details[open]::details-content { block-size: auto; opacity: 1; translate: none; transition-duration: var(--motion-enter); }
+}
+
+/* Hover tools keep their existing visibility rules. Every visible state has
+ * the same small lateral movement, and leaving reverses the transition. */
+:root :is(.message__actions, .work-message__reply-actions, .work-user-message-actions,
+  .editor-tab__close, .work-workspace__tab-close, .work-resource-tabs__close,
+  .session-tray__queue-remove, .welcome__recent-remove, .recent-dialog__remove,
+  .git-panel__group-btn, .git-panel__stash-actions, .explorer__recent-del,
+  .work-sidebar__task-actions, .logline__chevron, .work-agent-card__actions) {
+  transition: opacity var(--motion-hover) var(--motion-ease),
+    translate var(--motion-hover) var(--motion-ease), transform var(--motion-hover) var(--motion-ease),
+    background-color var(--motion-hover) var(--motion-ease), color var(--motion-hover) var(--motion-ease);
+  translate: -2px 0;
+}
+:root :is(.message, .work-message, .editor-tab, .work-workspace__tab, .work-resource-tabs__item,
+  .session-tray__queue-item, .welcome__recent, .recent-dialog__item, .git-panel__group-head,
+  .git-panel__stash-row, .explorer__recent-row, .work-sidebar__task, .logline-wrap, .work-agent-card):is(:hover, :focus-within)
+  :is(.message__actions, .work-message__reply-actions, .work-user-message-actions,
+    .editor-tab__close, .work-workspace__tab-close, .work-resource-tabs__close,
+    .session-tray__queue-remove, .welcome__recent-remove, .recent-dialog__remove,
+    .git-panel__group-btn, .git-panel__stash-actions, .explorer__recent-del,
+    .work-sidebar__task-actions, .logline__chevron, .work-agent-card__actions),
+:root .editor-tab.is-active .editor-tab__close,
+:root .logline[aria-expanded='true'] .logline__chevron { translate: 0 0; }
+
+/* Kept-alive views preserve editor/terminal state. Discrete display transitions
+ * let CSS visibility changes finish before removing them from layout. */
+:root :is(.panel__view, .subagent-followup__form, .work-subagents__composer,
+  .terminal-view__item-close, .work-task-primary, .work-workspace) {
+  transition: opacity var(--motion-enter) var(--motion-ease),
+    translate var(--motion-enter) var(--motion-ease), display var(--motion-exit) allow-discrete;
+}
+@starting-style {
+  :root :is(.panel__view, .subagent-followup__form, .work-subagents__composer,
+    .terminal-view__item-close) { opacity: 0; translate: 0 -4px; }
+}
+:root :is(.panel__view, .subagent-followup__form, .work-subagents__composer)[hidden] {
+  opacity: 0; translate: 0 -4px;
+}
+:root .workbench__sidebar[data-motion-state] { --motion-offset-x: calc(-1 * var(--motion-distance)); }
+:root .workbench__chat--left[data-motion-state] { --motion-offset-x: calc(-1 * var(--motion-distance)); }
+:root .panel__view[hidden] { display: none; }
+:root .work-navigation-scrim[data-motion-state] { translate: none; }
+@supports (interpolate-size: allow-keywords) {
+  :root .message__bubble-content {
+    interpolate-size: allow-keywords;
+    height: auto;
+    transition: height var(--motion-enter) var(--motion-ease);
+  }
+  :root .message__bubble-content.is-collapsed {
+    height: 13.2em;
+    max-height: none;
+    transition-duration: var(--motion-exit);
+  }
+}
+
+/* The navigation shell changes width only on explicit collapse; resizable
+ * editor and file panes deliberately keep direct, unanimated drag feedback. */
+:root .work-sidebar {
+  transition: width var(--motion-enter) var(--motion-ease), min-width var(--motion-enter) var(--motion-ease),
+    padding var(--motion-enter) var(--motion-ease);
+}
+:root :is(.work-sidebar__brand, .work-navigation__item > span, .work-new-task > span,
+  .work-sidebar__recent, .work-connection-status, .work-count) {
+  transition: opacity var(--motion-enter) var(--motion-ease), translate var(--motion-enter) var(--motion-ease),
+    display var(--motion-exit) allow-discrete;
+}
+:root .work-view[data-collapsed='true']:not([data-nav-open='true'])
+  :is(.work-sidebar__brand, .work-navigation__item > span, .work-new-task > span,
+    .work-sidebar__recent, .work-connection-status, .work-count) { opacity: 0; translate: -4px 0; }
+@starting-style {
+  :root :is(.work-sidebar__brand, .work-navigation__item > span, .work-new-task > span,
+    .work-sidebar__recent, .work-connection-status, .work-count) { opacity: 0; translate: -4px 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --motion-enter: 0ms; --motion-exit: 0ms; --motion-hover: 0ms; --motion-distance: 0px; }
+  :root [data-motion-state], :root [data-motion-state] *, details::details-content {
+    transition: none !important;
+    animation: none !important;
+    translate: none !important;
+  }
+}

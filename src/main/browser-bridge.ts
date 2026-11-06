@@ -7,6 +7,7 @@ import { engineTargetError } from './engine/protocol'
 
 interface BrowserExecutor {
   getSettings(): { aiEnabled: boolean }
+  rememberPresentation(context: BrowserContext, mode: 'code' | 'work'): void
   adoptUnboundTabs(context: BrowserContext, engine: BrowserConnectInput['expectedEngine']): void
   execute(request: BrowserToolRequest, context: BrowserContext, signal?: AbortSignal): Promise<BrowserToolResult>
 }
@@ -87,10 +88,17 @@ export class BrowserEngineBridge {
     if (!input || typeof input.sessionId !== 'string' || !input.sessionId.trim() || input.sessionId.length > 256 || !input.expectedEngine) {
       throw new Error('浏览器连接缺少有效会话')
     }
+    if (input.presentationMode !== undefined && !['code', 'work'].includes(input.presentationMode)) throw new Error('浏览器展示模式无效')
+    input = structuredClone(input)
     const current = engineHost.getSnapshot()
     if (current.phase !== 'ready' || engineTargetError(current, input.expectedEngine)) throw new Error('引擎或会话已变化，请重试')
+    if (input.presentationMode) this.service.rememberPresentation({ sessionId: input.sessionId,
+      engineId: browserEngineId(input.expectedEngine) }, input.presentationMode)
     const same = this.desired?.sessionId === input.sessionId && this.desired && browserEngineId(this.desired.expectedEngine) === browserEngineId(input.expectedEngine)
-    if (same && (this.active || this.connecting)) return this.state
+    if (same && (this.active || this.connecting)) {
+      if (this.active) this.service.adoptUnboundTabs(this.active.context, input.expectedEngine)
+      return this.state
+    }
     this.stop()
     this.desired = input
     if (!this.service.getSettings().aiEnabled) {

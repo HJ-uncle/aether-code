@@ -6,15 +6,23 @@ import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/so
 import { isVisibleToolActivity } from '@renderer/core/engine/task-plan'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { Icon } from '@renderer/workbench/icons'
+import { useMotionPresence } from '@renderer/workbench/MotionPresence'
 import { ToolResult } from './ToolResult'
+import { looksLikeStructuredResult } from './ToolResultData'
 import { WorkErrorNotice } from '../work/WorkErrorNotice'
+import { WorkToolOutcome } from '../work/WorkToolOutcome'
+import { workToolFeedback } from '../work/work-tool-feedback'
+import type { ToolActivity } from '@renderer/core/engine/useChat'
 import { parseToolResult } from './tool-result'
-import { toolDisplayName, toolParamSummary } from './tool-names'
+import { toolDisplayName, toolParamSummary, toolPathArg } from './tool-names'
+import { quietToolIcon } from './quiet-tool-icon'
 import { loadSubagentToolWindow, subagentHistoryScope, subagentDetailOffsetTrail, SubagentHistorySupersededError,
   SUBAGENT_DETAIL_CHUNK_BYTES, SUBAGENT_TOOL_PAGE_SIZE, type SubagentToolWindow } from './subagent-tool-history'
 import './subagent-history.css'
 
-function ToolDetail({ call, run, latestSeq = run.lastSeq }: { call: SubagentToolCall; run: SubagentRunView; latestSeq?: number }): JSX.Element {
+function ToolDetail({ call, run, latestSeq = run.lastSeq, visible, surfaceMode = 'code' }: {
+  call: SubagentToolCall; run: SubagentRunView; latestSeq?: number; visible: boolean; surfaceMode?: 'code' | 'work'
+}): JSX.Element {
   const { ready } = useApp()
   const source = useSyncExternalStore(subscribeEngineSource, getEngineSource)
   const [page, setPage] = useState<SubagentToolDetailPage>()
@@ -27,7 +35,7 @@ function ToolDetail({ call, run, latestSeq = run.lastSeq }: { call: SubagentTool
   const currentIdentity = useRef(identity)
   currentIdentity.current = identity
   const load = async (offset = 0, atSeq = page?.asOfSeq ?? run.lastSeq): Promise<void> => {
-    if (!ready || pending.current) return
+    if (!visible || !ready || pending.current) return
     const epoch = generation.current
     const current = (): boolean => epoch === generation.current && identity === currentIdentity.current && source === getEngineSource()
     pending.current = true
@@ -45,6 +53,7 @@ function ToolDetail({ call, run, latestSeq = run.lastSeq }: { call: SubagentTool
     finally { if (current()) { pending.current = false; setLoading(false) } }
   }
   useEffect(() => {
+    if (!visible) return
     generation.current++
     pending.current = false
     previousOffsets.current = []
@@ -53,7 +62,7 @@ function ToolDetail({ call, run, latestSeq = run.lastSeq }: { call: SubagentTool
     setLoading(false)
     if (ready) void load(0, run.lastSeq)
     return () => { generation.current++ }
-  }, [identity, ready])
+  }, [identity, ready, visible])
   const complete = page && page.detail.offset === 0 && !page.detail.hasMore
   const body = useMemo((): Record<string, unknown> | undefined => {
     if (!complete || !page) return undefined
@@ -62,14 +71,14 @@ function ToolDetail({ call, run, latestSeq = run.lastSeq }: { call: SubagentTool
   }, [page, complete])
   const output = typeof body?.output === 'string' ? body.output : undefined
   const parsed = useMemo(() => parseToolResult(output), [output])
-  return <div className="subagent-history__detail" aria-busy={loading}>
-    <div className="subagent-history__toolbar"><span>{page ? `${page.detail.offset.toLocaleString()}–${(page.detail.offset + new TextEncoder().encode(page.detail.text).byteLength).toLocaleString()} / ${page.detail.totalBytes.toLocaleString()} 字节` : '读取原始参数与输出'}</span>
+  return <div className={`subagent-history__detail${surfaceMode === 'work' ? ' subagent-history__detail--work' : ''}`} aria-busy={loading}>
+    <div className="subagent-history__toolbar"><span>{surfaceMode === 'work' ? '工具执行详情' : page ? `${page.detail.offset.toLocaleString()}–${(page.detail.offset + new TextEncoder().encode(page.detail.text).byteLength).toLocaleString()} / ${page.detail.totalBytes.toLocaleString()} 字节` : '读取原始参数与输出'}</span>
       <button type="button" disabled={!ready || loading} onClick={() => void load(0, latestSeq)}>{loading ? <Spinner size={12} /> : <Icon name="restart" size={14} />}更新详情</button></div>
     {error ? <p role="alert" className="subagent-history__error">{error}</p> : null}
     {page ? body ? <>
-      <div className="subagent-card__call-section">参数</div><pre className="subagent-card__call-pre">{JSON.stringify(body.args ?? {}, null, 2)}</pre>
-      {output ? <><div className="subagent-card__call-section">输出</div><ToolResult parsed={parsed} toolName={call.name} textClassName="subagent-card__call-pre" /></> : null}
-    </> : <><p className="subagent-history__notice">原始详情分段显示；每次只保留当前段，可继续读取后续内容。</p><pre className="subagent-card__call-pre">{page.detail.text}</pre></> : loading ? <p role="status">正在读取工具详情…</p> : null}
+      {surfaceMode === 'code' ? <><div className="subagent-card__call-section">参数</div><pre className="subagent-card__call-pre">{JSON.stringify(body.args ?? {}, null, 2)}</pre></> : null}
+      {output ? <><div className="subagent-card__call-section">输出</div><ToolResult parsed={parsed} toolName={call.name} textClassName="subagent-card__call-pre" surfaceMode={surfaceMode} /></> : surfaceMode === 'work' ? <p className="subagent-history__notice">本次详情未附输出</p> : null}
+    </> : surfaceMode === 'work' ? <p className="subagent-history__notice" role="status">{complete ? '这条详情暂时无法整理，可在子代理对话中查看' : '内容较长，可在子代理对话中查看'}</p> : <><p className="subagent-history__notice">原始详情分段显示；每次只保留当前段，可继续读取后续内容。</p><pre className="subagent-card__call-pre">{page.detail.text}</pre></> : loading ? <p role="status">正在读取工具详情…</p> : null}
     {page && page.detail.offset > 0 ? <div className="subagent-history__navigation">
       {previousOffsets.current.length ? <button type="button" className="subagent-history__more" disabled={!ready || loading} onClick={() => void load(previousOffsets.current.at(-1), page.asOfSeq)}>上一段内容</button> : null}
       <button type="button" className="subagent-history__more" disabled={!ready || loading} onClick={() => void load(0, page.asOfSeq)}>回到开头</button>
@@ -79,29 +88,43 @@ function ToolDetail({ call, run, latestSeq = run.lastSeq }: { call: SubagentTool
   </div>
 }
 
-export function SubagentToolRow({ call, run, latestSeq, open: controlledOpen, onToggle }: {
-  call: SubagentToolCall; run?: SubagentRunView; latestSeq?: number; open?: boolean; onToggle?: () => void
+export function SubagentToolRow({ call, run, latestSeq, open: controlledOpen, onToggle, visible = true, surfaceMode = 'code' }: {
+  call: SubagentToolCall; run?: SubagentRunView; latestSeq?: number; open?: boolean; onToggle?: () => void; visible?: boolean; surfaceMode?: 'code' | 'work'
 }): JSX.Element {
   const parsed = useMemo(() => parseToolResult(call.output), [call.output])
   const [manualOpen, setOpen] = useState<boolean | null>(null)
   const hasDetail = Boolean(run || call.output || call.error)
   const open = hasDetail && (controlledOpen ?? manualOpen ?? parsed.images.length > 0)
-  const summary = toolParamSummary(typeof call.args === 'string' ? call.args : JSON.stringify(call.args ?? {}))
-  const status = call.status === 'succeeded' ? '成功' : call.status === 'failed' ? '失败' : call.status === 'cancelled' ? '已取消' : '执行中'
-  return <div className="subagent-card__call">
-    <span className={`subagent-card__call-dot${call.status === 'failed' ? ' subagent-card__call-dot--fail' : ''}`} />
-    <button type="button" className="subagent-card__call-toggle" aria-expanded={open} disabled={!hasDetail} onClick={onToggle ?? (() => setOpen(!open))}>
-      <span className="subagent-card__call-name">{toolDisplayName(call.name)}</span><span className="subagent-card__call-summary">· {status}</span>
-      {summary ? <span className="subagent-card__call-args">{summary}</span> : null}
+  const presence = useMotionPresence(open && visible)
+  const args = typeof call.args === 'string' ? call.args : JSON.stringify(call.args ?? {})
+  const path = surfaceMode === 'work' ? toolPathArg(args) : null
+  const summary = path ? path.replace(/\\/g, '/').split('/').filter(Boolean).slice(-2).join('/') : toolParamSummary(args)
+  const outcomeTool: ToolActivity = {
+    id: call.id, name: call.name, args: typeof call.args === 'string' ? call.args : JSON.stringify(call.args ?? {}),
+    result: call.output ?? '', error: call.error?.message,
+    metadata: call.error ? { commandJob: { error: call.error } } : undefined,
+    state: call.status === 'failed' ? 'error' : call.status === 'succeeded' ? 'done' : call.status === 'cancelled' ? 'cancelled' : 'running'
+  }
+  const feedback = surfaceMode === 'work' ? workToolFeedback(outcomeTool) : null
+  const status = feedback?.label ?? (call.status === 'succeeded' ? '成功' : call.status === 'failed' ? '失败' : call.status === 'cancelled' ? '已取消' : '执行中')
+  return <div className={`subagent-card__call${surfaceMode === 'work' ? ' subagent-card__call--work' : ''}`}>
+    {surfaceMode === 'code' ? <span className={`subagent-card__call-dot${call.status === 'failed' ? ' subagent-card__call-dot--fail' : ''}`} /> : null}
+    <button type="button" className="subagent-card__call-toggle" aria-expanded={open} aria-label={surfaceMode === 'work' ? `${toolDisplayName(call.name)}${summary ? ` · ${summary}` : ''} · ${status}` : undefined} disabled={!hasDetail} onClick={onToggle ?? (() => setOpen(!open))}>
+      {surfaceMode === 'work' ? <span className="subagent-card__call-icon" aria-hidden="true">{call.status === 'running' ? <Spinner size={14} /> : <Icon name={quietToolIcon(call.name)} size={16} />}</span> : null}
+      <span className="subagent-card__call-name">{toolDisplayName(call.name)}</span>
+      {surfaceMode === 'code' ? <span className="subagent-card__call-summary">· {status}</span> : null}
+      {summary && (surfaceMode === 'code' || !looksLikeStructuredResult(summary)) ? <span className="subagent-card__call-args" title={path || summary}>{summary}</span> : null}
+      {surfaceMode === 'work' && call.status !== 'succeeded' ? <span className="subagent-card__call-summary">{status}</span> : null}
+      {surfaceMode === 'work' && hasDetail ? <Icon name="chevron-right" size={12} className="subagent-card__call-chevron" /> : null}
     </button>
-    {open ? <div className="subagent-card__call-detail">{call.error ? <WorkErrorNotice error={call.error.message} /> : null}
-      {run ? <ToolDetail call={call} run={run} latestSeq={latestSeq} /> : call.output ? <><div className="subagent-card__call-section">输出</div><ToolResult parsed={parsed} toolName={call.name} textClassName="subagent-card__call-pre" /></> : null}
-    </div> : null}
+    {presence.present ? <div className="ui-motion-collapse subagent-card__call-presence" {...presence.motionProps}><div className="ui-motion-collapse__content"><div className="subagent-card__call-detail">{surfaceMode === 'work' ? <WorkToolOutcome tool={outcomeTool} /> : call.error ? <WorkErrorNotice error={call.error.message} /> : null}
+      {run ? <ToolDetail call={call} run={run} latestSeq={latestSeq} visible={open && visible} surfaceMode={surfaceMode} /> : call.output ? <><div className="subagent-card__call-section">输出</div><ToolResult parsed={parsed} toolName={call.name} textClassName="subagent-card__call-pre" surfaceMode={surfaceMode} /></> : null}
+    </div></div></div> : null}
   </div>
 }
 
 /** Expanded history is a bounded window at an explicit watermark, separate from live summaries. */
-export function SubagentToolHistory({ run }: { run: SubagentRunView }): JSX.Element {
+export function SubagentToolHistory({ run, visible = true, surfaceMode = 'code' }: { run: SubagentRunView; visible?: boolean; surfaceMode?: 'code' | 'work' }): JSX.Element {
   const { ready } = useApp()
   const source = useSyncExternalStore(subscribeEngineSource, getEngineSource)
   const [window, setWindow] = useState<SubagentToolWindow>()
@@ -115,7 +138,7 @@ export function SubagentToolHistory({ run }: { run: SubagentRunView }): JSX.Elem
   const currentIdentity = useRef(identity)
   currentIdentity.current = identity
   const load = async (refresh = false): Promise<void> => {
-    if (!ready || pending.current) return
+    if (!visible || !ready || pending.current) return
     const epoch = generation.current
     const current = (): boolean => epoch === generation.current && identity === currentIdentity.current && source === getEngineSource()
     const target = refresh ? run : anchor
@@ -135,6 +158,7 @@ export function SubagentToolHistory({ run }: { run: SubagentRunView }): JSX.Elem
     finally { if (current()) { pending.current = false; setLoading(false) } }
   }
   useEffect(() => {
+    if (!visible) return
     generation.current++
     pending.current = false
     setWindow(undefined)
@@ -144,15 +168,15 @@ export function SubagentToolHistory({ run }: { run: SubagentRunView }): JSX.Elem
     setLoading(false)
     if (ready) void load(true)
     return () => { generation.current++ }
-  }, [identity, ready])
+  }, [identity, ready, visible])
   const calls = window?.items.filter(isVisibleToolActivity) ?? []
-  return <div className="subagent-history" aria-busy={loading}>
-    <div className="subagent-history__toolbar"><span>{window ? `${window.totalCount.toLocaleString()} 条历史记录 · 当前显示 ${calls.length.toLocaleString()} 次调用` : '按需读取工具记录'}</span>
+  return <div className={`subagent-history${surfaceMode === 'work' ? ' subagent-history--work' : ''}`} aria-busy={loading}>
+    <div className="subagent-history__toolbar"><span>{window ? surfaceMode === 'work' ? `已显示 ${calls.length.toLocaleString()} / ${window.totalCount.toLocaleString()} 条记录` : `${window.totalCount.toLocaleString()} 条历史记录 · 当前显示 ${calls.length.toLocaleString()} 次调用` : '正在读取记录'}</span>
       <button type="button" disabled={!ready || loading} onClick={() => void load(true)}><Icon name="restart" size={14} />更新记录</button></div>
     {window && window.scope.atSeq !== run.lastSeq ? <p className="subagent-history__notice" role="status">记录已更新，点击“更新记录”查看新活动。</p> : null}
     {window?.droppedCount ? <p className="subagent-history__notice">已读取 {window.loadedCount.toLocaleString()} 项，当前显示最近读取的记录；更早内容保留在服务端，可更新记录从头读取。</p> : null}
     {error ? <p className="subagent-history__error" role="alert">{error}<button type="button" disabled={!ready || loading} onClick={() => void load(true)}>重试</button></p> : null}
-    <div className="subagent-card__tools-list">{calls.map(call => <SubagentToolRow key={call.id} call={call} run={anchor} latestSeq={run.lastSeq} open={selected === call.id} onToggle={() => setSelected(selected === call.id ? null : call.id)} />)}</div>
+    <div className="subagent-card__tools-list">{calls.map(call => <SubagentToolRow key={call.id} call={call} run={anchor} latestSeq={run.lastSeq} open={selected === call.id} onToggle={() => setSelected(selected === call.id ? null : call.id)} visible={visible} surfaceMode={surfaceMode} />)}</div>
     {window?.hasMore ? <button type="button" className="subagent-history__more" disabled={!ready || loading} onClick={() => void load()}>{loading ? <Spinner size={14} /> : null}加载更多记录</button> : loading ? <p className="subagent-history__notice" role="status">正在读取工具记录…</p> : !calls.length && !error ? <p className="subagent-history__notice">此页没有可显示的工具记录。</p> : null}
   </div>
 }

@@ -1,4 +1,4 @@
-/** 源码预览真机闭环：未保存 Markdown、本地资源、双向滚动和 HTML 沙箱隔离。 */
+/** 源码预览真机闭环：未保存 Markdown、本地资源、双向滚动；HTML 使用独立运行入口。 */
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
@@ -41,7 +41,9 @@ test.describe.serial('源码与实时预览', () => {
     writeFileSync(join(workspace, 'assets', 'pixel.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="green"/></svg>')
     writeFileSync(join(workspace, 'assets', 'preview.css'), '.local-style { color: rgb(13, 124, 55); background-image: url("./pixel.svg"); }')
     writeFileSync(join(profile, 'settings.json'), JSON.stringify({ autoStartEngine: false, lastFolder: workspace }))
-    app = await electron.launch({ args: ['.', `--user-data-dir=${profile}`], cwd: APP_ROOT, env: { ...process.env } })
+    const env = { ...process.env }
+    delete env.ELECTRON_RUN_AS_NODE; delete env.ELECTRON_RENDERER_URL
+    app = await electron.launch({ args: [process.env.AETHER_E2E_MAIN || '.', `--user-data-dir=${profile}`], cwd: APP_ROOT, env })
     page = await app.firstWindow()
     page.on('pageerror', (error) => errors.push(String(error)))
     page.on('console', (message) => { if (message.type() === 'error') console.log('[preview-console]', message.text()) })
@@ -95,24 +97,12 @@ test.describe.serial('源码与实时预览', () => {
     expect(readFileSync(markdownFile, 'utf8')).toBe(MARKDOWN)
   })
 
-  test('HTML 本地 CSS 与图片可用，预览不能访问宿主或执行文件脚本', async () => {
+  test('HTML 仅保留运行入口，不显示重复的编辑和预览模式', async () => {
     await openFile('page.html')
-    await page.getByRole('button', { name: '分屏预览', exact: true }).click()
-    const preview = page.frameLocator('iframe[title="HTML 预览内容"]')
-    await expect(preview.getByRole('heading', { name: 'HTML 原稿', exact: true })).toBeVisible()
-    await expect(preview.getByText('五子棋：黑棋先行', { exact: true })).toBeVisible()
-    await expect(preview.locator('.local-style')).toHaveCSS('color', 'rgb(13, 124, 55)')
-    await expect.poll(() => preview.getByRole('img', { name: 'HTML 本地图片', exact: true }).evaluate((image) =>
-      image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0)).toBe(true)
-    expect(await preview.locator('body').evaluate(() => {
-      try { void parent.document.documentElement; return false } catch { return true }
-    })).toBe(true)
-    expect(await preview.locator('body').evaluate(() => 'aether' in window)).toBe(false)
-    expect(await page.evaluate(() => document.documentElement.hasAttribute('data-preview-unsafe'))).toBe(false)
-    await page.locator('.doc-view__source .monaco-editor').first().click({ position: { x: 100, y: 20 } })
-    await page.keyboard.press('Control+Home')
-    await page.keyboard.insertText('<h2>尚未保存的 HTML</h2>')
-    await expect(preview.getByRole('heading', { name: '尚未保存的 HTML', exact: true })).toBeVisible()
+    await expect(page.locator('.editor-preview-modes')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '保存并在浏览器中运行', exact: true })).toBeEnabled()
+    await expect(page.locator('iframe[title="HTML 预览内容"]')).toHaveCount(0)
+    await expect(page.locator('.doc-view__source .monaco-editor').first()).toBeVisible()
   })
 
   test('路径面包屑显示同级文件并实际打开所选文件', async () => {

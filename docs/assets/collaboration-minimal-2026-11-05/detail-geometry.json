@@ -1,0 +1,206 @@
+[
+  {
+    "appearance": "dark",
+    "view": "工作轮次",
+    "width": 860,
+    "height": 303,
+    "scrollWidth": 860,
+    "scrollHeight": 611,
+    "top": 300,
+    "bottom": 603.3333435058594,
+    "viewportHeight": 640,
+    "overflowY": "auto",
+    "actualScrollTarget": "run-result",
+    "scrollMetrics": {
+      "height": 280,
+      "scrollHeight": 4089
+    }
+  },
+  {
+    "appearance": "dark",
+    "view": "完整对话",
+    "width": 860,
+    "height": 243,
+    "scrollWidth": 860,
+    "scrollHeight": 2320,
+    "top": 360,
+    "bottom": 603.3333435058594,
+    "viewportHeight": 640,
+    "overflowY": "auto",
+    "actualScrollTarget": "transcript",
+    "scrollMetrics": {
+      "height": 243,
+      "scrollHeight": 2320
+    }
+  },
+  {
+    "appearance": "dark",
+    "view": "工作轮次",
+    "width": 439,
+    "height": 497,
+    "scrollWidth": 439,
+    "scrollHeight": 631,
+    "top": 226,
+    "bottom": 723.3333435058594,
+    "viewportHeight": 760,
+    "overflowY": "auto",
+    "actualScrollTarget": "run-result",
+    "scrollMetrics": {
+      "height": 280,
+      "scrollHeight": 4089
+    }
+  },
+  {
+    "appearance": "dark",
+    "view": "完整对话",
+    "width": 439,
+    "height": 421,
+    "scrollWidth": 439,
+    "scrollHeight": 3370,
+    "top": 302,
+    "bottom": 723.3333435058594,
+    "viewportHeight": 760,
+    "overflowY": "auto",
+    "actualScrollTarget": "transcript",
+    "scrollMetrics": {
+      "height": 421,
+      "scrollHeight": 3370
+    }
+  },
+  {
+    "appearance": "dark",
+    "view": "工作轮次",
+    "width": 532,
+    "height": 637,
+    "scrollWidth": 532,
+    "scrollHeight": 637,
+    "top": 226,
+    "bottom": 863.3333740234375,
+    "viewportHeight": 900,
+    "overflowY": "auto",
+    "actualScrollTarget": "run-result",
+    "scrollMetrics": {
+      "height": 280,
+      "scrollHeight": 4089
+    }
+  },
+  {
+    "appearance": "dark",
+    "view": "完整对话",
+    "width": 522,
+    "height": 561,
+    "scrollWidth": 522,
+    "scrollHeight": 3013,
+    "top": 302,
+    "bottom": 863.3333740234375,
+    "viewportHeight": 900,
+    "overflowY": "auto",
+    "actualScrollTarget": "transcript",
+    "scrollMetrics": {
+      "height": 561,
+      "scrollHeight": 3013
+    }
+  },
+  {
+    "appearance": "light",
+    "view": "工作轮次",
+    "width": 860,
+    "height": 303,
+    "scrollWidth": 860,
+    "scrollHeight": 611,
+    "top": 300,
+    "bottom": 603.3333435058594,
+    "viewportHeight": 640,
+    "overflowY": "auto",
+    "actualScrollTarget": "run-result",
+    "scrollMetrics": {
+      "height": 280,
+      "scrollHeight": 4089
+    }
+  },
+  {
+    "appearance": "light",
+    "view": "完整对话",
+    "width": 860,
+    "height": 243,
+    "scrollWidth": 860,
+    "scrollHeight": 2320,
+    "top": 360,
+    "bottom": 603.3333435058594,
+    "viewportHeight": 640,
+    "overflowY": "auto",
+    "actualScrollTarget": "transcript",
+    "scrollMetrics": {
+      "height": 243,
+      "scrollHeight": 2320
+    }
+  },
+  {
+    "appearance": "light",
+    "view": "工作轮次",
+    "width": 439,
+    "height": 497,
+    "scrollWidth": 439,
+    "scrollHeight": 631,
+    "top": 226,
+    "bottom": 723.3333435058594,
+    "viewportHeight": 760,
+    "overflowY": "auto",
+    "actualScrollTarget": "run-result",
+    "scrollMetrics": {
+      "height": 280,
+      "scrollHeight": 4089
+    }
+  },
+  {
+    "appearance": "light",
+    "view": "完整对话",
+    "width": 439,
+    "height": 421,
+    "scrollWidth": 439,
+    "scrollHeight": 3370,
+    "top": 302,
+    "bottom": 723.3333435058594,
+    "viewportHeight": 760,
+    "overflowY": "auto",
+    "actualScrollTarget": "transcript",
+    "scrollMetrics": {
+      "height": 421,
+      "scrollHeight": 3370
+    }
+  },
+  {
+    "appearance": "light",
+    "view": "工作轮次",
+    "width": 532,
+    "height": 637,
+    "scrollWidth": 532,
+    "scrollHeight": 637,
+    "top": 226,
+    "bottom": 863.3333740234375,
+    "viewportHeight": 900,
+    "overflowY": "auto",
+    "actualScrollTarget": "run-result",
+    "scrollMetrics": {
+      "height": 280,
+      "scrollHeight": 4089
+    }
+  },
+  {
+    "appearance": "light",
+    "view": "完整对话",
+    "width": 522,
+    "height": 561,
+    "scrollWidth": 522,
+    "scrollHeight": 3013,
+    "top": 302,
+    "bottom": 863.3333740234375,
+    "viewportHeight": 900,
+    "overflowY": "auto",
+    "actualScrollTarget": "transcript",
+    "scrollMetrics": {
+      "height": 561,
+      "scrollHeight": 3013
+    }
+  }
+]

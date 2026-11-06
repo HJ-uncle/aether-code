@@ -4,6 +4,8 @@ import type { EngineDiagnostics } from '@shared/engine-diagnostics'
 import { Icon } from '@renderer/workbench/icons'
 import { getWorkbenchVisible, onWorkbenchVisibility } from '@renderer/core/platform/workbench-visibility'
 import { EngineRuntimeHealth } from './EngineRuntimeHealth'
+import { EngineMonitorRefreshButton } from './EngineMonitorRefreshButton'
+import { createManualDiagnosticsReader } from './manual-diagnostics'
 import {
   engineDiagnosticsIdentity,
   formatResourceBytes,
@@ -20,8 +22,6 @@ import {
 } from './engine-resource-presentation'
 import './engine-resource-health.css'
 
-const SAMPLE_INTERVAL_MS = 5_000
-const STORAGE_REFRESH_MS = 60_000
 const PROCESS_ROWS_LIMIT = 24
 
 function processName(command: string, fallback: string): string {
@@ -68,88 +68,54 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
   const [diagnostics, setDiagnostics] = useState<EngineDiagnostics | null>(null)
   const [error, setError] = useState<{ identity: string; message: string } | null>(null)
   const [collecting, setCollecting] = useState(false)
-  const [refreshingStorage, setRefreshingStorage] = useState(false)
+  const [runtimeCollecting, setRuntimeCollecting] = useState(false)
   const [now, setNow] = useState(() => Date.now())
-  const [lastStorageRefresh, setLastStorageRefresh] = useState(0)
-  const collect = useRef<(refreshStorage?: boolean) => Promise<void>>(async () => {})
+  const collect = useRef<() => Promise<void>>(async () => {})
+  const runtimeRefresh = useRef<(() => Promise<void>) | null>(null)
+  const latestIdentity = useRef(identity)
+  latestIdentity.current = identity
 
   useEffect(() => {
-    let alive = true
-    let pending = false
-    let timer: number | undefined
-    const resetTimer = window.setTimeout(() => {
-      if (!alive) return
-      setDiagnostics(null)
-      setError(null)
-      setLastStorageRefresh(0)
-      setCollecting(false)
-      setRefreshingStorage(false)
-    }, 0)
+    setDiagnostics(null)
+    setError(null)
+    setCollecting(false)
     // Remote diagnostics reuse the existing host heartbeat and return explicit
     // unavailable OS resources; they never inspect a local stand-in process.
     if (snapshot.phase !== 'ready') {
       collect.current = async () => {}
-      return () => {
-        alive = false
-        window.clearTimeout(timer)
-        window.clearTimeout(resetTimer)
-      }
+      return
     }
-    const schedule = (): void => {
-      window.clearTimeout(timer)
-      if (alive && getWorkbenchVisible())
-        timer = window.setTimeout(() => void read(), SAMPLE_INTERVAL_MS)
-    }
-    const read = async (refreshStorage = false): Promise<void> => {
-      if (!alive || !getWorkbenchVisible() || pending) return
-      pending = true
-      setCollecting(true)
-      if (refreshStorage) setRefreshingStorage(true)
-      try {
-        const result = await window.aether.engine.diagnostics({ refreshStorage })
-        if (!alive || !getWorkbenchVisible() || result.identity !== identity) return
+    const reader = createManualDiagnosticsReader({
+      current: () => latestIdentity.current === identity,
+      read: async (refresh) => {
+        const [result] = await Promise.all([
+          window.aether.engine.diagnostics({ refresh }),
+          refresh ? runtimeRefresh.current?.() : undefined
+        ])
+        return result
+      },
+      publish: (result) => {
+        if (result.identity !== identity) return
         setDiagnostics(result)
         setError(null)
-        // The initial diagnostics call also performs the first storage scan.
-        // Mirror its timestamp so the button cannot immediately trigger a
-        // redundant directory walk; the backend applies the same cooldown.
-        if (typeof result.storage.scannedAt === 'number' && result.storage.scannedAt > 0) {
-          setLastStorageRefresh((previous) => previous || result.storage.scannedAt || 0)
-        }
-        if (refreshStorage) setLastStorageRefresh(Date.now())
         setNow(Date.now())
-      } catch (cause) {
-        if (alive && getWorkbenchVisible()) {
-          setError({
-            identity,
-            message: cause instanceof Error ? cause.message : '无法读取引擎资源，请重试。'
-          })
-          setNow(Date.now())
-        }
-      } finally {
-        pending = false
-        if (alive) {
-          setCollecting(false)
-          setRefreshingStorage(false)
-          schedule()
-        }
-      }
-    }
-    collect.current = read
-    const onVisibility = (): void => {
-      window.clearTimeout(timer)
-      if (getWorkbenchVisible()) void read()
-    }
+      },
+      error: cause => {
+        setError({ identity, message: cause instanceof Error ? cause.message : '无法读取引擎资源，请重试。' })
+        setNow(Date.now())
+      },
+      busy: setCollecting
+    })
+    collect.current = reader.refresh
+    const onVisibility = (): void => reader.setVisible(getWorkbenchVisible())
     const offVisibility = onWorkbenchVisibility(onVisibility)
-    window.setTimeout(() => void read(), 0)
+    onVisibility()
     return () => {
-      alive = false
-      window.clearTimeout(timer)
-      window.clearTimeout(resetTimer)
+      reader.dispose()
       offVisibility()
-      if (collect.current === read) collect.current = async () => {}
+      if (collect.current === reader.refresh) collect.current = async () => {}
     }
-  }, [identity, snapshot.mode, snapshot.phase])
+  }, [identity, snapshot.mode, snapshot.phase, snapshot.entryPath, snapshot.runtimeSource])
 
   const currentDiagnostics = diagnostics?.identity === identity ? diagnostics : null
   const currentError = error?.identity === identity ? error.message : ''
@@ -178,11 +144,8 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
   const processTree = resources?.processTree
   const processRows = processTree?.processes ?? []
   const visibleProcessRows = processRows.slice(0, PROCESS_ROWS_LIMIT)
-  const storageCooldown = Math.max(
-    0,
-    Math.ceil((lastStorageRefresh + STORAGE_REFRESH_MS - now) / 1000)
-  )
-  const warming = processAvailable ? '建立采样基线' : '不可用'
+  const busy = collecting || runtimeCollecting
+  const warming = processAvailable ? '需再次刷新' : '不可用'
   const readRateValue =
     !processAvailable || !usableResourceNumber(resources?.io.readBytes)
       ? '不可用'
@@ -197,16 +160,20 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
         : formatResourceRate(resources.io.writeBytesPerSecond)
 
   return (
-    <section className="engine-resource" aria-label="引擎资源与健康监控">
+    <section className="engine-resource" aria-label="引擎资源与健康监控" aria-busy={busy}>
       <header className="engine-resource__heading">
         <div>
           <h2>资源与健康</h2>
-          <p>{snapshot.mode === 'remote' ? '远端连接心跳 · 每 5 秒同步' : 'CPU、内存与进程 I/O · 每 5 秒采样'}</p>
+          <p>进入页面读取一次，之后手动刷新；CPU 和 I/O 速率需要两次采样。</p>
         </div>
-        <span className="engine-resource__health" data-state={status.state}>
-          <span aria-hidden="true" />
-          {status.label}
-        </span>
+        <div className="engine-resource__heading-actions" role="group" aria-label="监控操作">
+          <span className="engine-resource__health" data-state={status.state}>
+            <span aria-hidden="true" />
+            {status.label}
+          </span>
+          <EngineMonitorRefreshButton label="刷新监控数据" busy={busy}
+            disabled={snapshot.phase !== 'ready'} onRefresh={() => collect.current()} />
+        </div>
       </header>
       <div className="engine-resource__metrics" aria-label="引擎进程资源">
         <Metric
@@ -245,7 +212,7 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
         <header className="engine-resource__processes-heading">
           <div>
             <h3>进程</h3>
-            <p>引擎主进程及其真实后代 · 每 15 秒更新，最多显示 {PROCESS_ROWS_LIMIT} 项</p>
+            <p>引擎主进程及其真实后代 · 随手动刷新更新，最多显示 {PROCESS_ROWS_LIMIT} 项</p>
           </div>
           <span className="engine-resource__process-count">
             {processTree?.state === 'available' ? `${processTree.totals.count} 个进程` : '不可用'}
@@ -260,7 +227,7 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
             <div className="engine-resource__process-summary" aria-label="进程树合计">
               <div>
                 <span>合计 CPU</span>
-                <strong>{formatResourcePercent(processTree.totals.cpu.percent)}</strong>
+                <strong>{processTree.totals.cpu.percent === null ? '需再次刷新' : formatResourcePercent(processTree.totals.cpu.percent)}</strong>
               </div>
               <div>
                 <span>合计 RSS</span>
@@ -268,14 +235,14 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
               </div>
               <div>
                 <span>合计读取</span>
-                <strong>{formatResourceRate(processTree.totals.io.readBytesPerSecond)}</strong>
+                <strong>{processTree.totals.io.readBytes !== null && processTree.totals.io.readBytesPerSecond === null ? '需再次刷新' : formatResourceRate(processTree.totals.io.readBytesPerSecond)}</strong>
               </div>
               <div>
                 <span>合计写入</span>
-                <strong>{formatResourceRate(processTree.totals.io.writeBytesPerSecond)}</strong>
+                <strong>{processTree.totals.io.writeBytes !== null && processTree.totals.io.writeBytesPerSecond === null ? '需再次刷新' : formatResourceRate(processTree.totals.io.writeBytesPerSecond)}</strong>
               </div>
             </div>
-            <div className="engine-resource__process-table-wrap">
+            <div className="engine-resource__process-table-wrap" data-scroll-axis="x">
               <table className="engine-resource__process-table">
                 <caption className="sr-only">引擎进程资源明细</caption>
                 <thead>
@@ -305,7 +272,7 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
                           </span>
                         </span>
                       </th>
-                      <td>{formatResourcePercent(process.cpu.percent)}</td>
+                      <td>{process.cpu.percent === null ? '需再次刷新' : formatResourcePercent(process.cpu.percent)}</td>
                       <td>{formatResourceBytes(process.memory.rssBytes)}</td>
                       <td>{process.pid}</td>
                       <td>{formatProcessAge(process.ageMs)}</td>
@@ -335,7 +302,7 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
           <button
             type="button"
             className="btn btn--sm"
-            disabled={collecting}
+            disabled={busy}
             onClick={() => void collect.current()}
           >
             重试
@@ -352,7 +319,7 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
           <strong>{formatResourceTimestamp(health?.lastCheckedAt)}</strong>
         </div>
         <div>
-          <span>心跳新鲜度</span>
+          <span>采样时心跳新鲜度</span>
           <strong data-freshness={heartbeat.state}>{heartbeat.label}</strong>
         </div>
         <div>
@@ -374,7 +341,8 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
           <strong>{health ? health.activeStreams : '—'}</strong>
         </div>
       </div>
-      <EngineRuntimeHealth snapshot={snapshot} />
+      <EngineRuntimeHealth snapshot={snapshot} refreshRef={runtimeRefresh} onCollecting={setRuntimeCollecting}
+        refreshing={runtimeCollecting} />
       <div className="engine-resource__capacity" aria-label="宿主容量">
         <div>
           <span>宿主内存</span>
@@ -401,7 +369,7 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
           </small>
         </div>
       </div>
-      <section className="engine-resource__storage" aria-label="引擎数据存储">
+      <section className="engine-resource__storage" aria-label="引擎数据存储" aria-busy={collecting}>
         <header>
           <div>
             <h3>数据存储</h3>
@@ -417,23 +385,8 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
               )}
             </p>
           </div>
-          <button
-            type="button"
-            className="btn btn--sm"
-            disabled={
-              collecting || refreshingStorage || storageCooldown > 0 || snapshot.mode === 'remote'
-            }
-            title={
-              storageCooldown > 0 ? `${storageCooldown} 秒后可重新扫描` : '重新统计引擎数据文件占用'
-            }
-            onClick={() => void collect.current(true)}
-          >
-            {refreshingStorage
-              ? '正在统计…'
-              : storageCooldown > 0
-                ? `${storageCooldown} 秒后刷新`
-                : '刷新存储用量'}
-          </button>
+          <EngineMonitorRefreshButton label="刷新存储用量" busy={busy}
+            disabled={snapshot.phase !== 'ready' || snapshot.mode === 'remote'} onRefresh={() => collect.current()} />
         </header>
         {storage?.state === 'available' ? (
           <>
@@ -467,10 +420,52 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
             </p>
             <p className="engine-resource__storage-note">
               {storage.partial
-                ? '达到采集预算或部分文件不可读，当前为已统计用量。'
-                : '按实际文件统计；数据库中的会话与子代理记录共用空间，不估算拆分。'}{' '}
+                ? `${storage.partialReasons?.join('；') || '达到采集预算或部分文件不可读'}，当前仅包含已统计用量。`
+                : '按文件逻辑大小统计；文件数不代表会话数，长期记忆是磁盘数据，不是运行内存。'}{' '}
               · 上次统计 {formatResourceTimestamp(storage.scannedAt)}
+              {storage.cached ? ' · 缓存样本' : ' · 新采样'}
+              {' · '}采集 {Math.round(storage.durationMs)} ms
             </p>
+            <details className="engine-resource__sqlite">
+              <summary>SQLite 内部占用与维护收据</summary>
+              {storage.sqlite?.state === 'available' ? (
+                <>
+                  <dl className="engine-resource__sqlite-facts">
+                    <div><dt>数据库逻辑页</dt><dd>{storage.sqlite.pageCount?.toLocaleString('zh-CN') ?? '不可用'} 页</dd></div>
+                    <div><dt>空闲页（可复用）</dt><dd>{formatResourceBytes(storage.sqlite.freeBytes)} · {storage.sqlite.freelistPages?.toLocaleString('zh-CN') ?? '不可用'} 页</dd></div>
+                    <div><dt>页大小</dt><dd>{formatResourceBytes(storage.sqlite.pageSize)}</dd></div>
+                  </dl>
+                  <p className="engine-resource__storage-note">空闲页已包含在数据库文件内，不与文件总量重复相加；可复用不表示已归还磁盘空间。</p>
+                  {storage.sqlite.maintenance ? (
+                    <p className="engine-resource__storage-note">
+                      历史维护收据：待提交 {storage.sqlite.maintenance.pending.toLocaleString('zh-CN')} · 已提交 {storage.sqlite.maintenance.committed.toLocaleString('zh-CN')} · 已失效 {storage.sqlite.maintenance.invalidated.toLocaleString('zh-CN')}
+                      {storage.sqlite.maintenance.other ? ` · 其他 ${storage.sqlite.maintenance.other.toLocaleString('zh-CN')}` : ''}
+                    </p>
+                  ) : <p className="engine-resource__storage-note">当前数据库未提供历史维护收据统计。</p>}
+                  {storage.sqlite.objects.length > 0 ? (
+                    <div className="engine-resource__sqlite-table-wrap" data-scroll-axis="x">
+                      <table className="engine-resource__sqlite-table">
+                        <caption>表与索引占用最多的 {storage.sqlite.objects.length} 项</caption>
+                        <thead><tr><th scope="col">对象</th><th scope="col">类型</th><th scope="col">分配页占用</th></tr></thead>
+                        <tbody>{storage.sqlite.objects.map(object => (
+                          <tr key={`${object.kind}:${object.name}`}>
+                            <th scope="row" title={`${object.name} · 所属表 ${object.tableName}`}>{object.name}</th>
+                            <td>{object.kind === 'index' ? '索引' : '表'}</td>
+                            <td>{formatResourceBytes(object.bytes)}</td>
+                          </tr>
+                        ))}</tbody>
+                      </table>
+                    </div>
+                  ) : null}
+                  <p className="engine-resource__storage-note">
+                    只读统计主数据库页分配，包含索引；不按会话或子代理估算拆分。统计时间 {formatResourceTimestamp(storage.sqlite.sampledAt)} · {Math.round(storage.sqlite.durationMs)} ms
+                    {storage.sqlite.partial ? ` · 部分统计：${storage.sqlite.partialReasons.join('；') || '采集未完成'}` : ''}
+                  </p>
+                </>
+              ) : (
+                <p className="engine-resource__storage-note">{storage.sqlite?.reason || '当前桌面版本尚未提供 SQLite 内部统计，文件用量仍可使用。'}</p>
+              )}
+            </details>
           </>
         ) : (
           <p className="engine-resource__storage-note">
@@ -485,7 +480,10 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
             ? ` · 采集 ${Math.round(resources.collection.durationMs)} ms${resources.collection.cached ? ' · 缓存' : ''}`
             : ''}
         </span>
-        <span>{collecting ? '正在采样' : '页面隐藏后暂停采样'}</span>
+        <div className="engine-resource__footer-actions">
+          <EngineMonitorRefreshButton label="手动刷新监控数据" busy={busy}
+            disabled={snapshot.phase !== 'ready'} onRefresh={() => collect.current()} />
+        </div>
       </footer>
       <p className="engine-resource__scope">
         顶部资源卡显示引擎主进程；“进程”表会在权限允许时合计可确认的后代进程。I/O

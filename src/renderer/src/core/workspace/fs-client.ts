@@ -236,6 +236,16 @@ export async function captureSessionFileTarget(sessionId: string, workspaceRoot?
   return sessionFileTarget(sessionId, { source: getEngineSource(), expectedEngine: getExpectedEngine() }, workspaceRoot)
 }
 
+/** Explicit refresh observes an operator-restored binding without rebinding.
+ * Previously captured immutable targets keep their own read/write guards. */
+export function invalidateSessionFileTarget(sessionId: string): void {
+  const source = getEngineSource()
+  assertEngineSource(source)
+  const key = JSON.stringify([source, getExpectedEngine(), sessionId.trim()])
+  sessionTargetRequests.delete(key)
+  sessionDirectoryRequests.delete(key)
+}
+
 async function verifySessionBinding(target: SessionFileTarget): Promise<void> {
   assertSessionFileTarget(target)
   const context = await readSessionWorkspaceContext(target.sessionId, target)
@@ -718,33 +728,52 @@ export async function writeFile(path: string, content: string, target?: SessionF
   })
   return remoteStat(context, path)
 }
-async function mutate(path: string, route: string): Promise<void> {
+async function mutate(path: string, route: string, target?: SessionFileTarget): Promise<void> {
+  if (target) {
+    const relative = sessionRelativePath(target.root, path)
+    await verifySessionBinding(target)
+    await sessionRequest(target.sessionId, target, { method: 'POST', path: route, body: {
+      ...readQuery(target, relative)
+    } })
+    assertSessionFileTarget(target)
+    return
+  }
   const context = await remoteWorkspaceContext()
   await remoteRequest(context.target, { method: 'POST', path: route,
     body: { ...scope(context.target), path: remoteWorkspaceRelativePath(context, path) } })
 }
-export function createFile(path: string): Promise<void> {
-  return isRemoteEngine() ? mutate(path, '/workspace/file/create') : bridge().fs.createFile(path)
+export function createFile(path: string, target?: SessionFileTarget): Promise<void> {
+  return target || isRemoteEngine() ? mutate(path, '/workspace/file/create', target) : bridge().fs.createFile(path)
 }
-export function createFolder(path: string): Promise<void> {
-  return isRemoteEngine() ? mutate(path, '/workspace/folder/create') : bridge().fs.createFolder(path)
+export function createFolder(path: string, target?: SessionFileTarget): Promise<void> {
+  return target || isRemoteEngine() ? mutate(path, '/workspace/folder/create', target) : bridge().fs.createFolder(path)
 }
-export function trash(path: string): Promise<void> {
-  return isRemoteEngine() ? mutate(path, '/workspace/file/trash') : bridge().fs.trash(path)
+export function trash(path: string, target?: SessionFileTarget): Promise<void> {
+  return target || isRemoteEngine() ? mutate(path, '/workspace/file/trash', target) : bridge().fs.trash(path)
 }
-async function transfer(src: string, dest: string, route: string): Promise<void> {
+async function transfer(src: string, dest: string, route: string, target?: SessionFileTarget): Promise<void> {
+  if (target) {
+    const srcPath = sessionRelativePath(target.root, src), destPath = sessionRelativePath(target.root, dest)
+    await verifySessionBinding(target)
+    await sessionRequest(target.sessionId, target, { method: 'POST', path: route, body: {
+      sessionId: target.sessionId, srcPath, destPath,
+      ...(target.bindingEpoch ? { expectedRoot: target.root, bindingEpoch: target.bindingEpoch } : {})
+    } })
+    assertSessionFileTarget(target)
+    return
+  }
   const context = await remoteWorkspaceContext()
   await remoteRequest(context.target, { method: 'POST', path: route, body: {
     ...scope(context.target), srcPath: remoteWorkspaceRelativePath(context, src), destPath: remoteWorkspaceRelativePath(context, dest)
   } })
 }
-export function rename(src: string, dest: string): Promise<void> {
-  return isRemoteEngine() ? transfer(src, dest, '/workspace/file/move') : bridge().fs.rename(src, dest)
+export function rename(src: string, dest: string, target?: SessionFileTarget): Promise<void> {
+  return target || isRemoteEngine() ? transfer(src, dest, '/workspace/file/move', target) : bridge().fs.rename(src, dest)
 }
-export function copy(src: string, dest: string): Promise<void> {
+export function copy(src: string, dest: string, target?: SessionFileTarget): Promise<void> {
   // Server-side copy preserves all bytes, hidden children and metadata. Never
   // reconstruct a copied file from editor preview content.
-  return isRemoteEngine() ? transfer(src, dest, '/workspace/file/copy') : bridge().fs.copy(src, dest)
+  return target || isRemoteEngine() ? transfer(src, dest, '/workspace/file/copy', target) : bridge().fs.copy(src, dest)
 }
 
 function sanitizeAttachmentName(name: string): string {

@@ -71,11 +71,40 @@ test('清空显示名称仍发送空串；空密钥和脱敏串不从模型拷�
     buildModelUpdate(item, { ...initialModelForm(item), apiKey: 'synthetic-replacement-key' })
   ).toEqual({ apiKey: 'synthetic-replacement-key' })
 })
-test('新增模型不把运行预算固化为模型能力，默认由引擎推断', () => {
+test('新增模型默认 256 K，清空后仍可交给引擎推断', () => {
   const form = initialModelForm()
-  expect(form.contextWindow).toBe('')
-  expect(newModelOverrides(form)).toBeUndefined()
-  expect(newModelOverrides({ ...form, vision: false })).toEqual({ vision: false })
+  expect(form.contextWindow).toBe('256')
+  expect(newModelOverrides(form)).toEqual({ contextWindow: 256000 })
+  expect(newModelOverrides({ ...form, vision: false })).toEqual({ vision: false, contextWindow: 256000 })
+  expect(newModelOverrides({ ...form, contextWindow: '' })).toBeUndefined()
+})
+
+test('新建默认值不覆盖已有模型的自动识别或自定义窗口', () => {
+  const automatic = model(null)
+  expect(initialModelForm(automatic).contextWindow).toBe('')
+  expect(buildModelUpdate(automatic, initialModelForm(automatic))).toEqual({})
+  const custom = model({ contextWindow: 123456 })
+  expect(initialModelForm(custom).contextWindow).toBe('123.456')
+  expect(buildModelUpdate(custom, initialModelForm(custom))).toEqual({})
+})
+
+test('API 格式新建和旧记录缺省自动识别，明确格式编辑保持原值', () => {
+  expect(initialModelForm().apiFormat).toBe('auto')
+  const legacy = model()
+  expect(initialModelForm(legacy).apiFormat).toBe('auto')
+  expect(buildModelUpdate(legacy, initialModelForm(legacy))).toEqual({})
+  for (const apiFormat of ['openai', 'anthropic'] as const) {
+    const explicit: EngineModel = { ...legacy, apiFormat }
+    expect(initialModelForm(explicit).apiFormat).toBe(apiFormat)
+    expect(buildModelUpdate(explicit, initialModelForm(explicit))).toEqual({})
+    expect(buildModelUpdate(explicit, { ...initialModelForm(explicit), apiFormat: 'auto' })).toEqual({ apiFormat: 'auto' })
+  }
+})
+
+test('API 格式只在修改时提交，手选 OpenAI 不被服务商或地址后缀覆盖', () => {
+  const item: EngineModel = { ...model(), provider: 'anthropic', baseUrl: 'https://example.com/anthropic', apiFormat: 'anthropic' }
+  expect(buildModelUpdate(item, { ...initialModelForm(item), apiFormat: 'openai' })).toEqual({ apiFormat: 'openai' })
+  expect(buildModelUpdate(model(), { ...initialModelForm(model()), apiFormat: 'anthropic' })).toEqual({ apiFormat: 'anthropic' })
 })
 
 test('小数 K 无损换算为整数 token，并保留最大安全整数配置', () => {

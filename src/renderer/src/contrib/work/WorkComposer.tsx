@@ -19,7 +19,7 @@ import { DEFAULT_CONTEXT_WINDOW_BUDGET } from '@renderer/core/engine/models'
 import { ModelPicker } from '@renderer/contrib/models/ModelPicker'
 import { preserveMentions, userMessageDraft } from '@renderer/contrib/chat/mention-context'
 import { RootFollowupDelivery, RootFollowupFeedback, useRootFollowup } from '@renderer/contrib/chat/RootFollowup'
-import { rootFollowupLimitation, rootFollowupMessage, rootFollowupRun } from '@renderer/contrib/chat/root-followup'
+import { rootFollowupCanSubmit, rootFollowupLimitation, rootFollowupMessage, rootFollowupRun } from '@renderer/contrib/chat/root-followup'
 import { MentionRefPicker } from '@renderer/contrib/chat/MentionRefPicker'
 import { ResourcePicker, type ResourceItem } from '@renderer/contrib/chat/ResourcePicker'
 import { WorkComposerPreferences } from './WorkComposerPreferences'
@@ -51,6 +51,7 @@ export function WorkComposer({
   const addingFilesRef = useRef(false)
   const inputRef = useRef<MentionInputHandle>(null)
   const composerRef = useRef<HTMLDivElement>(null)
+  const workspaceButtonRef = useRef<HTMLButtonElement>(null)
   const draftState = useWorkDraft(controller.draftSource, controller.activeTask?.id ?? null)
   const userDraftRef = useRef<WorkDraft | null>(null)
   const mentionsRef = useRef<Mention[]>(draftState.mentions)
@@ -121,7 +122,7 @@ export function WorkComposer({
   const submit = (): void => {
     if (rootFollowup.busy || rootFollowup.pending || controller.stopping) return
     if (immediateIntent) {
-      if (mentionQuery !== null || resourceQuery !== null || !draft.trim() || !controller.ready || controller.uploading || controller.loading || !controller.historyReady || !rootAccepting || !rootFollowup.capability) return
+      if (mentionQuery !== null || resourceQuery !== null || !draft.trim() || !controller.ready || controller.uploading || controller.loading || !controller.historyReady || !rootFollowupCanSubmit(rootAccepting, rootFollowup.capability)) return
       let message: string
       try { message = rootFollowupMessage(draft, mentionsRef.current, controller.attachments) }
       catch (cause) { reportError(cause); return }
@@ -376,8 +377,10 @@ export function WorkComposer({
                 </>
               ) : null}
               {!controller.workspaceLocked ? (
+                <>
                 <button
                   type="button"
+                  ref={workspaceButtonRef}
                   className="work-quiet-button work-folder-button"
                   aria-label="选择工作区"
                   onClick={() => {
@@ -393,7 +396,7 @@ export function WorkComposer({
                       ? '正在等待选择工作区…'
                       : controller.workspacePath
                       ? controller.workspacePath
-                      : '未选择项目，任务会使用独立沙箱；点击可绑定本地项目'
+                      : '默认工作区：每个任务使用独立沙箱；点击可选择本地项目'
                   }
                 >
                   {workspacePicking ? <Spinner size={14} /> : <Icon name="folder-outline" size={16} />}
@@ -402,9 +405,25 @@ export function WorkComposer({
                       ? '选择中…'
                       : controller.workspacePath
                       ? controller.workspacePath.split(/[\\/]/).pop()
-                      : '独立沙箱'}
+                      : '默认工作区'}
                   </span>
                 </button>
+                {!controller.activeTask && controller.workspacePath ? (
+                  <button
+                    type="button"
+                    className="work-quiet-button work-folder-clear"
+                    aria-label="清除工作区选择，使用默认工作区"
+                    title="清除工作区选择，使用默认工作区"
+                    disabled={controller.streaming || controller.uploading || workspacePicking}
+                    onClick={() => {
+                      controller.clearWorkspace()
+                      workspaceButtonRef.current?.focus()
+                    }}
+                  >
+                    <Icon name="close" size={14} />
+                  </button>
+                ) : null}
+                </>
               ) : null}
               {!controller.agentLocked ? (
                 <button
@@ -476,30 +495,22 @@ export function WorkComposer({
                 onClick={submit}
                 disabled={
                   controller.stopping || Boolean(rootFollowup.pending) || (immediateIntent
-                    ? controller.uploading || controller.loading || !controller.historyReady || !rootAccepting || !rootFollowup.capability || Boolean(rootFollowupLimitation(mentionsRef.current, controller.attachments))
+                    ? controller.uploading || controller.loading || !controller.historyReady || !rootFollowupCanSubmit(rootAccepting, rootFollowup.capability) || Boolean(rootFollowupLimitation(mentionsRef.current, controller.attachments))
                     : queueIntent ? queueBusy : taskActive || busy) || !controller.ready || (!draft.trim() && !controller.attachments.length)
                 }
               />
             </>
           }
         />
-        <RootFollowupFeedback controller={rootFollowup} active={taskActive} limitation={!rootAccepting && taskActive ? '正在确认当前任务是否可接收补充，草稿已保留。' : rootFollowupLimitation(mentionsRef.current, controller.attachments)}
-          onResolve={resolveRootFollowup}
-          canRestore={!draft.trim() && !controller.attachments.length} onRestore={message => {
-            if (draftLiveRef.current.trim()) return
-            const recovered = userMessageDraft(message)
-            draftRevisionRef.current += 1; draftLiveRef.current = recovered.text; mentionsRef.current = recovered.mentions
-            controller.setDraft(recovered.text, recovered.mentions); inputRef.current?.setDraft(recovered.text, recovered.mentions)
-          }} />
-        {mentionQuery !== null && appMode === 'work' ? (
           <CompletionPopover
+            open={mentionQuery !== null && appMode === 'work'}
             anchorRef={composerRef}
             className="work-completion-popover"
             onClose={() => setMentionQuery(null)}
           >
               <MentionRefPicker
                 root={controller.workspacePath ?? null}
-                query={mentionQuery}
+                query={mentionQuery ?? ''}
                 onSelect={(mention) => {
                   inputRef.current?.completeMention(mention)
                   setMentionQuery(null)
@@ -510,15 +521,14 @@ export function WorkComposer({
                 }}
               />
           </CompletionPopover>
-        ) : null}
-        {resourceQuery !== null && appMode === 'work' ? (
           <CompletionPopover
+            open={resourceQuery !== null && appMode === 'work'}
             anchorRef={composerRef}
             className="work-completion-popover"
             onClose={() => setResourceQuery(null)}
           >
             <ResourcePicker
-              query={resourceQuery}
+              query={resourceQuery ?? ''}
               projectPath={controller.workspacePath ?? undefined}
               onSelect={selectResource}
               onClose={() => {
@@ -527,8 +537,19 @@ export function WorkComposer({
               }}
             />
           </CompletionPopover>
-        ) : null}
       </InputComposer>
+      <RootFollowupFeedback key={JSON.stringify([getEngineSource(), controller.activeTask?.id])} controller={rootFollowup} active={taskActive} limitation={!rootAccepting && taskActive ? '正在确认当前任务是否可接收补充，草稿已保留。' : rootFollowupLimitation(mentionsRef.current, controller.attachments)}
+        onFocusInput={() => inputRef.current?.focus()}
+        fallbackHint={!controller.ready ? '引擎尚未就绪，草稿会保留。' : queueIntent ? 'Enter 排到下一轮 · Shift + Enter 换行' : taskActive ? '任务正在准备，草稿会保留。' : 'Enter 发送 · Shift + Enter 换行'}
+        footerAction={!controller.ready ? <button type="button" className="input-composer__history-button" onClick={() => openAppSettings('general')}>引擎设置</button> : undefined}
+        onResolve={resolveRootFollowup}
+        canRestore={!draft.trim() && !controller.attachments.length} onRestore={message => {
+          if (draftLiveRef.current.trim()) return
+          const recovered = userMessageDraft(message)
+          draftRevisionRef.current += 1; draftLiveRef.current = recovered.text; mentionsRef.current = recovered.mentions
+          controller.setDraft(recovered.text, recovered.mentions); inputRef.current?.setDraft(recovered.text, recovered.mentions)
+          inputRef.current?.focus()
+        }} />
       {agentsOpen ? (
         <WorkAgentManager
           workspacePath={controller.workspacePath}
@@ -549,26 +570,6 @@ export function WorkComposer({
           onClose={() => setPreview(null)}
         />
       ) : null}
-      <div className="work-composer__hint">
-        <span>
-          {!controller.ready
-            ? '引擎尚未就绪，草稿会保留。'
-            : immediateIntent
-              ? 'Shift + Enter 换行 · 立即补充沿用当前任务的模型和配置'
-            : queueIntent
-              ? 'Enter 排到下一轮 · 当前执行不变 · 可编辑或暂停待发'
-              : taskActive
-                ? '任务正在准备或等待处理，草稿会保留。'
-                : controller.workspacePath
-                  ? '已绑定项目 · Enter 发送 · Shift + Enter 换行 · @ 文件 / @agent · / 技能、MCP、知识库'
-                  : '独立沙箱已就绪 · 无需先选项目 · Enter 发送 · Shift + Enter 换行 · @agent · / 技能、MCP、知识库'}
-        </span>
-        {!controller.ready ? (
-          <button type="button" onClick={() => openAppSettings('general')}>
-            查看引擎设置
-          </button>
-        ) : null}
-      </div>
     </div>
   )
 }

@@ -6,22 +6,23 @@ import { remoteRequestError } from '../src/main/engine/protocol'
 import { NextTurnQueueError } from '../src/shared/next-turn-queue'
 import type { EngineRequestInput, EngineRequestResult } from '../src/shared/ipc'
 import type { WorkQueueDraft } from '../src/shared/work-next-turn-api'
-import { WORK_QUEUE_TRANSPORT, freezeQueueRequest, assertFrozenQueueRequest } from '../src/main/next-turn-admission-protocol'
+import { WORK_QUEUE_TRANSPORT, CODE_QUEUE_TRANSPORT, freezeQueueRequest, assertFrozenQueueRequest } from '../src/main/next-turn-admission-protocol'
+import { rememberRemoteAttachment } from '../src/main/engine/remote-attachments'
 import { promises as fs } from 'node:fs'
 import { join, resolve, relative, sep } from 'node:path'
 
 /** Actual main gateway under an injected authenticated transport; no sockets or provider. */
-function setup(remote = true, workspace: string[] = []) {
+function setup(remote = true, workspace: string[] = [], owner: 'work' | 'code' = 'work') {
   const epoch = new AbortController(), snapshot = { ...engineHost.getSnapshot(), phase: 'ready' as const, mode: remote ? 'remote' as const : 'embedded' as const,
     baseUrl: 'https://synthetic.invalid', instanceId: 'synthetic-instance', accountId: 'synthetic-account' }
   let root = { runId: 'synthetic-initial', attemptId: 'initial-attempt', version: 1, status: 'succeeded', workspacePaths: workspace, modelId: 'synthetic-model', agentId: 'synthetic-primary' }
-  const context = { protocolVersion: 1, tenantId: 'middleware-tenant', sessionId: 'work-synthetic', namespace: { id: 'synthetic-db', generation: 'one' }, transport: WORK_QUEUE_TRANSPORT,
+  const context = { protocolVersion: 1, tenantId: 'middleware-tenant', sessionId: 'work-synthetic', namespace: { id: 'synthetic-db', generation: 'one' }, transport: owner === 'work' ? WORK_QUEUE_TRANSPORT : CODE_QUEUE_TRANSPORT,
     predecessor: { runId: root.runId, attemptId: root.attemptId, version: root.version }, root }
   const requests: EngineRequestInput[] = [], posts: RequestInit[] = [], files = new Map<string, Buffer>(), receipts = new Map<string, unknown>()
   let adapters = 0, modelEnabled = true, denyReceipt = false
   const port: QueueEnginePort = {
     snapshot: () => snapshot, signal: () => epoch.signal,
-    headers: async () => ({ Authorization: 'Bearer synthetic-test-credential', 'X-Aether-Tool-Profile': 'general', 'X-Aether-Run-Lifetime': 'durable' }),
+    headers: async (_url, profile) => ({ Authorization: 'Bearer synthetic-test-credential', 'X-Aether-Tool-Profile': profile, 'X-Aether-Run-Lifetime': 'durable' }),
     request: async <T>(input: EngineRequestInput): Promise<EngineRequestResult<T>> => {
       requests.push(structuredClone(input)); let data: unknown
       if (input.path === '/chat/admission/context') data = { ...context, root, predecessor: { runId: root.runId, attemptId: root.attemptId, version: root.version } }
@@ -55,12 +56,62 @@ function setup(remote = true, workspace: string[] = []) {
       return target
     }
   }
-  const gateway = new EngineQueueGateway(port), submission: WorkQueueDraft = { draft: { text: 'synthetic task', revision: 1, mentions: [] }, model: { kind: 'engine-default' },
+  const gateway = new EngineQueueGateway(port, owner), submission: WorkQueueDraft = { ...(owner === 'code' ? { code: {} } : {}), draft: { text: 'synthetic task', revision: 1, mentions: [] }, model: { kind: 'engine-default' },
     resources: { skills: { kind: 'inherit' }, mcpServers: { kind: 'none' }, knowledgeBases: { kind: 'override', ids: ['synthetic-kb'] } }, thinking: { kind: 'off' }, attachments: [] }
   return { gateway, port, epoch, snapshot, context, requests, posts, files, submission, adapters: () => adapters, disableModel: () => { modelEnabled = false }, denyReceipt: () => { denyReceipt = true } }
 }
 test('actual gateway rejects an idle authority before reading any source', async () => {
   await expect(new EngineQueueGateway().capture('work-synthetic')).rejects.toThrow('尚未就绪')
+})
+test('Code preserves complete options and uses Code admission identity; Work cannot reuse the frozen wire', async () => {
+  const env = setup(false, [], 'code'), lease = await env.gateway.capture('work-synthetic')
+  const input: WorkQueueDraft = { ...env.submission, code: { agentId: 'selected-primary', collaborators: [{ agentId: 'selected-agent', resumeRunId: 'selected-run' }, { resumeRunId: 'resume-only' }], workspacePaths: [], memoryScope: 'off' },
+    thinking: { kind: 'on' }, subagentModel: 'sub-model', utilityModel: 'utility-model' }
+  const envelope = await env.gateway.envelope(lease.scope, input), context = await env.gateway.context(lease.scope)
+  const body = await env.gateway.prepare(lease.scope, envelope, context)
+  expect(body).toMatchObject({ agentId: 'selected-primary', collaborators: input.code!.collaborators, workspacePaths: [], thinkingMode: true, memoryScope: 'off', mcpServers: [],
+    subagentModel: 'sub-model', utilityModel: 'utility-model', clientCapabilities: { mode: 'code', connected: false } })
+  expect(body).not.toHaveProperty('skills')
+  const frozen = freezeQueueRequest(lease.scope, body, 1, context.predecessor)
+  expect(JSON.parse(frozen.wireBody!).admission.owner).toBe('code')
+  expect(() => assertFrozenQueueRequest({ ...lease.scope, owner: 'work' }, frozen)).toThrow('integrity')
+  expect(env.requests.every(request => request.toolProfile === 'code')).toBe(true)
+  await env.gateway.submit(lease.scope, assertFrozenQueueRequest(lease.scope, frozen), new AbortController().signal)
+  expect(env.posts[0].headers).toMatchObject({ 'X-Aether-Tool-Profile': 'code', 'X-Aether-Run-Lifetime': 'durable' })
+  expect((await env.gateway.receipt(lease.scope, { id: 'code-item', revision: 1, createdAt: 1, updatedAt: 1, phase: 'dispatching', frozen, envelope })).status).toBe('accepted')
+})
+test('Code capability connection is regenerated from a live sender and expires on destruction', async () => {
+  const env = setup(false, [], 'code'), lease = await env.gateway.capture('work-synthetic')
+  const envelope = await env.gateway.envelope(lease.scope, env.submission), context = await env.gateway.context(lease.scope)
+  let destroyed = false
+  await env.gateway.setConnected('work-synthetic', { isDestroyed: () => destroyed }, true)
+  expect((await env.gateway.prepare(lease.scope, envelope, context)).clientCapabilities).toMatchObject({ connected: true })
+  expect(envelope).not.toHaveProperty('clientCapabilities')
+  destroyed = true
+  expect((await env.gateway.prepare(lease.scope, envelope, context)).clientCapabilities).toMatchObject({ connected: false })
+})
+test('Code remote upload tokens are resolved once, then immutable bytes survive token loss; foreign account is rejected', async () => {
+  const env = setup(true, ['/srv/primary', '/srv/secondary'], 'code'), lease = await env.gateway.capture('work-synthetic')
+  const path = '.ae/attachments/upload.txt'; env.files.set(path, Buffer.from('bytes'))
+  const token = rememberRemoteAttachment(env.snapshot, 'work-synthetic', path, 'text/plain')
+  const envelope = await env.gateway.envelope(lease.scope, { ...env.submission, attachments: [{ path: 'local-path-is-not-used', remoteUploadId: token, name: 'upload.txt', type: 'text/plain', size: 5 }] })
+  const body = await env.gateway.prepare(lease.scope, envelope, await env.gateway.context(lease.scope))
+  expect(body.workspacePaths).toEqual(['/srv/primary', '/srv/secondary'])
+  expect(body.attachments).toEqual([{ name: envelope.attachments[0].path, type: 'text/plain' }])
+  expect(JSON.stringify(envelope)).not.toContain(token)
+  const foreign = rememberRemoteAttachment({ ...env.snapshot, accountId: 'another-account' }, 'work-synthetic', path, 'text/plain')
+  await expect(env.gateway.envelope(lease.scope, { ...env.submission, attachments: [{ path, remoteUploadId: foreign, name: 'upload.txt', type: 'text/plain', size: 5 }] })).rejects.toThrow('所属连接')
+})
+test('Code attachment from secondary workspace is snapshotted under primary and ordered roots survive preparation', async () => {
+  const boundary = join(process.cwd(), '.e2e-tmp', 'code-multiple-roots'), primary = join(boundary, 'primary'), secondary = join(boundary, 'secondary')
+  await fs.mkdir(primary, { recursive: true }); await fs.mkdir(secondary, { recursive: true }); await fs.writeFile(join(secondary, 'file.txt'), 'code')
+  try {
+    const env = setup(false, [primary, secondary], 'code'), lease = await env.gateway.capture('work-synthetic')
+    const envelope = await env.gateway.envelope(lease.scope, { ...env.submission, code: { workspacePaths: [primary, secondary] }, attachments: [{ path: join(secondary, 'file.txt'), name: 'file.txt', type: 'text/plain', size: 4 }] })
+    expect(await fs.readFile(join(primary, envelope.attachments[0].path), 'utf8')).toBe('code')
+    const body = await env.gateway.prepare(lease.scope, envelope, await env.gateway.context(lease.scope))
+    expect(body.workspacePaths).toEqual([primary, secondary]); expect(envelope.code?.workspacePaths).toEqual([primary, secondary])
+  } finally { if (!resolve(boundary).startsWith(resolve(process.cwd(), '.e2e-tmp') + sep)) throw new Error('fixture boundary'); await fs.rm(boundary, { recursive: true, force: true }) }
 })
 test('remote authority carries trusted tenant and exact scoped transport, copied/stale lease is rejected', async () => {
   const env = setup(), lease = await env.gateway.capture('work-synthetic')
@@ -161,9 +212,8 @@ test('actual main request transport honors the private owner abort signal indepe
   }
   try {
     const pending = engineRequest({ method: 'GET', path: '/chat/admission/context', query: { sessionId: 'work-synthetic' }, expectedEngine: env.snapshot, toolProfile: 'general', subagentProtocol: 2 }, owned.signal)
-    const outcome = pending.then(() => 'unexpected response', error => error instanceof Error ? error.message : 'error')
     await expect.poll(() => requested).toBe(true); owned.abort()
-    expect(await outcome).toContain('private request aborted'); expect(observedSignal?.aborted).toBe(true); expect(engineHost.requestSignal.aborted).toBe(false)
+    expect(await pending).toMatchObject({ ok: false, code: 499, data: null }); expect(observedSignal?.aborted).toBe(true); expect(engineHost.requestSignal.aborted).toBe(false)
   } finally {
     owned.abort(); globalThis.fetch = previousFetch; engineHost.getSnapshot = originalSnapshot; engineHost.prepareRequestHeaders = originalHeaders
     if (baseUrl) Object.defineProperty(engineHost, 'baseUrl', baseUrl); else Reflect.deleteProperty(engineHost, 'baseUrl')

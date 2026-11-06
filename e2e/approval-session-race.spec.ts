@@ -38,7 +38,7 @@ function functionDeclaration(name: string): string {
   return declaration.getText(source)
 }
 const callbacks = ts.transpileModule(
-  `${callbackDeclaration('rejectOutgoingSend')}\n${callbackDeclaration('runStream')}\n${callbackDeclaration('respond')}\n` +
+  `${callbackDeclaration('rejectOutgoingSend')}\n${callbackDeclaration('acknowledgeOutgoingSend')}\n${callbackDeclaration('runStream')}\n${callbackDeclaration('respond')}\n` +
   ['patchLastAssistant', 'recover', 'refreshWaitingRun', 'isApprovalConflict', 'applyEvent'].map(functionDeclaration).join('\n') +
   '\nglobalThis.respond = respond; globalThis.applyEvent = applyEvent;',
   { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }

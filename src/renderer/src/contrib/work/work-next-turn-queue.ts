@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { WorkQueueAction, WorkQueueDraft, WorkQueueRead } from '@shared/work-next-turn-api'
 import type { NextTurnQueueState } from '@shared/next-turn-queue'
-import { assertQueueState } from '@shared/next-turn-queue-state'
+import { assertQueueState, sameQueueScope } from '@shared/next-turn-queue-state'
 import { assertEngineSource, getEngineSource, getExpectedEngine } from '@renderer/core/engine/source'
 import type { Mention } from '../chat/mention-context'
 import { mentionToken } from '../chat/mention-context'
@@ -51,27 +51,45 @@ export function useWorkNextTurnQueue(taskId: string | null, source: number, read
       void refresh()
     })
   }, [source, taskId, ready, refresh])
-  const commit = useCallback(async (action: WorkQueueAction) => {
+  const commit = useCallback(async (action: WorkQueueAction | (() => Promise<WorkQueueRead>)) => {
     if (busy.current) throw new Error('正在保存队列，请稍候')
     const epoch = generation.current
     busy.current = true; setSaving(true)
-    try { return await invoke(action) } catch (cause) {
+    try { return await (typeof action === 'function' ? action() : invoke(action)) } catch (cause) {
       if (epoch === generation.current) setError(cause instanceof Error ? cause.message : '队列保存失败，草稿已保留')
       throw cause
     } finally { if (epoch === generation.current) { busy.current = false; setSaving(false) } }
   }, [invoke])
-  const attempt = useRef<{ taskId: string; source: number; id: string; operationId: string; expectedRevision: number; submission: WorkQueueDraft } | null>(null)
+  const attempt = useRef<{ taskId: string; source: number; scope: NextTurnQueueState['scope']; id: string; operationId: string; expectedRevision: number; submission: WorkQueueDraft } | null>(null)
   const enqueue = async (submission: WorkQueueDraft) => {
     if (!taskId || !read) throw new Error(error || '队列尚未就绪，草稿已保留')
     const previous = attempt.current
     if (previous && previous.taskId === taskId && previous.source === source && JSON.stringify(previous.submission) !== JSON.stringify(submission))
       throw new Error('上次入队回执未确认，请先用原草稿重试核对，避免重复保存')
     const pending = previous && previous.taskId === taskId && previous.source === source ? previous : {
-      taskId, source, id: crypto.randomUUID(), operationId: crypto.randomUUID(), expectedRevision: read.state.revision, submission: structuredClone(submission)
+      taskId, source, scope: structuredClone(read.state.scope), id: crypto.randomUUID(), operationId: crypto.randomUUID(), expectedRevision: read.state.revision, submission: structuredClone(submission)
     }
     attempt.current = pending
+    const epoch = generation.current
     try {
-      const result = await commit({ kind: 'enqueue', expectedRevision: pending.expectedRevision, operationId: pending.operationId, id: pending.id, submission: pending.submission })
+      const result = await commit(async () => {
+        for (let rebases = 0; ; rebases++) {
+          try {
+            return await invoke({ kind: 'enqueue', expectedRevision: pending.expectedRevision, operationId: pending.operationId, id: pending.id, submission: pending.submission })
+          } catch (cause) {
+            // A typed CAS proves no commit happened. Appending the same draft may
+            // follow background terminal transitions; edits/reorders cannot rebase.
+            // Unknown responses retain the exact revision and identity for replay.
+            if (!cause || typeof cause !== 'object' || !('code' in cause) || cause.code !== 'CAS') throw cause
+            if (rebases >= 2) throw Object.assign(new Error('队列已更新，原稿已保留，请重试'), { code: 'CAS' })
+            const latest = await invoke({ kind: 'read' })
+            if (epoch !== generation.current || currentScope.current.taskId !== taskId || currentScope.current.source !== source)
+              throw new Error('任务已切换，原稿已保留')
+            if (!sameQueueScope(pending.scope, latest.state.scope)) throw new Error('队列所属会话已变化，原稿已保留')
+            pending.expectedRevision = latest.state.revision
+          }
+        }
+      })
       if (attempt.current === pending) attempt.current = null
       return result
     } catch (cause) {

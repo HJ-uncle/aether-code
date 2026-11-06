@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { isTrustedWorkbenchUrl } from '../shared/workbench-url'
 import { IPC } from '../shared/ipc'
 import { WORK_QUEUE_IPC, type WorkNextTurnApi, type WorkQueueInvokeResult } from '../shared/work-next-turn-api'
+import { CODE_QUEUE_IPC, type CodeNextTurnApi, type CodeQueueInvokeResult } from '../shared/code-next-turn-api'
 import type { GraphicsSnapshot } from '../shared/graphics'
 import { BROWSER_IPC, type BrowserApi, type BrowserConnectionState } from '../shared/browser-api'
 import type { BrowserEvent } from '../shared/browser'
@@ -102,10 +103,19 @@ const workQueue: WorkNextTurnApi = {
     return () => ipcRenderer.removeListener(WORK_QUEUE_IPC.changed, handler)
   }
 }
+const codeQueue: CodeNextTurnApi = {
+  invoke: async input => await ipcRenderer.invoke(CODE_QUEUE_IPC.invoke, input) as CodeQueueInvokeResult,
+  onChanged: listener => {
+    const handler = (_event: unknown, payload: Parameters<Parameters<CodeNextTurnApi['onChanged']>[0]>[0]): void => listener(payload)
+    ipcRenderer.on(CODE_QUEUE_IPC.changed, handler)
+    return () => ipcRenderer.removeListener(CODE_QUEUE_IPC.changed, handler)
+  }
+}
 const browserApi: BrowserApi = {
   getHostZoomFactor: () => webFrame.getZoomFactor(),
   list: () => invokeBrowser('list'),
   create: input => invokeBrowser('create', input),
+  duplicate: tabId => invokeBrowser('duplicate', tabId),
   action: input => invokeBrowser('action', input),
   activateSurface: owner => invokeBrowser('activateSurface', owner),
   setBounds: input => invokeBrowser('setBounds', input),
@@ -117,7 +127,11 @@ const browserApi: BrowserApi = {
   read: (tabId, kind) => invokeBrowser('read', tabId, kind),
   network: (tabId, query) => invokeBrowser('network', tabId, query),
   networkRequest: (tabId, requestId, options) => invokeBrowser('networkRequest', tabId, requestId, options),
-  openFile: (filePath, workspaceRoot) => invokeBrowser('openFile', filePath, workspaceRoot),
+    openFile: (filePath, workspaceRoot, options) => invokeBrowser('openFile', filePath, workspaceRoot, options),
+  openLocalFile: path => invokeBrowser('openLocalFile', path),
+  openLocalDirectory: path => invokeBrowser('openLocalDirectory', path),
+  openLocalEntry: (tabId, path) => invokeBrowser('openLocalEntry', tabId, path),
+  readLocalFile: tabId => invokeBrowser('readLocalFile', tabId),
   connect: input => invokeBrowser('connect', input),
   disconnect: () => invokeBrowser('disconnect'),
   getConnection: () => invokeBrowser('getConnection'),
@@ -135,6 +149,7 @@ const browserApi: BrowserApi = {
 
 const api = {
   workQueue,
+  codeQueue,
   browser: browserApi,
   account: {
     getState: () => invokeAccount('getState'),

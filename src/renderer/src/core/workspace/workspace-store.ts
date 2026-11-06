@@ -12,11 +12,12 @@
 import { useSyncExternalStore } from 'react'
 import type { FsEntry } from '@shared/ipc'
 import { ipcErrorMessage } from '../ipc-error'
-import { allowRoot, paths, pickFolder, readDir, remoteWorkspaceContext } from './fs-client'
+import { allowRoot, pickFolder, readDir, remoteWorkspaceContext } from './fs-client'
 import { rememberRecentFolder } from './recent-folders'
 import { getSettings, updateSettings } from '../engine/client'
-import { getEngineSource, isRemoteEngine, subscribeEngineSource } from '../engine/source'
+import { getEngineSource, getEngineStorageKey, isRemoteEngine, subscribeEngineSource } from '../engine/source'
 import { onWorkspaceConnectionChanged, workspaceConnectionKey, captureWorkspaceTarget } from './connection'
+import { createFileTreeScope, fileTreePathKey as expandedPathKey, readFileTreeMemory, restoreFileTreeExpansion, writeFileTreeMemory } from './file-tree-memory'
 
 export interface WorkspaceState {
   root: string | null
@@ -26,6 +27,8 @@ export interface WorkspaceState {
   children: Map<string, FsEntry[]>
   expanded: Set<string>
   loading: Set<string>
+  /** Initial root and all remembered descendants must finish before restoring the viewport. */
+  restoring: boolean
   error: string | null
   /** 最近一次被打开文件的路径，用于文件树高亮 */
   activeFilePath: string | null
@@ -47,6 +50,7 @@ let state: WorkspaceState = {
   children: new Map(),
   expanded: new Set(),
   loading: new Set(),
+  restoring: false,
   error: null,
   activeFilePath: null,
   selection: new Set(),
@@ -63,6 +67,12 @@ const listeners = new Set<() => void>()
 
 function setState(patch: Partial<WorkspaceState>): void {
   state = { ...state, ...patch }
+  // Persist the authoritative selection at the mutation, not from a delayed
+  // renderer snapshot. A root restore temporarily clears selection; publishing
+  // that empty value would erase the memory before descendants have loaded.
+  if (patch.selection && state.root && !state.restoring) {
+    writeFileTreeMemory(createFileTreeScope('code', getEngineStorageKey(), workspaceConnectionKey(), state.root), { selection: [...state.selection] })
+  }
   for (const listener of listeners) listener()
 }
 
@@ -94,39 +104,6 @@ function readExpandedDirsTable(): ExpandedDirsTable {
 
 function loadExpandedDirs(root: string): string[] {
   return readExpandedDirsTable()[root] ?? []
-}
-
-/**
- * Paths returned by the main process use the platform separator, while older
- * persisted entries may have been written by a renderer using the other one.
- * Keep the original path for IPC, but compare normalized keys when rebuilding
- * the expansion tree. Windows drive/UNC paths are case-insensitive; POSIX
- * paths retain their case.
- */
-function expandedPathKey(path: string): string {
-  const slashPath = path.replace(/\\/g, '/')
-  // Keep the two leading slashes of a UNC path, but collapse duplicate
-  // separators elsewhere so hand-edited/older localStorage entries still
-  // match the canonical path returned by readDir.
-  const prefix = slashPath.startsWith('//') ? '//' : ''
-  const normalized =
-    `${prefix}${slashPath.slice(prefix.length).replace(/\/{2,}/g, '/')}`.replace(/\/+$/, '') || '/'
-  return /^(?:[A-Za-z]:\/|\/\/)/.test(normalized) ? normalized.toLowerCase() : normalized
-}
-
-function expandedPathDepth(path: string): number {
-  return path.replace(/\\/g, '/').split('/').filter(Boolean).length
-}
-
-function isExpandedPathWithin(root: string, candidate: string): boolean {
-  const rootKey = expandedPathKey(root)
-  const candidateKey = expandedPathKey(candidate)
-  if (candidateKey === rootKey) return true
-  return rootKey === '/' ? candidateKey.startsWith('/') : candidateKey.startsWith(`${rootKey}/`)
-}
-
-function sameExpandedPath(left: string, right: string): boolean {
-  return expandedPathKey(left) === expandedPathKey(right)
 }
 
 /** 表按项目裁剪到最近 20 个，避免 localStorage 无限增长 */
@@ -173,7 +150,7 @@ onWorkspaceConnectionChanged(() => {
   if (!changed) return
   workspaceEpoch += 1
   restorePromise = null
-  setState({ root: null, showRoot: false, children: new Map(), expanded: new Set(), loading: new Set(), activeFilePath: null, selection: new Set(), selectionAnchor: null, error: null })
+  setState({ root: null, showRoot: false, children: new Map(), expanded: new Set(), loading: new Set(), restoring: false, activeFilePath: null, selection: new Set(), selectionAnchor: null, error: null })
   if (remote && nextKey !== 'remote:unavailable') void restoreLastFolder()
 })
 
@@ -267,44 +244,10 @@ async function restoreExpandedDirs(
   persisted: string[],
   rootEntries: FsEntry[] | null
 ): Promise<Set<string>> {
-  const restored = new Set<string>([root])
-  if (!rootEntries) return restored
-
-  const loaded = new Map<string, FsEntry[]>([[expandedPathKey(root), rootEntries]])
-  const candidates = [...new Set(persisted)]
-    .filter(
-      (candidate) => !sameExpandedPath(candidate, root) && isExpandedPathWithin(root, candidate)
-    )
-    .sort((left, right) => expandedPathDepth(left) - expandedPathDepth(right))
-
-  for (const candidate of candidates) {
-    // A child is restorable only when its parent was itself persisted and
-    // validated. This preserves the meaning of collapsing a parent even when
-    // an older state left one of its descendants in localStorage.
-    const parent = paths.dirname(candidate)
-    const parentKey = expandedPathKey(parent)
-    if (!restoredHasKey(restored, parentKey)) continue
-
-    const entries = loaded.get(parentKey)
-    const entry = entries?.find(
-      (item) => item.isDirectory && sameExpandedPath(item.path, candidate)
-    )
-    if (!entry) continue
-
-    const childEntries = await loadChildren(entry.path, { reportError: false })
-    if (!childEntries) continue
-    restored.add(entry.path)
-    loaded.set(expandedPathKey(entry.path), childEntries)
-  }
-
-  return restored
-}
-
-function restoredHasKey(restored: Set<string>, key: string): boolean {
-  for (const path of restored) {
-    if (expandedPathKey(path) === key) return true
-  }
-  return false
+  const epoch = workspaceEpoch
+  return restoreFileTreeExpansion({ root, expanded: persisted, rootEntries,
+    current: () => workspaceEpoch === epoch && state.root === root,
+    readChildren: directory => loadChildren(directory, { reportError: false }) })
 }
 
 /** 打开指定文件夹（已授权则直接切换） */
@@ -333,6 +276,8 @@ export async function openFolderAt(root: string): Promise<void> {
   // 根目录默认展开：树的第一行是根节点本身（见 ExplorerView），
   // 不在 expanded 里的话打开文件夹只会看到光秃秃的一行根。
   const persisted = loadExpandedDirs(root)
+  const treeScope = createFileTreeScope('code', getEngineStorageKey(), requestedKey, root)
+  const rememberedSelection = readFileTreeMemory(treeScope).selection
   const showRoot = !remote || Boolean(captureWorkspaceTarget().workspaceRoot.trim())
   setState({
     root,
@@ -342,15 +287,27 @@ export async function openFolderAt(root: string): Promise<void> {
     // 其余目录在 root 成功加载后按层级恢复，避免显示「展开但未加载」的幽灵节点。
     expanded: new Set([root]),
     loading: new Set(),
+    restoring: true,
     error: null,
     activeFilePath: null,
     selection: new Set(),
     selectionAnchor: null
   })
+  const initialSelection = state.selection
   workspaceEpoch += 1
+  const openedEpoch = workspaceEpoch
   const rootEntries = await loadChildren(root)
   const restored = await restoreExpandedDirs(root, persisted, rootEntries)
-  setState({ expanded: restored })
+  if (requestId !== openFolderRequestId || workspaceEpoch !== openedEpoch || state.root !== root) return
+  const knownPaths = new Map([root, ...[...state.children.values()].flat().map(entry => entry.path)]
+    .map(path => [expandedPathKey(path), path]))
+  const selection = state.selection === initialSelection
+    ? new Set(rememberedSelection.flatMap(path => { const known = knownPaths.get(expandedPathKey(path)); return known ? [known] : [] }))
+    : state.selection
+  // The first ready snapshot must already include its restored selection.
+  // Reopening the same scope and mounting/remounting a pane then behave alike;
+  // a user selection made while descendants load still takes precedence.
+  setState({ expanded: restored, restoring: false, selection })
   // 删除已经不存在或不再位于工作区内的旧路径，避免每次重启都重复尝试。
   const persistedKeys = new Set([root, ...persisted].map(expandedPathKey))
   const restoredKeys = new Set([...restored].map(expandedPathKey))
@@ -442,7 +399,7 @@ export function restoreLastFolder(): Promise<void> {
       }
     } catch (err) {
       // 目录已被删除或无权限：不打断启动，也不清空设置，让用户自己重新选择
-      setState({ error: ipcErrorMessage(err), root: null })
+      setState({ error: ipcErrorMessage(err), root: null, restoring: false })
     }
   })()
   return restorePromise
@@ -558,6 +515,7 @@ export function closeFolder(): void {
     children: new Map(),
     expanded: new Set(),
     loading: new Set(),
+    restoring: false,
     error: null,
     activeFilePath: null,
     selection: new Set(),

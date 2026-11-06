@@ -2,7 +2,7 @@
 import { expect, test } from '@playwright/test'
 import type { EngineRequestInput } from '../src/shared/ipc'
 import { DEFAULT_SETTINGS } from '../src/shared/ipc'
-import type { GitBranchInfoResult, GitResult, GitStatusResult } from '../src/shared/git-types'
+import type { GitBranchInfoResult, GitLeaseResult, GitResult, GitStatusResult } from '../src/shared/git-types'
 import { publishEngineSource } from '../src/renderer/src/core/engine/source'
 import { publishWorkspaceSelection } from '../src/renderer/src/core/workspace/connection'
 import { disposeGitStore, getGitState, loadBranches, onGitChanged, refreshGit, stage } from '../src/renderer/src/core/git/git-store'
@@ -23,6 +23,8 @@ let previousStorage: PropertyDescriptor | undefined
 let statusCall: (cwd: string) => Promise<GitStatusResult>
 let stageCall: (cwd: string, path: string) => Promise<GitResult>
 let branchesCall: () => Promise<{ success: boolean; branches: string[]; current: string }>
+let leaseCall: (cwd: string) => Promise<GitLeaseResult>
+let recoverCall: (cwd: string, generation: string) => Promise<GitLeaseResult>
 let remoteCall: (input: EngineRequestInput) => Promise<unknown>
 
 test.beforeEach(async () => {
@@ -36,11 +38,15 @@ test.beforeEach(async () => {
   statusCall = async () => status('current.txt')
   stageCall = async () => ({ success: true })
   branchesCall = async () => ({ success: true, branches: ['main'], current: 'main' })
+  leaseCall = async () => ({ success: true, lease: { busy: false, recoverable: false } })
+  recoverCall = async () => ({ success: false, error: 'unexpected recovery' })
   remoteCall = async (input) => {
     if (input.path === '/workspace/bind') return {}
     if (input.path === '/workspace/directory') return { root: '/remote/project', entries: [] }
+    if (input.path === '/git/binding') return { root: '/remote/project', epoch: 'fixture-epoch', contractVersion: 2, mutationRequiresBinding: true }
     if (input.path === '/git/status') return status('current.txt')
     if (input.path === '/git/branch-info') return branch
+    if (input.path === '/git/list-stashes') return { success: true, stashes: [] }
     if (input.path === '/git/action') return { success: true }
     throw new Error(`unexpected ${input.path}`)
   }
@@ -48,6 +54,9 @@ test.beforeEach(async () => {
     setTimeout,
     aether: {
       git: { status: (cwd: string) => statusCall(cwd), branchInfo: async () => branch,
+        listStashes: async () => ({ success: true, stashes: [] }),
+        leaseStatus: (cwd: string) => leaseCall(cwd),
+        recoverLease: (cwd: string, generation: string) => recoverCall(cwd, generation),
         listBranches: () => branchesCall(),
         stage: (cwd: string, path: string) => stageCall(cwd, path) },
       settings: { get: async () => ({ ...DEFAULT_SETTINGS }), update: async () => ({ ...DEFAULT_SETTINGS }) },
@@ -70,8 +79,10 @@ test.afterEach(async () => {
 
 test('Git A→B→A 时旧请求不能覆盖重新打开的同一路径', async () => {
   const old = deferred<GitStatusResult>()
-  statusCall = () => old.promise
+  const started = deferred<void>()
+  statusCall = () => { started.resolve(); return old.promise }
   const pending = refreshGit('/repo/a')
+  await started.promise
   statusCall = async () => status('fresh.txt')
   await refreshGit('/repo/b')
   await refreshGit('/repo/a')
@@ -84,8 +95,10 @@ test('Git A→B→A 时旧请求不能覆盖重新打开的同一路径', async 
 test('Git 旧请求失败不能清除新请求的 loading 或覆盖新错误状态', async () => {
   const old = deferred<GitStatusResult>()
   const fresh = deferred<GitStatusResult>()
-  statusCall = () => old.promise
+  const started = deferred<void>()
+  statusCall = () => { started.resolve(); return old.promise }
   const pendingOld = refreshGit('/repo/a')
+  await started.promise
   statusCall = () => fresh.promise
   const pendingFresh = refreshGit('/repo/b')
   old.reject(new Error('obsolete failure'))
@@ -195,5 +208,94 @@ test('Git 旧分支列表不能写入新仓库缓存', async () => {
   await pending
   expect(getGitState().branches).toEqual([])
   expect(getGitState().branch).toBe('main')
+})
+
+test('Code 原生状态只恢复已核验且有代际的孤儿占用，随后只重读状态一次', async () => {
+  const calls: string[] = []
+  statusCall = async cwd => {
+    calls.push(`status:${cwd}`)
+    return calls.filter(call => call.startsWith('status:')).length === 1
+      ? { success: false, error: 'Git operation left a verified orphan lease. Recover the interrupted operation, then retry.' }
+      : status('recovered.txt')
+  }
+  leaseCall = async cwd => {
+    calls.push(`lease:${cwd}`)
+    return { success: true, lease: { busy: true, recoverable: true, generation: 'native-generation' } }
+  }
+  recoverCall = async (cwd, generation) => {
+    calls.push(`recover:${cwd}:${generation}`)
+    return { success: true, lease: { busy: false, recoverable: false } }
+  }
+  await refreshGit('/repo/native')
+  expect(calls).toEqual(['status:/repo/native', 'lease:/repo/native', 'recover:/repo/native:native-generation', 'status:/repo/native'])
+  expect(getGitState().files.map(file => file.path)).toEqual(['recovered.txt'])
+  expect(getGitState().errorMessage).toBe('')
+})
+
+test('Code 活跃/未知/缺代际租约不能自动恢复，恢复代际失效不能继续重读', async () => {
+  for (const lease of [
+    { busy: true, recoverable: false, generation: 'active' },
+    { busy: true, recoverable: true },
+    { busy: false, recoverable: true, generation: 'invalid' }
+  ]) {
+    let recoveries = 0, reads = 0
+    statusCall = async () => { reads++; return { success: false, errorCode: 'git-orphan', error: 'orphan' } }
+    leaseCall = async () => ({ success: true, lease })
+    recoverCall = async () => { recoveries++; return { success: true, lease: { busy: false, recoverable: false } } }
+    await refreshGit('/repo/native')
+    expect(recoveries).toBe(0)
+    expect(reads).toBe(1)
+    expect(getGitState().errorMessage).toContain('可疑中断占用')
+  }
+  let reads = 0, recoveries = 0
+  statusCall = async () => { reads++; return { success: false, errorCode: 'git-orphan', error: 'orphan' } }
+  leaseCall = async () => ({ success: true, lease: { busy: true, recoverable: true, generation: 'expired' } })
+  recoverCall = async (_cwd, generation) => {
+    expect(generation).toBe('expired'); recoveries++
+    return { success: false, error: 'generation changed' }
+  }
+  await refreshGit('/repo/native')
+  expect(recoveries).toBe(1)
+  expect(reads).toBe(1)
+  expect(getGitState().errorMessage).toBe('generation changed')
+})
+
+test('Code 状态或租约核验期间切换仓库，不恢复旧占用也不借新目标恢复', async () => {
+  for (const boundary of ['status', 'lease'] as const) {
+    const gate = deferred<GitStatusResult & GitLeaseResult>(), started = deferred<void>()
+    const calls: string[] = []
+    statusCall = async cwd => {
+      if (cwd !== '/repo/old') return status('fresh.txt')
+      calls.push('old-status')
+      if (boundary === 'status') { started.resolve(); return gate.promise }
+      return { success: false, errorCode: 'git-orphan', error: 'orphan' }
+    }
+    leaseCall = async cwd => { calls.push(`lease:${cwd}`); started.resolve(); return gate.promise }
+    recoverCall = async cwd => { calls.push(`recover:${cwd}`); return { success: true, lease: { busy: false, recoverable: false } } }
+    const pending = refreshGit('/repo/old')
+    await started.promise
+    await refreshGit('/repo/new')
+    gate.resolve(boundary === 'status'
+      ? { success: false, errorCode: 'git-orphan', error: 'orphan' }
+      : { success: true, lease: { busy: true, recoverable: true, generation: 'old-generation' } })
+    await pending
+    expect(calls).toEqual(boundary === 'status' ? ['old-status'] : ['old-status', 'lease:/repo/old'])
+    expect(getGitState().cwd).toBe('/repo/new')
+    expect(getGitState().files.map(file => file.path)).toEqual(['fresh.txt'])
+    expect(getGitState().errorMessage).toBe('')
+  }
+})
+
+test('Code 恢复后再次遇到孤儿只上报失败，不无限恢复或重放写操作', async () => {
+  let reads = 0, recoveries = 0, writes = 0
+  statusCall = async () => { reads++; return { success: false, errorCode: 'git-orphan', error: 'orphan persists' } }
+  leaseCall = async () => ({ success: true, lease: { busy: true, recoverable: true, generation: 'once' } })
+  recoverCall = async () => { recoveries++; return { success: true, lease: { busy: false, recoverable: false } } }
+  stageCall = async () => { writes++; return { success: true } }
+  await refreshGit('/repo/native')
+  expect(reads).toBe(2)
+  expect(recoveries).toBe(1)
+  expect(writes).toBe(0)
+  expect(getGitState().errorMessage).toBe('orphan persists')
 })
 

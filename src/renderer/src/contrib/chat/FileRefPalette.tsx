@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
 import { listAllFiles } from '@renderer/core/workspace/fs-client'
 import { formatPathDisplay, type Mention } from './MentionInput'
+import { isMotionInteractive } from '@renderer/workbench/motion'
 
 interface FileRefPaletteProps {
   /** 工作区根目录；为空时面板不展示 */
@@ -98,6 +99,7 @@ export function FileRefPalette({
   // 选中项滚进可视区
   useEffect(() => {
     const list = listRef.current
+    if (!isMotionInteractive(list)) return
     const active = list?.children[activeIndex]
     if (active instanceof HTMLElement) active.scrollIntoView({ block: 'nearest' })
   }, [activeIndex, filtered])
@@ -105,6 +107,7 @@ export function FileRefPalette({
   // 键盘导航：捕获阶段拦截，先于输入框的 Enter=发送 生效
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      if (!isMotionInteractive(listRef.current)) return
       if (event.isComposing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
       if (event.target instanceof Element && event.target.closest('[data-mention-list-control]')) return
       if (event.key === 'Escape') {

@@ -40,15 +40,22 @@ function writeStore(store: Record<string, boolean>): void {
 export function useCollapseMemory(
   key: string | undefined
 ): [boolean | null, (value: boolean) => void] {
-  const [manual, setManualState] = useState<boolean | null>(() => {
-    if (!key) return null
-    const stored = readStore()[key]
+  const read = (): boolean | null => {
+    const stored = key ? readStore()[key] : undefined
     return typeof stored === 'boolean' ? stored : null
-  })
+  }
+  const [selection, setSelection] = useState(() => ({ key, manual: read() }))
+  let manual = selection.manual
+  // A row can survive a session or run-phase change. Never carry its previous
+  // owner's manual choice into the new key, even for a single painted frame.
+  if (selection.key !== key) {
+    manual = read()
+    setSelection({ key, manual })
+  }
 
   const setManual = useCallback(
     (value: boolean) => {
-      setManualState(value)
+      setSelection({ key, manual: value })
       if (!key) return
       const store = readStore()
       store[key] = value

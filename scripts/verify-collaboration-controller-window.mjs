@@ -29,7 +29,7 @@ const fingerprint = directory => {
 const before = fingerprint(buildDirectory), sourceBefore = fingerprint(path.join(source, 'src'))
 const token = 'owned-controller-fixture-token', model = 'owned-no-provider-model'
 const requests = [], posts = [], continuations = [], receipts = new Map(), streams = new Set(), held = new Map()
-let instanceId = path.basename(qa), mode = 'accepted', capability = true, childTerminal = false, rootTerminal = false, holdContext = false, modern = false, wrongInvocation = false, rootRevision = 0
+let instanceId = path.basename(qa), mode = 'accepted', capability = true, childTerminal = false, rootTerminal = false, holdContext = false, holdCapability = false, modern = false, wrongInvocation = false, rootRevision = 0
 const rootFor = sessionId => ({ schemaVersion: 1, runId: 'root-' + sessionId + (rootRevision ? '-' + rootRevision : ''), attemptId: 'attempt-' + sessionId + (rootRevision ? '-' + rootRevision : ''), sessionId,
   turnId: 'turn-' + sessionId, userMessageId: 'user-' + sessionId, assistantMessageId: 'assistant-' + sessionId,
   version: rootTerminal ? 2 : 1, seq: 1, status: rootTerminal ? rootProbe ? 'cancelled' : 'succeeded' : 'running', workspacePaths: [], modelId: model, createdAt: 1, updatedAt: 2, pending: [], requestConfig: { thinkingMode: false, memoryScope: 'off' } })
@@ -67,15 +67,18 @@ const server = http.createServer(async (req, res) => {
       if (typeof body.modern === 'boolean') modern = body.modern
       if (typeof body.wrongInvocation === 'boolean') wrongInvocation = body.wrongInvocation
       if (body.holdContext === true) holdContext = true
-      if (body.release) { for (const release of held.values()) release(); held.clear() }
+      if (typeof body.holdCapability === 'boolean') holdCapability = body.holdCapability
+      if (body.release) { holdCapability = false; for (const release of held.values()) release(); held.clear() }
       if (body.instanceId) instanceId = body.instanceId
       if (body.acceptKey && posts.find(item => item.body.requestKey === body.acceptKey)) {
         const post = posts.find(item => item.body.requestKey === body.acceptKey), text = post.body.message
         receipts.set(body.acceptKey, { messageId: 'message-' + body.acceptKey, rootRunId: post.rootRunId, rootAttemptId: post.query.rootAttemptId,
           senderParticipantId: 'root', senderInvocationRunId: post.rootRunId, recipientParticipantId: post.body.recipientParticipantId,
           requestKey: body.acceptKey, payloadHash: crypto.createHash('sha256').update(text).digest('hex'), payloadBytes: Buffer.byteLength(text), acceptedSeq: 3, acceptedAt: 4,
-          state: body.receiptState ?? 'queued', ...(body.receiptState === 'interrupted' ? { reason: 'target_invocation_finished_before_consumption' } : {}) })
+          state: body.receiptState ?? 'queued', delivery: { state: 'pending' }, ...(body.receiptState === 'interrupted' ? { reason: 'target_invocation_finished_before_consumption' } : {}) })
       }
+      if (body.integrateKey && receipts.has(body.integrateKey)) receipts.set(body.integrateKey, { ...receipts.get(body.integrateKey),
+        delivery: { state: 'integrated', historyMessageId: 'history-' + body.integrateKey, integratedAt: Date.now() } })
       return send(res, { ok: true })
     }
     if (route === '/api/v1/models') return send(res, [{ id: model, modelId: model, provider: 'openai', displayName: 'Owned no-provider fixture', isEnabled: true, capabilities: { toolCalling: true, contextWindow: 200000 } }])
@@ -87,7 +90,10 @@ const server = http.createServer(async (req, res) => {
     if (route === '/api/v1/chat/snapshot/projection') return send(res, { protocolVersion: 1, snapshotId: 'lease-' + sessionId, fence: fenceFor(sessionId), totalCount: 2, originalProjectionCount: 3, hasMore: false, nextCursor: null,
       entries: [1, 2].map(index => ({ projectionIndex: index, field: 'subagentEvent', runId: `child-run-${sessionId}-${index}`, atSeq: 9, sourceAtSeq: 4 })) })
     if (route.startsWith('/api/v1/chat/snapshot/children/')) return send(res, { snapshotId: 'lease-' + sessionId, fence: fenceFor(sessionId), item: { identity: identityFor(sessionId, Number(route.at(-1))), atSeq: 9 } })
-    if (route === '/api/v1/collaboration/capabilities') return send(res, { userControllerMutation: capability, rootUserControllerMutation: rootProbe && capability, rootControllerDelivery: 'next-model-iteration' })
+    if (route === '/api/v1/collaboration/capabilities') {
+      if (holdCapability) await new Promise(resolve => held.set('capability-' + crypto.randomUUID(), resolve))
+      return send(res, { userControllerMutation: capability, rootUserControllerMutation: rootProbe && capability, rootControllerDelivery: 'next-model-iteration' })
+    }
     const controller = route.match(/^\/api\/v1\/collaboration\/roots\/([^/]+)\/(controller-context|controller-receipts\/[^/]+|messages)$/)
     if (controller) {
       const rootRunId = decodeURIComponent(controller[1])
@@ -119,12 +125,12 @@ const server = http.createServer(async (req, res) => {
       if (mode === 'unknown') return send(res, { outcome: 'unknown', requestKey: body.requestKey }, 503)
       const receipt = { messageId: 'message-' + body.requestKey, rootRunId, rootAttemptId: url.searchParams.get('rootAttemptId'), senderParticipantId: 'root', senderInvocationRunId: rootRunId,
         recipientParticipantId: body.recipientParticipantId, requestKey: body.requestKey, payloadHash: crypto.createHash('sha256').update(body.message).digest('hex'),
-        payloadBytes: Buffer.byteLength(body.message), acceptedSeq: 3, acceptedAt: 4, state: 'queued' }
+        payloadBytes: Buffer.byteLength(body.message), acceptedSeq: 3, acceptedAt: 4, state: 'queued', delivery: { state: 'pending' } }
       receipts.set(body.requestKey, receipt)
       return send(res, { outcome: 'accepted', receipt: mode === 'malformed' ? { ...receipt, payloadHash: '0'.repeat(64) } : receipt })
     }
     if (route === '/api/v1/chat/admission/context') { const root = rootFor(sessionId); return send(res, { protocolVersion: 1, tenantId: 'owned-tenant', sessionId,
-      namespace: { id: 'owned-controller-db', generation: 'one' }, transport: { toolProfile: 'general', runLifetime: 'durable', subagentProtocol: 2 }, root,
+      namespace: { id: 'owned-controller-db', generation: 'one' }, transport: { toolProfile: req.headers['x-aether-tool-profile'] || 'general', runLifetime: 'durable', subagentProtocol: 2 }, root,
       predecessor: { runId: root.runId, attemptId: root.attemptId, version: root.version } }) }
     if (route === '/api/v1/chat/snapshot') { const run = rootFor(sessionId); return send(res, { schemaVersion: 1, sessionId, source: 'live', eventId: run.runId + ':1', finished: rootTerminal,
       ...(modern ? { eventId: 'stream-' + sessionId + ':7', projection: [{ content: '合成现代恢复前缀' }], projectionIndices: [0], subagentRecovery: recoveryFor(sessionId),

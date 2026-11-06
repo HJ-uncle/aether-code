@@ -6,6 +6,7 @@ import type { GitFileChange } from '@shared/git-types'
 import { STATUS_COLOR, STATUS_LETTER, visualKeyOf } from '@renderer/core/git/git-status-visuals'
 import { FileTreeRow } from '@renderer/contrib/explorer/FileTreeRow'
 import { Icon, type IconName } from '@renderer/workbench/icons'
+import { MotionPresence } from '@renderer/workbench/MotionPresence'
 
 function treeStatusIconName(file: GitFileChange): IconName {
   if (file.binary) return 'file-question-outline'
@@ -31,6 +32,7 @@ export interface GitChangeTreeNodeProps {
   group: 'staged' | 'unstaged' | 'conflict'
   /** 多选集合（元素为 `分组:路径`），由面板维护 */
   selectedKeys?: Set<string>
+  writeBusy?: boolean
   onSelect?: (file: GitFileChange, event: MouseEvent) => void
   onOpen?: (file: GitFileChange) => void
   onDiscard?: (file: GitFileChange) => void
@@ -44,6 +46,7 @@ export function GitChangeTreeNode({
   selectedPath,
   group,
   selectedKeys,
+  writeBusy = false,
   onSelect,
   onOpen,
   onDiscard,
@@ -66,6 +69,7 @@ export function GitChangeTreeNode({
           onClick={toggle}
           onActivate={toggle}
         />
+        <MotionPresence show={!collapsed}>
         {!collapsed && node.children
           ? node.children.map((child) => (
               <GitChangeTreeNode
@@ -75,6 +79,7 @@ export function GitChangeTreeNode({
                 selectedPath={selectedPath}
                 group={group}
                 selectedKeys={selectedKeys}
+                writeBusy={writeBusy}
                 onSelect={onSelect}
                 onOpen={onOpen}
                 onDiscard={onDiscard}
@@ -83,6 +88,7 @@ export function GitChangeTreeNode({
               />
             ))
           : null}
+        </MotionPresence>
       </div>
     )
   }
@@ -127,6 +133,7 @@ export function GitChangeTreeNode({
             type="button"
             className="git-row__btn"
             title={file.staged ? '取消暂存' : '暂存'}
+            disabled={writeBusy}
             onClick={(event) => {
               event.stopPropagation()
               onToggleStage?.(file)
@@ -138,6 +145,7 @@ export function GitChangeTreeNode({
             type="button"
             className="git-row__btn"
             title="放弃更改"
+            disabled={writeBusy}
             onClick={(event) => {
               event.stopPropagation()
               onDiscard?.(file)

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type JSX, type ReactNode, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { Fragment, useEffect, useRef, useState, type JSX, type ReactNode, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Icon, type IconName } from './icons'
 import { Popover } from './Popover'
 import './action-menu.css'
@@ -11,6 +11,7 @@ export interface ActionMenuItem {
   description?: string
   disabled?: boolean
   danger?: boolean
+  separatorBefore?: boolean
 }
 
 interface ActionMenuProps {
@@ -18,7 +19,10 @@ interface ActionMenuProps {
   label?: string
   disabled?: boolean
   className?: string
+  panelClassName?: string
   icon?: ReactNode
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }
 
 /**
@@ -31,23 +35,37 @@ export function ActionMenu({
   label = '更多操作',
   disabled = false,
   className,
-  icon
+  panelClassName,
+  icon,
+  open: controlledOpen,
+  onOpenChange
 }: ActionMenuProps): JSX.Element {
-  const [open, setOpen] = useState(false)
+  const [localOpen, setLocalOpen] = useState(false)
+  const open = controlledOpen ?? localOpen
+  const setOpen = (value: boolean): void => {
+    if (controlledOpen === undefined) setLocalOpen(value)
+    onOpenChange?.(value)
+  }
   const [activeIndex, setActiveIndex] = useState(0)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const wasOpen = useRef(false)
+  const availableIndices = items.flatMap((item, index) => item.disabled ? [] : [index]).join(',')
 
   useEffect(() => {
-    if (!open) return
+    if (!open) { wasOpen.current = false; return }
+    const available = availableIndices ? availableIndices.split(',').map(Number) : []
+    const index = !wasOpen.current || !available.includes(activeIndex) ? available[0] ?? -1 : activeIndex
+    wasOpen.current = true
+    if (index !== activeIndex) setActiveIndex(index)
     const frame = requestAnimationFrame(() => {
       const item = menuRef.current?.querySelector<HTMLButtonElement>(
-        `[data-action-index="${activeIndex}"]`
+        `[data-action-index="${index}"]`
       )
       item?.focus()
     })
     return () => cancelAnimationFrame(frame)
-  }, [activeIndex, open])
+  }, [activeIndex, open, availableIndices])
 
   const onKeyDown = (event: ReactKeyboardEvent): void => {
     if (!open) {
@@ -89,6 +107,7 @@ export function ActionMenu({
   return (
     <Popover
       className={`action-menu${className ? ` ${className}` : ''}`}
+      panelClassName={panelClassName}
       label={label}
       placement="up"
       align="end"
@@ -119,9 +138,9 @@ export function ActionMenu({
       )}
     >
       <div ref={menuRef} className="action-menu__panel" role="menu" onKeyDown={onKeyDown}>
-        {items.map((item, index) => (
+        {items.map((item, index) => <Fragment key={item.id}>
+          {item.separatorBefore && index > 0 ? <div className="action-menu__separator" role="separator" /> : null}
           <button
-            key={item.id}
             type="button"
             role="menuitem"
             data-action-index={index}
@@ -136,7 +155,7 @@ export function ActionMenu({
               {item.description ? <small>{item.description}</small> : null}
             </span>
           </button>
-        ))}
+        </Fragment>)}
       </div>
     </Popover>
   )

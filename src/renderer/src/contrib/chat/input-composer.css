@@ -74,7 +74,7 @@
   padding: 0 6px;
   color: var(--fg);
 }
-.input-composer__leading > .work-attach-button {
+.input-composer__leading > :is(.work-attach-button, .work-folder-clear) {
   width: 28px;
   justify-content: center;
   padding: 0;
@@ -112,28 +112,73 @@
 .input-composer__trailing > .context-ring {
   flex-shrink: 0;
 }
-.input-composer__delivery {
-  width: 104px;
-  min-width: 104px;
-  max-width: 104px;
+.input-composer__delivery.select {
+  flex: 0 0 108px;
+  width: 108px;
+}
+.input-composer__delivery .select__trigger {
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
   height: 28px;
-  padding-inline: 4px;
+  padding: 0 8px;
   white-space: nowrap;
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: 6px;
   color: var(--fg);
-  background: var(--bg);
+  background: transparent;
   font: inherit;
   font-size: 12px;
+  box-shadow: none;
+  transition: background-color var(--motion-hover) var(--ease-out);
 }
-.input-composer__delivery:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.input-composer__followup { min-width: 0; padding: 4px 8px; font-size: 12px; color: var(--fg-muted); }
-.input-composer__followup p { margin: 3px 0; overflow-wrap: anywhere; }
+.input-composer__delivery .select__trigger:is(:hover, [aria-expanded="true"]):not(:disabled) { background: var(--bg-hover); }
+.input-composer__delivery .select__trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.input-composer__delivery-menu .select__panel { padding: 5px; gap: 2px; }
+.input-composer__delivery-menu .select__item { padding: 8px 10px; border-radius: 6px; }
+.input-composer__delivery-menu .select__item-head { font-size: 13px; line-height: 18px; }
+.input-composer__delivery-menu .select__item-desc { font-size: 12px; line-height: 18px; }
+:root :is(.input-composer__delivery-menu, .root-followup-details, .root-followup-history)[data-motion-state] {
+  opacity: 1;
+  transition-property: translate;
+}
+.input-composer__followup { min-width: 0; height: 28px; margin-top: 6px; padding-inline: 4px; font-size: 12px; color: var(--fg-muted); }
+.input-composer__followup p { margin: 0; line-height: 20px; overflow-wrap: anywhere; }
 .input-composer__followup [role="alert"] { color: var(--danger); }
 .input-composer__followup-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.input-composer__followup summary { cursor: pointer; }
-.input-composer__followup pre { max-height: 160px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
-.input-composer__followup-history > article { padding: 8px 0; border-top: 1px solid var(--border); }
+.input-composer__followup-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; min-width: 0; }
+.input-composer__followup-row > p { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.input-composer__followup-row > .popover { flex-shrink: 0; }
+.input-composer__followup-row > button { flex-shrink: 0; }
+.input-composer__history-button { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; padding: 3px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--fg-muted); font: inherit; cursor: pointer; }
+.input-composer__history-button:hover, .input-composer__history-button[aria-expanded="true"] { color: var(--fg); background: var(--bg-hover); }
+.input-composer__history-button:focus-visible, .root-followup-history summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.input-composer__history-count { min-width: 16px; padding-inline: 3px; border-radius: 4px; background: var(--bg-hover); text-align: center; font-variant-numeric: tabular-nums; }
+.root-followup-history { max-width: calc(100vw - 16px); font-size: 12px; color: var(--fg); }
+.root-followup-history__header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px 6px 12px; border-bottom: 1px solid var(--border); }
+.root-followup-history__header strong { font-weight: 600; }
+.root-followup-history__list { max-height: min(320px, 45vh); overflow-y: auto; overscroll-behavior: contain; padding: 4px; }
+.root-followup-history__item > summary { display: flex; align-items: center; gap: 6px; min-height: 36px; padding: 6px 8px; border-radius: 6px; list-style: none; cursor: pointer; }
+.root-followup-history__item > summary::-webkit-details-marker { display: none; }
+.root-followup-history__item > summary:hover { background: var(--bg-hover); }
+.root-followup-history__item > summary > svg { flex-shrink: 0; color: var(--fg-muted); }
+.root-followup-history__item[open] > summary > svg { transform: rotate(90deg); }
+.root-followup-history__summary { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.root-followup-history__status { flex-shrink: 0; max-width: 46%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; color: var(--fg-muted); }
+.root-followup-history__detail { padding: 2px 10px 10px 28px; }
+.root-followup-history__detail pre { max-height: 160px; overflow: auto; margin: 2px 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.6; }
+.root-followup-history__item::details-content,
+.root-followup-details details::details-content {
+  opacity: 1;
+  translate: none;
+  transition-property: block-size, content-visibility;
+}
+.root-followup-history__hint { margin: 0; padding: 8px 12px; border-top: 1px solid var(--border); color: var(--fg-muted); font-size: 11px; }
+.root-followup-details { font-size: 12px; color: var(--fg); }
+.root-followup-details__body { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; max-height: min(360px, 50vh); overflow: auto; padding: 12px; line-height: 1.6; }
+.root-followup-details__body p { margin: 0; overflow-wrap: anywhere; }
+.root-followup-details__body pre { max-height: 160px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.root-followup-details__body summary { cursor: pointer; }
 @container input-composer (max-width: 520px) {
   /* The same permission control remains in the preferences popover. */
   .input-composer__leading .composer-access-picker {

@@ -148,7 +148,7 @@ export function assertQueueScope(value: unknown): asserts value is NextTurnQueue
   if (source.accountId !== null) string(source.accountId, 'accountId')
   string(scope.tenantId, 'tenantId')
   string(scope.taskId, 'taskId')
-  if (scope.owner !== 'work') fail('Queue owner must be work')
+  oneOf(scope.owner, ['work', 'code'], 'queue owner')
   const namespace = object(scope.namespace, ['id', 'generation'], 'namespace')
   string(namespace.id, 'namespace id')
   string(namespace.generation, 'namespace generation')
@@ -209,6 +209,7 @@ export function assertQueueEnvelope(
     value,
     [
       'draft',
+      'code',
       'submissionDigest',
       'model',
       'workspace',
@@ -223,6 +224,25 @@ export function assertQueueEnvelope(
     ],
     'envelope'
   )
+  if (scope.owner === 'code') {
+    const code = object(envelope.code, ['agentId', 'collaborators', 'workspacePaths', 'memoryScope'], 'Code options')
+    if (code.agentId !== undefined) string(code.agentId, 'Code Agent ID')
+    if (code.memoryScope !== undefined) oneOf(code.memoryScope, ['off', 'session', 'global'], 'Code memory scope')
+    if (code.workspacePaths !== undefined) {
+      list(code.workspacePaths, 'Code workspace paths', 100)
+      for (const path of code.workspacePaths) string(path, 'Code workspace path', 4096)
+      if (new Set(code.workspacePaths).size !== code.workspacePaths.length) fail('Duplicate Code workspace path')
+    }
+    if (code.collaborators !== undefined) {
+      list(code.collaborators, 'Code collaborators', 8)
+      for (const value of code.collaborators) {
+        const selected = object(value, ['agentId', 'resumeRunId'], 'Code collaborator')
+        if (selected.agentId === undefined && selected.resumeRunId === undefined) fail('Code collaborator requires a selector')
+        if (selected.agentId !== undefined) string(selected.agentId, 'Code collaborator Agent')
+        if (selected.resumeRunId !== undefined) string(selected.resumeRunId, 'Code collaborator resume run')
+      }
+    }
+  } else if (envelope.code !== undefined) fail('Work queue cannot carry Code options')
   if (envelope.submissionDigest !== undefined && (typeof envelope.submissionDigest !== 'string' || !/^[a-f0-9]{64}$/.test(envelope.submissionDigest))) fail('Enqueue submission digest is invalid')
   const draft = object(envelope.draft, ['text', 'revision', 'mentions'], 'draft')
   if (typeof draft.text !== 'string') fail('Draft text must be text')
@@ -302,7 +322,7 @@ export function assertQueueEnvelope(
       fail('Collaborator needs an authored selector')
     if (collaborator.agentId !== undefined) {
       string(collaborator.agentId, 'collaborator Agent')
-      if (!agentIds.has(collaborator.agentId) || selected.has(collaborator.agentId))
+      if ((scope.owner === 'work' && !agentIds.has(collaborator.agentId)) || selected.has(collaborator.agentId))
         fail('Collaborator is not selected by a unique Agent chip')
       selected.add(collaborator.agentId)
     }
@@ -321,7 +341,7 @@ export function assertQueueEnvelope(
   )
   for (const name of ['skills', 'mcpServers', 'knowledgeBases']) selection(resources[name], name)
   const thinking = object(envelope.thinking, ['kind', 'effort'], 'thinking')
-  oneOf(thinking.kind, ['inherit', 'off', 'effort'], 'thinking kind')
+  oneOf(thinking.kind, ['inherit', 'off', 'on', 'effort'], 'thinking kind')
   if (thinking.kind === 'effort')
     oneOf(thinking.effort, ['low', 'medium', 'high'], 'thinking effort')
   else if (thinking.effort !== undefined) fail('Inherited/off thinking cannot carry effort')
@@ -514,13 +534,14 @@ export function applyNextTurnQueueMutation(
   const next = structuredClone(state)
   const op = object(
     operation,
-    ['kind', 'id', 'envelope', 'entryRevision', 'at', 'beforeId', 'reason', 'frozen', 'receipt', 'outcome', 'anchor'],
+    ['kind', 'id', 'envelope', 'entryRevision', 'at', 'beforeId', 'reason', 'frozen', 'receipt', 'outcome', 'anchor', 'entries', 'replacements'],
     'mutation'
   )
   oneOf(
     op.kind,
     [
       'enqueue',
+      'replace-pending',
       'edit',
       'move',
       'remove',
@@ -539,6 +560,41 @@ export function applyNextTurnQueueMutation(
     return entry
   }
   switch (operation.kind) {
+    case 'replace-pending': {
+      list(operation.entries, 'replacement selectors', limits.maxEntries)
+      list(operation.replacements, 'replacement entries', limits.maxEntries)
+      integer(operation.at, 'replacement time')
+      if (!operation.entries.length || !operation.replacements.length) fail('Replacement must select and retain entries')
+      const ids = new Set<string>()
+      for (const selector of operation.entries) {
+        object(selector, ['id', 'entryRevision'], 'replacement selector')
+        const entry = pending(selector.id)
+        integer(selector.entryRevision, 'entry revision', 1)
+        if (ids.has(selector.id)) fail('Duplicate replacement selector')
+        if (entry.revision !== selector.entryRevision) throw new NextTurnQueueError('CAS', 'Entry revision changed')
+        ids.add(selector.id)
+      }
+      const position = next.entries.findIndex(entry => ids.has(entry.id)), replacementIds = new Set<string>()
+      const replacements = operation.replacements.map(replacement => {
+        object(replacement, ['id', 'envelope'], 'replacement')
+        string(replacement.id, 'replacement ID')
+        if (replacementIds.has(replacement.id) || next.removed.some(item => item.id === replacement.id) || next.entries.some(item => item.id === replacement.id && !ids.has(item.id))) fail('Replacement ID was already used')
+        replacementIds.add(replacement.id)
+        assertQueueEnvelope(replacement.envelope, state.scope, limits)
+        const previous = next.entries.find(item => item.id === replacement.id)
+        return { id: replacement.id, phase: 'pending' as const, revision: previous ? previous.revision + 1 : 1,
+          createdAt: previous?.createdAt ?? operation.at, updatedAt: operation.at, envelope: structuredClone(replacement.envelope) }
+      })
+      for (const entry of next.entries) if (ids.has(entry.id) && !replacementIds.has(entry.id)) next.removed.push({ id: entry.id, entryRevision: entry.revision, removedAt: operation.at })
+      if (replacements.length === ids.size && replacements.every(entry => ids.has(entry.id))) {
+        const byId = new Map(replacements.map(entry => [entry.id, entry]))
+        next.entries = next.entries.map(entry => byId.get(entry.id) ?? entry)
+      } else {
+        next.entries = next.entries.filter(entry => !ids.has(entry.id))
+        next.entries.splice(position, 0, ...replacements)
+      }
+      break
+    }
     case 'confirm-resume':
       if (next.entries.some(item => item.phase === 'dispatching' || item.phase === 'admission-unknown')) throw new NextTurnQueueError('CONFLICT', 'Unconfirmed admission must be reconciled first')
       next.paused = false; delete next.pauseReason; next.resumeAnchor = structuredClone(operation.anchor)

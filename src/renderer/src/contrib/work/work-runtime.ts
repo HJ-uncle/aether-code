@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '@renderer/core/app-context'
-import { useChat, type ChatAttachment, type SendOptions } from '@renderer/core/engine/useChat'
+import { useChat, type ChatAttachment, type ChatMessage, type SendOptions } from '@renderer/core/engine/useChat'
 import type { ArchivePageAction } from '@renderer/core/engine/archive-pages'
 import { useModels } from '@renderer/core/engine/model-store'
 import { restoreChatSnapshot, type ChatRecoverySnapshot } from '@renderer/core/engine/chat-recovery'
@@ -27,7 +27,7 @@ import { loadSessionThinkingMode, saveSessionThinkingMode, type SessionThinkingM
 import { loadSessionModelSelection, resolveSessionComposerModel, saveSessionModelSelection, type SessionModelSelection } from '../chat/session-model-store'
 import { requestedThinkingMode } from '../chat/session-request-config'
 import type { AgentCollaborator, SubagentRun } from '@shared/subagent'
-import { pollWorkTaskStatuses } from './work-status-poller'
+import { createWorkStatusDiscovery, pollWorkTaskStatuses, workTaskActivityFromRun, workTaskRunAdmitted, workTaskRunPatch } from './work-status-poller'
 import { cancelWorkTask } from './work-task-cancel'
 import { recoverWorkTurn } from './work-turn-recovery'
 import { restoreMessageDraft } from '../chat/message-draft-merge'
@@ -42,8 +42,10 @@ import {
   useWorkState,
   workArtifacts,
   workStatus,
+  WORK_TASK_LABEL_COLORS,
   type WorkArtifact,
-  type WorkTask
+  type WorkTask,
+  type WorkTaskLabelColor
 } from './work-state'
 
 const messageOf = (error: unknown): string =>
@@ -163,7 +165,8 @@ export function useWorkController() {
   const submitted = useRef(
     new Map<
       string,
-      { source: string; text: string; mentions: Mention[]; attachments: ChatAttachment[]; createdAt: number; preserveDraft: boolean }
+      { source: string; text: string; mentions: Mention[]; attachments: ChatAttachment[]; createdAt: number; preserveDraft: boolean
+        previousRunId?: string; previousRunSeq?: number; admitted: boolean; epoch: number }
     >()
   )
   const stoppingTaskIdsRef = useRef(new Set<string>())
@@ -219,7 +222,7 @@ export function useWorkController() {
 
   const updateTask = useCallback(
     (id: string, patch: Partial<WorkTask>) => {
-      if (patch.status !== undefined) invalidateStatusProbe(id)
+      if (patch.status !== undefined || patch.activity !== undefined) invalidateStatusProbe(id)
       updateWorkState(source, previous => {
         const task = previous.tasks.find(item => item.id === id)
         if (!task || (Object.keys(patch) as Array<keyof WorkTask>).every(key => Object.is(task[key], patch[key]))) return previous
@@ -247,6 +250,7 @@ export function useWorkController() {
   /** SSE owns the selected run. Other rows use bounded, lightweight status probes. */
   useEffect(() => {
     if (!engineReady) return
+    const discovery = createWorkStatusDiscovery()
     let cancelled = false
     let syncing = false
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -258,18 +262,22 @@ export function useWorkController() {
           tasks: () => getWorkState(source).tasks,
           revision: id => taskRevisionsRef.current.get(id) ?? 0,
           shouldPoll: task => !stoppingTaskIdsRef.current.has(task.id) &&
+            !(messageActionRef.current?.source === source && messageActionRef.current.taskId === task.id) &&
+            !(pendingStart.current?.source === source && pendingStart.current.id === task.id) &&
             !(probeAuthorityRef.current.selectedId === task.id && probeAuthorityRef.current.selectedLive),
           isCurrent: () => !cancelled && epoch === getEngineSource(),
           request: id => requestOrThrow({ method: 'GET', path: '/chat/status', query: { sessionId: id } }),
-          apply: (id, status) => {
+          discovery,
+          apply: (id, _status, activity, response) => {
             const task = getWorkState(source).tasks.find(item => item.id === id)
-            updateTask(id, {
-              status,
-              updatedAt: Date.now(),
-              ...(status === 'running' || status === 'waiting'
-                ? { runStartedAt: task?.runStartedAt ?? Date.now() }
-                : { runStartedAt: undefined })
-            })
+            const storedSubmission = submitted.current.get(id)
+            const sent = storedSubmission?.source === source && storedSubmission.epoch === epoch ? storedSubmission : undefined
+            if (sent && !sent.admitted) {
+              if (!workTaskRunAdmitted(activity, sent)) return
+              sent.admitted = true
+            }
+            const patch = task && workTaskRunPatch(task, response, Date.now(), sent)
+            if (patch) updateTask(id, patch)
           }
         })
       } finally {
@@ -355,7 +363,11 @@ export function useWorkController() {
         mentions: [...mentions],
         attachments: sentAttachments,
         createdAt: Date.now(),
-        preserveDraft
+        preserveDraft,
+        previousRunId: chat.sessionModel?.runId ?? task.activity?.runId,
+        previousRunSeq: task.activity?.seq,
+        admitted: false,
+        epoch
       }
       submitted.current.set(task.id, submission)
       try {
@@ -421,7 +433,7 @@ export function useWorkController() {
         if (preserveDraft) throw cause
       }
     },
-    [epoch, bindSessionWorkspace, chatSend, hasSessionWork, optionsFor, updateTask, source]
+    [epoch, bindSessionWorkspace, chatSend, chat.sessionModel, hasSessionWork, optionsFor, updateTask, source]
   )
   const sendTaskRef = useRef(sendTask)
   useEffect(() => {
@@ -501,20 +513,30 @@ export function useWorkController() {
   useEffect(() => {
     const observedId = chat.sessionModel?.sessionId
     if (!observedId || chat.sessionModel?.source !== epoch) return
-    const next = workStatus(chat.messages, chat.streaming) ?? (
-      isHistoryReady(observedId) && !chat.messages.length && !chat.streaming && pendingStart.current?.id !== observedId
-        ? 'draft' : null
-    )
     const task = getWorkState(source).tasks.find((item) => item.id === observedId)
-    if (next && task && next !== task.status)
-      updateTask(observedId, {
-        status: next,
-        updatedAt: Date.now(),
-        ...(next === 'running' || next === 'waiting'
-          ? { runStartedAt: task.runStartedAt ?? Date.now() }
-          : { runStartedAt: undefined })
-      })
     const sent = submitted.current.get(observedId)
+    const root = chat.messages.reduce<NonNullable<ChatMessage['run']> | undefined>((latest, message) => {
+      const run = message.run
+      if (!run || run.sessionId !== observedId || run.runId !== chat.sessionModel?.runId) return latest
+      return !latest || run.version > latest.version ? run : latest
+    }, undefined)
+    const activity = workTaskActivityFromRun({ run: root }, observedId)
+    const currentSubmission = sent?.source === source && sent.epoch === epoch ? sent : undefined
+    if (currentSubmission && activity && workTaskRunAdmitted(activity, currentSubmission)) currentSubmission.admitted = true
+    // During admission the last confirmed root still belongs to the preceding
+    // turn. Neither its terminal status nor an empty recovery can undo Send.
+    const awaitingAdmission = pendingStart.current?.source === source && pendingStart.current.id === observedId ||
+      currentSubmission && !currentSubmission.admitted
+    if (task && !awaitingAdmission) {
+      const patch = root && workTaskRunPatch(task, { run: root }, Date.now())
+      if (patch) updateTask(observedId, patch)
+      else if (!root && !task.activity) {
+        const next = workStatus(chat.messages, chat.streaming) ?? (
+          isHistoryReady(observedId) && !chat.messages.length && !chat.streaming ? 'draft' : null)
+        if (next && next !== task.status) updateTask(observedId, { status: next, updatedAt: Date.now(),
+          runStartedAt: next === 'running' || next === 'waiting' ? task.runStartedAt ?? Date.now() : undefined })
+      }
+    }
     const last = chat.messages.filter((message) => message.role === 'assistant').at(-1)
     if (
       sent?.source === source &&
@@ -604,6 +626,15 @@ export function useWorkController() {
     },
     [source, updateTask]
   )
+
+  const setTaskPinned = useCallback((id: string, pinned: boolean): void => {
+    updateTask(id, { pinned: pinned || undefined })
+  }, [updateTask])
+
+  const setTaskLabelColor = useCallback((id: string, color: WorkTaskLabelColor | undefined): void => {
+    if (color !== undefined && !WORK_TASK_LABEL_COLORS.includes(color)) return
+    updateTask(id, { labelColor: color })
+  }, [updateTask])
 
   const archiveTask = useCallback(
     (id: string, archived = true): void => {
@@ -794,15 +825,24 @@ export function useWorkController() {
     const operation = { source, taskId, action }
     messageActionRef.current = operation
     setMessageAction(operation)
+    const resetHistoryStatus = (): void => {
+      if (epoch !== getEngineSource()) return
+      // Deleting/reverting history can remove the newest root itself. The next
+      // snapshot establishes a new baseline; old in-flight probes stay invalid.
+      invalidateStatusProbe(taskId)
+      submitted.current.delete(taskId)
+      updateTask(taskId, { activity: undefined })
+    }
     try {
       if (action === 'retry') {
         const prepared = buildWorkAgentMessage(draft.text, draft.mentions)
         await chat.retryFrom(message, { ...optionsFor(task), attachments: message.attachments,
-          ...(prepared.collaborators.length ? { collaborators: prepared.collaborators } : {}) })
-      } else if (action === 'delete') await chat.deleteTurn(taskId, message)
-      else {
-        if (action === 'revert') await chat.revertFrom(taskId, message)
-        else await chat.truncateFrom(taskId, message)
+          ...(prepared.collaborators.length ? { collaborators: prepared.collaborators } : {}) }, resetHistoryStatus)
+      } else if (action === 'delete') {
+        await chat.deleteTurn(taskId, message, resetHistoryStatus)
+      } else {
+        if (action === 'revert') await chat.revertFrom(taskId, message, resetHistoryStatus)
+        else await chat.truncateFrom(taskId, message, resetHistoryStatus)
         if (!current()) return false
         refill()
       }
@@ -823,7 +863,7 @@ export function useWorkController() {
         setHistoryAttempt(attempt => attempt + 1)
     }
   }, [activeId, selectedView, epoch, source, messages, engineReady, restored, isHistoryReady, streaming, pending.length, uploadCount,
-    hasSessionWork, chat.retryFrom, chat.deleteTurn, chat.revertFrom, chat.truncateFrom, optionsFor])
+    hasSessionWork, chat.retryFrom, chat.deleteTurn, chat.revertFrom, chat.truncateFrom, optionsFor, updateTask])
 
   const stop = useCallback(async (): Promise<void> => {
     if (!activeTask || !engineReady || stoppingTaskIdsRef.current.has(activeTask.id)) return
@@ -910,18 +950,32 @@ export function useWorkController() {
     const task = getWorkState(source).tasks.find((item) => item.id === id)
     if (!task) throw new Error('任务不存在')
     let snapshot: ChatRecoverySnapshot | null = null
+    let fetched: ChatRecoverySnapshot | undefined
+    let requestFailure: { cause: unknown } | undefined
     try {
-      snapshot = await requestOrThrow<ChatRecoverySnapshot>({
+      fetched = await requestOrThrow<ChatRecoverySnapshot>({
         method: 'GET', path: '/chat/snapshot', query: { sessionId: id }
       })
-      assertEngineSource(epoch)
-      if (snapshot.schemaVersion !== 1 || snapshot.sessionId !== id)
-        throw new Error('任务历史不匹配，请重试导出')
     } catch (cause) {
+      requestFailure = { cause }
+    }
+    // A transport failure may permit an unsent local draft, but a connection
+    // switch or a response for another session must never enter that fallback.
+    assertEngineSource(epoch)
+    if (requestFailure) {
       // A never-sent draft has no engine session yet; it is still useful to
       // export its local metadata and attachments. Sent tasks must surface a
       // snapshot error instead of silently exporting an empty transcript.
-      if (task.status !== 'draft') throw cause
+      const currentTask = getWorkState(source).tasks.find(item => item.id === id)
+      const knownMessages = activeId === id && messages.length > 0 ||
+        chat.sessionModel?.source === epoch && chat.sessionModel.sessionId === id && Boolean(chat.sessionModel.runId) ||
+        submitted.current.get(id)?.source === source
+      if (!currentTask || currentTask.status !== 'draft' || currentTask.activity || currentTask.agentLocked || knownMessages)
+        throw requestFailure.cause
+    } else {
+      if (!fetched || fetched.schemaVersion !== 1 || fetched.sessionId !== id)
+        throw new Error('任务历史不匹配，请重试导出')
+      snapshot = fetched
     }
     const exportedMessages = snapshot
       ? restoreChatSnapshot(snapshot).messages
@@ -969,7 +1023,7 @@ export function useWorkController() {
       URL.revokeObjectURL(url)
     }
     return payload
-  }, [source, epoch, activeId, messages, chat.commandJobs])
+  }, [source, epoch, activeId, messages, chat.commandJobs, chat.sessionModel])
   const respond = useCallback(
     async (requestId: string, values: string[]): Promise<void> => {
       if (!activeTask || !restored) return
@@ -986,6 +1040,20 @@ export function useWorkController() {
     },
     [activeTask, restored, chatRespond, optionsFor]
   )
+
+  const clearWorkspace = useCallback((): void => {
+    if (epoch !== getEngineSource() || isRemoteEngine()) return
+    const latest = getWorkState(source)
+    // Only the home selection is unbound. Existing tasks may already own a
+    // persisted engine binding even when their local status reads "draft".
+    if (activeId || latest.activeTaskId) return
+    if (uploadCount > 0 || latest.homeAttachments.length) {
+      setError('请先完成上传并移除已添加的资料，再更换工作目录。')
+      return
+    }
+    setError(null)
+    updateWorkState(source, previous => ({ ...previous, homeWorkspacePath: null }))
+  }, [activeId, epoch, source, uploadCount])
 
   const chooseWorkspace = useCallback(async (): Promise<void> => {
     setError(null)
@@ -1195,6 +1263,9 @@ export function useWorkController() {
     defaultModelSource: followsEngineDefault ? undefined : settings.lastModelId ? '客户端默认' : agentIdentity.model ? 'Agent 配置' : undefined,
     models,
     messages,
+    commandJobs: restored || previewReady ? chat.commandJobs.filter(job => job.sessionId === activeId) : [],
+    // Match the transcript scope before showing lifetime totals from useChat.
+    sessionUsage: restored || previewReady ? chat.sessionUsage : null,
     usageSyncNotice: restored ? chat.usageSyncNotice : null,
     publishedRecovery: chat.publishedRecovery?.source === epoch && chat.publishedRecovery.sessionId === activeId ? chat.publishedRecovery : null,
     publishedFixedChildren: (restored || previewReady) && chat.publishedFixedChildren,
@@ -1228,6 +1299,12 @@ export function useWorkController() {
     archiveLoading: restored && chat.archiveLoading,
     archiveError: restored ? chat.archiveError : null,
     loadArchive: (action: ArchivePageAction = 'older') => activeId ? chat.loadArchive(activeId, action) : Promise.resolve(),
+    displayTurns: restored ? chat.displayTurns : null,
+    displayLoadedTurnIds: restored ? chat.displayLoadedTurnIds : [],
+    displayHistoryLoading: restored && chat.displayHistoryLoading,
+    displayHistoryError: restored ? chat.displayHistoryError : null,
+    displayHistoryCompleteness: restored ? chat.displayHistoryCompleteness : null,
+    loadDisplayTurn: (userMessageId?: string) => activeId ? chat.loadDisplayTurn(activeId, userMessageId) : Promise.resolve(false),
     uploading: uploadCount > 0,
     error: error ?? (activeId ? chat.historyError : null),
     actionError: error,
@@ -1245,11 +1322,14 @@ export function useWorkController() {
     stopping: Boolean(activeId && stoppingTaskIds.has(activeId)) || Boolean(restored && chat.stopping),
     stopTask,
     renameTask,
+    setTaskPinned,
+    setTaskLabelColor,
     archiveTask,
     continueTask,
     exportTask,
     respond,
     chooseWorkspace,
+    clearWorkspace,
     addFiles,
     removeAttachment,
     removeSource,

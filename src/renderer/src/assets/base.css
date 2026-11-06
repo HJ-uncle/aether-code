@@ -183,3 +183,40 @@ select:focus-visible {
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+/* 单轴区域从首帧就不预留滚动条空间，浮动轨道由 horizontal-scrollbar.ts 管理。 */
+[data-scroll-axis='x'] {
+  scrollbar-width: none;
+}
+
+[data-scroll-axis='x']::-webkit-scrollbar {
+  height: 0;
+}
+
+.horizontal-scrollbar {
+  position: fixed;
+  z-index: var(--z-scrollbar);
+  height: 8px;
+  cursor: default;
+  touch-action: none;
+  user-select: none;
+  -webkit-app-region: no-drag;
+}
+.horizontal-scrollbar[hidden] { display: none; }
+.horizontal-scrollbar__thumb {
+  position: absolute;
+  inset: 0 auto 0 0;
+  height: 100%;
+  min-width: 24px;
+}
+.horizontal-scrollbar__thumb::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--scrollbar-thumb);
+}
+.horizontal-scrollbar:hover .horizontal-scrollbar__thumb::after,
+.horizontal-scrollbar:focus-visible .horizontal-scrollbar__thumb::after,
+.horizontal-scrollbar.is-dragging .horizontal-scrollbar__thumb::after { background: var(--scrollbar-thumb-hover); }

@@ -2,6 +2,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { NextTurnQueueError, type FrozenQueueSubmission, type NextTurnQueueScope } from '../shared/next-turn-queue'
 
 export const WORK_QUEUE_TRANSPORT = Object.freeze({ toolProfile: 'general', runLifetime: 'durable', subagentProtocol: 2 })
+export const CODE_QUEUE_TRANSPORT = Object.freeze({ toolProfile: 'code', runLifetime: 'durable', subagentProtocol: 2 })
+export const queueTransport = (owner: NextTurnQueueScope['owner']) => owner === 'code' ? CODE_QUEUE_TRANSPORT : WORK_QUEUE_TRANSPORT
 export interface AdmissionOutcomeRoot {
   runId: string; version: number
   status: 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
@@ -11,7 +13,7 @@ export interface AdmissionRoot extends AdmissionOutcomeRoot { attemptId: string 
 export interface AdmissionContext {
   protocolVersion: 1; tenantId: string; sessionId: string
   namespace: NextTurnQueueScope['namespace']; predecessor: FrozenQueueSubmission['anchor']
-  root: AdmissionRoot | null; transport: typeof WORK_QUEUE_TRANSPORT
+  root: AdmissionRoot | null; transport: typeof WORK_QUEUE_TRANSPORT | typeof CODE_QUEUE_TRANSPORT
 }
 function fail(message: string): never { throw new NextTurnQueueError('AUTHORITY', message) }
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value)
@@ -32,10 +34,10 @@ function parseAdmissionOutcomeRoot(value: unknown): AdmissionOutcomeRoot {
 export function parseAdmissionRoot(value: unknown): AdmissionRoot {
   return { ...parseAdmissionOutcomeRoot(value), attemptId: identity(record(value).attemptId) }
 }
-export function parseAdmissionContext(value: unknown, taskId: string): AdmissionContext {
+export function parseAdmissionContext(value: unknown, taskId: string, owner: NextTurnQueueScope['owner'] = 'work'): AdmissionContext {
   const item = record(value), transport = record(item.transport)
-  if (item.protocolVersion !== 1 || item.sessionId !== taskId || transport.toolProfile !== 'general'
-    || transport.runLifetime !== 'durable' || transport.subagentProtocol !== 2) fail('引擎尚未提供 Work 下一轮接纳协议，未发送消息')
+  if (item.protocolVersion !== 1 || item.sessionId !== taskId || transport.toolProfile !== queueTransport(owner).toolProfile
+    || transport.runLifetime !== 'durable' || transport.subagentProtocol !== 2) fail(`引擎尚未提供 ${owner === 'code' ? 'Code' : 'Work'} 下一轮接纳协议，未发送消息`)
   const root = item.root === null ? null : parseAdmissionRoot(item.root)
   const predecessor = item.predecessor === null ? null : (() => {
     const anchor = record(item.predecessor)
@@ -43,7 +45,7 @@ export function parseAdmissionContext(value: unknown, taskId: string): Admission
   })()
   if ((root === null) !== (predecessor === null) || root && predecessor &&
     (root.runId !== predecessor.runId || root.attemptId !== predecessor.attemptId || root.version !== predecessor.version)) fail('Root authority and predecessor disagree')
-  return { protocolVersion: 1, tenantId: identity(item.tenantId), sessionId: taskId, namespace: namespace(item.namespace), predecessor, root, transport: WORK_QUEUE_TRANSPORT }
+  return { protocolVersion: 1, tenantId: identity(item.tenantId), sessionId: taskId, namespace: namespace(item.namespace), predecessor, root, transport: queueTransport(owner) }
 }
 /** This encoder deliberately mirrors admission v1: undefined is not an omitted JSON field. */
 export function canonicalAdmissionJson(value: unknown): string {
@@ -71,8 +73,8 @@ export function canonicalAdmissionJson(value: unknown): string {
 }
 export function freezeQueueRequest(scope: NextTurnQueueScope, body: Record<string, unknown>, entryRevision: number, anchor: FrozenQueueSubmission['anchor']): FrozenQueueSubmission {
   if (body.sessionId !== scope.taskId || body.admission !== undefined) fail('Queue request belongs to another task')
-  const selector = { protocolVersion: 1, namespace: scope.namespace, owner: 'work', predecessor: anchor }
-  const bodyDigest = createHash('sha256').update(canonicalAdmissionJson({ selector, transport: WORK_QUEUE_TRANSPORT, body })).digest('hex')
+  const selector = { protocolVersion: 1, namespace: scope.namespace, owner: scope.owner, predecessor: anchor }
+  const bodyDigest = createHash('sha256').update(canonicalAdmissionJson({ selector, transport: queueTransport(scope.owner), body })).digest('hex')
   const requestKey = randomUUID()
   return { requestKey, bodyDigest, entryRevision, anchor, wireBody: canonicalAdmissionJson({ ...body, admission: { ...selector, requestKey, bodyDigest } }) }
 }
@@ -80,8 +82,8 @@ export function assertFrozenQueueRequest(scope: NextTurnQueueScope, frozen: Froz
   if (!frozen.wireBody) fail('旧队列项缺少完整请求，需人工核对；不会自动重发')
   const body = record(JSON.parse(frozen.wireBody)), admission = record(body.admission)
   const { admission: _admission, ...request } = body
-  const selector = { protocolVersion: 1, namespace: scope.namespace, owner: 'work', predecessor: frozen.anchor }
-  const digest = createHash('sha256').update(canonicalAdmissionJson({ selector, transport: WORK_QUEUE_TRANSPORT, body: request })).digest('hex')
+  const selector = { protocolVersion: 1, namespace: scope.namespace, owner: scope.owner, predecessor: frozen.anchor }
+  const digest = createHash('sha256').update(canonicalAdmissionJson({ selector, transport: queueTransport(scope.owner), body: request })).digest('hex')
   if (body.sessionId !== scope.taskId || admission.requestKey !== frozen.requestKey || admission.bodyDigest !== frozen.bodyDigest
     || digest !== frozen.bodyDigest || canonicalAdmissionJson(admission) !== canonicalAdmissionJson({ ...selector, requestKey: frozen.requestKey, bodyDigest: frozen.bodyDigest })) fail('Frozen queue request integrity failed')
   return frozen.wireBody
@@ -96,7 +98,7 @@ export function parseExactAdmission(value: unknown, scope: NextTurnQueueScope, f
   }
   if (item.status !== 'accepted') fail('Admission result is unavailable')
   const receipt = record(item.receipt), publicRun = record(item.run), root = parseAdmissionOutcomeRoot(publicRun)
-  if (receipt.protocolVersion !== 1 || receipt.owner !== 'work' || receipt.sessionId !== scope.taskId || receipt.requestKey !== frozen.requestKey
+  if (receipt.protocolVersion !== 1 || receipt.owner !== scope.owner || receipt.sessionId !== scope.taskId || receipt.requestKey !== frozen.requestKey
     || receipt.bodyDigest !== frozen.bodyDigest || canonicalAdmissionJson(namespace(receipt.namespace)) !== canonicalAdmissionJson(scope.namespace)
     || canonicalAdmissionJson(receipt.predecessor) !== canonicalAdmissionJson(frozen.anchor) || receipt.rootRunId !== root.runId) fail('Accepted receipt does not match this exact submission')
   if (publicRun.sessionId !== scope.taskId || publicRun.turnId !== receipt.turnId || publicRun.userMessageId !== receipt.userMessageId) fail('Accepted root transcript scope does not match this receipt')

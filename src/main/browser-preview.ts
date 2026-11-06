@@ -28,6 +28,14 @@ function publicPath(path: string): boolean {
 
 interface PreviewEntry { server: Server; origin: string; token: string }
 
+/** Issued only by the main process after checking the authenticated session.
+ * This permission never enters the general desktop filesystem allow-list. */
+export interface BrowserPreviewAccess {
+  key: string
+  root: string
+  validate(): Promise<void>
+}
+
 function closePreview(entry: PreviewEntry): void {
   entry.server.closeAllConnections()
   if (entry.server.listening) entry.server.close()
@@ -38,27 +46,31 @@ export class BrowserPreviewServer {
   private servers = new Map<string, Promise<PreviewEntry>>()
   private disposed = false
 
-  async open(filePath: string, workspaceRoot: string): Promise<string> {
+  async open(filePath: string, workspaceRoot: string, access?: BrowserPreviewAccess): Promise<string> {
     if (this.disposed) throw new Error('网页预览服务已关闭')
-    const root = await realpath(assertAllowed(workspaceRoot))
-    const target = await realpath(assertAllowed(filePath))
+    await access?.validate()
+    const root = await realpath(access ? access.root : assertAllowed(workspaceRoot))
+    const target = await realpath(access ? filePath : assertAllowed(filePath))
+    await access?.validate()
     if (this.disposed) throw new Error('网页预览服务已关闭')
     if (!within(root, target) || !['.html', '.htm'].includes(extname(target).toLowerCase())) {
       throw new Error('请选择当前工作区中的 HTML 文件，应用项目请使用开发服务器地址')
     }
     if (!publicPath(relative(root, target))) throw new Error('此目录不用于网页预览，请使用工作区中的网页或 .ae 产物目录')
-    let pending = this.servers.get(root)
+    const key = JSON.stringify([access?.key ?? null, root])
+    let pending = this.servers.get(key)
     if (!pending) {
       // Publish the promise before awaiting listen: simultaneous file opens
       // must share one server so disposal cannot lose the earlier instance.
-      pending = this.start(root)
-      this.servers.set(root, pending)
+      pending = this.start(root, access)
+      this.servers.set(key, pending)
       const current = pending
       void pending.catch(() => {
-        if (this.servers.get(root) === current) this.servers.delete(root)
+        if (this.servers.get(key) === current) this.servers.delete(key)
       })
     }
     const entry = await pending
+    await access?.validate()
     if (this.disposed) {
       closePreview(entry)
       throw new Error('网页预览服务已关闭')
@@ -66,7 +78,7 @@ export class BrowserPreviewServer {
     return `${entry.origin}/${entry.token}/${relative(root, target).split(sep).map(encodeURIComponent).join('/')}`
   }
 
-  private async start(root: string): Promise<PreviewEntry> {
+  private async start(root: string, access?: BrowserPreviewAccess): Promise<PreviewEntry> {
       const token = randomBytes(24).toString('hex')
       const cookieName = `aether_preview_${token.slice(0, 12)}`
       const server = createServer((request, response) => {
@@ -83,16 +95,23 @@ export class BrowserPreviewServer {
           if (path.includes('\0') || !publicPath(path)) {
             response.writeHead(403); response.end('Forbidden'); return
           }
-          const candidate = await realpath(assertAllowed(resolve(root, path)))
+          await access?.validate()
+          const requested = resolve(root, path)
+          if (!within(root, requested)) { response.writeHead(403); response.end('Forbidden'); return }
+          const candidate = await realpath(access ? requested : assertAllowed(requested))
           if (!within(root, candidate) || !publicPath(relative(root, candidate))) { response.writeHead(403); response.end('Forbidden'); return }
           const info = await stat(candidate)
           if (!info.isFile() || info.size > 32 * 1024 * 1024) { response.writeHead(413); response.end('File unavailable'); return }
+          const content = request.method === 'HEAD' ? undefined : await readFile(candidate)
+          // A session can be rebound or deleted while disk IO is pending.
+          // Never send headers or bytes until the owning binding is rechecked.
+          await access?.validate()
           response.writeHead(200, { 'Content-Type': MIME[extname(candidate).toLowerCase()] ?? 'application/octet-stream',
             'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
             // Root-relative resources need the same capability after the initial
             // token URL. HttpOnly keeps the capability out of page JavaScript.
             ...(capabilityUrl ? { 'Set-Cookie': `${cookieName}=${token}; Path=/; HttpOnly; SameSite=Strict` } : {}) })
-          response.end(request.method === 'HEAD' ? undefined : await readFile(candidate))
+          response.end(content)
         })().catch(() => { if (!response.headersSent) response.writeHead(404); response.end('File unavailable') })
       })
       await new Promise<void>((done, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', done) })

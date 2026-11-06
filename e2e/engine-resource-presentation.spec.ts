@@ -145,6 +145,10 @@ test('存储条只使用实际容量，非法计数不参与也不伪拆会话',
     { category: 'logs', bytes: 25, files: 2, percent: 25 }
   ])
   expect(storageCategoryLabel('database')).toBe('数据库')
+  expect(storageCategoryLabel('database-wal')).toBe('数据库写入日志（WAL）')
+  expect(storageCategoryLabel('memory')).toBe('长期记忆（磁盘）')
+  expect(storageCategoryLabel('snapshots')).toBe('文件变更快照')
+  expect(storageCategoryLabel('history-backups')).toBe('历史备份（.bak）')
   expect(storageCategoryLabel('new-kind')).toBe('new-kind')
   const growing = {
     ...storage,

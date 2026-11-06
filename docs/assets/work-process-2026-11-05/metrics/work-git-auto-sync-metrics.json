@@ -1,0 +1,16 @@
+{
+  "createAndModifyLatencyMs": 5447,
+  "deleteLatencyMs": 4376,
+  "transport": {
+    "reads": 25,
+    "statusStarted": 2,
+    "activeStatus": 0,
+    "maxActiveStatus": 1,
+    "held": false,
+    "durationsMs": [
+      743,
+      917
+    ]
+  },
+  "mountedRows": 2
+}

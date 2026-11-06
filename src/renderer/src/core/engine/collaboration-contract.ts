@@ -19,10 +19,15 @@ export type ControllerTarget = { rootRunId: string; rootSessionId: string } & (
 )
 export type ControllerChildTarget = Extract<ControllerTarget, { kind?: 'child' }>
 export interface ControllerContext { scope: ControllerScope; recipient: ControllerParticipant }
+export type ControllerDelivery = { state: 'pending' }
+  | { state: 'integrated'; historyMessageId: string; integratedAt: number }
+  | { state: 'suppressed'; historyMessageId: string; integratedAt?: number; reason?: string }
 export interface ControllerReceipt {
   messageId: string; rootRunId: string; rootAttemptId: string; senderParticipantId: string; senderInvocationRunId: string
   recipientParticipantId: string; requestKey: string; payloadHash: string; payloadBytes: number
   acceptedSeq: number; acceptedAt: number; state: 'queued' | 'rejected' | 'interrupted'; reason?: string
+  /** Peer receipt pages may omit this; controller mutation/read receipts require it. */
+  delivery?: ControllerDelivery
 }
 export interface ControllerPending extends ControllerScope {
   version: 1; expectedEngine: NonNullable<EngineRequestInput['expectedEngine']>; storageIdentity: string
@@ -88,6 +93,16 @@ export function parseControllerContext(value: unknown, target: ControllerTarget)
   return result
 }
 /** Public receipt reads contain immutable acceptance evidence, never message bodies. */
+function parseControllerDelivery(value: unknown): ControllerDelivery {
+  if (!record(value)) throw new Error('补充要求的投递回执无效')
+  if (value.state === 'pending' && value.historyMessageId === undefined && value.integratedAt === undefined && value.reason === undefined) return { state: 'pending' }
+  if (!identifier(value.historyMessageId) || (value.integratedAt !== undefined && !integer(value.integratedAt))
+    || (value.reason !== undefined && (typeof value.reason !== 'string' || utf8Bytes(value.reason) > 4096))) throw new Error('补充要求的投递回执无效')
+  if (value.state === 'integrated' && integer(value.integratedAt)) return { state: 'integrated', historyMessageId: value.historyMessageId, integratedAt: value.integratedAt }
+  if (value.state === 'suppressed') return { state: 'suppressed', historyMessageId: value.historyMessageId,
+    ...(integer(value.integratedAt) ? { integratedAt: value.integratedAt } : {}), ...(typeof value.reason === 'string' ? { reason: value.reason } : {}) }
+  throw new Error('补充要求的投递回执无效')
+}
 export function parseControllerReceiptEvidence(value: unknown): ControllerReceipt {
   if (!record(value) || !identifier(value.messageId) || !identifier(value.rootRunId) || !identifier(value.rootAttemptId) || !identifier(value.senderParticipantId)
     || !identifier(value.senderInvocationRunId) || !identifier(value.recipientParticipantId) || !identifier(value.requestKey)
@@ -101,10 +116,12 @@ export function parseControllerReceiptEvidence(value: unknown): ControllerReceip
     senderParticipantId: value.senderParticipantId, senderInvocationRunId: value.senderInvocationRunId,
     recipientParticipantId: value.recipientParticipantId, requestKey: value.requestKey, payloadHash: value.payloadHash,
     payloadBytes: value.payloadBytes, acceptedSeq: value.acceptedSeq, acceptedAt: value.acceptedAt,
-    state: value.state as ControllerReceipt['state'], ...(typeof value.reason === 'string' ? { reason: value.reason } : {}) }
+    state: value.state as ControllerReceipt['state'], ...(typeof value.reason === 'string' ? { reason: value.reason } : {}),
+    ...(value.delivery !== undefined ? { delivery: parseControllerDelivery(value.delivery) } : {}) }
 }
 export function parseControllerReceipt(value: unknown, pending: ControllerPending): ControllerReceipt {
   const receipt = parseControllerReceiptEvidence(value)
+  if (!receipt.delivery) throw new Error('补充要求的回执缺少投递状态，请核对原请求')
   if (receipt.rootRunId !== pending.rootRunId || receipt.rootAttemptId !== pending.rootAttemptId
     || receipt.recipientParticipantId !== pending.recipientParticipantId || receipt.requestKey !== pending.requestKey
     || receipt.payloadBytes !== pending.payloadBytes)
@@ -194,18 +211,37 @@ export function mergeControllerSaved(previous: ControllerSavedRecord, next: Cont
   if ((['messageId', 'rootRunId', 'rootAttemptId', 'senderParticipantId', 'senderInvocationRunId', 'recipientParticipantId',
     'requestKey', 'payloadHash', 'payloadBytes', 'acceptedSeq', 'acceptedAt'] as const).some(key => a[key] !== b[key]))
     throw new Error('原排队回执的身份已变化，请保留记录核对')
-  if (a.state !== 'queued') {
-    if (b.state === 'queued') return previous
-    if (a.state !== b.state || a.reason !== b.reason) throw new Error('原补充要求出现不一致的结束结果，请保留记录核对')
-    return previous
+  let delivery = b.delivery
+  if (a.delivery && a.delivery.state !== 'pending') {
+    if (!b.delivery || b.delivery.state === 'pending') delivery = a.delivery
+    else {
+      if (a.delivery.historyMessageId !== b.delivery.historyMessageId
+        || a.delivery.integratedAt !== undefined && b.delivery.integratedAt !== undefined && a.delivery.integratedAt !== b.delivery.integratedAt)
+        throw new Error('补充要求的投递证据不一致，请保留记录核对')
+      if (a.delivery.state === 'suppressed' && b.delivery.state === 'integrated') delivery = a.delivery
+      else if (a.delivery.state === b.delivery.state && JSON.stringify(a.delivery) !== JSON.stringify(b.delivery))
+        throw new Error('补充要求的投递证据不一致，请保留记录核对')
+    }
   }
-  return previous.draftDismissed ? { ...next, draftDismissed: true } : next
+  let merged = { ...next, receipt: { ...b, delivery } }
+  if (a.state !== 'queued') {
+    if (b.state !== 'queued' && (a.state !== b.state || a.reason !== b.reason)) throw new Error('原补充要求出现不一致的结束结果，请保留记录核对')
+    merged = { ...previous, receipt: { ...a, delivery } }
+  }
+  return previous.draftDismissed ? { ...merged, draftDismissed: true } : merged
 }
-export function isControllerDraft(record: ControllerSavedRecord): boolean { return !record.draftDismissed && (record.kind === 'refused' || record.receipt.state !== 'queued') }
+export function controllerNeedsDeliveryRefresh(record: ControllerSavedRecord): boolean {
+  return record.kind === 'accepted' && record.receipt.state === 'queued' && record.receipt.delivery?.state === 'pending'
+}
+export function isControllerDraft(record: ControllerSavedRecord): boolean { return !record.draftDismissed && (record.kind === 'refused' || record.receipt.state !== 'queued' || record.receipt.delivery?.state === 'suppressed') }
 export function controllerSavedStatus(record: ControllerSavedRecord): string {
-  if (record.kind === 'refused') return '未被接纳，原文已保留'
-  if (record.receipt.state === 'queued') return '已接纳（不代表已执行）'
+  if (record.kind === 'refused') return '未被接纳，原文保留'
+  if (record.receipt.delivery?.state === 'integrated') return '已加入上下文'
+  if (record.receipt.delivery?.state === 'suppressed') return record.receipt.delivery.integratedAt !== undefined
+    ? record.receipt.delivery.reason === 'history_compacted' ? '原文已压缩为摘要' : '已从上下文移除'
+    : '未读取，原文保留'
+  if (record.receipt.state === 'queued') return '待加入上下文'
   if (record.receipt.state === 'interrupted') return record.receipt.reason === 'target_invocation_finished_before_consumption'
-    ? '本轮结束前未读取，原文已保留' : '已中断，未确认执行；原文已保留'
-  return '未被接受，原文已保留'
+    ? '未读取，原文保留' : '已中断，原文保留'
+  return '未被接受，原文保留'
 }

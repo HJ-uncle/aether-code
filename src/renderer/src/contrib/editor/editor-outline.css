@@ -82,6 +82,12 @@
   overflow: auto;
   padding: 0 var(--space-1) var(--space-2);
 }
+.editor-outline__body { flex: 1; min-height: 0; }
+.editor-outline__body > .ui-motion-collapse__content {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
 .editor-outline__list {
   list-style: none;
   margin: 0;

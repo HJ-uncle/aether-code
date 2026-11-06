@@ -14,6 +14,7 @@
 import { useSyncExternalStore, type JSX } from 'react'
 import { Dialog } from './Dialog'
 import { toast } from '@renderer/core/toast'
+import { useMotionPresence, useMotionValue } from './MotionPresence'
 
 export interface ConfirmOptions {
   title: string
@@ -78,10 +79,15 @@ function settle(ok: boolean, id: number): void {
 
 /** 挂在应用根部：有 pending 请求时渲染弹窗 */
 export function ConfirmDialogHost(): JSX.Element | null {
-  const req = useSyncExternalStore(subscribe, getSnapshot)
-  if (!req) return null
+  const currentRequest = useSyncExternalStore(subscribe, getSnapshot)
+  const motion = useMotionPresence(Boolean(currentRequest))
+  const req = useMotionValue(currentRequest)
+  if (!motion.present || !req) return null
   return (
     <Dialog
+      key={req.id}
+      open={Boolean(currentRequest)}
+      closeDisabled={req.busy}
       title={req.title}
       width={440}
       onClose={() => { if (!req.busy) settle(false, req.id) }}
@@ -121,7 +127,7 @@ export function ConfirmDialogHost(): JSX.Element | null {
         </>
       }
     >
-      <p style={{ margin: 0, lineHeight: 1.6 }}>{req.body}</p>
+      <p style={{ margin: 0, lineHeight: 1.6, whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}>{req.body}</p>
     </Dialog>
   )
 }

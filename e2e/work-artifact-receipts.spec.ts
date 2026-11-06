@@ -51,3 +51,11 @@ test('reverted deletion preserves a completed write and cannot erase its evidenc
   const result = workArtifacts([message('done', [tool(change('write', path, 1)), tool(removed)])])
   expect(result).toHaveLength(1); expect(result[0]).toMatchObject({ id: 'write', status: 'ready' })
 })
+
+test('restored primary decisions cannot be revived by stale arrays or later duplicate receipts', () => {
+  const pending = { ...change('same', root + '\\report.pdf', 1), sessionId: 'a' }
+  const reverted = { ...pending, status: 'reverted' as const }
+  expect(workArtifacts([message('done', [{ ...tool(reverted), changes: [pending] }, tool(pending)])], [], 'a')).toEqual([])
+  expect(workArtifacts([message('done', [tool({ ...pending, sessionId: 'b' })])], [], 'a')).toEqual([])
+  expect(workArtifacts([message('done', [tool(pending)])], [], 'a').map(item => item.id)).toEqual(['same'])
+})

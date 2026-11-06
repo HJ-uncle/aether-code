@@ -1,25 +1,6 @@
-.work-resource-tabs__new {
-  flex: 0 0 auto;
-  align-self: center;
-  margin: 0 3px;
-  padding: 6px;
-  border: 0;
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--fg-muted);
-  cursor: pointer;
-}
-.work-resource-tabs__new:hover { background: var(--bg-hover); color: var(--fg); }
-.work-resource-tabs__new:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.work-resource-tabs__browser {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding-inline: 8px;
-  white-space: nowrap;
-}
 .work-resource-tabs__file-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .work-resource-content { min-height: 0; flex: 1; overflow: hidden; }
+.work-resource-browser { display: flex; flex: 1; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }
 
 /* Code-style workspace chrome: one quiet row, with the overflow menu and
  * opened surfaces sharing the same tab language. */
@@ -47,33 +28,25 @@
 }
 .work-workspace__tabs {
   display: flex;
-  /* The list owns the remaining header width. Keeping the width at zero lets
-   * the tab strip scroll instead of pushing resource actions onto a second
-   * visual row when many files are open. */
+  /* Tabs own all space after the menu and scroll when full. Their icons and
+   * titles should not compress just because another resource was opened. */
   flex: 1 1 auto;
   align-items: stretch;
   min-width: 0;
   width: 0;
   max-width: none;
   overflow-x: auto;
-  scrollbar-width: thin;
-}
-.work-workspace__resource-actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  min-width: 0;
-  min-height: 0;
-  border-left: 1px solid var(--border);
-  background: var(--bg-surface);
+  overflow-y: hidden;
 }
 .work-workspace__tab {
   position: relative;
   display: flex;
-  flex: 0 1 180px;
-  min-width: 88px;
+  flex: 0 0 auto;
+  min-width: 92px;
   max-width: 180px;
-  align-items: stretch;
+  align-items: center;
+  gap: 2px;
+  padding-right: 6px;
   margin: 4px 2px 0;
   border: 1px solid transparent;
   border-bottom: 0;
@@ -90,10 +63,12 @@
 .work-workspace__tab-button {
   display: flex;
   align-items: center;
+  gap: 6px;
   min-width: 0;
   flex: 1;
+  height: 100%;
   overflow: hidden;
-  padding: 0 10px;
+  padding: 0 6px 0 10px;
   border: 0;
   border-radius: inherit;
   background: transparent;
@@ -105,51 +80,55 @@
   font: inherit;
   font-size: 12px;
 }
-.work-workspace__tab-button:hover { background: var(--bg-hover); color: var(--fg-strong); }
+.work-workspace__tab-button > svg { flex: 0 0 16px; }
+.work-workspace__tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-workspace__tab:hover { background: var(--bg-hover); color: var(--fg-strong); }
 .work-workspace__tab-button:focus-visible,
 .work-workspace__tab-close:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .work-workspace__tab-close {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 26px;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--fg-faint);
   cursor: pointer;
-  opacity: 0;
+  opacity: 1;
 }
 .work-workspace__tab:hover .work-workspace__tab-close,
 .work-workspace__tab.is-active .work-workspace__tab-close,
 .work-workspace__tab-close:focus-visible { opacity: 1; }
 .work-workspace__tab-close:hover { background: var(--bg-hover); color: var(--fg-strong); }
-/* ActionMenu is portaled to body, so :has keeps this compact treatment local
- * to the Work overflow button while leaving other menus unchanged. */
-body:has(.work-workspace__more .action-menu__trigger[aria-expanded='true']) .popover__panel:has(.action-menu__panel) {
-  width: 232px !important;
+/* The portal keeps its own class through closing, so size and motion stay
+ * stable after its trigger has returned to the closed state. */
+.work-workspace-menu {
   max-height: min(420px, calc(100vh - 24px));
   overflow: auto;
   border-radius: var(--radius-lg);
 }
-body:has(.work-workspace__more .action-menu__trigger[aria-expanded='true']) .popover__panel:has(.action-menu__panel) .action-menu__panel {
+.work-workspace-menu .action-menu__panel {
   padding: 6px;
 }
-body:has(.work-workspace__more .action-menu__trigger[aria-expanded='true']) .popover__panel:has(.action-menu__panel) .action-menu__item {
-  min-height: 38px;
+.work-workspace-menu .action-menu__item {
+  min-height: 32px;
   padding: 4px 10px;
   gap: 10px;
   border-radius: var(--radius);
 }
-body:has(.work-workspace__more .action-menu__trigger[aria-expanded='true']) .popover__panel:has(.action-menu__panel) .action-menu__item-copy {
+.work-workspace-menu .action-menu__item-copy {
   gap: 2px;
 }
-body:has(.work-workspace__more .action-menu__trigger[aria-expanded='true']) .popover__panel:has(.action-menu__panel) .action-menu__item-copy > span {
+.work-workspace-menu .action-menu__item-copy > span {
   font-size: 12px;
   font-weight: 500;
 }
-body:has(.work-workspace__more .action-menu__trigger[aria-expanded='true']) .popover__panel:has(.action-menu__panel) .action-menu__item-copy small {
+.work-workspace-menu .action-menu__item-copy small {
   font-size: 10px;
   line-height: 1.2;
 }
+:root .work-workspace-menu[data-motion-state] { opacity: 1; transition-property: translate; }

@@ -10,6 +10,7 @@ import { getSubagentDirectory, getSubagentDiscovery, getSubagentRuns, loadMoreSu
 import { isSubagentActive, toolStatusLabel } from '@renderer/core/engine/subagent-state'
 import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
+import { Popover } from '@renderer/workbench/Popover'
 import { SubagentCard } from '../chat/SubagentCard'
 import { ControllerReceiptHistory, ControllerTrackingRecovery, SubagentFollowupInput } from '../chat/SubagentFollowup'
 import { CollaborationReceiptInspector } from '../chat/CollaborationReceiptInspector'
@@ -18,6 +19,7 @@ import { toolDisplayName } from '../chat/tool-names'
 import { formatWorkSubagentDuration, resolveWorkSubagentGroup, workSubagentGroups, workSubagentStats, type WorkSubagentGroup } from './work-subagents'
 import { newWorkSubagentTranscriptMemory, WorkSubagentTranscript, type WorkSubagentTranscriptMemory } from './WorkSubagentTranscript'
 import { trimWorkSubagentSessionCaches } from './work-subagent-memory'
+import { searchWorkSubagentGroups, workSubagentTaskSummary } from './work-subagent-list-presentation'
 import { publishedDetailKey, publishedVisibleWindow, rememberPublishedDetail } from '@renderer/core/engine/published-card-memory'
 import './work-subagents.css'
 
@@ -33,6 +35,7 @@ export interface WorkSubagentsPanelProps {
 
 interface PanelMemory {
   selected: string | null
+  query: string
   listTop: number
   detailTop: Map<string, number>
   drafts: Map<string, string>
@@ -43,10 +46,11 @@ interface PanelMemory {
 }
 
 function newMemory(): PanelMemory {
-  return { selected: null, listTop: 0, detailTop: new Map(), drafts: new Map(), errors: new Map(), views: new Map(), followups: new Map(), transcripts: new Map() }
+  return { selected: null, query: '', listTop: 0, detailTop: new Map(), drafts: new Map(), errors: new Map(), views: new Map(), followups: new Map(), transcripts: new Map() }
 }
 
 const SHORT_WINDOW_QUERY = '(max-height: 720px)'
+const QUEUED_HINT = '等待执行名额，可在设置 → 模型调整并发数量'
 function subscribeShortWindow(notify: () => void): () => void {
   const query = window.matchMedia(SHORT_WINDOW_QUERY)
   query.addEventListener('change', notify)
@@ -58,6 +62,7 @@ function serverWindowSnapshot(): boolean { return false }
 function currentAction(group: WorkSubagentGroup): string {
   if (group.latest.subagentRef) return '已发布记录，点击查看过程与产出'
   const run = group.tools.find(tool => tool.subagent && isSubagentActive(tool.subagent.status))?.subagent ?? group.latest.subagent
+  if (run?.status === 'queued') return QUEUED_HINT
   const presentation = subagentToolPresentation(run)
   const latest = run?.schemaVersion === 2 && run.latestActivity && isVisibleToolActivity(run.latestActivity) ? run.latestActivity : undefined
   const call = latest?.status === 'running' ? latest : [...presentation.calls].sort((a, b) =>
@@ -65,7 +70,6 @@ function currentAction(group: WorkSubagentGroup): string {
     ('revisionSeq' in a && typeof a.revisionSeq === 'number' ? a.revisionSeq : a.startedAt ?? 0)).find(item => item.status === 'running')
   if (call) return `正在${toolDisplayName(call.name)}`
   if (run?.status === 'cancelling') return '正在停止本轮工作'
-  if (run?.status === 'queued') return '已排队，等待开始'
   if (run && isSubagentActive(run.status) && presentation.unseenActiveCount > 0) return '正在执行任务'
   if (latest) return `最近${toolDisplayName(latest.name)}`
   return group.active ? '正在执行任务' : group.latest.subagent?.description || '点击查看过程与产出'
@@ -91,6 +95,7 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
   const generation = useRef(0)
   const mounted = useRef(true)
   const listRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
   const detailRef = useRef<HTMLDivElement>(null)
   const backRef = useRef<HTMLButtonElement>(null)
   const followupToggleRef = useRef<HTMLButtonElement>(null)
@@ -160,9 +165,13 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
   const selected = resolveWorkSubagentGroup(groups, memory.selected)
   const activeRun = selected?.tools.find(tool => !tool.subagentRef && tool.subagent && isSubagentActive(tool.subagent.status))?.subagent
   const running = groups.filter(group => group.active)
-  const completed = groups.filter(group => !group.active)
-  const groupWindow = publishedVisibleWindow(groups, visibleCount)
+  const filteredGroups = useMemo(() => searchWorkSubagentGroups(groups, memory.query), [groups, memory.query])
+  const filteredRunning = filteredGroups.filter(group => group.active)
+  const completed = filteredGroups.filter(group => !group.active)
+  const groupWindow = publishedVisibleWindow(filteredGroups, visibleCount)
   const visibleGroups = new Set(groupWindow.items.map(group => group.key))
+  const visibleRunning = filteredRunning.filter(group => visibleGroups.has(group.key))
+  const visibleCompleted = completed.filter(group => visibleGroups.has(group.key))
   const roundWindow = publishedVisibleWindow(selected?.tools ?? [], roundCount)
   const transcriptRun = selected?.tools.find(tool => tool.subagent)?.subagent
   selectedRunIdRef.current = activeRun?.runId ?? transcriptRun?.runId
@@ -176,6 +185,7 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
   const directory = getSubagentDirectory(sessionId)
   const discovery = getSubagentDiscovery(sessionId)
   const selectedView = selected ? memory.views.get(selected.key) ?? 'rounds' : 'rounds'
+  const selectedStats = selected ? workSubagentStats(selected, now) : null
   useEffect(() => { setRoundCount(64) }, [selected?.key])
   // The resolver proves a legacy key belongs to this durable child. Read its
   // draft and disclosure choice before layout migration to avoid a hidden frame.
@@ -192,10 +202,10 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
   }
   while (memory.transcripts.size > 2) memory.transcripts.delete(memory.transcripts.keys().next().value!)
   useEffect(() => {
-    if (!panelActive || !running.length) return
+    if (!panelActive || !selected?.active) return
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
-  }, [panelActive, running.length])
+  }, [panelActive, selected?.active])
   useLayoutEffect(() => {
     if (!panelActive) return
     if (selected) {
@@ -221,7 +231,7 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
       if (!migrated) backRef.current?.focus({ preventScroll: true })
     } else {
       if (listRef.current) listRef.current.scrollTop = memory.listTop
-      if (returningTo.current) rowRefs.current.get(returningTo.current)?.focus({ preventScroll: true })
+      if (returningTo.current) (rowRefs.current.get(returningTo.current) ?? searchRef.current)?.focus({ preventScroll: true })
       returningTo.current = null
     }
   }, [scope, selected?.key, panelActive])
@@ -233,6 +243,13 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
   const openDetail = (group: WorkSubagentGroup): void => {
     memory.listTop = listRef.current?.scrollTop ?? memory.listTop
     memory.selected = group.key
+    redraw()
+  }
+  const searchGroups = (query: string): void => {
+    memory.query = query
+    memory.listTop = 0
+    if (listRef.current) listRef.current.scrollTop = 0
+    setVisibleCount(64)
     redraw()
   }
   const backToList = (): void => {
@@ -315,68 +332,77 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
     }
   }
   const renderRow = (group: WorkSubagentGroup): JSX.Element => {
-    const run = group.latest.subagent
     const stats = workSubagentStats(group, now)
-    const age = run ? Math.max(0, Math.round((now - (run.updatedAt || run.createdAt)) / 60000)) : 0
-    const duration = formatWorkSubagentDuration(stats.durationMs)
-    const latestTool = stats.latestTool?.name ? toolDisplayName(stats.latestTool.name) : undefined
     const status = toolStatusLabel(group.latest)
-    return <button type="button" className="work-subagents__row" key={group.key} ref={node => { if (node) rowRefs.current.set(group.key, node); else rowRefs.current.delete(group.key) }} data-child-session-id={group.childSessionId} data-agent-status={stats.status} data-model-id={stats.modelId || undefined} data-tool-count={stats.toolCount} data-active-tool-count={stats.activeToolCount} data-pending={stats.pending ? 'true' : 'false'} onClick={() => openDetail(group)} aria-label={`查看 ${group.label} 子代理详情`}>
-      <span className={`work-subagents__avatar${group.active ? ' work-subagents__avatar--active' : ''}`}>
-        {group.active ? <Spinner size={16} /> : <Icon name="account-outline" size={18} />}
-      </span>
-      <span className="work-subagents__row-content"><strong>{group.label}</strong><span>{currentAction(group)}</span><span className="work-subagents__row-properties" aria-label="子代理属性">
-        {stats.modelId ? <span className="work-subagents__row-model" title={`模型 ${stats.modelId}`}>模型 {stats.modelId}</span> : null}
-        {latestTool ? <span title={`最近工具 ${latestTool}`}>最近 {latestTool}</span> : null}
-        {stats.pending ? <span className="work-subagents__row-pending">待处理</span> : null}
-      </span></span>
-      <span className="work-subagents__row-meta"><span className={`work-subagents__row-status work-subagents__row-status--${group.active ? 'active' : 'complete'}`}>{status}</span><span>{group.tools.length} 轮 · {stats.toolCount} 工具{stats.activeToolCount ? ` · ${stats.activeToolCount} 执行中` : ''}</span><span>{duration ? `耗时 ${duration}` : !group.active && run ? (age ? `${age} 分钟前` : '刚刚') : '等待开始'}</span></span>
-      <Icon name="chevron-right" size={16} />
+    const task = workSubagentTaskSummary(group) || currentAction(group)
+    const tone = stats.status === 'queued' ? 'waiting' : group.active ? 'active' : ['failed', 'error', 'interrupted', 'blocked'].includes(stats.status) ? 'error' : 'complete'
+    return <button type="button" className="work-subagents__row" key={group.key} ref={node => { if (node) rowRefs.current.set(group.key, node); else rowRefs.current.delete(group.key) }} data-child-session-id={group.childSessionId} data-agent-status={stats.status} data-model-id={stats.modelId || undefined} data-tool-count={stats.toolCount} data-active-tool-count={stats.activeToolCount} data-pending={stats.pending ? 'true' : 'false'} onClick={() => openDetail(group)} aria-label={`查看 ${group.label} 子代理详情`} aria-description={`${status}。${task}`}>
+      <span className="work-subagents__row-content"><strong title={group.label}>{group.label}</strong><span title={task}>{task}</span></span>
+      <span className={`work-subagents__row-status work-subagents__row-status--${tone}`} title={stats.status === 'queued' ? QUEUED_HINT : undefined}>{status}</span>
     </button>
   }
+  const listStatus = publishedFixedChildren ? '已发布记录' : discovery.state?.activeCount
+    ? `${discovery.state.activeCount} 个进行中` : running.length ? `${running.length} 个已载入代理进行中`
+      : groups.length ? '' : discovery.loading ? '正在发现协作代理…' : '暂无协作代理'
 
   return <section className={`work-subagents${selected ? ' work-subagents--detail' : ''}`} aria-label="协作代理" onKeyDown={event => {
+    if (!selected && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f' && searchRef.current) { event.preventDefault(); event.stopPropagation(); searchRef.current.focus() }
+    // Popover handles Escape at document level. Let it close the information
+    // surface before a later Escape navigates away from the agent detail.
+    if (event.key === 'Escape' && event.currentTarget.querySelector('.work-subagents__info-trigger[aria-expanded="true"]')) return
     if (event.key === 'Escape' && selected && event.target instanceof HTMLElement && !event.target.closest('textarea')) { event.preventDefault(); backToList() }
   }}>
     <header className="work-subagents__header">
       {selected ? <>
         <button type="button" className="work-subagents__back" ref={backRef} onClick={backToList} aria-label="返回子代理列表" title="返回子代理列表 (Esc)"><Icon name="chevron-right" size={18} /></button>
-        <span className="work-subagents__avatar"><Icon name="account-outline" size={18} /></span>
-        <div className="work-subagents__heading"><h3>{selected.label}</h3><p><span role="status" className={`work-subagents__status work-subagents__status--${selected.latest.state}`}>{toolStatusLabel(selected.latest)}</span></p></div>
-        <span className="work-subagents__model" title={selected.modelId}>{selected.modelId}</span>
-      </> : <div className="work-subagents__heading"><h3>协作代理</h3><p>{publishedFixedChildren ? `已发布 ${groups.length} 个代理记录，按需查看详情` : discovery.state?.activeCount !== undefined
-        ? discovery.state.activeCount > 0 ? `${discovery.state.activeCount} 个运行中` : groups.length ? `${groups.length} 个代理` : '暂无协作代理'
-        : groups.length ? `${running.length} 个运行中 · ${groups.length} 个代理`
-          : discovery.loading ? '正在发现协作代理…' : '在对话中 @Agent，邀请它协作完成工作'}</p></div>}
+        <div className="work-subagents__heading"><h3 title={selected.label}>{selected.label}</h3><p><span role="status" className={`work-subagents__status work-subagents__status--${selected.latest.state}`}>{toolStatusLabel(selected.latest)}</span><span className="work-subagents__round-count">{selected.tools.length} 轮工作</span></p></div>
+        <Popover key={`${scope}:${selected.key}`} align="end" width={280} label="代理信息" className="work-subagents__info" panelClassName="work-subagents__info-panel"
+          trigger={({ open }) => <button type="button" className="work-subagents__info-trigger" aria-label="代理信息" aria-expanded={open} title="代理信息"><Icon name="info" size={16} /></button>}>
+          <dl className="work-subagents__facts">
+            {selectedStats?.modelId ? <div><dt>模型</dt><dd>{selectedStats.modelId}</dd></div> : null}
+            <div><dt>工作轮次</dt><dd>{selected.tools.length} 轮</dd></div>
+            <div><dt>工具调用</dt><dd>{selectedStats?.toolCount ?? 0} 次{selectedStats?.activeToolCount ? ` · ${selectedStats.activeToolCount} 执行中` : ''}</dd></div>
+            {formatWorkSubagentDuration(selectedStats?.durationMs) ? <div><dt>本轮耗时</dt><dd>{formatWorkSubagentDuration(selectedStats?.durationMs)}</dd></div> : null}
+          </dl>
+          {rootRunId && selected.childSessionId && selectedRunIdRef.current && !selected.latest.subagentRef && !publishedFixedChildren ? <CollaborationReceiptInspector
+            key={selectionKey} target={{ rootRunId, rootSessionId: sessionId!, childSessionId: selected.childSessionId, invocationRunId: selectedRunIdRef.current }}
+            source={source} ready={ready} visible={panelActive} /> : null}
+        </Popover>
+      </> : <div className="work-subagents__heading"><h3>协作代理 {groups.length ? <span className="work-subagents__count" title={`已载入 ${groups.length} 个代理`} aria-label={`已载入 ${groups.length} 个代理`}>{groups.length}</span> : null}</h3>{listStatus ? <p>{listStatus}</p> : null}</div>}
       {!publishedFixedChildren ? <button type="button" className="work-subagents__refresh" disabled={!sessionId || !ready} onClick={() => setRefreshKey(value => value + 1)} aria-label="刷新子代理状态" title="刷新状态"><Icon name="restart" size={16} /></button> : null}
     </header>
+    {!selected && (groups.length >= 12 || memory.query) ? <div className="work-subagents__searchbar">
+      <label className="work-subagents__search"><Icon name="search" size={14} /><input ref={searchRef} type="search" aria-label="搜索已载入代理" placeholder="搜索已载入代理" value={memory.query}
+        onChange={event => searchGroups(event.currentTarget.value)} onKeyDown={event => { if (event.key === 'Escape' && memory.query) { event.preventDefault(); event.stopPropagation(); searchGroups('') } }} /></label>
+      {memory.query.trim() ? <span className="work-subagents__search-count" role="status">{filteredGroups.length} 个匹配 · 已载入 {groups.length} 个</span> : null}
+    </div> : null}
     {error || !publishedFixedChildren && discovery.error ? <div className="work-subagents__error" role="alert">状态更新失败：{error || discovery.error} · 保留上次确认状态</div> : null}
     {selected ? <>
-      <div className="work-subagents__tabs" aria-label="子代理详情视图">
+      <div className="work-subagents__tabs" role="group" aria-label="子代理详情视图">
         <button type="button" aria-pressed={selectedView === 'rounds'} onClick={() => { memory.views.set(selected.key, 'rounds'); redraw() }}>工作轮次</button>
         <button type="button" aria-pressed={selectedView === 'transcript'} disabled={Boolean(selected.latest.subagentRef) || !transcriptRun?.childSessionId} title={selected.latest.subagentRef ? '当前显示固定发布记录；恢复实时更新后可查看独立会话' : !transcriptRun?.childSessionId ? '代理开始后可查看独立会话' : undefined} onClick={() => { if (detailRef.current) memory.detailTop.set(selected.key, detailRef.current.scrollTop); memory.views.set(selected.key, 'transcript'); redraw() }}>完整对话</button>
       </div>
-      {selected.active ? <div className="work-subagents__live" role="status"><Spinner size={14} /><span className="work-subagents__live-label">{currentAction(selected)}</span>{activeRun ? <button type="button" disabled={!ready || cancellingKey !== null || activeRun.status === 'cancelling'} onClick={() => void cancelRun(selected)}>{cancellingKey === selected.key || activeRun.status === 'cancelling' ? '正在停止…' : '停止本轮'}</button> : null}</div> : null}
-      {rootRunId && selected.childSessionId && selectedRunIdRef.current && !selected.latest.subagentRef && !publishedFixedChildren ? <CollaborationReceiptInspector
-        key={selectionKey} target={{ rootRunId, rootSessionId: sessionId!, childSessionId: selected.childSessionId, invocationRunId: selectedRunIdRef.current }}
-        source={source} ready={ready} visible={panelActive} /> : null}
+      {selected.active ? <div className="work-subagents__live" role="status">{activeRun?.status === 'queued' ? <Icon name="clock-outline" size={14} /> : <Spinner size={14} />}<span className="work-subagents__live-label">{currentAction(selected)}</span>{activeRun ? <button type="button" disabled={!ready || cancellingKey !== null || activeRun.status === 'cancelling'} onClick={() => void cancelRun(selected)}>{cancellingKey === selected.key || activeRun.status === 'cancelling' ? '正在停止…' : '停止本轮'}</button> : null}</div> : null}
       {selectedView === 'transcript' && !selected.latest.subagentRef && transcriptRun?.childSessionId ? <WorkSubagentTranscript source={source} parentSessionId={sessionId!} childSessionId={transcriptRun.childSessionId} runId={transcriptRun.runId} name={selected.label} memory={memory.transcripts.get(selected.key)!} active={panelActive} running={selected.active} /> : <div className="work-subagents__detail" ref={detailRef} onScroll={event => memory.detailTop.set(selected.key, event.currentTarget.scrollTop)} aria-label={`${selected.label} 的工作记录`}>
         {[...roundWindow.items].reverse().map((tool, index) => <article className="work-subagents__round" key={tool.subagent?.runId || tool.id} data-run-id={tool.subagent?.runId}>
-          <div className="work-subagents__round-heading"><span>第 {selected.tools.length - roundWindow.end + index + 1} 轮</span><time dateTime={tool.subagent?.createdAt ? new Date(tool.subagent.createdAt).toISOString() : undefined}>{tool.subagent?.createdAt ? new Date(tool.subagent.createdAt).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '历史记录'}</time></div>
-          <SubagentCard tool={tool} sessionId={sessionId!} defaultOpen={index === roundWindow.items.length - 1} visible={panelActive} onPublishedLoaded={rememberFixedDetail} />
+          <SubagentCard tool={tool} sessionId={sessionId!} defaultOpen={index === roundWindow.items.length - 1} visible={panelActive} onPublishedLoaded={rememberFixedDetail} surfaceMode="work" round={{ number: selected.tools.length - roundWindow.end + index + 1, createdAt: tool.subagent?.createdAt }} />
         </article>)}
-        <div className="work-subagents__pagination"><span>轮次 {roundWindow.start + 1}–{roundWindow.end} / {selected.tools.length}</span>
+        {selected.tools.length > 64 ? <div className="work-subagents__pagination"><span>轮次 {roundWindow.start + 1}–{roundWindow.end} / {selected.tools.length}</span>
           {roundWindow.start > 0 ? <button type="button" className="btn btn--sm" onClick={() => setRoundCount(count => Math.max(64, count - 64))}>较新轮次</button> : null}
-          {roundWindow.end < selected.tools.length ? <button type="button" className="btn btn--sm" onClick={() => setRoundCount(count => count + 64)}>较早轮次</button> : null}</div>
+          {roundWindow.end < selected.tools.length ? <button type="button" className="btn btn--sm" onClick={() => setRoundCount(count => count + 64)}>较早轮次</button> : null}</div> : null}
       </div>}
       {liveFollowup.pending || liveFollowup.restoredDraft || liveFollowup.history.length || activeRun && !selected.latest.subagentRef || selected.latest.subagent?.continuation && (!selected.latest.subagentRef || !isSubagentActive(selected.latest.subagent.status)) && onContinue ? <div className="work-subagents__followup">
         <button type="button" ref={followupToggleRef} className="work-subagents__followup-toggle" aria-expanded={followupExpanded} aria-controls={`${followupId}-form`} aria-label={`${followupExpanded ? '收起' : '展开'}${selected.active ? '补充要求给' : '继续交给'} ${selected.label}`} onClick={() => { memory.followups.set(selected.key, !followupExpanded); redraw() }}>
-          <Icon name="chevron-down" size={14} /><span id={`${followupId}-label`}>{selected.active ? '补充要求给' : '继续交给'} {selected.label}</span>{!followupExpanded && (selectedDraft.trim() || liveFollowup.pending) ? <span className="work-subagents__draft-status">{liveFollowup.pending ? '结果待核对' : '已保留草稿'}</span> : null}
+          <Icon name="chevron-down" size={14} /><span>{selected.active ? '补充要求' : '安排下一步'}</span>{!followupExpanded && (selectedDraft.trim() || liveFollowup.pending) ? <span className="work-subagents__draft-status">{liveFollowup.pending ? '结果待核对' : '已保留草稿'}</span> : null}
         </button>
         <form id={`${followupId}-form`} className="work-subagents__composer" hidden={!followupExpanded} onFocusCapture={() => memory.followups.set(selected.key, true)} onSubmit={event => { event.preventDefault(); void submitFollowup(selected) }}>
-        <SubagentFollowupInput id={`${followupId}-input`} value={liveFollowup.pending?.message ?? selectedDraft} readOnly={Boolean(liveFollowup.pending)} onChange={value => { memory.drafts.set(selected.key, value); memory.errors.delete(selected.key); redraw() }} placeholder={selected.active ? '补充本轮要求；继续使用此代理的上下文' : '安排下一步，或补充要求；保留此代理的上下文'} labelledBy={`${followupId}-label`} describedBy={`${followupId}-hint`}
+        <span id={`${followupId}-label`} className="work-subagents__input-label">{selected.active ? '补充要求给' : '继续交给'} {selected.label}</span>
+        <div className="work-subagents__composer-editor">
+        <SubagentFollowupInput id={`${followupId}-input`} value={liveFollowup.pending?.message ?? selectedDraft} readOnly={Boolean(liveFollowup.pending)} onChange={value => { memory.drafts.set(selected.key, value); memory.errors.delete(selected.key); redraw() }} placeholder={selected.active ? '补充本轮要求…' : '安排下一步…'} labelledBy={`${followupId}-label`} describedBy={`${followupId}-hint`}
           onDismiss={() => { memory.followups.set(selected.key, false); redraw(); followupToggleRef.current?.focus() }} onSubmit={() => void submitFollowup(selected)} />
-        <div className="work-subagents__composer-actions"><p id={`${followupId}-hint`}>{liveFollowup.pending ? '原要求已冻结；核对不会重复发送' : selected.active ? !rootRunId ? '正在确认主任务的协作上下文' : liveFollowup.capability === undefined ? '正在确认引擎协作能力…' : liveFollowup.capability ? '本轮补充要求将排队，保留当前代理上下文' : '当前引擎尚未启用运行中补充要求；草稿会保留' : busy ? '请等待主任务结束后发送' : 'Ctrl / ⌘ Enter 继续执行'}</p><button type="submit" disabled={liveFollowup.busy || sendingKey !== null || !ready || (!liveFollowup.pending && (!selectedDraft.trim() || (selected.active ? !liveFollowup.capability : busy)))}>{sendingKey === selected.key || liveFollowup.busy ? <><Spinner size={14} />{liveFollowup.pending ? '正在核对…' : '正在提交…'}</> : liveFollowup.pending ? '核对排队结果' : <><Icon name="send" size={14} />{selected.active ? '发送补充要求' : '继续执行'}</>}</button></div>
+        <div className="work-subagents__composer-actions"><button type="submit" title="Ctrl / ⌘ Enter" disabled={liveFollowup.busy || sendingKey !== null || !ready || (!liveFollowup.pending && (!selectedDraft.trim() || (selected.active ? !liveFollowup.capability : busy)))}>{sendingKey === selected.key || liveFollowup.busy ? <><Spinner size={14} />{liveFollowup.pending ? '正在核对…' : '正在提交…'}</> : liveFollowup.pending ? '核对排队结果' : <><Icon name="send" size={14} />{selected.active ? '发送补充要求' : '继续执行'}</>}</button></div>
+        </div>
+        <p id={`${followupId}-hint`} className="work-subagents__composer-hint">{liveFollowup.pending ? '原要求已冻结；核对不会重复发送' : selected.active ? !rootRunId ? '正在确认主任务的协作上下文' : liveFollowup.capability === undefined ? '正在确认引擎协作能力…' : liveFollowup.capability ? '保留代理上下文 · Ctrl / ⌘ Enter 发送' : '当前引擎尚未启用运行中补充要求；草稿会保留' : busy ? '请等待主任务结束后发送' : '保留代理上下文 · Ctrl / ⌘ Enter 继续'}</p>
         {liveFollowup.notice ? <p className="work-subagents__followup-notice" role="status">{liveFollowup.notice}</p> : null}
         {liveFollowup.canRetry ? <button type="button" className="work-subagents__retry-original" disabled={liveFollowup.busy || !ready} onClick={() => void liveFollowup.retry().then(accepted => {
           if (accepted && selectedKeyRef.current === selected.key && memory.drafts.get(selected.key)?.trim() === liveFollowup.pending?.message) { memory.drafts.delete(selected.key); redraw() }
@@ -393,12 +419,13 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
       </div> : memory.errors.get(selected.key) ? <p className="work-subagents__error" role="alert">{memory.errors.get(selected.key)}</p> : null}
     </> : <div className="work-subagents__list" ref={listRef} onScroll={event => { memory.listTop = event.currentTarget.scrollTop }}>
       {groups.length ? <>
-        <section className="work-subagents__group" aria-label="正在运行的子代理"><h4>正在运行 <span>{running.length}</span></h4>{running.length ? running.filter(group => visibleGroups.has(group.key)).map(renderRow) : <p className="work-subagents__group-empty">当前没有正在运行的子代理</p>}</section>
-        <section className="work-subagents__group" aria-label="已结束的子代理"><h4>{publishedFixedChildren ? '已发布记录' : '已结束'} <span>{completed.length}</span></h4>{completed.length ? completed.filter(group => visibleGroups.has(group.key)).map(renderRow) : <p className="work-subagents__group-empty">结束后的工作记录会保留在这里</p>}</section>
+        {visibleRunning.length ? <section className="work-subagents__group" aria-label="正在运行的子代理"><h4>进行中 <span>{filteredRunning.length}</span></h4>{visibleRunning.map(renderRow)}</section> : null}
+        {visibleCompleted.length ? <section className="work-subagents__group" aria-label="已结束的子代理"><h4>{publishedFixedChildren ? '已发布记录' : '已结束'} <span>{completed.length}</span></h4>{visibleCompleted.map(renderRow)}</section> : null}
+        {!filteredGroups.length ? <p className="work-subagents__search-empty">已载入的代理中没有匹配结果。</p> : null}
       </> : <div className="work-subagents__empty"><Icon name="account-outline" size={28} /><h4>让专长各异的 Agent 一起工作</h4><p>在对话中使用 @Agent 指定分工。这里会显示它的执行过程和产出，也能继续安排下一步。</p></div>}
-      {groups.length > 64 ? <div className="work-subagents__pagination"><span>代理 {groupWindow.start + 1}–{groupWindow.end} / {groups.length}</span>
+      {filteredGroups.length > 64 ? <div className="work-subagents__pagination"><span>代理 {groupWindow.start + 1}–{groupWindow.end} / {filteredGroups.length}{memory.query.trim() ? ' 个匹配' : ''}</span>
         {groupWindow.start > 0 ? <button type="button" className="btn btn--sm" onClick={() => setVisibleCount(count => Math.max(64, count - 64))}>上一页</button> : null}
-        {groupWindow.end < groups.length ? <button type="button" className="btn btn--sm" onClick={() => setVisibleCount(count => count + 64)}>下一页</button> : null}</div> : null}
+        {groupWindow.end < filteredGroups.length ? <button type="button" className="btn btn--sm" onClick={() => setVisibleCount(count => count + 64)}>下一页</button> : null}</div> : null}
       {!publishedFixedChildren && directory.directory ? <div className="work-subagents__pagination" aria-busy={directory.loading}>
         <p>{directory.directory.schemaVersion === 1 ? '此引擎提供旧版列表，暂不支持分页。' : directory.directory.partial
           ? '这里显示已读取的代理记录，更多运行状态可继续加载查看。' : '当前代理列表已完整读取。'}</p>

@@ -1,0 +1,46 @@
+{
+  "checkedAt": "2026-11-04T02:38:49.564Z",
+  "type": "research-only",
+  "applicationChanges": false,
+  "modelsInvoked": false,
+  "externalProjectsExecuted": false,
+  "clientCommit": "a41993dcb68c8d1b826fc6ce3c2758544a104f47",
+  "engineCommit": "d25d93a68ce44b5bc5498584434b40c9ac9b7441",
+  "files": [
+    {
+      "name": "report.md",
+      "bytes": 22659,
+      "sha256": "e6210df8435ce04c11e024ab734f7688ff0bf0c74c809746fb2001cd80894e12",
+      "localLinks": 4,
+      "missing": []
+    },
+    {
+      "name": "client-audit.md",
+      "bytes": 16274,
+      "sha256": "36b48d98b59f230c59d1b608cdecb8a6ff65ee6771f22757a0083ef020ee7455",
+      "localLinks": 30,
+      "missing": []
+    },
+    {
+      "name": "engine-audit.md",
+      "bytes": 25067,
+      "sha256": "cce5eb0bf7deaf7f9bbbb45319b9459513d18be91e69bd3af7171f43df13f073",
+      "localLinks": 41,
+      "missing": []
+    },
+    {
+      "name": "github-cases.md",
+      "bytes": 21898,
+      "sha256": "b49b77feb56892acc25f5d28fea7e4a581bc5cb14d3c5c8eac184828b7c1022f",
+      "localLinks": 0,
+      "missing": []
+    },
+    {
+      "name": "official-protocol-research.md",
+      "bytes": 9463,
+      "sha256": "87fd8d1553f288e82a1e59040ed704a3072d89ee299345bca9f686844ae31e48",
+      "localLinks": 1,
+      "missing": []
+    }
+  ]
+}

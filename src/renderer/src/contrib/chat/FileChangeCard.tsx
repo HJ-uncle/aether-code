@@ -1,13 +1,15 @@
-import { useMemo, useState, useSyncExternalStore, type JSX } from 'react'
+import { useMemo, useState, useSyncExternalStore, type JSX, type ReactNode } from 'react'
 import { useApp } from '@renderer/core/app-context'
 import { toast } from '@renderer/core/toast'
 import type { EngineFileChange } from '@shared/ipc'
 import { getRevertOutcome, revertStatusLabel, subscribeReverts } from '@renderer/core/engine/change-revert'
 import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
+import { MotionPresence } from '@renderer/workbench/MotionPresence'
 import { openFileFromChat } from './open-file'
 import type { ChatFileContext } from './chat-link'
 import { useCollapseMemory } from './useCollapseMemory'
+import { VirtualFileChangeDiff } from './VirtualFileChangeDiff'
 import {
   FILE_CHANGE_PREVIEW_ROWS,
   compactFileChangeRows,
@@ -35,32 +37,40 @@ export function FileChangeCard({
   change,
   state,
   fileContext,
-  onOpenFile
+  onOpenFile,
+  defaultOpen,
+  memoryKey,
+  embedded = false
 }: {
   change: EngineFileChange
   state: 'running' | 'done' | 'error' | 'unknown' | 'cancelled' | 'waiting' | 'interrupted'
   fileContext?: ChatFileContext
   onOpenFile?: (path: string) => void
+  defaultOpen?: boolean
+  memoryKey?: string
+  /** A surrounding inspector already supplies the file title and controls. */
+  embedded?: boolean
 }): JSX.Element {
   const { engine } = useApp()
   const remoteReadOnly = engine.snapshot.mode === 'remote'
   /** 分批渲染差异片段，不把省略的未修改内容计入预览。 */
   const [visibleLimit, setVisibleLimit] = useState(FILE_CHANGE_PREVIEW_ROWS)
   // 删除只保留摘要；用户主动选择优先于默认值，分页回收后也不重新展开。
-  const [manualCollapsed, setCollapsed] = useCollapseMemory(`file-change:${change.id}`)
-  const collapsed = manualCollapsed ?? fileChangeInitiallyCollapsed(change)
+  const [manualCollapsed, setCollapsed] = useCollapseMemory(memoryKey ?? `file-change:${change.id}`)
+  const collapsed = embedded ? false : manualCollapsed ?? (defaultOpen === undefined ? fileChangeInitiallyCollapsed(change) : !defaultOpen)
   const failed = state === 'error'
   const outcome = useSyncExternalStore(subscribeReverts, () => getRevertOutcome(change.id))
   const rollbackLabel = outcome ? revertStatusLabel[outcome.status] : change.status === 'reverted' ? '已撤回' : null
 
-  const isNew = change.isNew ?? (!change.truncated && change.oldContent === null)
+  const isNew = change.kind === 'write' && (change.isNew ?? (!change.truncated && change.oldContent === null &&
+    (!change.oldHash || change.oldHash === 'missing')))
   const rows = useMemo(() => {
     if (change.truncated) return null
-    if (change.kind === 'delete') return change.oldContent === null ? null : diffForDeletedFile(change.oldContent)
-    if (isNew) return change.newContent === null ? null : diffForNewFile(change.newContent)
-    if (change.oldContent === null || change.newContent === null) return null
+    if (change.kind === 'delete') return typeof change.oldContent === 'string' ? diffForDeletedFile(change.oldContent) : null
+    if (isNew) return typeof change.newContent === 'string' ? diffForNewFile(change.newContent) : null
+    if (typeof change.oldContent !== 'string' || typeof change.newContent !== 'string') return null
     return computeLineDiff(change.oldContent, change.newContent)
-  }, [change, isNew])
+  }, [change.truncated, change.kind, change.oldContent, change.newContent, isNew])
 
   const stats = useMemo(() => rows === null ? null : diffStats(rows), [rows])
   const displayPath = change.displayPath || change.path
@@ -73,7 +83,7 @@ export function FileChangeCard({
   }, [displayPath])
 
   const previewRows = useMemo(() => compactFileChangeRows(rows ?? []), [rows])
-  const visibleRows = useMemo(() => takeFileChangePreviewRows(previewRows, visibleLimit), [previewRows, visibleLimit])
+  const visibleRows = useMemo(() => embedded ? [] : takeFileChangePreviewRows(previewRows, visibleLimit), [embedded, previewRows, visibleLimit])
   const language = fileChangeLanguage(displayPath)
   const highlightedRows = useMemo(
     () => collapsed ? [] : visibleRows.map(row => row.type === 'gap' ? '' : highlightFileChangeLine(row.text || ' ', language)),
@@ -83,9 +93,9 @@ export function FileChangeCard({
   const stateIcon = failed ? 'close' : state === 'running' ? 'restart' : state === 'done' ? 'check' : 'clock-outline'
 
   return (
-    <div className={`diff-card${failed ? ' diff-card--error' : ''}${collapsed ? ' is-collapsed' : ''}`} data-change-kind={change.kind}>
+    <div className={`diff-card${embedded ? ' diff-card--embedded' : ''}${failed ? ' diff-card--error' : ''}${collapsed ? ' is-collapsed' : ''}`} data-change-kind={change.kind}>
       {/* 头部用 div[role=button] 而非 <button>：内部还有「路径」按钮，按钮不能嵌套按钮 */}
-      <div
+      {embedded ? null : <div
         className="diff-card__head"
         role="button"
         tabIndex={0}
@@ -132,7 +142,7 @@ export function FileChangeCard({
           </span>
         )}
         <Icon name="chevron" size={16} className="diff-card__chevron" />
-      </div>
+      </div>}
       {remoteReadOnly || rollbackLabel ? (
         <div className="diff-card__metadata">
           {remoteReadOnly ? <span className="diff-card__hint">远端快照</span> : null}
@@ -140,7 +150,7 @@ export function FileChangeCard({
         </div>
       ) : null}
 
-      {collapsed ? null : change.truncated ? (
+      <FileChangePresence show={!collapsed} embedded={embedded}>{change.truncated ? (
         <div className="diff-card__body diff-card__body--empty">
           文件过大或为二进制格式，未保存内容快照（无法展示差异，也不支持自动撤回）。
         </div>
@@ -153,6 +163,7 @@ export function FileChangeCard({
       ) : (
         <>
           {stats?.approximate ? <div className="diff-card__notice">{DIFF_APPROXIMATION_HINT}</div> : null}
+          {embedded ? <VirtualFileChangeDiff key={change.id} rows={previewRows} language={language} displayPath={displayPath} /> : <>
           <div className="diff-card__body" tabIndex={0} aria-label={`${displayPath} 文件差异`}>
             <div className="diff-card__lines">
               {visibleRows.map((row, index) => row.type === 'gap' ? (
@@ -181,8 +192,14 @@ export function FileChangeCard({
               展开更多差异
             </button>
           ) : null}
+          </>}
         </>
-      )}
+      )}</FileChangePresence>
     </div>
   )
+}
+
+/** The embedded virtual diff must keep its direct flex parent and measured size. */
+function FileChangePresence({ show, embedded, children }: { show: boolean; embedded: boolean; children: ReactNode }): JSX.Element {
+  return embedded ? <>{children}</> : <MotionPresence show={show}>{children}</MotionPresence>
 }

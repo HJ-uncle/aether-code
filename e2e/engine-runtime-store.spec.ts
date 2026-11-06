@@ -81,13 +81,14 @@ test('临时目录、损坏清单和与目录不符的清单不会成为候选�
   expect(listLocalRuntimes(fixture).map(item => item.id)).toEqual(['runtime-valid'])
 })
 
-test('用户选择的导入引擎在安装和开发模式中均实际生效，恢复默认回到原来源', () => {
+test('导入引擎生效，开发启动的显式入口优先固定本轮快照，安装模式忽略环境覆盖', () => {
   const importedRoot = join(fixture, 'engine', 'runtimes', 'runtime-selected')
   const options = { resourcesPath: join(fixture, 'resources'), appPath: fixture, platform: 'win32-x64', override: join(fixture, 'dev', 'dist', 'main.js') }
   for (const packaged of [true, false]) {
-    expect(selectRuntimeEntry({ ...options, packaged, importedRoot })).toEqual({
+    expect(selectRuntimeEntry({ ...options, packaged, importedRoot })).toEqual(packaged ? {
       entryPath: join(importedRoot, 'dist', 'main.js'), source: 'imported'
-    })
+    } : { entryPath: options.override, source: 'env' })
+    expect(selectRuntimeEntry({ ...options, override: undefined, packaged, importedRoot }).source).toBe('imported')
     expect(selectRuntimeEntry({ ...options, packaged }).source).toBe(packaged ? 'bundled' : 'env')
   }
 })

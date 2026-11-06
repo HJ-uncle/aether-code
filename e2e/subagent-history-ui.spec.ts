@@ -1,5 +1,5 @@
 /** Real Electron + fake HTTP coverage: authoritative totals, fixed history watermarks,
- * bounded rows, explicit detail chunks and stale responses after switching tasks.
+ * bounded rows, readable Work details, chunk navigation and stale task responses.
  * No model is invoked. The coordinator must build the IDE before running this spec. */
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { createServer, type ServerResponse } from 'node:http'
@@ -14,6 +14,7 @@ const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
 const token = 'subagent-history-fixture-token', modelId = 'subagent-history-model'
 interface Session { run: RootRun; child: SubagentRunView; history: Array<{ id: string; role: string; content: string; createdAt: number }>; projection: ChatSsePayload[] }
 const sessions = new Map<string, Session>()
+const admissionReceipts = new Map<string, { admission: Record<string, unknown>; run: RootRun }>()
 const toolRequests: Array<{ runId: string; atSeq: number; cursor: number }> = []
 const detailRequests: Array<{ runId: string; atSeq: number; offset: number; limit: number }> = []
 const listRequests: string[] = []
@@ -28,6 +29,7 @@ const envelope = (data: unknown): string => JSON.stringify({ code: 200, message:
 const capabilityBody = () => envelope({ schemaVersion: 2, eventVersions: [1, 2], views: ['legacy', 'summary'], toolPagination: true, eventPagination: true, detailChunks: true, exactWatermarks: true })
 const summary = (index: number): SubagentToolSummary => ({ id: `tool-${index}`, name: 'read_file', args: { path: `file-${index}.ts` }, status: 'succeeded', ordinal: index, revisionSeq: index, detailRef: `detail-${index}`, detailTruncated: true })
 const rawDetail = Buffer.from(JSON.stringify({ args: { path: 'file-1.ts' }, output: `FIRST_CHUNK_${'x'.repeat(40000)}SECOND_CHUNK_${'y'.repeat(40000)}FINAL_CHUNK` }), 'utf8')
+const readableDetail = Buffer.from(JSON.stringify({ args: { path: 'file-2.ts', internalReceipt: 'RAW_HISTORY_ARGS_ONLY' }, output: '已检查文件内容，未发现需要调整的配置。' }), 'utf8')
 function child(parentId: string, rootRun: RootRun): SubagentRunView {
   const latest = { ...summary(4100), name: 'grep' }
   return { schemaVersion: 2, view: 'summary', runId: `child-${parentId}`, tenantId: 'fixture', rootSessionId: parentId, parentSessionId: parentId,
@@ -43,10 +45,35 @@ const server = createServer((request, response) => {
     let raw = ''
     for await (const part of request) raw += part.toString()
     const body = raw ? JSON.parse(raw) as Record<string, unknown> : {}
+    if (path === '/api/v1/chat/admission/context') {
+      const sessionId = url.searchParams.get('sessionId') ?? '', run = sessions.get(sessionId)?.run
+      const root = run ? { ...run, attemptId: `attempt-${run.runId}` } : null
+      response.setHeader('content-type', 'application/json')
+      response.end(envelope({ protocolVersion: 1, tenantId: 'fixture', sessionId,
+        namespace: { id: 'subagent-history-db', generation: 'one' },
+        transport: { toolProfile: request.headers['x-aether-tool-profile'] || 'general', runLifetime: 'durable', subagentProtocol: 2 },
+        root, predecessor: root ? { runId: root.runId, attemptId: root.attemptId, version: root.version } : null })); return
+    }
+    if (path === '/api/v1/chat/admission/receipt') {
+      const accepted = admissionReceipts.get(String(body.requestKey)), current = accepted?.run
+      response.setHeader('content-type', 'application/json')
+      response.end(envelope(accepted && current ? { protocolVersion: 1, status: 'accepted',
+        receipt: { ...accepted.admission, sessionId: current.sessionId, rootRunId: current.runId,
+          turnId: current.turnId, userMessageId: current.userMessageId, assistantMessageId: current.assistantMessageId },
+        run: current, projection: { rootVersion: current.version, rootAttemptId: `attempt-${current.runId}`,
+          user: { messageId: current.userMessageId, state: 'projected' },
+          assistant: { anchorMessageId: current.assistantMessageId, messageId: current.assistantMessageId, state: 'persisted' } }
+      } : { protocolVersion: 1, status: 'absent', namespace: body.namespace, sessionId: body.sessionId, requestKey: body.requestKey })); return
+    }
     if (request.method === 'POST' && path === '/api/v1/chat') {
       const id = String(body.sessionId), now = Date.now()
       chatRequests.push({ sessionId: id, message: String(body.message) })
       const run: RootRun = { schemaVersion: 1, runId: `root-${id}`, sessionId: id, turnId: `turn-${id}`, userMessageId: `user-${id}`, assistantMessageId: `assistant-${id}`, seq: 4, version: 1, status: 'succeeded', modelId, pending: [], workspacePaths: [], createdAt: now, updatedAt: now, finishedAt: now }
+      if (body.admission && typeof body.admission === 'object' && !Array.isArray(body.admission)) {
+        const admission = body.admission as Record<string, unknown>
+        if (admission.protocolVersion !== 1 || admission.owner !== 'work' || typeof admission.requestKey !== 'string') throw new Error('Invalid fixture admission')
+        admissionReceipts.set(admission.requestKey, { admission, run })
+      }
       const delegated = child(id, run), user = { id: run.userMessageId, role: 'user', content: String(body.message), createdAt: now }
       const content = `任务已就绪：${String(body.message)}`
       const projection: ChatSsePayload[] = [{ userMessage: user }, { subagentEvent: { schemaVersion: 2, kind: 'snapshot', runId: delegated.runId, seq: delegated.lastSeq, view: delegated } }, { content }, { run }]
@@ -72,9 +99,10 @@ const server = createServer((request, response) => {
       response.setHeader('content-type', 'application/json')
       if (!path.includes('/tools')) { response.end(envelope(run)); return }
       if (match[2]) {
-        const offset = Number(url.searchParams.get('offset') ?? 0), limit = Number(url.searchParams.get('limitBytes') ?? 32768), end = Math.min(rawDetail.length, offset + limit)
+        const index = Number(decodeURIComponent(match[2]).slice(5)), detail = index === 2 ? readableDetail : rawDetail
+        const offset = Number(url.searchParams.get('offset') ?? 0), limit = Number(url.searchParams.get('limitBytes') ?? 32768), end = Math.min(detail.length, offset + limit)
         detailRequests.push({ runId: run.runId, atSeq, offset, limit })
-        response.end(envelope({ schemaVersion: 2, runId: run.runId, asOfSeq: atSeq, tool: summary(Number(decodeURIComponent(match[2]).slice(5))), detail: { encoding: 'json-utf8', text: rawDetail.subarray(offset, end).toString('utf8'), offset, totalBytes: rawDetail.length, hasMore: end < rawDetail.length, ...(end < rawDetail.length ? { nextOffset: end } : {}) } })); return
+        response.end(envelope({ schemaVersion: 2, runId: run.runId, asOfSeq: atSeq, tool: summary(index), detail: { encoding: 'json-utf8', text: detail.subarray(offset, end).toString('utf8'), offset, totalBytes: detail.length, hasMore: end < detail.length, ...(end < detail.length ? { nextOffset: end } : {}) } })); return
       }
       const cursor = Number(url.searchParams.get('cursor') ?? 0), limit = Number(url.searchParams.get('limit') ?? 50), total = atSeq === 5000 ? 4100 : run.toolCount, end = Math.min(total, cursor + limit)
       toolRequests.push({ runId: run.runId, atSeq, cursor })
@@ -93,6 +121,13 @@ const server = createServer((request, response) => {
     }
     if (path === '/api/v1/cron/capabilities') { response.writeHead(404).end(JSON.stringify({ code: 404, message: 'Legacy automation protocol' })); return }
     const id = url.searchParams.get('sessionId') ?? '', session = sessions.get(id)
+    if (path === '/api/v1/conversation/display') {
+      const rows = session?.history ?? [], users = rows.filter(row => row.role === 'user')
+      response.setHeader('content-type', 'application/json')
+      response.end(envelope({ schemaVersion: 1, turns: users.map(row => ({ userMessageId: row.id, preview: row.content, createdAt: row.createdAt })),
+        messages: rows, loadedTurnIds: users.map(row => row.id), revision: `${id}:${rows.length}`,
+        mutationRevision: `${id}:unchanged`, backend: 'jsonl', completeness: 'complete' })); return
+    }
     const data = path === '/health' ? { status: 'ok' }
       : path === '/meta' ? { version: '2.0.0', buildId: `sha256:${'f'.repeat(64)}`, protocolVersion: 1, toolProfiles: ['general', 'code'], subagentSchemaVersion: 1, instanceId: 'subagent-history-fixture' }
         : path === '/api/v1/models' ? [{ id: modelId, modelId, provider: 'openai', displayName: 'History fixture model', isEnabled: true, capabilities: { toolCalling: true, contextWindow: 128000 } }]
@@ -119,15 +154,24 @@ async function startTask(prompt: string): Promise<string> {
   await expect(work().getByRole('region', { name: '协作对话', exact: true })).toContainText(`任务已就绪：${prompt}`)
   return [...sessions.keys()].at(-1)!
 }
-async function openChild(): Promise<void> {
-  const tab = work().getByRole('tablist', { name: '工作区内容', exact: true }).getByRole('tab', { name: '子代理', exact: true })
-  await tab.click()
+async function openDirectory(): Promise<void> {
+  const openWorkspace = work().getByRole('button', { name: '打开工作区', exact: true })
+  if (await openWorkspace.isVisible()) await openWorkspace.click()
+  const tab = work().getByRole('tablist', { name: '已打开的工作区', exact: true }).getByRole('tab', { name: '子代理', exact: true })
+  if (await tab.isVisible()) await tab.click()
+  else {
+    await work().getByRole('button', { name: '更多工作区', exact: true }).click()
+    await page.getByRole('menuitem', { name: '子代理', exact: true }).click()
+  }
   await expect(tab).toHaveAttribute('aria-selected', 'true')
+}
+async function openChild(): Promise<void> {
+  await openDirectory()
   await panel().getByRole('button', { name: '查看 耐久测试代理 子代理详情', exact: true }).click()
   await expect(card()).toBeVisible()
   const toggle = card().locator('.subagent-card__tools-header')
   if (!await card().locator('.subagent-history').count()) await toggle.click()
-  await expect(card().locator('.subagent-history > .subagent-history__toolbar')).toContainText('4,100 条历史记录 · 当前显示 50 次调用')
+  await expect(card().locator('.subagent-history > .subagent-history__toolbar')).toContainText('已显示 50 / 4,100 条记录')
 }
 
 async function openChildWithHistoryFailure(prompt: string): Promise<string> {
@@ -185,48 +229,69 @@ test.describe.serial('子代理按需历史与详情', () => {
 
   test('摘要只有一项仍显示4100总数；分页固定水位且窗口最多128项', async () => {
     parent = await startTask('HISTORY_ORIGINAL_TASK')
-    await work().getByRole('button', { name: '子代理', exact: true }).click()
-    await expect(work().getByRole('tablist', { name: '工作区内容', exact: true }).getByRole('tab', { name: '子代理', exact: true })).toHaveAttribute('aria-selected', 'true')
-    await expect(panel()).toContainText('最近搜索内容')
-    await panel().getByRole('button', { name: '查看 耐久测试代理 子代理详情', exact: true }).click()
-    await expect(card().locator('summary')).toContainText('4,100 条历史记录')
-    await card().locator('.subagent-card__tools-header').click()
+    await openDirectory()
+    const row = panel().getByRole('button', { name: '查看 耐久测试代理 子代理详情', exact: true })
+    await expect(row).toContainText('检查长任务')
+    await expect(row).toHaveAttribute('data-tool-count', '4100')
+    await row.click()
+    await expect(panel().locator('.work-subagents__live-label')).toContainText('最近搜索内容')
+    const toolsHeader = card().locator('.subagent-card__tools-header')
+    await expect(toolsHeader).toContainText('4,100 条历史记录')
+    await toolsHeader.click()
     const history = card().locator('.subagent-history')
+    await expect(history.locator(':scope > .subagent-history__toolbar')).toContainText('已显示 50 / 4,100 条记录')
     await expect(history.locator('.subagent-card__call')).toHaveCount(50)
-    await history.getByRole('button', { name: '加载更多记录', exact: true }).click(); await expect(history.locator(':scope > .subagent-history__toolbar')).toContainText('4,100 条历史记录 · 当前显示 100 次调用')
+    await expect(history.locator('.subagent-card__call-icon')).toHaveCount(50)
+    await expect(history.locator('.subagent-card__call-summary')).toHaveCount(0)
+    await expect(history.locator('.subagent-card__call-toggle').first()).toHaveAccessibleName('读取文件 · file-1.ts · 成功')
+    await history.getByRole('button', { name: '加载更多记录', exact: true }).click(); await expect(history.locator(':scope > .subagent-history__toolbar')).toContainText('已显示 100 / 4,100 条记录')
     await history.getByRole('button', { name: '加载更多记录', exact: true }).click(); await expect(history).toContainText('已读取 150 项')
     await expect(history.locator('.subagent-card__call')).toHaveCount(128)
     expect(toolRequests.map(value => value.atSeq)).toEqual([5000, 5000, 5000])
     const run = sessions.get(parent)!.child
     run.lastSeq = 5001; run.toolCount = 4101; run.coverage.asOfSeq = 5001; run.coverage.toolCount = 4101; run.updatedAt++
     await panel().getByRole('button', { name: '刷新子代理状态', exact: true }).click()
-    await expect(card().locator('summary')).toContainText('4,101 条历史记录')
+    await expect(toolsHeader).toContainText('4,101 条历史记录')
     await expect(history).toContainText('记录已更新')
     await history.getByRole('button', { name: '加载更多记录', exact: true }).click()
-    await expect(history.locator(':scope > .subagent-history__toolbar')).toContainText('4,100 条历史记录 · 当前显示 128 次调用')
+    await expect(history.locator(':scope > .subagent-history__toolbar')).toContainText('已显示 128 / 4,100 条记录')
     await expect(history).toContainText('已读取 200 项')
     expect(toolRequests.at(-1)?.atSeq).toBe(5000)
     await history.getByRole('button', { name: '更新记录', exact: true }).click()
-    await expect(history.locator(':scope > .subagent-history__toolbar')).toContainText('4,101 条历史记录 · 当前显示 50 次调用')
+    await expect(history.locator(':scope > .subagent-history__toolbar')).toContainText('已显示 50 / 4,101 条记录')
     expect(toolRequests.at(-1)?.atSeq).toBe(5001)
-    await expect(history.locator('.subagent-card__tools-list')).toHaveCSS('overflow-y', 'auto')
+    await expect(history.locator('.subagent-card__tools-list')).toHaveCSS('overflow-y', 'visible')
+    await expect(panel().locator('.work-subagents__detail')).toHaveCSS('overflow-y', 'auto')
   })
 
-  test('工具详情按32KiB分段替换，下一段不累积上段正文', async () => {
+  test('Work工具详情保留可读输出并隐藏原始参数；长详情仍按32KiB固定水位翻页', async () => {
     const history = card().locator('.subagent-history')
-    await history.locator('.subagent-card__call-toggle').first().click()
-    const detail = history.locator('.subagent-history__detail')
-    await expect(detail).toContainText('FIRST_CHUNK_')
+    const firstCall = history.locator('.subagent-card__call').first()
+    await firstCall.locator('.subagent-card__call-toggle').click()
+    const detail = firstCall.locator('.subagent-history__detail')
+    await expect(detail).toContainText('内容较长，可在子代理对话中查看')
+    await expect(detail).not.toContainText(/FIRST_CHUNK_|SECOND_CHUNK_|FINAL_CHUNK|字节|原始详情|原始参数/)
+    await expect(detail.locator('pre')).toHaveCount(0)
     await detail.getByRole('button', { name: '下一段内容', exact: true }).click()
-    await expect(detail).toContainText('SECOND_CHUNK_')
-    await expect(detail).not.toContainText('FIRST_CHUNK_')
-    expect(detailRequests.slice(-2).map(value => ({ offset: value.offset, limit: value.limit, atSeq: value.atSeq }))).toEqual([{ offset: 0, limit: 32768, atSeq: 5001 }, { offset: 32768, limit: 32768, atSeq: 5001 }])
-    expect(await detail.locator('pre').textContent()).toHaveLength(32768)
-    await expect(detail).toHaveCSS('overflow-y', 'auto')
+    await expect(detail.getByRole('button', { name: '上一段内容', exact: true })).toBeEnabled()
+    await expect.poll(() => detailRequests.slice(-2).map(value => ({ offset: value.offset, limit: value.limit, atSeq: value.atSeq }))).toEqual([{ offset: 0, limit: 32768, atSeq: 5001 }, { offset: 32768, limit: 32768, atSeq: 5001 }])
+    await expect(detail).toContainText('内容较长，可在子代理对话中查看')
+    await expect(detail).not.toContainText(/FIRST_CHUNK_|SECOND_CHUNK_|FINAL_CHUNK|字节/)
+    await expect(detail.locator('pre')).toHaveCount(0)
+    await expect(detail).toHaveCSS('overflow-y', 'visible')
     await detail.getByRole('button', { name: '上一段内容', exact: true }).click()
-    await expect(detail).toContainText('FIRST_CHUNK_')
-    await expect(detail).not.toContainText('SECOND_CHUNK_')
-    expect(detailRequests.at(-1)?.offset).toBe(0)
+    await expect(detail.getByRole('button', { name: '上一段内容', exact: true })).toHaveCount(0)
+    await expect.poll(() => detailRequests.at(-1)?.offset).toBe(0)
+    await expect(detail).not.toContainText(/FIRST_CHUNK_|SECOND_CHUNK_|FINAL_CHUNK|字节/)
+
+    const secondCall = history.locator('.subagent-card__call').nth(1)
+    await secondCall.locator('.subagent-card__call-toggle').click()
+    const readable = secondCall.locator('.subagent-history__detail')
+    await expect(readable).toContainText('已检查文件内容，未发现需要调整的配置。')
+    await expect(readable.locator('.subagent-history__toolbar')).toContainText('工具执行详情')
+    await expect(readable).not.toContainText(/RAW_HISTORY_ARGS_ONLY|internalReceipt|字节|原始参数/)
+    await expect(readable.locator('.subagent-card__call-section', { hasText: /^参数$/ })).toHaveCount(0)
+    await expect(readable.getByRole('button', { name: '下一段内容', exact: true })).toHaveCount(0)
   })
 
   test('切换任务后旧分页响应不能回写新子代理窗口', async () => {
@@ -238,7 +303,7 @@ test.describe.serial('子代理按需历史与详情', () => {
     await openChild()
     heldPage!.response.end(heldPage!.body); heldPage = undefined
     await expect(card()).toHaveAttribute('data-run-id', sessions.get(other)!.child.runId)
-    await expect(card().locator('.subagent-history > .subagent-history__toolbar')).toContainText('4,100 条历史记录 · 当前显示 50 次调用')
+    await expect(card().locator('.subagent-history > .subagent-history__toolbar')).toContainText('已显示 50 / 4,100 条记录')
     await expect(card().locator('.subagent-card__call')).toHaveCount(50)
     await expect(card()).not.toContainText('SECOND_CHUNK_')
   })
@@ -257,7 +322,7 @@ test.describe.serial('子代理按需历史与详情', () => {
     expect(toolRequests.filter(value => value.runId === runId)).toEqual(expectedRequests)
     heldRetryHistory!.response.end(heldRetryHistory!.body); heldRetryHistory = undefined
     await expect(history).toHaveAttribute('aria-busy', 'false')
-    await expect(history.locator(':scope > .subagent-history__toolbar')).toContainText('4,100 条历史记录 · 当前显示 50 次调用')
+    await expect(history.locator(':scope > .subagent-history__toolbar')).toContainText('已显示 50 / 4,100 条记录')
     await expect(history.locator('.subagent-card__call')).toHaveCount(50)
     await expect(history.getByRole('alert')).toHaveCount(0)
     expect(toolRequests.filter(value => value.runId === runId)).toEqual(expectedRequests)
@@ -271,11 +336,10 @@ test.describe.serial('子代理按需历史与详情', () => {
     run.lastSeq = 5001; run.coverage.asOfSeq = 5001; run.updatedAt++; run.description = '耐久测试代理 · 状态已刷新'
     await panel().getByRole('button', { name: '刷新子代理状态', exact: true }).click()
     await expect.poll(() => listRequests.filter(id => id === parentId).length).toBeGreaterThan(readsBefore)
-    await expect(card().locator('.subagent-card__task')).toContainText('状态已刷新')
     await expect(history).toContainText('记录已更新')
     await history.locator('.subagent-card__call-toggle').first().click()
     const detail = history.locator('.subagent-history__detail')
-    await expect(detail).toContainText('FIRST_CHUNK_')
+    await expect(detail).toContainText('内容较长，可在子代理对话中查看')
     await detail.getByRole('button', { name: '更新详情', exact: true }).click()
     await expect.poll(() => detailRequests.filter(value => value.runId === runId).map(value => value.atSeq)).toEqual([5000, 5001])
     await expect(history.getByRole('alert')).toContainText('子代理工具分页协议无效')
@@ -286,7 +350,7 @@ test.describe.serial('子代理按需历史与详情', () => {
     ])
     invalidHistoryFor = ''
     await history.getByRole('button', { name: '重试', exact: true }).click()
-    await expect(history.locator(':scope > .subagent-history__toolbar')).toContainText('4,100 条历史记录 · 当前显示 50 次调用')
+    await expect(history.locator(':scope > .subagent-history__toolbar')).toContainText('已显示 50 / 4,100 条记录')
     await expect(history.getByRole('alert')).toHaveCount(0)
     await expect(history).not.toContainText('记录已更新')
     expect(toolRequests.filter(value => value.runId === runId)).toEqual([

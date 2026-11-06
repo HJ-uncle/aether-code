@@ -1,9 +1,84 @@
 import type { ChatMessage, ToolActivity } from '@renderer/core/engine/useChat'
 import { isVisibleToolActivity } from '@renderer/core/engine/task-plan'
+import { isWorkStandaloneTool } from './work-tool-presentation'
+import { toolPresentation } from '../chat/tool-presentation'
 
 export type WorkMessageSegment =
+  | { kind: 'followup'; key: string; message: ChatMessage }
   | { kind: 'content'; key: string; text: string }
+  | { kind: 'thinking'; key: string; text: string }
   | { kind: 'tools'; key: string; tools: ToolActivity[] }
+
+export type WorkPresentationSegment =
+  | { kind: 'process'; key: string; segments: WorkMessageSegment[] }
+  | { kind: 'tool'; key: string; tool: ToolActivity }
+  | { kind: 'collaboration'; key: string; tools: ToolActivity[] }
+  | { kind: 'answer'; key: string; text: string }
+
+export type WorkCollaborationMembership = ReadonlyMap<string, string>
+
+/** Freeze only the disclosure boundaries the user has started reading; receipt
+ * objects and statuses still come from the latest message on every render. */
+export function captureWorkCollaborationMembership(presentation: readonly WorkPresentationSegment[]): WorkCollaborationMembership {
+  return new Map(presentation.flatMap(segment => segment.kind === 'collaboration'
+    ? segment.tools.map(tool => [tool.id, segment.key] as const) : []))
+}
+
+/** Tool screenshots document the process; the assistant's final prose and
+ * images stay in the answer, with all receipts retaining their original order. */
+export function workMessagePresentation(segments: WorkMessageSegment[], membership?: WorkCollaborationMembership,
+  finalAnswer?: { text: string } | false): WorkPresentationSegment[] {
+  const lastContent = segments.findLast(segment => segment.kind === 'content')
+  // Legacy completed turns may end in prose. A progress sentence followed by
+  // another tool is never an answer, even when the transport has stopped.
+  const final = finalAnswer === undefined && lastContent &&
+    !segments.slice(segments.indexOf(lastContent) + 1).some(segment => segment.kind === 'tools') ? lastContent : undefined
+  const result: WorkPresentationSegment[] = []
+  const appendProcess = (segment: WorkMessageSegment): void => {
+    const previous = result.at(-1)
+    if (previous?.kind === 'process') previous.segments.push(segment)
+    else result.push({ kind: 'process', key: segment.key, segments: [segment] })
+  }
+  for (const segment of segments) {
+    if (finalAnswer && segment === lastContent && segment.kind === 'content' && finalAnswer.text && segment.text.endsWith(finalAnswer.text)) {
+      const preceding = segment.text.slice(0, -finalAnswer.text.length).trimEnd()
+      if (preceding) appendProcess({ ...segment, text: preceding })
+    } else if (segment.kind === 'content' && segment === final) {
+      result.push({ kind: 'answer', key: segment.key, text: segment.text })
+    } else if (segment.kind === 'tools') {
+      for (const tool of segment.tools) {
+        if (isWorkStandaloneTool(tool)) result.push({ kind: 'tool', key: `tool:${tool.id}`, tool })
+        else {
+          const previous = result.at(-1)
+          const last = previous?.kind === 'process' ? previous.segments.at(-1) : null
+          if (last?.kind === 'tools') last.tools.push(tool)
+          else appendProcess({ kind: 'tools', key: `tool:${tool.id}`, tools: [tool] })
+        }
+      }
+    } else appendProcess(segment)
+  }
+  if (finalAnswer && finalAnswer.text) result.push({ kind: 'answer', key: 'final-result', text: finalAnswer.text })
+  // Completed collaboration is reference material. Keep its original position,
+  // but don't let a long batch displace the answer or still-active work.
+  const compact: WorkPresentationSegment[] = []
+  for (let index = 0; index < result.length; index++) {
+    const item = result[index]
+    if (item.kind !== 'tool' || item.tool.subagent?.status !== 'succeeded' || membership && !membership.has(item.tool.id)) {
+      compact.push(item)
+      continue
+    }
+    const completed = [item.tool]
+    const group = membership?.get(item.tool.id)
+    while (index + 1 < result.length) {
+      const next = result[index + 1]
+      if (next.kind !== 'tool' || next.tool.subagent?.status !== 'succeeded' || membership && membership.get(next.tool.id) !== group) break
+      completed.push(next.tool)
+      index++
+    }
+    compact.push(completed.length > 1 ? { kind: 'collaboration', key: item.key, tools: completed } : item)
+  }
+  return compact
+}
 
 /** Preserve the engine's chronology; grouped receipts must never move ahead of earlier prose. */
 export function workMessageTimeline(message: ChatMessage): WorkMessageSegment[] {
@@ -19,14 +94,17 @@ export function workMessageTimeline(message: ChatMessage): WorkMessageSegment[] 
     else segments.push({ kind: 'tools', key: `tool:${tool.id}`, tools: [tool] })
   }
   for (const [index, item] of (message.items ?? []).entries()) {
-    if (item.kind === 'content' && item.text) {
+    if ((item.kind === 'content' || item.kind === 'thinking') && item.text) {
       const last = segments.at(-1)
-      if (last?.kind === 'content') last.text += item.text
-      else segments.push({ kind: 'content', key: `content:${index}`, text: item.text })
+      if (last?.kind === item.kind) last.text += item.text
+      else segments.push({ kind: item.kind, key: `${item.kind}:${index}`, text: item.text })
     } else if (item.kind === 'tool') {
       const tool = tools.get(item.id)
       if (tool) appendTool(tool)
     }
+  }
+  if (!segments.some(segment => segment.kind === 'thinking') && message.thinking?.trim()) {
+    segments.unshift({ kind: 'thinking', key: 'thinking', text: message.thinking })
   }
   // Older persisted messages may have no timeline. Retain their receipts and
   // final content, without repeating the aggregate text on current messages.
@@ -37,8 +115,29 @@ export function workMessageTimeline(message: ChatMessage): WorkMessageSegment[] 
   return segments
 }
 
+function browserPageTarget(value: string): string {
+  try {
+    const url = new URL(value)
+    // Capability origins and encoded local paths are internal routing,
+    // not useful names for an office-facing browser operation.
+    if (url.protocol === 'file:' || url.protocol === 'aether-local:') {
+      const name = url.pathname.split('/').filter(Boolean).at(-1)
+      return name ? decodeURIComponent(name) : '本地页面'
+    }
+    return url.hostname || '浏览器页面'
+  } catch { return '浏览器页面' }
+}
+
 /** Show recognizable work targets without flashing partial JSON during argument streaming. */
 export function workToolTarget(tool: ToolActivity, workspacePath?: string | null): string {
+  if (tool.name.startsWith('browser_')) {
+    const snapshot = toolPresentation(tool).browserSnapshots?.[0]
+    const title = snapshot?.title.trim()
+    if (title && title !== snapshot?.url && !/^(?:[a-z][a-z\d+.-]*:\/\/|file:|aether-local:)/i.test(title)) {
+      return title.length > 80 ? `${title.slice(0, 77)}…` : title
+    }
+    if (snapshot?.url) return browserPageTarget(snapshot.url)
+  }
   try {
     const args: unknown = JSON.parse(tool.args)
     if (!args || typeof args !== 'object' || Array.isArray(args)) return ''
@@ -47,6 +146,9 @@ export function workToolTarget(tool: ToolActivity, workspacePath?: string | null
       const value = fields[field]
       if (typeof value !== 'string' || !value.trim()) continue
       let target = value.trim().replace(/\s+/g, ' ')
+      if (tool.name.startsWith('browser_') && field === 'url') {
+        return browserPageTarget(target)
+      }
       const root = workspacePath?.replace(/\\/g, '/').replace(/\/$/, '')
       const normalized = target.replace(/\\/g, '/')
       if (root && normalized.toLocaleLowerCase().startsWith(`${root.toLocaleLowerCase()}/`)) target = normalized.slice(root.length + 1)

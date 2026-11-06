@@ -10,6 +10,7 @@ import { hunkLine, minimalReplacement, revertLineChange, type BufferReplacement 
 import { getWorkspaceState } from '../workspace/workspace-store'
 import { toast } from '../toast'
 import { cssColor, watchTheme } from '../theme/palette'
+import { handleHorizontalWheel } from '../platform/horizontal-scroll'
 import './source-git-features.css'
 
 export interface SourceGitSnapshot {
@@ -176,6 +177,8 @@ export function registerSourceGitFeatures(instance: editor.IStandaloneCodeEditor
     node.setAttribute('aria-label', '当前更改块')
     const header = document.createElement('div')
     header.className = 'source-git-preview-header'
+    header.dataset.scrollAxis = 'x'
+    header.addEventListener('wheel', handleHorizontalWheel, { passive: false })
     const title = document.createElement('strong')
     title.textContent = `相对 HEAD 的更改 ${index + 1}/${changes.length}`
     header.append(title,
@@ -340,6 +343,8 @@ export function registerSourceGitFeatures(instance: editor.IStandaloneCodeEditor
     conflictZones = conflicts.map((conflict) => {
         const node = document.createElement('div')
         node.className = 'source-conflict-actions'
+        node.dataset.scrollAxis = 'x'
+        node.addEventListener('wheel', handleHorizontalWheel, { passive: false })
         node.setAttribute('aria-label', `第 ${conflict.rangeStart} 行合并冲突`)
         node.append(button('采用当前更改', () => resolveConflict(conflict, 'current', version)), button('采用传入更改', () => resolveConflict(conflict, 'incoming', version)), button('保留双方更改', () => resolveConflict(conflict, 'both', version)))
         return accessibleZone(node, conflict.rangeStart - 1, 30)

@@ -15,20 +15,8 @@
  * - 右侧附 fetch/pull/push/sync 菜单（ContextMenu），与源面板工具链一致。
  */
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
-import {
-  useGitStore,
-  busyOperationOf,
-  sortedBranchesOf,
-  loadBranches,
-  loadRemoteBranches,
-  checkout,
-  createBranch,
-  fetchRemote,
-  pull,
-  push,
-  sync,
-  type GitStoreState
-} from '../../core/git/git-store'
+import { busyOperationOf, sortedBranchesOf, type GitStoreState } from '@renderer/core/git/git-store'
+import { useGitActions, useGitStore } from '@renderer/core/git/git-context'
 import { Popover } from '../../workbench/Popover'
 import { ContextMenu, type ContextMenuItem } from '../../workbench/ContextMenu'
 import { PromptDialog } from '../../workbench/PromptDialog'
@@ -92,6 +80,16 @@ interface GitBranchBarProps {
 }
 
 export function GitBranchBar({ position = 'bottom' }: GitBranchBarProps): JSX.Element {
+  const {
+    loadBranches,
+    loadRemoteBranches,
+    checkout,
+    createBranch,
+    fetchRemote,
+    pull,
+    push,
+    sync
+  } = useGitActions()
   const s = useGitStore()
   const busy = busyOperationOf(s) !== ''
   const [keyword, setKeyword] = useState('')

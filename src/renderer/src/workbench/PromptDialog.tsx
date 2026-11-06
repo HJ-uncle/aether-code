@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type JSX } from 'react'
 import { Dialog } from './Dialog'
+import { useMotionDismiss } from './MotionPresence'
 
 interface PromptDialogProps {
   title: string
@@ -29,8 +30,9 @@ export function PromptDialog({
   confirmLabel = '确定',
   validate,
   onConfirm,
-  onClose
+  onClose: dismiss
 }: PromptDialogProps): JSX.Element {
+  const { show, close: onClose } = useMotionDismiss(dismiss)
   const [value, setValue] = useState(initialValue)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -44,7 +46,8 @@ export function PromptDialog({
 
   const submit = async (): Promise<void> => {
     const trimmed = value.trim()
-    const invalid = validate?.(trimmed) ?? (trimmed ? null : '名称不能为空')
+    // A custom validator may deliberately allow an empty optional field.
+    const invalid = validate ? validate(trimmed) : trimmed ? null : '名称不能为空'
     if (invalid) {
       setError(invalid)
       return
@@ -65,6 +68,7 @@ export function PromptDialog({
 
   return (
     <Dialog
+      open={show}
       title={title}
       className="modal--prompt"
       footer={

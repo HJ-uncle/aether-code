@@ -10,12 +10,16 @@ import {
 import { createPortal } from 'react-dom'
 import type { RootRunCompaction } from '@shared/root-run'
 import { useAppMode } from '@renderer/core/platform/app-mode'
+import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
+import { useMotionPresence, useMotionValue } from '@renderer/workbench/MotionPresence'
 import {
   ContextUsageBar,
   RollingContextNumber,
   useReducedContextMotion
 } from './ContextUsageMotion'
 import { formatTokens } from './usage'
+
+type ContextRingAnchor = { rect: DOMRect; element: HTMLDivElement }
 
 /** The ring observes engine-owned automatic compaction; it never starts maintenance. */
 export function ContextUsageIndicator({
@@ -40,12 +44,13 @@ export function ContextUsageIndicator({
   streaming: boolean
 }): JSX.Element {
   const appMode = useAppMode()
-  const [hoverAnchor, setHoverAnchor] = useState<{ rect: DOMRect; element: HTMLDivElement } | null>(
+  const source = useSyncExternalStore(subscribeEngineSource, getEngineSource)
+  const [hoverAnchor, setHoverAnchor] = useState<ContextRingAnchor | null>(
     null
   )
   const ringRef = useRef<HTMLDivElement>(null)
   const closeTimerRef = useRef(0)
-  const scope = `${appMode}:${owner}`
+  const scope = `${appMode}:${owner}:${source}`
   const [previousScope, setPreviousScope] = useState(scope)
   if (scope !== previousScope) {
     setPreviousScope(scope)
@@ -64,9 +69,8 @@ export function ContextUsageIndicator({
   useEffect(() => () => window.clearTimeout(closeTimerRef.current), [])
   // Both workspaces remain mounted; a body portal must close when its owner is hidden.
   useEffect(() => {
-    if (appMode === owner) return
     window.clearTimeout(closeTimerRef.current)
-  }, [appMode, owner])
+  }, [scope])
   // Persisted completion time, rather than navigation time, owns this brief notice.
   const finishedAt = compaction?.finishedAt
   const compactionPhase = compaction?.phase
@@ -188,11 +192,11 @@ export function ContextUsageIndicator({
                   : '—'}
         </span>
       </div>
-      {hoverAnchor && appMode === owner ? (
-        <ContextRingCard
+      {appMode === owner ? (
+        <ContextRingCardPresence
+          key={scope}
+          hoverAnchor={hoverAnchor}
           requestEstimate={requestEstimate}
-          anchor={hoverAnchor.rect}
-          anchorElement={hoverAnchor.element}
           used={used}
           limit={limit}
           estimated={estimated}
@@ -205,6 +209,30 @@ export function ContextUsageIndicator({
       ) : null}
     </>
   )
+}
+
+type ContextRingCardProps = {
+  requestEstimate?: number
+  anchor: DOMRect
+  anchorElement: HTMLDivElement | null
+  used: number
+  limit: number
+  estimated?: boolean
+  provisional?: boolean
+  usageKnown: boolean
+  compactionPhase?: RootRunCompaction['phase']
+  status?: string
+  streaming: boolean
+  active: boolean
+  motionProps: ReturnType<typeof useMotionPresence>['motionProps']
+}
+
+/** The keyed owner boundary discards old portal data immediately on source/mode changes. */
+function ContextRingCardPresence({ hoverAnchor, ...props }: Omit<ContextRingCardProps, 'anchor' | 'anchorElement' | 'active' | 'motionProps'> & { hoverAnchor: ContextRingAnchor | null }): JSX.Element | null {
+  const anchor = useMotionValue(hoverAnchor)
+  const presence = useMotionPresence(Boolean(hoverAnchor))
+  if (!presence.present || !anchor) return null
+  return <ContextRingCard {...props} anchor={anchor.rect} anchorElement={anchor.element} active={Boolean(hoverAnchor)} motionProps={presence.motionProps} />
 }
 
 /**
@@ -224,20 +252,10 @@ function ContextRingCard({
   usageKnown,
   compactionPhase,
   status,
-  streaming
-}: {
-  requestEstimate?: number
-  anchor: DOMRect
-  anchorElement: HTMLDivElement | null
-  used: number
-  limit: number
-  estimated?: boolean
-  provisional?: boolean
-  usageKnown: boolean
-  compactionPhase?: RootRunCompaction['phase']
-  status?: string
-  streaming: boolean
-}): JSX.Element {
+  streaming,
+  active,
+  motionProps
+}: ContextRingCardProps): JSX.Element {
   const cardRef = useRef<HTMLDivElement>(null)
   const percent = ((Math.min(used, limit) * 100) / limit).toFixed(1)
 
@@ -266,6 +284,7 @@ function ContextRingCard({
   // at an old location. The observer also covers font and viewport size changes.
   useLayoutEffect(positionCard)
   useLayoutEffect(() => {
+    if (!active) return
     const el = cardRef.current
     if (!el) return
     const observer = new ResizeObserver(positionCard)
@@ -298,11 +317,12 @@ function ContextRingCard({
       window.removeEventListener('resize', positionCard)
       window.removeEventListener('scroll', positionCard, true)
     }
-  }, [anchor, anchorElement, positionCard])
+  }, [active, anchor, anchorElement, positionCard])
 
   return createPortal(
     <div
       ref={cardRef}
+      {...motionProps}
       className="git-stashcard ctx-card"
       role="tooltip"
       data-testid="context-usage-card"

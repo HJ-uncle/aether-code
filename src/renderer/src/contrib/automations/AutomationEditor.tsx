@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState, type JSX } from 'react'
 import type { CronAutomationRun, CronCapabilities, CronPreviewResponse, CronThinkingMode } from '@shared/automation'
 import { getEngineSource } from '@renderer/core/engine/source'
 import { Dialog } from '@renderer/workbench/Dialog'
+import { useMotionDismiss } from '@renderer/workbench/MotionPresence'
 import { Select } from '@renderer/workbench/Select'
 import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
@@ -17,7 +18,7 @@ function toLocalInput(value: number): string {
 }
 const days = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
 
-export function AutomationEditor({ job, capabilities, sessions, currentSessionId, currentAgentId, thinkingMode, initialTab = 'settings', onClose, onSaved, onOpenRun, onManageAgent }: {
+export function AutomationEditor({ job, capabilities, sessions, currentSessionId, currentAgentId, thinkingMode, initialTab = 'settings', onClose: dismiss, onSaved, onOpenRun, onManageAgent }: {
   job?: AutomationJob
   capabilities: CronCapabilities | null
   sessions: AutomationSession[]
@@ -30,6 +31,7 @@ export function AutomationEditor({ job, capabilities, sessions, currentSessionId
   onOpenRun: (run: CronAutomationRun) => void | Promise<void>
   onManageAgent: () => void
 }): JSX.Element {
+  const { show, close: onClose } = useMotionDismiss(dismiss)
   const [savedJob, setSavedJob] = useState(job)
   const [draft, setDraft] = useState(() => createAutomationDraft({ job, capabilities, sessionId: currentSessionId, agentId: currentAgentId, thinkingMode }))
   const [tab, setTab] = useState(initialTab)
@@ -122,7 +124,7 @@ export function AutomationEditor({ job, capabilities, sessions, currentSessionId
     ...(capabilities?.targets.includes('workspace') ? [{ value: 'workspace', label: '每次新建项目聊天', description: '跟随源聊天已授权的工作目录' }] : [])
   ]
   const disabled = saving || changingEnabled
-  return <Dialog title={savedJob ? '编辑自动化' : '新建自动化'} width={760} className="automation-editor" onClose={() => { if (!saving) onClose() }} footer={<>
+  return <Dialog open={show} title={savedJob ? '编辑自动化' : '新建自动化'} width={760} className="automation-editor" closeDisabled={saving} onClose={() => { if (!saving) onClose() }} footer={<>
     <div className="automation-editor__footer-status">{savedJob ? <button className="btn btn--sm" type="button" disabled={disabled || (!savedJob.enabled && capabilities?.executionSupported === false)} onClick={() => void toggleEnabled()}>{changingEnabled ? <Spinner size={13} /> : <Icon name={savedJob.enabled ? 'stop' : 'play'} size={13} />}{savedJob.enabled ? '暂停未来触发' : '恢复计划'}</button> : <label className="automation-toggle"><input type="checkbox" checked={draft.enabled} disabled={disabled || capabilities?.executionSupported === false} onChange={event => update('enabled', event.target.checked)} />保存后启用</label>}</div>
     <button className="btn" type="button" disabled={saving} onClick={onClose}>取消</button>
     {tab === 'settings' ? <button className="btn btn--primary" type="button" disabled={disabled || Boolean(errors.timeout)} onClick={() => formRef.current?.requestSubmit()}>{saving ? <Spinner size={14} /> : <Icon name="check" size={14} />}{saving ? '正在保存…' : '保存自动化'}</button> : <button className="btn btn--primary" type="button" onClick={onClose}>完成</button>}

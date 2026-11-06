@@ -12,8 +12,9 @@
  */
 import { useEffect, useState, type JSX } from 'react'
 import type { GitCommitFileChange, GitCommitInfo, GitCommitRef } from '@shared/git-types'
-import { loadCommitShow, useGitStore } from '@renderer/core/git/git-store'
+import { useGitActions, useGitStore } from '@renderer/core/git/git-context'
 import { Dialog } from '@renderer/workbench/Dialog'
+import { useMotionPresence } from '@renderer/workbench/MotionPresence'
 import { Icon } from '@renderer/workbench/icons'
 
 export interface GitCommitDetailDialogProps {
@@ -82,6 +83,7 @@ export function GitCommitDetailDialog({
   onOpenFileDiff,
   onOpenWorktree
 }: GitCommitDetailDialogProps): JSX.Element | null {
+  const { loadCommitShow } = useGitActions()
   const store = useGitStore()
   const [loading, setLoading] = useState(false)
   const [info, setInfo] = useState<GitCommitInfo | null>(null)
@@ -89,6 +91,7 @@ export function GitCommitDetailDialog({
   /** 弹窗从关闭到打开（或换了一个提交）时自增，作为拉取详情的触发信号 */
   const [request, setRequest] = useState({ open: false, hash: '', cwd: '', seq: 0 })
   const nextOpen = open && Boolean(hash)
+  const motion = useMotionPresence(nextOpen)
   const nextCwd = cwd ?? store.cwd
   if (
     nextOpen !== request.open ||
@@ -96,9 +99,11 @@ export function GitCommitDetailDialog({
   ) {
     // 渲染期派生：等价于 Vue watch(open/hash) 的 reset 语义，避免在 effect 里 setState
     setRequest({ open: nextOpen, hash, cwd: nextCwd, seq: request.seq + 1 })
-    setInfo(null)
-    setError('')
-    setLoading(nextOpen)
+    if (nextOpen) {
+      setInfo(null)
+      setError('')
+      setLoading(true)
+    }
   }
 
   useEffect(() => {
@@ -118,7 +123,7 @@ export function GitCommitDetailDialog({
     }
   }, [request])
 
-  if (!open) return null
+  if (!motion.present) return null
   const detailCwd = request.cwd
 
   const copyHash = (): void => {
@@ -135,6 +140,7 @@ export function GitCommitDetailDialog({
 
   return (
     <Dialog
+      open={nextOpen}
       title={`提交 ${info?.shortHash ?? ''}`}
       width={640}
       className="git-commitdlg"

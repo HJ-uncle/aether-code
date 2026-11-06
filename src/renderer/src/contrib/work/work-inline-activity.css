@@ -10,6 +10,31 @@
   border-left: 1px solid var(--border);
 }
 .work-inline-activity__item { min-width: 0; }
+.work-inline-activity--expanded { margin-bottom: 0; }
+.work-inline-activity--expanded .work-inline-activity__body { margin: 0; padding-left: 0; border-left: 0; }
+.work-tool-activity { min-width: 0; max-width: 100%; }
+.work-tool-activity[data-tool-kind='visual'] { margin: 8px 0; }
+.work-tool-activity .command-job-card,
+.work-tool-activity .subagent-card,
+.work-tool-activity .diff-card { max-width: 100%; }
+.work-tool-activity .logline__summary { min-width: 0; }
+/* A completed operation contributes its name and target, not another status badge. */
+.compact-tool-row--quiet > .logline { height: 28px; gap: var(--space-2); padding: 0 var(--space-2); font-size: 12px; }
+.compact-tool-row--quiet .logline__icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 16px; color: var(--fg-muted); }
+.compact-tool-row--quiet .logline__name { font-size: 12px; }
+.compact-tool-row--quiet .logline__summary { opacity: 1; }
+.compact-tool-row--quiet .logline__status { flex: 0 0 auto; margin-left: auto; font-size: 11px; color: var(--fg-muted); white-space: nowrap; }
+.compact-tool-row--quiet .logline__icon--running,
+.compact-tool-row--quiet .logline__icon--waiting { color: var(--accent); }
+.compact-tool-row--quiet[data-tool-state='error'] .logline__status,
+.compact-tool-row--quiet[data-tool-state='interrupted'] .logline__status,
+.compact-tool-row--quiet .logline__icon--error,
+.compact-tool-row--quiet .logline__icon--interrupted { color: var(--fg-muted); }
+/* Work disclosures are always visible; hover must not shift their shared column. */
+:root .compact-tool-row--quiet > .logline > .logline__chevron { flex: 0 0 12px; opacity: 0.6; margin-left: auto; translate: none; transition: transform var(--duration-fast) var(--ease-out); }
+:root .compact-tool-row--quiet > .logline > .logline__status + .logline__chevron { margin-left: 0; }
+.compact-tool-row--quiet .logline__detail { margin: 0 var(--space-2) var(--space-2) 14px; padding: var(--space-1) 0 0 var(--space-3); }
+.compact-tool-row--quiet .logline__metadata { margin: 0 0 var(--space-2); color: var(--fg-muted); font: 11px/1.5 var(--font-ui); font-variant-numeric: tabular-nums; }
 .work-inline-activity__footer,
 .work-inline-activity__pages {
   display: flex;
@@ -41,3 +66,20 @@
 .work-inline-activity button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .work-inline-activity__pages { padding: 4px 6px; border-top: 1px solid var(--border); font-variant-numeric: tabular-nums; }
 @media (prefers-reduced-motion: reduce) { .work-inline-activity__chevron { transition: none; } }
+/* Keep screenshots and process text opaque while their container slides closed. */
+:root .work-message__process[data-motion-state],
+:root .work-inline-activity .ui-motion-collapse[data-motion-state],
+:root .work-tool-activity .ui-motion-collapse[data-motion-state] {
+  opacity: 1;
+  transition-property: grid-template-rows, translate;
+}
+/* A stopped process leaves the live area; fade its whole card while its
+ * occupied space collapses. Routine result disclosures stay opaque above. */
+:root .command-job-card-presence.ui-motion-collapse[data-motion-state] {
+  opacity: 1;
+  transition-property: grid-template-rows, opacity, translate;
+}
+:root .command-job-card-presence.ui-motion-collapse:is([data-motion-state='entering'], [data-motion-state='closing']) { opacity: 0; }
+.command-job-card[data-surface='work'] .work-tool-outcome { padding: var(--space-2) var(--space-3); }
+.command-job-card[data-surface='work'] .command-job-card__stderr { color: var(--fg); }
+.work-view .command-job-children:not(:has(.command-job-card)) { display: none; }

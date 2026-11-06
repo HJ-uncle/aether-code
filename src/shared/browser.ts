@@ -6,6 +6,15 @@ export interface BrowserContext {
   engineId: string
 }
 
+/** Visible workspace ownership; independent from permission to use AI tools. */
+export interface BrowserTabPresentation {
+  mode: 'code' | 'work'
+  sessionId: string | null
+  engineId?: string
+  /** Selected endpoint/account before readiness; display isolation only, never AI authority. */
+  pendingSourceId?: string
+}
+
 export interface BrowserViewport {
   width: number
   height: number
@@ -40,9 +49,42 @@ export interface BrowserTabState {
   viewport: BrowserViewport | null
   navigationId: number
   context?: BrowserContext
+  presentation?: BrowserTabPresentation
+  /** Explicit user-selected local preview; never grants an AI context. */
+  localFile?: BrowserLocalFileInfo
   error?: string
   /** Live host conditions, distinct from page loading and ownership. */
   availability?: BrowserAvailability
+}
+
+export interface BrowserLocalFileInfo {
+  path: string
+  name: string
+  kind: 'html' | 'text' | 'binary' | 'directory'
+  size: number
+}
+
+export type BrowserLocalFileContent =
+  | { kind: 'text'; text: string; size: number; truncated: boolean; encoding: string }
+  | { kind: 'binary'; base64: string; size: number }
+  | BrowserLocalDirectoryContent
+
+export interface BrowserLocalDirectoryEntry {
+  name: string
+  path: string
+  kind: 'directory' | 'file' | 'unavailable'
+  size?: number
+  modifiedAt?: number
+  message?: string
+}
+
+export interface BrowserLocalDirectoryContent {
+  kind: 'directory'
+  path: string
+  root: string
+  parent: string | null
+  entries: BrowserLocalDirectoryEntry[]
+  truncated: boolean
 }
 
 export interface BrowserAvailability {
@@ -66,7 +108,10 @@ export type BrowserEvent =
 
 export interface BrowserSurfaceOwner {
   mode: 'code' | 'work'
-  /** Renderer-lifetime generation; a mode round trip never reuses old bounds. */
+  sessionId?: string | null
+  engineId?: string
+  pendingSourceId?: string
+  /** Renderer-lifetime generation; mode/session/engine changes never reuse old bounds. */
   generation: number
 }
 
@@ -173,6 +218,8 @@ export interface BrowserClickInteraction {
   viewport: { width: number; height: number; deviceScaleFactor: number; scrollX: number; scrollY: number }
   /** Captured before mouse dispatch; never replaced with a post-navigation image. */
   screenshot?: BrowserViewportScreenshot
+  /** A successful interaction may lack image evidence; this is not its result. */
+  screenshotUnavailable?: string
   target?: {
     name?: string
     role?: string
@@ -189,6 +236,8 @@ export interface BrowserSnapshot {
   truncated: boolean
   viewport: { width: number; height: number; deviceScaleFactor: number; scrollX: number; scrollY: number }
   screenshot?: BrowserViewportScreenshot
+  /** Text/geometry may be available even when both pixel capture paths fail. */
+  screenshotUnavailable?: string
   interaction?: BrowserClickInteraction
 }
 

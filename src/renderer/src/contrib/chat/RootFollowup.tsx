@@ -1,6 +1,8 @@
-import { useState, type JSX } from 'react'
+import { useLayoutEffect, useRef, useState, type JSX, type ReactNode, type RefObject } from 'react'
 import { useCollaborationController } from '@renderer/core/engine/useCollaborationController'
-import { controllerSavedStatus } from '@renderer/core/engine/collaboration-contract'
+import { Popover } from '@renderer/workbench/Popover'
+import { Select } from '@renderer/workbench/Select'
+import { Icon } from '@renderer/workbench/icons'
 import { ControllerTrackingRecovery } from './SubagentFollowup'
 
 export function useRootFollowup(input: {
@@ -18,41 +20,108 @@ export function useRootFollowup(input: {
 }
 
 export function RootFollowupDelivery({ controller, disabled }: { controller: ReturnType<typeof useRootFollowup>; disabled: boolean }): JSX.Element {
-  return <select className="input-composer__delivery" aria-label="发送方式" title="立即补充当前任务，或在当前任务结束后开始下一轮"
+  return <Select className="input-composer__delivery" ariaLabel="发送方式" title="发送方式"
+    placement="up" align="end" width={260} panelClassName="input-composer__delivery-menu"
     value={controller.delivery} disabled={disabled || controller.busy || Boolean(controller.pending)}
-    onChange={event => controller.setDelivery(event.target.value === 'next' ? 'next' : 'current')}>
-    <option value="current">立即补充</option><option value="next">排到下一轮</option>
-  </select>
+    onChange={value => controller.setDelivery(value === 'next' ? 'next' : 'current')}
+    options={[
+      { value: 'current', label: '立即补充', description: '补充当前任务，沿用当前模型和设置' },
+      { value: 'next', label: '排到下一轮', description: '当前任务结束后发送，可单独选择模型' }
+    ]} />
 }
 
-/** Keep delivery status near the editor, with the original text available in
- * one collapsed row. An acceptance receipt does not prove model consumption. */
-export function RootFollowupFeedback({ controller, active, limitation, canRestore, onRestore, onResolve }: {
+/** A reserved row outside the editor keeps asynchronous receipts from moving
+ * the draft. Full errors and recovery stay accessible in an anchored panel. */
+export function RootFollowupFeedback({ controller, active, limitation, canRestore, onRestore, onResolve, fallbackHint, footerAction, onFocusInput }: {
   controller: ReturnType<typeof useRootFollowup>; active: boolean; limitation: string
   canRestore: boolean; onRestore: (message: string) => void
   onResolve: (operation: () => Promise<boolean>, message: string) => void
-}): JSX.Element | null {
-  const hint = controller.notice || (active && controller.delivery === 'current'
-    ? limitation || (controller.capability === false ? '当前引擎未启用立即补充，可选择排到下一轮。' : controller.capability === undefined ? '正在确认立即补充能力…' : 'Enter 补充当前任务 · 在下一次模型调用前读取') : '')
-  if (!hint && !controller.error && !controller.history.length && !controller.pending) return null
+  fallbackHint: string; footerAction?: ReactNode
+  onFocusInput: () => void
+}): JSX.Element {
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const detailsButton = useRef<HTMLButtonElement>(null)
+  const detailsCloseButton = useRef<HTMLButtonElement>(null)
+  const hint = controller.error || controller.notice || (active && controller.delivery === 'current'
+    ? limitation || (controller.capability === false ? '当前引擎未启用立即补充，可选择排到下一轮。' : controller.capability === undefined ? '正在确认立即补充能力…' : 'Enter 补充当前任务 · Shift + Enter 换行') : '') || fallbackHint
+  const needsDetails = Boolean(controller.error || controller.pending || controller.restoredDraft || (active && controller.capability === false))
+  const closeDetails = (): void => {
+    setDetailsOpen(false)
+    if (needsDetails) detailsButton.current?.focus({ preventScroll: true })
+    else onFocusInput()
+  }
+  useLayoutEffect(() => {
+    if (!detailsOpen || needsDetails) return
+    const focused = document.activeElement
+    const panel = detailsCloseButton.current?.closest('[role="dialog"]')
+    setDetailsOpen(false)
+    // Successful delivery or a new root must not leave a stale recovery
+    // entry behind, or steal focus from a draft the user has already resumed.
+    if (focused === detailsButton.current || focused && panel?.contains(focused)) onFocusInput()
+  }, [detailsOpen, needsDetails, onFocusInput])
+  useFeedbackPopoverFocus(detailsOpen, detailsButton, detailsCloseButton)
   return <div className="input-composer__followup" aria-label="当前任务补充状态">
-    {controller.error ? <p role="alert">{controller.error}</p> : null}
-    {hint ? <p role="status">{hint}</p> : null}
-    {controller.pending ? <div className="input-composer__followup-actions">
-      <button type="button" className="link" disabled={controller.busy} onClick={() => onResolve(controller.reconcile, controller.pending!.message)}>核对原请求</button>
-      {controller.canRetry ? <button type="button" className="link" disabled={controller.busy} onClick={() => onResolve(controller.retry, controller.pending!.message)}>重试原请求</button> : null}
-      <details><summary>查看待核对原文</summary><pre>{controller.pending.message}</pre></details>
-      <ControllerTrackingRecovery message={controller.pending.message} disabled={controller.busy} onForget={controller.forgetTracking} />
-    </div> : null}
-    {active && controller.capability === false ? <button type="button" className="link" disabled={controller.busy} onClick={controller.refresh}>重新检查能力</button> : null}
-    {controller.history.length ? <details className="input-composer__followup-history"><summary>补充记录 · {controller.history.length}</summary>
-      {controller.history.map(item => <article key={item.requestKey}>
-        <span>{controllerSavedStatus(item)}</span><pre>{item.message}</pre>
-        <div className="input-composer__followup-actions">
-          {item.kind === 'accepted' ? <button type="button" className="link" disabled={controller.busy} onClick={() => void controller.queryHistory(item)}>查询原回执</button> : null}
-          <button type="button" className="link" disabled={!canRestore || controller.busy || Boolean(controller.pending)} onClick={() => onRestore(item.message)}>放回输入框</button>
+    <div className="input-composer__followup-row">
+      <p role={controller.error ? 'alert' : 'status'} title={hint}>{hint}</p>
+      {footerAction}
+      {needsDetails || detailsOpen ? <Popover placement="up" align="end" width={380} flush label="补充详情"
+        panelClassName="root-followup-details" open={detailsOpen} onOpenChange={setDetailsOpen}
+        trigger={({ open }) => <button ref={detailsButton} type="button" className="input-composer__history-button"
+          aria-haspopup="dialog" aria-expanded={open}>
+          <Icon name={controller.pending ? 'warning' : 'info'} size={14} />
+          <span>{controller.pending ? '核对补充' : '查看详情'}</span>
+        </button>}>
+        <div onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeDetails() } }}>
+          <div className="root-followup-history__header"><strong>{controller.pending ? '核对补充' : '补充详情'}</strong>
+            <button ref={detailsCloseButton} type="button" className="ui-icon-button" aria-label="关闭补充详情" onClick={closeDetails}><Icon name="close" size={14} /></button>
+          </div>
+          <div className="root-followup-details__body">
+            <p>{hint}</p>
+            {controller.pending ? <>
+              <div className="input-composer__followup-actions">
+                <button type="button" className="btn btn--sm" disabled={controller.busy} onClick={() => { closeDetails(); onResolve(controller.reconcile, controller.pending!.message) }}>核对原请求</button>
+                {controller.canRetry ? <button type="button" className="btn btn--sm" disabled={controller.busy} onClick={() => { closeDetails(); onResolve(controller.retry, controller.pending!.message) }}>重试原请求</button> : null}
+              </div>
+              <details><summary>查看待核对原文</summary><pre>{controller.pending.message}</pre></details>
+              <ControllerTrackingRecovery message={controller.pending.message} disabled={controller.busy} onForget={async () => {
+                const cleared = await controller.forgetTracking()
+                if (cleared) { setDetailsOpen(false); onFocusInput() }
+                return cleared
+              }} />
+            </> : null}
+            {controller.restoredDraft && !controller.pending ? <>
+              <details><summary>查看待恢复原文</summary><pre>{controller.restoredDraft.message}</pre></details>
+              <button type="button" className="btn btn--sm" disabled={!canRestore || controller.busy} onClick={() => {
+                if (!canRestore || controller.busy || controller.pending || !controller.restoredDraft) return
+                const message = controller.restoredDraft.message
+                setDetailsOpen(false)
+                onRestore(message)
+              }}>放回输入框</button>
+            </> : null}
+            {active && controller.capability === false ? <button type="button" className="btn btn--sm" disabled={controller.busy} onClick={() => { closeDetails(); controller.refresh() }}>重新检查能力</button> : null}
+          </div>
         </div>
-      </article>)}
-    </details> : null}
+      </Popover> : null}
+    </div>
   </div>
+}
+
+/** Portalled panels start hidden for measurement; native autoFocus runs before
+ * that measurement. Focus once visible, without stealing a later user action. */
+function useFeedbackPopoverFocus(open: boolean, trigger: RefObject<HTMLButtonElement | null>, close: RefObject<HTMLButtonElement | null>): void {
+  useLayoutEffect(() => {
+    if (!open) return
+    let frame = 0
+    const focus = (): void => {
+      if (document.activeElement !== trigger.current) return
+      const button = close.current
+      if (!button || getComputedStyle(button).visibility === 'hidden' || !button.getClientRects().length) {
+        frame = requestAnimationFrame(focus)
+        return
+      }
+      button.focus({ preventScroll: true })
+    }
+    frame = requestAnimationFrame(focus)
+    return () => cancelAnimationFrame(frame)
+  }, [open, trigger, close])
 }

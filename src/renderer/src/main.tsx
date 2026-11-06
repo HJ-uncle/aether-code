@@ -6,6 +6,7 @@ import 'monaco-editor/nls/lang/zh-cn'
 import '@fontsource-variable/inter/wght.css'
 import './assets/app.css'
 import './assets/visual-effects.css'
+import './assets/motion.css'
 
 // 平台标记：CSS 无法直接探测操作系统，而字体基线校准（--ctx-baseline）在
 // macOS(SF) 与其它平台(Inter) 上取值相反，故在渲染前把 platform 写到 <html> 上。

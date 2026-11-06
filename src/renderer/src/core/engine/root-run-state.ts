@@ -39,6 +39,25 @@ export function applyRootRun(
   optimistic?: { userId?: string; assistantId?: string }
 ): ChatMessage[] {
   let assistantFound = false
+  // Steering splits one root into several transcript segments. Only its last
+  // assistant owns the live status, final identity and unanswered interaction.
+  const ownsAssistant = (message: ChatMessage): boolean => message.role === 'assistant' &&
+    (message.id === run.assistantMessageId || message.id === optimistic?.assistantId ||
+      message.runId === run.runId || message.conversationId === run.turnId)
+  const rootAssistant = [...messages].reverse().find(ownsAssistant)
+  const historicalToolOwners = new Map<string, ChatMessage>()
+  for (const message of messages) {
+    if (message === rootAssistant || !ownsAssistant(message)) continue
+    for (const tool of message.tools) if (!historicalToolOwners.has(tool.id)) historicalToolOwners.set(tool.id, message)
+  }
+  const interactions = run.pending.map(item => normalizeRunPending(item, run.runId)).filter(item => item !== null)
+  const boundaries = new Map<ChatMessage, ChatMessage | undefined>()
+  let nextUser: ChatMessage | undefined
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message.role === 'user') nextUser = message
+    else if (message !== rootAssistant) boundaries.set(message, nextUser)
+  }
   /**
    * A few legacy history rows predate the durable identity envelope and have
    * neither conversationId nor runId.  They are still recoverable when they
@@ -54,10 +73,17 @@ export function applyRootRun(
     if (!own) return message
     if (message.run && message.run.version > run.version) return message
     const base = { ...message, runId: run.runId, conversationId: run.turnId, run }
-    if (message.role === 'user') return { ...base, id: run.userMessageId }
+    if (message.role === 'user') return { ...base, id: message.id === optimistic?.userId ? run.userMessageId : message.id }
     assistantFound = true
-    const interactions = run.pending.map(item => normalizeRunPending(item, run.runId)).filter(item => item !== null)
-    const pending = interactions.find(item => item.status !== 'answered')
+    const current = message === rootAssistant || positionalAssistant || !rootAssistant
+    const boundary = boundaries.get(message)
+    // Unanswered requests belong to the live tail, even when their tool began
+    // before a supplement. Answered history returns to that tool's segment.
+    const ownInteractions = interactions.filter(item => {
+      const historyOwner = historicalToolOwners.get(item.toolCallId)
+      return item.status === 'answered' && historyOwner ? historyOwner === message : current
+    })
+    const pending = current ? interactions.find(item => item.status !== 'answered') : undefined
     // A waiting run carries the ask/permission question in `run.error` as a
     // durable diagnostic for recovery. It is not a failure and must not render
     // the question again in the red message error strip below the card.
@@ -66,15 +92,16 @@ export function applyRootRun(
       : undefined
     return {
       ...base,
-      id: run.assistantMessageId || message.id,
-      status: rootStatus(run.status),
-      modelId: run.actualModelId ||
+      id: current ? run.assistantMessageId || message.id : message.id === run.assistantMessageId
+        ? `segment:${run.runId}:before:${boundary?.id ?? message.createdAt}` : message.id,
+      status: current ? rootStatus(run.status) : 'done',
+      modelId: (current ? run.actualModelId : message.modelId) ||
         (message.usage && typeof message.usage === 'object' && typeof (message.usage as Record<string, unknown>).modelId === 'string'
           ? (message.usage as { modelId: string }).modelId : undefined) || message.modelId || run.modelId,
-      startedAt: run.startedAt ?? message.startedAt ?? run.createdAt,
-      endedAt: run.finishedAt,
-      error: error || (run.status === 'interrupted' ? '运行已中断，未自动重试' : undefined),
-      interactions,
+      startedAt: current ? run.startedAt ?? message.startedAt ?? run.createdAt : message.startedAt ?? message.createdAt,
+      endedAt: current ? run.finishedAt : message.endedAt ?? (boundary?.createdAt || undefined),
+      error: current ? error || (run.status === 'interrupted' ? '运行已中断，未自动重试' : undefined) : undefined,
+      interactions: ownInteractions,
       pending,
       answered: undefined,
       tools: message.tools.map(tool => {

@@ -4,8 +4,8 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import type {
   BrowserAction, BrowserBoundsInput, BrowserClickInteraction, BrowserConsoleEntry, BrowserContext, BrowserCreateInput,
-  BrowserElement, BrowserEvent, BrowserExecutionIdentity, BrowserReadKind, BrowserScreenshot,
-  BrowserSettings, BrowserSnapshot, BrowserSurfaceOwner, BrowserTabState, BrowserToolRequest, BrowserToolResult, BrowserUnavailableSnapshot, BrowserViewportScreenshot
+  BrowserElement, BrowserEvent, BrowserExecutionIdentity, BrowserLocalFileContent, BrowserLocalFileInfo, BrowserReadKind, BrowserScreenshot,
+  BrowserSettings, BrowserSnapshot, BrowserSurfaceOwner, BrowserTabPresentation, BrowserTabState, BrowserToolRequest, BrowserToolResult, BrowserUnavailableSnapshot
 } from '../../shared/browser'
 import { BrowserSettingsStore } from './settings'
 import { BrowserNetworkCollector } from './network-collector'
@@ -13,14 +13,18 @@ import type { BrowserNetworkDetail, BrowserNetworkDetailOptions, BrowserNetworkL
 import type { BrowserConnectInput } from '../../shared/browser-api'
 import { browserError, clampBounds, contextsMatch, normalizeBrowserUrl, pendingBrowserEngineMatches, validateContext, validateViewport, validateZoom } from './validation'
 import { BrowserInputQueueError, OwnedBrowserInputQueue, type BrowserInputLease } from './owned-input-queue'
-import { BrowserLocalFiles, isLocalFileUrl, type LocalBrowserGrant } from './local-files'
-import { BrowserSurfaceOwnership } from './surface-ownership'
+import { BrowserLocalFiles, isLocalFileUrl, userLocalPath, type LocalBrowserGrant } from './local-files'
+import { readLocalFileContent } from './local-file-content'
+import { inspectLocalDirectoryEntry, readLocalDirectory, type LocalDirectoryGrant, type LocalDirectoryTarget } from './local-directory'
+import { BrowserPresentationRegistry, BrowserSurfaceOwnership, validatePresentation } from './surface-ownership'
 
 interface BrowserEntry {
   owner: BrowserWindow
   view: WebContentsView
   state: BrowserTabState
   pendingEngine?: BrowserConnectInput['expectedEngine']
+  /** Display continuity only; this never participates in AI adoption or context binding. */
+  localPresentationEngine?: BrowserConnectInput['expectedEngine']
   visible: boolean
   layoutVersion: number
   bounds: { x: number; y: number; width: number; height: number }
@@ -38,6 +42,7 @@ interface BrowserEntry {
   queue: Promise<unknown>
   logId: number
   localFile?: LocalBrowserGrant
+  localDirectory?: { grant: LocalDirectoryGrant; history: string[]; index: number }
 }
 
 interface AXNode {
@@ -74,6 +79,7 @@ const MAX_ELEMENTS = 500
 const MAX_TEXT = 24000
 const MAX_PREVIEW_EDGE = 1600
 const MAX_PREVIEW_BYTES = 1024 * 1024
+const CAPTURE_ATTEMPT_TIMEOUT_MS = 3000
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
 
 interface BrowserPageFrame {
@@ -153,6 +159,7 @@ export class BrowserService {
   private readonly localFiles = new BrowserLocalFiles()
   private readonly inputQueue = new OwnedBrowserInputQueue()
   private readonly surfaceOwnership = new BrowserSurfaceOwnership()
+  private readonly presentations = new BrowserPresentationRegistry()
   private disposed = false
 
   constructor(private readonly getWindow: () => BrowserWindow | undefined, private readonly emit: (event: BrowserEvent) => void) {}
@@ -163,22 +170,32 @@ export class BrowserService {
 
   list(): BrowserTabState[] { return [...this.tabs.values()].map((entry) => this.state(entry)) }
 
-  async create(input: BrowserCreateInput = {}, pendingEngine?: BrowserConnectInput['expectedEngine'], onCreated?: () => void): Promise<BrowserTabState> {
+  async create(input: BrowserCreateInput = {}, pendingEngine?: BrowserConnectInput['expectedEngine'], onCreated?: () => void,
+    presentation?: BrowserTabPresentation, authorizedLocalFile?: LocalBrowserGrant, userLocalFile?: BrowserLocalFileInfo,
+    localPresentationEngine?: BrowserConnectInput['expectedEngine'], localDirectory?: BrowserEntry['localDirectory']): Promise<BrowserTabState> {
     if (this.disposed) throw new Error('浏览器服务已关闭')
     const owner = this.getWindow()
     if (!owner || owner.isDestroyed()) throw new Error('编辑器窗口尚未就绪')
+    const context = !userLocalFile && input.context ? validateContext(input.context) : undefined
+    pendingEngine = !userLocalFile && pendingEngine ? structuredClone(pendingEngine) : undefined
+    // UI and popup callers capture this before any async file/navigation work;
+    // a background AI tab never borrows whichever surface is selected later.
+    presentation = presentation ? validatePresentation(presentation) : this.presentations.get(context)
     const settings = this.settings.get()
     const requestedUrl = input.url ?? settings.homeUrl
-    if (isLocalFileUrl(requestedUrl) && input.context) {
+    if (isLocalFileUrl(requestedUrl) && context) {
       let mode: unknown
-      try { mode = JSON.parse(input.context.engineId)[0] } catch { /* Unknown transports cannot open this machine's files. */ }
+      try { mode = JSON.parse(context.engineId)[0] } catch { /* Unknown transports cannot open this machine's files. */ }
       if (mode !== 'embedded') throw new Error('远端引擎不能通过文件地址访问本机文件，请使用客户端可访问的网页地址')
     }
     if (isLocalFileUrl(requestedUrl) && pendingEngine?.mode === 'remote') throw new Error('远端会话不能通过文件地址访问本机文件')
-    const localFile = isLocalFileUrl(requestedUrl) ? await this.localFiles.open(requestedUrl) : undefined
-    const url = localFile?.url ?? normalizeBrowserUrl(requestedUrl)
-    const context = input.context ? validateContext(input.context) : undefined
-    const partition = localFile ? this.localPartition : settings.persistSession ? 'persist:aether-browser' : this.temporaryPartition
+    // Capabilities are supplied only by main-process duplication or explicit user-file authorization.
+    const localFile = authorizedLocalFile ?? (!userLocalFile && isLocalFileUrl(requestedUrl) ? await this.localFiles.open(requestedUrl) : undefined)
+    const url = localFile?.url ?? (userLocalFile ? this.localFiles.fileUrl(userLocalFile) : normalizeBrowserUrl(requestedUrl))
+    // Registration may have finished during file authorization, before the
+    // new native entry existed for rememberPresentation to update.
+    presentation ??= this.presentations.get(context)
+    const partition = localFile || userLocalFile ? this.localPartition : settings.persistSession ? 'persist:aether-browser' : this.temporaryPartition
     const browserSession = session.fromPartition(partition)
     if (localFile) this.localFiles.attach(browserSession, (webContentsId, target) => {
       const owner = [...this.tabs.values()].find(tab => tab.view.webContents.id === webContentsId)
@@ -192,13 +209,15 @@ export class BrowserService {
       spellcheck: false, backgroundThrottling: false, safeDialogs: true
     } })
     const entry: BrowserEntry = {
-      owner, view, localFile, pendingEngine: !context && pendingEngine ? structuredClone(pendingEngine) : undefined,
+      owner, view, localFile, localDirectory, pendingEngine: !context && pendingEngine ? structuredClone(pendingEngine) : undefined,
+      localPresentationEngine: userLocalFile && localPresentationEngine ? structuredClone(localPresentationEngine) : undefined,
       visible: false, layoutVersion: 0, bounds: { x: 0, y: 0, width: 800, height: 600 }, emulationScale: 1, console: [],
       network: new BrowserNetworkCollector(async (method, params) => { await this.ensureInitialized(entry); await this.debugger(entry); return this.command(entry, method, params) }),
       networkInterrupted: false, initialization: Promise.resolve(), initializationState: 'starting', navigationVersion: 0, closed: new AbortController(), refs: new Map(),
       queue: Promise.resolve(), logId: 0, visibilityWaiters: new Map(),
-      state: { tabId: randomUUID(), url, title: '浏览器', loading: true, canGoBack: false, canGoForward: false,
-        zoomFactor: settings.zoomFactor, viewport: settings.defaultViewport, navigationId: 0, ...(context ? { context } : {}) }
+      state: { tabId: randomUUID(), url, title: userLocalFile?.name ?? '浏览器', loading: true, canGoBack: false, canGoForward: false,
+        zoomFactor: settings.zoomFactor, viewport: settings.defaultViewport, navigationId: 0, ...(context ? { context } : {}),
+        ...(presentation ? { presentation } : {}), ...(userLocalFile ? { localFile: { ...userLocalFile } } : {}) }
     }
     this.tabs.set(entry.state.tabId, entry)
     onCreated?.()
@@ -214,7 +233,7 @@ export class BrowserService {
     try {
       await entry.initialization
       // A user address submitted during initialization takes precedence over homeUrl.
-      if (url !== 'about:blank' && entry.navigationVersion === 0) await this.navigate(entry, url)
+      if (url !== 'about:blank' && (!userLocalFile || localFile) && entry.navigationVersion === 0) await this.navigate(entry, url)
       else this.changed(entry)
     } catch (error) {
       if (!view.webContents.isDestroyed()) {
@@ -225,6 +244,72 @@ export class BrowserService {
     }
     this.entry(entry.state.tabId)
     return this.state(entry)
+  }
+
+  /** Only the trusted workbench IPC calls this; AI browser_open keeps workspace authorization. */
+  async openLocalFile(input: string, presentation?: BrowserTabPresentation, localPresentationEngine?: BrowserConnectInput['expectedEngine'], directoryOnly = false): Promise<BrowserTabState> {
+    const authorized = await this.localFiles.openUserFile(input, directoryOnly)
+    const directory = authorized.directory ? { grant: authorized.directory, history: [authorized.info.path], index: 0 } : undefined
+    try { return await this.create({}, undefined, undefined, presentation, authorized.grant, authorized.info, localPresentationEngine, directory) }
+    catch (error) { if (authorized.grant) this.localFiles.revoke(authorized.grant); throw error }
+  }
+
+  async openLocalEntry(tabId: string, input: string): Promise<BrowserTabState> {
+    const entry = this.entry(tabId), directory = entry.localDirectory
+    if (!directory || entry.state.localFile?.kind !== 'directory') throw new Error('此标签没有本地目录授权')
+    const version = ++entry.navigationVersion
+    const target = await inspectLocalDirectoryEntry(directory.grant, userLocalPath(input))
+    this.entry(tabId)
+    if (version !== entry.navigationVersion) return this.state(entry)
+    if (target.kind === 'directory') {
+      this.commitLocalDirectory(entry, target)
+      return this.state(entry)
+    }
+    const authorized = await this.localFiles.openUserFile(target.path)
+    try {
+      // File authorization must still refer to the selected root after its asynchronous canonicalization.
+      const checked = await inspectLocalDirectoryEntry(directory.grant, authorized.info.path)
+      if (checked.kind !== 'file' || authorized.info.kind === 'directory') throw new Error('目录条目已变化，请刷新后重试')
+      this.entry(tabId)
+      if (version !== entry.navigationVersion) {
+        if (authorized.grant) this.localFiles.revoke(authorized.grant)
+        return this.state(entry)
+      }
+      return await this.create({}, undefined, undefined, entry.state.presentation, authorized.grant, authorized.info, entry.localPresentationEngine)
+    } catch (error) { if (authorized.grant) this.localFiles.revoke(authorized.grant); throw error }
+  }
+
+  async readLocalFile(tabId: string): Promise<BrowserLocalFileContent> {
+    const entry = this.entry(tabId), info = entry.state.localFile
+    if (!info || info.kind === 'html') throw new Error('此标签没有可读取的本地文件授权')
+    const navigationId = entry.state.navigationId
+    if (info.kind === 'directory' && !entry.localDirectory) throw new Error('此标签没有本地目录授权')
+    const result = info.kind === 'directory'
+      ? await readLocalDirectory(entry.localDirectory!.grant, info.path)
+      : await readLocalFileContent(info)
+    if (this.entry(tabId) !== entry || entry.state.navigationId !== navigationId || entry.state.localFile?.path !== info.path) {
+      throw new Error('本地文件预览已切换，请重新读取')
+    }
+    if (result.kind !== 'directory') entry.state.localFile = { ...info, size: result.size }
+    return result
+  }
+
+  async duplicate(tabId: string): Promise<BrowserTabState> {
+    const source = this.entry(tabId)
+    if (!this.surfaceOwnership.canPresent(source.state.presentation)) throw new Error('请在该标签所属的会话中复制标签页')
+    const original = this.state(source)
+    const localFile = source.localFile && original.url.startsWith(`${source.localFile.origin}/`)
+      ? this.localFiles.duplicate(original.url, source.localFile) : undefined
+    try {
+      const copy = await this.create({ url: original.url, context: original.context }, source.pendingEngine,
+        undefined, original.presentation, localFile, original.localFile, source.localPresentationEngine,
+        source.localDirectory ? structuredClone(source.localDirectory) : undefined)
+      await this.action({ tabId: copy.tabId, action: 'viewport', viewport: original.viewport })
+      return await this.action({ tabId: copy.tabId, action: 'zoom', zoomFactor: original.zoomFactor })
+    } catch (error) {
+      if (localFile) this.localFiles.revoke(localFile)
+      throw error
+    }
   }
 
   async action(input: BrowserAction): Promise<BrowserTabState> {
@@ -239,11 +324,23 @@ export class BrowserService {
     const version = changesNavigation ? ++entry.navigationVersion : entry.navigationVersion
     await this.ensureInitialized(entry)
     if (changesNavigation && version !== entry.navigationVersion) return this.state(entry)
+    if (entry.localDirectory && ['back', 'forward', 'reload'].includes(input.action)) {
+      const directory = entry.localDirectory
+      const index = directory.index + (input.action === 'back' ? -1 : input.action === 'forward' ? 1 : 0)
+      if (index < 0 || index >= directory.history.length) return this.state(entry)
+      const target = await inspectLocalDirectoryEntry(directory.grant, directory.history[index])
+      this.entry(input.tabId)
+      if (version !== entry.navigationVersion) return this.state(entry)
+      if (target.kind !== 'directory') throw new Error('目录已变化，请重新选择目录')
+      this.commitLocalDirectory(entry, target, index)
+      return this.state(entry)
+    }
     switch (input.action) {
       case 'back': if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack(); break
       case 'forward': if (wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward(); break
       case 'reload':
         entry.state.error = undefined
+        if (entry.state.localFile && !entry.localFile) { entry.state.navigationId += 1; break }
         // An explicit browser refresh starts a new document capture even when
         // Chromium has a cached response for the same URL. Bypass that cache so
         // the page, console, and network timeline are all actually reloaded.
@@ -259,8 +356,33 @@ export class BrowserService {
     return this.state(entry)
   }
 
-  activateSurface(owner: BrowserSurfaceOwner): void {
-    if (this.surfaceOwnership.activate(owner)) this.hideSurfaces()
+  activateSurface(owner: BrowserSurfaceOwner, verifiedEngine?: BrowserConnectInput['expectedEngine']): void {
+    if (!this.surfaceOwnership.activate(owner)) return
+    this.hideSurfaces()
+    // A ready engine can fill a startup page's missing display identity, even
+    // before a conversation exists. This does not grant AI tool access.
+    if (owner.engineId && verifiedEngine) for (const entry of this.tabs.values()) {
+      const presentation = entry.state.presentation
+      if (!entry.state.context && presentation && presentation.mode === owner.mode
+        && presentation.sessionId === (owner.sessionId ?? null) && presentation.engineId === undefined
+        && pendingBrowserEngineMatches(entry.state.localFile ? entry.localPresentationEngine : entry.pendingEngine, verifiedEngine)) {
+        entry.state.presentation = { mode: presentation.mode, sessionId: presentation.sessionId, engineId: owner.engineId }
+        this.changed(entry)
+      }
+    }
+  }
+
+  currentPresentation(): BrowserTabPresentation | undefined { return this.surfaceOwnership.currentPresentation() }
+
+  acceptsSurface(owner: BrowserSurfaceOwner): boolean { return this.surfaceOwnership.accepts(owner) }
+
+  rememberPresentation(context: BrowserContext, mode: 'code' | 'work'): void {
+    context = validateContext(context)
+    const presentation = this.presentations.remember(context, mode)
+    for (const entry of this.tabs.values()) if (!entry.state.presentation && contextsMatch(entry.state.context, context)) {
+      entry.state.presentation = { ...presentation }
+      this.changed(entry)
+    }
   }
 
   resetSurface(): void {
@@ -281,11 +403,12 @@ export class BrowserService {
     // hide a page after the user has switched back to a newer generation.
     if (!this.surfaceOwnership.accepts(input.surface)) return
     const entry = this.entry(input.tabId)
+    if (!this.surfaceOwnership.canPresent(entry.state.presentation)) return
     const layoutVersion = ++entry.layoutVersion
     const [width, height] = entry.owner.getContentSize()
     const bounds = clampBounds(input.bounds, { width, height })
     if (bounds.width > 0 && bounds.height > 0) entry.bounds = bounds
-    entry.visible = input.visible === true && bounds.width > 0 && bounds.height > 0
+    entry.visible = !(entry.state.localFile && entry.state.localFile.kind !== 'html') && input.visible === true && bounds.width > 0 && bounds.height > 0
     entry.view.setVisible(entry.visible)
     if (bounds.width > 0 && bounds.height > 0) {
       // A visible flag is not an acknowledgement until native geometry and
@@ -324,6 +447,7 @@ export class BrowserService {
   /** Called only by the explicit renderer share action with the trusted active context. */
   bindContext(tabId: string, context: BrowserContext): BrowserTabState {
     const entry = this.entry(tabId)
+    if (entry.state.localFile) throw new Error('用户本地文件预览不能添加到 AI 会话')
     entry.state.context = validateContext(context)
     entry.pendingEngine = undefined
     this.changed(entry)
@@ -334,8 +458,16 @@ export class BrowserService {
   adoptUnboundTabs(context: BrowserContext, engine: BrowserConnectInput['expectedEngine']): void {
     if (!this.settings.get().aiEnabled) return
     validateContext(context)
+    const presentation = this.presentations.get(context)
     for (const entry of this.tabs.values()) {
-      if (!entry.state.context && pendingBrowserEngineMatches(entry.pendingEngine, engine)) this.bindContext(entry.state.tabId, context)
+      const candidate = entry.state.presentation
+      if (!entry.state.localFile && !entry.state.context && candidate && presentation
+        && candidate.mode === presentation.mode && candidate.sessionId === presentation.sessionId
+        && (candidate.engineId === undefined || candidate.engineId === presentation.engineId)
+        && pendingBrowserEngineMatches(entry.pendingEngine, engine)) {
+        entry.state.presentation = { ...presentation }
+        this.bindContext(entry.state.tabId, context)
+      }
     }
   }
 
@@ -354,6 +486,7 @@ export class BrowserService {
     this.disposed = true
     this.inputQueue.dispose()
     this.localFiles.dispose()
+    this.presentations.clear()
     for (const id of [...this.tabs.keys()]) this.close(id)
   }
 
@@ -488,10 +621,28 @@ export class BrowserService {
   private changed(entry: BrowserEntry): void {
     if (!this.tabs.has(entry.state.tabId) || entry.view.webContents.isDestroyed()) return
     const wc = entry.view.webContents
-    entry.state.canGoBack = wc.navigationHistory.canGoBack()
-    entry.state.canGoForward = wc.navigationHistory.canGoForward()
-    entry.state.loading = wc.isLoading()
+    const staticLocal = entry.state.localFile && !entry.localFile
+    entry.state.canGoBack = entry.localDirectory ? entry.localDirectory.index > 0 : !staticLocal && wc.navigationHistory.canGoBack()
+    entry.state.canGoForward = entry.localDirectory ? entry.localDirectory.index < entry.localDirectory.history.length - 1 : !staticLocal && wc.navigationHistory.canGoForward()
+    entry.state.loading = !staticLocal && wc.isLoading()
     this.emit({ type: 'changed', tabId: entry.state.tabId, tab: this.state(entry) })
+  }
+
+  private commitLocalDirectory(entry: BrowserEntry, target: LocalDirectoryTarget, historyIndex?: number): void {
+    const directory = entry.localDirectory
+    if (!directory || target.kind !== 'directory') throw new Error('此标签没有本地目录授权')
+    if (historyIndex === undefined) {
+      if (directory.history[directory.index] !== target.path) {
+        directory.history = [...directory.history.slice(0, directory.index + 1), target.path]
+        directory.index = directory.history.length - 1
+      }
+    } else directory.index = historyIndex
+    entry.state.localFile = { path: target.path, name: target.name, kind: 'directory', size: 0 }
+    entry.state.url = this.localFiles.fileUrl(entry.state.localFile)
+    entry.state.title = target.name
+    entry.state.navigationId += 1
+    entry.state.error = undefined
+    this.changed(entry)
   }
 
   private log(entry: BrowserEntry, level: string, message: string, source?: string, line?: number): void {
@@ -547,7 +698,7 @@ export class BrowserService {
         }
         else this.action({ tabId: entry.state.tabId, action: 'reload' }).catch((error: unknown) => this.log(entry, 'error', browserError(error)))
       } else if (key === 't') {
-        this.create({ context: entry.state.context }, entry.pendingEngine).then((tab) => {
+        this.create({ context: entry.state.context }, entry.pendingEngine, undefined, entry.state.presentation).then((tab) => {
           this.focusOwner(entry)
           this.emit({ type: 'focus-address', tabId: tab.tabId })
         }).catch((error: unknown) => this.log(entry, 'error', browserError(error)))
@@ -567,6 +718,11 @@ export class BrowserService {
       }
     })
     wc.on('will-navigate', (event, url) => {
+      if (entry.state.localFile && /^https?:/i.test(url)) {
+        event.preventDefault()
+        this.create({ url }, undefined, undefined, entry.state.presentation).catch((error: unknown) => this.log(entry, 'error', browserError(error)))
+        return
+      }
       try { this.normalizeEntryUrl(entry, url); entry.navigationVersion += 1 } catch (error) { event.preventDefault(); entry.state.error = browserError(error); this.changed(entry) }
     })
     wc.on('will-redirect', (event, url) => {
@@ -576,12 +732,13 @@ export class BrowserService {
       // Keep popup ownership explicit, including the AI session that opened the parent.
       try {
         const target = normalizeBrowserUrl(url)
-        this.create({ url: target, context: entry.state.context }, entry.pendingEngine).catch((error: unknown) => this.log(entry, 'error', browserError(error)))
+        this.create({ url: target, context: entry.state.context }, entry.pendingEngine, undefined, entry.state.presentation).catch((error: unknown) => this.log(entry, 'error', browserError(error)))
       } catch (error) { this.log(entry, 'warning', browserError(error)) }
       return { action: 'deny' }
     })
     wc.on('did-start-navigation', (_event, url, inPlace, mainFrame) => {
       if (!mainFrame) return
+      if (entry.state.localFile && url === 'about:blank') return
       entry.state.url = url
       entry.state.error = undefined
       if (!inPlace) {
@@ -591,16 +748,34 @@ export class BrowserService {
         entry.refs.clear()
         entry.console.length = 0
         entry.network.beginNavigation(entry.state.navigationId, url)
-        entry.state.title = '加载中…'
+        entry.state.title = entry.state.localFile?.name ?? '加载中…'
       }
       this.changed(entry)
     })
-    wc.on('did-navigate', (_event, url) => { entry.state.url = url; this.changed(entry) })
-    wc.on('did-navigate-in-page', (_event, url, mainFrame) => { if (mainFrame) { entry.state.url = url; this.changed(entry) } })
-    wc.on('page-title-updated', (_event, title) => { entry.state.title = title || '浏览器'; this.changed(entry) })
+    wc.on('did-navigate', (_event, url) => {
+      if (entry.state.localFile && url === 'about:blank') return
+      entry.state.url = url
+      this.refreshLocalFileInfo(entry, url)
+      this.changed(entry)
+    })
+    wc.on('did-navigate-in-page', (_event, url, mainFrame) => {
+      if (mainFrame && !(entry.state.localFile && url === 'about:blank')) {
+        entry.state.url = url
+        this.refreshLocalFileInfo(entry, url)
+        this.changed(entry)
+      }
+    })
+    wc.on('page-title-updated', (_event, title) => {
+      if (entry.state.localFile && (!entry.localFile || wc.getURL() === 'about:blank')) return
+      entry.state.title = title || entry.state.localFile?.name || '浏览器'; this.changed(entry)
+    })
     wc.on('did-start-loading', () => this.changed(entry))
     wc.on('did-stop-loading', () => {
-      if (!wc.isDestroyed()) { entry.state.title = wc.getTitle() || (wc.getURL() === 'about:blank' ? '新标签页' : '浏览器'); this.changed(entry) }
+      if (!wc.isDestroyed()) {
+        entry.state.title = entry.state.localFile && (!entry.localFile || wc.getURL() === 'about:blank')
+          ? entry.state.localFile.name : wc.getTitle() || entry.state.localFile?.name || (wc.getURL() === 'about:blank' ? '新标签页' : '浏览器')
+        this.changed(entry)
+      }
     })
     wc.on('did-fail-load', (_event, code, description, _url, mainFrame) => {
       if (!mainFrame || code === -3) return
@@ -616,6 +791,7 @@ export class BrowserService {
     wc.on('console-message', (details) => this.log(entry, details.level, details.message, details.sourceId, details.lineNumber))
     wc.on('destroyed', () => {
       entry.closed.abort()
+      if (entry.localFile) this.localFiles.revoke(entry.localFile)
       entry.network.clear()
       if (!this.tabs.delete(entry.state.tabId)) return
       this.emit({ type: 'closed', tabId: entry.state.tabId })
@@ -693,6 +869,7 @@ export class BrowserService {
   }
 
   private async navigate(entry: BrowserEntry, url: string): Promise<void> {
+    if (entry.state.localFile && !entry.localFile) throw new Error('请在新标签中打开其它文件或网页')
     if (isLocalFileUrl(url) && !entry.localFile) throw new Error('请用 browser_open 为本地 HTML 新建独立文件标签')
     const target = isLocalFileUrl(url) ? await this.localFiles.fromFile(url, entry.localFile!) : this.normalizeEntryUrl(entry, url)
     const version = ++entry.navigationVersion
@@ -710,7 +887,22 @@ export class BrowserService {
   }
 
   private normalizeEntryUrl(entry: BrowserEntry, url: string): string {
+    if (entry.state.localFile && !url.startsWith('aether-local:')) throw new Error('请在新标签中打开网页，本地预览仅访问已授权目录')
     return entry.localFile && url.startsWith('aether-local:') ? this.localFiles.normalize(url, entry.localFile) : normalizeBrowserUrl(url)
+  }
+
+  private refreshLocalFileInfo(entry: BrowserEntry, url: string): void {
+    if (!entry.state.localFile || !entry.localFile) return
+    const navigationId = entry.state.navigationId
+    this.localFiles.fileInfo(url, entry.localFile).then(info => {
+      if (!this.tabs.has(entry.state.tabId) || entry.state.url !== url || entry.state.navigationId !== navigationId) return
+      entry.state.localFile = info
+      this.changed(entry)
+    }).catch((error: unknown) => {
+      if (!this.tabs.has(entry.state.tabId) || entry.state.url !== url || entry.state.navigationId !== navigationId) return
+      entry.state.error = browserError(error)
+      this.changed(entry)
+    })
   }
 
   private async applyViewport(entry: BrowserEntry): Promise<void> {
@@ -825,13 +1017,13 @@ export class BrowserService {
       elements.push(element)
       if (elements.length >= MAX_ELEMENTS) break
     }
-    const screenshot = await this.viewportScreenshot(entry, navigationId, page, budget)
+    const preview = await this.viewportScreenshot(entry, navigationId, page, budget)
     if (entry.state.navigationId !== navigationId || entry.state.url !== page.pageUrl) throw new Error('页面正在导航，请重新读取快照')
     return { tab: this.state(entry), text: page.text.slice(0, MAX_TEXT), viewport: page.viewport, elements,
-      ...(screenshot ? { screenshot } : {}), truncated: page.text.length > MAX_TEXT || elements.length >= MAX_ELEMENTS }
+      ...preview, truncated: page.text.length > MAX_TEXT || elements.length >= MAX_ELEMENTS }
   }
 
-  private async viewportScreenshot(entry: BrowserEntry, navigationId: number, expected: BrowserPageFrame, budget?: BrowserReadBudget): Promise<BrowserViewportScreenshot | undefined> {
+  private async viewportScreenshot(entry: BrowserEntry, navigationId: number, expected: BrowserPageFrame, budget?: BrowserReadBudget): Promise<Pick<BrowserSnapshot, 'screenshot' | 'screenshotUnavailable'>> {
     try {
       const wc = entry.view.webContents
       const zoom = wc.getZoomFactor(), emulationScale = entry.emulationScale
@@ -840,16 +1032,14 @@ export class BrowserService {
         && frame.pageUrl === expected.pageUrl && wc.getZoomFactor() === zoom && entry.emulationScale === emulationScale
         && (['x', 'y', 'width', 'height'] as const).every(key => entry.view.getBounds()[key] === viewBounds[key])
         && (['width', 'height', 'deviceScaleFactor', 'scrollX', 'scrollY'] as const).every(key => frame.viewport[key] === expected.viewport[key])
-      if (!isCurrent(await this.evaluate<BrowserPageFrame>(entry, PAGE_FRAME_EXPRESSION, budget))) return undefined
+      if (!isCurrent(await this.evaluate<BrowserPageFrame>(entry, PAGE_FRAME_EXPRESSION, budget))) return { screenshotUnavailable: '页面视口在截图时发生变化，请重新截图' }
       // Capture the whole guest surface: Electron already applies native density,
       // page zoom and device fit scaling. Multiplying these again would crop the view.
-      const captureBudget = { deadline: Math.min(budget?.deadline ?? Infinity, Date.now() + 3000),
-        assertActive: budget?.assertActive ?? (() => {}), signal: budget?.signal }
-      let png = await this.capturePng(entry, captureBudget)
-      if (!isCurrent(await this.evaluate<BrowserPageFrame>(entry, PAGE_FRAME_EXPRESSION, budget))) return undefined
-      if (png.length < 24 || !png.subarray(0, 8).equals(PNG_SIGNATURE)) return undefined
+      let png = await this.capturePng(entry, budget)
+      if (!isCurrent(await this.evaluate<BrowserPageFrame>(entry, PAGE_FRAME_EXPRESSION, budget))) return { screenshotUnavailable: '页面视口在截图时发生变化，请重新截图' }
+      if (png.length < 24 || !png.subarray(0, 8).equals(PNG_SIGNATURE)) return { screenshotUnavailable: '浏览器未返回有效 PNG 截图' }
       let width = png.readUInt32BE(16), height = png.readUInt32BE(20)
-      if (!width || !height) return undefined
+      if (!width || !height) return { screenshotUnavailable: '浏览器返回的截图尺寸无效' }
       // NativeImage.getSize() may be in DIP. Rehydrate at scale 1 before resizing,
       // then record IHDR pixel sizes so the renderer never guesses a DPR conversion.
       let preview = nativeImage.createFromBuffer(png, { scaleFactor: 1 })
@@ -857,14 +1047,17 @@ export class BrowserService {
         const scale = Math.min(MAX_PREVIEW_EDGE / Math.max(width, height), png.length > MAX_PREVIEW_BYTES ? 0.7 : 1)
         preview = preview.resize({ width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale)), quality: 'best' })
         png = preview.toPNG()
-        if (png.length < 24) return undefined
+        if (png.length < 24) return { screenshotUnavailable: '截图预览生成失败，请重新截图' }
         width = png.readUInt32BE(16); height = png.readUInt32BE(20)
       }
-      if (!width || !height || Math.max(width, height) > MAX_PREVIEW_EDGE || png.length > MAX_PREVIEW_BYTES) return undefined
-      return { dataUrl: `data:image/png;base64,${png.toString('base64')}`, width, height }
-    } catch {
-      // A missing preview must not turn a successful browser action into a failure.
-      return undefined
+      if (!width || !height || Math.max(width, height) > MAX_PREVIEW_EDGE || png.length > MAX_PREVIEW_BYTES) return { screenshotUnavailable: '截图超出预览大小限制，请缩小视口后重新截图' }
+      return { screenshot: { dataUrl: `data:image/png;base64,${png.toString('base64')}`, width, height } }
+    } catch (error) {
+      budget?.assertActive()
+      if (entry.closed.signal.aborted || budget?.signal?.aborted || entry.view.webContents.isDestroyed()) throw error
+      // Failed pixels do not undo a successful action, but callers need to
+      // distinguish a text observation from captured visual evidence.
+      return { screenshotUnavailable: `未能获取页面截图：${browserError(error)}` }
     }
   }
 
@@ -883,9 +1076,14 @@ export class BrowserService {
   }
 
   private async capturePng(entry: BrowserEntry, budget?: BrowserReadBudget): Promise<Buffer> {
+    // Reserve a bounded second attempt. A native timeout must not consume the
+    // fallback's entire allowance, while an outer action deadline still wins.
+    const captureBudget: BrowserReadBudget = { deadline: Math.min(budget?.deadline ?? Infinity, Date.now() + CAPTURE_ATTEMPT_TIMEOUT_MS * 2),
+      assertActive: budget?.assertActive ?? (() => {}), signal: budget?.signal }
     try {
+      const nativeTimeout = this.readTimeout(captureBudget, CAPTURE_ATTEMPT_TIMEOUT_MS)
       const image = await this.withLifetime(entry, entry.view.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true }),
-        '页面截图', this.readTimeout(budget, 3000), budget?.signal)
+        '页面截图', nativeTimeout, captureBudget.signal)
       if (!image.isEmpty()) return image.toPNG()
     } catch (error) {
       budget?.assertActive()
@@ -894,10 +1092,11 @@ export class BrowserService {
     // Electron's native capture can lack a display surface in a hidden tab.
     // CDP captures that same page without showing a window or replaying input.
     try {
-      this.readTimeout(budget)
-      await this.debugger(entry)
+      const connectionTimeout = this.readTimeout(captureBudget)
+      await this.withLifetime(entry, this.debugger(entry), '截图连接', connectionTimeout, captureBudget.signal)
+      const fallbackBudget = { ...captureBudget, deadline: Math.min(captureBudget.deadline, Date.now() + CAPTURE_ATTEMPT_TIMEOUT_MS) }
       const { data } = await this.command<{ data: string }>(entry, 'Page.captureScreenshot',
-        { format: 'png', fromSurface: true, captureBeyondViewport: false }, budget)
+        { format: 'png', fromSurface: true, captureBeyondViewport: false }, fallbackBudget)
       if (typeof data !== 'string' || data.length > 12 * 1024 * 1024) throw new Error('截图内容无效或过大')
       const png = Buffer.from(data, 'base64')
       if (png.length < 24 || !png.subarray(0, 8).equals(PNG_SIGNATURE)) throw new Error('截图内容不是有效 PNG')
@@ -932,12 +1131,12 @@ export class BrowserService {
       case 'network': return this.network(entry.state.tabId, request.query)
       case 'network_detail': return this.networkRequest(entry.state.tabId, request.requestId ?? '', { bodyTarget: request.bodyTarget, bodyOffset: request.bodyOffset, bodyLimit: request.bodyLimit })
       case 'close': markDispatch(); this.close(entry.state.tabId); return { tabId: entry.state.tabId, closed: true }
-      case 'navigate': if (!request.url) throw new Error('请提供网页地址'); markDispatch(); await this.navigate(entry, request.url); return this.snapshot(entry)
+      case 'navigate': if (!request.url) throw new Error('请提供网页地址'); markDispatch(); await this.navigate(entry, request.url); return this.snapshot(entry, { deadline: Infinity, assertActive, signal })
       case 'viewport': {
         const viewport = validateViewport(request.viewport ?? null)
         markDispatch()
         entry.state.viewport = viewport
-        await this.applyViewport(entry); this.changed(entry); return this.snapshot(entry)
+        await this.applyViewport(entry); this.changed(entry); return this.snapshot(entry, { deadline: Infinity, assertActive, signal })
       }
       case 'click': {
         const interaction = await this.click(entry, request, assertActive, signal, markDispatch)
@@ -945,7 +1144,7 @@ export class BrowserService {
       }
       case 'fill': await this.fill(entry, request, assertActive, signal, markDispatch); return this.postActionSnapshot(entry, assertActive, signal)
       case 'press_key': await this.pressKey(entry, request.key, assertActive, signal, markDispatch); return this.postActionSnapshot(entry, assertActive, signal)
-      case 'scroll': await this.scroll(entry, request, assertActive, signal, markDispatch); return this.snapshot(entry)
+      case 'scroll': await this.scroll(entry, request, assertActive, signal, markDispatch); return this.snapshot(entry, { deadline: Infinity, assertActive, signal })
       case 'wait': return this.waitFor(entry, request, assertActive, signal)
       default: throw new Error('未知浏览器工具操作')
     }
@@ -1122,8 +1321,7 @@ export class BrowserService {
       this.assertInputVisible(entry, assertActive)
       const interaction: BrowserClickInteraction = { ...captured, type: 'click', navigationId,
         ...(captured.target ? { target: { ...captured.target, ...(request.ref ? { ref: request.ref } : {}), ...(request.selector ? { selector: request.selector } : {}) } } : {}) }
-      const screenshot = await this.viewportScreenshot(entry, navigationId, captured)
-      if (screenshot) interaction.screenshot = screenshot
+      Object.assign(interaction, await this.viewportScreenshot(entry, navigationId, captured, { deadline: Infinity, assertActive, signal }))
       // Keep the original node alive while capturing. Re-resolving a selector could
       // silently click a replacement; scrolling it again would invalidate the image.
       const validation = await this.command<RuntimeResult<boolean>>(entry, 'Runtime.callFunctionOn', { objectId, returnByValue: true, functionDeclaration: `function(){

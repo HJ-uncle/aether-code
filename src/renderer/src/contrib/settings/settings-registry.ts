@@ -198,6 +198,15 @@ export const SETTINGS_DEFINITIONS: readonly SettingDefinition[] = [
     keywords: ['accent', 'color', 'custom', 'hex', '强调色', '自定义颜色', '色值']
   },
   {
+    key: 'aether.subagents.concurrency',
+    label: '子代理并发数量',
+    description: '每个主会话同时执行的子代理数量，默认 5 个，超出后排队。',
+    section: 'models',
+    category: '工作区 / 模型',
+    scope: 'user',
+    keywords: ['subagent', 'concurrency', 'parallel', '子代理', '并发', '并行', '排队', '上限']
+  },
+  {
     key: 'aether.models.default',
     label: '默认模型',
     description: '设置新会话使用的默认模型。',

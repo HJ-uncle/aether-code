@@ -14,9 +14,26 @@
 import { useMemo, type JSX } from 'react'
 import type { HistoryItemViewModel } from '@renderer/core/git/git-history-graph'
 
-const ROW_HEIGHT = 22
+export const GIT_HISTORY_ROW_HEIGHT = 22
+const ROW_HEIGHT = GIT_HISTORY_ROW_HEIGHT
 const LANE_WIDTH = 11
 const CURVE_R = 5
+
+export function gitHistoryGraphWidth(item: HistoryItemViewModel): number {
+  return LANE_WIDTH * (Math.max(item.inputSwimlanes.length, item.outputSwimlanes.length, 1) + 1)
+}
+
+/** Expanded file trees must carry every outgoing lane to the next commit row. */
+export function GitHistoryGraphContinuation({ item }: { item: HistoryItemViewModel }): JSX.Element {
+  return (
+    <svg width={gitHistoryGraphWidth(item)} className="git-panel__commit-rail" aria-hidden="true">
+      {item.outputSwimlanes.map((lane, index) => (
+        <line key={index} x1={LANE_WIDTH * (index + 1)} x2={LANE_WIDTH * (index + 1)}
+          y1="0" y2="100%" stroke={lane.color} strokeWidth={1} />
+      ))}
+    </svg>
+  )
+}
 
 export function GitHistoryGraph({ item }: { item: HistoryItemViewModel }): JSX.Element {
   const input = item.inputSwimlanes
@@ -28,7 +45,7 @@ export function GitHistoryGraph({ item }: { item: HistoryItemViewModel }): JSX.E
     return idx >= 0 ? idx : input.length
   }, [input, item.hash])
 
-  const svgWidth = LANE_WIDTH * (Math.max(input.length, output.length, 1) + 1)
+  const svgWidth = gitHistoryGraphWidth(item)
   const isMerge = item.parents.length > 1
   const circleX = LANE_WIDTH * (circleIndex + 1)
 

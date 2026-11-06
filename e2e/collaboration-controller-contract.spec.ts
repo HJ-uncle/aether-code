@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { expect, test } from '@playwright/test'
 import type { EngineRequestInput, EngineRequestResult } from '../src/shared/ipc'
 import { CollaborationController, type ControllerConnection, type ControllerEnvironment } from '../src/renderer/src/core/engine/collaboration-controller-core'
+import { controllerDeliveryRecords, startControllerDeliveryRefresh } from '../src/renderer/src/core/engine/controller-delivery-refresh'
 import { appendControllerPending, CONTROLLER_OUTBOX_KEY, CONTROLLER_HISTORY_KEY, CONTROLLER_HISTORY_COUNT, CONTROLLER_HISTORY_BYTES, controllerStorageIdentity, parseControllerCapability, parseControllerContext,
   parseControllerOutbox, parseControllerHistory, mergeControllerSaved, controllerSavedStatus, type ControllerPending, type ControllerTarget } from '../src/renderer/src/core/engine/collaboration-contract'
 import { remoteRequestError } from '../src/main/engine/protocol'
@@ -36,7 +37,7 @@ function receipt(item = pending(), overrides: Record<string, unknown> = {}): unk
   return { messageId: 'message', rootRunId: item.rootRunId, rootAttemptId: item.rootAttemptId, senderParticipantId: 'root',
     senderInvocationRunId: 'root', recipientParticipantId: item.recipientParticipantId, requestKey: item.requestKey,
     payloadHash: createHash('sha256').update(item.message).digest('hex'), payloadBytes: item.payloadBytes,
-    acceptedSeq: 2, acceptedAt: 3, state: 'queued', ...overrides }
+    acceptedSeq: 2, acceptedAt: 3, state: 'queued', delivery: { state: 'pending' }, ...overrides }
 }
 function ok(data: unknown): EngineRequestResult<unknown> { return { ok: true, code: 200, message: '', data } }
 function fixture() {
@@ -312,7 +313,7 @@ test('queued ACK keeps original key and text through restart for explicit GET of
   expect(await restarted.inspectHistory(connection, saved, f.selected)).toMatchObject({ receipt: { state: 'interrupted' } })
   const secondRestart = new CollaborationController(f.env)
   expect(secondRestart.drafts()[0]).toMatchObject({ message: '原要求', requestKey: 'key-1' })
-  expect(controllerSavedStatus(secondRestart.history()[0])).toBe('本轮结束前未读取，原文已保留')
+  expect(controllerSavedStatus(secondRestart.history()[0])).toBe('未读取，原文保留')
   expect(f.calls.filter(item => item.method === 'POST')).toHaveLength(1)
   expect(f.calls.at(-1)).toMatchObject({ method: 'GET', path: '/collaboration/roots/root/controller-receipts/key-1', query: { rootAttemptId: 'attempt', rootSessionId: 'parent' } })
 })
@@ -321,7 +322,7 @@ test('known receipt transitions never claim consumption or roll a terminal state
   const f = fixture(), original = pending()
   const saved = (state: string, reason?: string) => parseControllerHistory(JSON.stringify([{ ...original, kind: 'accepted', receipt: receipt(original, { state, ...(reason ? { reason } : {}) }) }]))[0]
   const queued = saved('queued'), terminal = saved('interrupted', 'target_invocation_finished_before_consumption')
-  expect(controllerSavedStatus(queued)).toBe('已接纳（不代表已执行）')
+  expect(controllerSavedStatus(queued)).toBe('待加入上下文')
   expect(controllerSavedStatus(saved('interrupted', 'engine_stopped'))).not.toContain('未读取')
   expect(mergeControllerSaved(terminal, queued)).toEqual(terminal)
   expect(() => mergeControllerSaved(terminal, saved('rejected'))).toThrow('不一致')
@@ -330,6 +331,97 @@ test('known receipt transitions never claim consumption or roll a terminal state
   f.values.set(CONTROLLER_HISTORY_KEY, JSON.stringify([terminal])); f.setRequest(async () => ok({ outcome: 'accepted', receipt: receipt(original) }))
   expect(await f.controller.inspectHistory(connection, terminal, f.selected)).toEqual(terminal)
   expect(f.controller.history()[0]).toEqual(terminal); expect(f.calls.every(item => item.method === 'GET')).toBe(true)
+})
+
+test('verified delivery advances independently of acceptance and cannot regress or change its history identity', () => {
+  const original = pending()
+  const saved = (delivery: unknown) => parseControllerHistory(JSON.stringify([{ ...original, kind: 'accepted', receipt: receipt(original, { delivery }) }]))[0]
+  const queued = saved({ state: 'pending' }), integrated = saved({ state: 'integrated', historyMessageId: 'history-1', integratedAt: 10 })
+  const suppressed = saved({ state: 'suppressed', historyMessageId: 'history-1', integratedAt: 10, reason: 'history_changed' })
+  expect(controllerSavedStatus(queued)).toBe('待加入上下文')
+  expect(controllerSavedStatus(integrated)).toBe('已加入上下文')
+  expect(controllerSavedStatus(suppressed)).toBe('已从上下文移除')
+  expect(controllerSavedStatus(saved({ state: 'suppressed', historyMessageId: 'history-1', integratedAt: 10, reason: 'history_compacted' }))).toBe('原文已压缩为摘要')
+  expect(mergeControllerSaved(queued, integrated)).toEqual(integrated)
+  expect(mergeControllerSaved(integrated, queued)).toEqual(integrated)
+  expect(mergeControllerSaved(integrated, suppressed)).toEqual(suppressed)
+  expect(mergeControllerSaved(suppressed, integrated)).toEqual(suppressed)
+  expect(mergeControllerSaved(suppressed, queued)).toEqual(suppressed)
+  expect(() => mergeControllerSaved(integrated, saved({ state: 'integrated', historyMessageId: 'foreign', integratedAt: 10 }))).toThrow('证据不一致')
+  expect(() => mergeControllerSaved(integrated, saved({ state: 'integrated', historyMessageId: 'history-1', integratedAt: 11 }))).toThrow('证据不一致')
+  for (const value of [undefined, {}, { state: 'read' }, { state: 'integrated', historyMessageId: 'history-1' },
+    { state: 'integrated', historyMessageId: 'history-1', integratedAt: -1 }, { state: 'pending', historyMessageId: 'invented' }])
+    expect(() => saved(value)).toThrow()
+})
+
+test('automatic delivery refresh uses GET only, yields to typing submissions, and stops querying integrated receipts', async () => {
+  const f = fixture(); await f.controller.submit(connection, target, '原要求', f.selected)
+  const saved = f.controller.history()[0], actions: Array<() => void> = [], observed: string[] = []
+  let busy = true
+  f.setRequest(async input => {
+    expect(input.method).toBe('GET')
+    return ok({ outcome: 'accepted', receipt: receipt(saved, { delivery: { state: 'integrated', historyMessageId: 'history-1', integratedAt: 10 } }) })
+  })
+  const stop = startControllerDeliveryRefresh({ records: () => f.controller.history(), current: () => true, busy: () => busy,
+    inspect: (record, selected) => f.controller.inspectHistory(connection, record, selected),
+    onResult: record => observed.push(controllerSavedStatus(record)), onError: error => { throw error },
+    schedule: action => { actions.push(action); return 0 as unknown as ReturnType<typeof setTimeout> }, cancel: () => {} })
+  try {
+    const count = f.calls.length
+    actions.shift()!(); await expect.poll(() => actions.length).toBe(1)
+    expect(f.calls).toHaveLength(count)
+    busy = false; actions.shift()!()
+    await expect.poll(() => observed).toEqual(['已加入上下文'])
+    expect(f.calls.filter(call => call.method === 'POST')).toHaveLength(1)
+    expect(f.calls.at(-1)?.path).toContain('/controller-receipts/key-1')
+    const settled = f.calls.length
+    actions.shift()!(); await expect.poll(() => actions.length).toBe(1)
+    expect(f.calls).toHaveLength(settled)
+  } finally { stop() }
+})
+
+test('switching away during automatic receipt read cannot apply a late response or restart its loop', async () => {
+  const f = fixture(); await f.controller.submit(connection, target, '原要求', f.selected)
+  const saved = f.controller.history()[0], actions: Array<() => void> = [], observed: string[] = []
+  let release!: () => void, started = false
+  const gate = new Promise<void>(resolve => { release = resolve })
+  f.setRequest(async () => { started = true; await gate; return ok({ outcome: 'accepted', receipt: receipt(saved, { delivery: { state: 'integrated', historyMessageId: 'history-1', integratedAt: 10 } }) }) })
+  const stop = startControllerDeliveryRefresh({ records: () => f.controller.history(), current: () => true, busy: () => false,
+    inspect: (record, selected) => f.controller.inspectHistory(connection, record, selected),
+    onResult: record => observed.push(controllerSavedStatus(record)), onError: error => { throw error },
+    schedule: action => { actions.push(action); return 0 as unknown as ReturnType<typeof setTimeout> }, cancel: () => {} })
+  actions.shift()!(); await expect.poll(() => started).toBe(true)
+  stop(); release(); await new Promise(resolve => setTimeout(resolve, 0))
+  expect(observed).toEqual([]); expect(actions).toEqual([])
+  expect(f.controller.history()[0]).toMatchObject({ receipt: { delivery: { state: 'pending' } } })
+})
+
+test('a newer root refreshes older accepted records by their original run and key without resending or crossing session targets', async () => {
+  const f = fixture(), actions: Array<() => void> = [], observed: string[] = []
+  const original = pending({ targetKind: 'root', childSessionId: undefined, recipientParticipantId: 'root',
+    rootRunId: 'old-root', rootAttemptId: 'old-attempt', recipientInvocationRunId: 'old-root', requestKey: 'old-key' })
+  const newer = { ...original, rootRunId: 'new-root', rootAttemptId: 'new-attempt', recipientInvocationRunId: 'new-root', requestKey: 'new-key' }
+  const unrelated = [pending(), { ...original, rootSessionId: 'other-session', requestKey: 'foreign-session' }]
+  f.values.set(CONTROLLER_HISTORY_KEY, JSON.stringify([original, newer, ...unrelated].map(item => ({ ...item, kind: 'accepted', receipt: receipt(item) }))))
+  const records = () => controllerDeliveryRecords(f.controller.history(), { storageIdentity: original.storageIdentity, rootSessionId: 'parent', kind: 'root' })
+  expect(records().map(item => item.requestKey)).toEqual(['old-key', 'new-key'])
+  f.setRequest(async input => {
+    const saved = records().find(item => input.path.endsWith('/' + item.requestKey))!
+    expect(input.path).toBe(`/collaboration/roots/${saved.rootRunId}/controller-receipts/${saved.requestKey}`)
+    expect(input.query).toEqual({ rootAttemptId: saved.rootAttemptId, rootSessionId: saved.rootSessionId })
+    return ok({ outcome: 'accepted', receipt: receipt(saved, { delivery: { state: 'integrated', historyMessageId: 'history-' + saved.requestKey, integratedAt: 10 } }) })
+  })
+  const stop = startControllerDeliveryRefresh({ records, current: () => true, busy: () => false,
+    inspect: (record, selected) => f.controller.inspectHistory(connection, record, selected),
+    onResult: record => observed.push(record.requestKey), onError: error => { throw error },
+    schedule: action => { actions.push(action); return 0 as unknown as ReturnType<typeof setTimeout> }, cancel: () => {} })
+  try {
+    actions.shift()!(); await expect.poll(() => observed).toEqual(['old-key', 'new-key'])
+    expect(f.calls.map(call => call.method)).toEqual(['GET', 'GET'])
+    expect(records().map(item => controllerSavedStatus(item))).toEqual(['已加入上下文', '已加入上下文'])
+    expect(f.controller.history().filter(item => unrelated.some(other => other.requestKey === item.requestKey)))
+      .toEqual(expect.arrayContaining(unrelated.map(item => expect.objectContaining({ requestKey: item.requestKey, receipt: expect.objectContaining({ delivery: { state: 'pending' } }) }))))
+  } finally { stop() }
 })
 
 test('explicit refusal is durable without fabricating an accepted receipt', async () => {

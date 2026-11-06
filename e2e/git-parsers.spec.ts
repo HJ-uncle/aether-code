@@ -3,6 +3,7 @@ import {
   isNoCommitsError,
   isNotARepoError,
   parseGitLog,
+  parseGitRemotes,
   parseGitStatus
 } from '../src/main/git/parsers'
 
@@ -10,7 +11,7 @@ import {
  * 纯函数测试：git 输出解析（src/main/git/parsers.ts）。
  *
  * 本文件覆盖：parseGitStatus（分支 / 改动条目 / 暂存标记）、parseGitLog、
- * isNotARepoError、isNoCommitsError。
+ * parseGitRemotes（含空格的本地 URL）、isNotARepoError、isNoCommitsError。
  *
  * 样本是**真实 git 输出**（本机 git 2.55 在某个仓库上跑出来的），
  * 不是手编的格式 —— 手编样本只能验证"我以为的格式"，验证不了 git 实际给什么。
@@ -26,6 +27,42 @@ const REAL_LOG =
   '2c8e8a826810337492cc5a38bb0bbd705b6fb632\u001f2c8e8a826\u001fMohamed Boudra\u001f2026-09-21T12:34:41+02:00\u001fHEAD -> main, origin/main, origin/HEAD\u001ffix(app): use Command+F for Find on macOS across chat, file, and terminal (#5129)\n' +
   'ee7949ae25441d67e0780b4e99bf1d4e7c57897c\u001fee7949ae2\u001fMatt Cowger\u001f2026-09-21T02:53:52-07:00\u001f\u001ffix(pi): honor per-model thinking configuration (#4413)\n' +
   'd636abd7a4ce302e7ccb9eb6074f637c6dd4d83b\u001fd636abd7a\u001fpaseo-ai[bot]\u001f2026-09-18T09:49:37Z\u001f\u001ffix: update lockfile signatures and Nix hash [skip ci]'
+
+test.describe('parseGitRemotes', () => {
+  test('本地 URL 包含空格、中文与括号时完整保留，fetch/push 行只返回一个远程', () => {
+    const backup = 'D:\\项目\\测试 (fetch) backup 远程\\backup.git'
+    const origin = 'D:\\项目\\测试 origin 远程\\origin.git'
+    const output = [
+      `backup\t${backup} (fetch)`, `backup\t${backup} (push)`,
+      `origin\t${origin} (fetch)`, `origin\t${origin} (push)`, ''
+    ].join('\r\n')
+    expect(parseGitRemotes(output)).toEqual([
+      { name: 'backup', url: backup }, { name: 'origin', url: origin }
+    ])
+  })
+
+  test('多个 fetch URL 去重且使用首个 fetch 地址，不混入独立 push 地址', () => {
+    expect(parseGitRemotes([
+      'origin\tgit@example.invalid:write/repo.git (push)',
+      'origin\thttps://example.invalid/read/repo.git (fetch)',
+      'origin\thttps://mirror.invalid/read/repo.git (fetch)',
+      'backup\tssh://git@example.invalid/backup.git (fetch)'
+    ].join('\n'))).toEqual([
+      { name: 'origin', url: 'https://example.invalid/read/repo.git' },
+      { name: 'backup', url: 'ssh://git@example.invalid/backup.git' }
+    ])
+  })
+
+  test('URL 中的空白和 (fetch) 文字不作为边界或被 trim 丢弃', () => {
+    const url = ' ../仓库 (fetch)/repo.git '
+    expect(parseGitRemotes(`origin\t${url} (fetch)\n`)).toEqual([{ name: 'origin', url }])
+  })
+
+  test('无远程、非 remote 输出和只含 push 的行不产生虚假选项', () => {
+    expect(parseGitRemotes('')).toEqual([])
+    expect(parseGitRemotes('warning: ignored\norigin\turl (push)\norigin url (fetch)\n')).toEqual([])
+  })
+})
 
 test.describe('parseGitStatus', () => {
   test('真实输出：分支、改动条目、暂存标记都解析正确', () => {

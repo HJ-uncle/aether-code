@@ -7,13 +7,19 @@ import { getEngineSource, getExpectedEngine } from '@renderer/core/engine/source
 import { errorText } from '@renderer/core/engine/subagent-state'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { Icon } from '@renderer/workbench/icons'
+import { useMotionPresence } from '@renderer/workbench/MotionPresence'
 import { Markdown } from '../chat/Markdown'
 import type { ChatFileContext } from '../chat/chat-link'
 import { ToolResult } from '../chat/ToolResult'
+import { looksLikeStructuredResult } from '../chat/ToolResultData'
 import { parseToolResult } from '../chat/tool-result'
-import { toolDisplayName } from '../chat/tool-names'
+import { parseToolResultData } from '../chat/tool-result-data'
+import { quietToolIcon } from '../chat/quiet-tool-icon'
+import { toolDisplayName, toolParamSummary, toolPathArg } from '../chat/tool-names'
 import { getSessionMeta } from '../history/session-meta'
 import { loadWorkSubagentTranscript, SUBAGENT_TRANSCRIPT_PAGE_SIZE, workTranscriptText, WorkTranscriptSupersededError, type WorkTranscriptWindow } from './work-subagent-transcript'
+import { workTranscriptItems, type WorkTranscriptItem } from './work-subagent-transcript-presentation'
+import './work-subagent-transcript.css'
 
 export interface WorkSubagentTranscriptMemory {
   window?: WorkTranscriptWindow
@@ -30,36 +36,103 @@ function TranscriptText({ value, id, memory, redraw, fileContext, markdown = fal
   value: unknown; id: string; memory: WorkSubagentTranscriptMemory; redraw: () => void; fileContext: ChatFileContext; markdown?: boolean; toolName?: string
 }): JSX.Element {
   const parsed = useMemo(() => toolName ? parseToolResult(value) : undefined, [toolName, value])
+  // Truncating a JSON receipt before parsing makes an otherwise readable result
+  // disappear. Structured fields already expand incrementally in ToolResult.
+  const structured = useMemo(() => parsed ? parseToolResultData(parsed.text) : null, [parsed])
   const text = parsed?.text ?? extractText(value)
   const preview = workTranscriptText(text, memory.expanded.get(id))
+  const output = parsed ? { ...parsed, text: structured ? parsed.text : preview.text } : undefined
+  const hasMedia = Boolean(parsed?.images.length || parsed?.browserSnapshots?.length)
   return <div className="work-subagent-transcript__text">
-    {markdown ? <Markdown text={preview.text} fileContext={fileContext} /> : parsed ? <ToolResult parsed={{ ...parsed, text: preview.text }} toolName={toolName} textClassName="work-subagent-transcript__pre" /> : <pre className="work-subagent-transcript__pre">{preview.text}</pre>}
-    {preview.remaining ? <button type="button" className="work-subagent-transcript__expand" onClick={() => { memory.expanded.set(id, preview.nextLimit); redraw() }}>继续展开 · 还有 {preview.remaining.toLocaleString()} 字符<Icon name="chevron-down" size={14} /></button> : null}
+    {markdown ? <Markdown text={preview.text} fileContext={fileContext} /> : output ? <ToolResult parsed={output} toolName={toolName} textClassName="work-subagent-transcript__pre" surfaceMode="work" structured /> : <pre className="work-subagent-transcript__pre">{preview.text}</pre>}
+    {hasMedia && output?.text ? <details className="work-subagent-transcript__media-text"><summary>文字说明</summary><ToolResult parsed={{ images: [], text: output.text }} textClassName="work-subagent-transcript__pre" surfaceMode="work" structured /></details> : null}
+    {!structured && preview.remaining ? <button type="button" className="work-subagent-transcript__expand" onClick={() => { memory.expanded.set(id, preview.nextLimit); redraw() }}>继续展开 · 还有 {preview.remaining.toLocaleString()} 字符<Icon name="chevron-down" size={14} /></button> : null}
   </div>
 }
 
-function TranscriptRow({ row, name, memory, redraw, fileContext, toolNames }: {
-  row: EngineHistoryRow; name: string; memory: WorkSubagentTranscriptMemory; redraw: () => void; fileContext: ChatFileContext; toolNames: Map<string, string>
+function transcriptArgs(value: unknown): string {
+  if (value == null) return ''
+  if (typeof value === 'string') return value
+  try { return JSON.stringify(value) ?? '' } catch { return '' }
+}
+
+function TranscriptAttachments({ row }: { row: EngineHistoryRow }): JSX.Element | null {
+  return row.metadata?.attachments?.length ? <p className="work-subagent-transcript__attachments">附件：{row.metadata.attachments.map(file => file.name).join('、')}</p> : null
+}
+
+function TranscriptTool({ item, memory, redraw, fileContext }: {
+  item: WorkTranscriptItem; memory: WorkSubagentTranscriptMemory; redraw: () => void; fileContext: ChatFileContext
 }): JSX.Element {
+  const { row, result, toolName } = item
+  const outcome = result ?? (row.role === 'tool' ? row : undefined)
+  // Keep the original result key when an earlier page reveals its invocation.
+  const bodyId = `${outcome?.id ?? row.id}:body`
+  const invocationBodyId = `${row.id}:body`
+  const argsId = `${row.id}:args`
+  const open = memory.opened.has(bodyId) || Boolean(result && memory.opened.has(invocationBodyId))
+  const presence = useMotionPresence(open)
+  const args = transcriptArgs(row.toolCall?.args)
+  const path = toolPathArg(args)
+  const summary = path ? path.replace(/\\/g, '/').split('/').filter(Boolean).slice(-2).join('/') : toolParamSummary(args)
+  const outcomeError = errorText(outcome?.error) || errorText(outcome?.metadata?.error)
+  const explicitStatus = outcome?.metadata?.status ?? row.metadata?.status
+  const failed = outcome?.success === false || outcome?.metadata?.success === false || Boolean(outcomeError) || explicitStatus === 'failed' || explicitStatus === 'error'
+  const status = failed ? '失败' : explicitStatus === 'cancelled' ? '已取消' : explicitStatus === 'interrupted' ? '已中断' :
+    explicitStatus === 'blocked' || explicitStatus === 'waiting' ? '等待处理' : explicitStatus === 'running' ? '处理中' :
+      explicitStatus === 'queued' ? '等待执行' : explicitStatus === 'cancelling' ? '正在取消' : !outcome ? '结果未载入' : ''
+  const reasoning = extractText(outcome?.reasoningContent)
+  const reasoningId = `${outcome?.id ?? row.id}:reasoning`
+  return <details className="work-subagent-transcript__tool" data-transcript-id={result?.id} open={open} onToggle={event => {
+    if (result) memory.opened.delete(invocationBodyId)
+    if (event.currentTarget.open) memory.opened.add(bodyId); else memory.opened.delete(bodyId)
+    redraw()
+  }}>
+    <summary title={[toolName, outcome?.modelId, outcome?.createdAt ? new Date(outcome.createdAt).toLocaleString() : row.createdAt ? new Date(row.createdAt).toLocaleString() : undefined].filter(Boolean).join(' · ') || undefined}>
+      <Icon name={quietToolIcon(toolName ?? '')} size={14} />
+      <span className="work-subagent-transcript__tool-name">{toolName ? toolDisplayName(toolName) : '工具输出'}</span>
+      {summary && !looksLikeStructuredResult(summary) ? <span className="work-subagent-transcript__tool-target" title={path || summary}>{summary}</span> : null}
+      {status ? <span className={`work-subagent-transcript__tool-status${failed || explicitStatus === 'interrupted' ? ' work-subagent-transcript__failure' : ''}`}>{status}</span> : null}
+      <Icon name="chevron-down" size={12} className="work-subagent-transcript__tool-chevron" />
+    </summary>
+    {presence.present ? <div className="work-subagent-transcript__tool-body" {...presence.motionProps}>
+      {args ? <details className="work-subagent-transcript__input" open={memory.opened.has(argsId)} onToggle={event => {
+        if (event.currentTarget.open) memory.opened.add(argsId); else memory.opened.delete(argsId)
+      }}><summary>输入参数</summary><TranscriptText value={args} id={argsId} memory={memory} redraw={redraw} fileContext={fileContext} toolName={toolName || 'unknown'} /></details> : null}
+      {outcomeError ? <p className="work-subagent-transcript__failure" role="alert">{outcomeError}</p> : null}
+      {reasoning ? <details open={memory.opened.has(reasoningId)} onToggle={event => {
+        if (event.currentTarget.open) memory.opened.add(reasoningId); else memory.opened.delete(reasoningId)
+      }}><summary>思考过程</summary><TranscriptText value={reasoning} id={reasoningId} memory={memory} redraw={redraw} fileContext={fileContext} /></details> : null}
+      {outcome ? <><TranscriptText value={outcome.content} id={bodyId} memory={memory} redraw={redraw} fileContext={fileContext} toolName={toolName || 'unknown'} /><TranscriptAttachments row={outcome} /></> : <p className="work-subagent-transcript__pending">当前记录中尚无此工具的输出。</p>}
+    </div> : null}
+  </details>
+}
+
+function TranscriptRow({ item, name, memory, redraw, fileContext }: {
+  item: WorkTranscriptItem; name: string; memory: WorkSubagentTranscriptMemory; redraw: () => void; fileContext: ChatFileContext
+}): JSX.Element {
+  const { row, showIdentity } = item
   const id = row.id!
   const content = extractText(row.content)
   const reasoning = extractText(row.reasoningContent)
-  const tool = row.toolCall
-  const toolName = typeof row.toolCallId === 'string' ? toolNames.get(row.toolCallId) : undefined
-  const label = row.role === 'user' ? '任务指令' : row.role === 'tool' ? toolName ? toolDisplayName(toolName) : '工具结果' : name
-  const failure = row.success === false || row.metadata?.success === false
   const rowError = errorText(row.error) || errorText(row.metadata?.error)
   const bodyId = `${id}:body`
   const reasoningId = `${id}:reasoning`
-  const argsId = `${id}:args`
-  const toggle = (key: string, open: boolean): void => { if (open) memory.opened.add(key); else memory.opened.delete(key) }
-  return <article className={`work-subagent-transcript__row work-subagent-transcript__row--${row.role === 'user' ? 'user' : row.role === 'tool' ? 'tool' : 'assistant'}`} data-transcript-id={id}>
-    <header><strong>{label}</strong>{row.role === 'tool' ? <span className={failure ? 'work-subagent-transcript__failure' : undefined}>{failure ? '失败' : row.success === true || row.metadata?.success === true ? '成功' : '历史记录'}</span> : row.modelId ? <span title={row.modelId}>{row.modelId}</span> : null}{row.createdAt ? <time dateTime={new Date(row.createdAt).toISOString()}>{new Date(row.createdAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</time> : null}</header>
-    {reasoning ? <details open={memory.opened.has(reasoningId)} onToggle={event => { toggle(reasoningId, event.currentTarget.open); redraw() }}><summary><Icon name="brain" size={14} />思考过程</summary>{memory.opened.has(reasoningId) ? <TranscriptText value={reasoning} id={reasoningId} memory={memory} redraw={redraw} fileContext={fileContext} /> : null}</details> : null}
-    {row.role === 'tool' ? <details open={memory.opened.has(bodyId)} onToggle={event => { toggle(bodyId, event.currentTarget.open); redraw() }}><summary><Icon name="output" size={14} />查看工具输出{rowError ? <span className="work-subagent-transcript__failure">{rowError}</span> : null}</summary>{memory.opened.has(bodyId) ? <TranscriptText value={row.content} id={bodyId} memory={memory} redraw={redraw} fileContext={fileContext} toolName={toolName || 'unknown'} /> : null}</details> : content ? <TranscriptText value={content} id={bodyId} memory={memory} redraw={redraw} fileContext={fileContext} markdown={row.role === 'assistant'} /> : null}
-    {tool?.name ? <details open={memory.opened.has(argsId)} onToggle={event => { toggle(argsId, event.currentTarget.open); redraw() }}><summary><Icon name="play" size={14} />调用{toolDisplayName(tool.name)}<span>参数</span></summary>{memory.opened.has(argsId) ? <TranscriptText value={typeof tool.args === 'string' ? tool.args : JSON.stringify(tool.args ?? {}, null, 2)} id={argsId} memory={memory} redraw={redraw} fileContext={fileContext} /> : null}</details> : null}
-    {row.role !== 'tool' && rowError ? <p className="work-subagent-transcript__failure" role="alert">{rowError}</p> : null}
-    {row.metadata?.attachments?.length ? <p className="work-subagent-transcript__attachments">附件：{row.metadata.attachments.map(file => file.name).join('、')}</p> : null}
+  const reasoningPresence = useMotionPresence(memory.opened.has(reasoningId))
+  const isTool = row.role === 'tool'
+  const toolOnly = isTool || Boolean(row.toolCall && !content && !reasoning && !rowError && !row.metadata?.attachments?.length)
+  const createdAt = row.createdAt ? new Date(row.createdAt) : undefined
+  const timestamp = createdAt && Number.isFinite(createdAt.getTime()) ? createdAt : undefined
+  const meta = [row.modelId, timestamp?.toLocaleString()].filter(Boolean).join(' · ')
+  return <article className={`work-subagent-transcript__row work-subagent-transcript__row--${row.role === 'user' ? 'user' : toolOnly ? 'tool' : 'assistant'}${showIdentity ? ' work-subagent-transcript__row--start' : ''}`} data-transcript-id={id} title={meta || undefined}>
+    {showIdentity ? <header title={meta || undefined}><strong>{row.role === 'user' ? '任务指令' : name}</strong>{timestamp ? <time dateTime={timestamp.toISOString()} title={timestamp.toLocaleString()}>{timestamp.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</time> : null}</header> : null}
+    {!isTool && reasoning ? <details className="work-subagent-transcript__reasoning" open={memory.opened.has(reasoningId)} onToggle={event => {
+      if (event.currentTarget.open) memory.opened.add(reasoningId); else memory.opened.delete(reasoningId)
+      redraw()
+    }}><summary><Icon name="brain" size={14} />思考过程</summary>{reasoningPresence.present ? <div {...reasoningPresence.motionProps}><TranscriptText value={reasoning} id={reasoningId} memory={memory} redraw={redraw} fileContext={fileContext} /></div> : null}</details> : null}
+    {!isTool && content ? <TranscriptText value={content} id={bodyId} memory={memory} redraw={redraw} fileContext={fileContext} markdown={row.role === 'assistant'} /> : null}
+    {!isTool && rowError ? <p className="work-subagent-transcript__failure" role="alert">{rowError}</p> : null}
+    {!isTool ? <TranscriptAttachments row={row} /> : null}
+    {row.toolCall || isTool ? <TranscriptTool item={item} memory={memory} redraw={redraw} fileContext={fileContext} /> : null}
   </article>
 }
 
@@ -133,12 +206,12 @@ export function WorkSubagentTranscript({ source, parentSessionId, childSessionId
     anchor.current = null
   }, [revision])
   const rows = useMemo(() => taskPlanTranscriptRows(memory.window?.rows ?? []).filter(row => row.role !== 'system' && row.isSidechain !== true), [memory, revision])
-  const toolNames = useMemo(() => new Map((memory.window?.rows ?? []).flatMap(row => row.toolCall?.id && row.toolCall.name ? [[row.toolCall.id, row.toolCall.name] as const] : [])), [memory, revision])
   const visible = rows.slice(-memory.visibleCount)
+  const items = workTranscriptItems(visible, memory.window?.rows ?? rows)
   const hasEarlier = rows.length > memory.visibleCount || (memory.window?.firstPage ?? 1) > 1
   const window = memory.window
   const availableOnly = window?.endpoint === '/conversation/history' || window?.backend !== 'jsonl'
-  return <section className="work-subagent-transcript" aria-label={`${name} 的完整对话`}>
+  return <section className="work-subagent-transcript work-subagent-transcript--compact" aria-label={`${name} 的完整对话`}>
     <div className="work-subagent-transcript__toolbar"><span>{window ? `当前窗口 ${window.rows.length.toLocaleString()} / ${window.total.toLocaleString()} 条记录` : '读取此代理的独立会话记录'}</span><button type="button" disabled={!ready || loading} onClick={() => void load('refresh')} aria-label="更新子代理完整对话">{loading ? <Spinner size={14} /> : <Icon name="restart" size={14} />}更新对话</button></div>
     {window?.windowed ? <p className="work-subagent-transcript__notice">加载更早内容后，点“更新对话”回到最新记录。</p> : null}
     {window && window.revision === undefined ? <p className="work-subagent-transcript__notice" role="status">归档第 {window.firstPage} / {Math.max(1, Math.ceil(window.total / SUBAGENT_TRANSCRIPT_PAGE_SIZE))} 页 · 引擎未提供跨页版本一致性，每次仅显示当前页。</p> : null}
@@ -146,7 +219,7 @@ export function WorkSubagentTranscript({ source, parentSessionId, childSessionId
     {error ? <div className="work-subagent-transcript__error" role="alert"><span>{error}</span><button type="button" disabled={!ready || loading} onClick={() => void load('refresh')}>重试读取</button></div> : null}
     <div className="work-subagent-transcript__scroll" ref={scroller} onScroll={event => { memory.scrollTop = event.currentTarget.scrollTop }} aria-busy={loading}>
       {hasEarlier ? <button type="button" className="work-subagent-transcript__earlier" disabled={!ready || loading} onClick={() => { if (rows.length > memory.visibleCount) { captureAnchor(); memory.visibleCount += SUBAGENT_TRANSCRIPT_PAGE_SIZE; redraw() } else void load('older') }}><Icon name="chevron-up" size={14} />加载更早记录</button> : null}
-      {visible.map(row => <TranscriptRow key={row.id} row={row} name={name} memory={memory} redraw={redraw} fileContext={fileContext} toolNames={toolNames} />)}
+      {items.map(item => <TranscriptRow key={item.row.id} item={item} name={name} memory={memory} redraw={redraw} fileContext={fileContext} />)}
       {window && window.lastPage < Math.ceil(window.total / SUBAGENT_TRANSCRIPT_PAGE_SIZE) ? <button type="button" className="work-subagent-transcript__earlier" disabled={!ready || loading} onClick={() => void load('newer')}><Icon name="chevron-down" size={14} />加载较新记录</button> : null}
       {!visible.length ? <div className="work-subagent-transcript__empty" role="status">{loading ? <><Spinner size={18} /><p>正在读取完整对话…</p></> : window ? <><Icon name="chat" size={24} /><p>{running ? '此代理尚未写入对话记录，稍后可更新查看。' : '此代理没有可用的对话记录。'}</p></> : <p>连接就绪后可读取此代理的对话。</p>}</div> : null}
       {running && visible.length ? <p className="work-subagent-transcript__notice">本轮仍在运行，更新对话可查看新记录。</p> : null}

@@ -3,7 +3,7 @@ export interface NextTurnQueueScope {
   source: { mode: 'embedded' | 'remote'; endpoint: string; accountId: string | null }
   tenantId: string
   namespace: { id: string; generation: string }
-  owner: 'work'
+  owner: 'work' | 'code'
   taskId: string
 }
 
@@ -36,6 +36,8 @@ export interface QueueAttachmentReceipt {
   sha256: string
 }
 export interface NextTurnQueueEnvelope {
+  /** Code's explicit options survive restart; Work retains its task-owned configuration. */
+  code?: import('./code-next-turn-api').CodeQueueOptions
   /** Main-owned enqueue identity; no provider or credential fields are stored. */
   submissionDigest?: string
   draft: { text: string; revision: number; mentions: QueueMention[] }
@@ -50,7 +52,7 @@ export interface NextTurnQueueEnvelope {
     mcpServers: QueueResourceSelection
     knowledgeBases: QueueResourceSelection
   }
-  thinking: { kind: 'inherit' | 'off' } | { kind: 'effort'; effort: 'low' | 'medium' | 'high' }
+  thinking: { kind: 'inherit' | 'off' | 'on' } | { kind: 'effort'; effort: 'low' | 'medium' | 'high' }
   memory: QueueMemorySelection
   security: { policy: 'engine-session'; observedVersion?: string }
   subagentModel?: string
@@ -97,6 +99,7 @@ export interface NextTurnQueueState {
   removed: { id: string; entryRevision: number; removedAt: number }[]
 }
 export type NextTurnQueueUserMutation =
+  | { kind: 'replace-pending'; entries: { id: string; entryRevision: number }[]; replacements: { id: string; envelope: NextTurnQueueEnvelope }[]; at: number }
   | { kind: 'enqueue'; id: string; envelope: NextTurnQueueEnvelope; at: number }
   | { kind: 'edit'; id: string; entryRevision: number; envelope: NextTurnQueueEnvelope; at: number }
   | { kind: 'move'; id: string; beforeId: string | null }

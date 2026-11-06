@@ -4,6 +4,7 @@ import { runToolState, toolStatusLabel } from '@renderer/core/engine/subagent-st
 import { toolDisplayName } from '@renderer/core/engine/tool-labels'
 import { isVisibleToolActivity } from '@renderer/core/engine/task-plan'
 import { workToolTarget } from './work-message-timeline'
+import { workToolFeedback } from './work-tool-feedback'
 
 export const WORK_INLINE_ACTIVITY_PAGE_SIZE = 20
 
@@ -26,7 +27,7 @@ export function workActivitySummary(tools: readonly ToolActivity[], workspacePat
   const action = toolDisplayName(current.name)
   const label = done === tools.length
     ? tools.length === 1 ? `已完成 · ${action}` : `已完成 ${done} 项操作 · ${action}`
-    : `${toolStatusLabel(current)} · ${action}${tools.length > 1 ? ` · ${done}/${tools.length} 已完成` : ''}`
+    : `${workToolFeedback(current, state)?.label ?? toolStatusLabel(current)} · ${action}${tools.length > 1 ? ` · ${done}/${tools.length} 已完成` : ''}`
   return { tool: current, state, label, target: workToolTarget(current, workspacePath) }
 }
 

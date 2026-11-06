@@ -1,0 +1,67 @@
+.modal--model-form .modal__footer {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.model-form__secondary-actions,
+.model-form__primary-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.model-form__primary-actions {
+  margin-left: auto;
+}
+
+/* These menus are portaled outside the dialog's stacking context. */
+.popover__panel.model-form__popover {
+  z-index: calc(var(--z-overlay) + 1);
+}
+
+.context-window-input {
+  width: 260px;
+  max-width: 100%;
+}
+
+.context-window-input__field {
+  position: relative;
+  width: 100%;
+}
+
+.context-window-input .context-window-input__value {
+  width: 100%;
+  padding-right: 64px;
+}
+
+.context-window-input__unit {
+  position: absolute;
+  top: 50%;
+  right: 38px;
+  transform: translateY(-50%);
+  color: var(--fg-muted);
+  pointer-events: none;
+}
+
+.context-window-input__toggle {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  bottom: 3px;
+  width: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+}
+
+.context-window-input__toggle:hover:not(:disabled) {
+  color: var(--fg-strong);
+  background: var(--bg-hover);
+}
+
+.context-window-input__toggle:disabled,
+.context-window-input__value:disabled + .context-window-input__unit {
+  opacity: 0.5;
+}

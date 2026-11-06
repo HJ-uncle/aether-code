@@ -7,6 +7,7 @@ import {
 } from '../src/renderer/src/contrib/work/work-draft-persistence'
 import {
   pollWorkTaskStatuses,
+  workTaskActivityFromRun,
   workTaskStatusFromRun,
   type WorkStatusTask,
   type WorkRunStatus
@@ -184,7 +185,10 @@ test('Work 每字只通知当前草稿，发送前 flush 保留 v1 格式且不�
 })
 
 function running(id: string): WorkStatusTask {
-  return { id, status: 'running', updatedAt: 1 }
+  return { id, status: 'running', updatedAt: 1, activity: workTaskActivityFromRun(runStatus(id, 'running', 1), id) }
+}
+function runStatus(id: string, status: string, version = 2): WorkRunStatus {
+  return { run: { schemaVersion: 1, sessionId: id, runId: 'run-' + id, seq: 1, version, status, updatedAt: version, pending: [] } }
 }
 
 test('Work 状态探测最多并发 2 个，选中 SSE 会话不探测，相同状态不产生写入', async () => {
@@ -214,11 +218,11 @@ test('Work 状态探测最多并发 2 个，选中 SSE 会话不探测，相同�
     }
   })
   expect(requested).toEqual(['first', 'second'])
-  releases.get('first')!({ run: { status: 'succeeded' } })
+  releases.get('first')!(runStatus('first', 'succeeded'))
   await Promise.resolve()
   expect(requested).toEqual(['first', 'second', 'third'])
-  releases.get('second')!({ run: { status: 'waiting' } })
-  releases.get('third')!({ run: { status: 'running' } })
+  releases.get('second')!(runStatus('second', 'waiting'))
+  releases.get('third')!(runStatus('third', 'running', 1))
   await polling
   expect(maximum).toBe(2)
   expect(applied).toEqual(['first:done', 'second:waiting'])
@@ -251,7 +255,7 @@ test('Work 迟到探测不能覆盖停止/继续动作、SSE 更新或已切换�
     if (race === 'sse') tasks[0] = { ...tasks[0], updatedAt: 2 }
     if (race === 'source') current = false
     if (race === 'selected') selected = true
-    complete({ run: { status: 'succeeded' } })
+    complete(runStatus('work-race', 'succeeded'))
     await polling
     expect(applied, race).toEqual([])
   }

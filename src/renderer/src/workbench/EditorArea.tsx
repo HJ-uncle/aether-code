@@ -383,7 +383,7 @@ function EditorGroupView({ group, first, focused, split }: {
       // 已经是焦点组时不要每次右键/中键都再次同步活动文档；同步会让标签栏
       // 恢复滚动位置，正好把刚打开的右键菜单卸载掉。
       onPointerDownCapture={() => { if (!focused) focusEditorGroup(group.id) }} onFocusCapture={() => { if (!focused) focusEditorGroup(group.id) }}>
-      <header className="editor-tabs" role="tablist" onKeyDown={handleTabsKeyDown}>
+      <header className="editor-tabs" data-scroll-axis="x" role="tablist" onKeyDown={handleTabsKeyDown}>
         {tabs.map((tab) => (
           <div
             key={tab.key}

@@ -1,0 +1,45 @@
+{
+  "description": "Session artifact tree construction benchmark; excludes UI rendering, tab transitions and window timing.",
+  "source": "src/renderer/src/contrib/work/work-session-artifacts.ts",
+  "method": {
+    "execution": "One Node.js process; original and current functions measured alternately",
+    "before": "Original sibling.find lookup plus name.localeCompare(name, 'zh-CN', { numeric: true }) per comparison",
+    "after": "Per-sibling Map lookup plus module-level Intl.Collator('zh-CN', { numeric: true })",
+    "currentFunctionLoading": "Read actual TypeScript source, extract buildSessionArtifactTree through the next statsCache declaration, prepend shared collator and transpile with TypeScript ES2022/CommonJS",
+    "input": "Flat filenames file0.ts through fileN.ts; deterministic Fisher-Yates shuffle using seed 0x12345678 and LCG Math.imul(seed, 1664525) + 1013904223",
+    "correctness": "assert.deepStrictEqual(after(rows), before(rows)) outside timings for each size",
+    "warmupsPerFunction": 3,
+    "samplesPerFunction": 7,
+    "sampleOrder": "Even samples before then after; odd samples after then before",
+    "timer": "node:perf_hooks performance.now()",
+    "unit": "milliseconds",
+    "summary": "Median of seven samples",
+    "limitations": "Single local run; machine load and garbage collection can affect timings. Measures pure tree construction only and must not be extrapolated to tab switching or UI rendering performance."
+  },
+  "results": [
+    {
+      "fileCount": 1000,
+      "before": [81.569, 70.051, 67.148, 69.74, 52.401, 55.365, 58.075],
+      "after": [3.383, 2.132, 1.899, 2.037, 3.424, 3.139, 1.895],
+      "beforeMedian": 67.148,
+      "afterMedian": 2.132,
+      "speedup": 31.5
+    },
+    {
+      "fileCount": 5000,
+      "before": [602.044, 659.073, 631.687, 644.202, 674.189, 622.958, 649.197],
+      "after": [21.582, 21.004, 21.444, 39.518, 20.926, 19.97, 20.923],
+      "beforeMedian": 644.202,
+      "afterMedian": 21.004,
+      "speedup": 30.67
+    },
+    {
+      "fileCount": 10000,
+      "before": [1628.88, 1656.577, 1677.036, 1583.738, 1610.741, 1630.456, 1573.123],
+      "after": [94.938, 54.697, 45.972, 98.352, 52.878, 49.558, 107.497],
+      "beforeMedian": 1628.88,
+      "afterMedian": 54.697,
+      "speedup": 29.78
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+.work-service-tray { position: relative; display: inline-flex; }
+.work-service-tray--rail { position: absolute; z-index: 5; top: var(--space-2); left: var(--space-2); }
+.work-service-tray--rail .work-service-tray__button { width: 28px; height: 28px; padding: 0; justify-content: center; border-color: var(--border); background: var(--bg-surface); box-shadow: var(--shadow-control); }
+.work-service-tray--rail .work-service-tray__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.work-service-tray__button {
+  display: inline-flex; align-items: center; gap: var(--space-1); min-height: 28px; padding: 4px 8px;
+  border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--fg-muted);
+  font-size: 12px; cursor: pointer; transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
+}
+.work-service-tray__button:hover, .work-service-tray__button.is-open { border-color: var(--border); background: var(--bg-hover); color: var(--fg); }
+.work-service-tray__button > svg { color: currentColor; }
+.work-service-tray__button b { min-width: 16px; padding: 1px 4px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 10px; font-weight: 600; text-align: center; }
+.work-service-tray__button:focus-visible, .work-service-tray__close:focus-visible, .work-service-tray__history-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.work-service-tray__popover { max-width: calc(100vw - 16px); }
+.work-service-tray__panel { display: flex; flex-direction: column; max-height: min(480px, calc(100vh - 32px)); overflow: hidden; color: var(--fg); }
+.work-service-tray__header { display: flex; align-items: center; gap: var(--space-2); min-height: 44px; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); }
+.work-service-tray__header strong { font-size: 13px; font-weight: 600; }
+.work-service-tray__header span { color: var(--fg-muted); font-size: 11px; }
+.work-service-tray__close { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 28px; width: 28px; height: 28px; margin-left: auto; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--fg-muted); cursor: pointer; }
+.work-service-tray__close:hover { background: var(--bg-hover); color: var(--fg); }
+.work-service-tray__body { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--space-1) var(--space-2) var(--space-2); }
+.work-service-tray__section { display: grid; gap: 2px; }
+.work-service-tray__section + .work-service-tray__section { margin-top: var(--space-1); padding-top: var(--space-1); border-top: 1px solid var(--border); }
+.work-service-tray__empty { margin: var(--space-3) var(--space-1); color: var(--fg-muted); font-size: 12px; }
+.work-service-tray__history-toggle { display: flex; align-items: center; gap: var(--space-1); width: 100%; min-height: 30px; padding: var(--space-1); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--fg-muted); font: inherit; font-size: 11px; text-align: left; cursor: pointer; }
+.work-service-tray__history-toggle:hover { background: var(--bg-hover); color: var(--fg); }
+.work-service-tray__history-toggle span { flex: 1; }
+.work-service-tray__history-toggle small { font-size: 10px; }
+.work-service-tray__history-list { display: grid; gap: 2px; }
+.work-service-card { min-width: 0; border-radius: var(--radius-sm); }
+.work-service-card__head { display: flex; align-items: center; min-width: 0; }
+.work-service-card__toggle { display: flex; align-items: center; flex: 1; min-width: 0; min-height: 36px; gap: var(--space-2); padding: 6px var(--space-1); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--fg); font: inherit; cursor: pointer; text-align: left; }
+.work-service-card__toggle:hover, .work-service-card__action:hover:not(:disabled) { background: var(--bg-hover); }
+.work-service-card__toggle > svg { flex: 0 0 auto; color: var(--fg-muted); }
+.work-service-card__toggle strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
+.work-service-card__status { flex: 0 0 auto; color: var(--fg-muted); font-size: 11px; white-space: nowrap; }
+.work-service-card[data-status="running"] .work-service-card__status { color: var(--ok-fg); }
+.work-service-card[data-status="failed"] .work-service-card__status, .work-service-card[data-status="timed_out"] .work-service-card__status { color: var(--danger); }
+.work-service-card__action { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 28px; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--fg-muted); cursor: pointer; }
+.work-service-card__action:disabled { opacity: .45; cursor: default; }
+.work-service-card__toggle:focus-visible, .work-service-card__action:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.work-service-card__details { display: grid; min-width: 0; gap: var(--space-2); margin: 0 var(--space-1) var(--space-2); padding: var(--space-2); border-radius: var(--radius-sm); background: var(--bg-surface); }
+.work-service-card__detail-head { display: flex; align-items: center; justify-content: space-between; min-height: 20px; gap: var(--space-2); color: var(--fg-muted); font-size: 11px; }
+.work-service-card__detail-head .work-service-card__action { height: 22px; }
+.work-service-card__command { display: block; max-height: 144px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: 11px; line-height: 1.6; }
+.work-service-card__metadata { display: grid; gap: var(--space-1); margin: 0; font-size: 11px; line-height: 1.5; }
+.work-service-card__metadata > div { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: var(--space-2); }
+.work-service-card__metadata dt { color: var(--fg-muted); }
+.work-service-card__metadata dd { margin: 0; overflow-wrap: anywhere; }
+.work-service-card__output { max-height: 180px; overflow: auto; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: 11px; line-height: 1.6; }
+.work-service-card__output [data-stream="stderr"], .work-service-card__error { color: var(--danger); }
+.work-service-card__note, .work-service-card__error { margin: 0; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.work-service-card__note { color: var(--fg-muted); }
+.work-service-card__error { padding: var(--space-1) var(--space-2) var(--space-2); }

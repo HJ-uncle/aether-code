@@ -47,13 +47,17 @@ test('background cancellation receipts refresh artifacts after the stream ends, 
 })
 
 test('old workbench cleanup cannot erase a replacement connection or advertise a different session', () => {
-  setWorkbenchConnected(123, 'one', 'old', true)
-  setWorkbenchConnected(123, 'one', 'new', true)
-  setWorkbenchConnected(123, 'one', 'old', false)
+  setWorkbenchConnected(123, 'one', 'old', true, 'work')
+  setWorkbenchConnected(123, 'one', 'new', true, 'work')
+  expect(setWorkbenchConnected(123, 'one', 'old', false, 'work')).toBe(false)
   expect(clientCapabilities(123, 'one', 'work').connected).toBe(true)
   expect(clientCapabilities(123, 'two', 'work').connected).toBe(false)
-  setWorkbenchConnected(123, 'one', 'new', false)
+  expect(clientCapabilities(123, 'one', 'code').connected).toBe(false)
+  setWorkbenchConnected(123, 'one', 'code-owner', true, 'code')
+  setWorkbenchConnected(123, 'one', 'new', false, 'work')
   expect(clientCapabilities(123, 'one', 'work').connected).toBe(false)
+  expect(clientCapabilities(123, 'one', 'code').connected).toBe(true)
+  setWorkbenchConnected(123, 'one', 'code-owner', false, 'code')
 })
 
 test('remote workbench permits only exact authenticated POST transport endpoints', () => {

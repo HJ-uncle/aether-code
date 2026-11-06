@@ -165,6 +165,11 @@ test('an image block missing MIME is redacted without guessing an image type', (
   expect(result.text).not.toContain(png)
 })
 
+test('recovery markers without a browser snapshot remain exact metadata and cannot fabricate images', () => {
+  const raw = '  {"screenshot":{"width":1,"height":1,"retainedForDisplay":true,"omittedFromStream":true,"retainedInHistory":true,"reason":"stream-byte-budget"}}\n'
+  expect(parseToolResult(raw)).toEqual({ images: [], text: raw })
+})
+
 test('cyclic and deeply nested results cannot crash the renderer', () => {
   const cycle: Record<string, unknown> = { dataUrl: src }
   cycle.self = cycle

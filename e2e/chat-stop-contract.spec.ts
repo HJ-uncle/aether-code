@@ -1,26 +1,34 @@
-/** Execute the production useChat stop callback without Electron or model calls. */
+/** Execute production stop and queue callbacks without Electron or model calls. */
 import { expect, test } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
 import { durableCancelBody, sameRecoveryScope, type RecoveryScope } from '../src/renderer/src/core/engine/chat-recovery-loop'
+import { ChatRequestRejectedError } from '../src/renderer/src/core/engine/chat-send-request'
+import { codeQueueSubmission } from '../src/renderer/src/core/engine/code-queue-entry'
 import type { RootRunStatus } from '../src/shared/root-run'
 
 const filename = resolve(__dirname, '../src/renderer/src/core/engine/useChat.ts')
 const source = ts.createSourceFile(filename, readFileSync(filename, 'utf8'), ts.ScriptTarget.Latest, true)
-let declaration: ts.VariableDeclaration | undefined
+const callbackNames = ['flushQueue', 'mergeAndSend', 'abort']
+const declarations = new Map<string, ts.VariableDeclaration>()
 const visit = (node: ts.Node): void => {
-  if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'abort') declaration = node
+  if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && callbackNames.includes(node.name.text)) declarations.set(node.name.text, node)
   ts.forEachChild(node, visit)
 }
 visit(source)
-if (!declaration) throw new Error('Missing production abort callback')
-const callback = ts.transpileModule(`const ${declaration.getText(source)}; globalThis.abort = abort;`, {
+const callback = ts.transpileModule(callbackNames.map(name => {
+  const declaration = declarations.get(name)
+  if (!declaration) throw new Error(`Missing production ${name} callback`)
+  return `const ${declaration.getText(source)}; globalThis.${name} = ${name};`
+}).join('\n'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
 }).outputText
 
 type Run = { sessionId: string; runId: string; status: RootRunStatus }
+type Entry = { id: string; text: string; options: { sessionId: string; model?: string }; attachments: [] }
+const queued = (id: string, sessionId: string): Entry => ({ id, text: id, options: { sessionId }, attachments: [] })
 const run = (status: RootRunStatus = 'running', runId = 'run-a'): Run => ({ sessionId: 'session-a', runId, status })
 const snapshot = (root: Run, runs: Run[] = []) => ({ kind: 'restored', snapshot: { run: root, runs } })
 const ack = (cancelled = true) => ({ sessionId: 'session-a', runId: 'run-a', cancelled, settled: cancelled })
@@ -39,10 +47,12 @@ function harness(options: {
   let epoch = 1
   let engineSource = 1
   let stopping = false
+  let working = true
   let error: string | null = null
   const cancellations: unknown[] = []
   const detached: string[] = []
   const resumed: string[] = []
+  const sends: { text: string; options: Entry['options'] }[] = []
   const refs = {
     activeStreamRef: { current: 'stream-a' as string | null },
     viewSessionRef: { current: 'session-a' as string | null },
@@ -51,15 +61,25 @@ function harness(options: {
     rootRunsRef: { current: new Map<string, Run>(options.known === null ? [] : [['run-a', options.known ?? run()]]) },
     stoppingRef: { current: null as RecoveryScope | null },
     stoppingFlightRef: { current: null as { scope: RecoveryScope; promise: Promise<void> } | null },
-    queueRef: { current: [{ id: 'queued-a', options: { sessionId: 'session-a' } }, { id: 'queued-b', options: { sessionId: 'session-b' } }] }
+    queueRef: { current: [queued('queued-a', 'session-a'), queued('queued-b', 'session-b')] },
+    pausedQueueSessionsRef: { current: new Set<string>() }
   }
   const context = {
-    ...refs, Error, renderSource: 1, durableCancelBody,
+    ...refs, Error, renderSource: 1, durableCancelBody, ChatRequestRejectedError, codeQueueSubmission,
+    commandOwner: 'code', queueSessionId: 'session-a', durableQueue: {
+      refresh: async () => { refs.pausedQueueSessionsRef.current.add('session-a'); return null },
+      resume: async () => { refs.pausedQueueSessionsRef.current.delete('session-a'); sends.push({ text: 'resume', options: { sessionId: 'session-a' } }) },
+      merge: async () => { sends.push({ text: 'merge', options: { sessionId: 'session-a' } }) }
+    },
+    sourceRef: { current: 1 }, mountedRef: { current: true },
+    getEngineSource: () => engineSource, isEngineReady: () => true,
+    queueSendModeRef: { current: 'serial' }, rejectedSendScopeRef: { current: null as RecoveryScope | null },
+    sendInternalRef: { current: async (text: string, options: Entry['options']) => { sends.push({ text, options }) } },
     useCallback: <T>(value: T): T => value,
     assertEngineSource: (expected: number) => { if (engineSource !== expected) throw new Error('Engine changed') },
     recoveryScope: (sessionId: string): RecoveryScope => ({ source: engineSource, sessionId, viewEpoch: epoch }),
     scopeIsCurrent: (scope: RecoveryScope) => sameRecoveryScope(scope, context.recoveryScope(refs.viewSessionRef.current ?? '')),
-    hasSessionWork: () => true,
+    hasSessionWork: () => working,
     flushStreamPatches: () => {},
     invalidateRecovery: () => {
       epoch++
@@ -77,10 +97,16 @@ function harness(options: {
       requestOrThrow: async (input: unknown) => { cancellations.push(input); return options.cancel ? options.cancel() : ack() },
       abortStream: async (streamId: string) => { detached.push(streamId); return { ok: true } }
     },
-    abort: undefined as unknown as () => Promise<void>
+    abort: undefined as unknown as () => Promise<void>,
+    drainQueue: undefined as unknown as () => Promise<void>,
+    flushQueue: undefined as unknown as () => Promise<void>,
+    mergeAndSend: undefined as unknown as (text: string, options: Entry['options']) => Promise<void>
   }
   runInNewContext(callback, context)
-  return { ...refs, cancellations, detached, resumed, abort: () => context.abort(),
+  return { ...refs, cancellations, detached, resumed, sends, abort: () => context.abort(),
+    drain: () => context.drainQueue(), flush: () => context.flushQueue(),
+    merge: () => context.mergeAndSend('补充要求', { sessionId: refs.viewSessionRef.current! }),
+    setWorking: (value: boolean) => { working = value },
     stopping: () => stopping, error: () => error,
     switchView: (sessionId: string, source = engineSource) => {
       context.invalidateRecovery()
@@ -104,9 +130,29 @@ test('stop is visible and single flight until owned cancellation and snapshot bo
   restored.resolve(snapshot(run('cancelled')))
   await first
   expect(state.stopping()).toBe(false)
-  expect(state.queueRef.current.map(entry => entry.id)).toEqual(['queued-b'])
+  expect(state.queueRef.current.map(entry => entry.id)).toEqual(['queued-a', 'queued-b'])
+  expect([...state.pausedQueueSessionsRef.current]).toEqual(['session-a'])
   expect(state.detached).toEqual(['stream-a'])
   expect(state.resumed).toEqual(['session-a'])
+})
+
+test('explicit queue send resumes the durable owner without renderer dispatch or deletion', async () => {
+  const state = harness()
+  await state.abort()
+  state.setWorking(false)
+  await state.flush()
+  expect(state.sends.map(send => send.text)).toEqual(['resume'])
+  expect(state.queueRef.current.map(entry => entry.id)).toEqual(['queued-a', 'queued-b'])
+})
+
+test('explicit resume during an active run delegates scheduling to the durable owner', async () => {
+  const state = harness()
+  await state.merge()
+  expect(state.sends.map(send => send.text)).toEqual(['merge'])
+  await state.flush()
+  state.setWorking(false)
+  await state.merge()
+  expect(state.sends.map(send => send.text)).toEqual(['merge', 'resume', 'merge', 'resume'])
 })
 
 test('false cancel acknowledgement with running snapshot rejects visibly and retains queue', async () => {
@@ -124,6 +170,7 @@ for (const status of ['succeeded', 'failed', 'interrupted'] satisfies RootRunSta
     await state.abort()
     expect(state.error()).toBeNull()
     expect(state.queueRef.current).toHaveLength(2)
+    expect(state.pausedQueueSessionsRef.current.size).toBe(0)
     expect(state.resumed).toEqual(['session-a'])
   })
 }
@@ -185,7 +232,8 @@ test('legacy acknowledgement without runId still requires an exact terminal snap
   const state = harness({ cancel: async () => ({ sessionId: 'session-a', cancelled: true }) })
   await state.abort()
   expect(state.error()).toBeNull()
-  expect(state.queueRef.current.map(entry => entry.id)).toEqual(['queued-b'])
+  expect(state.queueRef.current.map(entry => entry.id)).toEqual(['queued-a', 'queued-b'])
+  expect([...state.pausedQueueSessionsRef.current]).toEqual(['session-a'])
 })
 
 test('an accepted cancellation cannot manufacture a terminal status from a still-running snapshot', async () => {

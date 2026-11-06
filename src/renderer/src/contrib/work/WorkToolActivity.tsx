@@ -1,0 +1,52 @@
+import { memo, useMemo, type JSX } from 'react'
+import type { EngineFileChange } from '@shared/ipc'
+import type { ToolActivity } from '@renderer/core/engine/useChat'
+import { getEngineSource } from '@renderer/core/engine/source'
+import type { ChatFileContext } from '../chat/chat-link'
+import { CompactToolRow } from '../chat/CompactToolRow'
+import { CommandJobCard } from '../chat/CommandJobCard'
+import { SubagentCard } from '../chat/SubagentCard'
+import { readActivityPreview } from './work-activity-presentation'
+import { workActivityState } from './work-inline-activity-state'
+import { workToolTarget } from './work-message-timeline'
+import { workToolChanges, workToolHasImages, workToolKind } from './work-tool-presentation'
+import { WorkFileChangeRow } from './WorkFileChangeRow'
+import './work-inline-activity.css'
+
+/** Timeline and inspector use the same cards, including their task-scoped actions. */
+export const WorkToolActivity = memo(function WorkToolActivity({ tool, fileContext, onOpenFile, onOpenChange, defaultOpen, turnRunning, active = true }: {
+  tool: ToolActivity
+  fileContext: ChatFileContext
+  onOpenFile?: (path: string) => void
+  onOpenChange?: (change: EngineFileChange) => void
+  defaultOpen?: boolean
+  turnRunning?: boolean
+  active?: boolean
+}): JSX.Element {
+  const kind = workToolKind(tool)
+  const imagePreview = kind === 'visual' || kind === 'file-change' && workToolHasImages(tool)
+  // A completed turn starts closed even if its live preview was manually
+  // opened. Separate memory also handles completion while this row is unmounted.
+  const previewScope = imagePreview && turnRunning !== undefined ? `:preview:${turnRunning ? 'running' : 'settled'}` : ''
+  const state = workActivityState(tool)
+  const changes = useMemo(() => workToolChanges(tool, fileContext.sessionId), [tool.change, tool.changes, fileContext.sessionId])
+  // The version envelope is useful for diagnostics, but the receipt's readable
+  // file content is what belongs in the inline preview. The source stays intact.
+  const displayTool = useMemo(() => {
+    const preview = readActivityPreview(tool)
+    return preview ? { ...tool, result: preview.content || '文件内容为空' } : tool
+  }, [tool])
+  const details = <CompactToolRow tool={displayTool} state={state} summary={workToolTarget(tool, fileContext.workspaceRoot)}
+    memoryKey={`work-tool:${getEngineSource()}:${fileContext.sessionId}:${tool.id}${previewScope}`} fileContext={fileContext} onOpenFile={onOpenFile}
+    structuredResult={tool.name !== 'read_file'} quiet defaultOpen={defaultOpen ?? (imagePreview && turnRunning === true)} />
+  return <div className="work-tool-activity" data-tool-kind={kind} data-work-tool-id={tool.id}>
+    {kind === 'subagent' ? <SubagentCard tool={tool} sessionId={fileContext.sessionId} defaultOpen={defaultOpen ?? false} visible={active} surfaceMode="work" />
+      : kind === 'command' && tool.commandJob && !tool.commandJob.background ? <CommandJobCard job={tool.commandJob} sessionId={fileContext.sessionId} surfaceMode="work" active={active} />
+        : kind === 'command' && tool.commandJob ? <div className="work-tool-activity__service-row" data-service-job-id={tool.commandJob.jobId}>{details}</div>
+        : kind === 'file-change' && changes.length ? <div data-tool-id={tool.id}>
+          {changes.map(change => <WorkFileChangeRow key={change.id} change={change} state={state} onOpenChange={onOpenChange} />)}
+          {imagePreview || tool.error || state === 'error' || state === 'interrupted' ? details : null}
+        </div>
+          : details}
+  </div>
+})

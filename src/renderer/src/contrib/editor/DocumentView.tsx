@@ -37,8 +37,7 @@ export function DocumentView({ filePath, groupId, active = true }: { filePath: s
   const [outlineVisible, setOutlineVisible] = useState(false)
   const sourceContainer = useRef<HTMLDivElement>(null)
   const previewRef = useRef<SourcePreviewHandle>(null)
-  const previewKind = /\.(md|markdown|mdown)$/i.test(filePath) ? 'markdown'
-    : /\.(html?|xhtml)$/i.test(filePath) ? 'html' : null
+  const previewKind = /\.(md|markdown|mdown)$/i.test(filePath) ? 'markdown' : null
   const onPreviewScroll = useEditorPreviewScroll(sourceContainer, previewRef, previewMode === 'split', filePath)
 
   if (!doc) {

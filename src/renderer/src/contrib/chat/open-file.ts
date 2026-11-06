@@ -3,7 +3,7 @@ import { assertDocumentConnection, getDocument, openFile } from '@renderer/core/
 import { getWorkspaceState } from '@renderer/core/workspace/workspace-store'
 import { getSnapshot } from '@renderer/core/engine/client'
 import { resolveChatPath } from './chat-file-path'
-import { assertEngineSource, getEngineSource, isRemoteEngine } from '@renderer/core/engine/source'
+import { assertEngineSource, getEngineSource, isEngineReady, isRemoteEngine } from '@renderer/core/engine/source'
 import { paths, readLocalRecoveryFile, remoteWorkspaceContext, remoteWorkspaceRelativePath, resolveSessionFilePath, workspaceRecoveryCandidates } from '@renderer/core/workspace/fs-client'
 import { assertWorkspaceTarget } from '@renderer/core/workspace/connection'
 import { type ChatFileContext, type ChatLinkTarget } from './chat-link'
@@ -38,7 +38,10 @@ export async function openFileFromChat(rawPath: string, context?: ChatFileContex
   const source = getEngineSource()
   const mode = getAppMode()
   const assertOpeningContext = (): void => {
-    assertEngineSource(source)
+    // Local Work previews can use the bounded read-only recovery path while
+    // the engine is offline. Identity changes still invalidate the operation.
+    if (source !== getEngineSource()) throw new Error('引擎连接已变化，请在当前会话重试')
+    if (mode !== 'work' || isRemoteEngine()) assertEngineSource(source)
     if (getAppMode() !== mode || (mode === 'work' && context?.sessionId && getWorkState(getEngineStorageKey()).activeTaskId !== context.sessionId)) throw new Error('会话或模式已经切换，请返回文件所属会话后重试。')
   }
   const snapshot = await getSnapshot()
@@ -57,7 +60,12 @@ export async function openFileFromChat(rawPath: string, context?: ChatFileContex
       if (remoteMode) throw error
       assertOpeningContext()
       if (getAppMode() === 'work') {
-        const candidates = workspaceRecoveryCandidates(pathText, context.workspaceRoot)
+        const offline = !isEngineReady()
+        const recoveryRoot = offline
+          ? getWorkState(getEngineStorageKey()).tasks.find(task => task.id === context.sessionId)?.workspacePath
+          : context.workspaceRoot
+        const candidates = workspaceRecoveryCandidates(pathText, recoveryRoot)
+          .filter(candidate => !offline || Boolean(recoveryRoot && paths.contains(recoveryRoot, candidate)))
         for (const candidate of candidates) {
           try {
             await readLocalRecoveryFile(candidate)

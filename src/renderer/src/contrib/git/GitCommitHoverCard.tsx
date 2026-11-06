@@ -12,6 +12,7 @@ import { createPortal } from 'react-dom'
 import type { GitCommitRef } from '@shared/git-types'
 import { compareRefs } from '@renderer/core/git/git-history-graph'
 import { Icon } from '@renderer/workbench/icons'
+import { useMotionPresence, useMotionValue } from '@renderer/workbench/MotionPresence'
 
 /** 卡片只用到提交这几个字段：提交历史（GitLogEntry）与文件时间线条目都能直接喂进来 */
 export interface CommitHoverData {
@@ -74,15 +75,21 @@ function badgeText(ref: GitCommitRef): string {
 }
 
 export function GitCommitHoverCard({
-  commit,
+  commit: currentCommit,
   visible,
-  anchor,
-  hint,
-  stats,
+  anchor: currentAnchor,
+  hint: currentHint,
+  stats: currentStats,
   onKeep,
   onLeave
 }: GitCommitHoverCardProps): JSX.Element | null {
   const cardRef = useRef<HTMLDivElement>(null)
+  const motion = useMotionPresence(visible && Boolean(currentCommit))
+  // A host can clear the hover payload immediately; retain one receipt while exiting.
+  const retained = useMotionValue(visible && currentCommit ? {
+    commit: currentCommit, anchor: currentAnchor, hint: currentHint, stats: currentStats
+  } : null)
+  const commit = retained?.commit, anchor = retained?.anchor, hint = retained?.hint, stats = retained?.stats
 
   const allRefs = useMemo(() => (commit?.refs ?? []).slice().sort(compareRefs), [commit])
 
@@ -99,9 +106,9 @@ export function GitCommitHoverCard({
     if (!visible || !anchor) return
     const margin = 8
     const gap = 6
-    const rect = el.getBoundingClientRect()
-    const w = rect.width || 420
-    const h = rect.height || 120
+    // Exit/entry transforms must not shrink the layout dimensions used for clamping.
+    const w = el.offsetWidth || 420
+    const h = el.offsetHeight || 120
     const rowH = anchor.bottom - anchor.top
     let y = anchor.top + (rowH - h) / 2
     y = Math.min(Math.max(margin, y), window.innerHeight - h - margin)
@@ -113,7 +120,7 @@ export function GitCommitHoverCard({
     el.style.top = `${y}px`
   }, [visible, anchor, anchor?.left, anchor?.top, anchor?.bottom, commit?.hash, commit?.body])
 
-  if (!visible || !commit) return null
+  if (!motion.present || !commit) return null
 
   const copyHash = (): void => {
     void navigator.clipboard.writeText(commit.hash)
@@ -126,7 +133,7 @@ export function GitCommitHoverCard({
   }
 
   return createPortal(
-    <div ref={cardRef} className="git-hovercard" onMouseEnter={onKeep} onMouseLeave={onLeave}>
+    <div ref={cardRef} className="git-hovercard" {...motion.motionProps} onMouseEnter={onKeep} onMouseLeave={onLeave}>
       <div className="git-hovercard__body">
         <div className="git-hovercard__title group">
           <div className="git-hovercard__message">

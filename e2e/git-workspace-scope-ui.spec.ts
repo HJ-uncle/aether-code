@@ -3,11 +3,11 @@
  * An empty tenant workspace must not discover the host's enclosing repository;
  * Explorer/Git must share the account/session root through init, stage and logout.
  */
-import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test'
+import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import type { AetherIdeApi } from '../src/preload'
 import type { GitStatusResult } from '../src/shared/git-types'
@@ -80,25 +80,79 @@ async function showGit(): Promise<void> {
   await expect(page.locator('.git-panel')).toBeVisible()
 }
 
+function gitRows(path?: string, scope = page.locator('.git-panel')): Locator {
+  // Tree is the default; the same file can appear once in each staged group.
+  // Match only actual file rows, excluding directory and history rows.
+  return scope.locator(path
+    ? `.git-row[title=${JSON.stringify(path)}], .git-tree__file[data-path=${JSON.stringify(path)}]`
+    : '.git-row, .git-tree__file')
+}
+
+function gitGroup(name: '暂存的更改' | '更改'): Locator {
+  return page.locator('.git-panel__section').filter({
+    has: page.getByRole('button', { name, exact: true })
+  })
+}
+
+async function expandGitGroup(name: '暂存的更改' | '更改'): Promise<void> {
+  const header = gitGroup(name).getByRole('button', { name, exact: true })
+  await expect(header).toBeVisible()
+  if (await header.getAttribute('aria-expanded') === 'false') await header.click()
+  await expect(header).toHaveAttribute('aria-expanded', 'true')
+}
+
 async function tenantRoot(tenantId: string): Promise<string> {
-  const row = page.locator('.explorer__tree [role="treeitem"][aria-level="1"]')
-  await expect(row).toHaveCount(1)
-  await expect.poll(() => row.getAttribute('data-path'), { timeout: 30_000 }).toContain(tenantId)
-  const path = await row.getAttribute('data-path')
+  // Remote scratch workspaces hide the synthetic root row; a level-1 row is
+  // a child, such as the Git supervisor's .ae directory, never the root itself.
+  const mountedRoot = page.locator('.explorer__root')
+  await expect(mountedRoot).toHaveCount(1)
+  await expect.poll(() => mountedRoot.getAttribute('title'), { timeout: 30_000 }).toContain(tenantId)
+  const path = await mountedRoot.getAttribute('title')
   if (!path) throw new Error('Explorer did not expose the mounted workspace root')
   const owned = relative(join(outer, 'workspaces'), path)
   if (!owned || owned.startsWith('..') || resolve(join(outer, 'workspaces'), owned) !== resolve(path)) {
     throw new Error('Tenant fixture escaped the owned workspace root')
   }
+  expect(resolve(dirname(path))).toBe(resolve(join(outer, 'workspaces', tenantId)))
+  const binding = await page.evaluate(sessionId => window.aether.engine.request<{ root: string }>({
+    method: 'GET', path: '/git/binding', query: { sessionId }
+  }), basename(path))
+  expect(binding.ok, binding.message).toBe(true)
+  expect(resolve(binding.data!.root)).toBe(resolve(path))
   return path
 }
 
+async function expectNoTenantUserFiles(path: string): Promise<void> {
+  // A non-repository status read now creates its own coordination directory.
+  // Keep checking the actual tenant contents instead of treating that internal
+  // directory as evidence that another repository leaked into the workspace.
+  const tree = page.locator('.explorer__tree')
+  await expect(tree).not.toContainText('outer-tracked.txt')
+  await expect(tree).not.toContainText('outer-untracked.txt')
+  await expect.poll(async () => {
+    const entries = readdirSync(path, { withFileTypes: true })
+    const rows = (await tree.locator('[role="treeitem"]').evaluateAll(rows =>
+      rows.map(row => row.getAttribute('data-path'))))
+      .map(entry => entry ? relative(path, entry) : '<missing-path>').sort()
+    return {
+      userFiles: entries.filter(entry => entry.name !== '.ae' || !entry.isDirectory()).map(entry => entry.name),
+      treeMatchesDisk: JSON.stringify(rows) === JSON.stringify(entries.map(entry => entry.name).sort())
+    }
+  }).toEqual({ userFiles: [], treeMatchesDisk: true })
+}
+
 async function status(path: string): Promise<GitStatusResult> {
-  const result = await page.evaluate(sessionId => window.aether.engine.request<GitStatusResult>({
-    method: 'GET', path: '/git/status', query: { sessionId, cwd: '.' }
-  }), basename(path))
-  expect(result.ok, result.message).toBe(true)
-  return result.data!
+  let snapshot: GitStatusResult | undefined
+  // Background reads/recovery can own a short lease. Wait for this exact
+  // tenant's successful read without weakening its content assertions below.
+  await expect.poll(async () => {
+    const result = await page.evaluate(sessionId => window.aether.engine.request<GitStatusResult>({
+      method: 'GET', path: '/git/status', query: { sessionId, cwd: '.' }
+    }), basename(path))
+    if (result.ok && result.data?.success) { snapshot = result.data; return 'ready' }
+    return result.data?.error || result.message || 'Git status unavailable'
+  }, { timeout: 20_000 }).toBe('ready')
+  return snapshot!
 }
 
 test.describe.serial('Git 与资源管理器共享账号工作区边界', () => {
@@ -152,7 +206,7 @@ test.describe.serial('Git 与资源管理器共享账号工作区边界', () => 
       engineMode: 'remote', remoteBaseUrl: url, remoteWorkspaceRoot: '',
       autoStartEngine: false, lastFolder: '', lastSessionId: 'git-workspace-scope-session'
     }))
-    app = await electron.launch({ args: ['.', `--user-data-dir=${profile}`], cwd: root, env: { ...environment, AETHER_IDE_REMOTE_INSTANCE_TOKEN: instance } })
+    app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || '.', `--user-data-dir=${profile}`], cwd: root, env: { ...environment, AETHER_IDE_REMOTE_INSTANCE_TOKEN: instance } })
     page = await app.firstWindow()
     page.on('pageerror', error => errors.push(error.message))
     await expect(page.locator('.status-bar')).toBeVisible()
@@ -182,11 +236,11 @@ test.describe.serial('Git 与资源管理器共享账号工作区边界', () => 
     await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 30_000 })
     await showExplorer()
     originalRoot = await tenantRoot(originalTenant)
-    await expect(page.locator('.explorer__hint')).toContainText('目录为空')
+    await expectNoTenantUserFiles(originalRoot)
     expect(await status(originalRoot)).toMatchObject({ success: true, isRepo: false, files: [] })
     await showGit()
     await expect(page.locator('.git-panel')).toContainText('当前目录不是 Git 仓库')
-    await expect(page.locator('.git-row')).toHaveCount(0)
+    await expect(gitRows()).toHaveCount(0)
     expect(existsSync(join(originalRoot, '.git'))).toBe(false)
     assertOuterUnchanged()
   })
@@ -194,7 +248,12 @@ test.describe.serial('Git 与资源管理器共享账号工作区边界', () => 
   test('初始化当前租户仓库后，远端新增文件在资源树和 Git 中一致', async () => {
     await page.getByRole('button', { name: '初始化 Git 仓库', exact: true }).click()
     await expect.poll(() => existsSync(join(originalRoot, '.git'))).toBe(true)
-    expect(resolve(git(originalRoot, 'rev-parse', '--show-toplevel').trim())).toBe(resolve(originalRoot))
+    // The supervisor creates .git before dispatch to place its lease there.
+    // Until init writes repository metadata, rev-parse still finds the outer repo.
+    await expect.poll(() => resolve(git(originalRoot, 'rev-parse', '--show-toplevel').trim()), { timeout: 20_000 })
+      .toBe(resolve(originalRoot))
+    await expect(page.getByRole('button', { name: '正在初始化…', exact: true })).toHaveCount(0)
+    await expect(page.locator('.git-panel')).not.toContainText('当前目录不是 Git 仓库')
     writeFileSync(join(originalRoot, 'tenant-only.txt'), 'belongs to the first tenant\n')
     writeFileSync(join(originalRoot, 'still-untracked.txt'), 'not staged yet\n')
     await showExplorer()
@@ -202,25 +261,29 @@ test.describe.serial('Git 与资源管理器共享账号工作区边界', () => 
       .toEqual(expect.arrayContaining(['tenant-only.txt', 'still-untracked.txt']))
     await expect(page.locator('.explorer__tree')).not.toContainText('outer-tracked.txt')
     await showGit()
-    await expect(page.locator('.git-row[title="tenant-only.txt"]')).toHaveCount(1, { timeout: 20_000 })
-    await expect(page.locator('.git-row[title="still-untracked.txt"]')).toHaveCount(1)
+    await expandGitGroup('更改')
+    await expect(gitRows('tenant-only.txt')).toHaveCount(1, { timeout: 20_000 })
+    await expect(gitRows('still-untracked.txt')).toHaveCount(1)
     const beforeStage = await status(originalRoot)
     expect(beforeStage.files?.map(file => file.path).sort()).toEqual(['still-untracked.txt', 'tenant-only.txt'])
     for (const file of beforeStage.files!) expect(file).toMatchObject({ staged: false, stagedChange: null, unstagedChange: 'untracked' })
-    await expect(page.locator('.git-panel__group-head').filter({ hasText: '暂存的更改' })).toHaveCount(0)
+    await expect(gitGroup('暂存的更改')).toHaveCount(0)
     assertOuterUnchanged()
   })
 
   test('暂存只修改租户 index，未跟踪文件不会同时重复进入暂存分组', async () => {
-    const row = page.locator('.git-row[title="tenant-only.txt"]')
+    await expandGitGroup('更改')
+    const row = gitRows('tenant-only.txt')
     await row.hover()
     await row.getByRole('button', { name: '暂存', exact: true }).click()
     await expect.poll(() => git(originalRoot, 'ls-files', '--cached')).toBe('tenant-only.txt\n')
+    await expandGitGroup('暂存的更改')
     await expect(row).toHaveCount(1)
     await expect(row.getByRole('button', { name: '取消暂存', exact: true })).toHaveCount(1)
-    const staged = page.locator('.git-panel__section').filter({ has: page.locator('.git-panel__group-head').filter({ hasText: '暂存的更改' }) })
-    await expect(staged.locator('.git-row__name')).toHaveText(['tenant-only.txt'])
-    await expect(page.locator('.git-row[title="still-untracked.txt"]')).toHaveCount(1)
+    const staged = gitGroup('暂存的更改')
+    await expect(gitRows(undefined, staged).locator('.git-row__name, .tree-row__name')).toHaveText(['tenant-only.txt'])
+    await expect(gitRows('tenant-only.txt', gitGroup('更改'))).toHaveCount(0)
+    await expect(gitRows('still-untracked.txt', gitGroup('更改'))).toHaveCount(1)
     const result = await status(originalRoot)
     expect(result.files?.find(file => file.path === 'tenant-only.txt')).toMatchObject({ staged: true, stagedChange: 'added', unstagedChange: null })
     expect(result.files?.find(file => file.path === 'still-untracked.txt')).toMatchObject({ staged: false, stagedChange: null, unstagedChange: 'untracked' })
@@ -231,10 +294,14 @@ test.describe.serial('Git 与资源管理器共享账号工作区边界', () => 
     await expect(page.locator('.git-panel')).toBeVisible()
     writeFileSync(join(originalRoot, 'git-live.txt'), 'created while Git is visible\n')
     writeFileSync(join(originalRoot, 'tenant-only.txt'), 'modified after staging\n')
-    await expect(page.locator('.git-row[title="git-live.txt"]')).toHaveCount(1, { timeout: 20_000 })
+    await expandGitGroup('更改')
+    await expandGitGroup('暂存的更改')
+    await expect(gitRows('git-live.txt')).toHaveCount(1, { timeout: 20_000 })
     // A staged file modified again legitimately appears once in each group;
     // the previous test distinguishes this from duplicating a ?? file.
-    await expect(page.locator('.git-row[title="tenant-only.txt"]')).toHaveCount(2, { timeout: 20_000 })
+    await expect(gitRows('tenant-only.txt')).toHaveCount(2, { timeout: 20_000 })
+    await expect(gitRows('tenant-only.txt', gitGroup('暂存的更改'))).toHaveCount(1)
+    await expect(gitRows('tenant-only.txt', gitGroup('更改'))).toHaveCount(1)
     const result = await status(originalRoot)
     expect(result.files?.find(file => file.path === 'tenant-only.txt')).toMatchObject({ staged: true, stagedChange: 'added', unstagedChange: 'modified' })
     expect(git(originalRoot, 'show', ':0:tenant-only.txt')).toBe('belongs to the first tenant\n')
@@ -247,7 +314,7 @@ test.describe.serial('Git 与资源管理器共享账号工作区边界', () => 
 
   test('同一远端切换账号后，Git 和资源树清空旧账号文件并挂载新工作区', async () => {
     await page.evaluate(() => window.aether.account.logout())
-    await expect(page.locator('.git-row')).toHaveCount(0)
+    await expect(gitRows()).toHaveCount(0)
     const account = await page.evaluate(() => window.aether.account.register())
     expect(account.status).toBe('authenticated')
     expect(account.user!.id).not.toBe(originalAccount)
@@ -256,12 +323,12 @@ test.describe.serial('Git 与资源管理器共享账号工作区边界', () => 
     await showExplorer()
     const nextRoot = await tenantRoot(account.user!.tenantId)
     expect(nextRoot).not.toBe(originalRoot)
-    await expect(page.locator('.explorer__hint')).toContainText('目录为空')
+    await expectNoTenantUserFiles(nextRoot)
     await expect(page.locator('.explorer__tree')).not.toContainText('tenant-only.txt')
     expect(await status(nextRoot)).toMatchObject({ success: true, isRepo: false, files: [] })
     await showGit()
     await expect(page.locator('.git-panel')).toContainText('当前目录不是 Git 仓库')
-    await expect(page.locator('.git-row')).toHaveCount(0)
+    await expect(gitRows()).toHaveCount(0)
     expect(git(originalRoot, 'ls-files', '--cached')).toBe('tenant-only.txt\n')
     assertOuterUnchanged()
   })

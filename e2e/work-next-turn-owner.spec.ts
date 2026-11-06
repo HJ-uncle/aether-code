@@ -5,7 +5,8 @@ import { createWorkNextTurnOwner, type WorkQueueOwnerEvent, type WorkQueueOwnerP
 import { EngineQueueGateway, type QueueEnginePort } from '../src/main/next-turn-engine-gateway'
 import { NextTurnQueueStore } from '../src/main/next-turn-queue-store'
 import { engineHost } from '../src/main/engine/host'
-import { WORK_QUEUE_TRANSPORT } from '../src/main/next-turn-admission-protocol'
+import { queueTransport } from '../src/main/next-turn-admission-protocol'
+import { CODE_QUEUE_IPC, type CodeQueueRequest } from '../src/shared/code-next-turn-api'
 import type { EngineSnapshot, EngineRequestInput, EngineRequestResult } from '../src/shared/ipc'
 import { WORK_QUEUE_IPC, type WorkQueueDraft, type WorkQueueRequest, type WorkQueueInvokeResult } from '../src/shared/work-next-turn-api'
 
@@ -26,10 +27,11 @@ class Clock {
   }
 }
 class Ipc {
-  listener?: (event: WorkQueueOwnerEvent, input: WorkQueueRequest) => Promise<WorkQueueInvokeResult>
-  handle = (channel: string, listener: NonNullable<Ipc['listener']>) => { expect(channel).toBe(WORK_QUEUE_IPC.invoke); expect(this.listener).toBeUndefined(); this.listener = listener }
-  removeHandler = (channel: string) => { expect(channel).toBe(WORK_QUEUE_IPC.invoke); this.listener = undefined }
-  invoke(input: WorkQueueRequest, destroyed = false) { if (!this.listener) throw new Error('owned IPC is not installed'); return this.listener({ sender: { isDestroyed: () => destroyed } }, input) }
+  constructor(readonly owner: 'work' | 'code' = 'work') {}
+  listener?: (event: WorkQueueOwnerEvent, input: WorkQueueRequest | CodeQueueRequest) => Promise<WorkQueueInvokeResult>
+  handle = (channel: string, listener: NonNullable<Ipc['listener']>) => { expect(channel).toBe(this.owner === 'code' ? CODE_QUEUE_IPC.invoke : WORK_QUEUE_IPC.invoke); expect(this.listener).toBeUndefined(); this.listener = listener }
+  removeHandler = (channel: string) => { expect(channel).toBe(this.owner === 'code' ? CODE_QUEUE_IPC.invoke : WORK_QUEUE_IPC.invoke); this.listener = undefined }
+  invoke(input: WorkQueueRequest | CodeQueueRequest, destroyed = false) { if (!this.listener) throw new Error('owned IPC is not installed'); return this.listener({ sender: { isDestroyed: () => destroyed } }, input) }
 }
 class Store extends NextTurnQueueStore {
   listings = 0; failures = 0; gate?: Promise<void>
@@ -45,7 +47,7 @@ class RecoverFailureStore extends Store {
 }
 const gates: (() => void)[] = []
 function deferred() { let release!: () => void; const promise = new Promise<void>(resolve => { release = resolve }); gates.push(() => release()); return { promise, release } }
-function environment() {
+function environment(owner: 'work' | 'code' = 'work') {
   let controller = new AbortController()
   const snapshot: EngineSnapshot = { ...engineHost.getSnapshot(), phase: 'ready', mode: 'embedded', baseUrl: 'https://synthetic.invalid', instanceId: 'owned-instance', accountId: 'owned-account' }
   const listeners = new Set<() => void>(), calls = new Map<string, number>(), failures = new Map<string, number>()
@@ -53,7 +55,7 @@ function environment() {
   let denyReceipt = false, hook: ((taskId: string, call: number) => Promise<void> | void) | undefined
   const engine: WorkQueueOwnerPorts['engine'] = { snapshot: () => snapshot, signal: () => controller.signal, subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener) } } }
   const port: QueueEnginePort = {
-    snapshot: engine.snapshot, signal: engine.signal, headers: async () => ({ 'X-Aether-Tool-Profile': 'general', 'X-Aether-Run-Lifetime': 'durable' }),
+    snapshot: engine.snapshot, signal: engine.signal, headers: async (_url, profile) => ({ 'X-Aether-Tool-Profile': profile, 'X-Aether-Run-Lifetime': 'durable' }),
     request: async <T>(input: EngineRequestInput): Promise<EngineRequestResult<T>> => {
       let data: unknown
       if (input.path === '/chat/admission/context') {
@@ -63,7 +65,7 @@ function environment() {
         await hook?.(taskId, count)
         if ((failures.get(taskId) ?? 0) > 0) { failures.set(taskId, failures.get(taskId)! - 1); throw new Error('synthetic temporary context failure') }
         const root = { runId: 'initial-' + taskId, attemptId: 'attempt-' + taskId, version: 1, status: roots.get(taskId) ?? 'running', workspacePaths: [], modelId: 'owned-model' }
-        data = { protocolVersion: 1, tenantId: 'owned-tenant', sessionId: taskId, namespace: { id: 'owned-db', generation: namespaces.get(taskId) ?? 'one' }, transport: WORK_QUEUE_TRANSPORT,
+        data = { protocolVersion: 1, tenantId: 'owned-tenant', sessionId: taskId, namespace: { id: 'owned-db', generation: namespaces.get(taskId) ?? 'one' }, transport: queueTransport(owner),
           predecessor: { runId: root.runId, attemptId: root.attemptId, version: root.version }, root }
       } else if (input.path === '/models') data = [{ modelId: 'owned-model', isEnabled: true }]
       else if (input.path === '/chat/admission/receipt') {
@@ -83,9 +85,9 @@ function environment() {
       return new Response('', { status: 200 })
     }, remoteBody: async body => { if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('synthetic body requires record'); return body as Record<string, unknown> }, allowed: value => value
   }
-  const draft: WorkQueueDraft = { draft: { text: 'owned synthetic next turn', revision: 1, mentions: [] }, model: { kind: 'explicit', modelId: 'owned-model' },
+  const draft: WorkQueueDraft = { ...(owner === 'code' ? { code: {} } : {}), draft: { text: 'owned synthetic next turn', revision: 1, mentions: [] }, model: { kind: 'explicit', modelId: 'owned-model' },
     resources: { skills: { kind: 'inherit' }, mcpServers: { kind: 'inherit' }, knowledgeBases: { kind: 'inherit' } }, thinking: { kind: 'off' }, attachments: [] }
-  return { engine, port, snapshot, calls, failures, roots, namespaces, receipts, posts, draft, listeners,
+  return { owner, engine, port, snapshot, calls, failures, roots, namespaces, receipts, posts, draft, listeners,
     setHook(value: typeof hook) { hook = value }, setDenyReceipt(value: boolean) { denyReceipt = value },
     change(next: Partial<EngineSnapshot> = {}, replaceSignal = true) { if (replaceSignal) { controller.abort(); controller = new AbortController() }; Object.assign(snapshot, next); for (const listener of listeners) listener() }
   }
@@ -95,8 +97,8 @@ const owners: ReturnType<typeof createWorkNextTurnOwner>[] = []
 test.beforeEach(async ({}, info) => { fixture = join(process.cwd(), '.e2e-tmp', 'wq4-owner-' + info.testId.replace(/[^a-zA-Z0-9]/g, '-')); await fs.mkdir(fixture, { recursive: true }) })
 test.afterEach(async () => { for (const release of gates.splice(0)) release(); for (const owner of owners.splice(0)) await owner.close(); const boundary = resolve(process.cwd(), '.e2e-tmp'); if (!resolve(fixture).startsWith(boundary + sep)) throw new Error('fixture boundary'); await fs.rm(fixture, { recursive: true, force: true }) })
 function install(env: ReturnType<typeof environment>, store = new Store(fixture)) {
-  const clock = new Clock(), ipc = new Ipc(), reports: string[] = [], gateway = new EngineQueueGateway(env.port)
-  const owner = createWorkNextTurnOwner({ engine: env.engine, store, gateway, ipc, clock, report: message => reports.push(message) }); owners.push(owner)
+  const clock = new Clock(), ipc = new Ipc(env.owner), reports: string[] = [], gateway = new EngineQueueGateway(env.port, env.owner)
+  const owner = createWorkNextTurnOwner({ engine: env.engine, store, gateway, ipc, clock, report: message => reports.push(message) }, env.owner); owners.push(owner)
   return { owner, clock, ipc, store, reports }
 }
 const request = (env: ReturnType<typeof environment>, taskId: string, action: WorkQueueRequest['action']): WorkQueueRequest => ({ taskId, expectedEngine: { mode: env.snapshot.mode, baseUrl: env.snapshot.baseUrl,
@@ -112,6 +114,35 @@ async function seed(env: ReturnType<typeof environment>, taskIds = ['unopened-ta
   return first.store.listScopes()
 }
 const state = async (store: Store, scope: Awaited<ReturnType<typeof seed>>[number]) => (await store.read(scope)).state
+
+test('Code owned IPC restores only Code scopes from shared storage and leaves Work pending untouched', async () => {
+  const work = environment(), [workScope] = await seed(work, ['same-task'])
+  const code = environment('code'), codeScopes = await seed(code, ['same-task'])
+  const codeScope = codeScopes.find(scope => scope.owner === 'code')!
+  expect(codeScope.taskId).toBe(workScope.taskId)
+  code.roots.set('same-task', 'succeeded')
+  const restored = install(code)
+  await expect.poll(() => code.posts.length).toBe(1)
+  expect(JSON.parse(code.posts[0].wire).admission.owner).toBe('code')
+  expect((await state(restored.store, workScope)).entries[0].phase).toBe('pending')
+  expect(restored.owner.diagnostics().restoration?.items.map(item => item.scope.owner)).toEqual(['code'])
+})
+
+test('Code IPC validates explicit options and exposes atomic edit controls with durable typed outcomes', async () => {
+  const env = environment('code'), installed = install(env), taskId = 'code-controls'
+  const input: CodeQueueRequest = { ...request(env, taskId, { kind: 'read' }), action: { kind: 'enqueue', expectedRevision: 0, operationId: 'insert', id: 'item', submission: { ...env.draft, code: {} } } }
+  const inserted = await installed.ipc.invoke(input)
+  expect(inserted.ok).toBe(true)
+  if (!inserted.ok) throw new Error(inserted.message)
+  const edited = await installed.ipc.invoke({ ...input, action: { kind: 'replace-submission', expectedRevision: inserted.value.state.revision, operationId: 'edit', id: 'item', entryRevision: 1, submission: { ...env.draft, code: { memoryScope: 'session' }, draft: { text: 'edited Code message', revision: 2, mentions: [] }, thinking: { kind: 'on' } } } })
+  expect(edited.ok).toBe(true)
+  if (!edited.ok) throw new Error(edited.message)
+  expect(edited.value.state.entries[0].envelope).toMatchObject({ draft: { text: 'edited Code message' }, code: { memoryScope: 'session', workspacePaths: [] }, thinking: { kind: 'on' } })
+  const connected = await installed.ipc.invoke({ ...input, action: { kind: 'set-connected', connected: true } })
+  expect(connected.ok).toBe(true)
+  const work = install(environment())
+  expect(await work.ipc.invoke({ ...input, action: { kind: 'set-connected', connected: true } })).toMatchObject({ ok: false, code: 'INVALID' })
+})
 
 test('actual IPC restart retries first scope-listing failure in the same ready epoch without opening task', async () => {
   const env = environment(), [scope] = await seed(env); env.roots.set(scope.taskId, 'succeeded')

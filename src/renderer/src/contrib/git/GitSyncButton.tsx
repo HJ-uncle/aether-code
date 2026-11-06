@@ -14,13 +14,8 @@
  */
 import { useState, type JSX } from 'react'
 import { toast } from '../../core/toast'
-import {
-  useGitStore,
-  busyOperationOf,
-  forceRefreshGit,
-  gitRemoteStore,
-  mergeStrategyStore
-} from '../../core/git/git-store'
+import { busyOperationOf } from '@renderer/core/git/git-store'
+import { useGitActions, useGitStore } from '@renderer/core/git/git-context'
 import { runGitRemoteAction, type GitRemoteAction } from '../../core/git/git-remote-actions'
 import { chooseMergeStrategy, type ChooseStrategy } from '../../core/git/git-merge-strategy'
 import { ContextMenu, type ContextMenuItem } from '../../workbench/ContextMenu'
@@ -40,6 +35,7 @@ const labels: Record<GitRemoteAction, string> = {
 }
 
 export function GitSyncButton(): JSX.Element {
+  const { forceRefreshGit, gitRemoteStore, mergeStrategyStore } = useGitActions()
   const s = useGitStore()
   const [pending, setPending] = useState<GitRemoteAction | ''>('')
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
@@ -124,7 +120,11 @@ export function GitSyncButton(): JSX.Element {
         aria-busy={busy}
         onClick={() => void handleAction(s.upstream ? 'sync' : 'publish')}
       >
-        {busy ? <Spinner size={14} /> : <Icon name={s.upstream ? 'sync' : 'cloud-upload-outline'} size={16} />}
+        {busy ? (
+          <Spinner size={14} />
+        ) : (
+          <Icon name={s.upstream ? 'sync' : 'cloud-upload-outline'} size={16} />
+        )}
         {!s.upstream && !busy ? (
           <span className="git-sync__label">发布</span>
         ) : s.upstream && (s.behind || s.ahead) ? (
@@ -145,7 +145,6 @@ export function GitSyncButton(): JSX.Element {
         <Icon name="chevron-up" size={16} />
       </button>
 
-
       {menu ? (
         <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />
       ) : null}
@@ -163,7 +162,6 @@ export function GitSyncButton(): JSX.Element {
           }}
         />
       ) : null}
-
     </div>
   )
 }

@@ -27,6 +27,7 @@ import { getExpectedEngine, getEngineSource } from './source'
 import { getAppMode } from '@renderer/core/platform/app-mode'
 import { parseSubagentDiscoveryPage } from './subagent-discovery'
 import { withSubagentReadPermit } from './subagent-refresh'
+import { registerStreamOwner } from './stream-owner'
 
 function bridge(): Window['aether'] {
   const api = window.aether
@@ -361,9 +362,13 @@ export async function listSubagentEvents(runId: string, options: SubagentScope &
 // ==================== 流式 ====================
 
 export function startStream(input: StreamStartInput): Promise<StreamStartResult> {
+  const profile = input.toolProfile ?? (getAppMode() === 'work' ? 'general' : 'code')
+  const body = input.body
+  const sessionId = input.query?.sessionId ?? (body && typeof body === 'object' && 'sessionId' in body && typeof body.sessionId === 'string' ? body.sessionId : '')
+  if (sessionId) registerStreamOwner(input.streamId, { source: getEngineSource(), sessionId, profile })
   return bridge().engine.stream.start({
     ...input,
-    toolProfile: input.toolProfile ?? (getAppMode() === 'work' ? 'general' : 'code'),
+    toolProfile: profile,
     expectedEngine: input.expectedEngine ?? getExpectedEngine()
   })
 }

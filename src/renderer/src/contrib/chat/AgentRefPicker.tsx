@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } 
 import { requestOrThrow } from '@renderer/core/engine/client'
 import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
 import { agentMentionSearch, type AgentReferenceIdentity } from './agent-references'
+import { isMotionInteractive } from '@renderer/workbench/motion'
 
 export function AgentRefPicker({ query, onSelect, onClose }: {
   query: string
@@ -42,10 +43,12 @@ export function AgentRefPicker({ query, onSelect, onClose }: {
   }, [agents, query])
   useEffect(() => setActive(0), [query, filtered.length])
   useEffect(() => {
+    if (!isMotionInteractive(rootRef.current)) return
     rootRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
   }, [active, filtered])
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
+      if (!isMotionInteractive(rootRef.current)) return
       if (event.isComposing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey) return
       if (event.target instanceof Element && event.target.closest('[data-mention-list-control]')) return
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return }

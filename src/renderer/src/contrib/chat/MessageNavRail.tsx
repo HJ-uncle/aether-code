@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type JSX } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type JSX } from 'react'
 import type { ChatMessage } from '@renderer/core/engine/useChat'
 import { ContextMenu, type ContextMenuItem } from '@renderer/workbench/ContextMenu'
 import { Icon } from '@renderer/workbench/icons'
-import { resolveActiveNavId } from './message-nav'
+import { messageNavPanelLayout, resolveActiveNavId } from './message-nav'
+import './message-nav.css'
 
 /** 可选的标记颜色（存 localStorage 的是色值本身，换主题也不失真） */
 const MARK_COLORS: { color: string; name: string }[] = [
@@ -22,18 +23,7 @@ export interface NavTurn {
   preview: string
 }
 
-/**
- * 左侧消息导航栏（对齐 wuzu-client ConversationNavWidget，改为左侧 + 纯圆点）
- *
- * 每条用户消息一个圆点：点击跳转、滚动联动高亮当前轮次；
- * 右键圆点弹出该用户消息的全部操作（复制 / 重新发送 / 回退 / 删除）外加颜色标记。
- * 标记按会话存 localStorage，只影响圆点颜色，不动消息本身。
- *
- * 悬停整条栏会铺开展示消息列表（含预览），解决「几百条对话时圆点太密、
- * 看圆点认不出是哪条」的问题；栏底部带 到顶 / 上一条 / 下一条 / 到底 快捷按钮。
- *
- * 至少 2 条用户消息才显示 —— 单轮对话没有导航需求，一条竖线反而干扰。
- */
+/** Short conversations expose each turn; long ones fold into a bounded list. */
 export function MessageNavRail({
   sessionId,
   turns,
@@ -42,7 +32,13 @@ export function MessageNavRail({
   onCopy,
   onRetry,
   onRevert,
-  onDelete
+  onDelete,
+  turnSelector = ':scope > .chat__turn[data-turn-id]',
+  onNavigate,
+  onTop,
+  onBottom,
+  navigationKey,
+  className = ''
 }: {
   sessionId: string
   turns: NavTurn[]
@@ -51,18 +47,47 @@ export function MessageNavRail({
   /** 流式进行中/多选模式下禁用重试类操作（与消息气泡工具条一致） */
   disabled: boolean
   onCopy: (message: ChatMessage) => void
-  onRetry: (message: ChatMessage) => void
-  onRevert: (message: ChatMessage) => void
-  onDelete: (message: ChatMessage) => void
+  onRetry?: (message: ChatMessage) => void
+  onRevert?: (message: ChatMessage) => void
+  onDelete?: (message: ChatMessage) => void
+  /** Work nests its turn anchors inside a bounded history window. */
+  turnSelector?: string
+  /** A windowed host mounts the requested turn before scrolling to it. */
+  onNavigate?: (turn: NavTurn) => void
+  onTop?: () => void
+  onBottom?: () => void
+  /** Recompute the active turn when the host replaces its mounted window. */
+  navigationKey?: string | number | null
+  className?: string
 }): JSX.Element | null {
+  const radar = turns.length > 10
+  const visible = turns.length >= 2
   const storageKey = `aether:navMarks:${sessionId}`
   const [marks, setMarks] = useState<Record<string, string>>(() => readMarks(storageKey))
   /** 当前视口所处轮次（滚动联动） */
   const [activeId, setActiveId] = useState<string | null>(null)
   /** 右键菜单：记录命中的轮次与鼠标位置 */
   const [menu, setMenu] = useState<{ turn: NavTurn; x: number; y: number } | null>(null)
-  /** 悬停展开面板：锚定在导航栏右缘，按内容高度自然撑开 */
-  const [listAnchor, setListAnchor] = useState<{ x: number; y: number } | null>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [layout, setLayout] = useState<ReturnType<typeof messageNavPanelLayout> | null>(null)
+  const [focusedIndex, setFocusedIndex] = useState(0)
+  const navRef = useRef<HTMLElement | null>(null)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const listRef = useRef<HTMLDivElement | null>(null)
+  const previewRef = useRef<HTMLDivElement | null>(null)
+  const [preview, setPreview] = useState<{ id: string; left: number; top: number; width: number } | null>(null)
+  const expandedRef = useRef(false)
+  const pointerInside = useRef(false)
+  const keyboardFocus = useRef(false)
+  const returningFocus = useRef(false)
+  const menuOpen = useRef(false)
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const focusFrame = useRef(0)
+  const panelId = useId()
+  const previewId = useId()
+  const activeIndex = turns.findIndex(turn => turn.id === activeId)
+  const previewIndex = turns.findIndex(turn => turn.id === preview?.id)
+  const lastTurnId = turns.at(-1)?.id
 
   // 会话切换时换一份标记（storageKey 随 sessionId 变）
   useEffect(() => {
@@ -96,17 +121,20 @@ export function MessageNavRail({
     // Only the outer turn wrappers are navigation anchors. MessageItem also puts
     // data-turn-id on each article; using querySelectorAll('[data-turn-id]') lets
     // those nested nodes overwrite the real turn id, so no dot can become active.
-    const anchors = Array.from(container.children)
-      .filter(
-        (node): node is HTMLElement =>
-          node instanceof HTMLElement && node.classList.contains('chat__turn') && Boolean(node.dataset.turnId)
-      )
+    const anchors = Array.from(container.querySelectorAll<HTMLElement>(turnSelector))
+      .filter((node) => Boolean(node.dataset.turnId))
       .map((node) => ({
         id: node.dataset.turnId!,
         top: node.getBoundingClientRect().top - containerTop + container.scrollTop
       }))
-    setActiveId(resolveActiveNavId(anchors, probe))
-  }, [containerRef])
+    // A short final reply can start below the viewport probe even at the true
+    // bottom. Only select the global last turn when its anchor is mounted;
+    // the bottom of an older Work history window is not the conversation end.
+    const atEnd = container.scrollHeight > container.clientHeight + 2 &&
+      container.scrollHeight - container.clientHeight - container.scrollTop <= 2 &&
+      anchors.at(-1)?.id === lastTurnId
+    setActiveId(atEnd && lastTurnId ? lastTurnId : resolveActiveNavId(anchors, probe))
+  }, [containerRef, turnSelector, lastTurnId])
 
   // 监听器只绑一次（turns 每次消息变化都是新数组，放进依赖会让 scroll 监听反复重绑）
   useEffect(() => {
@@ -128,35 +156,38 @@ export function MessageNavRail({
   // 轮次增减后（消息流变了，offsetTop 随之变化）重算一次当前高亮
   useEffect(() => {
     syncActive()
-  }, [syncActive, turns])
+  }, [syncActive, turns, navigationKey])
 
   const jumpTo = useCallback(
     (turn: NavTurn) => {
+      if (onNavigate) {
+        onNavigate(turn)
+        setActiveId(turn.id)
+        return
+      }
       const container = containerRef.current
       if (!container) return
-      const el = Array.from(container.children).find(
-        (node): node is HTMLElement =>
-          node instanceof HTMLElement &&
-          node.classList.contains('chat__turn') &&
-          node.dataset.turnId === turn.id
-      )
+      const el = Array.from(container.querySelectorAll<HTMLElement>(turnSelector))
+        .find((node) => node.dataset.turnId === turn.id)
       if (!el) return
       const top = el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
       container.scrollTop = Math.max(0, top - 8)
       setActiveId(turn.id)
     },
-    [containerRef]
+    [containerRef, onNavigate, turnSelector]
   )
 
   const scrollToTop = useCallback(() => {
+    if (onTop) { onTop(); return }
     const container = containerRef.current
     if (container) container.scrollTop = 0
-  }, [containerRef])
+  }, [containerRef, onTop])
 
   const scrollToBottom = useCallback(() => {
+    if (onBottom) { onBottom(); return }
     const container = containerRef.current
     if (container) container.scrollTop = container.scrollHeight
-  }, [containerRef])
+  }, [containerRef, onBottom])
 
   /** 上一条 / 下一条：以当前高亮轮次为基准步进；没有高亮时以滚动位置现算 */
   const stepTurn = useCallback(
@@ -175,20 +206,20 @@ export function MessageNavRail({
       const marked = marks[turn.id]
       return [
         { id: 'copy', label: '复制', onSelect: () => onCopy(turn.message) },
-        {
+        ...(onRetry ? [{
           id: 'retry',
           label: '重新发送',
           hint: '删除此后的对话并重发',
           disabled,
           onSelect: () => onRetry(turn.message)
-        },
-        {
+        }] : []),
+        ...(onRevert ? [{
           id: 'revert',
           label: '回退到此处',
           hint: '撤销后续修改并回填原文',
           disabled,
           onSelect: () => onRevert(turn.message)
-        },
+        }] : []),
         {
           id: 'mark',
           label: marked ? '更改标记' : '添加标记',
@@ -205,13 +236,13 @@ export function MessageNavRail({
               : [])
           ]
         },
-        {
+        ...(onDelete ? [{
           id: 'delete',
           label: '删除本轮',
           danger: true,
           disabled,
           onSelect: () => onDelete(turn.message)
-        }
+        }] : [])
       ]
     },
     [marks, disabled, onCopy, onRetry, onRevert, onDelete, setMark]
@@ -219,136 +250,262 @@ export function MessageNavRail({
 
   const openMenu = useCallback((turn: NavTurn, event: React.MouseEvent) => {
     event.preventDefault()
+    menuOpen.current = true
     setMenu({ turn, x: event.clientX, y: event.clientY })
   }, [])
 
-  /** 鼠标进入导航栏：记下位置，面板锚定在这附近（而不是占满整条消息区高度） */
-  const handleEnter = useCallback((event: React.MouseEvent<HTMLElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect()
-    setListAnchor({ x: rect.right + 6, y: event.clientY })
-  }, [])
-
-  // 面板浮在导航栏右缘（与栏之间有 6px 间隙）：直接 leave 即关会让鼠标
-  // 永远到不了面板。延迟 150ms 关闭，面板 onMouseEnter 时取消。
-  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const scheduleClose = useCallback(() => {
-    closeTimer.current = setTimeout(() => setListAnchor(null), 150)
-  }, [])
   const cancelClose = useCallback(() => {
     if (closeTimer.current) {
       clearTimeout(closeTimer.current)
       closeTimer.current = null
     }
   }, [])
-  useEffect(() => cancelClose, [cancelClose])
 
-  if (turns.length < 2) return null
+  const measurePanel = useCallback(() => {
+    const trigger = triggerRef.current, container = containerRef.current, nav = navRef.current
+    if (!trigger || !container || !nav) return
+    const pane = container.getBoundingClientRect()
+    const anchor = nav.getBoundingClientRect()
+    const next = messageNavPanelLayout(trigger.getBoundingClientRect(), {
+      left: Math.max(8, pane.left - 26), right: Math.min(innerWidth - 8, pane.right - 4),
+      top: Math.max(8, pane.top + 4), bottom: Math.min(innerHeight - 8, pane.bottom - 4)
+    }, turns.length)
+    // Code's animated pane establishes a fixed containing block. Keep the
+    // bounded surface in the anchor's local coordinates so both modes agree.
+    setLayout({ ...next, left: next.left - anchor.left, top: next.top - anchor.top })
+  }, [containerRef, turns.length])
+
+  const showPreview = useCallback((turn: NavTurn, row: HTMLElement) => {
+    const container = containerRef.current, nav = navRef.current
+    if (!container || !nav) return
+    const pane = container.getBoundingClientRect(), anchor = row.getBoundingClientRect(), rail = nav.getBoundingClientRect()
+    const leftBound = Math.max(8, pane.left), rightBound = Math.min(innerWidth - 8, pane.right - 4)
+    const width = Math.min(292, Math.max(1, rightBound - leftBound))
+    const height = previewRef.current?.offsetHeight ?? 88
+    const left = Math.max(leftBound, Math.min(anchor.right + 8, rightBound - width)) - rail.left
+    const top = Math.max(Math.max(8, pane.top + 4), Math.min((anchor.top + anchor.bottom - height) / 2,
+      Math.min(innerHeight - 8, pane.bottom - 4) - height)) - rail.top
+    setPreview(previous => previous?.id === turn.id && previous.left === left && previous.top === top && previous.width === width
+      ? previous : { id: turn.id, left, top, width })
+  }, [containerRef])
+
+  useLayoutEffect(() => {
+    if (!preview || radar) return
+    const measure = (): void => {
+      const turn = turns.find(turn => turn.id === preview.id)
+      const row = Array.from(navRef.current?.querySelectorAll<HTMLElement>('.chat__nav-wave') ?? [])
+        .find(row => row.dataset.turnId === preview.id)
+      if (turn && row) showPreview(turn, row)
+      else setPreview(null)
+    }
+    measure()
+    const resize = new ResizeObserver(measure)
+    if (containerRef.current) resize.observe(containerRef.current)
+    window.addEventListener('resize', measure)
+    return () => { resize.disconnect(); window.removeEventListener('resize', measure) }
+  }, [preview?.id, radar, turns, containerRef, showPreview])
+
+  const returnToTrigger = useCallback(() => {
+    returningFocus.current = true
+    triggerRef.current?.focus({ preventScroll: true })
+    returningFocus.current = false
+  }, [])
+
+  const closePanel = useCallback((returnFocus = false) => {
+    cancelClose()
+    expandedRef.current = false
+    setExpanded(false)
+    if (returnFocus || listRef.current?.closest('.chat__nav-list')?.contains(document.activeElement)) returnToTrigger()
+  }, [cancelClose, returnToTrigger])
+
+  const openPanel = useCallback(() => {
+    if (!radar) return
+    cancelClose()
+    measurePanel()
+    if (expandedRef.current) return
+    expandedRef.current = true
+    setFocusedIndex(Math.max(0, turns.findIndex(turn => turn.id === activeId)))
+    setExpanded(true)
+  }, [activeId, cancelClose, measurePanel, turns, radar])
+
+  // A short grace period bridges the gap between the small anchor and its list.
+  // Keyboard reading stays open until focus leaves; pointer reading folds away.
+  const scheduleClose = useCallback(() => {
+    cancelClose()
+    closeTimer.current = setTimeout(() => {
+      closeTimer.current = null
+      if (menuOpen.current || pointerInside.current || keyboardFocus.current && navRef.current?.contains(document.activeElement)) return
+      closePanel()
+      setPreview(null)
+    }, 160)
+  }, [cancelClose, closePanel])
+
+  const focusTurn = useCallback((index: number) => {
+    const next = Math.max(0, Math.min(turns.length - 1, index))
+    if (radar) openPanel()
+    setFocusedIndex(next)
+    cancelAnimationFrame(focusFrame.current)
+    focusFrame.current = requestAnimationFrame(() => {
+      const row = (radar ? listRef.current : navRef.current)?.querySelector<HTMLButtonElement>(`[data-nav-index="${next}"]`)
+      row?.focus({ preventScroll: true })
+      if (radar) revealNavRow(listRef.current, row)
+    })
+  }, [openPanel, turns.length, radar])
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLElement>): void => {
+    keyboardFocus.current = true
+    if (event.key === 'Escape') {
+      if (menuOpen.current) return
+      event.preventDefault(); event.stopPropagation()
+      if (radar) closePanel(true)
+      setPreview(null)
+      return
+    }
+    const target = event.target instanceof Element ? event.target : null
+    const row = target?.closest<HTMLElement>('[data-nav-index]')
+    const isTrigger = target === triggerRef.current
+    if (!row && !isTrigger) return
+    const index = row ? Number(row.dataset.navIndex) : Math.max(0, turns.findIndex(turn => turn.id === activeId))
+    if (event.key === 'Home' || event.key === 'End' || ['ArrowDown', 'ArrowUp', 'ArrowRight'].includes(event.key)) {
+      event.preventDefault()
+      focusTurn(event.key === 'Home' ? 0 : event.key === 'End' ? turns.length - 1
+        : isTrigger || event.key === 'ArrowRight' ? index : index + (event.key === 'ArrowDown' ? 1 : -1))
+    } else if (row && (event.key === 'ContextMenu' || event.key === 'F10' && event.shiftKey)) {
+      event.preventDefault()
+      const rect = row.getBoundingClientRect()
+      menuOpen.current = true
+      setMenu({ turn: turns[index], x: rect.left + 16, y: rect.bottom })
+    }
+  }
+
+  useEffect(() => {
+    if (!expanded) return
+    const container = containerRef.current
+    const resize = new ResizeObserver(measurePanel)
+    if (container) resize.observe(container)
+    window.addEventListener('resize', measurePanel)
+    const frame = requestAnimationFrame(() => {
+      revealNavRow(listRef.current, listRef.current?.querySelector<HTMLElement>('[aria-current="true"]'))
+    })
+    return () => {
+      cancelAnimationFrame(frame)
+      resize.disconnect()
+      window.removeEventListener('resize', measurePanel)
+    }
+  }, [expanded, containerRef, measurePanel])
+
+  useEffect(() => {
+    closePanel()
+    cancelAnimationFrame(focusFrame.current)
+    setPreview(null)
+    setFocusedIndex(0)
+    pointerInside.current = false
+    keyboardFocus.current = false
+    menuOpen.current = false
+    setMenu(null)
+  }, [sessionId, radar, visible, closePanel])
+
+  useEffect(() => () => {
+    cancelClose()
+    cancelAnimationFrame(focusFrame.current)
+  }, [cancelClose])
+
+  if (!visible) return null
 
   return (
     <nav
-      className={`chat__nav${listAnchor ? ' is-expanded' : ''}`}
+      ref={navRef}
+      className={`chat__nav chat__nav--adaptive chat__nav--${radar ? 'radar' : 'waves'}${radar && expanded ? ' is-expanded' : ''}${className ? ` ${className}` : ''}`}
       aria-label="消息导航"
-      onMouseEnter={handleEnter}
-      onMouseLeave={scheduleClose}
+      data-variant={radar ? 'radar' : 'waves'}
+      data-state={radar && expanded ? 'open' : 'closed'}
+      onMouseEnter={() => { pointerInside.current = true; keyboardFocus.current = false; cancelClose() }}
+      onMouseLeave={() => { pointerInside.current = false; scheduleClose() }}
+      onPointerDown={() => { keyboardFocus.current = false }}
+      onFocusCapture={event => {
+        if (returningFocus.current) return
+        if (!pointerInside.current) keyboardFocus.current = true
+        if (event.target === triggerRef.current) openPanel()
+      }}
+      onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) scheduleClose() }}
+      onKeyDown={onKeyDown}
     >
-      {/* 常态：圆点列 */}
-      <div className="chat__nav-dots">
-        {turns.map((turn) => {
-          const mark = marks[turn.id]
-          return (
-            <button
-              key={turn.id}
-              type="button"
-              className={`chat__nav-dot${turn.id === activeId ? ' is-active' : ''}`}
-              style={mark ? { background: mark } : undefined}
-              title={turn.preview}
-              aria-label={`跳转到：${turn.preview}`}
-              aria-current={turn.id === activeId ? 'true' : undefined}
-              onClick={() => jumpTo(turn)}
-              onContextMenu={(event) => openMenu(turn, event)}
-            />
-          )
-        })}
-      </div>
-
-      {/* 悬停：铺开展示消息列表（fixed 浮层，锚定在鼠标进入处附近） */}
-      {listAnchor ? (
-        <div
-          className="chat__nav-list"
-          style={{
-            left: listAnchor.x,
-            top: Math.min(listAnchor.y, window.innerHeight - 200)
-          }}
-          onMouseEnter={cancelClose}
-          onMouseLeave={scheduleClose}
-        >
-          {turns.map((turn) => {
-            const mark = marks[turn.id]
-            return (
-              <button
-                key={turn.id}
-                type="button"
-                className={`chat__nav-item${turn.id === activeId ? ' is-active' : ''}`}
+      <button type="button" className="chat__nav-btn chat__nav-edge" title="回到顶部" aria-label="回到顶部" onMouseEnter={() => setPreview(null)} onClick={scrollToTop}>
+        <Icon name="chevron-double-up" size={16} />
+      </button>
+      {radar ? <>
+        <button ref={triggerRef} type="button" className="chat__nav-trigger" aria-label="展开消息导航"
+          aria-expanded={expanded} aria-controls={panelId} title="消息导航 · ↑↓ 浏览，Esc 收起"
+          onMouseEnter={openPanel} onClick={openPanel}>
+          <span className="chat__nav-radar" aria-hidden="true"><i /><i /><b /></span>
+        </button>
+        {/* Keep the long list mounted so leaving reverses the same centre-out motion. */}
+        <div id={panelId} className="chat__nav-list" aria-hidden={!expanded} inert={!expanded}
+          style={layout ? { left: layout.left, top: layout.top, width: layout.width, height: layout.height,
+            '--nav-origin-y': `${layout.originY}px` } as CSSProperties : undefined}>
+          <header className="chat__nav-heading"><span>消息</span><small>{turns.length} 条</small></header>
+          <div className="chat__nav-entries" ref={listRef}>
+            {turns.map((turn, index) => (
+              <button key={turn.id} type="button"
+                className={`chat__nav-item chat__nav-dot${turn.id === activeId ? ' is-active' : ''}`}
+                data-nav-index={index} tabIndex={expanded && index === focusedIndex ? 0 : -1}
+                title={turn.preview} aria-label={`跳转到：${turn.preview}`}
                 aria-current={turn.id === activeId ? 'true' : undefined}
-                onClick={() => jumpTo(turn)}
-                onContextMenu={(event) => openMenu(turn, event)}
-              >
-                <span
-                  className="chat__nav-item-dot"
-                  style={mark ? { background: mark } : undefined}
-                />
+                onFocus={() => setFocusedIndex(index)} onClick={() => jumpTo(turn)}
+                onContextMenu={event => openMenu(turn, event)}>
+                <span className="chat__nav-item-dot" style={marks[turn.id] ? { background: marks[turn.id] } : undefined} />
                 <span className="chat__nav-item-text">{turn.preview}</span>
               </button>
-            )
-          })}
+            ))}
+          </div>
+          <div className="chat__nav-controls">
+            <button type="button" className="chat__nav-btn" title="上一条" aria-label="上一条" onClick={() => stepTurn(-1)}>
+              <Icon name="chevron-up" size={16} />
+            </button>
+            <button type="button" className="chat__nav-btn" title="下一条" aria-label="下一条" onClick={() => stepTurn(1)}>
+              <Icon name="chevron" size={16} />
+            </button>
+          </div>
         </div>
-      ) : null}
-
-      {/* 快捷按钮：到顶 / 上一条 / 下一条 / 到底 */}
-      <div className="chat__nav-controls">
-        <button
-          type="button"
-          className="chat__nav-btn"
-          title="回到顶部"
-          aria-label="回到顶部"
-          onClick={scrollToTop}
-        >
-          <Icon name="chevron-double-up" size={16} />
-        </button>
-        <button
-          type="button"
-          className="chat__nav-btn"
-          title="上一条"
-          aria-label="上一条"
-          onClick={() => stepTurn(-1)}
-        >
-          <Icon name="chevron-up" size={16} />
-        </button>
-        <button
-          type="button"
-          className="chat__nav-btn"
-          title="下一条"
-          aria-label="下一条"
-          onClick={() => stepTurn(1)}
-        >
-          <Icon name="chevron" size={16} />
-        </button>
-        <button
-          type="button"
-          className="chat__nav-btn"
-          title="回到底部"
-          aria-label="回到底部"
-          onClick={scrollToBottom}
-        >
-          <Icon name="chevron-double-down" size={16} />
-        </button>
-      </div>
+      </> : <div className="chat__nav-waves">
+        {turns.map((turn, index) => <button key={turn.id} type="button"
+          className={`chat__nav-wave${turn.id === activeId ? ' is-active' : ''}${turn.id === preview?.id ? ' is-preview' : ''}${Math.abs(index - (previewIndex >= 0 ? previewIndex : activeIndex)) === 1 ? ' is-near' : ''}`}
+          data-nav-index={index} data-turn-id={turn.id}
+          tabIndex={index === Math.min(focusedIndex, turns.length - 1) ? 0 : -1}
+          aria-label={`跳转到：${turn.preview}`} aria-current={turn.id === activeId ? 'true' : undefined}
+          aria-describedby={turn.id === preview?.id ? previewId : undefined}
+          onMouseEnter={event => showPreview(turn, event.currentTarget)}
+          onFocus={event => { setFocusedIndex(index); showPreview(turn, event.currentTarget) }}
+          onBlur={() => setPreview(null)}
+          onClick={() => jumpTo(turn)} onContextMenu={event => openMenu(turn, event)}>
+          <span className="chat__nav-wave-line" aria-hidden="true" style={marks[turn.id] ? { background: marks[turn.id] } : undefined} />
+        </button>)}
+      </div>}
+      <button type="button" className="chat__nav-btn chat__nav-edge" title="回到底部" aria-label="回到底部" onMouseEnter={() => setPreview(null)} onClick={scrollToBottom}>
+        <Icon name="chevron-double-down" size={16} />
+      </button>
+      {!radar && preview && turns[previewIndex] ? <div ref={previewRef} id={previewId} role="tooltip" className="chat__nav-preview"
+        style={{ left: preview.left, top: preview.top, width: preview.width }}>
+        <small>第 {previewIndex + 1} 条</small><span>{turns[previewIndex].preview}</span>
+      </div> : null}
 
       {menu ? (
-        <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu.turn)} onClose={() => setMenu(null)} />
+        <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu.turn)} onClose={() => {
+          menuOpen.current = false; setMenu(null)
+          if (!pointerInside.current) scheduleClose()
+        }} />
       ) : null}
     </nav>
   )
+}
+
+/** Only the preview list should scroll; scrollIntoView also moves pane ancestors. */
+function revealNavRow(list: HTMLElement | null, row: HTMLElement | null | undefined): void {
+  if (!list || !row) return
+  const top = row.offsetTop
+  if (top < list.scrollTop) list.scrollTop = top
+  else if (top + row.offsetHeight > list.scrollTop + list.clientHeight)
+    list.scrollTop = top + row.offsetHeight - list.clientHeight
 }
 
 function readMarks(key: string): Record<string, string> {

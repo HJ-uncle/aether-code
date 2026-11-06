@@ -11,7 +11,7 @@
  * - git 参数中所有用户输入（路径/分支名/提交信息）一律作为独立 argv 元素传递，
  *   不经 shell 拼接，无注入面
  */
-import { readFile, appendFile, mkdir, rm, stat, realpath } from 'node:fs/promises'
+import { readFile, appendFile, mkdir, rm, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import type {
   GitBlameLine,
@@ -50,6 +50,8 @@ import { assertAllowed } from '../fs/file-service'
 import { resolveGitExecutable } from './git-resolver'
 import { withMainGitOperation, mainGitProcessScope } from './git-operation'
 import { repositoryFailureMetadata } from './repository-lease'
+import { parseGitRemotes } from './parsers'
+import { fillStatusStats } from './status-stats'
 
 
 
@@ -57,8 +59,6 @@ import { repositoryFailureMetadata } from './repository-lease'
 const GIT_TIMEOUT_MS = 30_000
 /** 输出上限：blame/log/status 在大仓库里可能很大，但没有大到需要流式 */
 const GIT_MAX_BUFFER = 20 * 1024 * 1024
-/** 未跟踪文件统计行数的体积上限：超过就不数了（读进内存不划算） */
-const UNTRACKED_COUNT_LIMIT = 2 * 1024 * 1024
 /** blame 文件体积上限：超过直接返回空（行内标注不是刚需） */
 const BLAME_MAX_FILE_BYTES = 2 * 1024 * 1024
 
@@ -321,7 +321,7 @@ export async function status(cwd: string): Promise<GitStatusResult>{
     return { success: true, isRepo: false, files: [] }
   }
   try {
-    const out = await runGit(root, ['status', '--porcelain=v2', '--untracked-files=all', '--renames'])
+    const out = await runGit(root, ['-c', 'status.relativePaths=true', 'status', '--porcelain=v2', '--untracked-files=all', '--renames'])
     const files: GitFileChange[] = []
 
     for (const line of out.split('\n')) {
@@ -389,7 +389,7 @@ export async function status(cwd: string): Promise<GitStatusResult>{
       // '#' 开头的是 branch 头信息，这里不需要（branchInfo 单独查）
     }
 
-    await fillNumstat(root, files)
+    await fillStatusStats(root, files, args => runGit(root, args))
     const mergeState = await readMergeState(root)
     return { success: true, isRepo: true, files, ...mergeState }
   } catch (error) {
@@ -418,74 +418,6 @@ async function readMergeState(cwd: string): Promise<{ merging: boolean; mergeMes
     return { merging: true, mergeMessage: message || undefined }
   } catch {
     return { merging: true }
-  }
-}
-
-/** 为状态列表补增删行数：分别跑 worktree vs index 与 index vs HEAD 的 numstat */
-async function fillNumstat(cwd: string, files: GitFileChange[]): Promise<void> {
-  const byPath = new Map(files.map((f) => [f.path, f]))
-
-  const applyNumstat = async (args: string[], side: 'staged' | 'unstaged'): Promise<void> => {
-    try {
-      const out = await runGit(cwd, args)
-      for (const line of out.split('\n')) {
-        if (!line.trim()) continue
-        const cols = line.split('\t')
-        if (cols.length < 3) continue
-        const [add, del] = cols
-        // rename 行带旧路径列，取最后一列作为当前路径
-        const filePath = cols[cols.length - 1]
-        const file = byPath.get(filePath)
-        if (!file) continue
-        if (add === '-' || del === '-') {
-          // numstat 对二进制输出 '-'
-          file.binary = true
-          continue
-        }
-        if (side === 'staged') {
-          file.stagedAdditions = Number(add)
-          file.stagedDeletions = Number(del)
-        } else {
-          file.unstagedAdditions = Number(add)
-          file.unstagedDeletions = Number(del)
-        }
-      }
-    } catch {
-      // numstat 失败（比如空仓库无 HEAD）不影响状态本身
-    }
-  }
-
-  await applyNumstat(['diff', '--numstat'], 'unstaged')
-  await applyNumstat(['diff', '--numstat', '--cached'], 'staged')
-
-  for (const file of files) {
-    file.additions = (file.stagedAdditions ?? 0) + (file.unstagedAdditions ?? 0)
-    file.deletions = (file.stagedDeletions ?? 0) + (file.unstagedDeletions ?? 0)
-  }
-
-  await fillUntrackedAdditions(cwd, files)
-}
-
-/** 未跟踪文件没有 numstat 可查，直接读文件数行（限体积；含 NUL 视为二进制） */
-async function fillUntrackedAdditions(cwd: string, files: GitFileChange[]): Promise<void> {
-  for (const file of files) {
-    if (file.changeType !== 'untracked' || file.additions > 0) continue
-    try {
-      const fullPath = path.join(cwd, file.path)
-      const info = await stat(fullPath)
-      if (!info.isFile() || info.size > UNTRACKED_COUNT_LIMIT) continue
-      const buffer = await readFile(fullPath)
-      if (buffer.includes(0)) {
-        file.binary = true
-        continue
-      }
-      const text = buffer.toString('utf8')
-      let lines = text.split('\n').length
-      if (text.endsWith('\n')) lines -= 1
-      file.additions = lines
-    } catch {
-      // 单个文件读失败不影响整体
-    }
   }
 }
 
@@ -1461,12 +1393,7 @@ export async function listRemotes(cwd: string): Promise<GitRemoteListResult>{
   const root = resolveCwd(cwd)
   try {
     const out = await runGit(root, ['remote', '-v'])
-    const remotes = new Map<string, string>()
-    for (const line of out.split('\n')) {
-      const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)$/.exec(line.trim())
-      if (match && !remotes.has(match[1])) remotes.set(match[1], match[2])
-    }
-    return { success: true, remotes: [...remotes.entries()].map(([name, url]) => ({ name, url })) }
+    return { success: true, remotes: parseGitRemotes(out) }
   } catch (error) {
     return fail(error)
   }
@@ -1985,7 +1912,8 @@ export async function log(cwd: string, limit?: number, skip?: number, query?: Gi
   try {
     const refArgs =
       query?.refs?.includes('all') ? ['--all'] : query?.refs && query.refs.length > 0 ? query.refs : ['HEAD']
-    const args = ['log', `--max-count=${count}`]
+    // Parent rows must follow their children even when commit timestamps tie or are rewritten.
+    const args = ['log', '--topo-order', `--max-count=${count}`]
     if (skip && skip > 0) args.push(`--skip=${Math.floor(skip)}`)
     if (query?.search?.trim()) args.push(`--grep=${query.search.trim()}`, '-i', '--fixed-strings')
     if (query?.author?.trim()) args.push(`--author=${query.author.trim()}`, '-i', '--fixed-strings')
@@ -2013,6 +1941,7 @@ export async function incomingLog(cwd: string, limit?: number): Promise<GitLogRe
   try {
     const out = await runGit(root, [
       'log',
+      '--topo-order',
       `--max-count=${size + 1}`,
       '--date=iso-strict',
       LOG_FORMAT,

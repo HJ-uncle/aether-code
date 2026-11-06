@@ -1,0 +1,12 @@
+.git-virtual-list {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.git-virtual-list__item {
+  display: flow-root;
+  width: 100%;
+  min-width: 0;
+}

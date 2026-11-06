@@ -34,12 +34,10 @@ export function BrowserPositionPreview({ screenshot, viewport, title, descriptio
       {!hasImage ? <div className="tool-browser-position__hint">
         {source ? '截图无法显示' : '此记录未保存截图'}{children ? '，已显示位置示意图' : ''}
       </div> : null}
-      {expanded && hasImage ? (
-        <Dialog title={title} className="modal--browser-position" width={1040} onClose={() => setExpanded(false)}>
-          {map(true)}
-          <div className="tool-browser-position__hint">{description}</div>
-        </Dialog>
-      ) : null}
+      <Dialog title={title} className="modal--browser-position" width={1040} open={expanded && hasImage} onClose={() => setExpanded(false)}>
+        {map(true)}
+        <div className="tool-browser-position__hint">{description}</div>
+      </Dialog>
     </>
   )
 }

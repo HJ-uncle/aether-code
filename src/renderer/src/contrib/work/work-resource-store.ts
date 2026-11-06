@@ -1,8 +1,9 @@
 import { useSyncExternalStore } from 'react'
-import { assertSessionFileTarget, type SessionFileTarget } from '@renderer/core/workspace/fs-client'
+import { assertSessionFileTarget, paths, type SessionFileTarget } from '@renderer/core/workspace/fs-client'
 import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
-import { engineConnectionKey, getExpectedEngine } from '@renderer/core/engine/source'
 import type { BrowserTabState } from '@shared/browser'
+import { browserTabInScope } from '@renderer/core/browser/scope'
+import { getBrowserPresentationScope } from '@renderer/core/browser/presentation'
 
 export interface WorkFileResource {
   id: string
@@ -50,8 +51,8 @@ export function resolvedWorkResourceId(resources: ResourceState, webIds: readonl
   return resources.files[0]?.id ?? (webIds[0] ? `web:${webIds[0]}` : null)
 }
 export function workResourceBrowserTabs(tabs: readonly BrowserTabState[], sessionId: string): BrowserTabState[] {
-  const engineId = engineConnectionKey({ ...getExpectedEngine(), phase: 'ready' })
-  return tabs.filter(tab => tab.context?.sessionId === sessionId && tab.context.engineId === engineId)
+  const scope = getBrowserPresentationScope('work', sessionId)
+  return tabs.filter(tab => browserTabInScope(tab, scope))
 }
 function update(sessionId: string, next: ResourceState): void {
   const key = keyFor(sessionId)
@@ -107,4 +108,23 @@ export function closeWorkResource(sessionId: string, id: string): void {
   const files = previous.files.filter(file => file.id !== id)
   update(sessionId, { ...previous, files,
     selected: previous.selected === id ? files[Math.min(Math.max(index, 0), files.length - 1)]?.id ?? null : previous.selected })
+}
+
+/** Completion belongs to its captured task even if another task is now visible.
+ * External resources and a newer workspace binding retain their own paths. */
+export function syncWorkFileOperation(target: SessionFileTarget, from: string, to?: string): void {
+  if (target.source !== getEngineSource()) return
+  const previous = getWorkResources(target.sessionId)
+  let selected = previous.selected, changed = false
+  const files = previous.files.flatMap(file => {
+    if (file.target?.key !== target.key || !paths.contains(from, file.path)) return [file]
+    changed = true
+    if (!to) { if (selected === file.id) selected = null; return [] }
+    const path = `${to}${file.path.replace(/\\/g, '/').slice(from.replace(/\\/g, '/').length)}`
+    const normalized = path.replace(/\\/g, '/')
+    const id = `file:${/^(?:[A-Za-z]:|\/\/)/.test(normalized) ? normalized.toLowerCase() : normalized}`
+    if (selected === file.id) selected = id
+    return [{ ...file, id, path, name: paths.basename(path) }]
+  })
+  if (changed) update(target.sessionId, { ...previous, files, selected })
 }

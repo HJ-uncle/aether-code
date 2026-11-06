@@ -5,6 +5,7 @@ let snapshot: SourceSnapshot = { mode: 'embedded', baseUrl: '', phase: 'idle' }
 let generation = 0
 let storageSource = ''
 const listeners = new Set<() => void>()
+const readinessListeners = new Set<() => void>()
 
 /** Transport identities expire at restart; persisted preferences keep the endpoint identity. */
 export function engineConnectionKey(value: SourceSnapshot): string {
@@ -25,18 +26,26 @@ export function assertEngineSource(source: number): void {
   if (source !== generation || !isEngineReady()) throw new Error('引擎连接已变化，请在当前会话重试')
 }
 export function publishEngineSource(next: SourceSnapshot): void {
+  const readinessChanged = (next.phase === 'ready') !== isEngineReady()
   const changed = (next.phase === 'ready' && engineStorageKey(next) !== storageSource) ||
     engineConnectionKey(next) !== engineConnectionKey(snapshot) ||
     (next.phase !== 'ready' && snapshot.phase === 'ready')
   snapshot = next
   if (next.phase === 'ready') storageSource = engineStorageKey(next)
-  if (!changed) return
-  generation++
-  for (const listener of listeners) listener()
+  if (changed) {
+    generation++
+    for (const listener of listeners) listener()
+  }
+  if (readinessChanged) for (const listener of readinessListeners) listener()
 }
 export function subscribeEngineSource(listener: () => void): () => void {
   listeners.add(listener)
   return () => { listeners.delete(listener) }
+}
+/** Readiness can change without replacing the connection identity. */
+export function subscribeEngineReadiness(listener: () => void): () => void {
+  readinessListeners.add(listener)
+  return () => { readinessListeners.delete(listener) }
 }
 export function sessionStorageKey(base: string, source = getEngineStorageKey()): string {
   return source ? base + ':' + encodeURIComponent(source) : base

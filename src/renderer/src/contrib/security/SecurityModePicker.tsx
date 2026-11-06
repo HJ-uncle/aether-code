@@ -3,6 +3,7 @@ import { useApp } from '@renderer/core/app-context'
 import { changeSecurityMode, useSecurityMode } from '@renderer/core/engine/security-store'
 import { MODE_DESCRIPTORS, isRiskyMode, type SecurityMode } from '@renderer/core/engine/security'
 import { Icon } from '@renderer/workbench/icons'
+import { MotionPresence } from '@renderer/workbench/MotionPresence'
 
 interface SecurityModePickerProps {
   /** 当前对话的会话 ID。模式是会话级的，没有会话就没得切。 */
@@ -37,7 +38,10 @@ export function SecurityModePicker({ sessionId, onManage }: SecurityModePickerPr
       if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false)
     }
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setOpen(false)
+      if (event.key === 'Escape') {
+        setOpen(false)
+        rootRef.current?.querySelector<HTMLButtonElement>('.sec-picker__trigger')?.focus()
+      }
     }
     document.addEventListener('mousedown', onPointerDown)
     document.addEventListener('keydown', onKey)
@@ -68,6 +72,8 @@ export function SecurityModePicker({ sessionId, onManage }: SecurityModePickerPr
           risky ? ' sec-picker__trigger--risky' : ''
         }`}
         disabled={disabled || loading}
+        aria-expanded={open}
+        aria-haspopup="menu"
         title={
           !sessionId
             ? '先发一条消息建立会话，之后才能设置安全模式'
@@ -80,7 +86,7 @@ export function SecurityModePicker({ sessionId, onManage }: SecurityModePickerPr
         <span className="sec-picker__caret">⌃</span>
       </button>
 
-      {open ? (
+      <MotionPresence show={open} asChild>
         <div className="sec-picker__popup" role="menu">
           <div className="sec-picker__section">本会话安全模式</div>
           {MODE_DESCRIPTORS.map((item) => (
@@ -120,7 +126,7 @@ export function SecurityModePicker({ sessionId, onManage }: SecurityModePickerPr
             </button>
           </div>
         </div>
-      ) : null}
+      </MotionPresence>
     </div>
   )
 }

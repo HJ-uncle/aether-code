@@ -1,0 +1,14 @@
+import fs from 'node:fs'; import path from 'node:path'; const out=process.argv[2];
+const paths={
+'paperclipai__paperclip':['docs/api/issues.md','docs/guides/agent-developer/heartbeat-protocol.md','docs/guides/board-operator/costs-and-budgets.md','server/src/services/issues.ts','server/src/services/required-quality-review.ts','packages/db/src/schema/agent_wakeup_requests.ts','packages/db/src/schema/issues.ts','server/src/routes/issues.ts','doc/experimental/issue-worktree-support.md'],
+'gastownhall__gastown':['docs/design/mail-protocol.md','internal/mail/types.go','internal/nudge/queue.go','internal/cmd/mail_send.go','internal/formula/formulas/mol-polecat-code-review.formula.toml'],
+'crewAIInc__crewAI':['docs/edge/en/learn/hierarchical-process.mdx','docs/edge/en/concepts/checkpointing.mdx','lib/crewai/src/crewai/tools/agent_tools/delegate_work_tool.py','lib/crewai/src/crewai/tools/agent_tools/ask_question_tool.py','lib/crewai/src/crewai/crew.py'],
+'langchain-ai__langgraph-swarm-py':['langgraph_swarm/handoff.py'],
+'microsoft__agent-framework':['python/packages/orchestrations/agent_framework_orchestrations/_magentic.py','python/packages/core/agent_framework/_workflows/_checkpoint.py','python/samples/03-workflows/checkpoint/checkpoint_with_human_in_the_loop.py'],
+'microsoft__magentic-ui':['src/magentic_ui/teams/omniagent/_user_interjection.py','src/magentic_ui/teams/omniagent/_verifier.py','src/magentic_ui/teams/omniagent/_state_io.py','docs/limitations.md'],
+'OpenBMB__ChatDev':['yaml_instance/general_problem_solving_team.yaml','workflow/executor/dag_executor.py','workflow/executor/parallel_executor.py','server/services/workflow_run_service.py'],
+'FoundationAgents__MetaGPT':['metagpt/team.py','metagpt/environment/base_env.py','metagpt/roles/di/team_leader.py'],
+'microsoft__autogen':['LICENSE','LICENSE-CODE'],
+'OpenHands__OpenHands':['src/hooks/use-send-message.ts','src/components/features/conversation/conversation-tabs/conversation-planner-build-bar.tsx','LICENSE']};
+const work=Object.entries(paths).flatMap(([repo,files])=>files.map(file=>({repo,file})));const manifest=[];
+for(let i=0;i<work.length;i+=8)await Promise.all(work.slice(i,i+8).map(async({repo,file})=>{try { const dir=path.join(out,repo);const meta=JSON.parse(fs.readFileSync(path.join(dir,'metadata.json'),'utf8'));const url=`https://raw.githubusercontent.com/${meta.full_name}/${meta.researchCommit}/${file}`;const r=await fetch(url);if(!r.ok)throw Error('HTTP '+r.status);const bytes=Buffer.from(await r.arrayBuffer());const target=path.join(dir,'files',file);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,bytes);manifest.push({repo,file,url,bytes:bytes.length}); }catch(e){manifest.push({repo,file,error:e.message})}}));fs.writeFileSync(path.join(out,'file-manifest.json'),JSON.stringify(manifest,null,2));console.log(JSON.stringify({fetched:manifest.filter(x=>!x.error).length,errors:manifest.filter(x=>x.error)}));

@@ -14,29 +14,15 @@
 import { useEffect, useRef, useState, type JSX } from 'react'
 import { toast } from '../../core/toast'
 import {
-  useGitStore,
   busyOperationOf,
   canCommitOf,
   canCommitStagedOf,
   hasChangesToCommitOf,
   stagedFilesOf,
-  changeCountOf,
-  setCommitMessage,
-  getCommitDraftRevision,
-  getGitState,
-  commit,
-  commitStaged,
-  commitAll,
-  commitAmend,
-  undoCommit,
-  commitEmpty,
-  push,
-  forceRefreshGit,
-  gitRemoteStore,
-  mergeStrategyStore
-} from '../../core/git/git-store'
-import { createGitClient } from '../../core/git/git-client'
-import { captureCodeGitTarget, assertGitTarget, gitUtilityChat } from '../../core/git/git-target'
+  changeCountOf
+} from '@renderer/core/git/git-store'
+import { useGitActions, useGitStore } from '@renderer/core/git/git-context'
+import { assertGitTarget, gitUtilityChat } from '../../core/git/git-target'
 import { useApp } from '../../core/app-context'
 import { runGitRemoteAction, type GitRemoteAction } from '../../core/git/git-remote-actions'
 import { chooseMergeStrategy, type ChooseStrategy } from '../../core/git/git-merge-strategy'
@@ -45,6 +31,7 @@ import { PromptDialog } from '../../workbench/PromptDialog'
 import { pickDivergedStrategy } from './DivergedStrategyDialog'
 import { Icon } from '../../workbench/icons'
 import { Spinner } from '../../workbench/ui-primitives'
+import './git-commitbar.css'
 
 /**
  * 规整模型返回的提交信息，保留标题下面的正文。
@@ -66,6 +53,22 @@ const labels: Record<GitRemoteAction, string> = {
 }
 
 export function GitCommitBar(): JSX.Element {
+  const {
+    setCommitMessage,
+    getCommitDraftRevision,
+    getGitState,
+    commit,
+    commitStaged,
+    commitAll,
+    commitAmend,
+    undoCommit,
+    commitEmpty,
+    push,
+    forceRefreshGit,
+    gitRemoteStore,
+    mergeStrategyStore
+  } = useGitActions()
+  const store = useGitActions()
   const s = useGitStore()
   const { settings } = useApp()
   const [suggesting, setSuggesting] = useState(false)
@@ -137,24 +140,27 @@ export function GitCommitBar(): JSX.Element {
   useEffect(autosize, [s.commitMessage])
 
   const handleSuggest = async (): Promise<void> => {
-    if (suggesting || suggestInFlight.current) return
+    if (suggesting || suggestInFlight.current || opBusy) return
+    const release = store.beginSuggestion()
+    if (!release) return
     suggestInFlight.current = true
     const revision = getCommitDraftRevision()
     const cwd = s.cwd
     setSuggesting(true)
     try {
-      const target = await captureCodeGitTarget(cwd)
+      const target = await store.captureTarget()
       const apply = (value: string): boolean => {
         assertGitTarget(target)
-        if (!mounted.current || getGitState().cwd !== cwd) return false
+        if (getGitState().cwd !== cwd) return false
         if (getCommitDraftRevision() !== revision) {
-          toast.warning('提交草稿已编辑，已保留你的内容；可再次生成 AI 建议')
+          store.setCommitProposal(value)
           return false
         }
         setCommitMessage(value)
+        store.setCommitProposal('')
         return true
       }
-      const res = await createGitClient(target).gitSuggestCommitMessage()
+      const res = await store.readClient((client) => client.gitSuggestCommitMessage())
       if (!res.success) {
         toast.error(res.error ?? '生成失败，请稍后重试')
         return
@@ -202,6 +208,7 @@ export function GitCommitBar(): JSX.Element {
     } catch (err) {
       if (mounted.current) toast.error(err instanceof Error ? err.message : '生成失败，请稍后重试')
     } finally {
+      release()
       suggestInFlight.current = false
       if (mounted.current) setSuggesting(false)
     }
@@ -347,6 +354,7 @@ export function GitCommitBar(): JSX.Element {
           rows={1}
           value={s.commitMessage}
           placeholder="提交信息"
+          aria-label="提交信息"
           onChange={(event) => setCommitMessage(event.target.value)}
           onKeyDown={(event) => {
             if (event.nativeEvent.isComposing) return
@@ -359,14 +367,38 @@ export function GitCommitBar(): JSX.Element {
         <button
           type="button"
           className="git-commitbar__ai"
-          disabled={suggesting}
-          aria-busy={suggesting}
+          disabled={suggesting || opBusy}
+          aria-busy={suggesting || s.operation === 'suggestion'}
           title="AI 帮我写提交信息"
           onClick={() => void handleSuggest()}
         >
-          {suggesting ? <Spinner size={14} /> : <Icon name="sparkles" size={16} />}
+          {suggesting || s.operation === 'suggestion' ? (
+            <Spinner size={14} />
+          ) : (
+            <Icon name="sparkles" size={16} />
+          )}
         </button>
       </div>
+
+      {s.commitProposal ? (
+        <div className="git-commitbar__proposal" role="status">
+          <span>草稿已修改，AI 建议已保留</span>
+          <pre>{s.commitProposal}</pre>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => {
+              setCommitMessage(s.commitProposal)
+              store.setCommitProposal('')
+            }}
+          >
+            采用建议
+          </button>
+          <button type="button" className="btn" onClick={() => store.setCommitProposal('')}>
+            保留当前草稿
+          </button>
+        </div>
+      ) : null}
 
       <div className="git-commitbar__actions">
         <button

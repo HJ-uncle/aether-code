@@ -260,6 +260,29 @@ test('remote and stopped engines expose no client memory, disk or process readin
   expect((await collector.getStorage(snapshot({ mode: 'remote' }))).state).toBe('unavailable')
 })
 
+test('explicit refresh bypasses both process and process-tree caches without losing rate baselines', async () => {
+  let now = 1000, processReads = 0, treeReads = 0
+  const collector = new EngineDiagnosticsCollector({
+    now: () => now, monotonic: () => now,
+    readProcess: async () => { processReads++; return sample({ cpuTimeMs: processReads * 100 }) },
+    readProcessTree: async () => {
+      treeReads++
+      return { rootPid: 123, partial: false, processes: [{ ...sample({ cpuTimeMs: treeReads * 100 }), parentPid: 1, name: 'node', command: 'node.exe' }] }
+    }
+  })
+  const first = await collector.getResources(snapshot())
+  expect(first.cpu.percent).toBeNull()
+  now += 1000
+  const refresh = collector.getResources(snapshot(), true)
+  expect(collector.getResources(snapshot(), true)).toBe(refresh)
+  expect(collector.getResources(snapshot())).toBe(refresh)
+  const second = await refresh
+  expect([processReads, treeReads]).toEqual([2, 2])
+  expect(second.collection.cached).toBe(false)
+  expect(second.processTree.collection.cached).toBe(false)
+  expect(second.cpu).toMatchObject({ percent: 10, intervalMs: 1000 })
+})
+
 test('storage counts physical domains and ignores symlink/junction targets', async () => {
   const base = fixture(),
     root = path.join(base, 'state'),
@@ -287,9 +310,10 @@ test('storage counts physical domains and ignores symlink/junction targets', asy
     partial: false
   })
   expect(storage.categories).toEqual([
-    { category: 'conversations', bytes: 20, files: 1 },
-    { category: 'database', bytes: 13, files: 2 },
-    { category: 'memory', bytes: 5, files: 1 }
+    { category: 'history-jsonl', bytes: 20, files: 1 },
+    { category: 'database', bytes: 10, files: 1 },
+    { category: 'memory', bytes: 5, files: 1 },
+    { category: 'database-wal', bytes: 3, files: 1 }
   ])
   const redirected = path.join(base, 'redirected-state')
   symlinkSync(root, redirected, process.platform === 'win32' ? 'junction' : 'dir')
@@ -298,7 +322,7 @@ test('storage counts physical domains and ignores symlink/junction targets', asy
   ).toBe('unavailable')
 })
 
-test('storage refresh obeys a sixty-second cooldown and never infers a directory from a missing database', async () => {
+test('storage caches passive reads, manual refresh bypasses cooldown and shares an in-flight scan', async () => {
   const root = fixture(),
     database = path.join(root, 'agent.db')
   writeFileSync(database, Buffer.alloc(10))
@@ -308,17 +332,19 @@ test('storage refresh obeys a sixty-second cooldown and never infers a directory
   expect(collector.getStorage(snapshot({ dataDir: database }))).toBe(first)
   expect((await first).totalBytes).toBe(10)
   writeFileSync(path.join(root, 'new.bin'), Buffer.alloc(20))
-  now += 59999
-  expect(await collector.getStorage(snapshot({ dataDir: database }), true)).toMatchObject({
+  now += 100
+  expect(await collector.getStorage(snapshot({ dataDir: database }))).toMatchObject({
     totalBytes: 10,
     cached: true,
     scannedAt: 1000
   })
-  now += 1
-  expect(await collector.getStorage(snapshot({ dataDir: database }), true)).toMatchObject({
+  const refreshed = collector.getStorage(snapshot({ dataDir: database }), true)
+  expect(collector.getStorage(snapshot({ dataDir: database }), true)).toBe(refreshed)
+  expect(collector.getStorage(snapshot({ dataDir: database }))).toBe(refreshed)
+  expect(await refreshed).toMatchObject({
     totalBytes: 30,
     cached: false,
-    scannedAt: 61000
+    scannedAt: 1100
   })
   expect(
     (await collector.getStorage(snapshot({ dataDir: path.join(root, 'missing.db') }))).state
@@ -346,6 +372,22 @@ test('storage entry and time budgets produce an explicit partial result', async 
     files: 0,
     totalBytes: 0
   })
+})
+
+test('storage cache never crosses a changed engine, account, endpoint or runtime source', async () => {
+  const root = fixture(), database = path.join(root, 'agent.db')
+  writeFileSync(database, Buffer.alloc(10))
+  let reads = 0
+  const collector = new EngineDiagnosticsCollector({ readSqlite: async () => { reads++; throw new Error('No metadata fixture') } })
+  const original = snapshot({ dataDir: database })
+  expect((await collector.getStorage(original)).cached).toBe(false)
+  expect((await collector.getStorage(original)).cached).toBe(true)
+  for (const change of [
+    { instanceId: 'next-instance' }, { pid: 456 }, { accountId: 'next-account' },
+    { baseUrl: 'http://127.0.0.1:45678' }, { entryPath: 'D:\\new-runtime\\dist\\main.js' },
+    { runtimeSource: 'env' as const }
+  ]) expect((await collector.getStorage({ ...original, ...change })).cached).toBe(false)
+  expect(reads).toBe(7)
 })
 
 test('a failed process measurement leaves an independent storage measurement usable', async () => {

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type JSX } from 'react'
+import { MotionPresence } from '@renderer/workbench/MotionPresence'
 import { IconButton } from '@renderer/workbench/ui-primitives'
 import { Icon } from '@renderer/workbench/icons'
 import { ComposerInput } from '../chat/InputComposer'
@@ -48,7 +49,7 @@ export function WorkNextTurnQueuePanel({ queue, scopeKey }: { queue: WorkNextTur
     {(error || queue.error) ? <div ref={errorRef} tabIndex={-1} className="work-next-turn__error" role="alert">{error || queue.error}</div> : null}
     {unknown ? <div className="work-next-turn__notice"><span>正在核对接纳结果，剩余消息保留。重试会先查准确回执。</span>
       <button type="button" className="btn btn--sm" disabled={queue.saving} onClick={() => void run(() => queue.reconcile(true))}>核对并重试</button></div> : null}
-    {expanded ? <div className="work-next-turn__details" tabIndex={0} aria-label="待发消息与队列操作">
+    <MotionPresence show={expanded}><div className="work-next-turn__details" tabIndex={0} aria-label="待发消息与队列操作">
       <ol className="work-next-turn__list">
         {entries.map(entry => { const index = pending.findIndex(item => item.id === entry.id), canEdit = entry.phase === 'pending', active = editing === entry.id
           return <li key={entry.id} className="work-next-turn__item">
@@ -62,13 +63,13 @@ export function WorkNextTurnQueuePanel({ queue, scopeKey }: { queue: WorkNextTur
               <IconButton icon="pencil" label="编辑待发正文" disabled={queue.saving} onClick={event => { editTrigger.current = event.currentTarget; if (active) closeEditor(); else { setText(entry.envelope.draft.text); setMentions(entry.envelope.draft.mentions); setEditing(entry.id) } }} />
               <IconButton icon="trash" label="取消这条待发消息" disabled={queue.saving} onClick={() => void run(() => queue.mutate({ kind: 'remove', id: entry.id, entryRevision: entry.revision, at: Date.now() }))} />
             </div> : null}</div>
-            {active && canEdit ? <div className="work-next-turn__editor" onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); event.preventDefault(); closeEditor() } }}>
+            <MotionPresence show={active && canEdit}><div className="work-next-turn__editor" onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); event.preventDefault(); closeEditor() } }}>
               <ComposerInput ref={editor} value={text} ariaLabel="编辑待发消息正文" disabled={queue.saving} onChange={(value, refs) => { setText(value); setMentions(refs) }} onSubmit={save} onPasteFiles={() => setError('文件请在主输入框添加；此处编辑正文，现有附件会保留')} />
               <div className="work-next-turn__editor-actions"><button className="btn btn--sm" type="button" disabled={queue.saving} onClick={closeEditor}>取消</button><button className="btn btn--primary btn--sm" type="button" disabled={queue.saving || !text.trim()} onClick={save}>{queue.saving ? '保存中…' : '保存正文'}</button></div>
-            </div> : null}
+            </div></MotionPresence>
           </li> })}
       </ol>
       {pending.length ? <div className="work-next-turn__footer"><span>逐条发送 · 暂停只影响后续消息</span><button type="button" className="btn btn--sm" disabled={queue.saving} onClick={() => { if (window.confirm(`取消 ${pending.length} 条待发消息？正在执行的任务会继续。`)) void run(() => queue.mutate({ kind: 'clear-pending', at: Date.now() })) }}>清空待发</button></div> : null}
-    </div> : null}
+    </div></MotionPresence>
   </section>
 }

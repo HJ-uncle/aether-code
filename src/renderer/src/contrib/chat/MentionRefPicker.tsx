@@ -3,6 +3,7 @@ import { AgentRefPicker } from './AgentRefPicker'
 import { agentMentionSearch } from './agent-references'
 import { FileRefPalette } from './FileRefPalette'
 import type { Mention } from './mention-context'
+import { isMotionInteractive } from '@renderer/workbench/motion'
 import './mention-ref-picker.css'
 
 type ReferenceKind = 'files' | 'agents'
@@ -18,6 +19,7 @@ export function MentionRefPicker({ root, query, showSearch = false, onSelect, on
   const [kind, setKind] = useState<ReferenceKind>(() => agentMentionSearch(query) !== null || !root ? 'agents' : 'files')
   const [search, setSearch] = useState('')
   const id = useId()
+  const rootRef = useRef<HTMLDivElement>(null)
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
   const keyword = showSearch ? search : query
   useEffect(() => {
@@ -25,6 +27,7 @@ export function MentionRefPicker({ root, query, showSearch = false, onSelect, on
   }, [query, showSearch])
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
+      if (!isMotionInteractive(rootRef.current)) return
       if (event.isComposing || event.keyCode === 229 || !event.altKey || event.ctrlKey || event.metaKey ||
         !['ArrowLeft', 'ArrowRight'].includes(event.key)) return
       event.preventDefault()
@@ -38,7 +41,7 @@ export function MentionRefPicker({ root, query, showSearch = false, onSelect, on
     setKind(next)
     if (focusTab) tabRefs.current[next === 'files' ? 0 : 1]?.focus()
   }
-  return <div className="mention-ref-picker">
+  return <div ref={rootRef} className="mention-ref-picker">
     <div className="mention-ref-picker__tabs" role="tablist" aria-label="引用类型">
       {(['files', 'agents'] as const).map((value, index) => <button key={value} ref={node => { tabRefs.current[index] = node }}
         type="button" role="tab" id={`${id}-${value}`} aria-controls={`${id}-list`} aria-selected={kind === value}

@@ -1,5 +1,5 @@
-/** New real Electron regression for duplicate model saves. UI, preload and IPC
- * are real; a controlled HTTP engine provides conflicts and a held save response.
+/** Real Electron regression for model form controls, footer actions and duplicate
+ * saves. UI, preload and IPC are real; a controlled HTTP engine provides responses.
  * No model/provider calls or production database writes. Run only after build,
  * serially when the campaign's Electron instance has been stopped by its owner. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
@@ -34,6 +34,8 @@ const writes = (method: string, modelId?: string) => requests.filter(request => 
   (modelId === undefined || request.body.modelId === modelId))
 
 async function addDialog(): Promise<Locator> {
+  // Closing dialogs become aria-hidden before their dismissal callback runs.
+  await expect(page.locator('.modal--model-form')).toHaveCount(0)
   await page.locator('.settings-view--models').getByRole('button', { name: '添加模型', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: '添加模型', exact: true })
   await expect(dialog).toBeVisible()
@@ -46,7 +48,7 @@ async function fillDraft(dialog: Locator, modelId: string): Promise<void> {
   await dialog.getByLabel('接口地址', { exact: true }).fill('https://example.com/attempted')
 }
 
-test.describe.serial('模型重复保存真实界面回归', () => {
+test.describe.serial('模型表单与重复保存真实界面回归', () => {
   test.beforeAll(async () => {
     mkdirSync(fixtureRoot, { recursive: true })
     fixture = mkdtempSync(join(fixtureRoot, 'model-save-conflict-ui-'))
@@ -68,6 +70,8 @@ test.describe.serial('模型重复保存真实界面回归', () => {
       if (path.startsWith('/api/v1/models')) {
         requests.push({ method, path, body })
         if (path === '/api/v1/models' && method === 'GET') return reply(models)
+        if (/^\/api\/v1\/models\/[^/]+\/test$/.test(path) && method === 'POST') return reply({ success: true, latency: 12 })
+        if (path === '/api/v1/models/detect-capabilities' && method === 'POST') return reply({ vision: true, contextWindow: 256000 })
         if (path === '/api/v1/models' && method === 'POST') {
           const save = (fail = false): void => {
             if (fail) { reply(null, 503, 50300, '保存暂时不可用，请重试'); return }
@@ -77,8 +81,10 @@ test.describe.serial('模型重复保存真实界面回归', () => {
                 '该提供方下已存在相同模型 ID，请编辑已有模型或使用其他模型 ID。')
               return
             }
-            const model = { ...record(String(body.modelId)), baseUrl: String(body.baseUrl),
-              displayName: body.displayName ? String(body.displayName) : String(body.modelId), apiKey: '...ider' }
+            const model: EngineModel = { ...record(String(body.modelId)), provider: String(body.provider), baseUrl: String(body.baseUrl),
+              displayName: body.displayName ? String(body.displayName) : String(body.modelId), apiKey: '...ider',
+              apiFormat: body.apiFormat === 'openai' || body.apiFormat === 'anthropic' ? body.apiFormat : 'auto',
+              capabilityOverrides: body.capabilityOverrides as EngineModel['capabilityOverrides'] }
             models.push(model)
             reply(model)
           }
@@ -88,7 +94,10 @@ test.describe.serial('模型重复保存真实界面回归', () => {
         if (method === 'PUT') {
           const index = models.findIndex(model => model.id === path.split('/').at(-1))
           if (index < 0) return reply(null, 404, 40400, '模型不存在')
-          models[index] = { ...models[index], ...(typeof body.displayName === 'string' ? { displayName: body.displayName } : {}) }
+          models[index] = { ...models[index],
+            ...(typeof body.displayName === 'string' ? { displayName: body.displayName } : {}),
+            ...(typeof body.baseUrl === 'string' ? { baseUrl: body.baseUrl } : {}),
+            ...(body.apiFormat === 'auto' || body.apiFormat === 'openai' || body.apiFormat === 'anthropic' ? { apiFormat: body.apiFormat } : {}) }
           return reply(models[index])
         }
       }
@@ -100,7 +109,7 @@ test.describe.serial('模型重复保存真实界面回归', () => {
     await new Promise<void>(resolve => server!.listen(0, '127.0.0.1', resolve))
     const remoteBaseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
     writeFileSync(join(fixture, 'settings.json'), JSON.stringify({ engineMode: 'remote', remoteBaseUrl,
-      autoStartEngine: false, lastFolder: '', lastSessionId: 'model-conflict-session' }))
+      autoStartEngine: true, appearance: 'dark', lastFolder: '', lastSessionId: 'model-conflict-session' }))
     const env = { ...process.env }
     for (const name of Object.keys(env)) {
       if (['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL', 'AETHER_IDE_REMOTE_API_KEY',
@@ -159,6 +168,8 @@ test.describe.serial('模型重复保存真实界面回归', () => {
     await expect(edit.getByRole('button', { name: '服务商', exact: true })).toBeDisabled()
     await expect(edit.getByLabel('API Key', { exact: true })).toHaveValue('')
     await expect(edit.getByLabel('接口地址', { exact: true })).toHaveValue('https://example.com/original')
+    await expect(edit.getByLabel('上下文窗口', { exact: true })).toHaveValue('')
+    await expect(edit.getByRole('button', { name: 'API 格式', exact: true })).toHaveText('自动识别')
     await edit.getByLabel('显示名称', { exact: true }).fill('Explicitly edited model')
     await edit.getByRole('button', { name: '保存', exact: true }).click()
     await expect(edit).toBeHidden()
@@ -209,5 +220,198 @@ test.describe.serial('模型重复保存真实界面回归', () => {
     await expect(dialog).toBeHidden()
     expect(writes('POST', 'guarded-model')).toHaveLength(2)
     expect(models.filter(model => model.modelId === 'guarded-model')).toHaveLength(1)
+  })
+
+  test('服务商浮层可真实点击，上下文四档可选择且键盘不会误保存或关闭弹窗', async ({}, testInfo) => {
+    const dialog = await addDialog()
+    const provider = dialog.getByRole('button', { name: '服务商', exact: true })
+    await provider.click()
+    await page.getByRole('menu', { name: '服务商', exact: true }).getByRole('menuitem', { name: 'OpenAI 兼容', exact: true }).click()
+    await expect(provider).toHaveText('OpenAI 兼容')
+    await expect(dialog.getByLabel('接口地址', { exact: true })).toHaveValue('https://api.openai.com/v1')
+    await provider.click()
+    await page.getByRole('menu', { name: '服务商', exact: true }).getByRole('menuitem', { name: 'DeepSeek', exact: true }).click()
+    await expect(provider).toHaveText('DeepSeek')
+    await expect(dialog.getByLabel('接口地址', { exact: true })).toHaveValue('https://api.deepseek.com')
+    await expect(dialog.getByRole('button', { name: 'deepseek-chat', exact: true })).toHaveCount(0)
+    await expect(dialog.getByRole('button', { name: 'deepseek-reasoner', exact: true })).toHaveCount(0)
+    await fillDraft(dialog, 'context-picker-draft')
+    const context = dialog.getByRole('combobox', { name: '上下文窗口', exact: true })
+    const presetButton = dialog.getByRole('button', { name: '选择上下文窗口预设', exact: true })
+    const presets = page.getByRole('listbox', { name: '上下文窗口预设', exact: true })
+    await expect(context).toHaveValue('256')
+    for (const value of ['128', '256', '512', '1000']) {
+      await presetButton.click()
+      await expect(presets.getByRole('option')).toHaveText(['128 K', '256 K', '512 K', '1000 K'])
+      await presets.getByRole('option', { name: `${value} K`, exact: true }).click()
+      await expect(context).toHaveValue(value)
+      await expect(presets).toBeHidden()
+    }
+    await context.fill('256')
+    await dialog.locator('.modal__header').hover()
+    const createsBefore = writes('POST').length
+    await context.press('ArrowDown')
+    await expect(presets).toBeVisible()
+    await context.press('ArrowDown')
+    await context.press('Enter')
+    await expect(context).toHaveValue('512')
+    await expect(presets).toBeHidden()
+    await expect(dialog).toBeVisible()
+    expect(writes('POST')).toHaveLength(createsBefore)
+    await context.press('ArrowDown')
+    await expect(presets).toBeVisible()
+    await context.press('Escape')
+    await expect(presets).toBeHidden()
+    await expect(dialog).toBeVisible()
+    await context.press('ArrowDown')
+    await expect(presets).toBeVisible()
+    await context.press('Tab')
+    await expect(presets).toBeHidden()
+    await expect(dialog).toBeVisible()
+    await context.fill('123.789')
+    await presetButton.click()
+    await expect(presets.getByRole('option')).toHaveText(['128 K', '256 K', '512 K', '1000 K'])
+    await dialog.screenshot({ path: testInfo.outputPath('model-context-presets.png') })
+    await context.press('Escape')
+    await context.fill('')
+    await expect(dialog.getByRole('button', { name: '保存', exact: true })).toBeEnabled()
+    await dialog.getByRole('button', { name: '取消', exact: true }).click()
+    expect(writes('POST')).toHaveLength(createsBefore)
+  })
+
+  test('新建默认 256 K 和自由输入的小数按 token 保存，重新编辑保留配置', async () => {
+    for (const [id, input, tokens] of [
+      ['context-default-model', '256', 256000],
+      ['context-custom-model', '123.789', 123789]
+    ] as const) {
+      const dialog = await addDialog()
+      await fillDraft(dialog, id)
+      const context = dialog.getByLabel('上下文窗口', { exact: true })
+      await expect(context).toHaveValue('256')
+      if (input !== '256') await context.fill(input)
+      await dialog.getByRole('button', { name: '保存', exact: true }).click()
+      await expect(dialog).toBeHidden()
+      const create = writes('POST', id).filter(request => request.path === '/api/v1/models')
+      expect(create).toHaveLength(1)
+      expect(create[0].body.capabilityOverrides).toEqual({ contextWindow: tokens })
+      expect(models.find(model => model.modelId === id)?.capabilityOverrides).toEqual({ contextWindow: tokens })
+      await expect(page.locator('.modal--model-form')).toHaveCount(0)
+      await page.locator('.settings-view--models .sg__row').filter({ hasText: id }).getByRole('button', { name: '编辑', exact: true }).click()
+      const edit = page.getByRole('dialog', { name: '编辑模型', exact: true })
+      await expect(edit.getByLabel('上下文窗口', { exact: true })).toHaveValue(input)
+      await edit.getByRole('button', { name: '取消', exact: true }).click()
+      await expect(edit).toBeHidden()
+    }
+  })
+
+  test('连接和能力按钮固定在底栏左侧，从正文顶部操作也会滚动到结果', async ({}, testInfo) => {
+    await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1000, 720))
+    const dialog = await addDialog()
+    await fillDraft(dialog, 'footer-actions-model')
+    const footer = dialog.locator('.modal__footer')
+    const secondary = footer.locator('.model-form__secondary-actions')
+    const primary = footer.locator('.model-form__primary-actions')
+    const body = dialog.locator('.modal__body')
+    await expect(secondary.getByRole('button')).toHaveText(['测试连接', '检测能力'])
+    await expect(primary.getByRole('button')).toHaveText(['取消', '保存'])
+    await expect(body.getByRole('button', { name: '测试连接', exact: true })).toHaveCount(0)
+    await expect(body.getByRole('button', { name: '检测能力', exact: true })).toHaveCount(0)
+    await expect(page.locator('.modal-overlay')).toHaveAttribute('data-motion-state', 'open')
+    await body.evaluate(element => { element.scrollTop = 0 })
+    const before = await secondary.boundingBox()
+    const primaryBox = await primary.boundingBox()
+    if (!before || !primaryBox) throw new Error('Missing model footer action bounds')
+    expect(before.x + before.width).toBeLessThan(primaryBox.x)
+    await expect.poll(() => body.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(0)
+    await body.evaluate(element => { element.scrollTop = element.scrollHeight })
+    await expect.poll(() => body.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+    const after = await secondary.boundingBox()
+    if (!after) throw new Error('Missing model footer after scrolling')
+    expect(Math.abs(after.y - before.y)).toBeLessThanOrEqual(1)
+    await body.evaluate(element => { element.scrollTop = 0 })
+    await expect.poll(() => body.evaluate(element => element.scrollTop)).toBe(0)
+    await secondary.getByRole('button', { name: '测试连接', exact: true }).click()
+    await expect(dialog.getByRole('status')).toHaveText('连接正常（12 ms）')
+    await expect(dialog.getByRole('status')).toBeInViewport({ ratio: 1 })
+    await expect.poll(() => body.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+    expect(requests.filter(request => request.path === '/api/v1/models/new/test').map(request => request.body)).toEqual([{
+      provider: 'deepseek', modelId: 'footer-actions-model', apiKey: 'synthetic-attempted-key-never-a-provider', baseUrl: 'https://example.com/attempted', apiFormat: 'auto'
+    }])
+    await body.evaluate(element => { element.scrollTop = 0 })
+    await expect.poll(() => body.evaluate(element => element.scrollTop)).toBe(0)
+    await expect(dialog.getByRole('status')).not.toBeInViewport()
+    await secondary.getByRole('button', { name: '检测能力', exact: true }).click()
+    await expect(dialog).toContainText('推断能力')
+    await expect(dialog.getByRole('button', { name: '→ 填入图片输入', exact: true })).toBeInViewport({ ratio: 1 })
+    await expect.poll(() => body.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+    expect(requests.filter(request => request.path === '/api/v1/models/detect-capabilities').map(request => request.body)).toEqual([{
+      provider: 'deepseek', modelId: 'footer-actions-model', baseUrl: 'https://example.com/attempted', apiFormat: 'auto'
+    }])
+    await dialog.screenshot({ path: testInfo.outputPath('model-footer-actions.png') })
+    await primary.getByRole('button', { name: '取消', exact: true }).click()
+  })
+
+  test('API 格式可选择保存和重开，连接测试使用当前格式及地址并复用已保存密钥', async ({}, testInfo) => {
+    const id = 'api-format-model'
+    const dialog = await addDialog()
+    await fillDraft(dialog, id)
+    const chooseFormat = async (form: Locator, label: string): Promise<void> => {
+      const control = form.getByRole('button', { name: 'API 格式', exact: true })
+      await control.click()
+      const menu = page.getByRole('menu', { name: 'API 格式', exact: true })
+      await expect(menu.locator('.select__item-head')).toHaveText(['自动识别', 'OpenAI', 'Anthropic'])
+      await expect(menu.locator('.select__item-desc')).toHaveText(['Chat Completions 格式', 'Messages 格式'])
+      await menu.getByRole('menuitem').filter({ has: page.getByText(label, { exact: true }) }).click()
+      await expect(control).toHaveText(label)
+    }
+    await expect(dialog.getByRole('button', { name: 'API 格式', exact: true })).toHaveText('自动识别')
+    await chooseFormat(dialog, 'Anthropic')
+    await dialog.getByRole('button', { name: '测试连接', exact: true }).click()
+    await expect(dialog).toContainText('连接正常（12 ms）')
+    const draftTest = requests.filter(request => request.path === '/api/v1/models/new/test' && request.body.modelId === id)
+    expect(draftTest.map(request => request.body)).toEqual([{
+      provider: 'deepseek', modelId: id, apiKey: 'synthetic-attempted-key-never-a-provider', baseUrl: 'https://example.com/attempted', apiFormat: 'anthropic'
+    }])
+    await dialog.getByRole('button', { name: '保存', exact: true }).click()
+    await expect(dialog).toBeHidden()
+    const created = models.find(model => model.modelId === id)
+    if (!created) throw new Error('Missing API format fixture model')
+    expect(created.apiFormat).toBe('anthropic')
+    expect(requests.filter(request => request.path === '/api/v1/models' && request.method === 'POST' && request.body.modelId === id).map(request => request.body.apiFormat)).toEqual(['anthropic'])
+    const openEdit = async (): Promise<Locator> => {
+      await expect(page.locator('.modal--model-form')).toHaveCount(0)
+      await page.locator('.settings-view--models .sg__row').filter({ hasText: id }).getByRole('button', { name: '编辑', exact: true }).click()
+      const form = page.getByRole('dialog', { name: '编辑模型', exact: true })
+      await expect(form).toBeVisible()
+      return form
+    }
+    const edit = await openEdit()
+    await expect(edit.getByRole('button', { name: 'API 格式', exact: true })).toHaveText('Anthropic')
+    await expect(edit.getByLabel('API Key', { exact: true })).toHaveValue('')
+    await edit.getByLabel('接口地址', { exact: true }).fill('https://example.com/custom/anthropic')
+    await chooseFormat(edit, 'OpenAI')
+    await edit.getByRole('button', { name: '测试连接', exact: true }).click()
+    await expect(edit).toContainText('连接正常（12 ms）')
+    const savedTest = requests.filter(request => request.path === `/api/v1/models/${created.id}/test`)
+    expect(savedTest.map(request => request.body)).toEqual([{
+      provider: 'deepseek', modelId: id, baseUrl: 'https://example.com/custom/anthropic', apiFormat: 'openai'
+    }])
+    expect(models.find(model => model.id === created.id)?.apiFormat).toBe('anthropic')
+    await edit.getByRole('button', { name: '保存', exact: true }).click()
+    await expect(edit).toBeHidden()
+    expect(requests.filter(request => request.path === `/api/v1/models/${created.id}` && request.method === 'PUT').map(request => request.body)).toEqual([{
+      apiFormat: 'openai', baseUrl: 'https://example.com/custom/anthropic'
+    }])
+    const reopened = await openEdit()
+    await expect(reopened.getByRole('button', { name: 'API 格式', exact: true })).toHaveText('OpenAI')
+    await expect(reopened.getByLabel('接口地址', { exact: true })).toHaveValue('https://example.com/custom/anthropic')
+    await chooseFormat(reopened, '自动识别')
+    await reopened.getByRole('button', { name: '保存', exact: true }).click()
+    await expect(reopened).toBeHidden()
+    expect(requests.filter(request => request.path === `/api/v1/models/${created.id}` && request.method === 'PUT').at(-1)?.body).toEqual({ apiFormat: 'auto' })
+    const automatic = await openEdit()
+    await expect(automatic.getByRole('button', { name: 'API 格式', exact: true })).toHaveText('自动识别')
+    await automatic.screenshot({ path: testInfo.outputPath('model-api-format-auto.png') })
+    await automatic.getByRole('button', { name: '取消', exact: true }).click()
   })
 })

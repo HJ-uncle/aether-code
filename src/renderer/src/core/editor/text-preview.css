@@ -19,3 +19,6 @@
 .text-preview__line { display: flex; height: 20px; min-width: max-content; white-space: pre; font: 12px/20px var(--font-mono); }
 .text-preview__number { position: sticky; left: 0; z-index: 1; flex: none; width: 64px; padding-right: 12px; box-sizing: border-box; border-right: 1px solid var(--border); background: var(--bg-app); color: var(--fg-faint); text-align: right; user-select: none; }
 .text-preview__text { padding: 0 16px 0 12px; color: var(--fg); user-select: text; }
+.text-preview__line.is-revealed { background: var(--accent-soft); }
+.text-preview__line.is-revealed > .text-preview__number { color: var(--accent); box-shadow: inset 3px 0 var(--accent); }
+.text-preview__match { background: var(--bg-selected); color: inherit; outline: 1px solid var(--accent); border-radius: 2px; }

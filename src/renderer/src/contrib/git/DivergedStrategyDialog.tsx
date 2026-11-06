@@ -13,11 +13,13 @@
  */
 import { useSyncExternalStore, type JSX } from 'react'
 import { Dialog } from '../../workbench/Dialog'
+import { useMotionPresence, useMotionValue } from '@renderer/workbench/MotionPresence'
 
 /** 用户的选择：合并 / 变基 / 取消（null） */
 export type DivergedStrategy = 'merge' | 'rebase' | null
 
 interface DivergedRequest {
+  id: number
   detail: string
   resolve: (v: DivergedStrategy) => void
 }
@@ -25,6 +27,7 @@ interface DivergedRequest {
 // ---------- 极简单例 store：同时只会有一个分叉策略弹窗 ----------
 
 let current: DivergedRequest | null = null
+let nextRequestId = 0
 const listeners = new Set<() => void>()
 
 function notify(): void {
@@ -47,12 +50,13 @@ function getSnapshot(): DivergedRequest | null {
 export function pickDivergedStrategy(detail: string): Promise<DivergedStrategy> {
   if (current) return Promise.resolve(null)
   return new Promise<DivergedStrategy>((resolve) => {
-    current = { detail, resolve }
+    current = { detail, resolve, id: ++nextRequestId }
     notify()
   })
 }
 
-function settle(v: DivergedStrategy): void {
+function settle(v: DivergedStrategy, expected: DivergedRequest): void {
+  if (current !== expected) return
   const req = current
   current = null
   notify()
@@ -61,22 +65,26 @@ function settle(v: DivergedStrategy): void {
 
 /** 挂在应用根部：有 pending 请求时渲染弹窗 */
 export function DivergedStrategyDialogHost(): JSX.Element | null {
-  const req = useSyncExternalStore(subscribe, getSnapshot)
-  if (!req) return null
+  const currentRequest = useSyncExternalStore(subscribe, getSnapshot)
+  const motion = useMotionPresence(Boolean(currentRequest))
+  const req = useMotionValue(currentRequest)
+  if (!motion.present || !req) return null
   return (
     <Dialog
+      key={req.id}
+      open={Boolean(currentRequest)}
       title="本地与远端已分叉"
       width={420}
-      onClose={() => settle(null)}
+      onClose={() => settle(null, req)}
       footer={
         <>
-          <button type="button" className="btn" onClick={() => settle(null)}>
+          <button type="button" className="btn" onClick={() => settle(null, req)}>
             取消
           </button>
-          <button type="button" className="btn" onClick={() => settle('rebase')}>
+          <button type="button" className="btn" onClick={() => settle('rebase', req)}>
             变基（rebase）
           </button>
-          <button type="button" className="btn btn--primary" onClick={() => settle('merge')}>
+          <button type="button" className="btn btn--primary" onClick={() => settle('merge', req)}>
             合并（merge）
           </button>
         </>

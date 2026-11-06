@@ -278,7 +278,6 @@
   border-radius: var(--radius-lg);
 }
 
-.git-panel__commit-row,
 .git-panel__stash-row,
 .git-panel__recent-row {
   min-height: 36px;
@@ -338,7 +337,6 @@
     margin-inline: var(--space-2);
   }
 
-  .git-panel__history-filter,
   .git-panel__merge-banner,
   .account-transport {
     flex-wrap: wrap;
@@ -429,6 +427,7 @@
 
   .browser-options {
     overflow-x: auto;
+    overflow-y: hidden;
   }
 }
 

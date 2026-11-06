@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState, type JSX } from 'react'
+import { useMemo, type JSX } from 'react'
 import type { EngineSnapshot } from '@shared/ipc'
 import { useApp } from '@renderer/core/app-context'
-import { useWorkbenchVisible } from '@renderer/core/platform/workbench-visibility'
 import { Icon } from '@renderer/workbench/icons'
 import { SectionHeading } from '@renderer/workbench/ui-primitives'
 import type { WorkTask } from './work-state'
@@ -65,13 +64,6 @@ function Stat({
  * page-performance observers on this long-lived diagnostic surface. */
 export function EngineMonitorView({ tasks }: { tasks: readonly WorkTask[] }): JSX.Element {
   const { engine } = useApp()
-  const visible = useWorkbenchVisible()
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    if (!visible) return
-    const timer = window.setInterval(() => setNow(Date.now()), 30_000)
-    return () => window.clearInterval(timer)
-  }, [visible])
   const snapshot = engine.snapshot
   const state = snapshotState(snapshot)
   const { running, waiting } = useMemo(() => {
@@ -84,7 +76,6 @@ export function EngineMonitorView({ tasks }: { tasks: readonly WorkTask[] }): JS
     }
     return { running, waiting }
   }, [tasks])
-  const age = snapshot.updatedAt ? Math.max(0, now - snapshot.updatedAt) : null
 
   return (
     <div className="work-page work-page--monitor">
@@ -92,7 +83,7 @@ export function EngineMonitorView({ tasks }: { tasks: readonly WorkTask[] }): JS
         <SectionHeading
           eyebrow="ENGINE · 只读监控"
           title="引擎监控"
-          description="查看引擎 CPU、内存、进程 I/O、存储容量和连接健康。资源按需采样，页面隐藏时停止刷新。"
+          description="查看引擎 CPU、内存、进程 I/O、存储容量和连接健康。进入页面读取一次，之后点击按钮手动刷新。"
         />
         <section className="engine-monitor__overview" aria-label="引擎概览">
           <div className="engine-monitor__status" data-state={state}>
@@ -101,7 +92,7 @@ export function EngineMonitorView({ tasks }: { tasks: readonly WorkTask[] }): JS
               <strong>{phaseLabel(snapshot)}</strong>
               <span>
                 {snapshot.mode === 'embedded' ? '本地内置引擎' : '远端引擎'} · 上次状态变化{' '}
-                {age === null ? '未知' : `${Math.round(age / 1000)} 秒前`}
+                {formatTime(snapshot.updatedAt)}
               </span>
             </div>
           </div>

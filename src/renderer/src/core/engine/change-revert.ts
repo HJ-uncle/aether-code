@@ -153,7 +153,7 @@ export async function revertConversationFrom(
   const report = await revertChanges(operation.request, { sessionId, scope: 'all', fromTurnId: row.conversationId })
   operation.assertCurrent()
   if (!revertComplete(report)) {
-    throw new Error(`${revertSummary(report)}。对话历史已保留，请在改动面板查看逐文件结果。`)
+    throw new Error(`${revertSummary(report)}。对话历史已保留，请查看逐文件回退结果。`)
   }
   try {
     await operation.request({ method: 'POST', path: '/conversation/truncate', body: { sessionId, messageId: row.id } })

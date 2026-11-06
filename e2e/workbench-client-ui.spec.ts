@@ -91,7 +91,7 @@ const server = createServer((request, response) => {
       admissionSessions.add(sessionId)
       send(response, { protocolVersion: 1, tenantId: 'fixture', sessionId,
         namespace: { id: 'workbench-client', generation: 'one' },
-        transport: { toolProfile: 'general', runLifetime: 'durable', subagentProtocol: 2 }, root: null, predecessor: null }); return
+        transport: { toolProfile: request.headers['x-aether-tool-profile'] || 'general', runLifetime: 'durable', subagentProtocol: 2 }, root: null, predecessor: null }); return
     }
     if (path === '/api/v1/cron/capabilities') { response.writeHead(404).end(); return }
     const data = path === '/health' ? { status: 'ok' }

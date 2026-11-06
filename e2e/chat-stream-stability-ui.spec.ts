@@ -15,6 +15,7 @@ const sealedText = 'STREAM_SEALED_PARAGRAPH：这段已经完成的正文在后�
 let fixture = '', remoteUrl = '', app: ElectronApplication | undefined, page: Page
 let heldStream: ServerResponse | undefined, run: RootRun | undefined, runNumber = 0, sequence = 0, runContent = '', runPrompt = ''
 const errors: string[] = []
+const admissionReceipts = new Map<string, { admission: Record<string, unknown>; run: RootRun }>()
 // The renderer CSP allows data images. Swapping an already loaded placeholder's
 // source exercises genuine browser decode/size events without bypassing that CSP.
 const placeholderImage = `data:image/svg+xml;base64,${Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1" fill="lightsteelblue"/></svg>').toString('base64')}`
@@ -25,7 +26,7 @@ let history: EngineHistoryRow[] = [
     content: Array.from({ length: 30 }, (_, index) => `HISTORY_ANCHOR_${index + 1}：已完成的历史段落。用户向上阅读时，新回复不能将这一段拉走。`).join('\n\n'),
     modelId, usage: { promptTokens: 1000, completionTokens: 100, totalTokens: 1100, currentPromptTokens: 1000, contextWindow: 100000 } }
 ]
-const envelope = (data: unknown) => JSON.stringify({ code: 200, message: 'ok', data })
+const envelope = (data: unknown, code = 200, message = 'ok') => JSON.stringify({ code, message, data })
 function frame(payload: Record<string, unknown>): void {
   if (!heldStream || heldStream.writableEnded || !run) throw new Error('Missing open stability fixture stream')
   if (typeof payload.content === 'string') runContent += payload.content
@@ -38,13 +39,45 @@ const server = createServer((request, response) => {
       response.writeHead(401, { 'content-type': 'application/json' }).end(envelope(null)); return
     }
     let raw = ''; for await (const chunk of request) raw += chunk.toString()
+    const body = raw ? JSON.parse(raw) as Record<string, unknown> : {}
+    const requestedSession = String(body.sessionId ?? url.searchParams.get('sessionId') ?? url.searchParams.get('parentSessionId') ?? sessionId)
+    const ownsSession = requestedSession === sessionId
+    // An unsupported optional capability must negotiate legacy behavior. A
+    // successful [] is malformed and keeps snapshot recovery retrying forever.
+    if (['/api/v1/subagent/capabilities', '/api/v1/cron/capabilities', '/api/v1/workbench/clients', '/api/v1/collaboration/capabilities'].includes(path)) {
+      response.writeHead(404, { 'content-type': 'application/json' }).end(envelope(null, 404, 'Unsupported fixture capability')); return
+    }
+    if (path === '/api/v1/chat/admission/context' && request.method === 'GET') {
+      const root = ownsSession && run ? { ...run, attemptId: `attempt-${run.runId}` } : null
+      response.setHeader('content-type', 'application/json')
+      response.end(envelope({ protocolVersion: 1, tenantId: 'default', sessionId: requestedSession,
+        namespace: { id: 'chat-stream-stability-db', generation: 'one' },
+        transport: { toolProfile: 'code', runLifetime: 'durable', subagentProtocol: 2 }, root,
+        predecessor: root ? { runId: root.runId, attemptId: root.attemptId, version: root.version } : null })); return
+    }
+    if (path === '/api/v1/chat/admission/receipt' && request.method === 'POST') {
+      const accepted = admissionReceipts.get(String(body.requestKey))
+      const current = accepted && (accepted.run.runId === run?.runId ? run : accepted.run)
+      response.setHeader('content-type', 'application/json')
+      response.end(envelope(accepted && current ? { protocolVersion: 1, status: 'accepted',
+        receipt: { ...accepted.admission, sessionId: current.sessionId, rootRunId: current.runId,
+          turnId: current.turnId, userMessageId: current.userMessageId, assistantMessageId: current.assistantMessageId },
+        run: current, projection: { rootVersion: current.version, rootAttemptId: `attempt-${current.runId}`,
+          user: { messageId: current.userMessageId, state: 'projected' },
+          assistant: { anchorMessageId: current.assistantMessageId, state: 'unwritten' } }
+      } : { protocolVersion: 1, status: 'absent', namespace: body.namespace, sessionId: requestedSession, requestKey: body.requestKey })); return
+    }
     if (path === '/api/v1/chat' && request.method === 'POST') {
-      const body = JSON.parse(raw) as { content?: string; message?: string }
-      runPrompt = body.content ?? body.message ?? 'STREAM_REQUEST'
+      if (!ownsSession) throw new Error('Wrong streaming stability fixture session')
+      const admission = body.admission as Record<string, unknown> | undefined
+      if (admission !== undefined && (!admission || typeof admission !== 'object' || Array.isArray(admission) ||
+        admission.protocolVersion !== 1 || admission.owner !== 'code' || typeof admission.requestKey !== 'string')) throw new Error('Invalid streaming fixture admission')
+      runPrompt = String(body.content ?? body.message ?? 'STREAM_REQUEST')
       heldStream = response; runContent = ''; sequence = 0; runNumber += 1
       run = { schemaVersion: 1, runId: `stability-run-${runNumber}`, sessionId, turnId: `stability-turn-${runNumber}`,
         userMessageId: `stability-user-${runNumber}`, assistantMessageId: `stability-assistant-${runNumber}`,
-        seq: 1, version: 1, status: 'running', modelId, createdAt: Date.now(), updatedAt: Date.now(), pending: [] }
+        seq: 1, version: 1, status: 'running', modelId, workspacePaths: ['/remote/stream-stability'], createdAt: Date.now(), updatedAt: Date.now(), pending: [] }
+      if (admission && typeof admission.requestKey === 'string') admissionReceipts.set(admission.requestKey, { admission, run })
       response.writeHead(200, { 'content-type': 'text/event-stream' }); frame({ run });
       frame({ usage: { modelId, promptTokens: 1000, completionTokens: 1, totalTokens: 1001, currentPromptTokens: 1000, contextWindow: 100000 } }); return
     }
@@ -53,9 +86,14 @@ const server = createServer((request, response) => {
       : path === '/meta' ? { version: '2.0.0', buildId: `sha256:${'a'.repeat(64)}`, protocolVersion: 1, toolProfiles: ['code'], subagentSchemaVersion: 1, instanceId: 'chat-stream-stability-fixture' }
       : path === '/api/v1/models' ? [{ id: modelId, modelId, provider: 'openai', displayName: modelId, isEnabled: true, capabilities: { toolCalling: true, contextWindow: 100000 } }]
       : path === '/api/v1/conversation/sessions' ? [{ sessionId, title: 'STREAM_HISTORY_START', lastAt: 2, messageCount: history.length }]
-      : path === '/api/v1/chat/snapshot' ? { schemaVersion: 1, source: 'persisted', sessionId, eventId: null, finished: true,
-          projection: [], run, runs: run ? [run] : [], history, todos: [], changes: [], commandJobs: [] }
-      : path === '/api/v1/chat/runs' ? { runs: [] }
+      : path === '/api/v1/chat/snapshot' ? { schemaVersion: 1, source: 'persisted', sessionId: requestedSession, eventId: null, finished: !ownsSession || run?.status !== 'running',
+          projection: [], run: ownsSession ? run : undefined, runs: ownsSession && run ? [run] : [], history: ownsSession ? history : [], todos: [], changes: [], commandJobs: [] }
+      : path === '/api/v1/conversation/history' ? ownsSession ? history : []
+      : path === '/api/v1/chat/runs' ? { runs: ownsSession && run ? [run] : [] }
+      : path === '/api/v1/chat/status' ? { run: ownsSession ? run : undefined, running: ownsSession && run?.status === 'running', finished: !ownsSession || run?.status !== 'running' }
+      : path === '/api/v1/command-jobs' ? { jobs: [] }
+      : path === '/api/v1/memory/settings' ? { sessionId: requestedSession, memoryScope: 'session', effectiveScope: 'session', enabled: true }
+      : path === '/api/v1/security/mode' ? { sessionId: requestedSession, mode: 'standard' }
       : path === '/api/v1/workspace/directory' ? { root: '/remote/stream-stability', entries: [] }
       : []
     response.end(envelope(data))
@@ -331,7 +369,7 @@ test.describe.serial('聊天流式输出的绘制稳定性', () => {
     mkdirSync(fixtureRoot, { recursive: true }); fixture = mkdtempSync(join(fixtureRoot, 'chat-stream-stability-ui-'))
     writeFileSync(join(fixture, 'settings.json'), JSON.stringify({ engineMode: 'remote', remoteBaseUrl: remoteUrl,
       autoStartEngine: true, lastSessionId: '', thinkingMode: 'off', appearance: 'dark' }))
-    app = await electron.launch({ args: ['.', `--user-data-dir=${fixture}`], cwd: root,
+    app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || '.', `--user-data-dir=${fixture}`], cwd: root,
       env: { ...process.env, AETHER_IDE_REMOTE_INSTANCE_TOKEN: token, AETHER_GLOBAL_DIR: join(fixture, 'global') } })
     page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message))
     await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90000 })

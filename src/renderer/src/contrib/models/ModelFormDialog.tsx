@@ -17,8 +17,11 @@ import {
 import { addModel, getModelState, refreshModels, saveModel, useModels } from '@renderer/core/engine/model-store'
 import { MODEL_CONFLICT_MESSAGE, ModelAlreadyExistsError } from '@renderer/core/engine/model-save-error'
 import { Dialog } from '@renderer/workbench/Dialog'
+import { useMotionDismiss } from '@renderer/workbench/MotionPresence'
 import { Select } from '@renderer/workbench/Select'
 import { Segmented, SettingsContent, SettingsGroup, SettingsRow } from '../settings/SettingsGroup'
+import { ContextWindowInput } from './ContextWindowInput'
+import './model-form.css'
 
 interface ModelFormDialogProps {
   /** 传入则为编辑模式，不传为新增 */
@@ -27,15 +30,8 @@ interface ModelFormDialogProps {
   onSaved?: (model: EngineModel) => void
 }
 
-/** 常见的 modelId 预设，减少手输错误 */
-const MODEL_PRESETS: Record<string, string[]> = {
-  deepseek: ['deepseek-chat', 'deepseek-reasoner'],
-  openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1'],
-  anthropic: ['claude-sonnet-4-20250514', 'claude-3-5-haiku-20241022'],
-  qwen: ['qwen-plus', 'qwen-max', 'qwen3-coder-plus']
-}
-
-export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProps): JSX.Element {
+export function ModelFormDialog({ model, onClose: dismiss, onSaved }: ModelFormDialogProps): JSX.Element {
+  const { show, close: onClose } = useMotionDismiss(dismiss)
   const [existingToEdit, setExistingToEdit] = useState<EngineModel | undefined>()
   const editingModel = model ?? existingToEdit
   const isEdit = Boolean(editingModel)
@@ -43,6 +39,7 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
   const conflictId = useId()
   const modelIdInput = useRef<HTMLInputElement>(null)
   const displayNameInput = useRef<HTMLInputElement>(null)
+  const feedbackRef = useRef<HTMLDivElement>(null)
   // State alone cannot stop two Enter/click handlers before React commits.
   const saveInFlight = useRef(false)
 
@@ -63,6 +60,10 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
   useEffect(() => {
     if (existingToEdit) displayNameInput.current?.focus()
   }, [existingToEdit])
+  useEffect(() => {
+    // Footer actions remain reachable while the feedback is below the fold.
+    if (testResult || caps || error) feedbackRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [testResult, caps, error])
 
   const providerMeta = useMemo(
     () => PROVIDERS.find((item) => item.value === form.provider),
@@ -142,21 +143,6 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
   }, [form, isEdit])
 
   const runTest = async (): Promise<void> => {
-    if (isEdit && !form.apiKey.trim()) {
-      // 用已保存的配置测试
-      setTesting(true)
-      setTestResult(null)
-      const result = await testModel(editingModel!.id)
-      setTesting(false)
-      setTestOk(result.success)
-      setTestResult(
-        result.success
-          ? `连接正常（${result.latency ?? '-'} ms）${result.thinkingSupported ? ' · 支持推理输出' : ''}`
-          : `失败：${result.error ?? '未知错误'}`
-      )
-      return
-    }
-
     if (validation) {
       setError(validation)
       return
@@ -164,11 +150,13 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
 
     setTesting(true)
     setTestResult(null)
-    const result = await testModel('new', {
+    // Reuse the saved key while testing the current draft URL and wire format.
+    const result = await testModel(isEdit && !form.apiKey.trim() ? editingModel!.id : 'new', {
       provider: form.provider,
       modelId: form.modelId.trim(),
-      apiKey: form.apiKey.trim(),
-      baseUrl: form.baseUrl.trim()
+      ...(form.apiKey.trim() ? { apiKey: form.apiKey.trim() } : {}),
+      baseUrl: form.baseUrl.trim(),
+      apiFormat: form.apiFormat
     })
     setTesting(false)
     setTestOk(result.success)
@@ -189,7 +177,8 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
         await detectCapabilities({
           provider: form.provider,
           modelId: form.modelId.trim(),
-          baseUrl: form.baseUrl.trim()
+          baseUrl: form.baseUrl.trim(),
+          apiFormat: form.apiFormat
         })
       )
       setError(null)
@@ -233,6 +222,7 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
           modelId: form.modelId.trim(),
           apiKey: form.apiKey.trim(),
           baseUrl: form.baseUrl.trim(),
+          apiFormat: form.apiFormat,
           displayName: form.displayName.trim() || undefined,
           capabilityOverrides: newModelOverrides(form)
         })
@@ -257,21 +247,33 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
 
   return (
     <Dialog
+      open={show}
+      className="modal--model-form"
       title={isEdit ? '编辑模型' : '添加模型'}
       footer={
         <>
-          <button type="button" className="btn" onClick={onClose}>
-            取消
-          </button>
-          <button
-            type="button"
-            className="btn btn--primary"
-            disabled={saving || hasConflict || Boolean(validation)}
-            title={hasConflict ? MODEL_CONFLICT_MESSAGE : validation ?? undefined}
-            onClick={() => void save()}
-          >
-            {saving ? '保存中…' : '保存'}
-          </button>
+          <div className="model-form__secondary-actions">
+            <button type="button" className="btn" disabled={testing || saving} onClick={() => void runTest()}>
+              {testing ? '测试中…' : '测试连接'}
+            </button>
+            <button type="button" className="btn" disabled={saving} onClick={() => void runDetect()}>
+              检测能力
+            </button>
+          </div>
+          <div className="model-form__primary-actions">
+            <button type="button" className="btn" onClick={onClose}>
+              取消
+            </button>
+            <button
+              type="button"
+              className="btn btn--primary"
+              disabled={saving || hasConflict || Boolean(validation)}
+              title={hasConflict ? MODEL_CONFLICT_MESSAGE : validation ?? undefined}
+              onClick={() => void save()}
+            >
+              {saving ? '保存中…' : '保存'}
+            </button>
+          </div>
         </>
       }
       onClose={onClose}
@@ -280,6 +282,7 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
         <SettingsRow label="服务商" description={providerMeta?.hint}>
           <Select
             className="sg__select-field"
+            panelClassName="model-form__popover"
             ariaLabel="服务商"
             value={form.provider}
             disabled={isEdit || saving}
@@ -330,23 +333,6 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
             </div>
           </SettingsContent>
         ) : null}
-        {MODEL_PRESETS[form.provider]?.length && !isEdit ? (
-          <SettingsContent>
-            <span className="chip-row">
-              {MODEL_PRESETS[form.provider].map((preset) => (
-                <button
-                  key={preset}
-                  type="button"
-                  className="chip"
-                  disabled={saving}
-                  onClick={() => patch({ modelId: preset })}
-                >
-                  {preset}
-                </button>
-              ))}
-            </span>
-          </SettingsContent>
-        ) : null}
       </SettingsGroup>
 
       <SettingsGroup title="连接">
@@ -362,6 +348,26 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
             placeholder="https://api.deepseek.com"
             onChange={(event) => patch({ baseUrl: event.target.value })}
             onKeyDown={submitOnEnter}
+          />
+        </SettingsRow>
+        <SettingsRow
+          label="API 格式"
+          description="默认按服务商和地址识别；第三方网关可手动指定，以所选格式为准"
+        >
+          <Select
+            className="sg__select-field"
+            panelClassName="model-form__popover"
+            ariaLabel="API 格式"
+            value={form.apiFormat}
+            disabled={saving}
+            options={[
+              { value: 'auto', label: '自动识别' },
+              { value: 'openai', label: 'OpenAI', description: 'Chat Completions 格式' },
+              { value: 'anthropic', label: 'Anthropic', description: 'Messages 格式' }
+            ]}
+            onChange={(value) => {
+              if (value === 'auto' || value === 'openai' || value === 'anthropic') patch({ apiFormat: value })
+            }}
           />
         </SettingsRow>
         <SettingsRow
@@ -422,78 +428,69 @@ export function ModelFormDialog({ model, onClose, onSaved }: ModelFormDialogProp
         </SettingsRow>
         <SettingsRow
           label="上下文窗口"
-          description="模型能力上限，留空自动识别；实际使用还受上下文预算约束。单位 K（1K = 1000 token），最多三位小数"
+          description="可选择或自由输入，留空自动识别。1 K = 1000 token，最多三位小数；实际使用还受上下文预算约束"
         >
-          <input
-            className="field__input sg__input sg__input--wide"
+          <ContextWindowInput
             value={form.contextWindow}
-            aria-label="上下文窗口"
             disabled={saving}
-            placeholder="自动识别，如需覆盖可填 128"
-            inputMode="decimal"
-            onChange={(event) => patch({ contextWindow: event.target.value })}
-            onKeyDown={submitOnEnter}
+            onChange={(contextWindow) => patch({ contextWindow })}
+            onSubmit={submitOnEnter}
           />
         </SettingsRow>
       </SettingsGroup>
 
-      <div className="settings-view__actions">
-        <button type="button" className="btn" disabled={testing || saving} onClick={() => void runTest()}>
-          {testing ? '测试中…' : '测试连接'}
-        </button>
-        <button type="button" className="btn" disabled={saving} onClick={() => void runDetect()}>
-          检测能力
-        </button>
-      </div>
+      {testResult || caps || error ? (
+        <div ref={feedbackRef} className="model-form__feedback">
+          {testResult ? (
+            <div role="status" className={testOk ? 'notice notice--ok' : 'notice notice--error'}>{testResult}</div>
+          ) : null}
 
-      {testResult ? (
-        <div className={testOk ? 'notice notice--ok' : 'notice notice--error'}>{testResult}</div>
+          {caps ? (
+            <SettingsGroup title="推断能力" footer="仅作参考，引擎会在每次请求时自行解析">
+              <SettingsContent>
+                <span className="chip-row">
+                  {Object.entries(caps)
+                    .filter(([, enabled]) => enabled)
+                    .map(([key]) => (
+                      <span key={key} className="chip chip--static">
+                        {key}
+                      </span>
+                    ))}
+                  {Object.values(caps).every((value) => !value) ? (
+                    <small className="field__hint">未匹配到已知能力，将按基础模型处理</small>
+                  ) : null}
+                </span>
+                <span className="chip-row">
+                  {caps.vision ? (
+                    <button
+                      type="button"
+                      className="chip"
+                      disabled={saving}
+                      title="把推断出的「图像理解」填入上方开关"
+                      onClick={() => patch({ vision: true })}
+                    >
+                      → 填入图片输入
+                    </button>
+                  ) : null}
+                  {caps.thinking ? (
+                    <button
+                      type="button"
+                      className="chip"
+                      disabled={saving}
+                      title="把推断出的「推理模式」填入上方开关"
+                      onClick={() => patch({ thinking: true })}
+                    >
+                      → 填入思考模式
+                    </button>
+                  ) : null}
+                </span>
+              </SettingsContent>
+            </SettingsGroup>
+          ) : null}
+
+          {error ? <div role="alert" className="notice notice--error">{error}</div> : null}
+        </div>
       ) : null}
-
-      {caps ? (
-        <SettingsGroup title="推断能力" footer="仅作参考，引擎会在每次请求时自行解析">
-          <SettingsContent>
-            <span className="chip-row">
-              {Object.entries(caps)
-                .filter(([, enabled]) => enabled)
-                .map(([key]) => (
-                  <span key={key} className="chip chip--static">
-                    {key}
-                  </span>
-                ))}
-              {Object.values(caps).every((value) => !value) ? (
-                <small className="field__hint">未匹配到已知能力，将按基础模型处理</small>
-              ) : null}
-            </span>
-            <span className="chip-row">
-              {caps.vision ? (
-                <button
-                  type="button"
-                  className="chip"
-                  disabled={saving}
-                  title="把推断出的「图像理解」填入上方开关"
-                  onClick={() => patch({ vision: true })}
-                >
-                  → 填入图片输入
-                </button>
-              ) : null}
-              {caps.thinking ? (
-                <button
-                  type="button"
-                  className="chip"
-                  disabled={saving}
-                  title="把推断出的「推理模式」填入上方开关"
-                  onClick={() => patch({ thinking: true })}
-                >
-                  → 填入思考模式
-                </button>
-              ) : null}
-            </span>
-          </SettingsContent>
-        </SettingsGroup>
-      ) : null}
-
-      {error ? <div role="alert" className="notice notice--error">{error}</div> : null}
     </Dialog>
   )
 }

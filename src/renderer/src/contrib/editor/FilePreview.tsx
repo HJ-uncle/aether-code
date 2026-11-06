@@ -14,6 +14,8 @@ import { DocumentPreview } from '../documents/DocumentPreview'
 interface FilePreviewProps {
   /** 文件名（用于判定预览方式与 MIME） */
   name: string
+  /** Immutable deliveries may have a display name without their real extension. */
+  formatName?: string
   /** 绝对路径（展示与排错用） */
   path: string
   /** Work may keep a hidden preview alive without rebuilding its parser. */
@@ -41,12 +43,13 @@ const ZOOM_STEP = 0.2
  * 因此可以拖出容器边界再拖回来。
  */
 export const FilePreview = memo(function FilePreview(props: FilePreviewProps): JSX.Element {
-  if (documentKindFor(props.name)) return <DocumentPreview name={props.name} base64={props.base64} data={props.bytes} size={props.size} identityKey={`${props.path}:${props.groupId || ''}`} active={props.active ?? true} />
+  const formatName = props.formatName ?? props.name
+  if (documentKindFor(formatName)) return <DocumentPreview name={props.name} formatName={formatName} base64={props.base64} data={props.bytes} size={props.size} identityKey={`${props.path}:${props.groupId || ''}`} active={props.active ?? true} />
   return <BinaryFilePreview {...props} />
 })
 
-function BinaryFilePreview({ name, path, base64 = '', size }: FilePreviewProps): JSX.Element {
-  const kind = previewKindFor(name)
+function BinaryFilePreview({ name, formatName = name, path, base64 = '', size }: FilePreviewProps): JSX.Element {
+  const kind = previewKindFor(formatName)
 
   // 十六进制视图只解码前 16 KB：见 preview.ts 的 base64ToBytes 说明
   const dump = useMemo(
@@ -55,8 +58,8 @@ function BinaryFilePreview({ name, path, base64 = '', size }: FilePreviewProps):
   )
 
   const dataUrl = useMemo(
-    () => (kind === 'hex' ? '' : toDataUrl(base64, name)),
-    [kind, base64, name]
+    () => (kind === 'hex' ? '' : toDataUrl(base64, formatName)),
+    [kind, base64, formatName]
   )
 
   const isImage = kind === 'image'

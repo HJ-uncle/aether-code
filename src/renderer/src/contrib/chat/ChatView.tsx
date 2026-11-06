@@ -7,6 +7,7 @@ import { visibleChildCommandJobs } from '@renderer/core/engine/command-job-state
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
 import { useAppMode } from '@renderer/core/platform/app-mode'
+import { horizontalWheelTarget } from '@renderer/core/platform/horizontal-scroll'
 import { codeWorkbenchAdapter, useWorkbenchClient } from '@renderer/core/workbench/client'
 import { useChat, type ChatMessage, type ToolActivity } from '@renderer/core/engine/useChat'
 import { isVisibleToolActivity } from '@renderer/core/engine/task-plan'
@@ -14,6 +15,7 @@ import { engineConnectionKey, engineStorageKey, getEngineSource } from '@rendere
 import type { PendingInteraction } from '@renderer/core/engine/pending'
 import { rootStatusLabel } from '@renderer/core/engine/root-run-state'
 import { SessionTray } from './SessionTray'
+import { queuedDraft } from '../work/work-next-turn-queue'
 import { FileChangeCard } from './FileChangeCard'
 import { SubagentCard } from './SubagentCard'
 import { SubagentControllerContext } from './SubagentFollowup'
@@ -26,6 +28,7 @@ import { toolDisplayName } from './tool-names'
 import { CompactToolRow } from './CompactToolRow'
 import { toolPresentation } from './tool-presentation'
 import { useCollapseMemory } from './useCollapseMemory'
+import { ThinkingRow } from './ThinkingRow'
 import { registerPendingSession, requestSessionListRefresh, touchPendingSession } from '../history/pending-sessions'
 import { useModels } from '@renderer/core/engine/model-store'
 import { DEFAULT_CONTEXT_WINDOW_BUDGET } from '@renderer/core/engine/models'
@@ -37,8 +40,8 @@ import { openAppSettings } from '@renderer/contrib/settings/app-settings-navigat
 import { refreshGit } from '@renderer/core/git/git-store'
 import { currentWorkspacePaths, useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { Icon } from '@renderer/workbench/icons'
+import { MotionPresence, useMotionPresence } from '@renderer/workbench/MotionPresence'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
-import { Popover } from '@renderer/workbench/Popover'
 import { CompletionPopover } from '@renderer/workbench/CompletionPopover'
 import { ContextMenu } from '@renderer/workbench/ContextMenu'
 import { Spinner } from '@renderer/workbench/ui-primitives'
@@ -49,20 +52,15 @@ import { loadSessionThinkingMode, saveSessionThinkingMode, type SessionThinkingM
 import { composerThinkingMode, requestedThinkingMode, resolveSessionRequestConfig, loadSessionRequestSelection, saveSessionRequestSelection, type SessionRequestSelection } from './session-request-config'
 import { normalizeRootRunRequestConfig, type RootRunRequestConfig } from '@shared/root-run'
 import { MessageNavRail, type NavTurn } from './MessageNavRail'
-import {
-  formatDuration,
-  formatTimestamp,
-  formatTokens,
-  groupIntoTurns,
-  type UsageDetailRow
-} from './usage'
+import { groupIntoTurns } from './usage'
+import { TurnUsage, UsageMeter, type TurnUsageInfo } from './ConversationUsage'
 import { useAttachments, shouldAttachPastedText, createPastedTextFile } from './useAttachments'
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
 import { knowledgeBindingKey, saveKnowledgeBinding } from '@renderer/core/engine/knowledge'
 import { ResourcePicker, type ResourceItem } from './ResourcePicker'
 import './apple-chat-panels.css'
 import { RootFollowupDelivery, RootFollowupFeedback, useRootFollowup } from './RootFollowup'
-import { rootFollowupLimitation, rootFollowupMessage, rootFollowupRun } from './root-followup'
+import { rootFollowupCanSubmit, rootFollowupLimitation, rootFollowupMessage, rootFollowupRun } from './root-followup'
 
 /** Older engines/models can omit the window; use the model initialization default. */
 const CONTEXT_WINDOW_FALLBACK = DEFAULT_CONTEXT_WINDOW_BUDGET
@@ -109,7 +107,7 @@ import {
 } from './AttachmentChip'
 import { type Mention, type MentionInputHandle } from './MentionInput'
 import { InputComposer, ComposerInput, ComposerPolish, ComposerToolbar, ComposerSend, ComposerStop } from './InputComposer'
-import { loadChatDraftState, saveChatDraft } from './draft-store'
+import { loadChatDraftState, saveChatDraft, saveChatDraftForSubmission, nextChatDraftRevision } from './draft-store'
 import {
   preserveMentions,
   userMessageDraft,
@@ -139,7 +137,7 @@ export function ChatView(): JSX.Element {
   const connectionKey = engineConnectionKey(engine.snapshot)
   const storageSource = engineStorageKey(engine.snapshot)
   const sourceEpoch = getEngineSource()
-  const { messages, sessionUsage, usageSyncNotice, publishedRecovery, cancelPublishedRecovery, loadPublishedBody, retryPublishedRecovery, commandJobs, sessionModel, streaming, stopping, stopError, dismissStopError, hasSessionWork, connection, historyError, recoveryNotice, dismissRecoveryNotice, historyCompacted, archiveRemaining, archivePage, archiveLoading, archiveError, loadArchive, todos, send, respond, abort, resumeStream, deleteTurn, retryFrom, truncateFrom, revertFrom, queue, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, queueSendMode, setQueueSendMode, retargetQueuedModel } = useChat()
+  const { messages, sessionUsage, usageSyncNotice, publishedRecovery, cancelPublishedRecovery, loadPublishedBody, retryPublishedRecovery, commandJobs, sessionModel, streaming, stopping, stopError, dismissStopError, hasSessionWork, connection, historyError, recoveryNotice, dismissRecoveryNotice, historyCompacted, archiveRemaining, archivePage, archiveLoading, archiveError, loadArchive, todos, send, respond, abort, resumeStream, deleteTurn, retryFrom, truncateFrom, revertFrom, queue, queueState, removeQueued, clearQueue, flushQueue, updateQueued, moveQueued, mergeQueued, pauseQueue, reconcileQueue, retargetQueuedModel } = useChat()
   const { models, loaded: modelsLoaded } = useModels()
   const workspace = useWorkspace()
   // AppProvider 按引擎来源统一恢复或创建会话。这里提前创建会与远端选择
@@ -151,7 +149,9 @@ export function ChatView(): JSX.Element {
   const [rejectedDrafts, setRejectedDrafts] = useState<Record<string, RejectedDraft>>({})
   /** 同步记录编辑器的最新文本，避免润色请求返回时覆盖用户刚刚的修改。 */
   const inputValueRef = useRef('')
-  const draftEditRevision = useRef(0)
+  const draftEditRevision = useRef(nextChatDraftRevision())
+  const submissionFlight = useRef<object | null>(null)
+  const [submitting, setSubmitting] = useState(false)
   useEffect(() => {
     inputValueRef.current = input
   }, [input])
@@ -565,6 +565,8 @@ export function ChatView(): JSX.Element {
     mentionsRef.current = draft.mentions
     inputRef.current?.setDraft(draft.text, draft.mentions)
     setInput(draft.text)
+    inputValueRef.current = draft.text
+    draftEditRevision.current = draft.revision
   }, [sessionId, sourceSessionKey, storageSource])
   useEffect(() => () => {
     window.clearTimeout(draftTimerRef.current)
@@ -589,7 +591,8 @@ export function ChatView(): JSX.Element {
       window.clearTimeout(draftTimerRef.current)
       if (!sessionId || sourceEpoch !== getEngineSource()) return
       const mentions = [...mentionsRef.current]
-      const persist = (): void => saveChatDraft(sessionId, text, storageSource, mentions)
+      const revision = draftEditRevision.current
+      const persist = (): void => { saveChatDraft(sessionId, text, storageSource, mentions, revision) }
       pendingDraftSaveRef.current = persist
       draftTimerRef.current = window.setTimeout(() => {
         pendingDraftSaveRef.current = null
@@ -643,6 +646,8 @@ export function ChatView(): JSX.Element {
       // 思考正文有自己的滚动区域；上翻它不能改变外层消息列表的跟随状态。
       if ((event.target as HTMLElement).closest('.logline__detail--thinking')) return
       if (event.deltaY >= 0) return
+      // 横移代码/表格不会离开消息底部；全局滚轮委托会在 React 冒泡之后执行。
+      if (horizontalWheelTarget(event.nativeEvent)) return
       const el = scrollRef.current
       if (!el || el.scrollHeight <= el.clientHeight) return
       followBottomRef.current = false
@@ -751,7 +756,7 @@ export function ChatView(): JSX.Element {
       void updateSettings({ lastModelId: next })
       // 运行中切换模型：把队列里待发消息的模型改写为新模型，
       // 避免出现「正在运行的回合显示成输入框后选的模型」这类错标
-      retargetQueuedModel(next, sessionId)
+      void retargetQueuedModel(next, sessionId).catch(cause => setToast(cause instanceof Error ? cause.message : String(cause)))
     },
     [updateSettings, retargetQueuedModel, sessionId, sessionModelReady, sessionModel, sourceEpoch, storageSource]
   )
@@ -793,7 +798,7 @@ export function ChatView(): JSX.Element {
     attach.restore(draft.attachments)
     window.clearTimeout(draftTimerRef.current)
     pendingDraftSaveRef.current = null
-    saveChatDraft(sessionId, recovered.text, storageSource, recovered.mentions)
+    draftEditRevision.current = saveChatDraft(sessionId, recovered.text, storageSource, recovered.mentions, nextChatDraftRevision(draftEditRevision.current))
     setRejectedDrafts(previous => {
       const next = { ...previous }; delete next[draftRecoveryKey]; return next
     })
@@ -810,7 +815,7 @@ export function ChatView(): JSX.Element {
       suppressResourceReconcileRef.current = true; inputRef.current?.clear(); suppressResourceReconcileRef.current = false
       resourceTextRef.current = ''
       window.clearTimeout(draftTimerRef.current); pendingDraftSaveRef.current = null
-      saveChatDraft(sessionId, '', storageSource)
+      draftEditRevision.current = saveChatDraft(sessionId, '', storageSource)
     })
   }, [attach.attachments, sourceEpoch, sourceSessionKey, sessionId, storageSource])
 
@@ -821,9 +826,9 @@ export function ChatView(): JSX.Element {
     const text = input.trim()
     // 允许「只发附件」：丢张截图直接问，是视觉模型的常见用法
     const files = attach.attachments
-    if ((!text && files.length === 0) || stopping || rootFollowup.busy || rootFollowup.pending || attach.uploading || !canExecute || !sessionId || sourceEpoch !== getEngineSource() || historyEditRef.current?.key === sourceSessionKey) return
+    if ((!text && files.length === 0) || submissionFlight.current || stopping || rootFollowup.busy || rootFollowup.pending || attach.uploading || !canExecute || !sessionId || sourceEpoch !== getEngineSource() || historyEditRef.current?.key === sourceSessionKey) return
     if (immediateIntent) {
-      if (!rootAccepting || !rootFollowup.capability) return
+      if (!rootFollowupCanSubmit(rootAccepting, rootFollowup.capability)) return
       let message: string
       try { message = rootFollowupMessage(input, mentionsRef.current, files) }
       catch (cause) { setToast(cause instanceof Error ? cause.message : String(cause)); return }
@@ -837,21 +842,37 @@ export function ChatView(): JSX.Element {
     const { message, collaborators } = buildAgentMentionMessage(input, mentionsRef.current)
     const original: RejectedDraft = { text: input, mentions: [...mentionsRef.current], attachments: files, root: attachmentRoot }
     const sentScope = draftScopeRef.current
-    const restoreAttachments = attach.restore
-    setInput('')
-    inputValueRef.current = ''
-    mentionsRef.current = []
-    // Clearing the editor after a send is not a user deletion. Keep the
-    // session-scoped resource bindings and only reset the edge detector.
-    suppressResourceReconcileRef.current = true
-    inputRef.current?.clear()
-    suppressResourceReconcileRef.current = false
-    resourceTextRef.current = ''
-    attach.clear()
-    // 发送成功后该会话草稿即作废
-    window.clearTimeout(draftTimerRef.current)
-    pendingDraftSaveRef.current = null
-    saveChatDraft(sessionId, '', storageSource)
+    const revision = draftEditRevision.current
+    let authored: ReturnType<typeof queuedDraft>
+    try {
+      window.clearTimeout(draftTimerRef.current); pendingDraftSaveRef.current = null
+      saveChatDraftForSubmission(sessionId, input, storageSource, mentionsRef.current, revision)
+      authored = queuedDraft(input, mentionsRef.current, revision)
+    }
+    catch (cause) { setToast(cause instanceof Error ? cause.message : String(cause)); return }
+    const flight = {}
+    let admitted = false
+    submissionFlight.current = flight; setSubmitting(true)
+    const releaseComposer = (): void => {
+      if (submissionFlight.current !== flight) return
+      submissionFlight.current = null; setSubmitting(false)
+    }
+    const onAdmitted = (): void => {
+      if (admitted) return
+      admitted = true
+      // The stream continues after admission. Clear only this authored draft,
+      // and never let its eventual completion unlock a newer composer send.
+      try {
+        if (sourceEpoch !== getEngineSource() || displayedSessionRef.current !== sourceSessionKey || draftScopeRef.current !== sentScope
+          || draftEditRevision.current !== revision || inputValueRef.current !== original.text) return
+        setInput(''); inputValueRef.current = ''; mentionsRef.current = []
+        suppressResourceReconcileRef.current = true; inputRef.current?.clear(); suppressResourceReconcileRef.current = false
+        resourceTextRef.current = ''
+        attach.removeSubmitted(files)
+        window.clearTimeout(draftTimerRef.current); pendingDraftSaveRef.current = null
+        draftEditRevision.current = saveChatDraft(sessionId, '', storageSource)
+      } finally { releaseComposer() }
+    }
     // 占位条目（若该会话是本次新建的）刷新时间戳，继续待在列表顶部；
     // 引擎落库后由列表侧的 prune 让它退场
     touchPendingSession(sessionId)
@@ -860,36 +881,24 @@ export function ChatView(): JSX.Element {
     resumeFollowBottom()
     void send(message, {
       ...buildSendOptions(),
+      queueDraft: authored,
       ...(collaborators.length ? { collaborators } : {}),
       attachments: files.length > 0 ? files : undefined
-    }).catch(cause => {
+    }, onAdmitted).catch(cause => {
+      // Post-admission stream failures already belong to the transcript and
+      // recovery UI; they must not restore a message that the engine accepted.
+      if (admitted) return
       const current = sourceEpoch === getEngineSource() && displayedSessionRef.current === sourceSessionKey && draftScopeRef.current === sentScope
-      if (cause && typeof cause === 'object' && 'requestRejected' in cause && cause.requestRejected === true) {
-        if (current && !inputValueRef.current.trim()) {
-          inputValueRef.current = original.text
-          mentionsRef.current = original.mentions
-          setInput(original.text)
-          inputRef.current?.setDraft(original.text, original.mentions)
-          restoreAttachments(files)
-          window.clearTimeout(draftTimerRef.current)
-          pendingDraftSaveRef.current = null
-          saveChatDraft(sessionId, original.text, storageSource, original.mentions)
-        } else {
-          setRejectedDrafts(previous => ({ ...previous, [draftRecoveryKey]: original }))
-        }
-        // The failed turn already shows the reason. Do not cover the restored
-        // draft with a duplicate toast while the user is correcting it.
-        return
-      }
+      if (!current || draftEditRevision.current !== revision || inputValueRef.current !== original.text) setRejectedDrafts(previous => ({ ...previous, [draftRecoveryKey]: original }))
       if (current) setToast(cause instanceof Error ? cause.message : String(cause))
-    })
+    }).finally(releaseComposer)
     scrollToBottom(true)
   }, [attach, attachmentRoot, buildSendOptions, input, canExecute, stopping, sourceEpoch, sourceSessionKey, draftRecoveryKey, storageSource, send, sessionId, resumeFollowBottom, scrollToBottom, resourceQuery, mentionQuery, manualPalette, rootFollowup, rootAccepting, immediateIntent, resolveRootFollowup])
 
   /** 托盘的「发送」：空闲时按当前模式（逐条/合并）立即发出队列 */
-  const flushQueueFromTray = useCallback(() => {
+  const flushQueueFromTray = useCallback(async () => {
     if (!canExecute || !sessionId || sourceEpoch !== getEngineSource() || historyEditRef.current?.key === sourceSessionKey) return
-    void flushQueue().catch(cause => setToast(cause instanceof Error ? cause.message : String(cause)))
+    await flushQueue()
   }, [flushQueue, canExecute, sessionId, sourceEpoch, sourceSessionKey])
 
   /**
@@ -1050,7 +1059,7 @@ export function ChatView(): JSX.Element {
     attach.restore(message.attachments ?? [])
     window.clearTimeout(draftTimerRef.current)
     pendingDraftSaveRef.current = null
-    saveChatDraft(sessionId, draft.text, storageSource, draft.mentions)
+    draftEditRevision.current = saveChatDraft(sessionId, draft.text, storageSource, draft.mentions, nextChatDraftRevision(draftEditRevision.current))
     inputRef.current?.focus()
   }, [attach.restore, sessionId, storageSource, sourceEpoch, sourceSessionKey])
 
@@ -1084,7 +1093,7 @@ export function ChatView(): JSX.Element {
         attach.restore(message.attachments ?? [])
         window.clearTimeout(draftTimerRef.current)
         pendingDraftSaveRef.current = null
-        saveChatDraft(sessionId, draft.text, storageSource, draft.mentions)
+        draftEditRevision.current = saveChatDraft(sessionId, draft.text, storageSource, draft.mentions, nextChatDraftRevision(draftEditRevision.current))
         inputRef.current?.focus()
       } catch (error) {
         if (isCurrentScope()) showError(error)
@@ -1113,12 +1122,14 @@ export function ChatView(): JSX.Element {
         void revertFrom(sessionId, message)
           .then(() => {
             if (sourceEpoch !== getEngineSource()) return
-            saveChatDraft(sessionId, draft.text, storageSource, draft.mentions)
+            const revision = saveChatDraft(sessionId, draft.text, storageSource, draft.mentions, nextChatDraftRevision())
             if (displayedSessionRef.current !== sourceSessionKey) return
             mentionsRef.current = draft.mentions
             resourceTextRef.current = draft.text
             inputRef.current?.setDraft(draft.text, draft.mentions)
             setInput(draft.text)
+            inputValueRef.current = draft.text
+            draftEditRevision.current = revision
           })
           .catch(showError)
       })
@@ -1386,11 +1397,11 @@ export function ChatView(): JSX.Element {
           onScroll={handleListScroll}
         >
         {/* 非跟随期间来了新内容：浮动「回到底部」（对齐 wuzu-client） */}
-        {showBackToBottom ? (
+        <MotionPresence show={showBackToBottom} asChild>
           <button type="button" className="chat__back-to-bottom" onClick={jumpToBottom}>
             <Icon name="chevron-double-down" size={16} />
           </button>
-        ) : null}
+        </MotionPresence>
         {messages.length === 0 && !historyCompacted && !archivePage ? (
           <div className="chat__empty">
             <h2>Agent IDE</h2>
@@ -1498,13 +1509,16 @@ export function ChatView(): JSX.Element {
         }}
       >
         <SessionTray
+          key={sourceSessionKey}
           sessionId={sessionId}
           streaming={streaming}
           todos={todos}
           queue={queue}
           workspaceRoot={workspace.root}
-          queueSendMode={queueSendMode}
-          onSetQueueSendMode={setQueueSendMode}
+          queueState={queueState}
+          onPauseQueue={pauseQueue}
+          onReconcileQueue={reconcileQueue}
+          onMergePending={mergeQueued}
           onUpdateQueued={updateQueued}
           onMoveQueued={moveQueued}
           onRemoveQueued={removeQueued}
@@ -1596,8 +1610,7 @@ export function ChatView(): JSX.Element {
             onSlashQuery={(query) => { setResourceQuery(query); if (query !== null) setMentionQuery(null) }}
           />
           <ComposerPolish busy={polishing} disabled={!canExecute || !input.trim()} title="AI 润色：让指令更清晰具体（使用轻任务模型）" onClick={() => void handlePolish()} />
-          {canExecute && appMode === 'code' && (mentionQuery !== null || manualPalette) ? (
-            <CompletionPopover anchorRef={composerRef} onClose={() => { setManualPalette(false); setMentionQuery(null) }}>
+            <CompletionPopover open={canExecute && appMode === 'code' && (mentionQuery !== null || manualPalette)} anchorRef={composerRef} onClose={() => { setManualPalette(false); setMentionQuery(null) }}>
             <MentionRefPicker
               root={workspace.root}
               query={mentionQuery ?? ''}
@@ -1615,7 +1628,6 @@ export function ChatView(): JSX.Element {
               }}
             />
             </CompletionPopover>
-          ) : null}
           {resourceQuery !== null ? (
             <ResourcePicker
               query={resourceQuery}
@@ -1753,18 +1765,21 @@ export function ChatView(): JSX.Element {
             {taskActive ? <ComposerStop loading={stopping} disabled={!ready} onClick={() => { void abort().catch(() => {}) }} /> : null}
             {taskActive ? <RootFollowupDelivery controller={rootFollowup} disabled={stopping || !canExecute} /> : null}
             <ComposerSend label={historyEditBusy ? '正在重新编辑…' : immediateIntent ? '立即补充' : taskActive ? '排到下一轮' : '发送'} loading={rootFollowup.busy} loadingLabel="正在提交补充…"
-              disabled={historyEditBusy || !canExecute || stopping || Boolean(rootFollowup.pending) || attach.uploading || (!input.trim() && attach.attachments.length === 0)
-                || (immediateIntent && (!rootAccepting || !rootFollowup.capability || Boolean(rootFollowupLimitation(mentionsRef.current, attach.attachments))))} onClick={submit} />
+              disabled={submitting || historyEditBusy || !canExecute || stopping || Boolean(rootFollowup.pending) || attach.uploading || (!input.trim() && attach.attachments.length === 0)
+                || (immediateIntent && (!rootFollowupCanSubmit(rootAccepting, rootFollowup.capability) || Boolean(rootFollowupLimitation(mentionsRef.current, attach.attachments))))} onClick={submit} />
           </>} />
-          <RootFollowupFeedback controller={rootFollowup} active={taskActive} limitation={!rootAccepting && taskActive ? '正在确认当前任务是否可接收补充，草稿已保留。' : rootFollowupLimitation(mentionsRef.current, attach.attachments)}
+        </InputComposer>
+          <RootFollowupFeedback key={JSON.stringify([sourceEpoch, sessionId])} controller={rootFollowup} active={taskActive} limitation={!rootAccepting && taskActive ? '正在确认当前任务是否可接收补充，草稿已保留。' : rootFollowupLimitation(mentionsRef.current, attach.attachments)}
+            onFocusInput={() => inputRef.current?.focus()}
+            fallbackHint={!ready ? '引擎尚未就绪，草稿会保留。' : taskActive && !immediateIntent ? 'Enter 排到下一轮 · Shift + Enter 换行' : 'Enter 发送 · Shift + Enter 换行'}
             onResolve={resolveRootFollowup}
             canRestore={!input.trim() && !attach.attachments.length} onRestore={message => {
               if (inputValueRef.current.trim()) return
               const recovered = userMessageDraft(message)
               draftEditRevision.current += 1; inputValueRef.current = recovered.text; mentionsRef.current = recovered.mentions
               setInput(recovered.text); inputRef.current?.setDraft(recovered.text, recovered.mentions); scheduleDraftSave(recovered.text)
+              inputRef.current?.focus()
             }} />
-        </InputComposer>
       </div>
 
       {toast ? (
@@ -1994,7 +2009,7 @@ const MessageItem = memo(function MessageItem({
           // 已完成的警示卡片，也避免让用户误以为它们仍在等待选择。
           // 无 durable requestId 的旧交互无法走当前应答协议，不能显示永久禁用
           // 的操作按钮。保留为历史记录，等待新的运行快照提供可应答请求。
-          const active = interactions.filter(item => item.status === 'pending' &&
+          const active = interactions.filter(item => message.status === 'waiting' && item.status === 'pending' &&
             Boolean(item.requestId) && item.runId === message.run?.runId && message.run?.status === 'waiting')
           const history = interactions.filter(item => !active.includes(item))
           return (
@@ -2033,17 +2048,6 @@ function isFullSizeTool(tool: ToolActivity): boolean {
 /** 过程块内的紧凑条目：一段思考 或 一次过程性工具调用 */
 type CompactEntry = { kind: 'thinking'; text: string } | { kind: 'tool'; tool: ToolActivity }
 
-/** 一轮问答的累计用量（并入最后一条 AI 消息底部的过程行） */
-type TurnUsageInfo = {
-  tokens: number
-  summary: UsageDetailRow[]
-  askedAt: number
-  startedAt?: number
-  endedAt?: number
-  model?: string
-  streaming: boolean
-}
-
 /** 内联段落：正文段 / 全尺寸卡片（diff）/ 单个子代理 / 子代理组，在过程块之后按原顺序渲染 */
 type InlineSegment =
   | { type: 'process'; entries: CompactEntry[] }
@@ -2053,7 +2057,7 @@ type InlineSegment =
 
 /** Each message observes its own root run before displaying the active tool. */
 function isMessageCompacting(message: ChatMessage): boolean {
-  return message.run?.compaction?.phase === 'running' && !['failed', 'cancelled', 'interrupted'].includes(message.run.status)
+  return (message.status === 'streaming' || message.status === 'waiting') && message.run?.compaction?.phase === 'running' && !['failed', 'cancelled', 'interrupted'].includes(message.run.status)
 }
 
 function streamStatusText(message: ChatMessage): string {
@@ -2076,6 +2080,7 @@ function MessageRunStatus({ message }: { message: ChatMessage }): JSX.Element | 
     : message.status === 'interrupted' ? '已中断'
     : message.status === 'aborted' ? '已取消'
     : message.status === 'error' ? '失败'
+    : message.status === 'done' ? '已完成'
     : rootStatusLabel(message.run!.status)
   return (
     <div
@@ -2231,6 +2236,7 @@ function SubagentGroup({
   sessionId: string
 }): JSX.Element {
   const [open, setOpen] = useState(false)
+  const bodyPresence = useMotionPresence(open)
   const [visibleCount, setVisibleCount] = useState(64)
   const window = publishedVisibleWindow(tools, visibleCount)
   const running = tools.some((tool) => tool.state === 'running')
@@ -2256,15 +2262,15 @@ function SubagentGroup({
         ) : null}
         <Icon name="chevron" size={16} className="subagent-group__chevron" />
       </button>
-      {open ? (
-        <div className="subagent-group__body">
+      {bodyPresence.present ? (
+        <div className="ui-motion-collapse" {...bodyPresence.motionProps}><div className="ui-motion-collapse__content"><div className="subagent-group__body">
           {window.items.map((tool) => (
-            <SubagentCard key={tool.id} tool={tool} sessionId={sessionId} />
+            <SubagentCard key={tool.id} tool={tool} sessionId={sessionId} visible={open} />
           ))}
           {tools.length > 64 ? <div className="subagent-history__navigation"><span>调用 {window.start + 1}–{window.end} / {tools.length}</span>
             {window.start > 0 ? <button type="button" className="btn btn--sm" onClick={() => setVisibleCount(count => Math.max(64, count - 64))}>上一页</button> : null}
             {window.end < tools.length ? <button type="button" className="btn btn--sm" onClick={() => setVisibleCount(count => count + 64)}>下一页</button> : null}</div> : null}
-        </div>
+        </div></div></div>
       ) : null}
     </div>
   )
@@ -2323,7 +2329,7 @@ function ProcessGroup({
         </span>
         <Icon name="chevron" size={16} className="process__chevron" />
       </button>
-      {expanded ? (
+      <MotionPresence show={expanded}>
         <div className="process__body">
           {entries.map((entry, index) =>
             entry.kind === 'thinking' ? (
@@ -2338,275 +2344,8 @@ function ProcessGroup({
             )
           )}
         </div>
-      ) : null}
+      </MotionPresence>
     </div>
-  )
-}
-
-/** 思考行：紫色圆点 + 单行预览，展开看全文（左侧竖线表示从属于该行） */
-function ThinkingRow({
-  text,
-  autoOpen,
-  memoryKey
-}: {
-  text: string
-  autoOpen: boolean
-  memoryKey?: string
-}): JSX.Element | null {
-  // 使用消息/过程/索引组成稳定 key；不能用思考文本本身，否则流式追加前 32 字变化时
-  // 会把用户刚刚手动折叠的状态重置掉。
-  const [memory, setMemory] = useCollapseMemory(memoryKey)
-  const open = memory ?? autoOpen
-  const detailRef = useRef<HTMLPreElement | null>(null)
-  const followDetailRef = useRef(true)
-  const THINKING_RESUME_PX = 40
-
-  const syncDetailFollow = useCallback((): void => {
-    const el = detailRef.current
-    if (!el) return
-    followDetailRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= THINKING_RESUME_PX
-  }, [])
-
-  // 打开思考区时从底部开始；之后只在用户仍贴底时跟随新增文本。
-  useEffect(() => {
-    if (!open) return
-    followDetailRef.current = true
-    const frame = requestAnimationFrame(() => {
-      const el = detailRef.current
-      if (el && followDetailRef.current) el.scrollTop = el.scrollHeight
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [open])
-
-  useEffect(() => {
-    if (!open || !followDetailRef.current) return
-    const frame = requestAnimationFrame(() => {
-      const el = detailRef.current
-      if (el && followDetailRef.current) el.scrollTop = el.scrollHeight
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [open, text])
-  const preview = text.replace(/\s+/g, ' ').trim()
-  // 空/纯空白思考不渲染（回放路径历史里可能残留，避免一列孤立箭头）
-  if (!preview) return null
-  const truncated = preview.length > 90 ? `${preview.slice(0, 87)}…` : preview
-
-  return (
-    <div className="logline-wrap">
-      <button
-        type="button"
-        className="logline"
-        aria-expanded={open}
-        onClick={() => setMemory(!open)}
-      >
-        <span className="logline__dot logline__dot--think" />
-        <span className="logline__text" title={preview}>
-          {truncated}
-        </span>
-        <Icon name="chevron" size={16} className="logline__chevron" />
-      </button>
-      {open ? (
-        <div className="logline__detail logline__detail--thinking">
-          <pre
-            ref={detailRef}
-            onScroll={syncDetailFollow}
-            onWheel={(event) => event.stopPropagation()}
-          >{text}</pre>
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-/**
- * 一次用户提问的累计用量（挂在「用户提问 + 其后的全部 AI 输出」整段的末尾）
- *
- * 一轮对话里 Agent 会跑很多步（思考 → 执行命令 → 再思考 …），逐步显示 token
- * 会把消息流打成碎片。这里按用户消息切分，只在该轮结尾给一个累计值。
- *
- * 除了 token，还要回答"这一轮是什么时候问的、跑了多久、用的哪个模型" ——
- * 这三项是回顾历史时最常需要的上下文，缺了就得翻设置页去猜。
- *
- * 外观与顶部会话用量一致，那它就也得能点开 —— 长得一样却有的能点有的不能点，
- * 比不能点本身更让人困惑。明细由调用方传入本轮的汇总行。
- */
-function UsageBreakdown({ summary }: { summary: UsageDetailRow[] }): JSX.Element {
-  return (
-    <div className="usage-detail">
-      {summary.map(row => (
-        <div key={row.label} title={row.title}
-          className={`usage-detail__row${row.child ? ' usage-detail__row--child' : ''}${row.group === 'cache' ? ' usage-detail__row--cache' : ''}${row.subtotal ? ' usage-detail__row--subtotal' : ''}`}>
-          {row.subtotal ? null : <span className={`usage-detail__bar usage-detail__bar--${row.group}`} />}
-          <span className="usage-detail__label">{row.label}</span>
-          <span className="usage-detail__value" title={row.unknown ? undefined : `${row.tokens.toLocaleString('en-US')} tokens${row.title ? `；${row.title}` : ''}`}>
-            {row.unknown ? '未知' : formatTokens(row.tokens)}
-          </span>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function TurnUsage({
-  tokens,
-  summary,
-  askedAt,
-  startedAt,
-  endedAt,
-  model,
-  streaming
-}: {
-  tokens: number
-  summary: UsageDetailRow[]
-  /** 用户提问时刻（epoch ms） */
-  askedAt: number
-  /** 本轮开始时刻；缺失表示尚未开始 */
-  startedAt?: number
-  /** 本轮结束时刻；缺失表示仍在进行中 */
-  endedAt?: number
-  /** 本轮使用的模型 id */
-  model?: string
-  /** 是否仍在输出：进行中用「当前时刻」估算已用时长 */
-  streaming: boolean
-}): JSX.Element {
-  // 进行中时 endedAt 还没有：需要一个随渲染推进的值来累计已用时长
-  const [now, setNow] = useState(() => Date.now())
-
-  useEffect(() => {
-    if (!streaming) return
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
-    return () => window.clearInterval(timer)
-  }, [streaming])
-
-  const duration = formatDuration(startedAt, streaming ? now : endedAt)
-  const stamp = formatTimestamp(askedAt)
-
-  return (
-    <Popover
-      className="turn-usage"
-      label="本次问答用量"
-      // 向上弹：每轮用量贴在消息流末尾，向下弹会盖住即将输入的区域
-      placement="up"
-      align="start"
-      width={268}
-      trigger={({ open }) => (
-        <button
-          type="button"
-          className={`turn-usage__trigger${open ? ' is-open' : ''}`}
-          title="查看本次问答的时间、耗时与 Token 明细"
-        >
-          <Icon name="model" size={16} />
-          <span className="turn-usage__text">
-            <span className="turn-usage__value">{formatTokens(tokens)}</span>
-            <span className="turn-usage__unit">tokens{summary.some((row) => row.unknown) ? '（已知）' : ''}</span>
-            {duration ? <span className="turn-usage__time">{duration}</span> : null}
-            {model ? <span className="turn-usage__model">{model}</span> : null}
-          </span>
-        </button>
-      )}
-    >
-      <div className="usage-popover__head">
-        <span className="usage-popover__title">本次问答</span>
-        {stamp ? <span className="usage-popover__meta">{stamp}</span> : null}
-      </div>
-      <div className="usage-popover__total">
-        <span className="usage-popover__total-value" title={`${tokens.toLocaleString('en-US')} tokens`}>{formatTokens(tokens)}</span>
-        <span className="usage-popover__total-unit">tokens{summary.some((row) => row.unknown) ? '（已知部分）' : ''}</span>
-        {duration ? <span className="usage-popover__meta">耗时 {duration}</span> : null}
-      </div>
-      {model ? (
-        <div className="usage-detail usage-detail--meta">
-          <div className="usage-detail__row usage-detail__row--model">
-            <Icon name="model" size={16} className="usage-detail__icon" />
-            <span className="usage-detail__label">模型</span>
-            <span className="usage-detail__value">{model}</span>
-          </div>
-          {stamp ? (
-            <div className="usage-detail__row">
-              <Icon name="clock-outline" size={16} className="usage-detail__icon" />
-              <span className="usage-detail__label">对话时间</span>
-              <span className="usage-detail__value">{stamp}</span>
-            </div>
-          ) : null}
-          {duration ? (
-            <div className="usage-detail__row">
-              <Icon name="sync" size={16} className="usage-detail__icon" />
-              <span className="usage-detail__label">任务耗时</span>
-              <span className="usage-detail__value">{duration}</span>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-      <UsageBreakdown summary={summary} />
-    </Popover>
-  )
-}
-
-/**
- * 页脚会话用量仪表
- *
- * 只统计整条会话的累计值 —— 会话可能先后用到多个模型，因此不显示模型名，
- * 只给「token + 使用时间」。触发区用胶囊按钮，明细走锚定在按钮上方的浮层，
- * 符合 macOS 里「状态项 → 向上弹出 popover」的惯例。
- */
-function UsageMeter({
-  total,
-  rounds,
-  summary,
-  startedAt,
-  endedAt,
-  streaming
-}: {
-  total: number
-  rounds: number
-  summary: UsageDetailRow[]
-  startedAt?: number
-  endedAt?: number
-  streaming: boolean
-}): JSX.Element {
-  // 进行中时没有 endedAt，用「当前时刻」估算已用时长：需要一个随渲染推进的值
-  const [now, setNow] = useState(() => Date.now())
-
-  useEffect(() => {
-    if (!streaming) return
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
-    return () => window.clearInterval(timer)
-  }, [streaming])
-
-  const duration = formatDuration(startedAt, streaming ? now : endedAt)
-
-  return (
-    <Popover
-      className="usage-meter"
-      label="会话用量明细"
-      placement="down"
-      align="end"
-      width={268}
-      trigger={({ open }) => (
-        <button
-          type="button"
-          className={`usage-meter__trigger${open ? ' is-open' : ''}`}
-          title="查看本会话的 Token 明细"
-        >
-          <Icon name="model" size={16} />
-          <span className="usage-meter__tokens">{formatTokens(total)}</span>
-          <span className="usage-meter__unit">tokens{summary.some((row) => row.unknown) ? '（已知）' : ''}</span>
-          {duration ? <span className="usage-meter__time">{duration}</span> : null}
-        </button>
-      )}
-    >
-      <div className="usage-popover__head">
-        <span className="usage-popover__title">本会话用量</span>
-        <span className="usage-popover__meta">
-          已加载 {rounds} 轮{duration ? ` · ${duration}` : ''}
-        </span>
-      </div>
-      <div className="usage-popover__total">
-        <span className="usage-popover__total-value" title={`${total.toLocaleString('en-US')} tokens`}>{formatTokens(total)}</span>
-        <span className="usage-popover__total-unit">tokens{summary.some((row) => row.unknown) ? '（已知部分）' : ''}</span>
-      </div>
-      <UsageBreakdown summary={summary} />
-    </Popover>
   )
 }
 

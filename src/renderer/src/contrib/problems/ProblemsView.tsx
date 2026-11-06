@@ -7,6 +7,7 @@ import type { Mention } from '@renderer/contrib/chat/MentionInput'
 import { getWorkspaceState } from '@renderer/core/workspace/workspace-store'
 import { fileIdentity } from '@renderer/core/editor/file-identity'
 import { toast } from '@renderer/core/toast'
+import { MotionPresence } from '@renderer/workbench/MotionPresence'
 
 /**
  * 问题面板（对标 VS Code Problems）
@@ -95,7 +96,7 @@ export function ProblemsView(): JSX.Element {
       ) : (
         <>
           <div className="problems-view__toolbar" role="toolbar" aria-label="问题工具">
-            <div className="problems-view__filters" aria-label="严重级筛选">
+            <div className="problems-view__filters" data-scroll-axis="x" aria-label="严重级筛选">
               {FILTERS.map((f) => {
                 const count = f.id === 'all' ? total : counts[f.id]
                 return (
@@ -185,13 +186,13 @@ function FileGroup({
           {errors === 0 && warnings === 0 ? `${badgeCount(items.length)} 项` : ''}
         </span>
       </button>
-      {collapsed ? null : (
+      <MotionPresence show={!collapsed}>
         <div className="problems-view__items">
           {items.map((item, index) => (
             <Item key={index} filePath={filePath} item={item} onAdd={onAdd} />
           ))}
         </div>
-      )}
+      </MotionPresence>
     </div>
   )
 }
