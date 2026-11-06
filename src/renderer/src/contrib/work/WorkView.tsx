@@ -2,7 +2,6 @@ import {
   memo,
   useCallback,
   useEffect,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -12,15 +11,9 @@ import {
   type JSX,
   type KeyboardEvent,
   type MutableRefObject,
-  type MouseEvent,
-  type ReactNode
+  type MouseEvent
 } from 'react'
 import type { ChatAttachment, ChatMessage, ToolActivity } from '@renderer/core/engine/useChat'
-import {
-  AttachmentChip,
-  AttachmentPreviewDialog,
-  type AttachmentPreview
-} from '../chat/AttachmentChip'
 import type { EngineFileChange } from '@shared/ipc'
 import type { CronAutomationRun } from '@shared/automation'
 import type { ChatRecoverySnapshot } from '@renderer/core/engine/chat-recovery'
@@ -41,7 +34,6 @@ import { Icon, type IconName } from '@renderer/workbench/icons'
 import type { ActionMenuItem } from '@renderer/workbench/ActionMenu'
 import { IconButton, SectionHeading, Spinner } from '@renderer/workbench/ui-primitives'
 import { openAppSettings } from '../settings/app-settings-navigation'
-import { UserMessageContent } from '../chat/UserMessageContent'
 import { FileGlyph } from '../explorer/FileGlyph'
 import { classifyChatLink } from '../chat/chat-link'
 import type { ChatFileContext } from '../chat/chat-link'
@@ -60,36 +52,29 @@ import { useRetainedPreviews } from '@renderer/core/editor/useRetainedPreviews'
 import type { TextPreviewReveal } from '@renderer/core/editor/TextPreview'
 import { workArtifactSelectionQuote } from './work-artifact-content'
 import { WorkSourcePreview, useWorkSourceFile } from './WorkSourcePreview'
-import { Markdown } from '../chat/Markdown'
 import { assertSessionFileTarget, paths, readLocalRecoveryFile, resolveSessionFilePath, workspaceRecoveryCandidates } from '@renderer/core/workspace/fs-client'
 import { WorkGitPanel } from './WorkGitPanel'
 import { WorkWorkspacePanel, type WorkFileRevealRequest } from './WorkWorkspacePanel'
 import { WorkSubagentsPanel } from './WorkSubagentsPanel'
 import { PublishedRecoveryNotice } from '../chat/PublishedRecoveryNotice'
 import { SessionConnectionNotice } from '../chat/SessionConnectionNotice'
-import { WorkInlineActivity } from './WorkInlineActivity'
-import { WorkToolActivity } from './WorkToolActivity'
-import { workMessageRunning } from './work-tool-presentation'
-import { workActivityState } from './work-inline-activity-state'
 import { WorkMessageNav } from './WorkMessageNav'
 import { workConversationGroups, workConversationEntries, workConversationComplete } from './work-conversation-turns'
 import { workGroupedDisplayTurns } from './work-message-nav'
 import { WorkArtifactsWorkspace } from './WorkArtifactsWorkspace'
 import { WorkFinalDeliverables } from './WorkFinalDeliverables'
 import type { FinalResult, FinalResultItem } from '@shared/final-result'
-import { finalAnswerForMessage, getMessageFinalResult } from '@renderer/core/engine/final-result'
-import { WorkCollaborationSummary } from './WorkCollaborationSummary'
+import { getMessageFinalResult } from '@renderer/core/engine/final-result'
 import type { WorkArtifactSelection } from './work-session-artifacts'
-import { ThinkingRow } from '../chat/ThinkingRow'
 import { TurnUsage, UsageMeter } from '../chat/ConversationUsage'
 import { summarizeTurnUsage } from '../chat/turn-usage'
 import { WorkProgressPanel, WorkProgressSync, WorkTodoProgress } from './WorkProgressPanel'
 import { useWorkProgressChanges } from './useWorkProgressChanges'
 import { workProgressTurnScope, workTurnProgressChanges } from './work-turn-progress'
 import { MotionPresence, useMotionPresence } from '@renderer/workbench/MotionPresence'
-import { useCollapseMemory } from '../chat/useCollapseMemory'
 import { WorkAgentManager } from './WorkAgentManager'
-import { captureWorkCollaborationMembership, workMessageTimeline, workMessagePresentation, workToolTarget, type WorkCollaborationMembership } from './work-message-timeline'
+import { workToolTarget } from './work-message-timeline'
+import { WorkMessageContent } from './WorkMessageContent'
 import { workSubagentName } from './work-subagents'
 import { serializeMessages } from '../chat/message-export'
 import { WORK_MESSAGE_PAGE_SIZE, WORK_TASK_PAGE_SIZE, workMessageRange, workPaneRatio, workSplitRatio, workToolSnapshot, type WorkToolSnapshot } from './work-view-performance'
@@ -100,6 +85,7 @@ import { subscribeAutomationEditor } from '../automations/automation-navigation'
 import { EngineMonitorView } from './EngineMonitorView'
 import { WorkErrorNotice } from './WorkErrorNotice'
 import { recoverWorkTurn } from './work-turn-recovery'
+import { workTaskRestart, type WorkTaskRestartPresentation } from './work-task-restart'
 import { WorkUserMessageActions } from './WorkUserMessageActions'
 import { flushWorkDrafts, getWorkDraft, getWorkState, updateWorkState, type WorkArtifact } from './work-state'
 import { findWorkArtifact } from './work-artifact-utils'
@@ -1055,7 +1041,7 @@ function Conversation({
     openArtifact(`path:${path}`)
   }, [openArtifact])
   const respond = useCallback<WorkController['respond']>((...args) => controllerRef.current.respond(...args), [])
-  const retryFailedTask = useCallback<WorkController['retryFailedTask']>((...args) => controllerRef.current.retryFailedTask(...args), [])
+  const restartFailedTask = useCallback<WorkController['restartFailedTask']>((...args) => controllerRef.current.restartFailedTask(...args), [])
   const editSettledTurn = useCallback<WorkController['editSettledTurn']>((...args) => controllerRef.current.editSettledTurn(...args), [])
   const userMessageAction = useCallback<WorkController['userMessageAction']>((...args) => controllerRef.current.userMessageAction(...args), [])
   const recoverableMessageId = useMemo(() => {
@@ -1063,6 +1049,14 @@ function Conversation({
     const last = controller.messages.at(-1)
     return last && recoverWorkTurn(controller.messages, last.id) ? last.id : null
   }, [controller.messages, controller.streaming, controller.launching, controller.messageActionBusy, controller.pending.length, task.status])
+  const restartPresentations = useMemo(() => {
+    const queue = controller.nextTurnQueue
+    const read = queue.state ? { state: queue.state, dispatchError: queue.error || controller.historyError || undefined } : null
+    return new Map(controller.messages.filter(message => message.run && message.error).map(message =>
+      [message.id, workTaskRestart(task.id, message.run!.runId, read, controller.messages)]))
+  }, [controller.messages, controller.nextTurnQueue.state, controller.nextTurnQueue.error, controller.historyError, task.id])
+  const restartableMessageId = !controller.streaming && !controller.launching && !controller.pending.length
+    ? controller.messages.findLast(message => message.role === 'assistant')?.id : undefined
   const [firstId, setFirstId] = useState<string | null>(() => conversationPositions.get(positionKey)?.firstId ?? null)
   const lastMountedStart = useRef<number | undefined>(undefined)
   // Keep selection local to a task. Work selects complete conversation turns
@@ -1505,7 +1499,9 @@ function Conversation({
                     onFileLink={onFileLink}
                     openFile={openActivityFile}
                     respond={respond}
-                    retryFailedTask={retryFailedTask}
+                    restartFailedTask={restartFailedTask}
+                    restart={restartPresentations.get(message.id)}
+                    canRestart={message.id === restartableMessageId && Boolean(message.run && ['failed', 'interrupted'].includes(message.run.status))}
                     editSettledTurn={editSettledTurn}
                     userMessageAction={userMessageAction}
                     showUserActions={!selectMode}
@@ -1513,7 +1509,7 @@ function Conversation({
                     canMutateMessage={controller.ready && controller.historyReady && !controller.uploading && !controller.streaming && !controller.launching && !controller.pending.length && !['running', 'waiting'].includes(task.status)}
                     taskId={task.id}
                     canRecover={message.id === recoverableMessageId}
-                    canRetry={controller.ready && controller.historyReady && !controller.uploading}
+                    canRetry={controller.ready && controller.historyReady && !controller.uploading && (!controller.messageActionBusy || controller.restartPending)}
                     canRespond={mode === 'work' && controller.ready && controller.historyReady}
                     openChange={openChange}
                     revealTool={activitySelection && (segments
@@ -1728,56 +1724,6 @@ function WorkRunStatus({ controller }: { controller: WorkController }): JSX.Elem
   )
 }
 
-/** 用户消息里的附件：与 Code 模式共用 AttachmentChip（图片缩略图 / 文件 chip，点击预览）。 */
-function WorkAttachment({
-  file,
-  root,
-  group
-}: {
-  file: ChatAttachment
-  root: string | null
-  group?: ChatAttachment[]
-}): JSX.Element {
-  const [preview, setPreview] = useState<AttachmentPreview | null>(null)
-  const images = (group ?? [file]).filter((a) => a.type.startsWith('image/'))
-  return (
-    <>
-      <AttachmentChip
-        root={root}
-        file={file}
-        onPreview={(target, src) => setPreview({ file: target, src })}
-      />
-      {preview ? (
-        <AttachmentPreviewDialog
-          root={root}
-          preview={preview}
-          images={images}
-          onNavigate={(next) => setPreview({ file: next, src: null })}
-          onClose={() => setPreview(null)}
-        />
-      ) : null}
-    </>
-  )
-}
-
-function WorkUserMessageBody({ message, root, children }: {
-  message: ChatMessage
-  root: string | null
-  children?: ReactNode
-}): JSX.Element {
-  return <div className="work-message__user">
-    {message.attachments?.length ? (
-      <div className="work-message__attachments" aria-label="附件">
-        {message.attachments.map(file => (
-          <WorkAttachment key={file.path} file={file} root={root} group={message.attachments} />
-        ))}
-      </div>
-    ) : null}
-    <div className="message__bubble"><UserMessageContent content={message.content} /></div>
-    {children}
-  </div>
-}
-
 const WorkMessage = memo(function WorkMessage({
   message,
   turnSegments,
@@ -1787,7 +1733,9 @@ const WorkMessage = memo(function WorkMessage({
   onFileLink,
   openFile,
   respond,
-  retryFailedTask,
+  restartFailedTask,
+  restart,
+  canRestart,
   editSettledTurn,
   userMessageAction,
   showUserActions,
@@ -1808,7 +1756,9 @@ const WorkMessage = memo(function WorkMessage({
   onFileLink: (event: MouseEvent<HTMLElement>) => void
   openFile: (path: string) => void
   respond: WorkController['respond']
-  retryFailedTask: WorkController['retryFailedTask']
+  restartFailedTask: WorkController['restartFailedTask']
+  restart?: WorkTaskRestartPresentation
+  canRestart: boolean
   editSettledTurn: WorkController['editSettledTurn']
   userMessageAction: WorkController['userMessageAction']
   showUserActions: boolean
@@ -1824,128 +1774,28 @@ const WorkMessage = memo(function WorkMessage({
   const pending = useMemo(() =>
     message.interactions?.filter((item) => item.status === 'pending') ??
     (message.pending ? [message.pending] : []), [message.interactions, message.pending])
-  const segments = useMemo(() => turnSegments ?? workMessageTimeline(message), [message, turnSegments])
-  const processTools = useMemo(() => segments.flatMap(segment => segment.kind === 'tools' ? segment.tools : []), [segments])
-  const collaborationMembership = useRef<WorkCollaborationMembership | undefined>(undefined)
-  const finalResult = getMessageFinalResult(message, taskId)
-  const presentation = useMemo(() => workMessagePresentation(segments, collaborationMembership.current,
-    finalAnswerForMessage(message, taskId)), [segments, message, taskId])
-  const answerText = presentation.flatMap(segment => segment.kind === 'answer' ? [segment.text] : []).join('\n\n')
-  const preserveCollaborationLayout = (): void => {
-    // A neighbouring completion must not unmount a card or control the user
-    // is reading. This choice lasts only for this mounted message.
-    collaborationMembership.current ??= captureWorkCollaborationMembership(presentation)
-  }
-  const hasProcess = presentation.some(segment => segment.kind === 'process')
-  const thinkingCount = segments.filter(segment => segment.kind === 'thinking').length
-  const failureCount = processTools.filter(tool => ['error', 'interrupted'].includes(workActivityState(tool))).length
-  const turnRunning = workMessageRunning(message)
-  const [processMemory, setProcessOpen] = useCollapseMemory(`work-message:${getEngineSource()}:${taskId}:${processKey ?? message.id}`)
-  const processOpen = processMemory ?? turnRunning
-  const [thinkingMemory, setThinkingOpen] = useCollapseMemory(`work-message-thinking:${getEngineSource()}:${taskId}:${processKey ?? message.id}`)
-  // Reasoning is available in its original position without interleaving a
-  // second summary before every routine operation. Pure reasoning replies
-  // still have useful content when their process is first opened.
-  const thinkingOpen = thinkingMemory ?? processTools.length === 0
-  const processId = `work-process-${useId().replace(/:/g, '')}`
-  const processBar = useRef<HTMLDivElement>(null)
-  const collapseAnchor = useRef<number | null>(null)
-  const toggleProcess = (): void => {
-    const bar = processBar.current
-    const scroll = bar?.closest('.work-conversation__scroll')
-    if (processOpen && bar && scroll && bar.parentElement!.getBoundingClientRect().top < scroll.getBoundingClientRect().top) {
-      collapseAnchor.current = bar.getBoundingClientRect().top
-    }
-    setProcessOpen(!processOpen)
-  }
-  useLayoutEffect(() => {
-    if (processOpen || collapseAnchor.current === null) return
-    const bar = processBar.current, scroll = bar?.closest('.work-conversation__scroll')
-    // Collapsing a pinned header restores its place in the message without
-    // leaving the reader at an unrelated turn farther down the transcript.
-    if (bar && scroll) scroll.scrollTop += bar.getBoundingClientRect().top - collapseAnchor.current
-    collapseAnchor.current = null
-  }, [processOpen])
-  useLayoutEffect(() => { if (revealTool) setProcessOpen(true) }, [revealTool, setProcessOpen])
-  const [copied, setCopied] = useState(false)
-  useEffect(() => {
-    if (!copied) return
-    const timer = window.setTimeout(() => setCopied(false), 1800)
-    return () => window.clearTimeout(timer)
-  }, [copied])
   return (
-    <article
-      className={`work-message work-message--${message.role}`}
-      aria-label={message.role === 'user' ? '用户消息' : 'AI 回复'}
-      data-message-id={message.id}
-      data-process-expanded={hasProcess && processOpen ? 'true' : undefined}
-      onClickCapture={onFileLink}
+    <WorkMessageContent
+      message={message}
+      sessionId={taskId}
+      fileContext={fileContext}
+      active={active}
+      onFileLink={onFileLink}
+      onOpenFile={openFile}
+      onOpenChange={openChange}
+      revealTool={revealTool}
+      turnSegments={turnSegments}
+      processKey={processKey}
+      userActions={showUserActions ? <WorkUserMessageActions taskId={taskId} messageId={message.id} content={message.content}
+        canMutate={canMutateMessage} busy={messageActionBusy} onAction={userMessageAction} /> : null}
     >
-      {message.role === 'user' ? (
-        <WorkUserMessageBody message={message} root={fileContext.workspaceRoot ?? null}>
-          {showUserActions ? <WorkUserMessageActions taskId={taskId} messageId={message.id} content={message.content}
-            canMutate={canMutateMessage} busy={messageActionBusy} onAction={userMessageAction} /> : null}
-        </WorkUserMessageBody>
-      ) : (
-        <>
-          {hasProcess ? <div ref={processBar} className="work-message__process-bar" data-expanded={processOpen ? 'true' : undefined}><button
-            type="button"
-            className="work-message__process-toggle"
-            aria-expanded={processOpen}
-            aria-controls={processId}
-            aria-label={processOpen ? '收起过程' : '展开过程'}
-            onClick={toggleProcess}
-          >
-            <Icon className="work-message__process-chevron" name="chevron-right" size={12} />
-            <span>过程</span>
-            {processTools.length ? <small>{processTools.length} 步</small> : null}
-            {failureCount ? <small className="work-message__process-failures">{failureCount} 步未通过</small> : null}
-          </button>
-            {thinkingCount ? <button type="button" className="work-message__thinking-toggle"
-              aria-label={thinkingOpen ? '隐藏思考' : '显示思考'} aria-pressed={thinkingOpen}
-              title={`${thinkingOpen ? '隐藏' : '显示'} ${thinkingCount} 段思考`}
-              onClick={() => { setThinkingOpen(!thinkingOpen); if (!thinkingOpen) setProcessOpen(true) }}>
-              <Icon name="brain" size={13} /><span>思考</span>
-            </button> : null}
-          </div> : null}
-          <div id={processId} className="work-message__timeline" onPointerDownCapture={preserveCollaborationLayout}
-            onFocusCapture={preserveCollaborationLayout} onKeyDownCapture={preserveCollaborationLayout}>
-            {presentation.map(segment => segment.kind === 'tool' ? (
-              <WorkToolActivity key={segment.key} tool={segment.tool} fileContext={fileContext} onOpenFile={openFile} onOpenChange={openChange} turnRunning={turnRunning} active={active} />
-            ) : segment.kind === 'collaboration' ? (
-              <WorkCollaborationSummary key={segment.key} tools={segment.tools} fileContext={fileContext} revealTool={revealTool} active={active} />
-            ) : segment.kind === 'answer' ? (
-              <WorkAssistantContent key={segment.key} text={segment.text} streaming={message.status === 'streaming'} fileContext={fileContext} renderImages={!finalResult} />
-            ) : (
-              <MotionPresence key={segment.key} className="work-message__process" show={processOpen}>
-                {segment.segments.map(item => item.kind === 'tools' ? (
-                  <WorkInlineActivity key={item.key} tools={item.tools} fileContext={fileContext} onOpenFile={openFile} onOpenChange={openChange} revealTool={revealTool} expanded turnRunning={turnRunning} active={active} />
-                ) : item.kind === 'thinking' ? (
-                  <MotionPresence key={item.key} className="work-message__thinking" show={thinkingOpen}>
-                    <ThinkingRow text={item.text} autoOpen={false} memoryKey={`work-thinking:${getEngineSource()}:${taskId}:${processKey ?? message.id}:${item.key}`} />
-                  </MotionPresence>
-                ) : item.kind === 'followup' ? (
-                  <div key={item.key} className="work-message--user work-message__followup" role="group" aria-label="用户消息" data-message-id={item.message.id}>
-                    <WorkUserMessageBody message={item.message} root={fileContext.workspaceRoot ?? null} />
-                  </div>
-                ) : (
-                  <WorkAssistantContent key={item.key} text={item.text} streaming={message.status === 'streaming'} fileContext={fileContext} />
-                ))}
-              </MotionPresence>
-            ))}
-          </div>
-          {answerText && !['streaming', 'waiting'].includes(message.status) ? <div className="work-message__reply-actions">
-            <button type="button" className="message__action" aria-label={copied ? '已复制回复' : '复制回复'} title={copied ? '已复制' : '复制回复'}
-              onClick={() => { void navigator.clipboard.writeText(answerText).then(() => setCopied(true), reportError) }}>
-              <Icon name={copied ? 'check' : 'copy'} size={14} />
-            </button>
-          </div> : null}
-        </>
-      )}
-      {message.error ? <WorkErrorNotice error={message.error} context={message.run}
-        onRetry={canRecover && canRetry && message.status === 'error' ? () => retryFailedTask(taskId, message.id) : undefined}
-        retryLabel="重试这条指令" /> : null}
-      {canRecover ? <div className="work-message__recovery">
+      {message.error ? <WorkErrorNotice error={message.error} context={message.run} compact
+        resolved={restart?.resolved} busy={restart?.busy} busyLabel={restart?.label}
+        recoveryError={restart?.error}
+        onRetry={canRetry && (canRestart || restart?.status === 'unconfirmed') ? () => restartFailedTask(taskId, message.id) : undefined}
+        retryLabel={restart?.status === 'unconfirmed' ? '核对并重启' : '重启任务'}
+        onEdit={canRecover ? () => editSettledTurn(taskId, message.id) : undefined} /> : null}
+      {canRecover && !message.error ? <div className="work-message__recovery">
         <button type="button" className="btn btn--sm" onClick={() => editSettledTurn(taskId, message.id)}
           title="将原指令与附件带回输入框，保留已有草稿">
           <Icon name="pencil" size={13} />{message.status === 'error' ? '编辑后重试' : '编辑后继续'}
@@ -1961,29 +1811,9 @@ const WorkMessage = memo(function WorkMessage({
         />
       ))}
       {message.answered && <p className="work-note">已回复：{message.answered}</p>}
-    </article>
+    </WorkMessageContent>
   )
 })
-
-function WorkAssistantContent({
-  text,
-  streaming,
-  fileContext,
-  renderImages = true
-}: {
-  text: string
-  streaming: boolean
-  fileContext: ChatFileContext
-  renderImages?: boolean
-}): JSX.Element {
-  return (
-    <div className="work-assistant-content-wrap">
-      <div className="work-assistant-content">
-        <Markdown text={text} streaming={streaming} fileContext={fileContext} renderImages={renderImages} />
-      </div>
-    </div>
-  )
-}
 
 function WorkPending({
   pending,
@@ -2667,6 +2497,7 @@ const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controll
               publishedFixedChildren={controller.publishedFixedChildren}
               busy={controller.streaming || controller.loading || controller.pending.length > 0 || controller.uploading}
               onContinue={controller.continueSubagent}
+              attachments={[...(controller.activeTask?.sources ?? []), ...controller.attachments]}
             />
           ) : id === 'git' ? (
             <StableWorkGitPanel

@@ -175,3 +175,4 @@ export function workTranscriptText(text: string, limit = SUBAGENT_TRANSCRIPT_TEX
   if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1])) end--
   return { text: text.slice(0, end), remaining: text.length - end, nextLimit: end + SUBAGENT_TRANSCRIPT_TEXT_STEP }
 }
+

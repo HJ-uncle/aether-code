@@ -33,11 +33,12 @@ export function isWorkStandaloneTool(tool: ToolActivity): boolean {
   return kind === 'subagent' || kind === 'command'
 }
 
-/** Legacy receipts inherit the tool's session; explicit foreign owners never open here. */
-export function workToolChanges(tool: Pick<ToolActivity, 'change' | 'changes'>, sessionId: string): EngineFileChange[] {
+/** Parent aggregation is valid only when the receipt names this child as its producer. */
+export function workToolChanges(tool: Pick<ToolActivity, 'change' | 'changes'>, sessionId: string, receiptParentSessionId?: string): EngineFileChange[] {
   if (!sessionId) return []
   return mergeFileChanges([...(tool.change ? [tool.change] : []), ...(tool.changes ?? [])]
-    .filter(change => !change.sessionId || change.sessionId === sessionId))
+    .filter(change => !change.sessionId || change.sessionId === sessionId ||
+      Boolean(receiptParentSessionId && change.sessionId === receiptParentSessionId && change.producerChildSessionId === sessionId)))
 }
 
 /** Keep exact wire text separate from readable previews, including invalid/partial JSON. */

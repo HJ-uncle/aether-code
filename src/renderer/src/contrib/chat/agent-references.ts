@@ -1,4 +1,5 @@
 import type { AgentCollaborator } from '../../../../shared/subagent'
+import { parseBuiltinAgentReference } from '../../../../shared/builtin-agents'
 import { buildMentionMessage, parseMentionContent, type Mention } from './mention-context'
 
 export interface AgentReferenceIdentity {
@@ -12,6 +13,7 @@ export interface AgentReferenceIdentity {
   mcpServers?: string[]
   knowledgeBases?: string[]
   allowedTools?: string[]
+  builtinRole?: import('../../../../shared/subagent').BuiltinAgentRole
 }
 
 /** Legacy aliases stay available, but a filename such as agents.ts is never an alias. */
@@ -32,5 +34,5 @@ export function buildAgentMentionMessage(text: string, mentions: readonly Mentio
   if (message === text.trim()) return { message, collaborators: [] }
   const { refs } = parseMentionContent(message)
   const ids = [...new Set(refs.filter(ref => ref.t === 'agent' && ref.p.trim()).map(ref => ref.p))]
-  return { message, collaborators: ids.map(agentId => ({ agentId })) }
+  return { message, collaborators: ids.map(agentId => parseBuiltinAgentReference(agentId) ?? { agentId }) }
 }

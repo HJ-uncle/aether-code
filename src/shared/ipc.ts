@@ -653,6 +653,8 @@ export interface ChatSsePayload {
  * 老内容/新内容用于渲染 git 风格 diff；内容过大或二进制时两者为 null（truncated=true）。
  */
 export interface EngineFileChange {
+  producerChildSessionId?: string
+  producerRunId?: string
   sessionId?: string
   source?: 'command-observation'
   commandJobId?: string

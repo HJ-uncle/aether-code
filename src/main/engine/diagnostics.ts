@@ -562,6 +562,10 @@ function categoryFor(relative: string[], databaseName: string): string {
   if (first === 'history-cold') return 'history-cold'
   if (first === 'memory') return 'memory'
   if (first === 'change-snapshots') return 'snapshots'
+  // Offline subagent migrations create a sibling directory next to the
+  // database. Keep rollback copies visible as backups instead of hiding them
+  // inside the generic “other files” bucket.
+  if (first.startsWith(`${databaseName}.subagent-migration-backup-`)) return 'backups'
   if (first === 'backups' || first === 'backup') return 'backups'
   if (first === 'logs' || first.endsWith('.log')) return 'logs'
   if (first === 'cache' || first === '.cache' || first === 'tmp' || first === 'temp') return 'cache'

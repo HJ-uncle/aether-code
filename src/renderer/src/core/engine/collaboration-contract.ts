@@ -76,6 +76,9 @@ function participant(value: unknown): value is ControllerParticipant {
 /** The exact owner lookup is authoritative even when the participant list is paginated. */
 export function parseControllerContext(value: unknown, target: ControllerTarget): ControllerContext {
   validateControllerTarget(target)
+  if (record(value) && value.outcome === 'closed') throw new Error(target.kind === 'root'
+    ? '本轮已停止接收补充，原文已保留。请刷新状态后安排下一轮。'
+    : '此代理正在结束本轮，补充尚未接纳，原文已保留。请刷新状态后继续安排下一步。')
   if (!record(value) || value.outcome !== 'ready' || !scope(value.scope) || !record(value.participants)
     || !Array.isArray(value.participants.entries) || value.participants.entries.length > 64
     || !value.participants.entries.every(participant) || !integer(value.participants.revision)

@@ -9,6 +9,7 @@ export interface WorkQueueDraft {
   attachments: { path: string; name: string; type: string; size: number; remoteUploadId?: string }[]
 }
 export type WorkQueueAction =
+  | { kind: 'restart'; runId: string }
   | { kind: 'read' } | { kind: 'reconcile'; retryIfAbsent?: boolean }
   | { kind: 'enqueue'; expectedRevision: number; operationId: string; id: string; submission: WorkQueueDraft }
   | { kind: 'edit-draft'; expectedRevision: number; operationId: string; id: string; entryRevision: number; draft: WorkQueueDraft['draft'] }

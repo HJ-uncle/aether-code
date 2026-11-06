@@ -320,7 +320,7 @@ function ArtifactContent({
   const copyLabel = value?.coverage === 'partial' ? '复制片段' : value?.coverage === 'receipt' ? '复制回执' : '复制'
   const saveLabel = saving ? '正在保存…' : value?.isBinary ? '保存原文件' : value?.coverage === 'partial' ? '保存预览片段' : value?.coverage === 'receipt' ? '保存历史回执' : '保存副本'
   return (
-    <section className="work-artifact-panel-v2" aria-label="成果预览" data-document-session={sessionId} data-document-path={artifact.path} data-document-active={active ? 'true' : 'false'} data-workbench-request={requestRevision} data-file-read-status={loading ? 'loading' : value?.coverage ?? 'unavailable'} data-resource-tab={inResourceTab ? 'true' : 'false'}>
+    <section className="work-artifact-panel-v2" aria-label="成果预览" data-document-session={sessionId} data-document-path={artifact.path} data-document-active={active ? 'true' : 'false'} data-workbench-request={requestRevision} data-file-read-status={loading ? 'loading' : value?.coverage ?? 'unavailable'} data-resource-tab={inResourceTab ? 'true' : 'false'} data-producer-child-session={artifact.producerChildSessionId} data-producer-run={artifact.producerRunId}>
       <div className="work-artifact-panel-v2__toolbar" role="group" aria-label="文件预览操作">
         {canRun ? <button type="button" className="work-artifact-panel-v2__action work-artifact-panel-v2__action--primary"
           aria-label="在浏览器中运行" title="在当前任务浏览器中运行 HTML"

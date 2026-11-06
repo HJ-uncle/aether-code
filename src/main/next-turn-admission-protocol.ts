@@ -6,6 +6,7 @@ export const CODE_QUEUE_TRANSPORT = Object.freeze({ toolProfile: 'code', runLife
 export const queueTransport = (owner: NextTurnQueueScope['owner']) => owner === 'code' ? CODE_QUEUE_TRANSPORT : WORK_QUEUE_TRANSPORT
 export interface AdmissionOutcomeRoot {
   runId: string; version: number
+  startedAt?: number
   status: 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
   workspacePaths: string[]; modelId?: string; agentId?: string
 }
@@ -26,7 +27,9 @@ function parseAdmissionOutcomeRoot(value: unknown): AdmissionOutcomeRoot {
   const item = record(value), status = item.status
   if (!['running', 'waiting', 'succeeded', 'failed', 'cancelled', 'interrupted'].includes(String(status))) fail('Root outcome is unknown')
   if (!Array.isArray(item.workspacePaths) || item.workspacePaths.some(path => typeof path !== 'string')) fail('Root workspace is unavailable')
+  if (item.startedAt !== undefined && (!Number.isSafeInteger(item.startedAt) || Number(item.startedAt) < 1)) fail('Root execution start is invalid')
   return { runId: identity(item.runId), version: version(item.version),
+    ...(item.startedAt === undefined ? {} : { startedAt: Number(item.startedAt) }),
     status: status as AdmissionRoot['status'], workspacePaths: [...item.workspacePaths],
     ...(item.modelId === undefined ? {} : { modelId: identity(item.modelId) }),
     ...(item.agentId === undefined ? {} : { agentId: identity(item.agentId) }) }

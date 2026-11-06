@@ -25,6 +25,8 @@ export interface WorkChangeReviewActionsProps {
   mode?: WorkChangeReviewMode
   presentation?: 'buttons' | 'menu'
   compact?: boolean
+  /** A surrounding toolbar may already explain why all its actions are unavailable. */
+  showBlockedHint?: boolean
 }
 
 // Row actions and the batch toolbar operate on the same files. A session lock
@@ -39,7 +41,7 @@ export function WorkChangeReviewActions(props: WorkChangeReviewActionsProps): JS
   return <ScopedWorkChangeReviewActions key={`${source}:${props.sessionId}`} {...props} source={source} />
 }
 
-function ScopedWorkChangeReviewActions({ sessionId, workspacePath, changes, streaming, disabled = false, refreshing = false, onChanged, mode = 'batch', presentation = 'buttons', compact = false, source }: WorkChangeReviewActionsProps & { source: number }): JSX.Element | null {
+function ScopedWorkChangeReviewActions({ sessionId, workspacePath, changes, streaming, disabled = false, refreshing = false, onChanged, mode = 'batch', presentation = 'buttons', compact = false, showBlockedHint = true, source }: WorkChangeReviewActionsProps & { source: number }): JSX.Element | null {
   const { ready } = useApp()
   const scope = `${source}:${sessionId}`
   const locked = useSyncExternalStore(subscribeLocks, () => locks.has(scope))
@@ -157,8 +159,9 @@ function ScopedWorkChangeReviewActions({ sessionId, workspacePath, changes, stre
   const revertLabel = mode === 'turn' ? '撤回本轮成果' : mode === 'single' ? '撤回此改动' : '撤回待确认改动'
   return <div className={`work-change-review work-change-review--${mode}`}>
     <div className={`work-change-review__actions${refreshingOnly ? ' is-refreshing' : ''}`} role="group" aria-label={mode === 'turn' ? '本轮成果操作' : mode === 'single' ? '此文件改动操作' : '待确认改动操作'} aria-busy={working !== null || refreshing} aria-description={blockedReason} title={blockedReason}>
-      {mode === 'batch' && pendingCount > 0 ? <span className="work-change-review__count">{pendingCount} 条修改待确认</span> : null}
+      {mode === 'batch' && pendingCount > 0 ? <span className="work-change-review__count" title={`${pendingCount} 条修改待确认`} aria-label={`${pendingCount} 条修改待确认`}>{compact ? `${pendingCount} 待确认` : `${pendingCount} 条修改待确认`}</span> : null}
       {presentation === 'menu' ? (keepTargets.length || revertTargets.length ? <ActionMenu label="批量改动操作" disabled={!canAct} className="work-change-review__menu"
+        panelClassName="work-change-review__menu-panel"
         icon={<><span>批量操作</span><Icon name="chevron" size={13} /></>}
         items={[
           ...(keepTargets.length ? [{ id: 'keep', label: keepLabel, icon: 'check' as const, onSelect: () => void act('keep') }] : []),
@@ -171,7 +174,7 @@ function ScopedWorkChangeReviewActions({ sessionId, workspacePath, changes, stre
         {working === 'revert' ? <Spinner size={13} /> : <Icon name="undo" size={13} />}{mode === 'turn' && working === 'revert' ? '处理中' : compact ? '撤回' : revertLabel}
       </button> : null}
       </>}
-      {mode !== 'turn' && streaming && (keepTargets.length || revertTargets.length) ? <span className="work-change-review__hint">任务结束后可确认</span> : null}
+      {showBlockedHint && mode !== 'turn' && streaming && (keepTargets.length || revertTargets.length) ? <span className="work-change-review__hint">任务结束后可确认</span> : null}
     </div>
     {error ? <p className="work-change-review__error" role="alert">{error}</p> : null}
     {notice ? <p className="work-change-review__notice" role="status">{notice}</p> : null}

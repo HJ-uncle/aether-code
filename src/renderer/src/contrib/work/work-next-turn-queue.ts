@@ -20,6 +20,7 @@ export function queuedDraft(text: string, mentions: readonly Mention[], revision
 }
 export function useWorkNextTurnQueue(taskId: string | null, source: number, ready: boolean) {
   const [read, setRead] = useState<WorkQueueRead | null>(null), [error, setError] = useState<string | null>(null), [saving, setSaving] = useState(false)
+  const readOwner = useRef<{ taskId: string; source: number } | null>(null)
   const generation = useRef(0), currentScope = useRef({ taskId, source }), busy = useRef(false), revision = useRef(-1)
   currentScope.current = { taskId, source }
   const invoke = useCallback(async (action: WorkQueueAction): Promise<WorkQueueRead> => {
@@ -33,14 +34,14 @@ export function useWorkNextTurnQueue(taskId: string | null, source: number, read
     if (currentScope.current.taskId !== taskId || currentScope.current.source !== source) throw new Error('任务已切换，本次结果已保存在原任务中')
     assertQueueState(result.state, result.state.scope)
     if (result.state.scope.taskId !== taskId) throw new Error('队列回执属于另一个任务')
-    if (result.state.revision >= revision.current) { revision.current = result.state.revision; setRead(result); setError(null) }
+    if (result.state.revision >= revision.current) { revision.current = result.state.revision; readOwner.current = { taskId, source }; setRead(result); setError(null) }
     return result
   }, [source, taskId])
   const refresh = useCallback(async () => { try { await invoke({ kind: 'read' }) } catch (cause) {
     if (currentScope.current.taskId === taskId && currentScope.current.source === source) setError(cause instanceof Error ? cause.message : '无法读取队列')
   } }, [invoke, source, taskId])
   useEffect(() => {
-    generation.current++; revision.current = -1; setRead(null); setError(null); busy.current = false; setSaving(false)
+    generation.current++; revision.current = -1; readOwner.current = null; setRead(null); setError(null); busy.current = false; setSaving(false)
     if (!ready || !taskId) return
     const epoch = generation.current
     void refresh()
@@ -111,9 +112,12 @@ export function useWorkNextTurnQueue(taskId: string | null, source: number, read
     if (!read) return Promise.reject(new Error('队列尚未就绪'))
     return commit({ kind: 'edit-draft', expectedRevision: read.state.revision, operationId: crypto.randomUUID(), id, entryRevision, draft })
   }
-  return { state: read?.state ?? null, error: error ?? read?.dispatchError ?? null, saving, ready: Boolean(read), enqueue, mutate, editDraft,
+  const restart = useCallback((runId: string) => commit({ kind: 'restart', runId }), [commit])
+  const currentRead = readOwner.current?.taskId === taskId && readOwner.current.source === source ? read : null
+  return { state: currentRead?.state ?? null, error: error ?? currentRead?.dispatchError ?? null, saving, ready: Boolean(currentRead), enqueue, mutate, editDraft,
+    restart,
     reconcile: (retryIfAbsent = false) => commit({ kind: 'reconcile', retryIfAbsent }), refresh,
-    pendingCount: read?.state.entries.filter(entry => entry.phase === 'pending').length ?? 0 }
+    pendingCount: currentRead?.state.entries.filter(entry => entry.phase === 'pending' && !entry.envelope.recovery).length ?? 0 }
 }
 export type WorkNextTurnQueue = ReturnType<typeof useWorkNextTurnQueue>
-export function visibleQueueEntries(state: NextTurnQueueState | null) { return state?.entries.filter(entry => entry.phase !== 'terminal') ?? [] }
+export function visibleQueueEntries(state: NextTurnQueueState | null) { return state?.entries.filter(entry => entry.phase !== 'terminal' && !entry.envelope.recovery) ?? [] }

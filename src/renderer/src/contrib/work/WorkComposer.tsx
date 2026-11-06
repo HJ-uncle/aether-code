@@ -84,7 +84,7 @@ export function WorkComposer({
   const immediateIntent = taskActive && rootFollowup.delivery === 'current'
   const busy = controller.streaming || controller.uploading || controller.loading || !controller.historyReady || awaitingAnswer || controller.messageActionBusy
   const queueIntent = !home && !immediateIntent && (taskActive || controller.nextTurnQueue.pendingCount > 0 || controller.nextTurnQueue.state?.entries.some(entry => ['dispatching', 'admission-unknown', 'accepted'].includes(entry.phase))) && !controller.pendingInitialStart
-  const queueBusy = controller.uploading || controller.loading || !controller.historyReady || controller.nextTurnQueue.saving || !controller.nextTurnQueue.ready
+  const queueBusy = controller.uploading || controller.loading || !controller.historyReady || controller.restartPending || controller.nextTurnQueue.saving || !controller.nextTurnQueue.ready
   const canAddFiles = controller.ready && !(queueIntent ? queueBusy : taskActive || busy)
   const addFiles = (files: File[]): void => {
     if (!files.length) return
@@ -447,7 +447,9 @@ export function WorkComposer({
                 </button>
               ) : null}
               <WorkComposerPreferences
+                home={home}
                 sessionId={controller.securitySessionId}
+                workspacePath={controller.workspacePath ?? undefined}
                 modelId={controller.modelId}
                 thinkingMode={controller.thinkingMode}
                 onThinkingChange={controller.setThinkingMode}

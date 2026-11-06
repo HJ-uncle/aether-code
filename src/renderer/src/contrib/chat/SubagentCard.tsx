@@ -7,6 +7,7 @@ import type { SubagentToolCall } from '@shared/subagent'
 import { getSubagentProtocol, stopSubagent } from '@renderer/core/engine/client'
 import {
   isSubagentActive,
+  isSubagentNeedsUser,
   mergeSubagentRun,
   subagentStopReasonLabel,
   toolStatusLabel
@@ -33,7 +34,7 @@ import type { SubagentRun } from '@shared/subagent'
 import { CodePublishedSubagentControl, CodeSubagentFollowup } from './SubagentFollowup'
 import './subagent-card-work.css'
 
-type SubagentCardProps = { tool: ToolActivity; sessionId: string; defaultOpen?: boolean; visible?: boolean; surfaceMode?: 'code' | 'work';
+type SubagentCardProps = { tool: ToolActivity; sessionId: string; defaultOpen?: boolean; visible?: boolean; surfaceMode?: 'code' | 'work'; readOnly?: boolean;
   /** A detail view already owns agent identity and live controls. */
   round?: { number: number; createdAt?: number }
   onPublishedLoaded?: (run: SubagentRun, reference: import('@shared/published-child').PublishedChildReference) => void }
@@ -48,7 +49,7 @@ function RoundTime({ createdAt }: { createdAt?: number }): JSX.Element {
 export function SubagentCard(props: SubagentCardProps): JSX.Element {
   const ref = props.tool.subagentRef
   const card = ref && !props.tool.subagent ? <PublishedReferenceCard key={JSON.stringify([ref.source, ref.sessionId, ref.snapshotId, ref.identity.runId, ref.atSeq, ref.projectionIndex])} {...props} /> : <SubagentRunCard {...props} />
-  return <>{card}{ref ? <CodePublishedSubagentControl reference={ref} visible={props.visible !== false} /> : null}</>
+  return <>{card}{ref && !props.readOnly ? <CodePublishedSubagentControl reference={ref} visible={props.visible !== false} /> : null}</>
 }
 
 function PublishedReferenceCard(props: SubagentCardProps): JSX.Element {
@@ -142,6 +143,7 @@ function SubagentRunCard({
   defaultOpen,
   visible = true,
   surfaceMode = 'code',
+  readOnly = false,
   round: requestedRound
 }: SubagentCardProps): JSX.Element {
   const { engine, ready } = useApp()
@@ -168,10 +170,11 @@ function SubagentRunCard({
   const operationEpoch = useRef(0)
   const active = run ? isSubagentActive(run.status) : tool.state === 'running'
   const cancelling = run?.status === 'cancelling'
+  const needsUser = isSubagentNeedsUser(run)
   const failed = run
-    ? ['failed', 'blocked', 'interrupted'].includes(run.status)
+    ? !needsUser && ['failed', 'blocked', 'interrupted'].includes(run.status)
     : tool.state === 'error'
-  const open = manualOpen ?? defaultOpen ?? (active || failed)
+  const open = manualOpen ?? defaultOpen ?? (active || failed || needsUser)
   const status = toolStatusLabel(run ? { ...tool, subagent: run } : tool)
   const quiet = surfaceMode === 'work'
   const statusLabel = quiet && status === '成功' ? '已完成' : status
@@ -294,7 +297,7 @@ function SubagentRunCard({
   const cancel = async (event: MouseEvent): Promise<void> => {
     event.preventDefault()
     event.stopPropagation()
-    if (!ready || sourceEpoch !== getEngineSource() || requesting || cancelling || !active) return
+    if (readOnly || !ready || sourceEpoch !== getEngineSource() || requesting || cancelling || !active) return
     setRequestError('')
     setRequesting(true)
     const epoch = operationEpoch.current
@@ -341,7 +344,7 @@ function SubagentRunCard({
           {countLabel} · {tokenLabel} tokens
           {elapsed !== undefined ? ` · ${duration(elapsed)}` : ''}
         </span> : null}
-        {active && !pinned && !round ? (
+        {active && !pinned && !round && !readOnly ? (
           <button
             type="button"
             className="subagent-card__stop"
@@ -359,9 +362,7 @@ function SubagentRunCard({
         <Icon name={quiet ? 'chevron-down' : 'chevron'} size={16} className="subagent-card__chevron" />
       </summary>
 
-      {reason ? (
-        <WorkErrorNotice error={reason} />
-      ) : null}
+      {reason ? needsUser ? <p className="subagent-card__question" role="status">{reason}</p> : <WorkErrorNotice error={reason} /> : null}
       {requestError ? (
         <WorkErrorNotice error={requestError} />
       ) : null}
@@ -454,7 +455,7 @@ function SubagentRunCard({
           </div>
         </div>
       ) : null}
-      {!round && !pinned && run ? <CodeSubagentFollowup run={run} sessionId={sessionId} source={sourceEpoch} visible={visible} /> : null}
+      {!round && !pinned && !readOnly && run ? <CodeSubagentFollowup run={run} sessionId={sessionId} source={sourceEpoch} visible={visible} /> : null}
       <div className="subagent-card__footer">
         {quiet && pinned ? <span>已发布记录 #{tool.subagentRef?.atSeq}</span> : null}
         {quiet && remoteReadOnly ? <span>远端</span> : null}

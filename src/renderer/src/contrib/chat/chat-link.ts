@@ -1,6 +1,8 @@
 export interface ChatFileContext {
   sessionId: string
   workspaceRoot?: string | null
+  /** Only verified child history may display its parent-aggregated receipts. */
+  receiptParentSessionId?: string
 }
 
 export type ChatLinkTarget =

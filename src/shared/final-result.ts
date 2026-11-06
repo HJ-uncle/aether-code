@@ -1,5 +1,8 @@
 /** A delivery is an explicit immutable publication, never a file-change receipt. */
 export interface FinalResultItem {
+  producerChildSessionId?: string
+  producerRunId?: string
+  producerArtifactId?: string
   id: string
   name: string
   path: string
@@ -39,9 +42,14 @@ export function normalizeFinalResult(value: unknown): FinalResult | undefined {
       typeof item.sha256 !== 'string' || !/^(?:sha256:)?[a-f\d]{64}$/i.test(item.sha256) ||
       !['image', 'file'].includes(String(item.kind)) || ids.has(item.id) || assets.has(item.assetId)) return undefined
     if (item.kind === 'image' && !item.mimeType.startsWith('image/')) return undefined
+    const producerKeys = ['producerChildSessionId', 'producerRunId', 'producerArtifactId'] as const
+    if (producerKeys.some(key => item[key] !== undefined && !identity(item[key]))) return undefined
+    if (producerKeys.some(key => item[key] !== undefined) && producerKeys.some(key => item[key] === undefined)) return undefined
     ids.add(item.id); assets.add(item.assetId)
     items.push({ id: item.id, name: item.name, path: item.path, mimeType: item.mimeType, size: item.size,
-      sha256: item.sha256, assetId: item.assetId, kind: item.kind as FinalResultItem['kind'] })
+      sha256: item.sha256, assetId: item.assetId, kind: item.kind as FinalResultItem['kind'],
+      ...(item.producerChildSessionId ? { producerChildSessionId: String(item.producerChildSessionId),
+        producerRunId: String(item.producerRunId), producerArtifactId: String(item.producerArtifactId) } : {}) })
   }
   return { schemaVersion: 1, sessionId: value.sessionId, turnId: value.turnId, runId: value.runId,
     assistantMessageId: value.assistantMessageId, text: value.text, items, publishedAt: value.publishedAt }

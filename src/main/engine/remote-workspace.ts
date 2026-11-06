@@ -1,6 +1,7 @@
 import { posix, win32 } from 'node:path'
 import type { EngineSnapshot } from '../../shared/ipc'
 import { remoteAttachmentsForRequest } from './remote-attachments'
+import type { AgentCollaborator } from '../../shared/subagent'
 
 /** Validate a path for the server OS without resolving it on the client machine. */
 export function validateRemoteWorkspaceRoot(value: unknown): string {
@@ -61,14 +62,24 @@ export async function prepareRemoteChatBody(body: unknown, context: RemoteChatCo
     clean.collaborators = input.collaborators.map(item => {
       if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('协作 Agent 选择器无效')
       const selector = item as Record<string, unknown>
-      const value: { agentId?: string; resumeRunId?: string } = {}
-      for (const key of ['agentId', 'resumeRunId'] as const) {
+      const value: AgentCollaborator = {}
+      for (const key of ['agentId', 'resumeRunId', 'instanceKey', 'description'] as const) {
         if (selector[key] !== undefined) {
-          if (typeof selector[key] !== 'string' || !selector[key].trim() || selector[key].length > 256) throw new Error('协作 Agent ID 无效')
+          if (typeof selector[key] !== 'string' || !selector[key].trim() || selector[key].length > (key === 'description' ? 100 : key === 'instanceKey' ? 128 : 256)) throw new Error('协作 Agent ID 无效')
           value[key] = selector[key].trim()
         }
       }
-      if (!value.agentId && !value.resumeRunId) throw new Error('请选择协作 Agent 或需要继续的子代理')
+      if (selector.builtinRole !== undefined) {
+        if (typeof selector.builtinRole !== 'string' || !['research', 'executor', 'general'].includes(selector.builtinRole) || value.agentId || value.resumeRunId) throw new Error('内置 Agent 角色无效')
+        value.builtinRole = selector.builtinRole as AgentCollaborator['builtinRole']
+        if (!value.instanceKey || !/^[a-zA-Z0-9_-]{1,128}$/.test(value.instanceKey)) throw new Error('内置 Agent 实例标识无效')
+      }
+      if (value.instanceKey && !value.builtinRole) throw new Error('实例标识需要内置 Agent 角色')
+      if (selector.task !== undefined) {
+        if (typeof selector.task !== 'string' || !selector.task.trim() || selector.task.length > 65536) throw new Error('协作 Agent 任务无效')
+        value.task = selector.task
+      }
+      if (!value.agentId && !value.resumeRunId && !value.builtinRole) throw new Error('请选择协作 Agent 或需要继续的子代理')
       // Only server-owned identities cross this boundary; custom prompts,
       // credentials and local resource configuration are resolved by the server.
       return value

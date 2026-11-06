@@ -13,6 +13,7 @@ export interface QueueDispatchGateway extends TrustedQueueAuthority {
   context(scope: NextTurnQueueScope): Promise<AdmissionContext>
   prepare(scope: NextTurnQueueScope, envelope: NextTurnQueueEnvelope, context: AdmissionContext): Promise<Record<string, unknown>>
   envelope(scope: NextTurnQueueScope, draft: WorkQueueDraft): Promise<NextTurnQueueEnvelope>
+  recoveryEnvelope?(scope: NextTurnQueueScope, runId: string): Promise<NextTurnQueueEnvelope>
   editDraft(envelope: NextTurnQueueEnvelope, draft: WorkQueueDraft['draft']): NextTurnQueueEnvelope
   submit(scope: NextTurnQueueScope, wireBody: string, signal: AbortSignal): Promise<void>
   receipt(scope: NextTurnQueueScope, entry: Exclude<NextTurnQueueState['entries'][number], { phase: 'pending' }>): Promise<ExactAdmission>
@@ -25,6 +26,7 @@ export class NextTurnDispatcher {
   private readonly controller = new AbortController()
   private readonly operations = new Set<Promise<unknown>>()
   private readonly pendingEnqueues = new Map<string, { id: string; expectedRevision: number; inputDigest: string; result: Promise<QueueCommitResult> }>()
+  private readonly pendingRestarts = new Map<string, Promise<WorkQueueRead>>()
   private readonly retainedTasks = new Map<string, number>()
   private eviction?: Promise<boolean>
   private evictions = 0
@@ -59,7 +61,7 @@ export class NextTurnDispatcher {
   private observe(job: Job, state: NextTurnQueueState): void {
     if (state.revision < job.revision) return
     job.revision = state.revision
-    job.active = state.entries.some(entry => entry.phase !== 'terminal' && (entry.phase !== 'pending' || !state.paused))
+    job.active = state.entries.some(entry => entry.phase !== 'terminal' && (entry.phase !== 'pending' || !!entry.envelope.recovery || !state.paused && !state.recoveryBarrier))
     // A paused pending item is inactive for polling, but still owns work and must never be evicted.
     job.evictable = state.entries.every(entry => entry.phase === 'terminal')
   }
@@ -146,6 +148,65 @@ export class NextTurnDispatcher {
     }
   }
   read(taskId: string): Promise<WorkQueueRead> { return this.owned(() => this.readOnce(taskId), taskId) }
+  restart(taskId: string, runId: string): Promise<WorkQueueRead> {
+    return this.owned(async () => {
+      if (typeof runId !== 'string' || !runId.trim() || runId.length > 256 || /[\x00-\x1f\x7f]/.test(runId))
+        throw new NextTurnQueueError('INVALID', '需要明确的待恢复任务身份')
+      const job = await this.bind(taskId)
+      if (job.scope.owner !== 'work' || !this.gateway.recoveryEnvelope) throw new NextTurnQueueError('AUTHORITY', '此模式不支持恢复 Work 任务')
+      const key = JSON.stringify([queueScopeIdentity(job.scope), runId]), pending = this.pendingRestarts.get(key)
+      if (pending) return pending
+      const operation = this.restartOnce(job, runId)
+      this.pendingRestarts.set(key, operation)
+      try { return await operation } finally { if (this.pendingRestarts.get(key) === operation) this.pendingRestarts.delete(key) }
+    }, taskId)
+  }
+  private async restartOnce(job: Job, runId: string): Promise<WorkQueueRead> {
+    while (job.busy) await job.busy
+    if (this.closing) throw new NextTurnQueueError('AUTHORITY', 'Queue dispatcher is closing')
+    if (this.running >= 2) throw new NextTurnQueueError('CAPACITY', '队列正在核对其他任务，请稍后重试')
+    this.running++
+    const operation = (async () => {
+      const id = 'work-recovery-' + createHash('sha256').update(JSON.stringify([queueScopeIdentity(job.scope), runId])).digest('hex')
+      let state = (await this.service.read(job.capability)).state
+      let entry = state.entries.find(item => item.id === id)
+      if (!entry) {
+        const envelope = await this.gateway.recoveryEnvelope!(job.scope, runId)
+        if (this.closing) throw new NextTurnQueueError('AUTHORITY', '恢复请求准备期间队列已关闭，尚未提交')
+        if (envelope.recovery?.runId !== runId) throw new NextTurnQueueError('AUTHORITY', '恢复请求未关联原任务')
+        // A fixed entry identity survives local ACK loss; only its first claim allocates an admission key.
+        for (let attempt = 0; attempt < 4; attempt++) {
+          state = (await this.service.read(job.capability)).state
+          if (this.closing) throw new NextTurnQueueError('AUTHORITY', '恢复请求准备期间队列已关闭，尚未提交')
+          entry = state.entries.find(item => item.id === id)
+          if (entry) break
+          try {
+            const result = await this.service.transition(job.capability, state.revision, randomUUID(), { kind: 'enqueue-recovery', id, envelope, at: Date.now() })
+            state = result.state; this.observe(job, state); this.publish(state.scope, state.revision)
+            entry = state.entries.find(item => item.id === id); break
+          } catch (error) {
+            if (!(error instanceof NextTurnQueueError) || error.code !== 'CAS' || attempt === 3) throw error
+          }
+        }
+      }
+      if (!entry || entry.envelope.recovery?.runId !== runId) throw new NextTurnQueueError('CONFLICT', '恢复请求身份冲突')
+      // Terminal retry is observation only. A failed continuation owns its own later restart action.
+      if (entry.phase !== 'terminal') await this.run(job, true, id)
+      else {
+        const exact = await this.gateway.receipt(job.scope, entry)
+        if (exact.status !== 'accepted' || canonicalAdmissionJson(exact.receipt) !== canonicalAdmissionJson(entry.receipt))
+          throw new NextTurnQueueError('AUTHORITY', '原恢复请求的准确回执尚未确认')
+        if (exact.root.startedAt !== undefined && entry.startedAt !== exact.root.startedAt) {
+          const result = await this.service.transition(job.capability, state.revision, randomUUID(), { kind: 'confirmed-start', id, startedAt: exact.root.startedAt, at: Date.now() })
+          this.observe(job, result.state); this.publish(result.state.scope, result.state.revision)
+        }
+        delete job.error
+      }
+    })()
+    job.busy = operation
+    try { await operation } finally { this.running--; if (job.busy === operation) job.busy = undefined }
+    return this.readOnce(job.scope.taskId)
+  }
   private async readOnce(taskId: string): Promise<WorkQueueRead> {
     const job = await this.bind(taskId), current = await this.service.read(job.capability)
     this.observe(job, current.state)
@@ -313,7 +374,7 @@ export class NextTurnDispatcher {
     job.busy = operation
     operation.finally(() => { this.running--; if (job.busy === operation) job.busy = undefined }).catch(() => {})
   }
-  private async run(job: Job, retryIfAbsent: boolean): Promise<void> {
+  private async run(job: Job, retryIfAbsent: boolean, recoveryId?: string): Promise<void> {
     if (this.closing) return
     try {
       let state = (await this.service.read(job.capability)).state
@@ -327,8 +388,9 @@ export class NextTurnDispatcher {
         let exact = await this.gateway.receipt(job.scope, entry)
         if (exact.status === 'absent') {
           if (entry.phase === 'accepted') throw new NextTurnQueueError('AUTHORITY', 'Accepted admission disappeared; automatic sending is paused')
-          if (!retryIfAbsent) {
+          if (!retryIfAbsent || recoveryId !== undefined && entry.id !== recoveryId) {
             if (entry.phase !== 'admission-unknown') await update({ kind: 'admission-unknown', id: entry.id, reason: '接纳回执尚未确认；核对后可重试', at: Date.now() })
+            if (recoveryId && entry.id !== recoveryId) job.error = '另一条消息的接纳状态尚未确认，请先核对后再恢复任务'
             return
           }
           // No preparation, new key, or changed predecessor occurs on an exact absent retry.
@@ -336,17 +398,33 @@ export class NextTurnDispatcher {
           exact = await this.gateway.receipt(job.scope, entry)
           if (exact.status === 'absent') throw new NextTurnQueueError('AUTHORITY', '重试后仍未取得接纳回执；未继续发送')
         }
-        if (entry.phase !== 'accepted') await update({ kind: 'accepted', id: entry.id, receipt: exact.receipt, at: Date.now() })
+        if (entry.phase !== 'accepted') await update({ kind: 'accepted', id: entry.id, receipt: exact.receipt,
+          ...(exact.root.startedAt === undefined ? {} : { startedAt: exact.root.startedAt }), at: Date.now() })
+        else if (exact.root.startedAt !== undefined && entry.startedAt !== exact.root.startedAt)
+          await update({ kind: 'confirmed-start', id: entry.id, startedAt: exact.root.startedAt, at: Date.now() })
         if (exact.root.status === 'running' || exact.root.status === 'waiting') { delete job.error; return }
         await update({ kind: 'terminal', id: entry.id, outcome: exact.root.status, at: Date.now() })
+        if (entry.envelope.recovery) { delete job.error; return }
       }
-      if (state.paused || this.closing) return
-      entry = state.entries.find(item => item.phase === 'pending')
+      if (this.closing) return
+      entry = state.entries.find(item => item.phase === 'pending' && item.envelope.recovery)
+      if (!entry && (state.paused || state.recoveryBarrier || recoveryId)) return
+      entry ??= state.entries.find(item => item.phase === 'pending')
       if (!entry || entry.phase !== 'pending') { delete job.error; return }
       const context = await this.gateway.context(job.scope)
       if (!context.root) throw new NextTurnQueueError('AUTHORITY', '先启动任务的首轮，再排下一轮消息')
+      const obsolete = state.entries.filter(item => item.phase === 'pending' && item.envelope.recovery && item.envelope.recovery.runId !== context.root!.runId)
+      for (const stale of obsolete) await update({ kind: 'abandon-recovery', id: stale.id, entryRevision: stale.revision, at: Date.now() })
+      if (obsolete.length) {
+        job.error = '任务已进入新一轮，旧恢复请求未执行；请在当前任务上继续'
+        if (recoveryId && obsolete.some(item => item.id === recoveryId)) return
+        entry = state.entries.find(item => item.phase === 'pending' && item.envelope.recovery)
+        if (!entry) return
+      }
+      if (entry.envelope.recovery && (context.root.runId !== entry.envelope.recovery.runId || !['failed', 'interrupted'].includes(context.root.status)))
+        throw new NextTurnQueueError('AUTHORITY', '待恢复的任务已变化，请同步当前任务后重试')
       if (context.root.status === 'running' || context.root.status === 'waiting') { delete job.error; return }
-      if (context.root.status !== 'succeeded' && (!state.resumeAnchor || canonicalAdmissionJson(state.resumeAnchor) !== canonicalAdmissionJson(context.predecessor))) {
+      if (!entry.envelope.recovery && context.root.status !== 'succeeded' && (!state.resumeAnchor || canonicalAdmissionJson(state.resumeAnchor) !== canonicalAdmissionJson(context.predecessor))) {
         const result = await this.service.mutate(job.capability, state.revision, randomUUID(), { kind: 'pause', reason: '上一轮未成功，确认后恢复队列' })
         this.observe(job, result.state)
         this.publish(result.state.scope, result.state.revision); return
@@ -361,7 +439,8 @@ export class NextTurnDispatcher {
         await this.gateway.submit(job.scope, assertFrozenQueueRequest(job.scope, frozen), this.controller.signal)
         const exact = await this.gateway.receipt(job.scope, claimed)
         if (exact.status !== 'accepted') throw new NextTurnQueueError('AUTHORITY', '接纳回执尚未确认；核对后可重试')
-        await update({ kind: 'accepted', id: entry.id, receipt: exact.receipt, at: Date.now() })
+        await update({ kind: 'accepted', id: entry.id, receipt: exact.receipt,
+          ...(exact.root.startedAt === undefined ? {} : { startedAt: exact.root.startedAt }), at: Date.now() })
         if (exact.root.status !== 'running' && exact.root.status !== 'waiting') await update({ kind: 'terminal', id: entry.id, outcome: exact.root.status, at: Date.now() })
         delete job.error
       } catch (error) {

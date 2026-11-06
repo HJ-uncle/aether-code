@@ -154,6 +154,12 @@ onWorkspaceConnectionChanged(() => {
   if (remote && nextKey !== 'remote:unavailable') void restoreLastFolder()
 })
 
+/** 筛选只补充子项缓存，不持久化临时展开状态。 */
+export async function loadDirectoryChildren(dir: string): Promise<FsEntry[] | null> {
+  if (state.children.has(dir)) return state.children.get(dir) ?? []
+  return loadChildren(dir)
+}
+
 /** 加载某目录的子项并写入缓存。恢复旧展开状态时，过期目录的失败应被静默忽略。 */
 async function loadChildren(
   dir: string,

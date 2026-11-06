@@ -46,11 +46,11 @@ export function rootFileTreeEntry(root: string): FsEntry {
   return { name: paths.basename(root), path: root, isDirectory: true, size: 0, mtimeMs: 0 }
 }
 
-/** Both modes flatten only loaded directories. Filtering never authorizes a
- * recursive filesystem scan; an explicit search owns that separate operation. */
-export function buildFileTreeRows({ snapshot, filter = '', filesExclude = {}, sortMode = 'default', compactFolders = true, cutPaths = [], decorations = { byPath: new Map(), dirtyDirs: new Set() } }: {
+/** 筛选只负责展开临时视图；目录读取由资源管理器按需调度，不改变真实展开状态。 */
+export function buildFileTreeRows({ snapshot, filter = '', filterExpanded, filesExclude = {}, sortMode = 'default', compactFolders = true, cutPaths = [], decorations = { byPath: new Map(), dirtyDirs: new Set() } }: {
   snapshot: FileTreeSnapshot
   filter?: string
+  filterExpanded?: ReadonlySet<string>
   filesExclude?: Record<string, boolean>
   sortMode?: 'default' | 'name'
   compactFolders?: boolean
@@ -60,7 +60,7 @@ export function buildFileTreeRows({ snapshot, filter = '', filesExclude = {}, so
   const { root, showRoot, expanded, loading, selection, activeFilePath } = snapshot
   // A Windows binding and its directory entries can spell the same path with
   // different separators/case. Compare identities without changing IPC paths.
-  const expandedKeys = new Set([...expanded].map(fileTreePathKey))
+  const expandedKeys = new Set([...(filterExpanded ?? expanded)].map(fileTreePathKey))
   const loadingKeys = new Set([...loading].map(fileTreePathKey))
   const selectionKeys = new Set([...selection].map(fileTreePathKey))
   const activeKey = activeFilePath ? fileTreePathKey(activeFilePath) : null
@@ -71,7 +71,9 @@ export function buildFileTreeRows({ snapshot, filter = '', filesExclude = {}, so
   if (root && showRoot) {
     // Filtering is a temporary view over the loaded snapshot. Do not collapse
     // the root (or write expansion state) merely because its own name misses.
-    const rootExpanded = Boolean(nameFilter) || expandedKeys.has(fileTreePathKey(root))
+    const rootExpanded = filterExpanded === undefined
+      ? Boolean(nameFilter) || expandedKeys.has(fileTreePathKey(root))
+      : expandedKeys.has(fileTreePathKey(root))
     output.push({ entry: rootFileTreeEntry(root), depth: 0, isExpanded: rootExpanded,
       isLoading: loadingKeys.has(fileTreePathKey(root)), isActive: false, isSelected: selectionKeys.has(fileTreePathKey(root)),
       gitDirty: !rootExpanded && decorations.dirtyDirs.has(root.replace(/\\/g, '/')) })
@@ -109,17 +111,30 @@ export function buildFileTreeRows({ snapshot, filter = '', filesExclude = {}, so
       // Keep walking only through this directory's cached children. A match at
       // any depth retains this directory as an expanded ancestor; misses are
       // removed below, so unrelated loaded branches stay hidden.
-      const childMatch = nameFilter && entry.isDirectory ? walk(entry.path, depth + 1, entryHidden) : false
-      if (!selfMatch && !childMatch) continue
+      const childLoading = loadingKeys.has(fileTreePathKey(entry.path))
+      const childMatch = nameFilter && entry.isDirectory &&
+        (filterExpanded === undefined || expandedKeys.has(fileTreePathKey(entry.path)) || childLoading || !childrenByKey.has(fileTreePathKey(entry.path)))
+        ? walk(entry.path, depth + 1, entryHidden) : false
+      const childPending = Boolean(nameFilter && entry.isDirectory && !childrenByKey.has(fileTreePathKey(entry.path))) ||
+        (nameFilter && childLoading)
+      if (!selfMatch && !childMatch) {
+        if (filterExpanded === undefined || !entry.isDirectory || !nameFilter || (childrenByKey.has(fileTreePathKey(entry.path)) && !childLoading)) continue
+      }
+      // A directory's own name is not enough to keep an empty or fully
+      // non-matching branch in the filtered view. An unread directory remains
+      // visible until its pending scan can establish whether it has a match.
+      if (nameFilter && entry.isDirectory && !childMatch && !childPending) continue
       hasMatch = true
       const descendants = output.splice(childrenStart)
       const compact = nameFilter || !compactFolders ? null : entry.isDirectory ? compactChain(entry, entryHidden) : null
       const shown = compact?.entry ?? entry
       const shownKey = fileTreePathKey(shown.path)
-      const isExpanded = shown.isDirectory && (Boolean(nameFilter) || expandedKeys.has(shownKey))
+      const isExpanded = shown.isDirectory && (filterExpanded === undefined
+        ? Boolean(nameFilter) || expandedKeys.has(shownKey)
+        : expandedKeys.has(shownKey))
       const key = shown.path.replace(/\\/g, '/')
       const change = decorations.byPath.get(key)
-      output.push({ entry: shown, depth, isExpanded, isLoading: loadingKeys.has(shownKey),
+      output.push({ entry: shown, depth, isExpanded, isLoading: loadingKeys.has(shownKey) || (filterExpanded !== undefined && Boolean(nameFilter) && !childrenByKey.has(shownKey)),
         isActive: !shown.isDirectory && shownKey === activeKey,
         isSelected: selectionKeys.has(shownKey), compactChain: compact?.chain,
         isCut: cutPaths.some(path => paths.contains(path, shown.path)), isIgnored: shown.gitignored === true,

@@ -6,6 +6,7 @@ interface CacheWithDrafts {
   detailTop: Map<string, number>
   views: Map<string, 'rounds' | 'transcript'>
   transcripts: Map<string, unknown>
+  attachments?: Map<string, Set<string>>
 }
 
 /** User input is not disposable history: only empty draft scopes may be evicted. */
@@ -18,6 +19,6 @@ export function trimWorkSubagentSessionCaches<T extends CacheWithDrafts>(memorie
     memory.views.clear()
     memory.errors.clear()
     for (const [key, draft] of memory.drafts) if (!draft) memory.drafts.delete(key)
-    if (!memory.drafts.size) memories.delete(scope)
+    if (!memory.drafts.size && ![...(memory.attachments?.values() ?? [])].some(files => files.size)) memories.delete(scope)
   }
 }

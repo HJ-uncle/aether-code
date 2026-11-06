@@ -39,14 +39,14 @@ function FinalDeliverable({ result, item, active, onOpenItem }: { result: FinalR
     catch (reason) { setActionError(reason instanceof Error ? reason.message : '下载失败，请重试') }
     finally { setDownloading(false) }
   }
-  return <article className={`work-final-deliverable${image ? ' work-final-deliverable--image' : ''}`} data-final-result-item={item.id} data-final-result-kind={item.kind}>
+  return <article className={`work-final-deliverable${image ? ' work-final-deliverable--image' : ''}`} data-final-result-item={item.id} data-final-result-kind={item.kind} data-producer-child-session={item.producerChildSessionId} data-producer-run={item.producerRunId}>
     {image ? failure ? null : src ? <button type="button" className="work-final-deliverable__image" aria-label={`放大查看 ${item.name}`}
       disabled={!active || !current} onClick={() => setExpanded(true)}>
       <img src={src} alt={item.name} decoding="async" onError={() => setFailedSource(src)} />
     </button> : <div className="work-final-deliverable__loading" role="status">正在加载图片…</div> : null}
     <div className="work-final-deliverable__info">
       <Icon name={image ? 'image' : 'file'} size={18} />
-      <div className="work-final-deliverable__name"><strong title={item.name}>{item.name}</strong><span>{formatSize(item.size)}</span></div>
+      <div className="work-final-deliverable__name"><strong title={item.name}>{item.name}</strong><span>{formatSize(item.size)}{item.producerChildSessionId ? ' · 子代理提交，已采用' : ''}</span></div>
       <button type="button" className="work-quiet-button" aria-label={`预览 ${item.name}`} disabled={!active || !current}
         onClick={() => onOpenItem ? onOpenItem(result, item) : setExpanded(true)}>预览</button>
       <button type="button" className="work-quiet-button" aria-label={`下载 ${item.name}`} disabled={!active || !current || downloading} onClick={() => void download()}>

@@ -1,6 +1,7 @@
 import type { SubagentRun, SubagentRunStatus, SubagentToolCall, SubagentToolSummary } from '@shared/subagent'
 import type { ToolActivity } from '@renderer/core/engine/useChat'
 import { mergeSubagentRun, runToolState } from '@renderer/core/engine/subagent-state'
+import { builtinAgentName } from '@shared/builtin-agents'
 
 export interface WorkSubagentGroup {
   key: string
@@ -131,7 +132,7 @@ export function workSubagentTools(sessionId: string, tools: ToolActivity[], runs
   const result = new Map<string, ToolActivity>()
   for (const tool of tools) {
     if (tool.subagentDeletion) continue
-    if (tool.name !== 'subagent' && !tool.subagent) continue
+    if (!['subagent', 'subagent_start', 'subagent_followup'].includes(tool.name) && !tool.subagent) continue
     if (tool.subagent && tool.subagent.parentSessionId !== sessionId) continue
     result.set(tool.subagent?.parentToolCallId || tool.subagentRef?.identity.parentToolCallId || tool.id, tool)
   }
@@ -243,6 +244,8 @@ export function workSubagentName(tool: ToolActivity): string {
   const run = tool.subagent
   const agentName = run?.agentName?.trim() || tool.subagentRef?.identity.agentName?.trim() || ''
   if (agentName) return agentName
+  const builtinRole = builtinAgentName(run?.continuation?.builtinRole ?? workSubagentArgs(tool.args).builtinRole)
+  if (builtinRole) return run?.description?.trim() || builtinRole
   const role = run?.continuation?.role ? workSubagentRole(JSON.stringify({ role: run.continuation.role })) : workSubagentRole(tool.args)
   const description = workSubagentArgs(tool.args).description
   return role === '子代理' ? run?.description || (typeof description === 'string' ? description.trim() : '') || '协作代理' : role
@@ -255,7 +258,12 @@ export function buildWorkSubagentContinuation(run: SubagentRun, prompt: string):
 export function workSubagentRole(args: string): string {
   try {
     const value: unknown = JSON.parse(args)
-    if (!value || typeof value !== 'object' || !('role' in value)) return '子代理'
+    if (!value || typeof value !== 'object') return '子代理'
+    if ('builtinRole' in value) {
+      const label = builtinAgentName(value.builtinRole)
+      if (label) return label
+    }
+    if (!('role' in value)) return '子代理'
     const role = value.role
     if (role === 'implementer') return '开发实现'
     if (role === 'spec-reviewer') return '需求审查'

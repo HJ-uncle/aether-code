@@ -12,6 +12,7 @@ export function WorkNextTurnQueuePanel({ queue, scopeKey }: { queue: WorkNextTur
   const [expanded, setExpanded] = useState(false), [editing, setEditing] = useState<string | null>(null), [text, setText] = useState(''), [mentions, setMentions] = useState<Mention[]>([])
   const [error, setError] = useState<string | null>(null), editor = useRef<MentionInputHandle>(null), errorRef = useRef<HTMLDivElement>(null), editTrigger = useRef<HTMLButtonElement | null>(null)
   const entries = visibleQueueEntries(queue.state), pending = entries.filter(entry => entry.phase === 'pending')
+  const paused = Boolean(queue.state?.paused || queue.state?.recoveryBarrier)
   const current = entries.find(entry => entry.id === editing)
   useEffect(() => { setEditing(null); setError(null); setExpanded(false) }, [scopeKey])
   useEffect(() => { if (current && current.phase === 'pending') { editor.current?.setDraft(current.envelope.draft.text, current.envelope.draft.mentions); editor.current?.focus() } }, [editing])
@@ -35,16 +36,17 @@ export function WorkNextTurnQueuePanel({ queue, scopeKey }: { queue: WorkNextTur
   }
   const save = () => { if (!current || current.phase !== 'pending') return
     void run(async () => { await queue.editDraft(current.id, current.revision, queuedDraft(text, mentions, current.envelope.draft.revision + 1)); closeEditor() }) }
-  if (!entries.length && !queue.error) return null
+  // Recovery feedback belongs beside its failed turn, not in a second queue card.
+  if (!entries.length && (!queue.error || queue.state?.entries.some(entry => entry.envelope.recovery))) return null
   const unknown = entries.some(entry => entry.phase === 'admission-unknown' || entry.phase === 'dispatching')
   return <section className="work-next-turn" aria-label="下一轮消息队列">
     <div className="work-next-turn__header">
       <button type="button" className="work-next-turn__summary" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
         <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={14} />
         <strong>下一轮</strong><span>{pending.length} 条待发</span>
-        <span className="work-next-turn__preview">{queue.state?.paused ? '已暂停' : entries[0]?.envelope.draft.text || '队列状态'}</span>
+        <span className="work-next-turn__preview">{paused ? '已暂停' : entries[0]?.envelope.draft.text || '队列状态'}</span>
       </button>
-      {entries.length ? <button type="button" className="btn btn--sm" disabled={queue.saving || unknown} onClick={() => void run(() => queue.mutate(queue.state?.paused ? { kind: 'resume' } : { kind: 'pause', reason: '用户暂停待发队列' }))}>{queue.state?.paused ? '恢复待发' : '暂停待发'}</button> : null}
+      {entries.length ? <button type="button" className="btn btn--sm" disabled={queue.saving || unknown} onClick={() => void run(() => queue.mutate(paused ? { kind: 'resume' } : { kind: 'pause', reason: '用户暂停待发队列' }))}>{paused ? '恢复待发' : '暂停待发'}</button> : null}
     </div>
     {(error || queue.error) ? <div ref={errorRef} tabIndex={-1} className="work-next-turn__error" role="alert">{error || queue.error}</div> : null}
     {unknown ? <div className="work-next-turn__notice"><span>正在核对接纳结果，剩余消息保留。重试会先查准确回执。</span>
@@ -55,7 +57,7 @@ export function WorkNextTurnQueuePanel({ queue, scopeKey }: { queue: WorkNextTur
           return <li key={entry.id} className="work-next-turn__item">
             <div className="work-next-turn__row"><span className="work-next-turn__number">{canEdit ? index + 1 : '•'}</span><div className="work-next-turn__body">
               <p className="work-next-turn__text" title={entry.envelope.draft.text}>{entry.envelope.draft.text || '附件任务'}</p>
-              <span className="work-next-turn__meta">{entry.phase === 'accepted' ? '已接纳，正在执行' : entry.phase === 'pending' ? queue.state?.paused ? '已保存，恢复待发后继续' : '已保存，上一轮成功后发送' : '接纳结果待核对'}{entry.envelope.attachments.length ? ` · ${entry.envelope.attachments.length} 个附件` : ''}</span>
+              <span className="work-next-turn__meta">{entry.phase === 'accepted' ? '已接纳，正在执行' : entry.phase === 'pending' ? paused ? '已保存，恢复待发后继续' : '已保存，上一轮成功后发送' : '接纳结果待核对'}{entry.envelope.attachments.length ? ` · ${entry.envelope.attachments.length} 个附件` : ''}</span>
             </div>
             {canEdit ? <div className="work-next-turn__actions">
               <IconButton icon="chevron-up" label="上移待发消息" disabled={queue.saving || index === 0} onClick={() => void run(() => queue.mutate({ kind: 'move', id: entry.id, beforeId: pending[index - 1].id }))} />

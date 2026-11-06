@@ -11,7 +11,7 @@ export interface WorkTranscriptItem {
 const callId = (row: EngineHistoryRow): string | undefined => row.role === 'assistant' && row.toolCall?.id?.trim() ? row.toolCall.id : undefined
 const resultId = (row: EngineHistoryRow): string | undefined => row.role === 'tool' && typeof row.toolCallId === 'string' && row.toolCallId.trim() ? row.toolCallId : undefined
 const turnId = (row: EngineHistoryRow): string | undefined => row.conversationId ?? row.metadata?.turnId
-const runId = (row: EngineHistoryRow): string | undefined => row.metadata?.runId ?? row.metadata?.rootRunId
+const runId = (row: EngineHistoryRow): string | undefined => row.metadata?.subagentRunId || (row.metadata?.runId ?? row.metadata?.rootRunId)
 
 export function workTranscriptHasMessage(row: EngineHistoryRow): boolean {
   return Boolean(extractText(row.content) || extractText(row.reasoningContent) || errorText(row.error) ||

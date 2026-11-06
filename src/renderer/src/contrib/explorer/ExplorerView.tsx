@@ -23,6 +23,7 @@ import { setContextKey } from '@renderer/core/platform/context-keys'
 import { setLayout } from '@renderer/core/platform/layout-state'
 import { buildFileTreeRows, FileTreeView, type FileTreeRowModel as Row } from './FileTreeView'
 import { paths } from '@renderer/core/workspace/fs-client'
+import { compileExclude, isExcluded } from '@renderer/core/workspace/exclude'
 import {
   forgetRecentFolder,
   getRecentFolders,
@@ -51,6 +52,7 @@ import {
   getClipboard,
   getSelection,
   getWorkspaceState,
+  loadDirectoryChildren,
   onWorkspaceChanged,
   openFolderAt,
   pickAndOpenFolder,
@@ -292,6 +294,70 @@ export function ExplorerView(): JSX.Element {
   const [nameFilterRaw, setNameFilterRaw] = useState('')
   const [filterOpen, setFilterOpen] = useState(false)
   const nameFilter = nameFilterRaw.trim().toLowerCase()
+  const [filterView, setFilterView] = useState<{ key: string; expanded: ReadonlySet<string>; collapsed: ReadonlySet<string> }>({ key: '', expanded: new Set(), collapsed: new Set() })
+  const filterKey = `${workspace.root ?? ''}\0${nameFilterRaw}`
+  const activeFilter = filterView.key === filterKey ? filterView : null
+  const filterKeyRef = useRef('')
+  filterKeyRef.current = filterKey
+  useEffect(() => {
+    const root = workspace.root
+    if (!nameFilter || !root || workspace.restoring) return
+    const key = filterKey
+    const query = nameFilter
+    setFilterView({ key, expanded: new Set(workspace.expanded), collapsed: new Set() })
+    const excludeRules = compileExclude(settings.filesExclude)
+    const matching = new Set<string>()
+    const directories: Array<{ path: string; hidden: boolean }> = [{ path: root, hidden: false }]
+    let next = 0
+    let cancelled = false
+    let incomplete = false
+    const load = async (): Promise<void> => {
+      while (!cancelled && next < directories.length) {
+        const directory = directories[next++]
+        const entries = await loadDirectoryChildren(directory.path)
+        if (cancelled || getWorkspaceState().root !== root) return
+        if (!entries) { incomplete = true; continue }
+        for (const entry of entries) {
+          const entryHidden = isExcluded(excludeRules, paths.relative(root, entry.path), entry.name, directory.hidden)
+          if (entryHidden || (entry.isDirectory && entry.gitignored)) continue
+          if (entry.name.toLowerCase().includes(query)) matching.add(entry.path)
+          if (entry.isDirectory) directories.push({ path: entry.path, hidden: entryHidden })
+        }
+      }
+    }
+    void Promise.all(Array.from({ length: 6 }, () => load())).then(() => {
+      if (cancelled || incomplete || getWorkspaceState().root !== root) return
+      const expanded = new Set(workspace.expanded)
+      // 递归必须在本批次目录全部读完后结算；父目录先返回不能遮掉较慢的命中分支。
+      for (const path of matching) {
+        let directory = paths.dirname(path)
+        while (paths.contains(root, directory)) {
+          expanded.add(directory)
+          if (directory === root) break
+          directory = paths.dirname(directory)
+        }
+      }
+      setFilterView({ key, expanded, collapsed: new Set() })
+    })
+    return () => { cancelled = true }
+  }, [filterKey, nameFilter, workspace.root, workspace.restoring, settings.filesExclude])
+  const openFilteredEntry = useCallback((entry: FsEntry): void => {
+    const key = filterKeyRef.current
+    if (!key.slice(key.indexOf('\0') + 1).trim() || !entry.isDirectory) return openEntry(entry)
+    setFilterView(previous => {
+      if (previous.key !== key) return previous
+      const expanded = new Set(previous.expanded)
+      const collapsed = new Set(previous.collapsed)
+      if (collapsed.has(entry.path)) {
+        collapsed.delete(entry.path)
+        expanded.add(entry.path)
+      } else {
+        collapsed.add(entry.path)
+        expanded.delete(entry.path)
+      }
+      return { key, expanded, collapsed }
+    })
+  }, [])
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [nameAction, setNameAction] = useState<NameAction | null>(null)
   const [opError, setOpError] = useState<string | null>(null)
@@ -381,9 +447,9 @@ export function ExplorerView(): JSX.Element {
   }, [git.status, workspace.root])
 
   const rows = useMemo(() => buildFileTreeRows({
-    snapshot: workspace, filter: nameFilter, filesExclude: settings.filesExclude,
+    snapshot: workspace, filter: nameFilter, filterExpanded: activeFilter?.expanded, filesExclude: settings.filesExclude,
     sortMode, cutPaths, decorations: gitIndex
-  }), [workspace, nameFilter, settings.filesExclude, sortMode, cutPaths, gitIndex])
+  }), [workspace, nameFilter, activeFilter, settings.filesExclude, sortMode, cutPaths, gitIndex])
   const treeReady = Boolean(workspace.root && workspace.children.has(workspace.root) && !workspace.restoring && !workspace.loading.size)
   const { scrollTop, viewportHeight, onScroll } = useFileTreeViewport({
     scopeKey: treeScope?.key, treeRef, memory: treeMemory, updateMemory: updateTreeMemory,
@@ -603,8 +669,8 @@ export function ExplorerView(): JSX.Element {
   /** 回车：等同于用鼠标点一下光标行 */
   const openCursor = useCallback(() => {
     const row = cursorPath ? rows.find((item) => item.entry.path === cursorPath) : null
-    if (row) openEntry(row.entry)
-  }, [cursorPath, rows])
+    if (row) void openFilteredEntry(row.entry)
+  }, [cursorPath, rows, openFilteredEntry])
 
   /**
    * 刚展开的目录：等子项加载出来后再把它的首个子项亮出来。
@@ -988,7 +1054,7 @@ export function ExplorerView(): JSX.Element {
       items.push({
         id: 'open',
         label: '打开',
-        onSelect: () => void openEntry(entry)
+        onSelect: () => void openFilteredEntry(entry)
       })
     }
 
@@ -1234,7 +1300,7 @@ export function ExplorerView(): JSX.Element {
         // 这里补上那次收缩：点哪一行就只剩哪一行。
         selectEntry(current.anchor, 'plain', visiblePaths)
         const entry = findEntry(rows, current.anchor)
-        if (entry) openEntry(entry)
+        if (entry) void openFilteredEntry(entry)
       }
       return
     }
@@ -1359,7 +1425,7 @@ export function ExplorerView(): JSX.Element {
         <button
           type="button"
           className={`explorer__btn${filterOpen || nameFilter ? ' is-on' : ''}`}
-          title="按名称筛选（在已加载的树内过滤）"
+          title="按名称筛选（按需加载目录，遵循文件排除规则）"
           onClick={() => setFilterOpen((open) => !open)}
         >
           <Icon name="search" size={16} />

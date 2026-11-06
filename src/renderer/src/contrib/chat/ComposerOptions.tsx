@@ -10,6 +10,7 @@ import { Select } from '@renderer/workbench/Select'
 import { useAppMode } from '@renderer/core/platform/app-mode'
 import type { SessionThinkingMode } from './session-thinking-store'
 import type { ComposerThinkingMode } from './session-request-config'
+import { ComposerCodegraphRow } from './ComposerCodegraphRow'
 
 /**
  * 思考档位（对齐 wuzu-client 的 Low/High/Max，外加独立「关闭」档）。
@@ -77,11 +78,12 @@ function MenuOption({
  * 两行同款 UI：图标 + 名称 + 摘要 + 右侧「值 + 弹出菜单」。
  * 弹层与菜单统一走 Popover（portal 挂 body、防裁切、防出界）。
  */
-export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingChange, owner = 'code' }: { sessionId: string; modelId: string; thinkingMode: ComposerThinkingMode; onThinkingChange: (mode: SessionThinkingMode) => void; owner?: 'code' | 'work' }): JSX.Element {
+export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingChange, owner = 'code', workspacePath }: { sessionId: string; modelId: string; thinkingMode: ComposerThinkingMode; onThinkingChange: (mode: SessionThinkingMode) => void; owner?: 'code' | 'work'; workspacePath?: string }): JSX.Element {
   const { ready } = useApp()
   const appMode = useAppMode()
   const { models } = useModels()
   const [openMenu, setOpenMenu] = useState<'memory' | 'thinking' | 'security' | null>(null)
+  const [optionsOpen, setOptionsOpen] = useState(false)
   const { mode: storedMode, loaded, loading, error, refresh } = useSecurityMode(sessionId)
   const {
     sessionOverride: memoryOverride,
@@ -180,12 +182,13 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
     />
     <Popover
       className="composer-options"
+      panelClassName="composer-options-panel"
       label="对话偏好"
       placement="up"
       align="start"
       width={360}
       flush
-      onOpenChange={(open) => { if (!open) setOpenMenu(null) }}
+      onOpenChange={(open) => { setOptionsOpen(open); if (!open) setOpenMenu(null) }}
       trigger={({ open: isOpen }) => (
         <button
           type="button"
@@ -199,6 +202,7 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
       )}
     >
       <div className="composer-options__popup">
+        {owner === 'work' ? <ComposerCodegraphRow sessionId={sessionId} path={workspacePath} active={active && optionsOpen} /> : null}
         <div className="composer-options__row composer-options__model-summary">
           <Icon name="brain" size={16} />
           <div className="composer-options__text">

@@ -51,6 +51,8 @@ export interface WorkTask {
   origin?: { kind: 'automation'; jobId: string; runId: string }
 }
 export interface WorkArtifact {
+  producerChildSessionId?: string
+  producerRunId?: string
   id: string
   path: string
   name: string
@@ -409,7 +411,10 @@ export function workArtifacts(messages: ChatMessage[], commandJobs: CommandJobSn
         name: normalized.split('/').at(-1) || change.path,
         content: change.newContent,
         status,
-        createdAt: change.createdAt
+        createdAt: change.createdAt,
+        ...(change.producerChildSessionId && change.producerRunId ? {
+          producerChildSessionId: change.producerChildSessionId, producerRunId: change.producerRunId
+        } : {})
     }
     artifacts.push(artifact)
     const writes = liveWrites.get(key) ?? []

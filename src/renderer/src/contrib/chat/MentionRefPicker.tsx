@@ -63,6 +63,6 @@ export function MentionRefPicker({ root, query, showSearch = false, onSelect, on
         <FileRefPalette root={root} keyword={keyword} onSelect={onSelect} onClose={onClose} /> :
         <div className="mention-ref-picker__empty"><span>选择工作区后可引用文件与目录</span><button type="button" data-mention-list-control className="mention-ref-picker__retry" onClick={() => changeTab('agents')}>选择协作 Agent</button></div>}
     </div>
-    <div className="mention-ref-picker__footer">{kind === 'agents' ? '作为子代理协作 · 保留上下文续跑' : '引用文件或整个目录'}<span>↑↓ 选择 · Enter / Tab 确认 · Alt + ←→ 切换 · Esc 关闭</span></div>
+    <div className="mention-ref-picker__footer">{kind === 'agents' ? '内置角色可多次添加 · 已有代理可在详情中继续' : '引用文件或整个目录'}<span>↑↓ 选择 · Enter / Tab 确认 · Alt + ←→ 切换 · Esc 关闭</span></div>
   </div>
 }

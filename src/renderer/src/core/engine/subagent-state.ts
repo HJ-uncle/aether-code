@@ -2,6 +2,7 @@ import { commandJobDisplayLabel } from './command-job-state'
 import { commandFailureLabel } from './tool-feedback'
 import { toolDisplayName } from './tool-labels'
 import { utf8BytePreview } from './utf8-preview'
+import { normalizeRootRunCompaction } from '@shared/root-run'
 import type {
   SubagentError,
   SubagentCoverage,
@@ -77,6 +78,19 @@ function finite(value: unknown): number | undefined {
 }
 function optionalText(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined
+}
+function normalizeContinuation(raw: unknown): SubagentRun['continuation'] {
+  const value = record(raw)
+  if (typeof value?.readOnly !== 'boolean') return undefined
+  const builtinRole = value.builtinRole === 'research' || value.builtinRole === 'executor' || value.builtinRole === 'general' ? value.builtinRole : undefined
+  return { readOnly: value.readOnly, role: preview(optionalText(value.role), 1024),
+    ...(builtinRole ? { builtinRole } : {}),
+    ...(builtinRole && Number.isSafeInteger(value.builtinRoleVersion) && Number(value.builtinRoleVersion) > 0 ? { builtinRoleVersion: Number(value.builtinRoleVersion) } : {}) }
+}
+function normalizeCompaction(raw: unknown): SubagentRun['compaction'] {
+  const state = normalizeRootRunCompaction(raw)
+  if (!state) return undefined
+  return state.error === undefined ? state : { ...state, error: utf8BytePreview(state.error, 1024) }
 }
 export function errorText(value: unknown): string | undefined {
   return optionalText(value) || optionalText(record(value)?.message)
@@ -166,13 +180,7 @@ function normalizeLegacySubagentRun(raw: unknown): SubagentRunV1 | undefined {
     resumeFromRunId: preview(optionalText(r.resumeFromRunId), 4096),
     agentId: preview(optionalText(r.agentId), 4096),
     agentName: optionalText(r.agentName),
-    continuation:
-      typeof record(r.continuation)?.readOnly === 'boolean'
-        ? {
-            role: optionalText(record(r.continuation)?.role),
-            readOnly: record(r.continuation)!.readOnly as boolean
-          }
-        : undefined,
+    continuation: normalizeContinuation(r.continuation),
     task: text('task'),
     description: text('description'),
     modelId: text('modelId'),
@@ -184,6 +192,7 @@ function normalizeLegacySubagentRun(raw: unknown): SubagentRunV1 | undefined {
     finishedAt: finite(r.finishedAt),
     durationMs: finite(r.durationMs),
     error: normalizeError(r.error),
+    compaction: normalizeCompaction(r.compaction),
     stopReason: optionalText(r.stopReason),
     resultSummary: optionalText(r.resultSummary),
     partialOutput: optionalText(r.partialOutput),
@@ -453,9 +462,8 @@ export function boundSubagentView(
         }
       : undefined,
     stopReason: preview(view.stopReason, 1024),
-    continuation: view.continuation
-      ? { readOnly: view.continuation.readOnly, role: preview(view.continuation.role, 1024) }
-      : undefined
+    compaction: normalizeCompaction(view.compaction),
+    continuation: normalizeContinuation(view.continuation)
   }
   next.residentBytes = subagentResidentBytes(next)
   next.residentBytes = subagentResidentBytes(next)
@@ -631,7 +639,8 @@ export function normalizeSubagentDeltaEvent(raw: unknown): SubagentDeltaEvent | 
       'finishedAt',
       'durationMs'
     ].some((key) => patch[key] !== undefined && !integer(patch[key])) ||
-    (patch.usage !== undefined && !validUsage(patch.usage))
+    (patch.usage !== undefined && !validUsage(patch.usage)) ||
+    (patch.compaction !== undefined && !normalizeCompaction(patch.compaction))
   )
     return undefined
   if (
@@ -664,7 +673,7 @@ export function normalizeSubagentDeltaEvent(raw: unknown): SubagentDeltaEvent | 
     baseSeq: r.baseSeq,
     identity: identity as unknown as SubagentIdentity,
     header: header as unknown as SubagentDeltaEvent['header'],
-    headerPatch: patch,
+    headerPatch: patch.compaction === undefined ? patch : { ...patch, compaction: normalizeCompaction(patch.compaction) },
     toolUpsert,
     coverage
   }
@@ -984,6 +993,7 @@ function sameScalar(a: SubagentRunView, b: SubagentRunView): boolean {
       'resumeFromRunId',
       'transcriptRef',
       'continuation',
+      'compaction',
       'error',
       'stopReason',
       'resultSummary',
@@ -1168,9 +1178,15 @@ export function mergeSubagentRun(
 
 export function runToolState(run: SubagentRun): ToolActivity['state'] {
   if (isSubagentActive(run.status)) return 'running'
+  if (isSubagentNeedsUser(run)) return 'waiting'
   if (run.status === 'succeeded') return 'done'
   if (run.status === 'cancelled') return 'cancelled'
   return 'error'
+}
+
+/** User clarification is a completed invocation awaiting a new answer, never permission approval. */
+export function isSubagentNeedsUser(run: SubagentRun | undefined): boolean {
+  return run?.status === 'blocked' && (run.stopReason === 'needs_user' || run.error?.code === 'NEEDS_USER')
 }
 
 export function toolStatusLabel(tool: ToolActivity): string {
@@ -1178,7 +1194,7 @@ export function toolStatusLabel(tool: ToolActivity): string {
   const commandFailure = commandFailureLabel(tool)
   if (commandFailure) return commandFailure
   if (tool.commandJob) return commandJobDisplayLabel(tool.commandJob)
-  if (tool.subagent) return STATUS_LABELS[tool.subagent.status]
+  if (tool.subagent) return isSubagentNeedsUser(tool.subagent) ? '待回答' : STATUS_LABELS[tool.subagent.status]
   if (tool.state === 'unknown') return '状态未知'
   if (tool.state === 'waiting') return '等待应答'
   if (tool.state === 'interrupted') return '已中断'

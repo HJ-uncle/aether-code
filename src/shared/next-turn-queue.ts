@@ -36,6 +36,8 @@ export interface QueueAttachmentReceipt {
   sha256: string
 }
 export interface NextTurnQueueEnvelope {
+  /** Main-owned continuation identity; retained even after the linked run finishes. */
+  recovery?: { runId: string }
   /** Code's explicit options survive restart; Work retains its task-owned configuration. */
   code?: import('./code-next-turn-api').CodeQueueOptions
   /** Main-owned enqueue identity; no provider or credential fields are stored. */
@@ -45,7 +47,7 @@ export interface NextTurnQueueEnvelope {
   workspace: { kind: 'local-workspace' | 'local-scratch' | 'remote-session'; identity: string }
   agent: {
     primaryAgentId: string | null
-    collaborators: { agentId?: string; resumeRunId?: string }[]
+    collaborators: import('./subagent').AgentCollaborator[]
   }
   resources: {
     skills: QueueResourceSelection
@@ -85,6 +87,8 @@ export type NextTurnQueueEntry =
       phase: 'accepted' | 'terminal'
       frozen: FrozenQueueSubmission
       receipt: { runId: string; turnId: string; userMessageId: string; assistantMessageId: string }
+      /** Exact engine receipt evidence, independent of admission and final outcome. */
+      startedAt?: number
       outcome?: 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
     })
 
@@ -95,6 +99,8 @@ export interface NextTurnQueueState {
   paused: boolean
   pauseReason?: string
   resumeAnchor?: FrozenQueueSubmission['anchor']
+  /** A task restart does not authorize draining unrelated pending messages. */
+  recoveryBarrier?: string
   entries: NextTurnQueueEntry[]
   removed: { id: string; entryRevision: number; removedAt: number }[]
 }
@@ -110,11 +116,14 @@ export type NextTurnQueueUserMutation =
 export type NextTurnQueueMutation =
   NextTurnQueueUserMutation | NextTurnQueueOwnerMutation
 export type NextTurnQueueOwnerMutation =
+  | { kind: 'enqueue-recovery'; id: string; envelope: NextTurnQueueEnvelope; at: number }
+  | { kind: 'abandon-recovery'; id: string; entryRevision: number; at: number }
   | { kind: 'confirm-resume'; anchor: FrozenQueueSubmission['anchor'] }
   | { kind: 'recover-interrupted-submissions'; at: number }
   | { kind: 'claim'; id: string; entryRevision: number; frozen: FrozenQueueSubmission; at: number }
   | { kind: 'admission-unknown'; id: string; reason: string; at: number }
-  | { kind: 'accepted'; id: string; receipt: { runId: string; turnId: string; userMessageId: string; assistantMessageId: string }; at: number }
+  | { kind: 'accepted'; id: string; receipt: { runId: string; turnId: string; userMessageId: string; assistantMessageId: string }; startedAt?: number; at: number }
+  | { kind: 'confirmed-start'; id: string; startedAt: number; at: number }
   | { kind: 'terminal'; id: string; outcome: 'succeeded' | 'failed' | 'cancelled' | 'interrupted'; at: number }
 
 export interface NextTurnQueueLimits {

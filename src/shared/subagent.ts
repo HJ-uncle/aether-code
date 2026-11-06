@@ -1,3 +1,5 @@
+import type { RootRunCompaction } from './root-run'
+
 /** Versioned snapshots shared with the engine; IDs describe different ownership boundaries. */
 export type SubagentRunStatus =
   | 'queued'
@@ -8,6 +10,8 @@ export type SubagentRunStatus =
   | 'cancelled'
   | 'blocked'
   | 'interrupted'
+
+export type BuiltinAgentRole = 'research' | 'executor' | 'general'
 
 export interface SubagentError {
   code: string
@@ -52,7 +56,7 @@ export interface SubagentRunV1 {
   agentId?: string
   agentName?: string
   /** Display-only capability metadata; enforcement remains in the engine. */
-  continuation?: { role?: string; readOnly: boolean }
+  continuation?: { role?: string; readOnly: boolean; builtinRole?: BuiltinAgentRole; builtinRoleVersion?: number }
   task: string
   description: string
   modelId: string
@@ -64,6 +68,7 @@ export interface SubagentRunV1 {
   finishedAt?: number
   durationMs?: number
   error?: SubagentError
+  compaction?: RootRunCompaction
   stopReason?: string
   resultSummary?: string
   partialOutput?: string
@@ -77,6 +82,10 @@ export interface SubagentRunV1 {
 export interface AgentCollaborator {
   agentId?: string
   resumeRunId?: string
+  builtinRole?: BuiltinAgentRole
+  instanceKey?: string
+  task?: string
+  description?: string
 }
 
 export interface SubagentEvent {

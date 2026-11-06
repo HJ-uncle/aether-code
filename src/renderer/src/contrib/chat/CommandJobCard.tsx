@@ -14,7 +14,7 @@ import { toast } from '@renderer/core/toast'
 import { WorkToolOutcome } from '../work/WorkToolOutcome'
 import { workToolFeedback } from '../work/work-tool-feedback'
 
-export function CommandJobCard({ job: initial, sessionId, surfaceMode = 'code', active: surfaceActive = true, preserveHistory = false, presentation = 'card' }: { job: CommandJobSnapshot; sessionId: string; surfaceMode?: AppMode; active?: boolean; preserveHistory?: boolean; presentation?: 'card' | 'service' }): JSX.Element {
+export function CommandJobCard({ job: initial, sessionId, surfaceMode = 'code', active: surfaceActive = true, preserveHistory = false, presentation = 'card', readOnly = false }: { job: CommandJobSnapshot; sessionId: string; surfaceMode?: AppMode; active?: boolean; preserveHistory?: boolean; presentation?: 'card' | 'service'; readOnly?: boolean }): JSX.Element {
   const { engine, ready } = useApp()
   const mode = useAppMode()
   const visible = useWorkbenchVisible()
@@ -108,7 +108,7 @@ export function CommandJobCard({ job: initial, sessionId, surfaceMode = 'code', 
     return () => { alive = false; if (timer) clearTimeout(timer) }
   }, [dismissed, belongs, initial.jobId, sessionId, ready, visible, mode, surfaceMode, surfaceActive])
   const stop = async (): Promise<void> => {
-    if (!ready || sourceEpoch !== getEngineSource() || !belongs || stopping || !active) return
+    if (readOnly || !ready || sourceEpoch !== getEngineSource() || !belongs || stopping || !active) return
     restoreFocusOnExit.current = Boolean(cardRef.current?.contains(document.activeElement))
     const serviceFocusTarget = servicePresentation ? cardRef.current?.closest('.work-service-tray__panel')?.querySelector<HTMLElement>('.work-service-tray__close') : null
     setStopping(true); setCancelError('')
@@ -123,14 +123,14 @@ export function CommandJobCard({ job: initial, sessionId, surfaceMode = 'code', 
     }
   }
   const restart = async (): Promise<void> => {
-    if (!ready || sourceEpoch !== getEngineSource() || !belongs || active || historyAction) return
+    if (readOnly || !ready || sourceEpoch !== getEngineSource() || !belongs || active || historyAction) return
     setHistoryAction('restart'); setActionError('')
     try { await restartCommandJob(sessionId, job.jobId) }
     catch (error) { if (sourceEpoch === getEngineSource()) setActionError(`重启失败：${error instanceof Error ? error.message : String(error)}`) }
     finally { if (sourceEpoch === getEngineSource()) setHistoryAction(null) }
   }
   const remove = async (): Promise<void> => {
-    if (!ready || sourceEpoch !== getEngineSource() || !belongs || active || historyAction) return
+    if (readOnly || !ready || sourceEpoch !== getEngineSource() || !belongs || active || historyAction) return
     if (!window.confirm('删除这条服务历史及其日志？此操作无法撤销。')) return
     setHistoryAction('delete'); setActionError('')
     try { await deleteCommandJob(sessionId, job.jobId); setDeleted(true) }
@@ -155,8 +155,8 @@ export function CommandJobCard({ job: initial, sessionId, surfaceMode = 'code', 
             <strong>{name}</strong>
             <span className="work-service-card__status" role="status" aria-label="命令状态">{commandJobDisplayLabel(job)}</span>
           </button>
-          {active && belongs ? <button type="button" className="work-service-card__action" aria-label="停止命令" title="停止命令" disabled={!ready || stopping || job.status === 'cancelling'} onClick={() => void stop()}><Icon name="stop" size={12} /></button> : null}
-          {!active && belongs ? <>
+          {active && belongs && !readOnly ? <button type="button" className="work-service-card__action" aria-label="停止命令" title="停止命令" disabled={!ready || stopping || job.status === 'cancelling'} onClick={() => void stop()}><Icon name="stop" size={12} /></button> : null}
+          {!active && belongs && !readOnly ? <>
             <button type="button" className="work-service-card__action" aria-label={historyAction === 'restart' ? '正在重启服务' : '重启服务'} title="按原命令重新启动" aria-busy={historyAction === 'restart'} disabled={!ready || historyAction !== null} onClick={() => void restart()}><Icon name="restart" size={13} /></button>
             <button type="button" className="work-service-card__action work-service-card__action--danger" aria-label={historyAction === 'delete' ? '正在删除服务历史' : '删除服务历史'} title="删除历史及日志" aria-busy={historyAction === 'delete'} disabled={!ready || historyAction !== null} onClick={() => void remove()}><Icon name="trash" size={13} /></button>
           </> : null}
@@ -189,7 +189,7 @@ export function CommandJobCard({ job: initial, sessionId, surfaceMode = 'code', 
           {feedback?.label ?? commandJobDisplayLabel(job)}
         </span>
       </button>
-      {active && belongs ? <button className="subagent-card__stop" disabled={!ready || stopping || job.status === 'cancelling'} title="停止命令" onClick={() => { void stop() }}>{stopping || job.status === 'cancelling' ? '正在停止…' : '停止命令'}</button> : null}
+      {active && belongs && !readOnly ? <button className="subagent-card__stop" disabled={!ready || stopping || job.status === 'cancelling'} title="停止命令" onClick={() => { void stop() }}>{stopping || job.status === 'cancelling' ? '正在停止…' : '停止命令'}</button> : null}
     </div>
     <div className={`command-job-card__command${commandIsLong ? ' command-job-card__command--long' : ''}`}>
       {commandIsLong ? (

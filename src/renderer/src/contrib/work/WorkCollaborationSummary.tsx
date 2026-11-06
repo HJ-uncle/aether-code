@@ -10,11 +10,12 @@ import './work-collaboration-summary.css'
 
 /** Only consecutive, confirmed successes arrive here; attention states stay
  * visible in the timeline. Closed groups don't mount the run subscribers. */
-export function WorkCollaborationSummary({ tools, fileContext, revealTool, active }: {
+export function WorkCollaborationSummary({ tools, fileContext, revealTool, active, readOnly = false }: {
   tools: ToolActivity[]
   fileContext: ChatFileContext
   revealTool: { toolId: string; revision: number } | null
   active: boolean
+  readOnly?: boolean
 }): JSX.Element {
   const [expanded, setExpanded] = useCollapseMemory(`work-collaboration:${getEngineSource()}:${fileContext.sessionId}:${tools[0].id}`)
   const id = `work-collaboration-${useId().replace(/:/g, '')}`
@@ -29,7 +30,7 @@ export function WorkCollaborationSummary({ tools, fileContext, revealTool, activ
       <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={12} />
     </button>
     <MotionPresence id={id} className="work-collaboration-summary__records" show={Boolean(expanded)}>
-      <WorkInlineActivity tools={tools} fileContext={fileContext} revealTool={revealTool} expanded active={active && Boolean(expanded)} />
+      <WorkInlineActivity tools={tools} fileContext={fileContext} revealTool={revealTool} expanded active={active && Boolean(expanded)} readOnly={readOnly} />
     </MotionPresence>
   </section>
 }

@@ -376,7 +376,7 @@ export function selectHit(root: string, hit: SearchHit): void {
   const filePath = paths.join(root, hit.path)
   // 列号从 1 起（Monaco 列号语义）
   void openFile(filePath, hit.line, hit.column ?? (match ? match.index + 1 : undefined), hit.length ?? match?.length)
-  setLayout({ activeEditorView: documentKey(filePath) })
+    .then(() => setLayout({ activeEditorView: documentKey(filePath) }))
 }
 
 // ── 替换预览与执行 ──

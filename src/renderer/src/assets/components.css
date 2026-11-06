@@ -3456,6 +3456,7 @@
   font-size: 11px;
   color: var(--fg-faint);
 }
+.subagent-card__question { margin: 8px 12px; color: var(--fg); font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* 收起态统计：「7 次调用 · 35k · 22s」，固定在右侧 */
 .subagent-card__stats {
@@ -8149,6 +8150,12 @@ select.field__input {
   padding: 6px;
 }
 
+/* Keep text fully opaque while the preference sheet slides into place. */
+:root .composer-options-panel[data-motion-state] {
+  opacity: 1;
+  transition-property: translate;
+}
+
 .composer-options__row {
   display: flex;
   align-items: center;
@@ -8213,6 +8220,17 @@ select.field__input {
 .composer-options__dd-btn:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+.composer-options__index-action {
+  flex: 0 0 auto;
+  min-width: 70px;
+  justify-content: center;
+}
+
+.composer-options__index-action:disabled {
+  opacity: 1;
+  color: var(--fg-muted);
 }
 
 .composer-options__dd-caret {

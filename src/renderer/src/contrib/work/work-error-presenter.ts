@@ -54,7 +54,7 @@ function knownReason(raw: string, state: Record<string, unknown> | undefined): s
   // result that quotes an old error code become a new error card.
   const structured = `${textField(state?.errorCode) ?? ''} ${textField(state?.stopReason) ?? ''}`.trim()
   const haystack = (state ? structured : raw).toLowerCase()
-  if (haystack.includes('engine_restarted') || haystack.includes('engine restarted')) return '引擎已重启，任务执行未自动恢复。之前的副作用状态无法安全接管，请重新发起任务。'
+  if (haystack.includes('engine_restarted') || haystack.includes('engine restarted')) return '引擎已重启，这次任务未能继续。'
   if (haystack.includes('empty_output') || haystack.includes('no final answer')) return '模型没有返回最终回答。请重试；若持续发生，请检查模型服务配置。'
   if (haystack.includes('context_limit') || haystack.includes('context limit')) return '任务超过了模型上下文容量。请缩小范围或从当前结果继续。'
   if (haystack.includes('output_limit') || haystack.includes('output limit')) return '模型本轮输出达到上限，已保留现有内容。可调整思考或输出设置后重试。'

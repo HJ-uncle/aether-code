@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '@renderer/core/app-context'
+import { workTaskTitle } from './work-task-title'
 import { useChat, type ChatAttachment, type ChatMessage, type SendOptions } from '@renderer/core/engine/useChat'
 import type { ArchivePageAction } from '@renderer/core/engine/archive-pages'
 import { useModels } from '@renderer/core/engine/model-store'
@@ -121,6 +122,7 @@ export function useWorkController() {
   const selectedViewRef = useRef(selectedView)
   selectedViewRef.current = selectedView
   const nextTurnQueue = useWorkNextTurnQueue(activeId, epoch, engineReady)
+  const restartBlockingRef = useRef(false)
   const [nextModel, setNextModel] = useState<{ source: string; taskId: string; modelId: string } | null>(null)
   const [selectedModel, setSelectedModel] = useState<{ source: string; id: string; selection: SessionModelSelection | null; defaultSelection: WorkDefaultModelSelection | null } | null>(null)
   const storedModelSelection = useMemo(() => activeId ? loadSessionModelSelection(activeId, source) : null, [activeId, source])
@@ -320,7 +322,7 @@ export function useWorkController() {
   const enqueueNextTurn = async (text: string, mentions: Mention[], draftRevision: number): Promise<void> => {
     assertEngineSource(epoch)
     const task = getWorkState(source).tasks.find(item => item.id === activeId)
-    if (!task || preparing || uploadCount > 0 || !isHistoryReady(task.id)) throw new Error('任务或附件尚未就绪，草稿已保留')
+    if (!task || preparing || restartBlockingRef.current || uploadCount > 0 || !isHistoryReady(task.id)) throw new Error('任务或附件尚未就绪，草稿已保留')
     const originalDraft = getWorkDraft(source, task.id), options = optionsFor(task), sentAttachments = [...task.attachments]
     const queuedModel = nextModel?.source === source && nextModel.taskId === task.id ? nextModel.modelId : undefined
     const resources = (ids: string[] | undefined): WorkQueueDraft['resources']['skills'] => ids?.length ? { kind: 'override', ids: [...ids] } : { kind: 'inherit' }
@@ -348,7 +350,7 @@ export function useWorkController() {
       // authoritative terminal snapshot or a later task has been selected.
       // The hook's exact current-session gate owns admission; old IPC promises
       // must not turn into a cross-task or cross-turn composer lock.
-      if (getWorkState(source).activeTaskId !== task.id || hasSessionWork(task.id)) return
+      if (getWorkState(source).activeTaskId !== task.id || hasSessionWork(task.id) || restartBlockingRef.current) return
       setError(null)
       // Authenticated Work sessions start on a private scratch root until an
       // explicitly selected project is bound. Do that before the first turn so
@@ -415,7 +417,7 @@ export function useWorkController() {
               ...item,
               title:
                 item.title === '新任务'
-                  ? text.trim().replace(/\s+/g, ' ').slice(0, 52) || item.title
+                  ? workTaskTitle(text, mentions)
                   : item.title,
               sources: combined.filter(
                 (file, index) =>
@@ -477,6 +479,32 @@ export function useWorkController() {
     ? activeTask.status !== 'draft' || activeTask.attachments.length || preparing
     : state.homeAttachments.length)
   const streaming = Boolean((restored || previewReady) && chat.streaming)
+  const recoveryEntries = nextTurnQueue.state?.scope.taskId === activeId
+    ? nextTurnQueue.state.entries.filter(entry => entry.envelope.recovery) : []
+  const restartPending = nextTurnQueue.saving || recoveryEntries.some(entry => entry.phase !== 'terminal' &&
+    (entry.phase !== 'accepted' || !messages.some(message => message.run?.runId === entry.receipt.runId)))
+  restartBlockingRef.current = restartPending
+  const recoveryReceipt = recoveryEntries.findLast(entry => entry.phase === 'accepted' || entry.phase === 'terminal')
+  const recoveryRunId = recoveryReceipt && (recoveryReceipt.phase === 'accepted' || recoveryReceipt.phase === 'terminal')
+    ? recoveryReceipt.receipt.runId : undefined
+  const hasRecoveryRun = Boolean(recoveryRunId && messages.some(message => message.run?.runId === recoveryRunId))
+  useEffect(() => {
+    if (!activeId || !engineReady || !restored || !recoveryRunId || hasRecoveryRun || streaming) return
+    let alive = true, timer: ReturnType<typeof setTimeout> | undefined
+    let attempts = 0
+    const attach = async (): Promise<void> => {
+      try {
+        await resumeStream(activeId)
+      } catch (cause) {
+        if (alive && epoch === getEngineSource()) setError(messageOf(cause))
+      }
+      // The queue owns admission; this read only follows its exact new run.
+      // Allow a short projection lag without issuing another execution request.
+      if (alive && ++attempts < 3) timer = setTimeout(() => void attach(), 1500)
+    }
+    void attach()
+    return () => { alive = false; if (timer) clearTimeout(timer) }
+  }, [activeId, epoch, engineReady, restored, recoveryRunId, hasRecoveryRun, streaming, resumeStream])
   useEffect(() => {
     // A retry's history mutation is over once the new stream starts. Its IPC
     // promise lasts until completion; that must not lock normal running actions.
@@ -497,7 +525,8 @@ export function useWorkController() {
     if (previous.scope === scope && previous.value.length === next.length && previous.value.every((item, index) => {
       const candidate = next[index]
       return item.id === candidate.id && item.path === candidate.path && item.name === candidate.name &&
-        item.content === candidate.content && item.status === candidate.status && item.createdAt === candidate.createdAt
+        item.content === candidate.content && item.status === candidate.status && item.createdAt === candidate.createdAt &&
+        item.producerChildSessionId === candidate.producerChildSessionId && item.producerRunId === candidate.producerRunId
     })) return previous.value
     artifactCache.current = { scope, value: next }
     return next
@@ -573,7 +602,7 @@ export function useWorkController() {
       const now = Date.now()
       const task: WorkTask = {
         id,
-        title: draft.trim().replace(/\s+/g, ' ').slice(0, 52) || '新任务',
+        title: workTaskTitle(draft, mentions),
         draft,
         status: 'draft',
         createdAt: now,
@@ -737,7 +766,7 @@ export function useWorkController() {
     async (text?: string, mentions: Mention[] = []): Promise<void> => {
       flushWorkDrafts(source)
       const currentTaskSending = activeTask ? hasSessionWork(activeTask.id) : false
-      if (!engineReady || streaming || currentTaskSending || pending.length || uploadCount > 0 || messageActionRef.current?.taskId === activeId) return
+      if (!engineReady || streaming || restartPending || currentTaskSending || pending.length || uploadCount > 0 || messageActionRef.current?.taskId === activeId) return
       if (!activeTask) {
         const home = getWorkDraft(source, null)
         await createTask(text ?? home.text, mentions.length ? mentions : home.mentions)
@@ -753,6 +782,7 @@ export function useWorkController() {
     [
       engineReady,
       streaming,
+      restartPending,
       hasSessionWork,
       pending.length,
       uploadCount,
@@ -767,26 +797,32 @@ export function useWorkController() {
     ]
   )
 
-  /** Replay the exact failed user turn from a Work error card. */
-  const retryFailedTask = useCallback(async (taskId: string, assistantId: string): Promise<void> => {
+  /** Admission is owned durably by main, so a lost response cannot replay a task. */
+  const restartFailedTask = useCallback(async (taskId: string, assistantId: string): Promise<void> => {
     assertEngineSource(epoch)
     if (activeId !== taskId || getWorkState(source).activeTaskId !== taskId) throw new Error('任务已切换，请在原任务中重试')
     if (!activeTask || !engineReady) throw new Error('引擎尚未就绪，请稍后重试')
+    if (messageActionRef.current) throw new Error('正在处理历史消息，请稍后重启')
     if (streaming || pending.length || uploadCount > 0 || hasSessionWork(activeTask.id))
       throw new Error('当前任务仍在执行，请等待本轮结束后重试')
     if (!restored || !isHistoryReady(activeTask.id)) {
       setHistoryAttempt(attempt => attempt + 1)
       throw new Error('任务历史尚未就绪，正在重新读取后再试')
     }
-    const latest = getWorkState(source).tasks.find(task => task.id === activeTask.id)
-    if (!latest) throw new Error('任务已不存在，请重新打开任务')
-    const original = recoverWorkTurn(messages, assistantId)
-    if (!original || original.status !== 'error') throw new Error('原始指令不可用，请回到最新消息后重试')
-    await sendTaskRef.current({ ...latest, attachments: original.attachments }, original.text, original.mentions, 'replay')
-  }, [activeTask, activeId, epoch, engineReady, streaming, pending.length, uploadCount, hasSessionWork, restored, isHistoryReady, source, messages])
+    const failed = messages.find(message => message.id === assistantId && message.role === 'assistant')
+    const run = failed?.run
+    if (!run || run.sessionId !== taskId || !['failed', 'interrupted'].includes(run.status))
+      throw new Error('这轮任务无法重启，请重新加载会话')
+    const previousRecovery = nextTurnQueue.state?.entries.find(entry => entry.envelope.recovery?.runId === run.runId)
+    if (!previousRecovery && messages.findLast(message => message.role === 'assistant')?.id !== assistantId)
+      throw new Error('任务已有新的轮次，请在最新错误处重启')
+    await nextTurnQueue.restart(run.runId)
+    assertEngineSource(epoch)
+    if (getWorkState(source).activeTaskId === taskId) await resumeStream(taskId)
+  }, [activeTask, activeId, epoch, engineReady, streaming, pending.length, uploadCount, hasSessionWork, restored, isHistoryReady, source, messages, nextTurnQueue.state, nextTurnQueue.restart, resumeStream])
 
   const editSettledTurn = useCallback((taskId: string, assistantId: string): void => {
-    if (epoch !== getEngineSource() || activeId !== taskId || getWorkState(source).activeTaskId !== taskId || hasSessionWork(taskId) || messageActionRef.current) return
+    if (epoch !== getEngineSource() || activeId !== taskId || getWorkState(source).activeTaskId !== taskId || restartPending || hasSessionWork(taskId) || messageActionRef.current) return
     const original = recoverWorkTurn(messages, assistantId)
     if (!original) { setError('原始指令不可用，请回到最新消息后编辑'); return }
     const draft = restoreMessageDraft(getWorkDraft(source, taskId), original)
@@ -797,7 +833,7 @@ export function useWorkController() {
       return { ...task, attachments: attachments.filter((file, index) => attachments.findIndex(other => other.path === file.path) === index) }
     }) }))
     setDraftFocusRequest(previous => ({ source, taskId, token: (previous?.token ?? 0) + 1 }))
-  }, [activeId, epoch, source, hasSessionWork, messages])
+  }, [activeId, epoch, source, hasSessionWork, messages, restartPending])
 
   const userMessageAction = useCallback(async (taskId: string, messageId: string, action: WorkUserMessageAction): Promise<boolean> => {
     const current = (): boolean => selectedViewRef.current === selectedView && epoch === getEngineSource() && activeId === taskId && getWorkState(source).activeTaskId === taskId
@@ -805,7 +841,7 @@ export function useWorkController() {
     const message = messages.find(item => item.id === messageId && item.role === 'user')
     const task = getWorkState(source).tasks.find(item => item.id === taskId)
     if (!message || !task) throw new Error('这条消息已不可用，请重新加载会话')
-    if (messageActionRef.current) throw new Error('正在处理消息，请稍候')
+    if (messageActionRef.current || restartPending) throw new Error('正在处理消息，请稍候')
     const draft = userMessageDraft(message.content)
     const refill = (): void => {
       // Read again after the server operation: typing during a slow request wins.
@@ -863,7 +899,7 @@ export function useWorkController() {
         setHistoryAttempt(attempt => attempt + 1)
     }
   }, [activeId, selectedView, epoch, source, messages, engineReady, restored, isHistoryReady, streaming, pending.length, uploadCount,
-    hasSessionWork, chat.retryFrom, chat.deleteTurn, chat.revertFrom, chat.truncateFrom, optionsFor, updateTask])
+    hasSessionWork, chat.retryFrom, chat.deleteTurn, chat.revertFrom, chat.truncateFrom, optionsFor, updateTask, restartPending])
 
   const stop = useCallback(async (): Promise<void> => {
     if (!activeTask || !engineReady || stoppingTaskIdsRef.current.has(activeTask.id)) return
@@ -913,7 +949,7 @@ export function useWorkController() {
       throw new Error('当前任务正在执行或等待确认，请完成后再继续子代理')
     if (['queued', 'running', 'cancelling'].includes(current.status)) throw new Error('这个子代理仍在运行，请等待本轮结束')
     if (hasSessionWork(activeTask.id)) throw new Error('当前任务已有请求正在发送')
-    await sendTaskRef.current(task, instruction.trim(), [], 'follow-up', [{ resumeRunId: current.runId }])
+    await sendTaskRef.current(task, instruction.trim(), [], 'follow-up', [{ resumeRunId: current.runId, task: instruction.trim() }])
   }, [activeTask, engineReady, restored, isHistoryReady, streaming, pending.length, uploadCount, epoch, source, hasSessionWork, sendTask])
 
   const stopTask = useCallback(async (id: string): Promise<void> => {
@@ -1273,6 +1309,7 @@ export function useWorkController() {
     loadPublishedBody: chat.loadPublishedBody,
     retryPublishedRecovery: chat.retryPublishedRecovery,
     nextTurnQueue,
+    restartPending,
     enqueueNextTurn,
     nextQueueModelId: nextModel?.source === source && nextModel.taskId === activeId ? nextModel.modelId : modelId,
     setNextQueueModel: (value: string) => { if (activeId) setNextModel({ source, taskId: activeId, modelId: canonicalModelId(value) }) },
@@ -1317,7 +1354,7 @@ export function useWorkController() {
     draftFocusRequest,
     editSettledTurn,
     userMessageAction,
-    messageActionBusy: messageAction?.source === source && messageAction.taskId === activeId,
+    messageActionBusy: restartPending || messageAction?.source === source && messageAction.taskId === activeId,
     send,
     stop,
     stopping: Boolean(activeId && stoppingTaskIds.has(activeId)) || Boolean(restored && chat.stopping),
@@ -1343,6 +1380,6 @@ export function useWorkController() {
     addReference,
     clearError: () => setError(null),
     retryHistory: () => setHistoryAttempt((attempt) => attempt + 1),
-    retryFailedTask
+    restartFailedTask
   }
 }

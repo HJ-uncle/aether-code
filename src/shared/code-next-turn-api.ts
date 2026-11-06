@@ -4,7 +4,7 @@ import type { WorkQueueAction, WorkQueueDraft, WorkQueueInvokeResult, WorkQueueR
 export const CODE_QUEUE_IPC = { invoke: 'code:next-turn-queue', changed: 'code:next-turn-queue:changed' } as const
 export interface CodeQueueOptions {
   agentId?: string
-  collaborators?: { agentId?: string; resumeRunId?: string }[]
+  collaborators?: import('./subagent').AgentCollaborator[]
   workspacePaths?: string[]
   memoryScope?: 'off' | 'session' | 'global'
 }

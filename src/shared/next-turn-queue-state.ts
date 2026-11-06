@@ -8,6 +8,8 @@ import {
   type NextTurnQueueScope,
   type NextTurnQueueState
 } from './next-turn-queue'
+import { builtinAgentReference } from './builtin-agents'
+import type { BuiltinAgentRole } from './subagent'
 
 function fail(message: string): never {
   throw new NextTurnQueueError('INVALID', message)
@@ -120,6 +122,23 @@ function list(value: unknown, label: string, maximum: number): asserts value is 
 function oneOf(value: unknown, choices: readonly string[], label: string): void {
   if (typeof value !== 'string' || !choices.includes(value)) fail(label + ' is invalid')
 }
+function collaboratorFields(value: unknown): Record<string, unknown> {
+  const selected = object(value, ['agentId', 'resumeRunId', 'builtinRole', 'instanceKey', 'task', 'description'], 'collaborator')
+  if (selected.agentId === undefined && selected.resumeRunId === undefined && selected.builtinRole === undefined)
+    fail('Collaborator requires a selector')
+  for (const key of ['agentId', 'resumeRunId', 'instanceKey'])
+    if (selected[key] !== undefined) string(selected[key], 'Collaborator ' + key)
+  if (selected.description !== undefined) string(selected.description, 'Collaborator description', 100)
+  if (selected.builtinRole !== undefined) {
+    oneOf(selected.builtinRole, ['research', 'executor', 'general'], 'Builtin Agent role')
+    if (selected.agentId !== undefined || selected.resumeRunId !== undefined) fail('Builtin creation cannot replace an existing Agent')
+    string(selected.instanceKey, 'Builtin instance key', 128)
+    if (!/^[a-zA-Z0-9_-]+$/.test(selected.instanceKey)) fail('Builtin instance key is invalid')
+  } else if (selected.instanceKey !== undefined) fail('Instance key requires a builtin role')
+  if (selected.task !== undefined && (typeof selected.task !== 'string' || !selected.task.trim() || selected.task.length > 65536))
+    fail('Collaborator task is invalid')
+  return selected
+}
 export function assertQueueScope(value: unknown): asserts value is NextTurnQueueScope {
   assertQueueJsonValue(value)
   const scope = object(value, ['source', 'tenantId', 'namespace', 'owner', 'taskId'], 'scope')
@@ -210,6 +229,7 @@ export function assertQueueEnvelope(
     [
       'draft',
       'code',
+      'recovery',
       'submissionDigest',
       'model',
       'workspace',
@@ -224,6 +244,11 @@ export function assertQueueEnvelope(
     ],
     'envelope'
   )
+  if (envelope.recovery !== undefined) {
+    const recovery = object(envelope.recovery, ['runId'], 'task recovery')
+    string(recovery.runId, 'recovery run')
+    if (scope.owner !== 'work') fail('Only Work owns task recovery')
+  }
   if (scope.owner === 'code') {
     const code = object(envelope.code, ['agentId', 'collaborators', 'workspacePaths', 'memoryScope'], 'Code options')
     if (code.agentId !== undefined) string(code.agentId, 'Code Agent ID')
@@ -236,10 +261,7 @@ export function assertQueueEnvelope(
     if (code.collaborators !== undefined) {
       list(code.collaborators, 'Code collaborators', 8)
       for (const value of code.collaborators) {
-        const selected = object(value, ['agentId', 'resumeRunId'], 'Code collaborator')
-        if (selected.agentId === undefined && selected.resumeRunId === undefined) fail('Code collaborator requires a selector')
-        if (selected.agentId !== undefined) string(selected.agentId, 'Code collaborator Agent')
-        if (selected.resumeRunId !== undefined) string(selected.resumeRunId, 'Code collaborator resume run')
+        collaboratorFields(value)
       }
     }
   } else if (envelope.code !== undefined) fail('Work queue cannot carry Code options')
@@ -317,9 +339,13 @@ export function assertQueueEnvelope(
   const selected = new Set<string>(),
     resumes = new Set<string>()
   for (const item of agent.collaborators) {
-    const collaborator = object(item, ['agentId', 'resumeRunId'], 'collaborator')
-    if (collaborator.agentId === undefined && collaborator.resumeRunId === undefined)
-      fail('Collaborator needs an authored selector')
+    const collaborator = collaboratorFields(item)
+    if (collaborator.builtinRole !== undefined) {
+      const reference = builtinAgentReference(collaborator.builtinRole as BuiltinAgentRole, String(collaborator.instanceKey))
+      if ((scope.owner === 'work' && !agentIds.has(reference)) || selected.has(reference))
+        fail('Builtin collaborator is not selected by a unique Agent chip')
+      selected.add(reference)
+    }
     if (collaborator.agentId !== undefined) {
       string(collaborator.agentId, 'collaborator Agent')
       if ((scope.owner === 'work' && !agentIds.has(collaborator.agentId)) || selected.has(collaborator.agentId))
@@ -396,6 +422,8 @@ export function assertQueueEnvelope(
   }
   if (!draft.text.trim() && !envelope.attachments.length)
     fail('Queue entry must contain text or an attachment')
+  if (envelope.recovery !== undefined && (draft.mentions.length || agent.collaborators.length || envelope.attachments.length))
+    fail('Task recovery cannot replay attachments or delegated tools')
   if (bytes(JSON.stringify(value)) > limits.maxStateBytes)
     throw new NextTurnQueueError('CAPACITY', 'Queue envelope UTF-8 byte budget exceeded')
 }
@@ -418,10 +446,11 @@ export function assertQueueState(
   assertQueueJsonValue(value, limits.maxStateBytes)
   const state = object(
     value,
-    ['schemaVersion', 'scope', 'revision', 'paused', 'pauseReason', 'resumeAnchor', 'entries', 'removed'],
+    ['schemaVersion', 'scope', 'revision', 'paused', 'pauseReason', 'resumeAnchor', 'recoveryBarrier', 'entries', 'removed'],
     'queue state'
   )
   if (state.schemaVersion !== 1) fail('Unsupported queue schema version')
+  if (state.recoveryBarrier !== undefined) string(state.recoveryBarrier, 'recovery barrier')
   assertQueueScope(state.scope)
   if (!sameQueueScope(state.scope, scope))
     throw new NextTurnQueueError('SCOPE', 'Queue snapshot belongs to another scope')
@@ -448,6 +477,7 @@ export function assertQueueState(
         'frozen',
         'reason',
         'receipt',
+        'startedAt',
         'outcome'
       ],
       'entry'
@@ -471,6 +501,7 @@ export function assertQueueState(
         entry.frozen !== undefined ||
         entry.receipt !== undefined ||
         entry.outcome !== undefined ||
+        entry.startedAt !== undefined ||
         entry.reason !== undefined
       )
         fail('Pending entry cannot claim delivery')
@@ -494,7 +525,7 @@ export function assertQueueState(
       integer(anchor.version, 'anchor version', 1)
     }
     if (entry.phase === 'dispatching' || entry.phase === 'admission-unknown') {
-      if (entry.receipt !== undefined || entry.outcome !== undefined)
+      if (entry.receipt !== undefined || entry.outcome !== undefined || entry.startedAt !== undefined)
         fail('Unknown submission cannot claim an accepted outcome')
       continue
     }
@@ -505,6 +536,7 @@ export function assertQueueState(
     )
     for (const name of ['runId', 'turnId', 'userMessageId', 'assistantMessageId'])
       string(receipt[name], 'accepted ' + name)
+    if (entry.startedAt !== undefined) integer(entry.startedAt, 'confirmed execution start', 1)
     if (entry.phase === 'terminal')
       oneOf(entry.outcome, ['succeeded', 'failed', 'cancelled', 'interrupted'], 'terminal outcome')
     else if (entry.outcome !== undefined) fail('Accepted entry cannot claim a terminal outcome')
@@ -517,6 +549,8 @@ export function assertQueueState(
     if (ids.has(removed.id)) fail('Removed ID conflicts with a live/tombstoned entry')
     ids.add(removed.id)
   }
+  if (state.recoveryBarrier !== undefined && !(state.entries as NextTurnQueueState['entries']).some(entry => entry.id === state.recoveryBarrier && entry.envelope.recovery))
+    fail('Recovery barrier must retain its continuation entry')
   if (bytes(JSON.stringify(value)) > limits.maxStateBytes)
     throw new NextTurnQueueError('CAPACITY', 'Queue snapshot UTF-8 byte budget exceeded')
 }
@@ -534,13 +568,15 @@ export function applyNextTurnQueueMutation(
   const next = structuredClone(state)
   const op = object(
     operation,
-    ['kind', 'id', 'envelope', 'entryRevision', 'at', 'beforeId', 'reason', 'frozen', 'receipt', 'outcome', 'anchor', 'entries', 'replacements'],
+    ['kind', 'id', 'envelope', 'entryRevision', 'at', 'beforeId', 'reason', 'frozen', 'receipt', 'startedAt', 'outcome', 'anchor', 'entries', 'replacements'],
     'mutation'
   )
   oneOf(
     op.kind,
     [
       'enqueue',
+      'enqueue-recovery',
+      'abandon-recovery',
       'replace-pending',
       'edit',
       'move',
@@ -548,18 +584,30 @@ export function applyNextTurnQueueMutation(
       'clear-pending',
       'pause',
       'resume',
-      'recover-interrupted-submissions', 'claim', 'admission-unknown', 'accepted', 'terminal', 'confirm-resume'
+      'recover-interrupted-submissions', 'claim', 'admission-unknown', 'accepted', 'confirmed-start', 'terminal', 'confirm-resume'
     ],
     'mutation kind'
   )
-  const pending = (id: unknown) => {
+  const pending = (id: unknown, allowRecovery = false) => {
     string(id, 'entry ID')
     const entry = next.entries.find((item) => item.id === id)
     if (!entry || entry.phase !== 'pending')
       throw new NextTurnQueueError('CONFLICT', 'Only a pending entry can be changed')
+    if (entry.envelope.recovery && !allowRecovery) throw new NextTurnQueueError('CONFLICT', 'Task recovery is controlled by its restart action')
     return entry
   }
   switch (operation.kind) {
+    case 'abandon-recovery': {
+      const entry = pending(operation.id, true)
+      integer(operation.entryRevision, 'entry revision', 1)
+      integer(operation.at, 'abandon time')
+      if (!entry.envelope.recovery) throw new NextTurnQueueError('CONFLICT', 'Only an unsubmitted task recovery can be abandoned')
+      if (entry.revision !== operation.entryRevision) throw new NextTurnQueueError('CAS', 'Recovery entry revision changed')
+      next.removed.push({ id: entry.id, entryRevision: entry.revision, removedAt: operation.at })
+      next.entries = next.entries.filter(item => item.id !== entry.id)
+      if (next.recoveryBarrier === entry.id) delete next.recoveryBarrier
+      break
+    }
     case 'replace-pending': {
       list(operation.entries, 'replacement selectors', limits.maxEntries)
       list(operation.replacements, 'replacement entries', limits.maxEntries)
@@ -581,6 +629,7 @@ export function applyNextTurnQueueMutation(
         if (replacementIds.has(replacement.id) || next.removed.some(item => item.id === replacement.id) || next.entries.some(item => item.id === replacement.id && !ids.has(item.id))) fail('Replacement ID was already used')
         replacementIds.add(replacement.id)
         assertQueueEnvelope(replacement.envelope, state.scope, limits)
+        if (replacement.envelope.recovery) fail('Task recovery requires the recovery owner')
         const previous = next.entries.find(item => item.id === replacement.id)
         return { id: replacement.id, phase: 'pending' as const, revision: previous ? previous.revision + 1 : 1,
           createdAt: previous?.createdAt ?? operation.at, updatedAt: operation.at, envelope: structuredClone(replacement.envelope) }
@@ -598,15 +647,17 @@ export function applyNextTurnQueueMutation(
     case 'confirm-resume':
       if (next.entries.some(item => item.phase === 'dispatching' || item.phase === 'admission-unknown')) throw new NextTurnQueueError('CONFLICT', 'Unconfirmed admission must be reconciled first')
       next.paused = false; delete next.pauseReason; next.resumeAnchor = structuredClone(operation.anchor)
+      delete next.recoveryBarrier
       break
     case 'claim': {
-      const entry = pending(operation.id)
-      if (next.paused || next.entries.some(item => ['dispatching', 'admission-unknown', 'accepted'].includes(item.phase)))
+      const entry = pending(operation.id, true)
+      if ((!entry.envelope.recovery && (next.paused || next.recoveryBarrier)) || next.entries.some(item => ['dispatching', 'admission-unknown', 'accepted'].includes(item.phase)))
         throw new NextTurnQueueError('CONFLICT', 'Queue is paused or already has an in-flight entry')
-      if (next.entries.find(item => item.phase === 'pending')?.id !== entry.id || entry.revision !== operation.entryRevision)
+      const head = next.entries.find(item => item.phase === 'pending' && item.envelope.recovery) ?? next.entries.find(item => item.phase === 'pending')
+      if (head?.id !== entry.id || entry.revision !== operation.entryRevision)
         throw new NextTurnQueueError('CAS', 'Queue head or entry revision changed')
       integer(operation.at, 'claim time')
-      delete next.resumeAnchor
+      if (!entry.envelope.recovery) delete next.resumeAnchor
       next.entries = next.entries.map(item => item.id === entry.id
         ? { ...item, phase: 'dispatching', frozen: structuredClone(operation.frozen), updatedAt: Math.max(item.updatedAt, operation.at) }
         : item)
@@ -621,19 +672,29 @@ export function applyNextTurnQueueMutation(
       next.entries = next.entries.map(item => item.id === entry.id
         ? { ...entry, phase: 'admission-unknown', reason: operation.reason, updatedAt: Math.max(entry.updatedAt, operation.at) }
         : item)
-      next.paused = true
-      next.pauseReason = operation.reason
+      if (!entry.envelope.recovery) { next.paused = true; next.pauseReason = operation.reason }
       break
     }
     case 'accepted': {
       integer(operation.at, 'acceptance time')
+      if (operation.startedAt !== undefined) integer(operation.startedAt, 'confirmed execution start', 1)
       const entry = next.entries.find(item => item.id === operation.id)
       if (!entry || (entry.phase !== 'dispatching' && entry.phase !== 'admission-unknown'))
         throw new NextTurnQueueError('CONFLICT', 'Only an unconfirmed admission can be accepted')
       next.entries = next.entries.map(item => item.id === entry.id
         ? { id: entry.id, revision: entry.revision, createdAt: entry.createdAt, updatedAt: Math.max(entry.updatedAt, operation.at),
-            envelope: entry.envelope, phase: 'accepted', frozen: entry.frozen, receipt: structuredClone(operation.receipt) }
+            envelope: entry.envelope, phase: 'accepted', frozen: entry.frozen, receipt: structuredClone(operation.receipt),
+            ...(operation.startedAt === undefined ? {} : { startedAt: operation.startedAt }) }
         : item)
+      break
+    }
+    case 'confirmed-start': {
+      integer(operation.at, 'confirmation time')
+      integer(operation.startedAt, 'confirmed execution start', 1)
+      const entry = next.entries.find(item => item.id === operation.id)
+      if (!entry || (entry.phase !== 'accepted' && entry.phase !== 'terminal')) throw new NextTurnQueueError('CONFLICT', 'Only an accepted run can confirm execution')
+      if (entry.startedAt !== undefined && entry.startedAt !== operation.startedAt) throw new NextTurnQueueError('CONFLICT', 'Execution start evidence changed')
+      entry.startedAt = operation.startedAt; entry.updatedAt = Math.max(entry.updatedAt, operation.at)
       break
     }
     case 'terminal': {
@@ -644,16 +705,19 @@ export function applyNextTurnQueueMutation(
       next.entries = next.entries.map(item => item.id === entry.id
         ? { ...entry, phase: 'terminal', outcome: operation.outcome, updatedAt: Math.max(item.updatedAt, operation.at) }
         : item)
-      if (operation.outcome !== 'succeeded') {
+      if (operation.outcome !== 'succeeded' && !entry.envelope.recovery) {
         next.paused = true
         next.pauseReason = '上一轮未成功，队列已暂停'
       }
       break
     }
+    case 'enqueue-recovery':
     case 'enqueue':
       string(operation.id, 'entry ID')
       integer(operation.at, 'enqueue time')
       assertQueueEnvelope(operation.envelope, state.scope, limits)
+      if ((operation.kind === 'enqueue-recovery') !== !!operation.envelope.recovery) fail('Task recovery requires the recovery owner')
+      if (operation.kind === 'enqueue-recovery' && next.entries.some(item => item.phase === 'pending' && !item.envelope.recovery)) next.recoveryBarrier = operation.id
       if ([...next.entries, ...next.removed].some((item) => item.id === operation.id))
         throw new NextTurnQueueError('CONFLICT', 'Entry identity was already used')
       next.entries.push({
@@ -672,6 +736,7 @@ export function applyNextTurnQueueMutation(
       if (entry.revision !== operation.entryRevision)
         throw new NextTurnQueueError('CAS', 'Entry revision changed')
       assertQueueEnvelope(operation.envelope, state.scope, limits)
+      if (operation.envelope.recovery) fail('Task recovery requires the recovery owner')
       entry.envelope = structuredClone(operation.envelope)
       entry.revision++
       entry.updatedAt = operation.at
@@ -701,16 +766,18 @@ export function applyNextTurnQueueMutation(
         throw new NextTurnQueueError('CAS', 'Entry revision changed')
       next.removed.push({ id: entry.id, entryRevision: entry.revision, removedAt: operation.at })
       next.entries = next.entries.filter((item) => item.id !== entry.id)
+      if (!next.entries.some(item => item.phase === 'pending' && !item.envelope.recovery)) delete next.recoveryBarrier
       break
     }
     case 'clear-pending':
       integer(operation.at, 'clear time')
       next.removed.push(
         ...next.entries
-          .filter((item) => item.phase === 'pending')
+          .filter((item) => item.phase === 'pending' && !item.envelope.recovery)
           .map((item) => ({ id: item.id, entryRevision: item.revision, removedAt: operation.at }))
       )
-      next.entries = next.entries.filter((item) => item.phase !== 'pending')
+      next.entries = next.entries.filter((item) => item.phase !== 'pending' || item.envelope.recovery)
+      delete next.recoveryBarrier
       break
     case 'pause':
       string(operation.reason, 'pause reason', 1024)
@@ -729,6 +796,7 @@ export function applyNextTurnQueueMutation(
         )
       next.paused = false
       delete next.pauseReason
+      delete next.recoveryBarrier
       break
     case 'recover-interrupted-submissions':
       integer(operation.at, 'recovery time')
@@ -742,7 +810,7 @@ export function applyNextTurnQueueMutation(
             }
           : entry
       )
-      if (next.entries.some((entry) => entry.phase === 'admission-unknown')) {
+      if (next.entries.some((entry) => entry.phase === 'admission-unknown' && !entry.envelope.recovery)) {
         next.paused = true
         next.pauseReason = 'Unconfirmed admission requires reconciliation'
       }

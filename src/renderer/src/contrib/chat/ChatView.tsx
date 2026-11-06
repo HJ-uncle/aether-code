@@ -34,8 +34,8 @@ import { useModels } from '@renderer/core/engine/model-store'
 import { DEFAULT_CONTEXT_WINDOW_BUDGET } from '@renderer/core/engine/models'
 import { contextPresentation, contextPresentationLimit } from './context-presentation'
 import { changeSecurityMode } from '@renderer/core/engine/security-store'
-import { requestOrThrow } from '@renderer/core/engine/client'
 import { utilityChat } from '@renderer/core/engine/utility-chat'
+import { useCodegraphIndex } from '@renderer/core/engine/useCodegraphIndex'
 import { openAppSettings } from '@renderer/contrib/settings/app-settings-navigation'
 import { refreshGit } from '@renderer/core/git/git-store'
 import { currentWorkspacePaths, useWorkspace } from '@renderer/core/workspace/workspace-store'
@@ -1160,145 +1160,7 @@ export function ChatView(): JSX.Element {
   // 列表不含引擎环境中的默认模型；提供配置入口，不能据空列表断言对话不可用。
   const needsModel = canExecute && modelsLoaded && models.length === 0
 
-  // ── 代码图索引（产品自带 codegraph：一键建索引，Agent 随之获得代码图查询能力）──
-  // initialized：项目是否已有索引。已建索引时页脚不再常驻按钮（入口收进右上角菜单），
-  // 仅在「尚未建索引」时才把「建索引」露在输入框下方，引导用户补上这一步。
-  const [cgIndex, setCgIndex] = useState<{
-    busy: boolean
-    label: string | null
-    initialized: boolean
-    /** 是否已知索引状态（避免未知期间误报「未建索引」而闪出一个按钮） */
-    known: boolean
-  }>({ busy: false, label: null, initialized: false, known: false })
-  const cgPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  const stopCgPoll = useCallback(() => {
-    if (cgPollRef.current) {
-      clearInterval(cgPollRef.current)
-      cgPollRef.current = null
-    }
-  }, [])
-
-  /** 查一次索引状态：是否已建索引（进入会话 / 切换项目时调用） */
-  const refreshCgState = useCallback(async () => {
-    if (!ready || (!codegraphRoot && !sessionId) || sourceEpoch !== getEngineSource()) {
-      setCgIndex((s) => ({ ...s, initialized: false, known: true }))
-      return
-    }
-    try {
-      const s = await requestOrThrow<{ initialized: boolean; indexing: boolean }>({
-        method: 'GET',
-        path: '/codegraph/status',
-        query: { sessionId, path: codegraphRoot }
-      })
-      if (sourceEpoch !== getEngineSource()) return
-      setCgIndex((prev) => ({ ...prev, initialized: s.initialized, known: true, busy: s.indexing }))
-      if (s.indexing) pollCgStatus()
-    } catch {
-      if (sourceEpoch !== getEngineSource()) return
-      setCgIndex((prev) => ({ ...prev, initialized: false, known: true }))
-    }
-    // pollCgStatus 定义在下方（useCallback 引用稳定），此处不列入依赖以免循环
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, codegraphRoot, ready, sourceEpoch])
-
-  /** 轮询引擎 /codegraph/status 直到索引完成/失败；label 短暂展示结果后复位 */
-  const pollCgStatus = useCallback(() => {
-    stopCgPoll()
-    if (sourceEpoch !== getEngineSource()) return
-    cgPollRef.current = setInterval(() => {
-      if (sourceEpoch !== getEngineSource()) { stopCgPoll(); return }
-      void (async () => {
-        try {
-          const s = await requestOrThrow<{
-            initialized: boolean
-            indexing: boolean
-            run: {
-              phase: string
-              progress: { current: number; total: number } | null
-              error?: string
-            } | null
-          }>({
-            method: 'GET',
-            path: '/codegraph/status',
-            query: { sessionId, path: codegraphRoot }
-          })
-          if (sourceEpoch !== getEngineSource()) return
-          if (s.indexing && s.run) {
-            const p = s.run.progress
-            setCgIndex((prev) => ({
-              ...prev,
-              busy: true,
-              known: true,
-              label: p ? `索引中 ${p.current}/${p.total}` : '索引中…'
-            }))
-            return
-          }
-          stopCgPoll()
-          const failed = s.run?.phase === 'failed'
-          setCgIndex((prev) => ({
-            ...prev,
-            busy: false,
-            initialized: s.initialized,
-            known: true,
-            label: failed
-              ? `索引失败${s.run?.error ? `: ${s.run.error.slice(0, 30)}` : ''}`
-              : '索引完成'
-          }))
-        } catch {
-          if (sourceEpoch !== getEngineSource()) return
-          stopCgPoll()
-          setCgIndex((prev) => ({ ...prev, busy: false, label: '状态查询失败' }))
-        }
-        setTimeout(() => { if (sourceEpoch === getEngineSource()) setCgIndex((prev) => ({ ...prev, busy: false, label: null })) }, 4000)
-      })()
-    }, 1500)
-  }, [sessionId, codegraphRoot, stopCgPoll, sourceEpoch])
-
-  const startCgIndex = useCallback(async () => {
-    if (!canExecute || sourceEpoch !== getEngineSource() || !sessionId || (!codegraphRoot && !sessionId) || cgIndex.busy) return
-    setCgIndex((prev) => ({ ...prev, busy: true, label: '启动中…' }))
-    try {
-      const r = await requestOrThrow<{
-        started: boolean
-        alreadyRunning?: boolean
-        alreadyInitialized?: boolean
-      }>({
-        method: 'POST',
-        path: '/codegraph/index',
-        body: { sessionId, path: codegraphRoot }
-      })
-      if (sourceEpoch !== getEngineSource()) return
-      if (r.alreadyInitialized && !r.started) {
-        // 已有索引：只需把状态标记为已建，页脚按钮随之收起
-        setCgIndex((prev) => ({
-          ...prev,
-          busy: false,
-          initialized: true,
-          known: true,
-          label: null
-        }))
-        return
-      }
-      pollCgStatus()
-    } catch (e) {
-      if (sourceEpoch !== getEngineSource()) return
-      setCgIndex((prev) => ({
-        ...prev,
-        busy: false,
-        label: e instanceof Error ? e.message.slice(0, 40) : '请求失败'
-      }))
-      setTimeout(() => { if (sourceEpoch === getEngineSource()) setCgIndex((prev) => ({ ...prev, busy: false, label: null })) }, 4000)
-    }
-  }, [canExecute, sourceEpoch, sessionId, codegraphRoot, cgIndex.busy, pollCgStatus])
-
-  // 进入会话 / 切换项目时同步一次索引状态（决定页脚是否显示「建索引」）
-  useEffect(() => {
-    void refreshCgState()
-  }, [refreshCgState])
-
-  // 卸载时停止轮询
-  useEffect(() => stopCgPoll, [stopCgPoll, sourceEpoch])
+  const cgIndex = useCodegraphIndex({ sessionId, path: codegraphRoot, active: appMode === 'code', ready })
 
   return (
     <div className="chat">
@@ -1719,17 +1581,17 @@ export function ChatView(): JSX.Element {
             <ComposerOptions sessionId={sessionId} modelId={modelId} thinkingMode={thinkingMode} onThinkingChange={selectThinkingMode} />
 
             {/* 仅当项目「尚未建索引」时才露出建索引入口；已建索引则不占位（重建走设置页 / 菜单） */}
-            {cgIndex.known && !cgIndex.initialized ? (
+            {(cgIndex.known || cgIndex.queryFailed) && !cgIndex.initialized ? (
               <button
                 type="button"
                 className={`chat__index-cta${cgIndex.busy ? ' is-active' : ''}`}
-                disabled={!canExecute || !sessionId || (!codegraphRoot && !sessionId) || cgIndex.busy}
+                disabled={!canExecute || !sessionId || cgIndex.busy || cgIndex.checking}
                 title={
-                  codegraphRoot
+                  cgIndex.error || (codegraphRoot
                     ? `为「${codegraphRoot.replace(/\\/g, '/').split('/').pop()}」创建代码图索引（Agent 随之可查询符号 / 调用关系 / 影响面）`
-                    : '为当前会话工作区创建代码图索引'
+                    : '为当前会话工作区创建代码图索引')
                 }
-                onClick={() => void startCgIndex()}
+                onClick={cgIndex.queryFailed ? cgIndex.refresh : cgIndex.start}
               >
                 <Icon name="search" size={16} />
                 <span className="picker__label">{cgIndex.label ?? '建索引'}</span>

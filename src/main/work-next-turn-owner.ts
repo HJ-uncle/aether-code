@@ -132,6 +132,9 @@ export function createWorkNextTurnOwner(ports: WorkQueueOwnerPorts, owner: NextT
     const action = input.action
     if (!action || typeof action !== 'object') throw new NextTurnQueueError('INVALID', 'Queue action is missing')
     switch (action.kind) {
+      case 'restart':
+        if (owner !== 'work') throw new NextTurnQueueError('AUTHORITY', 'Task restart requires Work ownership')
+        return dispatcher.restart(input.taskId, action.runId)
       case 'set-connected':
         if (owner !== 'code' || !ports.gateway.setConnected || typeof action.connected !== 'boolean') throw new NextTurnQueueError('INVALID', 'Connection binding is invalid')
         await ports.gateway.setConnected(input.taskId, event.sender, action.connected)

@@ -1,9 +1,15 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { requestOrThrow } from '@renderer/core/engine/client'
 import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
 import { agentMentionSearch, type AgentReferenceIdentity } from './agent-references'
 import { isMotionInteractive } from '@renderer/workbench/motion'
 import { isTopOverlay } from '@renderer/workbench/overlay'
+import { Icon } from '@renderer/workbench/icons'
+import { BUILTIN_AGENTS, builtinAgentReference } from '@shared/builtin-agents'
+
+const builtinAgents: AgentReferenceIdentity[] = BUILTIN_AGENTS.map(item => ({
+  id: `builtin:${item.role}`, name: item.name, description: item.description, builtinRole: item.role
+}))
 
 export function AgentRefPicker({ query, onSelect, onClose }: {
   query: string
@@ -17,6 +23,8 @@ export function AgentRefPicker({ query, onSelect, onClose }: {
   const [error, setError] = useState<string | null>(null)
   const [reload, setReload] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
+  const select = useCallback((agent: AgentReferenceIdentity): void => onSelect(agent.builtinRole
+    ? { ...agent, id: builtinAgentReference(agent.builtinRole, crypto.randomUUID()) } : agent), [onSelect])
   useEffect(() => {
     let alive = true
     setLoading(true)
@@ -40,7 +48,7 @@ export function AgentRefPicker({ query, onSelect, onClose }: {
   }, [source, reload])
   const filtered = useMemo(() => {
     const needle = (agentMentionSearch(query) ?? query).trim().toLowerCase()
-    return agents.filter(item => !needle || `${item.name} ${item.id} ${item.description ?? ''}`.toLowerCase().includes(needle)).slice(0, 20)
+    return [...builtinAgents, ...agents].filter(item => !needle || `${item.name} ${item.id} ${item.description ?? ''}`.toLowerCase().includes(needle)).slice(0, 20)
   }, [agents, query])
   useEffect(() => setActive(0), [query, filtered.length])
   useEffect(() => {
@@ -63,24 +71,25 @@ export function AgentRefPicker({ query, onSelect, onClose }: {
       if (!filtered.length) return
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         setActive(index => (index + (event.key === 'ArrowDown' ? 1 : -1) + filtered.length) % filtered.length)
-      } else onSelect(filtered[active] ?? filtered[0])
+      } else select(filtered[active] ?? filtered[0])
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [active, filtered, onClose, onSelect])
-  return <div ref={rootRef} className="agent-ref-picker work-agent-picker" role="listbox" aria-label="选择自定义 Agent" aria-busy={loading}>
+  }, [active, filtered, onClose, select])
+  return <div ref={rootRef} className="agent-ref-picker work-agent-picker" role="listbox" aria-label="选择协作 Agent" aria-busy={loading}>
     <div className="agent-ref-picker__list">
-      {loading ? <div className="mention-ref-picker__empty" role="status">正在加载 Agent…</div> : error ?
+      {filtered.map((agent, index) =>
+          <button key={agent.id} type="button" role="option" aria-selected={index === active}
+            className={`agent-ref-picker__item work-agent-picker__item${index === active ? ' is-active' : ''}`}
+            onMouseDown={event => event.preventDefault()} onClick={() => select(agent)} onMouseEnter={() => setActive(index)}>
+            <span className="agent-ref-picker__badge" aria-hidden="true"><Icon name={BUILTIN_AGENTS.find(item => item.role === agent.builtinRole)?.icon ?? 'account-outline'} size={16} /></span>
+            <span className="agent-ref-picker__copy"><strong>{agent.name}</strong><small>{agent.description || agent.id}</small></span>
+          </button>)}
+      {loading ? <div className="mention-ref-picker__empty" role="status">正在加载自定义 Agent…</div> : error ?
         <div className="mention-ref-picker__empty" role="alert">
           <span>{error}</span>
           <button type="button" data-mention-list-control className="mention-ref-picker__retry work-agent-picker__retry" onClick={() => setReload(value => value + 1)}>重试</button>
-        </div> : filtered.length ? filtered.map((agent, index) =>
-          <button key={agent.id} type="button" role="option" aria-selected={index === active}
-            className={`agent-ref-picker__item work-agent-picker__item${index === active ? ' is-active' : ''}`}
-            onMouseDown={event => event.preventDefault()} onClick={() => onSelect(agent)} onMouseEnter={() => setActive(index)}>
-            <span className="agent-ref-picker__badge" aria-hidden="true">A</span>
-            <span className="agent-ref-picker__copy"><strong>{agent.name}</strong><small>{agent.description || agent.id}</small></span>
-          </button>) : <div className="mention-ref-picker__empty">{agents.length ? '没有匹配的 Agent' : '暂无自定义 Agent，可在 Agent 管理中创建'}</div>}
+        </div> : !filtered.length ? <div className="mention-ref-picker__empty">没有匹配的 Agent</div> : null}
     </div>
   </div>
 }

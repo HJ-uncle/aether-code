@@ -14,7 +14,7 @@ import { WorkFileChangeRow } from './WorkFileChangeRow'
 import './work-inline-activity.css'
 
 /** Timeline and inspector use the same cards, including their task-scoped actions. */
-export const WorkToolActivity = memo(function WorkToolActivity({ tool, fileContext, onOpenFile, onOpenChange, defaultOpen, turnRunning, active = true }: {
+export const WorkToolActivity = memo(function WorkToolActivity({ tool, fileContext, onOpenFile, onOpenChange, defaultOpen, turnRunning, active = true, readOnly = false }: {
   tool: ToolActivity
   fileContext: ChatFileContext
   onOpenFile?: (path: string) => void
@@ -22,30 +22,36 @@ export const WorkToolActivity = memo(function WorkToolActivity({ tool, fileConte
   defaultOpen?: boolean
   turnRunning?: boolean
   active?: boolean
+  readOnly?: boolean
 }): JSX.Element {
   const kind = workToolKind(tool)
+  const outputOnly = tool.metadata?.archiveOutputOnly === true
   const imagePreview = kind === 'visual' || kind === 'file-change' && workToolHasImages(tool)
   // A completed turn starts closed even if its live preview was manually
   // opened. Separate memory also handles completion while this row is unmounted.
   const previewScope = imagePreview && turnRunning !== undefined ? `:preview:${turnRunning ? 'running' : 'settled'}` : ''
   const state = workActivityState(tool)
-  const changes = useMemo(() => workToolChanges(tool, fileContext.sessionId), [tool.change, tool.changes, fileContext.sessionId])
+  const changes = useMemo(() => workToolChanges(tool, fileContext.sessionId, fileContext.receiptParentSessionId),
+    [tool.change, tool.changes, fileContext.sessionId, fileContext.receiptParentSessionId])
   // The version envelope is useful for diagnostics, but the receipt's readable
   // file content is what belongs in the inline preview. The source stays intact.
   const displayTool = useMemo(() => {
     const preview = readActivityPreview(tool)
     return preview ? { ...tool, result: preview.content || '文件内容为空' } : tool
   }, [tool])
-  const details = <CompactToolRow tool={displayTool} state={state} summary={workToolTarget(tool, fileContext.workspaceRoot)}
+  const details = <CompactToolRow tool={displayTool} state={state} summary={outputOnly ? '调用记录未载入' : workToolTarget(tool, fileContext.workspaceRoot)}
     memoryKey={`work-tool:${getEngineSource()}:${fileContext.sessionId}:${tool.id}${previewScope}`} fileContext={fileContext} onOpenFile={onOpenFile}
     structuredResult={tool.name !== 'read_file'} quiet defaultOpen={defaultOpen ?? (imagePreview && turnRunning === true)} />
   return <div className="work-tool-activity" data-tool-kind={kind} data-work-tool-id={tool.id}>
-    {kind === 'subagent' ? <SubagentCard tool={tool} sessionId={fileContext.sessionId} defaultOpen={defaultOpen ?? false} visible={active} surfaceMode="work" />
-      : kind === 'command' && tool.commandJob && !tool.commandJob.background ? <CommandJobCard job={tool.commandJob} sessionId={fileContext.sessionId} surfaceMode="work" active={active} />
+    {outputOnly ? <>
+      {changes.map(change => <WorkFileChangeRow key={change.id} change={change} state={state} onOpenChange={onOpenChange} />)}
+      {details}
+    </> : kind === 'subagent' ? <SubagentCard tool={tool} sessionId={fileContext.sessionId} defaultOpen={defaultOpen ?? false} visible={active} surfaceMode="work" readOnly={readOnly} />
+      : kind === 'command' && tool.commandJob && !tool.commandJob.background ? <CommandJobCard job={tool.commandJob} sessionId={fileContext.sessionId} surfaceMode="work" active={active} readOnly={readOnly} />
         : kind === 'command' && tool.commandJob ? <div className="work-tool-activity__service-row" data-service-job-id={tool.commandJob.jobId}>{details}</div>
         : kind === 'file-change' && changes.length ? <div data-tool-id={tool.id}>
           {changes.map(change => <WorkFileChangeRow key={change.id} change={change} state={state} onOpenChange={onOpenChange} />)}
-          {imagePreview || tool.error || state === 'error' || state === 'interrupted' ? details : null}
+          {readOnly || imagePreview || tool.error || state === 'error' || state === 'interrupted' ? details : null}
         </div>
           : details}
   </div>

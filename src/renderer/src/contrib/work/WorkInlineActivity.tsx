@@ -13,13 +13,14 @@ import { WorkToolActivity } from './WorkToolActivity'
 import './work-inline-activity.css'
 
 /** Keep paged receipts and their original diagnostics beside the conversation. */
-export function WorkInlineActivity({ tools: receipts, fileContext, onOpenFile, onOpenChange, revealTool, expanded = false, turnRunning, active = true }: {
+export function WorkInlineActivity({ tools: receipts, fileContext, onOpenFile, onOpenChange, revealTool, expanded = false, turnRunning, active = true, readOnly = false }: {
   tools: ToolActivity[]; fileContext: ChatFileContext; onOpenFile?: (path: string) => void
   onOpenChange?: (change: EngineFileChange) => void
   revealTool?: { toolId: string; revision: number } | null
   expanded?: boolean
   turnRunning?: boolean
   active?: boolean
+  readOnly?: boolean
 }): JSX.Element | null {
   const tools = useMemo(() => receipts.filter(isVisibleToolActivity), [receipts])
   const [manual, setManual] = useCollapseMemory(`work-process:${fileContext.sessionId}:${tools[0]?.id}`)
@@ -63,7 +64,7 @@ export function WorkInlineActivity({ tools: receipts, fileContext, onOpenFile, o
         <div id={detailId} className="process__body work-inline-activity__body" role="region" aria-label="活动详情">
           {tools.slice(range.start, range.end).map(item => (
             <div className="work-inline-activity__item" key={item.id}>
-              <WorkToolActivity tool={item} fileContext={fileContext} onOpenFile={onOpenFile} onOpenChange={onOpenChange} turnRunning={turnRunning} active={active && open} />
+              <WorkToolActivity tool={item} fileContext={fileContext} onOpenFile={onOpenFile} onOpenChange={onOpenChange} turnRunning={turnRunning} active={active && open} readOnly={readOnly} />
             </div>
           ))}
           {range.pages > 1 ? (
