@@ -1021,8 +1021,10 @@ function Conversation({
   const mode = useAppMode()
   const [following, setFollowing] = useState(followRef.current)
   const [awayFromBottom, setAwayFromBottom] = useState(false)
+  const latestRequest = useRef(false)
+  const [latestPending, setLatestPending] = useState(false)
+  const hasNewerContentRef = useRef(false)
   const [bottomRequest, setBottomRequest] = useState(0)
-  const lastScrollTop = useRef(0)
   const measureScrollPosition = useCallback((): boolean | null => {
     const element = scrollRef.current
     const away = element ? workConversationAwayFromBottom(element) : null
@@ -1030,6 +1032,8 @@ function Conversation({
     return away
   }, [])
   const pauseFollowing = useCallback((): void => {
+    latestRequest.current = false
+    setLatestPending(false)
     followRef.current = false
     setFollowing(false)
   }, [])
@@ -1037,8 +1041,11 @@ function Conversation({
     const element = scrollRef.current
     if (!element || !active || mode !== 'work' || !followRef.current || !element.clientHeight) return
     element.scrollTop = element.scrollHeight
-    lastScrollTop.current = element.scrollTop
-    measureScrollPosition()
+    const away = measureScrollPosition()
+    if (latestRequest.current && !hasNewerContentRef.current && away === false) {
+      latestRequest.current = false
+      setLatestPending(false)
+    }
   }, [active, mode, measureScrollPosition])
   const controllerRef = useRef(controller)
   controllerRef.current = controller
@@ -1057,6 +1064,7 @@ function Conversation({
     return last && recoverWorkTurn(controller.messages, last.id) ? last.id : null
   }, [controller.messages, controller.streaming, controller.launching, controller.messageActionBusy, controller.pending.length, task.status])
   const [firstId, setFirstId] = useState<string | null>(() => conversationPositions.get(positionKey)?.firstId ?? null)
+  const lastMountedStart = useRef<number | undefined>(undefined)
   // Keep selection local to a task. Work selects complete conversation turns
   // (the user request together with the Agent response), so exporting one
   // item never produces a contextless half of a turn.
@@ -1069,10 +1077,16 @@ function Conversation({
     expandedHistory.current = value
     setHistoryBrowsing(value)
   }, [])
-  const { start, end, newer } = useMemo(() => workMessageRange(controller.messages, firstId), [controller.messages, firstId])
+  const { start, end, newer } = useMemo(() => workMessageRange(controller.messages, following ? null : firstId, following ? undefined : lastMountedStart.current), [controller.messages, firstId, following])
+  lastMountedStart.current = start
   const hasNewerContent = newer > 0 || Boolean(controller.archivePage?.unversioned && controller.archivePage.lastPage < controller.archivePage.totalPages)
-  const showLatest = hasNewerContent || awayFromBottom
+  hasNewerContentRef.current = hasNewerContent
+  const showLatest = latestPending || hasNewerContent || awayFromBottom
   const conversationGroups = useMemo(() => workConversationGroups(controller.messages), [controller.messages])
+  const turnTodos = useMemo(() => controller.assignTodos(conversationGroups.map(group => ({
+    id: group.id, identity: group.identity,
+    owners: group.messages.flatMap(message => [message.conversationId ? `conversation:${message.conversationId}` : '', message.runId ? `run:${message.runId}` : '']).filter(Boolean)
+  }))), [controller.assignTodos, conversationGroups, controller.todos])
   // Legacy and interrupted turns have durable edits but no published manifest.
   // Keep their review entry without promoting those edits to final deliveries.
   const receiptGroups = useMemo(() => conversationGroups.filter(group => {
@@ -1163,8 +1177,8 @@ function Conversation({
   const restoredPosition = useRef(false)
   useLayoutEffect(() => {
     if (!firstId && controller.messages.length) setFirstId(controller.messages[start].id)
-    // Do not remove an older message while it is being read or copied. At the
-    // live tail, advance the bounded window only when a new message arrives.
+    // The tail stays bounded, but a manual upward scroll freezes this prefix.
+    // Replacing an optimistic message ID must not itself move the reader.
     const selection = window.getSelection()
     const copying = selection && !selection.isCollapsed && selection.anchorNode && scrollRef.current?.contains(selection.anchorNode)
     if (!expandedHistory.current && followRef.current && !copying && controller.messages.length > WORK_MESSAGE_PAGE_SIZE) {
@@ -1222,6 +1236,13 @@ function Conversation({
   const latest = (): void => {
     pendingDisplayTurn.current = null
     prependAnchor.current = null
+    latestRequest.current = true
+    setLatestPending(true)
+    followRef.current = true
+    setFollowing(true)
+    // Start the actual navigation now; the following layout pass and resize
+    // observer finish it if archive/window/Markdown changes grow the content.
+    followBottom()
     if (controller.archivePage?.unversioned && controller.archivePage.lastPage < controller.archivePage.totalPages) {
       archiveNavigation.current = 'latest'
       void controller.loadArchive('latest')
@@ -1427,19 +1448,7 @@ function Conversation({
           if (['ArrowUp', 'PageUp', 'Home'].includes(event.key) &&
             !(event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"]'))) pauseFollowing()
         }}
-        onScroll={(event) => {
-          if (event.currentTarget !== scrollRef.current) return
-          const away = measureScrollPosition()
-          if (away === null) return
-          const element = event.currentTarget
-          const bottom = !hasNewerContent && !away
-          // Programmatic/layout scroll events do not revoke follow intent. A
-          // user moving upwards still stops it immediately, including scrollbar
-          // dragging and accessibility scrolling without a wheel event.
-          if (bottom) { followRef.current = true; setFollowing(true) }
-          else if (element.scrollTop < lastScrollTop.current - 1) pauseFollowing()
-          lastScrollTop.current = element.scrollTop
-        }}
+        onScroll={measureScrollPosition}
       >
         <div className="work-conversation__content" data-history-start={start} data-history-end={end}>
           {controller.displayHistoryError ? <div className="work-history-notice" role="alert"><span>{controller.displayHistoryError}</span><button type="button" className="btn btn--sm" disabled={controller.displayHistoryLoading} onClick={() => loadDisplayHistory(lastDisplayRequest.current)}>重新加载完整记录</button></div> : null}
@@ -1514,6 +1523,7 @@ function Conversation({
                 ))}
                 {turnUsage.get(group.id) ? <div className="work-conversation-turn__usage"><TurnUsage {...turnUsage.get(group.id)!} /></div> : null}
                 {finalResult?.items.length ? <WorkFinalDeliverables result={finalResult} active={active} onOpenItem={onOpenFinalItem} /> : null}
+                {turnTodos.has(group.id) ? <WorkTodoProgress todos={turnTodos.get(group.id)!} /> : null}
                 {!finalResult && turnChanges.get(group.id)?.length ? <WorkProgressPanel sessionId={task.id} turnKey={group.id}
                   changes={turnChanges.get(group.id)!} workspacePath={task.workspacePath}
                   streaming={controller.streaming || controller.launching || ['running', 'waiting'].includes(task.status)} sync={progress}
@@ -1526,7 +1536,7 @@ function Conversation({
           {newer === 0 && controller.archivePage?.unversioned && controller.archivePage.lastPage < controller.archivePage.totalPages ? <button type="button" className="btn btn--sm work-history-load" disabled={controller.archiveLoading} onClick={() => loadArchivePage('newer')}>查看较新归档页</button> : null}
           <WorkTurnFeedback controller={controller} announce={!showLatest} openActivity={openActivity} />
           {receiptGroups.length ? <WorkProgressSync state={progress} /> : null}
-          <WorkTodoProgress todos={controller.todos} />
+          {turnTodos.has('') ? <WorkTodoProgress todos={turnTodos.get('')!} /> : null}
         </div>
       </div>
       </div>
@@ -1544,7 +1554,10 @@ function Conversation({
           source={getEngineSource()} connection={controller.historyRecovery}
           active={controller.streaming || ['running', 'waiting'].includes(task.status)}
           error={controller.historyError} onRetry={controller.retryHistory} />
-        <WorkComposerV2 controller={controller} />
+        <WorkComposerV2 controller={controller} onPreserveReading={() => {
+          const element = scrollRef.current
+          if (element && workConversationAwayFromBottom(element)) pauseFollowing()
+        }} />
       </div>
     </section>
   )

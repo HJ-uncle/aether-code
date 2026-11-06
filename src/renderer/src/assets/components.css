@@ -232,7 +232,7 @@
      锚点是触发按钮的视口矩形 */
   z-index: var(--z-popover);
   min-width: 220px;
-  padding: var(--space-1);
+  padding: var(--menu-padding);
   background: var(--material-bg);
   border: 1px solid var(--material-border);
   border-radius: var(--radius-panel);
@@ -250,18 +250,19 @@
   justify-content: space-between;
   gap: var(--space-5);
   width: 100%;
-  height: 26px;
-  padding: 0 var(--space-3);
-  border-radius: var(--radius);
-  font-size: 12px;
+  min-height: var(--menu-row-height);
+  padding: var(--menu-row-padding);
+  border-radius: var(--menu-row-radius);
+  font-size: var(--menu-title-size);
   text-align: left;
   /* 菜单项同样退出拖动区，保证 hover / 点击命中自身 */
   -webkit-app-region: no-drag;
 }
 
-.menu-bar__item:hover {
-  background: var(--accent);
-  color: var(--accent-fg);
+.menu-bar__item:hover,
+.menu-bar__item:focus-visible {
+  background: var(--menu-hover-bg);
+  color: var(--fg-strong);
 }
 
 .menu-bar__key {
@@ -270,7 +271,7 @@
 }
 
 .menu-bar__item:hover .menu-bar__key {
-  color: color-mix(in srgb, var(--accent-fg) 75%, transparent);
+  color: var(--fg-muted);
 }
 
 /* ── 命令面板 ── */
@@ -326,7 +327,7 @@
 .palette__list {
   flex: 1;
   min-height: 0;
-  padding: var(--space-1);
+  padding: var(--menu-padding);
   overflow-y: auto;
 }
 
@@ -336,15 +337,16 @@
   justify-content: space-between;
   gap: var(--space-4);
   width: 100%;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius);
-  font-size: 12px;
+  min-height: var(--menu-row-height);
+  padding: var(--menu-row-padding);
+  border-radius: var(--menu-row-radius);
+  font-size: var(--menu-title-size);
   text-align: left;
 }
 
 .palette__item.is-active {
-  background: var(--accent);
-  color: var(--accent-fg);
+  background: var(--menu-selected-bg);
+  color: var(--fg-strong);
 }
 
 .palette__item.is-disabled {
@@ -357,7 +359,7 @@
 }
 
 .palette__item.is-active .palette__category {
-  color: color-mix(in srgb, var(--accent-fg) 70%, transparent);
+  color: var(--fg-muted);
 }
 
 .palette__key {
@@ -367,7 +369,7 @@
 }
 
 .palette__item.is-active .palette__key {
-  color: color-mix(in srgb, var(--accent-fg) 75%, transparent);
+  color: var(--fg-muted);
 }
 
 .palette__empty {
@@ -384,7 +386,7 @@
 }
 
 .palette__item.is-active mark {
-  color: var(--accent-fg);
+  color: var(--accent);
   text-decoration: underline;
 }
 
@@ -4865,18 +4867,20 @@
 .file-palette__list {
   flex: 1;
   overflow-y: auto;
-  padding: 4px;
+  padding: var(--menu-padding);
   display: flex;
   flex-direction: column;
+  gap: var(--menu-row-gap);
 }
 
 .file-palette__item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 8px;
+  min-height: var(--menu-row-height);
+  padding: var(--menu-row-padding);
   border: none;
-  border-radius: var(--radius);
+  border-radius: var(--menu-row-radius);
   background: transparent;
   color: var(--fg);
   font-size: 12px;
@@ -4885,7 +4889,7 @@
 }
 
 .file-palette__item.is-active {
-  background: var(--bg-active);
+  background: var(--menu-selected-bg);
   color: var(--fg-strong);
 }
 
@@ -6472,40 +6476,64 @@ textarea.field__input {
 .select__panel {
   display: flex;
   flex-direction: column;
-  max-height: 280px;
+  gap: var(--menu-row-gap);
+  max-height: min(360px, calc(100vh - 32px));
   overflow-y: auto;
-  padding: var(--space-1) 0;
+  padding: var(--menu-padding);
+  overscroll-behavior: contain;
 }
 
 .select__item {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: var(--menu-icon-gap);
+  min-width: 0;
+  min-height: var(--menu-row-height);
   width: 100%;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--menu-row-padding);
+  border: 0;
+  border-radius: var(--menu-row-radius);
+  background: transparent;
+  color: var(--fg);
   text-align: left;
+  cursor: pointer;
 }
 
 .select__item:hover {
-  background: var(--bg-hover);
+  background: var(--menu-hover-bg);
 }
 
 .select__item.is-active {
-  background: var(--bg-active);
+  background: var(--menu-selected-bg);
 }
 
 /* 键盘导航高亮（↑↓ 移动），与 hover 同一底色 */
-.select__item.is-highlight {
-  background: var(--bg-hover);
+.select__item.is-highlight:not(.is-active) {
+  background: var(--menu-hover-bg);
 }
+
+.select__item:focus-visible { outline: 1px solid var(--list-focus-outline); outline-offset: -1px; }
+.select__item-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
+.select__item-icon, .select__check-slot { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 16px; width: 16px; color: var(--fg-muted); }
+.select__item-icon { align-self: flex-start; margin-top: 2px; }
+.select__actions { display: grid; gap: var(--menu-row-gap); margin-top: var(--space-1); padding-top: var(--space-1); border-top: 1px solid var(--border); }
+.select__action { font-size: var(--menu-title-size); }
+.select__action > svg { flex: 0 0 16px; color: var(--fg-muted); }
+.select__hint { padding: var(--menu-row-padding); color: var(--fg-muted); font-size: var(--menu-description-size); line-height: 1.5; overflow-wrap: anywhere; }
 
 .select__item-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
+  width: 100%;
+  overflow-wrap: anywhere;
   color: var(--fg-strong);
-  font-size: 12px;
+  font-size: var(--menu-title-size);
+  font-weight: 500;
+  line-height: 1.4;
 }
 
 .select__check {
@@ -6515,8 +6543,9 @@ textarea.field__input {
 
 .select__item-desc {
   color: var(--fg-muted);
-  font-size: 11px;
-  line-height: 1.55;
+  font-size: var(--menu-description-size);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 /* 危险模式的单选圆点用警示色（如 full-access） */
@@ -7019,14 +7048,15 @@ select.field__input {
 
 /* 树内筛选输入条（工具栏漏斗按钮展开） */
 .explorer__filter {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 2px 8px;
+  flex: 0 1 128px;
+  width: 128px;
+  min-width: 72px;
+  padding: 2px 4px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-elevated);
   color: var(--fg-strong);
-  font-size: 12px;
+  font-size: 11px;
   outline: none;
 }
 .explorer__filter:focus {
@@ -7441,7 +7471,7 @@ select.field__input {
   max-height: 50vh;
   overflow-y: auto;
   margin: 0;
-  padding: 0;
+  padding: var(--menu-padding);
   list-style: none;
 }
 
@@ -7449,11 +7479,11 @@ select.field__input {
   display: flex;
   align-items: stretch;
   gap: 2px;
-  border-radius: var(--radius);
+  border-radius: var(--menu-row-radius);
 }
 
 .recent-dialog__item:hover {
-  background: var(--bg-hover);
+  background: var(--menu-hover-bg);
 }
 
 .recent-dialog__open {
@@ -7462,9 +7492,8 @@ select.field__input {
   gap: 8px;
   flex: 1;
   min-width: 0;
-  padding: 7px 10px;
-  margin-left: -10px;
-  border-radius: var(--radius);
+  padding: var(--menu-row-padding);
+  border-radius: var(--menu-row-radius);
   text-align: left;
   color: var(--fg-muted);
 }
@@ -8195,18 +8224,19 @@ select.field__input {
 .composer-options__dd-menu {
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  padding: 4px;
+  gap: var(--menu-row-gap);
+  padding: var(--menu-padding);
 }
 
 .composer-options__dd-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--menu-icon-gap);
   width: 100%;
-  padding: 7px 10px;
+  min-height: var(--menu-row-height);
+  padding: var(--menu-row-padding);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--menu-row-radius);
   background: transparent;
   color: var(--fg-strong);
   text-align: left;
@@ -8214,12 +8244,17 @@ select.field__input {
 }
 
 .composer-options__dd-item:hover {
-  background: var(--bg-hover);
+  background: var(--menu-hover-bg);
 }
 
 .composer-options__dd-item.is-active {
-  color: var(--accent);
+  background: var(--menu-selected-bg);
 }
+
+.composer-options__dd-icon { flex: 0 0 16px; align-self: flex-start; margin-top: 2px; color: var(--fg-muted); }
+.composer-options__dd-check { display: inline-flex; flex: 0 0 16px; width: 16px; color: var(--accent); }
+.composer-options__dd-item:focus-visible { outline: 1px solid var(--list-focus-outline); outline-offset: -1px; }
+.composer-options__dd-item:disabled { opacity: .45; cursor: default; }
 
 .composer-options__dd-text {
   display: flex;
@@ -8230,13 +8265,14 @@ select.field__input {
 }
 
 .composer-options__dd-label {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--menu-title-size);
+  font-weight: 500;
 }
 
 .composer-options__dd-hint {
   color: var(--fg-muted);
-  font-size: 11px;
+  font-size: var(--menu-description-size);
+  line-height: 1.5;
 }
 
 /* 思考档位行：Off 档时摘要文案已表达关闭态，无需额外置灰 */
@@ -8301,6 +8337,8 @@ select.field__input {
 
 .sec-picker__popup {
   width: 330px;
+  padding: var(--menu-padding);
+  gap: var(--menu-row-gap);
 }
 
 .sec-picker__section {
@@ -8314,16 +8352,18 @@ select.field__input {
   flex-direction: column;
   gap: 2px;
   width: 100%;
-  padding: var(--space-2) var(--space-3);
+  min-height: var(--menu-row-height);
+  padding: var(--menu-row-padding);
+  border-radius: var(--menu-row-radius);
   text-align: left;
 }
 
 .sec-picker__item:hover {
-  background: var(--bg-hover);
+  background: var(--menu-hover-bg);
 }
 
 .sec-picker__item.is-active {
-  background: var(--bg-active);
+  background: var(--menu-selected-bg);
 }
 
 .sec-picker__item-head {
@@ -8454,9 +8494,10 @@ select.field__input {
   /* 与 popover 同级：都在浮层带，但要压在普通面板之上 */
   z-index: var(--z-popover);
   min-width: 180px;
-  padding: var(--space-1);
+  padding: var(--menu-padding);
   display: flex;
   flex-direction: column;
+  gap: var(--menu-row-gap);
   background: var(--material-bg);
   border: 1px solid var(--material-border);
   border-radius: var(--radius-panel);
@@ -8468,19 +8509,23 @@ select.field__input {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  height: 26px;
-  padding: 0 var(--space-3);
-  border-radius: var(--radius);
+  min-height: var(--menu-row-height);
+  flex-shrink: 0;
+  padding: var(--menu-row-padding);
+  border-radius: var(--menu-row-radius);
   color: var(--fg);
-  font-size: 12px;
+  font-size: var(--menu-title-size);
   text-align: left;
   white-space: nowrap;
 }
 
 .context-menu__item:hover:not(:disabled) {
-  background: var(--bg-hover);
+  background: var(--menu-hover-bg);
   color: var(--fg-strong);
 }
+
+.context-menu__item:focus-visible { outline: 1px solid var(--list-focus-outline); outline-offset: -1px; background: var(--menu-hover-bg); }
+.context-menu__item:disabled { opacity: .45; cursor: default; }
 
 .context-menu__item--danger {
   color: var(--danger-fg);
@@ -8508,7 +8553,7 @@ select.field__input {
 
 /* 分组入口在子面板展开时保持 hover 高亮，视觉上两级是连在一起的 */
 .context-menu__item--submenu.is-open {
-  background: var(--bg-hover);
+  background: var(--menu-hover-bg);
   color: var(--fg-strong);
 }
 
@@ -10107,7 +10152,7 @@ select.field__input {
 }
 .git-branchbar__list {
   overflow-y: auto;
-  padding: 4px;
+  padding: var(--menu-padding);
 }
 .git-branchbar__group {
   padding: 4px 6px 2px;
@@ -10131,14 +10176,15 @@ select.field__input {
   background: transparent;
   color: var(--fg);
   cursor: pointer;
-  padding: 4px 6px;
-  border-radius: var(--radius-sm);
+  min-height: var(--menu-row-height);
+  padding: var(--menu-row-padding);
+  border-radius: var(--menu-row-radius);
 }
 .git-branchbar__option:hover {
-  background: var(--bg-hover);
+  background: var(--menu-hover-bg);
 }
 .git-branchbar__option.is-current {
-  color: var(--accent);
+  background: var(--menu-selected-bg);
 }
 .git-branchbar__option-row {
   display: flex;
@@ -10837,6 +10883,7 @@ select.field__input {
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
+  padding: var(--menu-padding);
 }
 .git-pickdlg__empty {
   padding: 14px;
@@ -10853,11 +10900,13 @@ select.field__input {
   background: transparent;
   color: var(--fg);
   cursor: pointer;
-  padding: 6px 8px;
+  min-height: var(--menu-row-height);
+  padding: var(--menu-row-padding);
+  border-radius: var(--menu-row-radius);
 }
 .git-pickdlg__item:hover,
 .git-pickdlg__item.is-active {
-  background: var(--bg-hover);
+  background: var(--menu-hover-bg);
 }
 .git-pickdlg__item--tall {
   align-items: flex-start;

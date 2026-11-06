@@ -51,7 +51,6 @@
 .automation-field input[aria-invalid="true"], .automation-field textarea[aria-invalid="true"] { border-color: var(--danger-fg); }
 .automation-field .select { width: 100%; }
 .automation-field .select__trigger { width: 100%; justify-content: space-between; min-height: 36px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-input); padding: 8px 10px; }
-.popover__panel.automation-select-panel { z-index: calc(var(--z-overlay) + 1); }
 .automation-field-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
 .automation-weekdays { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
 .automation-weekdays button { min-height: 34px; padding: 5px 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-input); color: var(--fg-muted); cursor: pointer; font: inherit; font-size: 12px; }

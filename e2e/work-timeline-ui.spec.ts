@@ -182,7 +182,7 @@ const server = createServer((request, response) => {
       run = {
         schemaVersion: 1, runId: `timeline-run-${requests.length}`, sessionId: id,
         turnId: `timeline-turn-${requests.length}`, userMessageId: `timeline-user-${requests.length}`,
-        assistantMessageId: `timeline-assistant-${requests.length}`, seq: 1, version: 1, status: 'running',
+        assistantMessageId: `timeline-assistant-${requests.length}`, seq: requests.length, version: 1, status: 'running',
         modelId, pending: [], workspacePaths: [], createdAt: Date.now(), updatedAt: Date.now()
       }
       if (body.admission && typeof body.admission === 'object' && !Array.isArray(body.admission)) {
@@ -925,8 +925,8 @@ test.describe.serial('Work 时间线与协作详情', () => {
       }).observe(document, { childList: true, subtree: true })
     }, observedIds)
     const mounts = () => page.evaluate(() => window.workCancelledCardMounts)
-    const card = (job: CommandJobSnapshot) => work().locator(`.command-job-card[data-job-id="${job.jobId}"]`)
-    const presence = (job: CommandJobSnapshot) => work().locator(`[data-command-presence="${job.jobId}"]`)
+    const card = (job: CommandJobSnapshot) => page.locator(`[data-job-id="${job.jobId}"]`)
+    const presence = (job: CommandJobSnapshot) => page.locator(`[data-command-presence="${job.jobId}"]`)
     const observeExit = (job: CommandJobSnapshot) => presence(job).evaluateHandle(element => {
       const probe = { removed: false, frames: [] as Array<{ state: string | null; height: number; opacity: number; inert: boolean; hidden: boolean }> }
       const sample = (): void => {
@@ -944,39 +944,40 @@ test.describe.serial('Work 时间线与协作详情', () => {
         error: { code: 'COMMAND_CANCELLED', message: '已按用户请求停止' } })
     }
     await page.emulateMedia({ reducedMotion: 'no-preference' })
+    const servicePanel = page.getByRole('complementary', { name: '后台服务', exact: true })
+    const openServices = async (): Promise<void> => {
+      if (!await servicePanel.isVisible()) await work().getByRole('button', { name: '查看后台服务', exact: true }).click()
+      await expect(servicePanel).toBeVisible()
+    }
+    const showHistory = async (): Promise<void> => {
+      const toggle = servicePanel.getByRole('button', { name: /历史记录/ })
+      if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click()
+    }
     try {
       await page.reload()
+      await openServices()
       await expect(card(stopping)).toHaveAttribute('data-status', 'running')
       await expect(card(historical)).toHaveCount(0)
       expect((await mounts()).filter(jobId => jobId === historical.jobId)).toEqual([])
       await expect(presence(stopping)).toHaveAttribute('data-motion-state', 'open')
-      await expect.poll(() => presence(stopping).evaluate(element => element.getAnimations({ subtree: true }).some(animation => animation.playState === 'running'))).toBe(false)
       await card(stopping).getByRole('button', { name: '停止命令', exact: true }).click()
       await expect(card(stopping)).toHaveAttribute('data-status', 'cancelling')
-      await expect(card(stopping).getByRole('button', { name: '正在停止…', exact: true })).toBeDisabled()
+      await expect(card(stopping).getByRole('button', { name: '停止命令', exact: true })).toBeDisabled()
       await expect(presence(stopping)).toHaveAttribute('data-motion-state', 'open')
       expect(commandCancelRequests.filter(jobId => jobId === stopping.jobId)).toHaveLength(1)
-      const exit = await observeExit(stopping)
       confirmStopped(stopping)
-      await expect.poll(() => exit.evaluate(probe => probe.removed)).toBe(true)
-      const frames = (await exit.jsonValue()).frames, closing = frames.filter(frame => frame.state === 'closing')
-      expect(closing.length).toBeGreaterThan(0)
-      expect(closing.every(frame => frame.inert && frame.hidden)).toBe(true)
-      expect(closing.some(frame => frame.opacity > 0 && frame.opacity < 1)).toBe(true)
-      expect(Math.min(...closing.map(frame => frame.height))).toBeLessThan(frames[0].height)
-      await exit.dispose()
-      await expect(card(stopping)).toHaveCount(0)
-      await expect(presence(stopping)).toHaveCount(0)
+      await expect.poll(() => commandJobs.get(stopping.jobId)?.status).toBe('cancelled')
+      await showHistory()
+      await expect(card(stopping)).toHaveAttribute('data-status', 'cancelled')
 
       await card(stopFailure).getByRole('button', { name: '停止命令', exact: true }).click()
       await expect(card(stopFailure)).toHaveAttribute('data-status', 'running')
       await expect(card(stopFailure).getByRole('alert')).toContainText('停止失败')
       await expect(card(stopFailure).getByRole('button', { name: '停止命令', exact: true })).toBeEnabled()
+      await showHistory()
       await expect(card(failed)).toHaveAttribute('data-status', 'failed')
-      await expect(card(failed).getByRole('status', { name: '命令状态' })).toHaveText('命令未通过')
-      await expect(card(failed).getByRole('alert')).toHaveCount(0)
-      await card(failed).locator('.command-job-card__toggle').press('Enter')
-      await expect(card(failed).locator('.work-tool-outcome[role="note"]')).toContainText('退出码 7')
+      await card(failed).locator('.work-service-card__toggle').press('Enter')
+      await expect(card(failed)).toContainText('退出码')
       await expect(card(failed).getByLabel('命令输出')).toContainText('WORK_BACKGROUND_FAILURE: AssertionError: expected seven stones')
       const diagnostic = await copyToolDiagnostic(card(failed), 'WORK_BACKGROUND_FAILURE')
       for (const evidence of ['node failed.mjs', '退出码：7', 'COMMAND_EXIT_FAILED', 'expected seven stones']) expect(diagnostic).toContain(evidence)
@@ -995,9 +996,11 @@ test.describe.serial('Work 时间线与协作详情', () => {
 
       await page.reload()
       await expect(work()).toContainText('后台命令仍可逐项管理。')
+      await openServices()
       await expect(card(stopFailure)).toHaveAttribute('data-status', 'running')
       for (const job of [historical, stopping, reduced]) await expect(card(job)).toHaveCount(0)
       expect(await mounts()).toEqual([])
+      await showHistory()
       for (const job of [failed, interrupted, succeeded]) await expect(card(job)).toHaveAttribute('data-status', job.status)
       expect(commandJobs.get(stopping.jobId)?.status).toBe('cancelled')
       expect(commandJobs.get(reduced.jobId)?.status).toBe('cancelled')
@@ -1021,10 +1024,15 @@ test.describe.serial('Work 时间线与协作详情', () => {
       await expect.poll(() => requests.length).toBe(before + 1)
       frame({ content: `# 轮次 ${index + 1}\n\nPERFORMANCE_HISTORY_REPLY_${index}\n\n本轮已完成，可继续查看历史内容。` }); finish()
       await expect(conversation.locator('.work-message--assistant').last()).toContainText(`PERFORMANCE_HISTORY_REPLY_${index}`)
+      await expect(work().getByRole('button', { name: '停止任务', exact: true })).toHaveCount(0)
     }
     await expect(conversation.locator('.work-message')).toHaveCount(60)
     const scroll = conversation.locator('.work-conversation__scroll')
-    await scroll.evaluate(element => { element.scrollTop = 0; element.dispatchEvent(new Event('scroll')) })
+    // Use the same explicit upward gesture as the real reader, not a bare DOM
+    // write that cannot carry wheel/scrollbar navigation intent.
+    await scroll.hover({ position: { x: 400, y: 120 } })
+    await page.mouse.wheel(0, -100_000)
+    await expect.poll(() => scroll.evaluate(element => element.scrollTop)).toBeLessThanOrEqual(2)
     await expect(conversation.getByRole('button', { name: '回到最新', exact: true })).toBeVisible()
     const anchor = await conversation.locator('.work-message').first().getAttribute('data-message-id')
     await work().getByRole('textbox', { name: '继续对话', exact: true }).fill('PERFORMANCE_HISTORY_WHILE_READING')
@@ -1121,7 +1129,9 @@ test.describe.serial('Work 时间线与协作详情', () => {
     await expect(changeSummary.locator('[data-final-result-item]')).toHaveCount(1)
     await expect(changeSummary).toContainText('result-2.md')
     await expect(changeSummary).not.toContainText('result-1.md')
-    await expect(plan).toHaveCount(0)
+    await expect(plan).toHaveCount(1)
+    await expect(conversation.locator('.work-conversation-turn').last().getByRole('region', { name: '任务清单', exact: true })).toHaveCount(1)
+    await expect(plan.locator('.work-progress-panel__todo-toggle')).toContainText('5 / 6 已完成 · 1 已取消')
     await expect(review.getByRole('button', { name: '批量改动操作', exact: true })).toBeEnabled()
     const message = conversation.locator('.work-message--assistant').last()
     const process = message.locator('.work-message__process-toggle')
@@ -1212,7 +1222,8 @@ test.describe.serial('Work 时间线与协作详情', () => {
         await app!.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0].setSize(width, 1000), width)
         if (width === 940) await work().locator('.work-mobile-tabs').getByRole('button', { name: '协作对话', exact: true }).click()
         await conversation.locator('.work-conversation__scroll').evaluate(element => { element.scrollTop = 0 })
-        await expect(plan).toHaveCount(0)
+        await expect(plan).toHaveCount(1)
+        await expect(plan.locator('.work-progress-panel__todo-toggle')).toContainText('5 / 6 已完成 · 1 已取消')
         await expect(changeSummary).toBeVisible()
         await expect(shot).toBeVisible()
         await page.screenshot({ path: testInfo.outputPath(`work-rich-receipts-${appearance}-${width}.png`), animations: 'disabled' })
@@ -1256,14 +1267,17 @@ test.describe.serial('Work 时间线与协作详情', () => {
     await expect(navigation.locator('.chat__nav-dot')).toHaveCount(110)
     await expect(conversation.locator('.work-message')).toHaveCount(60)
     await expect(work().locator('.usage-meter__tokens')).toHaveText('111.1k')
-    const childCommands = conversation.getByRole('region', { name: '子代理后台命令', exact: true })
+    await work().getByRole('button', { name: '查看后台服务', exact: true }).click()
+    const childCommands = page.getByRole('complementary', { name: '后台服务', exact: true })
+    await childCommands.getByRole('button', { name: /历史记录/ }).click()
     await expect(childCommands).toContainText('node verify-result.js')
-    await expect(childCommands).toContainText('子代理任务：nav-child-run')
-    const childCommand = childCommands.getByRole('region', { name: '命令任务', exact: true })
+    const childCommand = childCommands.locator('[data-job-id="nav-child-command"]')
     await expect(childCommand).toHaveAttribute('data-status', 'succeeded')
-    await childCommand.locator('.command-job-card__toggle').click()
+    await childCommand.locator('.work-service-card__toggle').click()
+    await expect(childCommand).toContainText('nav-child-run')
     await expect(childCommand.getByLabel('命令输出', { exact: true })).toContainText('CHILD_BACKGROUND_COMMAND_COMPLETE')
-    await childCommand.locator('.command-job-card__toggle').click()
+    await childCommand.locator('.work-service-card__toggle').click()
+    await childCommands.getByRole('button', { name: '关闭后台服务', exact: true }).click()
 
     const trigger = navigation.getByRole('button', { name: '展开消息导航', exact: true })
     const panel = navigation.locator('.chat__nav-list')
@@ -1992,7 +2006,9 @@ test.describe.serial('Work 时间线与协作详情', () => {
         if (width === 940) await work().locator('.work-mobile-tabs').getByRole('button', { name: /^工作区/ }).click()
         await expect(artifacts).toBeVisible()
         await assertFilledDiff()
-        await scroll.evaluate(element => { element.scrollTop = 0 })
+        await scroll.hover({ position: { x: 400, y: 120 } })
+      await page.mouse.wheel(0, -100_000)
+      await expect.poll(() => scroll.evaluate(element => element.scrollTop)).toBeLessThanOrEqual(2)
         await expect(scroll).toContainText('0001. 研究记录 1')
         await page.screenshot({ path: testInfo.outputPath(`work-artifacts-large-${appearance}-${width}-top.png`), animations: 'disabled' })
         if (width === 1440) {
@@ -2844,7 +2860,9 @@ test.describe.serial('Work 时间线与协作详情', () => {
       }
       await expect(conversation.locator('[data-work-tool-id^="scroll-read-"]')).toHaveCount(12)
       await expect.poll(() => scroll.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(70)
-      await scroll.evaluate(element => { element.scrollTop = 0 })
+      await scroll.hover({ position: { x: 400, y: 120 } })
+      await page.mouse.wheel(0, -100_000)
+      await expect.poll(() => scroll.evaluate(element => element.scrollTop)).toBeLessThanOrEqual(2)
       await expect(latest).toBeVisible()
       await expect(dock.getByRole('button', { name: '停止任务', exact: true })).toBeVisible()
       await expect(dock).toHaveAttribute('data-current-run-feedback', 'true')
@@ -2853,7 +2871,9 @@ test.describe.serial('Work 时间线与协作详情', () => {
       await expect.poll(() => scroll.evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThanOrEqual(2)
       await expect(latest).toHaveCount(0)
       await expect(dock).toHaveCount(0)
-      await scroll.evaluate(element => { element.scrollTop = 0 })
+      await scroll.hover({ position: { x: 400, y: 120 } })
+      await page.mouse.wheel(0, -100_000)
+      await expect.poll(() => scroll.evaluate(element => element.scrollTop)).toBeLessThanOrEqual(2)
       await expect(latest).toBeVisible()
 
       // Window growth and disclosure collapse can remove overflow without
@@ -2864,7 +2884,9 @@ test.describe.serial('Work 时间线与协作详情', () => {
       await expect(dock).toHaveCount(0)
       await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 680))
       await expect.poll(() => scroll.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(70)
-      await scroll.evaluate(element => { element.scrollTop = 0 })
+      await scroll.hover({ position: { x: 400, y: 120 } })
+      await page.mouse.wheel(0, -100_000)
+      await expect.poll(() => scroll.evaluate(element => element.scrollTop)).toBeLessThanOrEqual(2)
       await expect(latest).toBeVisible()
       await process.click()
       await expect(process).toHaveAttribute('aria-expanded', 'false')

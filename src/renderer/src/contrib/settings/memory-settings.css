@@ -5,7 +5,7 @@
 .memory-settings__preference-error summary { cursor: pointer; }
 .memory-settings__preference-error p { margin: 6px 0 0; white-space: pre-wrap; }
 .memory-settings__toolbar { display: flex; gap: 8px; align-items: center; width: 100%; min-width: 0; flex-wrap: wrap; }
-.memory-settings__toolbar .field__input { flex: 1 1 180px; min-width: 120px; }
+.memory-settings__toolbar .field__input, .memory-settings__toolbar > .select { flex: 1 1 180px; min-width: 120px; }
 .memory-settings__scope { display: flex; gap: 6px; flex-wrap: wrap; }
 .memory-settings__scope button { min-height: 36px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-elevated); color: var(--fg-muted); padding: 6px 12px; cursor: pointer; }
 .memory-settings__scope button.is-active { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
@@ -36,10 +36,12 @@
   .memory-settings__actions { justify-content: flex-start; }
   .memory-settings__toolbar { align-items: stretch; flex-direction: column; }
   .memory-settings__toolbar .field__input,
+  .memory-settings__toolbar > .select,
   .memory-settings__toolbar .btn { width: 100%; min-width: 0; }
   /* The toolbar uses a row flex basis above. In a column, that basis becomes
      the control's height and stretches the search/select fields into cards. */
   .memory-settings__toolbar .field__input,
+  .memory-settings__toolbar > .select,
   .memory-settings__toolbar .btn {
     flex: 0 0 auto;
     flex-basis: auto;

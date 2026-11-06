@@ -78,6 +78,7 @@ export function ActionMenu({
     const available = items.map((item, index) => ({ item, index })).filter(({ item }) => !item.disabled)
     if (event.key === 'Escape') {
       event.preventDefault()
+      event.stopPropagation()
       setOpen(false)
       triggerRef.current?.focus()
       return

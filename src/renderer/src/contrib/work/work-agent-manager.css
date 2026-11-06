@@ -415,10 +415,6 @@
   gap: 8px;
   color: var(--fg-muted);
 }
-/* Portal menus need to sit above the enclosing modal overlay. */
-.popover__panel.work-agent-manager__model-panel {
-  z-index: calc(var(--z-overlay) + 1);
-}
 .work-agent-manager__toolbar {
   display: flex;
   flex: none;

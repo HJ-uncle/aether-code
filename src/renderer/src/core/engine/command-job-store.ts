@@ -12,6 +12,7 @@ const listeners = new Set<() => void>()
 const requests = new Map<string, Promise<CommandJobView>>()
 const listings = new Map<string, Promise<void>>()
 const activeSessions = new Map<string, string>()
+const deletedJobs = new Set<string>()
 const sessionRevisions = new Map<string, number>()
 let generation = 0
 const ownsSession = (sessionId: string): boolean => [...activeSessions.values()].includes(sessionId)
@@ -56,7 +57,9 @@ export function useCommandJob(sessionId: string, jobId: string): CommandJobView 
 export function ingestCommandJob(raw: unknown): CommandJobSnapshot | undefined {
   const incoming = normalizeCommandJob(raw)
   if (!incoming || !ownsSession(incoming.sessionId)) return undefined
-  const id = key(incoming.sessionId, incoming.jobId), previous = jobs.get(id)
+  const id = key(incoming.sessionId, incoming.jobId)
+  if (deletedJobs.has(id)) return undefined
+  const previous = jobs.get(id)
   const job = mergeCommandJob(previous?.job, incoming)
   if (job !== previous?.job) { jobs.set(id, { job, output: previous?.output ?? emptyCommandOutput }); notify() }
   return job
@@ -91,6 +94,7 @@ export async function refreshCommandOutput(sessionId: string, jobId: string): Pr
       const previous = jobs.get(id)
       const page = await requestOrThrow<CommandJobOutput>({ method: 'GET', path: `/command-jobs/${encodeURIComponent(jobId)}/output`, query: { sessionId, cursor: previous?.output.cursor ?? 0, maxBytes: 65536 } })
       if (epoch !== revision(sessionId) || !ownsSession(sessionId)) throw new Error('命令会话已切换')
+      if (deletedJobs.has(id)) throw new CommandJobRequestError(404, '历史记录已删除')
       const incoming = normalizeCommandJob(page?.job)
       if (!incoming || incoming.sessionId !== sessionId || incoming.jobId !== jobId || (previous && !sameCommandOwner(previous.job, incoming))) throw new Error('命令任务归属不匹配')
       const current = jobs.get(id)
@@ -119,10 +123,32 @@ export async function cancelCommandJob(sessionId: string, jobId: string): Promis
   return ingestCommandJob(job)!
 }
 
+export async function restartCommandJob(sessionId: string, jobId: string): Promise<CommandJobSnapshot> {
+  if (!ownsSession(sessionId)) throw new Error('命令会话已切换')
+  const epoch = revision(sessionId)
+  const result = await requestOrThrow<CommandJobSnapshot>({ method: 'POST', path: `/command-jobs/${encodeURIComponent(jobId)}/restart`, body: { sessionId } })
+  if (epoch !== revision(sessionId) || !ownsSession(sessionId)) throw new Error('命令会话已切换')
+  const job = normalizeCommandJob(result)
+  if (!job || job.sessionId !== sessionId || job.jobId === jobId || !job.background) throw new Error('重启响应的任务归属不匹配')
+  return ingestCommandJob(job)!
+}
+
+export async function deleteCommandJob(sessionId: string, jobId: string): Promise<void> {
+  if (!ownsSession(sessionId)) throw new Error('命令会话已切换')
+  const epoch = revision(sessionId)
+  const id = key(sessionId, jobId)
+  await requestOrThrow<{ deleted: boolean }>({ method: 'DELETE', path: `/command-jobs/${encodeURIComponent(jobId)}`, query: { sessionId } })
+  if (epoch !== revision(sessionId) || !ownsSession(sessionId)) throw new Error('命令会话已切换')
+  deletedJobs.add(id)
+  jobs.delete(id)
+  notify()
+}
+
 subscribeEngineSource(() => {
   generation++
   activeSessions.clear()
   sessionRevisions.clear()
+  deletedJobs.clear()
   jobs.clear()
   requests.clear()
   listings.clear()

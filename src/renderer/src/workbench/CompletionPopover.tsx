@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { useMotionPresence, useMotionValue } from './MotionPresence'
+import { OverlayScope, useOverlay } from './overlay'
 
 /** Completion keeps focus in its editor, but its menu must escape editor/scroll clipping. */
 export function CompletionPopover({ anchorRef, children, onClose, className = '', open }: {
@@ -17,6 +18,8 @@ export function CompletionPopover({ anchorRef, children, onClose, className = ''
   const panelRef = useRef<HTMLDivElement>(null)
   const closeRef = useRef(onClose)
   closeRef.current = () => { if (open === undefined) setDismissed(true); else onClose() }
+  const overlay = useOverlay({ open: show, present: motion.present, panelRef, triggerRef: anchorRef,
+    onClose: () => closeRef.current(), restoreFocus: false })
   const [position, setPosition] = useState<CSSProperties>({ visibility: 'hidden' })
   useLayoutEffect(() => {
     if (!show) return
@@ -66,36 +69,18 @@ export function CompletionPopover({ anchorRef, children, onClose, className = ''
     const observer = new ResizeObserver(place)
     observer.observe(anchor)
     observer.observe(panel)
-    const outside = (event: PointerEvent): void => {
-      const target = event.target
-      if (target instanceof Node && !anchor.contains(target) && !panel.contains(target)) closeRef.current()
-    }
-    // The editor intentionally keeps focus while a completion is open, so the
-    // document-level Escape handler belongs to the portal rather than the
-    // contentEditable. Capture it before editor handlers can consume it and
-    // release the portal immediately.
-    const keydown = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape' || event.isComposing || event.keyCode === 229) return
-      event.preventDefault()
-      event.stopPropagation()
-      closeRef.current()
-    }
     const scroll = (event: Event): void => {
       if (event.target instanceof Node && panel.contains(event.target)) return
       place()
     }
-    document.addEventListener('pointerdown', outside)
-    document.addEventListener('keydown', keydown, true)
     document.addEventListener('scroll', scroll, true)
     window.addEventListener('resize', place)
     return () => {
       observer.disconnect()
-      document.removeEventListener('pointerdown', outside)
-      document.removeEventListener('keydown', keydown, true)
       document.removeEventListener('scroll', scroll, true)
       window.removeEventListener('resize', place)
     }
   }, [anchorRef, show])
   if (!motion.present) return null
-  return createPortal(<div ref={panelRef} {...motion.motionProps} data-motion-axis="y" className={`completion-popover ${className}`} style={position}>{shownChildren}</div>, document.body)
+  return createPortal(<OverlayScope id={overlay.id}><div ref={panelRef} {...motion.motionProps} {...overlay.layerProps} data-motion-axis="y" className={`completion-popover ${className}`} style={{ ...position, zIndex: overlay.zIndex }}>{shownChildren}</div></OverlayScope>, document.body)
 }

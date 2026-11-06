@@ -211,8 +211,9 @@ async function openConfirmation(session: Session, turn: number): Promise<void> {
   await expect(dialog()).toContainText('6 处改动')
   await expect(dialog()).toContainText('仅撤回本轮')
   await expect(dialog()).toContainText('含已保留的改动')
+  await expect(dialog()).toContainText('本轮新增的文件将删除，修改或删除的文件将恢复到本轮之前')
   await expect(dialog()).toContainText('对话历史保持不变')
-  for (const path of new Set(turnRecords(session, turn).map(change => change.path))) await expect(dialog()).toContainText(path)
+  for (const path of new Set(turnRecords(session, turn).map(change => change.path))) await expect(dialog()).not.toContainText(path)
   await expect(dialog()).not.toContainText(`round-${turn === 0 ? 'b' : 'a'}/`)
 }
 async function confirm(): Promise<void> {

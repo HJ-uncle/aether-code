@@ -144,21 +144,21 @@ export function registerIpcHandlers(): void {
       }
     }
   })
-  ipcMain.handle(IPC.invoke.accountAction, async (_event, action: unknown, ...args: unknown[]) => {
+  ipcMain.handle(IPC.invoke.accountAction, async (event, action: unknown, ...args: unknown[]) => {
     // Expected account failures are data, so Electron does not log a stack or
     // prepend its IPC implementation details to the user's error message.
     const invoke = (): unknown => {
     switch (action) {
       case 'getState': return accountService.getState()
-      case 'setHttpTrust': return accountService.setHttpTrust(args[0] as string, args[1] as boolean)
+      case 'setHttpTrust': return accountService.setHttpTrust(args[0] as string, args[1] as boolean, BrowserWindow.fromWebContents(event.sender))
       case 'register': return accountService.register()
       case 'login': return accountService.login(args[0] as string)
       case 'updateProfile': return accountService.updateProfile(args[0] as AccountProfileInput)
       case 'logout': return accountService.logout(args[0] === true)
       case 'sessions': return accountService.sessions()
       case 'revokeSession': return accountService.revokeSession(args[0] as string)
-      case 'exportRecovery': return accountService.exportRecovery()
-      case 'importRecovery': return accountService.importRecovery()
+      case 'exportRecovery': return accountService.exportRecovery(BrowserWindow.fromWebContents(event.sender))
+      case 'importRecovery': return accountService.importRecovery(BrowserWindow.fromWebContents(event.sender))
       case 'externalLogin': return accountService.externalLogin(args[0] as string, args[1] as 'login' | 'link', args[2] as string | undefined)
       case 'cancelExternalLogin': return accountService.cancelExternalLogin()
       case 'unlink': return accountService.unlink(args[0] as string)
@@ -504,7 +504,7 @@ export function registerIpcHandlers(): void {
     if (folder) updateSettings({ lastFolder: folder })
     return folder
   })
-  ipcMain.handle(IPC.invoke.fsPickFile, () => fileService.pickFile())
+  ipcMain.handle(IPC.invoke.fsPickFile, event => fileService.pickFile(BrowserWindow.fromWebContents(event.sender)))
   ipcMain.handle(IPC.invoke.fsAllowRoot, (_event, root: string) => fileService.allowRoot(root))
   ipcMain.handle(IPC.invoke.fsReadDir, (_event, dir: string) => fileService.readDirectory(dir))
   ipcMain.handle(IPC.invoke.fsReadFile, (_event, filePath: string) =>

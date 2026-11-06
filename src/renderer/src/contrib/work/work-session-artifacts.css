@@ -59,8 +59,6 @@
 .work-session-artifacts__deleted { display: flex; flex: 1; min-height: 100px; align-items: center; justify-content: center; flex-direction: column; gap: var(--space-2); padding: var(--space-4); color: var(--fg-muted); }
 .work-session-artifacts__deleted strong { color: var(--fg); font-size: 13px; font-weight: 500; }
 .work-session-artifacts__deleted span { font-size: 12px; }
-.work-artifact-picker .select__item-head { font-weight: 500; }
-.work-artifact-picker .select__item-desc { margin-top: var(--space-1); }
 @container (max-width: 560px) {
   .work-session-artifacts__split { grid-template-columns: minmax(0, 1fr); grid-template-rows: clamp(96px, 24%, 180px) minmax(0, 1fr); }
   .work-session-artifacts__tree { border-right: 0; border-bottom: 1px solid var(--border); }

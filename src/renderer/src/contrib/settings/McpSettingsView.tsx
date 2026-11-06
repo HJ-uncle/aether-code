@@ -5,6 +5,7 @@ import { useApp } from '@renderer/core/app-context'
 import { currentWorkspacePaths } from '@renderer/core/workspace/workspace-store'
 import { SettingsContent, SettingsGroup, SettingsRow, Toggle } from './SettingsGroup'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
+import { Select } from '@renderer/workbench/Select'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { parseMcpTimeout } from './mcp-config'
 import './mcp-settings.css'
@@ -109,7 +110,7 @@ export function McpSettingsView(): JSX.Element {
   return <div className="settings-view settings-view--mcp">
     <SettingsGroup title="MCP JSON 配置" footer="可粘贴标准 mcpServers JSON，一次导入多个服务器。导入前会校验全部条目，失败时不会写入任何更改。未知字段会原样保留，但引擎只使用已支持的传输与连接字段。">
       <SettingsContent className="mcp-json__toolbar">
-        <div className="mcp-json__scope"><span>保存层级</span><select className="field__input" value={jsonScope} disabled={jsonBusy} onChange={e => setJsonScope(e.target.value as 'project' | 'global')}><option value="project">项目</option><option value="global">全局</option></select></div>
+        <div className="mcp-json__scope"><span>保存层级</span><Select ariaLabel="MCP JSON 保存层级" value={jsonScope} disabled={jsonBusy} onChange={value => { if (value === 'project' || value === 'global') setJsonScope(value) }} options={[{ value: 'project', label: '项目' }, { value: 'global', label: '全局' }]} /></div>
         <div className="mcp-toolbar"><label className="btn"><input type="file" accept=".json,application/json" hidden onChange={e => void readJsonFile(e.target.files?.[0])} />导入 JSON 文件</label><button type="button" className="btn" disabled={jsonBusy} title="读取当前引擎配置" onClick={() => void exportJson()}>读取当前配置</button><button type="button" className="btn btn--primary" disabled={jsonBusy || !jsonText.trim()} onClick={() => void importJson()}>{jsonBusy ? '处理中…' : '应用 JSON'}</button><button type="button" className="btn" disabled={jsonBusy} onClick={() => setJsonOpen(value => !value)}>{jsonOpen ? '收起' : '展开'}</button></div>
       </SettingsContent>
       {jsonOpen ? <SettingsContent><textarea className="field__input mcp-json__editor" value={jsonText} disabled={jsonBusy} onChange={e => setJsonText(e.target.value)} spellCheck={false} aria-label="MCP JSON 配置" placeholder={'{\n  "mcpServers": {\n    "my-server": {\n      "type": "streamableHttp",\n      "url": "https://example.com/mcp"\n    }\n  }\n}'} /></SettingsContent> : null}
@@ -126,14 +127,14 @@ export function McpSettingsView(): JSX.Element {
     {formOpen ? <SettingsGroup title={editing ? `编辑 · ${editing}` : '新增 MCP 服务器'}><SettingsContent><div className="mcp-form">
       <input className="field__input" value={form.id} disabled={Boolean(editing) || busy} onChange={e => update('id', e.target.value)} placeholder="id（小写、数字、连字符）" aria-label="MCP id" />
       <input className="field__input" value={form.name} disabled={busy} onChange={e => update('name', e.target.value)} placeholder="显示名称" aria-label="MCP 名称" />
-      <select className="field__input" value={form.transportType} disabled={busy} onChange={e => update('transportType', e.target.value as Transport)} aria-label="MCP 传输类型"><option value="stdio">stdio（本地命令）</option><option value="streamableHttp">Streamable HTTP</option><option value="http">HTTP</option><option value="sse">SSE</option></select>
+      <Select className="settings-menu-field" value={form.transportType} disabled={busy} onChange={value => update('transportType', value)} ariaLabel="MCP 传输类型" options={[{ value: 'stdio', label: 'stdio（本地命令）' }, { value: 'streamableHttp', label: 'Streamable HTTP' }, { value: 'http', label: 'HTTP' }, { value: 'sse', label: 'SSE' }]} />
       <input className="field__input" value={form.transportType === 'stdio' ? form.command : form.url} disabled={busy} onChange={e => update(form.transportType === 'stdio' ? 'command' : 'url', e.target.value)} placeholder={form.transportType === 'stdio' ? '命令，例如 npx' : '服务 URL'} aria-label={form.transportType === 'stdio' ? 'MCP 命令' : 'MCP URL'} />
       {form.transportType === 'stdio' ? <textarea className="field__input" value={form.args} disabled={busy} onChange={e => update('args', e.target.value)} placeholder="参数（每行一个）" aria-label="MCP 参数" rows={3} /> : null}
       <textarea className="field__input" value={form.transportType === 'stdio' ? form.env : form.headers} disabled={busy} onChange={e => update(form.transportType === 'stdio' ? 'env' : 'headers', e.target.value)} placeholder={form.transportType === 'stdio' ? '{ } 环境变量 JSON' : '{ } 请求头 JSON'} aria-label={form.transportType === 'stdio' ? 'MCP 环境变量' : 'MCP 请求头'} rows={3} />
       <input className="field__input" value={form.disabledTools} disabled={busy} onChange={e => update('disabledTools', e.target.value)} placeholder="禁用工具（每行一个或逗号分隔）" aria-label="MCP 禁用工具" />
       <input className="field__input" value={form.description} disabled={busy} onChange={e => update('description', e.target.value)} placeholder="描述（可选）" aria-label="MCP 描述" />
       <label className="mcp-timeout"><span>请求超时 <small>留空使用默认；0 表示不限；停止引擎或切换连接会取消测试。</small></span><input className="field__input" type="text" inputMode="numeric" value={form.timeoutMs} disabled={busy} onChange={e => update('timeoutMs', e.target.value)} placeholder="默认（毫秒）" aria-label="MCP 请求超时" /></label>
-      <label className="mcp-scope">保存层级 <select className="field__input" value={form.scope} disabled={Boolean(editing) || busy} onChange={e => update('scope', e.target.value)}><option value="project">项目</option><option value="global">全局</option></select></label>
+      <div className="mcp-scope"><span>保存层级</span><Select value={form.scope} disabled={Boolean(editing) || busy} onChange={value => update('scope', value)} ariaLabel="MCP 服务器保存层级" options={[{ value: 'project', label: '项目' }, { value: 'global', label: '全局' }]} /></div>
       <div className="mcp-form__actions"><button type="button" className="btn btn--primary" disabled={busy || !form.id.trim() || !form.name.trim()} onClick={() => void save()}>{busy ? '保存中…' : '保存'}</button><button type="button" className="btn" disabled={busy} onClick={reset}>取消</button></div>
     </div></SettingsContent></SettingsGroup> : null}
     {error ? <div className="settings-view__error" role="alert">{error}</div> : null}{notice ? <div className="mcp-notice" role="status">{notice}</div> : null}

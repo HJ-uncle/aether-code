@@ -15,6 +15,7 @@ import { useSyncExternalStore, type JSX } from 'react'
 import { Dialog } from './Dialog'
 import { toast } from '@renderer/core/toast'
 import { useMotionPresence, useMotionValue } from './MotionPresence'
+import { getTopOverlayId } from './overlay'
 
 export interface ConfirmOptions {
   title: string
@@ -35,6 +36,7 @@ interface ConfirmRequest extends ConfirmOptions {
   resolve: (ok: boolean) => void
   id: number
   busy: boolean
+  ownerId: string | null
 }
 
 // ---------- 极简单例 store：同时只会有一个确认弹窗 ----------
@@ -64,7 +66,7 @@ function getSnapshot(): ConfirmRequest | null {
 export function confirmDialog(options: ConfirmOptions): Promise<boolean> {
   if (current) return Promise.resolve(false)
   return new Promise<boolean>((resolve) => {
-    current = { ...options, resolve, id: ++nextRequestId, busy: false }
+    current = { ...options, resolve, id: ++nextRequestId, busy: false, ownerId: getTopOverlayId() }
     notify()
   })
 }
@@ -86,6 +88,7 @@ export function ConfirmDialogHost(): JSX.Element | null {
   return (
     <Dialog
       key={req.id}
+      ownerId={req.ownerId}
       open={Boolean(currentRequest)}
       closeDisabled={req.busy}
       title={req.title}

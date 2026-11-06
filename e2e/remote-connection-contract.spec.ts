@@ -88,12 +88,14 @@ test('远端开放已接入的管理与会话接口，仍拒绝未接入路径',
   ]
   const actions = [
     '/chat', '/chat/cancel', '/utility/chat', '/conversation/truncate', '/changes/revert-batch',
-    '/subagent/cancel', '/subagent/runs/run-1/cancel', '/command-jobs/job-1/cancel'
+    '/subagent/cancel', '/subagent/runs/run-1/cancel', '/command-jobs/job-1/cancel',
+    '/workspace/search', '/workspace/search/cancel'
   ]
   for (const path of reads) {
     expect(remoteRequestError('remote', 'GET', path), path).toBeNull()
     for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
       if (path === '/models' && method === 'POST') continue
+      if (path === '/command-jobs/job-1' && method === 'DELETE') continue
       expect(remoteRequestError('remote', method, path), method + ' ' + path).toBeTruthy()
     }
   }
@@ -140,6 +142,7 @@ test('远端开放已接入的管理与会话接口，仍拒绝未接入路径',
     ['DELETE', '/conversation/turns/turn-1?sessionId=fixture'],
     ['DELETE', '/conversation/messages/message-1?sessionId=fixture'],
     ['DELETE', '/sessions/session-1?keepWorkspace=true'],
+    ['DELETE', '/command-jobs/job-1?sessionId=fixture'],
     ['POST', '/conversation/truncate'],
     ['POST', '/changes/revert-batch']
   ] as const) {

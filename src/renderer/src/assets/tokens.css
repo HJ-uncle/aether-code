@@ -52,6 +52,16 @@
   --radius-pill: 999px;
   --radius-round: 50%;
 
+  /* Menus share inset rows without changing form controls or dialog content. */
+  --menu-padding: 6px;
+  --menu-row-radius: 8px;
+  --menu-row-height: 32px;
+  --menu-row-padding: 6px 10px;
+  --menu-row-gap: 2px;
+  --menu-icon-gap: 8px;
+  --menu-title-size: 13px;
+  --menu-description-size: 11px;
+
   /* 控件尺寸（macOS 标准控件高度偏紧凑，正文 13px） */
   --control-h-compact: 24px;
   --control-h: 28px;
@@ -144,6 +154,8 @@
   --bg-panel: #242427;
   --bg-hover: rgba(255, 255, 255, 0.055);
   --bg-active: rgba(255, 255, 255, 0.1);
+  --menu-hover-bg: var(--bg-hover);
+  --menu-selected-bg: var(--bg-active);
   /* 选中态（列表/文件树里"被选中待操作"的行）。
      比 hover / active 都更实：选中是持久状态，不能和"鼠标扫过"混为一谈。
      深色底上用白色叠加，与 --bg-active 同向后微调即可。 */
@@ -287,6 +299,8 @@
   /* 浅色下 hover 要用"加黑"而不是"加白"，方向必须反转 */
   --bg-hover: rgba(0, 0, 0, 0.045);
   --bg-active: rgba(0, 0, 0, 0.08);
+  --menu-hover-bg: var(--bg-hover);
+  --menu-selected-bg: var(--bg-active);
   --bg-selected: rgba(0, 0, 0, 0.12);
   /* 浅色下失焦选区同样要"退一档"，退到 --bg-active 的量级 */
   --bg-selected-inactive: rgba(0, 0, 0, 0.055);

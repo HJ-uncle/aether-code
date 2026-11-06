@@ -4,7 +4,7 @@ import { useModels } from '@renderer/core/engine/model-store'
 import { changeSecurityMode, useSecurityMode } from '@renderer/core/engine/security-store'
 import { MODE_DESCRIPTORS, type SecurityMode } from '@renderer/core/engine/security'
 import { changeSessionMemoryEnabled, useMemoryScope } from '@renderer/core/engine/memory-store'
-import { Icon } from '@renderer/workbench/icons'
+import { Icon, type IconName } from '@renderer/workbench/icons'
 import { Popover } from '@renderer/workbench/Popover'
 import { Select } from '@renderer/workbench/Select'
 import { useAppMode } from '@renderer/core/platform/app-mode'
@@ -27,12 +27,19 @@ const THINKING_OPTIONS: Array<{
   { value: 'max', label: 'Max', summary: '想到底，最慢最贵' }
 ]
 
+const SECURITY_MENU: Record<SecurityMode, { icon: IconName; description: string }> = {
+  safe: { icon: 'shield', description: '完整策略与白名单检查；拒绝高危命令，未知命令先确认。' },
+  standard: { icon: 'terminal', description: '普通命令直接执行；拒绝规则或注入检测命中时确认。允许读写工作区外文件。' },
+  'full-access': { icon: 'warning', description: '跳过策略与白名单，命令直接执行并保留审计；允许读写工作区外文件。' }
+}
+
 /** 菜单里的一个选项行：名称 + 说明 + 选中勾 */
 function MenuOption({
   value,
   current,
   label,
   summary,
+  icon,
   disabled = false,
   onSelect
 }: {
@@ -40,6 +47,7 @@ function MenuOption({
   current: string
   label: string
   summary: string
+  icon?: IconName
   disabled?: boolean
   onSelect: (value: string) => void
 }): JSX.Element {
@@ -47,15 +55,17 @@ function MenuOption({
     <button
       type="button"
       role="menuitem"
+      aria-current={value === current ? 'true' : undefined}
       className={`composer-options__dd-item${value === current ? ' is-active' : ''}`}
       disabled={disabled}
       onClick={() => onSelect(value)}
     >
+      {icon ? <Icon name={icon} size={16} className="composer-options__dd-icon" /> : null}
       <span className="composer-options__dd-text">
         <span className="composer-options__dd-label">{label}</span>
         <span className="composer-options__dd-hint">{summary}</span>
       </span>
-      {value === current ? <Icon name="check" size={16} /> : null}
+      <span className="composer-options__dd-check" aria-hidden="true">{value === current ? <Icon name="check" size={16} /> : null}</span>
     </button>
   )
 }
@@ -154,12 +164,12 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
     <>
     <Select
       className="composer-access-picker"
+      panelClassName="composer-access-menu"
       ariaLabel={`切换本会话访问权限：${secDescriptor?.label ?? '尚未确认'}`}
       title={secSummary}
       triggerLabel={loading ? '读取权限…' : secDescriptor?.label ?? '访问权限'}
       value={mode ?? ''}
-      options={MODE_DESCRIPTORS.map(item => ({ value: item.value, label: item.label,
-        description: [item.summary, item.warning].filter(Boolean).join(' ') }))}
+      options={MODE_DESCRIPTORS.map(item => ({ value: item.value, label: item.label, ...SECURITY_MENU[item.value] }))}
       onChange={pickSecurity}
       disabled={!ready || !active || loading || !sessionId}
       placement="up"
@@ -237,6 +247,7 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
                   current={memoryChoice}
                   label={item.label}
                   summary={item.summary}
+                  icon="graph"
                   disabled={!ready || !active || !sessionId || memoryLoading || !memoryLoaded || (item.value === 'on' && memoryEnabled === false)}
                   onSelect={(next) => { pickMemory(next); setOpenMenu(null) }}
                 />
@@ -288,6 +299,7 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
                   current={thinkingMode}
                   label={item.label}
                   summary={item.summary}
+                  icon="brain"
                   disabled={!ready}
                   onSelect={(next) => { pickThinking(next); setOpenMenu(null) }}
                 />
@@ -337,7 +349,8 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
                   value={item.value}
                   current={mode ?? ''}
                   label={item.label}
-                  summary={[item.summary, item.warning].filter(Boolean).join(' ')}
+                  summary={SECURITY_MENU[item.value].description}
+                  icon={SECURITY_MENU[item.value].icon}
                   disabled={!ready || !sessionId || loading}
                   onSelect={(next) => { pickSecurity(next); setOpenMenu(null) }}
                 />

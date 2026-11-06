@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { createPortal } from 'react-dom'
 import { useMotionPresence, useMotionValue } from './MotionPresence'
+import { OverlayScope, useOverlay } from './overlay'
 import { executeCommand, registerCommands } from '@renderer/core/platform/commands'
 import { setAppMode, useAppMode, type AppMode } from '@renderer/core/platform/app-mode'
 import { getKeybindingHint } from '@renderer/core/platform/keybindings'
@@ -229,6 +230,11 @@ export function MenuBar(): JSX.Element {
   const ref = useRef<HTMLElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const overlay = useOverlay({ open: Boolean(open), present: dropdownMotion.present, panelRef: dropdownRef,
+    triggerRef: ref, onClose: () => {
+      if (dropdownRef.current?.contains(document.activeElement)) triggerRef.current?.focus()
+      setOpen(null)
+    }, restoreFocus: false })
   const layout = useLayout()
   const mode = useAppMode()
   const menus = mode === 'code' ? MENUS : WORK_MENUS
@@ -255,25 +261,6 @@ export function MenuBar(): JSX.Element {
     window.addEventListener('resize', resized)
     return () => window.removeEventListener('resize', resized)
   }, [])
-
-  useEffect(() => {
-    if (!open) return
-    const onPointerDown = (event: MouseEvent): void => {
-      const target = event.target as Node
-      // 下拉已 portal 到 body，不在菜单栏 DOM 里 —— 两处都要算「内部」，否则点菜单项会先触发关闭
-      if (ref.current?.contains(target) || dropdownRef.current?.contains(target)) return
-      setOpen(null)
-    }
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') close(true)
-    }
-    document.addEventListener('mousedown', onPointerDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
 
   return (
     <header className="menu-bar" ref={ref}>
@@ -316,9 +303,10 @@ export function MenuBar(): JSX.Element {
           磨砂直接失效。挂到 body 后采样恢复正常 —— 与 ContextMenu 子菜单同理。 */}
       {dropdownMotion.present && shownMenu
         ? createPortal(
-            <div
+            <OverlayScope id={overlay.id}><div
               ref={dropdownRef}
               {...dropdownMotion.motionProps}
+              {...overlay.layerProps}
               data-motion-axis="y"
               className="menu-bar__dropdown"
               role="menu"
@@ -336,6 +324,7 @@ export function MenuBar(): JSX.Element {
               }}
               style={{
                 position: 'fixed',
+                zIndex: overlay.zIndex,
                 top: shownMenu.anchor.bottom + 2,
                 left: Math.max(8, Math.min(shownMenu.anchor.left, window.innerWidth - 352))
               }}
@@ -360,7 +349,7 @@ export function MenuBar(): JSX.Element {
                 </button>
               ))}
               </div>)}
-            </div>,
+            </div></OverlayScope>,
             document.body
           )
         : null}

@@ -142,7 +142,7 @@
   .work-workspace-panel .search-view__tools { display: grid; grid-template-columns: 22px minmax(0, 1fr) repeat(3, 22px); gap: 2px; }
   .work-workspace-panel .search-view__check { grid-column: 2 / -1; }
   .work-workspace-panel .search-view__tools-spacer { display: none; }
-  .work-workspace-panel .search-view__tools > button[aria-label="刷新搜索"] { grid-column: 3; }
+  .work-workspace-panel .search-view__tools > button:is([aria-label="刷新搜索"], [aria-label="停止搜索"]) { grid-column: 3; }
 }
 
 /* On stacked workspaces the old 180px tree slot cannot fit expanded search

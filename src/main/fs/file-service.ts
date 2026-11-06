@@ -311,11 +311,14 @@ export async function readExternalFile(filePath: string): Promise<FsFileContent>
 }
 
 /** Native file chooser for the read-only external preview surface. */
-export async function pickFile(): Promise<string | null> {
-  const result = await dialog.showOpenDialog({
+export async function pickFile(owner?: BrowserWindow | null): Promise<string | null> {
+  const options: OpenDialogOptions = {
     title: '打开文件',
     properties: ['openFile']
-  })
+  }
+  const result = owner && !owner.isDestroyed()
+    ? await dialog.showOpenDialog(owner, options)
+    : await dialog.showOpenDialog(options)
   if (result.canceled || result.filePaths.length === 0) return null
   const picked = path.resolve(result.filePaths[0])
   const stat = await fsp.stat(picked)

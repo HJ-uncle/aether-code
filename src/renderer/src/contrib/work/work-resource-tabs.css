@@ -111,24 +111,7 @@
   overflow: auto;
   border-radius: var(--radius-lg);
 }
-.work-workspace-menu .action-menu__panel {
-  padding: 6px;
-}
-.work-workspace-menu .action-menu__item {
-  min-height: 32px;
-  padding: 4px 10px;
-  gap: 10px;
-  border-radius: var(--radius);
-}
-.work-workspace-menu .action-menu__item-copy {
-  gap: 2px;
-}
 .work-workspace-menu .action-menu__item-copy > span {
-  font-size: 12px;
   font-weight: 500;
-}
-.work-workspace-menu .action-menu__item-copy small {
-  font-size: 10px;
-  line-height: 1.2;
 }
 :root .work-workspace-menu[data-motion-state] { opacity: 1; transition-property: translate; }

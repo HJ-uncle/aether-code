@@ -39,16 +39,19 @@ export function workSplitRatio(startRatio: number, startX: number, currentX: num
 }
 
 /** Keep the oldest mounted message stable as new replies arrive while reading. */
-export function workMessageStart(messages: ReadonlyArray<{ id: string }>, firstId: string | null, size = WORK_MESSAGE_PAGE_SIZE): number {
+export function workMessageStart(messages: ReadonlyArray<{ id: string }>, firstId: string | null, size = WORK_MESSAGE_PAGE_SIZE, fallbackStart?: number): number {
   if (firstId) {
     const index = messages.findIndex(message => message.id === firstId)
     if (index >= 0) return index
+    // Optimistic IDs are replaced by durable IDs during admission. Keep the
+    // last mounted prefix instead of interpreting that rename as a latest jump.
+    if (fallbackStart !== undefined) return Math.max(0, Math.min(fallbackStart, Math.max(0, messages.length - 1)))
   }
   return Math.max(0, messages.length - size)
 }
 
-export function workMessageRange(messages: ReadonlyArray<{ id: string }>, firstId: string | null): { start: number; end: number; newer: number } {
-  const start = workMessageStart(messages, firstId)
+export function workMessageRange(messages: ReadonlyArray<{ id: string }>, firstId: string | null, fallbackStart?: number): { start: number; end: number; newer: number } {
+  const start = workMessageStart(messages, firstId, WORK_MESSAGE_PAGE_SIZE, fallbackStart)
   const end = Math.min(messages.length, start + WORK_MESSAGE_WINDOW_SIZE)
   return { start, end, newer: messages.length - end }
 }

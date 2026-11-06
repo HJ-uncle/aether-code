@@ -13,6 +13,7 @@ import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
 import { listAllFiles } from '@renderer/core/workspace/fs-client'
 import { formatPathDisplay, type Mention } from './MentionInput'
 import { isMotionInteractive } from '@renderer/workbench/motion'
+import { isTopOverlay } from '@renderer/workbench/overlay'
 
 interface FileRefPaletteProps {
   /** 工作区根目录；为空时面板不展示 */
@@ -108,6 +109,8 @@ export function FileRefPalette({
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (!isMotionInteractive(listRef.current)) return
+      const owner = listRef.current?.closest<HTMLElement>('[data-overlay-id]')?.dataset.overlayId
+      if (owner && (!isTopOverlay(owner) || event.key === 'Escape')) return
       if (event.isComposing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
       if (event.target instanceof Element && event.target.closest('[data-mention-list-control]')) return
       if (event.key === 'Escape') {

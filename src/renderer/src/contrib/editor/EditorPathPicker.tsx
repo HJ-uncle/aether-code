@@ -8,6 +8,7 @@ import { getDocument } from '@renderer/core/editor/editor-store'
 import { monaco } from '@renderer/core/editor/monaco-setup'
 import { toast } from '@renderer/core/toast'
 import { Icon } from '@renderer/workbench/icons'
+import { OverlayScope, useOverlay } from '@renderer/workbench/overlay'
 
 export interface EditorPathPickerProps {
   directory: string
@@ -27,8 +28,7 @@ export function EditorPathPicker({ directory, workspaceRoot, currentFile, anchor
   const [filter, setFilter] = useState('')
   const [selected, setSelected] = useState(0)
   const panel = useRef<HTMLDivElement>(null)
-  const close = useRef(onClose)
-  close.current = onClose
+  const overlay = useOverlay({ open: true, panelRef: panel, onClose, initialFocus: true })
   const visible = useMemo(() => entries.filter((entry) => entry.name.toLocaleLowerCase().includes(filter.toLocaleLowerCase())), [entries, filter])
   const parent = paths.dirname(folder)
   const canGoUp = Boolean(workspaceRoot && parent !== folder &&
@@ -45,18 +45,8 @@ export function EditorPathPicker({ directory, workspaceRoot, currentFile, anchor
     return () => { cancelled = true }
   }, [folder, target])
   useEffect(() => {
-    const outside = (event: MouseEvent): void => {
-      if (event.target instanceof Node && !panel.current?.contains(event.target)) close.current()
-    }
-    const keydown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') { event.preventDefault(); close.current() }
-    }
-    document.addEventListener('mousedown', outside)
-    document.addEventListener('keydown', keydown)
     window.addEventListener('resize', onClose)
     return () => {
-      document.removeEventListener('mousedown', outside)
-      document.removeEventListener('keydown', keydown)
       window.removeEventListener('resize', onClose)
     }
   }, [onClose])
@@ -68,14 +58,14 @@ export function EditorPathPicker({ directory, workspaceRoot, currentFile, anchor
       void openWorkspaceResource(monaco.Uri.file(entry.path), undefined, monaco.Uri.file(currentFile)).catch(() => toast.error('无法打开所选文件'))
     }
   }
-  return createPortal(<div ref={panel} className="editor-path-picker" role="dialog" aria-label="浏览文件路径"
-    style={{ left: Math.max(8, Math.min(anchor.left, window.innerWidth - 328)), top: Math.max(8, Math.min(anchor.bottom + 6, window.innerHeight - 356)) }}>
+  return createPortal(<OverlayScope id={overlay.id}><div ref={panel} {...overlay.layerProps} className="editor-path-picker" role="dialog" aria-label="浏览文件路径"
+    style={{ zIndex: overlay.zIndex, left: Math.max(8, Math.min(anchor.left, window.innerWidth - 328)), top: Math.max(8, Math.min(anchor.bottom + 6, window.innerHeight - 356)) }}>
     <header>
       <button type="button" aria-label="上一级目录" title="上一级目录" disabled={!canGoUp} onClick={() => browse(parent)}><Icon name="chevron-up" size={14} /></button>
       <span title={folder}>{paths.basename(folder)}</span>
       <button type="button" aria-label="关闭路径选择" onClick={onClose}><Icon name="close" size={14} /></button>
     </header>
-    <input autoFocus aria-label="筛选同级文件" placeholder="筛选文件或文件夹…" value={filter}
+    <input aria-label="筛选同级文件" placeholder="筛选文件或文件夹…" value={filter}
       onChange={(event) => { setFilter(event.target.value); setSelected(0) }}
       onKeyDown={(event) => {
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -94,5 +84,5 @@ export function EditorPathPicker({ directory, workspaceRoot, currentFile, anchor
         </button>
       )) : <p>没有匹配的文件</p>}
     </div>
-  </div>, document.body)
+  </div></OverlayScope>, document.body)
 }

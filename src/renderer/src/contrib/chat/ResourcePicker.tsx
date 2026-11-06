@@ -3,6 +3,7 @@ import { requestOrThrow } from '@renderer/core/engine/client'
 import { getEngineSource } from '@renderer/core/engine/source'
 import { listKnowledgeBases, type KnowledgeBase } from '@renderer/core/engine/knowledge'
 import { isMotionInteractive } from '@renderer/workbench/motion'
+import { isTopOverlay } from '@renderer/workbench/overlay'
 import './resource-picker.css'
 
 export type ResourceKind = 'skill' | 'mcp' | 'kb'
@@ -83,6 +84,8 @@ export function ResourcePicker({ query, projectPath, source, onSelect, onClose }
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (!isMotionInteractive(rootRef.current)) return
+      const owner = rootRef.current?.closest<HTMLElement>('[data-overlay-id]')?.dataset.overlayId
+      if (owner && (!isTopOverlay(owner) || event.key === 'Escape')) return
       if (event.isComposing) return
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return }
       if ((event.key === 'Enter' || event.key === 'Tab') && event.target instanceof HTMLButtonElement && event.target.classList.contains('resource-picker__retry')) return
@@ -105,6 +108,9 @@ export function ResourcePicker({ query, projectPath, source, onSelect, onClose }
   useEffect(() => {
     const onPointerDown = (event: PointerEvent): void => {
       if (!isMotionInteractive(rootRef.current)) return
+      // The shared layer dismisses on mousedown; closing here first would let
+      // that same gesture fall through to its parent layer a moment later.
+      if (rootRef.current?.closest('[data-overlay-id]')) return
       if (rootRef.current?.contains(event.target as Node)) return
       onClose()
     }

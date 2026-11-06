@@ -42,10 +42,12 @@ type WorkController = ReturnType<typeof useWorkController>
 
 export function WorkComposer({
   controller,
-  home = false
+  home = false,
+  onPreserveReading
 }: {
   controller: WorkController
   home?: boolean
+  onPreserveReading?: () => void
 }): JSX.Element {
   const filesRef = useRef<HTMLInputElement>(null)
   const addingFilesRef = useRef(false)
@@ -120,6 +122,7 @@ export function WorkComposer({
     })
   }
   const submit = (): void => {
+    onPreserveReading?.()
     if (rootFollowup.busy || rootFollowup.pending || controller.stopping) return
     if (immediateIntent) {
       if (mentionQuery !== null || resourceQuery !== null || !draft.trim() || !controller.ready || controller.uploading || controller.loading || !controller.historyReady || !rootFollowupCanSubmit(rootAccepting, rootFollowup.capability)) return

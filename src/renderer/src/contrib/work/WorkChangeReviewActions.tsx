@@ -104,10 +104,11 @@ function ScopedWorkChangeReviewActions({ sessionId, workspacePath, changes, stre
     try {
       const paths = [...new Set(targets.map(change => change.displayPath || change.path))]
       const describedPaths = paths.slice(0, 12).join('\n') + (paths.length > 12 ? `\n另有 ${paths.length - 12} 个文件，详见当前改动列表。` : '')
+      const pathDetails = mode === 'turn' ? '' : `${describedPaths}\n\n`
       const explicit = targets.some(change => change.requiresExplicitRevert)
       const confirmed = await confirmDialog({
         title: mode === 'turn' ? '撤回本轮成果' : action === 'keep' ? mode === 'single' ? '保留文件改动' : '保留待确认改动' : mode === 'single' ? '撤回文件改动' : '撤回待确认改动',
-        body: `${mode === 'turn' ? '仅撤回本轮生成的文件改动（含已保留的改动）。\n' : ''}${action === 'keep' ? '保留' : '撤回'}以下 ${paths.length} 个文件的 ${ids.length} 处改动？\n\n${describedPaths}\n\n${action === 'keep'
+        body: `${mode === 'turn' ? '仅撤回本轮生成的文件改动（含已保留的改动）。\n' : ''}${action === 'keep' ? '保留' : '撤回'}以下 ${paths.length} 个文件的 ${ids.length} 处改动？\n\n${pathDetails}${action === 'keep'
           ? '文件内容不变，这些记录将从待确认列表移除。'
           : `${mode === 'turn' ? '本轮新增的文件将删除，修改或删除的文件将恢复到本轮之前。' : '文件将按快照恢复。'}仅恢复版本匹配的改动；冲突或缺少快照的文件会保留并逐项报告。对话历史保持不变。`}${action === 'revert' && explicit ? '\n这些记录包含命令运行前后的文件比较，可能包含同期手动编辑，请确认也需要撤回。' : ''}`,
         confirmText: mode === 'turn' ? '确认撤回' : action === 'keep' ? '保留' : '撤回',

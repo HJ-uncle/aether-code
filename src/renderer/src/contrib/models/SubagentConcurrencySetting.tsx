@@ -82,7 +82,7 @@ function ConcurrencySetting({ source }: { source: number }): JSX.Element {
           : '每个主会话同时执行的数量，超出后依次排队。默认 5 个。'
   return <SettingsGroup title="子代理执行" footer={supported ? `${engine.snapshot.mode === 'remote' ? '适用于当前远程引擎' : '适用于当前引擎'}，Code 与 Work 共用。调整立即生效；降低数量不会中断正在执行的任务。` : undefined}>
     <SettingsRow label="子代理并发数量" description={description}>
-      <Select title="子代理并发数量" className="sg__select-field" width={120}
+      <Select title="子代理并发数量" className="sg__select-field" width={160}
         disabled={!ready || loading || !supported || managed} value={supported ? String(capability!.effectiveLimit) : ''}
         onChange={value => void change(value)}
         options={supported ? Array.from({ length: capability!.max - capability!.min + 1 }, (_, index) => {

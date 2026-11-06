@@ -556,7 +556,8 @@ function categoryFor(relative: string[], databaseName: string): string {
     if (file.endsWith('.jsonl')) return 'history-jsonl'
     return 'history-other'
   }
-  if (first === 'blobs') return 'blobs'
+  // Subagent payloads share the content bucket but remain scoped to this database.
+  if (first === 'blobs' || relative.length > 1 && first === `${databaseName}.subagent-payloads`) return 'blobs'
   if (first === 'audit-archive') return 'audit-archive'
   if (first === 'history-cold') return 'history-cold'
   if (first === 'memory') return 'memory'

@@ -72,7 +72,8 @@ test.describe.serial('办公预览保留与实际文件更新', () => {
     }
     await page.locator('.editor-tab').filter({ hasText: names[3] }).first().click(); await ready()
     const frame = active().locator('iframe').first()
-    await active().getByRole('combobox', { name: '缩放', exact: true }).selectOption('0.75')
+    await active().getByRole('button', { name: '缩放', exact: true }).click()
+    await page.getByRole('menuitem', { name: '75%', exact: true }).click()
     await expect.poll(() => frame.evaluate(element => getComputedStyle(element.contentDocument!.querySelector('main')!).zoom)).toBe('0.75')
     expect(await frame.evaluate(element => element.contentDocument!.documentElement.dataset.warmIdentity)).toBe(names[3])
     const body = active().locator('.document-preview__body--continuous')
@@ -81,7 +82,7 @@ test.describe.serial('办公预览保留与实际文件更新', () => {
     await page.locator('.editor-tab').filter({ hasText: names[0] }).first().click(); await ready()
     await page.locator('.editor-tab').filter({ hasText: names[3] }).first().click(); await ready()
     expect(await body.evaluate(element => element.scrollTop)).toBe(position)
-    await expect(active().getByRole('combobox', { name: '缩放', exact: true })).toHaveValue('0.75')
+    await expect(active().getByRole('button', { name: '缩放', exact: true })).toContainText('75%')
     expect(await page.locator('.document-preview').count()).toBeLessThanOrEqual(6)
   })
 
@@ -99,7 +100,8 @@ test.describe.serial('办公预览保留与实际文件更新', () => {
 
   test('PDF 固定比例拖动宽度保留已绘制画布，滚到底可见最后页', async () => {
     await openCode(names[4])
-    await active().getByRole('combobox', { name: '缩放', exact: true }).selectOption('1')
+    await active().getByRole('button', { name: '缩放', exact: true }).click()
+    await page.getByRole('menuitem', { name: '100%', exact: true }).click()
     const canvas = active().locator('canvas').first()
     await expect(canvas).toHaveAttribute('data-rendered-page', '1')
     const expectedWidth = (await PDFDocument.load(readFileSync(join(workspace, names[4])))).getPage(0).getWidth()

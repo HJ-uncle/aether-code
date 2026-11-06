@@ -3,13 +3,13 @@ import {
   useMemo,
   useRef,
   type JSX,
-  type ReactNode,
   type KeyboardEvent as ReactKeyboardEvent
 } from 'react'
 import { createPortal } from 'react-dom'
 import type { SearchHit } from '@shared/ipc'
 import { Icon } from '@renderer/workbench/icons'
-import { MotionPresence } from '@renderer/workbench/MotionPresence'
+import { MotionPresence, useMotionPresence } from '@renderer/workbench/MotionPresence'
+import { OverlayScope, useOverlay } from '@renderer/workbench/overlay'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { openAppSettings } from '@renderer/contrib/settings/app-settings-navigation'
 import {
@@ -38,6 +38,7 @@ export type SearchPanelSnapshot = SearchState & { optionsKey: string }
 
 /** A host owns scope, state and navigation; the shared panel owns only the UI. */
 export interface SearchPanelActions {
+  cancelSearch?: () => void
   clearSearch: typeof clearSearch
   closeReplacePreview: typeof closeReplacePreview
   confirmReplacePreview: typeof confirmReplacePreview
@@ -87,32 +88,16 @@ export function SearchPanel({ root, search, actions, active = true, embedded = f
 
   const inputRef = useRef<HTMLInputElement>(null)
   const cancelRef = useRef<HTMLButtonElement>(null)
+  const previewRef = useRef<HTMLDivElement>(null)
+  const previewMotion = useMotionPresence(search.previewVisible)
+  const previewOverlay = useOverlay({ open: search.previewVisible, present: previewMotion.present, modal: true,
+    panelRef: previewRef, onClose: closeReplacePreview, initialFocus: false })
   const lastFocusSeq = useRef(0)
 
   useEffect(() => {
-    if (!embedded || !search.previewVisible) return
-    const previous = document.activeElement
+    if (!search.previewVisible) return
     cancelRef.current?.focus()
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeReplacePreview() }
-      if (event.key === 'Tab') {
-        const buttons = Array.from(cancelRef.current?.closest('[role="dialog"]')?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])
-        if (buttons.length) {
-          event.preventDefault()
-          const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
-          buttons[(index + (event.shiftKey ? buttons.length - 1 : 1)) % buttons.length]?.focus()
-        }
-      }
-    }
-    document.addEventListener('keydown', onKeyDown, true)
-    return () => {
-      document.removeEventListener('keydown', onKeyDown, true)
-      if (previous instanceof HTMLElement && previous.isConnected) previous.focus()
-    }
-  }, [embedded, search.previewVisible, closeReplacePreview])
-
-  // Replacement diffs need readable width even when the host is a narrow tree.
-  const overlay = (node: ReactNode): ReactNode => embedded ? createPortal(node, document.body) : node
+  }, [search.previewVisible])
 
   // 打开视图即聚焦输入框（VS Code 行为）；Ctrl+Shift+F 重复触发时夺回焦点
   useEffect(() => {
@@ -299,12 +284,12 @@ export function SearchPanel({ root, search, actions, active = true, embedded = f
           <button
             type="button"
             className="search-view__btn"
-            aria-label="刷新搜索"
-            title="刷新"
+            aria-label={search.searching && actions.cancelSearch ? '停止搜索' : '刷新搜索'}
+            title={search.searching && actions.cancelSearch ? '停止搜索' : '刷新'}
             disabled={!root || !search.query.trim()}
-            onClick={() => root && void runSearch(root)}
+            onClick={() => search.searching && actions.cancelSearch ? actions.cancelSearch() : root && void runSearch(root)}
           >
-            <Icon name="restart" size={16} />
+            <Icon name={search.searching && actions.cancelSearch ? 'stop' : 'restart'} size={16} />
           </button>
           <button
             type="button"
@@ -336,7 +321,7 @@ export function SearchPanel({ root, search, actions, active = true, embedded = f
               <input
                 className="search-view__filter-input"
                 type="text"
-                placeholder="例如：src, *.ts"
+                placeholder={embedded ? '留空搜索整个项目；如 *.ts' : '例如：src, *.ts'}
                 spellCheck={false}
                 value={search.include}
                 onChange={(event) => patchSearch({ include: event.target.value })}
@@ -380,7 +365,9 @@ export function SearchPanel({ root, search, actions, active = true, embedded = f
         >
           <div className="search-view__summary">
             {search.errorMessage ? (
-              <span className="search-view__error">{search.errorMessage}</span>
+              <span className={groups.length ? 'search-view__replace-note' : 'search-view__error'}>
+                {groups.length ? `${groups.length} 个文件 ${search.hits.length} 处命中；` : ''}{search.errorMessage}
+              </span>
             ) : search.searching ? (
               '搜索中…'
             ) : (
@@ -449,14 +436,15 @@ export function SearchPanel({ root, search, actions, active = true, embedded = f
       )}
 
       {/* ── 替换预览（照搬 VS Code Replace Preview：确认后才真正写盘）── */}
-      {overlay(<MotionPresence show={search.previewVisible} asChild>
-        <div className={`replace-preview-overlay${embedded ? ' replace-preview-overlay--embedded' : ''}`} onMouseDown={closeReplacePreview}>
+      {previewMotion.present && createPortal(<OverlayScope id={previewOverlay.id}>
+        <div className={`replace-preview-overlay${embedded ? ' replace-preview-overlay--embedded' : ''}`} {...previewMotion.motionProps} {...previewOverlay.layerProps} style={{ position: 'fixed', zIndex: previewOverlay.zIndex }}>
           <div
+            ref={previewRef}
             className="replace-preview"
             role="dialog"
-            aria-modal={embedded || undefined}
+            aria-modal="true"
             aria-label="替换预览"
-            onMouseDown={(event) => event.stopPropagation()}
+            tabIndex={-1}
           >
             <div className="replace-preview__header">
               <span>
@@ -517,7 +505,7 @@ export function SearchPanel({ root, search, actions, active = true, embedded = f
             </div>
           </div>
         </div>
-      </MotionPresence>)}
+      </OverlayScope>, document.body)}
     </div>
   )
 }

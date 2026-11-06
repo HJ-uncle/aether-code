@@ -470,7 +470,7 @@ const server = createServer((request, response) => {
       response.setHeader('content-type', 'application/json')
       response.end(envelope({ protocolVersion: 1, tenantId: 'work-fixture', sessionId,
         namespace: { id: 'work-fixture-db', generation: 'generation-one' },
-        transport: { toolProfile: 'general', runLifetime: 'durable', subagentProtocol: 2 }, root,
+        transport: { toolProfile: request.headers['x-aether-tool-profile'] === 'code' ? 'code' : 'general', runLifetime: 'durable', subagentProtocol: 2 }, root,
         predecessor: root ? { runId: root.runId, attemptId: root.attemptId, version: root.version } : null }))
       return
     }

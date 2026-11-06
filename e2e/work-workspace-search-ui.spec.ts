@@ -1,13 +1,18 @@
 /** Fresh Work workspace search coverage: shared search controls, scoped remote
  * file reads, in-place line navigation, file/search switching, task isolation,
- * and previewed replacements whose actual disk effects are checked. No legacy
+ * engine-side large-tree searches, cancellation, incomplete-result replacement
+ * protection, and previewed replacements whose actual disk effects are checked. No legacy
  * suite, model request, or document export is needed by this fixture. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer } from 'node:http'
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import type { FilesExclude, SearchOptions, SearchOutcome } from '../src/shared/ipc'
+import type { AetherIdeApi } from '../src/preload'
 import { engineStorageKey } from '../src/renderer/src/core/engine/source'
 import { monitorElectronHealth, type ElectronHealthMonitor } from './helpers/electron-health'
+
+declare global { interface Window { aether: AetherIdeApi } }
 
 const root = resolve(__dirname, '..')
 const temporaryRoot = join(root, '.e2e-tmp')
@@ -26,6 +31,8 @@ const seedA = {
   'src/replace.txt': 'replace-token one\nreplace-token two\n',
   'src/anchors.txt': 'before\r\nanchor\r\nanchor suffix\r\nanchor\r\nafter\r\n',
   'src/long-line.txt': `short heading\n${'x'.repeat(600)} FarTailMarker ${'z'.repeat(50)}\n`,
+  'race-old.txt': 'StaleSearchToken previous query\n',
+  'race-new.txt': 'FreshSearchToken current query\n',
   'ignored/drop.txt': 'ScopeAlpha ignored\n',
   'node_modules/pkg.txt': 'ScopeAlpha dependency\n'
 }
@@ -34,6 +41,13 @@ const envelope = (data: unknown): string => JSON.stringify({ code: 200, message:
 const errors: string[] = []
 const writes: { sessionId: string; path: string; content: string }[] = []
 const reads: { sessionId: string; path: string }[] = []
+type SearchRequest = { sessionId: string; expectedRoot: string; bindingEpoch?: string; requestId: string;
+  query: string; options: SearchOptions; excludes: FilesExclude; useIgnoreFiles: boolean }
+const searchRequests: SearchRequest[] = []
+const searchReplies: string[] = []
+const searchCancels: { sessionId: string; requestId: string }[] = []
+const directoryRequests: { sessionId: string; path: string }[] = []
+let delayedSearch: { query: string; wait: Promise<void>; release(): void } | undefined
 let fixture = ''
 let server: ReturnType<typeof createServer> | undefined
 let app: ElectronApplication | undefined
@@ -50,6 +64,54 @@ function diskPath(sessionId: string, path: string): string {
   const remaining = relative(directory, absolute)
   if (remaining.startsWith('..') || isAbsolute(remaining)) throw new Error('Search fixture path escaped its session')
   return absolute
+}
+
+/** The HTTP fixture scans its real files on the server. Client file endpoints
+ * remain separately recorded so a renderer-side directory walk cannot pass. */
+function searchDisk(request: SearchRequest): SearchOutcome {
+  const escaped = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const source = request.options.useRegex ? request.query : escaped(request.query)
+  let matcher: RegExp
+  try { matcher = new RegExp(request.options.wholeWord ? `\\b(?:${source})\\b` : source, request.options.caseSensitive ? '' : 'i') }
+  catch { return { hits: [], truncated: false, strategy: 'scan', error: '正则表达式无效' } }
+  const matchesPath = (path: string, pattern: string): boolean => {
+    let expression = ''
+    for (let index = 0; index < pattern.length; index++) {
+      if (pattern[index] === '*' && pattern[index + 1] === '*') {
+        const recursive = pattern[index + 2] === '/'
+        expression += recursive ? '(?:.*/)?' : '.*'; index += recursive ? 2 : 1
+      } else expression += pattern[index] === '*' ? '[^/]*' : pattern[index] === '?' ? '[^/]' : escaped(pattern[index])
+    }
+    const regex = new RegExp(`${pattern.includes('/') ? '^' : '^(?:.*/)?'}${expression}$`)
+    return path.split('/').some((_, index, parts) => regex.test(parts.slice(0, index + 1).join('/')))
+  }
+  const patterns = (text: string): string[] => text.split(',').map(value => value.trim()).filter(Boolean)
+  const includes = patterns(request.options.include)
+  const excludes = [...patterns(request.options.exclude), ...Object.entries(request.excludes).filter(([, enabled]) => enabled).map(([pattern]) => pattern)]
+  const outcome: SearchOutcome = { hits: [], truncated: false, strategy: 'scan' }
+  const walk = (directory: string): boolean => {
+    for (const entry of readdirSync(diskPath(request.sessionId, directory || '.'), { withFileTypes: true })) {
+      const path = directory ? `${directory}/${entry.name}` : entry.name
+      if (entry.name === '.git' || excludes.some(pattern => matchesPath(path, pattern))) continue
+      if (entry.isDirectory()) { if (walk(path)) return true; continue }
+      if (!entry.isFile() || includes.length && !includes.some(pattern => matchesPath(path, pattern))) continue
+      const content = readFileSync(diskPath(request.sessionId, path), 'utf8')
+      if (content.includes('\0')) continue
+      const lines = content.split(/\r\n|\r|\n/)
+      for (let index = 0; index < lines.length; index++) {
+        const match = matcher.exec(lines[index])
+        if (!match) continue
+        // Discover the extra hit before claiming the displayed result is incomplete.
+        if (outcome.hits.length === 500) { outcome.truncated = true; return true }
+        const start = Math.max(0, match.index - 80)
+        outcome.hits.push({ path, line: index + 1, column: match.index + 1, length: match[0].length,
+          text: lines[index].slice(start, start + 240) })
+      }
+    }
+    return false
+  }
+  walk('')
+  return outcome
 }
 
 function taskHistory(sessionId: string) {
@@ -168,6 +230,26 @@ test.describe.serial('Work 工作区内搜索（全新专项）', () => {
           return
         }
         response.setHeader('content-type', 'application/json')
+        if (path === '/api/v1/workspace/search/cancel') {
+          if (request.method !== 'POST' || !Object.hasOwn(roots, sessionId) || typeof body.requestId !== 'string') throw new Error('Invalid search cancellation')
+          searchCancels.push({ sessionId, requestId: body.requestId })
+          response.end(envelope({ cancelled: true })); return
+        }
+        if (path === '/api/v1/workspace/search') {
+          if (request.method !== 'POST' || !Object.hasOwn(roots, sessionId) || body.expectedRoot !== roots[sessionId] ||
+              body.bindingEpoch !== 'one' || typeof body.requestId !== 'string' || !body.requestId || typeof body.query !== 'string' ||
+              !body.options || typeof body.options !== 'object' || !body.excludes || typeof body.excludes !== 'object' || typeof body.useIgnoreFiles !== 'boolean') {
+            throw new Error('Workspace search omitted its session binding or options')
+          }
+          const input = body as SearchRequest
+          searchRequests.push(structuredClone(input))
+          const result = searchDisk(input)
+          // Cancellation is advisory: a result already in flight may still
+          // arrive, and the client must reject it using request ownership.
+          if (delayedSearch?.query === input.query) await delayedSearch.wait
+          response.end(envelope({ root: roots[sessionId], bindingEpoch: 'one', ...result }))
+          searchReplies.push(input.requestId); return
+        }
         if (path.startsWith('/api/v1/workspace/')) {
           const scopedId = String(body.sessionId ?? url.searchParams.get('sessionId') ?? '')
           const relativePath = String(body.path ?? url.searchParams.get('path') ?? '.')
@@ -187,6 +269,7 @@ test.describe.serial('Work 工作区内搜索（全新专项）', () => {
           const absolute = diskPath(scopedId, relativePath)
           const workspaceRoot = roots[scopedId]
           if (path === '/api/v1/workspace/directory') {
+            directoryRequests.push({ sessionId: scopedId, path: relativePath })
             const entries = readdirSync(absolute, { withFileTypes: true }).map(entry => {
               const metadata = statSync(join(absolute, entry.name))
               return { name: entry.name, path: `${workspaceRoot}/${relativePath === '.' ? '' : relativePath + '/'}${entry.name}`,
@@ -274,6 +357,7 @@ test.describe.serial('Work 工作区内搜索（全新专项）', () => {
   })
 
   test.afterEach(async () => {
+    delayedSearch?.release(); delayedSearch = undefined
     expect(errors).toEqual([])
     health?.assertHealthy()
     await expect(page.locator('.work-view')).not.toContainText('完整对话记录格式不正确')
@@ -295,9 +379,11 @@ test.describe.serial('Work 工作区内搜索（全新专项）', () => {
   test('工作区内展开内容搜索并只搜索当前任务文件', async ({}, info) => {
     await openSearch()
     await expect(searchInput()).toBeFocused()
+    const readOffset = reads.length
     await searchFor('ScopeAlpha', 6)
     await expect(panel().locator('.search-view__group')).toHaveCount(3)
-    expect(reads.some(read => read.sessionId === sessionA && read.path === 'src/report.txt')).toBe(true)
+    expect(searchRequests.some(request => request.sessionId === sessionA && request.query === 'ScopeAlpha' && request.expectedRoot === roots[sessionA])).toBe(true)
+    expect(reads.slice(readOffset)).toEqual([])
     expect(reads.filter(read => read.sessionId === sessionB)).toEqual([])
     expect(reads.filter(read => read.path.startsWith('node_modules/'))).toEqual([])
     await page.screenshot({ path: info.outputPath('work-workspace-search-light.png'), fullPage: true })
@@ -319,6 +405,8 @@ test.describe.serial('Work 工作区内搜索（全新专项）', () => {
   })
 
   test('包含、排除、设置排除和结果折叠都在工作区内生效', async () => {
+    await resetSearch()
+    await searchFor('ScopeAlpha', 6)
     await showFilters()
     await panel().getByRole('textbox', { name: '包含', exact: true }).fill('src')
     await expect(hits()).toHaveCount(4)
@@ -334,6 +422,39 @@ test.describe.serial('Work 工作区内搜索（全新专项）', () => {
     await expect(panel().locator('.search-view__file')).toHaveCount(4)
     await panel().getByRole('button', { name: '全部展开', exact: true }).click()
     await expect(hits()).toHaveCount(7)
+  })
+
+  test('排除表为空时仅切使用排除设置也重查 gitignore，并正常结束搜索', async () => {
+    const original = await page.evaluate(async () => {
+      const settings = await window.aether.settings.get()
+      await window.aether.settings.update({ filesExclude: {}, searchExclude: {} })
+      return { filesExclude: settings.filesExclude, searchExclude: settings.searchExclude }
+    })
+    // Settings are normally propagated by AppProvider. A reload after the
+    // public settings IPC restores that same persisted state without reaching
+    // into React stores or faking the search controller's options key.
+    await page.reload()
+    try {
+      await expect(panel()).toHaveAttribute('data-session-id', sessionA)
+      await resetSearch()
+      await searchFor('ScopeAlpha', 7)
+      const option = panel().getByRole('checkbox', { name: '使用排除设置', exact: true })
+      for (const enabled of [false, true]) {
+        const offset = searchRequests.length
+        await option.setChecked(enabled)
+        await expect.poll(() => searchRequests.length).toBe(offset + 1)
+        expect(searchRequests[offset]).toMatchObject({ sessionId: sessionA, query: 'ScopeAlpha', excludes: {}, useIgnoreFiles: enabled })
+        await expect(searchInput()).toHaveValue('ScopeAlpha')
+        await expect(panel().locator('.search-view__summary')).toContainText('7 处命中')
+        await expect(hits()).toHaveCount(7)
+        await expect(panel().getByRole('button', { name: '停止搜索', exact: true })).toHaveCount(0)
+        await expect(panel().getByRole('button', { name: '刷新搜索', exact: true })).toBeVisible()
+      }
+    } finally {
+      await page.evaluate(patch => window.aether.settings.update(patch), original)
+      await page.reload()
+      await expect(panel()).toHaveAttribute('data-session-id', sessionA)
+    }
   })
 
   test('点击与键盘打开结果定位正文行，文件和搜索切换不丢状态', async () => {
@@ -446,6 +567,105 @@ test.describe.serial('Work 工作区内搜索（全新专项）', () => {
     expect(readFileSync(diskPath(sessionB, 'only-b.txt'), 'utf8')).toBe(seedB['only-b.txt'])
   })
 
+  test('空包含范围搜到超过 2000 目录和 48 层深处的内容，前端请求数不随目录增加', async () => {
+    await resetSearch()
+    const largeRoot = diskPath(sessionA, 'large-tree')
+    mkdirSync(largeRoot)
+    for (let index = 0; index < 2050; index++) mkdirSync(join(largeRoot, `folder-${index}`))
+    const path = `large-tree/${Array(52).fill('d').join('/')}/target.txt`
+    mkdirSync(dirname(diskPath(sessionA, path)), { recursive: true })
+    writeFileSync(diskPath(sessionA, path), 'UnknownLocationMarker deeply nested result\n')
+    const requestOffset = searchRequests.length, directoryOffset = directoryRequests.length, readOffset = reads.length
+    try {
+      await expect(panel().getByRole('textbox', { name: '包含', exact: true })).toHaveValue('')
+      await searchFor('UnknownLocationMarker', 1)
+      const requests = searchRequests.slice(requestOffset)
+      expect(requests).toHaveLength(1)
+      expect(requests[0]).toMatchObject({ sessionId: sessionA, expectedRoot: roots[sessionA], bindingEpoch: 'one', options: { include: '' } })
+      await expect(panel().locator('.search-view__file')).toHaveAttribute('title', path)
+      await expect(hits()).toContainText('UnknownLocationMarker')
+      expect(reads.slice(readOffset)).toEqual([])
+      // A root metadata refresh is permitted; recursive renderer enumeration
+      // must not issue thousands of HTTP calls before searching any content.
+      expect(directoryRequests.slice(directoryOffset).length).toBeLessThanOrEqual(1)
+      expect(directoryRequests.slice(directoryOffset).some(request => request.path.startsWith('large-tree'))).toBe(false)
+      await expect(panel()).not.toContainText('超过搜索上限')
+    } finally {
+      await searchInput().fill('')
+      const parent = resolve(diskPath(sessionA, '.')), owned = resolve(largeRoot)
+      if (dirname(owned) !== parent || relative(parent, owned) !== 'large-tree') throw new Error('Unsafe large-search fixture cleanup')
+      rmSync(owned, { recursive: true, force: true, maxRetries: 5 })
+    }
+  })
+
+  test('快速修改关键词取消旧引擎请求，迟到的旧结果不能覆盖新结果', async () => {
+    await resetSearch()
+    let release!: () => void
+    delayedSearch = { query: 'StaleSearchToken', wait: new Promise<void>(done => { release = done }), release: () => release() }
+    const offset = searchRequests.length
+    try {
+      await searchInput().fill('StaleSearchToken')
+      await expect.poll(() => searchRequests.slice(offset).find(request => request.query === 'StaleSearchToken')?.requestId).toBeTruthy()
+      const previous = searchRequests.slice(offset).find(request => request.query === 'StaleSearchToken')!
+      await searchFor('FreshSearchToken', 1)
+      await expect.poll(() => searchCancels.some(cancel => cancel.sessionId === sessionA && cancel.requestId === previous.requestId)).toBe(true)
+      const current = searchRequests.slice(offset).find(request => request.query === 'FreshSearchToken')!
+      expect(current.requestId).not.toBe(previous.requestId)
+      await expect(panel().locator('.search-view__file')).toHaveAttribute('title', 'race-new.txt')
+      release()
+      await expect.poll(() => searchReplies.includes(previous.requestId)).toBe(true)
+      await expect(searchInput()).toHaveValue('FreshSearchToken')
+      await expect(hits()).toHaveCount(1)
+      await expect(hits()).toContainText('FreshSearchToken')
+      await expect(hits()).not.toContainText('StaleSearchToken')
+      await expect(panel().locator('.search-view__file')).toHaveAttribute('title', 'race-new.txt')
+      // The same cancellation contract also backs the explicit Stop control.
+      delayedSearch = { query: 'StaleSearchToken', wait: new Promise<void>(done => { release = done }), release: () => release() }
+      const nextOffset = searchRequests.length
+      await searchInput().fill('StaleSearchToken')
+      await expect.poll(() => searchRequests.length).toBe(nextOffset + 1)
+      const stopped = searchRequests[nextOffset]
+      await panel().getByRole('button', { name: '停止搜索', exact: true }).click()
+      await expect.poll(() => searchCancels.some(cancel => cancel.sessionId === sessionA && cancel.requestId === stopped.requestId)).toBe(true)
+      await expect(panel().getByRole('button', { name: '刷新搜索', exact: true })).toBeVisible()
+      release()
+      await expect.poll(() => searchReplies.includes(stopped.requestId)).toBe(true)
+      await expect(hits()).toHaveCount(0)
+    } finally { release(); delayedSearch = undefined }
+  })
+
+  test('命中上限保留可见结果与不完整提示，替换预览不能确认写入', async () => {
+    await resetSearch()
+    const path = diskPath(sessionA, 'result-cap.txt'), original = Array.from({ length: 501 }, (_, index) => `CapSearchToken line ${index}`).join('\n')
+    writeFileSync(path, original)
+    const initialWrites = writes.length, readOffset = reads.length
+    try {
+      await searchFor('CapSearchToken', 500)
+      await expect(panel().locator('.search-view__summary')).toContainText(/上限|不完整|截断/)
+      await expect(hits().first()).toContainText('CapSearchToken')
+      if (!(await panel().getByRole('textbox', { name: '替换为', exact: true }).isVisible())) {
+        await panel().getByRole('button', { name: '显示替换', exact: true }).click()
+      }
+      await panel().getByRole('textbox', { name: '替换为', exact: true }).fill('must-not-write')
+      await panel().getByRole('button', { name: '全部替换', exact: true }).click()
+      const preview = page.getByRole('dialog', { name: '替换预览', exact: true })
+      await expect(preview).toBeVisible()
+      await expect(preview).toContainText(/上限|不完整|未完整|截断/)
+      const apply = preview.getByRole('button', { name: '应用替换', exact: true })
+      await expect(apply).toBeDisabled()
+      await apply.evaluate(element => (element as HTMLButtonElement).click())
+      expect(writes).toHaveLength(initialWrites)
+      expect(readFileSync(path, 'utf8')).toBe(original)
+      expect(reads.slice(readOffset).every(read => read.sessionId === sessionA && read.path === 'result-cap.txt')).toBe(true)
+      await preview.press('Escape')
+      await expect(preview).not.toBeVisible()
+      await expect(hits()).toHaveCount(500)
+    } finally {
+      await searchInput().fill('')
+      rmSync(path)
+    }
+  })
+
   test('切换会话后只搜索新任务，旧搜索和替换状态不能泄漏', async ({}, info) => {
     await page.getByRole('complementary', { name: 'Work 导航', exact: true }).getByRole('button', { name: `${titleB} · 已完成`, exact: true }).click()
     await expect(panel()).toHaveAttribute('data-session-id', sessionB)
@@ -453,10 +673,12 @@ test.describe.serial('Work 工作区内搜索（全新专项）', () => {
     await expect(searchInput()).toHaveValue('')
     await expect(panel().getByRole('textbox', { name: '替换为', exact: true })).not.toBeVisible()
     const readOffset = reads.length
+    const requestOffset = searchRequests.length
     await searchFor('ScopeAlpha', 0)
     await expect(panel()).toContainText('没有匹配的内容')
     await searchFor('ScopeBeta', 1)
     expect(reads.slice(readOffset).every(read => read.sessionId === sessionB)).toBe(true)
+    expect(searchRequests.slice(requestOffset).map(request => request.sessionId)).toEqual([sessionB, sessionB])
     await expect(panel().locator('.search-view__group')).toContainText('only-b.txt')
     await expect(panel()).not.toContainText('report.txt')
     await setAppearance('dark')

@@ -1,11 +1,12 @@
 import type { SearchOptions } from '@shared/ipc'
 import { getSearchExcludes, matchOnLine, type SearchState } from '../search/search-store'
 import type { SearchPanelActions, SearchPanelSnapshot } from '../search/SearchView'
-import { previewRemoteReplace, replaceRemoteWorkspace, remoteSearchRegExp, searchRemoteWorkspace, type RemoteContent } from '../search/remote-search'
+import { previewRemoteReplace, replaceRemoteWorkspace, remoteSearchRegExp, type RemoteContent } from '../search/remote-search'
 import { paths, type SessionFileTarget } from '@renderer/core/workspace/fs-client'
 import { requestWorkPreviews } from '@renderer/core/workbench/preview-request'
 import type { TextPreviewReveal } from '@renderer/core/editor/TextPreview'
 import { createWorkSearchTransport, workSearchFileTree } from './work-search-transport'
+import { startWorkSearch } from './work-search-api'
 
 const emptyState = (): SearchState => ({ query: '', replaceQuery: '', caseSensitive: false, wholeWord: false, useRegex: false,
   include: '', exclude: '', useExcludeSettings: true, replaceVisible: false, filtersVisible: false, hits: [], truncated: false,
@@ -24,18 +25,20 @@ export function createWorkSearchController(target: SessionFileTarget, current: (
   let timer: ReturnType<typeof setTimeout> | undefined
   let sequence = 0, previewSequence = 0, revision = 0
   let replacing = false
+  let activeSearch: ReturnType<typeof startWorkSearch> | undefined
+  let previewSearch: ReturnType<typeof startWorkSearch> | undefined
   let plan: { query: string; replacement: string; options: SearchOptions; originals: Map<string, RemoteContent>; paths: Set<string> } | undefined
   const options = (): SearchOptions => ({ caseSensitive: state.caseSensitive, wholeWord: state.wholeWord,
     useRegex: state.useRegex, include: state.include, exclude: state.exclude })
   const excludes = () => state.useExcludeSettings ? getSearchExcludes() : {}
-  const optionsKey = (): string => JSON.stringify([state.query, options(), excludes()])
+  const optionsKey = (): string => JSON.stringify([state.query, options(), excludes(), state.useExcludeSettings])
   const publish = (patch: Partial<SearchState> = {}): void => {
     state = { ...state, ...patch }
     snapshot = { ...state, optionsKey: optionsKey() }
     for (const listener of listeners) listener()
   }
-  const cancelSearch = (): void => { sequence++; clearTimeout(timer); timer = undefined }
-  const clearPreview = (): void => { previewSequence++; plan = undefined; publish({ previewVisible: false, previewBusy: false, previewOutcome: null }) }
+  const cancelSearch = (): void => { sequence++; clearTimeout(timer); timer = undefined; activeSearch?.cancel(); activeSearch = undefined }
+  const clearPreview = (): void => { previewSequence++; previewSearch?.cancel(); previewSearch = undefined; plan = undefined; publish({ previewVisible: false, previewBusy: false, previewOutcome: null }) }
   const search = async (): Promise<void> => {
     cancelSearch()
     if (!current() || !state.query.trim()) return
@@ -43,11 +46,13 @@ export function createWorkSearchController(target: SessionFileTarget, current: (
     publish({ searching: true, hits: [], errorMessage: null, selectedKey: null })
     const owns = (): boolean => current() && request === sequence
     try {
-      const result = await searchRemoteWorkspace(createWorkSearchTransport(target, owns, config, excluded), query, config, excluded)
+      activeSearch = startWorkSearch(target, owns, query, config, excluded, state.useExcludeSettings)
+      const result = await activeSearch.promise
       if (!owns()) return
       publish({ hits: result.hits, searching: false, truncated: result.truncated, strategy: result.strategy,
         errorMessage: result.error ?? null, collapsed: {}, history: [query, ...state.history.filter(value => value !== query)].slice(0, 20) })
     } catch (reason) { if (owns()) publish({ searching: false, hits: [], errorMessage: errorMessage(reason) }) }
+    finally { if (owns()) activeSearch = undefined }
   }
   const actions: SearchPanelActions = {
     patchSearch(patch) {
@@ -63,17 +68,30 @@ export function createWorkSearchController(target: SessionFileTarget, current: (
       timer = setTimeout(() => { void search() }, 300)
     },
     runSearch: search,
+    cancelSearch() { cancelSearch(); publish({ searching: false }) },
     clearSearch() { cancelSearch(); clearPreview(); publish({ query: '', hits: [], searching: false, truncated: false, strategy: null, selectedKey: null, errorMessage: null, replaceMessage: null }) },
     closeReplacePreview: clearPreview,
     async openReplacePreview() {
       if (!current() || !state.query.trim() || state.previewBusy || replacing) return
+      cancelSearch()
       const request = ++previewSequence, query = state.query.trim(), config = options(), excluded = excludes(), replacement = state.replaceQuery
       const owns = (): boolean => current() && request === previewSequence
-      publish({ previewVisible: true, previewBusy: true, previewOutcome: null })
-      const transport = createWorkSearchTransport(target, owns, config, excluded)
+      publish({ searching: false, previewVisible: true, previewBusy: true, previewOutcome: null })
       const originals = new Map<string, RemoteContent>()
       const matcher = remoteSearchRegExp(query, config)
       try {
+        previewSearch = startWorkSearch(target, owns, query, config, excluded, state.useExcludeSettings)
+        const found = await previewSearch.promise
+        if (!owns()) return
+        previewSearch = undefined
+        if (found.truncated || found.error) {
+          publish({ previewBusy: false, previewOutcome: { files: [], total: 0, truncated: found.truncated,
+            error: found.error ?? '搜索结果未完整返回，暂不能全部替换。请缩小关键词范围后重试。' } })
+          return
+        }
+        // The expensive scan is performed once beside the workspace. Only
+        // matched files cross the bridge for the explicit replacement preview.
+        const transport = createWorkSearchTransport(target, owns, [...new Set(found.hits.map(hit => hit.path))])
         const result = await previewRemoteReplace({ ...transport, async readFile(path) {
           const file = await transport.readFile(path)
           // Unmatched files never participate in a replacement. Retaining the
@@ -93,7 +111,7 @@ export function createWorkSearchController(target: SessionFileTarget, current: (
       const request = previewSequence
       const owns = (): boolean => current() && request === previewSequence
       publish({ previewVisible: false, replaceBusy: true, replaceMessage: null })
-      const transport = createWorkSearchTransport(target, owns, approved.options, {})
+      const transport = createWorkSearchTransport(target, owns, [...approved.paths])
       try {
         // Freeze the preview's file set and refuse files changed since it was
         // shown. Confirming a preview never expands to newly matching files.

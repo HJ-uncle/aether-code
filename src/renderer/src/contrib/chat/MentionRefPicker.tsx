@@ -4,6 +4,7 @@ import { agentMentionSearch } from './agent-references'
 import { FileRefPalette } from './FileRefPalette'
 import type { Mention } from './mention-context'
 import { isMotionInteractive } from '@renderer/workbench/motion'
+import { isTopOverlay } from '@renderer/workbench/overlay'
 import './mention-ref-picker.css'
 
 type ReferenceKind = 'files' | 'agents'
@@ -28,6 +29,8 @@ export function MentionRefPicker({ root, query, showSearch = false, onSelect, on
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (!isMotionInteractive(rootRef.current)) return
+      const owner = rootRef.current?.closest<HTMLElement>('[data-overlay-id]')?.dataset.overlayId
+      if (owner && !isTopOverlay(owner)) return
       if (event.isComposing || event.keyCode === 229 || !event.altKey || event.ctrlKey || event.metaKey ||
         !['ArrowLeft', 'ArrowRight'].includes(event.key)) return
       event.preventDefault()

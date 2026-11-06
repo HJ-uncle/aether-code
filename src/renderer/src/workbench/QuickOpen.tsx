@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type JSX, type MutableRefObject } from 'react'
+import { createPortal } from 'react-dom'
 import { documentKey, getEditorState, openFile } from '@renderer/core/editor/editor-store'
 import { activateGroupTab, getEditorGroups } from '@renderer/core/editor/editor-groups'
 import { getRecentFiles } from '@renderer/core/editor/recent-files'
@@ -13,6 +14,7 @@ import { FuzzyText } from './FuzzyText'
 import { fuzzyMatch } from '@renderer/core/platform/fuzzy'
 import { useAppMode } from '@renderer/core/platform/app-mode'
 import { useMotionPresence } from './MotionPresence'
+import { isTopOverlay, OverlayScope, useOverlay } from './overlay'
 
 const TOGGLE_COMMAND = 'aether.quickOpen.toggle'
 const MAX_ITEMS = 50
@@ -63,18 +65,6 @@ interface FileItem {
   nameStart: number
   positions: number[]
   score: number
-}
-
-/**
- * 另一个 palette 是否开着（命令面板）。
- *
- * 两个面板共用 .palette-overlay / .palette，但由各自组件管理开合，
- * 谁也不知道对方的 state。键位分发是「先注册者先响应」，Ctrl+Shift+P
- * 命中的是命令面板而不是这里的 TOGGLE_COMMAND，所以退出必须靠查 DOM，
- * 否则本组件的捕获监听会把 Esc 吞掉，命令面板再也关不上。
- */
-function isOtherPaletteOpen(): boolean {
-  return document.querySelector('.palette-overlay:not([inert]) .palette[aria-label="命令面板"]') !== null
 }
 
 export function QuickOpen(): JSX.Element | null {
@@ -142,6 +132,8 @@ function QuickOverlay({
   const [files, setFiles] = useState<string[] | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const overlay = useOverlay({ open, present: true, modal: true, panelRef, onClose: () => close() })
 
   const parsed = parseQuery(query)
 
@@ -282,15 +274,10 @@ function QuickOverlay({
   // 无依赖数组：每次渲染重挂，闭包里的 active/count/accept 始终是最新值。
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      // 面板关闭或已让位给命令面板后，这个监听仍在（捕获阶段且不判断状态），
-      // 会把发给别人的 Esc 一并 stopPropagation 掉。必须在捕获阶段先自查。
-      if (!open || closedRef.current || isOtherPaletteOpen()) return
+      // A newer dialog owns keyboard input even while this palette remains mounted.
+      if (!open || closedRef.current || !isTopOverlay(overlay.id)) return
 
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        event.stopPropagation()
-        close(true)
-      } else if (event.key === 'ArrowDown') {
+      if (event.key === 'ArrowDown') {
         event.preventDefault()
         event.stopPropagation()
         setActive((value) => Math.min(value + 1, count - 1))
@@ -320,18 +307,19 @@ function QuickOverlay({
         ? '选择一个前缀了解用法…'
         : '输入文件名打开文件，支持 `文件:行:列` 精确跳转…'
 
-  return (
-    <div className="palette-overlay" {...motionProps} data-motion-axis="y" onMouseDown={() => close()}>
+  return createPortal(
+    <OverlayScope id={overlay.id}><div className="palette-overlay" {...motionProps} {...overlay.layerProps} style={{ zIndex: overlay.zIndex }} data-motion-axis="y">
       <div
+        ref={panelRef}
         className="palette"
         role="dialog"
+        aria-modal="true"
         aria-label="快速打开文件"
-        onMouseDown={(event) => event.stopPropagation()}
+        tabIndex={-1}
       >
         <input
           ref={inputRef}
           className="palette__input"
-          autoFocus
           value={query}
           placeholder={placeholder}
           aria-label="搜索文件名"
@@ -457,7 +445,7 @@ function QuickOverlay({
           )}
         </div>
       </div>
-    </div>
+    </div></OverlayScope>, document.body
   )
 }
 

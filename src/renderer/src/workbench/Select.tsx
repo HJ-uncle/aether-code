@@ -13,6 +13,8 @@ import { Popover, type PopoverAlign, type PopoverPlacement } from './Popover'
 export interface SelectOption {
   value: string
   label: string
+  /** Optional identity icon; text-only choices keep their compact alignment. */
+  icon?: IconName
   /** 次要说明：展示在选项下方，帮助区分相近选项 */
   description?: string
 }
@@ -86,6 +88,7 @@ export function Select({
   /** Popover 经 onOpenChange 透出的开合态，供打开时同步高亮项 */
   const [open, setOpen] = useState(false)
   const itemCount = options.length + actions.length
+  const hasOptionIcons = options.some(option => option.icon)
   const changeOpen = useCallback(
     (next: boolean): void => {
       setOpen(next)
@@ -241,21 +244,19 @@ export function Select({
             key={option.value}
             type="button"
             role="menuitem"
+            aria-current={option.value === value ? 'true' : undefined}
             data-select-index={index}
             tabIndex={index === activeIndex ? 0 : -1}
             className={`select__item${option.value === value ? ' is-active' : ''}${index === activeIndex ? ' is-highlight' : ''}`}
             onFocus={() => setActiveIndex(index)}
             onClick={() => choose(option)}
           >
-            <span className="select__item-head">
-              {option.label}
-              {option.value === value ? (
-                <Icon name="check" size={16} className="select__check" />
-              ) : null}
+            {hasOptionIcons ? <span className="select__item-icon" aria-hidden="true">{option.icon ? <Icon name={option.icon} size={16} /> : null}</span> : null}
+            <span className="select__item-copy">
+              <span className="select__item-head">{option.label}</span>
+              {option.description ? <small className="select__item-desc">{option.description}</small> : null}
             </span>
-            {option.description ? (
-              <small className="select__item-desc">{option.description}</small>
-            ) : null}
+            <span className="select__check-slot" aria-hidden="true">{option.value === value ? <Icon name="check" size={16} className="select__check" /> : null}</span>
           </button>
         ))}
         {actions.length ? (

@@ -103,6 +103,16 @@
   background: var(--bg-input);
 }
 
+/* Migrated native selects retain the sizing of their surrounding form grid. */
+.settings-menu-field { min-width: 0; max-width: 100%; }
+.settings-menu-field > .popover__trigger,
+.settings-menu-field .select__trigger,
+.memory-settings__toolbar > .select > .popover__trigger,
+.memory-settings__toolbar > .select .select__trigger,
+.memory-settings__editor-row > .select > .popover__trigger,
+.memory-settings__editor-row > .select .select__trigger { width: 100%; min-width: 0; }
+.settings-menu-field .select__trigger { background: var(--bg-input); }
+
 .settings-view .btn {
   min-height: 30px;
   border-radius: 7px;

@@ -69,6 +69,7 @@ export function PromptDialog({
   return (
     <Dialog
       open={show}
+      closeDisabled={busy}
       title={title}
       className="modal--prompt"
       footer={

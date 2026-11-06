@@ -6,6 +6,7 @@ import {
   type JSX,
   type KeyboardEvent as ReactKeyboardEvent
 } from 'react'
+import { createPortal } from 'react-dom'
 import { executeCommand, isCommandEnabled, registerCommand } from '@renderer/core/platform/commands'
 import { recordCommandRun } from '@renderer/core/platform/commands-history'
 import { getKeybindingHint, registerKeybinding } from '@renderer/core/platform/keybindings'
@@ -13,6 +14,7 @@ import { buildCommandItems } from './command-filter'
 import { FuzzyText } from './FuzzyText'
 import { useAppMode } from '@renderer/core/platform/app-mode'
 import { useMotionPresence } from './MotionPresence'
+import { OverlayScope, useOverlay } from './overlay'
 
 const TOGGLE_COMMAND = 'aether.commandPalette.toggle'
 
@@ -60,13 +62,15 @@ export function CommandPalette(): JSX.Element | null {
   }, [])
 
   if (!motion.present) return null
-  return <PaletteOverlay key={generation} motionProps={motion.motionProps} onClose={() => { openRef.current = false; setOpen(false) }} />
+  return <PaletteOverlay key={generation} open={open} motionProps={motion.motionProps} onClose={() => { openRef.current = false; setOpen(false) }} />
 }
 
-function PaletteOverlay({ onClose, motionProps }: { onClose: () => void; motionProps: ReturnType<typeof useMotionPresence>['motionProps'] }): JSX.Element {
+function PaletteOverlay({ open, onClose, motionProps }: { open: boolean; onClose: () => void; motionProps: ReturnType<typeof useMotionPresence>['motionProps'] }): JSX.Element {
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const overlay = useOverlay({ open, present: true, modal: true, panelRef, onClose })
 
   const groups = useMemo(() => buildCommandItems(query), [query])
   const items = useMemo(() => groups.flatMap((group) => group.items), [groups])
@@ -80,10 +84,7 @@ function PaletteOverlay({ onClose, motionProps }: { onClose: () => void; motionP
   }
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>): void => {
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      onClose()
-    } else if (event.key === 'ArrowDown') {
+    if (event.key === 'ArrowDown') {
       event.preventDefault()
       setActive((value) => Math.min(value + 1, items.length - 1))
     } else if (event.key === 'ArrowUp') {
@@ -100,17 +101,18 @@ function PaletteOverlay({ onClose, motionProps }: { onClose: () => void; motionP
     listRef.current?.querySelector('.is-active')?.scrollIntoView({ block: 'nearest' })
   }, [active, query, items])
 
-  return (
-    <div className="palette-overlay" {...motionProps} data-motion-axis="y" onMouseDown={onClose}>
+  return createPortal(
+    <OverlayScope id={overlay.id}><div className="palette-overlay" {...motionProps} {...overlay.layerProps} style={{ zIndex: overlay.zIndex }} data-motion-axis="y">
       <div
+        ref={panelRef}
         className="palette"
         role="dialog"
+        aria-modal="true"
         aria-label="命令面板"
-        onMouseDown={(event) => event.stopPropagation()}
+        tabIndex={-1}
       >
         <input
           className="palette__input"
-          autoFocus
           value={query}
           placeholder="输入命令名过滤，回车执行…"
           aria-label="过滤命令"
@@ -157,6 +159,6 @@ function PaletteOverlay({ onClose, motionProps }: { onClose: () => void; motionP
           ))}
         </div>
       </div>
-    </div>
+    </div></OverlayScope>, document.body
   )
 }

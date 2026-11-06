@@ -15,7 +15,7 @@
 .knowledge-toolbar__fields .field__input:first-child { flex: 1 1 180px; }
 .knowledge-toolbar__fields .field__input:nth-child(2) { flex: 2 1 240px; }
 .knowledge-toolbar__base { margin-top: 12px; color: var(--fg-muted); font-size: 12px; }
-.knowledge-toolbar__base select { min-width: 220px; }
+.knowledge-toolbar__base .settings-menu-field { min-width: 220px; }
 .knowledge-upload__fields { align-items: stretch; flex-direction: column; }
 .knowledge-file-drop { display: flex; align-items: center; justify-content: center; gap: var(--space-2); min-height: 76px; padding: var(--space-4); border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); background: var(--bg-inset); cursor: pointer; transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out); }
 .knowledge-file-drop:hover, .knowledge-file-drop:focus-within { border-color: var(--accent); background: var(--bg-hover); }
@@ -130,7 +130,7 @@
     width: 100%;
   }
   .knowledge-toolbar__fields .btn { align-self: stretch; }
-  .knowledge-toolbar__base select { min-width: 0; width: 100%; }
+  .knowledge-toolbar__base .settings-menu-field { min-width: 0; width: 100%; }
   .knowledge-file-drop { align-items: flex-start; flex-direction: column; }
   .knowledge-document-summary { align-items: flex-start; }
 }
@@ -187,7 +187,7 @@
 }
 
 .settings-view--knowledge .knowledge-toolbar__fields .field__input,
-.settings-view--knowledge .knowledge-toolbar__base select {
+.settings-view--knowledge .knowledge-toolbar__base .select__trigger {
   min-height: 34px;
   border-radius: 8px;
 }

@@ -1279,6 +1279,7 @@ export function useWorkController() {
     workspaceRunId: restored && chat.sessionModel?.source === epoch && chat.sessionModel.sessionId === activeId ? chat.sessionModel.runId : undefined,
     contextCompaction: restored && chat.sessionModel?.source === epoch && chat.sessionModel.sessionId === activeId ? chat.sessionModel.compaction : undefined,
     todos: restored ? chat.todos : [],
+    assignTodos: restored ? chat.assignTodos : () => new Map(),
     artifacts,
     pending,
     streaming,

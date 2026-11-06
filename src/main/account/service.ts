@@ -1,4 +1,4 @@
-import { dialog, shell } from 'electron'
+import { dialog, shell, type BrowserWindow, type MessageBoxOptions, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { readFileSync, statSync, writeFileSync } from 'node:fs'
 import type { AccountProfileInput, AccountProvider, AccountSession, AccountState, AccountUser } from '../../shared/account'
@@ -218,17 +218,20 @@ async function readState(): Promise<AccountState> {
   }
 }
 export const accountService = {
-  async setHttpTrust(serviceUrl: string, trusted: boolean): Promise<AccountState> {
+  async setHttpTrust(serviceUrl: string, trusted: boolean, owner?: BrowserWindow | null): Promise<AccountState> {
     if (typeof serviceUrl !== 'string' || typeof trusted !== 'boolean') throw new Error('服务信任设置无效。')
     const t = target()
     if (remoteAuthTarget(serviceUrl) !== remoteAuthTarget(t.url)) throw new Error('连接已切换，请在当前服务重新确认。')
     if (trusted && getAccountTransport(t.url) === 'http-untrusted') {
-      const confirmed = await dialog.showMessageBox({
+      const options: MessageBoxOptions = {
         type: 'warning', title: '信任内网 HTTP 服务',
         message: '仅在你信任此网络和服务器时继续',
         detail: `${t.url}\n\nHTTP 会明文传输登录凭证及工作数据。此次确认只对这个服务地址生效。`,
         buttons: ['取消', '信任此服务'], defaultId: 0, cancelId: 0, noLink: true
-      })
+      }
+      const confirmed = owner && !owner.isDestroyed()
+        ? await dialog.showMessageBox(owner, options)
+        : await dialog.showMessageBox(options)
       if (confirmed.response !== 1) return accountService.getState()
     }
     assertTarget(t)
@@ -288,10 +291,11 @@ export const accountService = {
     if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(id)) throw new Error('会话标识无效。')
     await request(target(), `/sessions/${encodeURIComponent(id)}`, 'DELETE', undefined, true)
   },
-  exportRecovery(): Promise<boolean> { return exclusive(async t => {
+  exportRecovery(owner?: BrowserWindow | null): Promise<boolean> { return exclusive(async t => {
     const credential = readAccountCredential(t.scope).credential
     if (!credential) throw new Error('请先登录再备份。')
-    const picked = await dialog.showSaveDialog({ title: '备份登录凭证（请勿分享此文件）', defaultPath: 'aether-account.json', filters: [{ name: 'Aether 账号备份', extensions: ['json'] }] })
+    const options: SaveDialogOptions = { title: '备份登录凭证（请勿分享此文件）', defaultPath: 'aether-account.json', filters: [{ name: 'Aether 账号备份', extensions: ['json'] }] }
+    const picked = owner && !owner.isDestroyed() ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options)
     if (picked.canceled || !picked.filePath) return false
     assertTarget(t)
     let recoveryKey = credential.recoveryKey
@@ -305,9 +309,10 @@ export const accountService = {
     writeFileSync(picked.filePath, JSON.stringify({ version: 1, scope: t.scope === 'embedded' ? 'embedded' : 'remote', serviceUrl: t.url, userId: credential.user.id, recoveryKey }, null, 2), { mode: 0o600 })
     return true
   }) },
-  async importRecovery(): Promise<AccountState | null> {
+  async importRecovery(owner?: BrowserWindow | null): Promise<AccountState | null> {
     const t = target()
-    const picked = await dialog.showOpenDialog({ title: '导入账号备份', properties: ['openFile'], filters: [{ name: 'Aether 账号备份', extensions: ['json'] }] })
+    const options: OpenDialogOptions = { title: '导入账号备份', properties: ['openFile'], filters: [{ name: 'Aether 账号备份', extensions: ['json'] }] }
+    const picked = owner && !owner.isDestroyed() ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
     if (picked.canceled || !picked.filePaths[0]) return null
     assertTarget(t)
     const path = picked.filePaths[0]

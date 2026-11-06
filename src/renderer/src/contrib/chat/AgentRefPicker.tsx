@@ -3,6 +3,7 @@ import { requestOrThrow } from '@renderer/core/engine/client'
 import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
 import { agentMentionSearch, type AgentReferenceIdentity } from './agent-references'
 import { isMotionInteractive } from '@renderer/workbench/motion'
+import { isTopOverlay } from '@renderer/workbench/overlay'
 
 export function AgentRefPicker({ query, onSelect, onClose }: {
   query: string
@@ -49,6 +50,10 @@ export function AgentRefPicker({ query, onSelect, onClose }: {
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (!isMotionInteractive(rootRef.current)) return
+      const owner = rootRef.current?.closest<HTMLElement>('[data-overlay-id]')?.dataset.overlayId
+      // Window capture precedes the shared document handler. Only the foremost
+      // completion owns selection keys; let its layer handle Escape itself.
+      if (owner && (!isTopOverlay(owner) || event.key === 'Escape')) return
       if (event.isComposing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey) return
       if (event.target instanceof Element && event.target.closest('[data-mention-list-control]')) return
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return }

@@ -265,7 +265,7 @@ export interface SearchOutcome {
   truncated: boolean
   /** 实际采用的搜索方式：git grep 或文件遍历（用于结果区提示） */
   strategy: 'git' | 'scan'
-  /** 模式非法等用户可修复的错误（如正则语法错误）；有错误时 hits 为空 */
+  /** 查询错误或结果不完整的说明；部分成功时仍保留可用 hits。 */
   error?: string
 }
 
@@ -642,7 +642,7 @@ export interface ChatSsePayload {
   messageBlock?: unknown
   flow?: unknown
   /** 会话待办清单快照（\x00__todo__ 控制帧） */
-  todo?: { todos?: EngineTodo[] }
+  todo?: { todos?: EngineTodo[]; runId?: string; turnId?: string }
   /** 文件改动记录（\x00__file_change__ 控制帧，write_file/delete_file 后下发） */
   fileChange?: EngineFileChange
   usage?: unknown

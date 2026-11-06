@@ -6,7 +6,7 @@ import { useWorkbenchVisible } from '@renderer/core/platform/workbench-visibilit
 import type { CommandJobSnapshot } from '@shared/command-job'
 import { commandJobActive, commandJobDisplayLabel, commandJobInvocation, commandJobStopMessage, commandToolState, mergeCommandJob } from '@renderer/core/engine/command-job-state'
 import type { ToolActivity } from '@renderer/core/engine/useChat'
-import { cancelCommandJob, commandJobMissing, ingestCommandJob, refreshCommandOutput, useCommandJob } from '@renderer/core/engine/command-job-store'
+import { cancelCommandJob, commandJobMissing, deleteCommandJob, ingestCommandJob, refreshCommandOutput, restartCommandJob, useCommandJob } from '@renderer/core/engine/command-job-store'
 import { MotionPresence } from '@renderer/workbench/MotionPresence'
 import { Icon } from '@renderer/workbench/icons'
 import { exportToolDiagnostics } from '@renderer/core/engine/tool-feedback'
@@ -25,6 +25,9 @@ export function CommandJobCard({ job: initial, sessionId, surfaceMode = 'code', 
   const [outputError, setOutputError] = useState('')
   const [cancelError, setCancelError] = useState('')
   const [missing, setMissing] = useState(false)
+  const [deleted, setDeleted] = useState(false)
+  const [actionError, setActionError] = useState('')
+  const [historyAction, setHistoryAction] = useState<'restart' | 'delete' | null>(null)
   const [stopping, setStopping] = useState(false)
   const [copied, setCopied] = useState(false)
   const detailsId = useId()
@@ -48,7 +51,7 @@ export function CommandJobCard({ job: initial, sessionId, surfaceMode = 'code', 
   // visible, but remove stale service receipts from Work after their endpoint
   // reports 404 or the durable job reaches the interrupted terminal state.
   const staleBackground = job.background && (missing || job.status === 'interrupted')
-  const dismissed = surfaceMode === 'work' && belongs && job.background && (missing || !preserveHistory && (cancelledByStop || staleBackground))
+  const dismissed = surfaceMode === 'work' && belongs && job.background && (deleted || missing || !preserveHistory && (cancelledByStop || staleBackground))
   const cardRef = useRef<HTMLElement>(null)
   const restoreFocusOnExit = useRef(false)
   const outcomeTool: ToolActivity = {
@@ -119,6 +122,21 @@ export function CommandJobCard({ job: initial, sessionId, surfaceMode = 'code', 
       if (restoreFocusOnExit.current && document.activeElement === document.body && serviceFocusTarget?.isConnected) serviceFocusTarget.focus({ preventScroll: true })
     }
   }
+  const restart = async (): Promise<void> => {
+    if (!ready || sourceEpoch !== getEngineSource() || !belongs || active || historyAction) return
+    setHistoryAction('restart'); setActionError('')
+    try { await restartCommandJob(sessionId, job.jobId) }
+    catch (error) { if (sourceEpoch === getEngineSource()) setActionError(`重启失败：${error instanceof Error ? error.message : String(error)}`) }
+    finally { if (sourceEpoch === getEngineSource()) setHistoryAction(null) }
+  }
+  const remove = async (): Promise<void> => {
+    if (!ready || sourceEpoch !== getEngineSource() || !belongs || active || historyAction) return
+    if (!window.confirm('删除这条服务历史及其日志？此操作无法撤销。')) return
+    setHistoryAction('delete'); setActionError('')
+    try { await deleteCommandJob(sessionId, job.jobId); setDeleted(true) }
+    catch (error) { if (sourceEpoch === getEngineSource()) setActionError(`删除失败：${error instanceof Error ? error.message : String(error)}`) }
+    finally { if (sourceEpoch === getEngineSource()) setHistoryAction(null) }
+  }
   if (servicePresentation) {
     // The row identifies a process; its exact invocation belongs in the disclosure.
     const executable = job.command.trim().match(/^(?:"([^"]+)"|'([^']+)'|(\S+))/)
@@ -138,8 +156,12 @@ export function CommandJobCard({ job: initial, sessionId, surfaceMode = 'code', 
             <span className="work-service-card__status" role="status" aria-label="命令状态">{commandJobDisplayLabel(job)}</span>
           </button>
           {active && belongs ? <button type="button" className="work-service-card__action" aria-label="停止命令" title="停止命令" disabled={!ready || stopping || job.status === 'cancelling'} onClick={() => void stop()}><Icon name="stop" size={12} /></button> : null}
+          {!active && belongs ? <>
+            <button type="button" className="work-service-card__action" aria-label={historyAction === 'restart' ? '正在重启服务' : '重启服务'} title="按原命令重新启动" aria-busy={historyAction === 'restart'} disabled={!ready || historyAction !== null} onClick={() => void restart()}><Icon name="restart" size={13} /></button>
+            <button type="button" className="work-service-card__action work-service-card__action--danger" aria-label={historyAction === 'delete' ? '正在删除服务历史' : '删除服务历史'} title="删除历史及日志" aria-busy={historyAction === 'delete'} disabled={!ready || historyAction !== null} onClick={() => void remove()}><Icon name="trash" size={13} /></button>
+          </> : null}
         </div>
-        {!belongs || cancelError || outputError ? <div className="work-service-card__error" role="alert">{!belongs ? '命令任务不属于当前会话' : cancelError || outputError}</div> : null}
+        {!belongs || cancelError || actionError || outputError ? <div className="work-service-card__error" role="alert">{!belongs ? '命令任务不属于当前会话' : cancelError || actionError || outputError}</div> : null}
         <MotionPresence show={open} id={detailsId}>
           <div className="work-service-card__details">
             <div className="work-service-card__detail-head"><span>命令</span><button type="button" className="work-service-card__action" aria-label={copied ? '已复制诊断' : '复制诊断'} title={copied ? '已复制' : '复制命令、错误与输出'} onClick={() => void copy()}><Icon name={copied ? 'check' : 'copy'} size={13} /></button></div>

@@ -69,7 +69,9 @@ export function buildFileTreeRows({ snapshot, filter = '', filesExclude = {}, so
   const excludeRules = compileExclude(filesExclude)
   const nameFilter = filter.trim().toLowerCase()
   if (root && showRoot) {
-    const rootExpanded = expandedKeys.has(fileTreePathKey(root))
+    // Filtering is a temporary view over the loaded snapshot. Do not collapse
+    // the root (or write expansion state) merely because its own name misses.
+    const rootExpanded = Boolean(nameFilter) || expandedKeys.has(fileTreePathKey(root))
     output.push({ entry: rootFileTreeEntry(root), depth: 0, isExpanded: rootExpanded,
       isLoading: loadingKeys.has(fileTreePathKey(root)), isActive: false, isSelected: selectionKeys.has(fileTreePathKey(root)),
       gitDirty: !rootExpanded && decorations.dirtyDirs.has(root.replace(/\\/g, '/')) })
@@ -97,18 +99,24 @@ export function buildFileTreeRows({ snapshot, filter = '', filesExclude = {}, so
     }
     return chain ? { entry: current, chain } : null
   }
-  const walk = (directory: string, depth: number, parentHidden: boolean): void => {
+  const walk = (directory: string, depth: number, parentHidden: boolean): boolean => {
+    let hasMatch = false
     for (const entry of childrenOf(directory)) {
       const entryHidden = hidden(entry, parentHidden)
       if (entryHidden) continue
-      if (nameFilter && !entry.name.toLowerCase().includes(nameFilter)) {
-        if (entry.isDirectory) walk(entry.path, depth + 1, entryHidden)
-        continue
-      }
+      const selfMatch = !nameFilter || entry.name.toLowerCase().includes(nameFilter)
+      const childrenStart = output.length
+      // Keep walking only through this directory's cached children. A match at
+      // any depth retains this directory as an expanded ancestor; misses are
+      // removed below, so unrelated loaded branches stay hidden.
+      const childMatch = nameFilter && entry.isDirectory ? walk(entry.path, depth + 1, entryHidden) : false
+      if (!selfMatch && !childMatch) continue
+      hasMatch = true
+      const descendants = output.splice(childrenStart)
       const compact = nameFilter || !compactFolders ? null : entry.isDirectory ? compactChain(entry, entryHidden) : null
       const shown = compact?.entry ?? entry
       const shownKey = fileTreePathKey(shown.path)
-      const isExpanded = shown.isDirectory && expandedKeys.has(shownKey)
+      const isExpanded = shown.isDirectory && (Boolean(nameFilter) || expandedKeys.has(shownKey))
       const key = shown.path.replace(/\\/g, '/')
       const change = decorations.byPath.get(key)
       output.push({ entry: shown, depth, isExpanded, isLoading: loadingKeys.has(shownKey),
@@ -117,8 +125,10 @@ export function buildFileTreeRows({ snapshot, filter = '', filesExclude = {}, so
         isCut: cutPaths.some(path => paths.contains(path, shown.path)), isIgnored: shown.gitignored === true,
         gitCode: change?.code, gitTitle: change?.title, gitClassName: change?.className,
         gitDirty: shown.isDirectory ? !isExpanded && decorations.dirtyDirs.has(key) : undefined })
-      if (isExpanded) walk(shown.path, depth + 1, false)
+      output.push(...descendants)
+      if (isExpanded && !nameFilter) walk(shown.path, depth + 1, false)
     }
+    return hasMatch
   }
   if (root) walk(root, showRoot ? 1 : 0, false)
   return output

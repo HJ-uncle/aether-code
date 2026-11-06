@@ -13,6 +13,7 @@ import { createSessionUsageAnchor, sessionUsageTotal, type SessionUsageAnchor } 
 import type { UsageTotal } from '@renderer/contrib/chat/usage'
 import { reducePayload } from './chat-payload'
 import { restoreChatSnapshot, type ChatRecoverySnapshot } from './chat-recovery'
+import { WorkTurnTodoLedger, workTodoToolOwners } from '@renderer/contrib/work/work-turn-todos'
 import { inspectStreamCursor, parseEngineStreamCursor } from '@shared/stream-event'
 import { snapshotRecoveryNotice, streamRecoveryNoticeText, type StreamRecoveryNotice } from './stream-recovery-notice'
 import { preparePublishedSnapshot } from './published-snapshot-client'
@@ -263,6 +264,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
   loadDisplayTurn: (sessionId: string, userMessageId?: string) => Promise<boolean>
   /** 会话待办清单（引擎 todo 工具维护，随 \x00__todo__ 帧整表下发） */
   todos: EngineTodo[]
+  assignTodos: (groups: readonly { id: string; identity?: string; owners?: readonly string[] }[]) => Map<string, EngineTodo[]>
   /** onAdmitted releases the composer; the returned promise still owns the full stream. */
   send: (text: string, options: SendOptions, onAdmitted?: () => void) => Promise<void>
   /** Exact selected-session admission gate, including synchronous dispatch and recovery. */
@@ -358,6 +360,16 @@ export function useChat(options: { commandOwner?: string } = {}): {
   const restoredSessionRef = useRef<string | null>(null)
   const isHistoryReady = useCallback((sessionId: string): boolean => restoredSessionRef.current === sessionId && sourceRef.current === getEngineSource(), [])
   const [todos, setTodos] = useState<EngineTodo[]>([])
+  const todoLedgerRef = useRef(new WorkTurnTodoLedger())
+  const todoToolOwnersRef = useRef(new Map<string, string>())
+  const lastTodoToolRef = useRef<string | null>(null)
+  const updateTodos = useCallback((items: EngineTodo[], frame?: { runId?: string; turnId?: string }): void => {
+    const activeRun = activeRunIdRef.current ? rootRunsRef.current.get(activeRunIdRef.current) : undefined
+    const lastTool = lastTodoToolRef.current
+    todoLedgerRef.current.update({ todos: items, ...frame }, activeRun?.runId ? `run:${activeRun.runId}` : undefined, lastTool ? todoToolOwnersRef.current.get(lastTool) : undefined)
+    setTodos(items)
+  }, [])
+  const assignTodos = useCallback((groups: readonly { id: string; identity?: string; owners?: readonly string[] }[]): Map<string, EngineTodo[]> => todoLedgerRef.current.assign(groups), [])
   const [historyCompacted, setHistoryCompacted] = useState(false)
   const [archiveExpanded, setArchiveExpanded] = useState(false)
   const [archiveRemaining, setArchiveRemaining] = useState<number | null>(null)
@@ -600,6 +612,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
     activeStreamRef.current = null
     activeSessionRef.current = null
     activeRunIdRef.current = null
+    todoLedgerRef.current.reset()
     optimisticIdsRef.current = {}
     rootRunsRef.current.clear()
     answeringRef.current.clear()
@@ -654,6 +667,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
     activeStreamRef.current = null
     activeSessionRef.current = null
     viewSessionRef.current = null
+    todoLedgerRef.current.reset()
     setQueueSessionId(null)
     restoredSessionRef.current = null
     setHistoryError(null)
@@ -957,16 +971,28 @@ export function useChat(options: { commandOwner?: string } = {}): {
         return
       }
 
-      // todo 帧是会话级清单，不归属任何一条消息
+      // 整表保持全局同步；归属只决定清单固定显示在哪一轮。
       const todoFrame = event.payload.todo
       if (todoFrame && Array.isArray(todoFrame.todos)) {
-        setTodos(todoFrame.todos)
+        updateTodos(todoFrame.todos, { runId: todoFrame.runId, turnId: todoFrame.turnId })
         return
       }
 
       const payload = event.payload
       const receipt = { now: Date.now(), fallbackId: newId() }
       const ownerRunId = activeRunIdRef.current ?? undefined
+      const rawPlanTool = payload.toolEnd ?? payload.toolResult ?? payload.toolCall
+      if (rawPlanTool && typeof rawPlanTool === 'object' && 'id' in rawPlanTool && 'name' in rawPlanTool &&
+        typeof rawPlanTool.id === 'string' && typeof rawPlanTool.name === 'string' && ['plan_update', 'todo_create', 'todo_update', 'todo_delete'].includes(rawPlanTool.name)) {
+        const raw = rawPlanTool as { id: string; success?: unknown; status?: unknown }
+        if (raw.success === true || raw.status === 'succeeded' || raw.status === 'done') {
+          const owner = ownerRunId ? `run:${ownerRunId}` : undefined
+          if (owner) {
+            todoToolOwnersRef.current.set(raw.id, owner)
+            lastTodoToolRef.current = raw.id
+          }
+        }
+      }
       // 流式数据帧走节流队列：高频 content/thinking delta 攒 80ms 合并一次渲染
       scheduleStreamPatch((prev) => {
         if (!scopeIsCurrent(eventScope)) return prev
@@ -1318,6 +1344,9 @@ export function useChat(options: { commandOwner?: string } = {}): {
       setSessionModel({ source, sessionId, modelId: configuredRun?.modelId, runId: configuredRun?.runId, requestConfig: normalizeRootRunRequestConfig(configuredRun?.requestConfig), compaction: normalizeRootRunCompaction(configuredRun?.compaction) })
       activeRunIdRef.current = configuredRun?.runId ?? null
       activeSessionRef.current = sessionId
+      todoLedgerRef.current.reset()
+      todoToolOwnersRef.current = workTodoToolOwners(restored.messages)
+      lastTodoToolRef.current = restored.messages.flatMap(message => message.tools).findLast(tool => todoToolOwnersRef.current.has(tool.id))?.id ?? null
       consumedEventIdRef.current = snapshot.eventId
       optimisticIdsRef.current = {}
       for (const message of restored.messages) for (const tool of message.tools) {
@@ -1329,7 +1358,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
       dispatchMessages(restoredMessages)
       activatePublishedSnapshot(snapshot, source)
       setCommandJobs(getCommandJobs(sessionId))
-      setTodos(restored.todos)
+      updateTodos(restored.todos)
       setHistoryError(null)
       setRecoveryNoticeState(notice => snapshotRecoveryNotice(snapshot, notice))
       setStreaming((snapshot.executionRun ?? snapshot.run)?.status === 'running')
@@ -1388,12 +1417,15 @@ export function useChat(options: { commandOwner?: string } = {}): {
       if (snapshot.executionRun) rootRunsRef.current.set(snapshot.executionRun.runId, snapshot.executionRun)
       const configuredRun = snapshot.executionRun ?? snapshot.run ?? [...snapshot.runs].filter(run => run.sessionId === sessionId).sort((a, b) => b.createdAt - a.createdAt || b.updatedAt - a.updatedAt)[0]
       setSessionModel({ source, sessionId, modelId: configuredRun?.modelId, runId: configuredRun?.runId, requestConfig: normalizeRootRunRequestConfig(configuredRun?.requestConfig), compaction: normalizeRootRunCompaction(configuredRun?.compaction) })
+      todoLedgerRef.current.reset()
+      todoToolOwnersRef.current = workTodoToolOwners(restored.messages)
+      lastTodoToolRef.current = restored.messages.flatMap(message => message.tools).findLast(tool => todoToolOwnersRef.current.has(tool.id))?.id ?? null
       const restoredMessages = attachCommandJobs(attachSubagentRuns(restored.messages, getSubagentRuns(sessionId), window.revision !== undefined), getCommandJobs(sessionId), sessionId)
       commitUsageAnchor(createSessionUsageAnchor(restoredMessages, snapshot.sessionUsage, snapshot.sessionSubagentUsage, snapshot.subagentRuns, snapshot.publishedUsage))
       dispatchMessages(restoredMessages)
       activatePublishedSnapshot(snapshot, source)
       setCommandJobs(getCommandJobs(sessionId))
-      setTodos(restored.todos)
+      updateTodos(restored.todos)
       archiveWindowRef.current = window
       setArchiveRemaining((window.firstPage - 1) * ARCHIVE_PAGE_SIZE)
       setArchivePage({ firstPage: window.firstPage, lastPage: window.lastPage, totalPages: Math.max(1, Math.ceil(window.total / ARCHIVE_PAGE_SIZE)), unversioned: window.revision === undefined })
@@ -1619,6 +1651,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
         rootRunsRef.current.clear()
         activeRunIdRef.current = null
         activeSessionRef.current = null
+        todoLedgerRef.current.reset()
         consumedEventIdRef.current = null
         pendingPatchesRef.current = []
         if (throttleTimerRef.current) clearTimeout(throttleTimerRef.current)
@@ -1861,6 +1894,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
     displayHistoryCompleteness: displayHistory?.page.completeness ?? null,
     loadDisplayTurn,
     todos,
+    assignTodos,
     send,
     respond,
     abort,

@@ -186,14 +186,14 @@ const REMOTE_CHAT_ROUTES = [
   /^\/api\/v1\/subagent\/cancel$/,
   /^\/api\/v1\/collaboration\/roots\/[^/?#]+\/messages$/,
   /^\/api\/v1\/subagent\/runs\/[a-zA-Z0-9_-]+\/cancel$/,
-  /^\/api\/v1\/command-jobs\/[a-zA-Z0-9_-]+\/cancel$/,
+  /^\/api\/v1\/command-jobs\/[a-zA-Z0-9_-]+\/(?:cancel|restart)$/,
   /^\/api\/v1\/cron(?:\/[a-zA-Z0-9_-]+(?:\/(?:enable|disable))?)?$/,
   /^\/api\/v1\/mcp\/servers\/[a-zA-Z0-9_-]+\/test$/,
   /^\/api\/v1\/mcp\/servers(?:\/[a-zA-Z0-9_-]+)?\/(?:enable|disable)$/,
   /^\/api\/v1\/skills\/imports(?:\/chunks)?(?:\/[a-zA-Z0-9_-]+)?(?:\/merge)?$/,
   /^\/api\/v1\/knowledge\/(documents|bases|search)$/,
   /^\/api\/v1\/memory\/(remember|nodes|link|consolidate)$/,
-  /^\/api\/v1\/workspace\/(bind|file|file\/create|folder\/create|file\/trash|file\/move|file\/copy)$/
+  /^\/api\/v1\/workspace\/(bind|file|file\/create|folder\/create|file\/trash|file\/move|file\/copy|search|search\/cancel)$/
 ]
 
 /** Conversation execution uses server-side workspace paths, never the local IDE root. */
@@ -246,7 +246,7 @@ export function remoteRequestError(mode: 'embedded' | 'remote', method: string, 
   if (method === 'DELETE' && /^\/api\/v1\/memory\/[a-zA-Z0-9_.:-]+$/.test(pathname)) return null
   if (method === 'DELETE' && /^\/api\/v1\/cron\/[a-zA-Z0-9_-]+$/.test(pathname)) return null
   if (method === 'DELETE' && /^\/api\/v1\/(?:models\/(?!capability-defs$|detect-capabilities$)[a-zA-Z0-9_.-]+|skills\/imports\/[a-zA-Z0-9_.-]+|security\/policies\/[0-9]+)$/.test(pathname)) return null
-  if (method === 'DELETE' && /^\/api\/v1\/terminal\/[a-zA-Z0-9_-]+$/.test(pathname)) return null
+  if (method === 'DELETE' && /^\/api\/v1\/(?:terminal|command-jobs)\/[a-zA-Z0-9_-]+$/.test(pathname)) return null
   if (method === 'DELETE' && pathname === '/api/v1/lsp/session') return null
   // Conversation deletion mutates engine-owned records but never touches the
   // IDE's local workspace, so it is safe and supported for remote engines.

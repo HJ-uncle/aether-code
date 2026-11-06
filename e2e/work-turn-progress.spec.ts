@@ -6,6 +6,7 @@ import type { RootRun } from '../src/shared/root-run'
 import type { ChatMessage, ToolActivity } from '../src/renderer/src/core/engine/useChat'
 import { workProgressChanges } from '../src/renderer/src/contrib/work/work-progress-state'
 import { workProgressTurnScope, workTurnProgressChanges, type WorkTurnProgressGroup } from '../src/renderer/src/contrib/work/work-turn-progress'
+import { WorkTurnTodoLedger, workTodoToolOwners } from '../src/renderer/src/contrib/work/work-turn-todos'
 
 const session = 'session'
 const change = (id: string, patch: Partial<EngineFileChange> = {}): EngineFileChange => ({
@@ -28,6 +29,33 @@ const files = (...changes: EngineFileChange[]) => workProgressChanges(session, [
 const ids = (result: ReturnType<typeof workTurnProgressChanges>, id: string): string[] =>
   (result.get(id) ?? []).flatMap(file => file.records.map(record => record.id))
 
+test('任务清单固定原轮，跨轮新增各自归属，状态与删除始终同步', () => {
+  const ledger = new WorkTurnTodoLedger()
+  const groups = [{ id: 'first', owners: ['run:first'] }, { id: 'second', owners: ['run:second'] }]
+  const first = { id: 'one', title: '设计', status: 'pending' as const, priority: 'medium' as const }
+  const second = { id: 'two', title: '验证', status: 'pending' as const, priority: 'medium' as const }
+  ledger.update({ todos: [first], runId: 'first' })
+  expect(ledger.assign(groups).get('first')).toEqual([first])
+  ledger.update({ todos: [{ ...first, status: 'done' }], runId: 'second' })
+  expect(ledger.assign(groups).get('first')?.[0].status).toBe('done')
+  expect(ledger.assign(groups).has('second')).toBe(false)
+  ledger.update({ todos: [{ ...first, status: 'done' }, second], runId: 'second' })
+  expect(ledger.assign(groups).get('first')?.map(todo => todo.id)).toEqual(['one'])
+  expect(ledger.assign(groups).get('second')?.map(todo => todo.id)).toEqual(['two'])
+  ledger.update({ todos: [{ ...first, status: 'done' }, { ...second, status: 'done' }], runId: 'first' })
+  expect(ledger.assign(groups).get('second')?.[0].status).toBe('done')
+  ledger.update({ todos: [], runId: 'second' })
+  expect(ledger.assign(groups).size).toBe(0)
+})
+
+test('旧版清单仅由成功的计划工具确定归属，失败调用不伪造归属', () => {
+  const messages = [message('first', { conversationId: 'turn:first', tools: [tool('valid', { name: 'plan_update' }), tool('failed', { name: 'todo_update', state: 'error' })] })]
+  expect(workTodoToolOwners(messages).get('valid')).toBe('conversation:turn:first')
+  expect(workTodoToolOwners(messages).has('failed')).toBe(false)
+  const ledger = new WorkTurnTodoLedger()
+  ledger.update({ todos: [] }, undefined, 'conversation:turn:first')
+  expect(ledger.assign([{ id: 'first', identity: 'conversation:turn:first' }]).size).toBe(0)
+})
 test('显式轮次优先，同路径跨轮独立分组，迟到回执仍回原轮', () => {
   const groups = [group('first', message('one', { conversationId: 'turn-1', runId: 'run-1' })),
     group('second', message('two', { conversationId: 'turn-2', runId: 'run-2', tools: [tool('new-tool')] }))]

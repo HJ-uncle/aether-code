@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
+import { useRef, useState, type JSX, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from './icons'
 import { useMotionPresence } from './MotionPresence'
+import { OverlayScope, useOverlay } from './overlay'
 
 interface DialogProps {
   /** 标题栏文案 */
@@ -19,6 +20,7 @@ interface DialogProps {
   open?: boolean
   /** Preserve a caller's pending-operation guard before starting dismissal. */
   closeDisabled?: boolean
+  ownerId?: string | null
 }
 
 /**
@@ -43,7 +45,8 @@ export function Dialog({
   className,
   onClose,
   open,
-  closeDisabled = false
+  closeDisabled = false,
+  ownerId
 }: DialogProps): JSX.Element | null {
   const panelRef = useRef<HTMLDivElement>(null)
   const [dismissed, setDismissed] = useState(false)
@@ -55,78 +58,12 @@ export function Dialog({
     else onClose()
   }
 
-  useEffect(() => {
-    if (!show) return
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') close()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose, show, open, closeDisabled])
-
-  // 打开时把焦点移进面板，避免焦点留在背后的页面上导致 Esc / Tab 行为错乱
-  useEffect(() => {
-    if (!show) return
-    const panel = panelRef.current
-    if (!panel) return
-    // 在移入焦点前记录触发元素，否则关闭时会尝试聚焦已卸载的关闭按钮。
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    // 优先聚焦首个可交互控件（输入框），没有则聚焦面板本身
-    const focusable = panel.querySelector<HTMLElement>(
-      'input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])'
-    )
-    if (focusable) focusable.focus()
-    else panel.focus()
-    return () => {
-      if (previous && previous.isConnected) {
-        try {
-          previous.focus()
-        } catch {
-          /* 元素可能已不可聚焦，忽略 */
-        }
-      }
-    }
-  }, [show])
-
-  // 焦点陷阱：Tab / Shift+Tab 在弹窗内的可聚焦元素之间循环，不逃到背后界面
-  const onPanelKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if (event.key !== 'Tab') return
-    const panel = panelRef.current
-    if (!panel) return
-    const focusables = Array.from(
-      panel.querySelectorAll<HTMLElement>(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-      )
-    ).filter(
-      (el) =>
-        !el.hasAttribute('disabled') &&
-        el.getAttribute('aria-hidden') !== 'true' &&
-        (el.offsetWidth > 0 || el.offsetHeight > 0 || el.getClientRects().length > 0)
-    )
-    if (focusables.length === 0) {
-      event.preventDefault()
-      panel.focus()
-      return
-    }
-    const first = focusables[0]
-    const last = focusables[focusables.length - 1]
-    const active = document.activeElement as HTMLElement | null
-    if (event.shiftKey) {
-      if (active === first || !panel.contains(active)) {
-        event.preventDefault()
-        last.focus()
-      }
-    } else {
-      if (active === last || !panel.contains(active)) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-  }
+  const overlay = useOverlay({ open: show, present: motion.present, modal: true, panelRef, ownerId,
+    closeOnOutside: !closeDisabled, onClose: close })
 
   if (!motion.present) return null
   return createPortal(
-    <div className="modal-overlay" {...motion.motionProps} data-motion-axis="y" onMouseDown={close}>
+    <OverlayScope id={overlay.id}><div className="modal-overlay" {...motion.motionProps} {...overlay.layerProps} style={{ zIndex: overlay.zIndex }} data-motion-axis="y">
       <div
         ref={panelRef}
         className={`modal${className ? ` ${className}` : ''}`}
@@ -136,7 +73,6 @@ export function Dialog({
         tabIndex={-1}
         style={{ width }}
         onMouseDown={(event) => event.stopPropagation()}
-        onKeyDown={onPanelKeyDown}
       >
         <header className="modal__header">
           <span>{title}</span>
@@ -149,7 +85,7 @@ export function Dialog({
 
         {footer ? <footer className="modal__footer">{footer}</footer> : null}
       </div>
-    </div>,
+    </div></OverlayScope>,
     document.body
   )
 }

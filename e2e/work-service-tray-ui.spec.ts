@@ -32,6 +32,8 @@ const log = 'Preview service ready at http://127.0.0.1:4173\n'
 const envelope = (data: unknown): string => JSON.stringify({ code: 200, message: 'ok', data })
 const errors: string[] = []
 const stopRequests: { jobId: string; sessionId: unknown }[] = []
+const restartRequests: { jobId: string; sessionId: unknown }[] = []
+const deleteRequests: { jobId: string; sessionId: unknown }[] = []
 let outputReads = 0
 let rejectStop = true
 let server: ReturnType<typeof createServer> | undefined
@@ -56,18 +58,31 @@ test.describe.serial('Work 后台服务弹层', () => {
         for await (const chunk of request) raw += String(chunk)
         const body = raw ? JSON.parse(raw) as Record<string, unknown> : {}
         response.setHeader('content-type', 'application/json')
-        const route = path.match(/^\/api\/v1\/command-jobs\/([^/]+)\/(output|cancel)$/)
+        const route = path.match(/^\/api\/v1\/command-jobs\/([^/]+)(?:\/(output|cancel|restart))?$/)
         if (route) {
           let job = jobs.get(route[1])
-          if (!job || (route[2] === 'output' ? url.searchParams.get('sessionId') : body.sessionId) !== sessionId) {
+          const action = route[2] ?? (request.method === 'DELETE' ? 'delete' : '')
+          if (!job || (action === 'output' || action === 'delete' ? url.searchParams.get('sessionId') : body.sessionId) !== sessionId) {
             response.writeHead(404).end(envelope(null)); return
           }
-          if (route[2] === 'cancel') {
+          if (action === 'cancel') {
             stopRequests.push({ jobId: job.jobId, sessionId: body.sessionId })
             if (rejectStop) { response.writeHead(409).end(JSON.stringify({ code: 409, message: '服务暂时无法停止', data: null })); return }
             job = { ...job, status: 'cancelling', version: job.version + 1, updatedAt: Date.now() }
             jobs.set(job.jobId, job)
             response.end(envelope(job)); return
+          }
+          if (action === 'restart') {
+            restartRequests.push({ jobId: job.jobId, sessionId: body.sessionId })
+            const restarted = { ...job, jobId: 'restarted-service', version: 1, status: 'running' as const,
+              createdAt: Date.now(), updatedAt: Date.now(), finishedAt: undefined, exitCode: null }
+            jobs.set(restarted.jobId, restarted)
+            response.end(envelope(restarted)); return
+          }
+          if (action === 'delete') {
+            deleteRequests.push({ jobId: job.jobId, sessionId: url.searchParams.get('sessionId') })
+            jobs.delete(job.jobId)
+            response.end(envelope({ deleted: true })); return
           }
           outputReads++
           if (job.status === 'cancelling') {
@@ -151,15 +166,16 @@ test.describe.serial('Work 后台服务弹层', () => {
     await expect(tray()).not.toContainText('LONG_SERVICE_ARGUMENT_')
     await expect(tray().getByRole('button', { name: /历史记录/ })).toHaveAttribute('aria-expanded', 'false')
     await expect(tray().locator(`[data-job-id="${historyJob.jobId}"]`)).toHaveCount(0)
-    const geometry = await page.evaluate(() => {
+    const geometry = async (): Promise<{ width: number; height: number; anchored: boolean }> => page.evaluate(() => {
       const anchor = document.querySelector('.work-service-tray__button')!.getBoundingClientRect()
       const panel = document.querySelector('.work-service-tray__popover')!.getBoundingClientRect()
       return { width: panel.width, height: panel.height, anchored: Math.abs(panel.top - anchor.bottom - 6) < 3 }
     })
-    expect(geometry.width).toBeGreaterThanOrEqual(320)
-    expect(geometry.width).toBeLessThanOrEqual(380)
-    expect(geometry.height).toBeLessThan(220)
-    expect(geometry.anchored).toBe(true)
+    await expect.poll(async () => (await geometry()).anchored).toBe(true)
+    const settled = await geometry()
+    expect(settled.width).toBeGreaterThanOrEqual(320)
+    expect(settled.width).toBeLessThanOrEqual(380)
+    expect(settled.height).toBeLessThan(220)
     await tray().screenshot({ path: info.outputPath('services-light-compact.png'), animations: 'disabled' })
     await page.keyboard.press('Escape')
     await expect(tray()).not.toBeVisible()
@@ -228,5 +244,27 @@ test.describe.serial('Work 后台服务弹层', () => {
     await expect(tray().getByRole('button', { name: /历史记录/ })).toHaveAttribute('aria-expanded', 'false')
     await tray().getByRole('button', { name: '关闭后台服务', exact: true }).click()
     await expect(trigger()).toBeFocused()
+  })
+
+  test('历史服务可按原命令重启，删除确认后持久移除记录', async () => {
+    await trigger().click()
+    await tray().getByRole('button', { name: /历史记录/ }).click()
+    const historical = tray().locator(`[data-job-id="${historyJob.jobId}"]`)
+    await expect(historical).toBeVisible()
+    await historical.getByRole('button', { name: '重启服务', exact: true }).click()
+    await expect.poll(() => restartRequests).toEqual([{ jobId: historyJob.jobId, sessionId }])
+    expect(jobs.get('restarted-service')).toMatchObject({ command: historyJob.command, args: historyJob.args, cwd: historyJob.cwd })
+    expect(jobs.has(historyJob.jobId)).toBe(true)
+    await expect(tray().locator('[data-job-id="restarted-service"]')).toContainText('运行中')
+    page.once('dialog', dialog => { void dialog.accept() })
+    await historical.getByRole('button', { name: '删除服务历史', exact: true }).click()
+    await expect.poll(() => deleteRequests).toEqual([{ jobId: historyJob.jobId, sessionId }])
+    await expect(historical).toHaveCount(0)
+    expect(jobs.has(historyJob.jobId)).toBe(false)
+    await page.reload()
+    await expect(page.getByRole('heading', { name: '服务弹层回归', exact: true })).toBeVisible()
+    await trigger().click()
+    await expect(tray().locator(`[data-job-id="${historyJob.jobId}"]`)).toHaveCount(0)
+    await expect(tray().locator('[data-job-id="restarted-service"]')).toBeVisible()
   })
 })

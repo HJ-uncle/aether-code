@@ -50,20 +50,34 @@ test('physical files distinguish WAL/SHM, JSONL, backups, markers, blobs and aud
   const rows: Array<[string, number]> = [
     ['agent.db', 10], ['agent.db-wal', 11], ['agent.db-shm', 12], ['sessions/tenant/a.jsonl', 13],
     ['sessions/tenant/a.jsonl.1.bak', 14], ['sessions/tenant/a.migrated', 15], ['blobs/a.bin', 16],
-    ['audit-archive/a.bin', 17], ['change-snapshots/a.bin', 18], ['memory/memory.db', 19], ['history-cold/a.bin', 20]
+    ['audit-archive/a.bin', 17], ['change-snapshots/a.bin', 18], ['memory/memory.db', 19], ['history-cold/a.bin', 20],
+    ['agent.db.subagent-payloads/tenant/ab/payload.json', 21]
   ]
   for (const [file, size] of rows) { const target = join(fixture, file); mkdirSync(dirname(target), { recursive: true }); writeFileSync(target, Buffer.alloc(size)) }
   const collector = new EngineDiagnosticsCollector()
   const value = await collector.getStorage(snapshot(join(fixture, 'agent.db')))
   expect(value.totalBytes).toBe(rows.reduce((sum, row) => sum + row[1], 0))
-  expect(value.files).toBe(11)
+  expect(value.files).toBe(12)
   expect(Object.fromEntries(value.categories.map(row => [row.category, row.bytes]))).toEqual({
     database: 10, 'database-wal': 11, 'database-shm': 12, 'history-jsonl': 13, 'history-backups': 14,
-    'history-markers': 15, blobs: 16, 'audit-archive': 17, snapshots: 18, memory: 19, 'history-cold': 20
+    'history-markers': 15, blobs: 37, 'audit-archive': 17, snapshots: 18, memory: 19, 'history-cold': 20
   })
   expect(value.sqlite?.state).toBe('unavailable')
   expect((await collector.getStorage(snapshot(join(fixture, 'agent.db')))).cached).toBe(true)
   expect((await collector.getStorage(snapshot(join(fixture, 'agent.db')), true)).cached).toBe(false)
+})
+
+test('subagent payload classification follows the selected database without absorbing lookalike paths', async () => {
+  const rows: Array<[string, number]> = [
+    ['custom.sqlite', 10], ['custom.sqlite.subagent-payloads/tenant/ab/payload.jsonl', 21],
+    ['agent.db.subagent-payloads/tenant/payload.json', 22], ['custom.sqlite.subagent-payloads-old/payload.json', 23],
+    ['nested/custom.sqlite.subagent-payloads/payload.json', 24]
+  ]
+  for (const [file, size] of rows) { const target = join(fixture, file); mkdirSync(dirname(target), { recursive: true }); writeFileSync(target, Buffer.alloc(size)) }
+  const value = await new EngineDiagnosticsCollector().getStorage(snapshot(join(fixture, 'custom.sqlite')))
+  expect(value.totalBytes).toBe(100)
+  expect(value.files).toBe(5)
+  expect(Object.fromEntries(value.categories.map(row => [row.category, row.bytes]))).toEqual({ database: 10, blobs: 21, other: 69 })
 })
 test('older runtime and partial filesystem scans keep unavailable distinct from zero', async () => {
   const database = join(fixture, 'agent.db'); writeFileSync(database, Buffer.alloc(10))

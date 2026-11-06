@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type JSX, type RefObject } from 'react'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { Icon } from '@renderer/workbench/icons'
+import { Select } from '@renderer/workbench/Select'
 
 export function PreviewMessage({ error, onRetry }: { error?: string; onRetry?: () => void }): JSX.Element {
   return <div className="document-preview__message" role={error ? 'alert' : 'status'}>
@@ -12,9 +13,8 @@ export function PreviewMessage({ error, onRetry }: { error?: string; onRetry?: (
 
 export function PreviewZoom({ zoom, onZoom }: { zoom: number; onZoom: (zoom: number) => void }): JSX.Element {
   return <div className="document-preview__toolbar document-preview__toolbar--zoom" role="group" aria-label="文档缩放">
-    <select aria-label="缩放" value={zoom} onChange={event => onZoom(Number(event.target.value))}>
-      <option value={0}>适应宽度</option>{[0.5, 0.75, 1, 1.25, 1.5, 2].map(value => <option key={value} value={value}>{Math.round(value * 100)}%</option>)}
-    </select>
+    <Select ariaLabel="缩放" className="document-preview__zoom-select" width={160} value={String(zoom)} onChange={value => onZoom(Number(value))}
+      options={[{ value: '0', label: '适应宽度' }, ...[0.5, 0.75, 1, 1.25, 1.5, 2].map(value => ({ value: String(value), label: `${Math.round(value * 100)}%` }))]} />
   </div>
 }
 

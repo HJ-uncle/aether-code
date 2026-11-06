@@ -14,11 +14,6 @@
   margin-left: auto;
 }
 
-/* These menus are portaled outside the dialog's stacking context. */
-.popover__panel.model-form__popover {
-  z-index: calc(var(--z-overlay) + 1);
-}
-
 .context-window-input {
   width: 260px;
   max-width: 100%;

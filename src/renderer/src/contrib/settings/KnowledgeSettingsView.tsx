@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
+import { Select } from '@renderer/workbench/Select'
 import {
   createKnowledgeBase,
   deleteKnowledgeBase,
@@ -319,11 +320,8 @@ function KnowledgeSettingsContent({ source }: { source: number }): JSX.Element {
             <button type="button" className="btn btn--primary" disabled={!name.trim() || busy !== null} onClick={() => void addBase()}>{busy === 'base' ? '保存中…' : '新建知识库'}</button>
           </div>
           <div className="knowledge-toolbar__base">
-            <label htmlFor="knowledge-base-select">当前知识库</label>
-            <select id="knowledge-base-select" className="field__input" value={selectedBase} onChange={event => { const next = event.target.value; setSelectedBase(next); setDetailDocument(null); setEditingDocumentId(''); setResults([]); void refresh(next) }}>
-              <option value="">全部知识库</option>
-              {bases.map(base => <option key={base.id} value={base.id}>{base.name}</option>)}
-            </select>
+            <span>当前知识库</span>
+            <Select ariaLabel="当前知识库" className="settings-menu-field" value={selectedBase} onChange={next => { setSelectedBase(next); setDetailDocument(null); setEditingDocumentId(''); setResults([]); void refresh(next) }} options={[{ value: '', label: '全部知识库' }, ...bases.map(base => ({ value: base.id, label: base.name }))]} />
             <button type="button" className="btn btn--danger-ghost" disabled={!selected || busy !== null} onClick={() => void removeBase()}>删除</button>
           </div>
         </SettingsContent>

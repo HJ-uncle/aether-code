@@ -9,6 +9,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useMotionPresence } from './MotionPresence'
+import { OverlayScope, useOverlay } from './overlay'
 
 /** 浮层展开方向 */
 export type PopoverPlacement = 'up' | 'down'
@@ -97,6 +98,7 @@ export function Popover({
   const [pos, setPos] = useState<Position | null>(null)
   const triggerRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  const overlay = useOverlay({ open, present: motion.present, panelRef, triggerRef, onClose: () => setOpen(false) })
 
   // 打开时清掉上一次的定位，关闭则保留坐标供退出动画使用。
   // 避免在 effect 里同步 setState 触发级联渲染
@@ -190,37 +192,20 @@ export function Popover({
 
   useEffect(() => {
     if (!open) return
-    const onPointerDown = (event: MouseEvent): void => {
-      const target = event.target as Node
-      if (triggerRef.current?.contains(target)) return
-      if (panelRef.current?.contains(target)) return
-      // 嵌套弹层的面板也是 portal 到 body 的兄弟节点（如对话偏好里的下拉菜单），
-      // 点击落在「另一个」面板里不能算外部，否则会把外层一起关掉、连带卸载内层内容。
-      // 单层场景下页面上只有自己的面板，上一行已拦住，本行不会误伤。
-      if ((target as Element).closest?.('.popover__panel')) return
-      setOpen(false)
-    }
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setOpen(false)
-    }
     // 滚动/resize 后触发区位置就变了，重算而不是关闭（浮层常贴在输入框上，关闭太激进）
     const onReflow = (): void => reposition()
 
-    document.addEventListener('mousedown', onPointerDown)
-    document.addEventListener('keydown', onKeyDown)
     window.addEventListener('resize', onReflow)
     // capture: 捕获阶段，任意可滚动容器（消息流、侧边栏）滚动都能收到
     document.addEventListener('scroll', onReflow, true)
     return () => {
-      document.removeEventListener('mousedown', onPointerDown)
-      document.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('resize', onReflow)
       document.removeEventListener('scroll', onReflow, true)
     }
   }, [open, reposition, setOpen])
 
   return (
-    <div className={`popover${className ? ` ${className}` : ''}`} ref={triggerRef}>
+    <OverlayScope id={overlay.id}><div className={`popover${className ? ` ${className}` : ''}`} ref={triggerRef}>
       <div
         className={`popover__trigger${disabled ? ' is-disabled' : ''}`}
         onClick={() => {
@@ -235,6 +220,7 @@ export function Popover({
             <div
               ref={panelRef}
               {...motion.motionProps}
+              {...overlay.layerProps}
               data-motion-axis="y"
               className={`popover__panel popover__panel--${pos?.placement ?? placement} popover__panel--${align}${
                 flush ? ' popover__panel--flush' : ''
@@ -242,6 +228,7 @@ export function Popover({
               role="dialog"
               aria-label={label}
               style={{
+                zIndex: overlay.zIndex,
                 left: pos?.left ?? 0,
                 top: pos?.top ?? 0,
                 width: width ?? undefined
@@ -252,6 +239,6 @@ export function Popover({
             document.body
           )
         : null}
-    </div>
+    </div></OverlayScope>
   )
 }

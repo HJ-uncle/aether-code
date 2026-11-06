@@ -53,7 +53,7 @@ export function WorkServiceTray({ sessionId, jobs, active = true, placement = 'h
     open={open} onOpenChange={setOpen} disabled={!active} width={360} flush label="后台服务面板" trigger={() =>
     <button ref={triggerRef} type="button" className={`work-service-tray__button${open ? ' is-open' : ''}`} aria-label="查看后台服务" aria-expanded={open}
       aria-controls={open ? panelId : undefined} aria-haspopup="dialog" title="查看后台服务">
-      <Icon name="engine" size={15} />
+      <Icon name="terminal" size={15} />
       <span className="work-service-tray__label">服务</span>
       {running.length ? <b aria-label={`${running.length} 个运行中的服务`}>{running.length}</b> : null}
     </button>}>

@@ -1,18 +1,15 @@
-import type { FilesExclude, FsEntry, FsFileContent, SearchOptions } from '@shared/ipc'
+import type { FsFileContent } from '@shared/ipc'
 import { hasEncodedPathTraversal } from '@shared/path-safety'
-import { assertSessionFileTarget, readDir, readFile, writeFile, type SessionFileTarget } from '../../core/workspace/fs-client'
-import { remoteSearchPathExcluded, type RemoteSearchTransport, type RemoteWorkspaceItem } from '../search/remote-search'
+import { assertSessionFileTarget, readFile, writeFile, type SessionFileTarget } from '../../core/workspace/fs-client'
+import type { RemoteSearchTransport, RemoteWorkspaceItem } from '../search/remote-search'
 
 export interface WorkSearchDependencies {
   assertTarget(target: SessionFileTarget): void
-  readDir(path: string, target: SessionFileTarget): Promise<FsEntry[]>
   readFile(path: string, target: SessionFileTarget): Promise<FsFileContent>
   writeFile(path: string, content: string, target: SessionFileTarget): Promise<unknown>
 }
-export interface WorkSearchLimits { files: number; directories: number; depth: number }
 
-const defaults: WorkSearchDependencies = { assertTarget: assertSessionFileTarget, readDir, readFile, writeFile }
-const defaultLimits: WorkSearchLimits = { files: 20_000, directories: 2_000, depth: 48 }
+const defaults: WorkSearchDependencies = { assertTarget: assertSessionFileTarget, readFile, writeFile }
 
 function relativePath(value: string): string {
   const normalized = value.replace(/\\/g, '/')
@@ -48,12 +45,13 @@ export function workSearchFileTree(files: readonly string[]): RemoteWorkspaceIte
 
 /** Both embedded and remote Work tasks own a session sandbox, independent of the Code workspace. */
 export function createWorkSearchTransport(target: SessionFileTarget, current: () => boolean,
-  options: SearchOptions, excludes: FilesExclude, deps: WorkSearchDependencies = defaults,
-  limits: WorkSearchLimits = defaultLimits): RemoteSearchTransport {
+  files: readonly string[], deps: WorkSearchDependencies = defaults): RemoteSearchTransport {
   const root = target.root.replace(/\\/g, '/').replace(/\/+$/, '')
   const windows = /^(?:[A-Za-z]:|\/\/)/.test(root)
   const identity = (path: string): string => windows ? path.toLowerCase() : path
   const absolute = (path: string): string => `${root}/${relativePath(path)}`
+  const tree = workSearchFileTree(files)
+  const allowedFiles = new Set(files.map(file => identity(absolute(file))))
   const completeReads = new Set<string>()
   const assertCurrent = (): void => {
     if (!current()) throw new Error('工作区搜索已取消，请在当前会话重试')
@@ -61,51 +59,12 @@ export function createWorkSearchTransport(target: SessionFileTarget, current: ()
   }
   return {
     assertCurrent,
-    async listFiles() {
-      assertCurrent()
-      const files: string[] = []
-      const visited = new Set<string>([identity(root)])
-      const pending = [{ path: '', depth: 0 }]
-      let directories = 0
-      while (pending.length) {
-        assertCurrent()
-        if (++directories > limits.directories) throw new Error(`工作区目录超过搜索上限（${limits.directories} 个），请增加排除范围`)
-        const next = pending.pop()!
-        let entries: FsEntry[]
-        try { entries = await deps.readDir(next.path ? absolute(next.path) : target.root, target) }
-        catch (error) {
-          assertCurrent()
-          throw new Error(`无法搜索目录 ${next.path || '工作区'}：${error instanceof Error ? error.message : String(error)}`)
-        }
-        assertCurrent()
-        for (const entry of entries) {
-          assertCurrent()
-          if (!entry.name || /[/\\]/.test(entry.name)) throw new Error('工作区目录包含无效文件名')
-          const path = relativePath(next.path ? `${next.path}/${entry.name}` : entry.name)
-          // Do not follow a malformed response back to an ancestor or outside the captured root.
-          if (identity(entry.path.replace(/\\/g, '/')) !== identity(absolute(path))) {
-            throw new Error(`工作区目录路径不一致：${path}`)
-          }
-          if (entry.name === '.git' || remoteSearchPathExcluded(path, options, excludes)) continue
-          const key = identity(absolute(path))
-          if (visited.has(key)) throw new Error(`工作区目录包含重复路径：${path}`)
-          visited.add(key)
-          if (entry.isDirectory) {
-            if (next.depth >= limits.depth) throw new Error(`工作区目录超过搜索深度（${limits.depth} 层），请增加排除范围`)
-            if (directories + pending.length >= limits.directories) throw new Error(`工作区目录超过搜索上限（${limits.directories} 个），请增加排除范围`)
-            pending.push({ path, depth: next.depth + 1 })
-          } else {
-            if (files.length >= limits.files) throw new Error(`工作区文件超过搜索上限（${limits.files} 个），请增加排除范围`)
-            files.push(path)
-          }
-        }
-      }
-      assertCurrent()
-      return workSearchFileTree(files)
-    },
+    // The server already selected these files; preview never enumerates directories.
+    async listFiles() { assertCurrent(); return tree },
     async readFile(path) {
       assertCurrent()
       const fullPath = absolute(path), key = identity(fullPath)
+      if (!allowedFiles.has(key)) throw new Error('文件不在本次搜索结果中，请重新搜索并预览')
       completeReads.delete(key)
       const file = await deps.readFile(fullPath, target)
       assertCurrent()
@@ -117,6 +76,7 @@ export function createWorkSearchTransport(target: SessionFileTarget, current: ()
     async writeFile(path, content) {
       assertCurrent()
       const fullPath = absolute(path), key = identity(fullPath)
+      if (!allowedFiles.has(key)) throw new Error('文件不在本次搜索结果中，请重新搜索并预览')
       if (!completeReads.has(key)) throw new Error('文件尚未完整读取，无法安全替换')
       completeReads.delete(key)
       await deps.writeFile(fullPath, content, target)

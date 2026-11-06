@@ -25,7 +25,9 @@
 
 .action-menu__panel {
   min-width: 188px;
-  padding: 4px;
+  display: grid;
+  gap: var(--menu-row-gap);
+  padding: var(--menu-padding);
 }
 
 .action-menu__separator { height: 1px; margin: var(--space-1) var(--space-2); background: var(--border); }
@@ -34,20 +36,21 @@
   display: flex;
   align-items: center;
   width: 100%;
-  gap: 8px;
-  min-height: var(--control-h);
-  padding: 0 var(--space-3);
+  gap: var(--menu-icon-gap);
+  min-height: var(--menu-row-height);
+  padding: var(--menu-row-padding);
   border: 0;
-  border-radius: var(--radius);
+  border-radius: var(--menu-row-radius);
   background: transparent;
   color: var(--fg);
   text-align: left;
+  font-size: var(--menu-title-size);
   cursor: pointer;
 }
 
 .action-menu__item:hover:not(:disabled),
 .action-menu__item.is-highlight:not(:disabled) {
-  background: var(--bg-hover);
+  background: var(--menu-hover-bg);
   color: var(--fg-strong);
 }
 
@@ -73,17 +76,22 @@
   min-width: 0;
   flex: 1;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
 }
 
 .action-menu__item-copy small {
-  color: var(--fg-faint);
-  font-size: 11px;
+  color: var(--fg-muted);
+  font-size: var(--menu-description-size);
+  line-height: 1.5;
 }
 
 .action-menu__item--danger {
   color: var(--danger-fg);
 }
+
+.action-menu__item--danger:is(:hover, .is-highlight):not(:disabled) { color: var(--danger-fg); }
 
 .action-menu__item--danger svg {
   color: var(--danger-fg);

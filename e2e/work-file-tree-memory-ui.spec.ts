@@ -657,6 +657,35 @@ test.describe.serial('Code 与 Work 文件树状态记忆', () => {
     await page.emulateMedia({ reducedMotion: 'no-preference' })
   })
 
+  test('Work 筛选深层文件保留全部已加载祖先，隐藏无关分支且清空后恢复真实折叠状态', async () => {
+    await page.getByRole('tab', { name: 'Work 办公', exact: true }).click()
+    await openTask(taskA)
+    await workFilter().fill('')
+    await expandNested(workTree(), sharedRoot)
+    const nestedPath = `${sharedRoot}/collection/nested`
+    const nested = rowAt(workTree(), nestedPath)
+    await nested.click()
+    await expect(nested).toHaveAttribute('aria-expanded', 'false')
+    await expect.poll(async () => (await savedWorkMemory(taskA)).expanded.includes(nestedPath)).toBe(false)
+
+    await workFilter().fill('item-000.md')
+    for (const path of [sharedRoot, `${sharedRoot}/collection`, nestedPath]) {
+      await expect(rowAt(workTree(), path)).toHaveAttribute('aria-expanded', 'true')
+    }
+    await expect(rowAt(workTree(), filePath(sharedRoot, 0))).toBeVisible()
+    await expect(rowAt(workTree(), filePath(sharedRoot, 1))).toHaveCount(0)
+    await expect(rowAt(workTree(), `${sharedRoot}/notes`)).toHaveCount(0)
+    await expect(rowAt(workTree(), `${sharedRoot}/README.md`)).toHaveCount(0)
+    expect((await savedWorkMemory(taskA)).expanded.includes(nestedPath), '筛选展示不能改写目录展开记忆').toBe(false)
+
+    await workFilter().fill('')
+    await expect(rowAt(workTree(), sharedRoot)).toHaveAttribute('aria-expanded', 'true')
+    await expect(rowAt(workTree(), `${sharedRoot}/collection`)).toHaveAttribute('aria-expanded', 'true')
+    await expect(nested).toHaveAttribute('aria-expanded', 'false')
+    await expect(rowAt(workTree(), filePath(sharedRoot, 0))).toHaveCount(0)
+    await expect(rowAt(workTree(), `${sharedRoot}/notes`)).toBeVisible()
+  })
+
   test('Work 点击 Windows 混合分隔符的子目录开关时祖先始终保持展开', async () => {
     await page.getByRole('tab', { name: 'Work 办公', exact: true }).click()
     await openTask(taskWindows)

@@ -1628,15 +1628,15 @@ export function ChatView(): JSX.Element {
               }}
             />
             </CompletionPopover>
-          {resourceQuery !== null ? (
+          <CompletionPopover open={appMode === 'code' && resourceQuery !== null} anchorRef={composerRef} onClose={() => setResourceQuery(null)}>
             <ResourcePicker
-              query={resourceQuery}
+              query={resourceQuery ?? ''}
               projectPath={remoteReadOnly ? settings.remoteWorkspaceRoot.trim() || undefined : workspace.root || undefined}
               source={sourceEpoch}
               onSelect={chooseComposerResource}
               onClose={() => { setResourceQuery(null); inputRef.current?.focus() }}
             />
-          ) : null}
+          </CompletionPopover>
           {attach.error ? (
             <div className="chat__attach-hint" role="alert">
               <span>{attach.error}</span>

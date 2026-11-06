@@ -174,7 +174,8 @@ test.describe.serial('全局与会话记忆设置 CRUD 真机闭环', () => {
 
   test('会话记忆选择会话后创建，并且全局列表不受影响', async () => {
     await page.getByRole('button', { name: '会话记忆', exact: true }).click()
-    await page.locator('.memory-settings__session select').selectOption(sessionId)
+    await page.getByRole('button', { name: '选择会话', exact: true }).click()
+    await page.getByRole('menuitem', { name: '记忆测试会话', exact: true }).click()
     await page.getByRole('button', { name: /新建记忆/ }).click()
     await page.getByLabel('记忆摘要').fill('只属于本会话的记忆')
     await page.locator('.memory-settings__editor-actions .btn--primary').click()

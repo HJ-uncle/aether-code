@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { useEffect, useMemo, useState, type JSX } from 'react'
 import { Icon } from '@renderer/workbench/icons'
-import { MotionPresence, useMotionPresence } from '@renderer/workbench/MotionPresence'
+import { useMotionPresence } from '@renderer/workbench/MotionPresence'
+import { Popover } from '@renderer/workbench/Popover'
 import { toast } from '@renderer/core/toast'
 import type { WorkTask } from './work-state'
 import { getRunningWorkTasks } from './work-run-list'
@@ -49,7 +50,6 @@ export function WorkRunList({
   const [open, setOpen] = useState(false)
   const [stoppingId, setStoppingId] = useState<string | null>(null)
   const [now, setNow] = useState(Date.now)
-  const rootRef = useRef<HTMLDivElement>(null)
   const shown = runs.length > 0 && !(inline && runs.length === 1 && runs[0]?.id === activeTaskId)
   const presence = useMotionPresence(shown)
 
@@ -58,22 +58,6 @@ export function WorkRunList({
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [shown])
-
-  useEffect(() => {
-    if (!open || !shown) return
-    const onPointerDown = (event: PointerEvent): void => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false)
-    }
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('pointerdown', onPointerDown)
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown)
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [open, shown])
 
   // The active task already exposes its running status and stop action in the
   // heading. Keep the switcher for parallel work (or a background task) where
@@ -91,7 +75,9 @@ export function WorkRunList({
   }
 
   return (
-    <div className={`work-run-list${inline ? ' work-run-list--inline' : ''}`} ref={rootRef} {...presence.motionProps}>
+    <div className={`work-run-list${inline ? ' work-run-list--inline' : ''}`} {...presence.motionProps}>
+      <Popover open={open && shown} onOpenChange={setOpen} align="end" label="运行列表" panelClassName="work-run-list__popover" flush
+        trigger={() => (
       <button
         type="button"
         className="work-run-list__trigger"
@@ -99,15 +85,13 @@ export function WorkRunList({
         aria-haspopup="dialog"
         aria-label={`查看运行中的任务，共 ${runs.length} 项`}
         title="查看运行中的任务"
-        onClick={() => setOpen((value) => !value)}
       >
         <span className="work-run-list__pulse" aria-hidden="true" />
         <span className="work-run-list__label">{inline ? '后台' : '运行中'}</span>
         <b className="work-run-list__count" aria-live="polite" aria-atomic="true">{runs.length}</b>
         <Icon name={open ? 'chevron-up' : 'chevron-down'} size={13} />
       </button>
-      <MotionPresence show={open && shown} asChild>
-        <section className="work-run-list__popover" role="dialog" aria-label="运行列表">
+        )}>
           <header className="work-run-list__header">
             <strong>运行列表</strong>
             <span>{runs.length} 项任务</span>
@@ -157,8 +141,7 @@ export function WorkRunList({
               </li>
             ))}
           </ul>
-        </section>
-      </MotionPresence>
+      </Popover>
     </div>
   )
 }
