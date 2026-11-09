@@ -5,7 +5,7 @@ import { getEngineSource } from '@renderer/core/engine/source'
 import type { ChatFileContext } from '../chat/chat-link'
 import { CompactToolRow } from '../chat/CompactToolRow'
 import { CommandJobCard } from '../chat/CommandJobCard'
-import { SubagentCard } from '../chat/SubagentCard'
+import { WorkSubagentCard } from './WorkSubagentCard'
 import { readActivityFiles, readActivityPreview } from './work-activity-presentation'
 import { workActivityState } from './work-inline-activity-state'
 import { workToolTarget } from './work-message-timeline'
@@ -46,7 +46,7 @@ export const WorkToolActivity = memo(function WorkToolActivity({ tool, fileConte
     {outputOnly ? <>
       {changes.map(change => <WorkFileChangeRow key={change.id} change={change} state={state} onOpenChange={onOpenChange} />)}
       {details}
-    </> : kind === 'subagent' ? <SubagentCard tool={tool} sessionId={fileContext.sessionId} defaultOpen={defaultOpen ?? false} visible={active} surfaceMode="work" readOnly={readOnly} />
+    </> : kind === 'subagent' ? <WorkSubagentCard tool={tool} fileContext={fileContext} active={active} />
       : kind === 'command' && tool.commandJob && !tool.commandJob.background ? <CommandJobCard job={tool.commandJob} sessionId={fileContext.sessionId} surfaceMode="work" active={active} readOnly={readOnly} />
         : kind === 'command' && tool.commandJob ? <div className="work-tool-activity__service-row" data-service-job-id={tool.commandJob.jobId}>{details}</div>
         : kind === 'file-change' && changes.length ? <div data-tool-id={tool.id}>

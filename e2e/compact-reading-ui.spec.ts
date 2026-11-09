@@ -304,39 +304,47 @@ test.describe.serial('子代理紧凑阅读', () => {
     }
   })
 
-  test('长指令默认为两行摘要，展开直接读取完整原文，折叠过程不挂载长正文', async ({}, info) => {
-    const instruction = message('instruction'), summary = instruction.getByRole('button', { name: '展开任务指令', exact: true })
+  test('长用户消息以有限预览气泡呈现，展开保留全文和滚动锚点，折叠过程不挂载长正文', async ({}, info) => {
+    await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setMinimumSize(520, 600))
+    const instruction = message('instruction'), summary = instruction.getByRole('button', { name: '展开用户消息全文', exact: true })
     expect(first.instruction.length).toBeGreaterThan(120_000)
     await expect(summary).toHaveAttribute('aria-expanded', 'false')
-    await expect(instruction.locator('.work-subagent-instruction__body')).toHaveCount(0)
+    await expect(instruction.locator('.work-subagent-instruction__body--preview')).toHaveCount(1)
     await expect(instruction).not.toContainText('INSTRUCTION_END_FIRST')
+    await expect(instruction.locator('.work-subagent-instruction__meta > span')).toHaveText('用户')
+    await expect(instruction.locator('time')).toHaveAttribute('datetime', new Date(now + 50).toISOString())
+    await expect(instruction.getByRole('button', { name: '用户消息详情', exact: true })).toHaveCount(0)
     await expect(work().getByRole('region', { name: '协作对话', exact: true }).locator('.work-subagent-instruction')).toHaveCount(0)
     await expect(transcript()).not.toContainText(/继续阅读|继续展开|还有\s*[\d,]+\s*字符/)
-    for (const appearance of ['light', 'dark'] as const) for (const width of [1440, 980]) {
+    for (const appearance of ['light', 'dark'] as const) for (const width of [1440, 980, 560]) {
       await setWindow(width, 800); await setAppearance(appearance); await openChildren()
       await instruction.scrollIntoViewIfNeeded(); await settleMotion(panel())
       const geometry = await instruction.evaluate(element => {
         const article = element.getBoundingClientRect(), scroll = element.closest('.work-subagent-transcript__scroll')!
         const box = scroll.getBoundingClientRect(), style = getComputedStyle(scroll)
-        const label = element.querySelector('.work-subagent-instruction__summary > span')!
-        return { width: article.width, height: article.height, labelHeight: label.getBoundingClientRect().height,
+        const label = element.querySelector('.message__bubble-content')!
+        const meta = element.querySelector('.work-subagent-instruction__meta')!
+        return { width: article.width, contentWidth: scroll.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight), height: article.height, labelHeight: label.getBoundingClientRect().height,
+          panelWidth: element.closest('.work-subagents')!.getBoundingClientRect().width, metaHeight: meta.getBoundingClientRect().height,
           lineHeight: Number.parseFloat(getComputedStyle(label).lineHeight), textLength: label.textContent?.length ?? 0,
-          rightGap: box.right - Number.parseFloat(style.paddingRight) - article.right,
+          rightGap: box.left + scroll.clientLeft + scroll.clientWidth - Number.parseFloat(style.paddingRight) - article.right,
           overflow: element.scrollWidth > element.clientWidth + 1, viewportOverflow: scroll.scrollWidth > scroll.clientWidth + 1 }
       })
-      expect(geometry.width).toBeLessThanOrEqual(460)
-      expect(geometry.height).toBeLessThanOrEqual(60)
-      expect(geometry.labelHeight).toBeLessThanOrEqual(2 * geometry.lineHeight + 1)
-      expect(geometry.textLength).toBeLessThanOrEqual(180)
-      expect(Math.abs(geometry.rightGap)).toBeLessThanOrEqual(18)
+      expect(geometry.width).toBeLessThanOrEqual((geometry.panelWidth <= 480 ? geometry.contentWidth * .94 : Math.min(620, geometry.contentWidth * .88)) + 1)
+      expect(geometry.width).toBeLessThan(geometry.contentWidth)
+      expect(geometry.height).toBeLessThanOrEqual(geometry.metaHeight + 6 * geometry.lineHeight + 32)
+      expect(geometry.labelHeight).toBeLessThanOrEqual(6 * geometry.lineHeight + 1)
+      expect(geometry.textLength).toBeLessThanOrEqual(321)
+      expect(Math.abs(geometry.rightGap)).toBeLessThanOrEqual(1)
       expect(geometry.overflow).toBe(false); expect(geometry.viewportOverflow).toBe(false)
       const path = info.outputPath(`compact-instruction-${appearance}-${width}.png`)
       await page.screenshot({ path }); await info.attach(`子代理摘要 ${appearance} ${width}`, { path, contentType: 'image/png' })
     }
     await setWindow(1440, 900)
-    await summary.click()
-    await expect(instruction.getByRole('button', { name: '收起任务指令', exact: true })).toHaveAttribute('aria-expanded', 'true')
-    await expect(instruction.locator('.work-subagent-instruction__body')).toHaveAttribute('data-motion-state', 'open')
+    await summary.focus(); await page.keyboard.press('Enter')
+    await expect(instruction.getByRole('button', { name: '收起用户消息', exact: true })).toHaveAttribute('aria-expanded', 'true')
+    await expect(instruction.getByRole('button', { name: '收起用户消息', exact: true })).toBeFocused()
+    await expect(instruction.locator('.work-subagent-instruction__body--preview')).toHaveCount(0)
     await expect.poll(() => instruction.locator('.message__bubble-content').textContent()).toBe(first.instruction)
     await expect(instruction.getByRole('button', { name: /继续阅读|继续展开/ })).toHaveCount(0)
     for (const [appearance, width] of [['dark', 1440], ['light', 980]] as const) {
@@ -354,17 +362,18 @@ test.describe.serial('子代理紧凑阅读', () => {
       const sticky = await instruction.evaluate(element => {
         const scroll = element.closest('.work-subagent-transcript__scroll')!
         const viewport = scroll.getBoundingClientRect(), viewportTop = viewport.top + scroll.clientTop
-        const header = element.querySelector('.work-subagent-instruction__summary')!
+        const header = element.querySelector('.work-subagent-instruction__meta')!
         const summary = header.getBoundingClientRect(), label = header.querySelector('span')!.getBoundingClientRect()
-        // Probe inside the text column, away from rounded corners. The viewport's
-        // first readable pixel must belong to the sticky strip, never its body.
+        // The identity line remains reachable while reading a long message.
+        // Probe its background as well as text, without relying on DPR rounding.
         const points = [
-          { label: 'viewport-left', x: label.left + 1, y: viewportTop + 1 },
-          { label: 'viewport-right', x: label.right - 1, y: viewportTop + 1 },
+          { label: 'viewport-left', x: summary.left + 8, y: viewportTop + 1 },
+          { label: 'viewport-right', x: summary.right - 8, y: viewportTop + 1 },
           { label: 'text-top', x: label.left + 1, y: label.top + 1 },
           { label: 'text-bottom', x: label.left + 1, y: label.bottom - 1 }
         ]
         return { viewportTop, summaryTop: summary.top, summaryBottom: summary.bottom, scrollTop: scroll.scrollTop,
+          position: getComputedStyle(header).position,
           articleTop: element.getBoundingClientRect().top, dpr: devicePixelRatio,
           points: points.map(point => {
             const hit = document.elementFromPoint(point.x, point.y)
@@ -375,11 +384,13 @@ test.describe.serial('子代理紧凑阅读', () => {
       const path = info.outputPath(`compact-instruction-scrolled-${appearance}-${width}.png`)
       await page.screenshot({ path }); await info.attach(`长指令滚动 ${appearance} ${width}`, { path, contentType: 'image/png' })
       const evidence = JSON.stringify(sticky)
+      expect(sticky.position).toBe('sticky')
       expect(Math.abs(sticky.summaryTop - sticky.viewportTop), evidence).toBeLessThanOrEqual(1)
       expect(sticky.points.every(point => point.covered), evidence).toBe(true)
     }
-    await instruction.getByRole('button', { name: '收起任务指令', exact: true }).click()
-    await expect(instruction.locator('.work-subagent-instruction__body')).toHaveCount(0)
+    await instruction.getByRole('button', { name: '收起用户消息', exact: true }).click()
+    await expect(instruction.locator('.work-subagent-instruction__body--preview')).toHaveCount(1)
+    await expect(instruction).not.toContainText('INSTRUCTION_END_FIRST')
     const collapsedPosition = await instruction.evaluate(element => {
       const row = element.getBoundingClientRect(), scroll = element.closest('.work-subagent-transcript__scroll')!.getBoundingClientRect()
       return { top: row.top - scroll.top, bottom: row.bottom - scroll.top, viewport: scroll.height }
@@ -470,14 +481,14 @@ test.describe.serial('子代理紧凑阅读', () => {
     await expect(transcript()).toContainText('OTHER_ANSWER_FIRST_2')
     await expect(panel().getByRole('textbox', { name: '继续交给 阅读代理 2', exact: true })).toHaveValue('')
     await selectChild(1)
-    await expect(instruction.getByRole('button', { name: '收起任务指令', exact: true })).toHaveAttribute('aria-expanded', 'true')
+    await expect(instruction.getByRole('button', { name: '收起用户消息', exact: true })).toHaveAttribute('aria-expanded', 'true')
     await expect(answer).toContainText('FINAL_END_FIRST')
     await expect(draft).toHaveValue('保留未发送的审阅要求，不应交给别的任务或引擎')
     await expect.poll(() => scroller().evaluate(element => element.scrollTop)).toBeCloseTo(120, 0)
     await transcript().getByRole('button', { name: '加载更早消息', exact: true }).click()
     await expect(transcript().locator('[data-message-id="compact-child-1-old-0"]')).toContainText('OLD_PAGE_FIRST_0')
     expect(first.reads).toContainEqual({ sessionId: 'compact-child-1', current: 1, pageSize: 50 })
-    await expect(instruction.getByRole('button', { name: '收起任务指令', exact: true })).toHaveAttribute('aria-expanded', 'true')
+    await expect(instruction.getByRole('button', { name: '收起用户消息', exact: true })).toHaveAttribute('aria-expanded', 'true')
     await expect(answer).toContainText('FINAL_END_FIRST')
 
     first.holdArchive('compact-child-1', 1)
@@ -491,7 +502,7 @@ test.describe.serial('子代理紧凑阅读', () => {
     await expect(panel().getByRole('textbox', { name: '继续交给 阅读代理 3', exact: true })).toHaveValue('')
     await selectTask(first, taskA); await selectChild(1)
     await expect(draft).toHaveValue('保留未发送的审阅要求，不应交给别的任务或引擎')
-    await expect(instruction.getByRole('button', { name: '收起任务指令', exact: true })).toHaveAttribute('aria-expanded', 'true')
+    await expect(instruction.getByRole('button', { name: '收起用户消息', exact: true })).toHaveAttribute('aria-expanded', 'true')
 
     first.holdArchive('compact-child-1', 1)
     await panel().getByRole('button', { name: '刷新子代理对话', exact: true }).click()
@@ -511,7 +522,7 @@ test.describe.serial('子代理紧凑阅读', () => {
     first.releaseArchive(); await settleMotion(panel())
     await expect(transcript()).not.toContainText('FIRST')
     await expect(draft).toHaveValue('')
-    await expect(instruction.getByRole('button', { name: '展开任务指令', exact: true })).toHaveAttribute('aria-expanded', 'false')
+    await expect(instruction.getByRole('button', { name: '展开用户消息全文', exact: true })).toHaveAttribute('aria-expanded', 'false')
     await expect(answer).toContainText('FINAL_END_SECOND')
     await expect(answer.getByRole('button', { name: /继续阅读|继续展开/ })).toHaveCount(0)
     await transcript().getByRole('button', { name: '加载更早消息', exact: true }).click()

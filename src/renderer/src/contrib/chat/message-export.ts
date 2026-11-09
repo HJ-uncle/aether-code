@@ -25,7 +25,7 @@ export function serializeMessages(selected: readonly ChatMessage[]): string {
         if (exportedTools.length > 0) {
           const toolLines = exportedTools.map((tool) => {
             const state = toolStatusLabel(tool)
-            const summary = tool.args ? toolParamSummary(tool.args) : ''
+            const summary = tool.args ? toolParamSummary(tool.args, tool.name) : ''
             const details = tool.commandJob
               ? exportCommandJob(tool.commandJob)
               : tool.name === 'subagent'

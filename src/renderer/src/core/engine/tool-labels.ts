@@ -27,6 +27,7 @@ const TOOL_NAMES: Readonly<Record<string, string>> = {
   ask_user: '向用户提问',
   subagent: '子代理',
   subagent_start: '启动子代理',
+  subagent_directory: '查看可复用子代理',
   subagent_followup: '继续子代理',
   subagent_request_input: '请求补充信息',
   report_artifacts: '报告制作成果',

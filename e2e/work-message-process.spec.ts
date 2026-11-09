@@ -1,10 +1,10 @@
-/** Pure Work timeline regression: settled commands belong to process; live actions and final answers retain their scope. */
+/** Pure Work timeline regression: collaboration and settled commands belong to process; live commands and final answers retain their scope. */
 import { expect, test } from '@playwright/test'
 import type { ChatMessage, ToolActivity } from '../src/renderer/src/core/engine/useChat'
 import type { CommandJobStatus } from '../src/shared/command-job'
 import type { RootRun } from '../src/shared/root-run'
 import { finalAnswerForMessage } from '../src/renderer/src/core/engine/final-result'
-import { workMessagePresentation, workMessageTimeline, type WorkPresentationSegment } from '../src/renderer/src/contrib/work/work-message-timeline'
+import { captureWorkCollaborationMembership, workMessagePresentation, workMessageTimeline, type WorkPresentationSegment } from '../src/renderer/src/contrib/work/work-message-timeline'
 import { workMessageRunning } from '../src/renderer/src/contrib/work/work-tool-presentation'
 
 function command(status: CommandJobStatus, id = status): ToolActivity {
@@ -27,7 +27,7 @@ function present(value: ChatMessage): WorkPresentationSegment[] {
 }
 function processTools(presentation: WorkPresentationSegment[]): ToolActivity[] {
   return presentation.flatMap(segment => segment.kind === 'process'
-    ? segment.segments.flatMap(item => item.kind === 'tools' ? item.tools : []) : [])
+    ? segment.segments.flatMap(item => item.kind === 'tools' || item.kind === 'collaboration' ? item.tools : item.kind === 'tool' ? [item.tool] : []) : [])
 }
 
 test('settled command outcomes share the existing process disclosure in original order', () => {
@@ -88,11 +88,84 @@ test('command completion alone is not promoted to a final answer', () => {
   expect(present(source).map(segment => segment.kind)).toEqual(['process'])
 })
 
-test('collaboration boundaries survive folding adjacent commands', () => {
+test('collaboration and adjacent commands share the owning process in original order', () => {
   const before = command('failed', 'before'), after = command('cancelled', 'after')
   const collaborator: ToolActivity = { id: 'delegate', name: 'subagent', args: '{}', result: '协作结果', state: 'done' }
   const presentation = present(message('done', [before, collaborator, after], 'succeeded'))
-  expect(presentation.map(segment => segment.kind)).toEqual(['process', 'tool', 'process'])
-  expect(processTools(presentation)).toEqual([before, after])
-  expect(presentation[1]).toEqual({ kind: 'tool', key: 'tool:delegate', tool: collaborator })
+  expect(presentation.map(segment => segment.kind)).toEqual(['process'])
+  expect(processTools(presentation)).toEqual([before, collaborator, after])
+  expect(presentation[0]).toEqual({ kind: 'process', key: 'tool:before', segments: [
+    { kind: 'tools', key: 'tool:before', tools: [before] },
+    { kind: 'tool', key: 'tool:delegate', tool: collaborator },
+    { kind: 'tools', key: 'tool:after', tools: [after] }
+  ] })
+})
+
+test('a reply containing only a child invocation still has a process in live and settled phases', () => {
+  for (const status of ['streaming', 'waiting', 'done', 'error'] as const) {
+    const child: ToolActivity = { id: 'only-child', name: 'subagent_start', args: '{}', result: '',
+      state: status === 'streaming' || status === 'waiting' ? 'running' : 'done' }
+    const source = message(status, [child]), original = structuredClone(source)
+    const presentation = present(source)
+    expect(presentation.map(segment => segment.kind)).toEqual(['process'])
+    expect(processTools(presentation)).toEqual([child])
+    expect(source).toEqual(original)
+  }
+})
+
+test('completed collaboration groups stay inside process while their final answer stays outside', () => {
+  const children = Array.from({ length: 4 }, (_, index): ToolActivity => ({
+    id: `child-${index}`, name: 'subagent_start', args: '{}', result: `Child ${index} result`, state: 'done',
+    subagent: { schemaVersion: 1, runId: `run-${index}`, tenantId: 'tenant', rootSessionId: 'work-task',
+      parentSessionId: 'work-task', parentConversationId: 'turn', parentMessageId: 'assistant', parentToolCallId: `child-${index}`,
+      childSessionId: `session-${index}`, agentId: 'general', agentName: `Agent ${index}`, task: 'Inspect task',
+      description: '', modelId: 'model', lastSeq: 1, usage: {}, toolCalls: [],
+      status: 'succeeded', createdAt: 10, updatedAt: 20, finishedAt: 20 }
+  }))
+  const source = message('done', children, 'succeeded')
+  // Repeated stream references do not create extra process steps.
+  source.items.push({ kind: 'tool', id: children[0].id })
+  const original = structuredClone(source)
+  const presentation = workMessagePresentation(workMessageTimeline(source), undefined, { text: '最终结论' }, false)
+  expect(presentation).toEqual([
+    { kind: 'process', key: 'tool:child-0', segments: [{ kind: 'collaboration', key: 'tool:child-0', tools: children }] },
+    { kind: 'answer', key: 'final-result', text: '最终结论' }
+  ])
+  expect(processTools(presentation).map(tool => tool.id)).toEqual(children.map(tool => tool.id))
+  expect(captureWorkCollaborationMembership(presentation)).toEqual(new Map(children.map(tool => [tool.id, 'tool:child-0'])))
+  expect(source).toEqual(original)
+
+  const next = { ...children[0], id: 'later-child', subagent: { ...children[0].subagent!, runId: 'later-run', parentToolCallId: 'later-child' } }
+  const frozen = workMessagePresentation(workMessageTimeline(message('done', [...children, next])),
+    captureWorkCollaborationMembership(presentation), { text: '最终结论' }, false)
+  expect(frozen[0]).toEqual({ kind: 'process', key: 'tool:child-0', segments: [
+    { kind: 'collaboration', key: 'tool:child-0', tools: children }, { kind: 'tool', key: 'tool:later-child', tool: next }
+  ] })
+})
+
+test('whitespace-only streamed segments never create an empty process disclosure', () => {
+  const source = message('done', [], 'succeeded')
+  source.content = ' \n\t '
+  source.thinking = '\n '
+  source.items = [{ kind: 'thinking', text: '\t ' }, { kind: 'content', text: '\n\n' }]
+  expect(workMessageTimeline(source)).toEqual([])
+  expect(present(source)).toEqual([])
+  expect(workMessagePresentation([{ kind: 'thinking', key: 'thinking', text: '  ' },
+    { kind: 'content', key: 'content', text: '\n' }], undefined, false, false)).toEqual([])
+})
+
+test('removing blank segments preserves meaningful streamed spaces and code indentation', () => {
+  const source = message('streaming', [], 'running')
+  source.items = [{ kind: 'content', text: 'hello' }, { kind: 'content', text: ' ' },
+    { kind: 'content', text: 'world\n\n```ts\n' }, { kind: 'content', text: '  ' },
+    { kind: 'content', text: 'return value\n```' }]
+  const original = structuredClone(source)
+  expect(workMessageTimeline(source)).toEqual([{ kind: 'content', key: 'content:0', text: 'hello world\n\n```ts\n  return value\n```' }])
+  expect(source).toEqual(original)
+})
+
+test('a trailing blank segment cannot hide a real legacy answer or add a process header', () => {
+  const presentation = workMessagePresentation([{ kind: 'content', key: 'answer', text: '已完成核对。' },
+    { kind: 'thinking', key: 'empty-thinking', text: '\n' }, { kind: 'content', key: 'empty-content', text: '  ' }])
+  expect(presentation).toEqual([{ kind: 'answer', key: 'answer', text: '已完成核对。' }])
 })

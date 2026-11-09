@@ -18,19 +18,19 @@ export function WorkCollaborationSummary({ tools, fileContext, revealTool, activ
   readOnly?: boolean
 }): JSX.Element {
   const [expanded, setExpanded] = useCollapseMemory(`work-collaboration:${getEngineSource()}:${fileContext.sessionId}:${tools[0].id}`)
+  const open = expanded ?? true
   const id = `work-collaboration-${useId().replace(/:/g, '')}`
   useLayoutEffect(() => {
     if (revealTool && tools.some(tool => tool.id === revealTool.toolId)) setExpanded(true)
   }, [revealTool, tools, setExpanded])
-  return <section className="work-collaboration-summary" aria-label="已完成的协作" data-collaboration-count={tools.length}>
-    <button className="work-collaboration-summary__toggle" type="button" aria-expanded={Boolean(expanded)} aria-controls={id}
-      onClick={() => setExpanded(!expanded)}>
-      <Icon name="check" size={14} />
-      <span>已完成 {tools.length} 次协作</span>
-      <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={12} />
+  return <section className="work-collaboration-summary" aria-label="协作" data-collaboration-count={tools.length}>
+    <button className="work-collaboration-summary__toggle" type="button" aria-expanded={open} aria-controls={id}
+      onClick={() => setExpanded(!open)}>
+      <span>协作 · {tools.length}</span>
+      <Icon name={open ? 'chevron-down' : 'chevron-right'} size={12} />
     </button>
-    <MotionPresence id={id} className="work-collaboration-summary__records" show={Boolean(expanded)}>
-      <WorkInlineActivity tools={tools} fileContext={fileContext} revealTool={revealTool} expanded active={active && Boolean(expanded)} readOnly={readOnly} />
+    <MotionPresence id={id} className="work-collaboration-summary__records" show={open}>
+      <WorkInlineActivity tools={tools} fileContext={fileContext} revealTool={revealTool} expanded active={active && open} readOnly={readOnly} />
     </MotionPresence>
   </section>
 }

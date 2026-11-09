@@ -71,6 +71,12 @@ export interface SubagentRunV1 {
   compaction?: RootRunCompaction
   stopReason?: string
   resultSummary?: string
+  /** The summary is a bounded preview; the immutable body is paged from disk. */
+  resultRef?: string
+  resultHash?: string
+  resultBytes?: number
+  resultTruncated?: boolean
+  resultKind?: 'final' | 'partial'
   partialOutput?: string
   externalEffectStatus?: 'unknown'
   usage: SubagentUsage
@@ -213,6 +219,19 @@ export interface SubagentEventsPage {
   nextSeq: number
   hasMore: boolean
   checkpointRequired: boolean
+}
+
+export interface SubagentResultPage {
+  runId: string
+  resultRef: string
+  resultHash: string
+  resultKind: 'final' | 'partial'
+  encoding: 'utf8'
+  text: string
+  offset: number
+  nextOffset?: number
+  totalBytes: number
+  hasMore: boolean
 }
 
 /** Discovery carries exact identity hints, never a truncated run/usage snapshot. */

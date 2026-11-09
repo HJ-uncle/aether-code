@@ -156,7 +156,11 @@ export const WorkMessageContent = memo(function WorkMessageContent({
             ) : (
               <MotionPresence key={segment.key} className="work-message__process" show={processOpen}>
                 {segment.segments.map(item => item.kind === 'tools' ? (
-                  <WorkInlineActivity key={item.key} tools={item.tools} fileContext={fileContext} onOpenFile={onOpenFile} onOpenChange={onOpenChange} revealTool={revealTool} expanded turnRunning={turnRunning} active={active} readOnly={readOnly} />
+                  <WorkInlineActivity key={item.key} tools={item.tools} fileContext={fileContext} onOpenFile={onOpenFile} onOpenChange={onOpenChange} revealTool={revealTool} expanded turnRunning={turnRunning} active={active && processOpen} readOnly={readOnly} />
+                ) : item.kind === 'tool' ? (
+                  <WorkToolActivity key={item.key} tool={item.tool} fileContext={fileContext} onOpenFile={onOpenFile} onOpenChange={onOpenChange} turnRunning={turnRunning} active={active && processOpen} readOnly={readOnly} />
+                ) : item.kind === 'collaboration' ? (
+                  <WorkCollaborationSummary key={item.key} tools={item.tools} fileContext={fileContext} revealTool={revealTool} active={active && processOpen} readOnly={readOnly} />
                 ) : item.kind === 'thinking' ? (
                   <MotionPresence key={item.key} className="work-message__thinking" show={thinkingOpen}>
                     <ThinkingRow text={item.text} autoOpen={false} memoryKey={`work-thinking:${getEngineSource()}:${sessionId}:${processKey ?? message.id}:${item.key}`} />

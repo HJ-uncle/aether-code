@@ -32,6 +32,8 @@ import { formatTokens } from './usage'
 import { readPublishedChild } from '@renderer/core/engine/published-snapshot-client'
 import type { SubagentRun } from '@shared/subagent'
 import { CodePublishedSubagentControl, CodeSubagentFollowup } from './SubagentFollowup'
+import { subagentResultPresentation } from '@renderer/core/engine/subagent-result'
+import { SubagentResultReader } from './SubagentResultReader'
 import './subagent-card-work.css'
 
 type SubagentCardProps = { tool: ToolActivity; sessionId: string; defaultOpen?: boolean; visible?: boolean; surfaceMode?: 'code' | 'work'; readOnly?: boolean;
@@ -177,7 +179,7 @@ function SubagentRunCard({
   const open = manualOpen ?? defaultOpen ?? (active || failed || needsUser)
   const status = toolStatusLabel(run ? { ...tool, subagent: run } : tool)
   const quiet = surfaceMode === 'work'
-  const statusLabel = quiet && status === '成功' ? '已完成' : status
+  const statusLabel = status
   const publishedStatus = active ? '记录时运行中' : statusLabel
   const summaryStatus = pinned ? quiet ? publishedStatus : `已发布 · ${publishedStatus}` : statusLabel
   const reason = run?.error?.message || tool.error || (failed && !run ? legacy.text : '')
@@ -332,7 +334,7 @@ function SubagentRunCard({
         }}
       >
         <span className={`subagent-card__dot${failed ? ' subagent-card__dot--fail' : ''}`}>
-          {round && run?.status === 'queued' ? <Icon name="clock-outline" size={14} /> : active && !pinned ? <Spinner size={12} className="subagent-card__spinner" /> : <Icon name={quiet && status === '成功' ? 'check' : 'circle'} size={quiet ? 14 : 16} />}
+          {round && run?.status === 'queued' ? <Icon name="clock-outline" size={14} /> : active && !pinned ? <Spinner size={12} className="subagent-card__spinner" /> : <Icon name={quiet && run?.status === 'succeeded' ? 'check' : 'circle'} size={quiet ? 14 : 16} />}
         </span>
         <span className="subagent-card__name" title={round ? undefined : quiet && remoteReadOnly ? `远端 · ${agentLabel}` : agentLabel}>{round ? `第 ${round.number} 轮` : remoteReadOnly && !quiet ? `远端 · ${agentLabel}` : agentLabel}</span>
         {round ? <RoundTime createdAt={round.createdAt ?? run?.createdAt} /> : null}
@@ -442,10 +444,14 @@ function SubagentRunCard({
       {resultPresence.present ? (
         <div className="subagent-card__result-block" {...resultPresence.motionProps}>
           <div className="subagent-card__result-label">
-            {run?.partialOutput && !run.resultSummary ? '部分结果' : '返回结果'}
+            {run ? subagentResultPresentation(run, result).label : '返回结果'}
           </div>
           <div className="subagent-card__result-inner">
-            {failed ? (
+            {run ? <SubagentResultReader key={JSON.stringify([sourceEpoch, run.runId, run.resultRef])} run={run} visible={open && visible}>{failed ? (
+              <WorkErrorNotice error={result} className="work-error-notice--subagent" />
+            ) : (
+              <div className="subagent-card__result-markdown"><Markdown text={result} fileContext={fileContext} /></div>
+            )}</SubagentResultReader> : failed ? (
               <WorkErrorNotice error={result} className="work-error-notice--subagent" />
             ) : (
               <div className="subagent-card__result-markdown">

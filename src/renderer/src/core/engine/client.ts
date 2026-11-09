@@ -21,13 +21,14 @@ import type {
 } from '@shared/ipc'
 import type {
   SubagentRun, SubagentRunsPage, SubagentToolsPage, SubagentToolDetailPage, SubagentEventsPage,
-  SubagentCapabilities, SubagentDiscoveryPage
+  SubagentCapabilities, SubagentDiscoveryPage, SubagentResultPage
 } from '@shared/subagent'
 import { getExpectedEngine, getEngineSource } from './source'
 import { getAppMode } from '@renderer/core/platform/app-mode'
 import { parseSubagentDiscoveryPage } from './subagent-discovery'
 import { withSubagentReadPermit } from './subagent-refresh'
 import { registerStreamOwner } from './stream-owner'
+import { parseSubagentResultPage } from './subagent-result'
 
 function bridge(): Window['aether'] {
   const api = window.aether
@@ -272,6 +273,26 @@ export async function listSubagentRuns(parentSessionId: string, options: Subagen
 }
 
 export const listSubagentRunsPage = listSubagentRuns
+
+/** One bounded immutable result page; never caches a complete child answer in the run store. */
+export async function getSubagentResultPage(run: SubagentRun, options: {
+  offset?: number; limitBytes?: number; connection?: SubagentConnection
+} = {}): Promise<SubagentResultPage> {
+  const { connection = captureSubagentConnection(), offset = 0, limitBytes = 16 * 1024 } = options
+  if (!run.parentSessionId || !run.resultRef || !run.resultHash || !Number.isSafeInteger(run.resultBytes)
+    || !Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limitBytes) || limitBytes < 4 || limitBytes > 65536)
+    throw new Error('此记录未保存完整结果引用，或读取范围无效')
+  assertSubagentConnection(connection)
+  const data = await withSubagentReadPermit(() => {
+    assertSubagentConnection(connection)
+    return requestOrThrow<unknown>({ method: 'GET', path: `/subagent/runs/${encodeURIComponent(run.runId)}/result`,
+      query: { parentSessionId: run.parentSessionId, offset, limitBytes },
+      expectedEngine: connection.expectedEngine, toolProfile: connection.toolProfile })
+  })
+  assertSubagentConnection(connection)
+  return parseSubagentResultPage(data, { runId: run.runId, offset, limitBytes, resultRef: run.resultRef,
+    resultHash: run.resultHash, totalBytes: run.resultBytes!, kind: run.resultKind })
+}
 
 export async function getSubagentRun(runId: string, options: SubagentScope & { atSeq?: number; connection?: SubagentConnection; verify?: () => void } = {}): Promise<SubagentRun> {
   const { connection = captureSubagentConnection(), verify, ...query } = options

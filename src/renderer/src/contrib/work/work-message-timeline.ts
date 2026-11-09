@@ -3,9 +3,10 @@ import { isVisibleToolActivity } from '@renderer/core/engine/task-plan'
 import { commandInvocation } from '@renderer/core/engine/tool-feedback'
 import { commandJobInvocation } from '@renderer/core/engine/command-job-state'
 import { splitAssistantReasoning } from '@renderer/core/engine/assistant-reasoning'
-import { isWorkStandaloneTool } from './work-tool-presentation'
+import { isWorkStandaloneTool, workToolKind } from './work-tool-presentation'
 import { toolPresentation } from '../chat/tool-presentation'
 import { batchFileSummary } from '../chat/tool-file-args'
+import { subagentWaitSummary } from '../chat/subagent-wait-summary'
 
 export type WorkMessageSegment =
   | { kind: 'followup'; key: string; message: ChatMessage }
@@ -13,10 +14,13 @@ export type WorkMessageSegment =
   | { kind: 'thinking'; key: string; text: string }
   | { kind: 'tools'; key: string; tools: ToolActivity[] }
 
-export type WorkPresentationSegment =
-  | { kind: 'process'; key: string; segments: WorkMessageSegment[] }
+type WorkCardSegment =
   | { kind: 'tool'; key: string; tool: ToolActivity }
   | { kind: 'collaboration'; key: string; tools: ToolActivity[] }
+
+export type WorkPresentationSegment =
+  | { kind: 'process'; key: string; segments: Array<WorkMessageSegment | WorkCardSegment> }
+  | WorkCardSegment
   | { kind: 'answer'; key: string; text: string }
 
 export type WorkCollaborationMembership = ReadonlyMap<string, string>
@@ -24,14 +28,23 @@ export type WorkCollaborationMembership = ReadonlyMap<string, string>
 /** Freeze only the disclosure boundaries the user has started reading; receipt
  * objects and statuses still come from the latest message on every render. */
 export function captureWorkCollaborationMembership(presentation: readonly WorkPresentationSegment[]): WorkCollaborationMembership {
-  return new Map(presentation.flatMap(segment => segment.kind === 'collaboration'
-    ? segment.tools.map(tool => [tool.id, segment.key] as const) : []))
+  const membership = new Map<string, string>()
+  for (const segment of presentation) {
+    const items = segment.kind === 'process' ? segment.segments : [segment]
+    for (const item of items) if (item.kind === 'collaboration') {
+      for (const tool of item.tools) membership.set(tool.id, item.key)
+    }
+  }
+  return membership
 }
 
 /** Tool screenshots document the process; the assistant's final prose and
  * images stay in the answer, with all receipts retaining their original order. */
 export function workMessagePresentation(segments: WorkMessageSegment[], membership?: WorkCollaborationMembership,
   finalAnswer?: { text: string } | false, turnRunning = true): WorkPresentationSegment[] {
+  // Filter after stream chunks have joined; trimming individual chunks would
+  // remove the real separator in responses such as "hello" + " " + "world".
+  segments = segments.filter(segment => segment.kind !== 'content' && segment.kind !== 'thinking' || segment.text.trim())
   const published = finalAnswer ? splitAssistantReasoning(finalAnswer.text) : undefined
   if (published) finalAnswer = { text: published.content }
   const lastContent = segments.findLast(segment => segment.kind === 'content')
@@ -86,7 +99,18 @@ export function workMessagePresentation(segments: WorkMessageSegment[], membersh
     }
     compact.push(completed.length > 1 ? { kind: 'collaboration', key: item.key, tools: completed } : item)
   }
-  return compact
+  // Collaboration is part of the work that produced the answer. Retain its
+  // disclosure boundaries, but let the owning process hide every child card.
+  const scoped: WorkPresentationSegment[] = []
+  for (const item of compact) {
+    const process = item.kind === 'process' ? item.segments
+      : item.kind === 'collaboration' || item.kind === 'tool' && workToolKind(item.tool) === 'subagent' ? [item] : undefined
+    if (!process) { scoped.push(item); continue }
+    const previous = scoped.at(-1)
+    if (previous?.kind === 'process') previous.segments.push(...process)
+    else scoped.push({ kind: 'process', key: item.key, segments: [...process] })
+  }
+  return scoped
 }
 
 /** Preserve the engine's chronology; grouped receipts must never move ahead of earlier prose. */
@@ -122,11 +146,11 @@ export function workMessageTimeline(message: ChatMessage): WorkMessageSegment[] 
     segments.push({ kind: 'content', key: 'content', text: message.content })
   }
   return segments.flatMap(segment => {
-    if (segment.kind !== 'content') return [segment]
+    if (segment.kind !== 'content') return segment.kind === 'thinking' && !segment.text.trim() ? [] : [segment]
     const parsed = splitAssistantReasoning(segment.text, message.status === 'streaming')
     const normalized: WorkMessageSegment[] = []
     if (parsed.thinking) normalized.push({ kind: 'thinking', key: `${segment.key}:thinking`, text: parsed.thinking })
-    if (parsed.content) normalized.push({ ...segment, text: parsed.content })
+    if (parsed.content.trim()) normalized.push({ ...segment, text: parsed.content })
     return normalized
   })
 }
@@ -146,6 +170,7 @@ function browserPageTarget(value: string): string {
 
 /** Show recognizable work targets without flashing partial JSON during argument streaming. */
 export function workToolTarget(tool: ToolActivity, workspacePath?: string | null, full = false): string {
+  if (tool.name === 'subagent_wait') return subagentWaitSummary(tool.args)
   // The executable alone is often only cmd.exe or PowerShell. The invocation
   // keeps its separate argv so readers can identify what actually ran.
   const invocation = tool.commandJob ? commandJobInvocation(tool.commandJob)

@@ -5,8 +5,10 @@ import { normalizeFinalResult } from '@shared/final-result'
 import { normalizePublishedChildReference } from './published-child-recovery'
 import { normalizeRootFollowupMessage } from './root-followup-message'
 import type { ChatMessage, TimelineItem, ToolActivity } from './useChat'
+import type { SubagentRun } from '@shared/subagent'
 import {
   errorText,
+  isSubagentActive,
   mergeSubagentRun,
   normalizeSubagentRun,
   runToolState,
@@ -72,11 +74,30 @@ export interface EngineHistoryRow {
   /** 所属轮次 id（引擎 conversations 表的 conversation_id），删除整轮时定位用 */
   conversationId?: string
   toolCallId?: unknown
+  toolName?: string
   toolCall?: { id?: string; name?: string; args?: unknown } | null
   success?: boolean
   error?: unknown
-  metadata?: { finalResult?: unknown; contextUsageEstimated?: boolean; contextUsageProvisional?: boolean; requestInputTokenEstimate?: number; outputContinuation?: boolean; commandJob?: unknown; commandJobs?: unknown[]; subagent?: unknown; success?: boolean; error?: unknown; status?: string; outputPreview?: string; durationMs?: number; startedAt?: number; finishedAt?: number; runId?: string; rootRunId?: string; subagentRunId?: string; turnId?: string; collaborationDelivery?: unknown; attachments?: Array<{ name: string; type?: string; size?: number }>; change?: import('@shared/ipc').EngineFileChange; changes?: import('@shared/ipc').EngineFileChange[]; isCompactSummary?: boolean; toolName?: string }
+  metadata?: { finalResult?: unknown; contextUsageEstimated?: boolean; contextUsageProvisional?: boolean; requestInputTokenEstimate?: number; outputContinuation?: boolean; commandJob?: unknown; commandJobs?: unknown[]; subagent?: unknown; subagentNotification?: unknown; success?: boolean; error?: unknown; status?: string; outputPreview?: string; durationMs?: number; startedAt?: number; finishedAt?: number; runId?: string; rootRunId?: string; subagentRunId?: string; turnId?: string; collaborationDelivery?: unknown; attachments?: Array<{ name: string; type?: string; size?: number }>; change?: import('@shared/ipc').EngineFileChange; changes?: import('@shared/ipc').EngineFileChange[]; isCompactSummary?: boolean; toolName?: string }
   isSidechain?: boolean
+}
+
+/** Internal completion notes are model evidence, not a new answer from the
+ * parent. Require the producer's structured identity; quoted prose is untouched. */
+function ownedSubagentNotification(row: EngineHistoryRow): SubagentRun | undefined {
+  const raw = row.metadata?.subagentNotification
+  if (row.role !== 'assistant' || row.toolCall || !raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const notice = raw as Record<string, unknown>
+  const run = normalizeSubagentRun(row.metadata?.subagent)
+  if (!run || isSubagentActive(run.status) || row.id !== `subagent-result:${run.runId}` ||
+    notice.runId !== run.runId || notice.parentToolCallId !== run.parentToolCallId ||
+    (row.conversationId ?? row.metadata?.turnId) !== run.parentConversationId) return undefined
+  return run
+}
+
+function finishSubagentNotification(previous: ToolActivity, run: SubagentRun): ToolActivity {
+  const tool = finishTool(previous, { subagent: run })
+  return { ...tool, result: tool.subagent?.resultSummary || tool.subagent?.partialOutput || '' }
 }
 
 /**
@@ -148,11 +169,43 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
   const result: ChatMessage[] = []
   /** 尚未收到结果的工具调用，按 toolCallId 索引，用于回填 tool 结果行 */
   const openTools = new Map<string, { message: ChatMessage; index: number }>()
+  // An async admission settles its tool before its child finishes. Keep the
+  // original anchor independently so the terminal note updates that same card.
+  const subagentAnchors = new Map<string, Array<{ row: EngineHistoryRow; message: ChatMessage; index: number }>>()
+  const detachedNotifications = new Map<string, ChatMessage>()
   const outputContinuations = new WeakSet<ChatMessage>()
 
   for (const row of rows) {
     if (row.role === 'system' || row.isSidechain === true) continue
     const createdAt = Number(row.createdAt) || 0
+
+    const notification = ownedSubagentNotification(row)
+    if (notification) {
+      const anchors = (subagentAnchors.get(notification.parentToolCallId) ?? []).filter(anchor =>
+        anchor.row.id === notification.parentMessageId &&
+        (anchor.row.conversationId ?? anchor.row.metadata?.turnId) === notification.parentConversationId)
+      const anchor = anchors.length === 1 ? anchors[0] : undefined
+      if (anchor) {
+        const previous = anchor.message.tools[anchor.index]
+        anchor.message.tools[anchor.index] = finishSubagentNotification(previous, notification)
+      } else {
+        // A partial archive page can contain the result without its invocation.
+        // Retain a child result card, without claiming the parent's answer or
+        // inventing a root-run identity from the child's invocation ID.
+        const key = JSON.stringify([notification.parentSessionId, notification.runId])
+        const prior = detachedNotifications.get(key)
+        const tool: ToolActivity = { id: notification.parentToolCallId, name: 'subagent_start', args: '',
+          result: notification.resultSummary || notification.partialOutput || '', state: runToolState(notification), subagent: notification }
+        if (prior) prior.tools[0] = finishSubagentNotification(prior.tools[0], notification)
+        else {
+          const message: ChatMessage = { id: row.id!, role: 'assistant', conversationId: notification.parentConversationId,
+            content: '', thinking: '', tools: [tool], items: [{ kind: 'tool', id: tool.id }], status: 'done', createdAt }
+          detachedNotifications.set(key, message)
+          result.push(message)
+        }
+      }
+      continue
+    }
 
     if (row.role === 'user') {
       // Production history records use `rootRunId` for the parent execution
@@ -301,6 +354,11 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
       message.tools.push(tool)
       rowItems.push({ kind: 'tool', id: tool.id })
       if (tool.id) openTools.set(tool.id, { message, index: message.tools.length - 1 })
+      if (tool.name === 'subagent_start') {
+        const anchors = subagentAnchors.get(tool.id) ?? []
+        anchors.push({ row, message, index: message.tools.length - 1 })
+        subagentAnchors.set(tool.id, anchors)
+      }
     }
     // 对齐流式路径 appendTimeline：相邻同 kind 条目合并，避免一轮 ReAct 拆出 N 段碎 thinking
     for (const item of rowItems) {

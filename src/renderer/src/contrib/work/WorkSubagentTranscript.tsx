@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
 import { getSubagentProtocol, request } from '@renderer/core/engine/client'
 import { getEngineSource, getExpectedEngine } from '@renderer/core/engine/source'
@@ -11,9 +11,9 @@ import { getSessionMeta } from '../history/session-meta'
 import { loadWorkSubagentTranscript, SUBAGENT_TRANSCRIPT_PAGE_SIZE, WorkTranscriptSupersededError, type WorkTranscriptWindow } from './work-subagent-transcript'
 import { workSubagentErrorText, workSubagentFinalAnswer, workSubagentMessages } from './work-subagent-messages'
 import { workMessageTimeline } from './work-message-timeline'
-import { WorkMessageContent, WorkUserMessageBody } from './WorkMessageContent'
-import { userMessageText } from '../chat/mention-context'
-import { MotionPresence } from '@renderer/workbench/MotionPresence'
+import { WorkMessageContent } from './WorkMessageContent'
+import { WorkSubagentInstruction } from './WorkSubagentInstruction'
+import { workSubagentInstructionTime } from './work-subagent-instruction'
 import { workSubagentLiveMessage } from './work-subagent-live'
 import { WorkErrorNotice } from './WorkErrorNotice'
 import './work-subagent-transcript.css'
@@ -37,54 +37,21 @@ function TranscriptMessage({ message, messages, running, runId, memory, redraw, 
   // Legacy child rows carry the parent's rootRunId. Only an exact invocation
   // identity proves this message belongs to the currently running child.
   const isRunning = running && message === lastAssistant && message.runId === runId
-  if (message.role === 'user') return <TranscriptInstruction message={message} memory={memory} redraw={redraw} fileContext={fileContext} />
+  if (message.role === 'user') return <WorkSubagentInstruction message={message} memory={memory} redraw={redraw} fileContext={fileContext} />
   const segments = workMessageTimeline(message)
   const answer = isRunning ? false : workSubagentFinalAnswer(message, messages)
   const display = { ...message, status: isRunning ? 'streaming' as const : message.status }
   const errorText = workSubagentErrorText(message)
-  return <WorkMessageContent message={display} sessionId={fileContext.sessionId} fileContext={fileContext}
+  const time = workSubagentInstructionTime(message.createdAt)
+  return <div className="work-subagent-transcript__reply">
+    {time ? <div className="work-subagent-transcript__message-meta"><span>代理</span><time dateTime={time.dateTime} title={time.title}>{time.label}</time></div> : null}
+    <WorkMessageContent message={display} sessionId={fileContext.sessionId} fileContext={fileContext}
     active={active} readOnly defaultProcessOpen={false} turnSegments={segments} finalAnswer={answer}>
     {errorText ? <WorkErrorNotice compact className="work-subagent-transcript__failure" error={errorText}
       context={{ status: message.status === 'interrupted' ? 'interrupted' : message.status === 'aborted' ? 'cancelled' : 'failed',
         runId: message.runId ?? '', error: message.error }} /> : null}
-  </WorkMessageContent>
-}
-
-function TranscriptInstruction({ message, memory, redraw, fileContext }: {
-  message: ChatMessage; memory: WorkSubagentTranscriptMemory; redraw: () => void; fileContext: ChatFileContext
-}): JSX.Element {
-  const open = memory.opened.has(message.id)
-  const container = useRef<HTMLElement>(null)
-  const collapseTop = useRef<number | null>(null)
-  const contentId = `agent-instruction-${useId().replace(/:/g, '')}`
-  const preview = useMemo(() => {
-    const text = userMessageText(message.content).replace(/\s+/g, ' ').trim()
-    return text.length > 180 ? `${text.slice(0, 177)}…` : text || (message.attachments?.length ? '查看任务附件' : '查看任务指令')
-  }, [message.content, message.attachments?.length])
-  useLayoutEffect(() => {
-    if (open || collapseTop.current === null) return
-    const article = container.current, scroll = article?.closest('.work-conversation__scroll')
-    if (article && scroll) scroll.scrollTop += article.getBoundingClientRect().top - collapseTop.current
-    collapseTop.current = null
-  }, [open])
-  return <article className={`work-message work-message--user work-subagent-instruction${open ? ' is-open' : ''}`}
-    ref={container} data-message-id={message.id} aria-label="用户消息">
-    <button type="button" className="work-subagent-instruction__summary" aria-expanded={open} aria-controls={contentId}
-      aria-label={open ? '收起任务指令' : '展开任务指令'} onClick={() => {
-        if (open) {
-          const article = container.current, scroll = article?.closest('.work-conversation__scroll')
-          if (article && scroll && article.getBoundingClientRect().top < scroll.getBoundingClientRect().top)
-            collapseTop.current = scroll.getBoundingClientRect().top
-          memory.opened.delete(message.id)
-        } else memory.opened.add(message.id)
-        redraw()
-      }}>
-      <span>{open ? '任务指令' : preview}</span><Icon name="chevron-down" size={13} />
-    </button>
-    <MotionPresence show={open} className="work-subagent-instruction__body" id={contentId}>
-      <WorkUserMessageBody message={message} root={fileContext.workspaceRoot ?? null} fileContext={fileContext} collapsible={false} />
-    </MotionPresence>
-  </article>
+    </WorkMessageContent>
+  </div>
 }
 
 /** Reads are coalesced from real run revisions. Reading older messages never
@@ -207,7 +174,7 @@ export function WorkSubagentTranscript({ source, parentSessionId, childSessionId
     anchor.current = null
   }, [revision])
   const rows = memory.window?.rows ?? []
-  const messages = useMemo(() => workSubagentMessages(rows.slice(-memory.visibleCount)), [memory, revision])
+  const messages = useMemo(() => workSubagentMessages(rows, memory.visibleCount), [memory, revision])
   const liveMessage = memory.window && memory.window.lastPage >= Math.ceil(memory.window.total / SUBAGENT_TRANSCRIPT_PAGE_SIZE)
     ? workSubagentLiveMessage(liveRun, childSessionId, messages) : undefined
   const hasEarlier = rows.length > memory.visibleCount || (memory.window?.firstPage ?? 1) > 1

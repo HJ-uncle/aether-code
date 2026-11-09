@@ -2,6 +2,7 @@ import { commandJobDisplayLabel } from './command-job-state'
 import { commandFailureLabel } from './tool-feedback'
 import { toolDisplayName } from './tool-labels'
 import { utf8BytePreview } from './utf8-preview'
+import { subagentResultPresentation } from './subagent-result'
 import { normalizeRootRunCompaction } from '@shared/root-run'
 import type {
   SubagentError,
@@ -34,7 +35,7 @@ const STATUS_LABELS: Record<SubagentRunStatus, string> = {
   queued: '排队中',
   running: '运行中',
   cancelling: '取消中',
-  succeeded: '成功',
+  succeeded: '已完成',
   failed: '失败',
   cancelled: '已取消',
   blocked: '受阻',
@@ -78,6 +79,13 @@ function finite(value: unknown): number | undefined {
 }
 function optionalText(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined
+}
+function validResultFields(value: Record<string, unknown>): boolean {
+  return (value.resultRef === undefined || typeof value.resultRef === 'string' && /^subagent-result:v1:[a-f0-9]{64}$/.test(value.resultRef))
+    && (value.resultHash === undefined || typeof value.resultHash === 'string' && /^[a-f0-9]{64}$/.test(value.resultHash))
+    && (value.resultBytes === undefined || Number.isSafeInteger(value.resultBytes) && Number(value.resultBytes) >= 0)
+    && (value.resultTruncated === undefined || typeof value.resultTruncated === 'boolean')
+    && (value.resultKind === undefined || value.resultKind === 'final' || value.resultKind === 'partial')
 }
 function normalizeContinuation(raw: unknown): SubagentRun['continuation'] {
   const value = record(raw)
@@ -129,6 +137,7 @@ function normalizeLegacySubagentRun(raw: unknown): SubagentRunV1 | undefined {
     typeof r.parentToolCallId !== 'string' ||
     !r.parentToolCallId ||
     !STATUSES.includes(r.status as SubagentRunStatus) ||
+    !validResultFields(r) ||
     finite(r.lastSeq) === undefined ||
     !Number.isSafeInteger(r.lastSeq) ||
     [
@@ -195,6 +204,11 @@ function normalizeLegacySubagentRun(raw: unknown): SubagentRunV1 | undefined {
     compaction: normalizeCompaction(r.compaction),
     stopReason: optionalText(r.stopReason),
     resultSummary: optionalText(r.resultSummary),
+    resultRef: preview(optionalText(r.resultRef), 256),
+    resultHash: preview(optionalText(r.resultHash), 64),
+    resultBytes: Number.isSafeInteger(r.resultBytes) ? finite(r.resultBytes) : undefined,
+    resultTruncated: typeof r.resultTruncated === 'boolean' ? r.resultTruncated : undefined,
+    resultKind: r.resultKind === 'final' || r.resultKind === 'partial' ? r.resultKind : undefined,
     partialOutput: optionalText(r.partialOutput),
     externalEffectStatus: r.externalEffectStatus === 'unknown' ? 'unknown' : undefined,
     usage: normalizeUsage(r.usage),
@@ -449,6 +463,8 @@ export function boundSubagentView(
     task: preview(view.task, 4096) ?? '',
     description: preview(view.description, 2048) ?? '',
     resultSummary: preview(view.resultSummary, 4096),
+    resultTruncated: view.resultTruncated === true || preview(view.resultSummary, 4096) !== view.resultSummary
+      || (!view.resultSummary && preview(view.partialOutput, 4096) !== view.partialOutput) ? true : view.resultTruncated,
     partialOutput: preview(view.partialOutput, 4096),
     latestActivity: latest,
     residentToolCount: calls.length,
@@ -641,6 +657,7 @@ export function normalizeSubagentDeltaEvent(raw: unknown): SubagentDeltaEvent | 
     ].some((key) => patch[key] !== undefined && !integer(patch[key])) ||
     (patch.usage !== undefined && !validUsage(patch.usage)) ||
     (patch.compaction !== undefined && !normalizeCompaction(patch.compaction))
+    || !validResultFields(patch)
   )
     return undefined
   if (
@@ -672,7 +689,7 @@ export function normalizeSubagentDeltaEvent(raw: unknown): SubagentDeltaEvent | 
     seq: r.seq,
     baseSeq: r.baseSeq,
     identity: identity as unknown as SubagentIdentity,
-    header: header as unknown as SubagentDeltaEvent['header'],
+    header: header ? header as unknown as SubagentDeltaEvent['header'] : undefined,
     headerPatch: patch.compaction === undefined ? patch : { ...patch, compaction: normalizeCompaction(patch.compaction) },
     toolUpsert,
     coverage
@@ -958,6 +975,11 @@ function mergeSubagentView(
   const merged: SubagentRunView = {
     ...previous,
     ...incoming,
+    resultRef: incoming.resultRef ?? previous.resultRef,
+    resultHash: incoming.resultHash ?? previous.resultHash,
+    resultBytes: incoming.resultBytes ?? previous.resultBytes,
+    resultTruncated: incoming.resultTruncated ?? previous.resultTruncated,
+    resultKind: incoming.resultKind ?? previous.resultKind,
     toolCalls: [...byId.values()],
     latestActivity: latest,
     status: isSubagentActive(previous.status) ? incoming.status : previous.status,
@@ -997,6 +1019,11 @@ function sameScalar(a: SubagentRunView, b: SubagentRunView): boolean {
       'error',
       'stopReason',
       'resultSummary',
+      'resultRef',
+      'resultHash',
+      'resultBytes',
+      'resultTruncated',
+      'resultKind',
       'partialOutput',
       'externalEffectStatus',
       'usage'
@@ -1151,6 +1178,11 @@ export function mergeSubagentRun(
   }
   const next = {
     ...incoming,
+    resultRef: incoming.resultRef ?? previous.resultRef,
+    resultHash: incoming.resultHash ?? previous.resultHash,
+    resultBytes: incoming.resultBytes ?? previous.resultBytes,
+    resultTruncated: incoming.resultTruncated ?? previous.resultTruncated,
+    resultKind: incoming.resultKind ?? previous.resultKind,
     usage,
     toolCalls,
     externalEffectStatus: incoming.externalEffectStatus ?? previous.externalEffectStatus,
@@ -1194,6 +1226,8 @@ export function toolStatusLabel(tool: ToolActivity): string {
   const commandFailure = commandFailureLabel(tool)
   if (commandFailure) return commandFailure
   if (tool.commandJob) return commandJobDisplayLabel(tool.commandJob)
+  if (tool.state === 'done' && tool.name === 'subagent_followup') return '已接纳'
+  if (tool.state === 'done' && tool.name === 'subagent_wait') return '已读取'
   if (tool.subagent) return isSubagentNeedsUser(tool.subagent) ? '待回答' : STATUS_LABELS[tool.subagent.status]
   if (tool.state === 'unknown') return '状态未知'
   if (tool.state === 'waiting') return '等待应答'
@@ -1343,12 +1377,18 @@ export function exportSubagentDetails(tool: ToolActivity): string {
           `    参数：${typeof call.args === 'string' ? call.args : JSON.stringify(call.args)}`
         )
       if (call.output) lines.push(`    结果：${call.output}`)
+      if ('detailTruncated' in call && call.detailTruncated) lines.push('    详情不完整：仅导出当前加载的参数和结果预览。')
     }
+    const result = subagentResultPresentation(run)
+    if (result.notice) lines.push(`结果完整性：${result.notice}`)
+    if (result.referenced) lines.push(`完整结果引用：${run.resultRef}；UTF-8 ${run.resultBytes} bytes；SHA-256 ${run.resultHash}${result.partial ? '；部分输出' : ''}`)
     if (run.resultSummary || run.partialOutput)
       lines.push(run.resultSummary ?? run.partialOutput ?? '')
     lines.push(
-      `工具调用 ${run.toolCalls.length}；Tokens ${run.usage.unknown ? '未知' : (run.usage.totalTokens ?? '未知')}`
+      `工具调用 ${run.schemaVersion === 2 ? `${run.toolCount}；已加载 ${run.toolCalls.length}；记录水位 #${run.lastSeq}；完整性 ${run.coverage.completeness}` : run.toolCalls.length}；Tokens ${run.usage.unknown ? '未知' : (run.usage.totalTokens ?? '未知')}`
     )
+    if (run.schemaVersion === 2 && (run.coverage.hasMore || run.coverage.completeness !== 'complete'))
+      lines.push('工具记录不完整：此导出仅含当前已加载记录，不能据此判定其余工具未执行。')
     if (run.durationMs !== undefined) lines.push(`耗时：${(run.durationMs / 1000).toFixed(1)}s`)
   } else if (tool.name === 'subagent') {
     lines.push('旧记录未保存结构化详情。')

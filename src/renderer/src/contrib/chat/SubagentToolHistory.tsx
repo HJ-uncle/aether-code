@@ -99,7 +99,7 @@ export function SubagentToolRow({ call, run, latestSeq, open: controlledOpen, on
   const presence = useMotionPresence(open && visible)
   const args = typeof call.args === 'string' ? call.args : JSON.stringify(call.args ?? {})
   const path = surfaceMode === 'work' ? toolPathArg(args) : null
-  const summary = path ? path.replace(/\\/g, '/').split('/').filter(Boolean).slice(-2).join('/') : toolParamSummary(args)
+  const summary = path ? path.replace(/\\/g, '/').split('/').filter(Boolean).slice(-2).join('/') : toolParamSummary(args, call.name)
   const outcomeTool: ToolActivity = {
     id: call.id, name: call.name, args: typeof call.args === 'string' ? call.args : JSON.stringify(call.args ?? {}),
     result: call.output ?? '', error: call.error?.message,

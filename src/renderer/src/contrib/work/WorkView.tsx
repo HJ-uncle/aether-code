@@ -109,6 +109,7 @@ import { getRunningWorkTasks, WorkRunList } from './WorkRunList'
 import { WorkServiceTray, partitionWorkServices } from './WorkServiceTray'
 import { WorkTerminalPanel, type WorkTerminalPanelProps } from './WorkTerminalPanel'
 import { onWorkTerminalRequest } from './work-terminal-navigation'
+import { onWorkSubagentRequest, type WorkSubagentReveal } from './work-subagent-navigation'
 import { createLocalSession } from '../terminal/terminal-store'
 
 type WorkController = ReturnType<typeof useWorkController>
@@ -315,6 +316,7 @@ export function WorkView(): JSX.Element {
   const [fileRevealRequest, setFileRevealRequest] = useState<WorkFileRevealRequest | null>(null)
   const [terminalReveal, setTerminalReveal] = useState<{ scope: string; request: WorkTerminalPanelProps['reveal'] } | null>(null)
   const terminalRevision = useRef(0)
+  const [subagentReveal, setSubagentReveal] = useState<WorkSubagentReveal | null>(null)
   const fileRevealRevision = useRef(0)
   const acknowledgeFileReveal = useCallback((request: WorkFileRevealRequest): void => {
     // A consumed opening must not replay over manual scroll/filter changes
@@ -567,6 +569,11 @@ export function WorkView(): JSX.Element {
   }, [set, controller.selectTask])
   const openWorkspace = useCallback((tab: WorkspaceTab): void =>
     set({ workspace: true, tab, pane: 'workspace' }), [set])
+  useEffect(() => onWorkSubagentRequest(request => {
+    if (appMode !== 'work' || request.source !== getEngineSource() || request.sessionId !== task?.id) return
+    setSubagentReveal(request)
+    openWorkspace('subagents')
+  }), [appMode, task?.id, openWorkspace])
   const openRunningTerminal = useCallback((): void => {
     if (!task) return
     const services = partitionWorkServices(controller.commandJobs, task.id)
@@ -871,6 +878,7 @@ export function WorkView(): JSX.Element {
                     finalSelection={finalSelection?.sessionId === task.id ? finalSelection : null}
                     onOpenArtifacts={openSessionArtifacts}
                     terminalReveal={terminalReveal?.scope === JSON.stringify([browserSource, task.id]) ? terminalReveal.request : null}
+                    subagentReveal={subagentReveal?.source === getEngineSource() && subagentReveal.sessionId === task.id ? subagentReveal : null}
                   />
                 </>
               )}
@@ -2295,6 +2303,7 @@ function Workspace({
   changeSelection,
   finalSelection,
   terminalReveal,
+  subagentReveal,
   onOpenArtifacts
 }: {
   motionProps: ReturnType<typeof useMotionPresence>['motionProps']
@@ -2310,6 +2319,7 @@ function Workspace({
   changeSelection: WorkArtifactSelection | null
   finalSelection: FinalSelection | null
   terminalReveal: WorkTerminalPanelProps['reveal']
+  subagentReveal: WorkSubagentReveal | null
   onOpenArtifacts: (request: ArtifactNavigation) => void
 }): JSX.Element {
   const appMode = useAppMode()
@@ -2558,6 +2568,7 @@ function Workspace({
             openTab={activateTab}
             source={getEngineSource()}
             terminalReveal={terminalReveal}
+            subagentReveal={subagentReveal}
           />
         ))}
       </div>
@@ -2567,7 +2578,7 @@ function Workspace({
 
 /** Visited panes retain local drafts and selection, but hidden panes do not
  * rebuild message-derived diffs/activity on every incoming token. */
-const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controller, selectedArtifact, fileRevealRequest, onDidReveal, selectArtifact, changeSelection, finalSelection, terminalReveal, onOpenArtifacts, openTab }: {
+const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controller, selectedArtifact, fileRevealRequest, onDidReveal, selectArtifact, changeSelection, finalSelection, terminalReveal, subagentReveal, onOpenArtifacts, openTab }: {
   id: WorkspaceTab
   hidden: boolean
   active: boolean
@@ -2582,6 +2593,7 @@ const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controll
   openTab: (tab: WorkspaceTab) => void
   source: number
   terminalReveal: WorkTerminalPanelProps['reveal']
+  subagentReveal: WorkSubagentReveal | null
 }): JSX.Element {
   const previewRevision = useRef(0)
   const previewScope = JSON.stringify([getEngineSource(), controller.activeTask?.id, controller.activeTask?.workspacePath])
@@ -2650,6 +2662,7 @@ const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controll
             <SourcePanel controller={controller} />
           ) : id === 'subagents' ? (
             <StableWorkSubagentsPanel
+              reveal={subagentReveal}
               sessionId={controller.activeTask?.id ?? null}
               rootRunId={controller.workspaceRunId}
               tools={tools}

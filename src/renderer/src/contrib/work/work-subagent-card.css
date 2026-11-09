@@ -1,0 +1,35 @@
+.work-subagent-card { min-width: 0; container-type: inline-size; }
+.work-subagent-card__open {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--chrome-h);
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg);
+  font: 13px/20px var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+.work-subagent-card__open:hover { background: var(--bg-hover); }
+.work-subagent-card__open--static { cursor: default; }
+.work-subagent-card__open--static:hover { background: transparent; }
+.work-subagent-card__open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.work-subagent-card__identity { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.work-subagent-card__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.work-subagent-card__role { flex-shrink: 0; color: var(--fg-muted); font-size: 11px; }
+.work-subagent-card__timing { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--fg-muted); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.work-subagent-card__status { display: inline-flex; align-items: center; gap: var(--space-1); justify-self: end; color: var(--fg-muted); font-size: 12px; white-space: nowrap; }
+.work-subagent-card__status--failed { color: var(--danger); }
+@container (max-width: 480px) {
+  .work-subagent-card__open { grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--space-2); row-gap: 2px; padding-block: var(--space-2); }
+  .work-subagent-card__identity { grid-column: 1; grid-row: 1; }
+  .work-subagent-card__timing { grid-column: 1; grid-row: 2; }
+  .work-subagent-card__status { grid-column: 2; grid-row: 1 / span 2; }
+}
+@media (prefers-reduced-motion: reduce) { .work-subagent-card__open { transition: none; } }

@@ -23,11 +23,15 @@ import { formatWorkSubagentDuration, resolveWorkSubagentGroup, workSubagentGroup
 import { newWorkSubagentTranscriptMemory, WorkSubagentTranscript, type WorkSubagentTranscriptMemory } from './WorkSubagentTranscript'
 import { trimWorkSubagentSessionCaches } from './work-subagent-memory'
 import { searchWorkSubagentGroups, workSubagentTaskSummary } from './work-subagent-list-presentation'
+import { WorkSubagentListRow } from './WorkSubagentListRow'
+import { workSubagentTiming } from './work-subagent-timing'
 import { publishedDetailKey, publishedVisibleWindow, rememberPublishedDetail } from '@renderer/core/engine/published-card-memory'
 import './work-subagents.css'
 import { subagentFollowupMessage, subagentInstructionIssue } from './subagent-followup-message'
+import type { WorkSubagentReveal } from './work-subagent-navigation'
 
 export interface WorkSubagentsPanelProps {
+  reveal?: WorkSubagentReveal | null
   sessionId: string | null
   rootRunId?: string
   tools: ToolActivity[]
@@ -40,6 +44,7 @@ export interface WorkSubagentsPanelProps {
 
 interface PanelMemory {
   selected: string | null
+  publishedRunId?: string
   query: string
   listTop: number
   detailTop: Map<string, number>
@@ -79,7 +84,7 @@ function currentAction(group: WorkSubagentGroup): string {
 }
 
 /** The list represents durable child contexts; run cards belong only in their own detail view. */
-export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, active: panelActive = true, publishedFixedChildren = false, onContinue, attachments = [] }: WorkSubagentsPanelProps): JSX.Element {
+export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, active: panelActive = true, publishedFixedChildren = false, onContinue, attachments = [], reveal }: WorkSubagentsPanelProps): JSX.Element {
   const { ready } = useApp()
   const followupId = useId()
   const [revision, setRevision] = useState(0)
@@ -104,6 +109,7 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
   const backRef = useRef<HTMLButtonElement>(null)
   const rowRefs = useRef(new Map<string, HTMLButtonElement>())
   const returningTo = useRef<string | null>(null)
+  const appliedReveal = useRef<WorkSubagentReveal | null>(null)
   const selectedRunIdRef = useRef<string | undefined>(undefined)
   const selectedKeyRef = useRef<string | undefined>(undefined)
   const selectionRef = useRef({ key: '', generation: 0 })
@@ -167,7 +173,9 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
 
   const groups = useMemo(() => sessionId ? workSubagentGroups(sessionId, tools.map(tool => tool.subagentRef && fixedDetails.has(publishedDetailKey(tool.subagentRef))
     ? { ...tool, subagent: fixedDetails.get(publishedDetailKey(tool.subagentRef)) } : tool), publishedFixedChildren ? [] : getSubagentRuns(sessionId)) : [], [sessionId, tools, revision, fixedDetails, publishedFixedChildren])
-  const selected = resolveWorkSubagentGroup(groups, memory.selected)
+  const selectedGroup = resolveWorkSubagentGroup(groups, memory.selected)
+  const publishedTool = memory.publishedRunId ? selectedGroup?.tools.find(tool => tool.subagentRef?.identity.runId === memory.publishedRunId) : undefined
+  const selected = selectedGroup && publishedTool ? { ...selectedGroup, latest: publishedTool, tools: [publishedTool], active: false } : selectedGroup
   useEffect(() => {
     const sent = continuingRef.current
     if (!sent || sent.scope !== scope) return
@@ -247,6 +255,7 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
   const directory = getSubagentDirectory(sessionId)
   const discovery = getSubagentDiscovery(sessionId)
   const selectedStats = selected ? workSubagentStats(selected, now) : null
+  const selectedTiming = selected ? workSubagentTiming(selected.latest, now) : null
   useEffect(() => { setRoundCount(64) }, [selected?.key])
   // The resolver proves a legacy key belongs to this durable child. Read its
   // draft and disclosure choice before layout migration to avoid a hidden frame.
@@ -259,11 +268,13 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
     memory.transcripts.set(selected.key, transcript)
   }
   while (memory.transcripts.size > 2) memory.transcripts.delete(memory.transcripts.keys().next().value!)
+  const timingActive = panelActive && (selected ? selected.active : groups.some(group => group.active))
   useEffect(() => {
-    if (!panelActive || !selected?.active) return
+    if (!timingActive) return
+    setNow(Date.now())
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
-  }, [panelActive, selected?.active])
+  }, [timingActive])
   useLayoutEffect(() => {
     if (!panelActive) return
     if (selected) {
@@ -300,9 +311,22 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
       detailRef.current.scrollTop = memory.detailTop.get(selected.key) ?? 0
   }, [scope, selected?.key, panelActive])
 
+  useLayoutEffect(() => {
+    if (!panelActive || !reveal || appliedReveal.current === reveal || reveal.source !== source || reveal.sessionId !== sessionId) return
+    const group = reveal.childSessionId ? groups.find(item => item.childSessionId === reveal.childSessionId)
+      : resolveWorkSubagentGroup(groups, `legacy:${reveal.toolCallId}`)
+    if (!group) return
+    appliedReveal.current = reveal
+    memory.listTop = listRef.current?.scrollTop ?? memory.listTop
+    memory.selected = group.key
+    memory.publishedRunId = reveal.publishedRunId
+    redraw()
+  }, [panelActive, reveal, source, sessionId, groups, memory])
+
   const openDetail = (group: WorkSubagentGroup): void => {
     memory.listTop = listRef.current?.scrollTop ?? memory.listTop
     memory.selected = group.key
+    memory.publishedRunId = undefined
     redraw()
   }
   const searchGroups = (query: string): void => {
@@ -318,6 +342,7 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
       returningTo.current = selected.key
     }
     memory.selected = null
+    memory.publishedRunId = undefined
     redraw()
   }
   const readDirectory = async (restart: boolean): Promise<void> => {
@@ -429,10 +454,9 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
     const task = workSubagentTaskSummary(group) || currentAction(group)
     const role = builtinAgentName(group.latest.subagent?.continuation?.builtinRole)
     const tone = stats.status === 'queued' || isSubagentNeedsUser(group.latest.subagent) ? 'waiting' : group.active ? 'active' : ['failed', 'error', 'interrupted', 'blocked'].includes(stats.status) ? 'error' : 'complete'
-    return <button type="button" className="work-subagents__row" key={group.key} ref={node => { if (node) rowRefs.current.set(group.key, node); else rowRefs.current.delete(group.key) }} data-child-session-id={group.childSessionId} data-agent-status={stats.status} data-model-id={stats.modelId || undefined} data-tool-count={stats.toolCount} data-active-tool-count={stats.activeToolCount} data-pending={stats.pending ? 'true' : 'false'} onClick={() => openDetail(group)} aria-label={`查看 ${group.label} 子代理详情`} aria-description={`${status}。${task}`}>
-      <span className="work-subagents__row-content"><strong title={group.label}>{group.label}</strong><span title={task}>{role ? `${role} · ` : ''}{task}</span></span>
-      <span className={`work-subagents__row-status work-subagents__row-status--${tone}`} title={stats.status === 'queued' ? QUEUED_HINT : undefined}>{status}</span>
-    </button>
+    return <WorkSubagentListRow key={group.key} group={group} stats={stats} now={now} status={status} task={task} role={role} tone={tone}
+      statusHint={stats.status === 'queued' ? QUEUED_HINT : undefined} onOpen={() => openDetail(group)}
+      rowRef={node => { if (node) rowRefs.current.set(group.key, node); else rowRefs.current.delete(group.key) }} />
   }
   const listStatus = publishedFixedChildren ? '已发布记录' : discovery.state?.activeCount
     ? `${discovery.state.activeCount} 个进行中` : running.length ? `${running.length} 个已载入代理进行中`
@@ -448,7 +472,11 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
     <header className="work-subagents__header">
       {selected ? <>
         <button type="button" className="work-subagents__back" ref={backRef} onClick={backToList} aria-label="返回子代理列表" title="返回子代理列表 (Esc)"><Icon name="chevron-right" size={18} /></button>
-        <div className="work-subagents__heading"><h3 title={selected.label}>{selected.label}</h3><p><span role="status" className={`work-subagents__status${fixedConversation ? '' : ` work-subagents__status--${selected.latest.state}`}`}>{fixedConversation ? '会话历史' : toolStatusLabel(selected.latest)}</span></p></div>
+        <div className="work-subagents__heading"><h3 title={selected.label}>{selected.label}</h3><p>
+          <span role="status" className={`work-subagents__status${fixedConversation ? '' : ` work-subagents__status--${selected.latest.state}`}`}>{fixedConversation ? '会话历史' : toolStatusLabel(selected.latest)}</span>
+          <span className="work-subagents__detail-duration">{selectedTiming?.durationText}</span>
+          {selectedTiming?.timestamp ? <time className="work-subagents__detail-time" dateTime={selectedTiming.timestamp.dateTime} title={selectedTiming.timestamp.full}>{selectedTiming.timestamp.text}</time> : null}
+        </p></div>
         {activeRun ? <button type="button" className="work-subagents__stop" aria-label="停止本轮" title="停止本轮" disabled={!ready || cancellingKey !== null || activeRun.status === 'cancelling'} onClick={() => void cancelRun(selected)}>{cancellingKey === selected.key || activeRun.status === 'cancelling' ? <Spinner size={14} /> : <Icon name="stop" size={14} />}</button> : null}
         <Popover key={`${scope}:${selected.key}`} align="end" width={280} label="代理信息" className="work-subagents__info" panelClassName="work-subagents__info-panel"
           trigger={({ open }) => <button type="button" className="work-subagents__info-trigger" aria-label="代理信息" aria-expanded={open} title="代理信息"><Icon name="info" size={16} /></button>}>

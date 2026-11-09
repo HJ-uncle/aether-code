@@ -51,7 +51,7 @@ export const CompactToolRow = memo(function CompactToolRow({
   const visibleFiles = quiet && readFiles?.length ? readFiles : undefined
   const fileStateLabel = (file: ReadActivityFileSummary): string => file.state === 'error' ? '失败' : file.state === 'cancelled' ? '已取消' : file.state === 'pending' ? '未读取' : ''
   const summary = visibleFiles ? visibleFiles.map(file => [file.label, file.range, fileStateLabel(file)].filter(Boolean).join(' ')).join(' · ')
-    : summaryOverride ?? toolParamSummary(tool.args)
+    : summaryOverride ?? toolParamSummary(tool.args, tool.name)
   const failure = toolFailureMessage(tool)
   const feedback = quiet ? workToolFeedback(tool, state) : null
   // Only omit an exact, fully visible one-line duplicate. Multiline errors
@@ -95,7 +95,7 @@ export const CompactToolRow = memo(function CompactToolRow({
         {...triggerProps}
         type="button"
         className={`logline${hasDetail ? '' : ' logline--static'}`}
-        aria-label={`${hasDetail ? `${open ? '收起' : '展开'} ${label}${summary ? ` · ${summary}` : ''}${quiet && state !== 'done' ? ` · ${statusLabel}` : ''}` : `${label} · ${toolStatusLabel(tool)}`}${visibleReadRange ? ` · ${visibleReadRange.label}` : ''}`}
+        aria-label={`${hasDetail ? `${open ? '收起' : '展开'} ${label}${summary ? ` · ${summary}` : ''}${quiet && state !== 'done' ? ` · ${statusLabel}` : ''}` : `${label}${summary ? ` · ${summary}` : ''} · ${toolStatusLabel(tool)}`}${visibleReadRange ? ` · ${visibleReadRange.label}` : ''}`}
         aria-expanded={open}
         aria-controls={hasDetail ? detailId : undefined}
         disabled={!hasDetail}

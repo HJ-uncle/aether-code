@@ -10,6 +10,7 @@ export interface WorkTranscriptItem {
 
 const callId = (row: EngineHistoryRow): string | undefined => row.role === 'assistant' && row.toolCall?.id?.trim() ? row.toolCall.id : undefined
 const resultId = (row: EngineHistoryRow): string | undefined => row.role === 'tool' && typeof row.toolCallId === 'string' && row.toolCallId.trim() ? row.toolCallId : undefined
+const receiptName = (row: EngineHistoryRow): string | undefined => row.toolName ?? row.metadata?.toolName
 const turnId = (row: EngineHistoryRow): string | undefined => row.conversationId ?? row.metadata?.turnId
 const runId = (row: EngineHistoryRow): string | undefined => row.metadata?.subagentRunId || (row.metadata?.runId ?? row.metadata?.rootRunId)
 
@@ -18,27 +19,58 @@ export function workTranscriptHasMessage(row: EngineHistoryRow): boolean {
     errorText(row.metadata?.error) || row.metadata?.attachments?.length)
 }
 
-/** A partial archive is evidence, not a complete execution log. Only combine
- * adjacent, unambiguous receipts; an intervening message must stay in order. */
+/** Parallel calls are persisted before their receipts. Pair by invocation
+ * identity within one uninterrupted child turn, never by row adjacency. */
 export function workTranscriptItems(rows: readonly EngineHistoryRow[], residentRows: readonly EngineHistoryRow[] = rows): WorkTranscriptItem[] {
   const calls = new Map<string, EngineHistoryRow[]>()
-  const results = new Map<string, number>()
-  for (const row of residentRows) {
+  const results = new Map<string, EngineHistoryRow[]>()
+  const keys = new Map<EngineHistoryRow, string>()
+  const positions = new Map<EngineHistoryRow, number>()
+  let segment = 0, previousRun: string | undefined, previousTurn: string | undefined
+  for (const [index, row] of residentRows.entries()) {
+    const run = runId(row), turn = turnId(row)
+    if (row.role === 'user' || previousRun && run && previousRun !== run || previousTurn && turn && previousTurn !== turn) {
+      segment++
+      previousRun = undefined
+      previousTurn = undefined
+    }
+    previousRun = run ?? previousRun
+    previousTurn = turn ?? previousTurn
     const invocation = callId(row), outcome = resultId(row)
-    if (invocation) calls.set(invocation, [...(calls.get(invocation) ?? []), row])
-    if (outcome) results.set(outcome, (results.get(outcome) ?? 0) + 1)
+    const id = invocation ?? outcome
+    if (!id) continue
+    const key = JSON.stringify([segment, id])
+    keys.set(row, key)
+    positions.set(row, index)
+    if (invocation) calls.set(key, [...(calls.get(key) ?? []), row])
+    if (outcome) results.set(key, [...(results.get(key) ?? []), row])
+  }
+  const pairs = new Map<EngineHistoryRow, EngineHistoryRow>()
+  const owners = new Map<EngineHistoryRow, EngineHistoryRow>()
+  for (const [key, invocations] of calls) {
+    const receipts = results.get(key)
+    if (invocations.length !== 1 || receipts?.length !== 1) continue
+    const call = invocations[0], result = receipts[0]
+    if (positions.get(call)! >= positions.get(result)! ||
+      turnId(call) && turnId(result) && turnId(call) !== turnId(result) ||
+      runId(call) && runId(result) && runId(call) !== runId(result) ||
+      call.toolCall?.name && receiptName(result) && call.toolCall.name !== receiptName(result)) continue
+    pairs.set(call, result)
+    owners.set(result, call)
   }
   const items: WorkTranscriptItem[] = []
+  const visible = new Set(rows)
   let previousAssistant: EngineHistoryRow | undefined
   let previousModel: string | undefined
-  for (let index = 0; index < rows.length; index++) {
-    const row = rows[index], next = rows[index + 1], id = callId(row)
-    const matched = id && next && resultId(next) === id && calls.get(id)?.length === 1 && results.get(id) === 1 &&
-      (!turnId(row) || !turnId(next) || turnId(row) === turnId(next)) &&
-      (!runId(row) || !runId(next) || runId(row) === runId(next))
-    const result = matched ? next : undefined
-    const knownCalls = typeof row.toolCallId === 'string' ? calls.get(row.toolCallId) : undefined
-    const toolName = row.toolCall?.name ?? row.metadata?.toolName ?? result?.metadata?.toolName ??
+  for (const row of residentRows) {
+    if (owners.has(row)) continue
+    // Rendering fewer rows must not discard a call that is already resident.
+    // Keep invocation order when older rows become visible. A genuinely
+    // unloaded invocation remains an explicit output-only item.
+    const result = pairs.get(row)
+    if (!visible.has(row) && !(result && visible.has(result))) continue
+    const knownCalls = calls.get(keys.get(row) ?? '')
+    const toolName = row.toolCall?.name ?? receiptName(row) ?? (result ? receiptName(result) : undefined) ??
       (knownCalls?.length === 1 ? knownCalls[0].toolCall?.name : undefined)
     let showIdentity = row.role === 'user'
     if (row.role === 'user') { previousAssistant = undefined; previousModel = undefined }
@@ -49,7 +81,6 @@ export function workTranscriptItems(rows: readonly EngineHistoryRow[], residentR
       previousModel = row.modelId ?? previousModel
     }
     items.push({ row, ...(result ? { result } : {}), ...(toolName ? { toolName } : {}), showIdentity })
-    if (result) index++
   }
   return items
 }

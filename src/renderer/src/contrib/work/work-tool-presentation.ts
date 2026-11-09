@@ -21,7 +21,9 @@ export function workToolHasImages(tool: ToolActivity): boolean {
 /** Image receipts retain their preview renderer inside the process disclosure;
  * only ongoing collaboration and persistent commands need standalone cards. */
 export function workToolKind(tool: ToolActivity): WorkToolKind {
-  if (tool.name === 'subagent' || tool.subagent || tool.subagentRef) return 'subagent'
+  // A live supplement receipt confirms queued input; only a real invocation
+  // supplies the child identity and result needed for a separate agent card.
+  if (['subagent', 'subagent_start'].includes(tool.name) || tool.subagent || tool.subagentRef) return 'subagent'
   if (tool.commandJob) return 'command'
   if (tool.change || tool.changes?.length) return 'file-change'
   if (workToolHasImages(tool)) return 'visual'

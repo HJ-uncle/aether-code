@@ -1,6 +1,7 @@
 import { getWorkspaceState } from '@renderer/core/workspace/workspace-store'
 import { commandInvocation } from '@renderer/core/engine/tool-feedback'
 import { batchFileSummary } from './tool-file-args'
+import { subagentWaitSummary } from './subagent-wait-summary'
 export { toolDisplayName } from '@renderer/core/engine/tool-labels'
 
 /**
@@ -48,7 +49,8 @@ export function toolPathArg(argsJson: string): string | null {
  * 从工具参数 JSON 里提取一行人类可读的摘要（如文件路径 / 命令）。
  * args 不是合法 JSON（截断或格式化过）时退回原文首行。
  */
-export function toolParamSummary(argsJson: string): string {
+export function toolParamSummary(argsJson: string, toolName?: string): string {
+  if (toolName === 'subagent_wait') return subagentWaitSummary(argsJson)
   if (!argsJson) return ''
   const command = commandInvocation(argsJson)
   if (command) return condense(command)
@@ -56,6 +58,11 @@ export function toolParamSummary(argsJson: string): string {
     const args: unknown = JSON.parse(argsJson)
     if (args && typeof args === 'object') {
       const record = args as Record<string, unknown>
+      // Query operations share a path; exporting only "." loses what was actually requested.
+      if (typeof record.action === 'string' && record.action) {
+        const path = typeof record.path === 'string' && record.path ? ` · ${relativize(record.path)}` : ''
+        return condense(`${record.action}${path}`)
+      }
       if (Object.hasOwn(record, 'files')) return batchFileSummary(record) ?? ''
       for (const key of SUMMARY_KEYS) {
         const value = record[key]
