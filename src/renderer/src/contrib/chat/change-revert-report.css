@@ -1,0 +1,58 @@
+.change-revert-report {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--bg-elevated) 45%, transparent);
+  color: var(--fg);
+  font: 12px/1.5 var(--font-ui);
+}
+
+.change-revert-report__header {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: var(--space-1) var(--space-2);
+  box-sizing: border-box;
+}
+
+.change-revert-report__icon { display: flex; color: var(--fg-muted); }
+.change-revert-report[data-complete='false'] .change-revert-report__icon { color: var(--warn); }
+.change-revert-report__heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-2); min-width: 0; }
+.change-revert-report__heading strong { font-weight: 500; overflow-wrap: anywhere; }
+.change-revert-report__count { color: var(--fg-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.change-revert-report__controls { display: flex; align-items: center; gap: var(--space-1); }
+.change-revert-report .change-revert-report__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: var(--control-h);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  box-shadow: none;
+  color: var(--fg-muted);
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.change-revert-report .change-revert-report__dismiss { width: var(--control-h); padding: 0; }
+.change-revert-report .change-revert-report__button:hover { background: var(--bg-hover); color: var(--fg); }
+.change-revert-report .change-revert-report__button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.change-revert-report__details { max-height: 220px; overflow: auto; overscroll-behavior: contain; padding: var(--space-2) var(--space-3); border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+.change-revert-report__details[hidden] { display: none; }
+.change-revert-report__summary, .change-revert-report__hint { margin: 0 0 var(--space-2); color: var(--fg-muted); }
+.change-revert-report__details ul { list-style: none; padding: 0; margin: 0; }
+.change-revert-report__details li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: var(--space-2); padding: var(--space-2) 0; }
+.change-revert-report__details li + li { border-top: 1px solid var(--border); }
+.change-revert-report__file-icon { display: flex; align-items: flex-start; padding-top: 2px; color: var(--fg-muted); }
+.change-revert-report__file { min-width: 0; }
+.change-revert-report__path { user-select: text; }
+.change-revert-report__statuses { display: flex; flex-wrap: wrap; gap: 0 var(--space-3); color: var(--fg-muted); font-size: 11px; }
+.change-revert-report__statuses [data-status='conflict'], .change-revert-report__statuses [data-status='unavailable'] { color: var(--warn); }
+.change-revert-report__statuses [data-status='failed'] { color: var(--danger); }
+.change-revert-report__message { margin: var(--space-1) 0 0; color: var(--fg-muted); white-space: pre-wrap; user-select: text; }
+@media (prefers-reduced-motion: reduce) { .change-revert-report .change-revert-report__button { transition: none; } }

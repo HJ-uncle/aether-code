@@ -17,12 +17,18 @@
 .work-session-artifacts__refresh:hover:not(:disabled), .work-session-artifacts__file-header button:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg); }
 .work-session-artifacts__header { flex: 0 0 auto; color: var(--fg-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .work-session-artifacts__activity { flex: 0 0 auto; color: var(--fg-muted); font-size: 11px; white-space: nowrap; }
-.work-session-artifacts__batch { flex: 0 1 auto; display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-3); min-height: var(--control-h); max-height: 35%; overflow: auto; padding: 0 var(--space-3) var(--space-1); border-bottom: 1px solid var(--border); background: var(--bg-sidebar); }
-.work-session-artifacts__batch > .work-change-review { flex: 1; min-width: 0; }
+.work-session-artifacts__batch { flex: 0 1 auto; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--space-1) var(--space-3); min-height: var(--control-h); max-height: 35%; overflow: auto; padding: 0 var(--space-3) var(--space-1); border-bottom: 1px solid var(--border); background: var(--bg-sidebar); }
+.work-session-artifacts__batch > .work-session-artifacts__header { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); min-height: var(--control-h); }
+/* The receipt spans the toolbar, so expanding it never moves the file count. */
+.work-session-artifacts__batch > .work-change-review { display: contents; }
+.work-session-artifacts__batch .work-change-review__actions { grid-column: 2; grid-row: 1; }
+.work-session-artifacts__batch .change-revert-report,
+.work-session-artifacts__batch .work-change-review__error,
+.work-session-artifacts__batch .work-change-review__notice { grid-column: 1 / -1; margin: 0 0 var(--space-1); }
 .work-session-artifacts .work-change-review__actions { min-height: var(--control-h); gap: var(--space-2); }
 .work-session-artifacts .work-change-review__count { margin-left: auto; margin-right: 0; font-size: 11px; white-space: nowrap; }
-.work-session-artifacts .work-change-review button { min-height: var(--control-h); padding: 0 var(--space-2); border-radius: var(--radius); box-shadow: none; background: transparent; color: var(--fg-muted); }
-.work-session-artifacts .work-change-review button:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg); }
+.work-session-artifacts .work-change-review__actions button { min-height: var(--control-h); padding: 0 var(--space-2); border-radius: var(--radius); box-shadow: none; background: transparent; color: var(--fg-muted); }
+.work-session-artifacts .work-change-review__actions button:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg); }
 .work-session-artifacts .work-change-review__menu .action-menu__trigger { width: auto; gap: var(--space-1); }
 .work-session-artifacts__split { flex: 1; display: grid; grid-template-columns: clamp(192px, 29%, 264px) minmax(0, 1fr); min-width: 0; min-height: 0; overflow: hidden; }
 .work-session-artifacts__tree { min-width: 0; min-height: 0; overflow: auto; padding: var(--space-2) 0; border-right: 1px solid var(--border); background: var(--bg-sidebar); }

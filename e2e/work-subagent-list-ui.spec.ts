@@ -235,7 +235,7 @@ test.describe.serial('协作代理列表', () => {
     }
   })
 
-  test('代理列表以用时和开始时间替代正文，深浅主题与宽窄面板均不溢出', async ({}, info) => {
+  test('代理列表左右信息对齐，完整用时和开始时间在深浅主题与宽窄面板均不溢出', async ({}, info) => {
     expect(archiveReads).toEqual([])
     for (const appearance of ['light', 'dark'] as const) {
       await setWindow(1440, 900); await setAppearance(appearance)
@@ -261,27 +261,38 @@ test.describe.serial('协作代理列表', () => {
           const list = element.querySelector('.work-subagents__list')!
           return { panel: rect(element), list: rect(list), overflow: list.scrollWidth - list.clientWidth,
             rows: [...element.querySelectorAll('.work-subagents__row')].map(row => {
-              const name = row.querySelector('strong')!, status = row.querySelector('.work-subagents__row-status')!, timing = row.querySelector('.work-subagents__row-description')!
-              return { row: rect(row), name: rect(name), status: rect(status), statusOverflow: status.scrollWidth - status.clientWidth,
+              const name = row.querySelector('strong')!, status = row.querySelector('.work-subagents__row-status')!
+              const time = row.querySelector('.work-subagents__row-time')!, duration = row.querySelector('.work-subagents__row-duration')!
+              const icon = row.querySelector('.work-subagents__row-icon')!, metrics = row.querySelector('.work-subagents__row-metrics')!
+              return { row: rect(row), name: rect(name), status: rect(status), metrics: rect(metrics), icon: rect(icon),
+                statusOverflow: status.scrollWidth - status.clientWidth,
                 nameOverflow: name.scrollWidth - name.clientWidth, ellipsis: getComputedStyle(name).textOverflow,
-                timingOverflow: timing.scrollWidth - timing.clientWidth, timing: rect(timing) }
+                timeOverflow: time.scrollWidth - time.clientWidth, time: rect(time),
+                durationOverflow: duration.scrollWidth - duration.clientWidth, duration: rect(duration) }
             }) }
         })
         expect(geometry.overflow).toBeLessThanOrEqual(1)
         expect(geometry.rows).toHaveLength(4)
         for (const item of geometry.rows) {
-          expect(item.row.width).toBeLessThanOrEqual(801)
+          expect(item.row.width).toBeLessThanOrEqual(761)
           expect(item.row.left).toBeGreaterThanOrEqual(geometry.list.left)
           expect(item.row.right).toBeLessThanOrEqual(geometry.list.right + 1)
           expect(item.statusOverflow).toBeLessThanOrEqual(1)
           expect(Math.abs((item.name.top + item.name.bottom) / 2 - (item.status.top + item.status.bottom) / 2)).toBeLessThanOrEqual(2)
-          expect(item.status.left - item.name.right).toBeGreaterThanOrEqual(0)
-          expect(item.status.left - item.name.right).toBeLessThanOrEqual(16)
+          expect(item.metrics.left - item.name.right).toBeGreaterThanOrEqual(0)
           expect(item.status.right).toBeLessThanOrEqual(item.row.right)
+          expect(Math.abs(item.status.right - geometry.rows[0].status.right)).toBeLessThanOrEqual(1)
+          expect(Math.abs(item.duration.right - item.status.right)).toBeLessThanOrEqual(1)
+          expect(item.duration.top).toBeGreaterThanOrEqual(item.status.bottom)
+          expect(item.time.top).toBeGreaterThanOrEqual(item.name.bottom)
+          expect(item.time.right).toBeLessThanOrEqual(item.metrics.left)
           expect(item.ellipsis).toBe('ellipsis')
-          expect(item.timingOverflow).toBeLessThanOrEqual(1)
-          expect(item.timing.bottom).toBeLessThanOrEqual(item.row.bottom)
-          expect(Math.abs(item.row.height - geometry.rows[0].row.height)).toBeLessThanOrEqual(1)
+          expect(item.timeOverflow).toBeLessThanOrEqual(1)
+          expect(item.durationOverflow).toBeLessThanOrEqual(1)
+          expect(item.time.bottom).toBeLessThanOrEqual(item.row.bottom)
+          expect(item.duration.bottom).toBeLessThanOrEqual(item.row.bottom)
+          expect(item.icon.width).toBeCloseTo(24, 0)
+          expect(item.icon.height).toBeCloseTo(24, 0)
           expect(Math.abs(item.name.left - geometry.rows[0].name.left)).toBeLessThanOrEqual(1)
         }
         if (width === 560) {

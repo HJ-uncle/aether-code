@@ -1,6 +1,7 @@
-/** Real Electron with controlled authenticated HTTP and a disposable disk workspace:
- * command review, partial rollback, automatic tree/asset invalidation and safe retry. */
-import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test'
+/** Real Electron with authenticated HTTP and a disposable disk workspace:
+ * partial rollback, retry/truncate, compact result disclosures and zero-item
+ * results. Includes real disk assertions and wide/narrow light/dark screenshots. */
+import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page, type TestInfo } from '@playwright/test'
 import { createServer } from 'node:http'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -12,21 +13,31 @@ import { engineStorageKey } from '../src/renderer/src/core/engine/source'
 
 const root = resolve(__dirname, '..'), fixtures = join(root, '.e2e-tmp')
 const sessionId = 'work-rollback', title = '回退一致性验证', modelId = 'rollback-model', token = 'rollback-token'
+const emptySessionId = 'work-rollback-empty', emptyTitle = '无文件改动的回退验证', emptyPrompt = '仅讨论方案，不修改文件'
 const now = Date.now() - 10_000, remoteRoot = '/remote/rollback-project', fileName = '已交付报告.txt'
 const content = 'IMMUTABLE_ASSET_MUST_DISAPPEAR_AFTER_ROLLBACK'
 const run: RootRun = { schemaVersion: 1, runId: 'rollback-root', sessionId, turnId: 'rollback-turn', userMessageId: 'rollback-user',
   assistantMessageId: 'rollback-answer', seq: 1, version: 2, status: 'succeeded', modelId,
   pending: [], workspacePaths: [], createdAt: now, updatedAt: now, finishedAt: now }
+const emptyRun: RootRun = { ...run, sessionId: emptySessionId, runId: 'rollback-empty-root', turnId: 'rollback-empty-turn',
+  userMessageId: 'rollback-empty-user', assistantMessageId: 'rollback-empty-answer' }
 const manifest: FinalResult = { schemaVersion: 1, sessionId, turnId: run.turnId, runId: run.runId, assistantMessageId: run.assistantMessageId,
   text: '报告已经交付。', publishedAt: now, items: [{ id: 'report-item', assetId: 'report-asset', name: fileName, path: `${remoteRoot}/交付/${fileName}`,
     mimeType: 'text/plain', size: Buffer.byteLength(content), sha256: createHash('sha256').update(content).digest('hex'), kind: 'file' }] }
 const changes = [{ id: 'report', path: `${remoteRoot}/交付/${fileName}`, status: 'pending' },
   { id: 'generator', path: `${remoteRoot}/generator.js`, status: 'accepted', requiresExplicitRevert: true }]
-const errors: string[] = [], writes: string[] = [], reads: string[] = []
+const errors: string[] = [], writes: string[] = [], emptyWrites: string[] = [], reads: string[] = []
 let app: ElectronApplication | undefined, page: Page, fixture = '', disk = '', stage = 0
+let emptyTruncated = false
+test.describe.configure({ mode: 'serial' })
 const envelope = (data: unknown): string => JSON.stringify({ code: 200, message: 'ok', data })
 function result(): FinalResult { return { ...manifest, items: stage > 0 ? [] : manifest.items } }
 function history(id: string): EngineHistoryRow[] {
+  if (id === emptySessionId) return emptyTruncated ? [] : [
+    { id: emptyRun.userMessageId, role: 'user', content: emptyPrompt, createdAt: now, conversationId: emptyRun.turnId, metadata: { rootRunId: emptyRun.runId } },
+    { id: emptyRun.assistantMessageId, role: 'assistant', content: '方案已说明，没有修改文件。', createdAt: now + 1,
+      conversationId: emptyRun.turnId, metadata: { rootRunId: emptyRun.runId } }
+  ]
   return id !== sessionId || stage === 2 ? [] : [
     { id: run.userMessageId, role: 'user', content: '请制作报告', createdAt: now, conversationId: run.turnId, metadata: { rootRunId: run.runId } },
     { id: run.assistantMessageId, role: 'assistant', content: manifest.text, createdAt: now + 1, conversationId: run.turnId,
@@ -48,10 +59,19 @@ const server = createServer((request, response) => { void (async () => {
     response.writeHead(404).end(envelope(null)); return
   }
   if (path === '/api/v1/changes/revert-preview') {
+    if (body.sessionId === emptySessionId) {
+      expect(body).toEqual({ sessionId: emptySessionId, fromTurnId: emptyRun.turnId, scope: 'all' })
+      response.end(envelope({ total: 0, changes: [] })); return
+    }
     expect(body).toEqual({ sessionId, fromTurnId: run.turnId, scope: 'all' })
     response.end(envelope({ total: changes.length, changes: changes.map(change => stage > 0 && change.id === 'report' ? { ...change, status: 'reverted' } : change) })); return
   }
   if (path === '/api/v1/changes/revert-batch') {
+    if (body.sessionId === emptySessionId) {
+      expect(body).toEqual({ sessionId: emptySessionId, fromTurnId: emptyRun.turnId, scope: 'all', reviewedCommandChangeIds: [] })
+      emptyWrites.push(path)
+      response.end(envelope({ total: 0, reverted: 0, conflicts: 0, unavailable: 0, failed: 0, results: [] })); return
+    }
     expect(body).toEqual({ sessionId, fromTurnId: run.turnId, scope: 'all', reviewedCommandChangeIds: ['generator'] })
     writes.push(path)
     const first = stage === 0
@@ -66,6 +86,11 @@ const server = createServer((request, response) => { void (async () => {
       ] })); return
   }
   if (path === '/api/v1/conversation/truncate') {
+    if (body.sessionId === emptySessionId) {
+      expect(body).toEqual({ sessionId: emptySessionId, messageId: emptyRun.userMessageId })
+      expect(emptyWrites).toEqual(['/api/v1/changes/revert-batch'])
+      emptyTruncated = true; emptyWrites.push(path); response.end(envelope({ success: true })); return
+    }
     expect(body).toEqual({ sessionId, messageId: run.userMessageId }); expect(stage).toBe(1)
     expect(existsSync(localPath('generator.js'))).toBe(false)
     stage = 2; writes.push(path); response.end(envelope({ success: true })); return
@@ -85,12 +110,12 @@ const server = createServer((request, response) => { void (async () => {
       return { name, path: `${relative ? relative + '/' : ''}${name}`, isDirectory: stat.isDirectory(), size: stat.size, mtimeMs: stat.mtimeMs }
     }) })); return
   }
-  const rows = history(id), matching = id === sessionId && stage < 2 ? run : undefined
+  const rows = history(id), matching = id === sessionId && stage < 2 ? run : id === emptySessionId && !emptyTruncated ? emptyRun : undefined
   if (path === '/api/v1/conversation/display') {
     const users = rows.filter(row => row.role === 'user')
     response.end(envelope({ schemaVersion: 1, grouping: 'root', turns: users.map(row => ({ userMessageId: row.id, conversationId: row.conversationId,
       preview: row.content, createdAt: row.createdAt })), messages: rows, loadedTurnIds: users.map(row => row.id),
-      revision: `rollback-${stage}`, mutationRevision: `rollback-${stage}`, backend: 'jsonl', completeness: 'complete' })); return
+      revision: `rollback-${id}-${stage}-${emptyTruncated}`, mutationRevision: `rollback-${id}-${stage}-${emptyTruncated}`, backend: 'jsonl', completeness: 'complete' })); return
   }
   if (path === '/api/v1/chat/stream') { response.writeHead(200, { 'content-type': 'text/event-stream' }).end('data: [DONE]\n\n'); return }
   const data = path === '/health' ? { status: 'ok' }
@@ -101,7 +126,8 @@ const server = createServer((request, response) => { void (async () => {
     : path === '/api/v1/chat/status' ? { running: false, finished: true, run: matching, lastEventId: null }
     : path === '/api/v1/chat/runs' ? { runs: matching ? [matching] : [] }
     : path === '/api/v1/conversation/history' ? rows
-    : path === '/api/v1/conversation/sessions' ? stage === 2 ? [] : [{ sessionId, title, lastAt: now, messageCount: 2 }]
+    : path === '/api/v1/conversation/sessions' ? [...(stage === 2 ? [] : [{ sessionId, title, lastAt: now, messageCount: 2 }]),
+      ...(emptyTruncated ? [] : [{ sessionId: emptySessionId, title: emptyTitle, lastAt: now, messageCount: 2 }])]
     : path === '/api/v1/chat/admission/context' ? { protocolVersion: 1, tenantId: 'rollback', sessionId: id,
       namespace: { id: 'rollback-db', generation: 'one' }, transport: { toolProfile: request.headers['x-aether-tool-profile'] === 'code' ? 'code' : 'general',
         runLifetime: 'durable', subagentProtocol: 2 }, root: null, predecessor: null }
@@ -114,6 +140,64 @@ const server = createServer((request, response) => { void (async () => {
     : path === '/api/v1/workspace/bind' ? { workspaceRoot: remoteRoot } : []
   response.end(envelope(data))
 })().catch(error => { errors.push(String(error)); if (!response.headersSent) response.writeHead(500); response.end(String(error)) }) })
+
+const work = (): Locator => page.locator('.work-view')
+async function setWindow(width: number, height = 900): Promise<void> {
+  await app!.evaluate(({ BrowserWindow }, size) => { const win = BrowserWindow.getAllWindows()[0]; win.setContentSize(size.width, size.height); win.show(); win.focus() }, { width, height })
+  await expect.poll(() => page.evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({ width, height })
+  await page.locator('body').evaluate(async element => {
+    await new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done())))
+    await Promise.all(element.getAnimations({ subtree: true }).filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime))
+      .map(animation => animation.finished.catch(() => undefined)))
+  })
+}
+async function setAppearance(appearance: 'light' | 'dark'): Promise<void> {
+  await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+  const settings = page.getByRole('dialog', { name: '设置', exact: true })
+  await settings.getByRole('tab', { name: '外观', exact: true }).click()
+  await settings.getByRole('radio', { name: appearance === 'dark' ? '深色' : '浅色', exact: true }).click()
+  await expect(page.locator('html')).toHaveAttribute('data-appearance', appearance)
+  await settings.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(settings).toHaveCount(0)
+}
+async function captureNotice(notice: Locator, phase: 'partial' | 'complete' | 'empty', info: TestInfo): Promise<void> {
+  const before = { writes: [...writes], emptyWrites: [...emptyWrites] }
+  for (const appearance of ['light', 'dark'] as const) {
+    await setWindow(1560); await setAppearance(appearance)
+    for (const width of [1560, 560]) {
+      await setWindow(width)
+      const conversation = work().locator('.work-mobile-tabs').getByRole('button', { name: '协作对话', exact: true })
+      if (await conversation.isVisible()) await conversation.click()
+      await expect(notice).toBeVisible()
+      const geometry = await notice.evaluate(element => {
+        const box = element.getBoundingClientRect()
+        return { width: box.width, height: box.height, overflow: element.scrollWidth - element.clientWidth,
+          buttons: [...element.querySelectorAll('button')].map(button => {
+            const rect = button.getBoundingClientRect()
+            return { name: button.getAttribute('aria-label'), left: rect.left - box.left, right: rect.right - box.right,
+              top: rect.top - box.top, bottom: rect.bottom - box.bottom }
+          }) }
+      })
+      expect(geometry.width).toBeGreaterThan(150); expect(geometry.overflow).toBeLessThanOrEqual(1)
+      if (phase !== 'partial') expect(geometry.height).toBeLessThanOrEqual(128)
+      for (const button of geometry.buttons) {
+        expect(button.left, button.name ?? '').toBeGreaterThanOrEqual(-1)
+        expect(button.right, button.name ?? '').toBeLessThanOrEqual(1)
+        expect(button.top, button.name ?? '').toBeGreaterThanOrEqual(-1)
+        expect(button.bottom, button.name ?? '').toBeLessThanOrEqual(1)
+      }
+      if (phase === 'partial') {
+        await expect(notice.getByRole('button', { name: '逐文件结果', exact: true })).toHaveAttribute('aria-expanded', 'true')
+        await expect(notice.getByText('generator.js 已由用户修改，请确认版本后重试。', { exact: true })).toBeVisible()
+      }
+      const path = info.outputPath(`rollback-${phase}-${appearance}-${width}.png`)
+      await page.screenshot({ path, animations: 'disabled' })
+      await info.attach(`rollback-${phase}-${appearance}-${width}`, { path, contentType: 'image/png' })
+    }
+  }
+  await setWindow(1560, 1000)
+  expect({ writes, emptyWrites }).toEqual(before)
+}
 
 test.beforeAll(async () => {
   mkdirSync(fixtures, { recursive: true }); fixture = mkdtempSync(join(fixtures, 'rollback-profile-'))
@@ -129,21 +213,21 @@ test.beforeAll(async () => {
   env.AETHER_IDE_REMOTE_INSTANCE_TOKEN = token; env.AETHER_GLOBAL_DIR = join(fixture, 'global')
   app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || join(root, 'out/main/index.js'), `--user-data-dir=${fixture}`], cwd: root, env })
   page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message))
-  await app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.setContentSize(1560, 1000); win.show(); win.focus() })
+  await app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.setMinimumSize(520, 600); win.setContentSize(1560, 1000); win.show(); win.focus() })
   await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
-  await page.evaluate(({ key, sessionId, title, now, modelId }) => {
-    localStorage.setItem(key, JSON.stringify({ tasks: [{ id: sessionId, title, status: 'done', draft: '', createdAt: now,
-      updatedAt: now, workspacePath: null, modelId, attachments: [], sources: [] }], activeTaskId: sessionId }))
+  await page.evaluate(({ key, sessionId, title, emptySessionId, emptyTitle, now, modelId }) => {
+    localStorage.setItem(key, JSON.stringify({ tasks: [{ id: sessionId, title }, { id: emptySessionId, title: emptyTitle }]
+      .map(task => ({ ...task, status: 'done', draft: '', createdAt: now, updatedAt: now, workspacePath: null, modelId, attachments: [], sources: [] })), activeTaskId: sessionId }))
     localStorage.setItem('aether.app.mode', 'work')
     localStorage.setItem('aether.work.view.v1', JSON.stringify({ page: 'home', collapsed: false, workspace: false, tab: 'files', pane: 'conversation', ratio: 50 }))
-  }, { key: 'aether.work.state.v1:' + encodeURIComponent(engineStorageKey({ mode: 'remote', baseUrl: origin })), sessionId, title, now, modelId })
+  }, { key: 'aether.work.state.v1:' + encodeURIComponent(engineStorageKey({ mode: 'remote', baseUrl: origin })), sessionId, title, emptySessionId, emptyTitle, now, modelId })
   await page.reload(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
   await expect(page.locator('.work-view').getByRole('heading', { name: title, exact: true })).toBeVisible()
 })
 test.afterEach(async ({}, info) => {
   if (info.status !== info.expectedStatus && page && !page.isClosed()) {
     await page.screenshot({ path: info.outputPath('rollback-failure.png') })
-    const diagnostics = JSON.stringify({ errors, reads, writes, stage,
+    const diagnostics = JSON.stringify({ errors, reads, writes, emptyWrites, stage, emptyTruncated,
       treeError: await page.locator('.work-workspace-panel__error').allTextContents() }, null, 2)
     writeFileSync(info.outputPath('rollback-diagnostics.json'), diagnostics)
     await info.attach('rollback-diagnostics', { body: diagnostics, contentType: 'application/json' })
@@ -159,7 +243,7 @@ test.afterAll(async () => {
   }
 })
 
-test('partial rollback immediately removes delivery and tree entries; retry truncates and restores the prompt', async () => {
+test('partial rollback removes assets immediately; compact results disclose safely and retry truncates history', async ({}, info) => {
   const work = page.locator('.work-view'), workspace = work.getByRole('region', { name: '任务工作区', exact: true })
   await work.getByRole('button', { name: `预览 ${fileName}`, exact: true }).click()
   await expect(workspace.getByText(content, { exact: true })).toBeVisible()
@@ -177,13 +261,19 @@ test('partial rollback immediately removes delivery and tree entries; retry trun
   await expect(dialog).toContainText('generator.js'); await expect(dialog).toContainText('同期手动编辑')
   await dialog.getByRole('button', { name: '回退文件', exact: true }).click()
   const notice = work.getByRole('region', { name: '本次回退结果', exact: true })
-  await expect(notice).toContainText('generator.js 已由用户修改')
+  await expect(notice).toContainText('部分改动未能回退')
+  const details = notice.getByRole('button', { name: '逐文件结果', exact: true })
+  await expect(details).toHaveAttribute('aria-expanded', 'true')
+  await expect(notice.getByText('generator.js 已由用户修改，请确认版本后重试。', { exact: true })).toBeVisible()
+  await expect(notice).toContainText(changes[1].path)
+  await expect(notice).not.toContainText('对话暂时保留')
   await expect(tree.getByText(fileName, { exact: true })).toHaveCount(0)
   await expect(folder).toHaveCount(0)
   await expect(work.locator('.work-final-deliverable')).toHaveCount(0)
   expect(existsSync(join(disk, '交付'))).toBe(false)
   expect(readFileSync(join(disk, 'generator.js'), 'utf8')).toBe('// user edit')
   expect(writes).toEqual(['/api/v1/changes/revert-batch'])
+  await captureNotice(notice, 'partial', info)
   await openTab('成果'); await expect(workspace.getByText(content, { exact: true })).toHaveCount(0)
   await expect(workspace.locator('[data-final-result-item="report-item"]')).toHaveCount(0)
   await work.getByRole('button', { name: '回退文件', exact: true }).click()
@@ -193,5 +283,47 @@ test('partial rollback immediately removes delivery and tree entries; retry trun
   await expect(work.locator('[contenteditable="true"]').first()).toContainText('请制作报告')
   expect(existsSync(join(disk, 'generator.js'))).toBe(false)
   expect(writes).toEqual(['/api/v1/changes/revert-batch', '/api/v1/changes/revert-batch', '/api/v1/conversation/truncate'])
+  await expect(notice).toContainText('文件回退完成')
+  await expect(details).toHaveAttribute('aria-expanded', 'false')
+  await expect(notice.getByText(changes[1].path, { exact: true })).not.toBeVisible()
+  await expect(notice).not.toContainText('generator.js 已由用户修改')
+  const completedWrites = [...writes]
+  await details.focus(); await page.keyboard.press('Enter')
+  await expect(details).toHaveAttribute('aria-expanded', 'true')
+  await expect(notice.getByText(changes[0].path, { exact: true })).toBeVisible()
+  await expect(notice.getByText(changes[1].path, { exact: true })).toBeVisible()
+  await expect(notice).toContainText('此前已撤回')
+  await details.click(); await expect(details).toHaveAttribute('aria-expanded', 'false')
+  await captureNotice(notice, 'complete', info)
+  await notice.getByRole('button', { name: '关闭回退结果', exact: true }).click()
+  await expect(notice).toHaveCount(0)
+  expect(writes).toEqual(completedWrites)
+  expect(errors).toEqual([])
+})
+
+test('zero-item rollback has no empty details and dismisses without additional writes', async ({}, info) => {
+  await setWindow(1560, 1000)
+  await work().locator('.work-sidebar__task').filter({ hasText: emptyTitle }).click()
+  await expect(work().getByRole('heading', { name: emptyTitle, exact: true })).toBeVisible()
+  await expect(work().getByRole('region', { name: '协作对话', exact: true })).toContainText(emptyPrompt)
+  const beforeDisk = readdirSync(disk, { recursive: true })
+  const beforeWrites = [...writes]
+  await work().getByRole('button', { name: '回退文件', exact: true }).click()
+  await page.getByRole('dialog', { name: '回退文件', exact: true }).getByRole('button', { name: '回退文件', exact: true }).click()
+  await expect.poll(() => emptyTruncated).toBe(true)
+  const notice = work().getByRole('region', { name: '本次回退结果', exact: true })
+  await expect(notice).toContainText('没有需要撤回的改动')
+  await expect(notice.getByRole('button', { name: '逐文件结果', exact: true })).toHaveCount(0)
+  await expect(notice.locator('.change-revert-report__details, details, ul')).toHaveCount(0)
+  await expect(work().locator('.work-conversation-turn')).toHaveCount(0)
+  await expect(work().locator('[contenteditable="true"]').first()).toContainText(emptyPrompt)
+  await captureNotice(notice, 'empty', info)
+  expect(readdirSync(disk, { recursive: true })).toEqual(beforeDisk)
+  expect(writes).toEqual(beforeWrites)
+  expect(emptyWrites).toEqual(['/api/v1/changes/revert-batch', '/api/v1/conversation/truncate'])
+  await notice.getByRole('button', { name: '关闭回退结果', exact: true }).focus()
+  await page.keyboard.press('Enter')
+  await expect(notice).toHaveCount(0)
+  expect(emptyWrites).toEqual(['/api/v1/changes/revert-batch', '/api/v1/conversation/truncate'])
   expect(errors).toEqual([])
 })

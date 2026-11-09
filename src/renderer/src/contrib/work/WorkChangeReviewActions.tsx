@@ -4,13 +4,14 @@ import { useApp } from '@renderer/core/app-context'
 import { toast } from '@renderer/core/toast'
 import { requestOrThrow } from '@renderer/core/engine/client'
 import { changeIdsOf, keepChanges } from '@renderer/core/engine/change-actions'
-import { dismissRevertReport, getRevertReport, groupRevertResults, revertChanges, revertComplete, revertStatusLabel, revertSummary, subscribeReverts, type RevertReport } from '@renderer/core/engine/change-revert'
+import { dismissRevertReport, getRevertReport, revertChanges, revertComplete, revertSummary, subscribeReverts, type RevertReport } from '@renderer/core/engine/change-revert'
 import { assertEngineSource, getEngineSource, getExpectedEngine, subscribeEngineSource } from '@renderer/core/engine/source'
 import { requestWorkPreviews } from '@renderer/core/workbench/preview-request'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { ActionMenu } from '@renderer/workbench/ActionMenu'
+import { ChangeRevertReport } from '../chat/ChangeRevertReport'
 import { workChangeReviewIdentity, workChangeReviewTargets, type WorkChangeReviewAction, type WorkChangeReviewMode } from './work-change-review'
 import './work-change-review.css'
 
@@ -178,18 +179,6 @@ function ScopedWorkChangeReviewActions({ sessionId, workspacePath, changes, stre
     </div>
     {error ? <p className="work-change-review__error" role="alert">{error}</p> : null}
     {notice ? <p className="work-change-review__notice" role="status">{notice}</p> : null}
-    {mode !== 'single' && scopedReport ? <section className="work-change-review__report" aria-label="文件回退结果" aria-live="polite">
-      <div>{revertSummary(scopedReport)}</div>
-      {!revertComplete(scopedReport) ? <p>已回退的文件与成果已更新。未完成的改动和对话历史仍保留，请查看逐文件结果。</p> : null}
-      <details key={JSON.stringify(scopedReport.results.map(item => [item.id, item.status]))} open={!revertComplete(scopedReport)}>
-        <summary>逐文件结果</summary>
-        <ul>{groupRevertResults(scopedReport).map(({ path, items }) => <li key={path}>
-          <span>{path.replace(/\\/g, '/')}</span>
-          <span className="work-change-review__statuses">{[...new Set(items.map(item => item.status))].map(status => `${revertStatusLabel[status]} ${items.filter(item => item.status === status).length} 处`).join(' · ')}</span>
-          {[...new Set(items.map(item => item.message).filter(Boolean))].map(message => <p key={message}>{message}</p>)}
-        </li>)}</ul>
-      </details>
-      <button type="button" onClick={() => dismissRevertReport(sessionId)}>关闭结果</button>
-    </section> : null}
+    {mode !== 'single' && scopedReport ? <ChangeRevertReport report={scopedReport} onDismiss={() => dismissRevertReport(sessionId)} /> : null}
   </div>
 }

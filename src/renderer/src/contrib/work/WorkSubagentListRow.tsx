@@ -43,19 +43,21 @@ export function WorkSubagentListRow({ group, stats, now, status, task, role, ton
       data-model-id={stats.modelId || undefined} data-tool-count={stats.toolCount}
       data-active-tool-count={stats.activeToolCount} data-pending={stats.pending ? 'true' : 'false'}
       onClick={onOpen} aria-label={`查看 ${group.label} 子代理详情`} aria-description={`${status}。${timing.summary}。${task}`}>
-      <span className="work-subagents__row-icon" aria-hidden="true"><Icon name="account-outline" size={18} /></span>
+      <span className="work-subagents__row-icon" aria-hidden="true"><Icon name="account-outline" size={16} /></span>
       <span className="work-subagents__row-content">
         <span className="work-subagents__row-heading">
           <strong>{group.label}</strong>
-          <span className={`work-subagents__row-status work-subagents__row-status--${tone}`}>{status}</span>
         </span>
         <span className="work-subagents__row-description">
           {role ? <span className="work-subagents__row-role">{role}</span> : null}
-          <span className="work-subagents__row-duration" data-duration-ms={timing.durationMs}>{timing.durationText}</span>
           {timing.timestamp ? <time className="work-subagents__row-time" dateTime={timing.timestamp.dateTime}>{timing.timestamp.text}</time> : null}
         </span>
       </span>
-      <span className="work-subagents__row-chevron" aria-hidden="true"><Icon name="chevron-right" size={14} /></span>
+      <span className="work-subagents__row-metrics">
+        <span className={`work-subagents__row-status work-subagents__row-status--${tone}`}>{status}</span>
+        <span className="work-subagents__row-duration" data-duration-ms={timing.durationMs}>{timing.durationText}</span>
+      </span>
+      <span className="work-subagents__row-chevron" aria-hidden="true"><Icon name="chevron-right" size={12} /></span>
     </button>
     {tooltip}
   </>

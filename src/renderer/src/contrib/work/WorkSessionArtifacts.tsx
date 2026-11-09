@@ -384,8 +384,8 @@ function SessionArtifacts({ sessionId, workspacePath: workspaceHint, ready, stre
     <div className="work-session-artifacts__batch" aria-label={`${batchLabel}的文件改动操作`}>
       <header className="work-session-artifacts__header" title={`${batchLabel}${selectedTurn?.createdAt ? ` · ${turnOptionLabel(selectedTurn)}` : ''}${turnScope.kind === 'unassociated' ? ' · 这些记录未携带可靠的轮次标识，已单独列出。' : ''}`}>
         <span aria-label={`${query.trim() ? `${files.length} / ${scopedFiles.length}` : files.length} 个涉及文件`}>{query.trim() ? `${files.length} / ${scopedFiles.length}` : files.length} 个文件</span>
+        {streaming && batchRecords.length ? <span className="work-session-artifacts__activity" role="status" title="任务正在运行，请结束后重新确认文件改动">任务运行中</span> : null}
       </header>
-      {streaming && batchRecords.length ? <span className="work-session-artifacts__activity" role="status" title="任务正在运行，请结束后重新确认文件改动">任务运行中</span> : null}
       <WorkChangeReviewActions sessionId={sessionId} workspacePath={workspacePath} changes={batchRecords} streaming={streaming} disabled={actionsDisabled}
         refreshing={syncing} onChanged={refreshReview} presentation="menu" compact showBlockedHint={false} />
     </div>

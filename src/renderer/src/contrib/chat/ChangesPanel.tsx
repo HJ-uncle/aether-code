@@ -5,7 +5,8 @@ import type { EngineFileChange } from '@shared/ipc'
 import { Icon } from '@renderer/workbench/icons'
 import { FileGlyph } from '../explorer/FileGlyph'
 import { onSnapshot, onStreamEvent, requestOrThrow } from '@renderer/core/engine/client'
-import { dismissRevertReport, getRevertReport, groupRevertResults, revertChanges, revertComplete, revertStatusLabel, revertSummary, subscribeReverts } from '@renderer/core/engine/change-revert'
+import { dismissRevertReport, getRevertReport, revertChanges, subscribeReverts } from '@renderer/core/engine/change-revert'
+import { ChangeRevertReport } from './ChangeRevertReport'
 import { gitStageFiles } from '@renderer/core/git/git-client'
 import { changeIdsOf, keepChanges, stageAndKeepChanges } from '@renderer/core/engine/change-actions'
 import { assertEngineSource, getEngineSource, isRemoteEngine, subscribeEngineSource } from '@renderer/core/engine/source'
@@ -322,27 +323,7 @@ function ChangesPanelContent({
   return (
     <div className="changes-panel">
       {report ? (
-        <section className="changes-panel__report" aria-label="文件回退结果" aria-live="polite">
-          <div>{revertSummary(report)}</div>
-          {!revertComplete(report) ? <div>部分改动未恢复，请查看下列文件。</div> : null}
-          <details open={!revertComplete(report)}>
-            <summary>逐文件结果</summary>
-            <ul>
-              {groupRevertResults(report).map(({ path, items }) => (
-                <li key={path}>
-                  <span title={path}>{path.replace(/\\/g, '/')}</span>
-                  {' — '}{Array.from(new Set(items.map((item) => item.status))).map((status) => (
-                    <span key={status}>{revertStatusLabel[status]} {items.filter((item) => item.status === status).length} 处；</span>
-                  ))}
-                  {Array.from(new Set(items.map((item) => item.message).filter(Boolean))).map((message) => (
-                    <div key={message}>{message}</div>
-                  ))}
-                </li>
-              ))}
-            </ul>
-          </details>
-          <button type="button" className="changes-panel__footer-btn" onClick={() => dismissRevertReport(sessionId)}>关闭结果</button>
-        </section>
+        <ChangeRevertReport report={report} onDismiss={() => dismissRevertReport(sessionId)} />
       ) : null}
       <ul className="changes-panel__list">        {changes.map((change) => {
           const { name, dir } = splitPath(change)

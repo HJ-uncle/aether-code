@@ -31,16 +31,30 @@ function RepositoryNotice({ operation, onRefresh }: { operation: GitRepositoryOp
   }
   if (state.phase === 'running' || state.phase === 'succeeded' && !state.actionError) return null
   const unsafe = state.failure?.executionDisposition !== 'not_started'
-  const headline = state.phase === 'succeeded' ? `${state.label}已完成` : state.recovered ? '中断占用已恢复' : state.lease?.recoverable ? '上次 Git 操作已中断' : state.lease?.busy ? '仓库正在处理其他操作' : `${state.label}未完成`
-  const description = state.phase === 'succeeded' ? '可以刷新查看仓库的最新状态。' : unsafe ? '这项操作可能已经产生修改。先检查文件和提交记录，再选择下一项操作。' : state.lease?.busy ? '本次操作尚未开始。当前操作结束后，可重试原操作。' : '本次操作尚未开始，可以重试原操作。'
+  // A later lease inspection can observe another reader or writer. It is the
+  // current repository state, not evidence of why this command failed.
+  const failureCode = state.failure?.errorCode
+  const headline = state.phase === 'succeeded' ? `${state.label}已完成`
+    : failureCode === 'git-orphan' ? '上次 Git 操作已中断'
+    : failureCode === 'git-busy' ? '仓库正在处理其他操作'
+    : failureCode === 'git-quarantined' ? 'Git 操作结束状态尚未确认'
+    : `${state.label}未完成`
+  const description = state.phase === 'succeeded' ? '可以刷新查看仓库的最新状态。' : unsafe ? '这项操作可能已经产生修改。先检查文件和提交记录，再选择下一项操作。' : '本次操作尚未开始。'
+  const leaseStatus = state.recovered ? '当前状态：中断占用已恢复。'
+    : state.lease?.recoverable ? '当前状态：检测到可恢复的中断占用。'
+    : state.lease?.busy ? '当前状态：仓库正被其他操作占用。' : ''
   const pendingText = state.pending === 'recover' ? '正在恢复…' : state.pending === 'retry' ? '正在重试…' : '正在核对…'
   return (
     <section className="git-repository-notice" aria-label="Git 操作状态">
       <div className="git-repository-notice__content" role="status" aria-live="polite" aria-atomic="true">
         <Icon name={state.phase === 'succeeded' ? 'check' : 'info'} size={16} />
-        <div><strong>{headline}</strong><p>{description}</p></div>
+        <div>
+          <strong>{headline}</strong>
+          {state.failure?.error && state.phase === 'failed' && <p className="git-repository-notice__error">{state.failure.error}</p>}
+          <p>{description}</p>
+          {leaseStatus && <p>{leaseStatus}</p>}
+        </div>
       </div>
-      {state.failure?.error && state.phase === 'failed' && <details><summary>查看错误详情</summary><p>{state.failure.error}</p></details>}
       {state.actionError && <p className="git-repository-notice__error" role="alert">{state.actionError}</p>}
       {refreshError && <p className="git-repository-notice__error" role="alert">{refreshError}</p>}
       <div className="git-repository-notice__actions">
