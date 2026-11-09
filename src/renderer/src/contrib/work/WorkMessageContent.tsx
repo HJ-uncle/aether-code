@@ -138,10 +138,10 @@ export const WorkMessageContent = memo(function WorkMessageContent({
             {processTools.length ? <small>{processTools.length} 步</small> : null}
             {failureCount ? <small className="work-message__process-failures">{failureCount} 步未通过</small> : null}
           </button>
-            {processOpen && thinkingCount ? <button type="button" className="work-message__thinking-toggle"
+            {thinkingCount ? <button type="button" className="work-message__thinking-toggle"
               aria-label={thinkingOpen ? '隐藏思考' : '显示思考'} aria-pressed={thinkingOpen}
               title={`${thinkingOpen ? '隐藏' : '显示'} ${thinkingCount} 段思考`}
-              onClick={() => setThinkingOpen(!thinkingOpen)}>
+              onClick={() => { setThinkingOpen(!thinkingOpen); if (!thinkingOpen) setProcessOpen(true) }}>
               <Icon name="brain" size={13} /><span>思考</span>
             </button> : null}
           </div> : null}
