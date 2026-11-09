@@ -43,7 +43,7 @@ export function WorkFailureNavigator({ tools, onReveal }: {
               focusRequest.current = null
             } else setPage(nextPage)
           }}>
-          <span>{toolDisplayName(tool.name)}</span><span title={workToolTarget(tool)}>{workToolTarget(tool)}</span>
+          <span>{toolDisplayName(tool.name)}</span><span title={workToolTarget(tool, undefined, true)}>{workToolTarget(tool)}</span>
           <Icon name="chevron-right" size={12} />
         </button>
       </li>)}</ul>

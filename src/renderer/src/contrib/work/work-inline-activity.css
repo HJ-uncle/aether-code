@@ -21,22 +21,29 @@
 /* A completed operation contributes its name and target, not another status badge. */
 .compact-tool-row--quiet > .logline { height: 28px; gap: var(--space-2); padding: 0 var(--space-2); font-size: 12px; }
 .compact-tool-row--quiet .logline__icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 16px; color: var(--fg-muted); }
-.compact-tool-row--quiet .logline__name { font-size: 12px; }
+.compact-tool-row--quiet .logline__name { flex: 0 0 6em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; color: var(--fg-muted); font-size: 12px; }
 .compact-tool-row--quiet .logline__summary { opacity: 1; }
 .compact-tool-row--quiet .logline__status { flex: 0 0 auto; margin-left: auto; font-size: 11px; color: var(--fg-muted); white-space: nowrap; }
 .compact-tool-row--quiet > .logline:has(> .logline__read-range) > .logline__summary { flex: 0 1 auto; }
 .compact-tool-row--quiet .logline__read-range { flex: 0 0 auto; color: var(--fg-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-/* File identity and actual page bounds stay visible even with the source closed.
- * Wrap whole file groups; a narrow row must not hide later batch members. */
-.compact-tool-row--quiet.compact-tool-row--files > .logline { height: auto; min-height: 28px; align-items: flex-start; padding-block: 4px; line-height: 20px; }
-.compact-tool-row--files .logline__icon { height: 20px; }
-.compact-tool-row--files .logline__name { line-height: 20px; }
-.compact-tool-row--files .logline__files { display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: 2px 12px; min-width: 0; white-space: normal; text-align: left; }
-.compact-tool-row--files .logline__file { display: inline-flex; align-items: baseline; gap: 4px; min-width: 0; max-width: 100%; }
-.compact-tool-row--files .logline__file-name { min-width: 0; color: var(--fg); overflow-wrap: anywhere; }
+/* A receipt occupies one stable row. Its full file list stays available in the
+ * hover/focus detail; long names must not scatter subsequent operations. */
+.compact-tool-row--files .logline__files { display: block; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; line-height: 20px; }
+.compact-tool-row--files .logline__file { display: inline; margin-right: 12px; }
+.compact-tool-row--files .logline__file:last-child { margin-right: 0; }
+.compact-tool-row--files .logline__file > svg { display: inline-block; margin-right: 4px; vertical-align: -2px; }
+.compact-tool-row--files .logline__file-name { color: var(--fg); }
 .compact-tool-row--files .logline__file-range,
 .compact-tool-row--files .logline__file-state { flex: 0 0 auto; color: var(--fg-muted); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.compact-tool-row--quiet.compact-tool-row--files > .logline > .logline__chevron { margin-top: 4px; }
+.logline-hover__heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 8px; color: var(--fg-muted); font-size: 11px; }
+.logline-hover__heading strong { color: var(--fg); font-size: 12px; font-weight: 500; }
+.logline-hover__files { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.logline-hover__files li { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.logline-hover__files li > svg { flex: 0 0 auto; align-self: flex-start; margin-top: 2px; }
+.logline-hover__files li > div { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.logline-hover__files strong { color: var(--fg); font-size: 12px; font-weight: 500; }
+.logline-hover__files span { color: var(--fg-muted); font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.logline-hover__target { white-space: pre-wrap; overflow-wrap: anywhere; }
 .compact-tool-row--quiet .logline__icon--running,
 .compact-tool-row--quiet .logline__icon--waiting { color: var(--accent); }
 .compact-tool-row--quiet[data-tool-state='error'] .logline__status,

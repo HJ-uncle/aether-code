@@ -216,7 +216,7 @@ function readLineRange(fields: Record<string, unknown>): ReadActivityLineRange |
   const range = fields.startLine === fields.endLine ? `${fields.startLine}` : `${fields.startLine}–${fields.endLine}`
   return {
     label: `引用行数：${range}`,
-    title: `第 ${range} 行${fields.partialLine === true ? '（部分内容）' : ''} / 共 ${fields.totalLines} 行${fields.hasMore ? ' · 还有更多内容' : ''}`
+    title: `本次读取第 ${range} 行${fields.partialLine === true ? '（含不完整行）' : ''} · 文件共 ${fields.totalLines} 行`
   }
 }
 

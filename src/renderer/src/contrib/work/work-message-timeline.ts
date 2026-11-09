@@ -1,5 +1,7 @@
 import type { ChatMessage, ToolActivity } from '@renderer/core/engine/useChat'
 import { isVisibleToolActivity } from '@renderer/core/engine/task-plan'
+import { commandInvocation } from '@renderer/core/engine/tool-feedback'
+import { commandJobInvocation } from '@renderer/core/engine/command-job-state'
 import { splitAssistantReasoning } from '@renderer/core/engine/assistant-reasoning'
 import { isWorkStandaloneTool } from './work-tool-presentation'
 import { toolPresentation } from '../chat/tool-presentation'
@@ -143,10 +145,20 @@ function browserPageTarget(value: string): string {
 }
 
 /** Show recognizable work targets without flashing partial JSON during argument streaming. */
-export function workToolTarget(tool: ToolActivity, workspacePath?: string | null): string {
+export function workToolTarget(tool: ToolActivity, workspacePath?: string | null, full = false): string {
+  // The executable alone is often only cmd.exe or PowerShell. The invocation
+  // keeps its separate argv so readers can identify what actually ran.
+  const invocation = tool.commandJob ? commandJobInvocation(tool.commandJob)
+    : ['execute_cmd', 'run_command', 'execute_command'].includes(tool.name) ? commandInvocation(tool.args) : undefined
+  if (invocation) {
+    if (full) return invocation
+    const target = invocation.replace(/\s+/g, ' ').trim()
+    return target.length > 180 ? `${target.slice(0, 177)}…` : target
+  }
   if (tool.name.startsWith('browser_')) {
     const snapshot = toolPresentation(tool).browserSnapshots?.[0]
     const title = snapshot?.title.trim()
+    if (full && snapshot) return [title, snapshot.url].filter(Boolean).join('\n')
     if (title && title !== snapshot?.url && !/^(?:[a-z][a-z\d+.-]*:\/\/|file:|aether-local:)/i.test(title)) {
       return title.length > 80 ? `${title.slice(0, 77)}…` : title
     }
@@ -156,10 +168,15 @@ export function workToolTarget(tool: ToolActivity, workspacePath?: string | null
     const args: unknown = JSON.parse(tool.args)
     if (!args || typeof args !== 'object' || Array.isArray(args)) return ''
     const fields = args as Record<string, unknown>
-    if (Object.hasOwn(fields, 'files')) return batchFileSummary(fields) ?? ''
+    if (Object.hasOwn(fields, 'files')) {
+      const summary = batchFileSummary(fields)
+      return full && summary && Array.isArray(fields.files)
+        ? fields.files.map(file => (file as { path: string }).path).join('\n') : summary ?? ''
+    }
     for (const field of ['path', 'filePath', 'file_path', 'file', 'command', 'pattern', 'query', 'url', 'description', 'task', 'title', 'skill', 'name']) {
       const value = fields[field]
       if (typeof value !== 'string' || !value.trim()) continue
+      if (full) return value.trim()
       let target = value.trim().replace(/\s+/g, ' ')
       if (tool.name.startsWith('browser_') && field === 'url') {
         return browserPageTarget(target)

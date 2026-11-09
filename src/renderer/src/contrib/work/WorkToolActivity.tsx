@@ -39,6 +39,7 @@ export const WorkToolActivity = memo(function WorkToolActivity({ tool, fileConte
   const readFiles = useMemo(() => outputOnly ? undefined : readActivityFiles(tool), [tool, outputOnly])
   const displayTool = useMemo(() => readPreview ? { ...tool, result: readPreview.content || '文件内容为空' } : tool, [tool, readPreview])
   const details = <CompactToolRow tool={displayTool} state={state} summary={outputOnly ? '调用记录未载入' : workToolTarget(tool, fileContext.workspaceRoot)}
+    summaryDetail={outputOnly ? '调用记录未载入' : workToolTarget(tool, undefined, true)}
     memoryKey={`work-tool:${getEngineSource()}:${fileContext.sessionId}:${tool.id}${previewScope}`} fileContext={fileContext} onOpenFile={onOpenFile}
     structuredResult={tool.name !== 'read_file'} readRange={readPreview?.range} readFiles={readFiles} quiet defaultOpen={defaultOpen ?? (imagePreview && turnRunning === true)} />
   return <div className="work-tool-activity" data-tool-kind={kind} data-work-tool-id={tool.id}>

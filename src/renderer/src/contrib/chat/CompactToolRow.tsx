@@ -6,6 +6,7 @@ import { toolFailureMessage } from '@renderer/core/engine/tool-feedback'
 import { toast } from '@renderer/core/toast'
 import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
+import { useHoverDetail } from '@renderer/workbench/useHoverDetail'
 import { MotionPresence } from '@renderer/workbench/MotionPresence'
 import type { ChatFileContext } from './chat-link'
 import { openFileFromChat } from './open-file'
@@ -18,15 +19,18 @@ import { WorkErrorNotice } from '../work/WorkErrorNotice'
 import { workToolFeedback } from '../work/work-tool-feedback'
 import type { ReadActivityFileSummary, ReadActivityLineRange } from '../work/work-activity-presentation'
 import { quietToolIcon } from './quiet-tool-icon'
+import { FileGlyph } from '../explorer/FileGlyph'
 
 /** Code and Work share the same one-line receipt and result-only disclosure. */
 export const CompactToolRow = memo(function CompactToolRow({
-  tool, memoryKey, summary: summaryOverride, state = tool.state,
+  tool, memoryKey, summary: summaryOverride, summaryDetail, state = tool.state,
   fileContext, onOpenFile, defaultOpen, structuredResult = false, quiet = false, detailFooter, readRange, readFiles
 }: {
   tool: ToolActivity
   memoryKey?: string
   summary?: string
+  /** Full target for hover details, before display shortening or workspace relativization. */
+  summaryDetail?: string
   state?: ToolActivity['state']
   fileContext?: ChatFileContext
   onOpenFile?: (path: string) => void
@@ -61,6 +65,18 @@ export const CompactToolRow = memo(function CompactToolRow({
   const openablePath = !quiet && pathArg && (fileContext ? onOpenFile && tool.name === 'read_file' : engine.snapshot.mode !== 'remote' && summary === pathArg) ? pathArg : null
   const statusLabel = feedback?.label ?? toolStatusLabel(quiet && state !== tool.state ? { ...tool, state } : tool)
   const visibleReadRange = quiet && state === 'done' && !visibleFiles ? readRange : undefined
+  const { triggerProps, tooltip } = useHoverDetail({
+    enabled: quiet && Boolean(visibleFiles || summaryDetail || summary), label,
+    content: <>
+      <div className="logline-hover__heading"><strong>{label}</strong>{visibleFiles ? <span>{visibleFiles.length} 个文件</span> : null}</div>
+      {visibleFiles ? <ul className="logline-hover__files">{visibleFiles.map((file, index) => <li key={`${index}:${file.path}`}>
+        <FileGlyph name={file.path} size={16} />
+        <div><strong>{file.label}</strong><span className="logline-hover__path">{file.path}</span>
+          {file.title !== file.path ? <span>{file.title.startsWith(file.path + '\n') ? file.title.slice(file.path.length + 1) : file.title}</span> : null}
+        </div>
+      </li>)}</ul> : <div className="logline-hover__target">{summaryDetail || summary}{visibleReadRange ? `\n${visibleReadRange.title}` : ''}</div>}
+    </>
+  })
   const dot = state === 'running' ? 'running' : state === 'done' ? 'done'
     : state === 'error' || state === 'interrupted' ? 'error' : state === 'waiting' ? 'waiting' : 'neutral'
   const openPath = async (): Promise<void> => {
@@ -76,6 +92,7 @@ export const CompactToolRow = memo(function CompactToolRow({
   return (
     <div className={`logline-wrap compact-tool-row${quiet ? ' compact-tool-row--quiet' : ''}${visibleFiles ? ' compact-tool-row--files' : ''}`} data-tool-id={tool.id} data-tool-state={state}>
       <button
+        {...triggerProps}
         type="button"
         className={`logline${hasDetail ? '' : ' logline--static'}`}
         aria-label={`${hasDetail ? `${open ? '收起' : '展开'} ${label}${summary ? ` · ${summary}` : ''}${quiet && state !== 'done' ? ` · ${statusLabel}` : ''}` : `${label} · ${toolStatusLabel(tool)}`}${visibleReadRange ? ` · ${visibleReadRange.label}` : ''}`}
@@ -90,10 +107,10 @@ export const CompactToolRow = memo(function CompactToolRow({
         <span className={`logline__name${!quiet && state === 'error' ? ' logline__name--error' : ''}`}>{label}</span>
         {!quiet ? <span className="pending-card__hint">{toolStatusLabel(tool)}{tool.durationMs !== undefined ? ` · ${tool.durationMs} ms` : ''}</span> : null}
         {visibleFiles ? <span className="logline__files">
-          {visibleFiles.map((file, index) => <span className="logline__file" key={`${index}:${file.path}`} title={file.title}>
-            <span className="logline__file-name">{file.label}</span>
-            {file.range ? <span className="logline__file-range">{file.range}</span> : null}
-            {file.state ? <span className="logline__file-state">{fileStateLabel(file)}</span> : null}
+          {visibleFiles.map((file, index) => <span className="logline__file" key={`${index}:${file.path}`}>
+            <FileGlyph name={file.path} size={14} /><span className="logline__file-name">{file.label}</span>
+            {file.range ? <> <span className="logline__file-range">{file.range}</span></> : null}
+            {file.state ? <> <span className="logline__file-state">{fileStateLabel(file)}</span></> : null}
           </span>)}
         </span> : summary ? (
           openablePath ? (
@@ -107,12 +124,13 @@ export const CompactToolRow = memo(function CompactToolRow({
                 if (event.key === 'Enter') { event.stopPropagation(); void openPath() }
               }}
             >{summary}</span>
-          ) : <span className="logline__summary" title={summary}>{summary}</span>
+          ) : <span className="logline__summary" title={quiet ? undefined : summary}>{summary}</span>
         ) : null}
         {quiet && state !== 'done' ? <span className="logline__status">{statusLabel}</span> : null}
-        {visibleReadRange ? <span className="logline__read-range" title={visibleReadRange.title}>{visibleReadRange.label}</span> : null}
+        {visibleReadRange ? <span className="logline__read-range">{visibleReadRange.label}</span> : null}
         {hasDetail ? <Icon name={quiet ? 'chevron-right' : 'chevron'} size={quiet ? 12 : 16} className="logline__chevron" /> : null}
       </button>
+      {tooltip}
       <MotionPresence show={open && hasDetail}>
         <div id={detailId} className="logline__detail">
           {quiet ? <WorkToolOutcome tool={tool} state={state} /> : failure ? fileContext

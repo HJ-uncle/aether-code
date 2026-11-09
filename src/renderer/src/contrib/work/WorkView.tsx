@@ -46,6 +46,9 @@ import { WorkComposer as WorkComposerV2 } from './WorkComposer'
 import { WorkReferenceProvider, useWorkReferenceNavigation } from './WorkReferenceNavigation'
 import { WorkNextTurnQueuePanel } from './WorkNextTurnQueue'
 import { WorkTaskActions } from './WorkTaskActions'
+import { WorkSelectionCheckbox } from './WorkSelectionCheckbox'
+import { getTopOverlayId } from '@renderer/workbench/overlay'
+import { useHoverDetail } from '@renderer/workbench/useHoverDetail'
 import { WorkSidebarTask } from './WorkSidebarTask'
 import { sortWorkSidebarTasks } from './work-sidebar-task'
 import { WorkArtifactPanel, type WorkArtifactPanelProps } from './WorkArtifactPanel'
@@ -1516,23 +1519,32 @@ function Conversation({
     if (opening || paging) pauseReading()
   }
   return (
-    <section className="work-conversation" aria-label="协作对话">
+    <section className="work-conversation" aria-label="协作对话" onKeyDown={event => {
+      if (selectMode && event.key === 'Escape' && !event.nativeEvent.isComposing && !event.defaultPrevented && !getTopOverlayId()) {
+        event.preventDefault()
+        event.stopPropagation()
+        toggleSelectMode()
+      }
+    }}>
       <WorkRevertNotice sessionId={task.id} />
       <PublishedRecoveryNotice state={controller.publishedRecovery} onCancel={controller.cancelPublishedRecovery} onLoadBody={controller.loadPublishedBody} onRetry={controller.retryPublishedRecovery} />
       <MotionPresence show={selectMode}>
         <div className="work-conversation__select-bar" role="toolbar" aria-label="对话选择工具栏">
-          <div className="work-conversation__selection-leading">
-            <strong>选择对话</strong>
-            <span className="work-conversation__selection-hint">勾选完整一轮对话，可复制或导出</span>
-            <span className="work-conversation__selection-count">已选 {selectedGroups.length} 轮</span>
-            <button type="button" className="work-conversation__selection-button" onClick={toggleAll}>
-              {allSelected ? '取消全选' : '全选对话'}
-            </button>
-          </div>
-          <div className="work-conversation__selection-actions">
-            <button type="button" className="work-conversation__selection-button" disabled={selectedGroups.length === 0} onClick={copySelected}>复制</button>
-            <button type="button" className="work-conversation__selection-button" disabled={selectedGroups.length === 0} onClick={exportSelected}>导出</button>
-            <button type="button" className="work-conversation__selection-button work-conversation__selection-button--done" onClick={toggleSelectMode}>完成</button>
+          <div className="work-conversation__selection-controls">
+            <div className="work-conversation__selection-leading">
+              <label className="work-conversation__select-all" title="选择或取消所有已完整加载的对话">
+                <WorkSelectionCheckbox checked={allSelected} mixed={!allSelected && selectedGroups.length > 0}
+                  disabled={!selectableGroups.length} label="全选对话" onChange={toggleAll} />
+                <span>全选</span>
+              </label>
+              <span className="work-conversation__selection-count" role="status" aria-live="polite">已选 {selectedGroups.length} 轮</span>
+            </div>
+            <div className="work-conversation__selection-actions">
+              <button type="button" className="work-conversation__selection-button" disabled={selectedGroups.length === 0} onClick={copySelected}><Icon name="copy" size={14} />复制</button>
+              <button type="button" className="work-conversation__selection-button" disabled={selectedGroups.length === 0} onClick={exportSelected}><Icon name="upload-outline" size={14} />导出</button>
+              <span className="work-conversation__selection-separator" aria-hidden="true" />
+              <button type="button" className="work-conversation__selection-button work-conversation__selection-button--done" title="退出选择（Esc）" onClick={toggleSelectMode}>完成</button>
+            </div>
           </div>
         </div>
       </MotionPresence>
@@ -1600,18 +1612,16 @@ function Conversation({
                 {gap ? <button type="button" className="btn btn--sm work-history-load" disabled={controller.displayHistoryLoading} onClick={() => loadDisplayHistory(gap.anchor)}>加载前面的 {gap.count} 轮对话</button> : null}
                 <MotionPresence show={selectMode}>
                   <header className="work-conversation-turn__header">
-                    <label className="work-conversation-turn__pick">
-                      <input
-                        type="checkbox"
+                    <label className="work-conversation-turn__pick" title={complete ? `选择完整一轮对话（${group.messages.length} 条消息）` : '请先加载完整对话'}>
+                      <WorkSelectionCheckbox
                         checked={selected}
                         disabled={!complete}
                         onChange={() => toggleConversation(group.id)}
-                        aria-label={`选择第 ${group.order ?? index + 1} 轮对话`}
+                        label={`选择第 ${group.order ?? index + 1} 轮对话`}
                       />
-                      <span>第 {group.order ?? index + 1} 轮对话</span>
-                      <small>{group.messages.length} 条消息</small>
+                      <span>第 {group.order ?? index + 1} 轮</span>
                     </label>
-                    <span className="work-conversation-turn__summary">{workConversationSummary(group.messages)}</span>
+                    <span className="work-conversation-turn__summary" title={workConversationSummary(group.messages)}>{workConversationSummary(group.messages)}</span>
                   </header>
                 </MotionPresence>
                 {workConversationEntries(group).map(({ key, message, segments, processKey }) => (
@@ -1762,8 +1772,12 @@ function WorkTurnFeedback({ controller, announce, openActivity }: {
   // Scrolling changes which status is announced, not whether this live card's
   // elapsed time advances: it can remain visible beside the fixed status.
   const feedback = useWorkRunFeedback(controller)
-  if (!feedback.active) return null
   const target = feedback.running ? workToolTarget(feedback.running, controller.workspacePath) : ''
+  const fullTarget = feedback.running ? workToolTarget(feedback.running, undefined, true) : ''
+  const activityLabel = feedback.running ? toolDisplayName(feedback.running.name) : ''
+  const { triggerProps, tooltip } = useHoverDetail({ enabled: feedback.active && Boolean(fullTarget), label: activityLabel,
+    content: <><div className="logline-hover__heading"><strong>{activityLabel}</strong></div><div className="logline-hover__target">{fullTarget}</div></> })
+  if (!feedback.active) return null
   const agentName = feedback.running && (feedback.running.name === 'subagent' || feedback.running.subagent)
     ? workSubagentName(feedback.running)
     : controller.agentIdentity.name || 'Agent'
@@ -1785,7 +1799,7 @@ function WorkTurnFeedback({ controller, announce, openActivity }: {
                 ? '暂未收到回复内容，可以继续等待或停止任务。'
                 : '任务已发送，正在等待首个响应。'
   return (
-    <div className="work-turn-feedback" data-phase={feedback.phase} data-state={feedback.waiting ? 'waiting' : 'running'} data-current-run-feedback={announce ? 'true' : undefined} aria-label="Agent 执行反馈">
+    <><div className="work-turn-feedback" data-phase={feedback.phase} data-state={feedback.waiting ? 'waiting' : 'running'} data-current-run-feedback={announce ? 'true' : undefined} aria-label="Agent 执行反馈">
       <span className="work-turn-feedback__indicator" aria-hidden="true">
         {feedback.waiting ? <Icon name="chat" size={16} /> : <Spinner size={16} />}
       </span>
@@ -1799,12 +1813,12 @@ function WorkTurnFeedback({ controller, announce, openActivity }: {
           </div>
         </div>
         {feedback.running ? (
-          <button type="button" className="work-turn-feedback__activity" aria-label="查看正在执行的活动" onClick={() => openActivity(feedback.running!.id)}>
+          <button {...triggerProps} type="button" className="work-turn-feedback__activity" aria-label="查看正在执行的活动" onClick={() => openActivity(feedback.running!.id)}>
             <span>{detail}</span><Icon name="chevron-right" size={12} />
           </button>
         ) : <p>{detail}</p>}
       </div>
-    </div>
+    </div>{tooltip}</>
   )
 }
 

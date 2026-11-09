@@ -10,6 +10,7 @@ import type { ChatFileContext } from '../chat/chat-link'
 import { workPageRange } from './work-view-performance'
 import { WORK_INLINE_ACTIVITY_PAGE_SIZE, workActivitySummary } from './work-inline-activity-state'
 import { WorkToolActivity } from './WorkToolActivity'
+import { workToolTarget } from './work-message-timeline'
 import './work-inline-activity.css'
 
 /** Keep paged receipts and their original diagnostics beside the conversation. */
@@ -38,6 +39,7 @@ export function WorkInlineActivity({ tools: receipts, fileContext, onOpenFile, o
   const presence = useMotionPresence(open)
   if (!summary) return null
   const { tool, state, label, target } = summary
+  const fullTarget = workToolTarget(tool, undefined, true)
   // Open at the live operation, then retain that page while the user reads it.
   const defaultIndex = state === 'running' || state === 'waiting' ? tools.indexOf(tool) : tools.length - 1
   const range = workPageRange(tools.length, selectedPage ?? Math.floor(defaultIndex / WORK_INLINE_ACTIVITY_PAGE_SIZE), WORK_INLINE_ACTIVITY_PAGE_SIZE)
@@ -46,7 +48,7 @@ export function WorkInlineActivity({ tools: receipts, fileContext, onOpenFile, o
       {!expanded ? <button
         type="button"
         className={`work-process work-process--${state}`}
-        title={`${label}${target ? ` · ${target}` : ''}，${open ? '收起' : '展开'}活动详情`}
+        title={`${label}${fullTarget ? ` · ${fullTarget}` : ''}，${open ? '收起' : '展开'}活动详情`}
         aria-label={`${label}${target ? ` · ${target}` : ''}，${open ? '收起' : '展开'}活动详情`}
         aria-expanded={open}
         aria-controls={detailId}

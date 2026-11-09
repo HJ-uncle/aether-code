@@ -1,8 +1,8 @@
-.work-file-change-row { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-width: 0; min-height: var(--control-h); padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius); background: transparent; color: var(--fg); font: 12px/1.5 var(--font-ui); text-align: left; cursor: pointer; transition: background var(--duration-fast) var(--ease-out); }
+.work-file-change-row { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-width: 0; height: 28px; padding: 0 var(--space-2); border: 0; border-radius: var(--radius); background: transparent; color: var(--fg); font: 12px/1.5 var(--font-ui); text-align: left; cursor: pointer; transition: background var(--duration-fast) var(--ease-out); }
 .work-file-change-row:hover:not(:disabled) { background: var(--bg-hover); }
 .work-file-change-row:disabled { cursor: default; }
 .work-file-change-row__icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 16px; color: var(--fg-muted); }
-.work-file-change-row__action,
+.work-file-change-row__action { flex: 0 0 6em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-muted); font-size: 12px; }
 .work-file-change-row__state { flex: 0 0 auto; color: var(--fg-muted); font-size: 11px; }
 .work-file-change-row__code { flex: 0 0 auto; color: var(--fg-muted); font: 500 11px var(--font-mono); }
 .work-file-change-row__code[data-change-code='U'] { color: var(--git-added); }
@@ -15,6 +15,7 @@
 .work-file-change-row__added { color: var(--git-added); }
 .work-file-change-row__removed { color: var(--git-deleted); }
 .work-file-change-row__estimate { color: var(--fg-muted); font: 10px var(--font-ui); }
+.work-file-change-row__hover-stats { margin-top: 6px; color: var(--fg-muted); font-size: 11px; white-space: pre-wrap; }
 .work-file-change-row[data-tool-state='error'] .work-file-change-row__state,
 .work-file-change-row[data-tool-state='error'] .work-file-change-row__icon,
 .work-file-change-row[data-tool-state='interrupted'] .work-file-change-row__state,
