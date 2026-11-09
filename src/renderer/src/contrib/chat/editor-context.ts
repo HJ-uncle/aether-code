@@ -51,6 +51,14 @@ export function addFilesToChat(entries: { path: string; kind: 'file' | 'director
   return queue(mentions)
 }
 
+/** Rendered documents do not have Monaco coordinates; preserve only the
+ * selected text and its actual source file instead of inventing line numbers. */
+export function addDocumentSelectionToChat(filePath: string, content: string): boolean {
+  if (!content.trim()) return false
+  const path = referencePath(filePath)
+  return queue([{ source: 'file', path, displayText: `${formatPathDisplay(path)}（选区）`, content }])
+}
+
 export function addSelectionToChat(instance: editor.ICodeEditor | null = getActiveEditor(), filePath?: string): boolean {
   const model = instance?.getModel()
   const selections = instance?.getSelections()?.filter((selection) => !selection.isEmpty())

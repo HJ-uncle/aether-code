@@ -16,6 +16,9 @@ import { configureGraphics, confirmGraphicsStartup, initializeGraphicsRecovery }
 import { workbenchEntryUrl } from './ipc-security'
 import { isTrustedWorkbenchUrl } from '../shared/workbench-url'
 import { configureLaunchInstance } from './instance-profile'
+import { bindConversationLinkWindow, queueConversationLink, queueConversationLinkArguments, registerConversationLinkIpc } from './conversation-link'
+import { CONVERSATION_LINK_SCHEME } from '../shared/conversation-link'
+import { registerOpenWithIpc } from './open-with-ipc'
 
 // An explicit instance profile is opt-in. It is applied before settings,
 // graphics recovery, or engine state are read so each desktop process gets an
@@ -119,6 +122,7 @@ function createWindow(): void {
   if (winState.maximized) mainWindow.maximize()
   trackWindowState(mainWindow)
   registerBrowserIpc(mainWindow)
+  bindConversationLinkWindow(mainWindow)
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
@@ -160,9 +164,20 @@ const gotTheLock = app.requestSingleInstanceLock()
 if (!gotTheLock) {
   app.quit()
 } else {
+  queueConversationLinkArguments(process.argv)
+  app.on('open-url', (event, url) => {
+    event.preventDefault()
+    if (!queueConversationLink(url)) return
+    const [win] = BrowserWindow.getAllWindows()
+    if (win) {
+      if (win.isMinimized()) win.restore()
+      win.show(); win.focus()
+    }
+  })
   initializeNativeDiagnostics()
   initializeGraphicsRecovery()
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
+    queueConversationLinkArguments(argv)
     const [win] = BrowserWindow.getAllWindows()
     if (win) {
       if (win.isMinimized()) win.restore()
@@ -172,6 +187,8 @@ if (!gotTheLock) {
 
   app.whenReady().then(() => {
     electronApp.setAppUserModelId('com.aether.ide')
+    // Development and isolated profiles must not replace the installed app's OS handler.
+    if (app.isPackaged && launchInstance.mode === 'default') app.setAsDefaultProtocolClient(CONVERSATION_LINK_SCHEME)
 
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
@@ -186,6 +203,8 @@ if (!gotTheLock) {
     })
 
     registerIpcHandlers()
+    registerConversationLinkIpc()
+    registerOpenWithIpc()
 
     // 用英文输出，避免在非 UTF-8 控制台（Windows 默认 GBK）下显示成乱码
     console.log(

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import type { FsEntry } from '@shared/ipc'
-import { bindSessionWorkspace, captureSessionFileTarget, copy, createFile, createFolder, invalidateSessionFileTarget, paths, readDir, rename, stat, trash, type SessionFileTarget } from '@renderer/core/workspace/fs-client'
+import { assertSessionFileTarget, bindSessionWorkspace, captureSessionFileTarget, copy, createFile, createFolder, invalidateSessionFileTarget, paths, readDir, rename, stat, trash, type SessionFileTarget } from '@renderer/core/workspace/fs-client'
 import { captureSessionGitTarget } from '@renderer/core/git/git-target'
 import { createGitClient } from '@renderer/core/git/git-client'
 import { changeCode, changeCodeClass, changeTitle, normalizeGitPath } from '@renderer/core/git/git-format'
 import { engineStorageKey, getEngineSource, getExpectedEngine, subscribeEngineSource } from '@renderer/core/engine/source'
 import { createFileTreeScope, fileTreePathKey as pathKey, readFileTreeMemory, restoreFileTreeExpansion, writeFileTreeMemory, type FileTreeMemory, type FileTreeScope } from '@renderer/core/workspace/file-tree-memory'
 import { resolveFileTreeReveal } from '@renderer/core/workspace/file-tree-reveal'
+import { subscribeWorkPreview, workPreviewRevision } from '@renderer/core/workbench/preview-request'
 import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { buildFileTreeRows, FileTreeView } from '@renderer/contrib/explorer/FileTreeView'
@@ -17,6 +18,7 @@ import { PromptDialog } from '@renderer/workbench/PromptDialog'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { copyFilePaths, revealFile } from '@renderer/core/editor/file-context-actions'
 import { validateWorkEntryName, workCopyName, workOperationPaths } from './work-workspace-actions'
+import { resolveWorkWorkspaceReferences, workWorkspaceReferencePaths, type WorkWorkspaceReferenceEntry } from './work-workspace-reference'
 import { syncWorkFileOperation } from './work-resource-store'
 import { WorkWorkspaceSearch } from './WorkWorkspaceSearch'
 import type { TextPreviewReveal } from '@renderer/core/editor/TextPreview'
@@ -35,6 +37,7 @@ export interface WorkWorkspacePanelProps {
   revealRequest?: WorkFileRevealRequest | null
   onDidReveal?: (request: WorkFileRevealRequest) => void
   onOpenFile?: (path: string, reveal?: TextPreviewReveal) => void
+  onAddToConversation?: (entries: WorkWorkspaceReferenceEntry[]) => void
 }
 
 interface GitDecoration { code: string; className: string; title: string; additions: number; deletions: number }
@@ -92,8 +95,9 @@ function reconcileTreeMemory(scope: FileTreeScope, saved: FileTreeMemory, restor
  * session-scoped workspace API。不能直接复用 ExplorerView：ExplorerView
  * 订阅的是本地 workspace-store，接入这里会把任务沙箱泄露到 Code 工作区。
  */
-export function WorkWorkspacePanel({ sessionId, workspaceRoot, active = true, revealRequest, onDidReveal, onOpenFile }: WorkWorkspacePanelProps): JSX.Element {
+export function WorkWorkspacePanel({ sessionId, workspaceRoot, active = true, revealRequest, onDidReveal, onOpenFile, onAddToConversation }: WorkWorkspacePanelProps): JSX.Element {
   const source = useSyncExternalStore(subscribeEngineSource, getEngineSource)
+  const mutationRevision = useSyncExternalStore(subscribeWorkPreview, () => workPreviewRevision(source, sessionId ?? undefined, undefined))
   const requestKey = JSON.stringify([source, sessionId, workspaceRoot ?? ''])
   const requestKeyRef = useRef(requestKey)
   requestKeyRef.current = requestKey
@@ -129,6 +133,8 @@ export function WorkWorkspacePanel({ sessionId, workspaceRoot, active = true, re
   const [clipboard, setClipboard] = useState<{ owner: string; paths: string[]; mode: 'cut' | 'copy' } | null>(null)
   const [sortMode, setSortMode] = useState<'default' | 'name'>('default')
   const [busy, setBusy] = useState(false)
+  const [referencing, setReferencing] = useState(false)
+  const referenceRequest = useRef(0)
   const busyRef = useRef(false)
   const selectionAnchor = useRef<string | null>(null)
   const activeRef = useRef(active)
@@ -145,6 +151,11 @@ export function WorkWorkspacePanel({ sessionId, workspaceRoot, active = true, re
   revealRef.current = revealRequest
   const handledReveal = useRef<WorkFileRevealRequest | null>(null)
   const pendingReveal = useRef<{ request: WorkFileRevealRequest; path: string } | null>(null)
+
+  useLayoutEffect(() => {
+    setReferencing(false)
+    return () => { referenceRequest.current++ }
+  }, [requestKey, active])
 
   const loadDirectory = useCallback(async (nextTarget: SessionFileTarget, directory: string, requestGeneration: number, force = false): Promise<FsEntry[] | null> => {
     const key = pathKey(directory)
@@ -464,7 +475,7 @@ export function WorkWorkspacePanel({ sessionId, workspaceRoot, active = true, re
     }
   }
 
-  const refresh = async (): Promise<void> => {
+  const refresh = async (invalidateCached = false): Promise<void> => {
     if (!sessionId || busyRef.current || requestKeyRef.current !== requestKey) return
     const requestGeneration = ++generation.current
     const restoreRequest = ++restoration.current
@@ -480,6 +491,9 @@ export function WorkWorkspacePanel({ sessionId, workspaceRoot, active = true, re
       if (!current()) return
       const nextScope = createFileTreeScope('work', engineStorageKey(nextTarget.expectedEngine ?? getExpectedEngine()), nextTarget.sessionId, nextTarget.root)
       const saved = readFileTreeMemory(nextScope)
+      // Collapsed branches are not reread below. Drop their stale children so
+      // opening one after rollback cannot resurrect deleted file rows.
+      if (invalidateCached) { entriesRef.current = {}; setEntriesByDir({}) }
       if (target?.key !== nextTarget.key) {
         // Rows and operations captured under the old binding cannot be shown
         // as if they belonged to the newly recovered directory.
@@ -514,10 +528,47 @@ export function WorkWorkspacePanel({ sessionId, workspaceRoot, active = true, re
     }
   }
 
+  const refreshRef = useRef(refresh)
+  refreshRef.current = refresh
+  const refreshedMutation = useRef(0)
+  useEffect(() => {
+    if (!mutationRevision || refreshedMutation.current === mutationRevision || !ready || busy || !active) return
+    refreshedMutation.current = mutationRevision
+    void refreshRef.current(true)
+  }, [mutationRevision, ready, busy, active, requestKey])
+
   const entryFor = (path: string | null): FsEntry | null => path ? rows.find(row => pathKey(row.entry.path) === pathKey(path))?.entry ?? null : null
   const destination = (entry: FsEntry | null): string | null => target ? entry?.isDirectory ? entry.path : entry ? paths.dirname(entry.path) : target.root : null
   const currentOwner = (): boolean => requestKeyRef.current === requestKey && activeRef.current
   const selectPaths = (selected: string[]): void => updateMemory({ selection: selected, cursorPath: selected[0] ?? null })
+  const addToConversation = async (selected: readonly string[]): Promise<void> => {
+    if (!target || !onAddToConversation || !currentOwner() || busyRef.current || referencing) return
+    const request = ++referenceRequest.current, capturedGeneration = generation.current
+    const captured = target
+    const current = (): boolean => request === referenceRequest.current && capturedGeneration === generation.current &&
+      captured.source === getEngineSource() && currentOwner()
+    setReferencing(true)
+    setError('')
+    try {
+      assertSessionFileTarget(captured)
+      const entries = await resolveWorkWorkspaceReferences(selected, captured.root, async path => {
+        // File-info deliberately rejects the root; revalidate its directory
+        // binding through the session listing instead of inventing a file path.
+        if (pathKey(path) === pathKey(captured.root)) {
+          await readDir(captured.root, captured)
+          return { isDirectory: true }
+        }
+        return stat(path, captured)
+      }, current)
+      if (!entries?.length || !current()) return
+      assertSessionFileTarget(captured)
+      onAddToConversation(entries)
+    } catch (reason) {
+      if (current()) setError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      if (request === referenceRequest.current) setReferencing(false)
+    }
+  }
   const copySelection = (mode: 'copy' | 'cut', selected = memory.selection): void => {
     if (!target || !currentOwner()) return
     const files = workOperationPaths(selected, target.root)
@@ -649,23 +700,27 @@ export function WorkWorkspacePanel({ sessionId, workspaceRoot, active = true, re
   const menuItems = (): ContextMenuItem[] => {
     if (!menu || menu.owner !== requestKey || !target) return []
     const entry = menu.entry, directory = destination(entry), selected = workOperationPaths(menu.paths, target.root)
+    const references = workWorkspaceReferencePaths(menu.paths, target.root)
     const items: ContextMenuItem[] = []
     if (entry && !entry.isDirectory) items.push({ id: 'open', label: '打开', onSelect: () => activateRow(entry.path) })
+    if (references.length && onAddToConversation) items.push({ id: 'addToChat',
+      label: references.length > 1 ? `添加 ${references.length} 项到对话` : '添加到对话',
+      disabled: busy || referencing, onSelect: () => { void addToConversation(references) } })
     if (directory) items.push(
-      { id: 'newFile', label: '新建文件', disabled: busy, onSelect: () => beginName({ kind: 'file', directory }) },
+      { id: 'newFile', label: '新建文件', separatorBefore: true, disabled: busy, onSelect: () => beginName({ kind: 'file', directory }) },
       { id: 'newFolder', label: '新建文件夹', disabled: busy, onSelect: () => beginName({ kind: 'folder', directory }) })
     if (entry && pathKey(entry.path) !== pathKey(target.root)) items.push({ id: 'rename', label: '重命名', hint: 'F2', disabled: busy, onSelect: () => beginName({ kind: 'rename', entry }) })
     if (menu.paths.length) items.push(
-      { id: 'absolute', label: '复制绝对路径', onSelect: () => void copyFilePaths(menu.paths) },
+      { id: 'absolute', label: '复制绝对路径', separatorBefore: true, onSelect: () => void copyFilePaths(menu.paths) },
       { id: 'relative', label: '复制相对路径', onSelect: () => void copyFilePaths(menu.paths, target.root) })
     if (selected.length) items.push(
-      { id: 'cut', label: selected.length > 1 ? `剪切 ${selected.length} 项` : '剪切', hint: 'Ctrl+X', disabled: busy, onSelect: () => copySelection('cut', selected) },
+      { id: 'cut', label: selected.length > 1 ? `剪切 ${selected.length} 项` : '剪切', separatorBefore: true, hint: 'Ctrl+X', disabled: busy, onSelect: () => copySelection('cut', selected) },
       { id: 'copy', label: selected.length > 1 ? `复制 ${selected.length} 项` : '复制', hint: 'Ctrl+C', onSelect: () => copySelection('copy', selected) })
     items.push({ id: 'paste', label: '粘贴', hint: 'Ctrl+V', disabled: busy || !clipboard?.paths.length || clipboard.owner !== requestKey, onSelect: () => void pasteInto(directory) })
-    if (entry) items.push({ id: 'reveal', label: '在文件资源管理器中显示', disabled: target.expectedEngine?.mode === 'remote',
+    if (entry) items.push({ id: 'reveal', label: '在文件资源管理器中显示', separatorBefore: true, disabled: target.expectedEngine?.mode === 'remote',
       hint: target.expectedEngine?.mode === 'remote' ? '远端文件' : undefined, onSelect: () => void revealFile(entry.path) })
-    if (selected.length) items.push({ id: 'delete', label: selected.length > 1 ? `删除 ${selected.length} 项` : '删除', hint: 'Delete', danger: true, disabled: busy, onSelect: () => void deletePaths(selected) })
-    items.push({ id: 'refresh', label: '刷新', disabled: busy, onSelect: () => void refresh() })
+    if (selected.length) items.push({ id: 'delete', label: selected.length > 1 ? `删除 ${selected.length} 项` : '删除', separatorBefore: true, hint: 'Delete', danger: true, disabled: busy, onSelect: () => void deletePaths(selected) })
+    items.push({ id: 'refresh', label: '刷新', separatorBefore: true, disabled: busy, onSelect: () => void refresh() })
     return items
   }
 

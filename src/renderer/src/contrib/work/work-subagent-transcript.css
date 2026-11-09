@@ -1,5 +1,8 @@
 .work-subagent-transcript { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; }
-.work-subagent-transcript .work-subagent-transcript__scroll { flex: 1 1 auto; overflow: auto; min-width: 0; min-height: 0; padding: 16px; box-sizing: border-box; scrollbar-width: thin; overscroll-behavior: contain; scroll-padding: 8px; }
+.work-subagent-transcript .work-subagent-transcript__scroll { flex: 1 1 auto; overflow: auto; min-width: 0; min-height: 0; padding: 0 16px 16px; box-sizing: border-box; scrollbar-width: thin; overscroll-behavior: contain; scroll-padding: 8px; }
+/* Top padding offsets sticky controls and exposes scrolling text above them.
+   Keep the initial breathing room in content that can leave the viewport. */
+.work-subagent-transcript__scroll::before { content: ''; display: block; height: 16px; }
 .work-subagent-transcript .work-message { margin: 0 0 18px; max-width: 100%; content-visibility: visible; contain-intrinsic-size: none; }
 .work-subagent-transcript .work-message--user { margin-inline-start: auto; }
 .work-subagent-transcript .work-message .md p { color: var(--fg); font-size: inherit; line-height: inherit; margin-block: 8px; }

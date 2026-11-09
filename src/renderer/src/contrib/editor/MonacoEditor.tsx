@@ -166,7 +166,7 @@ export function MonacoEditor({
     // 添加时捕获缓冲区，避免未保存选区到了对话里变成旧磁盘内容。
     const addToChatAction = editor.addAction({
       id: 'aether.addSelectionToChat',
-      label: '添加到对话',
+      label: '添加选区到对话',
       precondition: 'editorHasSelection',
       keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyL],
       contextMenuGroupId: 'navigation',
@@ -174,7 +174,7 @@ export function MonacoEditor({
       run: (instance) => { addSelectionToChat(instance) }
     })
     const addFileToChatAction = editor.addAction({
-      id: 'aether.addFileToChat', label: '将当前文件添加到对话',
+      id: 'aether.addFileToChat', label: '添加到对话',
       contextMenuGroupId: 'navigation', contextMenuOrder: 1.1,
       run: () => {
         const path = currentPathRef.current

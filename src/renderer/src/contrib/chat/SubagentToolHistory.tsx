@@ -12,6 +12,7 @@ import { looksLikeStructuredResult } from './ToolResultData'
 import { WorkErrorNotice } from '../work/WorkErrorNotice'
 import { WorkToolOutcome } from '../work/WorkToolOutcome'
 import { workToolFeedback } from '../work/work-tool-feedback'
+import { readActivityPreview } from '../work/work-activity-presentation'
 import type { ToolActivity } from '@renderer/core/engine/useChat'
 import { parseToolResult } from './tool-result'
 import { toolDisplayName, toolParamSummary, toolPathArg } from './tool-names'
@@ -105,16 +106,21 @@ export function SubagentToolRow({ call, run, latestSeq, open: controlledOpen, on
     metadata: call.error ? { commandJob: { error: call.error } } : undefined,
     state: call.status === 'failed' ? 'error' : call.status === 'succeeded' ? 'done' : call.status === 'cancelled' ? 'cancelled' : 'running'
   }
+  const readRange = useMemo(() => surfaceMode === 'work' ? readActivityPreview({
+    name: call.name, state: call.status === 'succeeded' ? 'done' : call.status,
+    result: call.output ?? '', error: call.error?.message
+  })?.range : undefined, [surfaceMode, call.name, call.status, call.output, call.error?.message])
   const feedback = surfaceMode === 'work' ? workToolFeedback(outcomeTool) : null
   const status = feedback?.label ?? (call.status === 'succeeded' ? '成功' : call.status === 'failed' ? '失败' : call.status === 'cancelled' ? '已取消' : '执行中')
   return <div className={`subagent-card__call${surfaceMode === 'work' ? ' subagent-card__call--work' : ''}`}>
     {surfaceMode === 'code' ? <span className={`subagent-card__call-dot${call.status === 'failed' ? ' subagent-card__call-dot--fail' : ''}`} /> : null}
-    <button type="button" className="subagent-card__call-toggle" aria-expanded={open} aria-label={surfaceMode === 'work' ? `${toolDisplayName(call.name)}${summary ? ` · ${summary}` : ''} · ${status}` : undefined} disabled={!hasDetail} onClick={onToggle ?? (() => setOpen(!open))}>
+    <button type="button" className="subagent-card__call-toggle" aria-expanded={open} aria-label={surfaceMode === 'work' ? `${toolDisplayName(call.name)}${summary ? ` · ${summary}` : ''} · ${status}${readRange ? ` · ${readRange.label}` : ''}` : undefined} disabled={!hasDetail} onClick={onToggle ?? (() => setOpen(!open))}>
       {surfaceMode === 'work' ? <span className="subagent-card__call-icon" aria-hidden="true">{call.status === 'running' ? <Spinner size={14} /> : <Icon name={quietToolIcon(call.name)} size={16} />}</span> : null}
       <span className="subagent-card__call-name">{toolDisplayName(call.name)}</span>
       {surfaceMode === 'code' ? <span className="subagent-card__call-summary">· {status}</span> : null}
       {summary && (surfaceMode === 'code' || !looksLikeStructuredResult(summary)) ? <span className="subagent-card__call-args" title={path || summary}>{summary}</span> : null}
       {surfaceMode === 'work' && call.status !== 'succeeded' ? <span className="subagent-card__call-summary">{status}</span> : null}
+      {readRange ? <span className="subagent-card__call-range" title={readRange.title}>{readRange.label}</span> : null}
       {surfaceMode === 'work' && hasDetail ? <Icon name="chevron-right" size={12} className="subagent-card__call-chevron" /> : null}
     </button>
     {presence.present ? <div className="ui-motion-collapse subagent-card__call-presence" {...presence.motionProps}><div className="ui-motion-collapse__content"><div className="subagent-card__call-detail">{surfaceMode === 'work' ? <WorkToolOutcome tool={outcomeTool} /> : call.error ? <WorkErrorNotice error={call.error.message} /> : null}

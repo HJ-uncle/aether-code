@@ -1,18 +1,95 @@
-.work-final-deliverables { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-3); margin: var(--space-3) 0; }
-.work-final-deliverable { flex: 1 1 320px; max-width: 100%; min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-surface); }
-.work-final-deliverable--image { flex-basis: 360px; }
-.work-final-deliverable__image { display: block; width: 100%; padding: 0; border: 0; background: var(--bg-editor); cursor: zoom-in; }
-.work-final-deliverable__image img { display: block; width: 100%; max-height: 320px; object-fit: contain; }
-.work-final-deliverable__info { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3); }
-.work-final-deliverable__info > svg { flex: 0 0 auto; color: var(--fg-muted); }
-.work-final-deliverable__name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--space-1); }
-.work-final-deliverable__name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
-.work-final-deliverable__name > span { color: var(--fg-muted); font-size: 11px; }
-.work-final-deliverable__loading { display: grid; min-height: 140px; place-content: center; color: var(--fg-muted); font-size: 12px; }
-.work-final-deliverable__error { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: 0 var(--space-3) var(--space-3); color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
+.work-final-deliverables {
+  width: min(100%, 640px);
+  min-width: 0;
+  margin: var(--space-3) 0;
+  container-type: inline-size;
+}
+.work-final-deliverables__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.work-final-deliverable {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+}
+/* Information remains selectable; only the two labelled controls open files
+   or save them. A large invisible row hit area makes these actions ambiguous. */
+.work-final-deliverable__info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 35px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  color: var(--fg);
+  cursor: default;
+  user-select: text;
+}
+.work-final-deliverable__info:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+/* Every file reserves the same small slot, including loading and failed images.
+   A one-pixel asset must never become a full-width media stage. */
+.work-final-deliverable__thumbnail {
+  display: flex;
+  flex: 0 0 32px;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  overflow: hidden;
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  color: var(--fg-muted);
+}
+.work-final-deliverable__thumbnail--image {
+  background-image: repeating-conic-gradient(var(--bg-hover) 0% 25%, transparent 0% 50%);
+  background-size: 12px 12px;
+}
+.work-final-deliverable__thumbnail img { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; }
+.work-final-deliverable__name { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+.work-final-deliverable__name > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-final-deliverable__name strong { color: var(--fg-strong); font-size: 12px; font-weight: 500; line-height: 18px; }
+.work-final-deliverable__name > span { color: var(--fg-muted); font-size: 11px; line-height: 15px; }
+.work-final-deliverable__actions {
+  display: flex;
+  min-width: 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg-hover);
+}
+.work-final-deliverable .work-final-deliverable__action {
+  display: inline-flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  font: 11px/1 var(--font-ui);
+  cursor: pointer;
+  transition: background-color var(--motion-hover) var(--motion-ease), color var(--motion-hover) var(--motion-ease);
+}
+.work-final-deliverable__action + .work-final-deliverable__action { border-left: 1px solid var(--border); }
+.work-final-deliverable__name > .work-final-deliverable__error { display: flex; align-items: center; gap: 6px; overflow: visible; }
+.work-final-deliverable__error > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.work-final-deliverable .work-final-deliverable__retry { flex: 0 0 auto; padding: 0 3px; border: 0; border-radius: 3px; background: transparent; color: var(--fg); font: 11px/15px var(--font-ui); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.work-final-deliverable__actions > button:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg-strong); }
+.work-final-deliverable__actions > button:active:not(:disabled) { background: var(--bg-active); }
+@container (max-width: 459px) {
+  .work-final-deliverables__grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .work-final-deliverable__actions > button { transition: none; }
+}
 .work-final-deliverable button:focus-visible, .work-final-result button:focus-visible, .work-artifacts-workspace button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .work-final-deliverable button:disabled, .work-final-result button:disabled, .work-artifacts-workspace button:disabled { opacity: 0.5; cursor: default; }
-.work-final-deliverable__error > button, .work-final-result__status > button { padding: var(--space-1) var(--space-2); border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-surface); color: var(--fg); font: inherit; cursor: pointer; }
+.work-final-result__status > button { padding: var(--space-1) var(--space-2); border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-surface); color: var(--fg); font: inherit; cursor: pointer; }
 .work-final-result { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; height: 100%; overflow: hidden; background: var(--bg-surface); color: var(--fg); }
 .work-final-result__toolbar { display: flex; flex: 0 0 auto; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); }
 .work-final-result__title { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: var(--space-1); }
@@ -37,7 +114,8 @@
 .work-artifacts-workspace__toolbar .select__trigger { width: 100%; }
 .work-artifacts-workspace__toolbar > span { color: var(--fg-muted); white-space: nowrap; }
 .work-artifacts-workspace__split { display: grid; flex: 1; grid-template-columns: clamp(150px, 28%, 240px) minmax(0, 1fr); min-width: 0; min-height: 0; overflow: hidden; }
-.work-artifacts-workspace__files { overflow: auto; min-width: 0; min-height: 0; padding: var(--space-2); border-right: 1px solid var(--border); background: var(--bg-sidebar); }
+/* 宽窗仍是纵向文件列表；单轴增强按实际overflow生效，不能把纵向原生条一起隐藏。 */
+.work-artifacts-workspace__files { overflow-x: hidden; overflow-y: auto; scrollbar-width: auto; min-width: 0; min-height: 0; padding: var(--space-2); border-right: 1px solid var(--border); background: var(--bg-sidebar); }
 .work-artifacts-workspace__files > button { display: flex; align-items: center; width: 100%; min-height: var(--control-h-lg); gap: var(--space-2); padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius); background: transparent; color: var(--fg); text-align: left; font: inherit; cursor: pointer; }
 .work-artifacts-workspace__files > button > svg { flex: 0 0 auto; color: var(--fg-muted); }
 .work-artifacts-workspace__files > button > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -50,7 +128,7 @@
 .work-artifacts-workspace--changes-fallback > .work-session-artifacts { flex: 1; min-height: 0; }
 @container (max-width: 520px) {
   .work-artifacts-workspace__split { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-  .work-artifacts-workspace__files { display: flex; max-height: 120px; border-right: 0; border-bottom: 1px solid var(--border); }
-  .work-artifacts-workspace__files > button { width: auto; flex: 0 0 auto; max-width: 220px; }
+  .work-artifacts-workspace__files { display: flex; align-items: center; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; max-height: 120px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .work-artifacts-workspace__files > button { width: auto; flex: 0 0 auto; min-width: var(--horizontal-tab-min-width); max-width: 220px; }
   .work-final-result__size { display: none; }
 }

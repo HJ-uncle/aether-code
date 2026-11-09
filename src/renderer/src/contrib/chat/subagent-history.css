@@ -26,7 +26,10 @@
 .subagent-card__call--work .subagent-card__call-name { font-weight: 400; color: var(--fg); }
 .subagent-card__call--work .subagent-card__call-args { color: var(--fg-muted); font: inherit; }
 .subagent-card__call--work .subagent-card__call-summary { margin-left: auto; font-size: 11px; }
-.subagent-card__call-chevron { flex: 0 0 12px; margin-left: auto; color: var(--fg-faint); transition: transform var(--duration-fast) var(--ease-out); }
+.subagent-card__call-toggle:has(> .subagent-card__call-range) > .subagent-card__call-args { flex: 0 1 auto; }
+.subagent-card__call-range { flex: 0 0 auto; color: var(--fg-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.subagent-card__call-chevron { flex: 0 0 12px; margin-left: auto; color: var(--fg-faint); opacity: 0; transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out); }
+.subagent-card__call-toggle:is(:hover, :focus-visible, [aria-expanded='true']) > .subagent-card__call-chevron { opacity: 1; }
 .subagent-card__call-summary + .subagent-card__call-chevron { margin-left: 0; }
 .subagent-card__call-toggle[aria-expanded="true"] .subagent-card__call-chevron { transform: rotate(90deg); }
 .subagent-card__call--work .subagent-card__call-detail { padding: 4px 6px 12px 30px; }
@@ -37,6 +40,7 @@
 .subagent-history--work .subagent-history__more { border-color: transparent; background: transparent; color: var(--fg-muted); }
 .subagent-history__detail--work .subagent-card__call-section { display: none; }
 .subagent-history__detail--work .subagent-card__call-pre { font-size: 12px; line-height: 1.6; }
+@media (hover: none) { .subagent-card__call-chevron { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
   .subagent-card__call-chevron { transition: none; }
 }

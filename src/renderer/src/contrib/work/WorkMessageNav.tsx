@@ -26,7 +26,7 @@ export function WorkMessageNav({
   onInspectHistory: () => void
   /** Host also handles returning from an unversioned archive page. */
   onLatest: () => void
-}): JSX.Element | null {
+}): JSX.Element {
   const turns = useMemo(() => workNavigationTurns(groups, historyIndex, loadedTurnIds), [groups, historyIndex, loadedTurnIds])
   const pending = useRef<{ userId: string; top: boolean; ready: boolean } | null>(null)
   const pendingCopy = useRef<string | null>(null)
@@ -103,8 +103,12 @@ export function WorkMessageNav({
 
   // Work mutations keep their existing confirmation and controller guards in
   // the message actions. This navigator only reads, copies and marks turns.
-  return <MessageNavRail sessionId={`work:${sessionKey}`} turns={turns} containerRef={scrollRef}
-    turnSelector={TURN_SELECTOR} navigationKey={`${firstId ?? ''}:${request}`}
-    onNavigate={navigate} onTop={top} onBottom={latest} onCopy={copy} disabled
-    className="work-message-nav" />
+  // Keep the rail's footprint during loading and short conversations so the
+  // message column never shifts beneath the fixed running-service button.
+  return <div className="work-message-nav-slot">
+    <MessageNavRail sessionId={`work:${sessionKey}`} turns={turns} containerRef={scrollRef}
+      turnSelector={TURN_SELECTOR} navigationKey={`${firstId ?? ''}:${request}`}
+      onNavigate={navigate} onTop={top} onBottom={latest} onCopy={copy} disabled
+      className="work-message-nav" />
+  </div>
 }

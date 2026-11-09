@@ -64,6 +64,14 @@ export function requestWorkPreviews(source: number, sessionId: string, paths: re
 export function requestWorkPreview(source: number, sessionId: string, path: string, workspaceRoot?: string | null): number {
   return requestWorkPreviews(source, sessionId, [path], workspaceRoot)
 }
+/** Rollback can affect files not mounted in the tree and command-created
+ * directories. Invalidate the entire owning session, including retained tabs. */
+export function requestWorkSessionRefresh(source: number, sessionId: string): number {
+  const revision = ++nextRevision
+  requestSessionPreview(source, sessionId, revision)
+  for (const listener of listeners) listener()
+  return revision
+}
 export function workPreviewRevision(source: number, sessionId: string | undefined, path: string | undefined, workspaceRoot?: string | null): number {
   // Existing callers may issue an unrooted request; retain its exact-path
   // lookup while also matching relative receipts to absolute file previews.

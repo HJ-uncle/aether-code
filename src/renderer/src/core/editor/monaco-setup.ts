@@ -9,6 +9,7 @@
  */
 import * as monaco from 'monaco-editor'
 import { fileIdentity } from './file-identity'
+import { setupMonacoMenuStyles } from './monaco-menu-styles'
 // monaco 0.56 起 exports 为 `"./*": "./esm/vs/*.js"`，因此子路径要相对 esm/vs/ 写，
 // 不能再写成 monaco-editor/esm/vs/... （那会被 exports 映射成 .../esm/vs/esm/vs/...）
 import editorWorker from 'monaco-editor/editor/editor.worker?worker'
@@ -23,6 +24,8 @@ let initialized = false
 export function setupMonacoEnvironment(): void {
   if (initialized) return
   initialized = true
+
+  setupMonacoMenuStyles()
 
   // 补回 Monaco 0.56 移除的 diff 语言（必须在任何 diff model 创建前注册）
   registerDiffLanguage()

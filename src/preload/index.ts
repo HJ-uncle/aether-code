@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { isTrustedWorkbenchUrl } from '../shared/workbench-url'
 import { IPC } from '../shared/ipc'
+import type { ConversationLink } from '../shared/conversation-link'
 import { WORK_QUEUE_IPC, type WorkNextTurnApi, type WorkQueueInvokeResult } from '../shared/work-next-turn-api'
 import { CODE_QUEUE_IPC, type CodeNextTurnApi, type CodeQueueInvokeResult } from '../shared/code-next-turn-api'
 import type { GraphicsSnapshot } from '../shared/graphics'
@@ -13,6 +14,8 @@ import type { EngineImportProgress, EngineRuntimeCatalog, EngineRuntimeInfo } fr
 import type { EngineDiagnostics, EngineDiagnosticsInput } from '../shared/engine-diagnostics'
 import type {
   AppSettings,
+  OpenWithApp,
+  OpenWithAppId,
   CopyIntoWorkspaceInput,
   CopyIntoWorkspaceResult,
   EngineLogEntry,
@@ -148,6 +151,19 @@ const browserApi: BrowserApi = {
 }
 
 const api = {
+  system: {
+    getOpenWithApps: (): Promise<OpenWithApp[]> => ipcRenderer.invoke(IPC.invoke.systemGetOpenWithApps),
+    openWith: (path: string, app: OpenWithAppId): Promise<void> =>
+      ipcRenderer.invoke(IPC.invoke.systemOpenWith, path, app)
+  },
+  conversationLinks: {
+    takePending: (): Promise<ConversationLink[]> => ipcRenderer.invoke(IPC.invoke.conversationLinksTake),
+    onAvailable: (listener: () => void): (() => void) => {
+      const handler = (): void => listener()
+      ipcRenderer.on(IPC.event.conversationLinkAvailable, handler)
+      return () => ipcRenderer.removeListener(IPC.event.conversationLinkAvailable, handler)
+    }
+  },
   workQueue,
   codeQueue,
   browser: browserApi,

@@ -8,6 +8,9 @@ import type { JSX } from 'react'
 
 export type IconName =
   | 'chat'
+  | 'chat-outline'
+  | 'vscode'
+  | 'open-in-new'
   | 'palette'
   | 'graph'
   | 'settings'
@@ -94,8 +97,15 @@ export type IconName =
 const MDI_LOCATE =
   'M12 8a4 4 0 0 1 4 4a4 4 0 0 1-4 4a4 4 0 0 1-4-4a4 4 0 0 1 4-4m-8.95 5H1v-2h2.05C3.5 6.83 6.83 3.5 11 3.05V1h2v2.05c4.17.45 7.5 3.78 7.95 7.95H23v2h-2.05c-.45 4.17-3.78 7.5-7.95 7.95V23h-2v-2.05C6.83 20.5 3.5 17.17 3.05 13M12 5a7 7 0 0 0-7 7a7 7 0 0 0 7 7a7 7 0 0 0 7-7a7 7 0 0 0-7-7'
 
+/** Shared with the contenteditable reference chips, which create their SVG in the DOM. */
+export const CHAT_OUTLINE_PATH = 'M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5Z'
+
 const PATHS: Record<IconName, JSX.Element> = {
+  // MDI brand/navigation paths, matching the installed @iconify-json/mdi set.
+  vscode: <path fill="currentColor" d="M17 16.47V7.39l-6 4.54M2.22 9.19a.86.86 0 0 1-.02-1.15l1.2-1.11c.2-.18.69-.26 1.05 0l3.42 2.61l7.93-7.25c.32-.32.87-.45 1.5-.12l4 1.91c.36.21.7.54.7 1.15v13.5c0 .4-.29.83-.6 1l-4.4 2.1c-.32.13-.92.01-1.13-.2l-8.02-7.3l-3.4 2.6c-.38.26-.85.19-1.05 0l-1.2-1.1c-.32-.33-.28-.87.05-1.2l3-2.7" />,
+  'open-in-new': <path fill="currentColor" d="M14 3v2h3.59l-9.83 9.83l1.41 1.41L19 6.41V10h2V3m-2 16H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2z" />,
   chat: <path d="M3 3h18v14H7l-4 4V3zm3 2v2h12V5H6zm0 4v2h9V9H6z" fill="currentColor" />,
+  'chat-outline': <path d={CHAT_OUTLINE_PATH} fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />,
   palette: (
     <path
       d="M12 3a9 9 0 1 0 0 18h1.5a2.5 2.5 0 0 0 2.5-2.5c0-.6-.24-1.2-.66-1.63-.4-.41-.63-.95-.63-1.52a2.5 2.5 0 0 1 2.5-2.5H19a4 4 0 0 0 4-4c0-3.3-5-5.85-11-5.85zm-5.5 9a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm4-5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm3 5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z"

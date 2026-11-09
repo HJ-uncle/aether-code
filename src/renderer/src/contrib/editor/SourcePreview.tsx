@@ -11,6 +11,7 @@ import { fileIdentity } from '@renderer/core/editor/file-identity'
 import { toast } from '@renderer/core/toast'
 import { buildSourcePreviewDocument } from './source-preview-document'
 import bridgeSource from './preview-bridge.js?raw'
+import { useDocumentContextMenu } from '@renderer/core/editor/useDocumentContextMenu'
 import './source-preview.css'
 
 function toDataUrl(html: string): string {
@@ -40,6 +41,10 @@ export const SourcePreview = forwardRef<SourcePreviewHandle, {
   const epoch = useSyncExternalStore(subscribeEngineSource, getEngineSource)
   const remote = Boolean(target) || isRemoteEngine()
   const frame = useRef<HTMLIFrameElement>(null)
+  const host = useRef<HTMLElement>(null)
+  const { menu, openMenu } = useDocumentContextMenu(host)
+  const openDocumentMenu = useRef(openMenu)
+  openDocumentMenu.current = openMenu
   const [channel] = useState(() => crypto.randomUUID())
   const [document, setDocument] = useState('')
   const [error, setError] = useState('')
@@ -82,6 +87,17 @@ export const SourcePreview = forwardRef<SourcePreviewHandle, {
         ratioRef.current = Math.max(0, Math.min(1, event.data.ratio))
         onScrollRef.current(ratioRef.current)
       }
+      if (event.data.type === 'aether.preview.contextMenu' && typeof event.data.x === 'number' && typeof event.data.y === 'number' &&
+        Number.isFinite(event.data.x) && Number.isFinite(event.data.y) && typeof event.data.text === 'string' && event.data.text.length <= 4 * 1024 * 1024) {
+        const element = frame.current
+        if (!element) return
+        const rect = element.getBoundingClientRect()
+        const scaleX = rect.width / Math.max(1, element.clientWidth), scaleY = rect.height / Math.max(1, element.clientHeight)
+        openDocumentMenu.current({ x: rect.left + Math.max(0, Math.min(element.clientWidth, event.data.x)) * scaleX,
+          y: rect.top + Math.max(0, Math.min(element.clientHeight, event.data.y)) * scaleY, text: event.data.text, hasContent: true,
+          restoreFocus: () => element.contentWindow?.focus(),
+          selectAll: () => { element.contentWindow?.postMessage({ type: 'aether.preview.selectAll', channel }, '*'); element.contentWindow?.focus() } })
+      }
       if (event.data.type === 'aether.preview.openFile' && typeof event.data.path === 'string') {
         try { if (target) assertSessionFileTarget(target) } catch { return }
         const candidate = event.data.path.replace(/\\/g, '/')
@@ -96,10 +112,11 @@ export const SourcePreview = forwardRef<SourcePreviewHandle, {
     // The ref contains the current ratio, independent of render timing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filePath, root, channel, remote, target])
-  return <section className="source-preview" aria-label={kind === 'markdown' ? 'Markdown 预览' : 'HTML 预览'}>
+  return <section ref={host} className="source-preview" tabIndex={0} aria-label={kind === 'markdown' ? 'Markdown 预览' : 'HTML 预览'}>
     {error ? <div className="source-preview__message" role="alert">{error}</div> : null}
     {!document && !error ? <div className="source-preview__message" role="status">正在生成预览…</div> : null}
     {previewSource ? <iframe ref={frame} title={kind === 'markdown' ? 'Markdown 预览内容' : 'HTML 预览内容'}
       sandbox="allow-scripts allow-same-origin" referrerPolicy="no-referrer" src={previewSource} /> : null}
+    {menu}
   </section>
 })

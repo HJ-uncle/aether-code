@@ -56,3 +56,19 @@ export function applyProjectedFinalResult(messages: ChatMessage[], raw: unknown)
   const next = applyFinalResult(messages[owner], result)
   return next === messages[owner] ? messages : messages.map((message, index) => index === owner ? next : message)
 }
+
+/** A current history read may withdraw items without changing publication time.
+ * Keep this authority separate from duplicate or delayed stream frames. */
+export function applyHistoryFinalResult(messages: ChatMessage[], raw: unknown): ChatMessage[] {
+  const result = normalizeFinalResult(raw)
+  if (!result) return messages
+  const merged = applyProjectedFinalResult(messages, result)
+  return merged.map(message => {
+    const previous = message.finalResult
+    return message.role === 'assistant' && message.id === result.assistantMessageId &&
+      message.runId === result.runId && message.conversationId === result.turnId &&
+      (!message.run || message.run.sessionId === result.sessionId) &&
+      previous?.sessionId === result.sessionId && previous.publishedAt === result.publishedAt
+      ? { ...message, finalResult: result } : message
+  })
+}

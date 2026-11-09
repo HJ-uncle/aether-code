@@ -309,6 +309,7 @@ function EditorGroupView({ group, first, focused, split }: {
         {
           id: 'splitRight',
           label: '向右拆分编辑器',
+          separatorBefore: true,
           onSelect: () => splitDocumentToRight(path)
         },
         {
@@ -319,11 +320,13 @@ function EditorGroupView({ group, first, focused, split }: {
         {
           id: 'addToChat',
           label: '添加到对话',
+          separatorBefore: true,
           onSelect: () => { addFilesToChat([{ path, kind: 'file' }]) }
         },
         {
           id: 'copyPath',
           label: '复制绝对路径',
+          separatorBefore: true,
           onSelect: () => void copyFilePaths([path])
         },
         {
@@ -334,11 +337,12 @@ function EditorGroupView({ group, first, focused, split }: {
         {
           id: 'revealFile',
           label: '在文件资源管理器中显示',
+          separatorBefore: true,
           onSelect: () => void revealFile(path)
         }
       )
     }
-    if (split) items.push({ id: 'closeGroup', label: '关闭编辑组', onSelect: () => void closeEditorGroup(group.id) })
+    if (split) items.push({ id: 'closeGroup', label: '关闭编辑组', separatorBefore: true, onSelect: () => void closeEditorGroup(group.id) })
     return items
   }, [menu, tabs, handleClose, group.id, split])
   /** 标签栏键盘导航：方向键/Home/End 移动激活项（对齐 VS Code 的标签行为） */

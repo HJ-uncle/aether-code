@@ -23,6 +23,7 @@ import { rootFollowupCanSubmit, rootFollowupLimitation, rootFollowupMessage, roo
 import { MentionRefPicker } from '@renderer/contrib/chat/MentionRefPicker'
 import { ResourcePicker, type ResourceItem } from '@renderer/contrib/chat/ResourcePicker'
 import { WorkComposerPreferences } from './WorkComposerPreferences'
+import { WorkComposerWorkspace } from './WorkComposerWorkspace'
 import { openAppSettings } from '../settings/app-settings-navigation'
 import { useAppMode } from '@renderer/core/platform/app-mode'
 import { toast } from '@renderer/core/toast'
@@ -37,6 +38,12 @@ import {
   type AttachmentPreview
 } from '../chat/AttachmentChip'
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
+import { shouldAttachPastedText } from '../chat/useAttachments'
+import { composerInputIssue } from '../chat/input-limits'
+import { useWorkReferenceNavigation } from './WorkReferenceNavigation'
+import { parseConversationLink } from '@shared/conversation-link'
+import { resolveConversationReference } from './work-conversation-reference'
+import { ipcErrorMessage } from '@renderer/core/ipc-error'
 
 type WorkController = ReturnType<typeof useWorkController>
 
@@ -51,9 +58,11 @@ export function WorkComposer({
 }): JSX.Element {
   const filesRef = useRef<HTMLInputElement>(null)
   const addingFilesRef = useRef(false)
+  const [resolvingReference, setResolvingReference] = useState(false)
   const inputRef = useRef<MentionInputHandle>(null)
   const composerRef = useRef<HTMLDivElement>(null)
   const workspaceButtonRef = useRef<HTMLButtonElement>(null)
+  const references = useWorkReferenceNavigation()
   const draftState = useWorkDraft(controller.draftSource, controller.activeTask?.id ?? null)
   const userDraftRef = useRef<WorkDraft | null>(null)
   const mentionsRef = useRef<Mention[]>(draftState.mentions)
@@ -70,6 +79,8 @@ export function WorkComposer({
   const polishEpoch = useRef(0)
   const appMode = useAppMode()
   const draft = draftState.text
+  const inputIssue = composerInputIssue(draft)
+  const referencedAttachments = controller.attachmentsForMentions(draftState.mentions)
   const draftLiveRef = useRef(draft)
   const taskLiveRef = useRef(controller.activeTask?.id ?? 'home')
   const draftRevisionRef = useRef(0)
@@ -112,7 +123,7 @@ export function WorkComposer({
     if (!sessionId) return
     const source = getEngineSource(), original = getWorkDraft(controller.draftSource, sessionId), revision = draftRevisionRef.current
     let sameDraft = false
-    try { sameDraft = rootFollowupMessage(original.text, original.mentions, controller.attachments) === sentMessage } catch { /* Keep later attachment edits. */ }
+    try { sameDraft = rootFollowupMessage(original.text, original.mentions, controller.attachmentsForMentions(original.mentions)) === sentMessage } catch { /* Keep later attachment edits. */ }
     flushWorkDrafts(controller.draftSource)
     void operation().then(accepted => {
       if (!accepted || !sameDraft || source !== getEngineSource() || taskLiveRef.current !== sessionId || draftRevisionRef.current !== revision
@@ -122,12 +133,13 @@ export function WorkComposer({
     })
   }
   const submit = (): void => {
+    if (inputIssue) { toast.info(inputIssue); return }
     onPreserveReading?.()
-    if (rootFollowup.busy || rootFollowup.pending || controller.stopping) return
+    if (addingFilesRef.current || rootFollowup.busy || rootFollowup.pending || controller.stopping) return
     if (immediateIntent) {
       if (mentionQuery !== null || resourceQuery !== null || !draft.trim() || !controller.ready || controller.uploading || controller.loading || !controller.historyReady || !rootFollowupCanSubmit(rootAccepting, rootFollowup.capability)) return
       let message: string
-      try { message = rootFollowupMessage(draft, mentionsRef.current, controller.attachments) }
+      try { message = rootFollowupMessage(draft, mentionsRef.current, controller.attachmentsForMentions(mentionsRef.current)) }
       catch (cause) { reportError(cause); return }
       resolveRootFollowup(() => rootFollowup.send(message), message)
       return
@@ -165,7 +177,7 @@ export function WorkComposer({
   }, [draftState])
   useEffect(() => {
     const request = controller.draftFocusRequest
-    if (request?.source === controller.draftSource && request.taskId === controller.activeTask?.id) inputRef.current?.focus()
+    if (request?.source === controller.draftSource && request.taskId === (controller.activeTask?.id ?? null)) inputRef.current?.focus()
   }, [controller.draftFocusRequest])
   useEffect(
     () =>
@@ -212,6 +224,8 @@ export function WorkComposer({
       )
         return
       const polished = result.text.trim()
+      const polishedIssue = composerInputIssue(polished)
+      if (polishedIssue) { toast.info(polishedIssue); return }
       if (polished && polished !== requestDraft) {
         const next = preserveMentions(polished, mentionsRef.current)
         mentionsRef.current = next.mentions
@@ -269,7 +283,8 @@ export function WorkComposer({
                 root={controller.workspacePath ?? null}
                 file={file}
                 onPreview={(target: ChatAttachment, src: string | null) =>
-                  setPreview({ file: target, src })
+                  references ? references.openMention({ source: 'file', origin: 'attachment', path: target.path, displayText: target.name }, undefined, target)
+                    : setPreview({ file: target, src })
                 }
                 onRemove={() => controller.removeAttachment(file.path)}
               />
@@ -334,6 +349,47 @@ export function WorkComposer({
           }}
           onSubmit={submit}
           onPasteFiles={addFiles}
+          onOpenMention={references?.openMention}
+          onPasteText={(text, insertion) => {
+            if (parseConversationLink(text.trim())) {
+              if (!controller.ready || addingFilesRef.current) {
+                toast.info('请等待连接或资料读取完成后再粘贴会话链接。')
+                insertion.cancel()
+                return true
+              }
+              const source = getEngineSource(), taskId = taskLiveRef.current
+              addingFilesRef.current = true
+              setResolvingReference(true)
+              void resolveConversationReference(text.trim()).then(({ mention, notice }) => {
+                if (source !== getEngineSource() || taskLiveRef.current !== taskId) { insertion.cancel(); return }
+                if (insertion.insertMention(mention)) toast.info(notice)
+                else toast.info('草稿位置已变化，请重新粘贴会话链接。')
+              }).catch(error => {
+                insertion.cancel()
+                if (source === getEngineSource() && taskLiveRef.current === taskId) toast.error(ipcErrorMessage(error))
+              }).finally(() => { addingFilesRef.current = false; setResolvingReference(false) })
+              return true
+            }
+            if (!shouldAttachPastedText(text)) return false
+            if (!canAddFiles || addingFilesRef.current) {
+              toast.info(controller.uploading || addingFilesRef.current ? '资料正在添加，请稍候再粘贴。' : '暂时无法添加资料，请稍后重试；已有草稿已保留。')
+              insertion.cancel()
+              return true
+            }
+            const source = getEngineSource(), taskId = taskLiveRef.current
+            addingFilesRef.current = true
+            void controller.addPastedText(text).then(file => {
+              if (source !== getEngineSource() || taskLiveRef.current !== taskId) { insertion.cancel(); return }
+              if (!insertion.insertMention({ source: 'file', origin: 'attachment', path: file.path, displayText: file.name })) {
+                toast.info('原文已保存到任务资料，草稿已变化，可从资料中重新引用。')
+              }
+            }).catch(error => {
+              insertion.cancel()
+              if (source === getEngineSource() && taskLiveRef.current === taskId)
+                toast.error(`粘贴的文本未能保存：${ipcErrorMessage(error)}。已有草稿已保留，可重新粘贴。`)
+            }).finally(() => { addingFilesRef.current = false })
+            return true
+          }}
           onMentionQuery={(query) => {
             setMentionQuery(query)
             if (query !== null) setResourceQuery(null)
@@ -343,6 +399,7 @@ export function WorkComposer({
             if (query !== null) setMentionQuery(null)
           }}
         />
+        {inputIssue ? <div className="work-composer__input-issue" role="alert">{inputIssue}</div> : null}
         <ComposerPolish
           busy={polishing}
           disabled={!draft.trim() || busy || !controller.ready}
@@ -495,12 +552,12 @@ export function WorkComposer({
               <ComposerSend
                 className="work-send"
                 label={immediateIntent ? '立即补充' : queueIntent ? '排到下一轮' : home ? '开始任务' : '发送'}
-                loading={rootFollowup.busy || (queueIntent ? controller.nextTurnQueue.saving : !taskActive && controller.loading)}
-                loadingLabel={immediateIntent ? '正在提交补充…' : queueIntent ? '正在加入下一轮…' : '正在发送…'}
+                loading={resolvingReference || rootFollowup.busy || (queueIntent ? controller.nextTurnQueue.saving : !taskActive && controller.loading)}
+                loadingLabel={resolvingReference ? '正在读取引用会话…' : immediateIntent ? '正在提交补充…' : queueIntent ? '正在加入下一轮…' : '正在发送…'}
                 onClick={submit}
                 disabled={
-                  controller.stopping || Boolean(rootFollowup.pending) || (immediateIntent
-                    ? controller.uploading || controller.loading || !controller.historyReady || !rootFollowupCanSubmit(rootAccepting, rootFollowup.capability) || Boolean(rootFollowupLimitation(mentionsRef.current, controller.attachments))
+                  resolvingReference || Boolean(inputIssue) || controller.stopping || Boolean(rootFollowup.pending) || (immediateIntent
+                    ? controller.uploading || controller.loading || !controller.historyReady || !rootFollowupCanSubmit(rootAccepting, rootFollowup.capability) || Boolean(rootFollowupLimitation(mentionsRef.current, referencedAttachments))
                     : queueIntent ? queueBusy : taskActive || busy) || !controller.ready || (!draft.trim() && !controller.attachments.length)
                 }
               />
@@ -517,7 +574,7 @@ export function WorkComposer({
                 root={controller.workspacePath ?? null}
                 query={mentionQuery ?? ''}
                 onSelect={(mention) => {
-                  inputRef.current?.completeMention(mention)
+                  inputRef.current?.completeMention({ ...mention, origin: mention.source === 'agent' ? undefined : 'workspace' })
                   setMentionQuery(null)
                 }}
                 onClose={() => {
@@ -543,10 +600,16 @@ export function WorkComposer({
             />
           </CompletionPopover>
       </InputComposer>
-      <RootFollowupFeedback key={JSON.stringify([getEngineSource(), controller.activeTask?.id])} controller={rootFollowup} active={taskActive} limitation={!rootAccepting && taskActive ? '正在确认当前任务是否可接收补充，草稿已保留。' : rootFollowupLimitation(mentionsRef.current, controller.attachments)}
+      <RootFollowupFeedback key={JSON.stringify([getEngineSource(), controller.activeTask?.id])} controller={rootFollowup} active={taskActive} limitation={!rootAccepting && taskActive ? '正在确认当前任务是否可接收补充，草稿已保留。' : rootFollowupLimitation(mentionsRef.current, referencedAttachments)}
         onFocusInput={() => inputRef.current?.focus()}
         fallbackHint={!controller.ready ? '引擎尚未就绪，草稿会保留。' : queueIntent ? 'Enter 排到下一轮 · Shift + Enter 换行' : taskActive ? '任务正在准备，草稿会保留。' : 'Enter 发送 · Shift + Enter 换行'}
-        footerAction={!controller.ready ? <button type="button" className="input-composer__history-button" onClick={() => openAppSettings('general')}>引擎设置</button> : undefined}
+        footerAction={<>
+          {home && controller.sources.length ? <button type="button" className="input-composer__history-button" onClick={references?.openSources}>资料 · {controller.sources.length}</button> : null}
+          <WorkComposerWorkspace sessionId={controller.activeTask?.id ?? null} selectedPath={controller.workspacePath}
+            runId={controller.workspaceRunId} draft={home || controller.activeTask?.status === 'draft'}
+            ready={controller.ready} active={appMode === 'work'} remote={controller.remote} />
+          {!controller.ready ? <button type="button" className="input-composer__history-button" onClick={() => openAppSettings('general')}>引擎设置</button> : null}
+        </>}
         onResolve={resolveRootFollowup}
         canRestore={!draft.trim() && !controller.attachments.length} onRestore={message => {
           if (draftLiveRef.current.trim()) return

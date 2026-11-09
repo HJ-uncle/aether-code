@@ -36,6 +36,7 @@ import type {
   GitStashEntry
 } from '@shared/git-types'
 import { documentKey, openFile } from '@renderer/core/editor/editor-store'
+import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
 import { openGitDiff } from './GitDiffView'
 import { startCloneFlow, useGitCloneFlow } from '@renderer/core/git/git-clone-flow'
 import {
@@ -3125,7 +3126,7 @@ export function GitChangesPanel(): JSX.Element {
                 <ul className="git-panel__stash-detail-files-list">
                   {shownStashDetail.files.map((file) => (
                     <li key={file} className="git-panel__stash-detail-file" title={file}>
-                      <Icon name="file" size={16} />
+                      <FileGlyph name={file} />
                       {file}
                     </li>
                   ))}

@@ -8,6 +8,7 @@ import {
 import { createPortal } from 'react-dom'
 import type { SearchHit } from '@shared/ipc'
 import { Icon } from '@renderer/workbench/icons'
+import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
 import { MotionPresence, useMotionPresence } from '@renderer/workbench/MotionPresence'
 import { OverlayScope, useOverlay } from '@renderer/workbench/overlay'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
@@ -398,6 +399,7 @@ export function SearchPanel({ root, search, actions, active = true, embedded = f
                   onClick={() => toggleCollapse(group.path)}
                 >
                   <Icon name={collapsed ? 'chevron-right' : 'chevron'} size={16} />
+                  <FileGlyph name={group.path} />
                   <span className="search-view__file-name">{group.path.split('/').pop()}</span>
                   <span className="search-view__file-dir">
                     {group.path.split('/').slice(0, -1).join('/')}

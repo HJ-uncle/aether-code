@@ -752,7 +752,7 @@ async function main() {
     state.engine = { mode: engine.mode, version: engine.version, instanceId: engine.instanceId, buildId: engine.buildId, baseUrl: engine.baseUrl, accountId: engine.accountId }
     state.memoryPreferences = await request('GET', '/memory/preferences')
     expect(state.memoryPreferences.globalEnabled).toBe(false)
-    expect(state.memoryPreferences.sessionDefaultEnabled).toBe(true)
+    expect(state.memoryPreferences.sessionDefaultEnabled).toBe(false)
     expect(state.memoryPreferences.enabled, 'memory capability must actually be enabled').toBe(true)
     state.browserSettings = await page.evaluate(() => window.aether.browser.getSettings())
     expect(state.browserSettings.aiEnabled).toBe(true)

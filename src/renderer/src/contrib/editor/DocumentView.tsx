@@ -13,6 +13,9 @@ import { EditorBlameStatus } from './EditorBlameStatus'
 import { TextPreview } from '@renderer/core/editor/TextPreview'
 import { SourcePreview, type SourcePreviewHandle } from './SourcePreview'
 import { useEditorPreviewScroll } from './useEditorPreviewScroll'
+import { DocumentMenuProvider } from '@renderer/core/editor/useDocumentContextMenu'
+import { addDocumentSelectionToChat, addFilesToChat } from '../chat/editor-context'
+import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 
 type PreviewMode = 'edit' | 'split' | 'preview'
 const PREVIEW_MODES: { mode: PreviewMode; label: string; title: string }[] = [
@@ -28,7 +31,16 @@ const PREVIEW_MODES: { mode: PreviewMode; label: string; title: string }[] = [
  * 二进制**不提供编辑与保存** —— 用文本编辑器改二进制必然损坏文件。
  * 超限的二进制给出明确说明而不是硬读（见主进程 MAX_BINARY_BYTES）。
  */
-export function DocumentView({ filePath, groupId, active = true }: { filePath: string; groupId?: string; active?: boolean }): JSX.Element {
+export function DocumentView(props: { filePath: string; groupId?: string; active?: boolean }): JSX.Element {
+  const workspace = useWorkspace()
+  return <DocumentMenuProvider value={{ path: props.filePath, root: workspace.root, active: props.active ?? true,
+    onAddFile: () => { addFilesToChat([{ path: props.filePath, kind: 'file' }]) },
+    onAddSelection: text => { addDocumentSelectionToChat(props.filePath, text) } }}>
+    <DocumentViewContent {...props} />
+  </DocumentMenuProvider>
+}
+
+function DocumentViewContent({ filePath, groupId, active = true }: { filePath: string; groupId?: string; active?: boolean }): JSX.Element {
   const doc = useEditorSelector(state => state.docs.get(filePath))
   const cursor = useEditorSelector(state => active ? state.cursor : null)
   const reveal = useEditorSelector(state => active ? state.reveals[filePath] : undefined)

@@ -16,6 +16,7 @@
  */
 import { onStreamEvent } from '../engine/client'
 import { getEngineSource, isRemoteEngine, subscribeEngineSource } from '../engine/source'
+import { subscribeReverts } from '../engine/change-revert'
 import { getLayout, onLayoutChanged } from '../platform/layout-state'
 import { onWorkspaceConnectionChanged, workspaceConnectionKey } from './connection'
 import { paths } from './fs-client'
@@ -36,6 +37,7 @@ let wired = false
 let disposeSource: (() => void) | null = null
 let disposeConnection: (() => void) | null = null
 let disposeStream: (() => void) | null = null
+let disposeReverts: (() => void) | null = null
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 let eventTimer: ReturnType<typeof setTimeout> | null = null
 let inFlight: Promise<void> | null = null
@@ -196,6 +198,7 @@ export function wireWorkspaceLiveSync(): () => void {
     if (payload.fileChange || carriesFileChange(payload.toolResult) || carriesFileChange(payload.toolEnd)) scheduleEventRefresh()
   })
   disposeSource = subscribeEngineSource(configurePolling)
+  disposeReverts = subscribeReverts(scheduleEventRefresh)
   disposeConnection = onWorkspaceConnectionChanged(() => {
     configurePolling()
     scheduleEventRefresh()
@@ -234,12 +237,14 @@ export function wireWorkspaceLiveSync(): () => void {
     if (!wired) return
     wired = false
     disposeStream?.()
+    disposeReverts?.()
     disposeSource?.()
     disposeConnection?.()
     disposeLayout?.()
     disposeVisibility?.()
     disposeWorkspace?.()
     disposeStream = null
+    disposeReverts = null
     disposeSource = null
     disposeConnection = null
     disposeLayout = null

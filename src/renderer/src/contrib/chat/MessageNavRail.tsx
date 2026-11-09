@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type JSX } from 'react'
 import type { ChatMessage } from '@renderer/core/engine/useChat'
+import { horizontalWheelTarget } from '@renderer/core/platform/horizontal-scroll'
 import { ContextMenu, type ContextMenuItem } from '@renderer/workbench/ContextMenu'
 import { Icon } from '@renderer/workbench/icons'
 import { messageNavPanelLayout, resolveActiveNavId } from './message-nav'
@@ -65,7 +66,11 @@ export function MessageNavRail({
   const storageKey = `aether:navMarks:${sessionId}`
   const [marks, setMarks] = useState<Record<string, string>>(() => readMarks(storageKey))
   /** 当前视口所处轮次（滚动联动） */
-  const [activeId, setActiveId] = useState<string | null>(null)
+  const [scrollActiveId, setScrollActiveId] = useState<string | null>(null)
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null)
+  const selection = useRef<{ messageId: string; edge?: 'top'; positioned: boolean } | null>(null)
+  const currentTurns = useRef(turns)
+  currentTurns.current = turns
   /** 右键菜单：记录命中的轮次与鼠标位置 */
   const [menu, setMenu] = useState<{ turn: NavTurn; x: number; y: number } | null>(null)
   const [expanded, setExpanded] = useState(false)
@@ -85,6 +90,7 @@ export function MessageNavRail({
   const focusFrame = useRef(0)
   const panelId = useId()
   const previewId = useId()
+  const activeId = turns.find(turn => turn.message.id === selectedMessageId)?.id ?? scrollActiveId
   const activeIndex = turns.findIndex(turn => turn.id === activeId)
   const previewIndex = turns.findIndex(turn => turn.id === preview?.id)
   const lastTurnId = turns.at(-1)?.id
@@ -127,13 +133,33 @@ export function MessageNavRail({
         id: node.dataset.turnId!,
         top: node.getBoundingClientRect().top - containerTop + container.scrollTop
       }))
+    // A deliberate jump must not be replaced by the viewport's reading probe:
+    // several short turns may fit below it, or share the same clamped scroll
+    // position near the end. Retain that cursor until the reading position moves.
+    const requested = selection.current
+    if (requested) {
+      const turn = currentTurns.current.find(turn => turn.message.id === requested.messageId)
+      const anchor = turn && anchors.find(anchor => anchor.id === turn.id)
+      if (turn && !anchor) return // Work mounts older history asynchronously.
+      if (anchor) {
+        const maximum = Math.max(0, container.scrollHeight - container.clientHeight)
+        const target = requested.edge === 'top' ? 0
+          : Math.max(0, Math.min(maximum, anchor.top - 8))
+        if (Math.abs(container.scrollTop - target) <= 2) { requested.positioned = true; return }
+        // A restored anchor can exist before Work has fetched its full body.
+        // The host owns that asynchronous jump; an old window is not a scroll away.
+        if (!requested.positioned) return
+      }
+      selection.current = null
+      setSelectedMessageId(null)
+    }
     // A short final reply can start below the viewport probe even at the true
     // bottom. Only select the global last turn when its anchor is mounted;
     // the bottom of an older Work history window is not the conversation end.
     const atEnd = container.scrollHeight > container.clientHeight + 2 &&
       container.scrollHeight - container.clientHeight - container.scrollTop <= 2 &&
       anchors.at(-1)?.id === lastTurnId
-    setActiveId(atEnd && lastTurnId ? lastTurnId : resolveActiveNavId(anchors, probe))
+    setScrollActiveId(atEnd && lastTurnId ? lastTurnId : resolveActiveNavId(anchors, probe))
   }, [containerRef, turnSelector, lastTurnId])
 
   // 监听器只绑一次（turns 每次消息变化都是新数组，放进依赖会让 scroll 监听反复重绑）
@@ -145,11 +171,38 @@ export function MessageNavRail({
       cancelAnimationFrame(raf)
       raf = requestAnimationFrame(syncActive)
     }
+    const inspect = (): void => {
+      selection.current = null
+      setSelectedMessageId(null)
+      onScroll()
+    }
+    const onWheel = (event: WheelEvent): void => {
+      if (!event.deltaY || event.defaultPrevented || event.ctrlKey || event.metaKey || horizontalWheelTarget(event)) return
+      // Scrolling a code block or a nested transcript does not move the reading
+      // position. If scroll chaining reaches the outer pane, syncActive handles it.
+      for (let node = event.target instanceof Element ? event.target : null; node && node !== container; node = node.parentElement) {
+        if (node.scrollHeight > node.clientHeight && /^(auto|scroll)$/.test(getComputedStyle(node).overflowY)) return
+      }
+      inspect()
+    }
+    const onPointerDown = (event: PointerEvent): void => { if (event.target === container) inspect() }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented || event.target instanceof Element && event.target.closest('input, textarea, [contenteditable="true"]')) return
+      if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) inspect()
+    }
     container.addEventListener('scroll', onScroll, { passive: true })
+    container.addEventListener('wheel', onWheel, { passive: true })
+    container.addEventListener('touchmove', inspect, { passive: true })
+    container.addEventListener('pointerdown', onPointerDown)
+    container.addEventListener('keydown', onKeyDown)
     syncActive()
     return () => {
       cancelAnimationFrame(raf)
       container.removeEventListener('scroll', onScroll)
+      container.removeEventListener('wheel', onWheel)
+      container.removeEventListener('touchmove', inspect)
+      container.removeEventListener('pointerdown', onPointerDown)
+      container.removeEventListener('keydown', onKeyDown)
     }
   }, [containerRef, syncActive])
 
@@ -161,8 +214,9 @@ export function MessageNavRail({
   const jumpTo = useCallback(
     (turn: NavTurn) => {
       if (onNavigate) {
+        selection.current = { messageId: turn.message.id, positioned: false }
+        setSelectedMessageId(turn.message.id)
         onNavigate(turn)
-        setActiveId(turn.id)
         return
       }
       const container = containerRef.current
@@ -170,20 +224,28 @@ export function MessageNavRail({
       const el = Array.from(container.querySelectorAll<HTMLElement>(turnSelector))
         .find((node) => node.dataset.turnId === turn.id)
       if (!el) return
+      selection.current = { messageId: turn.message.id, positioned: true }
+      setSelectedMessageId(turn.message.id)
       const top = el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
       container.scrollTop = Math.max(0, top - 8)
-      setActiveId(turn.id)
     },
     [containerRef, onNavigate, turnSelector]
   )
 
   const scrollToTop = useCallback(() => {
+    const first = currentTurns.current[0]
+    selection.current = first ? { messageId: first.message.id, edge: 'top', positioned: !onTop } : null
+    setSelectedMessageId(first?.message.id ?? null)
     if (onTop) { onTop(); return }
     const container = containerRef.current
     if (container) container.scrollTop = 0
   }, [containerRef, onTop])
 
   const scrollToBottom = useCallback(() => {
+    // Returning to the live tail must follow new turns, not pin the old last one.
+    selection.current = null
+    setSelectedMessageId(null)
+    setScrollActiveId(currentTurns.current.at(-1)?.id ?? null)
     if (onBottom) { onBottom(); return }
     const container = containerRef.current
     if (container) container.scrollTop = container.scrollHeight
@@ -394,6 +456,16 @@ export function MessageNavRail({
     }
   }, [expanded, containerRef, measurePanel])
 
+  useLayoutEffect(() => {
+    if (expanded) revealNavRow(listRef.current, listRef.current?.querySelector<HTMLElement>('[aria-current="true"]'))
+  }, [expanded, activeId])
+
+  useEffect(() => {
+    selection.current = null
+    setSelectedMessageId(null)
+    syncActive()
+  }, [sessionId])
+
   useEffect(() => {
     closePanel()
     cancelAnimationFrame(focusFrame.current)
@@ -443,7 +515,20 @@ export function MessageNavRail({
         <div id={panelId} className="chat__nav-list" aria-hidden={!expanded} inert={!expanded}
           style={layout ? { left: layout.left, top: layout.top, width: layout.width, height: layout.height,
             '--nav-origin-y': `${layout.originY}px` } as CSSProperties : undefined}>
-          <header className="chat__nav-heading"><span>消息</span><small>{turns.length} 条</small></header>
+          <header className="chat__nav-heading">
+            <span>消息</span>
+            <small aria-label={activeIndex >= 0 ? `当前第 ${activeIndex + 1} 条，共 ${turns.length} 条` : `共 ${turns.length} 条`}>
+              {activeIndex >= 0 ? `${activeIndex + 1} / ${turns.length}` : `${turns.length} 条`}
+            </small>
+            <div className="chat__nav-controls" role="group" aria-label="逐条浏览">
+              <button type="button" className="chat__nav-btn" title="上一条" aria-label="上一条" disabled={activeIndex === 0} onClick={() => stepTurn(-1)}>
+                <Icon name="chevron-up" size={14} />
+              </button>
+              <button type="button" className="chat__nav-btn" title="下一条" aria-label="下一条" disabled={activeIndex === turns.length - 1} onClick={() => stepTurn(1)}>
+                <Icon name="chevron-down" size={14} />
+              </button>
+            </div>
+          </header>
           <div className="chat__nav-entries" ref={listRef}>
             {turns.map((turn, index) => (
               <button key={turn.id} type="button"
@@ -457,14 +542,6 @@ export function MessageNavRail({
                 <span className="chat__nav-item-text">{turn.preview}</span>
               </button>
             ))}
-          </div>
-          <div className="chat__nav-controls">
-            <button type="button" className="chat__nav-btn" title="上一条" aria-label="上一条" onClick={() => stepTurn(-1)}>
-              <Icon name="chevron-up" size={16} />
-            </button>
-            <button type="button" className="chat__nav-btn" title="下一条" aria-label="下一条" onClick={() => stepTurn(1)}>
-              <Icon name="chevron" size={16} />
-            </button>
           </div>
         </div>
       </> : <div className="chat__nav-waves">

@@ -1,3 +1,5 @@
+import { DOCUMENT_CONTEXT_EVENT } from '../../core/editor/document-menu-events'
+
 const FRAME_SELECTION = 'aether-document-selection'
 
 /** A selection belongs to one preview only when both endpoints are inside it. */
@@ -37,9 +39,24 @@ export function bridgeFrameSelection(frame: HTMLIFrameElement): () => void {
     detach()
     const document = frame.contentDocument
     if (!document) return
-    detach = observeSelection(document, () => document.querySelector('main.document-page'), text => {
+    const releaseSelection = observeSelection(document, () => document.querySelector('main.document-page'), text => {
       frame.dispatchEvent(new CustomEvent(FRAME_SELECTION, { bubbles: true, detail: text }))
     })
+    const context = (event: MouseEvent): void => {
+      event.preventDefault()
+      frame.dispatchEvent(new CustomEvent(DOCUMENT_CONTEXT_EVENT, { bubbles: true, cancelable: true, detail: { x: event.clientX, y: event.clientY } }))
+    }
+    const keyboard = (event: KeyboardEvent): void => {
+      if (event.key !== 'ContextMenu' && !(event.key === 'F10' && event.shiftKey)) return
+      event.preventDefault()
+      const selection = document.getSelection()
+      const rect = selection?.rangeCount ? selection.getRangeAt(0).getBoundingClientRect() : null
+      frame.dispatchEvent(new CustomEvent(DOCUMENT_CONTEXT_EVENT, { bubbles: true, cancelable: true,
+        detail: { x: rect?.left ?? 16, y: rect?.bottom ?? 16 } }))
+    }
+    document.addEventListener('contextmenu', context)
+    document.addEventListener('keydown', keyboard)
+    detach = () => { releaseSelection(); document.removeEventListener('contextmenu', context); document.removeEventListener('keydown', keyboard) }
   }
   frame.addEventListener('load', loaded)
   loaded()

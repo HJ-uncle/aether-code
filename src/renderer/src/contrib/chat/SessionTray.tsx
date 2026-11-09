@@ -3,6 +3,7 @@ import type { EngineTodo } from '@shared/ipc'
 import type { ChatAttachment, QueuedMessage } from '@renderer/core/engine/useChat'
 import { readFile } from '@renderer/core/workspace/fs-client'
 import { Icon } from '@renderer/workbench/icons'
+import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
 import { ActionMenu } from '@renderer/workbench/ActionMenu'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { MotionPresence, useMotionPresence } from '@renderer/workbench/MotionPresence'
@@ -440,7 +441,7 @@ export function SessionTray({
                           <QueueThumb key={file.path} root={workspaceRoot} file={file} />
                         ) : (
                           <span key={file.path} className="session-tray__queue-attach" title={file.name}>
-                            <Icon name="file" size={16} />
+                            <FileGlyph name={file.name} mimeType={file.type} />
                           </span>
                         )
                       )}

@@ -385,7 +385,9 @@ export function ChatView(): JSX.Element {
   // 只渲染尾部约 MESSAGE_PAGE_SIZE 条消息（按轮次边界切，不切断一问一答），
   // 滚到顶部附近时自动向前加载一页。窗口在会话内只增不减（流式追加不收缩，
   // 避免阅读中途内容被挤走）；切换会话时重置。
+  const sourceSessionKey = JSON.stringify([connectionKey, sourceEpoch, sessionId])
   const [visibleCount, setVisibleCount] = useState(MESSAGE_PAGE_SIZE)
+  const [navigationStart, setNavigationStart] = useState<{ key: string; turnId: string } | null>(null)
   const { visibleTurns, hiddenTurnCount } = useMemo(() => {
     if (turns.length === 0) return { visibleTurns: turns, hiddenTurnCount: 0 }
     let count = 0
@@ -394,17 +396,30 @@ export function ChatView(): JSX.Element {
       start -= 1
       count += turns[start].messages.length
     }
+    // Explicitly opened history remains mounted as the live tail grows, even
+    // after returning to follow mode. Only a session switch resets that window.
+    const pinned = navigationStart?.key === sourceSessionKey ? turns.findIndex(turn => turn.id === navigationStart.turnId) : -1
+    if (pinned >= 0) start = Math.min(start, pinned)
     return { visibleTurns: turns.slice(start), hiddenTurnCount: start }
-  }, [turns, visibleCount])
+  }, [turns, visibleCount, navigationStart, sourceSessionKey])
+  useLayoutEffect(() => {
+    const first = visibleTurns[0]
+    if (navigationStart?.key === sourceSessionKey && first && navigationStart.turnId !== first.id)
+      setNavigationStart({ key: sourceSessionKey, turnId: first.id })
+  }, [visibleTurns, navigationStart, sourceSessionKey])
   /** 向前加载一页前的滚动快照：加载后用来补偿 scrollTop，防止视口跳动 */
   const prependSnapshotRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
+  const pendingMessageNavigation = useRef<{ key: string; turnId: string; top: boolean } | null>(null)
+  const navigationScrollTop = useRef<number | null>(null)
   const hiddenTurnCountRef = useRef(hiddenTurnCount)
   hiddenTurnCountRef.current = hiddenTurnCount
+  const mountedMessageCount = useRef(0)
+  mountedMessageCount.current = visibleTurns.reduce((total, turn) => total + turn.messages.length, 0)
   const loadEarlier = useCallback(() => {
     if (hiddenTurnCountRef.current === 0) return
     const el = scrollRef.current
     if (el) prependSnapshotRef.current = { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop }
-    setVisibleCount((count) => count + MESSAGE_PAGE_SIZE)
+    setVisibleCount(count => Math.max(count, mountedMessageCount.current) + MESSAGE_PAGE_SIZE)
   }, [])
   // 前插加载完成后做 scrollTop 补偿：新内容插在顶部，视口要往下推同样的高度差
   useLayoutEffect(() => {
@@ -436,7 +451,6 @@ export function ChatView(): JSX.Element {
     activeSessionIdRef.current = sessionId
   }, [sessionId])
 
-  const sourceSessionKey = JSON.stringify([connectionKey, sourceEpoch, sessionId])
   const draftRecoveryKey = JSON.stringify([storageSource, sessionId])
   const rejectedDraft = rejectedDrafts[draftRecoveryKey]
   const attachmentRoot = remoteReadOnly ? null : workspace.root
@@ -520,6 +534,7 @@ export function ChatView(): JSX.Element {
   useEffect(() => {
     prependSnapshotRef.current = null
     setVisibleCount(MESSAGE_PAGE_SIZE)
+    setNavigationStart(null)
   }, [sourceSessionKey])
 
   // 启动 / 会话切换时回放引擎侧历史：conversations 表本来是 AI 的上下文来源，
@@ -619,6 +634,8 @@ export function ChatView(): JSX.Element {
   }, [])
 
   const resumeFollowBottom = useCallback((): void => {
+    pendingMessageNavigation.current = null
+    navigationScrollTop.current = null
     followBottomRef.current = true
     setFollowBottom(true)
     setHasNewWhileUnfollowed(false)
@@ -645,19 +662,27 @@ export function ChatView(): JSX.Element {
     (event: React.WheelEvent<HTMLDivElement>) => {
       // 思考正文有自己的滚动区域；上翻它不能改变外层消息列表的跟随状态。
       if ((event.target as HTMLElement).closest('.logline__detail--thinking')) return
-      if (event.deltaY >= 0) return
       // 横移代码/表格不会离开消息底部；全局滚轮委托会在 React 冒泡之后执行。
       if (horizontalWheelTarget(event.nativeEvent)) return
+      if (!event.deltaY || event.ctrlKey) return
+      pendingMessageNavigation.current = null
+      navigationScrollTop.current = null
+      if (event.deltaY > 0) {
+        if (!followBottomRef.current && measureDistToBottom() < RESUME_FOLLOW_PX) resumeFollowBottom()
+        return
+      }
       const el = scrollRef.current
       if (!el || el.scrollHeight <= el.clientHeight) return
       followBottomRef.current = false
       setFollowBottom(false)
     },
-    []
+    [measureDistToBottom, resumeFollowBottom]
   )
 
   const handleListPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget) return
+    pendingMessageNavigation.current = null
+    navigationScrollTop.current = null
     const el = scrollRef.current
     if (!el || el.scrollHeight <= el.clientHeight) return
     followBottomRef.current = false
@@ -674,9 +699,16 @@ export function ChatView(): JSX.Element {
 
   // 滚回底部附近（含拖动滚动条）时恢复跟随；滚到顶部附近时加载更早的消息
   const handleListScroll = useCallback(() => {
+    const el = scrollRef.current
+    // Short turns can share the bottom clamp. That programmatic landing must
+    // not resume streaming follow or prepend another page over the selection.
+    const navigationLanding = navigationScrollTop.current
+    if (el && navigationLanding !== null) {
+      if (Math.abs(el.scrollTop - navigationLanding) <= 2) return
+      navigationScrollTop.current = null
+    }
     const editingChild = document.activeElement instanceof HTMLElement && Boolean(document.activeElement.closest('.subagent-followup, .subagent-current'))
     if (!editingChild && !followBottomRef.current && measureDistToBottom() < RESUME_FOLLOW_PX) resumeFollowBottom()
-    const el = scrollRef.current
     if (el && el.scrollTop < LOAD_EARLIER_PX) loadEarlier()
   }, [measureDistToBottom, resumeFollowBottom, loadEarlier])
 
@@ -724,6 +756,53 @@ export function ChatView(): JSX.Element {
     resumeFollowBottom()
     scrollToBottom(true)
   }, [resumeFollowBottom, scrollToBottom])
+
+  const landMessageNavigation = useCallback((turnId: string, top: boolean): boolean => {
+    const container = scrollRef.current
+    const anchor = container?.querySelector<HTMLElement>(`:scope > .chat__turn[data-turn-id="${CSS.escape(turnId)}"]`)
+    if (!container || !anchor) return false
+    prependSnapshotRef.current = null
+    container.scrollTop = top ? 0 : Math.max(0,
+      anchor.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 8)
+    navigationScrollTop.current = container.scrollTop
+    setHasNewWhileUnfollowed(measureDistToBottom() > SHOW_BACK_TO_BOTTOM_PX)
+    return true
+  }, [measureDistToBottom])
+
+  const navigateMessageTurn = useCallback((turn: NavTurn, top = false): void => {
+    const index = turns.findIndex(item => item.id === turn.id)
+    if (index < 0) return
+    const first = turns[Math.min(index, hiddenTurnCount)]
+    setNavigationStart({ key: sourceSessionKey, turnId: first.id })
+    followBottomRef.current = false
+    setFollowBottom(false)
+    prependSnapshotRef.current = null
+    navigationScrollTop.current = null
+    pendingMessageNavigation.current = { key: sourceSessionKey, turnId: turn.id, top }
+    if (landMessageNavigation(turn.id, top)) { pendingMessageNavigation.current = null; return }
+    // The rail describes all loaded turns, while Code initially mounts only
+    // the tail. Expand through the requested turn before measuring its anchor.
+    const required = turns.slice(index).reduce((total, item) => total + item.messages.length, 0)
+    setVisibleCount(count => Math.max(count, required))
+  }, [turns, hiddenTurnCount, sourceSessionKey, landMessageNavigation])
+
+  useLayoutEffect(() => {
+    const target = pendingMessageNavigation.current
+    if (!target) return
+    const index = turns.findIndex(turn => turn.id === target.turnId)
+    if (target.key !== sourceSessionKey || index < 0) {
+      pendingMessageNavigation.current = null
+      return
+    }
+    if (landMessageNavigation(target.turnId, target.top)) { pendingMessageNavigation.current = null; return }
+    // A streamed append may arrive in the same commit as the window expansion.
+    const required = turns.slice(index).reduce((total, turn) => total + turn.messages.length, 0)
+    setVisibleCount(count => Math.max(count, required))
+  }, [visibleTurns, turns, sourceSessionKey, landMessageNavigation])
+
+  const navigateMessageTop = useCallback(() => {
+    if (navTurns[0]) navigateMessageTurn(navTurns[0], true)
+  }, [navTurns, navigateMessageTurn])
   useLayoutEffect(() => {
     if (!archivePage || !archiveNavigationRef.current) return
     const action = archiveNavigationRef.current
@@ -1110,17 +1189,12 @@ export function ChatView(): JSX.Element {
   const revertToMessage = useCommittedCallback(
     (message: ChatMessage) => {
       if (!canExecute || sourceEpoch !== getEngineSource() || historyEditRef.current) return
-      void confirmDialog({
-        title: '回退到此处',
-        body: '按轮次回退此消息及后续改动（包含已保留）。文件版本有冲突或缺少快照时将保留并报告；仅全部文件回退完成后删除对应对话。',
-        danger: true,
-        confirmText: '回退'
-      }).then((confirmed) => {
-        if (!confirmed || sourceEpoch !== getEngineSource() || historyEditRef.current) return
+      void (async () => {
         // 引用 chip 一并还原：当初能改「这段代码」再发，回退后也应该能
         const draft = userMessageDraft(message.content)
         void revertFrom(sessionId, message)
-          .then(() => {
+          .then((completed) => {
+            if (!completed) return
             if (sourceEpoch !== getEngineSource()) return
             const revision = saveChatDraft(sessionId, draft.text, storageSource, draft.mentions, nextChatDraftRevision())
             if (displayedSessionRef.current !== sourceSessionKey) return
@@ -1132,7 +1206,7 @@ export function ChatView(): JSX.Element {
             draftEditRevision.current = revision
           })
           .catch(showError)
-      })
+      })()
     }
   )
 
@@ -1178,9 +1252,7 @@ export function ChatView(): JSX.Element {
             total={usageTotal.total}
             rounds={usageTotal.rounds}
             summary={usageTotal.summary}
-            startedAt={usageTotal.startedAt}
-            endedAt={usageTotal.endedAt}
-            streaming={streaming}
+            messages={messages}
           />
         ) : null}
         <button
@@ -1247,6 +1319,10 @@ export function ChatView(): JSX.Element {
           onRetry={retryTurn}
           onRevert={revertToMessage}
           onDelete={deleteTurnById}
+          onNavigate={navigateMessageTurn}
+          onTop={navigateMessageTop}
+          onBottom={jumpToBottom}
+          navigationKey={hiddenTurnCount}
         />
         <div
           className="chat__messages"
@@ -1462,9 +1538,10 @@ export function ChatView(): JSX.Element {
             }}
             onSubmit={submit}
             onPasteFiles={(files) => { if (canExecute) attach.accept(files) }}
-            onPasteText={(text) => {
+            onPasteText={(text, insertion) => {
               // 长文本落成「粘贴的文本-xxx.txt」附件；短文本返回 false 由输入框自行插入
               if (!canExecute || !shouldAttachPastedText(text) || (!remoteReadOnly && !workspace.root)) return false
+              insertion.cancel()
               attach.accept([createPastedTextFile(text)])
               return true
             }}

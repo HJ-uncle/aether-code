@@ -14,6 +14,7 @@ import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { Popover } from '@renderer/workbench/Popover'
 import { SubagentCard } from '../chat/SubagentCard'
+import { FileGlyph } from '../explorer/FileGlyph'
 import { ControllerReceiptHistory, ControllerTrackingRecovery, SubagentFollowupInput } from '../chat/SubagentFollowup'
 import { CollaborationReceiptInspector } from '../chat/CollaborationReceiptInspector'
 import { subagentToolPresentation } from '../chat/subagent-tool-presentation'
@@ -24,7 +25,7 @@ import { trimWorkSubagentSessionCaches } from './work-subagent-memory'
 import { searchWorkSubagentGroups, workSubagentTaskSummary } from './work-subagent-list-presentation'
 import { publishedDetailKey, publishedVisibleWindow, rememberPublishedDetail } from '@renderer/core/engine/published-card-memory'
 import './work-subagents.css'
-import { subagentFollowupMessage } from './subagent-followup-message'
+import { subagentFollowupMessage, subagentInstructionIssue } from './subagent-followup-message'
 
 export interface WorkSubagentsPanelProps {
   sessionId: string | null
@@ -84,6 +85,7 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
   const [revision, setRevision] = useState(0)
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
+  const manualRefresh = useRef(false)
   const [visibleCount, setVisibleCount] = useState(64)
   const [roundCount, setRoundCount] = useState(64)
   const [fixedDetails, setFixedDetails] = useState(new Map<string, SubagentRun>())
@@ -137,6 +139,7 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
     sendingRef.current = false
     continuingRef.current = null
     cancellingRef.current = false
+    manualRefresh.current = false
     setSendingKey(null)
     setCancellingKey(null)
   }, [scope])
@@ -148,7 +151,9 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
       if (pending || document.hidden) return
       pending = true
       try {
-        await refreshSubagentRuns(sessionId, { selectedRunId: selectedRunIdRef.current })
+        const force = manualRefresh.current
+        manualRefresh.current = false
+        await refreshSubagentRuns(sessionId, { selectedRunId: selectedRunIdRef.current, force })
         if (alive && source === getEngineSource()) setError('')
       } catch (cause) {
         if (alive && source === getEngineSource()) setError(cause instanceof Error ? cause.message : String(cause))
@@ -367,6 +372,8 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
     const originalDraft = memory.drafts.get(group.key)
     const originalFiles = memory.attachments.get(group.key)
     const original = originalDraft ?? liveFollowup.restoredDraft?.message ?? ''
+    const issue = !liveFollowup.pending && subagentInstructionIssue(original)
+    if (issue) { memory.errors.set(group.key, issue); redraw(); return }
     let composed: string
     try { composed = subagentFollowupMessage(original, referencedFiles(group.key)) }
     catch (cause) { memory.errors.set(group.key, cause instanceof Error ? cause.message : String(cause)); redraw(); return }
@@ -458,7 +465,7 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
             source={source} ready={ready} visible={panelActive} /> : null}
         </Popover>
       </> : <div className="work-subagents__heading"><h3>协作代理 {groups.length ? <span className="work-subagents__count" title={`已载入 ${groups.length} 个代理`} aria-label={`已载入 ${groups.length} 个代理`}>{groups.length}</span> : null}</h3>{listStatus ? <p>{listStatus}</p> : null}</div>}
-      {!publishedFixedChildren || selected && transcriptIdentity?.childSessionId ? <button type="button" className="work-subagents__refresh" disabled={!sessionId || !ready} onClick={() => setRefreshKey(value => value + 1)} aria-label={selected ? "刷新子代理对话" : "刷新子代理状态"} title={selected ? "刷新对话" : "刷新状态"}><Icon name="restart" size={16} /></button> : null}
+      {!publishedFixedChildren || selected && transcriptIdentity?.childSessionId ? <button type="button" className="work-subagents__refresh" disabled={!sessionId || !ready} onClick={() => { manualRefresh.current = true; setRefreshKey(value => value + 1) }} aria-label={selected ? "刷新子代理对话" : "刷新子代理状态"} title={selected ? "刷新对话" : "刷新状态"}><Icon name="restart" size={16} /></button> : null}
     </header>
     {!selected && (groups.length >= 12 || memory.query) ? <div className="work-subagents__searchbar">
       <label className="work-subagents__search"><Icon name="search" size={14} /><input ref={searchRef} type="search" aria-label="搜索已载入代理" placeholder="搜索已载入代理" value={memory.query}
@@ -484,18 +491,18 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
         <form id={`${followupId}-form`} className="work-subagents__composer" onSubmit={event => { event.preventDefault(); void submitFollowup(selected) }}>
         <span id={`${followupId}-label`} className="work-subagents__input-label">{selected.active ? '补充要求给' : '继续交给'} {selected.label}</span>
         <div className="work-subagents__composer-editor">
-        <SubagentFollowupInput id={`${followupId}-input`} value={liveFollowup.pending?.message ?? selectedDraft} readOnly={Boolean(liveFollowup.pending)} onChange={value => { memory.drafts.set(selected.key, value); memory.errors.delete(selected.key); redraw() }} placeholder={selected.active ? '补充要求…' : isSubagentNeedsUser(selected.latest.subagent) ? '回答问题…' : '继续安排任务…'} labelledBy={`${followupId}-label`} describedBy={`${followupId}-hint`}
+        <SubagentFollowupInput id={`${followupId}-input`} value={liveFollowup.pending?.message ?? selectedDraft} readOnly={Boolean(liveFollowup.pending)} onChange={value => { memory.drafts.set(selected.key, value); memory.errors.delete(selected.key); redraw() }} placeholder={selected.active ? '补充要求…' : isSubagentNeedsUser(selected.latest.subagent) ? '回答问题…' : '继续安排任务…'} labelledBy={`${followupId}-label`} describedBy={`${followupId}-hint${memory.errors.has(selected.key) ? ` ${followupId}-error` : ''}`}
           onDismiss={() => backRef.current?.focus()} onSubmit={() => void submitFollowup(selected)} />
         <div className="work-subagents__composer-actions">
           {availableAttachments.length ? <Popover align="start" width={280} label="引用任务资料" panelClassName="work-subagents__attachment-menu"
             trigger={({ open }) => <button type="button" className="work-subagents__attachment-trigger" aria-label="引用任务资料" title="引用任务资料" aria-expanded={open} disabled={Boolean(liveFollowup.pending) || liveFollowup.busy || sendingKey !== null}><Icon name="paperclip" size={15} />{referencedFiles(selected.key).length ? <span>{referencedFiles(selected.key).length}</span> : null}</button>}>
             <div role="group" aria-label="可引用的任务资料">{availableAttachments.map(file => <label key={file.path}><input type="checkbox" checked={memory.attachments.get(selected.key)?.has(file.path) ?? false} disabled={Boolean(liveFollowup.pending) || liveFollowup.busy || sendingKey !== null}
-              onChange={event => { const next = new Set(memory.attachments.get(selected.key)); if (event.target.checked) next.add(file.path); else next.delete(file.path); memory.attachments.set(selected.key, next); redraw() }} /><span title={file.path}>{file.name}</span></label>)}</div>
+              onChange={event => { const next = new Set(memory.attachments.get(selected.key)); if (event.target.checked) next.add(file.path); else next.delete(file.path); memory.attachments.set(selected.key, next); redraw() }} /><FileGlyph name={file.name} size={16} /><span title={file.path}>{file.name}</span></label>)}</div>
           </Popover> : null}
           <button type="submit" aria-label={liveFollowup.pending ? '核对排队结果' : selected.active ? '发送补充要求' : '继续执行'} title={liveFollowup.pending ? '核对排队结果' : 'Ctrl / ⌘ Enter'} disabled={liveFollowup.busy || sendingKey !== null || !ready || (!liveFollowup.pending && (!selectedDraft.trim() || (selected.active ? !liveFollowup.capability : busy || fixedBusy)))}>{sendingKey === selected.key || liveFollowup.busy ? <Spinner size={14} /> : <Icon name={liveFollowup.pending ? 'restart' : 'send'} size={15} />}</button>
         </div>
         </div>
-        {referencedFiles(selected.key).length && !liveFollowup.pending ? <div className="work-subagents__attachment-chips">{referencedFiles(selected.key).map(file => <span key={file.path} title={file.path}><Icon name="file" size={12} />{file.name}<button type="button" aria-label={`移除引用 ${file.name}`} disabled={liveFollowup.busy || sendingKey !== null} onClick={() => { const next = new Set(memory.attachments.get(selected.key)); next.delete(file.path); memory.attachments.set(selected.key, next); redraw() }}><Icon name="close" size={12} /></button></span>)}</div> : null}
+        {referencedFiles(selected.key).length && !liveFollowup.pending ? <div className="work-subagents__attachment-chips">{referencedFiles(selected.key).map(file => <span key={file.path} title={file.path}><FileGlyph name={file.name} size={12} />{file.name}<button type="button" aria-label={`移除引用 ${file.name}`} disabled={liveFollowup.busy || sendingKey !== null} onClick={() => { const next = new Set(memory.attachments.get(selected.key)); next.delete(file.path); memory.attachments.set(selected.key, next); redraw() }}><Icon name="close" size={12} /></button></span>)}</div> : null}
         <p id={`${followupId}-hint`} className={`work-subagents__composer-hint${!liveFollowup.pending && (selected.active ? Boolean(rootRunId && liveFollowup.capability) : !busy && !fixedBusy) ? " work-subagents__composer-hint--quiet" : ""}`}>{liveFollowup.pending ? '原要求已冻结；核对不会重复发送' : selected.active ? !rootRunId ? '正在确认主任务的协作上下文' : liveFollowup.capability === undefined ? '正在确认引擎协作能力…' : liveFollowup.capability ? '保留代理上下文 · Ctrl / ⌘ Enter 发送' : '当前引擎尚未启用运行中补充要求；草稿会保留' : fixedBusy ? '此代理仍在执行，完成后可继续' : busy ? '请等待主任务结束后发送' : '保留代理上下文 · Ctrl / ⌘ Enter 继续'}</p>
         {liveFollowup.notice ? <p className="work-subagents__followup-notice" role="status">{liveFollowup.notice}</p> : null}
         {liveFollowup.canRetry ? <button type="button" className="work-subagents__retry-original" disabled={liveFollowup.busy || !ready} onClick={() => void retryFollowup(selected)}>重试原请求</button> : null}
@@ -507,7 +514,7 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
         </form>
         <ControllerReceiptHistory records={liveFollowup.history} rootRunId={rootRunId} invocationRunId={selectedRunIdRef.current} disabled={liveFollowup.busy || !ready} onQuery={liveFollowup.queryHistory} onRemove={liveFollowup.removeHistory} />
         {liveFollowup.error ? <p className="work-subagents__error" role="alert">{liveFollowup.error}</p> : null}
-        {memory.errors.get(selected.key) ? <p className="work-subagents__error" role="alert">{memory.errors.get(selected.key)}</p> : null}
+        {memory.errors.get(selected.key) ? <p id={`${followupId}-error`} className="work-subagents__error" role="alert">{memory.errors.get(selected.key)}</p> : null}
       </div> : memory.errors.get(selected.key) ? <p className="work-subagents__error" role="alert">{memory.errors.get(selected.key)}</p> : null}
     </> : <div className="work-subagents__list" ref={listRef} onScroll={event => { memory.listTop = event.currentTarget.scrollTop }}>
       {groups.length ? <>

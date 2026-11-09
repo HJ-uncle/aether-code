@@ -1,0 +1,15 @@
+.work-code-preview {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.work-artifact-panel-v2__content:has(> .work-code-preview),
+.work-artifact-panel-v2[data-resource-tab='true'] .work-artifact-panel-v2__content:has(> .work-code-preview) {
+  display: flex;
+  overflow: hidden;
+  padding: 0;
+}

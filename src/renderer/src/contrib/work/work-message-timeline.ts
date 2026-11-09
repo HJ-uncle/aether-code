@@ -1,7 +1,9 @@
 import type { ChatMessage, ToolActivity } from '@renderer/core/engine/useChat'
 import { isVisibleToolActivity } from '@renderer/core/engine/task-plan'
+import { splitAssistantReasoning } from '@renderer/core/engine/assistant-reasoning'
 import { isWorkStandaloneTool } from './work-tool-presentation'
 import { toolPresentation } from '../chat/tool-presentation'
+import { batchFileSummary } from '../chat/tool-file-args'
 
 export type WorkMessageSegment =
   | { kind: 'followup'; key: string; message: ChatMessage }
@@ -27,7 +29,9 @@ export function captureWorkCollaborationMembership(presentation: readonly WorkPr
 /** Tool screenshots document the process; the assistant's final prose and
  * images stay in the answer, with all receipts retaining their original order. */
 export function workMessagePresentation(segments: WorkMessageSegment[], membership?: WorkCollaborationMembership,
-  finalAnswer?: { text: string } | false): WorkPresentationSegment[] {
+  finalAnswer?: { text: string } | false, turnRunning = true): WorkPresentationSegment[] {
+  const published = finalAnswer ? splitAssistantReasoning(finalAnswer.text) : undefined
+  if (published) finalAnswer = { text: published.content }
   const lastContent = segments.findLast(segment => segment.kind === 'content')
   // Legacy completed turns may end in prose. A progress sentence followed by
   // another tool is never an answer, even when the transport has stopped.
@@ -47,7 +51,7 @@ export function workMessagePresentation(segments: WorkMessageSegment[], membersh
       result.push({ kind: 'answer', key: segment.key, text: segment.text })
     } else if (segment.kind === 'tools') {
       for (const tool of segment.tools) {
-        if (isWorkStandaloneTool(tool)) result.push({ kind: 'tool', key: `tool:${tool.id}`, tool })
+        if (isWorkStandaloneTool(tool, turnRunning)) result.push({ kind: 'tool', key: `tool:${tool.id}`, tool })
         else {
           const previous = result.at(-1)
           const last = previous?.kind === 'process' ? previous.segments.at(-1) : null
@@ -56,6 +60,9 @@ export function workMessagePresentation(segments: WorkMessageSegment[], membersh
         }
       }
     } else appendProcess(segment)
+  }
+  if (published?.thinking && !segments.some(segment => segment.kind === 'thinking' && segment.text.includes(published.thinking))) {
+    appendProcess({ kind: 'thinking', key: 'final-result-thinking', text: published.thinking })
   }
   if (finalAnswer && finalAnswer.text) result.push({ kind: 'answer', key: 'final-result', text: finalAnswer.text })
   // Completed collaboration is reference material. Keep its original position,
@@ -112,7 +119,14 @@ export function workMessageTimeline(message: ChatMessage): WorkMessageSegment[] 
   if (!segments.some(segment => segment.kind === 'content') && message.content) {
     segments.push({ kind: 'content', key: 'content', text: message.content })
   }
-  return segments
+  return segments.flatMap(segment => {
+    if (segment.kind !== 'content') return [segment]
+    const parsed = splitAssistantReasoning(segment.text, message.status === 'streaming')
+    const normalized: WorkMessageSegment[] = []
+    if (parsed.thinking) normalized.push({ kind: 'thinking', key: `${segment.key}:thinking`, text: parsed.thinking })
+    if (parsed.content) normalized.push({ ...segment, text: parsed.content })
+    return normalized
+  })
 }
 
 function browserPageTarget(value: string): string {
@@ -142,6 +156,7 @@ export function workToolTarget(tool: ToolActivity, workspacePath?: string | null
     const args: unknown = JSON.parse(tool.args)
     if (!args || typeof args !== 'object' || Array.isArray(args)) return ''
     const fields = args as Record<string, unknown>
+    if (Object.hasOwn(fields, 'files')) return batchFileSummary(fields) ?? ''
     for (const field of ['path', 'filePath', 'file_path', 'file', 'command', 'pattern', 'query', 'url', 'description', 'task', 'title', 'skill', 'name']) {
       const value = fields[field]
       if (typeof value !== 'string' || !value.trim()) continue

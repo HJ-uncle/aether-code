@@ -42,6 +42,9 @@ export function isCommandAvailableInMode(id: string): boolean {
     id.startsWith('aether.engine.') ||
     [
       'aether.commandPalette.toggle',
+      // These commands route to the active mode's session-scoped terminal.
+      'aether.panel.terminal',
+      'aether.terminal.newLocal',
       'aether.view.appSettings',
       'aether.view.models',
       'aether.view.security'

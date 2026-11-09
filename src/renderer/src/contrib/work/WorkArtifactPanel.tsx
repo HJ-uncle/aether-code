@@ -12,19 +12,23 @@ import './work-artifact-panel.css'
 import type { FsFileContent } from '@shared/ipc'
 import { hasBinaryFileSignature, hasOfficeFileSignature } from '@shared/file-signature'
 import { FilePreview } from '../editor/FilePreview'
-import { WorkTextPreview, isLargeWorkText } from './WorkTextPreview'
+import { FileGlyph } from '../explorer/FileGlyph'
+import { isLargeWorkText } from './WorkTextPreview'
+import { WorkCodePreview } from './WorkCodePreview'
+import type { Mention } from '../chat/mention-context'
 import type { TextPreviewReveal } from '@renderer/core/editor/TextPreview'
 import { readWorkFileCached } from './work-file-read-cache'
 import { subscribeWorkPreview, workPreviewRevision } from '@renderer/core/workbench/preview-request'
 import { observePreviewSelection } from '@renderer/contrib/documents/document-selection'
 import { runHtmlFile } from '../editor/run-html'
 import { browserAction } from '../browser/browser-store'
+import { DocumentMenuProvider, useDocumentContextMenu, type DocumentMenuOptions } from '@renderer/core/editor/useDocumentContextMenu'
 
 export interface WorkArtifactPanelProps {
   artifact: WorkArtifact | null
   workspaceRoot?: string | null
   sessionId?: string
-  onAddToConversation?: (artifact: WorkArtifact, selection?: string, selectionCoverage?: WorkArtifactContent['coverage']) => void
+  onAddToConversation?: (artifact: WorkArtifact, selection?: string, selectionCoverage?: WorkArtifactContent['coverage'], reference?: Mention) => void
   onOpenFile?: (artifact: WorkArtifact) => void
   artifacts?: WorkArtifact[]
   onSelect?: (id: string) => void
@@ -43,12 +47,6 @@ export interface WorkArtifactPanelProps {
 function isMarkdown(name: string): boolean {
   return /\.(md|markdown|mdx)$/i.test(name)
 }
-function isText(name: string): boolean {
-  return /\.(txt|json|ya?ml|xml|tsx?|jsx?|[cm][jt]s|css|scss|less|html?|svg|py|go|rs|java|c|cpp|h|sh|sql|toml|ini|env)$/i.test(
-    name
-  )
-}
-
 async function readWorkFile(
   path: string,
   sessionId: string | undefined,
@@ -149,7 +147,22 @@ function ArtifactContent({
   const mounted = useRef(true)
   const [mode, setMode] = useState<'preview' | 'source'>(reveal ? 'source' : 'preview')
   const [selection, setSelection] = useState('')
+  const [codeSelections, setCodeSelections] = useState<Mention[]>([])
+  const sourcePreview = content !== null && !value?.isBinary && Boolean(artifact) &&
+    (isLargeWorkText(content) || mode !== 'preview' || !isMarkdown(artifact!.name))
   const previewRef = useRef<HTMLDivElement>(null)
+  const documentMenu: DocumentMenuOptions = {
+    identity: `${epoch}:${sessionId}:${artifact?.id}`,
+    path: read.path ?? artifact?.path, root: workspaceRoot,
+    active: active && !loading && !error && artifact?.status !== 'deleted',
+    onAddFile: onAddToConversation ? () => {
+      if (artifact && active && epoch === getEngineSource()) onAddToConversation({ ...artifact, content: null })
+    } : undefined,
+    onAddSelection: onAddToConversation ? text => {
+      if (artifact && active && epoch === getEngineSource()) onAddToConversation({ ...artifact, content: null }, text, value?.coverage)
+    } : undefined
+  }
+  const { menu: documentContextMenu } = useDocumentContextMenu(previewRef, documentMenu)
 
   useEffect(() => {
     // A search hit refers to source coordinates. Only a new request changes
@@ -237,8 +250,9 @@ function ArtifactContent({
 
   useEffect(() => {
     setSelection('')
-    return active && previewRef.current ? observePreviewSelection(previewRef.current, setSelection) : undefined
-  }, [artifact?.id, active, readKey, mode])
+    setCodeSelections([])
+    return active && !sourcePreview && previewRef.current ? observePreviewSelection(previewRef.current, setSelection) : undefined
+  }, [artifact?.id, active, readKey, mode, sourcePreview])
 
   if (!artifact)
     return (
@@ -251,7 +265,7 @@ function ArtifactContent({
 
   if (artifact.status === 'deleted') return (
     <section className="work-artifact-panel-v2 work-artifact-panel-v2--empty" aria-label="已删除的成果" data-document-session={sessionId} data-document-path={artifact.path}>
-      <Icon name="file" size={22} />
+      <FileGlyph name={artifact.path || artifact.name} size={22} />
       <strong>{artifact.name} 已删除</strong>
       <span>保留生成记录，当前文件已删除。</span>
     </section>
@@ -306,9 +320,19 @@ function ArtifactContent({
   }
   const addReference = (): void => {
     if (!active || epoch !== getEngineSource()) return
+    if (sourcePreview && codeSelections.length) {
+      for (const reference of codeSelections) addCodeReference(reference)
+      return
+    }
     // A whole-file reference resolves its path at the next send. Never inject
     // the receipt bytes as though they were the successfully read version.
-    onAddToConversation?.({ ...artifact, content: null }, selection || undefined, selection ? value?.coverage : undefined)
+    onAddToConversation?.({ ...artifact, content: null }, sourcePreview ? undefined : selection || undefined, !sourcePreview && selection ? value?.coverage : undefined)
+  }
+  const addCodeReference = (reference?: Mention): void => {
+    if (!active || epoch !== getEngineSource()) return
+    const suffix = value?.coverage === 'receipt' ? '（历史回执）' : value?.coverage === 'partial' ? '（预览片段）' : ''
+    const quoted = reference && suffix ? { ...reference, displayText: `${reference.displayText}${suffix}` } : reference
+    onAddToConversation?.({ ...artifact, content: null }, reference?.content, reference ? value?.coverage : undefined, quoted)
   }
   // Use the file that actually satisfied the preview read, including a bounded
   // local recovery, rather than the possibly stale path in a write receipt.
@@ -316,7 +340,7 @@ function ArtifactContent({
   const runRoot = runPath && workspaceRoot && paths.contains(workspaceRoot, runPath)
     ? workspaceRoot : runPath ? paths.dirname(runPath) : undefined
   const canRun = /\.html?$/i.test(artifact.name) && !externalFile && !isRemoteEngine()
-  const referenceLabel = selection ? '引用选中内容' : '添加到对话'
+  const referenceLabel = '添加到对话'
   const copyLabel = value?.coverage === 'partial' ? '复制片段' : value?.coverage === 'receipt' ? '复制回执' : '复制'
   const saveLabel = saving ? '正在保存…' : value?.isBinary ? '保存原文件' : value?.coverage === 'partial' ? '保存预览片段' : value?.coverage === 'receipt' ? '保存历史回执' : '保存副本'
   return (
@@ -337,9 +361,9 @@ function ArtifactContent({
         </button> : null}
         <button type="button" className="work-artifact-panel-v2__action work-artifact-panel-v2__action--primary"
           aria-label={referenceLabel} title={referenceLabel}
-          onPointerDown={event => { if (selection) event.preventDefault() }}
+          onPointerDown={event => { if (selection || codeSelections.length) event.preventDefault() }}
           onClick={addReference} disabled={!active || !onAddToConversation || !artifact.path}>
-          <Icon name="chat" size={14} /><span className="work-artifact-panel-v2__action-label">{selection ? '引用选区' : '引用'}</span>
+          <Icon name="chat-outline" size={14} /><span className="work-artifact-panel-v2__action-label">添加到对话</span>
         </button>
         {isMarkdown(artifact.name) ? <div className="work-artifact-panel-v2__modes" role="group" aria-label="文件显示方式">
           <button type="button" aria-label="预览" title="预览" aria-pressed={mode === 'preview'} onClick={() => setMode('preview')}>
@@ -386,7 +410,7 @@ function ArtifactContent({
           <button type="button" className="work-quiet-button" onClick={() => setReadVersion(version => version + 1)}>重试读取</button>
         </div>
       ) : null}
-      <div className={`work-artifact-panel-v2__content work-artifact-preview${value?.base64 || value?.bytes ? ' work-artifact-panel-v2__content--document' : ''}`} ref={previewRef}>
+      <DocumentMenuProvider value={documentMenu}><div className={`work-artifact-panel-v2__content work-artifact-preview${value?.base64 || value?.bytes ? ' work-artifact-panel-v2__content--document' : ''}`} ref={previewRef} tabIndex={0}>
         {loading ? (
           <div className="work-artifact-panel-v2__loading" role="status">
             <Spinner size={16} />
@@ -405,7 +429,7 @@ function ArtifactContent({
             </button>
           </div>
         ) : value?.isBinary && (value.base64 || value.bytes) ? (
-          <FilePreview name={artifact.name} path={artifact.path} base64={value.base64} bytes={value.bytes} size={value.size ?? 0} active={active} />
+          <FilePreview name={artifact.name} path={read.path ?? artifact.path} base64={value.base64} bytes={value.bytes} size={value.size ?? 0} active={active} />
         ) : value?.isBinary ? (
           <div className="work-artifact-panel-v2__empty" role="status">
             {language} 文件 · {value.notice}
@@ -414,9 +438,7 @@ function ArtifactContent({
           <div className="work-artifact-panel-v2__empty">
             文件已生成，当前没有可读回执。可以添加到对话，让 AI 继续处理。
           </div>
-        ) : isLargeWorkText(content) ? (
-          <WorkTextPreview key={`${artifact.id}:${readVersion}`} content={content} name={artifact.name} reveal={reveal} active={active} />
-        ) : mode === 'preview' && isMarkdown(artifact.name) ? (
+        ) : !isLargeWorkText(content) && mode === 'preview' && isMarkdown(artifact.name) ? (
           <div className="work-artifact-panel-v2__markdown">
             <Markdown
               text={content}
@@ -425,12 +447,13 @@ function ArtifactContent({
               }
             />
           </div>
-        ) : isText(artifact.name) ? (
-          <WorkTextPreview key={`${artifact.id}:${readVersion}`} content={content} name={artifact.name} reveal={reveal} active={active} />
         ) : (
-          <WorkTextPreview key={`${artifact.id}:${readVersion}`} content={content} name={artifact.name} reveal={reveal} active={active} />
+          <WorkCodePreview key={`${artifact.id}:${readVersion}`} content={content} name={artifact.name}
+            path={read.path ?? artifact.path} origin={inResourceTab ? 'workspace' : 'artifact'} reveal={reveal} active={active}
+            onSelectionChange={setCodeSelections} onAddToConversation={onAddToConversation ? addCodeReference : undefined} />
         )}
-      </div>
+      </div></DocumentMenuProvider>
+      {documentContextMenu}
     </section>
   )
 }

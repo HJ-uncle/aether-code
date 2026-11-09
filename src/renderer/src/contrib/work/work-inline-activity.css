@@ -24,14 +24,28 @@
 .compact-tool-row--quiet .logline__name { font-size: 12px; }
 .compact-tool-row--quiet .logline__summary { opacity: 1; }
 .compact-tool-row--quiet .logline__status { flex: 0 0 auto; margin-left: auto; font-size: 11px; color: var(--fg-muted); white-space: nowrap; }
+.compact-tool-row--quiet > .logline:has(> .logline__read-range) > .logline__summary { flex: 0 1 auto; }
+.compact-tool-row--quiet .logline__read-range { flex: 0 0 auto; color: var(--fg-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* File identity and actual page bounds stay visible even with the source closed.
+ * Wrap whole file groups; a narrow row must not hide later batch members. */
+.compact-tool-row--quiet.compact-tool-row--files > .logline { height: auto; min-height: 28px; align-items: flex-start; padding-block: 4px; line-height: 20px; }
+.compact-tool-row--files .logline__icon { height: 20px; }
+.compact-tool-row--files .logline__name { line-height: 20px; }
+.compact-tool-row--files .logline__files { display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: 2px 12px; min-width: 0; white-space: normal; text-align: left; }
+.compact-tool-row--files .logline__file { display: inline-flex; align-items: baseline; gap: 4px; min-width: 0; max-width: 100%; }
+.compact-tool-row--files .logline__file-name { min-width: 0; color: var(--fg); overflow-wrap: anywhere; }
+.compact-tool-row--files .logline__file-range,
+.compact-tool-row--files .logline__file-state { flex: 0 0 auto; color: var(--fg-muted); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.compact-tool-row--quiet.compact-tool-row--files > .logline > .logline__chevron { margin-top: 4px; }
 .compact-tool-row--quiet .logline__icon--running,
 .compact-tool-row--quiet .logline__icon--waiting { color: var(--accent); }
 .compact-tool-row--quiet[data-tool-state='error'] .logline__status,
 .compact-tool-row--quiet[data-tool-state='interrupted'] .logline__status,
 .compact-tool-row--quiet .logline__icon--error,
 .compact-tool-row--quiet .logline__icon--interrupted { color: var(--fg-muted); }
-/* Work disclosures are always visible; hover must not shift their shared column. */
-:root .compact-tool-row--quiet > .logline > .logline__chevron { flex: 0 0 12px; opacity: 0.6; margin-left: auto; translate: none; transition: transform var(--duration-fast) var(--ease-out); }
+/* 折叠行只在操作时提示入口，展开后保留收起提示；占位固定，文字不会跳动。 */
+:root .compact-tool-row--quiet > .logline > .logline__chevron { flex: 0 0 12px; opacity: 0; margin-left: auto; translate: none; transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out); }
+:root .compact-tool-row--quiet > .logline:is(:hover, :focus-visible, [aria-expanded='true']) > .logline__chevron { opacity: 0.6; }
 :root .compact-tool-row--quiet > .logline > .logline__status + .logline__chevron { margin-left: 0; }
 .compact-tool-row--quiet .logline__detail { margin: 0 var(--space-2) var(--space-2) 14px; padding: var(--space-1) 0 0 var(--space-3); }
 .compact-tool-row--quiet .logline__metadata { margin: 0 0 var(--space-2); color: var(--fg-muted); font: 11px/1.5 var(--font-ui); font-variant-numeric: tabular-nums; }
@@ -65,7 +79,11 @@
 .work-inline-activity__pages button:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg); }
 .work-inline-activity button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .work-inline-activity__pages { padding: 4px 6px; border-top: 1px solid var(--border); font-variant-numeric: tabular-nums; }
-@media (prefers-reduced-motion: reduce) { .work-inline-activity__chevron { transition: none; } }
+@media (hover: none) { :root .compact-tool-row--quiet > .logline > .logline__chevron { opacity: 0.6; } }
+@media (prefers-reduced-motion: reduce) {
+  .work-inline-activity__chevron,
+  :root .compact-tool-row--quiet > .logline > .logline__chevron { transition: none; }
+}
 /* Keep screenshots and process text opaque while their container slides closed. */
 :root .work-message__process[data-motion-state],
 :root .work-inline-activity .ui-motion-collapse[data-motion-state],

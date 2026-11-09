@@ -96,12 +96,12 @@ export function GitDiffView(): JSX.Element {
       const unregister = registerActiveEditor(target, 'git-diff')
       const originalEditor = editor.getOriginalEditor()
       const unregisterOriginal = registerActiveEditor(originalEditor, 'git-diff-original')
-      const originalSelectionAction = originalEditor.addAction({ id: 'aether.diff.addOriginalSelectionToChat', label: '添加到对话',
+      const originalSelectionAction = originalEditor.addAction({ id: 'aether.diff.addOriginalSelectionToChat', label: '添加选区到对话',
         precondition: 'editorHasSelection', contextMenuGroupId: 'navigation',
         keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyL],
         run: (instance) => { addSelectionToChat(instance, absolute) }
       })
-      const selectionAction = target.addAction({ id: 'aether.diff.addSelectionToChat', label: '添加到对话',
+      const selectionAction = target.addAction({ id: 'aether.diff.addSelectionToChat', label: '添加选区到对话',
         precondition: 'editorHasSelection', contextMenuGroupId: 'navigation',
         keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyL],
         run: (instance) => { addSelectionToChat(instance, absolute) }

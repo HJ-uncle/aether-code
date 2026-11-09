@@ -63,6 +63,13 @@ function knownReason(raw: string, state: Record<string, unknown> | undefined): s
   if (haystack.includes('step_limit') || haystack.includes('steps limit')) return '任务达到最大执行步骤，已停止继续运行。请拆分任务后重试。'
   if (haystack.includes('usage_limit') || haystack.includes('rate limit')) return '模型服务达到用量或速率限制，请稍后重试。'
   if (haystack.includes('authorization') || haystack.includes('needs approval')) return '任务正在等待授权，完成授权后可继续执行。'
+  const status = textField(state?.status)
+  // HTTP/SSE envelopes are provider diagnostics, not a user-facing answer.
+  // A successful or pending structured state must not be reclassified from a
+  // quoted transport error in its text; known structured reasons take priority.
+  if ((!state || status === 'failed' || status === 'interrupted') && /^5\d{2}\s+(?:event:\s*error\b|(?:data:\s*)?\{)/i.test(raw)) {
+    return '模型服务暂时异常，本次执行未完成。请稍后重试。'
+  }
   return undefined
 }
 

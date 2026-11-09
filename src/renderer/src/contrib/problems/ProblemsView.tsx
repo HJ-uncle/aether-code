@@ -2,6 +2,7 @@ import { useState, type JSX } from 'react'
 import { openFile } from '@renderer/core/editor/editor-store'
 import { useProblems, type ProblemItem } from '@renderer/core/lsp/problems-store'
 import { Icon, type IconName } from '@renderer/workbench/icons'
+import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
 import { pushPendingMention, pushPendingMentions } from '@renderer/contrib/chat/pending-mentions'
 import type { Mention } from '@renderer/contrib/chat/MentionInput'
 import { getWorkspaceState } from '@renderer/core/workspace/workspace-store'
@@ -177,7 +178,7 @@ function FileGroup({
         <span className={`problems-view__chevron${collapsed ? '' : ' is-open'}`} aria-hidden="true">
           <Icon name="chevron-right" size={16} />
         </span>
-        <Icon name="file" size={16} />
+        <FileGlyph name={filePath} />
         <span className="problems-view__file-name">{fileName(filePath)}</span>
         <span className="problems-view__file-count">
           {errors > 0 ? `${badgeCount(errors)} 错误` : ''}

@@ -16,12 +16,13 @@ import { useCollapseMemory } from './useCollapseMemory'
 import { WorkToolOutcome } from '../work/WorkToolOutcome'
 import { WorkErrorNotice } from '../work/WorkErrorNotice'
 import { workToolFeedback } from '../work/work-tool-feedback'
+import type { ReadActivityFileSummary, ReadActivityLineRange } from '../work/work-activity-presentation'
 import { quietToolIcon } from './quiet-tool-icon'
 
 /** Code and Work share the same one-line receipt and result-only disclosure. */
 export const CompactToolRow = memo(function CompactToolRow({
   tool, memoryKey, summary: summaryOverride, state = tool.state,
-  fileContext, onOpenFile, defaultOpen, structuredResult = false, quiet = false, detailFooter
+  fileContext, onOpenFile, defaultOpen, structuredResult = false, quiet = false, detailFooter, readRange, readFiles
 }: {
   tool: ToolActivity
   memoryKey?: string
@@ -34,6 +35,8 @@ export const CompactToolRow = memo(function CompactToolRow({
   /** Work keeps routine receipts quiet while retaining the full Code presentation. */
   quiet?: boolean
   detailFooter?: ReactNode
+  readRange?: ReadActivityLineRange
+  readFiles?: ReadActivityFileSummary[]
 }): JSX.Element {
   const { engine } = useApp()
   const [memory, setMemory] = useCollapseMemory(memoryKey ?? `tool:${tool.id}`)
@@ -41,7 +44,10 @@ export const CompactToolRow = memo(function CompactToolRow({
   const result = toolPresentation(tool)
   const open = memory ?? defaultOpen ?? result.images.length > 0
   const label = toolDisplayName(tool.name)
-  const summary = summaryOverride ?? toolParamSummary(tool.args)
+  const visibleFiles = quiet && readFiles?.length ? readFiles : undefined
+  const fileStateLabel = (file: ReadActivityFileSummary): string => file.state === 'error' ? '失败' : file.state === 'cancelled' ? '已取消' : file.state === 'pending' ? '未读取' : ''
+  const summary = visibleFiles ? visibleFiles.map(file => [file.label, file.range, fileStateLabel(file)].filter(Boolean).join(' ')).join(' · ')
+    : summaryOverride ?? toolParamSummary(tool.args)
   const failure = toolFailureMessage(tool)
   const feedback = quiet ? workToolFeedback(tool, state) : null
   // Only omit an exact, fully visible one-line duplicate. Multiline errors
@@ -54,6 +60,7 @@ export const CompactToolRow = memo(function CompactToolRow({
   // navigate to its artifacts. Code retains its editor and remote policy.
   const openablePath = !quiet && pathArg && (fileContext ? onOpenFile && tool.name === 'read_file' : engine.snapshot.mode !== 'remote' && summary === pathArg) ? pathArg : null
   const statusLabel = feedback?.label ?? toolStatusLabel(quiet && state !== tool.state ? { ...tool, state } : tool)
+  const visibleReadRange = quiet && state === 'done' && !visibleFiles ? readRange : undefined
   const dot = state === 'running' ? 'running' : state === 'done' ? 'done'
     : state === 'error' || state === 'interrupted' ? 'error' : state === 'waiting' ? 'waiting' : 'neutral'
   const openPath = async (): Promise<void> => {
@@ -67,11 +74,11 @@ export const CompactToolRow = memo(function CompactToolRow({
   }
 
   return (
-    <div className={`logline-wrap compact-tool-row${quiet ? ' compact-tool-row--quiet' : ''}`} data-tool-id={tool.id} data-tool-state={state}>
+    <div className={`logline-wrap compact-tool-row${quiet ? ' compact-tool-row--quiet' : ''}${visibleFiles ? ' compact-tool-row--files' : ''}`} data-tool-id={tool.id} data-tool-state={state}>
       <button
         type="button"
         className={`logline${hasDetail ? '' : ' logline--static'}`}
-        aria-label={hasDetail ? `${open ? '收起' : '展开'} ${label}${summary ? ` · ${summary}` : ''}${quiet && state !== 'done' ? ` · ${statusLabel}` : ''}` : `${label} · ${toolStatusLabel(tool)}`}
+        aria-label={`${hasDetail ? `${open ? '收起' : '展开'} ${label}${summary ? ` · ${summary}` : ''}${quiet && state !== 'done' ? ` · ${statusLabel}` : ''}` : `${label} · ${toolStatusLabel(tool)}`}${visibleReadRange ? ` · ${visibleReadRange.label}` : ''}`}
         aria-expanded={open}
         aria-controls={hasDetail ? detailId : undefined}
         disabled={!hasDetail}
@@ -82,7 +89,13 @@ export const CompactToolRow = memo(function CompactToolRow({
         </span> : <span className={`logline__dot logline__dot--${dot}`} title={toolStatusLabel(tool)} aria-hidden="true" />}
         <span className={`logline__name${!quiet && state === 'error' ? ' logline__name--error' : ''}`}>{label}</span>
         {!quiet ? <span className="pending-card__hint">{toolStatusLabel(tool)}{tool.durationMs !== undefined ? ` · ${tool.durationMs} ms` : ''}</span> : null}
-        {summary ? (
+        {visibleFiles ? <span className="logline__files">
+          {visibleFiles.map((file, index) => <span className="logline__file" key={`${index}:${file.path}`} title={file.title}>
+            <span className="logline__file-name">{file.label}</span>
+            {file.range ? <span className="logline__file-range">{file.range}</span> : null}
+            {file.state ? <span className="logline__file-state">{fileStateLabel(file)}</span> : null}
+          </span>)}
+        </span> : summary ? (
           openablePath ? (
             <span
               role="button"
@@ -97,6 +110,7 @@ export const CompactToolRow = memo(function CompactToolRow({
           ) : <span className="logline__summary" title={summary}>{summary}</span>
         ) : null}
         {quiet && state !== 'done' ? <span className="logline__status">{statusLabel}</span> : null}
+        {visibleReadRange ? <span className="logline__read-range" title={visibleReadRange.title}>{visibleReadRange.label}</span> : null}
         {hasDetail ? <Icon name={quiet ? 'chevron-right' : 'chevron'} size={quiet ? 12 : 16} className="logline__chevron" /> : null}
       </button>
       <MotionPresence show={open && hasDetail}>

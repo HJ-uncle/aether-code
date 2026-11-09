@@ -65,9 +65,9 @@
   details[open]::details-content { block-size: auto; opacity: 1; translate: none; transition-duration: var(--motion-enter); }
 }
 
-/* Hover tools keep their existing visibility rules. Every visible state has
- * the same small lateral movement, and leaving reverses the transition. */
-:root :is(.message__actions, .work-message__reply-actions, .work-user-message-actions,
+/* Hover tools keep their existing visibility rules. The always-visible Work
+ * reply footer is excluded so its usage text and controls stay in place. */
+:root :is(.message__actions, .work-user-message-actions,
   .editor-tab__close, .work-workspace__tab-close, .work-resource-tabs__close,
   .session-tray__queue-remove, .welcome__recent-remove, .recent-dialog__remove,
   .git-panel__group-btn, .git-panel__stash-actions, .explorer__recent-del,
@@ -80,7 +80,7 @@
 :root :is(.message, .work-message, .editor-tab, .work-workspace__tab, .work-resource-tabs__item,
   .session-tray__queue-item, .welcome__recent, .recent-dialog__item, .git-panel__group-head,
   .git-panel__stash-row, .explorer__recent-row, .work-sidebar__task, .logline-wrap, .work-agent-card):is(:hover, :focus-within)
-  :is(.message__actions, .work-message__reply-actions, .work-user-message-actions,
+  :is(.message__actions, .work-user-message-actions,
     .editor-tab__close, .work-workspace__tab-close, .work-resource-tabs__close,
     .session-tray__queue-remove, .welcome__recent-remove, .recent-dialog__remove,
     .git-panel__group-btn, .git-panel__stash-actions, .explorer__recent-del,

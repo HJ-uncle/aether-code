@@ -13,7 +13,10 @@ function load(name) {
   const source = readFileSync(join(directory, `${name}.ts`), 'utf8')
   const javascript = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   const exports = {}
-  new vm.Script(`(function(exports){${javascript}\n})`, { filename: name }).runInThisContext()(exports)
+  new vm.Script(`(function(exports, require){${javascript}\n})`, { filename: name }).runInThisContext()(exports, id => {
+    if (id === '../../core/editor/document-menu-events') return load(id)
+    throw new Error(`Unexpected dependency: ${id}`)
+  })
   return exports
 }
 const { selectionTextWithin, observePreviewSelection, bridgeFrameSelection } = load('document-selection')
@@ -87,6 +90,23 @@ test('scriptless bridge rebinds child navigation and stops all old or hidden-doc
   second.document.emit('pointerdown', { target: second.first }); assert.equal(events.at(-1), '')
   stop(); assert.equal(second.document.listenerCount, 0)
   assert.equal(frame.listeners.get('load').size, 0)
+})
+
+test('scriptless frame context menus forward coordinates without trusting event-supplied selected text', () => {
+  const child = preview(), frame = new Target(), events = []
+  frame.contentDocument = child.document
+  frame.addEventListener('aether-document-context-menu', event => events.push(event.detail))
+  const stop = bridgeFrameSelection(frame)
+  let prevented = 0
+  child.document.emit('contextmenu', { clientX: 27, clientY: 46, selectedText: 'forged', preventDefault: () => prevented++ })
+  assert.deepEqual(events, [{ x: 27, y: 46 }])
+  child.document.selection.getRangeAt = () => ({ getBoundingClientRect: () => ({ left: 31, bottom: 58 }) })
+  child.document.emit('keydown', { key: 'F10', shiftKey: true, preventDefault: () => prevented++ })
+  assert.deepEqual(events.at(-1), { x: 31, y: 58 })
+  assert.equal(prevented, 2)
+  stop()
+  child.document.emit('contextmenu', { clientX: 10, clientY: 10, preventDefault: () => prevented++ })
+  assert.equal(events.length, 2)
 })
 
 const tick = () => new Promise(resolve => setImmediate(resolve))

@@ -22,7 +22,9 @@ import { toolDisplayName } from '@renderer/core/engine/tool-labels'
 import { isVisibleToolActivity } from '@renderer/core/engine/task-plan'
 import { useApp } from '@renderer/core/app-context'
 import { toast } from '@renderer/core/toast'
-import { getAppMode, useAppMode } from '@renderer/core/platform/app-mode'
+import { getAppMode, setAppMode, useAppMode } from '@renderer/core/platform/app-mode'
+import { buildConversationLink, parseConversationLink } from '@shared/conversation-link'
+import { conversationLinkTask } from './work-conversation-reference'
 import { getEngineSource, getEngineStorageKey, isEngineReady } from '@renderer/core/engine/source'
 import { changeSecurityMode } from '@renderer/core/engine/security-store'
 import { setBrowserSessionOverride } from '@renderer/core/browser/connection'
@@ -41,6 +43,7 @@ import { openFileFromChat } from '../chat/open-file'
 import { useWorkController } from './work-runtime'
 import { WorkBrowser } from './WorkBrowser'
 import { WorkComposer as WorkComposerV2 } from './WorkComposer'
+import { WorkReferenceProvider, useWorkReferenceNavigation } from './WorkReferenceNavigation'
 import { WorkNextTurnQueuePanel } from './WorkNextTurnQueue'
 import { WorkTaskActions } from './WorkTaskActions'
 import { WorkSidebarTask } from './WorkSidebarTask'
@@ -50,7 +53,6 @@ import { fileContentBytes } from '@renderer/core/workspace/file-content-bytes'
 import { resourcePreviewEntries } from './work-resource-preview-policy'
 import { useRetainedPreviews } from '@renderer/core/editor/useRetainedPreviews'
 import type { TextPreviewReveal } from '@renderer/core/editor/TextPreview'
-import { workArtifactSelectionQuote } from './work-artifact-content'
 import { WorkSourcePreview, useWorkSourceFile } from './WorkSourcePreview'
 import { assertSessionFileTarget, paths, readLocalRecoveryFile, resolveSessionFilePath, workspaceRecoveryCandidates } from '@renderer/core/workspace/fs-client'
 import { WorkGitPanel } from './WorkGitPanel'
@@ -62,7 +64,9 @@ import { WorkMessageNav } from './WorkMessageNav'
 import { workConversationGroups, workConversationEntries, workConversationComplete } from './work-conversation-turns'
 import { workGroupedDisplayTurns } from './work-message-nav'
 import { WorkArtifactsWorkspace } from './WorkArtifactsWorkspace'
+import { workFinalResultCatalog } from './work-final-results'
 import { WorkFinalDeliverables } from './WorkFinalDeliverables'
+import { WorkRevertNotice } from './WorkRevertNotice'
 import type { FinalResult, FinalResultItem } from '@shared/final-result'
 import { getMessageFinalResult } from '@renderer/core/engine/final-result'
 import type { WorkArtifactSelection } from './work-session-artifacts'
@@ -74,11 +78,14 @@ import { workProgressTurnScope, workTurnProgressChanges } from './work-turn-prog
 import { MotionPresence, useMotionPresence } from '@renderer/workbench/MotionPresence'
 import { WorkAgentManager } from './WorkAgentManager'
 import { workToolTarget } from './work-message-timeline'
+import { workMessageRunning } from './work-tool-presentation'
+import { buildWorkInlineFileResolver } from './work-inline-file-references'
 import { WorkMessageContent } from './WorkMessageContent'
 import { workSubagentName } from './work-subagents'
 import { serializeMessages } from '../chat/message-export'
 import { WORK_MESSAGE_PAGE_SIZE, WORK_TASK_PAGE_SIZE, workMessageRange, workPaneRatio, workSplitRatio, workToolSnapshot, type WorkToolSnapshot } from './work-view-performance'
 import { workConversationAwayFromBottom } from './work-conversation-scroll'
+import { useWorkConversationScrollIntent } from './useWorkConversationScrollIntent'
 import { requestedThinkingMode } from '../chat/session-request-config'
 import { AutomationsView } from '../automations/AutomationsView'
 import { subscribeAutomationEditor } from '../automations/automation-navigation'
@@ -86,8 +93,8 @@ import { EngineMonitorView } from './EngineMonitorView'
 import { WorkErrorNotice } from './WorkErrorNotice'
 import { recoverWorkTurn } from './work-turn-recovery'
 import { workTaskRestart, type WorkTaskRestartPresentation } from './work-task-restart'
-import { WorkUserMessageActions } from './WorkUserMessageActions'
-import { flushWorkDrafts, getWorkDraft, getWorkState, updateWorkState, type WorkArtifact } from './work-state'
+import { WorkRegenerateReplyButton, WorkUserMessageActions } from './WorkUserMessageActions'
+import { flushWorkDrafts, getWorkState, updateWorkState, type WorkArtifact } from './work-state'
 import { findWorkArtifact } from './work-artifact-utils'
 import { browserAction, hideBrowserSurfaces, selectBrowserTab, useBrowserState } from '../browser/browser-store'
 import './work.css'
@@ -96,12 +103,15 @@ import { WorkResourceTabs } from './WorkResourceTabs'
 import { closeWorkResource, openExternalWorkFileResource, resolvedWorkResourceId, selectWorkResource, useWorkResources, workResourceBrowserTabs } from './work-resource-store'
 import { workChangePathKey, type SessionFileChange } from './work-file-changes'
 import { getRunningWorkTasks, WorkRunList } from './WorkRunList'
-import { WorkServiceTray } from './WorkServiceTray'
+import { WorkServiceTray, partitionWorkServices } from './WorkServiceTray'
+import { WorkTerminalPanel, type WorkTerminalPanelProps } from './WorkTerminalPanel'
+import { onWorkTerminalRequest } from './work-terminal-navigation'
+import { createLocalSession } from '../terminal/terminal-store'
 
 type WorkController = ReturnType<typeof useWorkController>
 type WorkTask = WorkController['tasks'][number]
 type Page = 'home' | 'projects' | 'browser' | 'automations' | 'connections' | 'agents' | 'monitor'
-type WorkspaceTab = 'files' | 'workspace' | 'sources' | 'browser' | 'subagents' | 'git'
+type WorkspaceTab = 'files' | 'workspace' | 'sources' | 'browser' | 'subagents' | 'git' | 'terminal'
 type ArtifactNavigation = Omit<WorkArtifactSelection, 'revision'>
 type FinalSelection = { sessionId: string; runId: string; itemId: string; revision: number }
 type WorkspaceEntry = { kind: 'surface'; id: WorkspaceTab } | { kind: 'resource'; id: string }
@@ -221,7 +231,7 @@ function initialView(): ViewState {
         const stored = String(record.tab)
         // Saved destinations must follow their replacement after navigation merges.
         if (stored === 'artifacts' || stored === 'activity' || stored === 'changes') return 'files'
-        return ['files', 'workspace', 'sources', 'browser', 'subagents', 'git'].includes(stored)
+        return ['files', 'workspace', 'sources', 'browser', 'subagents', 'git', 'terminal'].includes(stored)
           ? (stored as WorkspaceTab)
           : 'files'
       })(),
@@ -261,7 +271,11 @@ function openWorkFileLink(
   const link = event.target instanceof Element ? event.target.closest('a') : null
   const href = link?.getAttribute('href')
   if (!href || !controller.activeTask) return
-  const target = classifyChatLink(href, controller.activeTask.id, engineUrl)
+  // Resolved receipt paths are literal filenames, including # names and files
+  // without extensions; URL classification must not reroute those references.
+  const fileReference = link?.getAttribute('data-work-file-path')
+  const target = fileReference ? { kind: 'file' as const, path: fileReference }
+    : classifyChatLink(href, controller.activeTask.id, engineUrl)
   if (target.kind === 'external') return
   event.preventDefault()
   event.stopPropagation()
@@ -269,7 +283,8 @@ function openWorkFileLink(
     toast.error(target.message)
     return
   }
-  const path = target.path.replace(/\\/g, '/').replace(/:\d+(?::\d+)?$/, '')
+  const path = fileReference ? target.path.replace(/\\/g, '/')
+    : target.path.replace(/\\/g, '/').replace(/:\d+(?::\d+)?$/, '')
   const artifact = findWorkArtifact(controller.artifacts, path, controller.activeTask.workspacePath)
   // A markdown link may point to a workspace file that has no write receipt.
   // Keep it in the Work surface as a synthetic artifact so the panel performs
@@ -293,8 +308,10 @@ export function WorkView(): JSX.Element {
   const workspaceMotion = useMotionPresence(view.workspace)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<TaskFilter>('all')
-  const [selectedArtifact, setSelectedArtifact] = useState<string | null>(null)
+  const [artifactSelection, setArtifactSelection] = useState<{ scope: string; id: string | null } | null>(null)
   const [fileRevealRequest, setFileRevealRequest] = useState<WorkFileRevealRequest | null>(null)
+  const [terminalReveal, setTerminalReveal] = useState<{ scope: string; request: WorkTerminalPanelProps['reveal'] } | null>(null)
+  const terminalRevision = useRef(0)
   const fileRevealRevision = useRef(0)
   const acknowledgeFileReveal = useCallback((request: WorkFileRevealRequest): void => {
     // A consumed opening must not replay over manual scroll/filter changes
@@ -304,6 +321,11 @@ export function WorkView(): JSX.Element {
   const conversationSelectionToggle = useRef<(() => void) | null>(null)
   const [conversationSelectMode, setConversationSelectMode] = useState(false)
   const [activitySelection, setActivitySelection] = useState<ActivitySelection | null>(null)
+  const activityRevealRevision = useRef(0)
+  const acknowledgeActivityReveal = useCallback((request: ActivitySelection): void => {
+    // Completed navigation must not replay when history rows mount again.
+    setActivitySelection(previous => previous === request ? null : previous)
+  }, [])
   const [changeSelection, setChangeSelection] = useState<WorkArtifactSelection | null>(null)
   const [finalSelection, setFinalSelection] = useState<FinalSelection | null>(null)
   const [automationRequest, setAutomationRequest] = useState<{ jobId: string; revision: number } | null>(null)
@@ -316,13 +338,22 @@ export function WorkView(): JSX.Element {
     setView((previous) => ({ ...previous, ...patch })), [])
   const task = controller.activeTask
   const latestUserMessageId = controller.messages.findLast(message => message.role === 'user')?.id
+  const latestDeliveryKey = useMemo(() => workFinalResultCatalog(controller.messages, task?.id ?? '').deliveryKey,
+    [controller.messages, task?.id])
   useEffect(() => {
-    // A historical preview belongs to the opening that selected it; a new turn
-    // must return the results pane to its own publication, including an empty one.
+    // Follow a new delivery, while text-only follow-ups leave the open file alone.
     setFinalSelection(null)
+  }, [browserSource, task?.id, latestDeliveryKey])
+  useEffect(() => {
     setChangeSelection(null)
   }, [browserSource, task?.id, latestUserMessageId])
   const fileTreeScope = JSON.stringify([browserSource, task?.id, task?.workspacePath ?? ''])
+  // Filter before rendering children: an effect-only reset lets the old path
+  // start a read using the newly selected task's session during that commit.
+  const selectedArtifact = artifactSelection?.scope === fileTreeScope ? artifactSelection.id : null
+  const setSelectedArtifact = useCallback((id: string | null): void => {
+    setArtifactSelection({ scope: fileTreeScope, id })
+  }, [fileTreeScope])
   const revealWorkspaceFile = useCallback((path: string): void => {
     setFileRevealRequest({ scope: fileTreeScope, path, revision: ++fileRevealRevision.current })
   }, [fileTreeScope])
@@ -348,7 +379,12 @@ export function WorkView(): JSX.Element {
     setChangeSelection(null)
     setActivitySelection(null)
     setConversationSelectMode(false)
-  }, [task?.id, browserSource, task?.workspacePath])
+  }, [task?.id, browserSource, task?.workspacePath, setSelectedArtifact])
+  useEffect(() => {
+    // Leaving before the reveal animation finishes cancels that navigation;
+    // returning to a completed turn must not revive the old live request.
+    if (view.page !== 'home' || appMode !== 'work') setActivitySelection(null)
+  }, [view.page, appMode])
   useEffect(() => {
     try {
       localStorage.setItem(VIEW_KEY, JSON.stringify(view))
@@ -438,7 +474,7 @@ export function WorkView(): JSX.Element {
     const next = controller.artifacts[0]?.id ?? null
     if (hasSelection || selectedArtifact?.startsWith('path:') || next === selectedArtifact) return
     setSelectedArtifact(next)
-  }, [controller.artifacts, selectedArtifact])
+  }, [controller.artifacts, selectedArtifact, setSelectedArtifact])
   const navigate = useCallback((page: Page): void => {
     set(page === 'home' ? { page, workspace: false, pane: 'conversation' } : { page })
     setNavigationOpen(false)
@@ -449,6 +485,46 @@ export function WorkView(): JSX.Element {
     setNavigationOpen(false)
     set({ page: 'home', pane: 'conversation' })
   }, [set, controller.selectTask])
+  useLayoutEffect(() => {
+    const request = controller.draftFocusRequest
+    if (request && request.source === getEngineStorageKey() && request.taskId === (controller.activeTask?.id ?? null))
+      set({ page: 'home', pane: 'conversation' })
+  }, [controller.draftFocusRequest, controller.activeTask?.id, set])
+  const openConversation = useCallback((url: string): void => {
+    try {
+      const link = parseConversationLink(url)
+      if (!link) throw new Error('会话链接格式不正确。')
+      const target = conversationLinkTask(link)
+      setAppMode('work')
+      openTask(target.id)
+    } catch (error) { toast.error(error instanceof Error ? error.message : '无法打开引用会话。') }
+  }, [openTask])
+  useEffect(() => {
+    if (!controller.ready) return
+    let draining = false
+    let requested = false
+    const drain = async (): Promise<void> => {
+      if (draining) { requested = true; return }
+      draining = true
+      const epoch = getEngineSource()
+      try {
+        do {
+          requested = false
+          const links = await window.aether.conversationLinks.takePending()
+          if (epoch !== getEngineSource()) {
+            if (links.length) toast.info('连接已变化，请重新打开会话链接。')
+            return
+          }
+          for (const link of links) openConversation(buildConversationLink(link))
+        } while (requested)
+      } catch (error) { toast.error(error instanceof Error ? error.message : '无法打开会话链接。') }
+      finally { draining = false }
+    }
+    // Subscribe before draining so cold-start and already-running app links share one inbox.
+    const off = window.aether.conversationLinks.onAvailable(() => { void drain() })
+    void drain()
+    return off
+  }, [controller.ready, openConversation])
   const newTask = useCallback((): void => {
     controller.showHome()
     setNavigationOpen(false)
@@ -488,6 +564,30 @@ export function WorkView(): JSX.Element {
   }, [set, controller.selectTask])
   const openWorkspace = useCallback((tab: WorkspaceTab): void =>
     set({ workspace: true, tab, pane: 'workspace' }), [set])
+  const openRunningTerminal = useCallback((): void => {
+    if (!task) return
+    const services = partitionWorkServices(controller.commandJobs, task.id)
+    setTerminalReveal({ scope: JSON.stringify([browserSource, task.id]), request: {
+      jobId: services.running[0]?.jobId ?? services.history[0]?.jobId ?? null,
+      revision: ++terminalRevision.current
+    } })
+    openWorkspace('terminal')
+  }, [task?.id, browserSource, controller.commandJobs, openWorkspace])
+  useEffect(() => onWorkTerminalRequest(action => {
+    if (appMode !== 'work') return
+    if (!task) { toast.info('请先打开一个任务，再使用终端'); return }
+    if (action === 'toggle' && view.page === 'home' && view.workspace && view.tab === 'terminal' && view.pane === 'workspace') {
+      set({ workspace: false, pane: 'conversation' })
+      return
+    }
+    // Start explicitly before mounting the view so its empty-state auto-create
+    // cannot race the command palette's request for a new terminal.
+    if (action === 'new') void createLocalSession(task.workspacePath ?? undefined, task.id)
+    setTerminalReveal({ scope: JSON.stringify([browserSource, task.id]), request: {
+      jobId: null, view: 'terminal', revision: ++terminalRevision.current
+    } })
+    set({ page: 'home', workspace: true, tab: 'terminal', pane: 'workspace' })
+  }), [appMode, task?.id, task?.workspacePath, browserSource, view.page, view.workspace, view.tab, view.pane, set])
   const openSessionArtifacts = useCallback((request: ArtifactNavigation): void => {
     if (!task || request.sessionId !== task.id) return
     setFinalSelection(null)
@@ -511,7 +611,7 @@ export function WorkView(): JSX.Element {
     // open the separate browser/resource surface. The preview resolves the
     // session-scoped path itself and keeps the conversation context stable.
     openWorkspace(id.startsWith('path:') ? 'workspace' : 'files')
-  }, [openWorkspace, controller.artifacts, task?.id, revealWorkspaceFile])
+  }, [openWorkspace, controller.artifacts, task?.id, revealWorkspaceFile, setSelectedArtifact])
   useWorkbenchClient(controller.securitySessionId, isEngineReady(), 'work', {
     context: () => ({ mode: 'work', selectedArtifact, files: controller.artifacts.slice(0, 100).map(item => ({ path: item.path, name: item.name, status: item.status })), hasMoreFiles: controller.artifacts.length > 100 }),
     open: async (path, _line, current) => {
@@ -529,7 +629,7 @@ export function WorkView(): JSX.Element {
   const setRatio = useCallback((ratio: number): void => set({ ratio }), [set])
   const openActivity = useCallback((toolId: string): void => {
     if (!task) return
-    setActivitySelection(previous => ({ taskId: task.id, toolId, revision: (previous?.revision ?? 0) + 1 }))
+    setActivitySelection({ taskId: task.id, toolId, revision: ++activityRevealRevision.current })
     set({ pane: 'conversation' })
   }, [task?.id, set])
   const openChange = useCallback((change: EngineFileChange): void => {
@@ -554,6 +654,10 @@ export function WorkView(): JSX.Element {
   )
 
   return (
+    <WorkReferenceProvider controller={controller} onSources={() => openWorkspace('sources')}
+      onWorkspaceFile={path => openArtifact(`path:${path}`)} onArtifact={openArtifact}
+      onBrowser={tabId => { selectBrowserTab(tabId); openWorkspace('browser') }}
+      onAgent={() => navigate('agents')} onConversation={openConversation}>
     <div
       className="work-view"
       ref={rootRef}
@@ -679,8 +783,7 @@ export function WorkView(): JSX.Element {
                   <div className="work-task-heading__actions">
                     {controller.sessionUsage && (controller.sessionUsage.total > 0 || controller.sessionUsage.unknownSubagents > 0) ? <UsageMeter
                       total={controller.sessionUsage.total} rounds={controller.sessionUsage.rounds} summary={controller.sessionUsage.summary}
-                      startedAt={controller.sessionUsage.startedAt} endedAt={controller.sessionUsage.endedAt}
-                      streaming={controller.streaming || controller.launching} /> : null}
+                      messages={controller.messages} /> : null}
                     {controller.usageSyncNotice ? <span className="work-usage-notice" role="status" title={controller.usageSyncNotice}>统计待同步</span> : null}
                     <TaskStatus status={task.status} ready={controller.ready} />
                     <WorkRunList
@@ -736,12 +839,14 @@ export function WorkView(): JSX.Element {
                   active={!singlePane || !view.workspace || view.pane === 'conversation'}
                   openActivity={openActivity}
                   activitySelection={activitySelection?.taskId === task.id ? activitySelection : null}
+                  onActivityRevealed={acknowledgeActivityReveal}
                   openChange={openChange}
                   openArtifact={openArtifact}
                   onOpenArtifacts={openSessionArtifacts}
                   onOpenFinalItem={openFinalItem}
                   selectionToggleRef={conversationSelectionToggle}
                   onSelectionModeChange={setConversationSelectMode}
+                  onOpenTerminal={openRunningTerminal}
                 />
               </div>
               {workspaceMotion.present && (
@@ -762,6 +867,7 @@ export function WorkView(): JSX.Element {
                     changeSelection={changeSelection?.sessionId === task.id ? changeSelection : null}
                     finalSelection={finalSelection?.sessionId === task.id ? finalSelection : null}
                     onOpenArtifacts={openSessionArtifacts}
+                    terminalReveal={terminalReveal?.scope === JSON.stringify([browserSource, task.id]) ? terminalReveal.request : null}
                   />
                 </>
               )}
@@ -880,6 +986,7 @@ export function WorkView(): JSX.Element {
         )}
       </main>
     </div>
+    </WorkReferenceProvider>
   )
 }
 
@@ -982,9 +1089,11 @@ function Conversation({
   openArtifact,
   openActivity,
   activitySelection,
+  onActivityRevealed,
   openChange,
   onOpenArtifacts,
   onOpenFinalItem,
+  onOpenTerminal,
   selectionToggleRef,
   onSelectionModeChange
 }: {
@@ -993,9 +1102,11 @@ function Conversation({
   openArtifact: (id: string) => void
   openActivity: (toolId: string) => void
   activitySelection: ActivitySelection | null
+  onActivityRevealed: (request: ActivitySelection) => void
   openChange: (change: EngineFileChange) => void
   onOpenArtifacts: (request: ArtifactNavigation) => void
   onOpenFinalItem: (result: FinalResult, item: FinalResultItem) => void
+  onOpenTerminal: () => void
   selectionToggleRef: MutableRefObject<(() => void) | null>
   onSelectionModeChange: (active: boolean) => void
 }): JSX.Element {
@@ -1023,6 +1134,17 @@ function Conversation({
     followRef.current = false
     setFollowing(false)
   }, [])
+  const resumeFollowing = useCallback((): void => {
+    // The bottom of a loaded archive page is not necessarily the latest turn.
+    if (hasNewerContentRef.current) return
+    followRef.current = true
+    setFollowing(true)
+  }, [])
+  const scrollIntent = useWorkConversationScrollIntent(scrollRef, pauseFollowing, resumeFollowing, measureScrollPosition)
+  const pauseReading = useCallback((): void => {
+    scrollIntent.reset()
+    pauseFollowing()
+  }, [scrollIntent.reset, pauseFollowing])
   const followBottom = useCallback((): void => {
     const element = scrollRef.current
     if (!element || !active || mode !== 'work' || !followRef.current || !element.clientHeight) return
@@ -1035,7 +1157,13 @@ function Conversation({
   }, [active, mode, measureScrollPosition])
   const controllerRef = useRef(controller)
   controllerRef.current = controller
-  const fileContext = useMemo<ChatFileContext>(() => ({ sessionId: task.id, workspaceRoot: task.workspacePath }), [task.id, task.workspacePath])
+  const previousFileResolver = useRef<ChatFileContext['resolveInlineFile']>(undefined)
+  const resolveInlineFile = useMemo(() => {
+    const resolver = buildWorkInlineFileResolver(controller.messages, task.id, task.workspacePath, previousFileResolver.current)
+    previousFileResolver.current = resolver
+    return resolver
+  }, [controller.messages, task.id, task.workspacePath])
+  const fileContext = useMemo<ChatFileContext>(() => ({ sessionId: task.id, workspaceRoot: task.workspacePath, resolveInlineFile }), [task.id, task.workspacePath, resolveInlineFile])
   const onFileLink = useCallback((event: MouseEvent<HTMLElement>): void => openWorkFileLink(event, controllerRef.current, engine.snapshot.baseUrl, openArtifact), [engine.snapshot.baseUrl, openArtifact])
   const openActivityFile = useCallback((path: string): void => {
     openArtifact(`path:${path}`)
@@ -1121,8 +1249,7 @@ function Conversation({
     if (!activitySelection) return
     const index = controller.messages.findIndex(message => message.tools?.some(tool => tool.id === activitySelection.toolId))
     if (index < 0) return
-    followRef.current = false
-    setFollowing(false)
+    pauseReading()
     setExpandedHistory(true)
     setFirstId(controller.messages[Math.min(index, Math.max(0, controller.messages.length - WORK_MESSAGE_PAGE_SIZE))].id)
   }, [activitySelection])
@@ -1155,12 +1282,13 @@ function Conversation({
       container.scrollTop += node.getBoundingClientRect().top - container.getBoundingClientRect().top - 20
       node.tabIndex = -1
       node.focus({ preventScroll: true })
+      onActivityRevealed(activitySelection)
       return true
     }
     const observer = new MutationObserver(() => { if (reveal()) observer.disconnect() })
     if (!reveal()) observer.observe(container, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden', 'data-motion-state'] })
     return () => { disposed = true; observer.disconnect() }
-  }, [activitySelection, firstId, active])
+  }, [activitySelection, firstId, active, onActivityRevealed])
   const firstIdRef = useRef(firstId)
   firstIdRef.current = controller.messages[start]?.id ?? firstId
   const prependAnchor = useRef<{ id: string; offset: number } | null>(null)
@@ -1228,6 +1356,7 @@ function Conversation({
     }
   }, [active, mode, measureScrollPosition, followBottom])
   const latest = (): void => {
+    scrollIntent.reset()
     pendingDisplayTurn.current = null
     prependAnchor.current = null
     latestRequest.current = true
@@ -1254,8 +1383,7 @@ function Conversation({
     const anchor = controller.messages[start]
     const article = anchor && element?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(anchor.id)}"]`)
     if (element && article) prependAnchor.current = { id: anchor.id, offset: article.getBoundingClientRect().top - element.getBoundingClientRect().top }
-    followRef.current = false
-    setFollowing(false)
+    pauseReading()
     setFirstId(controller.messages[Math.max(0, start - WORK_MESSAGE_PAGE_SIZE)].id)
   }
   const loadNewer = (): void => {
@@ -1265,23 +1393,20 @@ function Conversation({
     const article = anchor && element?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(anchor.id)}"]`)
     if (element && article) prependAnchor.current = { id: anchor.id, offset: article.getBoundingClientRect().top - element.getBoundingClientRect().top }
     setExpandedHistory(true)
-    followRef.current = false
-    setFollowing(false)
+    pauseReading()
     setFirstId(anchor?.id ?? null)
   }
   const loadArchivePage = (action: 'older' | 'newer'): void => {
     if (controller.archiveLoading) return
     archiveNavigation.current = action
     setExpandedHistory(true)
-    followRef.current = false
-    setFollowing(false)
+    pauseReading()
     void controller.loadArchive(action)
   }
   const loadDisplayHistory = (userMessageId?: string): void => {
     if (controller.displayHistoryLoading) return
     setExpandedHistory(true)
-    followRef.current = false
-    setFollowing(false)
+    pauseReading()
     pendingDisplayTurn.current = userMessageId ?? null
     lastDisplayRequest.current = userMessageId
     void controller.loadDisplayTurn(userMessageId).then(ok => {
@@ -1370,6 +1495,7 @@ function Conversation({
   useLayoutEffect(() => {
     const action = archiveNavigation.current
     if (!action || !controller.archivePage) return
+    scrollIntent.reset()
     archiveNavigation.current = null
     prependAnchor.current = null
     const atLatest = action === 'latest'
@@ -1380,15 +1506,18 @@ function Conversation({
     if (scrollRef.current) scrollRef.current.scrollTop = atLatest ? scrollRef.current.scrollHeight : 0
   }, [controller.archivePage])
   const inspectActivity = (target: EventTarget | null): void => {
-    // Code's shared file cards activate with a role=button, including keyboard
-    // events. All disclosures represent reading intent, regardless of markup.
-    if (target instanceof Element && target.closest('.work-inline-activity button, .work-tool-activity button, .work-tool-activity [role="button"], .work-message__process-toggle, .logline, .message__collapse-toggle')) {
-      followRef.current = false
-      setFollowing(false)
-    }
+    // Opening details is reading intent. Copy, preview, permission and closing
+    // controls must not silently disable following the next streamed result.
+    if (!(target instanceof Element) || !scrollRef.current?.contains(target)) return
+    const control = target.closest('button, summary, [role="button"]')
+    if (!control || control.matches(':disabled')) return
+    const opening = control.getAttribute('aria-expanded') === 'false' && control.matches('.work-inline-activity button, .work-tool-activity button, .work-tool-activity summary, .work-tool-activity [role="button"], .work-message__process-toggle, .logline, .message__collapse-toggle')
+    const paging = control.matches('.work-inline-activity__pages button, button.subagent-card__header:not([aria-expanded]), .subagent-history__more, .subagent-history__toolbar button, .subagent-history__error button')
+    if (opening || paging) pauseReading()
   }
   return (
     <section className="work-conversation" aria-label="协作对话">
+      <WorkRevertNotice sessionId={task.id} />
       <PublishedRecoveryNotice state={controller.publishedRecovery} onCancel={controller.cancelPublishedRecovery} onLoadBody={controller.loadPublishedBody} onRetry={controller.retryPublishedRecovery} />
       <MotionPresence show={selectMode}>
         <div className="work-conversation__select-bar" role="toolbar" aria-label="对话选择工具栏">
@@ -1414,7 +1543,7 @@ function Conversation({
         </div>
       ) : null}
       <div className="work-conversation__body">
-        <WorkServiceTray sessionId={task.id} jobs={controller.commandJobs} active={active && controller.ready} placement="rail" />
+        <WorkServiceTray sessionId={task.id} jobs={controller.commandJobs} active={active} placement="rail" onOpenTerminal={onOpenTerminal} />
         <WorkMessageNav sessionKey={positionKey} messages={controller.messages} groups={conversationGroups}
           historyIndex={displayTurns} loadedTurnIds={controller.displayLoadedTurnIds} onLoadTurn={(id) => {
             lastDisplayRequest.current = id
@@ -1424,25 +1553,18 @@ function Conversation({
           onInspectHistory={() => {
             pendingDisplayTurn.current = null
             setExpandedHistory(true)
-            followRef.current = false
-            setFollowing(false)
+            pauseReading()
           }} />
       <div
         className="work-conversation__scroll"
         data-browsing-history={historyBrowsing ? 'true' : undefined}
         ref={scrollRef}
+        {...scrollIntent.handlers}
         onClickCapture={(event) => inspectActivity(event.target)}
-        onWheelCapture={(event) => { if (event.deltaY < 0) pauseFollowing() }}
-        onPointerDownCapture={(event) => {
-          const element = event.currentTarget
-          if (event.pointerType === 'touch' || event.clientX - element.getBoundingClientRect().left >= element.clientWidth) pauseFollowing()
-        }}
         onKeyDownCapture={(event) => {
           if (event.key === 'Enter' || event.key === ' ') inspectActivity(event.target)
-          if (['ArrowUp', 'PageUp', 'Home'].includes(event.key) &&
-            !(event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"]'))) pauseFollowing()
+          scrollIntent.handlers.onKeyDownCapture?.(event)
         }}
-        onScroll={measureScrollPosition}
       >
         <div className="work-conversation__content" data-history-start={start} data-history-end={end}>
           {controller.displayHistoryError ? <div className="work-history-notice" role="alert"><span>{controller.displayHistoryError}</span><button type="button" className="btn btn--sm" disabled={controller.displayHistoryLoading} onClick={() => loadDisplayHistory(lastDisplayRequest.current)}>重新加载完整记录</button></div> : null}
@@ -1466,6 +1588,10 @@ function Conversation({
           {visibleConversationGroups.map((group, index) => {
             const selected = selectedIds.has(group.id)
             const finalMessage = group.messages.findLast(message => message.role === 'assistant')
+            // Supplements share the reply, but regeneration belongs to the
+            // original admission. Partial history must not retry a supplement.
+            const originalMessage = group.messages.find(message => message.role === 'user' && !message.rootFollowup &&
+              (!finalMessage?.run?.userMessageId || message.id === finalMessage.run.userMessageId))
             const finalResult = finalMessage ? getMessageFinalResult(finalMessage, task.id) : undefined
             const gap = historyGaps.get(group.id)
             const complete = selectableGroups.includes(group)
@@ -1494,6 +1620,8 @@ function Conversation({
                     message={message}
                     turnSegments={segments}
                     processKey={processKey}
+                    deliveryResult={message.id === finalResult?.assistantMessageId ? finalResult : undefined}
+                    usage={message === finalMessage ? turnUsage.get(group.id) ?? undefined : undefined}
                     active={active}
                     fileContext={fileContext}
                     onFileLink={onFileLink}
@@ -1504,6 +1632,7 @@ function Conversation({
                     canRestart={message.id === restartableMessageId && Boolean(message.run && ['failed', 'interrupted'].includes(message.run.status))}
                     editSettledTurn={editSettledTurn}
                     userMessageAction={userMessageAction}
+                    regenerateMessageId={message === finalMessage && !workMessageRunning(message) ? originalMessage?.id : undefined}
                     showUserActions={!selectMode}
                     messageActionBusy={controller.messageActionBusy}
                     canMutateMessage={controller.ready && controller.historyReady && !controller.uploading && !controller.streaming && !controller.launching && !controller.pending.length && !['running', 'waiting'].includes(task.status)}
@@ -1517,9 +1646,8 @@ function Conversation({
                       : message.tools.some(tool => tool.id === activitySelection.toolId)) ? activitySelection : null}
                   />
                 ))}
-                {turnUsage.get(group.id) ? <div className="work-conversation-turn__usage"><TurnUsage {...turnUsage.get(group.id)!} /></div> : null}
                 {finalResult?.items.length ? <WorkFinalDeliverables result={finalResult} active={active} onOpenItem={onOpenFinalItem} /> : null}
-                {turnTodos.has(group.id) ? <WorkTodoProgress todos={turnTodos.get(group.id)!} /> : null}
+                {turnTodos.has(group.id) ? <WorkTodoProgress todos={turnTodos.get(group.id)!} running={Boolean(finalMessage && workMessageRunning(finalMessage))} /> : null}
                 {!finalResult && turnChanges.get(group.id)?.length ? <WorkProgressPanel sessionId={task.id} turnKey={group.id}
                   changes={turnChanges.get(group.id)!} workspacePath={task.workspacePath}
                   streaming={controller.streaming || controller.launching || ['running', 'waiting'].includes(task.status)} sync={progress}
@@ -1532,7 +1660,7 @@ function Conversation({
           {newer === 0 && controller.archivePage?.unversioned && controller.archivePage.lastPage < controller.archivePage.totalPages ? <button type="button" className="btn btn--sm work-history-load" disabled={controller.archiveLoading} onClick={() => loadArchivePage('newer')}>查看较新归档页</button> : null}
           <WorkTurnFeedback controller={controller} announce={!showLatest} openActivity={openActivity} />
           {receiptGroups.length ? <WorkProgressSync state={progress} /> : null}
-          {turnTodos.has('') ? <WorkTodoProgress todos={turnTodos.get('')!} /> : null}
+          {turnTodos.has('') ? <WorkTodoProgress todos={turnTodos.get('')!} running={controller.streaming || controller.launching || ['running', 'waiting'].includes(task.status)} /> : null}
         </div>
       </div>
       </div>
@@ -1551,8 +1679,9 @@ function Conversation({
           active={controller.streaming || ['running', 'waiting'].includes(task.status)}
           error={controller.historyError} onRetry={controller.retryHistory} />
         <WorkComposerV2 controller={controller} onPreserveReading={() => {
-          const element = scrollRef.current
-          if (element && workConversationAwayFromBottom(element)) pauseFollowing()
+          // A card or composer resize can briefly create a gap before the
+          // ResizeObserver catches up. Preserve intent, not that transient gap.
+          if (!followRef.current) pauseReading()
         }} />
       </div>
     </section>
@@ -1728,6 +1857,8 @@ const WorkMessage = memo(function WorkMessage({
   message,
   turnSegments,
   processKey,
+  deliveryResult,
+  usage,
   active,
   fileContext,
   onFileLink,
@@ -1738,6 +1869,7 @@ const WorkMessage = memo(function WorkMessage({
   canRestart,
   editSettledTurn,
   userMessageAction,
+  regenerateMessageId,
   showUserActions,
   messageActionBusy,
   canMutateMessage,
@@ -1751,6 +1883,8 @@ const WorkMessage = memo(function WorkMessage({
   message: ChatMessage
   turnSegments?: import('./work-message-timeline').WorkMessageSegment[]
   processKey?: string
+  deliveryResult?: FinalResult
+  usage?: import('../chat/ConversationUsage').TurnUsageInfo
   active: boolean
   fileContext: ChatFileContext
   onFileLink: (event: MouseEvent<HTMLElement>) => void
@@ -1761,6 +1895,7 @@ const WorkMessage = memo(function WorkMessage({
   canRestart: boolean
   editSettledTurn: WorkController['editSettledTurn']
   userMessageAction: WorkController['userMessageAction']
+  regenerateMessageId?: string
   showUserActions: boolean
   messageActionBusy: boolean
   canMutateMessage: boolean
@@ -1786,6 +1921,10 @@ const WorkMessage = memo(function WorkMessage({
       revealTool={revealTool}
       turnSegments={turnSegments}
       processKey={processKey}
+      deliveryResult={deliveryResult}
+      usage={usage ? <TurnUsage {...usage} /> : null}
+      replyActions={showUserActions && regenerateMessageId ? <WorkRegenerateReplyButton taskId={taskId} messageId={regenerateMessageId}
+        canMutate={canMutateMessage} busy={messageActionBusy} onAction={userMessageAction} /> : null}
       userActions={showUserActions ? <WorkUserMessageActions taskId={taskId} messageId={message.id} content={message.content}
         canMutate={canMutateMessage} busy={messageActionBusy} onAction={userMessageAction} /> : null}
     >
@@ -2141,6 +2280,7 @@ function Workspace({
   selectArtifact,
   changeSelection,
   finalSelection,
+  terminalReveal,
   onOpenArtifacts
 }: {
   motionProps: ReturnType<typeof useMotionPresence>['motionProps']
@@ -2155,6 +2295,7 @@ function Workspace({
   selectArtifact: (id: string, openResource?: boolean) => void
   changeSelection: WorkArtifactSelection | null
   finalSelection: FinalSelection | null
+  terminalReveal: WorkTerminalPanelProps['reveal']
   onOpenArtifacts: (request: ArtifactNavigation) => void
 }): JSX.Element {
   const appMode = useAppMode()
@@ -2217,6 +2358,7 @@ function Workspace({
     ['workspace', '工作区', 'folder-outline'],
     ['sources', '资料', 'file'],
     ['subagents', '子代理', 'account-outline'],
+    ['terminal', '终端', 'terminal'],
     ['git', 'Git', 'git']
   ]
   const labelFor = (id: WorkspaceTab): string => tabs.find(([candidate]) => candidate === id)?.[1] ?? '成果'
@@ -2317,6 +2459,7 @@ function Workspace({
     },
     { id: 'sources', label: '资料', icon: 'file', onSelect: () => activateTab('sources') },
     { id: 'subagents', label: '子代理', icon: 'account-outline', onSelect: () => activateTab('subagents') },
+    { id: 'terminal', label: '终端', icon: 'terminal', onSelect: () => activateTab('terminal') },
     { id: 'git', label: 'Git', icon: 'git', onSelect: () => activateTab('git') }
   ]
   const tabsRef = useRef<HTMLDivElement>(null)
@@ -2400,6 +2543,7 @@ function Workspace({
             onOpenArtifacts={onOpenArtifacts}
             openTab={activateTab}
             source={getEngineSource()}
+            terminalReveal={terminalReveal}
           />
         ))}
       </div>
@@ -2409,7 +2553,7 @@ function Workspace({
 
 /** Visited panes retain local drafts and selection, but hidden panes do not
  * rebuild message-derived diffs/activity on every incoming token. */
-const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controller, selectedArtifact, fileRevealRequest, onDidReveal, selectArtifact, changeSelection, finalSelection, onOpenArtifacts, openTab }: {
+const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controller, selectedArtifact, fileRevealRequest, onDidReveal, selectArtifact, changeSelection, finalSelection, terminalReveal, onOpenArtifacts, openTab }: {
   id: WorkspaceTab
   hidden: boolean
   active: boolean
@@ -2423,6 +2567,7 @@ const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controll
   onOpenArtifacts: (request: ArtifactNavigation) => void
   openTab: (tab: WorkspaceTab) => void
   source: number
+  terminalReveal: WorkTerminalPanelProps['reveal']
 }): JSX.Element {
   const previewRevision = useRef(0)
   const previewScope = JSON.stringify([getEngineSource(), controller.activeTask?.id, controller.activeTask?.workspacePath])
@@ -2457,7 +2602,7 @@ const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controll
             <WorkArtifactsWorkspace sessionId={controller.activeTask!.id} workspacePath={controller.activeTask?.workspacePath}
               ready={controller.ready} streaming={controller.streaming || controller.launching || ['running', 'waiting'].includes(controller.activeTask?.status ?? '')}
               active={active} tools={tools} messages={controller.messages} selection={changeSelection} finalSelection={finalSelection} onOpenCurrentFile={selectWorkspaceFile}
-              onAddToConversation={(...args) => addWorkArtifactToConversation(controller, ...args)} />
+              onAddToConversation={(...args) => addWorkArtifactToConversation(controller, 'artifact', ...args)} />
           ) : id === 'workspace' ? (
             <div className="work-files-workspace" style={{ '--work-panel-split-ratio': `${workspaceSplitRatio}%` } as CSSProperties}>
               <div className="work-files-workspace__tree">
@@ -2468,6 +2613,7 @@ const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controll
                   revealRequest={fileRevealRequest}
                   onDidReveal={onDidReveal}
                   onOpenFile={selectWorkspaceFile}
+                  onAddToConversation={controller.addWorkspaceReferences}
                 />
               </div>
               <WorkPanelDivider ratio={workspaceSplitRatio} setRatio={setWorkspaceSplitRatio} label="调整工作区文件与预览宽度" min={24} max={54} />
@@ -2499,6 +2645,9 @@ const WorkspacePane = memo(function WorkspacePane({ id, hidden, active, controll
               onContinue={controller.continueSubagent}
               attachments={[...(controller.activeTask?.sources ?? []), ...controller.attachments]}
             />
+          ) : id === 'terminal' ? (
+            <WorkTerminalPanel sessionId={controller.activeTask!.id} cwd={controller.activeTask?.workspacePath}
+              jobs={controller.commandJobs} active={active} reveal={terminalReveal} />
           ) : id === 'git' ? (
             <StableWorkGitPanel
               // Never fall back to the Code workspace when Work has no active
@@ -2614,27 +2763,30 @@ function WorkResourceFile({ controller, file, onOpenArtifacts, active }: {
     <WorkArtifactPanel
     artifact={{ id: file.id, path: file.path, name: file.name, content: null, status: 'ready', createdAt: 0 }}
     workspaceRoot={file.target?.root ?? controller.activeTask?.workspacePath} sessionId={sessionId} externalFile={file.externalFile} externalPath={file.externalPath} inResourceTab active={active}
-    onAddToConversation={(item, selection, coverage) => {
-      if (selection) {
-        const draft = getWorkDraft(controller.draftSource, controller.activeTask?.id ?? null)
-        controller.setDraft(`${draft.text}${draft.text ? '\n\n' : ''}${workArtifactSelectionQuote(item.name, item.path, selection, coverage)}`, draft.mentions)
-        toast.success('已引用选中内容')
+    onAddToConversation={(item, selection, coverage, mention) => {
+      if (mention || selection) {
+        addWorkArtifactToConversation(controller, 'workspace', item, selection, coverage, mention)
       } else if (file.externalFile || file.externalPath) {
         void addExternalToConversation().catch((reason: unknown) => toast.error(reason instanceof Error ? reason.message : String(reason)))
       } else {
-        controller.addReference(item)
-        toast.success('已添加到对话')
+        try { controller.addWorkspaceReferences([{ path: item.path, kind: 'file' }]) }
+        catch (reason) { toast.error(reason instanceof Error ? reason.message : String(reason)) }
       }
     }}
   />
   </div>
 }
 
-function addWorkArtifactToConversation(controller: WorkController, ...[item, selection, coverage]: Parameters<NonNullable<WorkArtifactPanelProps['onAddToConversation']>>): void {
-  if (selection) {
-    const draft = getWorkDraft(controller.draftSource, controller.activeTask?.id ?? null)
-    controller.setDraft(`${draft.text}${draft.text ? '\n\n' : ''}${workArtifactSelectionQuote(item.name, item.path, selection, coverage)}`, draft.mentions)
-  } else controller.addReference(item)
+function addWorkArtifactToConversation(controller: WorkController, origin: 'workspace' | 'artifact', ...[item, selection, coverage, mention]: Parameters<NonNullable<WorkArtifactPanelProps['onAddToConversation']>>): void {
+  try {
+    if (origin === 'workspace' && !selection && !mention) {
+      controller.addWorkspaceReferences([{ path: item.path, kind: 'file' }])
+      return
+    }
+    controller.addMentions([mention ? { ...mention, origin } : { source: 'file', origin, path: item.path,
+      displayText: selection ? `${item.name}（选区）` : item.name,
+      ...(selection ? { content: coverage && coverage !== 'current' ? `来自${coverage === 'receipt' ? '历史回执' : '预览片段'}的选中内容：\n${selection}` : selection } : {}) }])
+  } catch (reason) { toast.error(reason instanceof Error ? reason.message : String(reason)) }
 }
 
 function TaskArtifactPanel({ controller, active, selectedId, revealTarget, onOpenFile }: {
@@ -2651,14 +2803,20 @@ function TaskArtifactPanel({ controller, active, selectedId, revealTarget, onOpe
   const reveal = artifact && revealTarget && workChangePathKey(artifact.path, root) === workChangePathKey(revealTarget.path, root)
     ? revealTarget.reveal : undefined
   return <WorkArtifactPanel artifact={artifact} sessionId={controller.activeTask?.id} workspaceRoot={controller.activeTask?.workspacePath}
-    active={active} reveal={reveal} onOpenFile={onOpenFile} onAddToConversation={(...args) => addWorkArtifactToConversation(controller, ...args)} />
+    active={active} reveal={reveal} onOpenFile={onOpenFile} onAddToConversation={(...args) => addWorkArtifactToConversation(controller, 'workspace', ...args)} />
 }
 
 function SourcePanel({ controller }: { controller: WorkController }): JSX.Element {
-  const sources = controller.activeTask?.sources ?? []
+  const references = useWorkReferenceNavigation()
+  const requested = references?.sourceSelection?.sessionId === controller.activeTask?.id ? references?.sourceSelection : null
+  const sources = useMemo(() => {
+    const files = [...(controller.activeTask?.sources ?? []), ...controller.attachments]
+    return files.filter((file, index) => files.findIndex(other => other.path === file.path) === index)
+  }, [controller.activeTask?.sources, controller.attachments])
   const root = controller.activeTask?.workspacePath ?? null
   const [selectedPath, setSelectedPath] = useState<string | null>(sources[0]?.path ?? null)
   const selected = sources.find((item) => item.path === selectedPath) ?? null
+  useEffect(() => { if (requested) setSelectedPath(requested.source.path) }, [requested])
   useEffect(() => {
     // Keep a valid selection as the task's source list changes (attach / remove / task switch).
     if (!sources.some((item) => item.path === selectedPath)) setSelectedPath(sources[0]?.path ?? null)
@@ -2677,16 +2835,16 @@ function SourcePanel({ controller }: { controller: WorkController }): JSX.Elemen
               source={source}
               root={root}
               selected={selected?.path === source.path}
-              onSelect={() => {
-                setSelectedPath(source.path)
-                void openFileFromChat(source.path, { sessionId: controller.activeTask!.id, workspaceRoot: root }).catch(reportError)
-              }}
+              onSelect={() => setSelectedPath(source.path)}
             />
           ))}
         </ul>
         <div className="work-sources__preview">
           {selected ? (
-            <WorkSourcePreview source={selected} root={root} sessionId={controller.activeTask?.id} />
+            <WorkSourcePreview source={selected} root={root} sessionId={controller.activeTask?.id}
+              onAddFile={() => { controller.addMentions([{ source: 'file', origin: 'attachment', path: selected.path, displayText: selected.name }]) }}
+              onAddSelection={text => { controller.addMentions([{ source: 'file', origin: 'attachment', path: selected.path,
+                displayText: `${selected.name}（选区）`, content: text }]) }} />
           ) : (
             <div className="work-sources__preview-empty">
               <Icon name="file" size={20} />

@@ -4,6 +4,8 @@ import type { ChatAttachment } from '@renderer/core/engine/useChat'
 import { toast } from '@renderer/core/toast'
 import { Dialog } from '@renderer/workbench/Dialog'
 import { Icon, type IconName } from '@renderer/workbench/icons'
+import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
+import { useDocumentContextMenu } from '@renderer/core/editor/useDocumentContextMenu'
 
 /** 字节数 → 人类可读（附件条上展示大小） */
 export function formatAttachmentBytes(bytes: number): string {
@@ -103,6 +105,7 @@ export function AttachmentPreviewDialog({
 
   // ---- 查看器状态（对齐 FilePreview） ----
   const bodyRef = useRef<HTMLDivElement>(null)
+  const textRef = useRef<HTMLPreElement>(null)
   const mediaRef = useRef<HTMLImageElement>(null)
   const [scale, setScale] = useState(1)
   const [offset, setOffset] = useState({ x: 0, y: 0 })
@@ -256,6 +259,14 @@ export function AttachmentPreviewDialog({
     anchor.click()
   }, [src, file.name])
 
+  const { menu: imageMenu } = useDocumentContextMenu(bodyRef, { identity: file.path, path: file.path, root,
+    active: isImage && Boolean(src), hasContent: false, getExtraItems: () => [
+      { id: 'copy-image', label: '复制图片', onSelect: () => void copyImage() },
+      { id: 'save-image', label: '另存为', onSelect: saveAs }
+    ] })
+  const { menu: textMenu } = useDocumentContextMenu(textRef, { identity: file.path, path: file.path, root,
+    active: !isImage && text !== null, getText: () => text ?? '' })
+
   // ---- 键盘快捷键 ----
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -323,6 +334,7 @@ export function AttachmentPreviewDialog({
         <div className="viewer">
           <div
             ref={bodyRef}
+            tabIndex={0}
             className={dragging ? 'viewer__stage viewer__stage--dragging' : 'viewer__stage'}
             onWheel={onWheel}
             onDoubleClick={resetView}
@@ -391,8 +403,9 @@ export function AttachmentPreviewDialog({
           </footer>
         </div>
       ) : (
-        <pre className="attachment-text-preview">{text ?? '加载中…'}</pre>
+        <pre ref={textRef} tabIndex={0} className="attachment-text-preview">{text ?? '加载中…'}</pre>
       )}
+      {imageMenu}{textMenu}
     </Dialog>
   )
 }
@@ -444,7 +457,7 @@ export function AttachmentChip({
 
   const body = (
     <>
-      <Icon name={isImage ? 'image' : 'file'} size={16} />
+      {isImage ? <Icon name="image" size={16} /> : <FileGlyph name={file.name} mimeType={file.type} />}
       <span className="attach-chip__name">{file.name}</span>
       {file.size > 0 ? <span className="attach-chip__size">{formatAttachmentBytes(file.size)}</span> : null}
     </>

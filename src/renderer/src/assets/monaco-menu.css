@@ -1,0 +1,65 @@
+/* Monaco keeps its language actions, selection handling and native keyboard
+   navigation; its menu surface follows the same tokens as document menus. */
+:root .context-view.monaco-menu-container {
+  border-radius: var(--radius-panel);
+  box-shadow: var(--material-shadow), var(--material-highlight);
+}
+:root .monaco-menu-container > .monaco-scrollable-element {
+  border-radius: var(--radius-panel) !important;
+  outline: none !important;
+  background: transparent !important;
+}
+:root .monaco-menu {
+  min-width: 180px;
+  padding: var(--menu-padding);
+  font-family: var(--font-ui);
+  font-size: var(--menu-title-size);
+  color: var(--fg);
+  background: var(--material-bg);
+  border: 1px solid var(--material-border);
+  border-radius: var(--radius-panel);
+}
+:root .monaco-menu .monaco-action-bar.vertical { padding: 0; }
+:root .monaco-menu .monaco-action-bar.vertical .actions-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--menu-row-gap);
+}
+:root .monaco-menu .monaco-action-bar.vertical .action-menu-item {
+  box-sizing: border-box;
+  min-height: var(--menu-row-height);
+  height: auto;
+  margin: 0;
+  padding: var(--menu-row-padding);
+  gap: var(--space-3);
+  border-radius: var(--menu-row-radius);
+}
+:root .monaco-menu .monaco-action-bar.vertical .action-label:not(.separator) {
+  padding: 0;
+  font-size: var(--menu-title-size);
+  line-height: 20px;
+}
+:root .monaco-menu .monaco-action-bar.vertical .keybinding,
+:root .monaco-menu .monaco-action-bar.vertical .submenu-indicator {
+  flex: 0 0 auto;
+  padding: 0;
+  color: var(--fg-faint);
+  font-size: 11px;
+  opacity: 1;
+}
+:root .monaco-menu .monaco-action-bar.vertical .submenu-indicator.codicon::before { margin: 0; }
+:root .monaco-menu .monaco-action-bar.vertical .action-menu-item.checked { padding-left: 28px; }
+:root .monaco-menu .monaco-action-bar.vertical .menu-item-check { left: 8px; width: 16px; }
+:root .monaco-menu .monaco-action-bar.vertical .action-item.disabled { opacity: .45; }
+:root .monaco-menu .monaco-action-bar.vertical .action-label.separator {
+  margin: var(--space-1) var(--space-2) !important;
+  border-bottom-color: var(--border);
+}
+:root .monaco-menu .monaco-action-bar.vertical .action-item:not(.disabled) .action-menu-item:is(:hover, :focus) {
+  background: var(--menu-hover-bg) !important;
+  color: var(--fg-strong) !important;
+}
+:root .monaco-menu .monaco-action-bar.vertical .action-menu-item:focus-visible {
+  outline: 1px solid var(--list-focus-outline) !important;
+  outline-offset: -1px !important;
+}

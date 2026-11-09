@@ -26,7 +26,8 @@ import { createRecoveryLoop, createRecoverySingleFlight, durableCancelBody, reco
 import type { EngineFileChange, EngineTodo, StreamEvent } from '@shared/ipc'
 import * as engine from './client'
 import { assertEngineSource, getEngineSource, isEngineReady, isRemoteEngine, subscribeEngineSource } from './source'
-import { revertConversationFrom } from './change-revert'
+import { getRevertReport, revertConversationFrom, subscribeReverts } from './change-revert'
+import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import {
   buildToolResponse,
   normalizePending,
@@ -293,7 +294,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
   /** 删除该用户消息及后续历史，保留文件，不自动重发。 */
   truncateFrom: (sessionId: string, userMessage: ChatMessage, onHistoryChanged?: () => void) => Promise<void>
   /** 消息级回退：恢复该消息之后的所有文件改动（含 kept）并截断对话，不自动重发 */
-  revertFrom: (sessionId: string, userMessage: ChatMessage, onHistoryChanged?: () => void) => Promise<void>
+  revertFrom: (sessionId: string, userMessage: ChatMessage, onHistoryChanged?: () => void) => Promise<boolean>
   /** 合并发送：把排队中的消息与本条合并成一条立即发出（流中时合并全部队列） */
   mergeAndSend: (text: string, options: SendOptions) => Promise<void>
   /** 当前排队中的消息（供队列托盘渲染） */
@@ -1377,6 +1378,23 @@ export function useChat(options: { commandOwner?: string } = {}): {
     })
   }, [selectView, renderSource, snapshotReads, recoveryScope, scopeIsCurrent, commitUsageAnchor, prepareInView, activatePublishedSnapshot])
 
+  useEffect(() => {
+    let lastReport: ReturnType<typeof getRevertReport> = null
+    return subscribeReverts(() => {
+      const sessionId = viewSessionRef.current
+      if (!sessionId || renderSource !== getEngineSource()) return
+      const report = getRevertReport(sessionId)
+      if (!report || report === lastReport) return
+      lastReport = report
+      // Message rollback owns its refresh and truncation. Standalone file
+      // decisions also revoke deliveries, so they must refresh the transcript.
+      if (historyMutationGuard.blocked(recoveryScope(sessionId)) || hasSessionWork(sessionId)) return
+      invalidateRecovery()
+      resetDisplayHistory()
+      void restoreSession(sessionId)
+    })
+  }, [renderSource, restoreSession, recoveryScope, historyMutationGuard, hasSessionWork, invalidateRecovery, resetDisplayHistory])
+
   const loadArchive = useCallback(async (sessionId: string, action: ArchivePageAction = 'older'): Promise<void> => {
     if (!sessionId || !isEngineReady() || renderSource !== getEngineSource() || hasSessionWork(sessionId) || archiveLoadingRef.current || historyMutationGuard.blocked(recoveryScope(sessionId))) return
     const source = getEngineSource()
@@ -1825,33 +1843,56 @@ export function useChat(options: { commandOwner?: string } = {}): {
    * 再截断该消息及之后的对话历史。不自动重发，由调用方决定回填输入框。
    */
   const revertFrom = useCallback(
-    async (sessionId: string, userMessage: ChatMessage, onHistoryChanged?: () => void): Promise<void> => {
+    async (sessionId: string, userMessage: ChatMessage, onHistoryChanged?: () => void): Promise<boolean> => {
       const source = getEngineSource()
       assertEngineSource(renderSource)
       if (hasSessionWork(sessionId)) throw new Error('会话运行中，请先停止再回退')
-      if (viewSessionRef.current !== sessionId) return
+      if (viewSessionRef.current !== sessionId) return false
       invalidateRecovery()
       const scope = recoveryScope(sessionId)
+      if (historyMutationGuard.blocked(scope)) throw new Error('正在处理消息，请稍候')
       const mutation = historyMutationGuard.begin(scope)
+      const previousReport = getRevertReport(sessionId)
+      let historyRemoved = false
       try {
-        await revertConversationFrom(async <T,>(input: Parameters<typeof engine.requestOrThrow>[0]) => {
+        const report = await revertConversationFrom(async <T,>(input: Parameters<typeof engine.requestOrThrow>[0]) => {
           assertEngineSource(source)
           const result = await engine.requestOrThrow<T>(input)
           assertEngineSource(source)
           return result
-        }, sessionId, userMessage)
+        }, sessionId, userMessage, async preview => {
+          if (!scopeIsCurrent(scope)) return false
+          const commands = preview.changes.filter(item => item.requiresExplicitRevert && item.status !== 'reverted')
+          const paths = [...new Set(commands.map(item => item.path))]
+          const confirmed = await confirmDialog({ title: '回退文件', danger: true, confirmText: '回退文件',
+            body: `将回退这条消息及之后的 ${preview.total} 处文件及目录改动（含已保留的修改），并撤销对应成果。全部安全回退后删除对应对话，将原指令放回输入框。\n\n${paths.length ? `以下 ${paths.length} 个路径包含命令运行期间的改动，也可能包含同期手动编辑，请确认一并回退：\n${paths.join('\n')}\n\n` : ''}遇到版本冲突或缺少快照时保留相关文件和对话，并显示具体原因。` })
+          return confirmed && scopeIsCurrent(scope)
+        })
+        if (!report) return false
+        historyRemoved = true
         assertEngineSource(source)
         if (scopeIsCurrent(scope)) setSessionModel(null)
         onHistoryChanged?.()
         // A slow rollback may finish after navigation. Do not remove another session's messages.
-        if (!scopeIsCurrent(scope)) return
+        if (!scopeIsCurrent(scope)) return true
         resetDisplayHistory()
         const refreshed = await restoreSession(sessionId)
-        if (!scopeIsCurrent(scope)) return
+        if (!scopeIsCurrent(scope)) return true
         if (refreshed.kind !== 'restored') throw new Error('回退已完成，但未能重新加载会话，请刷新后查看')
+        return true
       } finally {
-        historyMutationGuard.release(mutation)
-        if (scopeIsCurrent(scope)) setDisplayRefreshVersion(value => value + 1)
+        // A partial rollback has already changed disk and revoked deliveries.
+        // Reload its projection even though the transcript must remain intact.
+        try {
+          const report = getRevertReport(sessionId)
+          if (!historyRemoved && report && report !== previousReport && scopeIsCurrent(scope)) {
+            resetDisplayHistory()
+            await restoreSession(sessionId)
+          }
+        } finally {
+          historyMutationGuard.release(mutation)
+          if (scopeIsCurrent(scope)) setDisplayRefreshVersion(value => value + 1)
+        }
       }
     },
     [restoreSession, renderSource, hasSessionWork, invalidateRecovery, recoveryScope, scopeIsCurrent, historyMutationGuard, resetDisplayHistory]

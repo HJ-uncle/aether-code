@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type JSX } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react'
 import { Icon, type IconName } from '@renderer/workbench/icons'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { toast } from '@renderer/core/toast'
+import { getEngineSource } from '@renderer/core/engine/source'
 import { userMessageText } from '../chat/mention-context'
 import type { useWorkController, WorkUserMessageAction } from './work-runtime'
 
@@ -21,21 +22,33 @@ const confirmations = {
   delete: { title: '删除本轮', body: '删除这条用户消息和本轮 AI 回复？后续轮次和已生成的文件会保留。', confirmText: '删除' }
 }
 
-export function WorkUserMessageActions({ taskId, messageId, content, canMutate, busy, onAction }: {
-  taskId: string; messageId: string; content: string; canMutate: boolean; busy: boolean
+type MessageActionProps = {
+  taskId: string; messageId: string; canMutate: boolean; busy: boolean
   onAction: WorkController['userMessageAction']
-}): JSX.Element {
+}
+
+function useMessageAction({ taskId, messageId, canMutate, busy, onAction }: MessageActionProps, regenerate = false) {
   const [working, setWorking] = useState(false)
-  const [copied, setCopied] = useState(false)
   const flight = useRef(false)
-  const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  useEffect(() => () => clearTimeout(copyTimer.current), [])
+  const viewRevision = useRef(0)
+  useLayoutEffect(() => () => { viewRevision.current++ }, [taskId, messageId])
   const run = async (action: WorkUserMessageAction): Promise<void> => {
     if (flight.current || busy || (action !== 'add' && !canMutate)) return
+    const source = getEngineSource(), revision = viewRevision.current
     flight.current = true
     setWorking(true)
     try {
-      if (action !== 'add' && !await confirmDialog({ ...confirmations[action], danger: true })) return
+      // Revert reads its authoritative scope before showing one confirmation.
+      if (action !== 'add' && action !== 'revert') {
+        const confirmation = regenerate && action === 'retry' ? {
+          title: '重新生成', confirmText: '重新生成',
+          body: '将删除本轮及之后的对话，并按本轮原指令和附件重新生成。已生成的文件保持原样。'
+        } : confirmations[action]
+        if (!await confirmDialog({ ...confirmation, danger: true })) return
+      }
+      // A modal can outlive its conversation; the latest controller callback
+      // must never redirect that old confirmation into another engine or view.
+      if (source !== getEngineSource() || revision !== viewRevision.current) return
       if (await onAction(taskId, messageId, action)) {
         if (action === 'add') toast.success('已添加到对话')
         else if (action === 'delete') toast.success('已删除本轮对话')
@@ -45,6 +58,24 @@ export function WorkUserMessageActions({ taskId, messageId, content, canMutate, 
     } catch (error) { toast.error(error instanceof Error ? error.message : String(error)) }
     finally { flight.current = false; setWorking(false) }
   }
+  return { working, run }
+}
+
+export function WorkRegenerateReplyButton(props: MessageActionProps): JSX.Element {
+  const { working, run } = useMessageAction(props, true)
+  return <button type="button" className="message__action" aria-label="重新生成" aria-busy={working || props.busy}
+    title="按本轮原指令重新生成，将删除本轮及后续对话；文件保持原样"
+    disabled={working || props.busy || !props.canMutate} onClick={() => void run('retry')}>
+    <Icon name="restart" size={15} aria-hidden="true" />
+  </button>
+}
+
+export function WorkUserMessageActions({ content, ...props }: MessageActionProps & { content: string }): JSX.Element {
+  const { working, run } = useMessageAction(props)
+  const { busy, canMutate } = props
+  const [copied, setCopied] = useState(false)
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => clearTimeout(copyTimer.current), [])
   const copy = async (): Promise<void> => {
     try {
       await navigator.clipboard.writeText(userMessageText(content))

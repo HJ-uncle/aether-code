@@ -6,7 +6,7 @@ import type { ChatFileContext } from '../chat/chat-link'
 import { CompactToolRow } from '../chat/CompactToolRow'
 import { CommandJobCard } from '../chat/CommandJobCard'
 import { SubagentCard } from '../chat/SubagentCard'
-import { readActivityPreview } from './work-activity-presentation'
+import { readActivityFiles, readActivityPreview } from './work-activity-presentation'
 import { workActivityState } from './work-inline-activity-state'
 import { workToolTarget } from './work-message-timeline'
 import { workToolChanges, workToolHasImages, workToolKind } from './work-tool-presentation'
@@ -35,13 +35,12 @@ export const WorkToolActivity = memo(function WorkToolActivity({ tool, fileConte
     [tool.change, tool.changes, fileContext.sessionId, fileContext.receiptParentSessionId])
   // The version envelope is useful for diagnostics, but the receipt's readable
   // file content is what belongs in the inline preview. The source stays intact.
-  const displayTool = useMemo(() => {
-    const preview = readActivityPreview(tool)
-    return preview ? { ...tool, result: preview.content || '文件内容为空' } : tool
-  }, [tool])
+  const readPreview = useMemo(() => readActivityPreview(tool), [tool])
+  const readFiles = useMemo(() => outputOnly ? undefined : readActivityFiles(tool), [tool, outputOnly])
+  const displayTool = useMemo(() => readPreview ? { ...tool, result: readPreview.content || '文件内容为空' } : tool, [tool, readPreview])
   const details = <CompactToolRow tool={displayTool} state={state} summary={outputOnly ? '调用记录未载入' : workToolTarget(tool, fileContext.workspaceRoot)}
     memoryKey={`work-tool:${getEngineSource()}:${fileContext.sessionId}:${tool.id}${previewScope}`} fileContext={fileContext} onOpenFile={onOpenFile}
-    structuredResult={tool.name !== 'read_file'} quiet defaultOpen={defaultOpen ?? (imagePreview && turnRunning === true)} />
+    structuredResult={tool.name !== 'read_file'} readRange={readPreview?.range} readFiles={readFiles} quiet defaultOpen={defaultOpen ?? (imagePreview && turnRunning === true)} />
   return <div className="work-tool-activity" data-tool-kind={kind} data-work-tool-id={tool.id}>
     {outputOnly ? <>
       {changes.map(change => <WorkFileChangeRow key={change.id} change={change} state={state} onOpenChange={onOpenChange} />)}

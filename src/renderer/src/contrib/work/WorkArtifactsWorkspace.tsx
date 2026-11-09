@@ -2,9 +2,11 @@ import { useMemo, useState, useSyncExternalStore, type JSX } from 'react'
 import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
 import { Icon } from '@renderer/workbench/icons'
 import { Select } from '@renderer/workbench/Select'
+import { FileGlyph } from '../explorer/FileGlyph'
 import { WorkSessionArtifacts, type WorkSessionArtifactsProps } from './WorkSessionArtifacts'
 import { WorkFinalResult } from './WorkFinalResult'
 import { workFinalResultCatalog, type WorkFinalResultSelection } from './work-final-results'
+import { finalResultPreviewFormat } from './final-result-preview-format'
 import './work-final-result.css'
 
 export type { WorkFinalResultSelection } from './work-final-results'
@@ -23,14 +25,18 @@ function ArtifactsWorkspace({ finalSelection, ...props }: WorkArtifactsWorkspace
   const requestKey = JSON.stringify(finalSelection?.sessionId === sessionId ? finalSelection : null)
   const reviewKey = JSON.stringify(selection?.sessionId === sessionId ? selection : null)
   const [dismissedReview, setDismissedReview] = useState('')
-  const [choice, setChoice] = useState<{ requestKey: string; currentKey: string; runId: string; itemId?: string }>()
-  const local = choice?.requestKey === requestKey && choice.currentKey === catalog.currentKey ? choice : undefined
+  const [choice, setChoice] = useState<{ requestKey: string; deliveryKey: string; runId: string; itemId?: string }>()
+  const local = choice?.requestKey === requestKey && choice.deliveryKey === catalog.deliveryKey &&
+    catalog.results.some(result => result.runId === choice.runId &&
+      (!choice.itemId || result.items.some(item => item.id === choice.itemId))) ? choice : undefined
   const requested = finalSelection?.sessionId === sessionId ? finalSelection : null
-  const defaultResult = catalog.current ?? catalog.results[0]
-  const selectedRun = local?.runId ?? requested?.runId ?? defaultResult?.runId
+  const defaultResult = catalog.latestDelivery ?? catalog.current ?? catalog.results[0]
+  const validRequest = requested && catalog.results.some(result => result.runId === requested.runId &&
+    result.items.some(item => item.id === requested.itemId)) ? requested : null
+  const selectedRun = local?.runId ?? validRequest?.runId ?? defaultResult?.runId
   const result = selectedRun ? catalog.results.find(candidate => candidate.runId === selectedRun) : undefined
-  const selectedItemId = local?.itemId ?? (requested?.runId === selectedRun ? requested?.itemId : undefined)
-  const item = selectedItemId ? result?.items.find(candidate => candidate.id === selectedItemId) : result?.items[0]
+  const selectedItemId = local?.itemId ?? (validRequest && validRequest.runId === selectedRun ? validRequest.itemId : undefined)
+  const item = result?.items.find(candidate => candidate.id === selectedItemId) ?? result?.items[0]
   const reviewing = !requested && selection?.sessionId === sessionId && reviewKey !== dismissedReview
   if (reviewing) return <div className="work-artifacts-workspace work-artifacts-workspace--review">
     <div className="work-artifacts-workspace__review-header"><button type="button" className="work-quiet-button" disabled={!active}
@@ -47,21 +53,21 @@ function ArtifactsWorkspace({ finalSelection, ...props }: WorkArtifactsWorkspace
     aria-label="本会话成果" data-final-result-fallback="changes">
     <WorkSessionArtifacts {...props} />
   </section>
-  const options = [{ value: '', label: catalog.current ? '本轮成果' : '最近成果', description: defaultResult ? `${defaultResult.items.length} 个交付物` : '本轮尚未发布交付物' },
+  const options = [{ value: '', label: defaultResult && defaultResult.runId === catalog.current?.runId ? '本轮成果' : '最近成果', description: defaultResult ? `${defaultResult.items.length} 个交付物` : '本轮尚未发布交付物' },
     ...catalog.results.filter(entry => entry.runId !== defaultResult?.runId).map(entry => ({ value: entry.runId,
       label: new Date(entry.publishedAt).toLocaleString(),
       description: entry.items.length ? entry.items.map(file => file.name).join('、') : '本轮仅有文字回复' }))]
-  const selectRun = (runId: string): void => setChoice({ requestKey, currentKey: catalog.currentKey, runId: runId || defaultResult?.runId || '' })
+  const selectRun = (runId: string): void => setChoice({ requestKey, deliveryKey: catalog.deliveryKey, runId: runId || defaultResult?.runId || '' })
   return <section className="work-artifacts-workspace" aria-label="本会话成果" data-final-result-session={sessionId}>
     <header className="work-artifacts-workspace__toolbar">
       <Select ariaLabel="选择交付轮次" value={result?.runId === defaultResult?.runId ? '' : result?.runId ?? ''} options={options} onChange={selectRun} disabled={!active} />
       <span>{result?.items.length ?? 0} 个交付物</span>
     </header>
     {result?.items.length ? <div className="work-artifacts-workspace__split">
-      <nav className="work-artifacts-workspace__files" aria-label="本轮交付物">
+      <nav className="work-artifacts-workspace__files" data-scroll-axis="x" aria-label="本轮交付物">
         {result.items.map(entry => <button key={entry.id} type="button" data-final-result-item={entry.id} aria-current={entry.id === item?.id ? 'true' : undefined}
-          title={entry.path} disabled={!active} onClick={() => setChoice({ requestKey, currentKey: catalog.currentKey, runId: result.runId, itemId: entry.id })}>
-          <Icon name={entry.kind === 'image' ? 'image' : 'file'} size={16} /><span>{entry.name}</span>
+          title={entry.path} disabled={!active} onClick={() => setChoice({ requestKey, deliveryKey: catalog.deliveryKey, runId: result.runId, itemId: entry.id })}>
+          <FileGlyph name={finalResultPreviewFormat(entry)} size={16} /><span>{entry.name}</span>
         </button>)}
       </nav>
       {item ? <WorkFinalResult result={result} itemId={item.id} active={active && props.ready} /> : <div className="work-final-result__status" role="status">所选交付物不在本轮发布清单中。</div>}

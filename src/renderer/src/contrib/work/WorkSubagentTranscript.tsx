@@ -9,12 +9,13 @@ import { Icon } from '@renderer/workbench/icons'
 import type { ChatFileContext } from '../chat/chat-link'
 import { getSessionMeta } from '../history/session-meta'
 import { loadWorkSubagentTranscript, SUBAGENT_TRANSCRIPT_PAGE_SIZE, WorkTranscriptSupersededError, type WorkTranscriptWindow } from './work-subagent-transcript'
-import { workSubagentFinalAnswer, workSubagentMessages } from './work-subagent-messages'
+import { workSubagentErrorText, workSubagentFinalAnswer, workSubagentMessages } from './work-subagent-messages'
 import { workMessageTimeline } from './work-message-timeline'
 import { WorkMessageContent, WorkUserMessageBody } from './WorkMessageContent'
 import { userMessageText } from '../chat/mention-context'
 import { MotionPresence } from '@renderer/workbench/MotionPresence'
 import { workSubagentLiveMessage } from './work-subagent-live'
+import { WorkErrorNotice } from './WorkErrorNotice'
 import './work-subagent-transcript.css'
 
 export interface WorkSubagentTranscriptMemory {
@@ -40,9 +41,12 @@ function TranscriptMessage({ message, messages, running, runId, memory, redraw, 
   const segments = workMessageTimeline(message)
   const answer = isRunning ? false : workSubagentFinalAnswer(message, messages)
   const display = { ...message, status: isRunning ? 'streaming' as const : message.status }
+  const errorText = workSubagentErrorText(message)
   return <WorkMessageContent message={display} sessionId={fileContext.sessionId} fileContext={fileContext}
     active={active} readOnly defaultProcessOpen={false} turnSegments={segments} finalAnswer={answer}>
-    {message.error ? <p className="work-subagent-transcript__error" role="alert">{message.error}</p> : null}
+    {errorText ? <WorkErrorNotice compact className="work-subagent-transcript__failure" error={errorText}
+      context={{ status: message.status === 'interrupted' ? 'interrupted' : message.status === 'aborted' ? 'cancelled' : 'failed',
+        runId: message.runId ?? '', error: message.error }} /> : null}
   </WorkMessageContent>
 }
 
@@ -78,7 +82,7 @@ function TranscriptInstruction({ message, memory, redraw, fileContext }: {
       <span>{open ? '任务指令' : preview}</span><Icon name="chevron-down" size={13} />
     </button>
     <MotionPresence show={open} className="work-subagent-instruction__body" id={contentId}>
-      <WorkUserMessageBody message={message} root={fileContext.workspaceRoot ?? null} collapsible={false} />
+      <WorkUserMessageBody message={message} root={fileContext.workspaceRoot ?? null} fileContext={fileContext} collapsible={false} />
     </MotionPresence>
   </article>
 }
@@ -224,7 +228,10 @@ export function WorkSubagentTranscript({ source, parentSessionId, childSessionId
         <p className="work-subagent-transcript__notice">实时进度</p>
         <WorkMessageContent message={liveMessage} sessionId={childSessionId} fileContext={fileContext} active={active} readOnly defaultProcessOpen={false} finalAnswer={liveMessage.content ? { text: liveMessage.content } : false} />
       </div> : null}
-      {statusNote && !messages.some(message => message.content.includes(statusNote)) ? <p className="work-subagent-transcript__notice" role="status">{statusNote}</p> : null}
+      {statusNote && !messages.some(message => message.runId === runId &&
+        (message.error?.trim() === statusNote.trim() || message.content.includes(statusNote))) ?
+        <WorkErrorNotice compact className="work-subagent-transcript__failure" error={statusNote}
+          context={{ status: status === 'interrupted' ? 'interrupted' : status === 'cancelled' ? 'cancelled' : 'failed', runId, error: statusNote }} /> : null}
       {window && window.lastPage < Math.ceil(window.total / SUBAGENT_TRANSCRIPT_PAGE_SIZE) ? <button type="button" className="work-subagent-transcript__earlier" disabled={!ready || loading} onClick={() => void load('newer')}><Icon name="chevron-down" size={14} />加载较新消息</button> : null}
       {!messages.length ? <div className="work-subagent-transcript__empty" role="status">{loading ? <><Spinner size={18} /><p>正在读取对话…</p></> : window ? <><Icon name="chat" size={24} /><p>{running ? '正在等待代理写入消息…' : '此代理没有可用的对话记录。'}</p></> : <p>连接就绪后可读取此代理的对话。</p>}</div> : null}
     </div>

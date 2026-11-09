@@ -1,6 +1,7 @@
 .work-service-tray { position: relative; display: inline-flex; }
 .work-service-tray--rail { position: absolute; z-index: 5; top: var(--space-2); left: var(--space-2); }
-.work-service-tray--rail .work-service-tray__button { width: 28px; height: 28px; padding: 0; justify-content: center; border-color: var(--border); background: var(--bg-surface); box-shadow: var(--shadow-control); }
+.work-service-tray--rail .work-service-tray__button { position: relative; width: 32px; height: 32px; padding: 0; justify-content: center; border-color: var(--border); background: var(--bg-surface); box-shadow: var(--shadow-control); }
+.work-service-tray--rail .work-service-tray__button b { position: absolute; top: -5px; right: -6px; min-width: 16px; box-sizing: border-box; }
 .work-service-tray--rail .work-service-tray__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .work-service-tray__button {
   display: inline-flex; align-items: center; gap: var(--space-1); min-height: 28px; padding: 4px 8px;
@@ -8,7 +9,7 @@
   font-size: 12px; cursor: pointer; transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
 }
 .work-service-tray__button:hover, .work-service-tray__button.is-open { border-color: var(--border); background: var(--bg-hover); color: var(--fg); }
-.work-service-tray__button > svg { color: currentColor; }
+.work-service-tray__button > svg { color: currentColor; flex-shrink: 0; }
 .work-service-tray__button b { min-width: 16px; padding: 1px 4px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 10px; font-weight: 600; text-align: center; }
 .work-service-tray__button:focus-visible, .work-service-tray__close:focus-visible, .work-service-tray__history-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .work-service-tray__popover { max-width: calc(100vw - 16px); }

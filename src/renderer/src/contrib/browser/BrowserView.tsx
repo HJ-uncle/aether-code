@@ -11,6 +11,7 @@ import type { BrowserBoundsInput, BrowserTabState, BrowserViewport } from '@shar
 import type { BrowserConnectionState } from '@shared/browser-api'
 import { localBrowserInput } from '@shared/browser-local-file'
 import { Icon, type IconName } from '@renderer/workbench/icons'
+import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { Select } from '@renderer/workbench/Select'
 import { ActionMenu } from '@renderer/workbench/ActionMenu'
@@ -531,7 +532,9 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
                 target?.focus()
               }}
             >
-              {item.loading ? <Spinner size={12} /> : <Icon name={item.localFile ? 'file' : 'eye-outline'} size={14} />}
+              {item.loading ? <Spinner size={12} /> : item.localFile
+                ? item.localFile.kind === 'directory' ? <Icon name="explorer" size={14} /> : <FileGlyph name={item.localFile.path} size={14} />
+                : <Icon name="eye-outline" size={14} />}
               <span>{item.title || (item.url === 'about:blank' ? '新标签页' : item.url)}</span>
             </button>
             <button

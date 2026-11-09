@@ -66,6 +66,7 @@ export interface WorkState {
   homeDraft: string
   homeWorkspacePath: string | null
   homeAttachments: ChatAttachment[]
+  homeSources: ChatAttachment[]
   homeModelId: string
   homeSessionId: string | null
   homeAgentId: string
@@ -165,6 +166,7 @@ const emptyState = (): WorkState => ({
   homeDraft: '',
   homeWorkspacePath: null,
   homeAttachments: [],
+  homeSources: [],
   homeModelId: '',
   homeSessionId: null,
   homeAgentId: '',
@@ -256,6 +258,7 @@ export function normalizeWorkState(value: unknown): WorkState {
     homeDraft: typeof data.homeDraft === 'string' ? data.homeDraft : '',
     homeWorkspacePath: typeof data.homeWorkspacePath === 'string' ? data.homeWorkspacePath : null,
     homeAttachments: attachments(data.homeAttachments),
+    homeSources: attachments(data.homeSources),
     homeModelId: typeof data.homeModelId === 'string' ? data.homeModelId : '',
     homeSessionId:
       typeof data.homeSessionId === 'string' && data.homeSessionId.startsWith('work-')

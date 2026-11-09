@@ -3,7 +3,7 @@ import type { EngineHistoryRow } from './chat-history'
 import { replayMessages } from './chat-history'
 import { isHistoryDisplayRow } from './history-page'
 import { applyRootRuns } from './root-run-state'
-import { applyProjectedFinalResult } from './final-result'
+import { applyHistoryFinalResult } from './final-result'
 import { isRootFollowupFor, normalizeRootFollowupMessage } from './root-followup-message'
 import type { ChatMessage, ToolActivity } from './useChat'
 
@@ -212,7 +212,7 @@ export function mergeDisplayHistory(cache: DisplayHistoryCache | null, current: 
       // Restore a missing old prefix only before its earliest observed tool.
       if (!present.some(message => message.role === 'user' && message.id === id)) result.push(complete[0])
       let restored = restoreLivePrefix(complete, present)
-      for (const message of complete) if (message.finalResult) restored = applyProjectedFinalResult(restored, message.finalResult)
+      for (const message of complete) if (message.finalResult) restored = applyHistoryFinalResult(restored, message.finalResult)
       result.push(...restored)
     } else {
       const presentById = new Map(present.map(message => [message.id, message]))

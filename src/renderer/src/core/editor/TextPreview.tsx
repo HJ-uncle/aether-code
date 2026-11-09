@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX, type UIEvent } from 'react'
 import { sourceLanguage } from './source-highlight-language'
 import type { SourceHighlightLines } from './source-highlight'
+import { useDocumentContextMenu } from './useDocumentContextMenu'
 import './text-preview.css'
 
 export interface TextPreviewReveal {
@@ -29,6 +30,7 @@ export function TextPreview({ content, name, reveal, active = true }: {
   const virtual = isLargeText(content)
   const lines = useMemo(() => content.split(/\r\n|\r|\n/), [content])
   const viewport = useRef<HTMLDivElement>(null)
+  const { menu } = useDocumentContextMenu(viewport, { active, getText: () => content })
   const frame = useRef(0)
   const pendingScroll = useRef(0)
   const [scrollTop, setScrollTop] = useState(0)
@@ -114,7 +116,7 @@ export function TextPreview({ content, name, reveal, active = true }: {
       setScrollTop(pendingScroll.current)
     })
   }
-  return <div ref={viewport} className="work-artifact-panel-v2__source work-text-preview text-preview" onScroll={onScroll}
+  return <><div ref={viewport} className="work-artifact-panel-v2__source work-text-preview text-preview" onScroll={onScroll}
     role="grid" aria-label={`${name} 文本预览`} aria-rowcount={lines.length} tabIndex={0}>
     <div className="work-text-preview__spacer text-preview__spacer" style={{ height: lines.length * LINE_HEIGHT }}>
       <div className="work-text-preview__window text-preview__window" style={{ transform: `translateY(${start * LINE_HEIGHT}px)` }}>
@@ -125,7 +127,7 @@ export function TextPreview({ content, name, reveal, active = true }: {
         </div>)}
       </div>
     </div>
-  </div>
+  </div>{menu}</>
 }
 
 function renderLine(line: string | SourceHighlightLines[number], match?: { start: number; length: number }): JSX.Element[] | string {

@@ -1,8 +1,8 @@
 /**
  * 文件类型图标映射（照抄 wuzu-client 的 languageMap.ts EXT_TO_ICON）
  *
- * 扩展名 → mdi 图标 body + seti 色板 hex（VSCode 文件图标在明暗主题下颜色
- * 一致，这里同样固定 hex 直涂）。直接读 `@iconify-json/mdi` 的 icons.json
+ * 扩展名 → mdi 图标 body + seti 代码色板；办公文档用主题令牌保证明暗可辨。
+ * 直接读 `@iconify-json/mdi` 的 icons.json
  * （键为 kebab-case），零运行时依赖、离线可用。
  */
 
@@ -80,7 +80,17 @@ const EXT_TO_ICON: Record<string, FileIcon> = {
   gif: svg('file-image-outline', '#a074c4'),
   webp: svg('file-image-outline', '#a074c4'),
   ico: svg('file-image-outline', '#a074c4'),
-  pdf: svg('file-pdf-box', '#cc3e44'),
+  doc: svg('file-word', 'var(--file-icon-word)'),
+  docx: svg('file-word', 'var(--file-icon-word)'),
+  docm: svg('file-word', 'var(--file-icon-word)'),
+  xls: svg('file-excel', 'var(--file-icon-excel)'),
+  xlsx: svg('file-excel', 'var(--file-icon-excel)'),
+  xlsm: svg('file-excel', 'var(--file-icon-excel)'),
+  csv: svg('file-delimited', 'var(--file-icon-excel)'),
+  ppt: svg('file-powerpoint', 'var(--file-icon-powerpoint)'),
+  pptx: svg('file-powerpoint', 'var(--file-icon-powerpoint)'),
+  pptm: svg('file-powerpoint', 'var(--file-icon-powerpoint)'),
+  pdf: svg('file-pdf-box', 'var(--file-icon-pdf)'),
   zip: svg('folder-zip-outline', '#cc3e44')
 }
 
@@ -98,9 +108,26 @@ const FILENAME_TO_ICON: Record<string, FileIcon> = {
 
 const DEFAULT_ICON = svg('file-outline', '#8a8a8a')
 
+// 附件的展示标题可能没有后缀；已知 MIME 比标题更可靠。
+const MIME_TO_EXTENSION: Record<string, string> = {
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.ms-word.document.macroenabled.12': 'docm',
+  'application/vnd.ms-excel': 'xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.ms-excel.sheet.macroenabled.12': 'xlsm',
+  'text/csv': 'csv',
+  'application/vnd.ms-powerpoint': 'ppt',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+  'application/vnd.ms-powerpoint.presentation.macroenabled.12': 'pptm',
+  'application/pdf': 'pdf'
+}
+
 /** 按文件名取图标配置（纯函数，无副作用） */
-export function resolveFileIcon(name: string): FileIcon {
-  const lower = name.toLowerCase()
+export function resolveFileIcon(name: string, mimeType?: string): FileIcon {
+  const mimeExtension = MIME_TO_EXTENSION[mimeType?.split(';')[0].trim().toLowerCase() ?? '']
+  if (mimeExtension) return EXT_TO_ICON[mimeExtension]
+  const lower = name.replace(/\\/g, '/').split('/').pop()?.toLowerCase() ?? ''
   const byName = FILENAME_TO_ICON[lower]
   if (byName) return byName
   const dot = lower.lastIndexOf('.')

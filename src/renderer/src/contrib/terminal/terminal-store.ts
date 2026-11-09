@@ -17,8 +17,9 @@ import { FitAddon } from '@xterm/addon-fit'
 import type { TerminalDataEvent, TerminalExitInfo } from '@shared/ipc'
 import { toast } from '@renderer/core/toast'
 import { getSettings, getSnapshot } from '@renderer/core/engine/client'
-import { engineConnectionKey, engineStorageKey, getEngineStorageKey, sessionStorageKey } from '@renderer/core/engine/source'
+import { engineConnectionKey, engineStorageKey, getEngineSource, getEngineStorageKey, sessionStorageKey } from '@renderer/core/engine/source'
 import { ipcErrorMessage } from '@renderer/core/ipc-error'
+import { captureSessionFileTarget } from '@renderer/core/workspace/fs-client'
 import { buildTerminalTheme } from './terminal-theme'
 import { getTerminalPreferences, onTerminalPreferencesChanged } from './terminal-preferences'
 
@@ -39,6 +40,8 @@ export interface TerminalSession {
   source: string
   cwd?: string
   sessionId?: string
+  /** Explicit Work ownership keeps task terminals out of the shared Code list. */
+  workSession?: boolean
 }
 
 export type TerminalStatus = 'running' | 'disconnected' | 'exited' | 'reconnecting'
@@ -73,7 +76,27 @@ interface TerminalState {
 }
 
 const internals = new Map<string, SessionInternals>()
-let creationGeneration = 0
+const workScopeStates = new Map<string, { closedAll: boolean; createFailed: string | null }>()
+const scopeKey = (sessionId: string, source = getEngineStorageKey()): string => JSON.stringify([source, sessionId])
+export function getTerminalScopeState(sessionId?: string): { closedAll: boolean; createFailed: string | null } {
+  return sessionId === undefined ? state : workScopeStates.get(scopeKey(sessionId)) ?? { closedAll: false, createFailed: null }
+}
+interface TerminalCreation {
+  scope?: string
+  replacingId?: string
+  detach?: () => void
+}
+let pendingCreation: TerminalCreation | null = null
+
+/** Cancellation releases only its own attempt; a late IPC result must not
+ * clear a newer task's creating flag or restart a deliberately closed scope. */
+function cancelCreation(creation: TerminalCreation): void {
+  if (pendingCreation !== creation) return
+  pendingCreation = null
+  creation.detach?.()
+  if (creation.scope) workScopeStates.set(creation.scope, { closedAll: true, createFailed: null })
+  setState({ creating: false, ...(!creation.scope ? { closedAll: true, createFailed: null } : {}) })
+}
 
 function withInternals(id: string, patch: Partial<SessionInternals>): void {
   const current = internals.get(id)
@@ -185,7 +208,7 @@ export async function pasteTerminalClipboard(id: string): Promise<void> {
     const text = await navigator.clipboard.readText()
     // Reading the OS clipboard is asynchronous. Never redirect a pending paste
     // into a newly selected tab, or write to a disposed terminal.
-    if (state.activeId !== id || !state.sessions.includes(session) || isSessionDead(id)) {
+    if (state.activeId !== id || !state.sessions.includes(session) || isSessionDead(id) || !session.term.element?.getClientRects().length) {
       toast.info('目标终端已关闭或切换，请重新粘贴')
       return
     }
@@ -263,20 +286,32 @@ function registerSession(session: TerminalSession): void {
     activeId: session.id,
     counter: state.counter + 1,
     creating: false,
-    closedAll: false
+    ...(!session.workSession ? { closedAll: false } : {})
   })
 }
 
 /** 新建终端；cwd 跟随工作区根目录（未打开文件夹时用主目录） */
-export async function createLocalSession(cwd?: string): Promise<void> {
-  await createSession(cwd)
+export async function createLocalSession(cwd?: string, sessionId?: string): Promise<void> {
+  await createSession(cwd, undefined, sessionId)
 }
 
-async function createSession(cwd?: string, replacing?: TerminalSession): Promise<void> {
+async function createSession(cwd?: string, replacing?: TerminalSession, requestedSessionId?: string): Promise<void> {
   if (state.creating) return
-  const generation = ++creationGeneration
+  const sourceGeneration = getEngineSource()
+  const workSession = replacing?.workSession ?? requestedSessionId !== undefined
+  const ownedSessionId = replacing?.sessionId ?? requestedSessionId?.trim()
+  const creationScope = workSession ? scopeKey(ownedSessionId ?? '', replacing?.source ?? getEngineStorageKey()) : undefined
+  const creation: TerminalCreation = { scope: creationScope, replacingId: replacing?.id }
+  pendingCreation = creation
+  const currentCreation = (): boolean => pendingCreation === creation && sourceGeneration === getEngineSource()
+  const setCreation = (creating: boolean, createFailed: string | null): void => {
+    if (creationScope) {
+      workScopeStates.set(creationScope, { closedAll: false, createFailed })
+      setState({ creating })
+    } else setState({ creating, createFailed, closedAll: false })
+  }
   // 显式创建是一次新的尝试：清掉上次的失败标记，成功与否都重新如实记录
-  setState({ creating: true, createFailed: null, closedAll: false })
+  setCreation(true, null)
   let createdId: string | undefined
   let pendingTerm: Terminal | undefined
   let offEarlyData: (() => void) | undefined
@@ -288,7 +323,9 @@ async function createSession(cwd?: string, replacing?: TerminalSession): Promise
   let createdEventId: string | undefined
   let routeLive = false
   try {
+    if (workSession && !ownedSessionId) throw new Error('请先选择当前任务，再创建终端')
     const [settings, snapshot] = await Promise.all([getSettings(), getSnapshot()])
+    if (!currentCreation()) return
     if (replacing && (replacing.source !== engineStorageKey(snapshot) || !state.sessions.some(session => session.id === replacing.id))) {
       throw new Error('终端所属连接或账号已变化，请在当前工作区新建终端')
     }
@@ -298,14 +335,13 @@ async function createSession(cwd?: string, replacing?: TerminalSession): Promise
     const remote = snapshot.mode === 'remote' || (snapshot.phase !== 'ready' && settings.engineMode === 'remote')
     if (remote && (snapshot.mode !== 'remote' || snapshot.phase !== 'ready')) {
       if (replacing) throw new Error('请先连接远端引擎')
-      setState({ creating: false })
       return
     }
     // 后台创建用默认尺寸，首次挂载时由 fit 修正
     // Capture ownership for local PTYs too; later model reads must not infer it
     // from whichever conversation happens to be selected at read time.
-    let sessionId: string | undefined = replacing?.sessionId ?? (settings.lastSessionId.trim() || undefined)
-    if (remote) {
+    let sessionId: string | undefined = ownedSessionId ?? (settings.lastSessionId.trim() || undefined)
+    if (remote && ownedSessionId === undefined) {
       sessionId = settings.lastSessionId.trim()
       const source = getEngineStorageKey()
       if (source) {
@@ -313,11 +349,13 @@ async function createSession(cwd?: string, replacing?: TerminalSession): Promise
       }
       if (replacing?.sessionId) sessionId = replacing.sessionId
     }
+    // Scratch tasks have no project hint. Resolve their own workspace instead
+    // of silently starting a local shell in Code's workspace or the home folder.
+    const resolvedCwd = !remote && workSession && !cwd && sessionId
+      ? (await captureSessionFileTarget(sessionId)).root
+      : cwd
     const current = await getSnapshot()
-    if (generation !== creationGeneration || current.mode !== snapshot.mode || (remote && (current.phase !== 'ready' || engineConnectionKey(current) !== engineConnectionKey(snapshot)))) {
-      setState({ creating: false })
-      return
-    }
+    if (!currentCreation() || current.mode !== snapshot.mode || (remote && (current.phase !== 'ready' || engineConnectionKey(current) !== engineConnectionKey(snapshot)))) return
     // Shell banners can arrive during the IPC creation handshake. Listen before
     // creating, then replay only the returned terminal's events in their order.
     const early: ({ kind: 'data'; value: TerminalDataEvent } | { kind: 'exit'; value: TerminalExitInfo })[] = []
@@ -331,11 +369,12 @@ async function createSession(cwd?: string, replacing?: TerminalSession): Promise
     offEarlyExit = window.aether.terminal.onExit(value => {
       if (!routeLive && (!createdEventId || value.id === createdEventId)) early.push({ kind: 'exit', value })
     })
-    const { id } = await window.aether.terminal.create({ cwd, cols: 80, rows: 24, ...(sessionId ? { sessionId } : {}) })
+    creation.detach = () => { offEarlyData?.(); offEarlyExit?.() }
+    const { id } = await window.aether.terminal.create({ cwd: resolvedCwd, cols: 80, rows: 24, ...(sessionId ? { sessionId } : {}) })
     createdId = id
     createdEventId = id
     const after = await getSnapshot()
-    if (generation !== creationGeneration || engineConnectionKey(after) !== engineConnectionKey(snapshot) || (remote && after.phase !== 'ready') ||
+    if (!currentCreation() || engineConnectionKey(after) !== engineConnectionKey(snapshot) || (remote && after.phase !== 'ready') ||
         (replacing && !state.sessions.some(session => session.id === replacing.id))) {
       throw new Error('连接或目标终端已变化，终端创建已取消')
     }
@@ -375,6 +414,9 @@ async function createSession(cwd?: string, replacing?: TerminalSession): Promise
       }
     })
 
+    // The replacement now exists; closing its old tab must not cancel the
+    // completed attempt or mark the newly registered scope as closed.
+    pendingCreation = null
     registerSession({
       id,
       title: replacing?.title ?? `终端 ${state.counter + 1}`,
@@ -382,8 +424,9 @@ async function createSession(cwd?: string, replacing?: TerminalSession): Promise
       fit,
       transport,
       source: engineStorageKey(snapshot),
-      cwd,
-      sessionId
+      cwd: resolvedCwd,
+      sessionId,
+      workSession
     })
     createdId = undefined
     pendingTerm = undefined
@@ -401,16 +444,20 @@ async function createSession(cwd?: string, replacing?: TerminalSession): Promise
       else void window.aether.terminal.dispose(createdId).catch(() => undefined)
       pendingTerm?.dispose()
     }
-    if (generation !== creationGeneration) { setState({ creating: false }); return }
+    if (!currentCreation()) return
     // 创建失败（如环境不支持 ConPTY）不能只把 creating 复位了事：
     // 视图层的「无会话则自动新建」effect 依赖 sessions.length/creating，
     // 复位后依赖变化会立刻再触发一次创建 —— 失败-复位-重试的无限循环。
     // 用 createFailed 顶住，让视图层知道"这次尝试明确失败了"，不再自动重试。
-    setState({ creating: false, createFailed: ipcErrorMessage(error) })
+    setCreation(false, ipcErrorMessage(error))
     if (state.sessions.length > 0) toast.error(`终端启动失败：${ipcErrorMessage(error)}`)
   } finally {
     offEarlyData?.()
     offEarlyExit?.()
+    if (pendingCreation === creation) {
+      pendingCreation = null
+      if (state.creating) setState({ creating: false })
+    }
   }
 }
 
@@ -425,7 +472,7 @@ export async function reconnectSession(id: string): Promise<void> {
     withInternals(id, { status: 'running' })
     session.transport.resize(session.term.cols, session.term.rows)
     session.term.write('\r\n\x1b[90m[终端连接已恢复]\x1b[0m\r\n')
-    if (state.activeId === id) session.term.focus()
+    if (state.activeId === id && session.term.element?.getClientRects().length) session.term.focus()
   } catch (error) {
     if (!internals.has(id)) return
     if (getSessionStatus(id) === 'reconnecting') withInternals(id, { status: 'disconnected' })
@@ -440,18 +487,27 @@ export async function restartSession(id: string): Promise<void> {
   await createSession(session.cwd, session)
 }
 
-export function closeOtherSessions(id: string): void {
-  for (const session of [...state.sessions]) if (session.id !== id) closeSession(session.id)
+export function closeOtherSessions(id: string, visibleIds?: readonly string[]): void {
+  for (const session of [...state.sessions]) if (session.id !== id && (!visibleIds || visibleIds.includes(session.id))) closeSession(session.id)
 }
 
-export function closeAllSessions(): void {
-  creationGeneration++
-  for (const session of [...state.sessions]) closeSession(session.id)
-  setState({ closedAll: true })
+export function closeAllSessions(visibleIds?: readonly string[], scope?: { sessionId: string; source?: string }): void {
+  const targetScope = scope ? scopeKey(scope.sessionId, scope.source ?? getEngineStorageKey()) : undefined
+  // Work may display a Code-origin terminal for the same session. The caller's
+  // scope, rather than the listed terminal's origin, owns a pending creation.
+  for (const session of [...state.sessions]) if (!visibleIds || visibleIds.includes(session.id)) closeTerminalSession(session.id, false)
+  if (targetScope) workScopeStates.set(targetScope, { closedAll: true, createFailed: null })
+  const creation = pendingCreation
+  if (creation && (!visibleIds || creation.scope === targetScope)) cancelCreation(creation)
+  setState(!scope ? { closedAll: true, createFailed: null } : {})
 }
 
 /** 关闭会话：杀 shell、释放 xterm、激活标签落到右侧最后一个 */
 export function closeSession(id: string): void {
+  closeTerminalSession(id, true)
+}
+
+function closeTerminalSession(id: string, cancelPending: boolean): void {
   const session = state.sessions.find((item) => item.id === id)
   if (!session) return
 
@@ -461,11 +517,18 @@ export function closeSession(id: string): void {
   session.term.dispose()
 
   const remaining = state.sessions.filter((item) => item.id !== id)
-  if (remaining.length === 0) creationGeneration++
+  if (session.sessionId && !remaining.some(item => item.source === session.source && item.sessionId === session.sessionId)) {
+    workScopeStates.set(scopeKey(session.sessionId, session.source), { closedAll: true, createFailed: null })
+  }
+  const creation = pendingCreation
+  const closedScope = session.sessionId ? scopeKey(session.sessionId, session.source) : undefined
+  if (cancelPending && creation && (creation.replacingId === id ||
+      (creation.scope ? creation.scope === closedScope && !remaining.some(item => item.source === session.source && item.sessionId === session.sessionId)
+        : !session.workSession && !remaining.some(item => !item.workSession)))) cancelCreation(creation)
   setState({
     sessions: remaining,
     activeId:
       state.activeId === id ? (remaining[remaining.length - 1]?.id ?? null) : state.activeId,
-    closedAll: remaining.length === 0
+    ...(!session.workSession ? { closedAll: remaining.every(item => item.workSession) } : {})
   })
 }

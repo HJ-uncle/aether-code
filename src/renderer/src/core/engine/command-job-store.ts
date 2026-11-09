@@ -101,8 +101,8 @@ export async function refreshCommandOutput(sessionId: string, jobId: string): Pr
       if (previous && current && !sameCommandOwner(previous.job, current.job)) throw new Error('命令任务已变化')
       const job = mergeCommandJob(current?.job, incoming)
       const output = mergeCommandOutput(current?.output ?? emptyCommandOutput, page)
-      const view = { job, output }
-      jobs.set(id, view); notify()
+      const view = current?.job === job && current.output === output ? current : { job, output }
+      if (view !== current) { jobs.set(id, view); notify() }
       if (!page.hasMore) return view
       if (output.cursor <= (previous?.output.cursor ?? 0)) throw new Error('命令输出游标未前进')
     }

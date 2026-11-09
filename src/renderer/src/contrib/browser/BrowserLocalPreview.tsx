@@ -1,14 +1,25 @@
-import { useEffect, useState, type JSX } from 'react'
+import { useEffect, useRef, useState, type JSX } from 'react'
 import type { BrowserLocalFileContent, BrowserTabState } from '@shared/browser'
 import { TextPreview } from '@renderer/core/editor/TextPreview'
 import { formatSize } from '@renderer/core/editor/preview'
 import { FilePreview } from '../editor/FilePreview'
 import { Icon } from '@renderer/workbench/icons'
+import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { BrowserLocalDirectory } from './BrowserLocalDirectory'
+import { DocumentMenuProvider, useDocumentContextMenu } from '@renderer/core/editor/useDocumentContextMenu'
 
 /** A file tab reads only its own main-process grant; text never becomes page markup. */
 export function BrowserLocalPreview({ tab }: { tab: BrowserTabState }): JSX.Element {
+  return <DocumentMenuProvider value={{ identity: `${tab.tabId}:${tab.navigationId}`, path: tab.localFile?.path }}>
+    <BrowserLocalPreviewContent tab={tab} />
+  </DocumentMenuProvider>
+}
+
+function BrowserLocalPreviewContent({ tab }: { tab: BrowserTabState }): JSX.Element {
+  const host = useRef<HTMLElement>(null)
+  const { menu } = useDocumentContextMenu(host, { active: tab.localFile?.kind !== 'directory', hasContent: false,
+    getContentRoot: () => host.current?.querySelector<HTMLElement>('.browser-local-preview__binary') ?? null })
   const [result, setResult] = useState<{ key: string; content?: BrowserLocalFileContent; error?: string } | null>(null)
   const [attempt, setAttempt] = useState(0)
   const key = `${tab.tabId}:${tab.navigationId}:${attempt}`
@@ -24,9 +35,9 @@ export function BrowserLocalPreview({ tab }: { tab: BrowserTabState }): JSX.Elem
   const current = result?.key === key ? result : null
   const file = tab.localFile!
   const content = current?.content
-  return <section className="browser-local-preview" aria-label="本地文件预览">
+  return <section ref={host} tabIndex={0} className="browser-local-preview" aria-label="本地文件预览">
     <div className="browser-local-preview__info">
-      <Icon name={file.kind === 'directory' ? 'explorer' : 'file'} size={14} />
+      {file.kind === 'directory' ? <Icon name="explorer" size={14} /> : <FileGlyph name={file.path} size={14} />}
       <span className="browser-local-preview__name" title={file.path}>{file.name}</span>
       <span>{file.kind === 'directory' ? '文件夹' : formatSize(content && content.kind !== 'directory' ? content.size : file.size)}</span>
       {content?.kind === 'text' ? <span>{content.encoding} · 只读</span> : null}
@@ -45,5 +56,6 @@ export function BrowserLocalPreview({ tab }: { tab: BrowserTabState }): JSX.Elem
           ? <img className="browser-local-preview__image" src={`data:image/svg+xml;base64,${content.base64}`} alt={file.name} />
           : <FilePreview key={key} name={file.name} path={file.path} groupId={`browser:${tab.tabId}`} base64={content.base64} size={content.size} />}
       </div> : null}
+    {menu}
   </section>
 }

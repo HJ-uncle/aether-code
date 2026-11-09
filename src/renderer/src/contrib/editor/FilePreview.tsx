@@ -10,6 +10,8 @@ import {
 import { Icon } from '@renderer/workbench/icons'
 import { documentKindFor } from '../documents/document-kind'
 import { DocumentPreview } from '../documents/DocumentPreview'
+import { DocumentMenuProvider, useDocumentContextMenu } from '@renderer/core/editor/useDocumentContextMenu'
+import { toast } from '@renderer/core/toast'
 
 interface FilePreviewProps {
   /** 文件名（用于判定预览方式与 MIME） */
@@ -44,8 +46,10 @@ const ZOOM_STEP = 0.2
  */
 export const FilePreview = memo(function FilePreview(props: FilePreviewProps): JSX.Element {
   const formatName = props.formatName ?? props.name
-  if (documentKindFor(formatName)) return <DocumentPreview name={props.name} formatName={formatName} base64={props.base64} data={props.bytes} size={props.size} identityKey={`${props.path}:${props.groupId || ''}`} active={props.active ?? true} />
-  return <BinaryFilePreview {...props} />
+  return <DocumentMenuProvider value={{ path: props.path, active: props.active }}>
+    {documentKindFor(formatName) ? <DocumentPreview name={props.name} formatName={formatName} base64={props.base64} data={props.bytes} size={props.size} identityKey={`${props.path}:${props.groupId || ''}`} active={props.active ?? true} />
+      : <BinaryFilePreview {...props} />}
+  </DocumentMenuProvider>
 })
 
 function BinaryFilePreview({ name, formatName = name, path, base64 = '', size }: FilePreviewProps): JSX.Element {
@@ -64,6 +68,18 @@ function BinaryFilePreview({ name, formatName = name, path, base64 = '', size }:
 
   const isImage = kind === 'image'
   const bodyRef = useRef<HTMLDivElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const { menu } = useDocumentContextMenu(bodyRef, { hasContent: kind === 'hex', getText: kind === 'hex' ? () => dump : undefined,
+    getExtraItems: () => {
+      const media = videoRef.current
+      return media ? [
+        { id: 'media-play', label: media.paused ? '播放' : '暂停', onSelect: () => {
+          if (media.paused) void media.play().catch(() => toast.error('暂时无法播放此视频。'))
+          else media.pause()
+        } },
+        { id: 'media-mute', label: media.muted ? '取消静音' : '静音', onSelect: () => { media.muted = !media.muted } }
+      ] : []
+    } })
   const mediaRef = useRef<HTMLImageElement>(null)
 
   const [scale, setScale] = useState(1)
@@ -174,6 +190,7 @@ function BinaryFilePreview({ name, formatName = name, path, base64 = '', size }:
       <div
         className={isImage ? 'preview__body preview__body--interactive' : 'preview__body'}
         ref={bodyRef}
+        tabIndex={0}
         onWheel={onWheel}
         onDoubleClick={isImage ? resetView : undefined}
       >
@@ -194,9 +211,9 @@ function BinaryFilePreview({ name, formatName = name, path, base64 = '', size }:
             }}
           />
         ) : kind === 'video' ? (
-          <video className="preview__video" src={dataUrl} controls preload="metadata" title={path} />
+          <video ref={videoRef} className="preview__video" src={dataUrl} controls preload="metadata" title={path} />
         ) : (
-          <pre className="preview__hex">{dump}</pre>
+          <pre className="preview__hex" data-scroll-axis="x">{dump}</pre>
         )}
       </div>
 
@@ -242,6 +259,7 @@ function BinaryFilePreview({ name, formatName = name, path, base64 = '', size }:
           {path}
         </span>
       </footer>
+      {menu}
     </div>
   )
 }

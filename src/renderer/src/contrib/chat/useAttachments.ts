@@ -4,6 +4,7 @@ import type { ChatAttachment } from '@renderer/core/engine/useChat'
 import { ipcErrorMessage } from '@renderer/core/ipc-error'
 import { copyIntoWorkspace } from '@renderer/core/workspace/fs-client'
 import { cancelAttachmentUpload, uploadAttachment } from '@renderer/core/engine/client'
+import { composerCharacterCount } from './input-limits'
 
 /**
  * 聊天附件（图片 / 文本 / 文档）
@@ -19,15 +20,11 @@ import { cancelAttachmentUpload, uploadAttachment } from '@renderer/core/engine/
 const MAX_FILE_BYTES = 20 * 1024 * 1024
 const UPLOAD_TIMEOUT_MS = 120_000
 
-/** 粘贴长文本的附件化阈值（与 wuzu-client 对齐） */
-const PASTED_TEXT_MAX_CHARS = 2_000
-const PASTED_TEXT_MAX_LINES = 200
+const PASTED_TEXT_MAX_CHARS = 1_000
 
-/** 判断一段粘贴文本是否「长」到需要落成附件（照抄 wuzu-client 规则） */
+/** Emoji and other supplementary characters count once, just like typed text. */
 export function shouldAttachPastedText(text: string): boolean {
-  if (text.length > PASTED_TEXT_MAX_CHARS) return true
-  const lines = text.split(/\r\n|\r|\n/)
-  return lines.length > PASTED_TEXT_MAX_LINES
+  return composerCharacterCount(text) > PASTED_TEXT_MAX_CHARS
 }
 
 /** 把一段长文本包成「粘贴的文本-<首行>.txt」File（照抄 wuzu-client 命名规则） */

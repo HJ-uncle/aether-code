@@ -1,5 +1,11 @@
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
 
+/** A reaction is valid in ordinary chat, but cannot describe delegated work.
+ * Check the raw draft before attachment labels are added as model context. */
+export function subagentInstructionIssue(text: string): string | undefined {
+  return /[\p{L}\p{N}]/u.test(text) ? undefined : '请写明要子代理处理的内容，不能只发送标点或表情。'
+}
+
 /** References point only to files already owned by this task; they are not a new upload or an image payload. */
 export function subagentFollowupMessage(text: string, files: readonly Pick<ChatAttachment, 'name' | 'path' | 'type'>[]): string {
   const refs = [...new Map(files.map(file => [file.path, file])).values()]

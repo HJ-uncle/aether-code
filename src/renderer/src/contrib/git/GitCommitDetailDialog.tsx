@@ -16,6 +16,7 @@ import { useGitActions, useGitStore } from '@renderer/core/git/git-context'
 import { Dialog } from '@renderer/workbench/Dialog'
 import { useMotionPresence } from '@renderer/workbench/MotionPresence'
 import { Icon } from '@renderer/workbench/icons'
+import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
 
 export interface GitCommitDetailDialogProps {
   open: boolean
@@ -230,6 +231,7 @@ export function GitCommitDetailDialog({
                   onClick={() => onOpenFileDiff?.(f, info, detailCwd)}
                 >
                   <span className={codeClass(f.code)}>{f.code || 'M'}</span>
+                  <FileGlyph name={f.path} />
                   <span className="git-commitdlg__file-name" title={f.path}>
                     {fileName(f.path)}
                   </span>

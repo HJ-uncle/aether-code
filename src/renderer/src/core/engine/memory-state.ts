@@ -34,7 +34,7 @@ function confirmedState(sessionId: string, settings: MemorySettings, error: stri
     sessionId, scope: settings.memoryScope, effectiveScope: settings.enabled ? settings.effectiveScope : 'off',
     enabled: settings.enabled, loaded: true, loading: false, error,
     globalEnabled: settings.globalEnabled ?? settings.memoryScope === 'global',
-    sessionDefaultEnabled: settings.sessionDefaultEnabled ?? true,
+    sessionDefaultEnabled: settings.sessionDefaultEnabled ?? false,
     sessionOverride: settings.sessionOverride !== undefined ? settings.sessionOverride
       : settings.memoryScope === 'session' ? true : settings.memoryScope === 'off' ? false : null,
     sessionEnabled: settings.sessionEnabled ?? settings.memoryScope === 'session',

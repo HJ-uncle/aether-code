@@ -42,6 +42,9 @@ function makeEngine(name: string) {
   const finalText = `# 完整审阅结果 ${name}\n\n` + Array.from({ length: 95 }, (_, index) =>
     `段落 ${index}：RESULT_SEGMENT_${index.toString().padStart(3, '0')} ${'接口行为保持一致，记录可以逐段核对。'.repeat(6)}\n\n`).join('') + `FINAL_END_${name}`
   const thinking = `THINKING_BEGIN_${name}\n${'尚未形成最终结论，正在核对原始调用边界。'.repeat(900)}\nTHINKING_END_${name}`
+  const failureDiagnostic = `500 event:error data:${JSON.stringify({ code: 'InternalError', message: 'inference abort',
+    request_id: `fixture-request-${name}`, detail: `DIAGNOSTIC_END_${name}` })}`
+  const beforeFailure = `NORMAL_BEFORE_FAILURE_${name}：已确认两个接口的参数一致，尚未完成其余核对。`
   for (const id of [taskA, taskB]) {
     const run: RootRun = { schemaVersion: 1, runId: `root-${id}`, sessionId: id, turnId: `turn-${id}`,
       userMessageId: `user-${id}`, assistantMessageId: `assistant-${id}`, seq: 1, version: 2,
@@ -73,8 +76,28 @@ function makeEngine(name: string) {
           { ...row('short-answer', 'assistant', `SHORT_FINAL_${name}：核对完成。`, 57), reasoningContent: thinking },
           row('tail-prompt', 'user', `TAIL_PROMPT_${name}：保留当前阅读位置。`, 58), row('tail-answer', 'assistant', `TAIL_ANSWER_${name}`, 59))
         archives.set(child.childSessionId, rows)
-      } else archives.set(child.childSessionId, [row('other-user', 'user', `OTHER_CHILD_${name}_${index}：独立任务指令。`, 0),
-        row('other-answer', 'assistant', `OTHER_ANSWER_${name}_${index}：独立任务结果。`, 1)])
+      } else {
+        const rows = [row('other-user', 'user', `OTHER_CHILD_${name}_${index}：独立任务指令。`, 0),
+          row('other-answer', 'assistant', `OTHER_ANSWER_${name}_${index}：独立任务结果。`, 1)]
+        if (index === 2) {
+          const previousRunId = `${child.runId}-previous`, previousTurn = `${child.childSessionId}-failed-previous`, currentTurn = `${child.childSessionId}-failed-current`
+          const previousMetadata = { rootRunId: run.runId, subagentRunId: previousRunId }
+          const currentMetadata = { rootRunId: run.runId, subagentRunId: child.runId }
+          rows.push(
+            { ...row('failure-prompt', 'user', '继续核对接口。', 2), conversationId: previousTurn, metadata: previousMetadata },
+            { ...row('failure-with-content', 'assistant', beforeFailure, 3), conversationId: previousTurn, metadata: previousMetadata },
+            { ...row('failure-duplicate', 'assistant', failureDiagnostic, 4), conversationId: previousTurn,
+              metadata: { ...previousMetadata, error: failureDiagnostic, status: 'failed' } },
+            { ...row('failure-retry-prompt', 'user', '再试一次未完成的核对。', 5), conversationId: currentTurn, metadata: currentMetadata },
+            { ...row('failure-only', 'assistant', failureDiagnostic, 6), conversationId: currentTurn,
+              error: failureDiagnostic, metadata: { ...currentMetadata, status: 'failed' } }
+          )
+          child.status = 'failed'
+          child.error = { code: 'SUBAGENT_EXECUTION_FAILED', message: failureDiagnostic, retryable: true }
+          delete child.resultSummary
+        }
+        archives.set(child.childSessionId, rows)
+      }
     }
   }
   function parentHistory(id: string): EngineHistoryRow[] {
@@ -173,7 +196,7 @@ function makeEngine(name: string) {
       : path === '/api/v1/command-jobs' ? { jobs: [] } : []
     response.end(envelope(data))
   })().catch(error => { errors.push(String(error)); if (!response.headersSent) response.writeHead(500); response.end(String(error)) }) })
-  return { name, title, agentName, instruction, finalText, thinking, roots, children, archives, reads, runReads, fileReads, capabilityProbes, reportPath, server,
+  return { name, title, agentName, instruction, finalText, thinking, failureDiagnostic, beforeFailure, roots, children, archives, reads, runReads, fileReads, capabilityProbes, reportPath, server,
     holdArchive(sessionId: string, current: number) {
       if (held) throw new Error('An archive is already held')
       // A changed authoritative revision requires an actual data-page refresh;
@@ -316,13 +339,45 @@ test.describe.serial('子代理紧凑阅读', () => {
     await expect(instruction.locator('.work-subagent-instruction__body')).toHaveAttribute('data-motion-state', 'open')
     await expect.poll(() => instruction.locator('.message__bubble-content').textContent()).toBe(first.instruction)
     await expect(instruction.getByRole('button', { name: /继续阅读|继续展开/ })).toHaveCount(0)
-    await settleMotion(instruction)
-    await scroller().evaluate(element => {
-      const article = element.querySelector('[data-message-id="compact-child-1-instruction"]')!
-      element.scrollTop += article.getBoundingClientRect().top - element.getBoundingClientRect().top + 1200
-    })
-    await expect.poll(() => instruction.evaluate(element => element.getBoundingClientRect().top -
-      element.closest('.work-subagent-transcript__scroll')!.getBoundingClientRect().top)).toBeLessThan(-500)
+    for (const [appearance, width] of [['dark', 1440], ['light', 980]] as const) {
+      await setWindow(width, 800); await setAppearance(appearance); await openChildren()
+      const workspacePane = work().locator('.work-mobile-tabs').getByRole('button', { name: '工作区', exact: true })
+      if (await workspacePane.isVisible()) await workspacePane.click()
+      await expect(instruction).toBeVisible(); await settleMotion(instruction)
+      await scroller().evaluate(element => {
+        const article = element.querySelector('[data-message-id="compact-child-1-instruction"]')!
+        element.scrollTop += article.getBoundingClientRect().top - element.getBoundingClientRect().top + 1200
+      })
+      await expect.poll(() => instruction.evaluate(element => element.getBoundingClientRect().top -
+        element.closest('.work-subagent-transcript__scroll')!.getBoundingClientRect().top)).toBeLessThan(-500)
+      await settleMotion(panel())
+      const sticky = await instruction.evaluate(element => {
+        const scroll = element.closest('.work-subagent-transcript__scroll')!
+        const viewport = scroll.getBoundingClientRect(), viewportTop = viewport.top + scroll.clientTop
+        const header = element.querySelector('.work-subagent-instruction__summary')!
+        const summary = header.getBoundingClientRect(), label = header.querySelector('span')!.getBoundingClientRect()
+        // Probe inside the text column, away from rounded corners. The viewport's
+        // first readable pixel must belong to the sticky strip, never its body.
+        const points = [
+          { label: 'viewport-left', x: label.left + 1, y: viewportTop + 1 },
+          { label: 'viewport-right', x: label.right - 1, y: viewportTop + 1 },
+          { label: 'text-top', x: label.left + 1, y: label.top + 1 },
+          { label: 'text-bottom', x: label.left + 1, y: label.bottom - 1 }
+        ]
+        return { viewportTop, summaryTop: summary.top, summaryBottom: summary.bottom, scrollTop: scroll.scrollTop,
+          articleTop: element.getBoundingClientRect().top, dpr: devicePixelRatio,
+          points: points.map(point => {
+            const hit = document.elementFromPoint(point.x, point.y)
+            return { ...point, covered: hit !== null && header.contains(hit), hit: hit?.tagName,
+              hitClass: hit instanceof HTMLElement ? hit.className : null }
+          }) }
+      })
+      const path = info.outputPath(`compact-instruction-scrolled-${appearance}-${width}.png`)
+      await page.screenshot({ path }); await info.attach(`长指令滚动 ${appearance} ${width}`, { path, contentType: 'image/png' })
+      const evidence = JSON.stringify(sticky)
+      expect(Math.abs(sticky.summaryTop - sticky.viewportTop), evidence).toBeLessThanOrEqual(1)
+      expect(sticky.points.every(point => point.covered), evidence).toBe(true)
+    }
     await instruction.getByRole('button', { name: '收起任务指令', exact: true }).click()
     await expect(instruction.locator('.work-subagent-instruction__body')).toHaveCount(0)
     const collapsedPosition = await instruction.evaluate(element => {
@@ -331,6 +386,7 @@ test.describe.serial('子代理紧凑阅读', () => {
     })
     expect(collapsedPosition.top).toBeGreaterThanOrEqual(-1)
     expect(collapsedPosition.bottom).toBeLessThanOrEqual(collapsedPosition.viewport + 1)
+    await setWindow(1440, 900)
 
     const thinking = message('thinking-only')
     await expect(thinking.getByRole('button', { name: '展开过程', exact: true })).toHaveAttribute('aria-expanded', 'false')
@@ -361,6 +417,47 @@ test.describe.serial('子代理紧凑阅读', () => {
     // Leave this expanded for the memory assertions in the following scenario.
     await summary.click()
     await expect(instruction.locator('.message__bubble-content')).toContainText('INSTRUCTION_END_FIRST')
+  })
+
+  test('失败正文与状态只显示一次提示，不同轮次各自保留诊断和失败前正文', async ({}, info) => {
+    await selectChild(2)
+    const withContent = transcript().locator('[data-message-id="compact-child-2-failure-with-content"]')
+    const errorOnly = transcript().locator('[data-message-id="compact-child-2-failure-only"]')
+    const failures = transcript().locator('.work-subagent-transcript__failure')
+    const summary = '模型服务暂时异常，本次执行未完成。请稍后重试。'
+    await expect(failures).toHaveCount(2)
+    await expect(withContent.locator('.work-subagent-transcript__failure')).toHaveCount(1)
+    await expect(errorOnly.locator('.work-subagent-transcript__failure')).toHaveCount(1)
+    await expect(failures.locator('.work-error-notice__reason')).toHaveText([summary, summary])
+    await expect(withContent.locator('.work-assistant-content')).toHaveText(first.beforeFailure)
+    await expect(transcript()).toContainText('OTHER_ANSWER_FIRST_2')
+    await expect(errorOnly.locator('.work-assistant-content')).toHaveCount(0)
+    await expect(errorOnly.getByRole('button', { name: '复制回复', exact: true })).toHaveCount(0)
+    await expect(transcript()).not.toContainText(/500 event:error|InternalError|inference abort|request_id|DIAGNOSTIC_END/)
+    await expect(page.locator('.work-error-diagnostics__detail')).toHaveCount(0)
+    await expect(failures.getByRole('button', { name: /重试|重启/ })).toHaveCount(0)
+    await withContent.getByRole('button', { name: '复制回复', exact: true }).click()
+    await expect.poll(() => app!.evaluate(({ clipboard }) => clipboard.readText().replace(/\r\n/g, '\n'))).toBe(first.beforeFailure)
+    const screenshot = info.outputPath('compact-child-errors.png')
+    await page.screenshot({ path: screenshot }); await info.attach('不同轮次的简洁失败提示', { path: screenshot, contentType: 'image/png' })
+    for (const [message, runId] of [[withContent, 'compact-child-run-2-previous'], [errorOnly, 'compact-child-run-2']] as const) {
+      await message.getByRole('button', { name: '任务恢复更多操作', exact: true }).click()
+      await page.getByRole('menuitem', { name: '查看诊断详情', exact: true }).click()
+      const dialog = page.getByRole('dialog', { name: '诊断详情', exact: true })
+      await expect(dialog).toBeVisible()
+      const detail = dialog.locator('.work-error-diagnostics__detail')
+      await expect(detail).toContainText(`运行 ID：${runId}`)
+      await expect(detail).toContainText(first.failureDiagnostic)
+      expect((await detail.textContent())!.split(first.failureDiagnostic)).toHaveLength(2)
+      await dialog.getByRole('button', { name: '复制诊断', exact: true }).click()
+      const fullDetail = (await detail.textContent())!
+      await expect.poll(() => app!.evaluate(({ clipboard }) => clipboard.readText().replace(/\r\n/g, '\n'))).toBe(fullDetail)
+      await dialog.getByRole('button', { name: '完成', exact: true }).click()
+      await expect(page.locator('.work-error-diagnostics__detail')).toHaveCount(0)
+    }
+    await expect(failures).toHaveCount(2)
+    await expect(transcript()).not.toContainText(first.failureDiagnostic)
+    await selectChild(1)
   })
 
   test('分页与展开滚动草稿保留，切父任务或引擎时旧页不能串入当前对话', async () => {

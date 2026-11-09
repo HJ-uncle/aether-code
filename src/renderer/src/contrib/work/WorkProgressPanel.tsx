@@ -1,9 +1,8 @@
-import { memo, useId, useMemo, useState, type JSX } from 'react'
-import type { EngineFileChange, EngineTodo } from '@shared/ipc'
+import { memo, useId, useMemo, type JSX } from 'react'
+import type { EngineFileChange } from '@shared/ipc'
 import { sessionStorageKey } from '@renderer/core/engine/source'
-import { previewKindFor } from '@renderer/core/editor/preview'
 import { Icon } from '@renderer/workbench/icons'
-import { Spinner } from '@renderer/workbench/ui-primitives'
+import { FileGlyph } from '../explorer/FileGlyph'
 import { DIFF_APPROXIMATION_HINT } from '../chat/diff'
 import { useCollapseMemory } from '../chat/useCollapseMemory'
 import { workProgressChangeStatus, workProgressPath, type WorkProgressChange } from './work-progress-state'
@@ -12,6 +11,7 @@ import { artifactChangesCancel } from './work-session-artifacts'
 import type { WorkProgressSyncState } from './useWorkProgressChanges'
 import { WorkChangeReviewActions } from './WorkChangeReviewActions'
 import './work-progress-panel.css'
+export { WorkTodoProgress } from './WorkTodoProgress'
 
 export interface WorkProgressPanelProps {
   sessionId: string
@@ -25,40 +25,6 @@ export interface WorkProgressPanelProps {
   onOpenChange?: (change: EngineFileChange) => void
   onShowChanges: () => void
 }
-
-const TODO_LABELS: Record<EngineTodo['status'], string> = {
-  pending: '待开始', in_progress: '进行中', done: '已完成', cancelled: '已取消'
-}
-
-export const WorkTodoProgress = memo(function WorkTodoProgress({ todos }: { todos: EngineTodo[] }): JSX.Element | null {
-  const [expanded, setExpanded] = useState(false)
-  const listId = useId()
-  const done = todos.filter(todo => todo.status === 'done').length
-  const cancelled = todos.filter(todo => todo.status === 'cancelled').length
-  const current = todos.find(todo => todo.status === 'in_progress')
-  if (!todos.length) return null
-  return <section className="work-progress-panel" aria-label="执行反馈">
-    <section className="work-progress-panel__section work-progress-panel__section--todos" aria-label="任务清单">
-      <button type="button" className="work-progress-panel__todo-toggle" aria-expanded={expanded} aria-controls={listId} onClick={() => setExpanded(value => !value)}>
-        <span className="work-progress-panel__title"><Icon name="check-all" size={15} /><span>任务清单</span></span>
-        <span className="work-progress-panel__count" aria-live="polite">{done} / {todos.length} 已完成{cancelled ? ` · ${cancelled} 已取消` : ''}</span>
-        <Icon name="chevron-right" size={13} className="work-progress-panel__changes-chevron" />
-      </button>
-      {!expanded && current ? <div className="work-progress-panel__current-todo" aria-label="当前步骤">
-        <Spinner size={12} /><span title={current.title}>{current.title}</span>
-      </div> : null}
-      <ol id={listId} className="work-progress-panel__todos" hidden={!expanded}>
-        {todos.map(todo => <li key={todo.id} data-todo-id={todo.id} data-status={todo.status} aria-label={`${todo.title} · ${TODO_LABELS[todo.status]}`}>
-          <span className={`work-progress-panel__todo-icon work-progress-panel__todo-icon--${todo.status}`} aria-hidden="true">
-            {todo.status === 'in_progress' ? <Spinner size={14} /> : <Icon name={todo.status === 'done' ? 'check' : todo.status === 'cancelled' ? 'close' : 'circle'} size={15} />}
-          </span>
-          <span className="work-progress-panel__todo-text">{todo.title}</span>
-          {todo.status !== 'done' ? <span className={`work-progress-panel__todo-status work-progress-panel__todo-status--${todo.status}`}>{TODO_LABELS[todo.status]}</span> : null}
-        </li>)}
-      </ol>
-    </section>
-  </section>
-})
 
 /** Each card receives only its owning turn's receipts from the shared ledger reader. */
 export const WorkProgressPanel = memo(function WorkProgressPanel({ sessionId, turnKey, changes, scopedToTurn, streaming, sync, workspacePath, onOpenFile, onOpenChange, onShowChanges }: WorkProgressPanelProps): JSX.Element | null {
@@ -129,7 +95,7 @@ const WorkProgressFileRow = memo(function WorkProgressFileRow({ change: { latest
     <button type="button" className="work-progress-panel__file" title={`${latest.path}\n${kindLabel} · ${status.detail}`}
       aria-label={`${display} · ${kindLabel} · ${status.detail}`}
       onClick={() => onOpenChange ? onOpenChange(latest) : deleted ? onShowChanges() : onOpenFile(latest.path)}>
-      <span className="work-progress-panel__file-icon"><Icon name={previewKindFor(latest.path) === 'image' ? 'image' : 'file'} size={18} /></span>
+      <span className="work-progress-panel__file-icon"><FileGlyph name={latest.path} size={18} /></span>
       <span className="work-progress-panel__file-label">
         <span className="work-progress-panel__file-name">{name}</span>
         {directory ? <span className="work-progress-panel__file-path">{directory}</span> : null}

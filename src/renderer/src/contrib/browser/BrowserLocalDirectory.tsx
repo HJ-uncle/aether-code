@@ -1,6 +1,7 @@
 import { useState, type JSX } from 'react'
 import type { BrowserLocalDirectoryContent } from '@shared/browser'
 import { Icon } from '@renderer/workbench/icons'
+import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
 import { formatSize } from '@renderer/core/editor/preview'
 import { browserAction, openLocalBrowserEntry } from './browser-store'
 
@@ -34,7 +35,8 @@ export function BrowserLocalDirectory({ tabId, content }: { tabId: string; conte
         <tbody>{entries.map(entry => <tr key={entry.path}>
           <td><button type="button" className="browser-directory__entry" title={entry.message ?? entry.name}
             disabled={entry.kind === 'unavailable' || opening !== null} onClick={() => open(entry.path)}>
-            <Icon name={entry.kind === 'directory' ? 'explorer' : entry.kind === 'unavailable' ? 'warning' : 'file'} size={16} />
+            {entry.kind === 'directory' ? <Icon name="explorer" size={16} /> : entry.kind === 'unavailable'
+              ? <Icon name="warning" size={16} /> : <FileGlyph name={entry.path} />}
             <span>{entry.name}</span>
           </button>{entry.message ? <span className="browser-directory__reason">{entry.message}</span> : null}</td>
           <td>{entry.kind === 'directory' ? '文件夹' : entry.size === undefined ? '—' : formatSize(entry.size)}</td>

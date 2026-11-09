@@ -4,8 +4,8 @@
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { createServer, type ServerResponse } from 'node:http'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join, resolve } from 'node:path'
 import type { RootRun } from '../src/shared/root-run'
 import type { SubagentRunView } from '../src/shared/subagent'
 import type { ChatSsePayload } from '../src/shared/ipc'
@@ -75,20 +75,27 @@ const server = createServer((request, response) => { void (async () => {
       const childRow = (suffix: string, role: string, content: unknown): EngineHistoryRow => ({
         id: `${next.runId}-${suffix}`, role, content, isSidechain: true, createdAt: now, conversationId: current!.turnId, metadata: meta
       })
-      archive.push({ ...childRow('user', 'user', prior ? String(selector.task) : '实现独立组件，保持现有接口兼容'), metadata: { ...meta, attachments: [{ name: '组件需求.txt', type: 'text/plain', size: 42 }] } })
+      const taskText = prior ? String(selector.task) : '实现独立组件，保持现有接口兼容'
+      const instruction = !prior && next.runId === 'child-run-1'
+        ? `用户明确委派你作为协作子代理，结合你的职责完成本次请求中与你相关的部分。保留此前上下文；以实际完成的结果、证据和未完成事项回复。\n\n本实例的任务与分工：\n${taskText}\n\n当前用户请求：\n${taskText}` : taskText
+      archive.push({ ...childRow('user', 'user', instruction), metadata: { ...meta, attachments: [{ name: '组件需求.txt', type: 'text/plain', size: 42 }] } })
       if (!prior && next.runId === 'child-run-1') {
         archive.push({ ...childRow('orphan', 'tool', '上页工具保留的验证结果'), toolCallId: 'missing-before-window', metadata: { ...meta, toolName: 'read_file' } })
         archive.push({ ...childRow('call', 'assistant', '先检查组件接口。'), reasoningContent: '核对组件边界和已有调用方。', toolCall: { id: 'read-component', name: 'read_file', args: { path: 'src/Component.tsx' } } },
           { ...childRow('result', 'tool', 'export const Component = () => null'), toolCallId: 'read-component', metadata: { ...meta, toolName: 'read_file', status: 'succeeded' } })
       }
-      archive.push(childRow('assistant', 'assistant', prior ? '正在结合原组件继续处理。' : next.runId === 'child-run-2' ? '需要适配 macOS 还是 Windows？' : '组件已完成，可继续复用上下文。'))
+      archive.push(childRow('assistant', 'assistant', prior ? '正在结合原组件继续处理。' : next.runId === 'child-run-2' ? '需要适配 macOS 还是 Windows？' : '<think>CHILD_REASONING_ONLY</think>组件已完成，可继续复用上下文。'))
+      if (!prior && next.runId === 'child-run-1') archive.push({
+        ...childRow('cancelled', 'assistant', 'cancelled'), id: 'subagent-outcome:historic-cancelled',
+        metadata: { ...meta, subagentRunId: 'historic-cancelled', status: 'cancelled' }
+      })
       childArchives.set(next.childSessionId, archive)
       return next
     })
     const user: EngineHistoryRow = { id: current.userMessageId, role: 'user', content: prompt, createdAt: now, conversationId: current.turnId,
       metadata: { rootRunId: current.runId, turnId: current.turnId } }
     const finalResult = { schemaVersion: 1 as const, sessionId: id, turnId: current.turnId, runId: current.runId, assistantMessageId: current.assistantMessageId,
-      text: n === 1 ? '已完成首个组件，另一个组件需要补充信息。' : '已复用原代理上下文，正在继续。', publishedAt: now,
+      text: n === 1 ? '<think>ROOT_REASONING_ONLY</think>已完成首个组件，另一个组件需要补充信息。' : '已复用原代理上下文，正在继续。', publishedAt: now,
       items: n === 1 ? [{ id: 'report', assetId: 'adopted-report', name: '组件说明.md', path: '组件说明.md', mimeType: 'text/markdown', size: 20, sha256: 'a'.repeat(64), kind: 'file' as const,
         producerChildSessionId: added[0].childSessionId, producerRunId: added[0].runId, producerArtifactId: 'child-artifact' }] : [] }
     history.push(user, { id: current.assistantMessageId, role: 'assistant', content: finalResult.text, createdAt: now, conversationId: current.turnId,
@@ -197,13 +204,23 @@ test.beforeAll(async () => {
     remoteWorkspaceRoot: '/remote/team', lastSessionId: '', lastModelId: modelId, thinkingMode: 'off', appearance: 'light', lastFolder: '' }))
   const env = Object.fromEntries(Object.entries(process.env).flatMap(([key, value]) => value === undefined ? [] : [[key, value]]))
   env.AETHER_IDE_REMOTE_INSTANCE_TOKEN = token; env.AETHER_GLOBAL_DIR = join(fixture, 'global'); delete env.ELECTRON_RUN_AS_NODE
-  app = await electron.launch({ args: [join(root, '.e2e-tmp/builtin-agent-team-build/main/index.js'), `--user-data-dir=${fixture}`], cwd: root, env })
+  app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || join(root, '.e2e-tmp/builtin-agent-team-build/main/index.js'), `--user-data-dir=${fixture}`], cwd: root, env })
   page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message))
   await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(1440, 900) })
   await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 45_000 })
   await page.getByRole('tab', { name: 'Work 办公', exact: true }).click()
 })
-test.afterAll(async () => { await app?.close(); server.closeAllConnections(); await new Promise<void>(done => server.close(() => done())) })
+test.afterAll(async () => {
+  try { await app?.close() }
+  finally {
+    server.closeAllConnections(); await new Promise<void>(done => server.close(() => done()))
+    if (fixture) {
+      const target = resolve(fixture)
+      if (dirname(target) !== join(root, '.e2e-tmp') || !basename(target).startsWith('builtin-agent-team-profile-')) throw new Error(`Unsafe fixture cleanup: ${target}`)
+      rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    }
+  }
+})
 
 test('builtin instances, resume and live followup keep their exact child identities', async ({}, info) => {
   try {
@@ -224,6 +241,9 @@ test('builtin instances, resume and live followup keep their exact child identit
     expect(new Set(selectors.map(item => item.instanceKey)).size).toBe(2)
     await expect(work.locator('.work-sidebar')).not.toContainText('builtin-agent:')
     await expect(work.getByRole('region', { name: '协作对话', exact: true })).toContainText('已完成首个组件，另一个组件需要补充信息。')
+    const parentReply = work.locator('[data-message-id="assistant-1"]')
+    await expect(parentReply).not.toContainText('ROOT_REASONING_ONLY')
+    await expect(parentReply).not.toContainText('<think>')
     await expect(work.locator('[data-producer-child-session="child-context-1"]')).toBeVisible()
     const workspace = work.getByRole('region', { name: '任务工作区', exact: true })
     if (!await workspace.isVisible()) await work.getByRole('button', { name: '打开工作区', exact: true }).click()
@@ -241,7 +261,16 @@ test('builtin instances, resume and live followup keep their exact child identit
     const transcript = panel.getByRole('region', { name: '执行代理 1 的对话', exact: true })
     await expect(transcript.getByRole('article', { name: '用户消息', exact: true })).toContainText('实现独立组件，保持现有接口兼容')
     await expect(transcript).toContainText('组件已完成，可继续复用上下文。')
+    await expect(transcript).not.toContainText('CHILD_REASONING_ONLY')
+    await expect(transcript).not.toContainText('<think>')
+    await expect(transcript).not.toContainText('用户明确委派')
+    await expect(transcript).not.toContainText('cancelled')
+    await expect(transcript).toContainText('已取消')
+    await transcript.getByRole('button', { name: '展开任务指令', exact: true }).click()
+    await expect(transcript).not.toContainText('用户明确委派')
+    await expect(transcript).not.toContainText('本实例的任务与分工')
     await expect(transcript.locator('.attach-chip')).toContainText('组件需求.txt')
+    await transcript.getByRole('button', { name: '收起任务指令', exact: true }).click()
     await expect(panel.getByRole('button', { name: '工作轮次', exact: true })).toHaveCount(0)
     await expect(panel.getByRole('button', { name: '完整对话', exact: true })).toHaveCount(0)
     await expect(transcript.getByRole('button', { name: '展开过程', exact: true })).toHaveAttribute('aria-expanded', 'false')
@@ -250,6 +279,13 @@ test('builtin instances, resume and live followup keep their exact child identit
     await expect(transcript.locator('[data-work-tool-id="archive-output:child-run-1-orphan"]')).toBeVisible()
     await transcript.getByRole('button', { name: '收起过程', exact: true }).click()
     await page.screenshot({ path: info.outputPath('child-conversation-light.png') })
+    const childInput = panel.getByRole('textbox', { name: '继续交给 执行代理 1', exact: true })
+    await childInput.fill('!')
+    await panel.getByRole('button', { name: '继续执行', exact: true }).click()
+    await expect(panel.getByRole('alert')).toContainText('不能只发送标点或表情')
+    await expect(childInput).toHaveValue('!')
+    expect(chats).toHaveLength(1)
+    expect(runs).toHaveLength(2)
     await panel.getByRole('textbox', { name: '继续交给 执行代理 1', exact: true }).fill('复用原上下文，整合组件并返回结果')
     const resume = panel.getByRole('button', { name: '继续执行', exact: true })
     await expect(resume).toHaveText(''); await resume.click()
@@ -263,6 +299,10 @@ test('builtin instances, resume and live followup keep their exact child identit
     expect(activeStream?.writableEnded).toBe(false)
     await expect(work.locator('.work-status--running')).toBeVisible()
     await expect(panel.getByRole('textbox', { name: '补充要求给 执行代理 1', exact: true })).toBeVisible()
+    await panel.getByRole('textbox', { name: '补充要求给 执行代理 1', exact: true }).fill('？！')
+    await panel.getByRole('button', { name: '发送补充要求', exact: true }).click()
+    await expect(panel.getByRole('alert')).toContainText('不能只发送标点或表情')
+    expect(messages).toHaveLength(0)
     await panel.getByRole('textbox', { name: '补充要求给 执行代理 1', exact: true }).fill('运行中追加：保持原接口兼容')
     await panel.getByRole('button', { name: '发送补充要求', exact: true }).click()
     await expect.poll(() => messages.length).toBe(1)

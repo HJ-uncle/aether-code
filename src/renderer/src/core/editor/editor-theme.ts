@@ -264,6 +264,15 @@ function themeData(base: 'vs' | 'vs-dark', light: boolean): monaco.editor.IStand
       'list.focusBackground': cssColor('--bg-active'),
       'list.inactiveSelectionBackground': cssColor('--bg-hover'),
 
+      // Native editor actions share the document menu palette and focus state.
+      'menu.background': cssColor('--material-bg'),
+      'menu.foreground': cssColor('--fg'),
+      'menu.border': cssColor('--material-border'),
+      'menu.selectionBackground': cssColor('--menu-hover-bg'),
+      'menu.selectionForeground': cssColor('--fg-strong'),
+      'menu.selectionBorder': cssColor('--list-focus-outline'),
+      'menu.separatorBackground': cssColor('--border'),
+
       // 链接与滚动条
       'editorLink.activeForeground': accent,
       'scrollbarSlider.background': cssColor('--scrollbar-thumb'),

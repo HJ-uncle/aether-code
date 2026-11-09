@@ -457,6 +457,43 @@
 .work-composer-wrap--home {
   padding: 0;
 }
+.work-composer-wrap .input-composer__followup-row > .work-composer-workspace {
+  order: -1;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+}
+.work-composer-workspace > .popover__trigger {
+  min-width: 0;
+  max-width: 100%;
+}
+.work-composer-workspace__trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 26px;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.work-composer-workspace__trigger > svg { flex-shrink: 0; }
+.work-composer-workspace__trigger > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.work-composer-workspace__trigger:hover,
+.work-composer-workspace__trigger[aria-expanded="true"] { background: var(--bg-hover); color: var(--fg); }
+.work-composer-workspace__trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.work-composer-workspace__details { font-size: 12px; }
+.work-composer-workspace__details > strong { color: var(--fg); font-weight: 500; }
+.work-composer-workspace__details > p { margin: 6px 0 0; color: var(--fg-muted); overflow-wrap: anywhere; user-select: text; }
 .work-agent-picker,
 .work-composer .file-palette,
 .work-composer .resource-picker {
@@ -819,6 +856,7 @@
 }
 .work-conversation {
   --work-content-width: 880px;
+  --work-navigation-width: 36px;
   --work-content-inset: var(--space-5);
   --work-scrollbar-width: 6px;
   display: flex;
@@ -864,6 +902,8 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
+  /* Sticky process controls stay below the footer's floating latest button. */
+  isolation: isolate;
   scrollbar-gutter: stable;
   overscroll-behavior: contain;
   overflow-anchor: none;
@@ -1098,7 +1138,6 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  margin-left: auto;
   flex: 0 0 auto;
   min-height: var(--control-h);
   padding: var(--space-1) var(--space-2);
@@ -1131,11 +1170,33 @@
 }
 .work-message__reply-actions {
   display: flex;
-  justify-content: flex-end;
-  margin-top: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+  margin-top: var(--space-2);
 }
-.work-message__reply-actions .message__action { width: 28px; height: 28px; }
-.work-conversation-turn__usage { margin: -12px 0 24px; }
+.work-message__reply-actions .message__action { width: 28px; height: 28px; flex: 0 0 auto; }
+.work-message__reply-controls {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: var(--space-1);
+  /* Retain the controls' footprint without moving or fading the usage row. */
+  opacity: 0;
+  pointer-events: none;
+}
+.work-message--assistant:is(:hover, :focus-within) .work-message__reply-controls {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  .work-message__reply-controls { opacity: 1; pointer-events: auto; }
+}
+.work-message__reply-actions .turn-usage { margin: 0; min-width: 0; max-width: 100%; }
+.work-message__reply-actions .turn-usage > .popover__trigger { min-width: 0; max-width: 100%; }
+.work-message__reply-actions .turn-usage__trigger { min-width: 0; max-width: 100%; height: auto; min-height: 28px; }
+.work-message__reply-actions .turn-usage__text { flex-wrap: nowrap; }
 .work-task-heading__actions .usage-meter__trigger { min-height: 28px; }
 .work-usage-notice { color: var(--fg-muted); font-size: 11px; }
 .work-process {
@@ -1294,11 +1355,11 @@
 .work-conversation__footer {
   position: relative;
   flex-shrink: 0;
-  width: 100%;
-  /* Match the centered scroll content, including its reserved scrollbar gutter. */
-  max-width: calc(var(--work-content-width) + var(--work-scrollbar-width));
+  /* Match the scroll content's balanced rail reserves. Keep this a direct flex
+     child so queued messages retain their existing height constraints. */
+  width: calc(100% - var(--work-navigation-width) - var(--work-navigation-width));
+  max-width: var(--work-content-width);
   margin-inline: auto;
-  padding-inline-end: var(--work-scrollbar-width);
 }
 /* 共享提示条在 Chat 中自带居中宽度；Work 需跟随输入框的内容边界。 */
 .work-conversation__footer > .session-connection-notice {
@@ -1679,6 +1740,40 @@
 }
 @media (max-width: 760px) {
   .work-task-actions { width: 100%; margin-left: 0; justify-content: flex-start; flex-wrap: wrap; }
+}
+.work-composer__input-issue {
+  padding: 4px 12px;
+  color: var(--warn);
+  font-size: 12px;
+}
+.work-reference-preview__body {
+  display: flex;
+  min-height: 200px;
+  height: min(65vh, 680px);
+  min-width: 0;
+  overflow: auto;
+}
+.work-reference-preview__body > * {
+  flex: 1;
+  min-width: 0;
+}
+.work-reference-library__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+}
+.work-reference-library__row > :first-child {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+.work-reference-agent {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 .work-sources {
   padding: 20px;

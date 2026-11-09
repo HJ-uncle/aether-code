@@ -8,6 +8,7 @@ import { getDocument } from '@renderer/core/editor/editor-store'
 import { monaco } from '@renderer/core/editor/monaco-setup'
 import { toast } from '@renderer/core/toast'
 import { Icon } from '@renderer/workbench/icons'
+import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
 import { OverlayScope, useOverlay } from '@renderer/workbench/overlay'
 
 export interface EditorPathPickerProps {
@@ -78,7 +79,7 @@ export function EditorPathPicker({ directory, workspaceRoot, currentFile, anchor
         <button key={entry.path} type="button" className={`editor-path-picker__entry${index === selected ? ' is-selected' : ''}`}
           aria-current={fileIdentity(entry.path) === fileIdentity(currentFile) ? 'page' : undefined}
           title={entry.path} onClick={() => pick(entry)} onMouseEnter={() => setSelected(index)}>
-          <Icon name={entry.isDirectory ? 'folder-outline' : 'file'} size={14} />
+          {entry.isDirectory ? <Icon name="folder-outline" size={14} /> : <FileGlyph name={entry.path} size={14} />}
           <span>{entry.name}</span>
           {entry.isDirectory ? <Icon name="chevron-right" size={12} /> : null}
         </button>

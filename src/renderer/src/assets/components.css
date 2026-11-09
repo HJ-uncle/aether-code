@@ -2205,11 +2205,9 @@
 }
 
 .message__bubble-content .mention-chip {
-  display: inline-block;
+  display: inline-flex;
   max-width: calc(100% - 2px);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  vertical-align: middle;
+  vertical-align: baseline;
 }
 
 .message__bubble-content.is-collapsed {
@@ -4783,53 +4781,86 @@
   pointer-events: none;
 }
 
-/* 行内引用 chip：原子节点（contenteditable=false），退格整枚删除。
-   五种来源用颜色区分（对齐 wuzu MENTION_META） */
+/* A single underline joins the icon and label without changing the text baseline. */
 .mention-chip {
+  position: relative;
   display: inline-flex;
-  align-items: center;
+  align-items: baseline;
   gap: 3px;
-  padding: 0 6px;
-  margin: 0 1px;
-  border-radius: 5px;
-  font-size: 12px;
-  line-height: 18px;
+  padding: 0;
+  margin: 0 2px;
+  font-size: inherit;
+  line-height: inherit;
+  max-width: calc(100% - 2px);
   vertical-align: baseline;
   white-space: nowrap;
   cursor: default;
   user-select: all;
-  border: 1px solid transparent;
+  border: 0;
+  background: none;
+}
+
+.mention-chip::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0.12em;
+  height: 1px;
+  background: color-mix(in srgb, currentColor 55%, transparent);
+  pointer-events: none;
 }
 
 .mention-chip--file,
+.mention-chip--conversation,
 .mention-chip--browser {
   color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.mention-chip--conversation {
+  gap: 4px;
+}
+
+.mention-chip__icon {
+  display: block;
+  align-self: center;
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+}
+
+.mention-chip__label {
+  min-width: 0;
+  /* Clip long labels while retaining their text baseline beside the user's words. */
+  overflow: clip;
+  text-overflow: ellipsis;
+}
+
+.mention-chip[role="button"] {
+  cursor: pointer;
+}
+.mention-chip[role="button"]:hover::after {
+  background: currentColor;
+}
+.mention-chip[role="button"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .mention-chip--dir {
   color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 12%, transparent);
-  border-color: color-mix(in srgb, var(--warn) 30%, transparent);
 }
 
 .mention-chip--code {
   color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .mention-chip--terminal {
   color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .mention-chip--agent {
   color: var(--ok);
-  background: color-mix(in srgb, var(--ok) 12%, transparent);
-  border-color: color-mix(in srgb, var(--ok) 30%, transparent);
 }
 
 /* ── 文件/目录引用选择面板（@ 补全 / + 菜单共用） ────────────────────────────
@@ -8512,6 +8543,8 @@ select.field__input {
   /* 与 popover 同级：都在浮层带，但要压在普通面板之上 */
   z-index: var(--z-popover);
   min-width: 180px;
+  max-height: calc(100dvh - 8px);
+  overflow-y: auto;
   padding: var(--menu-padding);
   display: flex;
   flex-direction: column;
@@ -8552,6 +8585,25 @@ select.field__input {
 .context-menu__hint {
   color: var(--fg-faint);
   font-size: 11px;
+}
+
+.context-menu__separator {
+  flex: 0 0 auto;
+  height: 0;
+  margin: var(--space-1) var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+.context-menu__icon {
+  display: inline-flex;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-muted);
+}
+
+.context-menu__icon-label {
+  flex: 1;
 }
 
 /* 菜单项左侧的色板圆点（颜色选择等场景） */
@@ -8662,6 +8714,8 @@ select.field__input {
   /* 十六进制必须等宽且不换行，否则列对不齐就没有可读性 */
   white-space: pre;
   overflow-x: auto;
+  /* 文本按完整行高展开，纵向浏览由外层preview__body承担。 */
+  overflow-y: hidden;
 }
 
 .preview__status {

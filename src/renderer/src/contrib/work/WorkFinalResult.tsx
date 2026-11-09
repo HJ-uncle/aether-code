@@ -1,4 +1,4 @@
-import { useState, type JSX } from 'react'
+import { useRef, useState, type JSX } from 'react'
 import type { FinalResult, FinalResultItem } from '@shared/final-result'
 import { formatSize } from '@renderer/core/editor/preview'
 import { Dialog } from '@renderer/workbench/Dialog'
@@ -9,6 +9,7 @@ import { WorkTextPreview } from './WorkTextPreview'
 import { finalResultPreviewFormat } from './final-result-preview-format'
 import { downloadFinalResultAsset, useFinalAssetUrl, useFinalResultAsset } from './useFinalResultAsset'
 import './work-final-result.css'
+import { DocumentMenuProvider, useDocumentContextMenu } from '@renderer/core/editor/useDocumentContextMenu'
 
 export interface WorkFinalResultProps {
   result: FinalResult
@@ -37,7 +38,9 @@ function FinalAssetPreview({ result, item, active }: { result: FinalResult; item
     try { downloadFinalResultAsset(item, asset, source); setActionError('') }
     catch (reason) { setActionError(reason instanceof Error ? reason.message : '下载失败，请重试') }
   }
-  return <section className="work-final-result" aria-label="交付物预览" data-final-result-session={result.sessionId}
+  return <DocumentMenuProvider value={{ identity: `${source}:${result.sessionId}:${result.runId}:${item.assetId}`, path: item.path, active: active && current,
+    getExtraItems: () => [{ id: 'download', label: '下载', disabled: !asset || !current, onSelect: download }] }}>
+    <section className="work-final-result" aria-label="交付物预览" data-final-result-session={result.sessionId}
     data-final-result-run={result.runId} data-final-result-item={item.id} data-final-result-asset={item.assetId}>
     <header className="work-final-result__toolbar">
       <div className="work-final-result__title"><strong title={item.name}>{item.name}</strong><span title={item.path}>{item.path}</span></div>
@@ -50,16 +53,26 @@ function FinalAssetPreview({ result, item, active }: { result: FinalResult; item
       {failure ? <div className="work-final-result__status work-final-result__status--error" role="alert">
         <span>{failure}</span>{current ? <button type="button" disabled={!active} onClick={reload}>重新加载</button> : null}
       </div> : loading || !asset ? <div className="work-final-result__status" role="status"><Spinner size={16} />正在加载交付物…</div>
-        : item.kind === 'image' ? <div className="work-final-result__image">
-          {src ? <button type="button" aria-label={`放大查看 ${item.name}`} disabled={!active} onClick={() => setExpanded(true)}>
-            <img src={src} alt={item.name} decoding="async" onError={() => setFailedSource(src)} />
-          </button> : <span role="status">正在加载图片…</span>}
-        </div> : asset.text !== undefined ? <WorkTextPreview content={asset.text} name={item.name} />
+        : item.kind === 'image' ? src ? <FinalImage src={src} name={item.name} className="work-final-result__image"
+          disabled={!active} onExpand={() => setExpanded(true)} onError={() => setFailedSource(src)} />
+          : <span role="status">正在加载图片…</span> : asset.text !== undefined ? <WorkTextPreview content={asset.text} name={item.name} active={active} />
           : <FilePreview name={item.name} formatName={finalResultPreviewFormat(item)} path={item.path} groupId={`${result.sessionId}:${result.runId}:${item.assetId}`}
             bytes={asset.bytes} base64={asset.base64} size={item.size} active={active} />}
     </div>
     <Dialog title={item.name} width={960} className="modal--final-result-image" open={expanded && active && current && !!src && !failure} onClose={() => setExpanded(false)}>
-      <div className="work-final-result__expanded"><img src={src} alt={item.name} onError={() => setFailedSource(src ?? '')} /></div>
+      {src ? <FinalImage src={src} name={item.name} className="work-final-result__expanded" onError={() => setFailedSource(src)} /> : null}
     </Dialog>
-  </section>
+  </section></DocumentMenuProvider>
+}
+
+function FinalImage({ src, name, className, disabled, onExpand, onError }: {
+  src: string; name: string; className: string; disabled?: boolean; onExpand?: () => void; onError: () => void
+}): JSX.Element {
+  const host = useRef<HTMLDivElement>(null)
+  const { menu } = useDocumentContextMenu(host, { hasContent: false, allowButtons: true })
+  const image = <img src={src} alt={name} decoding="async" onError={onError} />
+  return <div ref={host} tabIndex={onExpand ? undefined : 0} className={className}>
+    {onExpand ? <button type="button" aria-label={`放大查看 ${name}`} disabled={disabled} onClick={onExpand}>{image}</button> : image}
+    {menu}
+  </div>
 }

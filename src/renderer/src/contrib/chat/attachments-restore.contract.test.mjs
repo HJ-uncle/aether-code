@@ -10,6 +10,11 @@ const directory = dirname(fileURLToPath(import.meta.url))
 const javascript = ts.transpileModule(readFileSync(join(directory, 'useAttachments.ts'), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
 }).outputText
+const inputLimits = {}
+const inputLimitsJavascript = ts.transpileModule(readFileSync(join(directory, 'input-limits.ts'), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+}).outputText
+new vm.Script(`(function(exports){${inputLimitsJavascript}\n})`).runInThisContext()(inputLimits)
 const settle = () => new Promise(done => setImmediate(done))
 const file = (path, remoteUploadId) => ({ path, remoteUploadId, name: path, type: 'text/plain', size: 10 })
 
@@ -52,6 +57,7 @@ function fixture() {
   const forbidden = () => { throw new Error('restore must not use file or upload transport') }
   const imports = {
     react,
+    './input-limits': inputLimits,
     '@renderer/core/engine/source': {
       getEngineSource: () => source, isRemoteEngine: () => false,
       subscribeEngineSource: listener => { listeners.add(listener); return () => listeners.delete(listener) }

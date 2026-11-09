@@ -180,7 +180,7 @@ function ScopedWorkChangeReviewActions({ sessionId, workspacePath, changes, stre
     {notice ? <p className="work-change-review__notice" role="status">{notice}</p> : null}
     {mode !== 'single' && scopedReport ? <section className="work-change-review__report" aria-label="文件回退结果" aria-live="polite">
       <div>{revertSummary(scopedReport)}</div>
-      {!revertComplete(scopedReport) ? <p>部分改动未恢复，文件和对话历史已保留，请查看逐文件结果。</p> : null}
+      {!revertComplete(scopedReport) ? <p>已回退的文件与成果已更新。未完成的改动和对话历史仍保留，请查看逐文件结果。</p> : null}
       <details key={JSON.stringify(scopedReport.results.map(item => [item.id, item.status]))} open={!revertComplete(scopedReport)}>
         <summary>逐文件结果</summary>
         <ul>{groupRevertResults(scopedReport).map(({ path, items }) => <li key={path}>

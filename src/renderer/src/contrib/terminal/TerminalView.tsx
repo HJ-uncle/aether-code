@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState, type JSX, type MouseEvent, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore, type JSX, type MouseEvent, type KeyboardEvent } from 'react'
 import '@xterm/xterm/css/xterm.css'
 import {
   getWorkspaceState,
   useWorkspace,
   workspaceRestoreSettled
 } from '@renderer/core/workspace/workspace-store'
-import { copyIntoWorkspace } from '@renderer/core/workspace/fs-client'
+import { assertSessionFileTarget, captureSessionFileTarget, copyIntoWorkspace, writeFile } from '@renderer/core/workspace/fs-client'
 import { watchTheme } from '@renderer/core/theme/palette'
 import { useApp } from '@renderer/core/app-context'
 import { Icon } from '@renderer/workbench/icons'
@@ -15,10 +15,12 @@ import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { toast } from '@renderer/core/toast'
 import { ipcErrorMessage } from '@renderer/core/ipc-error'
 import { getEngineSource, getEngineStorageKey } from '@renderer/core/engine/source'
+import { useAppMode } from '@renderer/core/platform/app-mode'
+import { getLayout, onLayoutChanged } from '@renderer/core/platform/layout-state'
+import { useWorkbenchVisible } from '@renderer/core/platform/workbench-visibility'
 import { assertWorkspaceTarget, captureWorkspaceTarget } from '@renderer/core/workspace/connection'
 import { pushPendingMention } from '@renderer/contrib/chat/pending-mentions'
 import {
-  clearActiveSession,
   clearSession,
   closeAllSessions,
   closeOtherSessions,
@@ -26,6 +28,7 @@ import {
   copyTerminalSelection,
   createLocalSession,
   getTerminalState,
+  getTerminalScopeState,
   getSessionStatus,
   isSessionAttached,
   isSessionDead,
@@ -50,21 +53,40 @@ import './terminal-view.css'
  * 标签栏只是会话切换器——xterm 实例与会话绑定，切换靠 DOM 显隐，
  * 后台会话的 shell 与滚动缓冲始终存活。
  */
-export function TerminalView(): JSX.Element {
+export function TerminalView({ active: activeProp, sessionId: sessionIdProp, cwd }: { active?: boolean; sessionId?: string; cwd?: string | null } = {}): JSX.Element {
   const { engine, settings, settingsLoaded } = useApp()
+  const appMode = useAppMode()
+  const codePanelVisible = useSyncExternalStore(onLayoutChanged, () => {
+    const layout = getLayout()
+    return layout.panelVisible && layout.activePanelView === 'terminal'
+  })
+  const windowVisible = useWorkbenchVisible()
+  const visible = windowVisible && (activeProp ?? (appMode === 'code' && codePanelVisible))
+  const workScoped = sessionIdProp !== undefined
+  const sessionId = workScoped ? sessionIdProp.trim() : settings.lastSessionId
   const workspace = useWorkspace()
-  const root = workspace.root
+  const root = workScoped ? cwd ?? null : cwd === undefined ? workspace.root : cwd
   const state = useTerminalStore()
+  const source = getEngineStorageKey()
+  const sessions = state.sessions.filter(session => workScoped ? session.source === source && session.sessionId === sessionId : !session.workSession)
+  const scopeState = getTerminalScopeState(workScoped ? sessionId : undefined)
+  const selectedByScope = useRef(new Map<string, string>())
+  const viewScope = JSON.stringify([source, workScoped ? sessionId : null])
+  if (state.activeId && sessions.some(session => session.id === state.activeId)) selectedByScope.current.set(viewScope, state.activeId)
+  const activeId = sessions.find(session => session.id === selectedByScope.current.get(viewScope))?.id ?? sessions.at(-1)?.id
   const waitingForRemote = engine.snapshot.phase !== 'ready' && (engine.snapshot.mode === 'remote' || settings.engineMode === 'remote')
-  const canCreate = settingsLoaded && !waitingForRemote
+  const canCreate = visible && settingsLoaded && !waitingForRemote && (!workScoped || Boolean(sessionId))
   const [menu, setMenu] = useState<{ id: string; x: number; y: number; selection: string; anchor: Element } | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [attaching, setAttaching] = useState(false)
-  const scopeRef = useRef({ root, sessionId: settings.lastSessionId })
-  scopeRef.current = { root, sessionId: settings.lastSessionId }
-  const menuSession = state.sessions.find(session => session.id === menu?.id)
+  const scopeRef = useRef({ root, sessionId, visible })
+  scopeRef.current = { root, sessionId, visible }
+  const menuSession = sessions.find(session => session.id === menu?.id)
   const menuText = menuSession ? menu?.selection || readTerminalOutput(menuSession.term.buffer.active) : ''
-  const renameTarget = state.sessions.find(session => session.id === renaming)
+  const renameTarget = sessions.find(session => session.id === renaming)
+  const create = (): void => { if (canCreate) void createLocalSession(root ?? undefined, workScoped ? sessionId : undefined) }
+  useEffect(() => { if (visible && activeId) setActiveSession(activeId) }, [visible, activeId, viewScope])
+  useEffect(() => { setMenu(null); setRenaming(null) }, [visible, viewScope])
 
   const openMenu = (session: TerminalSession, event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>): void => {
     event.preventDefault()
@@ -79,15 +101,29 @@ export function TerminalView(): JSX.Element {
     setAttaching(true)
     try {
       const source = getEngineSource()
-      const target = captureWorkspaceTarget()
       const scope = scopeRef.current
-      if (!scope.root || !scope.sessionId) throw new Error('请先打开工作区和会话')
+      if ((!workScoped && !scope.root) || !scope.sessionId || !scope.visible) throw new Error('请先打开工作区和会话')
       if (session.source !== getEngineStorageKey()) throw new Error('终端所属账号或连接已变化，请使用当前连接的终端')
-      const result = await copyIntoWorkspace({ root: scope.root,
-        fileName: `terminal-${Date.now()}-${crypto.randomUUID().slice(0, 8)}.txt`, data: new TextEncoder().encode(text) })
-      assertWorkspaceTarget(target)
-      if (scopeRef.current.root !== scope.root || scopeRef.current.sessionId !== scope.sessionId) throw new Error('当前工作区或会话已切换，请重新添加')
-      pushPendingMention({ displayText: `${session.title} 输出`, source: 'terminal', path: result.relativePath }, { sessionId: scope.sessionId, source })
+      if (workScoped && session.sessionId !== scope.sessionId) throw new Error('终端不属于当前任务')
+      const fileName = `terminal-${Date.now()}-${crypto.randomUUID().slice(0, 8)}.txt`
+      const currentScope = (): void => {
+        if (getEngineSource() !== source || !scopeRef.current.visible || scopeRef.current.root !== scope.root || scopeRef.current.sessionId !== scope.sessionId) throw new Error('当前工作区或会话已切换，请重新添加')
+      }
+      let relativePath: string
+      if (workScoped) {
+        const target = await captureSessionFileTarget(scope.sessionId, scope.root)
+        currentScope()
+        await writeFile(`${target.root.replace(/[\\/]+$/, '')}/${fileName}`, text, target)
+        assertSessionFileTarget(target)
+        relativePath = fileName
+      } else {
+        const target = captureWorkspaceTarget()
+        const result = await copyIntoWorkspace({ root: scope.root!, fileName, data: new TextEncoder().encode(text) })
+        assertWorkspaceTarget(target)
+        relativePath = result.relativePath
+      }
+      currentScope()
+      pushPendingMention({ displayText: `${session.title} 输出`, source: 'terminal', path: relativePath }, { sessionId: scope.sessionId, source })
       toast.success('终端输出已添加到当前会话')
     } catch (error) {
       toast.error(`添加终端输出失败：${ipcErrorMessage(error)}`)
@@ -110,54 +146,55 @@ export function TerminalView(): JSX.Element {
   useEffect(() => {
     if (!canCreate) return
     let cancelled = false
-    void workspaceRestoreSettled().then(() => {
+    void (workScoped ? Promise.resolve() : workspaceRestoreSettled()).then(() => {
       if (cancelled) return
       const current = getTerminalState()
-      if (current.sessions.length > 0 || current.creating || current.createFailed || current.closedAll) return
-      void createLocalSession(getWorkspaceState().root ?? undefined)
+      const scoped = getTerminalScopeState(workScoped ? sessionId : undefined)
+      const hasSessions = current.sessions.some(session => workScoped ? session.source === source && session.sessionId === sessionId : !session.workSession)
+      if (hasSessions || current.creating || scoped.createFailed || scoped.closedAll) return
+      void createLocalSession((workScoped ? root : getWorkspaceState().root) ?? undefined, workScoped ? sessionId : undefined)
     })
     return () => {
       cancelled = true
     }
-  }, [canCreate, state.sessions.length, state.creating, state.createFailed, state.closedAll])
+  }, [canCreate, source, workScoped, sessionId, root, state.sessions, state.creating, scopeState.createFailed, scopeState.closedAll])
 
   // 外观/强调色变化（含 'system' 模式的系统切换）→ 热更新全部存活会话的主题
   useEffect(
-    () =>
-      watchTheme(() => {
+    () => visible ? watchTheme(() => {
         for (const session of getTerminalState().sessions) {
           session.term.options.theme = buildTerminalTheme()
         }
-      }),
-    []
+      }) : undefined,
+    [visible]
   )
 
   return (
     <div className="terminal-view terminal-view--tabs" aria-label="终端">
       <div className="terminal-view__main">
-        {state.sessions.map((session) => (
-          <SessionSlot key={session.id} session={session} active={session.id === state.activeId} onMenu={openMenu} />
+        {sessions.map((session) => (
+          <SessionSlot key={session.id} session={session} active={visible && session.id === activeId} onMenu={openMenu} />
         ))}
-        {state.sessions.length === 0 && waitingForRemote ? (
+        {sessions.length === 0 && waitingForRemote ? (
           <div className="terminal-view__error" role="status">
             <p className="terminal-view__error-title">等待远端引擎连接</p>
-            <p className="terminal-view__error-detail">{engine.snapshot.error || state.createFailed || '连接成功后即可使用远程终端。'}</p>
+            <p className="terminal-view__error-detail">{engine.snapshot.error || scopeState.createFailed || '连接成功后即可使用远程终端。'}</p>
           </div>
         ) : null}
-        {state.sessions.length === 0 && state.closedAll && !state.createFailed && !waitingForRemote ? (
-          <div className="terminal-view__error"><p>所有终端已关闭</p><button type="button" className="btn" disabled={!canCreate || state.creating} onClick={() => void createLocalSession(root ?? undefined)}>创建终端</button></div>
+        {sessions.length === 0 && scopeState.closedAll && !scopeState.createFailed && !waitingForRemote ? (
+          <div className="terminal-view__error"><p>所有终端已关闭</p><button type="button" className="btn" disabled={!canCreate || state.creating} onClick={create}>创建终端</button></div>
         ) : null}
         {/* 创建失败时不再静默留白：用户至少要知道"终端没起来，以及为什么"，
             并有一个显式的重试入口（自动重试会陷入无限循环，见上方 effect）。 */}
-        {state.sessions.length === 0 && state.createFailed && !waitingForRemote ? (
+        {sessions.length === 0 && scopeState.createFailed && !waitingForRemote ? (
           <div className="terminal-view__error" role="alert">
             <p className="terminal-view__error-title">终端启动失败</p>
-            <p className="terminal-view__error-detail">{state.createFailed}</p>
+            <p className="terminal-view__error-detail">{scopeState.createFailed}</p>
             <button
               type="button"
               className="terminal-view__error-retry"
               disabled={!canCreate || state.creating}
-              onClick={() => void createLocalSession(root ?? undefined)}
+              onClick={create}
             >
               重试
             </button>
@@ -172,7 +209,8 @@ export function TerminalView(): JSX.Element {
             className="terminal-view__side-btn"
             title="清屏"
             aria-label="清屏"
-            onClick={() => clearActiveSession()}
+            disabled={!activeId}
+            onClick={() => { if (activeId) clearSession(activeId) }}
           >
             <Icon name="trash" size={16} />
           </button>
@@ -182,22 +220,22 @@ export function TerminalView(): JSX.Element {
             title="新建终端"
             aria-label="新建终端"
             disabled={!canCreate || state.creating}
-            onClick={() => void createLocalSession(root ?? undefined)}
+            onClick={create}
           >
             <Icon name="plus" size={16} />
           </button>
         </div>
         <div className="terminal-view__list" data-scroll-axis="x" role="tablist" aria-label="终端标签">
-          {state.sessions.map((session) => (
-            <Item key={session.id} session={session} active={session.id === state.activeId} onMenu={openMenu} />
+          {sessions.map((session) => (
+            <Item key={session.id} session={session} active={session.id === activeId} onMenu={openMenu} />
           ))}
         </div>
       </aside>
-      {menu && menuSession ? (
+      {visible && menu && menuSession ? (
         <ContextMenu x={menu.x} y={menu.y} anchor={menu.anchor} onClose={() => setMenu(null)} items={[
-          { id: 'new', label: '新建终端', disabled: !canCreate || state.creating, onSelect: () => { setMenu(null); void createLocalSession(root ?? undefined) } },
+          { id: 'new', label: '新建终端', disabled: !canCreate || state.creating, onSelect: () => { setMenu(null); create() } },
           { id: 'rename', label: '重命名', onSelect: () => { setMenu(null); setRenaming(menuSession.id) } },
-          { id: 'add-to-chat', label: '添加到当前会话', hint: menu.selection ? '选中内容' : '保留的全部输出', disabled: attaching || !menuText.trim() || !root || !settings.lastSessionId || menuSession.source !== getEngineStorageKey(), onSelect: () => {
+          { id: 'add-to-chat', label: '添加到当前会话', hint: menu.selection ? '选中内容' : '保留的全部输出', disabled: attaching || !menuText.trim() || (!workScoped && !root) || !sessionId || menuSession.source !== source || (workScoped && menuSession.sessionId !== sessionId), onSelect: () => {
             setMenu(null)
             const text = menuText
             if (!text.trim()) toast.info('终端还没有可添加的输出')
@@ -213,11 +251,11 @@ export function TerminalView(): JSX.Element {
           ] : []),
           { id: 'restart', label: '重新启动终端', disabled: !canCreate || state.creating || getSessionStatus(menuSession.id) === 'reconnecting', onSelect: () => { setMenu(null); void restart(menuSession) } },
           { id: 'close', label: '关闭终端', onSelect: () => { setMenu(null); closeSession(menuSession.id) } },
-          { id: 'close-others', label: '关闭其他终端', disabled: state.sessions.length < 2, onSelect: () => { setMenu(null); closeOtherSessions(menuSession.id) } },
-          { id: 'close-all', label: '关闭全部终端', onSelect: () => { setMenu(null); closeAllSessions() } }
+          { id: 'close-others', label: '关闭其他终端', disabled: sessions.length < 2, onSelect: () => { setMenu(null); closeOtherSessions(menuSession.id, sessions.map(session => session.id)) } },
+          { id: 'close-all', label: '关闭全部终端', onSelect: () => { setMenu(null); closeAllSessions(sessions.map(session => session.id), workScoped ? { sessionId, source } : undefined) } }
         ]} />
       ) : null}
-      {renameTarget ? <PromptDialog title="重命名终端" label="终端名称" initialValue={renameTarget.title} onConfirm={value => renameSession(renameTarget.id, value)} onClose={() => setRenaming(null)} /> : null}
+      {visible && renameTarget ? <PromptDialog title="重命名终端" label="终端名称" initialValue={renameTarget.title} onConfirm={value => renameSession(renameTarget.id, value)} onClose={() => setRenaming(null)} /> : null}
     </div>
   )
 }
@@ -264,8 +302,8 @@ function Item({ session, active, onMenu }: { session: TerminalSession; active: b
 }
 
 /**
- * 单个会话的挂载点。xterm 只能 open 一次，因此每个会话对应一个
- * 常驻 DOM，用 display 显隐；激活时重新 fit 并把尺寸同步给传输层。
+ * xterm 只能 open 一次；Code 与 Work 切换时只迁移已有 DOM，
+ * 隐藏视图不认领挂载点，避免抢走当前视图的输出或焦点。
  * attached 标记由 store 的登记表持有，这里只读不写会话对象。
  */
 function SessionSlot({ session, active, onMenu }: {
@@ -276,12 +314,15 @@ function SessionSlot({ session, active, onMenu }: {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const el = ref.current
-    if (!el) return
+    if (!active || !el) return
     if (!isSessionAttached(session.id)) {
       session.term.open(el)
       markSessionAttached(session.id)
+    } else if (session.term.element && session.term.element.parentElement !== el) {
+      el.appendChild(session.term.element)
+      session.term.refresh(0, session.term.rows - 1)
     }
-    if (active) session.term.focus()
+    session.term.focus()
   }, [active, session])
   useTerminalFit(ref, session, active)
   return <div ref={ref} className="terminal-view__session" style={{ display: active ? 'block' : 'none' }}

@@ -12,6 +12,9 @@ import type { GraphicsMode, VisualEffects } from './graphics'
 export const IPC = {
   /** 渲染进程 → 主进程（invoke） */
   invoke: {
+    conversationLinksTake: 'conversation-links:take',
+    systemGetOpenWithApps: 'system:get-open-with-apps',
+    systemOpenWith: 'system:open-with',
     accountAction: 'account:action',
     engineGetSnapshot: 'engine:get-snapshot',
     engineDiagnostics: 'engine:diagnostics',
@@ -171,6 +174,7 @@ export const IPC = {
   },
   /** 主进程 → 渲染进程（send） */
   event: {
+    conversationLinkAvailable: 'conversation-links:available',
     accountChanged: 'account:changed',
     fsDocumentsChanged: 'fs:documents-changed',
     engineSnapshot: 'engine:snapshot',
@@ -190,6 +194,20 @@ export const IPC = {
     windowVisibility: 'window:visibility'
   }
 } as const
+
+export const OPEN_WITH_APP_IDS = [
+  'vscode', 'vscode-insiders', 'cursor', 'windsurf', 'trae', 'vscodium', 'zed', 'sublime-text', 'notepad-plus-plus',
+  'intellij-idea', 'webstorm', 'pycharm', 'goland', 'rider', 'clion', 'rustrover', 'android-studio',
+  'file-explorer'
+] as const
+export type OpenWithAppId = (typeof OPEN_WITH_APP_IDS)[number]
+
+export interface OpenWithApp {
+  id: OpenWithAppId
+  label: string
+  available: boolean
+  unavailableReason?: string
+}
 
 // ==================== 终端 ====================
 

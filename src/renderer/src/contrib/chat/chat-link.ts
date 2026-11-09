@@ -3,6 +3,8 @@ export interface ChatFileContext {
   workspaceRoot?: string | null
   /** Only verified child history may display its parent-aggregated receipts. */
   receiptParentSessionId?: string
+  /** Work can resolve code-formatted filenames using this conversation's receipts. */
+  resolveInlineFile?: (text: string) => string | undefined
 }
 
 export type ChatLinkTarget =

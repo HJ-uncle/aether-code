@@ -88,6 +88,9 @@ export function mergeCommandOutput(previous: CommandOutputState, page: CommandJo
       !['stdout', 'stderr'].includes(entry.stream) || typeof entry.text !== 'string')) throw new Error('命令输出响应无效')
   const fresh = page.entries.filter(entry => entry.seq > previous.cursor)
   if (fresh.some((entry, index) => index > 0 && entry.seq <= fresh[index - 1].seq)) throw new Error('命令输出顺序无效')
+  // Idle services often have nothing new. Preserve the snapshot so readers do
+  // not rebuild their log DOM or restore scroll position on every poll.
+  if (!fresh.length && page.nextCursor === previous.cursor && (!page.truncated || previous.truncated)) return previous
   let entries = [...previous.entries, ...fresh]
   let bytes = previous.bytes + fresh.reduce((total, entry) => total + new TextEncoder().encode(entry.text).byteLength, 0)
   let truncated = previous.truncated || page.truncated

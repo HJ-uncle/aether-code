@@ -9,6 +9,7 @@ import {
   type NextTurnQueueState
 } from './next-turn-queue'
 import { builtinAgentReference } from './builtin-agents'
+import { parseConversationLink } from './conversation-link'
 import type { BuiltinAgentRole } from './subagent'
 
 function fail(message: string): never {
@@ -279,6 +280,7 @@ export function assertQueueEnvelope(
       item,
       [
         'source',
+        'origin',
         'displayText',
         'textOffset',
         'path',
@@ -290,10 +292,12 @@ export function assertQueueEnvelope(
       ],
       'mention'
     )
-    oneOf(mention.source, ['file', 'dir', 'code', 'terminal', 'agent', 'browser'], 'mention source')
+    oneOf(mention.source, ['file', 'dir', 'code', 'terminal', 'agent', 'browser', 'conversation'], 'mention source')
+    if (mention.origin !== undefined) oneOf(mention.origin, ['workspace', 'attachment', 'artifact'], 'mention origin')
     string(mention.displayText, 'mention label', 512)
     integer(mention.textOffset, 'mention offset')
-    if (mention.path !== undefined) string(mention.path, 'mention path', 4096, true)
+    if (mention.path !== undefined) string(mention.path, 'mention path', mention.source === 'conversation' ? 8192 : 4096, true)
+    if (mention.source === 'conversation' && !parseConversationLink(mention.path)) fail('Conversation mention link is invalid')
     if (mention.content !== undefined && typeof mention.content !== 'string')
       fail('Mention content must be text')
     for (const name of ['startLine', 'endLine', 'startColumn', 'endColumn'])

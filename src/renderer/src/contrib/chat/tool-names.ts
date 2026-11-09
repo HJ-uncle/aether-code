@@ -1,5 +1,6 @@
 import { getWorkspaceState } from '@renderer/core/workspace/workspace-store'
 import { commandInvocation } from '@renderer/core/engine/tool-feedback'
+import { batchFileSummary } from './tool-file-args'
 export { toolDisplayName } from '@renderer/core/engine/tool-labels'
 
 /**
@@ -32,6 +33,7 @@ export function toolPathArg(argsJson: string): string | null {
     const args: unknown = JSON.parse(argsJson)
     if (!args || typeof args !== 'object') return null
     const record = args as Record<string, unknown>
+    if (Object.hasOwn(record, 'files')) return null
     for (const key of ['path', 'filePath', 'file']) {
       const value = record[key]
       if (typeof value === 'string' && value) return value
@@ -54,6 +56,7 @@ export function toolParamSummary(argsJson: string): string {
     const args: unknown = JSON.parse(argsJson)
     if (args && typeof args === 'object') {
       const record = args as Record<string, unknown>
+      if (Object.hasOwn(record, 'files')) return batchFileSummary(record) ?? ''
       for (const key of SUMMARY_KEYS) {
         const value = record[key]
         if (typeof value === 'string' && value) return condense(relativize(value))

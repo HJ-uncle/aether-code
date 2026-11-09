@@ -1058,11 +1058,24 @@ export function ExplorerView(): JSX.Element {
       })
     }
 
+    if (targets.length > 0) items.push({
+      id: 'addToChat',
+      label: targets.length > 1 ? `添加 ${targets.length} 项到对话` : '添加到对话',
+      onSelect: () => void runOp(async () => {
+        const entries = await Promise.all(targets.map(async (path) => ({
+          path,
+          kind: (await window.aether.fs.stat(path)).isDirectory ? 'directory' as const : 'file' as const
+        })))
+        addFilesToChat(entries)
+      })
+    })
+
     if (dir) {
       items.push(
         {
           id: 'newFile',
           label: '新建文件',
+          separatorBefore: true,
           onSelect: () => setNameAction({ kind: 'newFile', dir })
         },
         {
@@ -1087,20 +1100,9 @@ export function ExplorerView(): JSX.Element {
     if (targets.length > 0) {
       items.push(
         {
-          id: 'addToChat',
-          label: targets.length > 1 ? `添加 ${targets.length} 项到对话` : '添加到对话',
-          onSelect: () => void runOp(async () => {
-            // 选区可以跨目录，不能用右键那一项的类型代表整个选区。
-            const entries = await Promise.all(targets.map(async (path) => ({
-              path,
-              kind: (await window.aether.fs.stat(path)).isDirectory ? 'directory' as const : 'file' as const
-            })))
-            addFilesToChat(entries)
-          })
-        },
-        {
           id: 'copyPath',
           label: '复制绝对路径',
+          separatorBefore: true,
           onSelect: () => void copyFilePaths(targets)
         },
         {
@@ -1111,6 +1113,7 @@ export function ExplorerView(): JSX.Element {
         {
           id: 'cut',
           label: targets.length > 1 ? `剪切 ${targets.length} 项` : '剪切',
+          separatorBefore: true,
           hint: 'Ctrl+X',
           onSelect: () => setClipboard(targets, 'cut')
         },
@@ -1123,14 +1126,6 @@ export function ExplorerView(): JSX.Element {
       )
     }
 
-    if (entry) {
-      items.push({
-        id: 'revealFile',
-        label: '在文件资源管理器中显示',
-        onSelect: () => void revealFile(entry.path)
-      })
-    }
-
     // 粘贴只在有剪贴板内容且能算出落点目录时出现；dir 为空说明右键在树外，无处可贴
     if (clipboard && dir) {
       items.push({
@@ -1141,6 +1136,15 @@ export function ExplorerView(): JSX.Element {
       })
     }
 
+    if (entry) {
+      items.push({
+        id: 'revealFile',
+        label: '在文件资源管理器中显示',
+        separatorBefore: true,
+        onSelect: () => void revealFile(entry.path)
+      })
+    }
+
     if (targets.length > 0) {
       items.push({
         id: 'trash',
@@ -1148,12 +1152,14 @@ export function ExplorerView(): JSX.Element {
           targets.length > 1 ? `删除 ${targets.length} 项（移入回收站）` : '删除（移入回收站）',
         hint: 'Delete',
         danger: true,
+        separatorBefore: true,
         onSelect: () => void handleTrash(targets, entry?.name)
       })
     }
 
     items.push({
       id: 'undo',
+      separatorBefore: true,
       label: undoLabel ? `撤销 ${undoLabel}` : '撤销文件操作',
       hint: 'Ctrl+Z',
       disabled: !undoLabel,

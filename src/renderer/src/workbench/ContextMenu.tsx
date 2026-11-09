@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type JSX, type ReactNode, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useMotionDismiss, useMotionPresence, useMotionValue } from './MotionPresence'
 import { OverlayScope, useOverlay } from './overlay'
@@ -8,13 +8,21 @@ export interface ContextMenuItem {
   label: string
   /** 右侧的次要说明（快捷键、类型等） */
   hint?: string
+  /** Full explanation when the compact hint is not enough. */
+  title?: string
   /** 左侧色板圆点（颜色选择等场景），值为 CSS 颜色 */
   swatch?: string
+  /** Decorative icon; the visible label remains the accessible name. */
+  icon?: ReactNode
   /** 危险操作（删除等）用警示色 */
   danger?: boolean
   disabled?: boolean
+  /** Visual/semantic grouping without adding a keyboard stop. */
+  separatorBefore?: boolean
   /** 二级菜单：存在时本项为分组入口，hover 展开子面板，点击不再触发 onSelect */
   children?: ContextMenuItem[]
+  /** Resolve lazy menu contents only when the user opens this group. */
+  onOpen?: () => void
   onSelect: () => void
 }
 
@@ -58,6 +66,7 @@ function navigateMenu(event: ReactKeyboardEvent, panel: HTMLElement | null): boo
   event.preventDefault()
   event.stopPropagation()
   buttons[next]?.focus({ preventScroll: true })
+  buttons[next]?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   return true
 }
 
@@ -105,6 +114,13 @@ export function ContextMenu({ x, y, items, onClose: dismiss, onDismiss, anchor =
     const ignoreAnchorScrollUntil = anchorTabBar ? performance.now() + 250 : 0
     // 滚动后菜单位置就不再对应目标行，直接关闭比留在原地更不容易误点
     const onScroll = (event: Event): void => {
+      // Installed tools may exceed the viewport. Scrolling within a menu must
+      // keep its keyboard/pointer interaction alive, including portaled submenus.
+      if (event.type === 'scroll' && event.target instanceof Element && event.target.closest('.context-menu')) {
+        // A parent row can move out from under its portaled child panel.
+        if (event.target === ref.current) setSubmenu(null)
+        return
+      }
       // Focusing/revealing the clicked row can queue a scroll before this
       // menu exists, then deliver it after mounting. Only subsequent scrolls
       // invalidate the coordinates captured by the contextmenu event.
@@ -117,7 +133,7 @@ export function ContextMenu({ x, y, items, onClose: dismiss, onDismiss, anchor =
       ) return
       // 切换标签会让 Monaco 内容区恢复滚动位置；它与标签锚点无关，
       // 不应把刚打开的标签菜单吞掉。真正滚动锚点所在容器（或页面）时仍关闭。
-      if (anchor && event.target instanceof Node && event.target !== document && !anchor.contains(event.target)) return
+      if (anchor && event.target instanceof Node && event.target !== document && !event.target.contains(anchor)) return
       onClose()
     }
 
@@ -135,6 +151,7 @@ export function ContextMenu({ x, y, items, onClose: dismiss, onDismiss, anchor =
 
   const openSubmenu = (item: ContextMenuItem, element: HTMLElement, focusFirst = false): void => {
     if (!item.children || item.disabled) return
+    if (submenu?.id !== item.id) item.onOpen?.()
     setSubmenu({ id: item.id, anchor: element.getBoundingClientRect(), element, focusFirst })
   }
 
@@ -177,8 +194,9 @@ export function ContextMenu({ x, y, items, onClose: dismiss, onDismiss, anchor =
         } else if (event.key === 'Tab' && !inline) dismissForTab()
       }}
     >
-      {items.map((item) =>
-        item.children ? (
+      {items.map((item, index) => <Fragment key={item.id}>
+        {index > 0 && item.separatorBefore ? <div className="context-menu__separator" role="separator" /> : null}
+        {item.children ? (
           <button
             key={item.id}
             type="button"
@@ -190,14 +208,15 @@ export function ContextMenu({ x, y, items, onClose: dismiss, onDismiss, anchor =
               submenu?.id === item.id ? ' is-open' : ''
             }`}
             disabled={item.disabled}
-            title={item.hint}
+            title={item.title ?? item.hint}
             onMouseEnter={(event) => openSubmenu(item, event.currentTarget)}
             onClick={(event) =>
               openSubmenu(item, event.currentTarget, true)
             }
           >
-            <span>{item.label}</span>
-            <span className="context-menu__submenu-arrow">›</span>
+            {item.icon ? <span className="context-menu__icon" aria-hidden="true">{item.icon}</span> : null}
+            <span className={item.icon ? 'context-menu__icon-label' : undefined}>{item.label}</span>
+            <span className="context-menu__submenu-arrow" aria-hidden="true">›</span>
           </button>
         ) : (
           <button
@@ -206,21 +225,22 @@ export function ContextMenu({ x, y, items, onClose: dismiss, onDismiss, anchor =
             role="menuitem"
             className={`context-menu__item${item.danger ? ' context-menu__item--danger' : ''}`}
             disabled={item.disabled}
-            title={item.hint}
+            title={item.title ?? item.hint}
             onMouseEnter={() => setSubmenu(null)}
             onClick={() => {
               onClose()
               item.onSelect()
             }}
           >
+            {item.icon ? <span className="context-menu__icon" aria-hidden="true">{item.icon}</span> : null}
             {item.swatch ? (
               <span className="context-menu__swatch" style={{ background: item.swatch }} />
             ) : null}
-            <span>{item.label}</span>
+            <span className={item.icon ? 'context-menu__icon-label' : undefined}>{item.label}</span>
             {item.hint ? <span className="context-menu__hint">{item.hint}</span> : null}
           </button>
-        )
-      )}
+        )}
+      </Fragment>)}
       {submenuMotion.present && lastSubmenu ? (
         // portal 到 body：父菜单的 backdrop-filter 会让它成为 fixed 后代的包含块，
         // 子菜单不挪出去就会按「父菜单盒子 + 视口坐标」双重偏移，飞到屏幕远处
@@ -272,12 +292,12 @@ function SubmenuPanel({
     const fitsRight = preferRight + rect.width <= window.innerWidth - 4
     const x = fitsRight ? preferRight : anchor.left - rect.width - 2
     setPos(clampToViewport(rect, x, anchor.top - 4))
-  }, [anchor])
+  }, [anchor, items])
 
   useLayoutEffect(() => {
     if (!focusFirst || !pos || motionState === 'closing' || ref.current?.contains(document.activeElement)) return
     ref.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus({ preventScroll: true })
-  }, [focusFirst, pos, motionState])
+  }, [focusFirst, pos, motionState, items])
 
   return (
     <div
@@ -301,26 +321,28 @@ function SubmenuPanel({
         } else if (event.key === 'Tab') onTab()
       }}
     >
-      {items.map((item) => (
+      {items.map((item, index) => <Fragment key={item.id}>
+        {index > 0 && item.separatorBefore ? <div className="context-menu__separator" role="separator" /> : null}
         <button
           key={item.id}
           type="button"
           role="menuitem"
           className={`context-menu__item${item.danger ? ' context-menu__item--danger' : ''}`}
           disabled={item.disabled}
-          title={item.hint}
+          title={item.title ?? item.hint}
           onClick={() => {
             onClose()
             item.onSelect()
           }}
         >
+          {item.icon ? <span className="context-menu__icon" aria-hidden="true">{item.icon}</span> : null}
           {item.swatch ? (
             <span className="context-menu__swatch" style={{ background: item.swatch }} />
           ) : null}
-          <span>{item.label}</span>
+          <span className={item.icon ? 'context-menu__icon-label' : undefined}>{item.label}</span>
           {item.hint ? <span className="context-menu__hint">{item.hint}</span> : null}
         </button>
-      ))}
+      </Fragment>)}
     </div>
   )
 }

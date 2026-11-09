@@ -28,9 +28,11 @@ export function workToolKind(tool: ToolActivity): WorkToolKind {
   return 'compact'
 }
 
-export function isWorkStandaloneTool(tool: ToolActivity): boolean {
+export function isWorkStandaloneTool(tool: ToolActivity, turnRunning = true): boolean {
   const kind = workToolKind(tool)
-  return kind === 'subagent' || kind === 'command'
+  // Once the owning turn settles, command outcomes are process evidence.
+  // Keeping them standalone bypasses the user's collapsed process disclosure.
+  return kind === 'subagent' || kind === 'command' && turnRunning
 }
 
 /** Parent aggregation is valid only when the receipt names this child as its producer. */

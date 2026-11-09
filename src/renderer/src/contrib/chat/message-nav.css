@@ -144,7 +144,7 @@
   gap: 0;
   min-width: 0;
   max-height: none;
-  padding: 6px;
+  padding: var(--menu-padding);
   overflow: hidden;
   border: 1px solid var(--material-border);
   border-radius: 13px;
@@ -174,65 +174,78 @@
 .chat__nav-heading {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  flex: 0 0 27px;
-  padding: 0 9px;
+  flex: 0 0 34px;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 4px 0 10px;
   color: var(--fg-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
 }
 
-.chat__nav-heading small { color: var(--fg-faint); font-size: 10px; font-weight: 400; }
+.chat__nav-heading small {
+  color: var(--fg-muted);
+  font-size: var(--menu-description-size);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 
 .chat__nav-entries {
   position: relative;
+  display: flex;
+  flex-direction: column;
   flex: 1;
+  gap: var(--menu-row-gap);
   min-height: 0;
   min-width: 0;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
+  /* Keep Chromium's shared WebKit scrollbar; thin restores Windows arrow buttons. */
+  scrollbar-width: auto;
   scrollbar-gutter: auto;
-  padding: 2px;
+  padding: 2px 0;
 }
 
 .chat__nav--adaptive .chat__nav-item.chat__nav-dot {
   display: flex;
+  flex: 0 0 var(--menu-row-height);
   align-items: center;
   width: 100%;
-  height: 32px;
+  height: var(--menu-row-height);
   min-width: 0;
-  margin: 1px 0;
-  padding: 0 8px;
-  gap: 9px;
+  margin: 0;
+  padding: var(--menu-row-padding);
+  gap: var(--menu-icon-gap);
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--menu-row-radius);
   background: transparent;
-  color: var(--fg-muted);
+  color: var(--fg);
   opacity: 1;
   transform: none;
-  font-size: 12px;
+  font-size: var(--menu-title-size);
   font-weight: 400;
+  line-height: 18px;
   text-align: left;
   transition: background-color var(--motion-hover) var(--motion-ease), color var(--motion-hover) var(--motion-ease);
 }
 
-.chat__nav--adaptive .chat__nav-item.chat__nav-dot:hover { background: var(--bg-hover); color: var(--fg); }
-.chat__nav--adaptive .chat__nav-item.chat__nav-dot.is-active { background: var(--bg-active); color: var(--fg-strong); }
+.chat__nav--adaptive .chat__nav-item.chat__nav-dot:hover { background: var(--menu-hover-bg); color: var(--fg); }
+.chat__nav--adaptive .chat__nav-item.chat__nav-dot.is-active { background: var(--menu-selected-bg); color: var(--fg-strong); }
 .chat__nav--adaptive .chat__nav-item-dot { width: 5px; height: 5px; background: var(--fg-faint); }
 .chat__nav--adaptive .is-active .chat__nav-item-dot { background: var(--fg-strong); }
 .chat__nav--adaptive .chat__nav-item-text { min-width: 0; }
 
 .chat__nav--adaptive .chat__nav-controls {
-  display: flex;
+  display: inline-flex;
   flex: 0 0 auto;
   flex-direction: row;
-  justify-content: space-between;
-  gap: 4px;
-  margin: 5px 3px 0;
-  padding-top: 5px;
-  border-top: 1px solid var(--border);
+  align-items: center;
+  gap: 2px;
+  margin: 0 0 0 auto;
+  padding: 0;
+  border: 0;
 }
 
 .chat__nav--adaptive .chat__nav-btn {
@@ -244,9 +257,14 @@
   transition: background-color var(--motion-hover) var(--motion-ease), color var(--motion-hover) var(--motion-ease);
 }
 
-.chat__nav--adaptive .chat__nav-controls .chat__nav-btn { flex: 1; width: auto; }
+.chat__nav--adaptive .chat__nav-controls .chat__nav-btn { flex: 0 0 28px; width: 28px; }
+.chat__nav--adaptive .chat__nav-controls .chat__nav-btn:disabled {
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: default;
+}
 .chat__nav--adaptive .chat__nav-edge { color: var(--fg-faint); }
-.chat__nav--adaptive .chat__nav-btn:hover { background: var(--bg-hover); color: var(--fg); }
+.chat__nav--adaptive .chat__nav-btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg); }
 .chat__nav--adaptive :is(.chat__nav-trigger, .chat__nav-item, .chat__nav-btn, .chat__nav-wave):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;

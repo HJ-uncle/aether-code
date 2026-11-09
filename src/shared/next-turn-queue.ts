@@ -15,7 +15,8 @@ export type QueueModelSelection =
 export type QueueMemorySelection =
   { kind: 'inherit' } | { kind: 'override'; scope: 'off' | 'session' | 'global'; version: string }
 export interface QueueMention {
-  source: 'file' | 'dir' | 'code' | 'terminal' | 'agent' | 'browser'
+  source: 'file' | 'dir' | 'code' | 'terminal' | 'agent' | 'browser' | 'conversation'
+  origin?: 'workspace' | 'attachment' | 'artifact'
   displayText: string
   textOffset: number
   path?: string

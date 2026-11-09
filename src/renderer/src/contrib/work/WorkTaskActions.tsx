@@ -1,14 +1,17 @@
 import { useEffect, useState, type JSX } from 'react'
 import { toast } from '@renderer/core/toast'
 import type { WorkTask } from './work-state'
-import { ActionMenu } from '@renderer/workbench/ActionMenu'
+import { WorkTaskMenu } from './WorkTaskMenu'
+import { workTaskCopyMenu } from './work-conversation-reference'
+import { useWorkOpenWithMenu } from './useWorkOpenWithMenu'
 
 type Controller = {
+  ready: boolean
   renameTask: (id: string, title: string) => void
   archiveTask: (id: string, archived?: boolean) => void
-  continueTask: (id: string) => void
   stopTask: (id: string) => Promise<void>
   exportTask: (id: string) => Promise<string>
+  addConversationReference: (id: string) => Promise<void>
 }
 
 /** Task actions are deliberately plain buttons so keyboard users get the same
@@ -34,6 +37,7 @@ export function WorkTaskActions({
   const [editing, setEditing] = useState(false)
   const [title, setTitle] = useState(task.title)
   const [busy, setBusy] = useState(false)
+  const openWithMenu = useWorkOpenWithMenu(task)
   useEffect(() => {
     setEditing(false)
     setTitle(task.title)
@@ -73,27 +77,27 @@ export function WorkTaskActions({
           重命名
         </button>
       ) : null}
-      {compact ? <ActionMenu label="任务更多操作" disabled={busy} items={[
+      {compact ? <WorkTaskMenu key={task.id} label="任务更多操作" disabled={busy} items={[
+        ...(active && showStop ? [{ id: 'stop', label: '停止任务', onSelect: () => runAction(() => controller.stopTask(task.id)) }] : []),
+        { id: 'rename', label: '重命名任务', separatorBefore: true, onSelect: () => setEditing(true) },
         ...(onSelectConversation ? [{
           id: 'select-conversation',
           label: conversationSelected ? '退出选择对话' : '选择对话',
+          separatorBefore: true,
           onSelect: onSelectConversation,
-          disabled: conversationDisabled,
-          icon: 'checkbox-multiple-marked-outline' as const
+          disabled: conversationDisabled
         }] : []),
-        { id: 'rename', label: '重命名任务', icon: 'pencil', onSelect: () => setEditing(true) },
-        ...(active ? showStop ? [{ id: 'stop', label: '停止任务', icon: 'stop' as const, onSelect: () => runAction(() => controller.stopTask(task.id)) }] : []
-          : [{ id: 'continue', label: '继续任务', icon: 'play' as const, onSelect: () => controller.continueTask(task.id) }]),
-        { id: 'archive', label: task.archived ? '恢复任务' : '归档任务', icon: 'package-variant-closed', onSelect: () => controller.archiveTask(task.id, !task.archived) },
-        { id: 'export', label: '导出任务', icon: 'upload-outline', onSelect: () => runAction(() => controller.exportTask(task.id)) }
+        { id: 'add-to-conversation', label: '添加到对话', separatorBefore: !onSelectConversation, disabled: !controller.ready,
+          onSelect: () => runAction(() => controller.addConversationReference(task.id)) },
+        workTaskCopyMenu(task),
+        openWithMenu,
+        { id: 'export', label: '导出任务', onSelect: () => runAction(() => controller.exportTask(task.id)) },
+        { id: 'archive', label: task.archived ? '恢复任务' : '归档任务', separatorBefore: true, onSelect: () => controller.archiveTask(task.id, !task.archived) }
       ]} /> : <>
+      <button type="button" disabled={busy || !controller.ready} onClick={() => runAction(() => controller.addConversationReference(task.id))}>添加到对话</button>
       {active && showStop ? (
         <button type="button" disabled={busy} onClick={() => runAction(() => controller.stopTask(task.id))} aria-label="停止任务">
           停止
-        </button>
-      ) : !active ? (
-        <button type="button" onClick={() => controller.continueTask(task.id)} aria-label="继续任务">
-          继续
         </button>
       ) : null}
       <button type="button" onClick={() => controller.archiveTask(task.id, !task.archived)}>

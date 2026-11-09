@@ -2,27 +2,30 @@ import { memo, useId, useLayoutEffect, useMemo, useRef, useState, type JSX } fro
 import { Icon } from '@renderer/workbench/icons'
 import {
   mentionTitle,
+  contentFromBody,
   parseMentionContent,
+  refToMention,
   userMessageText,
-  type PromptRef
+  type Mention
 } from './mention-context'
 
 const USER_COLLAPSED_LINES = 8
 
 /** User-facing refs are restored by their persisted ranges, never by matching
  * display names. Both modes must hide snapshots and protocol metadata. */
-export const UserMessageContent = memo(function UserMessageContent({ content, collapsible = true }: {
+export const UserMessageContent = memo(function UserMessageContent({ content, collapsible = true, onOpenMention }: {
   content: string
   collapsible?: boolean
+  onOpenMention?: (mention: Mention) => void
 }): JSX.Element {
   const segments = useMemo(() => {
     const { body, refs } = parseMentionContent(content)
     if (!refs.length) return [{ text: userMessageText(content), ref: null }]
-    const out: { text: string; ref: PromptRef | null }[] = []
+    const out: { text: string; ref: Mention | null }[] = []
     let cursor = 0
     for (const ref of refs) {
       if (ref.s > cursor) out.push({ text: body.slice(cursor, ref.s), ref: null })
-      out.push({ text: ref.d, ref })
+      out.push({ text: ref.d, ref: refToMention(ref, contentFromBody(body, ref)) })
       cursor = ref.e
     }
     if (cursor < body.length) out.push({ text: body.slice(cursor), ref: null })
@@ -66,15 +69,21 @@ export const UserMessageContent = memo(function UserMessageContent({ content, co
           segment.ref ? (
             <span
               key={index}
-              className={`mention-chip mention-chip--${segment.ref.t}`}
-              title={`${segment.ref.d}\n${mentionTitle({
-                source: segment.ref.t,
-                path: segment.ref.p,
-                startLine: segment.ref.r?.[0],
-                endLine: segment.ref.r?.[1]
-              })}`}
+              className={`mention-chip mention-chip--${segment.ref.source}`}
+              title={segment.ref.source === 'conversation' ? mentionTitle(segment.ref) : `${segment.ref.displayText}\n${mentionTitle(segment.ref)}`}
+              role={onOpenMention ? 'button' : undefined}
+              tabIndex={onOpenMention ? 0 : undefined}
+              aria-label={onOpenMention ? `查看引用：${segment.ref.displayText}` : undefined}
+              onClick={onOpenMention ? () => onOpenMention(segment.ref!) : undefined}
+              onKeyDown={onOpenMention ? (event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return
+                event.preventDefault()
+                event.stopPropagation()
+                onOpenMention(segment.ref!)
+              } : undefined}
             >
-              {segment.ref.d}
+              {segment.ref.source === 'conversation' ? <Icon name="chat-outline" size={14} className="mention-chip__icon" /> : null}
+              <span className="mention-chip__label">{segment.ref.displayText}</span>
             </span>
           ) : (
             <span key={index}>{segment.text}</span>

@@ -61,6 +61,8 @@ import { AppSettingsView } from './settings/AppSettingsView'
 import { openAppSettings } from './settings/app-settings-navigation'
 import { createLocalSession } from './terminal/terminal-store'
 import { TerminalView } from './terminal/TerminalView'
+import { getAppMode } from '@renderer/core/platform/app-mode'
+import { requestWorkTerminal } from './work/work-terminal-navigation'
 import { registerBrowserContribution } from './browser'
 
 export function registerContributions(): () => void {
@@ -252,6 +254,7 @@ export function registerContributions(): () => void {
       title: '新建终端',
       category: '终端',
       run: () => {
+        if (getAppMode() === 'work') { requestWorkTerminal('new'); return }
         showPanel('terminal')
         return createLocalSession(getWorkspaceState().root ?? undefined).then(() => undefined)
       }
@@ -442,7 +445,7 @@ export function registerContributions(): () => void {
       id: 'aether.panel.terminal',
       title: '切换终端面板',
       category: '视图',
-      run: () => togglePanel('terminal')
+      run: () => getAppMode() === 'work' ? requestWorkTerminal('toggle') : togglePanel('terminal')
     },
     {
       id: 'aether.panel.output',

@@ -9,10 +9,10 @@ export interface WorkFinalResultSelection {
   revision: number
 }
 
-/** The newest user group owns the default view even before it publishes any
- * delivery. Older files remain explicitly selectable without posing as new work. */
+/** Conversation cards keep their own turn; the workspace keeps the latest
+ * actual delivery until another nonempty publication replaces it. */
 export function workFinalResultCatalog(messages: readonly ChatMessage[], sessionId: string): {
-  results: FinalResult[]; current?: FinalResult; currentKey: string
+  results: FinalResult[]; current?: FinalResult; latestDelivery?: FinalResult; deliveryKey: string
 } {
   const lastUser = messages.findLastIndex(message => message.role === 'user')
   const latestMessage = messages.findLastIndex(message => message.role === 'assistant')
@@ -27,6 +27,8 @@ export function workFinalResultCatalog(messages: readonly ChatMessage[], session
     if ((lastUser >= 0 ? index > lastUser && (!currentTurnId || result.turnId === currentTurnId) : index === latestMessage)) currentRuns.add(result.runId)
   }
   const results = [...byRun.values()].sort((left, right) => right.publishedAt - left.publishedAt)
-  return { results, current: results.find(result => currentRuns.has(result.runId)),
-    currentKey: messages[lastUser]?.id ?? messages.at(-1)?.runId ?? 'empty' }
+  const latestDelivery = results.find(result => result.items.length > 0)
+  return { results, current: results.find(result => currentRuns.has(result.runId)), latestDelivery,
+    deliveryKey: latestDelivery ? JSON.stringify([latestDelivery.runId, latestDelivery.publishedAt,
+      latestDelivery.items.map(item => [item.id, item.assetId])]) : 'empty' }
 }

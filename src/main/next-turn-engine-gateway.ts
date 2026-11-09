@@ -18,6 +18,7 @@ import { ATTACHMENTS_DIRECTORY } from '../shared/attachments'
 import { buildAgentMentionMessage } from '../renderer/src/contrib/chat/agent-references'
 import { collaboratorIdentity } from '../shared/builtin-agents'
 import { canonicalAdmissionJson, parseAdmissionContext, parseExactAdmission, type AdmissionContext } from './next-turn-admission-protocol'
+import { remapQueueAttachmentReferences } from '../shared/queue-attachment-references'
 
 interface LeaseFacts { target: WorkQueueTarget; signal: AbortSignal }
 export interface QueueEnginePort {
@@ -243,10 +244,14 @@ export class EngineQueueGateway implements QueueDispatchGateway {
     assertQueueEnvelope(preflight, scope)
     if (!Array.isArray(submission.attachments) || submission.attachments.length > 32) fail('最多添加 32 个队列附件')
     let budget = 100 * 1024 * 1024
+    const frozenPaths = new Map<string, string>()
     for (const file of submission.attachments) {
       if (!file || typeof file.path !== 'string' || typeof file.name !== 'string' || typeof file.type !== 'string' || !Number.isSafeInteger(file.size) || file.size < 0) fail('附件选择无效')
       const receipt = await this.stageAttachment(scope, file, budget, paths); budget -= receipt.bytes; envelope.attachments.push(receipt)
+      const finalPath = receipt.kind === 'local-workspace' ? join(envelope.workspace.identity, receipt.path) : receipt.path
+      frozenPaths.set(file.path, finalPath)
     }
+    envelope.draft = remapQueueAttachmentReferences(envelope.draft, frozenPaths)
     assertQueueEnvelope(envelope, scope); return envelope
   }
   async prepare(scope: NextTurnQueueScope, envelope: NextTurnQueueEnvelope, context: AdmissionContext): Promise<Record<string, unknown>> {

@@ -7,6 +7,7 @@ import { replayMessages, type EngineHistoryRow } from './chat-history'
 import { restoreProjectedTimeline } from './chat-snapshot-timeline'
 import { applyRootRuns } from './root-run-state'
 import { inspectStreamCursor } from '@shared/stream-event'
+import { normalizeFinalResult } from '@shared/final-result'
 
 export interface ChatRecoverySnapshot {
   schemaVersion: 1
@@ -54,6 +55,21 @@ export function restoreChatSnapshot(snapshot: ChatRecoverySnapshot): { messages:
     for (const payload of snapshot.projection) if (payload.todo?.todos) todos = payload.todo.todos
     messages = restoreProjectedTimeline(snapshot, messages, run)
   }
+
+  // Published stream checkpoints keep their original bytes. Current history
+  // applies later asset withdrawals, including when a partial rollback kept
+  // the conversation. Replaying an older checkpoint must not revive its cards.
+  const currentResults = new Map(snapshot.history.flatMap(row => {
+    const result = normalizeFinalResult(row.metadata?.finalResult)
+    return row.role === 'assistant' && result && row.id === result.assistantMessageId &&
+      result.sessionId === snapshot.sessionId && row.conversationId === result.turnId
+      ? [[result.assistantMessageId, result] as const] : []
+  }))
+  messages = messages.map(message => {
+    const result = currentResults.get(message.id)
+    return result && message.role === 'assistant' && message.runId === result.runId &&
+      message.conversationId === result.turnId ? { ...message, finalResult: result } : message
+  })
 
   const execution = snapshot.executionRun ?? run
   const runs = [...snapshot.runs.filter(item => item.runId !== run?.runId), ...(execution ? [execution] : [])]

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import type { FinalResult, FinalResultItem } from '@shared/final-result'
 import { requestOrThrow } from '@renderer/core/engine/client'
 import { assertEngineSource, getEngineSource, getExpectedEngine, subscribeEngineSource } from '@renderer/core/engine/source'
+import { subscribeWorkPreview, workPreviewRevision } from '@renderer/core/workbench/preview-request'
 import { decodeFinalResultAsset, MAX_FINAL_RESULT_ASSET_BYTES, type FinalResultAsset } from './final-result-asset'
 
 interface CacheEntry { promise: Promise<FinalResultAsset>; size: number }
@@ -10,7 +11,8 @@ const CACHE_BYTES = 64 * 1024 * 1024
 let cacheSource = -1
 
 function assetKey(result: FinalResult, item: FinalResultItem, source: number): string {
-  return JSON.stringify([source, result.sessionId, result.turnId, result.runId, item.id, item.assetId, item.sha256, item.size, item.mimeType])
+  return JSON.stringify([source, result.sessionId, result.turnId, result.runId, item.id, item.assetId, item.sha256, item.size, item.mimeType,
+    workPreviewRevision(source, result.sessionId, item.path)])
 }
 
 export async function readFinalResultAsset(result: FinalResult, item: FinalResultItem, source = getEngineSource()): Promise<FinalResultAsset> {
@@ -20,11 +22,15 @@ export async function readFinalResultAsset(result: FinalResult, item: FinalResul
     candidate.sha256 === item.sha256 && candidate.size === item.size && candidate.mimeType === item.mimeType)) throw new Error('交付物不属于本轮结果')
   if (cacheSource !== source) { cache.clear(); cacheSource = source }
   const key = assetKey(result, item, source)
+  const assertFresh = (): void => {
+    assertEngineSource(source)
+    if (key !== assetKey(result, item, source)) throw new Error('成果状态已变化，请重新打开')
+  }
   const cached = cache.get(key)
   if (cached) {
     cache.delete(key); cache.set(key, cached)
     const asset = await cached.promise
-    assertEngineSource(source)
+    assertFresh()
     return asset
   }
   const expectedEngine = getExpectedEngine()
@@ -33,7 +39,7 @@ export async function readFinalResultAsset(result: FinalResult, item: FinalResul
       query: { sessionId: result.sessionId, runId: result.runId, assetId: item.assetId }, expectedEngine })
     assertEngineSource(source)
     const asset = await decodeFinalResultAsset(response, item)
-    assertEngineSource(source)
+    assertFresh()
     return asset
   })()
   const entry = { promise, size: item.size }
@@ -51,6 +57,7 @@ export async function readFinalResultAsset(result: FinalResult, item: FinalResul
 
 export function useFinalResultAsset(result: FinalResult, item: FinalResultItem, enabled: boolean) {
   const source = useSyncExternalStore(subscribeEngineSource, getEngineSource)
+  useSyncExternalStore(subscribeWorkPreview, () => workPreviewRevision(source, result.sessionId, item.path))
   const [ownerSource] = useState(getEngineSource)
   const key = assetKey(result, item, ownerSource)
   const [attempt, setAttempt] = useState(0)

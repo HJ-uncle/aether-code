@@ -12,6 +12,7 @@ import { ChatImage } from './ChatImage'
 /** Nested Markdown links inherit their message's workspace instead of the active editor's. */
 const FileContext = createContext<ChatFileContext | undefined>(undefined)
 const RenderImages = createContext(true)
+const InsideLink = createContext(false)
 
 /**
  * Markdown 渲染（助手正文专用）
@@ -95,24 +96,38 @@ function ChatLink({ token, prefix, source, reveal }: { token: Tokens.Link; prefi
     return <ReplyImage token={token.tokens[0] as Tokens.Image} />
   }
   const target = classifyChatLink(href, context?.sessionId, engine.snapshot.baseUrl)
+  // A code-styled label inside an explicit link must keep that link's target.
+  const label = <InsideLink.Provider value={true}>{renderInline(token.tokens, prefix, source, reveal)}</InsideLink.Provider>
   if (target.kind === 'artifact' || target.kind === 'invalid') {
     return <a href={href} title={target.kind === 'artifact' ? `在编辑器中打开 ${target.path}` : target.message} onClick={(event) => {
       event.preventDefault()
       if (target.kind === 'invalid' || !context) { toast.error(target.kind === 'invalid' ? target.message : '文件链接缺少会话信息。'); return }
       void openArtifactFromChat(target, context).catch(error => toast.error(`打开文件失败：${error instanceof Error ? error.message : String(error)}`))
-    }}>{renderInline(token.tokens, prefix, source, reveal)}</a>
+    }}>{label}</a>
   }
   const remoteFile = !href.startsWith('#') && !/^(?:https?:|mailto:|tel:)/i.test(href)
   if (engine.snapshot.mode === 'remote' && remoteFile) {
-    return <span title={`远端路径（尚未映射）：${href}`}>{renderInline(token.tokens, prefix, source, reveal)}</span>
+    return <span title={`远端路径（尚未映射）：${href}`}>{label}</span>
   }
   if (target.kind === 'file') {
     return <a href={href} title={`在编辑器中打开 ${href}`} onClick={(event) => {
       event.preventDefault()
       void openFileFromChat(href, context).catch(error => toast.error(`打开文件失败：${error instanceof Error ? error.message : String(error)}`))
-    }}>{renderInline(token.tokens, prefix, source, reveal)}</a>
+    }}>{label}</a>
   }
-  return <a href={href} title={token.title ?? undefined} target="_blank" rel="noreferrer noopener">{renderInline(token.tokens, prefix, source, reveal)}</a>
+  return <a href={href} title={token.title ?? undefined} target="_blank" rel="noreferrer noopener">{label}</a>
+}
+
+function InlineCode({ text, prefix, source, reveal }: { text: string; prefix: string; source?: SourceRange; reveal: StreamReveal }): JSX.Element {
+  const context = useContext(FileContext)
+  const insideLink = useContext(InsideLink)
+  const path = insideLink ? undefined : context?.resolveInlineFile?.(text)
+  const code = <code className="md-inline-code">{revealText(text, prefix, source, reveal)}</code>
+  if (!path) return code
+  return <a className="md-file-reference" href={path} data-work-file-path={path} title={`打开文件 ${path}`} onClick={event => {
+    event.preventDefault()
+    void openFileFromChat(path, context).catch(error => toast.error(`打开文件失败：${error instanceof Error ? error.message : String(error)}`))
+  }}>{code}</a>
 }
 
 function ReplyImage({ token }: { token: Tokens.Image }): JSX.Element | null {
@@ -141,11 +156,7 @@ function renderInline(tokens: Token[] | undefined, keyPrefix: string, parent: So
       case 'del':
         return <del key={key}>{renderInline(token.tokens, key, source, reveal)}</del>
       case 'codespan':
-        return (
-          <code key={key} className="md-inline-code">
-            {revealText(token.text, key, source, reveal)}
-          </code>
-        )
+        return <InlineCode key={key} text={token.text} prefix={key} source={source} reveal={reveal} />
       case 'link':
         return <ChatLink key={key} token={token as Tokens.Link} prefix={key} source={source} reveal={reveal} />
       case 'image':

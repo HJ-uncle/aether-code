@@ -3,6 +3,7 @@ import './apple-chat-panels.css'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import type { EngineFileChange } from '@shared/ipc'
 import { Icon } from '@renderer/workbench/icons'
+import { FileGlyph } from '../explorer/FileGlyph'
 import { onSnapshot, onStreamEvent, requestOrThrow } from '@renderer/core/engine/client'
 import { dismissRevertReport, getRevertReport, groupRevertResults, revertChanges, revertComplete, revertStatusLabel, revertSummary, subscribeReverts } from '@renderer/core/engine/change-revert'
 import { gitStageFiles } from '@renderer/core/git/git-client'
@@ -349,7 +350,7 @@ function ChangesPanelContent({
           const badge = badgeOf(change)
           return (
             <li key={change.id} className="changes-panel__item">
-              <Icon name="file" size={16} />
+              <FileGlyph name={change.displayPath || change.path} size={16} />
               <button
                 type="button"
                 className="changes-panel__identity"

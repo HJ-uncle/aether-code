@@ -193,6 +193,25 @@ select:focus-visible {
   height: 0;
 }
 
+/* Alpha渐隐让边缘内容融入所在表面，适配不同主题；不增加命中层和布局宽度。
+   只有仍有内容的物理边缘渐隐，独立于悬停时才出现的2px滚动条。 */
+[data-scroll-axis='x'][data-scroll-edges] {
+  --scroll-fade-left: 0px;
+  --scroll-fade-right: 0px;
+  mask-image: linear-gradient(to right,
+    transparent, var(--fg) var(--scroll-fade-left),
+    var(--fg) calc(100% - var(--scroll-fade-right)), transparent);
+  mask-mode: alpha;
+  mask-repeat: no-repeat;
+  mask-size: 100% 100%;
+}
+[data-scroll-axis='x']:is([data-scroll-edges='left'], [data-scroll-edges='both']) {
+  --scroll-fade-left: min(var(--horizontal-scroll-fade-width), 20%);
+}
+[data-scroll-axis='x']:is([data-scroll-edges='right'], [data-scroll-edges='both']) {
+  --scroll-fade-right: min(var(--horizontal-scroll-fade-width), 20%);
+}
+
 .horizontal-scrollbar {
   position: fixed;
   z-index: var(--z-scrollbar);

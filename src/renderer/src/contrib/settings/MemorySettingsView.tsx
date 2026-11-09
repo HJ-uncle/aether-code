@@ -113,8 +113,8 @@ function MemorySettingsContent({ source }: { source: number }): JSX.Element {
       <SettingsRow label="全局记忆" description="默认关闭。开启后，可在不同会话中参考全局记忆。">
         <Toggle label="全局记忆" checked={preferences?.globalEnabled ?? false} disabled={preferencesDisabled || (preferences?.enabled === false && !preferences.globalEnabled)} onChange={globalEnabled => changePreference({ globalEnabled })} />
       </SettingsRow>
-      <SettingsRow label="默认开启会话记忆" description="未单独设置的会话使用此默认值；已单独设置的会话沿用自己的选择。会话中可随时恢复默认。">
-        <Toggle label="默认开启会话记忆" checked={preferences?.sessionDefaultEnabled ?? true} disabled={preferencesDisabled} onChange={sessionDefaultEnabled => changePreference({ sessionDefaultEnabled })} />
+      <SettingsRow label="默认开启会话记忆" description="默认关闭。开启后，未单独设置的会话会使用会话记忆；会话中可单独开关或恢复默认。">
+        <Toggle label="默认开启会话记忆" checked={preferences?.sessionDefaultEnabled ?? false} disabled={preferencesDisabled} onChange={sessionDefaultEnabled => changePreference({ sessionDefaultEnabled })} />
       </SettingsRow>
       {preferencesLoading || !ready || !preferencesLoaded || preferences?.enabled === false || preferencesError ? <SettingsContent>
         <div className="memory-settings__preference-status" aria-live="polite" aria-busy={preferencesLoading}>

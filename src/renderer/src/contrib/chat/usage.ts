@@ -62,9 +62,9 @@ export interface UsageTotal {
   rounds: number
   /** 按累计值排序、只保留非零项的分组明细 */
   summary: UsageDetailRow[]
-  /** 会话首次用量出现的时间 */
+  /** 已观测消息的最早起点；跨轮首尾跨度不能用作累计耗时 */
   startedAt?: number
-  /** 最后一轮结束时间；仍在生成中则取当前已知值 */
+  /** 已观测消息的最晚终点，保留给单轮边界使用 */
   endedAt?: number
 }
 
@@ -182,8 +182,8 @@ function usageDetails(acc: Record<string, number>, display: DisplayInputUsage): 
     } else if (row.key === 'cacheMissTokens') {
       // Some providers report cache creation here, not all uncached prompt tokens.
       detail.title = '供应商报告的缓存未命中或缓存写入统计，不重复计入总用量。'
-    } else if (row.group === 'input' && row.child && reportedHit > 0) {
-      detail.title = '全部输入的构成（含缓存），不重复计入合计。'
+    } else if (row.group === 'input' && row.child) {
+      detail.title = '本地估算后分摊，非供应商逐类统计；不重复计入合计。'
     }
     return detail
   }).filter(row => row.tokens > 0 || (reportedHit > 0 &&
@@ -194,7 +194,7 @@ function usageDetails(acc: Record<string, number>, display: DisplayInputUsage): 
  * 汇总整条会话的用量。
  *
  * 只统计 assistant 消息（usage 挂在那里）；用户消息不含用量。
- * startedAt/endedAt 取所有消息的极值，用于页脚显示「会话使用时间」。
+ * startedAt/endedAt 仅保留观测边界；会话累计耗时独立合并执行区间。
  */
 export function sumUsage(messages: ChatMessage[]): UsageTotal {
   const acc: Record<string, number> = {}
@@ -421,7 +421,12 @@ export function formatTokens(value: number): string {
 /** 把毫秒格式化成「1h 02m 03s」这类可读时长；不足 1 秒显示 <1s */
 export function formatDuration(startedAt?: number, endedAt?: number): string | null {
   if (!startedAt || !endedAt || endedAt < startedAt) return null
-  const ms = endedAt - startedAt
+  return formatElapsedDuration(endedAt - startedAt)
+}
+
+/** Aggregate execution time has no single start/end pair. */
+export function formatElapsedDuration(ms?: number): string | null {
+  if (ms === undefined || !Number.isFinite(ms) || ms < 0) return null
   if (ms < 1000) return '<1s'
   const totalSeconds = Math.round(ms / 1000)
   const hours = Math.floor(totalSeconds / 3600)

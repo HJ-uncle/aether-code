@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { documentKey, getEditorState, openFile } from '@renderer/core/editor/editor-store'
 import { activateGroupTab, getEditorGroups } from '@renderer/core/editor/editor-groups'
 import { getRecentFiles } from '@renderer/core/editor/recent-files'
+import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
 import { executeCommand, isCommandEnabled, registerCommand } from '@renderer/core/platform/commands'
 import { recordCommandRun } from '@renderer/core/platform/commands-history'
 import { registerKeybinding } from '@renderer/core/platform/keybindings'
@@ -425,13 +426,16 @@ function QuickOverlay({
                   onMouseEnter={() => setActive(index)}
                   onClick={() => openFileItem(item)}
                 >
-                  <span>
-                    <FuzzyText
-                      text={item.name}
-                      positions={item.positions
-                        .filter((p) => p >= item.nameStart)
-                        .map((p) => p - item.nameStart)}
-                    />
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', minWidth: 0 }}>
+                    <FileGlyph name={item.name} />
+                    <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <FuzzyText
+                        text={item.name}
+                        positions={item.positions
+                          .filter((p) => p >= item.nameStart)
+                          .map((p) => p - item.nameStart)}
+                      />
+                    </span>
                   </span>
                   <span className="palette__category">
                     <FuzzyText

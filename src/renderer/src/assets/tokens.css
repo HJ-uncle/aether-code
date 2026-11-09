@@ -75,6 +75,7 @@
   /* 横向列表优先滚动，给标题和操作文字保留可读空间。 */
   --horizontal-tab-min-width: 160px;
   --horizontal-option-min-width: 80px;
+  --horizontal-scroll-fade-width: 28px;
 
   /* 间距节奏：4 的倍数为基准，控件内边距 / 区块间距都从这里取，避免 5px、7px 这类碎值 */
   --space-1: 4px;
@@ -198,6 +199,10 @@
   --task-label-green: #66d580;
   --task-label-blue: #64a9ff;
   --task-label-purple: #c596f0;
+  --file-icon-word: #64a8ff;
+  --file-icon-excel: #60b880;
+  --file-icon-powerpoint: #e89673;
+  --file-icon-pdf: #ef7e83;
   --agent-hue: 210;
   --agent-identity-top-lightness: 78%;
   --agent-identity-bottom-lightness: 66%;
@@ -225,6 +230,13 @@
 
   /* 安全/不可用表面：用于禁用态、只读区、代码块底 */
   --bg-inset: rgba(0, 0, 0, 0.22);
+
+  /* 文档纸面独立于应用主题；无填充的单元格也必须衬住文件原有的文字颜色。 */
+  --document-paper: #ffffff;
+  --document-ink: #1d1d1f;
+  --document-grid: #dedee3;
+  --document-header-bg: #f5f5f7;
+  --document-header-fg: #5f6368;
 
   /* 编辑器 Chrome：把标签/路径/操作条与 Monaco 画布分层，
      让编辑器像一个有明确层次的工作区，而不是一整块灰色面板。 */
@@ -327,6 +339,10 @@
   --task-label-green: #287b43;
   --task-label-blue: #256bc2;
   --task-label-purple: #8051aa;
+  --file-icon-word: #1c63bb;
+  --file-icon-excel: #247847;
+  --file-icon-powerpoint: #b85632;
+  --file-icon-pdf: #c54148;
   --agent-hue: 210;
   --agent-identity-top-lightness: 70%;
   --agent-identity-bottom-lightness: 58%;
@@ -351,6 +367,13 @@
   --git-ref-tag: #9a6700;
 
   --bg-inset: rgba(0, 0, 0, 0.05);
+
+  /* 与暗色主题使用同一张纸，切换应用外观不改变文件的默认配色。 */
+  --document-paper: #ffffff;
+  --document-ink: #1d1d1f;
+  --document-grid: #dedee3;
+  --document-header-bg: #f5f5f7;
+  --document-header-fg: #5f6368;
 
   --editor-chrome: var(--bg-surface);
   --editor-chrome-deep: var(--bg-surface);

@@ -13,6 +13,7 @@ import { Spinner } from '@renderer/workbench/ui-primitives'
 import { Select } from '@renderer/workbench/Select'
 import { Popover } from '@renderer/workbench/Popover'
 import { FileTreeRow } from '../explorer/FileTreeRow'
+import { FileGlyph } from '../explorer/FileGlyph'
 import { FileChangeCard } from '../chat/FileChangeCard'
 import { WorkChangeReviewActions } from './WorkChangeReviewActions'
 import { WorkArtifactPanel, type WorkArtifactPanelProps } from './WorkArtifactPanel'
@@ -66,9 +67,9 @@ function ChangeCount({ view }: { view: WorkArtifactView | null }): JSX.Element {
   </span> : <span className="work-session-artifacts__file-status" data-file-status={code} title={`${scopeLabel}：${statusLabel}`} aria-label={`${scopeLabel}：${statusLabel}`}>{code}</span>
 }
 
-function DeletedArtifact(): JSX.Element {
+function DeletedArtifact({ path }: { path: string }): JSX.Element {
   return <div className="work-session-artifacts__deleted" role="status">
-    <Icon name="file" size={24} /><strong>已删除</strong><span>文件已删除，修改记录仍可查看。</span>
+    <FileGlyph name={path} size={24} /><strong>已删除</strong><span>文件已删除，修改记录仍可查看。</span>
   </div>
 }
 
@@ -430,14 +431,14 @@ function SessionArtifacts({ sessionId, workspacePath: workspaceHint, ready, stre
             {selectedView ? <WorkChangeReviewActions sessionId={sessionId} workspacePath={workspacePath} changes={[selectedView.change]} streaming={streaming} disabled={actionsDisabled}
               refreshing={syncing} onChanged={refreshReview} mode="single" compact showBlockedHint={false} /> : null}
           </div>
-          {displayedView === 'current' ? currentDeleted ? <DeletedArtifact /> : <>
+          {displayedView === 'current' ? currentDeleted ? <DeletedArtifact path={selectedFile.path} /> : <>
             <div className="work-session-artifacts__preview" data-artifact-view="current">
               <WorkArtifactPanel artifact={currentArtifact} sessionId={sessionId} workspaceRoot={workspacePath} active={active}
                 inResourceTab onAddToConversation={onAddToConversation} />
             </div>
           </> : <>
           {selectedView?.change.projectionIssue ? <p className="work-session-artifacts__notice" role="note">{ARTIFACT_PROJECTION_NOTICES[selectedView.change.projectionIssue]}</p> : null}
-          {prefersPreview ? currentDeleted ? <DeletedArtifact /> : <>
+          {prefersPreview ? currentDeleted ? <DeletedArtifact path={selectedFile.path} /> : <>
             <p className="work-session-artifacts__notice" role="note">{selectedView?.change.kind === 'delete'
               ? '此记录删除了文件。下方读取当前路径；若文件已重新创建，显示重新创建后的内容。'
               : '此类文件不显示文本差异。下方预览当前文件，不代表所选历史版本。'}</p>

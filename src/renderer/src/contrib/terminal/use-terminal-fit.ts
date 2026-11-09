@@ -23,7 +23,9 @@ export function useTerminalFit(
       frame = window.requestAnimationFrame(() => {
         frame = undefined
         if (disposed || !container.isConnected || container.clientWidth <= 0 || container.clientHeight <= 0) return
-        if (!session.term.element) return
+        // A keep-alive Code/Work view can still have a queued frame after the
+        // other view claimed this xterm. Only its current host may resize it.
+        if (session.term.element?.parentElement !== container) return
 
         // DOM rendering rounds the canvas in device pixels, then derives cell
         // height from the current row count. At fractional DPR a font change can

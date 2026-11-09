@@ -1,4 +1,5 @@
 import { installHorizontalScrollbar } from './horizontal-scrollbar'
+import { installHorizontalScrollHints } from './horizontal-scroll-hints'
 
 const horizontalScrollSelector = '[data-scroll-axis="x"]'
 const nativeOverflow = /^(auto|scroll)$/
@@ -47,9 +48,11 @@ export function handleHorizontalWheel(event: WheelEvent): void {
 /** 使用一个冒泡监听器支持动态标签和 Markdown；原生横向触控板、缩放手势不重映射。 */
 export function installHorizontalWheelScrolling(): () => void {
   const disposeScrollbar = installHorizontalScrollbar()
+  const disposeHints = installHorizontalScrollHints()
   document.addEventListener('wheel', handleHorizontalWheel, { passive: false })
   return () => {
     document.removeEventListener('wheel', handleHorizontalWheel)
     disposeScrollbar()
+    disposeHints()
   }
 }

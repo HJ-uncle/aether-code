@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type JSX } from 'react'
+import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import type { FsFileContent } from '@shared/ipc'
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
 import { getEngineSource, isRemoteEngine } from '@renderer/core/engine/source'
@@ -8,6 +8,7 @@ import { Spinner } from '@renderer/workbench/ui-primitives'
 import { TextPreview } from '@renderer/core/editor/TextPreview'
 import { FilePreview } from '../editor/FilePreview'
 import { fileContentUrl } from '@renderer/core/workspace/file-content-bytes'
+import { DocumentMenuProvider, useDocumentContextMenu } from '@renderer/core/editor/useDocumentContextMenu'
 
 /** The task owns uploaded files even when the user has not opened a project. */
 export function useWorkSourceFile(source: ChatAttachment, sessionId?: string, root?: string | null, enabled = true) {
@@ -39,7 +40,24 @@ export function useWorkSourceFile(source: ChatAttachment, sessionId?: string, ro
   return { ...(state.key === key ? state : { key }), retry: () => retry(value => value + 1) }
 }
 
-export function WorkSourcePreview({ source, sessionId, root }: { source: ChatAttachment; sessionId?: string; root: string | null }): JSX.Element | null {
+interface WorkSourcePreviewProps {
+  source: ChatAttachment
+  sessionId?: string
+  root: string | null
+  onAddFile?: () => void
+  onAddSelection?: (text: string) => void
+}
+
+export function WorkSourcePreview(props: WorkSourcePreviewProps): JSX.Element {
+  return <DocumentMenuProvider value={{ identity: `${props.sessionId}:${props.source.path}`, path: props.source.path,
+    root: props.root, onAddFile: props.onAddFile, onAddSelection: props.onAddSelection }}>
+    <WorkSourcePreviewContent {...props} />
+  </DocumentMenuProvider>
+}
+
+function WorkSourcePreviewContent({ source, sessionId, root }: WorkSourcePreviewProps): JSX.Element | null {
+  const imageRef = useRef<HTMLImageElement>(null)
+  const { menu } = useDocumentContextMenu(imageRef)
   const { file, error, retry } = useWorkSourceFile(source, sessionId, root)
   const isImage = source.type.startsWith('image/')
   const image = useMemo(() => file && isImage ? fileContentUrl(file, source.type) : null, [file, isImage, source.type])
@@ -53,7 +71,7 @@ export function WorkSourcePreview({ source, sessionId, root }: { source: ChatAtt
   if (!file) return <div className="work-sources__preview-empty" role="status">
     <Spinner size={16} /><span>{isImage ? '正在读取图片…' : '正在读取文件…'}</span>
   </div>
-  if (isImage) return image ? <img className="work-sources__preview-image" src={image.url} alt={source.name} /> : null
+  if (isImage) return image ? <><img ref={imageRef} tabIndex={0} className="work-sources__preview-image" src={image.url} alt={source.name} />{menu}</> : null
   if (file.isBinary && (file.base64 || file.bytes)) return <FilePreview name={source.name} path={source.path} base64={file.base64} bytes={file.bytes} size={file.size} />
   const text = file.truncated ? `${file.content}\n\n…（内容过长已截断）` : file.content
   return <div className="work-sources__preview-text"><TextPreview content={text} name={source.name} /></div>

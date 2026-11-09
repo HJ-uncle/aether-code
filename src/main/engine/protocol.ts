@@ -263,7 +263,7 @@ export function remoteRequestError(mode: 'embedded' | 'remote', method: string, 
   if (method === 'POST' && pathname === '/api/v1/conversation/truncate') return null
   // Change snapshots are stored by the engine. A remote revert therefore
   // operates on the remote engine workspace and does not require a local path.
-  if (method === 'POST' && pathname === '/api/v1/changes/revert-batch') return null
+  if (method === 'POST' && /^\/api\/v1\/changes\/revert-(?:preview|batch)$/.test(pathname)) return null
   if (method === 'PUT' && /^\/api\/v1\/models\/(?!capability-defs$|detect-capabilities$)[a-zA-Z0-9_-]+$/.test(pathname)) return null
   return '此入口尚未接入远端服务；请使用已接入的远端工作区、聊天、MCP、技能、知识库与代码图接口。'
 }

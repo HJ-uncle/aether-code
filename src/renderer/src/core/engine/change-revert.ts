@@ -1,5 +1,6 @@
 import type { EngineRequestInput } from '@shared/ipc'
 import { getEngineSource, getExpectedEngine, subscribeEngineSource } from './source'
+import { requestWorkSessionRefresh } from '../workbench/preview-request'
 
 export type RevertStatus = 'reverted' | 'already_reverted' | 'conflict' | 'unavailable' | 'failed'
 export interface RevertItem {
@@ -9,6 +10,7 @@ export interface RevertItem {
   message?: string
   expectedHash?: string
   actualHash?: string
+  entryType?: 'file' | 'directory'
 }
 export interface RevertReport {
   results: RevertItem[]
@@ -17,6 +19,7 @@ export interface RevertReport {
   conflicts: number
   unavailable: number
   failed: number
+  removedDirectories?: string[]
 }
 export interface RevertIntent {
   sessionId: string
@@ -24,6 +27,11 @@ export interface RevertIntent {
   createdAfter?: number
   fromTurnId?: string
   scope?: 'pending' | 'all'
+  reviewedCommandChangeIds?: string[]
+}
+export interface RevertPreview {
+  total: number
+  changes: Array<{ id: string; path: string; status: string; requiresExplicitRevert?: boolean; entryType?: 'file' | 'directory' }>
 }
 type Request = <T>(input: EngineRequestInput) => Promise<T>
 interface HistoryRow {
@@ -97,7 +105,12 @@ export const revertStatusLabel: Record<RevertStatus, string> = {
 export function revertSummary(report: RevertReport): string {
   if (report.total === 0) return '没有需要撤回的改动'
   const restored = report.results.filter((item) => item.status === 'reverted')
-  const parts = [`已撤回 ${new Set(restored.map((item) => item.path)).size} 个文件（${restored.length} 处改动）`]
+  const files = restored.filter(item => item.entryType !== 'directory')
+  const directories = new Set([
+    ...restored.filter(item => item.entryType === 'directory').map(item => item.path),
+    ...(report.removedDirectories ?? [])
+  ]).size
+  const parts = [`已撤回 ${new Set(files.map((item) => item.path)).size} 个文件${directories ? `、${directories} 个文件夹` : ''}（${restored.length} 处改动）`]
   for (const status of ['already_reverted', 'conflict', 'unavailable', 'failed'] as const) {
     const count = report.results.filter((item) => item.status === status).length
     if (count) parts.push(`${revertStatusLabel[status]} ${count} 处`)
@@ -127,6 +140,7 @@ export async function revertChanges(request: Request, intent: RevertIntent): Pro
   }
   reports.set(intent.sessionId, report)
   for (const item of report.results) outcomes.set(item.id, item)
+  requestWorkSessionRefresh(getEngineSource(), intent.sessionId)
   for (const listener of listeners) listener()
   operation.assertCurrent()
   return report
@@ -143,14 +157,22 @@ export function locateRevertRow(rows: HistoryRow[], target: { id: string; role: 
 export async function revertConversationFrom(
   request: Request,
   sessionId: string,
-  target: { id: string; role: string; content: string }
-): Promise<RevertReport> {
+  target: { id: string; role: string; content: string },
+  confirm?: (preview: RevertPreview) => Promise<boolean>
+): Promise<RevertReport | null> {
   const operation = bindRevertSource(request)
   const rows = await operation.request<HistoryRow[]>({ method: 'GET', path: '/conversation/history', query: { sessionId } })
   operation.assertCurrent()
   if (!Array.isArray(rows)) throw new Error('读取会话历史失败，未执行文件回退')
   const row = locateRevertRow(rows, target)
-  const report = await revertChanges(operation.request, { sessionId, scope: 'all', fromTurnId: row.conversationId })
+  const intent: RevertIntent = { sessionId, scope: 'all', fromTurnId: row.conversationId }
+  const preview = await operation.request<RevertPreview>({ method: 'POST', path: '/changes/revert-preview', body: intent })
+  if (!preview || !Array.isArray(preview.changes) || preview.total !== preview.changes.length) throw new Error('无法读取完整回退范围，未修改文件')
+  if (confirm && !await confirm(preview)) return null
+  operation.assertCurrent()
+  const reviewedCommandChangeIds = preview.changes.filter(item => item.requiresExplicitRevert && item.status !== 'reverted').map(item => item.id)
+  if (reviewedCommandChangeIds.length && !confirm) throw new Error('命令产生的文件改动需要先确认回退范围')
+  const report = await revertChanges(operation.request, { ...intent, reviewedCommandChangeIds })
   operation.assertCurrent()
   if (!revertComplete(report)) {
     throw new Error(`${revertSummary(report)}。对话历史已保留，请查看逐文件回退结果。`)

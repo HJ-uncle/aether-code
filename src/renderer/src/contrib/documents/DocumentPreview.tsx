@@ -1,4 +1,5 @@
-import { Component, lazy, Suspense, useMemo, useState, type JSX, type ReactNode } from 'react'
+import { Component, lazy, Suspense, useMemo, useRef, useState, type JSX, type ReactNode } from 'react'
+import { useDocumentContextMenu } from '@renderer/core/editor/useDocumentContextMenu'
 import { documentBytes, documentKindFor, previewErrorMessage } from './document-kind'
 import { PreviewMessage } from './preview-controls'
 import './document-preview.css'
@@ -22,7 +23,11 @@ export interface DocumentPreviewProps {
 }
 
 export function DocumentPreview({ active = true, ...props }: DocumentPreviewProps): JSX.Element | null {
-  return <div className="document-preview-host" hidden={!active}><DocumentPreviewContent key={JSON.stringify([props.identityKey, props.name, props.formatName])} {...props} active={active} /></div>
+  const host = useRef<HTMLDivElement>(null)
+  const { menu } = useDocumentContextMenu(host, { active,
+    getContentRoot: target => target?.closest<HTMLElement>('.document-preview__notes-content') ??
+      host.current?.querySelector<HTMLElement>('.document-preview__body') ?? null })
+  return <><div ref={host} className="document-preview-host" hidden={!active} tabIndex={0}><DocumentPreviewContent key={JSON.stringify([props.identityKey, props.name, props.formatName])} {...props} active={active} /></div>{menu}</>
 }
 
 class PreviewBoundary extends Component<{ children: ReactNode; onRetry: () => void }, { failed: boolean }> {

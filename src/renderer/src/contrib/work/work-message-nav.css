@@ -8,6 +8,15 @@
 
 .work-conversation__body > .work-conversation__scroll {
   min-width: 0;
+  /* Balance the navigation reserve without moving the scrollbar away from the edge. */
+  padding-inline-end: max(0px, calc(var(--work-navigation-width) - var(--work-scrollbar-width)));
+}
+
+.work-message-nav-slot {
+  display: flex;
+  flex: 0 0 var(--work-navigation-width);
+  min-width: 0;
+  min-height: 0;
 }
 
 .work-message-nav.chat__nav--adaptive { margin-inline: 2px; }

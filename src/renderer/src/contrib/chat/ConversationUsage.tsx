@@ -1,7 +1,9 @@
-import { useEffect, useState, type JSX } from 'react'
+import { useEffect, useMemo, useState, type JSX } from 'react'
 import { Icon } from '@renderer/workbench/icons'
 import { Popover } from '@renderer/workbench/Popover'
-import { formatDuration, formatTimestamp, formatTokens, type UsageDetailRow } from './usage'
+import { formatDuration, formatElapsedDuration, formatTimestamp, formatTokens, type UsageDetailRow } from './usage'
+import type { ChatMessage } from '@renderer/core/engine/useChat'
+import { sessionExecutionDuration, sessionExecutionTiming } from './session-duration'
 
 /** 一轮问答的累计用量（并入最后一条 AI 消息底部的过程行） */
 export type TurnUsageInfo = {
@@ -142,34 +144,36 @@ export function TurnUsage({
  * 页脚会话用量仪表
  *
  * 只统计整条会话的累计值 —— 会话可能先后用到多个模型，因此不显示模型名，
- * 只给「token + 使用时间」。触发区用胶囊按钮，明细走锚定在按钮上方的浮层，
+ * 时间仅累计已加载轮次的执行区间，不能用首尾跨度推算，避免计入轮间空闲。
+ * 触发区用胶囊按钮，明细走锚定在按钮上方的浮层，
  * 符合 macOS 里「状态项 → 向上弹出 popover」的惯例。
  */
 export function UsageMeter({
   total,
   rounds,
   summary,
-  startedAt,
-  endedAt,
-  streaming
+  messages
 }: {
   total: number
   rounds: number
   summary: UsageDetailRow[]
-  startedAt?: number
-  endedAt?: number
-  streaming: boolean
+  messages: readonly ChatMessage[]
 }): JSX.Element {
-  // 进行中时没有 endedAt，用「当前时刻」估算已用时长：需要一个随渲染推进的值
-  const [now, setNow] = useState(() => Date.now())
+  const timing = useMemo(() => sessionExecutionTiming(messages), [messages])
+  const active = timing.intervals.some(interval => interval.end === undefined)
+  const [clock, setClock] = useState(() => ({ timing, now: Date.now() }))
+  // Switching tasks must not reuse an earlier task's last clock tick.
+  const now = clock.timing === timing ? clock.now : Date.now()
 
   useEffect(() => {
-    if (!streaming) return
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    if (!active) return
+    const timer = window.setInterval(() => setClock({ timing, now: Date.now() }), 1000)
     return () => window.clearInterval(timer)
-  }, [streaming])
+  }, [timing, active])
 
-  const duration = formatDuration(startedAt, streaming ? now : endedAt)
+  const duration = formatElapsedDuration(sessionExecutionDuration(timing, now))
+  const durationTitle = '已加载轮次的累计执行用时，含轮内等待，不含轮间空闲；并行时段只计算一次。' +
+    (timing.incomplete ? '部分历史记录缺少起止时间，仅显示已知部分。' : '')
 
   return (
     <Popover
@@ -187,14 +191,14 @@ export function UsageMeter({
           <Icon name="model" size={16} />
           <span className="usage-meter__tokens">{formatTokens(total)}</span>
           <span className="usage-meter__unit">tokens{summary.some((row) => row.unknown) ? '（已知）' : ''}</span>
-          {duration ? <span className="usage-meter__time">{duration}</span> : null}
+          {duration ? <span className="usage-meter__time" title={durationTitle}>{timing.incomplete ? '≥' : ''}{duration}</span> : null}
         </button>
       )}
     >
       <div className="usage-popover__head">
         <span className="usage-popover__title">本会话用量</span>
-        <span className="usage-popover__meta">
-          已加载 {rounds} 轮{duration ? ` · ${duration}` : ''}
+        <span className="usage-popover__meta" title={durationTitle}>
+          已加载 {rounds} 轮{duration ? ` · ${timing.incomplete ? '已知' : '累计'} ${duration}` : ''}
         </span>
       </div>
       <div className="usage-popover__total">

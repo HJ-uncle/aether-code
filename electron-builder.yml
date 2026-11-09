@@ -1,5 +1,9 @@
 appId: com.electron.app
 productName: aether-code
+protocols:
+  - name: Aether 会话
+    schemes:
+      - aether
 directories:
   buildResources: build
 files:
