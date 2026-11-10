@@ -3,7 +3,19 @@ import { exportCommandJob } from '@renderer/core/engine/command-job-state'
 import { exportSubagentDetails, toolStatusLabel } from '@renderer/core/engine/subagent-state'
 import { exportToolDiagnostics } from '@renderer/core/engine/tool-feedback'
 import { toolDisplayName, toolParamSummary } from './tool-names'
-import { userMessageText } from './mention-context'
+import { mentionToken, userMessageDraft } from './mention-context'
+
+function exportedUserText(content: string): string {
+  const draft = userMessageDraft(content)
+  let text = '', cursor = 0
+  for (const mention of draft.mentions) {
+    if (!mention.attachmentId || mention.textOffset === undefined) continue
+    const start = mention.textOffset
+    text += draft.text.slice(cursor, start) + mention.displayText
+    cursor = start + mentionToken(mention).length
+  }
+  return (text + draft.text.slice(cursor)).trimEnd()
+}
 
 /**
  * Serialize a set of chat messages in their supplied (usually chronological)
@@ -40,7 +52,11 @@ export function serializeMessages(selected: readonly ChatMessage[]): string {
       if (message.content) {
         // User messages may contain protocol/reference blocks that are only
         // useful to the engine; export the readable body instead.
-        parts.push(`\n${message.role === 'user' ? userMessageText(message.content) : message.content}`)
+        parts.push(`\n${message.role === 'user' ? exportedUserText(message.content) : message.content}`)
+      }
+      if (message.role === 'user' && message.attachments?.length) {
+        parts.push(`\n**附件**\n\n${message.attachments.map(file =>
+          `- ${file.referenceLabel ? `${file.referenceLabel}：` : ''}${file.name}（${file.path}）`).join('\n')}`)
       }
       return parts.join('\n')
     })

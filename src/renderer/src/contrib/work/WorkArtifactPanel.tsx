@@ -359,11 +359,11 @@ function ArtifactContent({
           })}>
           {running ? <Spinner size={14} /> : <Icon name="play" size={14} />}<span className="work-artifact-panel-v2__action-label">{running ? '正在打开…' : '运行'}</span>
         </button> : null}
-        <button type="button" className="work-artifact-panel-v2__action work-artifact-panel-v2__action--primary"
+        <button type="button" className="work-artifact-panel-v2__action work-artifact-panel-v2__action--primary work-artifact-panel-v2__action--reference"
           aria-label={referenceLabel} title={referenceLabel}
           onPointerDown={event => { if (selection || codeSelections.length) event.preventDefault() }}
           onClick={addReference} disabled={!active || !onAddToConversation || !artifact.path}>
-          <Icon name="chat-outline" size={14} /><span className="work-artifact-panel-v2__action-label">添加到对话</span>
+          <Icon name="plus" size={14} /><span className="work-artifact-panel-v2__action-label">添加到对话</span>
         </button>
         {isMarkdown(artifact.name) ? <div className="work-artifact-panel-v2__modes" role="group" aria-label="文件显示方式">
           <button type="button" aria-label="预览" title="预览" aria-pressed={mode === 'preview'} onClick={() => setMode('preview')}>

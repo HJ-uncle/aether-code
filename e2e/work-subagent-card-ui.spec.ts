@@ -1,5 +1,6 @@
 /** Isolated Electron + authenticated fixture: Work cards show name/status/time inside process,
- * open the matching child inspector by mouse or keyboard, and never load inline details. */
+ * completed collaboration shares ordinary task rows without another disclosure,
+ * and mouse/keyboard navigation opens the matching child inspector without inline details. */
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { createServer } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -201,7 +202,7 @@ test('协作收进过程且仅显示名称状态用时，展开后仍能打开�
   await running.getByText('正在运行', { exact: true }).click()
   const inspector = page.getByRole('region', { name: '协作代理', exact: true })
   await expect(inspector.getByRole('heading', { name: '组件执行', exact: true })).toBeVisible()
-  await inspector.getByRole('button', { name: '展开过程', exact: true }).click()
+  await expect(inspector.getByRole('button', { name: '展开过程', exact: true })).toHaveCount(0)
   await expect(inspector).toContainText('INSPECTOR_RESULT_card-child-0')
   expect(archiveReads).toContain('card-child-0'); expect(archiveReads).not.toContain('card-child-1')
   await completed.getByRole('button').focus(); await page.keyboard.press('Enter')
@@ -250,7 +251,9 @@ test('协作收进过程且仅显示名称状态用时，展开后仍能打开�
   await expect(page.locator('.work-conversation').getByText(finalAnswer, { exact: true })).toBeVisible()
   await parentProcess.click()
   const group = page.locator('.work-collaboration-summary[data-collaboration-count="4"]')
-  await expect(group.getByRole('button', { name: '协作 · 4', exact: true })).toHaveAttribute('aria-expanded', 'true')
+  await expect(group.locator('.work-collaboration-summary__toggle')).toHaveCount(0)
+  await expect(group.getByText('协作 · 4', { exact: true })).toHaveCount(0)
+  await expect(group.getByRole('heading')).toHaveCount(0)
   await expect(group.locator('.work-subagent-card')).toHaveCount(4)
   await parentProcess.click()
   await expect(group).toHaveCount(0)
@@ -258,18 +261,27 @@ test('协作收进过程且仅显示名称状态用时，展开后仍能打开�
   await parentProcess.click()
   await expect(group.locator('.work-subagent-card')).toHaveCount(4)
   await expect(group.locator('.work-subagent-card__status')).toHaveText(['已完成', '已完成', '已完成', '已完成'])
-  await expect(group.locator('.work-subagent-card__role')).toHaveText(['调研', '调研', '调研', '调研'])
+  await expect(group.locator('.work-subagent-card__action')).toHaveText(['调研任务', '调研任务', '调研任务', '调研任务'])
+  await expect(group.locator('.work-subagent-card__role')).toHaveCount(0)
+  await expect(group.locator('[data-work-tool-id]')).toHaveCount(4)
   await expect(page.locator('.work-message__process-toggle')).toHaveCount(1)
   await expect(page.locator('.work-conversation')).not.toContainText('SUBAGENT_PROTOCOL_ONLY')
   await expect(page.locator('.work-conversation').getByText(finalAnswer, { exact: true })).toBeVisible()
-  await group.getByRole('button', { name: '协作 · 4', exact: true }).click()
-  await expect(group.locator('.work-subagent-card')).toHaveCount(0)
-  await group.getByRole('button', { name: '协作 · 4', exact: true }).click()
-  await expect(group.locator('.work-subagent-card')).toHaveCount(4)
-  await completed.getByRole('button').click()
-  await expect(inspector.getByRole('heading', { name: '接口研究', exact: true })).toBeVisible()
+  for (const [index, run] of runs.entries()) {
+    const card = group.locator(`.work-subagent-card[data-run-id="${run.runId}"]`)
+    const button = card.getByRole('button', { name: `${run.agentName}，调研，已完成，查看子代理详情`, exact: true })
+    await expect(button).toBeVisible()
+    const height = await button.evaluate(element => element.getBoundingClientRect().height)
+    expect(height).toBeGreaterThan(0); expect(height).toBeLessThanOrEqual(36)
+    if (index % 2) { await button.focus(); await page.keyboard.press('Enter') }
+    else await button.click()
+    await expect(inspector.getByRole('heading', { name: run.agentName!, exact: true })).toBeVisible()
+    await expect(inspector).toContainText(`INSPECTOR_RESULT_${run.childSessionId}`)
+    expect(archiveReads).toContain(run.childSessionId)
+    await expect(group.locator('.work-subagent-card')).toHaveCount(4)
+  }
   await expect(page.locator('.work-conversation').getByText(finalAnswer, { exact: true })).toBeInViewport()
-  await expect(group.getByRole('button', { name: '协作 · 4', exact: true })).toBeInViewport()
+  await expect(parentProcess).toBeInViewport()
   await page.screenshot({ path: info.outputPath('subagent-card-light.png'), animations: 'disabled' })
   await page.getByRole('button', { name: '设置', exact: true }).first().click()
   const settings = page.locator('.modal[aria-label="设置"]')

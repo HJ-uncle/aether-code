@@ -55,6 +55,11 @@ import { MessageNavRail, type NavTurn } from './MessageNavRail'
 import { groupIntoTurns } from './usage'
 import { TurnUsage, UsageMeter, type TurnUsageInfo } from './ConversationUsage'
 import { useAttachments, shouldAttachPastedText, createPastedTextFile } from './useAttachments'
+import { ImageConversationProvider } from './image-conversation'
+import { ToolImageGalleryProvider } from './ToolImageGalleryProvider'
+import { replaceImageAttachmentReferences } from './image-attachment-reference'
+import { AttachmentStrip } from './AttachmentStrip'
+import { attachmentIdentity, attachmentReferences, freezeAttachmentReferences } from './attachment-references'
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
 import { knowledgeBindingKey, saveKnowledgeBinding } from '@renderer/core/engine/knowledge'
 import { ResourcePicker, type ResourceItem } from './ResourcePicker'
@@ -161,6 +166,7 @@ export function ChatView(): JSX.Element {
   const [polishing, setPolishing] = useState(false)
   /** 输入框里的引用 chip（文件/目录/源码/终端），由 MentionInput 序列化时同步 */
   const mentionsRef = useRef<Mention[]>([])
+  const [, refreshMentionLabels] = useState(0)
   /** 多选模式：按消息粒度勾选，复制或导出为 Markdown */
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set())
@@ -274,15 +280,28 @@ export function ChatView(): JSX.Element {
   /** 「+」按钮弹出的附件/引用菜单（视口坐标） */
   const [attachMenu, setAttachMenu] = useState<{ x: number; y: number } | null>(null)
   // 附件：落盘到当前工作区，发送时把相对路径交给引擎（图片→视觉/OCR，文本→smart_read）
-  const attach = useAttachments(workspace.root, sessionId)
+  const replaceImageDraftRef = useRef<(previous: ChatAttachment, next: ChatAttachment) => void>(() => {})
+  const attachmentChangeRef = useRef<(files: readonly ChatAttachment[]) => void>(() => {})
+  const attach = useAttachments(remoteReadOnly ? null : workspace.root, sessionId, { active: appMode === 'code',
+    onReplace: (previous, next) => replaceImageDraftRef.current(previous, next),
+    loadDraft: () => {
+      const saved = loadChatDraftState(sessionId, storageSource)
+      return (saved.attachmentRoot ?? null) === (remoteReadOnly ? null : workspace.root) ? saved.attachments ?? [] : []
+    },
+    onChange: files => attachmentChangeRef.current(files) })
+  const currentAttachmentReferences = useMemo(() => attachmentReferences(attach.attachments), [attach.attachments])
+  const attachmentStateRef = useRef(attach.attachments)
+  attachmentStateRef.current = attach.attachments
+  const imageConversationScope = JSON.stringify([sourceEpoch, sessionId, workspace.root])
   /** 附件点击预览（图片放大 / 文本查看，统一 AttachmentPreviewDialog） */
-  const [previewImage, setPreviewImage] = useState<AttachmentPreview | null>(null)
+  const [previewImage, setPreviewImage] = useState<(AttachmentPreview & { scope: string; draft: boolean }) | null>(null)
   /** 预览来源的同组图片（查看器内左右翻页） */
   const [previewGroup, setPreviewGroup] = useState<ChatAttachment[]>([])
-  const previewAttachment = useCallback((file: ChatAttachment, src: string | null, group?: ChatAttachment[]) => {
-    setPreviewImage({ file, src })
+  const previewAttachment = useCallback((file: ChatAttachment, src: string | null, group?: ChatAttachment[], draft = false) => {
+    setPreviewImage({ file, src, scope: imageConversationScope, draft })
     setPreviewGroup(group ?? (file.type.startsWith('image/') ? [file] : []))
-  }, [])
+  }, [imageConversationScope])
+  useEffect(() => { setPreviewImage(null); setPreviewGroup([]) }, [imageConversationScope])
 
   /** AI 润色输入框内容：用轻任务模型改写得更清晰；chip 引用会随文本一起被序列化给模型 */
   const handlePolish = async (): Promise<void> => {
@@ -330,10 +349,8 @@ export function ChatView(): JSX.Element {
     }
   }
 
-  const clearAttachments = attach.clear
   const setAttachmentDragging = attach.setDragging
   useEffect(() => {
-    clearAttachments()
     setAttachmentDragging(false)
     mentionsRef.current = []
     setMentionQuery(null)
@@ -343,7 +360,7 @@ export function ChatView(): JSX.Element {
     setAttachMenu(null)
     setPreviewImage(null)
     setPolishing(false)
-  }, [connectionKey, sourceEpoch, clearAttachments, setAttachmentDragging])
+  }, [connectionKey, sourceEpoch, setAttachmentDragging])
 
   // Lifetime billing is anchored to the authoritative server snapshot. Loading
   // archived transcript pages must not make previously billed tokens new spend.
@@ -609,15 +626,36 @@ export function ChatView(): JSX.Element {
       if (!sessionId || sourceEpoch !== getEngineSource()) return
       const mentions = [...mentionsRef.current]
       const revision = draftEditRevision.current
-      const persist = (): void => { saveChatDraft(sessionId, text, storageSource, mentions, revision) }
+      const attachmentState = { attachments: [...attachmentStateRef.current], root: attachmentRoot }
+      const persist = (): void => { saveChatDraft(sessionId, text, storageSource, mentions, revision, attachmentState) }
       pendingDraftSaveRef.current = persist
       draftTimerRef.current = window.setTimeout(() => {
         pendingDraftSaveRef.current = null
         persist()
       }, 400)
     },
-    [sessionId, sourceEpoch, storageSource]
+    [sessionId, sourceEpoch, storageSource, attachmentRoot]
   )
+  attachmentChangeRef.current = files => {
+    attachmentStateRef.current = [...files]
+    if (!sessionId || sourceEpoch !== getEngineSource()) return
+    // A scope can change before the text debounce fires. Persist completed
+    // attachment receipts immediately so returning to that draft can restore them.
+    window.clearTimeout(draftTimerRef.current)
+    pendingDraftSaveRef.current = null
+    draftEditRevision.current = saveChatDraft(sessionId, inputValueRef.current, storageSource, mentionsRef.current,
+      nextChatDraftRevision(draftEditRevision.current), { attachments: files, root: attachmentRoot })
+  }
+  replaceImageDraftRef.current = (previous, next): void => {
+    const draft = replaceImageAttachmentReferences({ text: inputValueRef.current, mentions: mentionsRef.current }, previous, next)
+    if (draft.text === inputValueRef.current && draft.mentions.every((mention, index) => mention === mentionsRef.current[index])) return
+    draftEditRevision.current += 1
+    inputValueRef.current = draft.text
+    mentionsRef.current = draft.mentions
+    setInput(draft.text)
+    inputRef.current?.setDraft(draft.text, draft.mentions)
+    scheduleDraftSave(draft.text)
+  }
 
   // ── 吸底跟随（对齐 wuzu-client CliChatView）──
   // 内容增高不能改变用户的阅读选择；手势暂停后，回到底部才恢复跟随。
@@ -879,7 +917,7 @@ export function ChatView(): JSX.Element {
     attach.restore(draft.attachments)
     window.clearTimeout(draftTimerRef.current)
     pendingDraftSaveRef.current = null
-    draftEditRevision.current = saveChatDraft(sessionId, recovered.text, storageSource, recovered.mentions, nextChatDraftRevision(draftEditRevision.current))
+    draftEditRevision.current = saveChatDraft(sessionId, recovered.text, storageSource, recovered.mentions, nextChatDraftRevision(draftEditRevision.current), { attachments: attachmentStateRef.current, root: attachmentRoot })
     setRejectedDrafts(previous => {
       const next = { ...previous }; delete next[draftRecoveryKey]; return next
     })
@@ -927,7 +965,7 @@ export function ChatView(): JSX.Element {
     let authored: ReturnType<typeof queuedDraft>
     try {
       window.clearTimeout(draftTimerRef.current); pendingDraftSaveRef.current = null
-      saveChatDraftForSubmission(sessionId, input, storageSource, mentionsRef.current, revision)
+      saveChatDraftForSubmission(sessionId, input, storageSource, mentionsRef.current, revision, { attachments: files, root: attachmentRoot })
       authored = queuedDraft(input, mentionsRef.current, revision)
     }
     catch (cause) { setToast(cause instanceof Error ? cause.message : String(cause)); return }
@@ -964,7 +1002,7 @@ export function ChatView(): JSX.Element {
       ...buildSendOptions(),
       queueDraft: authored,
       ...(collaborators.length ? { collaborators } : {}),
-      attachments: files.length > 0 ? files : undefined
+      attachments: files.length > 0 ? freezeAttachmentReferences(files) : undefined
     }, onAdmitted).catch(cause => {
       // Post-admission stream failures already belong to the transcript and
       // recovery UI; they must not restore a message that the engine accepted.
@@ -1140,7 +1178,7 @@ export function ChatView(): JSX.Element {
     attach.restore(message.attachments ?? [])
     window.clearTimeout(draftTimerRef.current)
     pendingDraftSaveRef.current = null
-    draftEditRevision.current = saveChatDraft(sessionId, draft.text, storageSource, draft.mentions, nextChatDraftRevision(draftEditRevision.current))
+    draftEditRevision.current = saveChatDraft(sessionId, draft.text, storageSource, draft.mentions, nextChatDraftRevision(draftEditRevision.current), { attachments: attachmentStateRef.current, root: attachmentRoot })
     inputRef.current?.focus()
   }, [attach.restore, sessionId, storageSource, sourceEpoch, sourceSessionKey])
 
@@ -1174,7 +1212,7 @@ export function ChatView(): JSX.Element {
         attach.restore(message.attachments ?? [])
         window.clearTimeout(draftTimerRef.current)
         pendingDraftSaveRef.current = null
-        draftEditRevision.current = saveChatDraft(sessionId, draft.text, storageSource, draft.mentions, nextChatDraftRevision(draftEditRevision.current))
+        draftEditRevision.current = saveChatDraft(sessionId, draft.text, storageSource, draft.mentions, nextChatDraftRevision(draftEditRevision.current), { attachments: attachmentStateRef.current, root: attachmentRoot })
         inputRef.current?.focus()
       } catch (error) {
         if (isCurrentScope()) showError(error)
@@ -1239,6 +1277,8 @@ export function ChatView(): JSX.Element {
   const cgIndex = useCodegraphIndex({ sessionId, path: codegraphRoot, active: appMode === 'code', ready })
 
   return (
+    <ImageConversationProvider value={{ scope: imageConversationScope, addImage: attach.addImage }} active={appMode === 'code' && Boolean(sessionId)}>
+    <ToolImageGalleryProvider messages={messages} source={sourceEpoch} sessionId={sessionId} active={appMode === 'code'}>
     <div className="chat">
       <PublishedRecoveryNotice state={publishedRecovery} onCancel={cancelPublishedRecovery} onLoadBody={loadPublishedBody} onRetry={retryPublishedRecovery} />
       <div className="chat__topbar">
@@ -1413,7 +1453,7 @@ export function ChatView(): JSX.Element {
 
       {needsModel ? (
         <div className="chat__notice">
-          <span>尚未配置模型，可添加模型或确认引擎已设置默认模型。</span>
+          <span>尚未配置模型，请先添加模型。</span>
           <button type="button" className="link" onClick={() => openAppSettings('models')}>
             去添加模型
           </button>
@@ -1491,17 +1531,11 @@ export function ChatView(): JSX.Element {
         <InputComposer ref={composerRef}>
           {(attach.attachments.length > 0 || attach.uploading) ? (
             <div className="chat__attach-strip">
-              {attach.attachments.map((file) => (
-                <AttachmentChip
-                  key={file.path}
-                  root={workspace.root}
-                  file={file}
-                  onPreview={(f, src) =>
-                    previewAttachment(f, src, attach.attachments.filter((a) => a.type.startsWith('image/')))
-                  }
-                  onRemove={() => attach.remove(file.path)}
-                />
-              ))}
+              <AttachmentStrip root={workspace.root} sessionId={sessionId}
+                references={currentAttachmentReferences} mentions={mentionsRef.current}
+                onPreview={(file, src) => previewAttachment(file, src, attach.attachments.filter(item => item.type.startsWith('image/')), true)}
+                onRemove={file => { inputRef.current?.removeAttachmentReferences(attachmentIdentity(file)); attach.remove(file.path) }}
+                onReorder={attach.reorder} />
               {attach.uploading ? (
                 <span className="attach-chip attach-chip--busy">
                   <span className="attach-chip__progress" role="status" title={attach.uploadingFileName ?? undefined}>
@@ -1526,6 +1560,9 @@ export function ChatView(): JSX.Element {
           <ComposerInput
             ref={inputRef}
             value={input}
+            attachmentReferences={currentAttachmentReferences}
+            attachmentRoot={workspace.root}
+            attachmentSessionId={sessionId}
             disabled={!settingsLoaded}
             placeholder={
               ready ? taskActive ? `补充要求，Enter ${immediateIntent ? '立即补充' : '排到下一轮'}，Shift+Enter 换行；@ 引用文件，/ 选择资源` : '输入消息，Enter 发送，Shift+Enter 换行；@ 引用文件或协作 Agent，/ 选择资源' : '可先准备问题和代码引用，引擎就绪后发送'
@@ -1533,6 +1570,7 @@ export function ChatView(): JSX.Element {
             onChange={(text, mentions) => {
               draftEditRevision.current += 1
               mentionsRef.current = mentions
+              refreshMentionLabels(revision => revision + 1)
               reconcileComposerResources(text)
               inputValueRef.current = text
               setInput(text)
@@ -1553,7 +1591,10 @@ export function ChatView(): JSX.Element {
           <ComposerPolish busy={polishing} disabled={!canExecute || !input.trim()} title="AI 润色：让指令更清晰具体（使用轻任务模型）" onClick={() => void handlePolish()} />
             <CompletionPopover open={canExecute && appMode === 'code' && (mentionQuery !== null || manualPalette)} anchorRef={composerRef} onClose={() => { setManualPalette(false); setMentionQuery(null) }}>
             <MentionRefPicker
+              open={canExecute && appMode === 'code' && (mentionQuery !== null || manualPalette)}
               root={workspace.root}
+              sessionId={sessionId}
+              attachments={currentAttachmentReferences}
               query={mentionQuery ?? ''}
               showSearch={manualPalette && mentionQuery === null}
               onSelect={(mention) => {
@@ -1586,12 +1627,13 @@ export function ChatView(): JSX.Element {
               </button>
             </div>
           ) : null}
-          {previewImage ? (
+          {appMode === 'code' && previewImage?.scope === imageConversationScope ? (
             <AttachmentPreviewDialog
               root={workspace.root}
               preview={previewImage}
               images={previewGroup}
-              onNavigate={(file) => setPreviewImage({ file, src: null })}
+              onNavigate={(file) => setPreviewImage(previous => previous ? { ...previous, file, src: null } : null)}
+              onApply={previewImage.draft ? (file) => attach.addImage(file, previewImage.file.path) : undefined}
               onClose={() => setPreviewImage(null)}
             />
           ) : null}
@@ -1694,7 +1736,6 @@ export function ChatView(): JSX.Element {
             ) : null}
 
             <ModelPicker
-              includeDefault={false}
               active={appMode === 'code'}
               scopeKey={sessionId}
               value={modelId}
@@ -1729,6 +1770,7 @@ export function ChatView(): JSX.Element {
         </div>
       ) : null}
     </div>
+    </ToolImageGalleryProvider></ImageConversationProvider>
   )
 }
 
@@ -1905,6 +1947,8 @@ const MessageItem = memo(function MessageItem({
                   key={file.path}
                   root={workspaceRoot}
                   file={file}
+                  sessionId={sessionId}
+                  referenceLabel={file.referenceLabel}
                   onPreview={(f, src) =>
                     onPreviewImage(f, src, message.attachments?.filter((a) => a.type.startsWith('image/')) ?? [])
                   }

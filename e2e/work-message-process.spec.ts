@@ -1,4 +1,5 @@
-/** Pure Work timeline regression: collaboration and settled commands belong to process; live commands and final answers retain their scope. */
+/** Pure Work timeline regression: process prose and receipts fold together in order,
+ * and only confirmed final answers own reply actions. Full child transcripts keep order. */
 import { expect, test } from '@playwright/test'
 import type { ChatMessage, ToolActivity } from '../src/renderer/src/core/engine/useChat'
 import type { CommandJobStatus } from '../src/shared/command-job'
@@ -7,7 +8,7 @@ import { finalAnswerForMessage } from '../src/renderer/src/core/engine/final-res
 import { captureWorkCollaborationMembership, workMessagePresentation, workMessageTimeline, workTranscriptPresentation, type WorkPresentationSegment } from '../src/renderer/src/contrib/work/work-message-timeline'
 import { workMessageRunning } from '../src/renderer/src/contrib/work/work-tool-presentation'
 
-function command(status: CommandJobStatus, id = status): ToolActivity {
+function command(status: CommandJobStatus, id: string = status): ToolActivity {
   return { id, name: 'execute_command', args: '{"command":"npm test"}', result: `Full ${status} output`,
     state: status === 'running' || status === 'cancelling' ? 'running' : status === 'succeeded' ? 'done' : 'error',
     commandJob: { schemaVersion: 1, jobId: `job-${id}`, sessionId: 'work-task', ownerSessionId: 'work-task',
@@ -92,6 +93,7 @@ test('final answer and delivered image stay outside while command and preview ev
     { kind: 'tool', id: preview.id }, { kind: 'content', text: final }]
   const presentation = workMessagePresentation(workMessageTimeline(source), undefined, { text: final }, false)
   expect(presentation.map(segment => segment.kind)).toEqual(['process', 'answer'])
+  expect(presentation[0]).toMatchObject({ kind: 'process', segments: [{ kind: 'content', text: '先检查失败原因。' }, { kind: 'tools' }] })
   expect(processTools(presentation)).toEqual([tool, preview])
   expect(presentation.at(-1)).toEqual({ kind: 'answer', key: 'final-result', text: final })
 })
@@ -100,7 +102,79 @@ test('command completion alone is not promoted to a final answer', () => {
   const source = message('done', [command('succeeded')], 'succeeded')
   source.content = '现在开始运行验证。'
   source.items.unshift({ kind: 'content', text: source.content })
-  expect(present(source).map(segment => segment.kind)).toEqual(['process'])
+  const presentation = present(source)
+  expect(presentation.map(segment => segment.kind)).toEqual(['process'])
+  expect(presentation[0]).toMatchObject({ kind: 'process', segments: [{ kind: 'content', text: source.content }, { kind: 'tools' }] })
+  expect(presentation.filter(segment => segment.kind === 'answer')).toEqual([])
+})
+
+test('a full report and closing prose remain intact inside process while only the published answer is copied', () => {
+  const report = '# 完整核对报告\n\n' + Array.from({ length: 60 }, (_, index) =>
+    `## 核对项 ${index + 1}\n\nREPORT_SECTION_${index}：保留检查依据、差异说明与原始结论。\n\n`).join('') +
+    '```ts\n  return originalValue\n```\n\nREPORT_END'
+  const closing = '页面复核也已完成，完整报告保持原文可读。'
+  const final = '最终交付已确认，请查看完整报告和附件。'
+  const tool = command('succeeded', 'after-report')
+  const source = message('done', [tool], 'succeeded')
+  source.content = `${report}\n\n${closing}\n\n${final}`
+  source.items = [{ kind: 'thinking', text: '内部核对过程。' }, { kind: 'content', text: report },
+    { kind: 'tool', id: tool.id }, { kind: 'content', text: `${closing}\n\n${final}` }]
+  source.finalResult = { schemaVersion: 1, sessionId: 'work-task', turnId: 'turn', runId: 'root',
+    assistantMessageId: 'assistant', text: final, publishedAt: 20, items: [] }
+  const original = structuredClone(source), presentation = present(source)
+  expect(presentation.map(segment => segment.kind)).toEqual(['process', 'answer'])
+  expect(presentation.filter(segment => segment.kind === 'content')).toEqual([])
+  const process = presentation.flatMap(segment => segment.kind === 'process' ? segment.segments : [])
+  expect(process.map(segment => segment.kind)).toEqual(['thinking', 'content', 'tools', 'content'])
+  expect(process.flatMap(segment => segment.kind === 'content' ? [segment.text] : [])).toEqual([report, closing])
+  expect(processTools(presentation)).toEqual([tool])
+  const answers = presentation.flatMap(segment => segment.kind === 'answer' ? [segment.text] : [])
+  expect(answers).toEqual([final])
+  expect(answers.join('\n\n')).not.toContain('REPORT_SECTION_')
+  expect(answers.join('\n\n')).not.toContain(closing)
+  // A published suffix is rendered once, without duplicating it in the body.
+  const prose = [...process, ...presentation].flatMap(segment => segment.kind === 'content' || segment.kind === 'answer' ? [segment.text] : []).join('\n\n')
+  expect(prose).toBe(`${report}\n\n${closing}\n\n${final}`)
+  expect(source).toEqual(original)
+})
+
+test('live and unsuccessful tool turns keep AI progress around the matching receipts without a final answer', () => {
+  for (const status of ['streaming', 'waiting', 'error', 'aborted', 'interrupted'] as const) {
+    const tool: ToolActivity = { id: 'read', name: 'read_file', args: '{}', result: 'source', state: 'done' }
+    const source = message(status, [tool])
+    source.items = [{ kind: 'content', text: '先检查输入。' }, { kind: 'tool', id: tool.id }, { kind: 'content', text: '核对结果，等待下一步。' }]
+    const original = structuredClone(source), presentation = present(source)
+    expect(presentation.map(segment => segment.kind)).toEqual(['process'])
+    expect(presentation[0]).toMatchObject({ segments: [
+      { kind: 'content', text: '先检查输入。' }, { kind: 'tools', tools: [tool] }, { kind: 'content', text: '核对结果，等待下一步。' }
+    ] })
+    expect(source).toEqual(original)
+  }
+})
+
+test('ordinary text-only replies remain visible while streaming and after completion', () => {
+  for (const status of ['streaming', 'waiting', 'error', 'aborted', 'done'] as const) {
+    const source = message(status, [])
+    source.content = '这是直接给用户的回答。'
+    source.items = [{ kind: 'content', text: source.content }]
+    expect(present(source)).toEqual([{ kind: status === 'done' ? 'answer' : 'content', key: 'content:0', text: source.content }])
+  }
+})
+
+test('legacy completed turns expose only the trailing answer after the last tool', () => {
+  const tool: ToolActivity = { id: 'read', name: 'read_file', args: '{}', result: 'source', state: 'done' }
+  const source = message('done', [tool])
+  source.items = [{ kind: 'content', text: '先查看输入。' }, { kind: 'tool', id: tool.id }, { kind: 'content', text: '核对完成，这是最终结论。' }]
+  const presentation = present(source)
+  expect(presentation.map(segment => segment.kind)).toEqual(['process', 'answer'])
+  expect(presentation[0]).toMatchObject({ segments: [{ kind: 'content', text: '先查看输入。' }, { kind: 'tools', tools: [tool] }] })
+  expect(presentation[1]).toMatchObject({ kind: 'answer', text: '核对完成，这是最终结论。' })
+})
+
+test('an empty published answer never promotes its earlier progress into an answer', () => {
+  expect(workMessagePresentation([{ kind: 'content', key: 'progress', text: '交付信息在附件里。' }], undefined, { text: '' }, false)).toEqual([
+    { kind: 'process', key: 'progress', segments: [{ kind: 'content', key: 'progress', text: '交付信息在附件里。' }] }
+  ])
 })
 
 test('collaboration and adjacent commands share the owning process in original order', () => {

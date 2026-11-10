@@ -1,9 +1,11 @@
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type JSX, type UIEvent } from 'react'
 import { spreadsheetColumn } from './document-kind'
-import { PreviewMessage } from './preview-controls'
+import { PreviewCapabilityNotice, PreviewMessage } from './preview-controls'
 import type { SheetCell, SheetLayout } from './spreadsheet-preview-contract'
 import { bufferedSpreadsheetRange, buildSpreadsheetAxis, spreadsheetAxisIndex } from './spreadsheet-page'
 import { acquireSpreadsheetSession, getSpreadsheetSession, subscribeSpreadsheetSessions } from './spreadsheet-preview-session'
+import { Select } from '@renderer/workbench/Select'
+import { SpreadsheetChart } from './SpreadsheetChart'
 
 const HEADER_HEIGHT = 30
 const ROW_HEADER_WIDTH = 52
@@ -25,6 +27,7 @@ function dimensions(rows: number, columns: number, layout?: SheetLayout): SheetL
 export default function SpreadsheetDocumentPreview({ data, sessionKey, onRetry }: { data: ArrayBuffer; sessionKey: string; onRetry?: () => void }): JSX.Element {
   const panelId = useId()
   const [selection, setSelection] = useState({ key: '', sheet: 0 })
+  const [chartSelection, setChartSelection] = useState({ key: '', sheet: 0, id: '' })
   const { sheet } = selection.key === sessionKey ? selection : { sheet: 0 }
   const session = useSyncExternalStore(subscribeSpreadsheetSessions,
     () => getSpreadsheetSession(sessionKey, data), () => null)
@@ -35,6 +38,7 @@ export default function SpreadsheetDocumentPreview({ data, sessionKey, onRetry }
   const [viewport, setViewport] = useState({ top: 0, left: 0, width: 800, height: 600 })
   const body = useRef<HTMLDivElement>(null)
   const frame = useRef(0)
+  const chartReturnPosition = useRef({ top: 0, left: 0 })
   const rangeConsumer = useRef({})
   useEffect(() => {
     const consumer = rangeConsumer.current
@@ -42,6 +46,9 @@ export default function SpreadsheetDocumentPreview({ data, sessionKey, onRetry }
   }, [session])
   const sheets = session?.sheets || []
   const selected = sheets[sheet] || sheets[0]
+  const charts = session?.charts[sheet] || []
+  const focusedChart = chartSelection.key === sessionKey && chartSelection.sheet === sheet
+    ? charts.find(chart => chart.id === chartSelection.id) : undefined
   const ready = Boolean(session && selected && !session.error)
   const rowCount = selected ? Math.max(1, selected.rows) : 1
   const columnCount = selected ? Math.max(1, selected.columns) : 1
@@ -49,6 +56,8 @@ export default function SpreadsheetDocumentPreview({ data, sessionKey, onRetry }
   const layout = useMemo(() => dimensions(rowCount, columnCount, sheetLayout), [rowCount, columnCount, sheetLayout])
   const rowAxis = useMemo(() => buildSpreadsheetAxis(layout.rows), [layout.rows])
   const columnAxis = useMemo(() => buildSpreadsheetAxis(layout.columns), [layout.columns])
+  const contentWidth = Math.max(ROW_HEADER_WIDTH + columnAxis.total, ...charts.map(chart => ROW_HEADER_WIDTH + chart.x + chart.width + 16))
+  const contentHeight = Math.max(HEADER_HEIGHT + rowAxis.total, ...charts.map(chart => HEADER_HEIGHT + chart.y + chart.height + 16))
   const visibleTop = Math.max(0, viewport.top - HEADER_HEIGHT)
   const visibleLeft = Math.max(0, viewport.left - ROW_HEADER_WIDTH)
   const visibleRow = spreadsheetAxisIndex(rowAxis, visibleTop)
@@ -79,13 +88,13 @@ export default function SpreadsheetDocumentPreview({ data, sessionKey, onRetry }
   }, [ready])
   useEffect(() => {
     const element = body.current
-    if (!element) return
-    const maximumTop = Math.max(0, HEADER_HEIGHT + rowAxis.total - element.clientHeight)
-    const maximumLeft = Math.max(0, ROW_HEADER_WIDTH + columnAxis.total - element.clientWidth)
+    if (!element || focusedChart) return
+    const maximumTop = Math.max(0, contentHeight - element.clientHeight)
+    const maximumLeft = Math.max(0, contentWidth - element.clientWidth)
     if (element.scrollTop > maximumTop || element.scrollLeft > maximumLeft) {
       element.scrollTo({ top: Math.min(element.scrollTop, maximumTop), left: Math.min(element.scrollLeft, maximumLeft) })
     }
-  }, [rowAxis, columnAxis])
+  }, [contentHeight, contentWidth, focusedChart])
   useEffect(() => {
     const element = body.current
     if (!element) return
@@ -102,13 +111,24 @@ export default function SpreadsheetDocumentPreview({ data, sessionKey, onRetry }
       setViewport(previous => previous.top === scrollTop && previous.left === scrollLeft ? previous : { ...previous, top: scrollTop, left: scrollLeft })
     })
   }
+  const selectChart = (id: string): void => {
+    if (id && !focusedChart && body.current) chartReturnPosition.current = { top: body.current.scrollTop, left: body.current.scrollLeft }
+    setChartSelection({ key: sessionKey, sheet, id })
+    // The chart stays in this worksheet. Preserve the user's cell position
+    // while they inspect a readable chart in a narrow Work pane.
+    requestAnimationFrame(() => body.current?.scrollTo(id ? { top: 0, left: 0 } : chartReturnPosition.current))
+  }
   if (session?.error) return <PreviewMessage error={session.error} onRetry={onRetry} />
   if (!session || !selected) return <PreviewMessage />
   const rangeError = session.getRangeError(sheet, requestRow, requestColumn, requestEndRow, requestEndColumn)
   return <>
-    <div className="document-preview__body document-preview__body--sheet" ref={body} onScroll={onScroll}
+    <PreviewCapabilityNotice kind="xlsx" />
+    <div className={`document-preview__body document-preview__body--sheet${focusedChart ? ' document-preview__body--chart' : ''}`} ref={body} onScroll={onScroll}
       id={panelId} role="tabpanel" aria-labelledby={`${panelId}-tab-${sheet}`} data-document-sheet={sheet} data-document-row-start={visibleRow + 1} data-document-row-count={selected.rows}>
-      <div className="document-preview__sheet-viewport" style={{ position: 'relative', width: Math.max(ROW_HEADER_WIDTH + columnAxis.total, viewport.width), height: Math.max(HEADER_HEIGHT + rowAxis.total, viewport.height) }}>
+      {focusedChart ? <div className="document-preview__chart-focus" data-focused-chart={focusedChart.id}>
+        <button type="button" className="document-preview__chart-back" onClick={() => selectChart('')}>返回工作表</button>
+        <SpreadsheetChart key={focusedChart.id} chart={focusedChart} width={Math.max(280, viewport.width - 24)} height={Math.max(300, Math.min(640, viewport.height - 64, (viewport.width - 24) * 0.62 + 110))} />
+      </div> : <div className="document-preview__sheet-viewport" style={{ position: 'relative', width: Math.max(contentWidth, viewport.width), height: Math.max(contentHeight, viewport.height) }}>
         <table className="document-preview__table" aria-label={selected.name} style={{ width: ROW_HEADER_WIDTH + columnAxis.total }}>
           <colgroup><col style={{ width: ROW_HEADER_WIDTH, minWidth: ROW_HEADER_WIDTH }} />{layout.columns.map((width, index) => <col key={index} style={{ width, minWidth: width }} />)}</colgroup>
           <thead><tr style={{ height: HEADER_HEIGHT }}><th aria-label="行号" />{firstColumn ? <th aria-hidden="true" colSpan={firstColumn} /> : null}{Array.from({ length: endColumn - firstColumn }, (_, index) => <th key={firstColumn + index} scope="col">{spreadsheetColumn(firstColumn + index + 1)}</th>)}{endColumn < columnCount ? <th aria-hidden="true" colSpan={columnCount - endColumn} /> : null}</tr></thead>
@@ -125,7 +145,13 @@ export default function SpreadsheetDocumentPreview({ data, sessionKey, onRetry }
             {endRow < rowCount ? <tr aria-hidden="true" style={{ height: rowAxis.total - rowAxis.offsets[endRow] }}><td colSpan={columnCount + 1} style={{ height: rowAxis.total - rowAxis.offsets[endRow], padding: 0, border: 0 }} /></tr> : null}
           </tbody>
         </table>
-      </div>
+        {charts.map(chart => <div key={chart.id} className="document-preview__chart-anchor"
+          style={{ left: ROW_HEADER_WIDTH + chart.x, top: HEADER_HEIGHT + chart.y, width: chart.width, height: chart.height }}>
+          {ROW_HEADER_WIDTH + chart.x < viewport.left + viewport.width + 400 && ROW_HEADER_WIDTH + chart.x + chart.width > viewport.left - 400
+            && HEADER_HEIGHT + chart.y < viewport.top + viewport.height + 400 && HEADER_HEIGHT + chart.y + chart.height > viewport.top - 400
+            ? <SpreadsheetChart chart={chart} onExpand={() => selectChart(chart.id)} /> : null}
+        </div>)}
+      </div>}
       {rangeError ? <PreviewMessage error={rangeError} onRetry={onRetry} /> : session.pageError ? <PreviewMessage error={session.pageError} onRetry={onRetry} /> : null}
     </div>
     <div className="document-preview__toolbar document-preview__toolbar--sheets">
@@ -144,7 +170,10 @@ export default function SpreadsheetDocumentPreview({ data, sessionKey, onRetry }
             event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
           }}>{item.name}</button>)}
       </div>
-      <span>{selected.rows.toLocaleString()} 行 · {selected.columns} 列</span>
+      {charts.length ? <Select className="document-preview__chart-select" ariaLabel="图表" title="查看当前工作表中的图表" placement="up" width={260}
+        value={focusedChart?.id || ''} triggerLabel={focusedChart ? `图表 · ${focusedChart.title}` : `图表 ${charts.length}`}
+        onChange={selectChart} options={[{ value: '', label: '工作表' }, ...charts.map((chart, index) => ({ value: chart.id, label: chart.title || `图表 ${index + 1}` }))]} />
+        : <span>{selected.rows.toLocaleString()} 行 · {selected.columns} 列</span>}
     </div>
   </>
 }

@@ -24,12 +24,17 @@ export function draftAttachments(
   sources: readonly ChatAttachment[],
   mentions: readonly Mention[]
 ): ChatAttachment[] {
-  const referenced = new Set(mentions.filter(mention => isAttachmentReference(mention) && mention.content === undefined)
-    .map(mention => attachmentKey(mention.path!)))
+  const referenced = new Set(mentions.filter(mention => isAttachmentReference(mention) && mention.content === undefined).flatMap(mention => {
+    // A historical version's exact path wins; identity is the fallback after a
+    // queue/import path remap, not permission to resend every edited version.
+    const file = sources.find(item => attachmentKey(item.path) === attachmentKey(mention.path!))
+      ?? (mention.attachmentId ? sources.findLast(item => item.attachmentId === mention.attachmentId) : undefined)
+    return file ? [file] : []
+  }))
   // Snapshot references already carry the original bytes inside the message.
   const embedded = new Set(mentions.filter(mention => mention.path && mention.content !== undefined)
     .map(mention => attachmentKey(mention.path!)))
-  return mergeWorkAttachments(pending, sources.filter(file => referenced.has(attachmentKey(file.path))))
+  return mergeWorkAttachments(pending, sources.filter(file => referenced.has(file)))
     .filter(file => !embedded.has(attachmentKey(file.path)))
 }
 
@@ -41,8 +46,9 @@ export function restoreWorkAttachments(
   mentions: readonly Mention[]
 ): { attachments: ChatAttachment[]; sources: ChatAttachment[] } {
   const referenced = new Set(mentions.filter(isAttachmentReference).map(mention => attachmentKey(mention.path!)))
+  const referencedIds = new Set(mentions.filter(isAttachmentReference).flatMap(mention => mention.attachmentId ? [mention.attachmentId] : []))
   return {
-    attachments: mergeWorkAttachments(pending, incoming.filter(file => !referenced.has(attachmentKey(file.path)))),
+    attachments: mergeWorkAttachments(pending, incoming.filter(file => !referenced.has(attachmentKey(file.path)) && !(file.attachmentId && referencedIds.has(file.attachmentId)))),
     sources: mergeWorkAttachments(sources, incoming)
   }
 }

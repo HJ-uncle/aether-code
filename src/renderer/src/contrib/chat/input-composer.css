@@ -1,6 +1,9 @@
 /* A surface-local container keeps both modes responsive to their own panel,
  * including a narrow Code sidebar inside a wide desktop window. */
 .input-composer.chat__surface {
+  /* Focus lifts the writing surface without adding a colored outline. */
+  --input-focus-border: var(--input-border);
+  --input-focus-shadow: var(--composer-focus-shadow);
   container: input-composer / inline-size;
   padding: 12px 12px 8px;
   gap: 6px;
@@ -10,10 +13,10 @@
   background: var(--bg-elevated);
   box-shadow: var(--shadow-card);
 }
-/* 工具按钮保留自己的焦点提示，只有正文编辑器聚焦才点亮整个输入框。 */
-.input-composer.chat__surface:has(> .input-composer__input:focus-visible) {
-  border-color: var(--accent);
-  box-shadow: var(--shadow-card), var(--focus-ring);
+/* 工具按钮保留自己的焦点提示；正文聚焦只加柔和阴影，边框保持中性。 */
+.input-composer.chat__surface:has(> .input-composer__input:focus-visible):not(:has([aria-invalid='true'])) {
+  border-color: var(--input-focus-border);
+  box-shadow: var(--input-focus-shadow);
 }
 .input-composer > .input-composer__input {
   display: block;
@@ -231,7 +234,4 @@
   .input-composer .model-picker {
     max-width: 95px;
   }
-}
-.composer-options__model-summary .composer-options__summary {
-  overflow-wrap: anywhere;
 }

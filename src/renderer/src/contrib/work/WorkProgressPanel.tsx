@@ -1,4 +1,4 @@
-import { memo, useId, useMemo, type JSX } from 'react'
+import { memo, useId, useLayoutEffect, useMemo, useRef, type JSX } from 'react'
 import type { EngineFileChange } from '@shared/ipc'
 import { sessionStorageKey } from '@renderer/core/engine/source'
 import { Icon } from '@renderer/workbench/icons'
@@ -13,6 +13,8 @@ import { WorkChangeReviewActions } from './WorkChangeReviewActions'
 import './work-progress-panel.css'
 export { WorkTodoProgress } from './WorkTodoProgress'
 
+const PREVIEW_FILE_COUNT = 5
+
 export interface WorkProgressPanelProps {
   sessionId: string
   turnKey: string
@@ -24,12 +26,21 @@ export interface WorkProgressPanelProps {
   onOpenFile: (path: string) => void
   onOpenChange?: (change: EngineFileChange) => void
   onShowChanges: () => void
+  onDisclosureLayout?: () => void
 }
 
 /** Each card receives only its owning turn's receipts from the shared ledger reader. */
-export const WorkProgressPanel = memo(function WorkProgressPanel({ sessionId, turnKey, changes, scopedToTurn, streaming, sync, workspacePath, onOpenFile, onOpenChange, onShowChanges }: WorkProgressPanelProps): JSX.Element | null {
+export const WorkProgressPanel = memo(function WorkProgressPanel({ sessionId, turnKey, changes, scopedToTurn, streaming, sync, workspacePath, onOpenFile, onOpenChange, onShowChanges, onDisclosureLayout }: WorkProgressPanelProps): JSX.Element | null {
   const [changesMemory, setChangesOpen] = useCollapseMemory(sessionStorageKey(`work-progress-changes:${encodeURIComponent(sessionId)}:${encodeURIComponent(turnKey)}`))
   const changesOpen = changesMemory ?? false
+  const previousOpen = useRef(changesOpen)
+  useLayoutEffect(() => {
+    if (previousOpen.current === changesOpen) return
+    previousOpen.current = changesOpen
+    // Preserve the conversation's follow/read choice before paint. Waiting for
+    // its resize observer would expose a frame above the new bottom first.
+    onDisclosureLayout?.()
+  }, [changesOpen, onDisclosureLayout])
   const bodyId = useId()
   const visibleChanges = useMemo(() => changes.filter(change => !artifactChangesCancel(change.records)), [changes])
   const turnRecords = useMemo(() => visibleChanges.flatMap(file => file.records), [visibleChanges])
@@ -42,24 +53,25 @@ export const WorkProgressPanel = memo(function WorkProgressPanel({ sessionId, tu
         <div className="work-progress-panel__heading">
           <button type="button" className="work-progress-panel__changes-toggle" aria-expanded={changesOpen} aria-controls={bodyId}
             onClick={() => setChangesOpen(!changesOpen)}>
-            <span className="work-progress-panel__title"><span>成果</span><span className="work-progress-panel__count">{visibleChanges.length} 个文件</span></span>
-            <Icon className="work-progress-panel__changes-chevron" name="chevron-right" size={13} />
+            <Icon className="work-progress-panel__changes-chevron" name="chevron-right" size={12} />
+            <span className="work-progress-panel__title"><span>成果</span><span className="work-progress-panel__count" title={`${visibleChanges.length} 个文件`}>{visibleChanges.length} 个文件</span></span>
           </button>
           {scopedToTurn ? <WorkChangeReviewActions key={turnKey} sessionId={sessionId} workspacePath={workspacePath}
             changes={turnRecords} mode="turn" compact streaming={streaming} refreshing={sync.syncing}
             disabled={sync.syncError || sync.retryDisabled && !sync.syncing} onChanged={sync.retry} /> : null}
           <button type="button" className="work-progress-panel__review-summary" aria-label={scopedToTurn ? '查看本轮全部成果' : '查看全部成果记录'} title={viewLabel} onClick={onShowChanges}>
-            <span>{pendingFiles ? `${pendingFiles} 个待确认` : '查看全部'}</span><Icon name="chevron-right" size={13} />
+            <span>{pendingFiles ? `${pendingFiles} 个待确认` : '查看全部'}</span><Icon name="chevron-right" size={12} />
           </button>
         </div>
         <div id={bodyId} className="work-progress-panel__changes-body" hidden={!changesOpen}>
           <ul className="work-progress-panel__files">
-            {visibleChanges.slice(0, 3).map(change => <WorkProgressFileRow key={change.key} change={change} workspacePath={workspacePath}
+            {visibleChanges.slice(0, PREVIEW_FILE_COUNT).map(change => <WorkProgressFileRow key={change.key} change={change} workspacePath={workspacePath}
               onOpenFile={onOpenFile} onOpenChange={onOpenChange} onShowChanges={onShowChanges} />)}
           </ul>
           <footer className="work-progress-panel__footer">
-            {visibleChanges.length > 3 ? <span>还有 {visibleChanges.length - 3} 个文件</span> : null}
-            <button type="button" onClick={onShowChanges}>{viewLabel}<Icon name="chevron-right" size={12} /></button>
+            <button type="button" aria-label={`${viewLabel}，共 ${visibleChanges.length} 个文件`} onClick={onShowChanges}>
+              <span>查看全部 {visibleChanges.length} 个文件</span><Icon name="chevron-right" size={12} />
+            </button>
           </footer>
         </div>
       </div>
@@ -95,17 +107,19 @@ const WorkProgressFileRow = memo(function WorkProgressFileRow({ change: { latest
     <button type="button" className="work-progress-panel__file" title={`${latest.path}\n${kindLabel} · ${status.detail}`}
       aria-label={`${display} · ${kindLabel} · ${status.detail}`}
       onClick={() => onOpenChange ? onOpenChange(latest) : deleted ? onShowChanges() : onOpenFile(latest.path)}>
-      <span className="work-progress-panel__file-icon"><FileGlyph name={latest.path} size={18} /></span>
+      <span className="work-progress-panel__file-icon"><FileGlyph name={latest.path} size={20} /></span>
       <span className="work-progress-panel__file-label">
         <span className="work-progress-panel__file-name">{name}</span>
         {directory ? <span className="work-progress-panel__file-path">{directory}</span> : null}
       </span>
-      {stats ? <span className="work-progress-panel__file-stats" title={stats.approximate ? DIFF_APPROXIMATION_HINT : '最新一次修改的增删行数'}
-        aria-label={`最新修改${stats.approximate ? '估算' : ''}：新增 ${stats.added} 行，删除 ${stats.removed} 行`}>
-        {stats.approximate ? <span className="work-progress-panel__file-estimate">约</span> : null}
-        <span className="work-progress-panel__file-added">+{stats.added}</span><span className="work-progress-panel__file-removed">-{stats.removed}</span>
-      </span> : <span className="work-progress-panel__file-code" data-change-code={code} title={kindLabel} aria-label={kindLabel}>{code}</span>}
-      {!status.pending ? <span className="work-progress-panel__file-state" title={status.detail}>{status.label}</span> : null}
+      <span className="work-progress-panel__file-meta">
+        {stats ? <span className="work-progress-panel__file-stats" title={stats.approximate ? DIFF_APPROXIMATION_HINT : '最新一次修改的增删行数'}
+          aria-label={`最新修改${stats.approximate ? '估算' : ''}：新增 ${stats.added} 行，删除 ${stats.removed} 行`}>
+          {stats.approximate ? <span className="work-progress-panel__file-estimate">约</span> : null}
+          <span className="work-progress-panel__file-added">+{stats.added}</span><span className="work-progress-panel__file-removed">-{stats.removed}</span>
+        </span> : <span className="work-progress-panel__file-code" data-change-code={code} title={kindLabel} aria-label={kindLabel}>{kindLabel}</span>}
+        {!status.pending ? <span className="work-progress-panel__file-state" title={status.detail}>{status.label}</span> : null}
+      </span>
       <Icon name="chevron-right" size={12} />
     </button>
   </li>

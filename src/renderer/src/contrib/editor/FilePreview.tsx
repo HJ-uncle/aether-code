@@ -12,6 +12,7 @@ import { documentKindFor } from '../documents/document-kind'
 import { DocumentPreview } from '../documents/DocumentPreview'
 import { DocumentMenuProvider, useDocumentContextMenu } from '@renderer/core/editor/useDocumentContextMenu'
 import { toast } from '@renderer/core/toast'
+import { ImageViewerDialog } from '../chat/ImageViewerDialog'
 
 interface FilePreviewProps {
   /** 文件名（用于判定预览方式与 MIME） */
@@ -52,7 +53,7 @@ export const FilePreview = memo(function FilePreview(props: FilePreviewProps): J
   </DocumentMenuProvider>
 })
 
-function BinaryFilePreview({ name, formatName = name, path, base64 = '', size }: FilePreviewProps): JSX.Element {
+function BinaryFilePreview({ name, formatName = name, path, base64 = '', size, active = true }: FilePreviewProps): JSX.Element {
   const kind = previewKindFor(formatName)
 
   // 十六进制视图只解码前 16 KB：见 preview.ts 的 base64ToBytes 说明
@@ -67,10 +68,12 @@ function BinaryFilePreview({ name, formatName = name, path, base64 = '', size }:
   )
 
   const isImage = kind === 'image'
+  const [imageEditorOpen, setImageEditorOpen] = useState(false)
   const bodyRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const { menu } = useDocumentContextMenu(bodyRef, { hasContent: kind === 'hex', getText: kind === 'hex' ? () => dump : undefined,
     getExtraItems: () => {
+      if (isImage) return [{ id: 'edit-image', label: '标注图片', onSelect: () => setImageEditorOpen(true) }]
       const media = videoRef.current
       return media ? [
         { id: 'media-play', label: media.paused ? '播放' : '暂停', onSelect: () => {
@@ -223,6 +226,7 @@ function BinaryFilePreview({ name, formatName = name, path, base64 = '', size }:
         {kind === 'hex' ? <span>仅显示前 {formatSize(DEFAULT_HEX_BYTES)}</span> : null}
         {isImage ? (
           <span className="preview__zoom">
+            <button type="button" className="preview__zoom-btn" title="标注图片" aria-label="标注图片" onClick={() => setImageEditorOpen(true)}><Icon name="pencil" /></button>
             <button
               type="button"
               className="preview__zoom-btn"
@@ -260,6 +264,8 @@ function BinaryFilePreview({ name, formatName = name, path, base64 = '', size }:
         </span>
       </footer>
       {menu}
+      {isImage ? <ImageViewerDialog src={dataUrl} title={name} filePath={path} open={active && imageEditorOpen}
+        onClose={() => setImageEditorOpen(false)} /> : null}
     </div>
   )
 }

@@ -17,7 +17,7 @@ const js = ts.transpileModule(readFileSync(join(root, 'scripts/pptx-preview-tran
 new vm.Script(`(function(exports){${js}\n})`).runInThisContext()(exports)
 const original = readFileSync(join(root, 'node_modules/@jvmr/pptx-to-html/dist/index.js'), 'utf8')
 const patched = exports.patchPptxPreview(original).replace('import JSZip from "jszip";', '').replace('export { pptxToHtml };', '')
-const converter = new vm.Script(`(function(JSZip){${patched}\nreturn {ChartExtractor,ImageExtractor,renderChartElement,renderImageElement,aetherChartFontSizes};})`).runInThisContext()(JSZip)
+const converter = new vm.Script(`(function(JSZip){${patched}\nreturn {ChartExtractor,ImageExtractor,TableExtractor,renderChartElement,renderImageElement,renderTableElement,computeCellBordersCSS,aetherChartFontSizes};})`).runInThisContext()(JSZip)
 const parse = xml => new DOMParser().parseFromString(xml, 'application/xml')
 
 async function chart(type, showValue, series = [{ name: '样例 A', labels: ['第一周', '第二周'], values: [12, 38] }]) {
@@ -82,4 +82,36 @@ test('source rectangle projection keeps positive cover crop and negative contain
   const contain = converter.renderImageElement({ ...common, crop: { left: 0, right: 0, top: -50000, bottom: -50000 } })
   assert.match(contain, /left:0px; top:100px; width:400px; height:200px/)
   assert.ok(!patched.includes('Math.max(0, Number(srcRect.getAttribute('))
+})
+
+test('explicit noFill hides cell edges instead of rendering the converter black grid fallback', () => {
+  const cell = parse('<a:tcPr xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:lnL><a:noFill/></a:lnL><a:lnR w="0"><a:noFill/></a:lnR><a:lnT><a:noFill/></a:lnT><a:lnB w="12700"><a:solidFill><a:srgbClr val="AABBCC"/></a:solidFill><a:prstDash val="solid"/></a:lnB></a:tcPr>').documentElement
+  const borders = converter.TableExtractor.extractCellBorders(cell, {})
+  assert.deepEqual(borders.left, { style: 'none', width: 0 })
+  assert.deepEqual(borders.right, { style: 'none', width: 0 })
+  const table = { rows: [{ cells: [] }], columns: [914400], tableBorders: { top: { width: 2, color: '#123456' }, left: { width: 2, color: '#123456' }, right: { width: 2, color: '#123456' } } }
+  const css = converter.computeCellBordersCSS(table, { borders }, 0, 0)
+  assert.match(css, /border-top:none;/)
+  assert.match(css, /border-left:none;/)
+  assert.match(css, /border-right:none;/)
+  assert.match(css, /border-bottom: 1px solid #AABBCC;/)
+  assert.doesNotMatch(css, /#000|#123456/)
+})
+
+test('table-level noFill stays absent while ordinary solid and dashed edges retain width and color', () => {
+  const tableProperties = parse('<a:tblPr xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:tblBorders><a:top><a:ln><a:noFill/></a:ln></a:top><a:insideV><a:noFill/></a:insideV><a:bottom><a:ln w="25400"><a:solidFill><a:srgbClr val="336699"/></a:solidFill><a:prstDash val="dash"/></a:ln></a:bottom></a:tblBorders></a:tblPr>').documentElement
+  const tableBorders = converter.TableExtractor.extractTableBorders(tableProperties, {})
+  assert.deepEqual(tableBorders.top, { style: 'none', width: 0 })
+  assert.deepEqual(tableBorders.insideV, { style: 'none', width: 0 })
+  const css = converter.computeCellBordersCSS({ rows: [{ cells: [] }], columns: [914400, 914400], tableBorders }, {}, 0, 1)
+  assert.match(css, /border-top:none;/)
+  assert.match(css, /border-left:none;/)
+  assert.match(css, /border-bottom: 3px dashed #336699;/)
+  assert.doesNotMatch(css, /#000/)
+})
+
+test('a hidden border does not discard a cell solid fill, but direct cell noFill remains transparent', () => {
+  const cell = xml => parse(`<a:tcPr xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">${xml}</a:tcPr>`).documentElement
+  assert.equal(converter.TableExtractor.extractFillColor(cell('<a:lnL><a:noFill/></a:lnL><a:solidFill><a:srgbClr val="F5EEDD"/></a:solidFill>'), {}), '#F5EEDD')
+  assert.equal(converter.TableExtractor.extractFillColor(cell('<a:noFill/><a:lnL><a:solidFill><a:srgbClr val="F5EEDD"/></a:solidFill></a:lnL>'), {}), undefined)
 })

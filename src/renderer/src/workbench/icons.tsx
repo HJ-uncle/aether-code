@@ -26,6 +26,7 @@ export type IconName =
   | 'model'
   | 'explorer'
   | 'shield'
+  | 'lock-open'
   | 'git'
   | 'terminal'
   | 'search'
@@ -59,6 +60,8 @@ export type IconName =
   | 'source-pull'
   | 'source-branch'
   | 'sync'
+  | 'rotate-clockwise'
+  | 'download'
   | 'cloud-upload-outline'
   | 'cloud-download-outline'
   | 'dots-horizontal'
@@ -185,6 +188,12 @@ const PATHS: Record<IconName, JSX.Element> = {
       fill="currentColor"
     />
   ),
+  'lock-open': (
+    <g fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="5" y="11" width="14" height="10" rx="2" />
+      <path d="M8 11V7a4 4 0 0 1 7.8-1.2M12 15v2" />
+    </g>
+  ),
   // 大脑：两瓣对称轮廓 + 中线，表达「推理 / 思考模式」
   brain: (
     <path
@@ -242,6 +251,18 @@ const PATHS: Record<IconName, JSX.Element> = {
       d="M13 14c-3.36 0-4.46 1.35-4.82 2.24C9.25 16.7 10 17.76 10 19a3 3 0 0 1-3 3 3 3 0 0 1-3-3c0-1.31.83-2.42 2-2.83V7.83A2.99 2.99 0 0 1 4 5a3 3 0 0 1 3-3 3 3 0 0 1 3 3c0 1.31-.83 2.42-2 2.83v5.29c.88-.65 2.16-1.12 4-1.12 2.67 0 3.56-1.34 3.85-2.23A3.006 3.006 0 0 1 14 7a3 3 0 0 1 3-3 3 3 0 0 1 3 3c0 1.34-.88 2.5-2.09 2.86C17.65 11.29 15.68 14 13 14m-6 4a1 1 0 0 0-1 1 1 1 0 0 0 1 1 1 1 0 0 0 1-1 1 1 0 0 0-1-1M7 4a1 1 0 0 0-1 1 1 1 0 0 0 1 1 1 1 0 0 0 1-1 1 1 0 0 0-1-1m10 2a1 1 0 0 0-1 1 1 1 0 0 0 1 1 1 1 0 0 0 1-1 1 1 0 0 0-1-1z"
       fill="currentColor"
     />
+  ),
+  download: (
+    <g fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3v12m-5-5 5 5 5-5" />
+      <path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" />
+    </g>
+  ),
+  'rotate-clockwise': (
+    <g fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.9 1 6.7 2.8L21 8" />
+      <path d="M21 3v5h-5" />
+    </g>
   ),
   sync: (
     <path

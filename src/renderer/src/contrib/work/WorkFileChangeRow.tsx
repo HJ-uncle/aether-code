@@ -24,7 +24,7 @@ export const WorkFileChangeRow = memo(function WorkFileChangeRow({ change, state
   const name = path.replace(/\\/g, '/').split('/').filter(Boolean).at(-1) || path
   const action = change.kind === 'delete' ? '删除文件' : workFileIsNew(change) ? '新建文件' : '编辑文件'
   const failure = state === 'error' || state === 'interrupted'
-  const { triggerProps, tooltip } = useHoverDetail({ enabled: true, label: action, content: <>
+  const { triggerProps, tooltip } = useHoverDetail({ enabled: true, label: action, preferredSide: 'above', content: <>
     <div className="logline-hover__heading"><strong>{action}</strong><span>{stateLabels[state]}</span></div>
     <div className="logline-hover__target">{path}</div>
     <div className="work-file-change-row__hover-stats">{stats ? `新增 ${stats.added} 行 · 删除 ${stats.removed} 行${stats.approximate ? `\n${DIFF_APPROXIMATION_HINT}` : ''}` : `${workFileChangeCode(change)} · ${action}`}</div>

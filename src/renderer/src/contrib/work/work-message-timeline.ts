@@ -21,6 +21,7 @@ type WorkCardSegment =
 export type WorkPresentationSegment =
   | { kind: 'process'; key: string; segments: Array<WorkMessageSegment | WorkCardSegment> }
   | WorkCardSegment
+  | { kind: 'content'; key: string; text: string }
   | { kind: 'answer'; key: string; text: string }
 
 export type WorkCollaborationMembership = ReadonlyMap<string, string>
@@ -55,8 +56,9 @@ export function captureWorkCollaborationMembership(presentation: readonly WorkPr
   return membership
 }
 
-/** Tool screenshots document the process; the assistant's final prose and
- * images stay in the answer, with all receipts retaining their original order. */
+/** A tool-assisted turn is one chronological process, including its prose.
+ * Only a published result or the legacy tail is presented as the answer;
+ * ordinary text-only replies stay readable while they stream. */
 export function workMessagePresentation(segments: WorkMessageSegment[], membership?: WorkCollaborationMembership,
   finalAnswer?: { text: string } | false, turnRunning = true): WorkPresentationSegment[] {
   // Filter after stream chunks have joined; trimming individual chunks would
@@ -69,6 +71,8 @@ export function workMessagePresentation(segments: WorkMessageSegment[], membersh
   // another tool is never an answer, even when the transport has stopped.
   const final = finalAnswer === undefined && lastContent &&
     !segments.slice(segments.indexOf(lastContent) + 1).some(segment => segment.kind === 'tools') ? lastContent : undefined
+  const processProse = Boolean(finalAnswer) || segments.some(segment =>
+    segment.kind === 'tools' && segment.tools.length > 0 || segment.kind === 'followup')
   const result: WorkPresentationSegment[] = []
   const appendProcess = (segment: WorkMessageSegment): void => {
     const previous = result.at(-1)
@@ -81,6 +85,9 @@ export function workMessagePresentation(segments: WorkMessageSegment[], membersh
       if (preceding) appendProcess({ ...segment, text: preceding })
     } else if (segment.kind === 'content' && segment === final) {
       result.push({ kind: 'answer', key: segment.key, text: segment.text })
+    } else if (segment.kind === 'content') {
+      if (processProse) appendProcess(segment)
+      else result.push(segment)
     } else if (segment.kind === 'tools') {
       for (const tool of segment.tools) {
         if (isWorkStandaloneTool(tool, turnRunning)) result.push({ kind: 'tool', key: `tool:${tool.id}`, tool })
@@ -185,6 +192,24 @@ function browserPageTarget(value: string): string {
   } catch { return '浏览器页面' }
 }
 
+/** Shorten only paths owned by this project. Keep external paths and ambiguous
+ * dot segments intact so a receipt never suggests it operated inside the project. */
+function projectPathTarget(value: string, workspacePath?: string | null): string {
+  if (!workspacePath?.trim() || /^[a-z]:(?![\\/])/i.test(value)) return value
+  const normalize = (path: string): string => path.replace(/\\/g, '/').replace(/\/+$/, '')
+  const root = normalize(workspacePath.trim())
+  const target = normalize(value)
+  if (!root && target.startsWith('//')) return value
+  const windows = /^[a-z]:/i.test(root) || root.startsWith('//')
+  const key = (path: string): string => windows ? path.toLowerCase() : path
+  const name = /^[a-z]:$/i.test(root) ? `${root}/` : root.split('/').at(-1) || '/'
+  if (target === '.') return name
+  if ([root, target].some(path => path.split('/').some(part => part === '.' || part === '..'))) return value
+  if (key(target) === key(root)) return name
+  if (key(target).startsWith(`${key(root)}/`)) return target.slice(root.length + 1)
+  return value
+}
+
 /** Show recognizable work targets without flashing partial JSON during argument streaming. */
 export function workToolTarget(tool: ToolActivity, workspacePath?: string | null, full = false): string {
   if (tool.name === 'subagent_wait') return subagentWaitSummary(tool.args)
@@ -219,13 +244,11 @@ export function workToolTarget(tool: ToolActivity, workspacePath?: string | null
       const value = fields[field]
       if (typeof value !== 'string' || !value.trim()) continue
       if (full) return value.trim()
-      let target = value.trim().replace(/\s+/g, ' ')
+      const pathField = ['path', 'filePath', 'file_path', 'file'].includes(field)
+      const target = pathField ? projectPathTarget(value.trim(), workspacePath) : value.trim().replace(/\s+/g, ' ')
       if (tool.name.startsWith('browser_') && field === 'url') {
         return browserPageTarget(target)
       }
-      const root = workspacePath?.replace(/\\/g, '/').replace(/\/$/, '')
-      const normalized = target.replace(/\\/g, '/')
-      if (root && normalized.toLocaleLowerCase().startsWith(`${root.toLocaleLowerCase()}/`)) target = normalized.slice(root.length + 1)
       return target.length > 180 ? `${target.slice(0, 177)}…` : target
     }
   } catch { /* Argument chunks are incomplete until the engine finishes emitting JSON. */ }

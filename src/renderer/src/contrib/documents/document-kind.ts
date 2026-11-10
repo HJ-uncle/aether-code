@@ -1,5 +1,21 @@
 export type DocumentKind = 'pdf' | 'docx' | 'xlsx' | 'pptx'
 
+/**
+ * Preview surfaces are deliberately read-only and use format-specific
+ * renderers. Keep this copy close to dispatch so every entry point exposes the
+ * same fidelity boundary instead of implying native Office/PDF editing or QA.
+ */
+export const DOCUMENT_PREVIEW_NOTICES: Readonly<Record<DocumentKind, string>> = Object.freeze({
+  docx: '只读预览 · Aether 渲染；分页以 Word 为准，非 Word 原生视觉验收。',
+  xlsx: '只读预览 · Aether 表格视图；复杂格式、对象与公式计算可能与 Excel 不同。',
+  pptx: '只读预览 · Aether 渲染；非 PowerPoint 原生视觉验收。',
+  pdf: '只读预览 · Aether 渲染；不提供编辑或批注，不等同于原生 PDF 视觉验收。'
+})
+
+export function documentPreviewNotice(kind: DocumentKind): string {
+  return DOCUMENT_PREVIEW_NOTICES[kind]
+}
+
 export const DOCUMENT_LIMITS = Object.freeze({
   inputBytes: 16 * 1024 * 1024,
   expandedBytes: 64 * 1024 * 1024,

@@ -33,6 +33,11 @@ import {
 import { toast } from '@renderer/core/toast'
 import { CHAT_OUTLINE_PATH } from '@renderer/workbench/icons'
 import { acceptsComposerChange, composerInputIssue } from './input-limits'
+import { getEngineSource } from '@renderer/core/engine/source'
+import { ATTACHMENT_DRAG_TYPE, attachmentMention, referencesAttachment, type AttachmentReference } from './attachment-references'
+import { ATTACHMENT_CHIP_DRAG_TYPE, ATTACHMENT_CLIPBOARD_TYPE, attachmentDragKey, attachmentDropReference, rebindAttachmentClipboard } from './attachment-editor-transfer'
+import { createMentionEditHistory, sameAuthoredDraft } from './mention-edit-history'
+import './attachment-mention-input.css'
 export { formatPathDisplay, type Mention, type MentionSource } from './mention-context'
 
 /** An upload may finish after the user has moved the caret or replaced the draft. */
@@ -50,6 +55,8 @@ export interface MentionInputHandle {
   completeSlash: (token: string) => void
   /** 删除遗留的手工资源 token（兼容旧草稿），同时保留其它 @ 引用 chip */
   removeTextToken: (token: string) => void
+  /** Removing a pending attachment explicitly removes all its inline occurrences. */
+  removeAttachmentReferences: (id: string) => void
   /** 整体替换输入框文本（原 mention chip 全部丢弃，用于 AI 润色回填） */
   setText: (text: string) => void
   setDraft: (text: string, mentions: Mention[]) => void
@@ -80,6 +87,7 @@ function makeChip(mention: Mention, key: string, interactive = false): HTMLEleme
   const chip = document.createElement('span')
   chip.className = `mention-chip mention-chip--${mention.source}`
   chip.contentEditable = 'false'
+  chip.draggable = true
   chip.dataset.mentionKey = key
   chip.title = mentionTitle(mention)
   const label = document.createElement('span')
@@ -110,6 +118,38 @@ function makeChip(mention: Mention, key: string, interactive = false): HTMLEleme
     chip.tabIndex = 0
   }
   return chip
+}
+
+function paintAttachmentChip(chip: HTMLElement, mention: Mention, reference?: AttachmentReference): void {
+  if (mention.origin !== 'attachment') return
+  chip.classList.add('mention-chip--attachment')
+  chip.dataset.attachmentId = mention.attachmentId ?? reference?.id ?? ''
+  chip.tabIndex = 0
+  chip.setAttribute('aria-label', chip.getAttribute('role') === 'button'
+    ? `查看引用：${mention.displayText}` : `引用 ${mention.displayText}`)
+  chip.title = `${reference?.file.name ?? mention.path ?? mention.displayText}\n拖动调整位置；Delete 删除引用`
+  const label = chip.querySelector<HTMLElement>('.mention-chip__label')
+  if (label && label.textContent !== mention.displayText) label.textContent = mention.displayText
+}
+
+/** Native drop selection can point inside an atomic chip. Resolve it to the
+ * visual edge under the pointer, never to the editor's previous caret. */
+function dropRangeAt(box: HTMLElement, x: number, y: number): Range {
+  const range = document.caretRangeFromPoint(x, y) ?? document.createRange()
+  if (!box.contains(range.startContainer)) {
+    range.selectNodeContents(box)
+    range.collapse(y < box.getBoundingClientRect().top)
+    return range
+  }
+  const element = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement
+  const chip = element?.closest<HTMLElement>('[data-mention-key]')
+  if (chip && box.contains(chip)) {
+    const rect = chip.getBoundingClientRect()
+    if (x < rect.left + rect.width / 2) range.setStartBefore(chip)
+    else range.setStartAfter(chip)
+  }
+  range.collapse(true)
+  return range
 }
 
 interface InputDraft { text: string; mentions: Mention[] }
@@ -184,6 +224,9 @@ interface MentionInputProps {
   baseClassName?: string
   /** Keep the generic selector opt-in so keep-alive surfaces cannot collide with Code selectors. */
   includeMentionClass?: boolean
+  attachmentReferences?: readonly AttachmentReference[]
+  attachmentRoot?: string | null
+  attachmentSessionId?: string
   onChange: (text: string, mentions: Mention[]) => void
   onSubmit: () => void
   /** 粘贴到剪贴板里的文件（截图/复制的文件），交给附件体系处理 */
@@ -203,7 +246,7 @@ interface MentionInputProps {
 
 export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
   function MentionInput(
-    { value, disabled, placeholder, ariaLabel, className, baseClassName, includeMentionClass = true, onChange, onSubmit, onPasteFiles, onPasteText, onOpenMention, onInputLimit, onMentionQuery, onSlashQuery },
+    { value, disabled, placeholder, ariaLabel, className, baseClassName, includeMentionClass = true, attachmentReferences = [], attachmentRoot = null, attachmentSessionId, onChange, onSubmit, onPasteFiles, onPasteText, onOpenMention, onInputLimit, onMentionQuery, onSlashQuery },
     ref
   ): JSX.Element {
     const boxRef = useRef<HTMLDivElement>(null)
@@ -216,6 +259,36 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
     const acceptedDraftRef = useRef<InputDraft>({ text: '', mentions: [] })
     const draftGenerationRef = useRef(0)
     const pendingInsertionsRef = useRef(new Set<() => void>())
+    const attachmentReferencesRef = useRef(attachmentReferences)
+    attachmentReferencesRef.current = attachmentReferences
+    const disabledRef = useRef(disabled)
+    disabledRef.current = disabled
+    const instanceRef = useRef(crypto.randomUUID())
+    const clipboardRef = useRef<{ token: string; draft: InputDraft; scope: string } | null>(null)
+    const draftScope = JSON.stringify([getEngineSource(), attachmentRoot, attachmentSessionId])
+    const draftScopeRef = useRef(draftScope)
+    draftScopeRef.current = draftScope
+    const domDraftScopeRef = useRef(draftScope)
+    const pointerRef = useRef<{ x: number; y: number; moved: boolean } | null>(null)
+    const localTextDragRef = useRef(false)
+    const suppressClickUntilRef = useRef(0)
+    const editHistoryRef = useRef(createMentionEditHistory())
+    const restoringHistoryRef = useRef(false)
+
+    useEffect(() => {
+      editHistoryRef.current.reset()
+      clipboardRef.current = null
+    }, [draftScope])
+
+    const decorateChip = useCallback((chip: HTMLElement, mention: Mention): Mention => {
+      const reference = attachmentReferencesRef.current.find(item => referencesAttachment(mention, item))
+      // Reordering changes presentation only. A replacement file's path and
+      // serialized text are committed together by the owning composer.
+      const updated = reference ? { ...mention, displayText: reference.label, attachmentId: reference.id } : mention
+      chip.draggable = !disabledRef.current
+      paintAttachmentChip(chip, updated, reference)
+      return updated
+    }, [])
 
     const reportInputLimit = useCallback((message: string) => {
       if (onInputLimit) onInputLimit(message)
@@ -233,27 +306,59 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       return serializeNodes(box.childNodes, mentionsRef.current)
     }, [])
 
-    const restoreDraft = useCallback((text: string, mentions: Mention[]) => {
-      invalidateInsertions()
+    const restoreDraft = useCallback((text: string, mentions: Mention[], resetHistory = true) => {
       const box = boxRef.current
       if (!box) return
+      // A child effect can publish refreshed attachment labels before the
+      // parent's effect echoes the previous render's draft. Those drafts have
+      // identical authored content: replacing their DOM would collapse a live
+      // selection and discard asynchronous paste anchors for a metadata update.
+      const current = serialize()
+      if (resetHistory && domDraftScopeRef.current === draftScopeRef.current && sameAuthoredDraft(current, { text, mentions }) &&
+        mentions.every((mention, index) => mentionToken(mention) === mentionToken(current.mentions[index]))) {
+        const chips = [...box.querySelectorAll<HTMLElement>('[data-mention-key]')]
+          .filter(chip => mentionsRef.current.has(chip.dataset.mentionKey ?? ''))
+        let normalized = false
+        chips.forEach((chip, index) => {
+          const mention = mentions[index]
+          if (!mention) return
+          const updated = decorateChip(chip, mention)
+          normalized ||= !sameMention(mention, updated) || mention.attachmentId !== updated.attachmentId
+          mentionsRef.current.set(chip.dataset.mentionKey!, updated)
+          const label = chip.querySelector<HTMLElement>('.mention-chip__label')
+          if (label && label.textContent !== updated.displayText) label.textContent = updated.displayText
+          if (chip.getAttribute('role') === 'button') chip.setAttribute('aria-label', `查看引用：${updated.displayText}`)
+        })
+        lastSerializedRef.current = text
+        acceptedDraftRef.current = { text, mentions: serialize().mentions }
+        if (normalized) onChange(text, acceptedDraftRef.current.mentions)
+        return
+      }
+      invalidateInsertions()
+      domDraftScopeRef.current = draftScopeRef.current
+      if (resetHistory && !restoringHistoryRef.current && !sameAuthoredDraft(acceptedDraftRef.current, { text, mentions })) editHistoryRef.current.reset()
       mentionsRef.current.clear()
       box.replaceChildren()
       let cursor = 0
+      let normalized = false
       for (const mention of mentions) {
         const token = mentionToken(mention)
         const offset = mention.textOffset ?? text.indexOf(token, cursor)
         if (offset < cursor || text.slice(offset, offset + token.length) !== token) continue
         box.appendChild(document.createTextNode(text.slice(cursor, offset)))
         const key = `m${++keySeqRef.current}`
-        mentionsRef.current.set(key, mention)
-        box.appendChild(makeChip(mention, key, Boolean(onOpenMention)))
+        const chip = makeChip(mention, key, Boolean(onOpenMention))
+        const updated = decorateChip(chip, mention)
+        normalized ||= !sameMention(mention, updated) || mention.attachmentId !== updated.attachmentId
+        mentionsRef.current.set(key, updated)
+        box.appendChild(chip)
         cursor = offset + token.length
       }
       if (cursor < text.length) box.appendChild(document.createTextNode(text.slice(cursor)))
       lastSerializedRef.current = text
       acceptedDraftRef.current = { text, mentions: serialize().mentions }
-    }, [invalidateInsertions, onOpenMention, serialize])
+      if (normalized) onChange(text, acceptedDraftRef.current.mentions)
+    }, [invalidateInsertions, onOpenMention, serialize, decorateChip, onChange])
 
     const rebuildFromText = useCallback((text: string) => restoreDraft(text, []), [restoreDraft])
 
@@ -290,13 +395,13 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
     }, [serialize])
 
     /** 把当前 DOM 序列化并抛给父组件（IME 组合中不抛，避免打断输入法） */
-    const emitChange = useCallback((): boolean => {
+    const emitChange = useCallback((typing = false): boolean => {
       if (composingRef.current) return true
       dropEmptyResidue()
       const { text, mentions } = serialize()
       if (!acceptsComposerChange(acceptedDraftRef.current.text, text)) {
         const accepted = acceptedDraftRef.current
-        restoreDraft(accepted.text, accepted.mentions)
+        restoreDraft(accepted.text, accepted.mentions, false)
         const box = boxRef.current
         if (box && document.activeElement === box) {
           const range = document.createRange()
@@ -309,25 +414,73 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         reportInputLimit(composerInputIssue(text)!)
         return false
       }
+      if (!restoringHistoryRef.current) editHistoryRef.current.record(acceptedDraftRef.current, { text, mentions }, typing)
       lastSerializedRef.current = text
       acceptedDraftRef.current = { text, mentions }
       onChange(text, mentions)
       return true
     }, [onChange, serialize, dropEmptyResidue, reportInputLimit, restoreDraft])
 
+    const restoreHistory = useCallback((redo: boolean, current = serialize()): boolean => {
+      const next = redo ? editHistoryRef.current.redo(current) : editHistoryRef.current.undo(current)
+      if (!next) return false
+      restoringHistoryRef.current = true
+      try {
+        restoreDraft(next.text, next.mentions, false)
+        boxRef.current?.focus()
+        if (boxRef.current) {
+          const range = document.createRange(); range.selectNodeContents(boxRef.current); range.collapse(false)
+          const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range)
+        }
+        emitChange()
+      } finally { restoringHistoryRef.current = false }
+      return true
+    }, [emitChange, restoreDraft, serialize])
+
+    useEffect(() => {
+      const box = boxRef.current
+      if (!box) return
+      // A native listener also catches Electron's Edit > Undo menu; React's
+      // before-input polyfill does not consistently expose history inputTypes.
+      const onHistory = (event: InputEvent): void => {
+        if (!['historyUndo', 'historyRedo'].includes(event.inputType) || !event.cancelable) return
+        event.preventDefault(); event.stopPropagation()
+        if (!disabled && !composingRef.current) restoreHistory(event.inputType === 'historyRedo')
+      }
+      box.addEventListener('beforeinput', onHistory)
+      return () => box.removeEventListener('beforeinput', onHistory)
+    }, [disabled, restoreHistory])
+
+    const refreshAttachmentChips = useCallback(() => {
+      if (composingRef.current) return
+      let changed = false
+      boxRef.current?.querySelectorAll<HTMLElement>('[data-mention-key]').forEach(chip => {
+        const key = chip.dataset.mentionKey!, previous = mentionsRef.current.get(key)
+        if (!previous || previous.origin !== 'attachment') return
+        const next = decorateChip(chip, previous)
+        if (!sameMention(previous, next) || previous.attachmentId !== next.attachmentId) {
+          mentionsRef.current.set(key, next)
+          changed = true
+        }
+      })
+      if (changed) emitChange()
+    }, [decorateChip, emitChange])
+
+    useEffect(refreshAttachmentChips, [attachmentReferences, refreshAttachmentChips])
+
     const insertMentionAt = useCallback(
       (mention: Mention, target?: Range, preserveSelection = false): boolean => {
         const box = boxRef.current
         if (!box) return false
         for (const [existingKey, existing] of mentionsRef.current) {
-          if (sameMention(existing, mention) && box.querySelector(`[data-mention-key="${existingKey}"]`)) {
+          if (mention.origin !== 'attachment' && sameMention(existing, mention) && box.querySelector(`[data-mention-key="${existingKey}"]`)) {
             if (!preserveSelection) box.focus()
             return true
           }
         }
         const key = `m${++keySeqRef.current}`
-        mentionsRef.current.set(key, mention)
         const chip = makeChip(mention, key, Boolean(onOpenMention))
+        mentionsRef.current.set(key, decorateChip(chip, mention))
 
         const selection = window.getSelection()
         const savedSelection = preserveSelection && selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null
@@ -374,7 +527,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         }
         return emitChange()
       },
-      [emitChange, onOpenMention]
+      [emitChange, onOpenMention, decorateChip]
     )
 
     const insertMention = useCallback((mention: Mention) => { insertMentionAt(mention) }, [insertMentionAt])
@@ -651,6 +804,23 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       }
     }, [emitChange, syncSlashQuery])
 
+    const removeAttachmentReferences = useCallback((id: string): void => {
+      const reference = attachmentReferencesRef.current.find(item => item.id === id)
+      let removed = false
+      boxRef.current?.querySelectorAll<HTMLElement>('[data-mention-key]').forEach(chip => {
+        const key = chip.dataset.mentionKey!, mention = mentionsRef.current.get(key)
+        if (!mention || mention.origin !== 'attachment' || mention.content !== undefined ||
+          !(mention.attachmentId === id || reference && referencesAttachment(mention, reference))) return
+        mentionsRef.current.delete(key)
+        chip.remove()
+        removed = true
+      })
+      if (removed) emitChange()
+      // Even an already-deleted chip may still exist in undo history. Removing
+      // its resource ends that history so undo cannot revive a dangling ID.
+      editHistoryRef.current.reset()
+    }, [emitChange])
+
     useImperativeHandle(
       ref,
       () => ({
@@ -658,18 +828,21 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         completeMention,
         completeSlash,
         removeTextToken,
+        removeAttachmentReferences,
         setText: (text: string) => {
           rebuildFromText(text)
           emitChange()
         },
         setDraft: restoreDraft,
         clear: () => {
+          editHistoryRef.current.reset()
+          invalidateInsertions()
           rebuildFromText('')
           emitChange()
         },
         focus: () => boxRef.current?.focus()
       }),
-      [insertMention, completeMention, completeSlash, removeTextToken, rebuildFromText, restoreDraft, emitChange]
+      [insertMention, completeMention, completeSlash, removeTextToken, removeAttachmentReferences, rebuildFromText, restoreDraft, emitChange, invalidateInsertions]
     )
 
     // 光标移动（点击/方向键）不产生 input 事件，用 selectionchange 补齐 @ 触发检测
@@ -698,17 +871,18 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
     useEffect(() => {
       boxRef.current?.querySelectorAll<HTMLElement>('[data-mention-key]').forEach((chip) => {
         const mention = mentionsRef.current.get(chip.dataset.mentionKey ?? '')
+        chip.draggable = Boolean(mention) && !disabled
         if (onOpenMention && mention) {
           chip.setAttribute('role', 'button')
           chip.setAttribute('aria-label', `查看引用：${mention.displayText}`)
           chip.tabIndex = 0
-        } else {
+        } else if (mention?.origin !== 'attachment') {
           chip.removeAttribute('role')
           chip.removeAttribute('aria-label')
           chip.removeAttribute('tabindex')
         }
       })
-    }, [onOpenMention])
+    }, [disabled, onOpenMention])
 
     const copyConversationSelection = useCallback((event: ClipboardEvent<HTMLDivElement>, cut = false) => {
       if (cut && disabled) { event.preventDefault(); return }
@@ -723,8 +897,22 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement
       const enclosingChip = ancestor?.closest<HTMLElement>('[data-mention-key]')
       const enclosingMention = enclosingChip ? mentionsRef.current.get(enclosingChip.dataset.mentionKey ?? '') : undefined
-      if (enclosingChip && enclosingMention?.source === 'conversation') range.selectNode(enclosingChip)
+      if (enclosingChip && (enclosingMention?.source === 'conversation' || enclosingMention?.origin === 'attachment')) range.selectNode(enclosingChip)
       const fragment = range.cloneContents()
+      const draft = serializeNodes(fragment.childNodes, mentionsRef.current, false)
+      if (draft.mentions.some(mention => mention.origin === 'attachment' && mention.content === undefined)) {
+        const token = crypto.randomUUID()
+        clipboardRef.current = { token, draft, scope: draftScopeRef.current }
+        event.clipboardData.setData(ATTACHMENT_CLIPBOARD_TYPE, token)
+        event.clipboardData.setData('text/plain', draft.text)
+        event.preventDefault()
+        if (cut) {
+          range.deleteContents(); range.collapse(true)
+          selection.removeAllRanges(); selection.addRange(range)
+          emitChange(); syncMentionQuery(); syncSlashQuery()
+        }
+        return
+      }
       let hasConversation = false
       fragment.querySelectorAll<HTMLElement>('[data-mention-key]').forEach((chip) => {
         const mention = mentionsRef.current.get(chip.dataset.mentionKey ?? '')
@@ -749,6 +937,49 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       }
     }, [disabled, emitChange, syncMentionQuery, syncSlashQuery])
 
+    const pasteAttachmentDraft = useCallback((draft: InputDraft): void => {
+      const box = boxRef.current, selection = window.getSelection()
+      if (!box) return
+      let range = selection?.rangeCount ? selection.getRangeAt(0) : document.createRange()
+      if (!box.contains(range.commonAncestorContainer)) { range = document.createRange(); range.selectNodeContents(box); range.collapse(false) }
+      const before = document.createRange(), after = document.createRange()
+      before.selectNodeContents(box); before.setEnd(range.startContainer, range.startOffset)
+      after.selectNodeContents(box); after.setStart(range.endContainer, range.endOffset)
+      const projected = serializeNodes(before.cloneContents().childNodes, mentionsRef.current, false).text + draft.text +
+        serializeNodes(after.cloneContents().childNodes, mentionsRef.current, false).text
+      if (!acceptsComposerChange(serialize().text, projected)) { reportInputLimit(composerInputIssue(projected)!); return }
+      const fragment = document.createDocumentFragment()
+      let cursor = 0
+      for (const mention of draft.mentions) {
+        const start = mention.textOffset!
+        fragment.appendChild(document.createTextNode(draft.text.slice(cursor, start)))
+        const key = `m${++keySeqRef.current}`, chip = makeChip(mention, key, Boolean(onOpenMention))
+        mentionsRef.current.set(key, decorateChip(chip, mention))
+        fragment.appendChild(chip)
+        cursor = start + mentionToken(mention).length
+      }
+      fragment.appendChild(document.createTextNode(draft.text.slice(cursor)))
+      const last = fragment.lastChild!
+      range.deleteContents(); range.insertNode(fragment)
+      box.focus(); range.setStartAfter(last); range.collapse(true)
+      selection?.removeAllRanges(); selection?.addRange(range)
+      emitChange(); syncMentionQuery(); syncSlashQuery()
+    }, [decorateChip, emitChange, onOpenMention, reportInputLimit, serialize, syncMentionQuery, syncSlashQuery])
+
+    const moveMentionChip = useCallback((chip: HTMLElement, range: Range): void => {
+      const box = boxRef.current
+      if (!box || chip.contains(range.startContainer)) return
+      // Ranges follow DOM mutations, including removal from an earlier position.
+      // Move the registered node itself so repeated references keep their identity.
+      range.insertNode(chip)
+      const spacer = chip.nextSibling?.nodeType === Node.TEXT_NODE && /^\s/.test(chip.nextSibling.textContent ?? '')
+        ? chip.nextSibling : spacerAfter(chip)
+      box.focus(); range.setStartBefore(spacer); range.collapse(true)
+      const selection = window.getSelection()
+      selection?.removeAllRanges(); selection?.addRange(range)
+      emitChange(); syncMentionQuery(); syncSlashQuery()
+    }, [emitChange, syncMentionQuery, syncSlashQuery])
+
     return (
       <div
         ref={boxRef}
@@ -758,8 +989,14 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         aria-multiline="true"
         contentEditable={disabled ? 'false' : 'true'}
         data-placeholder={placeholder ?? ''}
-        onInput={() => {
-          emitChange()
+        onInput={(event) => {
+          const inputType = (event.nativeEvent as InputEvent).inputType
+          if (inputType === 'historyUndo' || inputType === 'historyRedo') {
+            const accepted = acceptedDraftRef.current
+            if (disabled || !restoreHistory(inputType === 'historyRedo', accepted)) restoreDraft(accepted.text, accepted.mentions, false)
+            return
+          }
+          emitChange(['insertText', 'deleteContentBackward', 'deleteContentForward'].includes(inputType))
           syncMentionQuery()
           syncSlashQuery()
         }}
@@ -768,6 +1005,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         }}
         onCompositionEnd={() => {
           composingRef.current = false
+          refreshAttachmentChips()
           emitChange()
           syncSlashQuery()
         }}
@@ -775,6 +1013,15 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         onCut={(event) => copyConversationSelection(event, true)}
         onPaste={(event) => {
           if (disabled) { event.preventDefault(); return }
+          const clipboard = clipboardRef.current
+          if (clipboard && event.clipboardData.getData(ATTACHMENT_CLIPBOARD_TYPE) === clipboard.token) {
+            event.preventDefault()
+            const draft = clipboard.scope === draftScopeRef.current
+              ? rebindAttachmentClipboard(clipboard.draft, attachmentReferencesRef.current) : null
+            if (draft) pasteAttachmentDraft(draft)
+            else toast.info('复制的附件已不在当前草稿中，请重新添加后引用。')
+            return
+          }
           const files = [...event.clipboardData.files]
           if (files.length > 0) {
             event.preventDefault()
@@ -819,10 +1066,88 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
           }
           document.execCommand('insertText', false, text)
         }}
+        onPointerDown={(event) => {
+          suppressClickUntilRef.current = 0
+          const chip = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-mention-key]') : null
+          pointerRef.current = !disabled && !composingRef.current && chip && event.currentTarget.contains(chip) &&
+            mentionsRef.current.has(chip.dataset.mentionKey ?? '')
+            ? { x: event.clientX, y: event.clientY, moved: false } : null
+        }}
+        onPointerMove={(event) => {
+          const pointer = pointerRef.current
+          if (event.buttons && pointer && Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) >= 5) pointer.moved = true
+        }}
+        onDragStart={(event) => {
+          const chip = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-mention-key]') : null
+          if (!chip || !event.currentTarget.contains(chip)) { localTextDragRef.current = true; return }
+          localTextDragRef.current = false
+          event.stopPropagation()
+          if (disabled || composingRef.current) { event.preventDefault(); return }
+          const mention = mentionsRef.current.get(chip.dataset.mentionKey ?? '')
+          if (!mention) { event.preventDefault(); return }
+          event.dataTransfer.effectAllowed = 'move'
+          event.dataTransfer.setData(ATTACHMENT_CHIP_DRAG_TYPE, JSON.stringify({ owner: instanceRef.current, key: chip.dataset.mentionKey }))
+          event.dataTransfer.setData('text/plain', mention.displayText)
+          event.dataTransfer.setDragImage(chip, 12, 12)
+          suppressClickUntilRef.current = Date.now() + 700
+        }}
+        onDragEnd={(event) => {
+          localTextDragRef.current = false
+          const chip = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-mention-key]') : null
+          if (!chip || !event.currentTarget.contains(chip)) return
+          event.stopPropagation()
+          suppressClickUntilRef.current = Date.now() + 250
+          pointerRef.current = null
+        }}
+        onDragEnter={(event) => {
+          if (event.dataTransfer.types.some(type => type === ATTACHMENT_DRAG_TYPE || type === ATTACHMENT_CHIP_DRAG_TYPE)) {
+            event.preventDefault(); event.stopPropagation()
+          }
+        }}
+        onDragOver={(event) => {
+          const internal = event.dataTransfer.types.includes(ATTACHMENT_CHIP_DRAG_TYPE)
+          if (!internal && !event.dataTransfer.types.includes(ATTACHMENT_DRAG_TYPE)) return
+          event.preventDefault(); event.stopPropagation()
+          event.dataTransfer.dropEffect = disabled || composingRef.current ? 'none' : internal ? 'move' : 'copy'
+        }}
+        onDrop={(event) => {
+          const internal = event.dataTransfer.types.includes(ATTACHMENT_CHIP_DRAG_TYPE)
+          if (!internal && !event.dataTransfer.types.includes(ATTACHMENT_DRAG_TYPE)) {
+            // Browser HTML from another surface must not acquire registered
+            // chip keys. Ordinary in-editor text moves keep native selection.
+            if (event.dataTransfer.files.length || !event.dataTransfer.types.includes('text/html') || localTextDragRef.current) return
+            event.preventDefault(); event.stopPropagation()
+            const box = boxRef.current, text = event.dataTransfer.getData('text/plain')
+            if (disabled || composingRef.current || !box || !text) return
+            const range = dropRangeAt(box, event.clientX, event.clientY), selection = window.getSelection()
+            selection?.removeAllRanges(); selection?.addRange(range)
+            pasteAttachmentDraft({ text, mentions: [] })
+            return
+          }
+          event.preventDefault(); event.stopPropagation()
+          const box = boxRef.current
+          if (disabled || composingRef.current || !box) return
+          const range = dropRangeAt(box, event.clientX, event.clientY)
+          if (internal) {
+            const key = attachmentDragKey(event.dataTransfer.getData(ATTACHMENT_CHIP_DRAG_TYPE), instanceRef.current)
+            const chip = key ? [...box.querySelectorAll<HTMLElement>('[data-mention-key]')].find(node => node.dataset.mentionKey === key) : undefined
+            if (chip && key && mentionsRef.current.has(key)) moveMentionChip(chip, range)
+          } else {
+            const reference = attachmentDropReference(event.dataTransfer.getData(ATTACHMENT_DRAG_TYPE), attachmentReferencesRef.current)
+            if (reference) insertMentionAt(attachmentMention(reference), range)
+          }
+          onMentionQuery?.(null); onSlashQuery?.(null)
+        }}
         onClick={(event) => {
           if (!(event.target instanceof Element)) return
           const chip = event.target.closest<HTMLElement>('[data-mention-key]')
           const mention = chip ? mentionsRef.current.get(chip.dataset.mentionKey ?? '') : undefined
+          if (mention) {
+            if (Date.now() < suppressClickUntilRef.current || pointerRef.current?.moved) {
+              event.preventDefault(); event.stopPropagation(); pointerRef.current = null; return
+            }
+            pointerRef.current = null
+          }
           if (mention && onOpenMention) {
             event.stopPropagation()
             onOpenMention(mention)
@@ -830,6 +1155,12 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         }}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || composingRef.current) return
+          if ((event.ctrlKey || event.metaKey) && !event.altKey &&
+            (event.key.toLowerCase() === 'z' || event.key.toLowerCase() === 'y')) {
+            event.preventDefault(); event.stopPropagation()
+            if (!disabled) restoreHistory(event.key.toLowerCase() === 'y' || event.shiftKey)
+            return
+          }
           const focusedChip = event.target instanceof HTMLElement
             ? event.target.closest<HTMLElement>('[data-mention-key]') : null
           const focusedMention = focusedChip ? mentionsRef.current.get(focusedChip.dataset.mentionKey ?? '') : undefined

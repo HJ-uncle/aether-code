@@ -4,11 +4,14 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ButtonHTMLAttributes,
+  type ReactNode,
   type JSX,
   type KeyboardEvent as ReactKeyboardEvent
 } from 'react'
 import { Icon, type IconName } from './icons'
 import { Popover, type PopoverAlign, type PopoverPlacement } from './Popover'
+import { useHoverDetail } from './useHoverDetail'
 
 export interface SelectOption {
   value: string
@@ -17,6 +20,36 @@ export interface SelectOption {
   icon?: IconName
   /** 次要说明：展示在选项下方，帮助区分相近选项 */
   description?: string
+  /** Rich metadata stays beside the menu instead of crowding every option. */
+  detail?: ReactNode
+  detailLabel?: string
+}
+
+interface DetailOptionProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  detail: ReactNode
+  detailLabel: string
+  detailEnabled: boolean
+}
+
+function DetailOption({ detail, detailLabel, detailEnabled, onFocus, children, ...props }: DetailOptionProps): JSX.Element {
+  const { triggerProps, tooltip } = useHoverDetail<HTMLButtonElement>({
+    enabled: detailEnabled,
+    content: detail,
+    label: detailLabel,
+    placement: 'side',
+    sideAnchor: '.select__panel'
+  })
+  return <>
+    <button {...props} {...triggerProps} onFocus={event => { triggerProps.onFocus?.(event); onFocus?.(event) }}>
+      {children}
+    </button>
+    {tooltip}
+  </>
+}
+
+function OptionButton({ detail, detailLabel, detailEnabled, ...props }: DetailOptionProps): JSX.Element {
+  return detail == null ? <button {...props} />
+    : <DetailOption {...props} detail={detail} detailLabel={detailLabel} detailEnabled={detailEnabled} />
 }
 
 export interface SelectAction {
@@ -240,8 +273,11 @@ export function Select({
           </div>
         ) : null}
         {options.map((option, index) => (
-          <button
+          <OptionButton
             key={option.value}
+            detail={option.detail}
+            detailLabel={option.detailLabel ?? `${option.label}详情`}
+            detailEnabled={open && !disabled}
             type="button"
             role="menuitem"
             aria-current={option.value === value ? 'true' : undefined}
@@ -257,7 +293,7 @@ export function Select({
               {option.description ? <small className="select__item-desc">{option.description}</small> : null}
             </span>
             <span className="select__check-slot" aria-hidden="true">{option.value === value ? <Icon name="check" size={16} className="select__check" /> : null}</span>
-          </button>
+          </OptionButton>
         ))}
         {actions.length ? (
           <div className="select__actions" role="group" aria-label="更多操作">
@@ -269,6 +305,7 @@ export function Select({
                   type="button"
                   role="menuitem"
                   data-select-index={itemIndex}
+                  data-select-action={action.id}
                   tabIndex={itemIndex === activeIndex ? 0 : -1}
                   className={`select__item select__action${itemIndex === activeIndex ? ' is-highlight' : ''}`}
                   onFocus={() => setActiveIndex(itemIndex)}

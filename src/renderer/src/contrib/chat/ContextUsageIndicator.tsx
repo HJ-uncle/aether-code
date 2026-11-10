@@ -201,11 +201,8 @@ export function ContextUsageIndicator({
           key={scope}
           tooltipId={tooltipId}
           hoverAnchor={hoverAnchor}
-          requestEstimate={requestEstimate}
           used={used}
           limit={limit}
-          estimated={estimated}
-          provisional={provisional}
           usageKnown={usageKnown}
           compactionPhase={phase}
           status={status}
@@ -218,13 +215,10 @@ export function ContextUsageIndicator({
 
 type ContextRingCardProps = {
   tooltipId: string
-  requestEstimate?: number
   anchor: DOMRect
   anchorElement: HTMLDivElement | null
   used: number
   limit: number
-  estimated?: boolean
-  provisional?: boolean
   usageKnown: boolean
   compactionPhase?: RootRunCompaction['phase']
   status?: string
@@ -248,13 +242,10 @@ function ContextRingCardPresence({ hoverAnchor, ...props }: Omit<ContextRingCard
  */
 function ContextRingCard({
   tooltipId,
-  requestEstimate,
   anchor,
   anchorElement,
   used,
   limit,
-  estimated,
-  provisional,
   usageKnown,
   compactionPhase,
   status,
@@ -286,7 +277,7 @@ function ContextRingCard({
     el.dataset.positioned = 'true'
   }, [anchor, anchorElement])
 
-  // Position before every paint; changing source/status text must not leave one frame
+  // Position before every paint; changing usage/status text must not leave one frame
   // at an old location. The observer also covers font and viewport size changes.
   useLayoutEffect(positionCard)
   useLayoutEffect(() => {
@@ -381,17 +372,6 @@ function ContextRingCard({
         <ContextUsageBar ratio={used / limit} reduced={reducedMotion} />
       )}
       <div className="ctx-card__details">
-        <p className="ctx-card__hint ctx-card__source-hint">
-          {provisional === true
-            ? '模型初步统计 · 等待最终确认'
-            : estimated === true
-              ? '本地估算 · 等待模型确认'
-              : estimated === false
-                ? requestEstimate !== undefined
-                  ? '模型统计 · 最近确认值，新请求待确认'
-                  : '模型统计 · 最近一次请求输入'
-                : usageKnown ? '请求输入 · 模型统计或本地估算' : '请求输入尚未确认'}
-        </p>
         <div className="ctx-card__hint ctx-card__status-hint" role="status">
           {status ? (
             <span className={compactionPhase === 'failed' ? 'ctx-card__error' : undefined}>

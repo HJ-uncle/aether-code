@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore, type JSX } from 're
 import { useApp } from '@renderer/core/app-context'
 import { assertEngineSource, getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
 import { readSessionFile } from '@renderer/core/workspace/fs-client'
-import { Dialog } from '@renderer/workbench/Dialog'
+import { ImageViewerDialog } from './ImageViewerDialog'
 import { classifyChatImage, chatImageFileSource } from './chat-image-source'
 import type { ChatFileContext } from './chat-link'
 import './chat-image.css'
@@ -63,8 +63,6 @@ export function ChatImage({ href, alt, title, context }: {
         setLoaded(undefined); setFailedSource(''); setAttempt(value => value + 1)
       }}>重新加载图片</button> : null}
     </span>}
-    <Dialog title={label} className="modal--reply-image" width={960} open={expanded && ready} onClose={() => setExpanded(false)}>
-      <div className="md-image__expanded"><img src={src} alt={label} /></div>
-    </Dialog>
+    <ImageViewerDialog src={src ?? null} title={label} open={expanded && ready} onClose={() => setExpanded(false)} />
   </span>
 }

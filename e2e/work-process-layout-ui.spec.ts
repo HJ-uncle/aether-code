@@ -13,8 +13,8 @@ import { engineStorageKey } from '../src/renderer/src/core/engine/source'
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
 const token = 'process-layout-token', model = 'process-layout-model', now = Date.now() - 60_000
-const settled = 'process-layout-settled', live = 'process-layout-live', workspaceRoot = '/remote/process-layout'
-const titles = new Map([[settled, '核对完整文档处理过程'], [live, '继续检查文档处理过程']])
+const settled = 'work-process-layout-settled', live = 'work-process-layout-live', paged = 'work-process-layout-paged', workspaceRoot = '/remote/process-layout'
+const titles = new Map([[settled, '核对完整文档处理过程'], [live, '继续检查文档处理过程'], [paged, '核对长过程的分页阅读']])
 const finalText = 'PROCESS_LAYOUT_FINAL：文档检查已完成。\n\n所有页面均已核对，正文只保留交付结论。'
 const noteText = 'PROCESS_LAYOUT_NOTE：正在核对页面尺寸和内容层次，下一步检查实际画面。'
 const errors: string[] = [], mutations: string[] = [], streams = new Map<string, ServerResponse>()
@@ -49,14 +49,14 @@ function history(id: string): EngineHistoryRow[] {
     createdAt: previous.finishedAt, conversationId: previous.turnId, metadata: earlier })
   }
   rows.push(row('user', 'user', titles.get(id), 0))
-  for (let index = 0; index < 38; index++) {
-    if (index === 0 || index === 13 || index === 36) rows.push({
+  for (let index = 0; index < (id === paged ? 105 : 38); index++) {
+    if (index === 0 || id !== paged && (index === 13 || index === 36)) rows.push({
       ...row(`note-${index}`, 'assistant', `${noteText}（阶段 ${index + 1}）`, index * 1000 + 1),
       ...(index === 0 ? { reasoningContent: 'PROCESS_LAYOUT_THINKING：先验证边界，再检查每个原始步骤。' } : {})
     })
-    const wait = index >= 1 && index <= 6 || index >= 36
-    const office = index >= 7 && index <= 12
-    const image = index === 35
+    const wait = id !== paged && (index >= 1 && index <= 6 || index >= 36)
+    const office = id !== paged && index >= 7 && index <= 12
+    const image = id !== paged && index === 35
     const name = wait ? 'browser_wait' : office ? 'office_inspect' : image ? 'workbench_render' : 'read_file'
     const args = wait ? { url: 'https://example.test/review', timeout_ms: 1000 }
       : office ? { path: `${workspaceRoot}/delivery-review.docx` }
@@ -64,12 +64,14 @@ function history(id: string): EngineHistoryRow[] {
           : { path: `${workspaceRoot}/source-${index}.txt` }
     rows.push({ ...row(`call-${index}`, 'assistant', '', index * 1000 + 2), toolCall: { id: toolId(id, index), name, args } })
     if (id === live && index === 37) continue
+    const success = id !== settled || index !== 34
     const output = image ? JSON.stringify({ type: 'image', mimeType: 'image/png', title: '文档检查完整画面', data: imageDataUrl.replace(/^data:image\/png;base64,/, '') })
-      : `PROCESS_RECEIPT_${index.toString().padStart(2, '0')}：已完成该步骤，原始结果完整保留。`
-    rows.push({ ...row(`result-${index}`, 'tool', output, index * 1000 + 3), toolCallId: toolId(id, index), success: true,
-      metadata: { ...metadata, success: true } })
+      : id === paged && index === 104 ? Array.from({ length: 28 }, (_, line) => `PROCESS_RECEIPT_104_${line}：保留完整原始记录，展开后需要滚动阅读。`).join('\n')
+        : `PROCESS_RECEIPT_${index.toString().padStart(2, '0')}：${success ? '已完成该步骤' : '首次读取未通过，后续步骤继续核对'}，原始结果完整保留。`
+    rows.push({ ...row(`result-${index}`, 'tool', output, index * 1000 + 3), toolCallId: toolId(id, index), success,
+      metadata: { ...metadata, success } })
   }
-  if (id === settled) rows.push({ ...row('answer', 'assistant', finalText, 38_000),
+  if (id !== live) rows.push({ ...row('answer', 'assistant', finalText, 38_000),
     metadata: { ...metadata, finalResult: { schemaVersion: 1, sessionId: id, turnId: run.turnId, runId: run.runId,
       assistantMessageId: run.assistantMessageId, text: finalText, publishedAt: now + 38_000, items: [] } } })
   return rows
@@ -156,6 +158,130 @@ async function expectContainedReceipt(target: Locator): Promise<void> {
   expect(bounds.bottom).toBeLessThanOrEqual(bounds.height + 1)
 }
 
+async function expectScrollEdges(edges: 'top' | 'bottom' | 'both' | null): Promise<void> {
+  await expect.poll(() => viewport().getAttribute('data-scroll-edges')).toBe(edges)
+  const mask = await viewport().evaluate(element => getComputedStyle(element).maskImage)
+  if (edges) expect(mask).toContain('linear-gradient')
+  else expect(mask).toBe('none')
+}
+
+async function waitForProcessLayout(): Promise<void> {
+  await message().evaluate(element => new Promise<void>((resolve, reject) => {
+    let previous = '', stable = 0
+    const deadline = performance.now() + 5000
+    const sample = (): void => {
+      const viewport = element.querySelector('.work-message__process-viewport')!
+      const content = element.querySelector('.work-message__process-content')!
+      const process = element.querySelector('.work-message__process')!
+      const rect = process.getBoundingClientRect()
+      const geometry = JSON.stringify([rect.x, rect.y, rect.width, rect.height, viewport.clientHeight,
+        viewport.scrollHeight, viewport.scrollTop, content.getBoundingClientRect().height])
+      const moving = element.getAnimations({ subtree: true }).some(animation =>
+        (animation.pending || animation.playState === 'running') && Number.isFinite(animation.effect?.getComputedTiming().endTime ?? Infinity))
+      stable = !moving && geometry === previous ? stable + 1 : 0
+      previous = geometry
+      if (stable >= 4) resolve()
+      else if (performance.now() >= deadline) reject(new Error(`Process layout did not settle: ${geometry}; finite animations running: ${moving}`))
+      else requestAnimationFrame(sample)
+    }
+    // "open" starts the grid transition. Nested disclosures can start theirs
+    // on the following frame, so neither DOM presence nor that state is ready.
+    requestAnimationFrame(() => requestAnimationFrame(sample))
+  }))
+}
+
+async function expectProcessHeaderLayout(expanded: boolean, hasAnswer = true): Promise<void> {
+  await expect(toggle()).toHaveAttribute('aria-expanded', String(expanded))
+  await expect(message().locator('.work-message__body')).toHaveCount(0)
+  await expect(message().locator('.work-message__answer')).toHaveCount(hasAnswer ? 1 : 0)
+  const divider = message().locator('.work-message__process-divider')
+  await expect(divider).toHaveCount(hasAnswer ? 1 : 0)
+  if (hasAnswer) await expect(divider).toHaveJSProperty('tagName', 'HR')
+  if (expanded) {
+    await expect(message().locator('.work-message__process')).toHaveAttribute('data-motion-state', 'open')
+    await waitForProcessLayout()
+  }
+  else await expect(viewport()).toHaveCount(0)
+  const layout = await message().evaluate(element => {
+    const button = element.querySelector('.work-message__process-toggle')!
+    const chevron = button.querySelector('.work-message__process-chevron')!
+    const labels = [...button.querySelectorAll(':scope > span, :scope > small')].map(label => {
+      const range = document.createRange(); range.selectNodeContents(label)
+      return range.getBoundingClientRect().toJSON()
+    })
+    const divider = element.querySelector('.work-message__process-divider')
+    const separator = divider?.getBoundingClientRect(), dividerStyle = divider ? getComputedStyle(divider) : null
+    const blocks = [...element.querySelectorAll('.work-message__answer')]
+    const content = blocks.map(block => {
+      const paragraph = block.querySelector('.md > :first-child')
+      if (!paragraph) throw new Error('Missing first body paragraph in process-layout fixture')
+      return { block: block.getBoundingClientRect().toJSON(), paragraph: paragraph.getBoundingClientRect().toJSON() }
+    })
+    const process = element.querySelector('.work-message__process') ?? element.querySelector('.work-message__process-bar')!
+    return { labels, chevron: chevron.getBoundingClientRect().toJSON(), trailingChevron: button.lastElementChild === chevron,
+      contentLeft: element.querySelector('.work-message__timeline')!.getBoundingClientRect().left,
+      separator: separator?.toJSON(), border: dividerStyle ? parseFloat(dividerStyle.borderTopWidth) : 0, style: dividerStyle?.borderTopStyle,
+      content, processBottom: process.getBoundingClientRect().bottom,
+      followsProcess: Boolean(divider && process.compareDocumentPosition(divider) & Node.DOCUMENT_POSITION_FOLLOWING),
+      precedesContent: Boolean(divider && blocks[0] && divider.compareDocumentPosition(blocks[0]) & Node.DOCUMENT_POSITION_FOLLOWING) }
+  })
+  expect(Math.abs(layout.labels[0].left - layout.contentLeft)).toBeLessThanOrEqual(1)
+  expect(layout.content).toHaveLength(hasAnswer ? 1 : 0)
+  for (const content of layout.content) {
+    expect(Math.abs(layout.labels[0].left - content.paragraph.left)).toBeLessThanOrEqual(1)
+    expect(Math.abs(layout.separator.left - content.block.left)).toBeLessThanOrEqual(1)
+    expect(Math.abs(layout.separator.width - content.block.width)).toBeLessThanOrEqual(1)
+  }
+  expect(layout.trailingChevron).toBe(true)
+  expect(layout.chevron.left).toBeGreaterThanOrEqual(Math.max(...layout.labels.map(label => label.right)))
+  if (hasAnswer) {
+    expect(layout.border).toBeGreaterThan(0); expect(layout.border).toBeLessThanOrEqual(2)
+    expect(layout.style).toBe('solid')
+    expect(layout.followsProcess).toBe(true); expect(layout.precedesContent).toBe(true)
+    expect(layout.separator.top).toBeGreaterThanOrEqual(layout.processBottom - 1)
+    expect(layout.separator.bottom).toBeLessThanOrEqual(layout.content[0].paragraph.top + 1)
+  }
+}
+
+async function expectProcessToggleFeedback(): Promise<void> {
+  await expect.poll(() => toggle().evaluate(element => {
+    const color = getComputedStyle(element).color
+    return [...element.querySelectorAll('small')].every(label => getComputedStyle(label).color === color)
+  })).toBe(true)
+  const feedback = await toggle().evaluate(element => {
+    return { content: getComputedStyle(element, '::after').content,
+      decorations: [element, ...element.querySelectorAll('span, small')].map(label => getComputedStyle(label).textDecorationLine) }
+  })
+  expect(feedback.content).toBe('none')
+  for (const decoration of feedback.decorations) expect(decoration).toBe('none')
+}
+
+async function expectWholeProcessToggle(): Promise<void> {
+  await expect(toggle()).toHaveJSProperty('tagName', 'BUTTON')
+  await expect(toggle().locator('button, a, input, select, textarea, [role="button"], [tabindex]')).toHaveCount(0)
+  await expect(toggle().locator('.work-message__process-failures')).toHaveText('1 步未通过')
+  await toggle().locator(':scope > small').first().hover()
+  await expectProcessToggleFeedback()
+  const targets = [
+    toggle().locator(':scope > span'),
+    toggle().locator(':scope > small:not(.work-message__process-failures)'),
+    toggle().locator('.work-message__process-failures'),
+    toggle().locator('.work-message__process-chevron')
+  ]
+  for (const target of targets) {
+    await target.click(); await expectProcessHeaderLayout(true)
+    await target.click(); await expectProcessHeaderLayout(false)
+  }
+  const gap = await toggle().evaluate(element => {
+    const button = element.getBoundingClientRect(), label = element.querySelector(':scope > span')!.getBoundingClientRect()
+    const count = element.querySelector(':scope > small')!.getBoundingClientRect()
+    if (count.left <= label.right) throw new Error('Missing process-button text gap')
+    return { x: (label.right + count.left) / 2 - button.left, y: button.height / 2 }
+  })
+  await toggle().click({ position: gap }); await expectProcessHeaderLayout(true)
+  await toggle().click({ position: gap }); await expectProcessHeaderLayout(false)
+}
+
 test.describe.serial('Work 展开过程阅读', () => {
   test.beforeAll(async () => {
     mkdirSync(fixtureRoot, { recursive: true }); fixture = mkdtempSync(join(fixtureRoot, 'process-layout-profile-'))
@@ -194,7 +320,7 @@ test.describe.serial('Work 展开过程阅读', () => {
       } })
     }
     await page.evaluate(({ key, entries, selected, model, timestamp }) => {
-      localStorage.setItem(key, JSON.stringify({ tasks: entries.map(([id, title]) => ({ id, title, status: id === selected ? 'done' : 'running',
+      localStorage.setItem(key, JSON.stringify({ tasks: entries.map(([id, title]) => ({ id, title, status: id.endsWith('-live') ? 'running' : 'done',
         draft: '', mentions: [], createdAt: timestamp, updatedAt: timestamp, workspacePath: '/remote/process-layout', modelId: model, attachments: [], sources: [] })), activeTaskId: selected }))
       localStorage.setItem('aether.app.mode', 'work')
       localStorage.setItem('aether.work.view.v1', JSON.stringify({ page: 'home', collapsed: false, workspace: false, tab: 'files', pane: 'conversation', ratio: 56 }))
@@ -226,12 +352,29 @@ test.describe.serial('Work 展开过程阅读', () => {
     await expect(toggle()).toHaveAttribute('aria-expanded', 'false')
     await expect(toggle()).toContainText('38 步')
     await expect(viewport()).toHaveCount(0)
-    await expect(message().locator('.work-message__answer')).toContainText('PROCESS_LAYOUT_FINAL')
+    await expect(message().locator('.work-message__body, .work-message__process-note')).toHaveCount(0)
+    await expect(message()).not.toContainText('PROCESS_LAYOUT_NOTE')
+    await expect(message().locator('.work-message__answer .md > p')).toHaveText(finalText.split('\n\n'))
+    await expect(message().getByText('PROCESS_LAYOUT_FINAL：文档检查已完成。', { exact: true })).toHaveCount(1)
     await expect(message().locator('.work-message__answer')).not.toContainText('PROCESS_LAYOUT_NOTE')
     for (const appearance of ['light', 'dark'] as const) {
       await setAppearance(appearance)
-      await toggle().click()
+      await toggle().scrollIntoViewIfNeeded()
+      await expectProcessHeaderLayout(false)
+      await expectWholeProcessToggle()
+      await toggle().locator(':scope > small').first().hover()
+      await expectProcessToggleFeedback()
+      const collapsedPath = info.outputPath(`work-process-collapsed-${appearance}.png`)
+      await page.screenshot({ path: collapsedPath, animations: 'disabled' })
+      await info.attach(`收起过程 ${appearance}`, { path: collapsedPath, contentType: 'image/png' })
+      await page.mouse.move(0, 0)
+      await toggle().focus(); await page.keyboard.press('Enter')
+      await expect(viewport()).toHaveCount(1)
       await expect(viewport()).toBeVisible()
+      await expectProcessHeaderLayout(true)
+      await expect(toggle()).toBeFocused()
+      expect(await toggle().evaluate(element => element.matches(':focus-visible'))).toBe(true)
+      await expectProcessToggleFeedback()
       const groups = viewport().locator('.work-activity-group')
       await expect(groups).toHaveCount(3)
       for (const group of await groups.all()) {
@@ -243,7 +386,16 @@ test.describe.serial('Work 展开过程阅读', () => {
       await expect(viewport().locator('[data-work-tool-id]')).toHaveCount(38)
       const ids = await viewport().locator('[data-work-tool-id]').evaluateAll(elements => elements.map(element => element.getAttribute('data-work-tool-id')))
       expect(ids).toEqual(Array.from({ length: 38 }, (_, index) => toolId(settled, index)))
-      await expect(viewport().locator('.work-message__process-note')).toContainText([noteText, noteText, noteText])
+      await expect(message().locator('.work-message__body')).toHaveCount(0)
+      await expect(viewport().locator('.work-message__process-note')).toHaveText([0, 13, 36].map(index => `${noteText}（阶段 ${index + 1}）`))
+      const ordered = await viewport().locator('.work-message__process-note, [data-work-tool-id]').evaluateAll(elements =>
+        elements.map(element => element.getAttribute('data-work-tool-id') ?? element.textContent?.trim()))
+      expect(ordered).toEqual(Array.from({ length: 38 }, (_, index) =>
+        [0, 13, 36].includes(index) ? [`${noteText}（阶段 ${index + 1}）`, toolId(settled, index)] : [toolId(settled, index)]).flat())
+      await expect(viewport()).not.toContainText('PROCESS_LAYOUT_FINAL')
+      await expect(message().locator('.work-message__answer .md > p')).toHaveText(finalText.split('\n\n'))
+      await expect(message().getByText('PROCESS_LAYOUT_FINAL：文档检查已完成。', { exact: true })).toHaveCount(1)
+      await expect(viewport().locator('.work-message__body, .work-message__answer')).toHaveCount(0)
       await expect(viewport().locator('img')).toHaveCount(0)
       await viewport().evaluate(element => { element.scrollTop = 0 })
       await toggle().scrollIntoViewIfNeeded()
@@ -252,12 +404,32 @@ test.describe.serial('Work 展开过程阅读', () => {
         barTop: element.closest('.work-message')!.querySelector('.work-message__process-bar')!.getBoundingClientRect().top }))
       expect(initial.scrollHeight).toBeGreaterThan(initial.height + 100)
       expect(initial.height).toBeLessThanOrEqual(Math.min(400, initial.windowHeight * 0.48) + 1)
+      await expectScrollEdges('bottom')
       await viewport().hover(); await page.mouse.wheel(0, 430)
       await expect.poll(() => viewport().evaluate(element => element.scrollTop)).toBeGreaterThan(100)
+      await expectScrollEdges('both')
       const after = await viewport().evaluate(element => ({ outerTop: element.closest('.work-conversation__scroll')!.scrollTop,
         barTop: element.closest('.work-message')!.querySelector('.work-message__process-bar')!.getBoundingClientRect().top }))
       expect(Math.abs(after.outerTop - initial.outerTop)).toBeLessThanOrEqual(1)
       expect(Math.abs(after.barTop - initial.barTop)).toBeLessThanOrEqual(1)
+      const readingTop = await viewport().evaluate(element => element.scrollTop)
+      expect(readingTop).toBeGreaterThan(100)
+      await toggle().focus(); await page.keyboard.press('Space')
+      await expect(toggle()).toHaveAttribute('aria-expanded', 'false')
+      // Wait for retained exit content to unmount, otherwise the same DOM node
+      // could hide a broken reading-position restoration behind its old scrollTop.
+      await expect(viewport()).toHaveCount(0)
+      await expectProcessHeaderLayout(false)
+      await expect(message().locator('.work-message__body, .work-message__process-note')).toHaveCount(0)
+      await expect(message()).not.toContainText('PROCESS_LAYOUT_NOTE')
+      await expect(message().locator('.work-message__answer .md > p')).toHaveText(finalText.split('\n\n'))
+      await toggle().click(); await expect(viewport()).toBeVisible()
+      await expectProcessHeaderLayout(true)
+      await expect.poll(() => viewport().evaluate((element, saved) => Math.abs(element.scrollTop - saved), readingTop)).toBeLessThanOrEqual(1)
+      await expectScrollEdges('both')
+      await expect(viewport().locator('[data-work-tool-id]')).toHaveCount(38)
+      await viewport().evaluate(element => { element.scrollTop = element.scrollHeight })
+      await expectScrollEdges('top')
       // Latest-step navigation should preserve closed receipt choices. The
       // original operation remains available through its own explicit controls.
       await groups.last().getByRole('button').first().click()
@@ -276,23 +448,134 @@ test.describe.serial('Work 展开过程阅读', () => {
       await previewButton.click()
       await expect(preview.locator('img')).toHaveCount(1)
       await expect.poll(() => preview.locator('img').evaluate(image => image instanceof HTMLImageElement && image.complete && image.naturalWidth)).toBe(960)
+      await expect(preview.locator('img')).toHaveCSS('max-height', '160px')
+      const previewHeight = await preview.locator('img').evaluate(image => image.getBoundingClientRect().height)
+      expect(previewHeight).toBeGreaterThan(0)
+      expect(previewHeight).toBeLessThanOrEqual(160)
+      await preview.getByRole('button', { name: '放大查看 文档检查完整画面', exact: true }).click()
+      const viewer = page.getByRole('dialog', { name: '文档检查完整画面', exact: true })
+      await expect(viewer).toBeVisible()
+      await expect.poll(() => viewer.locator('.image-editor__surface > img').evaluate(image => image.getBoundingClientRect().height)).toBeGreaterThan(160)
+      await expect(viewer.locator('.image-editor__surface > img')).toHaveCSS('max-height', 'none')
+      await viewer.getByRole('button', { name: '关闭', exact: true }).click()
+      await expect(viewer).toHaveCount(0)
+      await expect(preview.locator('img')).toHaveCSS('max-height', '160px')
       await expect(viewport()).toBeVisible()
       await previewButton.click(); await expect(preview.locator('img')).toHaveCount(0)
       await viewport().evaluate(element => { element.scrollTop = 0 })
+      await expectScrollEdges('bottom')
       await toggle().scrollIntoViewIfNeeded()
+      await expectProcessHeaderLayout(true)
       const path = info.outputPath(`work-process-focused-${appearance}.png`)
       await page.screenshot({ path, animations: 'disabled' }); await info.attach(`展开过程 ${appearance}`, { path, contentType: 'image/png' })
       // Reset only user choices made above before checking the second theme.
       for (const group of await groups.all()) if (await group.getByRole('button').first().getAttribute('aria-expanded') === 'true') await group.getByRole('button').first().click()
       await toggle().click(); await expect(toggle()).toHaveAttribute('aria-expanded', 'false')
       await expect(viewport()).toHaveCount(0)
+      await expectProcessHeaderLayout(false)
       await expect(message().locator('.work-message__answer')).toContainText('正文只保留交付结论')
     }
+  })
+
+  test('长过程重开保留阅读位置，图标按钮支持首尾分页与键盘定位', async () => {
+    await selectTask(paged)
+    await expectProcessHeaderLayout(false)
+    await toggle().click()
+    await expectProcessHeaderLayout(true)
+    const pages = viewport().getByRole('navigation', { name: '活动分页', exact: true })
+    const first = message().getByRole('button', { name: '查看最早步骤', exact: true })
+    const latest = message().getByRole('button', { name: '查看最新步骤', exact: true })
+    for (const [button, label] of [[first, '查看最早步骤'], [latest, '查看最新步骤']] as const) {
+      await expect(button).toBeVisible()
+      await expect(button).toHaveText('')
+      await expect(button).toHaveAttribute('title', label)
+      await expect(button.locator('svg')).toHaveCount(1)
+    }
+    await expect(pages).toContainText('101–105 / 105')
+    // Receipt text mounts before the nested disclosure finishes growing.
+    // Wait for its layout so the pointer reaches the pagination button.
+    await expect(message().locator('.work-message__process')).toHaveAttribute('data-motion-state', 'open')
+    await pages.evaluate(nav => new Promise<void>((resolve, reject) => {
+      let previous = '', stable = 0, frames = 0
+      const sample = (): void => {
+        const rect = nav.getBoundingClientRect(), viewport = nav.closest('.work-message__process-viewport')!
+        const geometry = JSON.stringify([rect.x, rect.y, rect.width, rect.height, viewport.scrollTop, viewport.clientHeight])
+        stable = geometry === previous ? stable + 1 : 0
+        previous = geometry
+        if (stable >= 4) resolve()
+        else if (++frames >= 120) reject(new Error('Process pagination layout did not settle'))
+        else requestAnimationFrame(sample)
+      }
+      requestAnimationFrame(sample)
+    }))
+    await expectScrollEdges(null)
+    // A window resize can turn the same five receipts into overflow without
+    // changing their content or dispatching a scroll event.
+    await app!.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0]
+      window.setMinimumSize(520, 300); window.setContentSize(1440, 320)
+    })
+    await expect.poll(() => page.evaluate(() => innerHeight)).toBe(320)
+    await expectScrollEdges('bottom')
+    await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 1000))
+    await expect.poll(() => page.evaluate(() => innerHeight)).toBe(1000)
+    await expectScrollEdges(null)
+    const longReceipt = receipt(paged, 104).locator('button.logline')
+    await longReceipt.click()
+    await expect(longReceipt).toHaveAttribute('aria-expanded', 'true')
+    const longDetail = receipt(paged, 104).locator('.compact-tool-row > .ui-motion-collapse')
+    await expect(longDetail).toHaveAttribute('data-motion-state', 'open')
+    // The open attribute starts the CSS height transition; scrolling before it
+    // finishes would target a temporary bottom that keeps moving afterward.
+    await longDetail.evaluate(async element => {
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      await Promise.all(element.getAnimations({ subtree: true })
+        .filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime))
+        .map(animation => animation.finished.catch(() => undefined)))
+    })
+    await expectScrollEdges('bottom')
+    await viewport().evaluate(element => { element.scrollTop = element.scrollHeight })
+    await expectScrollEdges('top')
+    await longReceipt.click()
+    await expect(longReceipt).toHaveAttribute('aria-expanded', 'false')
+    await expectScrollEdges(null)
+    await first.click()
+    await expect(pages).toContainText('1–100 / 105')
+    await expect.poll(() => viewport().evaluate(element => element.scrollTop)).toBeLessThanOrEqual(1)
+    await expectScrollEdges('bottom')
+    await expectContainedReceipt(receipt(paged, 0))
+    await viewport().hover(); await page.mouse.wheel(0, 300)
+    await expect.poll(() => viewport().evaluate(element => element.scrollTop)).toBeGreaterThan(100)
+    await expectScrollEdges('both')
+    const top = await viewport().evaluate(element => element.scrollTop)
+    await toggle().click(); await expect(viewport()).toHaveCount(0)
+    await expectProcessHeaderLayout(false)
+    await toggle().click(); await expect(pages).toContainText('1–100 / 105')
+    await expectProcessHeaderLayout(true)
+    await expect.poll(() => viewport().evaluate((element, saved) => Math.abs(element.scrollTop - saved), top)).toBeLessThanOrEqual(1)
+    await expectScrollEdges('both')
+    await latest.click()
+    await expect(pages).toContainText('101–105 / 105')
+    await expectContainedReceipt(receipt(paged, 104))
+    await expectScrollEdges(null)
+    await first.focus(); await page.keyboard.press('Enter')
+    await expect(pages).toContainText('1–100 / 105')
+    await expect.poll(() => viewport().evaluate(element => element.scrollTop)).toBeLessThanOrEqual(1)
+    await expectScrollEdges('bottom')
+    await expectContainedReceipt(receipt(paged, 0))
+    await latest.click()
+    await expect(pages).toContainText('101–105 / 105')
+    await expectContainedReceipt(receipt(paged, 104))
+    await expectScrollEdges(null)
+    await toggle().click()
+    await expectProcessHeaderLayout(false)
   })
 
   test('运行时大图保持收起，活动定位可重复进入且不锁住用户的收起选择', async ({}, info) => {
     await selectTask(live)
     await expect(toggle()).toHaveAttribute('aria-expanded', 'true')
+    await expectProcessHeaderLayout(true, false)
+    await expect(viewport().locator('.work-message__process-note')).toHaveText([0, 13, 36].map(index => `${noteText}（阶段 ${index + 1}）`))
     await expect.poll(() => streams.has(live)).toBe(true)
     const outer = conversation().locator('.work-conversation__scroll'), feedback = conversation().locator('.work-turn-feedback')
     await outer.evaluate(element => { element.scrollTop = element.scrollHeight })
@@ -300,7 +583,14 @@ test.describe.serial('Work 展开过程阅读', () => {
     await expect(conversation().locator('.work-run-status')).toHaveCount(0)
     await expect(feedback.getByRole('button', { name: '停止任务', exact: true })).toBeEnabled()
     await expect(feedback.locator('.work-turn-feedback__elapsed')).toContainText(/秒|分/)
-    await outer.evaluate(element => { element.scrollTop = 0 })
+    // Scroll with user intent: assigning scrollTop alone deliberately does not
+    // disengage the conversation's live-follow controller.
+    await outer.hover({ position: { x: 8, y: 32 } }); await page.mouse.wheel(0, -5000)
+    await expect.poll(() => outer.evaluate(element => element.scrollTop)).toBeLessThanOrEqual(1)
+    const earlierAnswer = conversation().locator('.work-message--assistant').filter({ hasText: 'EARLIER_REVIEW_0' })
+    await expect(earlierAnswer).toContainText('EARLIER_REVIEW_31')
+    await expect(earlierAnswer.locator('.work-message__process-toggle')).toHaveCount(0)
+    await expect(earlierAnswer.getByText('EARLIER_REVIEW_0：既有检查记录保持完整，向上阅读时运行状态应只固定显示一份。', { exact: true })).toBeVisible()
     await expect(conversation().locator('.work-run-status')).toHaveCount(1)
     await expect(conversation().locator('[data-current-run-feedback="true"]')).toHaveCount(1)
     await conversation().getByRole('button', { name: '回到最新', exact: true }).click()
@@ -313,12 +603,16 @@ test.describe.serial('Work 展开过程阅读', () => {
     await previewButton.click(); await expect(preview.locator('img')).toHaveCount(0)
     for (let attempt = 0; attempt < 2; attempt++) {
       await toggle().click(); await expect(toggle()).toHaveAttribute('aria-expanded', 'false')
+      await expectProcessHeaderLayout(false, false)
+      await expect(message()).not.toContainText('PROCESS_LAYOUT_NOTE')
       await conversation().getByRole('button', { name: '查看正在执行的活动', exact: true }).click()
       await expect(toggle()).toHaveAttribute('aria-expanded', 'true')
+      await expectProcessHeaderLayout(true, false)
       await expect(receipt(live, 37)).toBeFocused()
       await expectContainedReceipt(receipt(live, 37))
     }
     await toggle().click(); await expect(toggle()).toHaveAttribute('aria-expanded', 'false')
+    await expectProcessHeaderLayout(false, false)
     for (const payload of [
       { content: 'PROCESS_STREAM_TICK：仍在等待页面状态。' },
       { toolStart: { id: toolId(live, 37), name: 'browser_wait', args: { url: 'https://process-stream-tick.example.test/review', timeout_ms: 1000 } } }
@@ -330,8 +624,14 @@ test.describe.serial('Work 展开过程阅读', () => {
     // that the earlier reveal revision did not override the user's collapse.
     await expect(conversation().getByRole('button', { name: '查看正在执行的活动', exact: true })).toContainText('process-stream-tick.example.test')
     await expect(toggle()).toHaveAttribute('aria-expanded', 'false')
+    await expect(message().locator('.work-message__body, .work-message__answer, .work-message__process-note')).toHaveCount(0)
+    await expect(message()).not.toContainText('PROCESS_STREAM_TICK')
     await toggle().click()
-    await expect(viewport()).toContainText('PROCESS_STREAM_TICK')
+    await expect(viewport()).toHaveCount(1)
+    await expectProcessHeaderLayout(true, false)
+    await expect(viewport().locator('.work-message__process-note').last()).toContainText('PROCESS_STREAM_TICK')
+    await expect(viewport().getByText('PROCESS_STREAM_TICK：仍在等待页面状态。', { exact: true })).toHaveCount(1)
+    await expect(message().locator('.work-message__body, .work-message__answer')).toHaveCount(0)
     await expect(previewButton).toHaveAttribute('aria-expanded', 'false')
     const path = info.outputPath('work-process-focused-running.png')
     await page.screenshot({ path, animations: 'disabled' }); await info.attach('运行中的过程阅读', { path, contentType: 'image/png' })

@@ -35,6 +35,7 @@ export interface Mention {
   displayText: string
   source: MentionSource
   origin?: MentionOrigin
+  attachmentId?: string
   path?: string
   startLine?: number
   endLine?: number
@@ -51,6 +52,7 @@ export interface PromptRef {
   /** 引用类型 */
   t: MentionSource
   o?: MentionOrigin
+  a?: string
   /** 相对路径；终端为临时文件，会话为带来源标识的完整深链接。 */
   p: string
   /** 标签上显示的文字（不含 @，与输入框 chip 一致） */
@@ -124,7 +126,7 @@ export function mentionTitle(mention: Pick<Mention, 'source' | 'path' | 'startLi
 }
 
 export function sameMention(a: Mention, b: Mention): boolean {
-  return a.source === b.source && a.origin === b.origin && a.path === b.path && a.startLine === b.startLine &&
+  return a.source === b.source && a.origin === b.origin && a.attachmentId === b.attachmentId && a.path === b.path && a.startLine === b.startLine &&
     a.endLine === b.endLine && a.startColumn === b.startColumn && a.endColumn === b.endColumn &&
     a.content === b.content && a.displayText === b.displayText
 }
@@ -135,6 +137,7 @@ export function isStoredMention(value: unknown): value is Mention {
   return typeof record.displayText === 'string' &&
     ['file', 'dir', 'code', 'terminal', 'agent', 'browser', 'conversation'].includes(String(record.source)) &&
     (record.origin === undefined || typeof record.origin === 'string' && ['workspace', 'attachment', 'artifact'].includes(record.origin)) &&
+    (record.attachmentId === undefined || typeof record.attachmentId === 'string' && record.attachmentId.length > 0 && record.attachmentId.length <= 4096) &&
     ['path', 'content'].every((key) => record[key] === undefined || typeof record[key] === 'string') &&
     ['startLine', 'endLine', 'startColumn', 'endColumn', 'textOffset'].every((key) =>
       record[key] === undefined || (typeof record[key] === 'number' && Number.isInteger(record[key]) && Number(record[key]) >= 0))
@@ -149,6 +152,12 @@ function langFor(path: string): string {
 
 function escapeAttr(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+/** The model needs the same visible label as the user, beside its real file path. */
+function attachmentReferenceText(mention: Mention): string | undefined {
+  return mention.source === 'file' && mention.attachmentId && mention.path && mention.content === undefined
+    ? `${mention.displayText}（文件：${mention.path}）` : undefined
 }
 
 function fenceFor(content: string): string {
@@ -239,11 +248,13 @@ export function buildMentionMessage(text: string, mentions: readonly Mention[], 
     if (out && !/\s$/.test(out)) out += ' '
     const refStart = out.length
     const block = (mention.content !== undefined ? formatReferenceBlock(mention, mention.content) : undefined)
+      ?? attachmentReferenceText(mention)
       ?? body.slice(start, end)
     out += block
     refs.push({
       t: mention.source,
       ...(mention.origin ? { o: mention.origin } : {}),
+      ...(mention.attachmentId ? { a: mention.attachmentId } : {}),
       p: mention.path ?? '',
       d: mention.displayText,
       s: refStart,
@@ -276,6 +287,7 @@ function isValidRefShape(value: unknown): value is PromptRef {
   const r = value as Record<string, unknown>
   if (!['file', 'dir', 'code', 'terminal', 'agent', 'browser', 'conversation'].includes(String(r.t))) return false
   if (r.o !== undefined && (typeof r.o !== 'string' || !['workspace', 'attachment', 'artifact'].includes(r.o))) return false
+  if (r.a !== undefined && (typeof r.a !== 'string' || !r.a || r.a.length > 4096)) return false
   if (typeof r.p !== 'string' || typeof r.d !== 'string') return false
   if (typeof r.s !== 'number' || typeof r.e !== 'number') return false
   if (!Number.isInteger(r.s) || !Number.isInteger(r.e)) return false
@@ -369,7 +381,8 @@ export function parseMentionContent(content: string): { body: string; refs: Prom
   for (const candidate of parsed.filter(isValidRefShape).sort((a, b) => a.s - b.s)) {
     if (candidate.s < searchFrom || candidate.e > body.length) continue
     const isBlock = blocks.some(ref => ref.s === candidate.s && ref.e === candidate.e && ref.t === candidate.t && ref.p === candidate.p)
-    if (!isBlock && body.slice(candidate.s, candidate.e) !== mentionToken(refToMention(candidate))) continue
+    const mention = refToMention(candidate)
+    if (!isBlock && body.slice(candidate.s, candidate.e) !== (attachmentReferenceText(mention) ?? mentionToken(mention))) continue
     refs.push({ ...candidate })
     searchFrom = candidate.e
   }
@@ -394,6 +407,7 @@ export function refToMention(ref: PromptRef, content?: string): Mention {
     displayText: ref.d,
     source: ref.t,
     ...(ref.o ? { origin: ref.o } : {}),
+    ...(ref.a ? { attachmentId: ref.a } : {}),
     ...(ref.p ? { path: ref.p } : {}),
     ...(ref.r ? { startLine: ref.r[0], endLine: ref.r[1] } : {}),
     ...(ref.c ? { startColumn: ref.c[0], endColumn: ref.c[1] } : {}),

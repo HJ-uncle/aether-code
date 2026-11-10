@@ -69,6 +69,8 @@ export const WorkMessageContent = memo(function WorkMessageContent({
     collaborationMembership.current ??= captureWorkCollaborationMembership(presentation)
   }
   const hasProcess = presentation.some(segment => segment.kind === 'process')
+  const hasReplyContent = presentation.some(segment => segment.kind === 'answer' || segment.kind === 'content')
+  const executionSegments = presentation.flatMap(segment => segment.kind === 'process' ? segment.segments : [])
   const thinkingCount = presentation.flatMap(segment => segment.kind === 'process' ? segment.segments : [])
     .filter(segment => segment.kind === 'thinking').length
   const failureCount = processTools.filter(tool => ['error', 'interrupted'].includes(workActivityState(tool))).length
@@ -160,10 +162,10 @@ export const WorkMessageContent = memo(function WorkMessageContent({
             aria-label={processOpen ? '收起过程' : '展开过程'}
             onClick={toggleProcess}
           >
-            <Icon className="work-message__process-chevron" name="chevron-right" size={12} />
             <span>过程</span>
             {processTools.length ? <small>{processTools.length} 步</small> : null}
             {failureCount ? <small className="work-message__process-failures">{failureCount} 步未通过</small> : null}
+            <Icon className="work-message__process-chevron" name="chevron-right" size={12} />
           </button>
             {/* Retain the control only for its exit animation; the reading choice survives collapse. */}
             <MotionPresence show={processOpen && thinkingCount > 0} asChild axis="x">
@@ -174,25 +176,35 @@ export const WorkMessageContent = memo(function WorkMessageContent({
                 <Icon name="brain" size={13} /><span>思考</span>
               </button>
             </MotionPresence>
-            {processOpen && !showAllContent ? <button type="button" className="work-message__process-jump" aria-label="查看最新步骤"
-              onClick={() => {
-                const viewports = article.current?.querySelectorAll<HTMLElement>('.work-message__process-viewport')
-                const viewport = viewports?.[viewports.length - 1]
-                if (viewport) { viewport.dispatchEvent(new Event('work-process-latest')); viewport.focus({ preventScroll: true }) }
-              }}><Icon name="chevron-down" size={13} /><span>最新步骤</span></button> : null}
+            {processOpen && !showAllContent ? <div className="work-message__process-navigation" role="group" aria-label="过程导航">
+              {(['first', 'latest'] as const).map(direction => <button key={direction} type="button" className="work-message__process-jump"
+                aria-label={direction === 'first' ? '查看最早步骤' : '查看最新步骤'} title={direction === 'first' ? '查看最早步骤' : '查看最新步骤'}
+                onClick={() => {
+                  const viewport = article.current?.querySelector<HTMLElement>('.work-message__process-viewport')
+                  if (viewport) { viewport.dispatchEvent(new Event(`work-process-${direction}`)); viewport.focus({ preventScroll: true }) }
+                }}><Icon name={direction === 'first' ? 'chevron-double-up' : 'chevron-double-down'} size={15} /></button>)}
+            </div> : null}
           </div> : null}
           <div id={processId} className="work-message__timeline" onPointerDownCapture={preserveCollaborationLayout}
             onFocusCapture={preserveCollaborationLayout} onKeyDownCapture={preserveCollaborationLayout}>
-            {presentation.map(segment => segment.kind === 'tool' ? (
+            {!showAllContent && hasProcess ? <MotionPresence className="work-message__process" show={processOpen}>
+              <WorkProcessPanel running={turnRunning} memoryKey={`${processScope}:${processPhase}`}>
+                {renderProcess({ kind: 'process', key: processScope, segments: executionSegments })}
+              </WorkProcessPanel>
+            </MotionPresence> : null}
+            {!showAllContent && hasProcess && hasReplyContent ? <hr className="work-message__process-divider" /> : null}
+            {presentation.filter(segment => showAllContent || segment.kind !== 'process').map(segment => segment.kind === 'tool' ? (
               <WorkToolActivity key={segment.key} tool={segment.tool} fileContext={fileContext} onOpenFile={onOpenFile} onOpenChange={onOpenChange}
                 revealRevision={revealTool?.toolId === segment.tool.id ? revealTool.revision : undefined} turnRunning={turnRunning} active={active} readOnly={readOnly} />
             ) : segment.kind === 'collaboration' ? (
               <WorkCollaborationSummary key={segment.key} tools={segment.tools} fileContext={fileContext} revealTool={revealTool} active={active} readOnly={readOnly} />
             ) : segment.kind === 'answer' ? (
               <div key={segment.key} className="work-message__answer"><WorkAssistantContent text={segment.text} streaming={message.status === 'streaming'} fileContext={fileContext} renderImages={!finalResult} deliveryResult={deliveryResult} /></div>
+            ) : segment.kind === 'content' ? (
+              <div key={segment.key} className="work-message__body"><WorkAssistantContent text={segment.text} streaming={message.status === 'streaming'} fileContext={fileContext} /></div>
             ) : (
               <MotionPresence key={segment.key} className="work-message__process" show={processOpen}>
-                {showAllContent ? renderProcess(segment) : <WorkProcessPanel running={turnRunning} memoryKey={`${processScope}:${processPhase}:${segment.key}`}>{renderProcess(segment)}</WorkProcessPanel>}
+                {renderProcess(segment)}
               </MotionPresence>
             ))}
           </div>
@@ -224,10 +236,10 @@ function WorkAttachment({ file, root, group, fileContext }: {
   const images = (group ?? [file]).filter((a) => a.type.startsWith('image/'))
   return (
     <>
-      <AttachmentChip root={root} file={file} onPreview={(target, src) => references
+      <AttachmentChip root={root} file={file} referenceLabel={file.referenceLabel} sessionId={fileContext?.sessionId} onPreview={(target, src) => references && !target.type.startsWith('image/')
         ? references.openMention({ source: 'file', origin: 'attachment', path: target.path, displayText: target.name }, fileContext, target)
         : setPreview({ file: target, src })} />
-      {preview ? <AttachmentPreviewDialog root={root} preview={preview} images={images}
+      {preview ? <AttachmentPreviewDialog root={root} sessionId={fileContext?.sessionId} preview={preview} images={images}
         onNavigate={(next) => setPreview({ file: next, src: null })} onClose={() => setPreview(null)} /> : null}
     </>
   )

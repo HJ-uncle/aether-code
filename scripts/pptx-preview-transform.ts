@@ -3,7 +3,7 @@
 export function patchPptxPreview(source: string): string {
   let output = source
   const replace = (before: string, after: string, count = 1): void => {
-    if (output.split(before).length - 1 !== count) throw new Error('PPTX preview patch no longer matches @jvmr/pptx-to-html 1.1.2; review its chart/image renderer before upgrading.')
+    if (output.split(before).length - 1 !== count) throw new Error('PPTX preview patch no longer matches @jvmr/pptx-to-html 1.1.2; review its chart/image/table renderer before upgrading.')
     output = output.split(before).join(after)
   }
   replace('var ChartExtractor = class {', `
@@ -59,6 +59,18 @@ var ChartExtractor = class {`)
   // Positive values crop (cover); negative values add empty margins (contain).
   // Both use the same existing source rectangle math in renderImageElement.
   for (const side of ['l', 't', 'r', 'b']) replace(`Math.max(0, Number(srcRect.getAttribute("${side}") || 0))`, `Number(srcRect.getAttribute("${side}") || 0)`)
+  // An explicit DrawingML noFill cancels a border, including inherited table
+  // borders. Dropping that signal makes upstream draw its 1px black fallback.
+  replace('const ln = tcPr.getElementsByTagNameNS("*", key)[0] ?? null;\n\t\t\tif (!ln) continue;',
+    'const ln = tcPr.getElementsByTagNameNS("*", key)[0] ?? null;\n\t\t\tif (!ln) continue;\n\t\t\tif (Array.from(ln.childNodes).some(node => node.localName === "noFill")) {\n\t\t\t\tborders[map[key]] = { style: "none", width: 0 };\n\t\t\t\tcontinue;\n\t\t\t}')
+  replace('const ln = node.getElementsByTagNameNS("*", "ln")[0] ?? node;\n\t\t\tconst wAttr',
+    'const ln = node.getElementsByTagNameNS("*", "ln")[0] ?? node;\n\t\t\tif (Array.from(ln.childNodes).some(child => child.localName === "noFill")) {\n\t\t\t\tborders[map[tag]] = { style: "none", width: 0 };\n\t\t\t\tcontinue;\n\t\t\t}\n\t\t\tconst wAttr')
+  replace('const apply = (side, b) => {\n\t\tif (!b) return;\n\t\tconst w = b.width ?? 1;',
+    'const apply = (side, b) => {\n\t\tif (!b) return;\n\t\tif (b.style === "none") { css.push(`border-${side}:none;`); return; }\n\t\tconst w = b.width ?? 1;')
+  // Border noFill is not cell noFill; inspecting descendants also erased the
+  // cell's explicitly chosen background whenever just one edge was hidden.
+  replace('if (tcPr.getElementsByTagNameNS("*", "noFill")[0]) return void 0;\n\t\tconst direct = Array.from(tcPr.children).find((c) => c.localName === "solidFill");',
+    'if (Array.from(tcPr.childNodes).some(node => node.localName === "noFill")) return void 0;\n\t\tconst direct = Array.from(tcPr.childNodes).find((c) => c.localName === "solidFill");')
   return output
 }
 

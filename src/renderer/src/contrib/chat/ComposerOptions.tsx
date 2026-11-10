@@ -11,6 +11,7 @@ import { useAppMode } from '@renderer/core/platform/app-mode'
 import type { SessionThinkingMode } from './session-thinking-store'
 import type { ComposerThinkingMode } from './session-request-config'
 import { ComposerCodegraphRow } from './ComposerCodegraphRow'
+import './composer-options.css'
 
 /**
  * 思考档位（对齐 wuzu-client 的 Low/High/Max，外加独立「关闭」档）。
@@ -29,9 +30,9 @@ const THINKING_OPTIONS: Array<{
 ]
 
 const SECURITY_MENU: Record<SecurityMode, { icon: IconName; description: string }> = {
-  safe: { icon: 'shield', description: '完整策略与白名单检查；拒绝高危命令，未知命令先确认。' },
-  standard: { icon: 'terminal', description: '普通命令直接执行；拒绝规则或注入检测命中时确认。允许读写工作区外文件。' },
-  'full-access': { icon: 'warning', description: '跳过策略与白名单，命令直接执行并保留审计；允许读写工作区外文件。' }
+  safe: { icon: 'shield', description: '仅工作区内；拦截高危，询问未知命令。' },
+  standard: { icon: 'terminal', description: '风险命令需确认；可读写工作区外文件。' },
+  'full-access': { icon: 'lock-open', description: '命令免确认；可读写工作区外文件。' }
 }
 
 /** 菜单里的一个选项行：名称 + 说明 + 选中勾 */
@@ -71,13 +72,8 @@ function MenuOption({
   )
 }
 
-/**
- * 输入框左下角的「偏好收纳」入口（参考 Trae / wuzu-client 的行式弹层）
- *
- * 思考档位 / 安全模式都是低频设置，收进一个图标按钮后面的弹层里，
- * 两行同款 UI：图标 + 名称 + 摘要 + 右侧「值 + 弹出菜单」。
- * 弹层与菜单统一走 Popover（portal 挂 body、防裁切、防出界）。
- */
+/** Keep session preferences together; model selection stays in the composer.
+ * Nested choices share the overlay stack so Escape dismisses only the active layer. */
 export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingChange, owner = 'code', workspacePath }: { sessionId: string; modelId: string; thinkingMode: ComposerThinkingMode; onThinkingChange: (mode: SessionThinkingMode) => void; owner?: 'code' | 'work'; workspacePath?: string }): JSX.Element {
   const { ready } = useApp()
   const appMode = useAppMode()
@@ -124,15 +120,15 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
         : '当前模型未声明支持推理；选 Max 会由引擎记录告警'
   const secSummary = loading
     ? '正在读取安全模式…'
-    : error ?? (secDescriptor ? [secDescriptor.summary, secDescriptor.warning].filter(Boolean).join(' ') : '尚未确认引擎当前权限')
+    : error ?? (mode ? SECURITY_MENU[mode].description : '尚未确认引擎当前权限')
   const memoryChoice = !memoryLoaded ? '' : memoryOverride === null ? 'default' : memoryOverride ? 'on' : 'off'
   const memoryLabel = !ready ? '引擎未连接' : memoryLoading ? '同步中…' : memoryEnabled === false ? '服务端已关闭'
     : !memoryLoaded ? '尚未确认' : memoryOverride === null ? `跟随默认 · ${sessionEnabled ? '开启' : '关闭'}`
       : `本会话${sessionEnabled ? '开启' : '关闭'}`
   const memoryOptions = [
-    { value: 'on', label: '本会话开启', summary: '单独开启当前会话的记忆，覆盖设置中的默认值。' },
-    { value: 'off', label: '本会话关闭', summary: '单独关闭当前会话的记忆，聊天历史仍会保留。' },
-    { value: 'default', label: '恢复默认', summary: `取消本会话的单独设置，跟随默认${sessionDefaultEnabled ? '开启' : '关闭'}。` }
+    { value: 'on', label: '本会话开启', summary: '仅本会话开启，覆盖默认设置。' },
+    { value: 'off', label: '本会话关闭', summary: '仅本会话关闭，保留聊天历史。' },
+    { value: 'default', label: '恢复默认', summary: `跟随默认${sessionDefaultEnabled ? '开启' : '关闭'}，可在设置中修改。` }
   ]
   const memorySummary = memoryLoading
     ? '正在同步本会话记忆设置…'
@@ -141,8 +137,8 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
       : memoryEnabled === false
         ? '服务端已关闭长期记忆。聊天历史会继续保留。'
         : !memoryLoaded ? '尚未确认本会话的记忆设置。'
-          : memoryOverride === null ? `跟随设置中的默认值，当前${sessionEnabled ? '开启' : '关闭'}。聊天历史会继续保留。`
-            : `已为本会话单独${sessionEnabled ? '开启' : '关闭'}记忆，可随时恢复默认。聊天历史会继续保留。`
+          : memoryOverride === null ? '使用设置中的默认值。聊天历史会继续保留。'
+            : '仅本会话生效，可随时恢复默认。聊天历史会继续保留。'
 
   const pickThinking = (next: string): void => {
     if (!ready) return
@@ -188,6 +184,7 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
       align="start"
       width={360}
       flush
+      open={optionsOpen}
       onOpenChange={(open) => { setOptionsOpen(open); if (!open) setOpenMenu(null) }}
       trigger={({ open: isOpen }) => (
         <button
@@ -196,20 +193,20 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
           disabled={!ready}
           title={`对话偏好：${secDescriptor?.label ?? '访问权限尚未确认'} / 本会话记忆 / 思考档位`}
           aria-label="对话偏好"
+          aria-expanded={isOpen}
+          aria-haspopup="dialog"
         >
           <Icon name="settings" size={16} />
         </button>
       )}
     >
       <div className="composer-options__popup">
-        {owner === 'work' ? <ComposerCodegraphRow sessionId={sessionId} path={workspacePath} active={active && optionsOpen} /> : null}
-        <div className="composer-options__row composer-options__model-summary">
-          <Icon name="brain" size={16} />
-          <div className="composer-options__text">
-            <div className="composer-options__title">当前模型</div>
-            <div className="composer-options__summary">{currentModel?.displayName || currentModel?.modelId || modelId || '跟随引擎配置'}</div>
-          </div>
-        </div>
+        <header className="composer-options__header">
+          <h3>对话偏好</h3>
+          <button type="button" className="composer-options__close" aria-label="关闭对话偏好" title="关闭"
+            onClick={() => { setOptionsOpen(false); setOpenMenu(null) }}><Icon name="close" size={16} /></button>
+        </header>
+        <div className="composer-options__settings">
         <div className="composer-options__row">
           <Icon name="graph" size={16} />
           <div className="composer-options__text">
@@ -226,7 +223,7 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
             label="本会话记忆"
             placement="up"
             align="end"
-            width={260}
+            width={320}
             flush
             open={openMenu === 'memory'}
             onOpenChange={(open) => setOpenMenu(open ? 'memory' : null)}
@@ -237,9 +234,11 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
                 disabled={!ready || !active || !sessionId || memoryLoading || !memoryLoaded}
                 title={!sessionId ? '建立会话后可设置本会话记忆' : memoryEnabled === false ? '服务端已关闭长期记忆，仍可关闭本会话记忆或恢复默认' : '选择本会话记忆，或恢复默认'}
                 aria-label={`本会话记忆：${memoryLabel}`}
+                aria-expanded={isOpen}
+                aria-haspopup="dialog"
               >
                 <span>{memoryLabel}</span>
-                <span className="composer-options__dd-caret">⌄</span>
+                <Icon className="composer-options__dd-caret" name="chevron-down" size={16} />
               </button>
             )}
           >
@@ -279,7 +278,7 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
             label="思考档位"
             placement="up"
             align="end"
-            width={240}
+            width={320}
             flush
             open={openMenu === 'thinking'}
             onOpenChange={(open) => setOpenMenu(open ? 'thinking' : null)}
@@ -289,9 +288,12 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
                 className={`composer-options__dd-btn${isOpen ? ' is-open' : ''}`}
                 disabled={!ready}
                 title="选择思考档位"
+                aria-label={`思考档位：${thinkDescriptor.label}`}
+                aria-expanded={isOpen}
+                aria-haspopup="dialog"
               >
                 <span>{thinkDescriptor.label}</span>
-                <span className="composer-options__dd-caret">⌄</span>
+                <Icon className="composer-options__dd-caret" name="chevron-down" size={16} />
               </button>
             )}
           >
@@ -326,7 +328,7 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
             label="安全模式"
             placement="up"
             align="end"
-            width={240}
+            width={320}
             flush
             open={openMenu === 'security'}
             onOpenChange={(open) => setOpenMenu(open ? 'security' : null)}
@@ -335,6 +337,9 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
                 type="button"
                 className={`composer-options__dd-btn${isOpen ? ' is-open' : ''}`}
                 disabled={!ready || !sessionId || loading}
+                aria-label={`安全模式：${secDescriptor?.label ?? '尚未确认'}`}
+                aria-expanded={isOpen}
+                aria-haspopup="dialog"
                 title={
                   !sessionId
                     ? '先发一条消息建立会话，之后才能设置安全模式'
@@ -342,7 +347,7 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
                 }
               >
                 <span>{loading ? '读取中…' : (secDescriptor?.label ?? '状态未知')}</span>
-                <span className="composer-options__dd-caret">⌄</span>
+                <Icon className="composer-options__dd-caret" name="chevron-down" size={16} />
               </button>
             )}
           >
@@ -362,6 +367,10 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
             </div>
           </Popover>
         </div>
+        </div>
+        {owner === 'work' ? <div className="composer-options__workspace">
+          <ComposerCodegraphRow sessionId={sessionId} path={workspacePath} active={active && optionsOpen} />
+        </div> : null}
       </div>
     </Popover>
     </>

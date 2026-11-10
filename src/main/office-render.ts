@@ -41,14 +41,14 @@ export async function captureOfficePage(input: OfficePageRenderInput, owner: Web
     const work = async (): Promise<OfficePageRenderResult> => {
       const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; connect-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'"><style>html,body{margin:0;width:960px;height:540px;overflow:hidden;background:white;color:black;color-scheme:light}*{animation:none!important;transition:none!important}</style></head><body>${input.html}</body></html>`
       await view!.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
-      const complete = await view!.webContents.executeJavaScript(`(async()=>{await document.fonts.ready;await Promise.all(Array.from(document.images).map(image=>image.decode()));await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return document.querySelector('.slide-container, .slide')!==null})()`)
-      if (!complete) throw new Error('幻灯片未生成可绘制的页面。')
+      const complete = await view!.webContents.executeJavaScript(`(async()=>{await document.fonts.ready;await Promise.all(Array.from(document.images).map(image=>image.decode().catch(()=>{})));await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return document.body.children.length>0})()`)
+      if (!complete) throw new Error('办公文件未生成可绘制的页面。')
       assertCurrent()
       const screenshot = await view!.webContents.capturePage({ x: 0, y: 0, width: 960, height: 540 })
       assertCurrent()
-      if (screenshot.isEmpty()) throw new Error('幻灯片画面为空，不能作为验收证据。')
+      if (screenshot.isEmpty()) throw new Error('办公文件画面为空，不能作为验收证据。')
       const png = screenshot.resize({ width: 960, height: 540, quality: 'best' }).toPNG()
-      if (png.length > 4 * 1024 * 1024) throw new Error('幻灯片画面超过单次返回预算。')
+      if (png.length > 4 * 1024 * 1024) throw new Error('办公文件画面超过单次返回预算。')
       return { dataUrl: `data:image/png;base64,${png.toString('base64')}`, width: 960, height: 540 }
     }
     return await Promise.race([work(), new Promise<never>((_resolve, reject) => { timer = setTimeout(() => { destroy(); reject(new Error('幻灯片绘制超时。')) }, 15_000) })])
@@ -58,7 +58,7 @@ export async function captureOfficePage(input: OfficePageRenderInput, owner: Web
 }
 export function registerOfficeRender(): void {
   ipcMain.handle(OFFICE_RENDER_IPC, (event, input: OfficePageRenderInput) => {
-    assertTrustedRenderer(event, '幻灯片画面检查')
+    assertTrustedRenderer(event, '办公文件画面检查')
     return captureOfficePage(input, event.sender)
   })
 }

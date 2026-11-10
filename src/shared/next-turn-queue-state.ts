@@ -281,6 +281,7 @@ export function assertQueueEnvelope(
       [
         'source',
         'origin',
+        'attachmentId',
         'displayText',
         'textOffset',
         'path',
@@ -294,6 +295,7 @@ export function assertQueueEnvelope(
     )
     oneOf(mention.source, ['file', 'dir', 'code', 'terminal', 'agent', 'browser', 'conversation'], 'mention source')
     if (mention.origin !== undefined) oneOf(mention.origin, ['workspace', 'attachment', 'artifact'], 'mention origin')
+    if (mention.attachmentId !== undefined) string(mention.attachmentId, 'attachment identity', 4096)
     string(mention.displayText, 'mention label', 512)
     integer(mention.textOffset, 'mention offset')
     if (mention.path !== undefined) string(mention.path, 'mention path', mention.source === 'conversation' ? 8192 : 4096, true)
@@ -394,7 +396,7 @@ export function assertQueueEnvelope(
   for (const item of envelope.attachments) {
     const attachment = object(
       item,
-      ['kind', 'scope', 'path', 'name', 'mime', 'bytes', 'receiptId', 'sha256'],
+      ['kind', 'scope', 'path', 'name', 'mime', 'bytes', 'receiptId', 'sha256', 'attachmentId', 'referenceLabel'],
       'attachment'
     )
     assertQueueScope(attachment.scope)
@@ -413,6 +415,8 @@ export function assertQueueEnvelope(
     )
       fail('Attachment selector must be a strict relative path')
     string(attachment.name, 'attachment name', 512)
+    if (attachment.attachmentId !== undefined) string(attachment.attachmentId, 'attachment identity', 4096)
+    if (attachment.referenceLabel !== undefined) string(attachment.referenceLabel, 'attachment label', 512)
     string(attachment.mime, 'attachment MIME', 256)
     integer(attachment.bytes, 'attachment bytes')
     attachmentBytes += attachment.bytes

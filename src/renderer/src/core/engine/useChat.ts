@@ -1,13 +1,14 @@
 import type { CommandJobSnapshot } from '@shared/command-job'
 import { attachCommandJobs } from './command-job-state'
-import { subscribeCommandJobs, getCommandJobs, ingestCommandJob, forgetCommandSession, refreshCommandJobs, activateCommandSession, deactivateCommandSession } from './command-job-store'
+import { subscribeCommandJobs, getCommandJobs, ingestCommandJob, refreshCommandJobs, activateCommandSession, deactivateCommandSession } from './command-job-store'
 import type { SubagentRun, SubagentDiscoveryRef } from '@shared/subagent'
 import { normalizeRootRunCompaction, normalizeRootRunRequestConfig, type RootRun, type RootRunCompaction, type RootRunRequestConfig } from '@shared/root-run'
 import { applyRootRun, finishTransport, mergeRootRun, normalizeRootRun } from './root-run-state'
 import { applyToolResult, normalizeTool, type EngineHistoryRow } from './chat-history'
 export { extractText } from './chat-history'
 import { attachSubagentRuns, applySubagentDeletions } from './subagent-state'
-import { ingestSubagentEventResult, ingestSubagentRun, ingestSubagentRunResult, getSubagentRuns, refreshSubagentRuns, subscribeSubagents, subscribeSubagentDeletions, forgetSubagentSession, hasActiveSubagents } from './subagent-store'
+import { ingestSubagentEventResult, ingestSubagentRun, ingestSubagentRunResult, getSubagentRuns, refreshSubagentRuns, subscribeSubagents, subscribeSubagentDeletions, hasActiveSubagents } from './subagent-store'
+import { invalidateHistoryRuntimeCache } from './history-runtime-cache'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createSessionUsageAnchor, sessionUsageTotal, type SessionUsageAnchor } from '@renderer/contrib/chat/session-usage'
 import type { UsageTotal } from '@renderer/contrib/chat/usage'
@@ -144,6 +145,10 @@ export interface ChatMessage {
  * 所以渲染层先把字节落盘到工作区，再把相对路径交给引擎读回。
  */
 export interface ChatAttachment {
+  /** Stable identity across edits, queue staging and history replay. */
+  attachmentId?: string
+  /** Label frozen for the submitted turn; never renumber a historical message. */
+  referenceLabel?: string
   /** 相对工作区根的路径（引擎 attachments[].name 用的就是它） */
   path: string
   /** 远端上传后由主进程分配的 opaque 引用；本地附件不设置。 */
@@ -1662,8 +1667,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
           })
           assertEngineSource(source)
           if (!result.ok) throw new Error(result.message || '引擎侧历史删除失败')
-          forgetSubagentSession(sessionId)
-          forgetCommandSession(sessionId)
+          invalidateHistoryRuntimeCache(sessionId)
         }
         if (!scopeIsCurrent(scope)) return
         rootRunsRef.current.clear()
@@ -1737,6 +1741,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
         })
         assertEngineSource(source)
         if (!result.ok) throw new Error(result.message || '引擎侧删除失败')
+        invalidateHistoryRuntimeCache(sessionId)
         if (scopeIsCurrent(scope)) setSessionModel(null)
         onHistoryChanged?.()
         if (!scopeIsCurrent(scope)) return
@@ -1773,6 +1778,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
         })
         assertEngineSource(source)
         if (!result.ok) throw new Error(result.message || '引擎侧截断失败')
+        invalidateHistoryRuntimeCache(sessionId)
         if (scopeIsCurrent(scope)) setSessionModel(null)
         onHistoryChanged?.()
         if (!scopeIsCurrent(scope)) throw new Error('历史已截断，但会话状态已变化，请重新加载后查看')
@@ -1815,6 +1821,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
           })
           assertEngineSource(source)
           if (!result.ok) throw new Error(result.message || '引擎侧截断失败')
+          invalidateHistoryRuntimeCache(options.sessionId)
           if (scopeIsCurrent(scope)) setSessionModel(null)
           onHistoryChanged?.()
         }
@@ -1871,6 +1878,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
         if (!report) return false
         historyRemoved = true
         assertEngineSource(source)
+        invalidateHistoryRuntimeCache(sessionId)
         if (scopeIsCurrent(scope)) setSessionModel(null)
         onHistoryChanged?.()
         // A slow rollback may finish after navigation. Do not remove another session's messages.

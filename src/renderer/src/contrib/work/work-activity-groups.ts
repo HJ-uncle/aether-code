@@ -12,7 +12,7 @@ export function workActivityGroups(tools: readonly ToolActivity[]): ToolActivity
     const kind = workToolKind(tool)
     const target = workToolTarget(tool, undefined, true)
     const key = (kind === 'compact' || kind === 'visual') && workActivityState(tool) === 'done' && !tool.error &&
-      !tool.metadata?.archiveOutputOnly && target ? JSON.stringify([tool.name, target]) : null
+      !tool.metadata?.archiveOutputOnly && target ? JSON.stringify([tool.name, target, tool.args]) : null
     if (key && key === previousKey) groups[groups.length - 1].push(tool)
     else groups.push([tool])
     previousKey = key

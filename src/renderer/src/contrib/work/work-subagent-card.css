@@ -32,4 +32,32 @@
   .work-subagent-card__timing { grid-column: 1; grid-row: 2; }
   .work-subagent-card__status { grid-column: 2; grid-row: 1 / span 2; }
 }
+.work-subagent-card--compact .work-subagent-card__open {
+  display: flex;
+  gap: var(--space-2);
+  height: 28px;
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+.work-subagent-card--compact .work-subagent-card__icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 16px; color: var(--fg-muted); }
+.work-subagent-card--compact .work-subagent-card__action { flex: 0 0 9em; color: var(--fg-muted); white-space: nowrap; }
+.work-subagent-card--compact .work-subagent-card__identity { flex: 1; }
+.work-subagent-card--compact .work-subagent-card__name { color: var(--fg-muted); font-weight: 400; }
+.work-subagent-card--compact .work-subagent-card__timing,
+.work-subagent-card--compact .work-subagent-card__status { flex: 0 0 auto; font-size: 11px; }
+.work-subagent-card--compact .work-subagent-card__status > svg { opacity: 0; }
+.work-subagent-card--compact .work-subagent-card__open:is(:hover, :focus-visible) .work-subagent-card__status > svg { opacity: 0.6; }
+.work-subagent-card__hover { display: flex; flex-direction: column; gap: var(--space-1); }
+.work-subagent-card__hover strong { color: var(--fg); font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
+.work-subagent-card__hover span { color: var(--fg-muted); font-size: 11px; }
+.work-subagent-card__hover p { margin: var(--space-1) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
+@container (max-width: 480px) {
+  .work-subagent-card--compact .work-subagent-card__action { flex-basis: auto; }
+}
+@container (max-width: 340px) {
+  .work-subagent-card--compact .work-subagent-card__action { display: none; }
+}
+@media (hover: none) { .work-subagent-card--compact .work-subagent-card__status > svg { opacity: 0.6; } }
 @media (prefers-reduced-motion: reduce) { .work-subagent-card__open { transition: none; } }

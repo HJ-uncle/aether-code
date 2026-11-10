@@ -395,6 +395,12 @@ function SessionArtifacts({ sessionId, workspacePath: workspaceHint, ready, stre
       <div className="work-session-artifacts__detail">
         {selectedFile ? <header className="work-session-artifacts__file-header">
           <strong title={selectedFile.path}>{selectedFile.name}</strong>
+          {!missingRequested ? <Select className="work-session-artifacts__view-select" ariaLabel="差异范围" title={viewDescription} value={displayedView} width={240} panelClassName="work-session-artifacts__popover"
+            options={[
+              { value: 'current', label: '当前内容', description: '读取当前文件，可预览、引用和保存' },
+              { value: 'net', label: '待确认改动', description: '当前范围内仍待确认的连续修改' },
+              { value: 'operation', label: '修改记录', description: '查看每次写入前后的历史内容' }
+            ]} onChange={value => { if (value === 'current' || value === 'net' || value === 'operation') setScope(value) }} /> : null}
           <ChangeCount view={selectedView ?? defaultArtifactView(selectedFile)} />
           <Popover key={reviewContext} label="文件改动信息" className="work-session-artifacts__info" panelClassName="work-session-artifacts__popover work-session-artifacts__info-panel" align="end" width={320}
             trigger={({ open }) => <button type="button" className="work-session-artifacts__info-trigger" aria-label="文件改动信息" aria-expanded={open} title="文件路径、修改时间与范围说明"><Icon name="info" size={14} /></button>}>
@@ -410,13 +416,7 @@ function SessionArtifacts({ sessionId, workspacePath: workspaceHint, ready, stre
           {!currentDeleted ? <button type="button" aria-label="打开当前文件" title="打开当前文件" disabled={!enabled} onClick={() => onOpenCurrentFile(selectedFile.path)}><Icon name="file" size={15} /></button> : null}
         </header> : null}
         {missingRequested ? <p className="work-session-artifacts__empty" role="status">{requestNotice}</p> : selectedFile ? <>
-          <div className="work-session-artifacts__scope">
-            <Select ariaLabel="差异范围" title={viewDescription} value={displayedView} width={240} panelClassName="work-session-artifacts__popover"
-              options={[
-                { value: 'current', label: '当前内容', description: '读取当前文件，可预览、引用和保存' },
-                { value: 'net', label: '待确认改动', description: '当前范围内仍待确认的连续修改' },
-                { value: 'operation', label: '修改记录', description: '查看每次写入前后的历史内容' }
-              ]} onChange={value => { if (value === 'current' || value === 'net' || value === 'operation') setScope(value) }} />
+          {selectedView ? <div className="work-session-artifacts__scope">
             {selectedView && selectedVersions.length > 1 ? <Select className="work-session-artifacts__versions"
               ariaLabel={selectedView.scope === 'net' ? '选择净变化片段' : '选择单次修改'} value={selectedView.change.id} width={280}
               panelClassName="work-session-artifacts__popover" title={`${new Date(selectedView.change.createdAt).toLocaleString()} · ${artifactChangeStatus(selectedView.change.status)}`}
@@ -430,7 +430,7 @@ function SessionArtifacts({ sessionId, workspacePath: workspaceHint, ready, stre
             }} /> : selectedView?.scope === 'operation' && selectedView.change.status !== 'pending' ? <span className="work-session-artifacts__version-status" title={`${new Date(selectedView.change.createdAt).toLocaleString()} · ${artifactChangeStatus(selectedView.change.status)}`}>{artifactChangeStatus(selectedView.change.status)}</span> : null}
             {selectedView ? <WorkChangeReviewActions sessionId={sessionId} workspacePath={workspacePath} changes={[selectedView.change]} streaming={streaming} disabled={actionsDisabled}
               refreshing={syncing} onChanged={refreshReview} mode="single" compact showBlockedHint={false} /> : null}
-          </div>
+          </div> : null}
           {displayedView === 'current' ? currentDeleted ? <DeletedArtifact path={selectedFile.path} /> : <>
             <div className="work-session-artifacts__preview" data-artifact-view="current">
               <WorkArtifactPanel artifact={currentArtifact} sessionId={sessionId} workspaceRoot={workspacePath} active={active}

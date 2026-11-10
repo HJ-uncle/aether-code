@@ -1,6 +1,6 @@
 import { useState, type JSX } from 'react'
 import { Icon } from '@renderer/workbench/icons'
-import { Dialog } from '@renderer/workbench/Dialog'
+import { ImageViewerDialog } from './ImageViewerDialog'
 import type { ToolBrowserSnapshot } from './browser-snapshot'
 import { BrowserClickPosition } from './BrowserClickPosition'
 import { BrowserPositionPreview } from './BrowserPositionPreview'
@@ -15,9 +15,7 @@ function WorkScreenshot({ screenshot, title = '页面截图' }: { screenshot: No
         <img src={source} width={screenshot.width} height={screenshot.height} alt={title} decoding="async" onError={() => setFailedSource(source)} />
       </button>
     )}
-    <Dialog title={title} className="modal--tool-result-image" width={960} open={expanded && failedSource !== source} onClose={() => setExpanded(false)}>
-      <div className="tool-result__expanded"><img src={source} alt={title} onError={() => setFailedSource(source)} /></div>
-    </Dialog>
+    <ImageViewerDialog src={source} title={title} open={expanded && failedSource !== source} onClose={() => setExpanded(false)} />
   </figure>
 }
 

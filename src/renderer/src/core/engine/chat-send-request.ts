@@ -16,6 +16,12 @@ export async function dispatchChatRequest(
   remote: boolean
 ): Promise<void> {
   const attachments = options.attachments ?? []
+  const serializedAttachments = attachments.map(file => ({
+    ...(remote && file.remoteUploadId ? { remoteUploadId: file.remoteUploadId } : { name: file.path, type: file.type }),
+    displayName: file.name, size: file.size,
+    ...(file.attachmentId ? { attachmentId: file.attachmentId } : {}),
+    ...(file.referenceLabel ? { referenceLabel: file.referenceLabel } : {})
+  }))
   await transport({
     message: text,
     sessionId: options.sessionId || undefined,
@@ -31,12 +37,6 @@ export async function dispatchChatRequest(
     utilityModel: options.utilityModel,
     memoryScope: options.memoryScope,
     clientCapabilities: clientCapabilities(getEngineSource(), options.sessionId, getAppMode()),
-    attachments: attachments.length > 0
-      ? remote
-        ? attachments.map(file => file.remoteUploadId
-          ? { remoteUploadId: file.remoteUploadId }
-          : { name: file.path, type: file.type })
-        : attachments.map(file => ({ name: file.path, type: file.type }))
-      : undefined
+    attachments: serializedAttachments.length ? serializedAttachments : undefined
   })
 }

@@ -26,12 +26,14 @@ async function requestOrThrow<T>(input: EngineRequestInput): Promise<T> {
   if (!response.ok) throw new CommandJobRequestError(response.code, [404, 40400].includes(response.code) ? '任务已过期或不存在' : response.message || '命令请求失败')
   return response.data as T
 }
-function releaseSession(sessionId: string): void {
-  if (ownsSession(sessionId)) return
+function clearSessionCache(sessionId: string): void {
   sessionRevisions.set(sessionId, (sessionRevisions.get(sessionId) ?? 0) + 1)
   for (const [id, view] of jobs) if (view.job.sessionId === sessionId) jobs.delete(id)
   for (const id of requests.keys()) if (id.startsWith(JSON.stringify([sessionId]).slice(0, -1) + ',')) requests.delete(id)
   listings.delete(sessionId)
+}
+function releaseSession(sessionId: string): void {
+  if (!ownsSession(sessionId)) clearSessionCache(sessionId)
 }
 /** Code and Work each keep their viewed session alive without evicting the other's output. */
 export function activateCommandSession(sessionId: string, owner = 'code'): void {
@@ -67,6 +69,11 @@ export function ingestCommandJob(raw: unknown): CommandJobSnapshot | undefined {
 export function forgetCommandSession(sessionId: string): void {
   for (const [owner, active] of activeSessions) if (active === sessionId) activeSessions.delete(owner)
   releaseSession(sessionId)
+  notify()
+}
+/** History replacement must fence old reads without detaching Code/Work owners. */
+export function invalidateCommandSession(sessionId: string): void {
+  clearSessionCache(sessionId)
   notify()
 }
 export async function refreshCommandJobs(sessionId: string): Promise<void> {

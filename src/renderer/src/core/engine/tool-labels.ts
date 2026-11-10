@@ -3,11 +3,13 @@
  * This module has no renderer state so chat, approvals, settings and text exports share one mapping.
  */
 const TOOL_NAMES: Readonly<Record<string, string>> = {
+  load_tools: '加载工具',
   read_file: '读取文件',
   write_file: '写入文件',
   office_document: '办公文档',
   office_inspect: '检查办公文档',
   office_environment: '办公运行环境',
+  deliver_files: '登记交付文件',
   edit_file: '编辑文件',
   list_files: '列出文件',
   delete_file: '删除文件',
@@ -30,12 +32,14 @@ const TOOL_NAMES: Readonly<Record<string, string>> = {
   subagent_directory: '查看可复用子代理',
   subagent_followup: '继续子代理',
   subagent_request_input: '请求补充信息',
+  subagent_read_result: '读取子代理结果',
   report_artifacts: '报告制作成果',
   subagent_send: '发送子代理消息',
   subagent_wait: '等待子代理',
   subagent_cancel: '取消子代理',
   subagent_participants: '查看协作参与者',
   subagent_inbox: '查看协作收件回执',
+  collaborator_dispatch: '安排协作分工',
   code_diagnose: '代码诊断',
   codegraph: '代码图查询',
   agent_list: '列出代理',

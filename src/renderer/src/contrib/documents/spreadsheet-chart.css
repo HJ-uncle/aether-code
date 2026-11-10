@@ -1,0 +1,34 @@
+.spreadsheet-chart { display:flex; flex-direction:column; box-sizing:border-box; margin:0; overflow:hidden; color-scheme:light; color:var(--document-ink); background:var(--document-paper); border:1px solid var(--document-grid); border-radius:4px; font-family:var(--font-ui); }
+.spreadsheet-chart__heading { display:flex; flex:none; align-items:center; gap:8px; min-width:0; min-height:44px; padding:6px 12px; box-sizing:border-box; }
+.spreadsheet-chart__heading strong { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; font-weight:600; }
+.spreadsheet-chart__actions { display:flex; flex:none; gap:4px; }
+.spreadsheet-chart__actions button { min-height:28px; padding:4px 7px; border:0; border-radius:var(--radius); color:var(--document-header-fg); background:transparent; font:inherit; font-size:12px; cursor:pointer; }
+.spreadsheet-chart__actions button:hover, .spreadsheet-chart__actions button[aria-pressed='true'] { background:var(--document-header-bg); color:var(--document-ink); }
+.spreadsheet-chart__actions button:focus-visible, .spreadsheet-chart__data:focus-visible, .spreadsheet-chart__warnings summary:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+.spreadsheet-chart__plot { display:block; flex:1; width:100%; min-height:0; overflow:hidden; }
+.spreadsheet-chart__axis line { stroke:var(--document-grid); stroke-width:1; }
+.spreadsheet-chart__axis text, .spreadsheet-chart__category { fill:var(--document-header-fg); font-size:12px; }
+.spreadsheet-chart__baseline { stroke:var(--document-header-fg); stroke-width:1; }
+.spreadsheet-chart__legend { display:flex; flex:none; gap:16px; align-items:center; min-width:0; min-height:28px; max-height:34px; margin:0; padding:2px 12px 6px; overflow:auto hidden; list-style:none; font-size:12px; }
+.spreadsheet-chart__legend li { display:flex; flex:none; align-items:center; gap:6px; white-space:nowrap; }
+.spreadsheet-chart__legend li > span { width:10px; height:10px; border-radius:2px; }
+.spreadsheet-chart__empty { display:flex; flex:1; align-items:center; justify-content:center; padding:24px; text-align:center; color:var(--document-header-fg); font-size:13px; }
+.spreadsheet-chart__warnings { flex:none; max-height:96px; overflow:auto; padding:0 12px 6px; color:var(--document-header-fg); font-size:12px; }
+.spreadsheet-chart__warnings summary { cursor:pointer; padding:3px 0; }
+.spreadsheet-chart__warnings ul { margin:4px 0 0; padding-left:18px; }
+.spreadsheet-chart__data { flex:1; min-height:0; overflow:auto; border-top:1px solid var(--document-grid); }
+.spreadsheet-chart__data table { width:100%; border-spacing:0; font-size:12px; }
+.spreadsheet-chart__data th, .spreadsheet-chart__data td { padding:7px 10px; border-bottom:1px solid var(--document-grid); text-align:right; white-space:nowrap; }
+.spreadsheet-chart__data th:first-child { text-align:left; }
+.spreadsheet-chart__data thead th { position:sticky; top:0; background:var(--document-header-bg); font-weight:600; }
+.spreadsheet-chart__data tbody th { font-weight:400; }
+.document-preview__chart-anchor { position:absolute; z-index:0; }
+/* The document keeps its white canvas; navigation and the full surrounding pane follow the app theme. */
+.document-preview__body--sheet.document-preview__body--chart { color-scheme:inherit; color:var(--fg); background:var(--bg-inset); }
+.document-preview__chart-focus { display:flex; flex-direction:column; align-items:flex-start; gap:10px; padding:12px; min-width:0; box-sizing:border-box; }
+.document-preview__chart-back { flex:none; min-height:28px; border:0; padding:4px 8px; border-radius:var(--radius); color:var(--fg); background:transparent; font:inherit; font-size:12px; cursor:pointer; }
+.document-preview__chart-back:hover { color:var(--fg); background:var(--bg-hover); }
+.document-preview__chart-back:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+.document-preview__chart-select { flex:none; min-width:80px; max-width:180px; }
+.document-preview__toolbar--sheets .document-preview__chart-select .select__trigger { min-height:28px; height:28px; font-size:12px; }
+.document-preview__chart-select .select__value { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

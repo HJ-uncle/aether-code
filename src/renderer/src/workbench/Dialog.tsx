@@ -7,6 +7,8 @@ import { OverlayScope, useOverlay } from './overlay'
 interface DialogProps {
   /** 标题栏文案 */
   title: string
+  /** Content-led viewers provide their own title and dismissal controls. */
+  hideHeader?: boolean
   /** 正文内容 */
   children: ReactNode
   /** 底部操作区；不传则不渲染 footer */
@@ -39,6 +41,7 @@ interface DialogProps {
  */
 export function Dialog({
   title,
+  hideHeader = false,
   children,
   footer,
   width = 520,
@@ -74,12 +77,12 @@ export function Dialog({
         style={{ width }}
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <header className="modal__header">
+        {!hideHeader && <header className="modal__header">
           <span>{title}</span>
           <button type="button" className="modal__close" aria-label="关闭" disabled={closeDisabled} onClick={close}>
             <Icon name="close" size={16} />
           </button>
-        </header>
+        </header>}
 
         <div className="modal__body">{children}</div>
 

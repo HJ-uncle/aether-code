@@ -5,6 +5,7 @@ import { ipcErrorMessage } from '@renderer/core/ipc-error'
 import { copyIntoWorkspace } from '@renderer/core/workspace/fs-client'
 import { cancelAttachmentUpload, uploadAttachment } from '@renderer/core/engine/client'
 import { composerCharacterCount } from './input-limits'
+import { attachmentIdentity, reorderAttachments } from './attachment-references'
 
 /**
  * 聊天附件（图片 / 文本 / 文档）
@@ -164,6 +165,7 @@ export interface UseAttachmentsResult {
   pick: () => void
   /** 移除一个已上传附件 */
   remove: (path: string) => void
+  reorder: (ids: readonly string[]) => void
   removeSubmitted: (submitted: readonly ChatAttachment[]) => void
   /** 清空（发送后调用） */
   clear: () => void
@@ -171,6 +173,8 @@ export interface UseAttachmentsResult {
   restore: (files: readonly ChatAttachment[]) => void
   /** 接收来自拖拽 / 粘贴的 File 列表 */
   accept: (files: File[]) => void
+  /** 图片编辑/引用等待实际上传；仅能替换仍在当前草稿中的原附件。 */
+  addImage: (file: File, replacePath?: string) => Promise<void>
   /** 拖拽进入 / 离开输入区 */
   setDragging: (value: boolean) => void
   /** 最近一次失败原因，保留到关闭、再次上传或切换会话。 */
@@ -178,8 +182,24 @@ export interface UseAttachmentsResult {
   clearError: () => void
 }
 
-export function useAttachments(root: string | null, sessionId = ''): UseAttachmentsResult {
-  const [attachments, setAttachments] = useState<ChatAttachment[]>([])
+export function useAttachments(root: string | null, sessionId = '', imageOptions: {
+  active?: boolean
+  onReplace?: (previous: ChatAttachment, next: ChatAttachment) => void
+  loadDraft?: () => readonly ChatAttachment[]
+  onChange?: (files: readonly ChatAttachment[]) => void
+} = {}): UseAttachmentsResult {
+  const [attachments, setAttachmentState] = useState<ChatAttachment[]>([])
+  const attachmentsRef = useRef(attachments)
+  const draftCallbacks = useRef(imageOptions)
+  draftCallbacks.current = imageOptions
+  // Upload completion and a same-frame send/remove must agree on which draft
+  // objects still exist, before React commits the next render.
+  const setAttachments = useCallback((next: ChatAttachment[] | ((previous: ChatAttachment[]) => ChatAttachment[]), notify = true): void => {
+    const files = typeof next === 'function' ? next(attachmentsRef.current) : next
+    attachmentsRef.current = files
+    setAttachmentState(files)
+    if (notify) draftCallbacks.current.onChange?.(files)
+  }, [])
   const [pendingUploads, setPendingUploads] = useState<Array<{ id: string; fileName: string }>>([])
   const [dragging, setDragging] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -194,6 +214,12 @@ export function useAttachments(root: string | null, sessionId = ''): UseAttachme
     scopeRef.current = { root, sessionId, source: renderSource, active: true }
   }
   const scope = scopeRef.current
+  const imageLifetime = useRef({ scope, active: imageOptions.active !== false })
+  if (imageLifetime.current.scope !== scope || imageLifetime.current.active !== (imageOptions.active !== false))
+    imageLifetime.current = { scope, active: imageOptions.active !== false }
+  const imageOwner = imageLifetime.current
+  const imageReplacement = useRef(imageOptions.onReplace)
+  imageReplacement.current = imageOptions.onReplace
   const pendingUploadsRef = useRef(new Map<string, PendingUpload>())
 
   useEffect(() => {
@@ -214,13 +240,13 @@ export function useAttachments(root: string | null, sessionId = ''): UseAttachme
   }, [])
   const cancelUpload = useCallback(() => abortUploads(), [abortUploads])
 
-  const clear = useCallback(() => {
+  const clear = useCallback((notify = true) => {
     generationRef.current++
     abortUploads()
-    setAttachments([])
+    setAttachments([], notify)
     setDragging(false)
     setError(null)
-  }, [abortUploads])
+  }, [abortUploads, setAttachments])
 
   const restore = useCallback((files: readonly ChatAttachment[]): void => {
     const isCurrent = (): boolean => scope.active && scope === scopeRef.current && scope.source === getEngineSource()
@@ -238,14 +264,15 @@ export function useAttachments(root: string | null, sessionId = ''): UseAttachme
       }
       return restored.length ? [...previous, ...restored] : previous
     })
-  }, [scope])
+  }, [scope, setAttachments])
 
   useEffect(() => {
-    const generation = generationRef.current
-    void Promise.resolve().then(() => { if (generation === generationRef.current) clear() })
-    const off = subscribeEngineSource(clear)
+    // Restoring a scope must not persist the transient empty list over its draft.
+    clear(false)
+    setAttachments((draftCallbacks.current.loadDraft?.() ?? []).map(file => ({ ...file, attachmentId: attachmentIdentity(file) })), false)
+    const off = subscribeEngineSource(() => clear(false))
     return () => { generationRef.current++; abortUploads(false); off() }
-  }, [root, sessionId, clear, abortUploads])
+  }, [root, sessionId, renderSource, clear, abortUploads, setAttachments])
 
   const accept = useCallback(
     (files: File[]) => {
@@ -306,6 +333,7 @@ export function useAttachments(root: string | null, sessionId = ''): UseAttachme
             setAttachments((prev) => [
               ...prev,
               {
+                attachmentId: id,
                 path: attachmentPath,
                 ...(remote && 'remoteUploadId' in result ? { remoteUploadId: result.remoteUploadId } : {}),
                 name: file.name,
@@ -331,8 +359,71 @@ export function useAttachments(root: string | null, sessionId = ''): UseAttachme
         }
       })()
     },
-    [root, renderSource, sessionId, syncPendingUploads]
+    [root, renderSource, sessionId, syncPendingUploads, setAttachments]
   )
+
+  const addImage = useCallback(async (file: File, replacePath?: string): Promise<void> => {
+    const generation = generationRef.current
+    const isCurrent = (): boolean => scope.active && scope === scopeRef.current &&
+      generation === generationRef.current && scope.source === getEngineSource() && imageOwner.active && imageOwner === imageLifetime.current
+    const assertCurrent = (): void => { if (!isCurrent()) throw new Error('会话或工作区已变化，请重新打开图片') }
+    assertCurrent()
+    const remote = isRemoteEngine()
+    if (!IMAGE_RE.test(file.type)) throw new Error('仅支持添加图片')
+    if (file.size > MAX_FILE_BYTES) throw new Error(`「${file.name}」超过 20MB，请缩小图片后重试`)
+    if (remote && !sessionId) throw new Error('请先建立远端会话，再上传附件')
+    if (!remote && !root) throw new Error('请先打开一个项目目录，附件需要落盘到工作区')
+    const original = replacePath === undefined ? undefined : attachmentsRef.current.find(item => item.path === replacePath)
+    if (replacePath !== undefined && !original) throw new Error('原附件已不在待发送列表中，请重新打开图片')
+
+    const task: PendingUpload = { id: crypto.randomUUID(), file, controller: new AbortController() }
+    const { id, controller } = task, { signal } = controller
+    let remoteRequestStarted = false
+    const cancelRemote = (): void => {
+      if (!remoteRequestStarted) return
+      try { void cancelAttachmentUpload(id).catch(() => undefined) } catch { /* transport closed */ }
+    }
+    pendingUploadsRef.current.set(id, task)
+    syncPendingUploads()
+    setError(null)
+    signal.addEventListener('abort', cancelRemote, { once: true })
+    const timer = window.setTimeout(() => controller.abort(new DOMException('附件上传超时，请重试', 'TimeoutError')), UPLOAD_TIMEOUT_MS)
+    try {
+      const data = await waitForUpload(readBytes(file), signal)
+      assertCurrent()
+      signal.throwIfAborted()
+      remoteRequestStarted = remote
+      const result = remote
+        ? await waitForUpload(uploadAttachment({ requestId: id, sessionId, fileName: file.name, type: file.type, data }), signal)
+        : await waitForUpload(copyIntoWorkspace({ root: root!, fileName: file.name, data }), signal)
+      assertCurrent()
+      signal.throwIfAborted()
+      // Removing or sending the original while editing must not silently turn
+      // a replacement into a new attachment, or revive a submitted draft.
+      if (original && !attachmentsRef.current.includes(original)) throw new Error('原附件已被移除或发送，请重新添加编辑后的图片')
+      const attachment: ChatAttachment = {
+        attachmentId: original ? attachmentIdentity(original) : id,
+        path: 'relativePath' in result ? result.relativePath : result.path,
+        ...('remoteUploadId' in result ? { remoteUploadId: result.remoteUploadId } : {}),
+        name: file.name, type: file.type, size: result.size
+      }
+      if (original) imageReplacement.current?.(original, attachment)
+      setAttachments(previous => original ? previous.map(item => item === original ? attachment : item) : [...previous, attachment])
+    } catch (error) {
+      const reason: unknown = signal.aborted ? signal.reason : error
+      if (isCurrent() && !(reason instanceof Error && reason.name === 'AbortError')) {
+        setError(`上传「${file.name}」失败：${ipcErrorMessage(reason)}`)
+      }
+      throw reason instanceof Error ? reason : new Error(ipcErrorMessage(reason))
+    } finally {
+      window.clearTimeout(timer)
+      signal.removeEventListener('abort', cancelRemote)
+      if (pendingUploadsRef.current.get(id) === task) {
+        pendingUploadsRef.current.delete(id)
+        if (isCurrent()) syncPendingUploads()
+      }
+    }
+  }, [root, sessionId, scope, imageOwner, setAttachments, syncPendingUploads])
 
   const pick = useCallback(() => {
     if (renderSource !== getEngineSource()) return
@@ -349,10 +440,13 @@ export function useAttachments(root: string | null, sessionId = ''): UseAttachme
 
   const remove = useCallback((path: string) => {
     setAttachments((prev) => prev.filter((item) => item.path !== path))
-  }, [])
+  }, [setAttachments])
+  const reorder = useCallback((ids: readonly string[]) => {
+    setAttachments(previous => reorderAttachments(previous, ids))
+  }, [setAttachments])
   const removeSubmitted = useCallback((submitted: readonly ChatAttachment[]) => {
     setAttachments(prev => prev.filter(item => !submitted.includes(item)))
-  }, [])
+  }, [setAttachments])
   const clearError = useCallback(() => setError(null), [])
 
   return {
@@ -365,10 +459,12 @@ export function useAttachments(root: string | null, sessionId = ''): UseAttachme
     fileInputRef: inputRef,
     pick,
     remove,
+    reorder,
     removeSubmitted,
     clear,
     restore,
     accept,
+    addImage,
     setDragging,
     error,
     clearError

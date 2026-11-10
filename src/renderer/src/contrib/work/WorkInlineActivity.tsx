@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useMemo, useRef, useState, type JSX, type ReactNode } from 'react'
+import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type JSX, type ReactNode } from 'react'
 import type { EngineFileChange } from '@shared/ipc'
 import type { ToolActivity } from '@renderer/core/engine/useChat'
 import { isVisibleToolActivity } from '@renderer/core/engine/task-plan'
@@ -17,6 +17,8 @@ import { toolDisplayName } from '@renderer/core/engine/tool-labels'
 import { quietToolIcon } from '../chat/quiet-tool-icon'
 import './work-inline-activity.css'
 
+const pagePositions = new Map<string, number | null>()
+
 /** Keep paged receipts and their original diagnostics beside the conversation. */
 export function WorkInlineActivity({ tools: receipts, fileContext, onOpenFile, onOpenChange, revealTool, expanded = false, contained = false, turnRunning, active = true, readOnly = false }: {
   tools: ToolActivity[]; fileContext: ChatFileContext; onOpenFile?: (path: string) => void
@@ -30,7 +32,15 @@ export function WorkInlineActivity({ tools: receipts, fileContext, onOpenFile, o
 }): JSX.Element | null {
   const tools = useMemo(() => receipts.filter(isVisibleToolActivity), [receipts])
   const [manual, setManual] = useCollapseMemory(`work-process:${fileContext.sessionId}:${tools[0]?.id}`)
-  const [selectedPage, setSelectedPage] = useState<number | null>(null)
+  const pageKey = contained ? `${getEngineSource()}:${fileContext.sessionId}:${tools[0]?.id}:${turnRunning ? 'live' : 'settled'}` : ''
+  const [pageSelection, setPageSelection] = useState(() => ({ key: pageKey, page: pagePositions.get(pageKey) ?? null }))
+  const selectedPage = pageSelection.key === pageKey ? pageSelection.page : pagePositions.get(pageKey) ?? null
+  const setSelectedPage = useCallback((page: number | null): void => {
+    setPageSelection({ key: pageKey, page })
+    if (!pageKey) return
+    pagePositions.set(pageKey, page)
+    if (pagePositions.size > 200) pagePositions.delete(pagePositions.keys().next().value!)
+  }, [pageKey])
   const activity = useRef<HTMLElement>(null)
   const detailId = useId()
   const pageSize = contained ? 100 : WORK_INLINE_ACTIVITY_PAGE_SIZE
@@ -38,19 +48,25 @@ export function WorkInlineActivity({ tools: receipts, fileContext, onOpenFile, o
   useLayoutEffect(() => {
     if (!contained) return
     const viewport = activity.current?.closest('.work-message__process-viewport')
-    const latest = (): void => setSelectedPage(Math.max(0, Math.ceil(tools.length / pageSize) - 1))
+    const first = (): void => setSelectedPage(0)
+    const latest = (): void => setSelectedPage(null)
+    viewport?.addEventListener('work-process-first', first)
     viewport?.addEventListener('work-process-latest', latest)
-    return () => viewport?.removeEventListener('work-process-latest', latest)
-  }, [contained, tools.length, pageSize])
+    return () => {
+      viewport?.removeEventListener('work-process-first', first)
+      viewport?.removeEventListener('work-process-latest', latest)
+    }
+  }, [contained, setSelectedPage])
   useLayoutEffect(() => {
     if (!revealTool) return
     const index = tools.findIndex(tool => tool.id === revealTool.toolId)
     if (index < 0) return
     setManual(true)
     setSelectedPage(Math.floor(index / pageSize))
-  }, [revealTool, tools, setManual, pageSize])
+  }, [revealTool, tools, setManual, pageSize, setSelectedPage])
   const open = expanded || (manual ?? false)
-  const presence = useMotionPresence(open)
+  // The owning process animates expanded receipts as one stable block.
+  const presence = useMotionPresence(!expanded && open)
   if (!summary) return null
   const { tool, state, label, target } = summary
   const fullTarget = workToolTarget(tool, undefined, true)
@@ -62,6 +78,23 @@ export function WorkInlineActivity({ tools: receipts, fileContext, onOpenFile, o
   const renderTool = (item: ToolActivity): ReactNode => <WorkToolActivity key={item.id} tool={item} fileContext={fileContext}
     onOpenFile={onOpenFile} onOpenChange={onOpenChange} turnRunning={turnRunning} active={active && open} readOnly={readOnly}
     revealRevision={revealTool?.toolId === item.id ? revealTool.revision : undefined} />
+  const body = <div id={detailId} className="process__body work-inline-activity__body" role="region" aria-label="活动详情">
+    {groups.map(group => (
+      <div className="work-inline-activity__item" key={group[0].id}>
+        {group.length > 1 ? <WorkActivityGroup tools={group} fileContext={fileContext} revealTool={revealTool}>
+          {group.map(renderTool)}
+        </WorkActivityGroup> : renderTool(group[0])}
+      </div>
+    ))}
+    {range.pages > 1 ? (
+      <nav className="work-inline-activity__pages" aria-label="活动分页">
+        <button type="button" disabled={range.page === 0} onClick={() => setSelectedPage(range.page - 1)}>上一页</button>
+        <span>{range.start + 1}–{range.end} / {tools.length}</span>
+        <button type="button" disabled={range.page === range.pages - 1} onClick={() => setSelectedPage(range.page + 1)}>下一页</button>
+        {range.page !== range.pages - 1 ? <button type="button" onClick={() => setSelectedPage(range.pages - 1)}>最新活动</button> : null}
+      </nav>
+    ) : null}
+  </div>
   return (
     <section ref={activity} className={`work-inline-activity${expanded ? ' work-inline-activity--expanded' : ''}`} data-tool-count={tools.length}>
       {!expanded ? <button
@@ -81,24 +114,8 @@ export function WorkInlineActivity({ tools: receipts, fileContext, onOpenFile, o
         {target ? <span className="work-process__target">{target}</span> : null}
         <Icon name="chevron-right" size={12} className="work-inline-activity__chevron" />
       </button> : null}
-      {presence.present ? <div className="ui-motion-collapse" {...presence.motionProps}><div className="ui-motion-collapse__content">
-        <div id={detailId} className="process__body work-inline-activity__body" role="region" aria-label="活动详情">
-          {groups.map(group => (
-            <div className="work-inline-activity__item" key={group[0].id}>
-              {group.length > 1 ? <WorkActivityGroup tools={group} fileContext={fileContext} revealTool={revealTool}>
-                {group.map(renderTool)}
-              </WorkActivityGroup> : renderTool(group[0])}
-            </div>
-          ))}
-          {range.pages > 1 ? (
-            <nav className="work-inline-activity__pages" aria-label="活动分页">
-              <button type="button" disabled={range.page === 0} onClick={() => setSelectedPage(range.page - 1)}>上一页</button>
-              <span>{range.start + 1}–{range.end} / {tools.length}</span>
-              <button type="button" disabled={range.page === range.pages - 1} onClick={() => setSelectedPage(range.page + 1)}>下一页</button>
-              {range.page !== range.pages - 1 ? <button type="button" onClick={() => setSelectedPage(range.pages - 1)}>最新活动</button> : null}
-            </nav>
-          ) : null}
-        </div>
+      {expanded ? body : presence.present ? <div className="ui-motion-collapse" {...presence.motionProps}><div className="ui-motion-collapse__content">
+        {body}
       </div></div> : null}
     </section>
   )

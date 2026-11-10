@@ -34,7 +34,16 @@
 }
 :root .ui-motion-collapse[data-motion-state='closing'] { transition-duration: var(--motion-exit); }
 .ui-motion-collapse__content { min-width: 0; min-height: 0; overflow: clip; }
-.ui-motion-collapse[data-motion-state='open'] > .ui-motion-collapse__content { overflow: visible; }
+/* "open" starts the height transition; it does not mean the occupied height
+ * has settled. Keep paint inside that changing height, then release shadows
+ * and focus outlines without measuring layout or scheduling React updates. */
+.ui-motion-collapse[data-motion-state='open'] > .ui-motion-collapse__content {
+  overflow: visible;
+  animation: ui-collapse-clip var(--motion-enter) step-end;
+}
+@keyframes ui-collapse-clip {
+  from, to { overflow: clip; }
+}
 
 /* Backdrops fade in place; only their bounded content slides. Moving a full
  * window overlay would uncover an edge and makes the whole desktop wobble. */

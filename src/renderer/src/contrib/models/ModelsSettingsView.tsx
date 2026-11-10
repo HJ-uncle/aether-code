@@ -68,7 +68,7 @@ export function ModelsSettingsView(): JSX.Element {
       {loading && !loaded ? (
         <div className="settings-view__saved">加载中…</div>
       ) : models.length === 0 && ready ? (
-        <div className="notice">尚未配置模型，可添加模型或确认引擎已设置默认模型。</div>
+        <div className="notice">尚未配置模型，请先添加模型。</div>
       ) : models.length > 0 ? (
         <SettingsGroup title="已配置的模型">
           {models.map((model) => (

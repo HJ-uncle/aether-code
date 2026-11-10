@@ -20,7 +20,7 @@ const ownedSessions = new Set([taskA, taskB])
 const errors: string[] = [], chats: Record<string, unknown>[] = [], bindings: Record<string, unknown>[] = []
 const reads: Array<{ sessionId: string; path: string }> = []
 interface UploadedFile { sessionId: string; path: string; bytes: Buffer; type: string }
-interface SavedSource { path: string; name: string; type: string; size: number }
+interface SavedSource { path: string; name: string; type: string; size: number; attachmentId?: string }
 interface SavedTask { id: string; draft: string; mentions: Array<Record<string, unknown>>; sources: SavedSource[]; attachments: SavedSource[] }
 const uploads: UploadedFile[] = [], files = new Map<string, UploadedFile>()
 const histories = new Map<string, EngineHistoryRow[]>(), runs = new Map<string, RootRun[]>()
@@ -127,7 +127,11 @@ const server = createServer((request, response) => { void (async () => {
       userMessageId: `paste-user-${owner}-${historyGeneration}-${ordinal}`, assistantMessageId: `paste-assistant-${owner}-${historyGeneration}-${ordinal}`, seq: ordinal, version: 1,
       status: 'running', modelId: model, pending: [], workspacePaths: [roots.get(owner)!], createdAt: now, updatedAt: now, startedAt: now }
     const attachments = Array.isArray(input.attachments) ? input.attachments.flatMap(file => isRecord(file) && typeof file.name === 'string'
-      ? [{ name: file.name, type: typeof file.type === 'string' ? file.type : 'application/octet-stream' }] : []) : []
+      ? [{ name: file.name, type: typeof file.type === 'string' ? file.type : 'application/octet-stream',
+        displayName: typeof file.displayName === 'string' ? file.displayName : undefined,
+        size: typeof file.size === 'number' ? file.size : undefined,
+        attachmentId: typeof file.attachmentId === 'string' ? file.attachmentId : undefined,
+        referenceLabel: typeof file.referenceLabel === 'string' ? file.referenceLabel : undefined }] : []) : []
     const user: EngineHistoryRow = { id: run.userMessageId, role: 'user', content: input.message, createdAt: now,
       conversationId: run.turnId, metadata: { rootRunId: run.runId, attachments } }
     const assistant: EngineHistoryRow = { id: run.assistantMessageId, role: 'assistant', content: 'PASTE_SENT_OK：已收到本次资料引用。',
@@ -345,19 +349,21 @@ test.describe.serial('Work 长文本粘贴与资料引用', () => {
     const stored = await savedTask(), source = stored.sources[0]
     expect(stored.attachments).toEqual([]); expect(stored.mentions).toHaveLength(1)
     expect(stored.draft).not.toContain('原文_END')
-    await composer().getByRole('button', { name: `查看引用：${source.name}`, exact: true }).click()
+    await composer().getByRole('button', { name: '查看引用：附件1', exact: true }).click()
     await expect(sourcePanel()).toBeVisible()
     await expect(sourcePanel().getByRole('option', { name: source.name, exact: false })).toHaveAttribute('aria-selected', 'true')
     await expect(sourcePanel()).toContainText('精确原文_START'); await expect(sourcePanel()).toContainText('原文_END')
     await expect.poll(() => reads.some(read => read.sessionId === taskA && read.path === file.path)).toBe(true)
     const request = await send(), message = String(request.message)
     expect(request.sessionId).toBe(taskA)
-    expect(request.attachments).toEqual([{ name: file.path, type: file.type }])
+    expect(source.attachmentId).toEqual(expect.stringMatching(/\S+/))
+    expect(request.attachments).toEqual([{ name: file.path, type: file.type,
+      displayName: source.name, size: file.bytes.length, attachmentId: source.attachmentId, referenceLabel: '附件1' }])
     expect(message).not.toContain(original); expect(message).not.toContain('原文_END')
     expect(message.split('\n<!--aether-refs:')[0].split(file.path)).toHaveLength(2)
     expect((await savedTask()).sources.map(item => item.path)).toContain(file.path)
     const userMessage = work().locator(`[data-message-id="${latestRun(taskA)!.userMessageId}"]`)
-    const sentReference = userMessage.getByRole('button', { name: `查看引用：${source.name}`, exact: true })
+    const sentReference = userMessage.getByRole('button', { name: '查看引用：附件1', exact: true })
     await expect(sentReference).toHaveCount(1); await expect(sentReference).toBeVisible()
     // The fixture also returns the real attachment receipt in the user row.
     // A zero attachment strip therefore verifies deduplication, not absent data.
@@ -381,7 +387,7 @@ test.describe.serial('Work 长文本粘贴与资料引用', () => {
     await composer().fill('引用前 引用后'); await selectText(4); await exactPaste(original)
     await expect(chips()).toHaveCount(1)
     const source = (await savedTask()).sources[0]
-    await composer().getByRole('button', { name: `查看引用：${source.name}`, exact: true }).click()
+    await composer().getByRole('button', { name: '查看引用：附件1', exact: true }).click()
     await expect(sourcePanel()).toBeVisible()
     await adjacentToChip('after'); await page.keyboard.press('Backspace')
     await expect(chips()).toHaveCount(0)
@@ -539,7 +545,11 @@ test.describe.serial('Work 长文本粘贴与资料引用', () => {
     await expect.poll(() => chats.length).toBe(sentBefore + 1)
     await expect(work()).toContainText('PASTE_SENT_OK')
     const request = chats[sentBefore]
-    expect(request.sessionId).toBe(file.sessionId); expect(request.attachments).toEqual([{ name: file.path, type: file.type }])
+    expect(request.sessionId).toBe(file.sessionId)
+    expect(state.homeSources[0].attachmentId).toEqual(expect.stringMatching(/\S+/))
+    expect(request.attachments).toEqual([{ name: file.path, type: file.type,
+      displayName: state.homeSources[0].name, size: file.bytes.length,
+      attachmentId: state.homeSources[0].attachmentId, referenceLabel: '附件1' }])
     expect(String(request.message)).not.toContain(original)
     expect((await savedTask(file.sessionId)).sources.map(source => source.path)).toEqual([file.path])
     const migrated = await page.evaluate(key => JSON.parse(localStorage.getItem(key) ?? '{}') as { homeSources: unknown[]; homeAttachments: unknown[]; homeMentions: unknown[] }, storageKey)

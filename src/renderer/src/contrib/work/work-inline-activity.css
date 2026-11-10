@@ -32,7 +32,7 @@
 .compact-tool-row--files .logline__file { display: inline; margin-right: 12px; }
 .compact-tool-row--files .logline__file:last-child { margin-right: 0; }
 .compact-tool-row--files .logline__file > svg { display: inline-block; margin-right: 4px; vertical-align: -2px; }
-.compact-tool-row--files .logline__file-name { color: var(--fg); }
+.compact-tool-row--files .logline__file-name { color: var(--fg-muted); }
 .compact-tool-row--files .logline__file-range,
 .compact-tool-row--files .logline__file-state { flex: 0 0 auto; color: var(--fg-muted); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .logline-hover__heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 8px; color: var(--fg-muted); font-size: 11px; }

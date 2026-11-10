@@ -1,0 +1,207 @@
+.composer-options { position: relative; flex: 0 0 auto; min-width: 0; }
+.composer-options__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-round);
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.composer-options__trigger > svg { width: 16px; height: 16px; }
+.composer-options__trigger:hover:not(:disabled),
+.composer-options__trigger.is-open { background: var(--bg-hover); color: var(--fg-strong); }
+.composer-options__trigger:disabled { opacity: .62; cursor: default; }
+.popover__panel.composer-options-panel { max-width: calc(100vw - 16px); }
+
+/* Keep text fully opaque while the preference sheet slides into place. */
+:root .composer-options-panel[data-motion-state] { opacity: 1; transition-property: translate; }
+.composer-options__popup {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 24px);
+  min-width: 0;
+  padding: 12px 14px;
+  overflow: hidden;
+  color: var(--fg);
+  font: 13px/1.5 var(--font-ui);
+}
+.composer-options__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  gap: 12px;
+  min-height: 28px;
+  padding-bottom: 8px;
+  color: var(--fg-strong);
+  font-size: 13px;
+  font-weight: 600;
+}
+.composer-options__header > :is(h2, h3) { margin: 0; font: inherit; }
+.composer-options__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin-right: -4px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  color: var(--fg-muted);
+  background: transparent;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.composer-options__close > svg { width: 16px; height: 16px; }
+.composer-options__close:hover { background: var(--bg-hover); color: var(--fg-strong); }
+
+/* Settings may scroll in a short window while the close and workspace actions
+ * remain available. The extra inset leaves room for keyboard focus outlines. */
+.composer-options__settings {
+  min-height: 0;
+  margin-inline: -2px;
+  padding-inline: 2px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.composer-options__row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 10px;
+  min-width: 0;
+  padding-block: 10px;
+  color: var(--fg-muted);
+}
+.composer-options__settings > .composer-options__row:first-child { padding-top: 2px; }
+.composer-options__settings > .composer-options__row ~ .composer-options__row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 26px;
+  height: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+.composer-options__row > svg { grid-row: 1; grid-column: 1; width: 16px; height: 16px; }
+.composer-options__text { display: contents; }
+.composer-options__title { grid-row: 1; grid-column: 2; min-width: 0; color: var(--fg-strong); font-size: 13px; font-weight: 500; }
+.composer-options__summary {
+  grid-row: 2;
+  grid-column: 2 / -1;
+  min-width: 0;
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.composer-options__workspace { flex: none; margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--border); }
+.composer-options__workspace .composer-options__row { padding-block: 2px; }
+.composer-options__dd { position: relative; grid-row: 1; grid-column: 3; min-width: 0; max-width: 184px; justify-self: end; }
+.composer-options__dd-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-height: 28px;
+  max-width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg);
+  font: 12px/1.5 var(--font-ui);
+  text-align: right;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.composer-options__dd-btn > span { min-width: 0; overflow-wrap: anywhere; }
+.composer-options__dd-btn:hover:not(:disabled),
+.composer-options__dd-btn.is-open { background: var(--bg-hover); color: var(--fg-strong); }
+.composer-options__dd-btn:disabled { opacity: .4; cursor: default; }
+.composer-options__dd-caret { flex: none; width: 16px; height: 16px; color: var(--fg-muted); }
+.composer-options__index-action { grid-row: 1; grid-column: 3; justify-self: end; min-width: 70px; justify-content: center; }
+.composer-options__index-action:disabled { opacity: 1; color: var(--fg-muted); }
+.composer-options__index-action > svg { flex: none; width: 16px; height: 16px; }
+.composer-options__trigger:focus-visible,
+.composer-options__close:focus-visible,
+.composer-options__dd-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.composer-options__dd-menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--menu-row-gap);
+  max-height: calc(100dvh - 24px);
+  padding: var(--menu-padding);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.composer-options__dd-item {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: var(--menu-icon-gap);
+  width: 100%;
+  min-height: var(--menu-row-height);
+  padding: var(--menu-row-padding);
+  border: 0;
+  border-radius: var(--menu-row-radius);
+  background: transparent;
+  color: var(--fg-strong);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.composer-options__dd-item:hover:not(:disabled) { background: var(--menu-hover-bg); }
+.composer-options__dd-item.is-active { background: var(--menu-selected-bg); }
+.composer-options__dd-icon { flex: 0 0 16px; width: 16px; height: 16px; align-self: flex-start; margin-top: 2px; color: var(--fg-muted); }
+.composer-options__dd-check { display: inline-flex; flex: 0 0 16px; width: 16px; color: var(--accent); }
+.composer-options__dd-item:focus-visible { outline: 1px solid var(--list-focus-outline); outline-offset: -1px; }
+.composer-options__dd-item:disabled { opacity: .45; cursor: default; }
+.composer-options__dd-text { display: flex; flex-direction: column; flex: 1; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.composer-options__dd-label { font-size: var(--menu-title-size); font-weight: 500; }
+.composer-options__dd-hint { color: var(--fg-muted); font-size: var(--menu-description-size); line-height: 1.5; }
+.composer-options__error { padding: 0 0 10px 26px; color: var(--warn); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.composer-options__error button,
+.composer-options__summary button {
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.composer-options__error button:hover:not(:disabled),
+.composer-options__summary button:hover:not(:disabled) { color: var(--fg-strong); }
+.composer-options__error button:disabled,
+.composer-options__summary button:disabled { opacity: .45; cursor: default; }
+.composer-options__error button:focus-visible,
+.composer-options__summary button:focus-visible,
+.composer-options__diagnostics summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.composer-options__diagnostics { margin-top: 6px; color: var(--fg-muted); font-size: 11px; overflow-wrap: anywhere; }
+.composer-options__diagnostics summary { cursor: pointer; }
+.composer-options__diagnostics > div { margin-top: 4px; white-space: pre-wrap; }
+@media (max-width: 380px) {
+  .composer-options__popup { padding-inline: 10px; }
+  .composer-options__dd { max-width: 45vw; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .composer-options__trigger, .composer-options__close,
+  .composer-options__dd-btn, .composer-options__dd-item { transition: none; }
+}

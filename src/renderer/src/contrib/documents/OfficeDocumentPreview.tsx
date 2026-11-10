@@ -3,7 +3,7 @@ import { DOCUMENT_LIMITS, previewErrorMessage } from './document-kind'
 import { prepareOfficeArchiveOffThread } from './office-archive-client'
 import { cacheOfficePreview, getOfficePreview, type CachedOfficePreview } from './office-preview-cache'
 import { documentFrame, passiveDocumentHtml } from './document-html'
-import { PreviewMessage, PreviewZoom, usePreviewWidth, useStablePreviewWidth } from './preview-controls'
+import { PreviewCapabilityNotice, PreviewMessage, PreviewZoom, usePreviewWidth, useStablePreviewWidth } from './preview-controls'
 import { readPptxNotesForPreview, type PptxNotesPreview } from './pptx-notes'
 import { bridgeFrameSelection } from './document-selection'
 import { officeVisiblePage } from './office-visible-page'
@@ -169,6 +169,9 @@ export default function OfficeDocumentPreview({ data, kind, name, sessionKey, ac
     return () => observer.disconnect()
   }, [active, layoutReady, pages.length, data, cacheKey])
   const note = state.notes?.[visiblePage - 1]
+  // Page detection depends on the body's viewport. Keep the notes slot across
+  // pages so empty/short notes cannot resize that viewport and select a different page.
+  const hasNotes = Boolean(state.notesError || state.notes?.some(item => item.text || item.truncated))
   useEffect(() => {
     const element = body.current
     if (!element || !active || pages.length < 2) return
@@ -186,7 +189,10 @@ export default function OfficeDocumentPreview({ data, kind, name, sessionKey, ac
   if (state.error) return <PreviewMessage error={state.error} onRetry={onRetry} />
   if (!pages.length) return <PreviewMessage />
   return <>
-    <PreviewZoom zoom={zoom} onZoom={setZoom} note={kind === 'docx' ? '连续内容预览 · 分页以 Word 为准' : undefined} />
+    <div className="document-preview__header">
+      <PreviewCapabilityNotice kind={kind} />
+      <PreviewZoom zoom={zoom} onZoom={setZoom} />
+    </div>
     <div className="document-preview__body document-preview__body--continuous" ref={body}
       data-document-pages={kind === 'pptx' ? pages.length : undefined} data-document-sections={kind === 'docx' ? pages.length : undefined}>
       {layoutReady ? <div className="document-preview__continuous-content" style={{ minHeight: totalHeight }}>
@@ -194,11 +200,12 @@ export default function OfficeDocumentPreview({ data, kind, name, sessionKey, ac
           height={pageHeight(pageHeights[index] ?? estimatedHeight, scale)} retained={retainedPages.has(index)} active={active} onSize={rememberHeight} />)}
       </div> : <PreviewMessage />}
     </div>
-    {state.notesError || note && (note.text || note.truncated) ? <details className="document-preview__notes" open={notesOpen}
+    {hasNotes ? <details className="document-preview__notes" open={notesOpen}
       onToggle={event => setNotesOpen(event.currentTarget.open)}>
       <summary>备注 · 第 {visiblePage} 页</summary>
       <div key={visiblePage} className="document-preview__notes-content" data-presentation-notes={visiblePage} aria-label={`第 ${visiblePage} 页备注`}>
-        {state.notesError ? <p className="document-preview__notes-limit" role="status">{state.notesError}</p> : note?.text}
+        {state.notesError ? <p className="document-preview__notes-limit" role="status">{state.notesError}</p>
+          : note?.text || <span className="document-preview__notes-empty">本页暂无备注</span>}
         {note?.truncated ? <p className="document-preview__notes-limit">备注较长，当前显示前 {note.text.length.toLocaleString()} 个字符。</p> : null}
       </div>
     </details> : null}

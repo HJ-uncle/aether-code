@@ -44,6 +44,8 @@ import { useWorkController } from './work-runtime'
 import { WorkBrowser } from './WorkBrowser'
 import { WorkComposer as WorkComposerV2 } from './WorkComposer'
 import { WorkReferenceProvider, useWorkReferenceNavigation } from './WorkReferenceNavigation'
+import { ImageConversationProvider } from '../chat/image-conversation'
+import { ToolImageGalleryProvider } from '../chat/ToolImageGalleryProvider'
 import { WorkNextTurnQueuePanel } from './WorkNextTurnQueue'
 import { WorkTaskActions } from './WorkTaskActions'
 import { WorkSelectionCheckbox } from './WorkSelectionCheckbox'
@@ -665,6 +667,9 @@ export function WorkView(): JSX.Element {
   )
 
   return (
+    <ImageConversationProvider active={appMode === 'work' && Boolean(controller.securitySessionId)}
+      value={{ scope: JSON.stringify([getEngineSource(), task?.id ?? 'home', controller.securitySessionId, controller.workspacePath]), addImage: controller.addImage }}>
+    <ToolImageGalleryProvider messages={controller.messages} source={getEngineSource()} sessionId={controller.securitySessionId ?? ''} active={appMode === 'work'}>
     <WorkReferenceProvider controller={controller} onSources={() => openWorkspace('sources')}
       onWorkspaceFile={path => openArtifact(`path:${path}`)} onArtifact={openArtifact}
       onBrowser={tabId => { selectBrowserTab(tabId); openWorkspace('browser') }}
@@ -999,6 +1004,7 @@ export function WorkView(): JSX.Element {
       </main>
     </div>
     </WorkReferenceProvider>
+    </ToolImageGalleryProvider></ImageConversationProvider>
   )
 }
 
@@ -1124,6 +1130,7 @@ function Conversation({
 }): JSX.Element {
   const { engine } = useApp()
   const task = controller.activeTask!
+  const taskRunning = controller.streaming || controller.launching || ['running', 'waiting'].includes(task.status)
   const positionKey = `${getEngineSource()}:${task.id}`
   const scrollRef = useRef<HTMLDivElement>(null)
   const followRef = useRef(conversationPositions.get(positionKey)?.follow ?? true)
@@ -1223,12 +1230,11 @@ function Conversation({
     id: group.id, identity: group.identity,
     owners: group.messages.flatMap(message => [message.conversationId ? `conversation:${message.conversationId}` : '', message.runId ? `run:${message.runId}` : '']).filter(Boolean)
   }))), [controller.assignTodos, conversationGroups, controller.todos])
-  // Legacy and interrupted turns have durable edits but no published manifest.
-  // Keep their review entry without promoting those edits to final deliveries.
-  const receiptGroups = useMemo(() => conversationGroups.filter(group => {
-    const answer = group.messages.findLast(message => message.role === 'assistant')
-    return answer && !getMessageFinalResult(answer, task.id)
-  }), [conversationGroups, task.id])
+  // Published deliveries list selected assets; every turn still needs its full
+  // file-change ledger for the result summary and review after completion.
+  const receiptGroups = useMemo(() => conversationGroups.filter(group =>
+    group.messages.some(message => message.role === 'assistant')
+  ), [conversationGroups])
   const receiptTools = useMemo(() => receiptGroups.flatMap(group => group.messages.flatMap(message => message.tools)), [receiptGroups])
   const progress = useWorkProgressChanges(task.id, receiptTools, task.workspacePath, active && receiptGroups.length > 0, receiptGroups)
   const turnChanges = useMemo(() => workTurnProgressChanges(task.id, conversationGroups, progress.changes, task.workspacePath),
@@ -1631,6 +1637,8 @@ function Conversation({
           {visibleConversationGroups.map((group, index) => {
             const selected = selectedIds.has(group.id)
             const finalMessage = group.messages.findLast(message => message.role === 'assistant')
+            // Results belong to the settled turn, including when a later turn is running.
+            const turnRunning = Boolean(finalMessage && workMessageRunning(finalMessage))
             // Supplements share the reply, but regeneration belongs to the
             // original admission. Partial history must not retry a supplement.
             const originalMessage = group.messages.find(message => message.role === 'user' && !message.rootFollowup &&
@@ -1687,11 +1695,12 @@ function Conversation({
                       : message.tools.some(tool => tool.id === activitySelection.toolId)) ? activitySelection : null}
                   />
                 ))}
-                {finalResult?.items.length ? <WorkFinalDeliverables result={finalResult} active={active} onOpenItem={onOpenFinalItem} /> : null}
-                {turnTodos.has(group.id) ? <WorkTodoProgress todos={turnTodos.get(group.id)!} running={Boolean(finalMessage && workMessageRunning(finalMessage))} /> : null}
-                {!finalResult && turnChanges.get(group.id)?.length ? <WorkProgressPanel sessionId={task.id} turnKey={group.id}
+                {!turnRunning && finalResult?.items.length ? <WorkFinalDeliverables result={finalResult} active={active} onOpenItem={onOpenFinalItem} /> : null}
+                {turnRunning && turnTodos.has(group.id) ? <WorkTodoProgress todos={turnTodos.get(group.id)!} running={turnRunning} /> : null}
+                {!turnRunning && turnChanges.get(group.id)?.length ? <WorkProgressPanel sessionId={task.id} turnKey={group.id}
                   changes={turnChanges.get(group.id)!} workspacePath={task.workspacePath}
-                  streaming={controller.streaming || controller.launching || ['running', 'waiting'].includes(task.status)} sync={progress}
+                  streaming={taskRunning} sync={progress}
+                  onDisclosureLayout={followBottom}
                   scopedToTurn={workProgressTurnScope(task.id, group).kind === 'turn'} onOpenFile={openActivityFile} onOpenChange={openChange}
                   onShowChanges={() => onOpenArtifacts({ sessionId: task.id, turnScope: workProgressTurnScope(task.id, group) })} /> : null}
               </section>
@@ -1702,7 +1711,7 @@ function Conversation({
           <WorkTurnFeedback controller={controller} announce={!showPinnedFeedback} openActivity={openActivity}
             onVisibilityChange={setInlineFeedbackVisible} />
           {receiptGroups.length ? <WorkProgressSync state={progress} /> : null}
-          {turnTodos.has('') ? <WorkTodoProgress todos={turnTodos.get('')!} running={controller.streaming || controller.launching || ['running', 'waiting'].includes(task.status)} /> : null}
+          {taskRunning && turnTodos.has('') ? <WorkTodoProgress todos={turnTodos.get('')!} running={taskRunning} /> : null}
         </div>
       </div>
       </div>

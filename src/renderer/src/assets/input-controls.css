@@ -40,6 +40,17 @@
   color: var(--input-disabled-fg);
 }
 
+/* 访问权限是工具条上的菜单按钮，不应被通用输入框基线重新加上边框。 */
+:root .input-composer.chat__surface .composer-access-picker .select__trigger {
+  border: 0;
+  background: transparent;
+}
+
+:root .input-composer.chat__surface .composer-access-picker .select__trigger:hover:not(:disabled),
+:root .input-composer.chat__surface .composer-access-picker .select__trigger[aria-expanded='true'] {
+  background: var(--bg-hover);
+}
+
 /* Shell aliases cover older markup as well as explicitly marked components.
    They deliberately leave layout, spacing and a composer's resting shadow to
    the feature, so a form field cannot accidentally resize a chat editor. */
@@ -83,11 +94,11 @@
    attach or send button returns the shell to rest and highlights that button. */
 :root .ui-input-shell:has(.ui-input-field:focus-visible) {
   outline: none;
-  box-shadow: var(--focus-ring);
+  box-shadow: var(--input-focus-shadow, var(--focus-ring));
 }
 
 :root .ui-input-shell:has(.ui-input-field:focus-visible):not(:has([aria-invalid='true'])) {
-  border-color: var(--accent);
+  border-color: var(--input-focus-border, var(--accent));
 }
 
 :root .ui-input-field,

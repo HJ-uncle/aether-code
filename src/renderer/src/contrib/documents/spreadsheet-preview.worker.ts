@@ -3,6 +3,7 @@ import { DOCUMENT_LIMITS } from './document-kind'
 import { prepareOfficeArchive } from './office-archive'
 import { type SpreadsheetRequest, type SpreadsheetResponse } from './spreadsheet-preview-contract'
 import { spreadsheetThemeColors } from './spreadsheet-style'
+import { readSpreadsheetCharts } from './spreadsheet-charts'
 import { buildSpreadsheetLayout, buildSpreadsheetPage, prepareSpreadsheetPageSource, spreadsheetRequestValid, type SpreadsheetPageSource } from './spreadsheet-page'
 
 let workbook: Workbook | null = null
@@ -30,7 +31,8 @@ onmessage = (event: MessageEvent<SpreadsheetRequest>): void => {
       sources = next.worksheets.map(prepareSpreadsheetPageSource)
       themeColors = spreadsheetThemeColors((next as Workbook & { _themes?: { theme1?: unknown } })._themes?.theme1)
       const layouts = sources.map(buildSpreadsheetLayout)
-      reply({ kind: 'loaded', sheets, layouts })
+      const charts = await readSpreadsheetCharts(message.data, next, layouts)
+      reply({ kind: 'loaded', sheets, layouts, charts })
     } else if (message.kind === 'page' && workbook) {
       const { sheet: index, row, column, endRow, endColumn, requestId } = message
       const sheet = sources[index]

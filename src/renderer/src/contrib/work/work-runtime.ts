@@ -26,6 +26,7 @@ import { resolveConversationReference } from './work-conversation-reference'
 import { appendWorkMentions, workspaceReferenceMentions } from './work-reference-draft'
 import { buildWorkAgentMessage } from './work-agent-collaboration'
 import { draftAttachments, mergeWorkAttachments, restoreWorkAttachments, workMessageAttachments } from './work-attachments'
+import { attachmentIdentity, freezeAttachmentReferences, reorderAttachments as orderAttachments } from '../chat/attachment-references'
 import { queuedDraft, useWorkNextTurnQueue } from './work-next-turn-queue'
 import type { WorkQueueDraft } from '@shared/work-next-turn-api'
 import { ATTACHMENTS_DIRECTORY } from '@shared/attachments'
@@ -38,6 +39,7 @@ import { cancelWorkTask } from './work-task-cancel'
 import { recoverWorkTurn } from './work-turn-recovery'
 import { restoreMessageDraft } from '../chat/message-draft-merge'
 import { getAppMode } from '@renderer/core/platform/app-mode'
+import { replaceImageAttachmentReferences } from '../chat/image-attachment-reference'
 import { useWorkAgentIdentity } from './work-agent-identity'
 import {
   flushWorkDrafts,
@@ -329,7 +331,7 @@ export function useWorkController() {
     const task = getWorkState(source).tasks.find(item => item.id === activeId)
     if (!task || preparing || restartBlockingRef.current || uploadCount > 0 || !isHistoryReady(task.id)) throw new Error('任务或附件尚未就绪，草稿已保留')
     const originalDraft = getWorkDraft(source, task.id), options = optionsFor(task), pendingAttachments = [...task.attachments]
-    const sentAttachments = draftAttachments(pendingAttachments, task.sources, mentions)
+    const sentAttachments = freezeAttachmentReferences(draftAttachments(pendingAttachments, task.sources, mentions))
     const queuedModel = nextModel?.source === source && nextModel.taskId === task.id ? nextModel.modelId : undefined
     const resources = (ids: string[] | undefined): WorkQueueDraft['resources']['skills'] => ids?.length ? { kind: 'override', ids: [...ids] } : { kind: 'inherit' }
     const chosen = queuedModel === undefined ? options.model : canonicalModelId(queuedModel)
@@ -339,7 +341,8 @@ export function useWorkController() {
       resources: { skills: resources(options.skills), mcpServers: resources(options.mcpServers), knowledgeBases: resources(options.knowledgeBases) },
       thinking: options.thinkingMode === false ? { kind: 'off' } : typeof options.thinkingMode === 'string' ? { kind: 'effort', effort: options.thinkingMode } : { kind: 'inherit' },
       ...(options.subagentModel ? { subagentModel: options.subagentModel } : {}), ...(options.utilityModel ? { utilityModel: options.utilityModel } : {}),
-      attachments: sentAttachments.map(file => ({ path: file.path, name: file.name, type: file.type, size: file.size }))
+      attachments: sentAttachments.map(file => ({ path: file.path, name: file.name, type: file.type, size: file.size,
+        attachmentId: file.attachmentId, referenceLabel: file.referenceLabel }))
     }
     await nextTurnQueue.enqueue(submission)
     if (epoch !== getEngineSource()) return
@@ -364,7 +367,9 @@ export function useWorkController() {
       if (task.workspacePath) await bindSessionWorkspace(task.id, task.workspacePath)
       updateTask(task.id, { status: 'running', agentLocked: true, runStartedAt: Date.now(), updatedAt: Date.now() })
       const preserveDraft = mode !== 'composer'
-      const sentAttachments = mode === 'follow-up' ? [] : draftAttachments(task.attachments, task.sources, mentions)
+      const sentAttachments = mode === 'follow-up' ? [] : mode === 'replay'
+        ? draftAttachments(task.attachments, task.sources, mentions)
+        : freezeAttachmentReferences(draftAttachments(task.attachments, task.sources, mentions))
       const submission = {
         source,
         text,
@@ -1169,8 +1174,9 @@ export function useWorkController() {
   }, [activeTask, activeId, workspaceLocked, state.homeAttachments.length, state.homeSources.length, epoch, source, updateTask, uploadCount])
 
   const storeFiles = useCallback(
-    async (files: File[], referenceOnly = false): Promise<ChatAttachment[]> => {
+    async (files: File[], referenceOnly = false, imageEdit?: { replacePath?: string; assertCurrent: () => void }): Promise<ChatAttachment[]> => {
       if (!files.length) return []
+      imageEdit?.assertCurrent()
       assertEngineSource(epoch)
       setError(null)
       const taskId = activeId
@@ -1179,6 +1185,8 @@ export function useWorkController() {
       const task = taskId ? initial.tasks.find(item => item.id === taskId) : null
       if (taskId && !task) throw new Error('资料所属任务已不可用，请返回任务后重试')
       const root = task ? task.workspacePath : initial.homeWorkspacePath
+      if (imageEdit?.replacePath && !(task?.attachments ?? initial.homeAttachments).some(file => file.path === imageEdit.replacePath))
+        throw new Error('原图片已不在当前草稿中，请重新打开图片。')
       const remote = isRemoteEngine()
       let sessionId = taskId ?? initial.homeSessionId
       if (!sessionId) {
@@ -1236,7 +1244,9 @@ export function useWorkController() {
             timeout
           ]).finally(() => clearTimeout(timer))
           assertEngineSource(epoch)
+          imageEdit?.assertCurrent()
           const attachment: ChatAttachment = {
+            attachmentId: crypto.randomUUID(),
             path: 'relativePath' in result ? result.relativePath : result.path,
             ...('remoteUploadId' in result ? { remoteUploadId: result.remoteUploadId } : {}),
             name: file.name,
@@ -1244,22 +1254,37 @@ export function useWorkController() {
             size: result.size
           }
           updateWorkState(source, previous => {
+            imageEdit?.assertCurrent()
+            const applyImage = (attachments: ChatAttachment[]): ChatAttachment[] => {
+              if (!imageEdit?.replacePath) return mergeWorkAttachments(attachments, [attachment])
+              const original = attachments.find(file => file.path === imageEdit.replacePath)
+              if (!original) throw new Error('原图片已发送或移除，编辑结果未替换草稿。')
+              attachment.attachmentId = attachmentIdentity(original)
+              return attachments.map(file => file.path === imageEdit.replacePath ? attachment : file)
+            }
             // A completed upload belongs to its captured session even if the
             // user has selected another task while the bytes were being stored.
             const owner = previous.tasks.find(item => item.id === sessionId)
+            const originalImage = imageEdit?.replacePath
+              ? (owner?.attachments ?? previous.homeAttachments).find(file => file.path === imageEdit.replacePath) : undefined
+            if (originalImage) attachment.attachmentId = attachmentIdentity(originalImage)
             if (owner) {
               if (!remote && owner.workspacePath !== root) throw new Error('资料所属工作目录已变化，请重新添加资料')
+              const draft = imageEdit?.replacePath ? replaceImageAttachmentReferences({ text: owner.draft, mentions: owner.mentions ?? [] },
+                { path: imageEdit.replacePath }, attachment) : null
               return { ...previous, tasks: previous.tasks.map(item => item.id === owner.id
                 ? referenceOnly
                   ? { ...item, sources: mergeWorkAttachments(item.sources, [attachment]) }
-                  : { ...item, attachments: mergeWorkAttachments(item.attachments, [attachment]) }
+                  : { ...item, attachments: applyImage(item.attachments), ...(draft ? { draft: draft.text, mentions: draft.mentions } : {}) }
                 : item) }
             }
             if (taskId || previous.homeSessionId !== sessionId || previous.homeWorkspacePath !== root)
               throw new Error('资料所属任务已变化，请返回原任务后重试')
+            const draft = imageEdit?.replacePath ? replaceImageAttachmentReferences({ text: previous.homeDraft, mentions: previous.homeMentions },
+              { path: imageEdit.replacePath }, attachment) : null
             return referenceOnly
               ? { ...previous, homeSources: mergeWorkAttachments(previous.homeSources, [attachment]) }
-              : { ...previous, homeAttachments: mergeWorkAttachments(previous.homeAttachments, [attachment]) }
+              : { ...previous, homeAttachments: applyImage(previous.homeAttachments), ...(draft ? { homeDraft: draft.text, homeMentions: draft.mentions } : {}) }
           })
           uploaded.push(attachment)
         }
@@ -1279,6 +1304,19 @@ export function useWorkController() {
       if (epoch === getEngineSource() && getWorkState(source).activeTaskId === activeId) setError(messageOf(cause))
     }
   }, [storeFiles, epoch, source, activeId])
+
+  const addImage = useCallback(async (file: File, replacePath?: string): Promise<void> => {
+    const assertCurrent = (): void => {
+      assertEngineSource(epoch)
+      if (getAppMode() !== 'work' || selectedViewRef.current !== selectedView || getWorkState(source).activeTaskId !== activeId)
+        throw new Error('图片所属任务已切换，请返回原任务后重试。')
+    }
+    assertCurrent()
+    // Unlike the general file picker, an editor needs the real failure receipt
+    // so it can keep its canvas open and retain the user's annotations.
+    await storeFiles([file], false, { replacePath, assertCurrent })
+    assertCurrent()
+  }, [activeId, epoch, selectedView, source, storeFiles])
 
   const addPastedText = useCallback(async (text: string): Promise<ChatAttachment> => {
     const [file] = await storeFiles([createPastedTextFile(text)], true)
@@ -1313,6 +1351,13 @@ export function useWorkController() {
     },
     [source, activeId]
   )
+  const reorderAttachments = useCallback((ids: readonly string[]): void => {
+    assertEngineSource(epoch)
+    updateWorkState(source, previous => activeId
+      ? { ...previous, tasks: previous.tasks.map(task => task.id === activeId
+        ? { ...task, attachments: orderAttachments(task.attachments, ids) } : task) }
+      : { ...previous, homeAttachments: orderAttachments(previous.homeAttachments, ids) })
+  }, [source, activeId, epoch])
   const addReference = useCallback(
     (artifact: WorkArtifact): void => {
       const latest = getWorkDraft(source, activeId)
@@ -1443,12 +1488,14 @@ export function useWorkController() {
     chooseWorkspace,
     clearWorkspace,
     addFiles,
+    addImage,
     addPastedText,
     attachmentsForMentions,
     addMentions,
     addWorkspaceReferences,
     addConversationReference,
     removeAttachment,
+    reorderAttachments,
     removeSource,
     addSourceReference,
     setModel,

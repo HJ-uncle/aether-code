@@ -17,6 +17,7 @@ export type QueueMemorySelection =
 export interface QueueMention {
   source: 'file' | 'dir' | 'code' | 'terminal' | 'agent' | 'browser' | 'conversation'
   origin?: 'workspace' | 'attachment' | 'artifact'
+  attachmentId?: string
   displayText: string
   textOffset: number
   path?: string
@@ -27,6 +28,8 @@ export interface QueueMention {
   endColumn?: number
 }
 export interface QueueAttachmentReceipt {
+  attachmentId?: string
+  referenceLabel?: string
   kind: 'local-workspace' | 'local-scratch' | 'remote-session'
   scope: NextTurnQueueScope
   path: string

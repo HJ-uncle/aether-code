@@ -1,7 +1,7 @@
 import { useRef, useState, type JSX } from 'react'
 import type { FinalResult, FinalResultItem } from '@shared/final-result'
 import { formatSize } from '@renderer/core/editor/preview'
-import { Dialog } from '@renderer/workbench/Dialog'
+import { ImageViewerDialog } from '../chat/ImageViewerDialog'
 import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { FilePreview } from '../editor/FilePreview'
@@ -59,9 +59,8 @@ function FinalAssetPreview({ result, item, active }: { result: FinalResult; item
           : <FilePreview name={item.name} formatName={finalResultPreviewFormat(item)} path={item.path} groupId={`${result.sessionId}:${result.runId}:${item.assetId}`}
             bytes={asset.bytes} base64={asset.base64} size={item.size} active={active} />}
     </div>
-    <Dialog title={item.name} width={960} className="modal--final-result-image" open={expanded && active && current && !!src && !failure} onClose={() => setExpanded(false)}>
-      {src ? <FinalImage src={src} name={item.name} className="work-final-result__expanded" onError={() => setFailedSource(src)} /> : null}
-    </Dialog>
+    <ImageViewerDialog src={src ?? null} title={item.name} filePath={item.path}
+      open={expanded && active && current && !!src && !failure} onClose={() => setExpanded(false)} />
   </section></DocumentMenuProvider>
 }
 

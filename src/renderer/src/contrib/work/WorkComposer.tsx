@@ -33,7 +33,6 @@ import { CompletionPopover } from '@renderer/workbench/CompletionPopover'
 import type { useWorkController } from './work-runtime'
 import { flushWorkDrafts, getWorkDraft, useWorkDraft, type WorkDraft } from './work-state'
 import {
-  AttachmentChip,
   AttachmentPreviewDialog,
   type AttachmentPreview
 } from '../chat/AttachmentChip'
@@ -43,7 +42,10 @@ import { composerInputIssue } from '../chat/input-limits'
 import { useWorkReferenceNavigation } from './WorkReferenceNavigation'
 import { parseConversationLink } from '@shared/conversation-link'
 import { resolveConversationReference } from './work-conversation-reference'
+import { useImageConversation } from '../chat/image-conversation'
 import { ipcErrorMessage } from '@renderer/core/ipc-error'
+import { AttachmentStrip } from '../chat/AttachmentStrip'
+import { attachmentIdentity, attachmentReferences } from '../chat/attachment-references'
 
 type WorkController = ReturnType<typeof useWorkController>
 
@@ -63,6 +65,7 @@ export function WorkComposer({
   const composerRef = useRef<HTMLDivElement>(null)
   const workspaceButtonRef = useRef<HTMLButtonElement>(null)
   const references = useWorkReferenceNavigation()
+  const imageConversation = useImageConversation()
   const draftState = useWorkDraft(controller.draftSource, controller.activeTask?.id ?? null)
   const userDraftRef = useRef<WorkDraft | null>(null)
   const mentionsRef = useRef<Mention[]>(draftState.mentions)
@@ -75,12 +78,17 @@ export function WorkComposer({
   // the dialog is open so a click never looks like it was ignored (and avoid
   // opening multiple pickers when a user double-clicks it).
   const [workspacePicking, setWorkspacePicking] = useState(false)
-  const [preview, setPreview] = useState<AttachmentPreview | null>(null)
+  const previewScope = JSON.stringify([getEngineSource(), controller.activeTask?.id ?? 'home', controller.workspacePath])
+  const [previewState, setPreview] = useState<(AttachmentPreview & { scope: string }) | null>(null)
+  const preview = previewState?.scope === previewScope ? previewState : null
   const polishEpoch = useRef(0)
   const appMode = useAppMode()
   const draft = draftState.text
   const inputIssue = composerInputIssue(draft)
   const referencedAttachments = controller.attachmentsForMentions(draftState.mentions)
+  const currentAttachmentReferences = attachmentReferences(referencedAttachments)
+  const pendingAttachmentReferences = currentAttachmentReferences.filter(reference =>
+    controller.attachments.some(file => attachmentIdentity(file) === reference.id))
   const draftLiveRef = useRef(draft)
   const taskLiveRef = useRef(controller.activeTask?.id ?? 'home')
   const draftRevisionRef = useRef(0)
@@ -277,18 +285,18 @@ export function WorkComposer({
       >
         {controller.attachments.length ? (
           <div className="work-attachments">
-            {controller.attachments.map((file) => (
-              <AttachmentChip
-                key={file.path}
+              <AttachmentStrip
+                sessionId={controller.securitySessionId ?? undefined}
                 root={controller.workspacePath ?? null}
-                file={file}
+                references={pendingAttachmentReferences}
+                mentions={draftState.mentions}
                 onPreview={(target: ChatAttachment, src: string | null) =>
-                  references ? references.openMention({ source: 'file', origin: 'attachment', path: target.path, displayText: target.name }, undefined, target)
-                    : setPreview({ file: target, src })
+                  references && !target.type.startsWith('image/') ? references.openMention({ source: 'file', origin: 'attachment', path: target.path, displayText: target.name }, undefined, target)
+                    : setPreview({ file: target, src, scope: previewScope })
                 }
-                onRemove={() => controller.removeAttachment(file.path)}
+                onRemove={file => { inputRef.current?.removeAttachmentReferences(attachmentIdentity(file)); controller.removeAttachment(file.path) }}
+                onReorder={controller.reorderAttachments}
               />
-            ))}
           </div>
         ) : null}
         {controller.resources.skills.length +
@@ -331,6 +339,9 @@ export function WorkComposer({
         <ComposerInput
           ref={inputRef}
           value={draft}
+          attachmentReferences={currentAttachmentReferences}
+          attachmentRoot={controller.workspacePath ?? null}
+          attachmentSessionId={controller.securitySessionId ?? undefined}
           ariaLabel={home ? '任务目标' : '继续对话'}
           baseClassName="work-chat__input"
           includeMentionClass={false}
@@ -380,7 +391,7 @@ export function WorkComposer({
             addingFilesRef.current = true
             void controller.addPastedText(text).then(file => {
               if (source !== getEngineSource() || taskLiveRef.current !== taskId) { insertion.cancel(); return }
-              if (!insertion.insertMention({ source: 'file', origin: 'attachment', path: file.path, displayText: file.name })) {
+              if (!insertion.insertMention({ source: 'file', origin: 'attachment', attachmentId: attachmentIdentity(file), path: file.path, displayText: file.name })) {
                 toast.info('原文已保存到任务资料，草稿已变化，可从资料中重新引用。')
               }
             }).catch(error => {
@@ -535,7 +546,6 @@ export function WorkComposer({
                 ariaLabel="Work 使用的模型"
                 value={queueIntent ? controller.nextQueueModelId : controller.modelId}
                 defaultModelId={controller.defaultModelId}
-                defaultModelSource={controller.defaultModelSource}
                 onChange={queueIntent ? controller.setNextQueueModel : controller.setModel}
                 disabled={
                   !controller.ready ||
@@ -571,10 +581,13 @@ export function WorkComposer({
             onClose={() => setMentionQuery(null)}
           >
               <MentionRefPicker
+                open={mentionQuery !== null && appMode === 'work'}
                 root={controller.workspacePath ?? null}
+                sessionId={controller.securitySessionId ?? undefined}
+                attachments={pendingAttachmentReferences}
                 query={mentionQuery ?? ''}
                 onSelect={(mention) => {
-                  inputRef.current?.completeMention({ ...mention, origin: mention.source === 'agent' ? undefined : 'workspace' })
+                  inputRef.current?.completeMention({ ...mention, origin: mention.origin ?? (mention.source === 'agent' ? undefined : 'workspace') })
                   setMentionQuery(null)
                 }}
                 onClose={() => {
@@ -629,12 +642,14 @@ export function WorkComposer({
           onClose={() => setAgentsOpen(false)}
         />
       ) : null}
-      {preview ? (
+      {preview && appMode === 'work' ? (
         <AttachmentPreviewDialog
+          sessionId={controller.securitySessionId ?? undefined}
           root={controller.workspacePath ?? null}
           preview={preview}
           images={controller.attachments.filter((a) => a.type.startsWith('image/'))}
-          onNavigate={(file) => setPreview({ file, src: null })}
+          onNavigate={(file) => setPreview({ file, src: null, scope: previewScope })}
+          onApply={imageConversation ? file => imageConversation.addImage(file, preview.file.path) : undefined}
           onClose={() => setPreview(null)}
         />
       ) : null}

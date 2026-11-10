@@ -78,7 +78,7 @@ export const CompactToolRow = memo(function CompactToolRow({
   const statusLabel = feedback?.label ?? toolStatusLabel(quiet && state !== tool.state ? { ...tool, state } : tool)
   const visibleReadRange = quiet && state === 'done' && !visibleFiles ? readRange : undefined
   const { triggerProps, tooltip } = useHoverDetail({
-    enabled: quiet && Boolean(visibleFiles || summaryDetail || summary), label,
+    enabled: quiet && Boolean(visibleFiles || summaryDetail || summary), label, preferredSide: 'above',
     content: <>
       <div className="logline-hover__heading"><strong>{label}</strong>{visibleFiles ? <span>{visibleFiles.length} 个文件</span> : null}</div>
       {visibleFiles ? <ul className="logline-hover__files">{visibleFiles.map((file, index) => <li key={`${index}:${file.path}`}>
@@ -147,7 +147,7 @@ export const CompactToolRow = memo(function CompactToolRow({
         <div id={detailId} className="logline__detail">
           {quiet ? <WorkToolOutcome tool={tool} state={state} /> : failure ? fileContext
             ? <WorkErrorNotice error={failure} /> : <div className="message__error" role="alert">{failure}</div> : null}
-          {!duplicateWorkFailure && (result.text || result.images.length || result.browserSnapshots?.length) ? <ToolResult parsed={result} toolName={tool.name} structured={structuredResult} surfaceMode={quiet ? 'work' : 'code'} /> : null}
+          {!duplicateWorkFailure && (result.text || result.images.length || result.browserSnapshots?.length) ? <ToolResult parsed={result} toolId={tool.id} toolName={tool.name} toolArgs={tool.args} structured={structuredResult} surfaceMode={quiet ? 'work' : 'code'} /> : null}
           {detailFooter}
         </div>
       </MotionPresence>

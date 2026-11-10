@@ -60,6 +60,7 @@ export function workConversationEntries(group: WorkConversationGroup): WorkConve
   const admission = group.messages.find(message => message.role === 'user')
   const lastAssistant = group.messages.findLast(message => message.role === 'assistant')
   const hasFollowups = group.messages.some(message => isRootFollowupFor(message, admission))
+  const hasAssistantSegments = group.messages.filter(message => message.role === 'assistant').length > 1
   // Assistant IDs are renamed when a supplement splits the live stream. The
   // preceding immutable user row keeps disclosure state stable across that split.
   let precedingUser = admission?.id ?? group.id, ordinal = 0
@@ -69,7 +70,11 @@ export function workConversationEntries(group: WorkConversationGroup): WorkConve
     const prefix = `${precedingUser}:assistant:${ordinal++}`
     timelines.set(message, workMessageTimeline(message).map(segment => ({ ...segment, key: `${prefix}:${segment.key}` })))
   }
-  if (!hasFollowups || !lastAssistant) return group.messages.map(message => ({
+  // History can split ordinary tool iterations into assistant rows even without
+  // a supplement. Their progress and tools need one timeline to distinguish the
+  // final reply. Partial archives already require matching turn identities to
+  // form a group, so they can share that timeline without inventing a user row.
+  if (!lastAssistant || !hasFollowups && !hasAssistantSegments) return group.messages.map(message => ({
     key: message === lastAssistant ? `${group.id}:assistant` : message.id,
     message, segments: timelines.get(message), ...(message === lastAssistant ? { processKey: group.id } : {})
   }))
@@ -82,7 +87,7 @@ export function workConversationEntries(group: WorkConversationGroup): WorkConve
     }
   }
   return [
-    { key: admission!.id, message: admission! },
+    ...(admission ? [{ key: admission.id, message: admission }] : []),
     { key: `${group.id}:assistant`, message: lastAssistant, segments, processKey: group.id }
   ]
 }

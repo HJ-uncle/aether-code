@@ -6,7 +6,7 @@ export interface WorkQueueDraft {
   code?: import('./code-next-turn-api').CodeQueueOptions
   draft: NextTurnQueueEnvelope['draft']; model: NextTurnQueueEnvelope['model']; resources: NextTurnQueueEnvelope['resources']
   thinking: NextTurnQueueEnvelope['thinking']; subagentModel?: string; utilityModel?: string
-  attachments: { path: string; name: string; type: string; size: number; remoteUploadId?: string }[]
+  attachments: { path: string; name: string; type: string; size: number; remoteUploadId?: string; attachmentId?: string; referenceLabel?: string }[]
 }
 export type WorkQueueAction =
   | { kind: 'restart'; runId: string }

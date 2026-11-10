@@ -15,6 +15,11 @@ const inputLimitsJavascript = ts.transpileModule(readFileSync(join(directory, 'i
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
 }).outputText
 new vm.Script(`(function(exports){${inputLimitsJavascript}\n})`).runInThisContext()(inputLimits)
+const attachmentReferences = {}
+const attachmentReferencesJavascript = ts.transpileModule(readFileSync(join(directory, 'attachment-references.ts'), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+}).outputText
+new vm.Script(`(function(exports){${attachmentReferencesJavascript}\n})`).runInThisContext()(attachmentReferences)
 const settle = () => new Promise(done => setImmediate(done))
 const file = (path, remoteUploadId) => ({ path, remoteUploadId, name: path, type: 'text/plain', size: 10 })
 
@@ -58,6 +63,7 @@ function fixture() {
   const imports = {
     react,
     './input-limits': inputLimits,
+    './attachment-references': attachmentReferences,
     '@renderer/core/engine/source': {
       getEngineSource: () => source, isRemoteEngine: () => false,
       subscribeEngineSource: listener => { listeners.add(listener); return () => listeners.delete(listener) }

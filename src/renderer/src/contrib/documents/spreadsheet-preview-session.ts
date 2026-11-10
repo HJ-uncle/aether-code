@@ -1,4 +1,5 @@
 import { DOCUMENT_LIMITS, previewErrorMessage } from './document-kind'
+import type { SheetChart } from './spreadsheet-charts'
 import { SHEET_RANGE_CELL_LIMIT, type SheetLayout, type SheetPage, type SheetSummary, type SpreadsheetRequest, type SpreadsheetResponse } from './spreadsheet-preview-contract'
 
 const IDLE_SESSION_MS = 60_000
@@ -11,6 +12,7 @@ type PageRequest = Extract<SpreadsheetRequest, { kind: 'page' }>
 export interface SpreadsheetSession {
   sheets: SheetSummary[]
   layouts: SheetLayout[]
+  charts: SheetChart[][]
   page: SheetPage | null
   error: string
   pageError: string
@@ -32,6 +34,7 @@ type WorkerFactory = () => PreviewWorker
 export class SpreadsheetPreviewSession {
   sheets: SheetSummary[] = []
   layouts: SheetLayout[] = []
+  charts: SheetChart[][] = []
   page: SheetPage | null = null
   error = ''
   pageError = ''
@@ -63,6 +66,7 @@ export class SpreadsheetPreviewSession {
         this.loaded = true
         this.sheets = event.data.sheets
         this.layouts = event.data.layouts || []
+        this.charts = event.data.charts || this.sheets.map(() => [])
         if (!this.sheets.length) { this.fail('工作簿中没有可预览的工作表。'); return }
         if (this.request) this.target.postMessage(this.request)
         for (const request of this.pendingPages.values()) this.target.postMessage(request)

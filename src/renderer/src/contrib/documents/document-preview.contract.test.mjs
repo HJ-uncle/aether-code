@@ -36,7 +36,7 @@ function load(name) {
   modules.set(name, exports)
   return exports
 }
-const { documentKindFor, documentBytes, spreadsheetColumn, pdfCanvasSize, DOCUMENT_LIMITS } = load('document-kind')
+const { documentKindFor, documentBytes, spreadsheetColumn, pdfCanvasSize, documentPreviewNotice, DOCUMENT_LIMITS } = load('document-kind')
 const { inspectOfficeArchive, expandOfficeEntry, officeImagePixels, passiveOfficePart, passiveOfficeRelationship, sanitizeMergeRefs, prepareOfficeArchive } = load('office-archive')
 const { spreadsheetDisplayValue } = load('spreadsheet-value')
 const { spreadsheetCellStyle, spreadsheetColor, spreadsheetThemeColors, spreadsheetLength } = load('spreadsheet-style')
@@ -70,6 +70,16 @@ test('an explicitly present empty-string formula cache displays empty rather tha
 test('document dispatch excludes macro/legacy/unknown formats and handles uppercase extensions', () => {
   for (const kind of ['pdf', 'docx', 'xlsx', 'pptx']) assert.equal(documentKindFor('report.' + kind.toUpperCase()), kind)
   for (const name of ['readme', 'report.docm', 'report.xlsm', 'report.pptm', 'report.xls', 'report.doc', 'report.pdf.exe']) assert.equal(documentKindFor(name), null)
+})
+test('document preview notices state read-only and native fidelity boundaries', () => {
+  for (const kind of ['docx', 'xlsx', 'pptx', 'pdf']) {
+    const notice = documentPreviewNotice(kind)
+    assert.match(notice, /只读预览/)
+    assert.match(notice, /Aether/)
+  }
+  assert.match(documentPreviewNotice('docx'), /分页以 Word 为准/)
+  assert.match(documentPreviewNotice('xlsx'), /公式计算可能与 Excel 不同/)
+  assert.match(documentPreviewNotice('pdf'), /不提供编辑或批注/)
 })
 test('input requires exact byte size and rejects oversized data before decoding', () => {
   assert.deepEqual([...new Uint8Array(documentBytes('AQID', 3))], [1, 2, 3])

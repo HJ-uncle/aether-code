@@ -19,9 +19,10 @@
 .document-preview__toolbar button { font-size: 22px; line-height: 1; }
 .document-preview__toolbar button:hover { background: var(--bg-hover); }
 .document-preview__toolbar button:disabled { color: var(--fg-faint); opacity: 0.5; cursor: default; }
-.document-preview__toolbar input, .document-preview__toolbar .document-preview__zoom-select .select__trigger { min-height: 28px; border: 1px solid var(--border); border-radius: var(--radius); padding: 2px 6px; color: var(--fg); background: var(--bg-input); font: inherit; }
+.document-preview__toolbar input { min-height: 28px; border: 1px solid var(--border); border-radius: var(--radius); padding: 2px 6px; color: var(--fg); background: var(--bg-input); font: inherit; }
 .document-preview__zoom-select { min-width: 0; max-width: min(260px, 60vw); }
-.document-preview__zoom-select .select__trigger { height: 28px; }
+:root .document-preview .document-preview__toolbar .document-preview__zoom-select .select__trigger { width: auto; min-width: 0; height: var(--control-h); min-height: var(--control-h); padding: 0 var(--space-1); border: 0; border-radius: var(--radius); background: transparent; box-shadow: none; color: var(--fg-muted); font: 12px/16px var(--font-ui); }
+:root .document-preview .document-preview__toolbar .document-preview__zoom-select .select__trigger:is(:hover, [aria-expanded='true']) { color: var(--fg); }
 .document-preview__toolbar input { width: 55px; text-align: center; }
 .document-preview__toolbar input:focus-visible { border-color: var(--accent); }
 .document-preview__toolbar button:focus-visible, .document-preview__message button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -44,7 +45,7 @@
 .document-preview__table-nav { display: flex; justify-content: space-between; flex-wrap: wrap; }
 /* Files own their ink and fills. Only preview chrome follows the app theme. */
 .document-preview__body--sheet { color-scheme: light; color: var(--document-ink); background: var(--document-paper); }
-.document-preview__format-note { padding: 6px 12px; color: var(--fg-muted); font-size: 12px; border-bottom: 1px solid var(--border); }
+.document-preview__format-note { flex: none; padding: 6px 12px; color: var(--fg-muted); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; border-bottom: 1px solid var(--border); background: var(--bg-surface); }
 .document-preview__table { border-collapse: separate; border-spacing: 0; font-size: 12px; table-layout: fixed; }
 .document-preview__table th, .document-preview__table td { height: 30px; padding: 5px 10px; border-right: 1px solid var(--document-grid); border-bottom: 1px solid var(--document-grid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .document-preview__table td { background: var(--document-paper); }
@@ -57,7 +58,9 @@
 .document-preview__notes summary { min-height: 34px; padding: 8px 12px; box-sizing: border-box; cursor: pointer; font-size: 12px; line-height: 1.5; user-select: none; }
 .document-preview__notes summary:hover { background: var(--bg-hover); }
 .document-preview__notes summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
-.document-preview__notes-content { max-height: min(30vh, 180px); overflow: auto; overscroll-behavior: contain; padding: 0 12px 12px 26px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.65; }
+/* Notes must not resize the scroll viewport when its active page changes. */
+.document-preview__notes-content { height: min(30vh, 180px); box-sizing: border-box; overflow: auto; overscroll-behavior: contain; padding: 0 12px 12px 26px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.65; }
+.document-preview__notes-empty { color: var(--fg-muted); }
 .document-preview__notes-limit { margin: 8px 0 0; color: var(--fg-muted); font-size: 12px; }
 
 .document-preview__pdf-shell { position: relative; display: block; margin: 0 auto; background: var(--document-paper); }
@@ -87,7 +90,9 @@
 .document-preview__pdf-text[data-main-rotation='270'] { transform: rotate(270deg) translateX(-100%); }
 .document-preview__pdf-text-notice { position: absolute; right: 8px; bottom: 8px; z-index: 2; padding: 3px 6px; border-radius: var(--radius); background: var(--bg-surface); color: var(--fg-muted); font-size: 12px; pointer-events: none; }
 .document-preview__toolbar--zoom { justify-content: flex-end; min-height: 36px; padding-block: 3px; }
-.document-preview__zoom-note { flex: 1; color: var(--fg-muted); font-size: 12px; }
+.document-preview__header { display: flex; flex: none; align-items: flex-start; gap: var(--space-2); min-width: 0; min-height: var(--chrome-h); padding: var(--space-1) var(--space-3); border-bottom: 0.5px solid var(--border); background: var(--bg-surface); }
+.document-preview__header > .document-preview__format-note { flex: 1; align-self: center; min-width: 0; padding: 0; border: 0; background: transparent; font-size: 11px; line-height: 16px; }
+.document-preview__header > .document-preview__toolbar--zoom { flex: 0 0 auto; min-height: var(--control-h); padding: 0; }
 .document-preview__toolbar--pdf-tools { justify-content: space-between; gap: 8px; min-width: 0; }
 .document-preview__body--continuous { padding: 16px; overflow: auto; overscroll-behavior: contain; }
 .document-preview__continuous-content { min-width: 0; }

@@ -210,8 +210,28 @@ const receipt = (ordinal: number): Locator => turn(ordinal).locator(`[data-work-
 async function expectProcess(ordinal: number, open: boolean): Promise<void> {
   await expect(toggle(ordinal)).toHaveCount(1)
   await expect(toggle(ordinal)).toHaveAttribute('aria-expanded', String(open))
+  const process = turn(ordinal).locator('.work-message__process')
+  const notes = process.locator('.work-message__process-note')
+  const initialNote = notes.filter({ hasText: `LIFECYCLE_PROCESS_${ordinal}：` })
+  const answer = turn(ordinal).locator('.work-message__answer')
+  const settled = roots.find(run => run.seq === ordinal)?.status === 'succeeded'
+  await expect(turn(ordinal).locator('.work-message__body')).toHaveCount(0)
+  await expect(answer).toHaveCount(settled ? 1 : 0)
+  await expect(turn(ordinal).locator('.work-message__process-divider')).toHaveCount(settled ? 1 : 0)
+  if (settled) {
+    await expect(answer).toHaveText(finalText(ordinal))
+    await expect(turn(ordinal).getByText(finalText(ordinal), { exact: true })).toHaveCount(1)
+  }
   if (open) {
     await expect(receipt(ordinal)).toBeVisible()
+    await expect(initialNote).toHaveCount(1)
+    await expect(initialNote).toContainText(`LIFECYCLE_PROCESS_${ordinal}：正在读取参考资料。`)
+    expect(await initialNote.evaluate(note => {
+      const tool = note.closest('.work-message__process')?.querySelector('[data-work-tool-id]')
+      if (!tool) throw new Error('Missing tool after the lifecycle process note')
+      return Boolean(note.compareDocumentPosition(tool) & Node.DOCUMENT_POSITION_FOLLOWING)
+    })).toBe(true)
+    await expect(process).not.toContainText(finalText(ordinal))
     await expect(thinking(ordinal)).toBeVisible()
     await expect(thinking(ordinal)).toHaveAttribute('data-motion-state', 'open')
     await expect(thinking(ordinal)).toHaveCSS('opacity', '1')
@@ -226,6 +246,9 @@ async function expectProcess(ordinal: number, open: boolean): Promise<void> {
     expect(positions.centerDelta).toBeLessThanOrEqual(2)
   } else {
     await expect(receipt(ordinal)).toBeHidden()
+    await expect(notes).toHaveCount(0)
+    await expect(turn(ordinal)).not.toContainText(`LIFECYCLE_PROCESS_${ordinal}：`)
+    await expect(turn(ordinal)).not.toContainText('LIFECYCLE_RESUMED')
     // Thinking is a control inside the open process, never a second entry
     // beside a collapsed process or an extra keyboard stop outside it.
     await expect(thinking(ordinal)).toHaveCount(0)
@@ -487,7 +510,14 @@ test('Work process folds on completion and preserves only the current phase’s 
     await expect.poll(() => chats.length).toBe(2)
     expect(chats[1].toolResponse).toMatchObject({ requestId: 'lifecycle-permission', output: 'rejected' })
     await expect(pending).toHaveCount(0)
-    await expect(turn(1)).toContainText('LIFECYCLE_RESUMED')
+    const resumed = turn(1).locator('.work-message__process-note').filter({ hasText: 'LIFECYCLE_RESUMED' })
+    await expect(resumed).toHaveCount(1)
+    await expect(resumed).toContainText('LIFECYCLE_RESUMED：已收到选择，原轮次继续执行。')
+    expect(await resumed.evaluate(note => {
+      const tool = note.closest('.work-message__process')?.querySelector('[data-work-tool-id]')
+      if (!tool) throw new Error('Missing tool before the resumed process note')
+      return Boolean(tool.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING)
+    })).toBe(true)
     await expectProcess(1, true); await expect(thinking(1)).toHaveAttribute('aria-pressed', 'true')
     for (let request = 0; request < 2; request++) {
       await toggle(1).click(); await expectProcess(1, false)
@@ -566,6 +596,23 @@ test('Work process folds on completion and preserves only the current phase’s 
     await expectProcess(1, true)
     await toggle(2).click(); await expectProcess(2, false)
     const activity = conversation().getByRole('button', { name: '查看正在执行的活动', exact: true })
+    // Inert receipts are hidden before their collapse exits. Hover only after
+    // removal and follow-scroll settle, otherwise scrolling cancels the tooltip.
+    await expect(turn(2).locator('.work-message__process')).toHaveCount(0)
+    await activity.scrollIntoViewIfNeeded()
+    await activity.evaluate(button => new Promise<void>((resolve, reject) => {
+      let previous = '', stable = 0, frames = 0
+      const sample = (): void => {
+        const rect = button.getBoundingClientRect(), scroll = button.closest('.work-conversation__scroll')
+        const geometry = JSON.stringify([rect.x, rect.y, rect.width, rect.height, scroll?.scrollTop, scroll?.scrollHeight, scroll?.clientHeight])
+        stable = geometry === previous ? stable + 1 : 0
+        previous = geometry
+        if (stable >= 4) resolve()
+        else if (++frames >= 120) reject(new Error('Running activity layout did not settle before hover'))
+        else requestAnimationFrame(sample)
+      }
+      requestAnimationFrame(sample)
+    }))
     await expect(activity.locator('span')).toHaveText(commandInvocation.slice(0, 177) + '…')
     await expect(activity.locator('span')).toHaveCSS('white-space', 'nowrap')
     await expect(activity.locator('span')).toHaveCSS('text-overflow', 'ellipsis')

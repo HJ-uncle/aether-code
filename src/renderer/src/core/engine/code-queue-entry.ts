@@ -34,7 +34,9 @@ export function queueEntryDraft(entry: NextTurnQueueEntry): CodeQueueDraft {
     ...(envelope.subagentModel ? { subagentModel: envelope.subagentModel } : {}),
     ...(envelope.utilityModel ? { utilityModel: envelope.utilityModel } : {}),
     code: structuredClone(envelope.code), attachments: envelope.attachments.map(file => ({
-      path: file.path, name: file.name, type: file.mime, size: file.bytes
+      path: file.path, name: file.name, type: file.mime, size: file.bytes,
+      ...(file.attachmentId ? { attachmentId: file.attachmentId } : {}),
+      ...(file.referenceLabel ? { referenceLabel: file.referenceLabel } : {})
     })) }
 }
 

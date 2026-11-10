@@ -213,7 +213,9 @@ export class EngineQueueGateway implements QueueDispatchGateway {
     }
     this.assertFacts(facts)
     const kind = scope.source.mode === 'remote' ? 'remote-session' : root ? 'local-workspace' : 'local-scratch'
-    return { scope: structuredClone(scope), kind, path: name, name: file.name, mime: file.type, bytes: bytes.length, receiptId: randomUUID(), sha256: hash(bytes) }
+    return { scope: structuredClone(scope), kind, path: name, name: file.name, mime: file.type, bytes: bytes.length, receiptId: randomUUID(), sha256: hash(bytes),
+      ...(file.attachmentId ? { attachmentId: file.attachmentId } : {}),
+      ...(file.referenceLabel ? { referenceLabel: file.referenceLabel } : {}) }
   }
   editDraft(envelope: NextTurnQueueEnvelope, draft: WorkQueueDraft['draft']): NextTurnQueueEnvelope {
     const prepared = buildAgentMentionMessage(draft.text, draft.mentions)
@@ -290,7 +292,10 @@ export class EngineQueueGateway implements QueueDispatchGateway {
     if (envelope.subagentModel) body.subagentModel = envelope.subagentModel
     if (envelope.utilityModel) body.utilityModel = envelope.utilityModel
     if (envelope.attachments.length) body.attachments = envelope.attachments.map(file => ({
-      name: file.kind === 'local-workspace' ? join(envelope.workspace.identity, file.path) : file.path, type: file.mime
+      name: file.kind === 'local-workspace' ? join(envelope.workspace.identity, file.path) : file.path, type: file.mime,
+      displayName: file.name, size: file.bytes,
+      ...(file.attachmentId ? { attachmentId: file.attachmentId } : {}),
+      ...(file.referenceLabel ? { referenceLabel: file.referenceLabel } : {})
     }))
     const final = scope.source.mode === 'remote' ? await this.port.remoteBody(body, { baseUrl: facts.target.baseUrl,
       headers: await this.port.headers(facts.target.baseUrl, this.profile), signal: AbortSignal.any([facts.signal, this.controller.signal]), configuredRoot: '', target: facts.target }) : body

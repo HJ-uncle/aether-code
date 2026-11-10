@@ -1,5 +1,6 @@
-/** Real Electron Work receipts: one-line read/list/Office/command summaries, complete
- * themed hover details, keyboard disclosure, and unchanged per-file sources/stats. */
+/** Real Electron Work receipts: aligned operation/target columns across file and
+ * read/list/Office/command rows, themed hover details, keyboard disclosure, and
+ * unchanged per-file sources/stats. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page, type TestInfo } from '@playwright/test'
 import { createServer } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -29,10 +30,15 @@ const commands = [
 const invocation = (script: string): string => `cmd.exe /d /s /c ${JSON.stringify(script)}`
 const run: RootRun = { schemaVersion: 1, runId: 'tool-row-run', sessionId, turnId: 'tool-row-turn',
   userMessageId: 'tool-row-user', assistantMessageId: 'tool-row-answer', seq: 1, version: 2,
-  status: 'succeeded', modelId, pending: [], workspacePaths: [], createdAt: now, updatedAt: now + 17, finishedAt: now + 17 }
+  status: 'succeeded', modelId, pending: [], workspacePaths: [], createdAt: now, updatedAt: now + 21, finishedAt: now + 21 }
 const change: EngineFileChange = { id: 'tool-row-change', sessionId, turnId: run.turnId, runId: run.runId,
   path: `${remoteRoot}/changed.ts`, kind: 'write', oldContent: 'const value = 1;\n', newContent: 'const value = 2;\n',
   truncated: false, status: 'pending', createdAt: now + 6, toolCallId: 'write-change' }
+const presentationChange: EngineFileChange = { id: 'tool-row-presentation', sessionId, turnId: run.turnId, runId: run.runId,
+  path: `${remoteRoot}/交付/2048-项目介绍.pptx`, kind: 'write', oldContent: null, newContent: null,
+  oldHash: 'missing', newHash: `sha256:${'d'.repeat(64)}`, isNew: true,
+  truncated: false, status: 'pending', createdAt: now + 19, toolCallId: 'write-presentation' }
+const changes = [change, presentationChange]
 const metadata = { rootRunId: run.runId, turnId: run.turnId }
 const errors: string[] = [], mutations: string[] = []
 let app: ElectronApplication | undefined, page: Page, fixture = ''
@@ -85,7 +91,11 @@ function history(id: string): EngineHistoryRow[] {
       metadata, toolCall: { id: command.id, name: 'execute_cmd', args: { command: 'cmd.exe', args: ['/d', '/s', '/c', command.script] } } },
     { id: `result-${command.id}`, role: 'tool', toolCallId: command.id, content: command.output, success: command.success,
       createdAt: now + 14 + index * 2, conversationId: run.turnId, metadata: { ...metadata, success: command.success } })
-  rows.push({ id: run.assistantMessageId, role: 'assistant', content: '已读取源码、目录和办公文档，并核对命令记录。', createdAt: now + 17,
+  rows.push({ id: 'call-presentation', role: 'assistant', content: '', createdAt: now + 18, conversationId: run.turnId, metadata,
+    toolCall: { id: 'write-presentation', name: 'write_file', args: { path: presentationChange.path } } },
+  { id: 'result-presentation', role: 'tool', toolCallId: 'write-presentation', content: '演示文稿已创建', success: true,
+    createdAt: now + 19, conversationId: run.turnId, metadata: { ...metadata, success: true, change: presentationChange } })
+  rows.push({ id: run.assistantMessageId, role: 'assistant', content: '已读取源码、目录和办公文档，并核对命令记录。', createdAt: now + 21,
     conversationId: run.turnId, metadata })
   return rows
 }
@@ -112,12 +122,12 @@ const server = createServer((request, response) => { void (async () => {
     : path === '/meta' ? { version: '2.0.0', buildId: `sha256:${'e'.repeat(64)}`, protocolVersion: 1, toolProfiles: ['general', 'code'], subagentSchemaVersion: 1, instanceId: 'tool-row-fixture' }
     : path === '/api/v1/models' ? [{ id: modelId, modelId, provider: 'openai', displayName: '工具行核对模型', isEnabled: true, capabilities: { toolCalling: true } }]
     : path === '/api/v1/chat/snapshot' ? { schemaVersion: 1, sessionId: id, source: 'persisted', eventId: null, finished: true,
-      history: rows, projection: [], run: matching, runs: matching ? [matching] : [], subagentRuns: [], todos: [], changes: matching ? [change] : [], commandJobs: [] }
+      history: rows, projection: [], run: matching, runs: matching ? [matching] : [], subagentRuns: [], todos: [], changes: matching ? changes : [], commandJobs: [] }
     : path === '/api/v1/chat/status' ? { running: false, finished: true, run: matching, lastEventId: null }
     : path === '/api/v1/chat/runs' ? { runs: matching ? [matching] : [] }
     : path === '/api/v1/conversation/history' ? rows
     : path === '/api/v1/conversation/sessions' ? [{ sessionId, title, lastAt: now, messageCount: 18 }]
-    : path === '/api/v1/changes' ? matching ? [change] : []
+    : path === '/api/v1/changes' ? matching ? changes : []
     : path === '/api/v1/chat/admission/context' ? { protocolVersion: 1, tenantId: 'tool-row-fixture', sessionId: id,
       namespace: { id: 'tool-row-db', generation: 'one' }, transport: { toolProfile: request.headers['x-aether-tool-profile'] === 'code' ? 'code' : 'general', runLifetime: 'durable', subagentProtocol: 2 }, root: null, predecessor: null }
     : path === '/api/v1/subagent/runs' ? { schemaVersion: 2, runs: [], listComplete: true, hasMore: false, revision: 'empty' }
@@ -378,5 +388,58 @@ test('成功和失败命令保留cmd参数，窄窗单行省略且悬浮显示�
     }
   }
   await app!.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(1440, 900) })
+  await page.locator('html').evaluate(element => element.setAttribute('data-appearance', 'light'))
+})
+
+test('宽窄浅深主题中文件收据与其他过程行共用对齐列，悬浮和键盘焦点不移动内容', async ({}, info) => {
+  await collapseToolRows()
+  const row = (id: string): Locator => page.locator(`[data-work-tool-id="${id}"]`).locator('button.logline, button.work-file-change-row')
+  const ids = ['read-first', 'read-batch', 'list-directory', 'inspect-office', 'command-success', 'command-failure', 'write-change', 'write-presentation']
+  const geometry = async (header: Locator) => header.evaluate(element => {
+    const rect = element.getBoundingClientRect()
+    const offset = (selector: string): number => {
+      const item = element.querySelector(selector)
+      if (!item) throw new Error(`Missing receipt column ${selector}`)
+      return item.getBoundingClientRect().left - rect.left
+    }
+    return { icon: offset('.logline__icon, .work-file-change-row__icon'),
+      action: offset('.logline__name, .work-file-change-row__action'),
+      target: offset('.logline__summary, .logline__files, .work-file-change-row__name'),
+      height: rect.height, overflow: element.scrollWidth - element.clientWidth }
+  })
+  for (const width of [1440, 560]) {
+    await app!.evaluate(({ BrowserWindow }, value) => BrowserWindow.getAllWindows()[0].setContentSize(value, 900), width)
+    await expect.poll(() => page.evaluate(() => innerWidth)).toBe(width)
+    for (const appearance of ['light', 'dark']) {
+      await page.locator('html').evaluate((element, value) => element.setAttribute('data-appearance', value), appearance)
+      await page.keyboard.press('Escape'); await page.mouse.move(4, 4)
+      const reference = await geometry(row('list-directory'))
+      for (const id of ids) {
+        const header = row(id)
+        await header.scrollIntoViewIfNeeded()
+        const before = await geometry(header)
+        for (const column of ['icon', 'action', 'target'] as const)
+          expect(Math.abs(before[column] - reference[column]), `${id} ${column} at ${width}px ${appearance}`).toBeLessThanOrEqual(1)
+        expect(before.height).toBeGreaterThanOrEqual(27); expect(before.height).toBeLessThanOrEqual(29)
+        expect(before.overflow).toBeLessThanOrEqual(1)
+        await header.hover()
+        expect(await geometry(header)).toEqual(before)
+        await page.keyboard.press('Escape'); await page.mouse.move(4, 4)
+        await header.focus(); await page.keyboard.press('Tab'); await page.keyboard.press('Shift+Tab')
+        await expect(header).toBeFocused()
+        await expect.poll(() => header.evaluate(element => element.matches(':focus-visible'))).toBe(true)
+        expect(await geometry(header)).toEqual(before)
+        await page.keyboard.press('Escape')
+      }
+      await expect(row('write-change').locator('.work-file-change-row__stats')).toHaveAttribute('aria-label', '新增 1 行，删除 1 行')
+      await expect(row('command-failure').locator('.logline__status')).toBeVisible()
+      await expect(row('write-presentation').locator('.work-file-change-row__action')).toHaveText('新建文件')
+      await expect(row('write-presentation').locator('.work-file-change-row__name')).toHaveText('2048-项目介绍.pptx')
+      await expect(row('write-presentation').locator('.work-file-change-row__code')).toHaveText('U')
+      await page.mouse.move(4, 4); await page.keyboard.press('Escape')
+      await screenshot(`receipt-columns-${width}-${appearance}`, info)
+    }
+  }
+  await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 900))
   await page.locator('html').evaluate(element => element.setAttribute('data-appearance', 'light'))
 })

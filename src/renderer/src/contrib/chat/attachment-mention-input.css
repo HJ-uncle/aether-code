@@ -1,0 +1,4 @@
+/* References share the existing underline and text baseline. The attachment
+ * strip owns thumbnails; moving an inline reference keeps its identity. */
+[contenteditable='true'] .mention-chip[draggable='true'] { cursor: grab; }
+[contenteditable='true'] .mention-chip[draggable='true']:active { cursor: grabbing; }

@@ -1,5 +1,6 @@
 /** Real Electron + isolated HTTP/disk fixture: default-off memory preferences,
- * Code/Work session overrides, reset and renderer reload. No model calls.
+ * Code/Work session overrides, nested preference menus and responsive layout.
+ * Reset and renderer reload retain their disk/HTTP checks. No model calls.
  * This verifies the client contract; engine default/storage tests remain separate.
  * AETHER_E2E_APP_ENTRY selects an independently built application snapshot. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
@@ -128,6 +129,25 @@ async function settingsDialog(): Promise<Locator> {
 async function reload(): Promise<void> {
   await page.reload(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
 }
+async function setWindow(width: number, height: number): Promise<void> {
+  await app!.evaluate(({ BrowserWindow }, size) => {
+    const win = BrowserWindow.getAllWindows()[0]
+    win.setMinimumSize(520, 600); win.setContentSize(size.width, size.height)
+  }, { width, height })
+  await expect.poll(() => page.evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({ width, height })
+}
+async function setAppearance(appearance: 'light' | 'dark'): Promise<void> {
+  await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '设置', exact: true })
+  await dialog.getByRole('tab', { name: '外观', exact: true }).click()
+  await dialog.getByRole('radio', { name: appearance === 'dark' ? '深色' : '浅色', exact: true }).click()
+  await expect(page.locator('html')).toHaveAttribute('data-appearance', appearance)
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+}
+const preferencePanel = (): Locator => page.getByRole('dialog', { name: '对话偏好', exact: true })
+const preferenceRow = (label: string): Locator => preferencePanel().locator('.composer-options__settings > .composer-options__row')
+  .filter({ has: page.getByText(label, { exact: true }) })
 
 test.describe.serial('记忆默认关闭与明确开启', () => {
   test.beforeAll(async () => {
@@ -235,5 +255,119 @@ test.describe.serial('记忆默认关闭与明确开启', () => {
       { path: '/api/v1/memory/settings', body: { sessionId: id, sessionEnabled: true } },
       { path: '/api/v1/memory/settings', body: { sessionId: id, sessionEnabled: null } }
     ])
+  })
+
+  test('Code 与 Work 偏好仅保留三项设置，菜单逐层关闭，模型选择保留在输入框外侧', async () => {
+    const previousWrites = structuredClone(writes), previousDisk = disk()
+    for (const mode of ['code', 'work'] as const) {
+      await openPreference(mode)
+      const panel = preferencePanel(), surface = page.locator(`#mode-${mode}`)
+      const model = surface.locator('.model-picker .select__trigger')
+      await expect(panel.locator('.composer-options__header')).toContainText('对话偏好')
+      await expect(panel.getByText('当前模型', { exact: true })).toHaveCount(0)
+      await expect(panel.locator('.composer-options__model-summary, .model-picker')).toHaveCount(0)
+      await expect(panel.locator('.composer-options__settings > .composer-options__row .composer-options__title'))
+        .toHaveText(['本会话记忆', '思考档位', '安全模式'])
+      await expect(model).toBeVisible(); await expect(model).toBeEnabled()
+      if (mode === 'work') {
+        await expect(panel.locator('.composer-options__workspace .composer-options__index')).toHaveCount(1)
+        await expect(panel.locator('.composer-options__settings .composer-options__index')).toHaveCount(0)
+      } else await expect(panel.locator('.composer-options__workspace')).toHaveCount(0)
+
+      for (const [label, count] of [['本会话记忆', 3], ['思考档位', 4], ['安全模式', 3]] as const) {
+        const trigger = preferenceRow(label).locator('.composer-options__dd-btn')
+        await expect(trigger).toBeEnabled()
+        await expect(trigger).toHaveAttribute('aria-label', new RegExp(`^${label}：`))
+        await expect(trigger).toHaveAttribute('aria-expanded', 'false')
+        await trigger.click()
+        const child = page.getByRole('dialog', { name: label, exact: true })
+        await expect(child).toBeVisible()
+        await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+        await expect(child.getByRole('menuitem')).toHaveCount(count)
+        await expect(child.locator('[role="menuitem"][aria-current="true"]')).toHaveCount(1)
+        await page.keyboard.press('Escape')
+        await expect(child).toHaveCount(0)
+        await expect(panel).toBeVisible()
+        await expect(trigger).toHaveAttribute('aria-expanded', 'false')
+        await expect(trigger).toBeFocused()
+      }
+      // Opening and dismissing these menus must not silently choose a value.
+      await closePreference()
+      await expect(surface.getByRole('button', { name: '对话偏好', exact: true })).toBeFocused()
+      await openPreference(mode)
+      await preferencePanel().getByRole('button', { name: '关闭对话偏好', exact: true }).click()
+      await expect(preferencePanel()).toHaveCount(0)
+      await model.click()
+      await expect(page.locator('.model-select-menu').getByRole('menuitem', { name: /^不调用的测试模型/ })).toBeVisible()
+      await page.keyboard.press('Escape')
+      await expect(page.locator('.model-select-menu')).toHaveCount(0)
+    }
+    expect(writes).toEqual(previousWrites); expect(disk()).toEqual(previousDisk)
+    expect(forbidden).toEqual([])
+  })
+
+  test('对话偏好在深浅色与宽窄窗口中保留完整摘要、对齐当前值并留在页面内', async ({}, info) => {
+    const previousWrites = structuredClone(writes), previousDisk = disk()
+    for (const appearance of ['light', 'dark'] as const) {
+      await setWindow(1440, 960); await setAppearance(appearance)
+      for (const [width, height] of [[1440, 960], [640, 700]] as const) {
+        await setWindow(width, height)
+        for (const mode of ['code', 'work'] as const) {
+          await openPreference(mode)
+          const panel = preferencePanel()
+          await expect(preferenceRow('本会话记忆').locator('.composer-options__summary'))
+            .toHaveText('使用设置中的默认值。聊天历史会继续保留。')
+          await expect(preferenceRow('思考档位').locator('.composer-options__summary'))
+            .toHaveText('下一次发送请求关闭推理；当前运行沿用原设置')
+          await expect(preferenceRow('安全模式').locator('.composer-options__summary'))
+            .toHaveText('风险命令需确认；可读写工作区外文件。')
+          await expect(panel.getByRole('button', { name: '关闭对话偏好', exact: true })).toBeInViewport()
+          const geometry = await panel.evaluate(element => {
+            const rect = (node: Element) => { const bounds = node.getBoundingClientRect(); return { left: bounds.left, right: bounds.right,
+              top: bounds.top, bottom: bounds.bottom, width: bounds.width, height: bounds.height } }
+            return { panel: rect(element), width: innerWidth, height: innerHeight,
+              overflow: element.scrollWidth - element.clientWidth,
+              rows: [...element.querySelectorAll('.composer-options__settings > .composer-options__row')].map(row => {
+                const summary = row.querySelector<HTMLElement>('.composer-options__summary')!
+                const trigger = row.querySelector('.composer-options__dd-btn')!, title = row.querySelector('.composer-options__title')!
+                const style = getComputedStyle(summary)
+                return { row: rect(row), summary: rect(summary), trigger: rect(trigger), title: rect(title),
+                  summaryOverflowX: summary.scrollWidth - summary.clientWidth, summaryOverflowY: summary.scrollHeight - summary.clientHeight,
+                  whiteSpace: style.whiteSpace, ellipsis: style.textOverflow, lineClamp: style.webkitLineClamp }
+              }) }
+          })
+          expect(geometry.rows).toHaveLength(3)
+          expect(geometry.panel.left).toBeGreaterThanOrEqual(0)
+          expect(geometry.panel.right).toBeLessThanOrEqual(geometry.width)
+          expect(geometry.panel.top).toBeGreaterThanOrEqual(0)
+          expect(geometry.panel.bottom).toBeLessThanOrEqual(geometry.height)
+          expect(geometry.panel.width).toBeLessThanOrEqual(362)
+          expect(geometry.overflow).toBeLessThanOrEqual(1)
+          for (const row of geometry.rows) {
+            expect(row.summaryOverflowX).toBeLessThanOrEqual(1); expect(row.summaryOverflowY).toBeLessThanOrEqual(1)
+            expect(row.whiteSpace).not.toBe('nowrap'); expect(row.ellipsis).not.toBe('ellipsis'); expect(row.lineClamp).toBe('none')
+            expect(row.summary.left).toBeGreaterThanOrEqual(row.row.left)
+            expect(row.summary.right).toBeLessThanOrEqual(row.row.right + 1)
+            expect(row.summary.top).toBeGreaterThanOrEqual(row.title.bottom - 1)
+            expect(row.trigger.left).toBeGreaterThanOrEqual(row.title.right)
+            expect(Math.abs(row.trigger.right - geometry.rows[0].trigger.right)).toBeLessThanOrEqual(1)
+          }
+          const screenshot = info.outputPath(`composer-options-${mode}-${appearance}-${width}.png`)
+          await page.screenshot({ path: screenshot, animations: 'disabled' })
+          await info.attach(`${mode}-${appearance}-${width}`, { path: screenshot, contentType: 'image/png' })
+          for (const [label, name] of [['安全模式', 'security'], ['思考档位', 'thinking'], ['本会话记忆', 'memory']] as const) {
+            await preferenceRow(label).locator('.composer-options__dd-btn').click()
+            const menu = page.getByRole('dialog', { name: label, exact: true })
+            const menuScreenshot = info.outputPath(`composer-${name}-${mode}-${appearance}-${width}.png`)
+            await menu.screenshot({ path: menuScreenshot, animations: 'disabled' })
+            await info.attach(`${name}-${mode}-${appearance}-${width}`, { path: menuScreenshot, contentType: 'image/png' })
+            await page.keyboard.press('Escape')
+          }
+          await closePreference()
+        }
+      }
+    }
+    expect(writes).toEqual(previousWrites); expect(disk()).toEqual(previousDisk)
+    expect(forbidden).toEqual([])
   })
 })

@@ -40,3 +40,52 @@
   box-shadow: var(--focus-ring);
 }
 
+.model-select-menu .select__panel {
+  scroll-padding-block: var(--menu-padding) calc(var(--menu-row-height) + var(--space-4));
+}
+.model-select-menu:has([data-select-action='reload']) .select__panel {
+  scroll-padding-bottom: calc(2 * var(--menu-row-height) + var(--space-5));
+}
+.model-select-menu .select__item-copy { gap: 2px; }
+.model-select-menu .select__item-head { line-height: 1.5; }
+.model-select-menu .select__item-desc { font-size: 12px; }
+
+/* Keep management reachable in long lists without changing Select's shared
+ * keyboard order. Scroll padding keeps model rows clear of this footer. */
+.model-select-menu .select__actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  flex: none;
+  gap: var(--menu-row-gap) var(--space-1);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  background: var(--material-bg-solid);
+}
+.model-select-menu .select__action { justify-content: center; gap: 6px; }
+.model-select-menu [data-select-action='reload'] { grid-column: 1 / -1; }
+
+.model-picker-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 284px;
+  max-width: 100%;
+  min-width: 0;
+  color: var(--fg);
+  font: 12px/1.5 var(--font-ui);
+  white-space: normal;
+}
+.model-picker-detail__header { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.model-picker-detail__header > strong { color: var(--fg-strong); font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+.model-picker-detail__header > span { color: var(--fg-muted); }
+.model-picker-detail__facts { display: grid; gap: 6px; min-width: 0; margin: 0; }
+.model-picker-detail__facts > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 12px; align-items: baseline; }
+.model-picker-detail__facts dt { color: var(--fg-muted); }
+.model-picker-detail__facts dd { margin: 0; color: var(--fg); text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.model-picker-detail__facts dd.is-unavailable { color: var(--fg-muted); }
+.model-picker-detail__capabilities { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
+.model-picker-detail__heading { color: var(--fg-strong); font-size: 12px; font-weight: 500; }
+

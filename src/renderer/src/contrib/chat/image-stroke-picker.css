@@ -1,0 +1,57 @@
+.image-stroke-picker { flex: none; }
+.image-stroke-picker__trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--image-viewer-fg);
+  font: 12px/1 var(--font-ui);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.image-stroke-picker__trigger:hover:not(:disabled),
+.image-stroke-picker__trigger[aria-expanded='true'] { background: var(--image-viewer-hover); }
+.image-stroke-picker__trigger:disabled { opacity: .35; cursor: default; }
+.image-stroke-picker__trigger:focus-visible { outline: 2px solid var(--image-viewer-fg); outline-offset: 2px; }
+.image-stroke-picker__sample { display: flex; align-items: center; width: 28px; height: 16px; flex: none; }
+.image-stroke-picker__sample > span { display: block; width: 100%; border-radius: 999px; background: currentColor; }
+.image-stroke-picker__value { flex: none; min-width: 31px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.image-stroke-picker__value > span, .image-stroke-picker__caret { color: var(--image-viewer-muted); }
+.popover__panel.image-stroke-picker__panel {
+  border: 1px solid var(--image-viewer-border);
+  border-radius: 12px;
+  background: var(--image-viewer-chrome);
+  color: var(--image-viewer-fg);
+  box-shadow: var(--image-viewer-shadow);
+  color-scheme: dark;
+}
+.image-stroke-picker__menu { display: grid; gap: 2px; padding: 6px; }
+.image-stroke-picker__option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 36px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--image-viewer-fg);
+  background: transparent;
+  font: 13px/1 var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.image-stroke-picker__option[aria-checked='true'] { background: var(--image-viewer-selected); }
+.image-stroke-picker__option:hover { background: var(--image-viewer-hover); }
+.image-stroke-picker__option:focus-visible { outline: 1px solid var(--image-viewer-fg); outline-offset: -2px; background: var(--image-viewer-hover); }
+.image-stroke-picker__option .image-stroke-picker__sample { width: 36px; }
+.image-stroke-picker__label { flex: 1; }
+.image-stroke-picker__option .image-stroke-picker__value { color: var(--image-viewer-muted); font-size: 12px; text-align: right; }
+.image-stroke-picker__check { display: flex; width: 14px; flex: none; }
+@media (prefers-reduced-motion: reduce) {
+  .image-stroke-picker__trigger, .image-stroke-picker__option { transition: none; }
+}

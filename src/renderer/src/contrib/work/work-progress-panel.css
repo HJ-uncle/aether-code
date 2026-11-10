@@ -9,9 +9,10 @@
   color: var(--fg);
   font: 12px/1.5 var(--font-ui);
 }
+.work-progress-panel[data-result-turn-id] { container: work-result / inline-size; }
 .work-progress-panel__section { min-width: 0; padding: var(--space-3); border-radius: var(--radius-lg); background: var(--bg-inset); }
-/* Results sit above the conversation surface, like a Finder list group. */
-.work-progress-panel__section--changes { padding: var(--space-2); background: var(--bg-elevated); box-shadow: var(--shadow-control); }
+/* An inline disclosure group needs separation without a floating-card shadow. */
+.work-progress-panel__section--changes { padding: var(--space-2); background: var(--bg-elevated); box-shadow: inset 0 0 0 0.5px var(--border); }
 .work-progress-panel__section--todos { padding: var(--space-1) var(--space-2); background: transparent; }
 .work-progress-panel__todo-toggle { display: flex; align-items: center; gap: var(--space-3); width: 100%; min-height: var(--control-h-lg); padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius); background: transparent; color: var(--fg); font: inherit; text-align: left; cursor: pointer; transition: background var(--duration-fast) var(--ease-out); }
 .work-progress-panel__todo-toggle .work-progress-panel__count { margin-left: auto; }
@@ -26,27 +27,29 @@
 .work-progress-panel__heading h3 { margin: 0; font: inherit; font-weight: 600; }
 .work-progress-panel__title > span:first-child { font-weight: 600; }
 .work-progress-panel__changes { min-width: 0; }
-.work-progress-panel__changes > .work-progress-panel__heading { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--space-1); }
+.work-progress-panel__changes > .work-progress-panel__heading { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-1) var(--space-2); }
 .work-progress-panel__heading > .work-progress-panel__changes-toggle { grid-area: 1 / 1; }
 .work-progress-panel__heading > .work-progress-panel__review-summary { grid-area: 1 / 3; }
 .work-progress-panel__heading > .work-change-review--turn { display: contents; }
 .work-progress-panel__heading .work-change-review--turn > .work-change-review__actions { grid-area: 1 / 2; }
 .work-progress-panel__heading .work-change-review--turn > :not(.work-change-review__actions) { grid-column: 1 / -1; }
-.work-progress-panel__heading .work-change-review--turn .work-change-review__actions button { min-height: var(--control-h-lg); background: transparent; box-shadow: none; color: var(--fg-muted); white-space: nowrap; }
+.work-progress-panel__heading .work-change-review--turn .work-change-review__actions button { min-height: var(--control-h); background: transparent; box-shadow: none; color: var(--fg-muted); line-height: 16px; white-space: nowrap; }
 .work-progress-panel__heading .work-change-review--turn .work-change-review__actions button:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg); }
-.work-progress-panel__changes-toggle { display: flex; align-items: center; flex: 1; gap: var(--space-2); min-width: 0; min-height: var(--control-h-lg); padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; user-select: none; transition: background var(--duration-fast) var(--ease-out); }
-.work-progress-panel__changes-toggle:hover { background: var(--bg-hover); }
-.work-progress-panel__changes-toggle .work-progress-panel__title { gap: var(--space-3); font-size: 13px; }
-.work-progress-panel__review-summary { display: inline-flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; min-height: var(--control-h-lg); padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius); background: transparent; color: var(--fg-muted); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
+.work-progress-panel__changes-toggle { display: flex; align-items: center; flex: 1; gap: var(--space-2); min-width: 0; min-height: calc(var(--control-h) + var(--space-1)); padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius); background: transparent; color: inherit; font: inherit; line-height: 18px; text-align: left; cursor: pointer; user-select: none; }
+.work-progress-panel .work-progress-panel__changes-toggle:is(:hover, :active) { background: transparent; }
+.work-progress-panel__changes-toggle .work-progress-panel__title { gap: var(--space-2); overflow: hidden; font-size: 13px; white-space: nowrap; }
+.work-progress-panel__changes-toggle .work-progress-panel__title > span:first-child { flex: 0 0 auto; }
+.work-progress-panel__changes-toggle .work-progress-panel__count { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.work-progress-panel__review-summary { display: inline-flex; align-items: center; gap: var(--space-1); flex: 0 0 auto; min-height: var(--control-h); padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius); background: var(--bg-control-subtle); color: var(--fg); font: inherit; font-size: 12px; line-height: 16px; font-variant-numeric: tabular-nums; white-space: nowrap; cursor: pointer; transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
+.work-progress-panel__review-summary > svg { flex: 0 0 auto; color: var(--fg-muted); }
 .work-progress-panel__changes-chevron { flex: 0 0 auto; color: var(--fg-muted); transition: transform var(--duration-fast) var(--ease-out); }
+.work-progress-panel__changes-toggle > .work-progress-panel__changes-chevron { width: 20px; }
 .work-progress-panel__changes-toggle[aria-expanded='true'] .work-progress-panel__changes-chevron { transform: rotate(90deg); }
 .work-progress-panel__changes-body { min-width: 0; }
 .work-progress-panel__count { color: var(--fg-muted); font-size: 12px; font-weight: 400; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .work-progress-panel__todos,
 .work-progress-panel__files { list-style: none; padding: 0; margin: var(--space-2) 0 0; }
 .work-progress-panel__files { margin-top: var(--space-1); }
-.work-progress-panel__files > li + li { position: relative; }
-.work-progress-panel__files > li + li::before { content: ''; position: absolute; inset: 0 var(--space-2) auto 48px; height: 0.5px; background: var(--border); pointer-events: none; }
 .work-progress-panel__todos { padding: 0 var(--space-2) var(--space-1); margin-top: var(--space-1); }
 .work-progress-panel__todos li { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: start; gap: var(--space-2); min-height: var(--control-h); padding: var(--space-1) 0; }
 .work-progress-panel__todo-icon { display: flex; align-items: center; min-height: 19px; color: var(--fg-muted); }
@@ -55,19 +58,19 @@
 .work-progress-panel__todo-text { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .work-progress-panel__todo-status { color: var(--fg-muted); font-size: 11px; white-space: nowrap; }
 .work-progress-panel__todo-status--in_progress { color: var(--accent); }
-.work-progress-panel__file { display: flex; align-items: center; gap: var(--space-3); width: 100%; min-height: 52px; padding: var(--space-2); border: 0; border-radius: var(--radius); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; transition: background var(--duration-fast) var(--ease-out); }
+.work-progress-panel__file { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: calc(var(--control-h) + var(--space-3)); padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; transition: background var(--duration-fast) var(--ease-out); }
 .work-progress-panel__file > svg { flex: 0 0 auto; }
-.work-progress-panel__file-icon { display: grid; place-items: center; flex: 0 0 28px; height: 32px; color: var(--fg-muted); }
-.work-progress-panel__file-label { display: grid; flex: 1; gap: 2px; min-width: 0; }
-.work-progress-panel__file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 18px; font-weight: 500; }
-.work-progress-panel__file-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-muted); font-size: 11px; line-height: 16px; }
-.work-progress-panel__file-code { flex: 0 0 auto; min-width: 18px; color: var(--fg-muted); font: 500 11px/20px var(--font-mono); text-align: center; }
-.work-progress-panel__file-code[data-change-code='U'] { color: var(--git-added); }
-.work-progress-panel__file-code[data-change-code='M'] { color: var(--git-modified); }
-.work-progress-panel__file-code[data-change-code='D'] { color: var(--git-deleted); }
+.work-progress-panel__file-icon { display: grid; place-items: center; flex: 0 0 20px; height: 20px; color: var(--fg-muted); }
+/* Names and locations share a stable column; receipt metadata must not push a
+ * long location sideways into the filename or change the row's height. */
+.work-progress-panel__file-label { display: flex; flex-direction: column; justify-content: center; flex: 1; min-width: 0; overflow: hidden; }
+.work-progress-panel__file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 18px; font-weight: 400; }
+.work-progress-panel__file-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-muted); font-size: 11px; line-height: 14px; }
+.work-progress-panel__file-meta { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; flex: 0 0 auto; color: var(--fg-muted); font-size: 11px; line-height: 16px; white-space: nowrap; }
+.work-progress-panel__file-code { font: inherit; }
 .work-progress-panel__file-state,
 .work-progress-panel__file > svg:last-child { flex: 0 0 auto; color: var(--fg-muted); font-size: 11px; white-space: nowrap; }
-.work-progress-panel__file-stats { display: inline-flex; align-items: center; flex: 0 0 auto; gap: var(--space-1); font: 11px var(--font-mono); font-variant-numeric: tabular-nums; }
+.work-progress-panel__file-stats { display: inline-flex; align-items: center; flex: 0 0 auto; gap: var(--space-1); font: 11px/16px var(--font-mono); font-variant-numeric: tabular-nums; }
 .work-progress-panel__file-added { color: var(--git-added); }
 .work-progress-panel__file-removed { color: var(--git-deleted); }
 .work-progress-panel__file-estimate { color: var(--fg-muted); font-family: var(--font-ui); }
@@ -75,15 +78,21 @@
 .work-progress-panel__sync { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-1); color: var(--fg-muted); font-size: 12px; }
 .work-progress-panel__sync { margin-top: var(--space-2); }
 .work-progress-panel__sync > span { margin-right: auto; }
-.work-progress-panel__footer > span { margin-right: auto; }
-.work-progress-panel__footer { margin: var(--space-1) var(--space-2) 0; padding-top: var(--space-1); }
+.work-progress-panel__footer { margin: var(--space-1) var(--space-2) 0; padding-top: var(--space-1); border-top: 0.5px solid var(--border); }
 .work-progress-panel__footer button,
 .work-progress-panel__sync button { display: inline-flex; align-items: center; gap: var(--space-1); min-height: var(--control-h); padding: 2px 6px; border: 0; border-radius: var(--radius); background: transparent; color: var(--fg-muted); font: inherit; cursor: pointer; transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
+.work-progress-panel__footer button { justify-content: space-between; width: 100%; padding: var(--space-1) 0 var(--space-1) calc(20px + var(--space-2)); color: var(--link-fg); text-align: left; }
+.work-progress-panel .work-progress-panel__footer button:is(:hover, :active) { color: var(--link-fg); }
+.work-progress-panel__footer button > svg { flex: 0 0 auto; color: var(--fg-muted); }
 .work-progress-panel button:hover { background: var(--bg-hover); color: var(--fg); }
 .work-progress-panel button:active,
 .work-progress-panel__changes-toggle:active { background: var(--bg-active); }
 .work-progress-panel button:focus-visible,
 .work-progress-panel__changes-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@container work-result (max-width: 360px) {
+  .work-progress-panel__section--changes { padding-inline: var(--space-1); }
+  .work-progress-panel__changes > .work-progress-panel__heading { column-gap: var(--space-1); }
+}
 @media (prefers-reduced-motion: reduce) {
   .work-progress-panel button,
   .work-progress-panel__changes-toggle,

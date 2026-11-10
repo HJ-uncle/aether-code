@@ -8,6 +8,7 @@ interface HoverDetailOptions {
   content: ReactNode
   label: string
   placement?: 'vertical' | 'side'
+  preferredSide?: 'above' | 'below'
   /** Side details clear the whole owning surface, while staying aligned to the hovered row. */
   sideAnchor?: string
 }
@@ -25,7 +26,7 @@ const MARGIN = 8
 const GAP = 6
 
 /** A read-only detail surface leaves the row's click and keyboard action intact. */
-export function useHoverDetail<T extends HTMLElement = HTMLButtonElement>({ enabled, content, label, placement = 'vertical', sideAnchor }: HoverDetailOptions): {
+export function useHoverDetail<T extends HTMLElement = HTMLButtonElement>({ enabled, content, label, placement = 'vertical', preferredSide = 'below', sideAnchor }: HoverDetailOptions): {
   triggerProps: HoverDetailTriggerProps<T>
   tooltip: ReactNode
 } {
@@ -115,7 +116,11 @@ export function useHoverDetail<T extends HTMLElement = HTMLButtonElement>({ enab
         return
       }
     }
-    const side = below >= desired || below >= above ? 'below' : 'above'
+    // Long receipt lists can scroll above the row instead of covering the
+    // answer below it. Flip only when even a small readable area cannot fit.
+    const side = preferredSide === 'above'
+      ? above >= Math.min(desired, 160) || above >= below ? 'above' : 'below'
+      : below >= desired || below >= above ? 'below' : 'above'
     const maxHeight = Math.min(480, height * 0.6, side === 'below' ? below : above)
     if (maxHeight < 1) { close(); return }
     const panelHeight = Math.min(desired, maxHeight)
@@ -124,7 +129,7 @@ export function useHoverDetail<T extends HTMLElement = HTMLButtonElement>({ enab
       height - panelHeight - MARGIN))
     setPosition(previous => previous?.left === left && previous.top === top && previous.maxHeight === maxHeight && previous.side === side
       ? previous : { left, top, maxHeight, side })
-  }, [canShow, close, placement, sideAnchor])
+  }, [canShow, close, placement, preferredSide, sideAnchor])
 
   useLayoutEffect(() => {
     if (!open) return

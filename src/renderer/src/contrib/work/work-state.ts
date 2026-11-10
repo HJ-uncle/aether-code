@@ -4,6 +4,7 @@ import type { CommandJobSnapshot } from '@shared/command-job'
 import { visibleChildCommandJobs } from '../../core/engine/command-job-state'
 import { mergeFileChanges } from '../../core/engine/tool-file-changes'
 import { isStoredMention, type Mention } from '@renderer/contrib/chat/mention-context'
+import { storedAttachments } from '@renderer/contrib/chat/attachment-storage'
 import { createDraftPersistenceScheduler } from './work-draft-persistence'
 import type { RootRun, RootRunActivity, RootRunStatus } from '@shared/root-run'
 import { normalizeWorkTaskActivity, workTaskStatusFromRun } from './work-status-poller'
@@ -176,23 +177,7 @@ const emptyState = (): WorkState => ({
 })
 
 function attachments(value: unknown): ChatAttachment[] {
-  if (!Array.isArray(value)) return []
-  return (
-    value
-      .filter((item): item is ChatAttachment =>
-        Boolean(
-          item &&
-          typeof item === 'object' &&
-          typeof item.path === 'string' &&
-          typeof item.name === 'string' &&
-          typeof item.type === 'string' &&
-          typeof item.size === 'number' && Number.isFinite(item.size) && item.size >= 0
-        )
-      )
-      // Upload tokens live in the main process only. Persisted remote paths are already
-      // checked by its session-relative attachment adapter when a draft is restored.
-      .map(({ path, name, type, size }) => ({ path, name, type, size }))
-  )
+  return storedAttachments(value)
 }
 
 export function normalizeWorkState(value: unknown): WorkState {

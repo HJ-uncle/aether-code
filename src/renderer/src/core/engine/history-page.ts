@@ -21,7 +21,9 @@ export function isHistoryDisplayRow(value: unknown): value is EngineHistoryRow {
   if (value.metadata !== undefined) {
     if (!record(value.metadata)) return false
     const attachments = value.metadata.attachments
-    if (attachments !== undefined && (!Array.isArray(attachments) || attachments.some(file => !record(file) || typeof file.name !== 'string' || !optionalString(file.type) || (file.size !== undefined && (typeof file.size !== 'number' || !Number.isFinite(file.size) || file.size < 0))))) return false
+    if (attachments !== undefined && (!Array.isArray(attachments) || attachments.some(file => !record(file) || typeof file.name !== 'string' ||
+      !['type', 'displayName', 'attachmentId', 'referenceLabel'].every(key => optionalString(file[key])) ||
+      (file.size !== undefined && (typeof file.size !== 'number' || !Number.isFinite(file.size) || file.size < 0))))) return false
   }
   return true
 }

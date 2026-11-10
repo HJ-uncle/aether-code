@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { NextTurnQueueError, type NextTurnQueueEnvelope, type NextTurnQueueScope, type NextTurnQueueState, type QueueCommitResult } from '../shared/next-turn-queue'
 import { queueScopeIdentity, sameQueueScope } from '../shared/next-turn-queue-state'
+import { mergeQueueAttachmentReferences } from '../shared/queue-attachment-references'
 import type { WorkQueueDraft, WorkQueueRead } from '../shared/work-next-turn-api'
 import type { CodeQueueAction } from '../shared/code-next-turn-api'
 import { NextTurnQueueMutationService, type QueueOwnerCapability, type TrustedQueueAuthority } from './next-turn-queue-service'
@@ -310,7 +311,8 @@ export class NextTurnDispatcher {
             mentions.push(...envelope.draft.mentions.map(mention => ({ ...mention, textOffset: mention.textOffset + offset })))
             for (const file of envelope.attachments) if (!attachments.some(item => item.receiptId === file.receiptId)) attachments.push(file)
           }
-          replacements = [{ id: input.id, envelope: { ...this.gateway.editDraft(base, { text, mentions, revision: Math.max(...envelopes.map(envelope => envelope.draft.revision)) + 1 }), attachments } }]
+          const merged = mergeQueueAttachmentReferences({ text, mentions, revision: Math.max(...envelopes.map(envelope => envelope.draft.revision)) + 1 }, attachments)
+          replacements = [{ id: input.id, envelope: { ...this.gateway.editDraft(base, merged.draft), attachments: merged.attachments } }]
         }
         for (const replacement of replacements) replacement.envelope.submissionDigest = digest
         const result = await this.service.mutate(job.capability, input.expectedRevision, input.operationId,
