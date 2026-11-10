@@ -59,6 +59,7 @@ const TOOL_NAMES: Readonly<Record<string, string>> = {
   run_skill_script: '运行技能脚本',
   workbench_context: '读取工作台状态',
   workbench_open: '在工作台打开文件',
+  workbench_render: '检查幻灯片实际画面',
   search_history: '检索会话原始历史',
   remember: '记录记忆',
   recall: '记忆检索',

@@ -10,8 +10,12 @@ export function quietToolIcon(name: string): IconName {
     case 'write_file': return 'file-plus-outline'
     case 'edit_file': return 'file-edit-outline'
     case 'delete_file': return 'file-remove-outline'
-    case 'office_document': case 'office_inspect': return 'file'
-    case 'browser_screenshot': return 'image'
+    case 'office_document': return 'file-edit-outline'
+    case 'office_inspect': return 'eye-outline'
+    case 'office_environment': return 'settings'
+    case 'workbench_context': return 'layout-panel'
+    case 'workbench_open': return 'open-in-new'
+    case 'workbench_render': case 'browser_screenshot': return 'image'
     default: return name.startsWith('browser_') ? 'eye-outline' : 'output'
   }
 }

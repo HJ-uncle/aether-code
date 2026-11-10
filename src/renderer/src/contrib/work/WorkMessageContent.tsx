@@ -15,9 +15,10 @@ import { UserMessageContent } from '../chat/UserMessageContent'
 import { useCollapseMemory } from '../chat/useCollapseMemory'
 import { WorkCollaborationSummary } from './WorkCollaborationSummary'
 import { WorkInlineActivity } from './WorkInlineActivity'
+import { WorkProcessPanel } from './WorkProcessPanel'
 import { WorkToolActivity } from './WorkToolActivity'
 import { workActivityState } from './work-inline-activity-state'
-import { captureWorkCollaborationMembership, workMessageTimeline, workMessagePresentation, workTranscriptPresentation, type WorkCollaborationMembership, type WorkMessageSegment } from './work-message-timeline'
+import { captureWorkCollaborationMembership, workMessageTimeline, workMessagePresentation, workTranscriptPresentation, type WorkCollaborationMembership, type WorkMessageSegment, type WorkPresentationSegment } from './work-message-timeline'
 import { workMessageRunning } from './work-tool-presentation'
 import { workDeliveryProse } from './work-delivery-prose'
 import { parseMentionContent } from '../chat/mention-context'
@@ -81,6 +82,7 @@ export const WorkMessageContent = memo(function WorkMessageContent({
   // Pure reasoning replies still have useful content when their process is opened.
   const thinkingOpen = thinkingMemory ?? defaultThinkingOpen ?? processTools.length === 0
   const processId = `work-process-${useId().replace(/:/g, '')}`
+  const article = useRef<HTMLElement>(null)
   const processBar = useRef<HTMLDivElement>(null)
   const collapseAnchor = useRef<number | null>(null)
   const toggleProcess = (): void => {
@@ -113,12 +115,35 @@ export const WorkMessageContent = memo(function WorkMessageContent({
     const timer = window.setTimeout(() => setCopied(false), 1800)
     return () => window.clearTimeout(timer)
   }, [copied])
+  const renderProcess = (segment: Extract<WorkPresentationSegment, { kind: 'process' }>): ReactNode => segment.segments.map(item => item.kind === 'tools' ? (
+    <WorkInlineActivity key={item.key} tools={item.tools} fileContext={fileContext} onOpenFile={onOpenFile} onOpenChange={onOpenChange}
+      revealTool={revealTool} expanded contained={!showAllContent} turnRunning={turnRunning} active={active && processOpen} readOnly={readOnly} />
+  ) : item.kind === 'tool' ? (
+    <WorkToolActivity key={item.key} tool={item.tool} fileContext={fileContext} onOpenFile={onOpenFile} onOpenChange={onOpenChange}
+      revealRevision={revealTool?.toolId === item.tool.id ? revealTool.revision : undefined} turnRunning={turnRunning} active={active && processOpen} readOnly={readOnly} />
+  ) : item.kind === 'collaboration' ? (
+    <WorkCollaborationSummary key={item.key} tools={item.tools} fileContext={fileContext} revealTool={revealTool} active={active && processOpen} readOnly={readOnly} />
+  ) : item.kind === 'thinking' ? (
+    <MotionPresence key={item.key} className="work-message__thinking" show={thinkingOpen}>
+      <ThinkingRow text={item.text} autoOpen={false} memoryKey={`work-thinking:${getEngineSource()}:${sessionId}:${processKey ?? message.id}:${item.key}`} />
+    </MotionPresence>
+  ) : item.kind === 'followup' ? (
+    <div key={item.key} className="work-message--user work-message__followup" role="group" aria-label="用户消息" data-message-id={item.message.id}>
+      <WorkUserMessageBody message={item.message} root={fileContext.workspaceRoot ?? null} fileContext={fileContext} />
+    </div>
+  ) : (
+    <div key={item.key} className={showAllContent ? undefined : 'work-message__process-note'}>
+      <WorkAssistantContent text={item.text} streaming={message.status === 'streaming'} fileContext={fileContext} renderImages={showAllContent} />
+    </div>
+  ))
   return (
     <article
+      ref={article}
       className={`work-message work-message--${message.role}`}
       aria-label={message.role === 'user' ? '用户消息' : 'AI 回复'}
       data-message-id={message.id}
       data-process-expanded={hasProcess && processOpen ? 'true' : undefined}
+      data-process-view={message.role === 'assistant' && !showAllContent ? 'focused' : undefined}
       onClickCapture={onFileLink}
     >
       {message.role === 'user' ? (
@@ -149,34 +174,25 @@ export const WorkMessageContent = memo(function WorkMessageContent({
                 <Icon name="brain" size={13} /><span>思考</span>
               </button>
             </MotionPresence>
+            {processOpen && !showAllContent ? <button type="button" className="work-message__process-jump" aria-label="查看最新步骤"
+              onClick={() => {
+                const viewports = article.current?.querySelectorAll<HTMLElement>('.work-message__process-viewport')
+                const viewport = viewports?.[viewports.length - 1]
+                if (viewport) { viewport.dispatchEvent(new Event('work-process-latest')); viewport.focus({ preventScroll: true }) }
+              }}><Icon name="chevron-down" size={13} /><span>最新步骤</span></button> : null}
           </div> : null}
           <div id={processId} className="work-message__timeline" onPointerDownCapture={preserveCollaborationLayout}
             onFocusCapture={preserveCollaborationLayout} onKeyDownCapture={preserveCollaborationLayout}>
             {presentation.map(segment => segment.kind === 'tool' ? (
-              <WorkToolActivity key={segment.key} tool={segment.tool} fileContext={fileContext} onOpenFile={onOpenFile} onOpenChange={onOpenChange} turnRunning={turnRunning} active={active} readOnly={readOnly} />
+              <WorkToolActivity key={segment.key} tool={segment.tool} fileContext={fileContext} onOpenFile={onOpenFile} onOpenChange={onOpenChange}
+                revealRevision={revealTool?.toolId === segment.tool.id ? revealTool.revision : undefined} turnRunning={turnRunning} active={active} readOnly={readOnly} />
             ) : segment.kind === 'collaboration' ? (
               <WorkCollaborationSummary key={segment.key} tools={segment.tools} fileContext={fileContext} revealTool={revealTool} active={active} readOnly={readOnly} />
             ) : segment.kind === 'answer' ? (
-              <WorkAssistantContent key={segment.key} text={segment.text} streaming={message.status === 'streaming'} fileContext={fileContext} renderImages={!finalResult} deliveryResult={deliveryResult} />
+              <div key={segment.key} className="work-message__answer"><WorkAssistantContent text={segment.text} streaming={message.status === 'streaming'} fileContext={fileContext} renderImages={!finalResult} deliveryResult={deliveryResult} /></div>
             ) : (
               <MotionPresence key={segment.key} className="work-message__process" show={processOpen}>
-                {segment.segments.map(item => item.kind === 'tools' ? (
-                  <WorkInlineActivity key={item.key} tools={item.tools} fileContext={fileContext} onOpenFile={onOpenFile} onOpenChange={onOpenChange} revealTool={revealTool} expanded turnRunning={turnRunning} active={active && processOpen} readOnly={readOnly} />
-                ) : item.kind === 'tool' ? (
-                  <WorkToolActivity key={item.key} tool={item.tool} fileContext={fileContext} onOpenFile={onOpenFile} onOpenChange={onOpenChange} turnRunning={turnRunning} active={active && processOpen} readOnly={readOnly} />
-                ) : item.kind === 'collaboration' ? (
-                  <WorkCollaborationSummary key={item.key} tools={item.tools} fileContext={fileContext} revealTool={revealTool} active={active && processOpen} readOnly={readOnly} />
-                ) : item.kind === 'thinking' ? (
-                  <MotionPresence key={item.key} className="work-message__thinking" show={thinkingOpen}>
-                    <ThinkingRow text={item.text} autoOpen={false} memoryKey={`work-thinking:${getEngineSource()}:${sessionId}:${processKey ?? message.id}:${item.key}`} />
-                  </MotionPresence>
-                ) : item.kind === 'followup' ? (
-                  <div key={item.key} className="work-message--user work-message__followup" role="group" aria-label="用户消息" data-message-id={item.message.id}>
-                    <WorkUserMessageBody message={item.message} root={fileContext.workspaceRoot ?? null} fileContext={fileContext} />
-                  </div>
-                ) : (
-                  <WorkAssistantContent key={item.key} text={item.text} streaming={message.status === 'streaming'} fileContext={fileContext} />
-                ))}
+                {showAllContent ? renderProcess(segment) : <WorkProcessPanel running={turnRunning} memoryKey={`${processScope}:${processPhase}:${segment.key}`}>{renderProcess(segment)}</WorkProcessPanel>}
               </MotionPresence>
             ))}
           </div>

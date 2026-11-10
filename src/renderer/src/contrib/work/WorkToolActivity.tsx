@@ -14,12 +14,13 @@ import { WorkFileChangeRow } from './WorkFileChangeRow'
 import './work-inline-activity.css'
 
 /** Timeline and inspector use the same cards, including their task-scoped actions. */
-export const WorkToolActivity = memo(function WorkToolActivity({ tool, fileContext, onOpenFile, onOpenChange, defaultOpen, turnRunning, active = true, readOnly = false }: {
+export const WorkToolActivity = memo(function WorkToolActivity({ tool, fileContext, onOpenFile, onOpenChange, defaultOpen, revealRevision, turnRunning, active = true, readOnly = false }: {
   tool: ToolActivity
   fileContext: ChatFileContext
   onOpenFile?: (path: string) => void
   onOpenChange?: (change: EngineFileChange) => void
   defaultOpen?: boolean
+  revealRevision?: number
   turnRunning?: boolean
   active?: boolean
   readOnly?: boolean
@@ -41,7 +42,7 @@ export const WorkToolActivity = memo(function WorkToolActivity({ tool, fileConte
   const details = <CompactToolRow tool={displayTool} state={state} summary={outputOnly ? '调用记录未载入' : workToolTarget(tool, fileContext.workspaceRoot)}
     summaryDetail={outputOnly ? '调用记录未载入' : workToolTarget(tool, undefined, true)}
     memoryKey={`work-tool:${getEngineSource()}:${fileContext.sessionId}:${tool.id}${previewScope}`} fileContext={fileContext} onOpenFile={onOpenFile}
-    structuredResult={tool.name !== 'read_file'} readRange={readPreview?.range} readFiles={readFiles} quiet defaultOpen={defaultOpen ?? (imagePreview && turnRunning === true)} />
+    structuredResult={tool.name !== 'read_file'} readRange={readPreview?.range} readFiles={readFiles} quiet defaultOpen={defaultOpen ?? false} revealRevision={revealRevision} />
   return <div className="work-tool-activity" data-tool-kind={kind} data-work-tool-id={tool.id}>
     {outputOnly ? <>
       {changes.map(change => <WorkFileChangeRow key={change.id} change={change} state={state} onOpenChange={onOpenChange} />)}

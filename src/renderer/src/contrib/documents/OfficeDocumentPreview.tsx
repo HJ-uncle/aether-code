@@ -12,8 +12,8 @@ const PAGE_GAP = 16
 const RECENT_PAGES = 3
 const pageHeight = (height: number, scale: number): number => Math.max(200, Math.ceil(height * scale + 2))
 
-function ContinuousPage({ html, name, index, scale, height, retained, active, onSize }: {
-  html: string; name: string; index: number; scale: number; height: number; retained: boolean; active: boolean
+function ContinuousPage({ html, name, kind, index, scale, height, retained, active, onSize }: {
+  html: string; name: string; kind: 'docx' | 'pptx'; index: number; scale: number; height: number; retained: boolean; active: boolean
   onSize: (index: number, intrinsicHeight: number) => void
 }): JSX.Element {
   const frame = useRef<HTMLIFrameElement>(null)
@@ -55,7 +55,7 @@ function ContinuousPage({ html, name, index, scale, height, retained, active, on
   useLayoutEffect(() => { resize.current?.() }, [scale])
   return <div className="document-preview__continuous-page" data-document-page={index + 1} style={{ height }}>
     {retained ? <iframe ref={frame} className="document-preview__frame" sandbox="allow-same-origin" referrerPolicy="no-referrer" data-document-selection-frame="true"
-      title={`${name} · 第 ${index + 1} 页`} srcDoc={srcDoc} /> : null}
+      title={`${name} · ${kind === 'docx' ? '预览区段' : '第'} ${index + 1}${kind === 'docx' ? '' : ' 页'}`} srcDoc={srcDoc} /> : null}
   </div>
 }
 
@@ -106,7 +106,7 @@ export default function OfficeDocumentPreview({ data, kind, name, sessionKey, ac
       }
       controller.signal.throwIfAborted()
       if (!pages.length || pages.length > DOCUMENT_LIMITS.pages || pages.reduce((sum, html) => sum + html.length, 0) > DOCUMENT_LIMITS.htmlBytes) {
-        throw new Error('此文档页数或渲染后版面超出预览预算（最多 100 页、32 MB HTML）。')
+        throw new Error(`此文档超出预览预算（最多 100 ${kind === 'docx' ? '个预览区段' : '页'}、32 MB HTML）。`)
       }
       clearTimeout(timer)
       let htmlBytes = 0
@@ -186,10 +186,11 @@ export default function OfficeDocumentPreview({ data, kind, name, sessionKey, ac
   if (state.error) return <PreviewMessage error={state.error} onRetry={onRetry} />
   if (!pages.length) return <PreviewMessage />
   return <>
-    <PreviewZoom zoom={zoom} onZoom={setZoom} />
-    <div className="document-preview__body document-preview__body--continuous" ref={body} data-document-pages={pages.length}>
+    <PreviewZoom zoom={zoom} onZoom={setZoom} note={kind === 'docx' ? '连续内容预览 · 分页以 Word 为准' : undefined} />
+    <div className="document-preview__body document-preview__body--continuous" ref={body}
+      data-document-pages={kind === 'pptx' ? pages.length : undefined} data-document-sections={kind === 'docx' ? pages.length : undefined}>
       {layoutReady ? <div className="document-preview__continuous-content" style={{ minHeight: totalHeight }}>
-        {pages.map((html, index) => <ContinuousPage key={index} html={html} name={name} index={index} scale={scale}
+        {pages.map((html, index) => <ContinuousPage key={index} html={html} name={name} kind={kind} index={index} scale={scale}
           height={pageHeight(pageHeights[index] ?? estimatedHeight, scale)} retained={retainedPages.has(index)} active={active} onSize={rememberHeight} />)}
       </div> : <PreviewMessage />}
     </div>

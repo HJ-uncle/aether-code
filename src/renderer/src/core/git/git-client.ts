@@ -28,6 +28,7 @@ import type {
   GitUserResult
 } from '@shared/git-types'
 import { isRemoteEngine } from '../engine/source'
+import { withBranchMetadata } from './git-branch-metadata'
 import {
   captureCodeGitTarget,
   gitRead,
@@ -346,10 +347,17 @@ export function createGitClient(target: GitTarget) {
         ? gitAction(target, 'push-to-branch', { remote: remote.trim(), branch: destination })
         : gitLocal(target, api => api.pushTo(target.cwd, remote.trim(), `HEAD:refs/heads/${destination}`))
     },
-    gitListRemoteBranches: (): Promise<GitRemoteBranchListResult> =>
-      target.route === 'session'
-        ? gitRead<GitRemoteBranchListResult>(target, 'list-remote-branches')
-        : gitLocal(target, (api) => api.listRemoteBranches(target.cwd)),
+    gitListRemoteBranches: async (): Promise<GitRemoteBranchListResult> => {
+      if (target.route === 'local') return gitLocal(target, api => api.listRemoteBranches(target.cwd))
+      const result = await gitRead<GitRemoteBranchListResult>(target, 'list-remote-branches')
+      // Older for-each-ref responses also include symbolic remote HEAD, often
+      // abbreviated to just the remote name; neither is an actionable branch.
+      const branches = result.branches?.filter(name => name.includes('/') &&
+        (!name.endsWith('/HEAD') || result.infos?.some(info => info.name === name)))
+      return withBranchMetadata({ ...result, branches }, 'remotes',
+        (refs, limit) => gitRead<GitLogResult>(target, 'log', { refs, limit: String(limit) }),
+        () => gitRead<GitBranchListResult>(target, 'list-branches'))
+    },
     gitDeleteRemoteBranch: (remote: string, branch: string): Promise<GitResult> =>
       target.route === 'session'
         ? gitAction(target, 'delete-remote-branch', { remote, branch })
@@ -370,9 +378,11 @@ export function createGitClient(target: GitTarget) {
       target.route === 'session'
         ? gitAction(target, 'remove-remote', { name })
         : gitLocal(target, (api) => api.removeRemote(target.cwd, name)),
-    gitListBranches: (): Promise<GitBranchListResult> =>
+    gitListBranches: async (): Promise<GitBranchListResult> =>
       target.route === 'session'
-        ? gitRead<GitBranchListResult>(target, 'list-branches')
+        ? withBranchMetadata(await gitRead<GitBranchListResult>(target, 'list-branches'), 'heads',
+            (refs, limit) => gitRead<GitLogResult>(target, 'log', { refs, limit: String(limit) }),
+            () => gitRead<GitRemoteBranchListResult>(target, 'list-remote-branches'))
         : gitLocal(target, (api) => api.listBranches(target.cwd)),
     gitCheckout: async (branch: string): Promise<GitResult> => {
       if (target.route === 'local') return gitLocal(target, (api) => api.checkout(target.cwd, branch))

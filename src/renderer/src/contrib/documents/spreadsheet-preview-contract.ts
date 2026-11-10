@@ -2,6 +2,8 @@ export interface SheetSummary { name: string; rows: number; columns: number }
 export interface SheetBorder { color?: string; width?: number; style?: 'solid' | 'dotted' | 'dashed' | 'double' }
 export interface SheetCell {
   text: string
+  fontFamily?: string
+  fontSize?: number
   bold?: boolean
   italic?: boolean
   align?: 'left' | 'center' | 'right' | 'justify'

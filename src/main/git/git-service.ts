@@ -1298,31 +1298,28 @@ export async function pushTo(cwd: string, remote: string, branch?: string): Prom
   }, false, false)
 }
 
-/** 解析 for-each-ref 的分支列表（tab 分隔；跳过 origin/HEAD 这类符号引用） */
+/** 提交摘要可含 tab；保留完整 ref 与 symref，避免同名分支或 origin/HEAD 的短名歧义。 */
 function parseRefList(out: string, withHead: boolean): { branches: string[]; infos: GitRemoteBranchInfo[]; current?: string } {
   const branches: string[] = []
   const infos: GitRemoteBranchInfo[] = []
+  const prefix = withHead ? 'refs/heads/' : 'refs/remotes/'
   let current: string | undefined
-  for (const line of out.split('\n')) {
-    if (!line.trim()) continue
-    const cols = line.split('\t')
-    if (withHead) {
-      const [head, name, hash, subject, author, date] = cols
-      if (!name) continue
-      if (head === '*') current = name
-      branches.push(name)
-      infos.push({ name, hash: hash ?? '', subject: subject ?? '', author: author ?? '', date: date ?? '' })
-    } else {
-      const [name, hash, subject, author, date] = cols
-      if (!name || name.endsWith('/HEAD')) continue
-      branches.push(name)
-      infos.push({ name, hash: hash ?? '', subject: subject ?? '', author: author ?? '', date: date ?? '' })
-    }
+  for (const line of out.split(/\r?\n/)) {
+    if (!line) continue
+    const cols = line.split('\0')
+    const head = withHead ? cols.shift() : undefined
+    const [ref, hash, subject, author, date, symref] = cols
+    if (!ref?.startsWith(prefix) || (!withHead && symref)) continue
+    const name = ref.slice(prefix.length)
+    if (!name) continue
+    if (head === '*') current = name
+    branches.push(name)
+    infos.push({ name, hash: hash ?? '', subject: subject ?? '', author: author ?? '', date: date ?? '' })
   }
   return { branches, infos, current }
 }
 
-const REF_FORMAT = '%(refname:short)%09%(objectname:short)%09%(subject)%09%(authorname)%09%(committerdate:iso-strict)'
+const REF_FORMAT = '%(refname)%00%(objectname:short)%00%(subject)%00%(authorname)%00%(committerdate:iso-strict)%00%(symref)'
 
 export async function listBranches(cwd: string): Promise<GitBranchListResult>{
   return withMainGitOperation(cwd, async () => {
@@ -1331,7 +1328,7 @@ export async function listBranches(cwd: string): Promise<GitBranchListResult>{
     const out = await runGit(root, [
       'for-each-ref',
       'refs/heads',
-      `--format=%(HEAD)%09${REF_FORMAT}`,
+      `--format=%(HEAD)%00${REF_FORMAT}`,
       '--sort=-committerdate'
     ])
     const { branches, infos, current } = parseRefList(out, true)

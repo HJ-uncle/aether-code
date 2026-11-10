@@ -1,4 +1,4 @@
-import { memo, useId, type JSX, type ReactNode } from 'react'
+import { memo, useId, useLayoutEffect, useRef, type JSX, type ReactNode } from 'react'
 import { useApp } from '@renderer/core/app-context'
 import type { ToolActivity } from '@renderer/core/engine/useChat'
 import { toolStatusLabel } from '@renderer/core/engine/subagent-state'
@@ -24,7 +24,7 @@ import { FileGlyph } from '../explorer/FileGlyph'
 /** Code and Work share the same one-line receipt and result-only disclosure. */
 export const CompactToolRow = memo(function CompactToolRow({
   tool, memoryKey, summary: summaryOverride, summaryDetail, state = tool.state,
-  fileContext, onOpenFile, defaultOpen, structuredResult = false, quiet = false, detailFooter, readRange, readFiles
+  fileContext, onOpenFile, defaultOpen, revealRevision, structuredResult = false, quiet = false, detailFooter, readRange, readFiles
 }: {
   tool: ToolActivity
   memoryKey?: string
@@ -35,6 +35,8 @@ export const CompactToolRow = memo(function CompactToolRow({
   fileContext?: ChatFileContext
   onOpenFile?: (path: string) => void
   defaultOpen?: boolean
+  /** A fresh navigation request opens this receipt once, without locking it open. */
+  revealRevision?: number
   structuredResult?: boolean
   /** Work keeps routine receipts quiet while retaining the full Code presentation. */
   quiet?: boolean
@@ -46,7 +48,17 @@ export const CompactToolRow = memo(function CompactToolRow({
   const [memory, setMemory] = useCollapseMemory(memoryKey ?? `tool:${tool.id}`)
   const detailId = useId()
   const result = toolPresentation(tool)
-  const open = memory ?? defaultOpen ?? result.images.length > 0
+  // Work process rows stay compact even when a renderer returns a large image.
+  // Code keeps its existing image-preview default and explicit choices win.
+  const open = memory ?? defaultOpen ?? (!quiet && result.images.length > 0)
+  const revealed = useRef<{ sessionId: string | undefined; toolId: string; revision: number } | null>(null)
+  useLayoutEffect(() => {
+    if (revealRevision === undefined) return
+    const previous = revealed.current
+    if (previous?.sessionId === fileContext?.sessionId && previous?.toolId === tool.id && previous?.revision === revealRevision) return
+    revealed.current = { sessionId: fileContext?.sessionId, toolId: tool.id, revision: revealRevision }
+    setMemory(true)
+  }, [fileContext?.sessionId, tool.id, revealRevision, setMemory])
   const label = toolDisplayName(tool.name)
   const visibleFiles = quiet && readFiles?.length ? readFiles : undefined
   const fileStateLabel = (file: ReadActivityFileSummary): string => file.state === 'error' ? '失败' : file.state === 'cancelled' ? '已取消' : file.state === 'pending' ? '未读取' : ''

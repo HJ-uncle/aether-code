@@ -87,6 +87,7 @@
 .document-preview__pdf-text[data-main-rotation='270'] { transform: rotate(270deg) translateX(-100%); }
 .document-preview__pdf-text-notice { position: absolute; right: 8px; bottom: 8px; z-index: 2; padding: 3px 6px; border-radius: var(--radius); background: var(--bg-surface); color: var(--fg-muted); font-size: 12px; pointer-events: none; }
 .document-preview__toolbar--zoom { justify-content: flex-end; min-height: 36px; padding-block: 3px; }
+.document-preview__zoom-note { flex: 1; color: var(--fg-muted); font-size: 12px; }
 .document-preview__toolbar--pdf-tools { justify-content: space-between; gap: 8px; min-width: 0; }
 .document-preview__body--continuous { padding: 16px; overflow: auto; overscroll-behavior: contain; }
 .document-preview__continuous-content { min-width: 0; }

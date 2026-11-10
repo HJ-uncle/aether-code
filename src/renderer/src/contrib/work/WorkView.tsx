@@ -1130,6 +1130,7 @@ function Conversation({
   const mode = useAppMode()
   const [following, setFollowing] = useState(followRef.current)
   const [awayFromBottom, setAwayFromBottom] = useState(false)
+  const [inlineFeedbackVisible, setInlineFeedbackVisible] = useState(true)
   const latestRequest = useRef(false)
   const [latestPending, setLatestPending] = useState(false)
   const hasNewerContentRef = useRef(false)
@@ -1216,6 +1217,7 @@ function Conversation({
   const hasNewerContent = newer > 0 || Boolean(controller.archivePage?.unversioned && controller.archivePage.lastPage < controller.archivePage.totalPages)
   hasNewerContentRef.current = hasNewerContent
   const showLatest = latestPending || hasNewerContent || awayFromBottom
+  const showPinnedFeedback = showLatest && !inlineFeedbackVisible
   const conversationGroups = useMemo(() => workConversationGroups(controller.messages), [controller.messages])
   const turnTodos = useMemo(() => controller.assignTodos(conversationGroups.map(group => ({
     id: group.id, identity: group.identity,
@@ -1272,6 +1274,7 @@ function Conversation({
     // the actual ancestor transitions settle, without guessing a timer or
     // following later stream updates once the user has reached the receipt.
     let disposed = false, settling = false
+    const inspectedViewports = new WeakSet<HTMLElement>()
     const reveal = (): boolean => {
       const node = Array.from(container.querySelectorAll<HTMLElement>('[data-work-tool-id]'))
         .find(element => element.dataset.workToolId === activitySelection.toolId)
@@ -1290,6 +1293,25 @@ function Conversation({
           })
         }
         return false
+      }
+      const processViewport = node.closest<HTMLElement>('.work-message__process-viewport')
+      if (processViewport && container.contains(processViewport)) {
+        if (!inspectedViewports.has(processViewport)) {
+          // An explicit jump is reading intent, even though no wheel or pointer
+          // event reaches the inner process panel to stop its live following.
+          processViewport.dispatchEvent(new Event('work-process-inspect'))
+          inspectedViewports.add(processViewport)
+        }
+        const viewportBounds = processViewport.getBoundingClientRect()
+        const viewportTop = viewportBounds.top + processViewport.clientTop
+        processViewport.scrollTop += node.getBoundingClientRect().top - viewportTop - 12
+        const targetBounds = node.getBoundingClientRect()
+        const viewportBottom = viewportTop + processViewport.clientHeight
+        // A long output can exceed the panel. Its receipt's leading row, rather
+        // than the entire expanded result, must be visible before acknowledging.
+        const leadingHeight = Math.min(targetBounds.height, 28)
+        if (leadingHeight <= 0 || targetBounds.top < viewportTop - 1 ||
+          targetBounds.top + leadingHeight > viewportBottom + 1) return false
       }
       container.scrollTop += node.getBoundingClientRect().top - container.getBoundingClientRect().top - 20
       node.tabIndex = -1
@@ -1677,7 +1699,8 @@ function Conversation({
           })}
           {newer > 0 ? <button type="button" className="btn btn--sm work-history-load" onClick={loadNewer}>查看较新消息（{newer} 条）</button> : null}
           {newer === 0 && controller.archivePage?.unversioned && controller.archivePage.lastPage < controller.archivePage.totalPages ? <button type="button" className="btn btn--sm work-history-load" disabled={controller.archiveLoading} onClick={() => loadArchivePage('newer')}>查看较新归档页</button> : null}
-          <WorkTurnFeedback controller={controller} announce={!showLatest} openActivity={openActivity} />
+          <WorkTurnFeedback controller={controller} announce={!showPinnedFeedback} openActivity={openActivity}
+            onVisibilityChange={setInlineFeedbackVisible} />
           {receiptGroups.length ? <WorkProgressSync state={progress} /> : null}
           {turnTodos.has('') ? <WorkTodoProgress todos={turnTodos.get('')!} running={controller.streaming || controller.launching || ['running', 'waiting'].includes(task.status)} /> : null}
         </div>
@@ -1691,7 +1714,7 @@ function Conversation({
             回到最新
           </button>
         </MotionPresence>
-        {showLatest && <WorkRunStatus controller={controller} />}
+        {showPinnedFeedback && <WorkRunStatus controller={controller} />}
         <WorkNextTurnQueuePanel key={`queue:${controller.draftSource}:${task.id}`} scopeKey={`${controller.draftSource}:${task.id}`} queue={controller.nextTurnQueue} />
         <SessionConnectionNotice key={`connection:${controller.draftSource}:${task.id}`} ready={controller.ready} sessionId={task.id}
           source={getEngineSource()} connection={controller.historyRecovery}
@@ -1779,14 +1802,41 @@ function useWorkRunFeedback(controller: WorkController) {
 
 /** The first response must be visible in the conversation, including the
  * preflight before the engine has emitted any assistant text or tool frames. */
-export function WorkTurnFeedback({ controller, announce, openActivity }: {
+export function WorkTurnFeedback({ controller, announce, openActivity, onVisibilityChange }: {
   controller: WorkController
   announce: boolean
   openActivity: (toolId: string) => void
+  onVisibilityChange?: (visible: boolean) => void
 }): JSX.Element | null {
-  // Scrolling changes which status is announced, not whether this live card's
-  // elapsed time advances: it can remain visible beside the fixed status.
+  // Keep this card in the scroll flow. Removing it when the footer appears
+  // changes the bottom distance and can repeatedly switch the two surfaces.
   const feedback = useWorkRunFeedback(controller)
+  const headingRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    if (!onVisibilityChange) return
+    const heading = headingRef.current
+    const viewport = heading?.closest<HTMLElement>('.work-conversation__scroll')
+    if (!feedback.active || !heading || !viewport) {
+      onVisibilityChange(false)
+      return
+    }
+    // The heading contains phase, stop and time. A long activity description
+    // below it must not cause a second copy of those already visible controls.
+    const measure = (): boolean => {
+      const bounds = heading.getBoundingClientRect(), root = viewport.getBoundingClientRect()
+      const left = root.left + viewport.clientLeft, top = root.top + viewport.clientTop
+      const width = Math.max(0, Math.min(bounds.right, left + viewport.clientWidth) - Math.max(bounds.left, left))
+      const height = Math.max(0, Math.min(bounds.bottom, top + viewport.clientHeight) - Math.max(bounds.top, top))
+      return bounds.width > 0 && bounds.height > 0 && width * height / (bounds.width * bounds.height) >= 0.99
+    }
+    onVisibilityChange(measure())
+    const observer = new IntersectionObserver(entries => {
+      const entry = entries.at(-1)
+      if (entry) onVisibilityChange(entry.isIntersecting && entry.intersectionRatio >= 0.99)
+    }, { root: viewport, threshold: [0, 0.99, 1] })
+    observer.observe(heading)
+    return () => observer.disconnect()
+  }, [feedback.active, controller.activeTask?.id, onVisibilityChange])
   const target = feedback.running ? workToolTarget(feedback.running, controller.workspacePath) : ''
   const fullTarget = feedback.running ? workToolTarget(feedback.running, undefined, true) : ''
   const activityLabel = feedback.running ? toolDisplayName(feedback.running.name) : ''
@@ -1821,7 +1871,7 @@ export function WorkTurnFeedback({ controller, announce, openActivity }: {
         {feedback.waiting ? <Icon name="chat" size={16} /> : <Spinner size={16} />}
       </span>
       <div className="work-turn-feedback__body">
-        <div className="work-turn-feedback__heading">
+        <div ref={headingRef} className="work-turn-feedback__heading">
           <strong title={agentName}>{agentName}</strong>
           <span role="status" aria-live={announce ? 'polite' : 'off'} aria-atomic="true" aria-label={feedback.dependency?.accessibleLabel ?? '任务运行状态'}>{feedback.label}</span>
           <div className="work-turn-feedback__controls">

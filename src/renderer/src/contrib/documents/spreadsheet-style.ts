@@ -2,7 +2,7 @@ import type { SheetBorder, SheetCell } from './spreadsheet-preview-contract'
 
 export interface SpreadsheetColor { argb?: string; theme?: number; indexed?: number; tint?: number }
 export interface SpreadsheetCellStyle {
-  font?: { bold?: boolean; italic?: boolean; underline?: boolean | string; strike?: boolean; color?: SpreadsheetColor }
+  font?: { name?: string; size?: number; bold?: boolean; italic?: boolean; underline?: boolean | string; strike?: boolean; color?: SpreadsheetColor }
   fill?: { type?: string; pattern?: string; fgColor?: SpreadsheetColor }
   alignment?: { horizontal?: string; vertical?: string; wrapText?: boolean }
   border?: Partial<Record<'top' | 'right' | 'bottom' | 'left' | 'diagonal', { style?: string; color?: SpreadsheetColor }>>
@@ -46,6 +46,8 @@ export function spreadsheetBorder(border: { style?: string; color?: SpreadsheetC
 export function spreadsheetCellStyle(style: SpreadsheetCellStyle, themeColors: string[]): Partial<SheetCell> {
   const horizontal = style.alignment?.horizontal
   const vertical = style.alignment?.vertical
+  const fontName = style.font?.name?.trim()
+  const fontSize = style.font?.size
   const borders: SheetCell['borders'] = {}
   for (const side of ['top', 'right', 'bottom', 'left'] as const) {
     const border = spreadsheetBorder(style.border?.[side], themeColors)
@@ -53,6 +55,10 @@ export function spreadsheetCellStyle(style: SpreadsheetCellStyle, themeColors: s
   }
   const fill = style.fill?.type === 'pattern' && style.fill.pattern === 'solid' ? spreadsheetColor(style.fill.fgColor, themeColors) : undefined
   return {
+    // Quote the full Excel name so commas/quotes cannot become a CSS family list.
+    fontFamily: fontName && fontName.length <= 128 && !/[\u0000-\u001f\u007f]/.test(fontName)
+      ? `"${fontName.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : undefined,
+    fontSize: typeof fontSize === 'number' && Number.isFinite(fontSize) && fontSize >= 1 && fontSize <= 409 ? fontSize : undefined,
     bold: style.font?.bold === true,
     italic: style.font?.italic === true,
     underline: style.font?.underline === true || typeof style.font?.underline === 'string',

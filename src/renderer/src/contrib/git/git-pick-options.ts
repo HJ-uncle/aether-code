@@ -42,7 +42,8 @@ export function remoteBranchPickOptions(names: string[], infos: GitRemoteBranchI
   // remote/branch target and must not appear as an option that does nothing.
   return branchPickOptions(names.filter(name => {
     const slash = name.indexOf('/')
-    return slash > 0 && slash < name.length - 1 && !name.endsWith('/HEAD')
+    return slash > 0 && slash < name.length - 1 &&
+      (!name.endsWith('/HEAD') || infos.some(info => info.name === name))
   }), infos)
 }
 
