@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode, type RefObject } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type HTMLAttributes, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { isTopOverlay, OverlayScope, useOverlay } from './overlay'
 import './hover-detail.css'
@@ -7,27 +7,30 @@ interface HoverDetailOptions {
   enabled: boolean
   content: ReactNode
   label: string
+  placement?: 'vertical' | 'side'
+  /** Side details clear the whole owning surface, while staying aligned to the hovered row. */
+  sideAnchor?: string
 }
 
-interface HoverDetailTriggerProps extends Pick<ButtonHTMLAttributes<HTMLButtonElement>,
+interface HoverDetailTriggerProps<T extends HTMLElement> extends Pick<HTMLAttributes<T>,
   'onPointerEnter' | 'onPointerLeave' | 'onPointerDown' | 'onFocus' | 'onBlur' | 'aria-describedby'> {
-  ref: RefObject<HTMLButtonElement | null>
+  ref: RefObject<T | null>
   'data-hover-detail-trigger': string
 }
 
-interface Position { left: number; top: number; maxHeight: number; side: 'above' | 'below' }
+interface Position { left: number; top: number; maxHeight: number; side: 'above' | 'below' | 'left' | 'right' }
 const OPEN_DELAY = 400
 const CLOSE_DELAY = 160
 const MARGIN = 8
 const GAP = 6
 
 /** A read-only detail surface leaves the row's click and keyboard action intact. */
-export function useHoverDetail({ enabled, content, label }: HoverDetailOptions): {
-  triggerProps: HoverDetailTriggerProps
+export function useHoverDetail<T extends HTMLElement = HTMLButtonElement>({ enabled, content, label, placement = 'vertical', sideAnchor }: HoverDetailOptions): {
+  triggerProps: HoverDetailTriggerProps<T>
   tooltip: ReactNode
 } {
   const id = useId()
-  const triggerRef = useRef<HTMLButtonElement>(null)
+  const triggerRef = useRef<T>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -93,6 +96,25 @@ export function useHoverDetail({ enabled, content, label }: HoverDetailOptions):
     // scrollHeight retains the full content height after a short viewport has
     // constrained the panel, avoiding repeated flips between the two sides.
     const desired = Math.min(480, height * 0.6, panel.scrollHeight + panel.offsetHeight - panel.clientHeight)
+    if (placement === 'side') {
+      const surface = (sideAnchor ? anchor.closest(sideAnchor) : null)?.getBoundingClientRect() ?? rect
+      const right = width - surface.right - GAP - MARGIN
+      const left = surface.left - GAP - MARGIN
+      const side = right >= panel.offsetWidth ? 'right' : left >= panel.offsetWidth ? 'left' : null
+      if (side) {
+        const maxHeight = Math.min(480, height * 0.6, height - MARGIN * 2)
+        const panelHeight = Math.min(desired, maxHeight)
+        const position: Position = {
+          left: side === 'right' ? surface.right + GAP : surface.left - GAP - panel.offsetWidth,
+          top: Math.max(MARGIN, Math.min(rect.top, height - panelHeight - MARGIN)),
+          maxHeight,
+          side
+        }
+        setPosition(previous => previous?.left === position.left && previous.top === position.top &&
+          previous.maxHeight === maxHeight && previous.side === side ? previous : position)
+        return
+      }
+    }
     const side = below >= desired || below >= above ? 'below' : 'above'
     const maxHeight = Math.min(480, height * 0.6, side === 'below' ? below : above)
     if (maxHeight < 1) { close(); return }
@@ -102,7 +124,7 @@ export function useHoverDetail({ enabled, content, label }: HoverDetailOptions):
       height - panelHeight - MARGIN))
     setPosition(previous => previous?.left === left && previous.top === top && previous.maxHeight === maxHeight && previous.side === side
       ? previous : { left, top, maxHeight, side })
-  }, [canShow, close])
+  }, [canShow, close, placement, sideAnchor])
 
   useLayoutEffect(() => {
     if (!open) return
@@ -111,12 +133,14 @@ export function useHoverDetail({ enabled, content, label }: HoverDetailOptions):
     const resize = new ResizeObserver(reposition)
     if (anchor) resize.observe(anchor)
     if (panel) resize.observe(panel)
+    const surface = sideAnchor ? anchor?.closest(sideAnchor) : null
+    if (surface) resize.observe(surface)
     const visibility = new MutationObserver(reposition)
     for (let ancestor: HTMLElement | null = anchor; ancestor; ancestor = ancestor.parentElement)
       visibility.observe(ancestor, { attributes: true, attributeFilter: ['hidden', 'inert', 'aria-hidden', 'style', 'class'] })
     window.addEventListener('resize', reposition)
     return () => { resize.disconnect(); visibility.disconnect(); window.removeEventListener('resize', reposition) }
-  }, [open, reposition])
+  }, [open, reposition, sideAnchor])
 
   useEffect(() => {
     if (!enabled || phase === 'closed') return
@@ -143,7 +167,7 @@ export function useHoverDetail({ enabled, content, label }: HoverDetailOptions):
     if (pointerFocusTimer.current !== null) clearTimeout(pointerFocusTimer.current)
   }, [clearOpen, clearClose])
 
-  const triggerProps: HoverDetailTriggerProps = {
+  const triggerProps: HoverDetailTriggerProps<T> = {
     ref: triggerRef,
     'data-hover-detail-trigger': id,
     'aria-describedby': open ? id : undefined,

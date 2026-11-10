@@ -1,0 +1,122 @@
+/* This information surface stays non-interactive: focusing the ring reveals
+   the same complete values as hovering, without introducing a second popover. */
+.git-stashcard.ctx-card.ctx-card--compact {
+  cursor: default;
+  width: min(300px, calc(100vw - 16px));
+  min-width: 0;
+  max-width: none;
+  box-sizing: border-box;
+  padding: var(--space-3);
+  border-radius: var(--radius-panel);
+  line-height: 1.45;
+  font-family: var(--font-ui);
+  font-style: normal;
+  text-align: left;
+}
+
+[data-appearance='light'] .git-stashcard.ctx-card {
+  /* White elevation keeps this readout distinct from disabled form controls. */
+  background: var(--bg-elevated);
+  border-color: var(--border);
+  box-shadow: var(--shadow-card);
+}
+
+.ctx-card__header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fg);
+}
+
+.ctx-card__percent {
+  justify-self: end;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 24px;
+  color: var(--fg-strong);
+  font-variant-numeric: tabular-nums;
+  font-style: normal;
+}
+
+.ctx-card__percent-sign {
+  margin-left: 2px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.ctx-card__bar {
+  position: relative;
+  margin-top: var(--space-2);
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+
+.ctx-card__bar--compacting::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 35%;
+  border-radius: inherit;
+  background: var(--accent);
+  animation: context-compaction-progress 1.2s ease-in-out infinite;
+}
+
+.ctx-card__bar--compacting[data-reduced-motion='true']::after {
+  animation: none;
+  left: 32.5%;
+}
+
+@keyframes context-compaction-progress {
+  from { left: -35%; }
+  to { left: 100%; }
+}
+
+.ctx-card__bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: none;
+}
+
+.ctx-card__bar-fill--warn { background: var(--danger-fg); }
+
+.ctx-card__bar-gain {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  opacity: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+  pointer-events: none;
+}
+
+.ctx-card__tokens { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+.ctx-card__tokens-value { color: var(--fg-strong); font-size: 17px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.ctx-card__separator, .ctx-card__tokens-label { color: var(--fg-muted); font-weight: 400; }
+.ctx-card__tokens-label { font-size: 11px; }
+.ctx-card__exact-tokens { margin-top: var(--space-1); color: var(--fg-muted); font-size: 12px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+.ctx-card__details {
+  display: grid;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+}
+
+.ctx-card__hint {
+  min-height: 0;
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.ctx-card__hint.ctx-card__status-hint { color: var(--fg); }
+.ctx-card__error { color: var(--danger-fg); overflow-wrap: anywhere; }

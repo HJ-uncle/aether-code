@@ -27,7 +27,7 @@ function ReportContent({ report, onDismiss, label = '文件回退结果' }: Chan
   const title = empty ? '没有需要撤回的改动' : !complete ? hasRestored ? '部分改动未能回退' : '文件回退未完成' : previouslyReverted ? '此前已撤回' : '文件回退完成'
   return <section className="change-revert-report" aria-label={label} aria-live="polite" data-complete={complete}>
     <div className="change-revert-report__header">
-      <span className="change-revert-report__icon"><Icon name={empty ? 'info' : complete ? 'check' : 'warning'} size={15} /></span>
+      <span className="change-revert-report__icon"><Icon name={empty ? 'info' : complete ? 'check' : 'alert-circle'} size={15} /></span>
       <div className="change-revert-report__heading">
         <strong>{title}</strong>
         {!empty ? <span className="change-revert-report__count">{report.total} 处改动</span> : null}

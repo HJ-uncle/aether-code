@@ -225,7 +225,7 @@ export function NetworkInspector({
           <div className="network-inspector__search">
             <Icon name="search" size={14} />
             <input
-              className="field__input"
+              className="field__input ui-input--compact"
               aria-label="过滤网络请求"
               placeholder="搜索请求 URL"
               value={query.url ?? ''}

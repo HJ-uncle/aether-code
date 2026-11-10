@@ -6,7 +6,7 @@
 .subagent-followup__form { display: grid; gap: 8px; min-width: 0; }
 .subagent-followup__form[hidden] { display: none; }
 .subagent-followup__form textarea { box-sizing: border-box; width: 100%; min-width: 0; min-height: 58px; max-height: 160px; resize: vertical; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-input); color: var(--fg); font: inherit; font-size: 12px; line-height: 1.5; }
-.subagent-followup__form textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.subagent-followup__form textarea:focus-visible { border-color: var(--accent); }
 .subagent-followup__actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; flex-wrap: wrap; }
 .subagent-followup__actions > p { flex: 1 1 180px; margin: 0; color: var(--fg-muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
 .subagent-followup__actions > button { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; flex-shrink: 0; }

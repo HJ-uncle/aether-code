@@ -1,6 +1,6 @@
 /** Compact child reading in real Electron: authenticated archives retain full
  * instructions and answers while collapsed process text stays out of the body.
- * Includes archive pagination, reading/draft memory and stale source isolation.
+ * Includes full archive reading, reading/draft memory and stale source isolation.
  * Run with playwright.compact-reading.config.ts; AETHER_E2E_APP_ENTRY can override the build entry. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer, type ServerResponse } from 'node:http'
@@ -17,7 +17,7 @@ const token = 'compact-reading-fixture-token', model = 'compact-reading-model', 
 const taskA = 'work-compact-task-a', taskB = 'work-compact-task-b'
 const errors: string[] = [], mutations: string[] = []
 const envelope = (data: unknown): string => JSON.stringify({ code: 200, message: 'ok', data })
-type ArchiveRead = { sessionId: string; current: number; pageSize: number }
+type ArchiveRead = { sessionId: string; current: number | null; pageSize: number | null }
 type HeldArchive = { sessionId: string; current: number; response?: ServerResponse; body?: string }
 
 function makeEngine(name: string) {
@@ -145,12 +145,13 @@ function makeEngine(name: string) {
     if (path === '/api/v1/conversation/archive') {
       const archive = archives.get(id)
       if (!archive) throw new Error(`Foreign archive requested: ${id}`)
+      const paged = url.searchParams.has('current') || url.searchParams.has('pageSize')
       const currentPage = Number(url.searchParams.get('current') ?? 1), pageSize = Number(url.searchParams.get('pageSize') ?? 50)
-      reads.push({ sessionId: id, current: currentPage, pageSize })
-      const body = JSON.stringify({ code: 200, message: 'ok', data: archive.slice((currentPage - 1) * pageSize, currentPage * pageSize),
-        pagination: { current: currentPage, pageSize, total: archive.length, totalPages: Math.ceil(archive.length / pageSize) },
+      reads.push({ sessionId: id, current: paged ? currentPage : null, pageSize: paged ? pageSize : null })
+      const body = JSON.stringify({ code: 200, message: 'ok', data: paged ? archive.slice((currentPage - 1) * pageSize, currentPage * pageSize) : archive,
+        ...(paged ? { pagination: { current: currentPage, pageSize, total: archive.length, totalPages: Math.ceil(archive.length / pageSize) } } : {}),
         metadata: { archiveMessageCount: archive.length, archiveRevision: `${name}-${id}-${archiveRevision}`, backend: 'jsonl', compressed: false } })
-      if (held?.sessionId === id && held.current === currentPage && pageSize === 50) { held.response = response; held.body = body; return }
+      if (held?.sessionId === id && (!paged || held.current === currentPage && pageSize === 50)) { held.response = response; held.body = body; return }
       response.end(body); return
     }
     if (path === '/api/v1/conversation/display') {
@@ -199,8 +200,8 @@ function makeEngine(name: string) {
   return { name, title, agentName, instruction, finalText, thinking, failureDiagnostic, beforeFailure, roots, children, archives, reads, runReads, fileReads, capabilityProbes, reportPath, server,
     holdArchive(sessionId: string, current: number) {
       if (held) throw new Error('An archive is already held')
-      // A changed authoritative revision requires an actual data-page refresh;
-      // unchanged archives correctly reuse their retained pages after the header.
+      // Freeze a new snapshot so changing the selected source can race with a
+      // genuine pending archive response rather than a reused local view.
       archiveRevision++; held = { sessionId, current }
     },
     isHeld: () => Boolean(held?.response), releaseArchive() { held?.response?.end(held.body); held = undefined } }
@@ -406,6 +407,8 @@ test.describe.serial('子代理紧凑阅读', () => {
     await expect(thinking.locator('.logline__detail pre')).toHaveCount(0)
     await expect(thinking).not.toContainText('THINKING_END_FIRST')
     await thinking.getByRole('button', { name: '展开过程', exact: true }).click()
+    await expect(thinking.locator('.logline')).toHaveCount(0)
+    await thinking.getByRole('button', { name: '显示思考', exact: true }).click()
     await expect(thinking.locator('.logline')).toHaveAttribute('aria-expanded', 'false')
     await expect(thinking.getByRole('button', { name: '继续阅读', exact: true })).toHaveCount(0)
     await thinking.locator('.logline').click()
@@ -447,6 +450,7 @@ test.describe.serial('子代理紧凑阅读', () => {
     await expect(transcript()).not.toContainText(/500 event:error|InternalError|inference abort|request_id|DIAGNOSTIC_END/)
     await expect(page.locator('.work-error-diagnostics__detail')).toHaveCount(0)
     await expect(failures.getByRole('button', { name: /重试|重启/ })).toHaveCount(0)
+    await withContent.hover()
     await withContent.getByRole('button', { name: '复制回复', exact: true }).click()
     await expect.poll(() => app!.evaluate(({ clipboard }) => clipboard.readText().replace(/\r\n/g, '\n'))).toBe(first.beforeFailure)
     const screenshot = info.outputPath('compact-child-errors.png')
@@ -471,7 +475,7 @@ test.describe.serial('子代理紧凑阅读', () => {
     await selectChild(1)
   })
 
-  test('分页与展开滚动草稿保留，切父任务或引擎时旧页不能串入当前对话', async () => {
+  test('完整历史与展开滚动草稿保留，切父任务或引擎时旧快照不能串入当前对话', async () => {
     const instruction = message('instruction'), answer = message('answer')
     const draft = panel().getByRole('textbox', { name: '继续交给 阅读代理 1', exact: true })
     await draft.fill('保留未发送的审阅要求，不应交给别的任务或引擎')
@@ -485,9 +489,9 @@ test.describe.serial('子代理紧凑阅读', () => {
     await expect(answer).toContainText('FINAL_END_FIRST')
     await expect(draft).toHaveValue('保留未发送的审阅要求，不应交给别的任务或引擎')
     await expect.poll(() => scroller().evaluate(element => element.scrollTop)).toBeCloseTo(120, 0)
-    await transcript().getByRole('button', { name: '加载更早消息', exact: true }).click()
+    await expect(transcript().getByRole('button', { name: '加载更早消息', exact: true })).toHaveCount(0)
     await expect(transcript().locator('[data-message-id="compact-child-1-old-0"]')).toContainText('OLD_PAGE_FIRST_0')
-    expect(first.reads).toContainEqual({ sessionId: 'compact-child-1', current: 1, pageSize: 50 })
+    expect(first.reads).toContainEqual({ sessionId: 'compact-child-1', current: null, pageSize: null })
     await expect(instruction.getByRole('button', { name: '收起用户消息', exact: true })).toHaveAttribute('aria-expanded', 'true')
     await expect(answer).toContainText('FINAL_END_FIRST')
 
@@ -525,9 +529,9 @@ test.describe.serial('子代理紧凑阅读', () => {
     await expect(instruction.getByRole('button', { name: '展开用户消息全文', exact: true })).toHaveAttribute('aria-expanded', 'false')
     await expect(answer).toContainText('FINAL_END_SECOND')
     await expect(answer.getByRole('button', { name: /继续阅读|继续展开/ })).toHaveCount(0)
-    await transcript().getByRole('button', { name: '加载更早消息', exact: true }).click()
+    await expect(transcript().getByRole('button', { name: '加载更早消息', exact: true })).toHaveCount(0)
     await expect(transcript().locator('[data-message-id="compact-child-1-old-0"]')).toContainText('OLD_PAGE_SECOND_0')
-    expect(second.reads).toContainEqual({ sessionId: 'compact-child-1', current: 1, pageSize: 50 })
+    expect(second.reads).toContainEqual({ sessionId: 'compact-child-1', current: null, pageSize: null })
     expect(second.runReads.some(read => read.runId === 'compact-child-run-1' && read.parentSessionId === taskA)).toBe(true)
   })
 

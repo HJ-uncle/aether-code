@@ -17,7 +17,7 @@ import { WorkCollaborationSummary } from './WorkCollaborationSummary'
 import { WorkInlineActivity } from './WorkInlineActivity'
 import { WorkToolActivity } from './WorkToolActivity'
 import { workActivityState } from './work-inline-activity-state'
-import { captureWorkCollaborationMembership, workMessageTimeline, workMessagePresentation, type WorkCollaborationMembership, type WorkMessageSegment } from './work-message-timeline'
+import { captureWorkCollaborationMembership, workMessageTimeline, workMessagePresentation, workTranscriptPresentation, type WorkCollaborationMembership, type WorkMessageSegment } from './work-message-timeline'
 import { workMessageRunning } from './work-tool-presentation'
 import { workDeliveryProse } from './work-delivery-prose'
 import { parseMentionContent } from '../chat/mention-context'
@@ -36,6 +36,8 @@ export interface WorkMessageContentProps {
   turnSegments?: WorkMessageSegment[]
   processKey?: string
   defaultProcessOpen?: boolean
+  defaultThinkingOpen?: boolean
+  showAllContent?: boolean
   finalAnswer?: { text: string } | false
   deliveryResult?: FinalResult
   readOnly?: boolean
@@ -48,7 +50,7 @@ export interface WorkMessageContentProps {
 /** Message presentation is shared; the owning conversation supplies its actions and approvals. */
 export const WorkMessageContent = memo(function WorkMessageContent({
   message, sessionId, fileContext, active, onFileLink, onOpenFile, onOpenChange,
-  revealTool = null, turnSegments, processKey, defaultProcessOpen, finalAnswer, deliveryResult, readOnly = false,
+  revealTool = null, turnSegments, processKey, defaultProcessOpen, defaultThinkingOpen, showAllContent = false, finalAnswer, deliveryResult, readOnly = false,
   userActions, replyActions, usage, children
 }: WorkMessageContentProps): JSX.Element {
   const segments = useMemo(() => turnSegments ?? workMessageTimeline(message), [message, turnSegments])
@@ -56,8 +58,8 @@ export const WorkMessageContent = memo(function WorkMessageContent({
   const collaborationMembership = useRef<WorkCollaborationMembership | undefined>(undefined)
   const finalResult = getMessageFinalResult(message, sessionId)
   const turnRunning = workMessageRunning(message)
-  const presentation = useMemo(() => workMessagePresentation(segments, collaborationMembership.current,
-    finalAnswer === undefined ? finalAnswerForMessage(message, sessionId) : finalAnswer, turnRunning), [segments, message, sessionId, finalAnswer, turnRunning])
+  const presentation = useMemo(() => showAllContent ? workTranscriptPresentation(segments) : workMessagePresentation(segments, collaborationMembership.current,
+    finalAnswer === undefined ? finalAnswerForMessage(message, sessionId) : finalAnswer, turnRunning), [segments, message, sessionId, finalAnswer, turnRunning, showAllContent])
   const answerText = presentation.flatMap(segment => segment.kind === 'answer' ? [segment.text] : []).join('\n\n')
   const canCopy = Boolean(answerText) && !['streaming', 'waiting'].includes(message.status)
   const preserveCollaborationLayout = (): void => {
@@ -77,7 +79,7 @@ export const WorkMessageContent = memo(function WorkMessageContent({
   const processOpen = processMemory ?? defaultProcessOpen ?? turnRunning
   const [thinkingMemory, setThinkingOpen] = useCollapseMemory(`work-message-thinking:${processScope}:${processPhase}`)
   // Pure reasoning replies still have useful content when their process is opened.
-  const thinkingOpen = thinkingMemory ?? processTools.length === 0
+  const thinkingOpen = thinkingMemory ?? defaultThinkingOpen ?? processTools.length === 0
   const processId = `work-process-${useId().replace(/:/g, '')}`
   const processBar = useRef<HTMLDivElement>(null)
   const collapseAnchor = useRef<number | null>(null)
@@ -138,12 +140,15 @@ export const WorkMessageContent = memo(function WorkMessageContent({
             {processTools.length ? <small>{processTools.length} 步</small> : null}
             {failureCount ? <small className="work-message__process-failures">{failureCount} 步未通过</small> : null}
           </button>
-            {thinkingCount ? <button type="button" className="work-message__thinking-toggle"
-              aria-label={thinkingOpen ? '隐藏思考' : '显示思考'} aria-pressed={thinkingOpen}
-              title={`${thinkingOpen ? '隐藏' : '显示'} ${thinkingCount} 段思考`}
-              onClick={() => { setThinkingOpen(!thinkingOpen); if (!thinkingOpen) setProcessOpen(true) }}>
-              <Icon name="brain" size={13} /><span>思考</span>
-            </button> : null}
+            {/* Retain the control only for its exit animation; the reading choice survives collapse. */}
+            <MotionPresence show={processOpen && thinkingCount > 0} asChild axis="x">
+              <button type="button" className="work-message__thinking-toggle"
+                aria-label={thinkingOpen ? '隐藏思考' : '显示思考'} aria-pressed={thinkingOpen}
+                title={`${thinkingOpen ? '隐藏' : '显示'} ${thinkingCount} 段思考`}
+                onClick={() => setThinkingOpen(!thinkingOpen)}>
+                <Icon name="brain" size={13} /><span>思考</span>
+              </button>
+            </MotionPresence>
           </div> : null}
           <div id={processId} className="work-message__timeline" onPointerDownCapture={preserveCollaborationLayout}
             onFocusCapture={preserveCollaborationLayout} onKeyDownCapture={preserveCollaborationLayout}>

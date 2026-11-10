@@ -9,6 +9,7 @@
 import { app, dialog, ipcMain, webContents, BrowserWindow, type IpcMainInvokeEvent, type WebContents } from 'electron'
 import { IPC } from '../shared/ipc'
 import { readWindowVisibility } from './window-visibility'
+import { registerOfficeRender } from './office-render'
 import { accountService, configureAccountService } from './account/service'
 import { registerWorkNextTurnQueue } from './work-next-turn-ipc'
 import { disconnectBrowserClients } from './browser-ipc'
@@ -118,6 +119,7 @@ function broadcast(channel: string, payload: unknown): void {
 }
 
 export function registerIpcHandlers(): void {
+  registerOfficeRender()
   registerWorkNextTurnQueue()
   onGraphicsChanged(snapshot => broadcast(IPC.event.graphicsChanged, snapshot))
   ipcMain.handle(IPC.invoke.graphicsGetSnapshot, getGraphicsSnapshot)

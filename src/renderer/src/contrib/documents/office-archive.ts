@@ -194,7 +194,10 @@ function cleanXml(text: string, name: string): string {
   if (name.endsWith('.rels')) {
     for (const relation of Array.from(xml.getElementsByTagNameNS('*', 'Relationship'))) {
       const target = relation.getAttribute('Target') || ''
-      if (!passiveOfficeRelationship(target, relation.getAttribute('Type') || '', relation.getAttribute('TargetMode') || '')) { relation.remove(); modified = true }
+      // xmldom in the Worker implements DOM Core, not the browser-only
+      // ChildNode.remove(). Charts commonly contain an embedded workbook
+      // relationship, so this path also runs for ordinary safe presentations.
+      if (!passiveOfficeRelationship(target, relation.getAttribute('Type') || '', relation.getAttribute('TargetMode') || '')) { relation.parentNode?.removeChild(relation); modified = true }
       // ExcelJS indexes tables relative to xl/worksheets, but looks them up
       // using the relationship verbatim. Convert package-absolute table targets
       // to that same relative form without changing external-link filtering.

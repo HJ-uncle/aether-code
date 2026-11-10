@@ -36,8 +36,7 @@
   background: var(--bg-hover);
   color: var(--fg-strong);
 }
-.editor-outline button:focus-visible,
-.editor-outline__filter:focus-visible {
+.editor-outline button:focus-visible {
   outline: 1px solid var(--focus-ring-color);
   outline-offset: -1px;
 }

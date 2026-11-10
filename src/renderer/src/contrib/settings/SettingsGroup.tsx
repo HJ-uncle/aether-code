@@ -16,7 +16,7 @@ export function SettingsGroup({
   children,
   className
 }: {
-  title: string
+  title: ReactNode
   /** 组下方的灰字说明 */
   footer?: string
   children: ReactNode

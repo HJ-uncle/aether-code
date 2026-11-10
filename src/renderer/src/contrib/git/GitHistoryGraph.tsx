@@ -13,20 +13,31 @@
  */
 import { useMemo, type JSX } from 'react'
 import type { HistoryItemViewModel } from '@renderer/core/git/git-history-graph'
+import './git-history-graph.css'
 
 export const GIT_HISTORY_ROW_HEIGHT = 22
 const ROW_HEIGHT = GIT_HISTORY_ROW_HEIGHT
 const LANE_WIDTH = 11
 const CURVE_R = 5
+const MAX_GRAPH_WIDTH = 88
 
-export function gitHistoryGraphWidth(item: HistoryItemViewModel): number {
-  return LANE_WIDTH * (Math.max(item.inputSwimlanes.length, item.outputSwimlanes.length, 1) + 1)
+function graphLaneCount(item: HistoryItemViewModel): number {
+  return Math.max(item.inputSwimlanes.length, item.outputSwimlanes.length, 1)
+}
+
+export function gitHistoryGraphWidth(item: HistoryItemViewModel, full = false): number {
+  // This is the viewport, also used by the expanded file-tree indentation.
+  // Keep the original lane coordinates: scaling each row independently would
+  // disconnect adjacent commits as the number of open branches changes.
+  const width = LANE_WIDTH * (graphLaneCount(item) + 1)
+  return full ? width : Math.min(MAX_GRAPH_WIDTH, width)
 }
 
 /** Expanded file trees must carry every outgoing lane to the next commit row. */
-export function GitHistoryGraphContinuation({ item }: { item: HistoryItemViewModel }): JSX.Element {
+export function GitHistoryGraphContinuation({ item, width = gitHistoryGraphWidth(item) }: { item: HistoryItemViewModel; width?: number }): JSX.Element {
   return (
-    <svg width={gitHistoryGraphWidth(item)} className="git-panel__commit-rail" aria-hidden="true">
+    <svg width={width} className="git-panel__commit-rail" aria-hidden="true"
+      data-clipped={gitHistoryGraphWidth(item, true) > width || undefined}>
       {item.outputSwimlanes.map((lane, index) => (
         <line key={index} x1={LANE_WIDTH * (index + 1)} x2={LANE_WIDTH * (index + 1)}
           y1="0" y2="100%" stroke={lane.color} strokeWidth={1} />
@@ -35,7 +46,7 @@ export function GitHistoryGraphContinuation({ item }: { item: HistoryItemViewMod
   )
 }
 
-export function GitHistoryGraph({ item }: { item: HistoryItemViewModel }): JSX.Element {
+export function GitHistoryGraph({ item, width }: { item: HistoryItemViewModel; width?: number }): JSX.Element {
   const input = item.inputSwimlanes
   const output = item.outputSwimlanes
 
@@ -45,7 +56,8 @@ export function GitHistoryGraph({ item }: { item: HistoryItemViewModel }): JSX.E
     return idx >= 0 ? idx : input.length
   }, [input, item.hash])
 
-  const svgWidth = gitHistoryGraphWidth(item)
+  const svgWidth = width ?? gitHistoryGraphWidth(item)
+  const clipped = gitHistoryGraphWidth(item, true) > svgWidth
   const isMerge = item.parents.length > 1
   const circleX = LANE_WIDTH * (circleIndex + 1)
 
@@ -139,7 +151,10 @@ export function GitHistoryGraph({ item }: { item: HistoryItemViewModel }): JSX.E
   const color = paths.nodeColor()
 
   return (
-    <svg width={svgWidth} height={ROW_HEIGHT} className="git-graph" aria-hidden="true">
+    <svg width={svgWidth} height={ROW_HEIGHT} className="git-graph" aria-hidden="true"
+      data-lane-count={graphLaneCount(item)}
+      data-clipped={clipped || undefined}>
+      {clipped ? <title>部分轨道已折叠；开启筛选栏的「完整图谱」查看全部轨道。</title> : null}
       {paths.segs.map((seg, i) => (
         <path
           key={`p${i}`}

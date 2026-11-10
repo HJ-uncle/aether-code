@@ -92,6 +92,7 @@ export type IconName =
   | 'star-outline'
   | 'fit-screen'
   | 'engine'
+  | 'alert-circle'
 
 /** mdi:crosshairs-gps —— 资源管理器「定位当前文件」，与 wuzu-client 同图标 */
 const MDI_LOCATE =
@@ -467,8 +468,17 @@ const PATHS: Record<IconName, JSX.Element> = {
       fill="currentColor"
     />
   ),
+  // Reserve the triangle for risk/diagnostic warnings; failures and attention
+  // states use the quieter circle so a status is not mistaken for a warning.
   warning: (
     <path d="M12 2 1 21h22L12 2zm1 14h-2v2h2v-2zm0-7h-2v5h2V9z" fill="currentColor" />
+  ),
+  'alert-circle': (
+    <g fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v6" />
+      <path d="M12 17h.01" />
+    </g>
   ),
   info: (
     <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" fill="currentColor" />

@@ -64,7 +64,7 @@ function WorkSourcePreviewContent({ source, sessionId, root }: WorkSourcePreview
   useEffect(() => () => image?.revoke(), [image])
   const unavailable = error || (file?.tooLarge ? '文件超过当前预览读取上限。' : '') || (file?.isBinary && !file.base64 && !file.bytes ? '未能读取完整文件，请重试。' : '')
   if (unavailable) return <div className="work-sources__preview-empty" role="alert">
-    <Icon name="warning" size={18} />
+    <Icon name="alert-circle" size={18} />
     <span>{unavailable}</span>
     <button type="button" className="work-quiet-button" onClick={retry}>重试读取</button>
   </div>

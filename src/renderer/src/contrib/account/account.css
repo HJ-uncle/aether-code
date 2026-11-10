@@ -89,6 +89,50 @@
 .account-settings {
   min-width: 0;
 }
+.account-login-help__heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.account-login-help__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-round);
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: help;
+  transition: color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+}
+.account-login-help__trigger:hover,
+.account-login-help__trigger:focus-visible {
+  color: var(--accent);
+  background: var(--bg-hover);
+}
+.account-login-help__trigger:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+.account-login-help__title {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--fg-strong);
+  font-size: 13px;
+}
+.account-login-help__list {
+  display: grid;
+  gap: 5px;
+  margin: var(--space-3) 0 0;
+  padding-left: 18px;
+}
+.account-login-help__list strong {
+  color: var(--fg-strong);
+  font-weight: 600;
+}
 .account-summary {
   display: flex;
   gap: var(--space-4);

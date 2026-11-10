@@ -98,7 +98,6 @@
 
 .editor-toolbar__button:focus-visible,
 .editor-toolbar__symbol:focus-visible,
-.editor-settings input:focus-visible,
 .editor-settings__reset:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 1px;
@@ -161,6 +160,8 @@
   gap: var(--space-2);
 }
 
+.editor-settings__field input:focus-visible { border-color: var(--accent); }
+
 .editor-settings__preview {
   margin: 0;
   padding: var(--space-2);
@@ -183,8 +184,9 @@
 .editor-path-picker button:disabled { opacity: .4; cursor: default; }
 .editor-path-picker button:hover { background: var(--menu-hover-bg); }
 .editor-path-picker button.is-selected { background: var(--menu-selected-bg); }
-.editor-path-picker button:focus-visible, .editor-path-picker input:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.editor-path-picker button:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 .editor-path-picker input { min-width: 0; height: 28px; padding: 0 var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-input); color: var(--fg); font: inherit; }
+.editor-path-picker input:focus-visible { border-color: var(--accent); }
 .editor-path-picker__list { max-height: 280px; min-height: 0; overflow: auto; padding-top: var(--space-1); }
 .editor-path-picker__list p { color: var(--fg-muted); margin: var(--space-2); }
 .editor-path-picker .editor-path-picker__entry { width: 100%; min-height: var(--menu-row-height); padding: var(--menu-row-padding); border-radius: var(--menu-row-radius); text-align: left; }

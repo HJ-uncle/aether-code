@@ -71,7 +71,7 @@ export function AutomationRuns({ jobId, capabilities, onOpenRun }: {
     {!runs.length && loading ? <p className="automation-loading" role="status"><Spinner size={16} />正在读取运行记录…</p> : !runs.length ? <div className="automation-empty"><Icon name="clock-outline" size={24} /><h3>还没有运行记录</h3><p>按计划触发后，这里会显示实际结果。</p></div> : <div className="automation-runs__list">
       {runs.map(run => <article className="automation-run" key={run.id} data-run-id={run.id} data-status={run.status}>
         <div className="automation-run__heading"><strong className={`automation-run__status automation-run__status--${run.status}`}>
-          {run.status === 'running' || run.status === 'claimed' ? <Spinner size={14} /> : <Icon name={run.status === 'succeeded' ? 'check' : run.status === 'waiting' ? 'chat' : run.status === 'failed' || run.status === 'interrupted' ? 'warning' : 'clock-outline'} size={14} />}
+          {run.status === 'running' || run.status === 'claimed' ? <Spinner size={14} /> : <Icon name={run.status === 'succeeded' ? 'check' : run.status === 'waiting' ? 'chat' : run.status === 'failed' || run.status === 'interrupted' ? 'alert-circle' : 'clock-outline'} size={14} />}
           {RUN_LABELS[run.status]}</strong><time dateTime={new Date(run.scheduledAt).toISOString()}>{date(run.scheduledAt)}</time></div>
         <div className="automation-run__facts"><span>Agent <b>{run.snapshot.effectiveAgentName || run.snapshot.effectiveAgentId || run.snapshot.agentId || '引擎默认'}</b></span>
           <span>有效模型 <b>{run.snapshot.effectiveModelId || '运行时由引擎确认'}</b></span>

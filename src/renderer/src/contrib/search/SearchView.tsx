@@ -168,10 +168,10 @@ export function SearchPanel({ root, search, actions, active = true, embedded = f
           >
             <Icon name="chevron-right" size={16} />
           </button>
-          <div className="search-view__field search-view__field--query">
+          <div className="search-view__field search-view__field--query ui-input-shell ui-input-shell--compact">
             <input
               ref={inputRef}
-              className="search-view__input"
+              className="search-view__input ui-input-field"
               type="text"
               placeholder="搜索"
               aria-label="搜索内容"
@@ -238,9 +238,9 @@ export function SearchPanel({ root, search, actions, active = true, embedded = f
         <MotionPresence show={search.replaceVisible}>
           <div className="search-view__row">
             <span className="search-view__row-spacer" />
-            <div className="search-view__field">
+            <div className="search-view__field ui-input-shell ui-input-shell--compact">
               <input
-                className="search-view__input"
+                className="search-view__input ui-input-field"
                 type="text"
                 placeholder="替换为"
                 aria-label="替换为"
@@ -320,7 +320,7 @@ export function SearchPanel({ root, search, actions, active = true, embedded = f
             <label className="search-view__filter">
               <span>包含</span>
               <input
-                className="search-view__filter-input"
+                className="search-view__filter-input ui-input ui-input--compact"
                 type="text"
                 placeholder={embedded ? '留空搜索整个项目；如 *.ts' : '例如：src, *.ts'}
                 spellCheck={false}
@@ -331,7 +331,7 @@ export function SearchPanel({ root, search, actions, active = true, embedded = f
             <label className="search-view__filter">
               <span>排除</span>
               <input
-                className="search-view__filter-input"
+                className="search-view__filter-input ui-input ui-input--compact"
                 type="text"
                 placeholder="例如：dist, **/*.min.js"
                 spellCheck={false}

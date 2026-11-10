@@ -98,7 +98,7 @@ export function AutomationsView(props: {
     </div></header>
     {error ? <div className="automation-error" role="alert"><span>{error}</span><button className="btn btn--sm" type="button" disabled={loading} onClick={() => void refresh()}>重试</button></div> : null}
     {!ready ? <div className="automation-empty"><Icon name="engine" size={26} /><h3>引擎尚未就绪</h3><p>连接引擎后即可创建、查看与管理计划。</p></div> : inbox && capabilities?.persistentNotifications ? <AutomationInbox key={source} onUnreadCount={setUnreadCount} onOpenRun={onOpenRun} /> : loading && !jobs.length ? <p className="automation-loading" role="status"><Spinner size={18} />正在读取自动化…</p> : <>
-      {jobs.length ? <label className="automations-search"><Icon name="search" size={15} /><input aria-label="搜索自动化" value={query} placeholder="搜索名称或任务内容" onChange={event => setQuery(event.target.value)} /></label> : null}
+      {jobs.length ? <label className="automations-search ui-input-shell ui-input-shell--compact"><Icon name="search" size={15} /><input className="ui-input-field" aria-label="搜索自动化" value={query} placeholder="搜索名称或任务内容" onChange={event => setQuery(event.target.value)} /></label> : null}
       {visibleJobs.length ? <div className="automation-list">{visibleJobs.map(job => <article className="automation-list-row" data-job-id={job.id} key={job.id}>
         <span className="automation-list-row__icon"><Icon name="clock-outline" size={20} /></span>
         <button className="automation-list-row__main" type="button" onClick={() => open(job)} aria-label={`编辑自动化 ${job.name}`}>

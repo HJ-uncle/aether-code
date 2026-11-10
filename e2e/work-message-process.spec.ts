@@ -4,7 +4,7 @@ import type { ChatMessage, ToolActivity } from '../src/renderer/src/core/engine/
 import type { CommandJobStatus } from '../src/shared/command-job'
 import type { RootRun } from '../src/shared/root-run'
 import { finalAnswerForMessage } from '../src/renderer/src/core/engine/final-result'
-import { captureWorkCollaborationMembership, workMessagePresentation, workMessageTimeline, type WorkPresentationSegment } from '../src/renderer/src/contrib/work/work-message-timeline'
+import { captureWorkCollaborationMembership, workMessagePresentation, workMessageTimeline, workTranscriptPresentation, type WorkPresentationSegment } from '../src/renderer/src/contrib/work/work-message-timeline'
 import { workMessageRunning } from '../src/renderer/src/contrib/work/work-tool-presentation'
 
 function command(status: CommandJobStatus, id = status): ToolActivity {
@@ -29,6 +29,21 @@ function processTools(presentation: WorkPresentationSegment[]): ToolActivity[] {
   return presentation.flatMap(segment => segment.kind === 'process'
     ? segment.segments.flatMap(item => item.kind === 'tools' || item.kind === 'collaboration' ? item.tools : item.kind === 'tool' ? [item.tool] : []) : [])
 }
+
+test('child full transcript keeps every prose segment in order and folds even live command output', () => {
+  const tool = command('running')
+  const source = message('streaming', [tool])
+  source.items = [{ kind: 'thinking', text: '内部检查步骤' }, { kind: 'content', text: '先核对输入。' },
+    { kind: 'tool', id: tool.id }, { kind: 'content', text: '输入已确认，继续处理。' }]
+  const timeline = workMessageTimeline(source), original = structuredClone(timeline)
+  const transcript = workTranscriptPresentation(timeline)
+  expect(transcript.map(segment => segment.kind)).toEqual(['process', 'answer', 'process', 'answer'])
+  expect(transcript.flatMap(segment => segment.kind === 'answer' ? [segment.text] : [])).toEqual(['先核对输入。', '输入已确认，继续处理。'])
+  expect(processTools(transcript)).toEqual([tool])
+  expect(timeline).toEqual(original)
+  // The main conversation retains its live command card and final-answer rules.
+  expect(workMessagePresentation(timeline, undefined, false, true).some(segment => segment.kind === 'tool')).toBe(true)
+})
 
 test('settled command outcomes share the existing process disclosure in original order', () => {
   const tools = (['failed', 'cancelled', 'interrupted', 'timed_out', 'succeeded'] as const).map(status => command(status))

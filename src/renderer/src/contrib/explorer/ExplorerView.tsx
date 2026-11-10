@@ -1397,7 +1397,7 @@ export function ExplorerView(): JSX.Element {
         {filterOpen ? (
           <input
             type="text"
-            className="explorer__filter"
+            className="explorer__filter ui-input ui-input--compact"
             placeholder="筛选文件名…"
             autoFocus
             value={nameFilterRaw}

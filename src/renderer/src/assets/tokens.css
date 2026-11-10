@@ -66,6 +66,18 @@
   --control-h-compact: 24px;
   --control-h: 28px;
   --control-h-lg: 34px;
+  /* Text inputs share their material across forms and compound search fields;
+     compact toolbars and multiline editors keep their own layout dimensions. */
+  --input-radius: var(--radius-lg);
+  --input-height: 32px;
+  --input-font-size: 13px;
+  --input-bg: var(--bg-input);
+  --input-fg: var(--fg-strong);
+  --input-placeholder: var(--fg-muted);
+  --input-border: var(--border);
+  --input-border-hover: var(--border-strong);
+  --input-disabled-bg: var(--bg-surface);
+  --input-disabled-fg: var(--fg-muted);
   /* macOS window chrome reserves a quiet 48px drag zone.  The extra breathing
      room keeps menus and window actions from reading as a cramped web toolbar. */
   --titlebar-h: 46px;
@@ -155,6 +167,10 @@
   --bg-panel: #242427;
   --bg-hover: rgba(255, 255, 255, 0.055);
   --bg-active: rgba(255, 255, 255, 0.1);
+  /* Keep small link text readable over both the canvas and its tinted states. */
+  --link-fg: color-mix(in srgb, var(--accent) 75%, var(--fg-strong));
+  --link-hover-bg: color-mix(in srgb, var(--accent) 12%, transparent);
+  --link-active-bg: color-mix(in srgb, var(--accent) 20%, transparent);
   --menu-hover-bg: var(--bg-hover);
   --menu-selected-bg: var(--bg-active);
   /* 选中态（列表/文件树里"被选中待操作"的行）。
@@ -307,10 +323,16 @@
   --bg-activity: #e9e9ec;
   --bg-sidebar: #f7f7f9;
   --bg-editor: #ffffff;
-  --bg-panel: #f4f4f6;
+  /* Panels sit on the white document canvas in Light appearance. A faint
+     border and hover tint provide separation without turning every surface
+     into a gray card. */
+  --bg-panel: #ffffff;
   /* 浅色下 hover 要用"加黑"而不是"加白"，方向必须反转 */
   --bg-hover: rgba(0, 0, 0, 0.045);
   --bg-active: rgba(0, 0, 0, 0.08);
+  --link-fg: color-mix(in srgb, var(--accent) 82%, var(--fg-strong));
+  --link-hover-bg: color-mix(in srgb, var(--accent) 7%, transparent);
+  --link-active-bg: color-mix(in srgb, var(--accent) 13%, transparent);
   --menu-hover-bg: var(--bg-hover);
   --menu-selected-bg: var(--bg-active);
   --bg-selected: rgba(0, 0, 0, 0.12);

@@ -359,7 +359,7 @@ function SessionArtifacts({ sessionId, workspacePath: workspaceHint, ready, stre
             onChange={changeTurnScope} />
         </div>
         <label className="work-session-artifacts__search" title="搜索当前范围的全部文件"><span className="work-session-artifacts__control-label">搜索文件</span><Icon name="search" size={13} />
-          <input type="search" aria-label="搜索当前范围文件" placeholder="搜索文件或路径" value={query} onChange={event => {
+          <input className="ui-input ui-input--compact" type="search" aria-label="搜索当前范围文件" placeholder="搜索文件或路径" value={query} onChange={event => {
             const value = event.currentTarget.value
             const matching = searchArtifactFiles(scopedFiles, value)
             const next = resolveArtifactChoice(matching, sessionId, choice, workspacePath)?.file ?? matching[0]

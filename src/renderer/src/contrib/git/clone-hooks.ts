@@ -26,6 +26,7 @@ export function configureGitCloneFlow(): void {
     confirmOpen: (finalPath: string) =>
       confirmDialog({
         title: '克隆完成',
+        className: 'git-dialog',
         body: `克隆完成：\n${finalPath}\n\n是否打开该仓库？`,
         confirmText: '打开'
       }),

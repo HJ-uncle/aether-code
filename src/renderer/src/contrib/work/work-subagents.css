@@ -12,7 +12,7 @@
 }
 .work-subagents button { font: inherit; cursor: pointer; }
 .work-subagents button:disabled { opacity: .5; cursor: default; }
-.work-subagents :is(button, textarea, input):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.work-subagents button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .work-subagents__header {
   display: flex;
   align-items: center;
@@ -117,11 +117,6 @@
 .work-subagents__row-status--error { color: var(--danger-fg); }
 .work-subagents__row-status--complete { color: var(--fg-muted); }
 .work-subagents__row-status--waiting { color: var(--fg-muted); }
-.work-subagents__row-preview { display: grid; gap: 8px; white-space: normal; }
-.work-subagents__row-preview > strong { font-weight: 600; }
-.work-subagents__row-preview-meta { display: flex; flex-wrap: wrap; gap: 12px; color: var(--fg-muted); font-size: 11px; }
-.work-subagents__row-preview p { white-space: pre-wrap; }
-.work-subagents__row-preview-hint { color: var(--fg-muted); }
 .work-subagents__search-empty { padding: 20px 10px; text-align: center; }
 .work-subagents__empty { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 220px; gap: 12px; padding: 24px 16px; text-align: center; }
 .work-subagents__empty > svg { color: var(--fg-muted); }
@@ -157,7 +152,7 @@
 .work-subagents__composer { box-sizing: border-box; width: 100%; max-width: calc(var(--work-subagent-content-width) + 32px); margin-inline: auto; padding: 10px 16px; display: flex; flex-direction: column; gap: 8px; }
 .work-subagents__input-label { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .work-subagents__composer-editor { display: flex; align-items: flex-end; gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-editor); }
-.work-subagents__composer-editor:focus-within { border-color: var(--accent); }
+.work-subagents__composer-editor:has(textarea:focus-visible) { border-color: var(--accent); box-shadow: var(--focus-ring); }
 /* The form stays mounted to preserve draft selection; author display must not override hidden. */
 .work-subagents__composer[hidden] { display: none; }
 .work-subagents__composer textarea { box-sizing: border-box; display: block; flex: 1; width: 100%; min-width: 0; min-height: 42px; max-height: 120px; resize: vertical; font: inherit; font-size: 13px; line-height: 18px; color: var(--fg); background: transparent; border: 0; border-radius: var(--radius-sm); padding: 3px 2px; }
@@ -183,7 +178,8 @@
 .work-subagents__retry-original { align-self: flex-start; min-height: 30px; padding: 5px 10px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--fg); background: var(--bg-editor); font: inherit; font-size: 12px; }
 .work-subagents__retry-original:hover:not(:disabled) { background: var(--bg-hover); }
 .work-subagents__composer textarea:read-only { color: var(--fg-muted); }
-.work-subagents__composer :is(button, textarea):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.work-subagents__composer button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.work-subagents__composer textarea:focus-visible { outline: none; box-shadow: none; }
 @container (max-width: 360px) {
   .work-subagents__header { padding: 8px 12px; }
   .work-subagents__detail { padding: 12px; }

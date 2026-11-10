@@ -33,7 +33,7 @@
   box-shadow: none;
   font: 12px/1.4 var(--font-ui);
 }
-.browser-view[data-browser-surface-mode='work'] .browser-address:focus { border-color: var(--accent); outline: 1px solid var(--accent); outline-offset: -1px; }
+.browser-view[data-browser-surface-mode='work'] .browser-address:focus-visible { border-color: var(--accent); outline: none; box-shadow: var(--focus-ring); }
 .browser-view[data-browser-surface-mode='work'] .browser-tabs { flex-basis: 32px; background: var(--bg-sidebar); }
 .browser-view[data-browser-surface-mode='work'] .browser-tab { height: 26px; }
 .browser-view[data-browser-surface-mode='work'] .browser-tab.is-active { background: var(--bg-elevated); box-shadow: var(--shadow-control); }
@@ -52,6 +52,7 @@
 .work-browser-display__dimensions { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto auto; align-items: end; gap: 5px; padding: var(--space-2); border-radius: var(--radius); background: var(--bg-inset); }
 .work-browser-display__dimensions label { display: grid; gap: 3px; min-width: 0; color: var(--fg-muted); font-size: 11px; }
 .work-browser-display__dimensions input { box-sizing: border-box; min-width: 0; width: 100%; height: 26px; padding: 0 4px; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--fg); background: var(--bg-surface); font: 11px var(--font-mono); }
+.work-browser-display__dimensions input:focus-visible { border-color: var(--accent); }
 .work-browser-display__dimensions > span { align-self: center; margin-top: 17px; color: var(--fg-muted); }
 .work-browser-display__dimensions > button { height: 26px; padding: 0 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--fg); background: var(--bg-elevated); font: inherit; cursor: pointer; }
 .work-browser-display__dimensions > .browser-tool { width: 22px; padding: 0; border: 0; background: transparent; }
@@ -63,8 +64,7 @@
 .browser-view[data-browser-surface-mode='work'] .browser-navigation button:active:not(:disabled),
 .work-browser-display__popover button:active:not(:disabled) { background: var(--bg-active); }
 .browser-view[data-browser-surface-mode='work'] .browser-navigation button:focus-visible,
-.work-browser-display__popover button:focus-visible,
-.work-browser-display__popover input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.work-browser-display__popover button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 @container (max-width: 400px) {
   .browser-view[data-browser-surface-mode='work'] .browser-navigation { gap: 1px; padding-inline: 5px; }
   .browser-view[data-browser-surface-mode='work'] .browser-navigation > .browser-tool,

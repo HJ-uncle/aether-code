@@ -768,13 +768,13 @@ export function WorkWorkspacePanel({ sessionId, workspaceRoot, active = true, re
       }} />
     </div> : null}
     <div className="work-workspace-panel__files" hidden={searchVisible}>
-    <div className="work-workspace-panel__filter-wrap">
+    <div className="work-workspace-panel__filter-wrap ui-input-shell ui-input-shell--compact">
       <Icon name="search" size={15} />
-      <input type="text" value={nameFilterRaw} onChange={event => setNameFilterRaw(event.target.value)} placeholder="筛选文件…" aria-label="筛选文件" />
+      <input className="ui-input-field" type="text" value={nameFilterRaw} onChange={event => setNameFilterRaw(event.target.value)} placeholder="筛选文件…" aria-label="筛选文件" />
       {nameFilterRaw ? <button type="button" aria-label="清除筛选" onClick={() => setNameFilterRaw('')}><Icon name="close" size={13} /></button> : null}
     </div>
     {error ? <div className="work-workspace-panel__error" role="alert">
-      <div className="work-workspace-panel__error-summary"><Icon name="warning" size={15} />
+      <div className="work-workspace-panel__error-summary"><Icon name="alert-circle" size={15} />
         <span>{/ENOENT|no such file|Bound workspace is no longer available/i.test(error) ? '工作区目录暂时不可用' : '工作区操作未完成'}</span>
         <button type="button" onClick={() => void refresh()}>重试</button>
       </div>

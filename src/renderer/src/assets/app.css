@@ -19,3 +19,5 @@
 @import './components.css';
 @import './monaco-menu.css';
 @import './page-surfaces.css';
+@import '../contrib/git/git-dialog.css';
+@import './input-controls.css';

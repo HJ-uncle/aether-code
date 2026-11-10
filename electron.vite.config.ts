@@ -3,6 +3,7 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import { createHash } from 'node:crypto'
 import { buildSync } from 'esbuild'
+import { pptxPreviewPatch } from './scripts/pptx-preview-transform'
 
 /** A single self-contained worker asset avoids unpinned shared chunk imports.
  * The runtime descriptor is compiled into main, rather than trusted from a
@@ -42,6 +43,7 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()]
   },
   renderer: {
+    optimizeDeps: { exclude: ['@jvmr/pptx-to-html'] },
     server: {
       port: 5180,
       strictPort: true
@@ -52,6 +54,6 @@ export default defineConfig({
         '@shared': resolve('src/shared')
       }
     },
-    plugins: [react()]
+    plugins: [react(), pptxPreviewPatch()]
   }
 })

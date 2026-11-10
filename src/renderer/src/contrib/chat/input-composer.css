@@ -10,8 +10,10 @@
   background: var(--bg-elevated);
   box-shadow: var(--shadow-card);
 }
-.input-composer.chat__surface:focus-within {
-  border-color: var(--border-strong);
+/* 工具按钮保留自己的焦点提示，只有正文编辑器聚焦才点亮整个输入框。 */
+.input-composer.chat__surface:has(> .input-composer__input:focus-visible) {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-card), var(--focus-ring);
 }
 .input-composer > .input-composer__input {
   display: block;

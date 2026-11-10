@@ -1,6 +1,5 @@
-import { useCallback, type JSX } from 'react'
+import type { JSX } from 'react'
 import { Icon } from '@renderer/workbench/icons'
-import { useHoverDetail } from '@renderer/workbench/useHoverDetail'
 import type { WorkSubagentGroup, workSubagentStats } from './work-subagents'
 import { workSubagentTiming } from './work-subagent-timing'
 
@@ -12,33 +11,14 @@ interface WorkSubagentListRowProps {
   task: string
   role: string | undefined
   tone: 'waiting' | 'active' | 'error' | 'complete'
-  statusHint?: string
   onOpen: () => void
   rowRef: (node: HTMLButtonElement | null) => void
 }
 
-export function WorkSubagentListRow({ group, stats, now, status, task, role, tone, statusHint, onOpen, rowRef }: WorkSubagentListRowProps): JSX.Element {
+export function WorkSubagentListRow({ group, stats, now, status, task, role, tone, onOpen, rowRef }: WorkSubagentListRowProps): JSX.Element {
   const timing = workSubagentTiming(group.latest, now)
-  const { triggerProps, tooltip } = useHoverDetail({
-    enabled: true,
-    label: `${group.label} 的任务`,
-    content: <div className="work-subagents__row-preview">
-      <strong>{group.label}</strong>
-      <div className="work-subagents__row-preview-meta"><span>{status}</span>{role ? <span>{role}</span> : null}</div>
-      <div className="work-subagents__row-preview-meta"><span>{timing.durationText}</span>{timing.timestamp ? <time dateTime={timing.timestamp.dateTime}>{timing.timestamp.full}</time> : null}</div>
-      <p>{task}</p>
-      {statusHint && statusHint !== task ? <p className="work-subagents__row-preview-hint">{statusHint}</p> : null}
-    </div>
-  })
-  const hoverRef = triggerProps.ref
-  // Both the reading popover and returning from a conversation use this button.
-  const ref = useCallback((node: HTMLButtonElement | null) => {
-    hoverRef.current = node
-    rowRef(node)
-  }, [hoverRef, rowRef])
 
-  return <>
-    <button {...triggerProps} ref={ref} type="button" className="work-subagents__row"
+  return <button ref={rowRef} type="button" className="work-subagents__row"
       data-child-session-id={group.childSessionId} data-agent-status={stats.status}
       data-model-id={stats.modelId || undefined} data-tool-count={stats.toolCount}
       data-active-tool-count={stats.activeToolCount} data-pending={stats.pending ? 'true' : 'false'}
@@ -59,6 +39,4 @@ export function WorkSubagentListRow({ group, stats, now, status, task, role, ton
       </span>
       <span className="work-subagents__row-chevron" aria-hidden="true"><Icon name="chevron-right" size={12} /></span>
     </button>
-    {tooltip}
-  </>
 }

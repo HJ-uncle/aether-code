@@ -68,7 +68,7 @@ export function RootFollowupFeedback({ controller, active, limitation, canRestor
         panelClassName="root-followup-details" open={detailsOpen} onOpenChange={setDetailsOpen}
         trigger={({ open }) => <button ref={detailsButton} type="button" className="input-composer__history-button"
           aria-haspopup="dialog" aria-expanded={open}>
-          <Icon name={controller.pending ? 'warning' : 'info'} size={14} />
+          <Icon name={controller.pending || controller.error ? 'alert-circle' : 'info'} size={14} />
           <span>{controller.pending ? '核对补充' : '查看详情'}</span>
         </button>}>
         <div onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeDetails() } }}>

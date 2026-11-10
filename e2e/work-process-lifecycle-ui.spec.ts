@@ -23,6 +23,8 @@ const admissions = new Map<string, { admission: Record<string, unknown>; run: Ro
 type FooterRect = { x: number; y: number; width: number; height: number; opacity: number }
 type FooterGeometry = Record<'row' | 'usage' | 'copy' | 'regenerate' | 'body' | 'composer', FooterRect>
 const footerGeometry: Array<{ label: string; frames: FooterGeometry[] }> = []
+type ThinkingMotionFrame = { state: string | null; opacity: number; x: number; y: number; inert: boolean; hidden: boolean }
+const thinkingMotion: Array<{ show: boolean; frames: Array<ThinkingMotionFrame | null> }> = []
 let current: RootRun | undefined, activeStream: ServerResponse | undefined
 let nextRun = 0, mutationRevision = 0
 let app: ElectronApplication | undefined, page: Page, fixture = ''
@@ -211,6 +213,9 @@ async function expectProcess(ordinal: number, open: boolean): Promise<void> {
   if (open) {
     await expect(receipt(ordinal)).toBeVisible()
     await expect(thinking(ordinal)).toBeVisible()
+    await expect(thinking(ordinal)).toHaveAttribute('data-motion-state', 'open')
+    await expect(thinking(ordinal)).toHaveCSS('opacity', '1')
+    await expect(thinking(ordinal)).toHaveCSS('translate', 'none')
     const positions = await turn(ordinal).locator('.work-message__process-bar').evaluate(bar => {
       const process = bar.querySelector('.work-message__process-toggle')!.getBoundingClientRect()
       const thinking = bar.querySelector('.work-message__thinking-toggle')!.getBoundingClientRect()
@@ -221,10 +226,82 @@ async function expectProcess(ordinal: number, open: boolean): Promise<void> {
     expect(positions.centerDelta).toBeLessThanOrEqual(2)
   } else {
     await expect(receipt(ordinal)).toBeHidden()
-    // The process is collapsed, but the thinking switch remains available so
-    // users can reveal the process directly from the same toolbar.
-    await expect(thinking(ordinal)).toBeVisible()
+    // Thinking is a control inside the open process, never a second entry
+    // beside a collapsed process or an extra keyboard stop outside it.
+    await expect(thinking(ordinal)).toHaveCount(0)
   }
+}
+async function sampleThinkingMotion(ordinal: number, show: boolean): Promise<Array<ThinkingMotionFrame | null>> {
+  const frames = await turn(ordinal).locator('.work-message__process-bar').evaluate((bar, show) => new Promise<Array<ThinkingMotionFrame | null>>((resolve, reject) => {
+    const trigger = bar.querySelector<HTMLButtonElement>('.work-message__process-toggle')!
+    const samples: Array<ThinkingMotionFrame | null> = []
+    let settled = 0
+    const sample = (): void => {
+      const button = bar.querySelector<HTMLButtonElement>('.work-message__thinking-toggle')
+      let frame: ThinkingMotionFrame | null = null
+      if (button) {
+        const style = getComputedStyle(button), translate = style.translate === 'none' ? [0, 0] : style.translate.split(' ').map(parseFloat)
+        frame = { state: button.dataset.motionState ?? null, opacity: Number(style.opacity), x: translate[0], y: translate[1] ?? 0,
+          inert: button.inert, hidden: button.getAttribute('aria-hidden') === 'true' }
+      }
+      samples.push(frame)
+      const finished = show ? frame?.state === 'open' && !button!.getAnimations().some(animation => animation.playState === 'running' || animation.pending) : !button
+      settled = finished ? settled + 1 : 0
+      if (settled >= 3) resolve(samples)
+      else if (samples.length >= 120) reject(new Error('Thinking switch animation did not settle'))
+      else requestAnimationFrame(sample)
+    }
+    trigger.click()
+    requestAnimationFrame(sample)
+  }), show)
+  thinkingMotion.push({ show, frames })
+  return frames
+}
+async function expectThinkingMotion(ordinal: number): Promise<void> {
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  for (const show of [false, true]) {
+    const frames = await sampleThinkingMotion(ordinal, show)
+    const visible = frames.filter((frame): frame is ThinkingMotionFrame => frame !== null)
+    expect(visible.some(frame => frame.opacity > 0 && frame.opacity < 1)).toBe(true)
+    expect(visible.some(frame => frame.x < -0.1)).toBe(true)
+    expect(visible.every(frame => Math.abs(frame.y) < 0.01)).toBe(true)
+    if (!show) {
+      const closing = visible.filter(frame => frame.state === 'closing')
+      expect(closing.length).toBeGreaterThan(0)
+      expect(closing.every(frame => frame.inert && frame.hidden)).toBe(true)
+      expect(frames.at(-1)).toBeNull()
+    } else expect(frames.at(-1)).toMatchObject({ state: 'open', opacity: 1, x: 0, y: 0, inert: false, hidden: false })
+  }
+  // Reverse during the retained exit, then observe beyond the old exit's
+  // deadline so a stale dismissal cannot pass an immediate positive assertion.
+  const reversal = await turn(ordinal).locator('.work-message__process-bar').evaluate(bar => new Promise<{ closing: boolean; missingAfterReopen: boolean }>(resolve => {
+    const trigger = bar.querySelector<HTMLButtonElement>('.work-message__process-toggle')!
+    const exitMs = parseFloat(getComputedStyle(bar).getPropertyValue('--motion-exit'))
+    trigger.click()
+    requestAnimationFrame(() => {
+      const closing = bar.querySelector<HTMLElement>('.work-message__thinking-toggle')?.dataset.motionState === 'closing'
+      trigger.click()
+      const start = performance.now()
+      let missingAfterReopen = false
+      const sample = (): void => {
+        missingAfterReopen ||= !bar.querySelector('.work-message__thinking-toggle')
+        if (performance.now() - start > exitMs + 80) resolve({ closing, missingAfterReopen })
+        else requestAnimationFrame(sample)
+      }
+      requestAnimationFrame(sample)
+    })
+  }))
+  expect(reversal).toEqual({ closing: true, missingAfterReopen: false })
+  await expectProcess(ordinal, true)
+  try {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await toggle(ordinal).click(); await expect(thinking(ordinal)).toHaveCount(0)
+    await toggle(ordinal).click()
+    await expect(thinking(ordinal)).toHaveAttribute('data-motion-state', 'open')
+    await expect(thinking(ordinal)).toHaveCSS('transition-duration', '0s')
+    await expect(thinking(ordinal)).toHaveCSS('translate', 'none')
+    await expect(thinking(ordinal)).toHaveCSS('opacity', '1')
+  } finally { await page.emulateMedia({ reducedMotion: 'no-preference' }) }
 }
 async function sendNext(ordinal: number): Promise<void> {
   const composer = conversation().getByRole('textbox', { name: '继续对话', exact: true })
@@ -321,11 +398,9 @@ async function expectFooterStable(ordinal: number, size: 'wide' | 'narrow'): Pro
     await copy.hover(); await check('hover-copy', true)
     await regenerate.hover(); await check('hover-regenerate', true)
     await composer.hover(); await check('after-hover', false)
-    // The collapsed process toggle and the thinking switch precede the footer
-    // in the actual tab order. Enter both footer controls with Tab, leaving the
-    // pointer outside.
+    // A collapsed process has no thinking control in the tab order.
+    // Enter the footer with Tab, leaving the pointer outside.
     await toggle(ordinal).focus(); await page.keyboard.press('Tab')
-    await expect(thinking(ordinal)).toBeFocused(); await page.keyboard.press('Tab')
     await expect(usage).toBeFocused(); await check('keyboard-usage', true)
     await page.keyboard.press('Tab')
     await expect(copy).toBeFocused(); await check('keyboard-copy', true)
@@ -362,7 +437,7 @@ test.afterEach(async ({}, info) => {
     await page.screenshot({ path }); await info.attach('过程状态失败窗口', { path, contentType: 'image/png' })
   }
   const path = info.outputPath('work-process-receipts.json')
-  writeFileSync(path, JSON.stringify({ chats, roots, events, truncateCalls, fileReverts, footerGeometry, errors }, null, 2))
+  writeFileSync(path, JSON.stringify({ chats, roots, events, truncateCalls, fileReverts, footerGeometry, thinkingMotion, errors }, null, 2))
   await info.attach('轮次状态与真实传输记录', { path, contentType: 'application/json' })
   expect(errors).toEqual([])
 })
@@ -392,10 +467,16 @@ test('Work process folds on completion and preserves only the current phase’s 
     await work().getByRole('button', { name: '开始任务', exact: true }).click()
     await expect.poll(() => roots.length).toBe(1)
     await expectProcess(1, true)
+    await expectThinkingMotion(1)
     await toggle(1).click(); await expectProcess(1, false)
-    await thinking(1).click(); await expectProcess(1, true)
-    await expect(thinking(1)).toHaveAttribute('aria-pressed', 'true')
+    await toggle(1).click(); await expectProcess(1, true)
+    await thinking(1).click(); await expect(thinking(1)).toHaveAttribute('aria-pressed', 'true')
     await turn(1).locator('.work-message__thinking .logline').click()
+    await expect(turn(1).locator('.logline__detail--thinking')).toContainText('LIFECYCLE_THINKING_1')
+    await toggle(1).click(); await expectProcess(1, false)
+    await expect(turn(1).locator('.logline__detail--thinking')).toBeHidden()
+    await toggle(1).click(); await expectProcess(1, true)
+    await expect(thinking(1)).toHaveAttribute('aria-pressed', 'true')
     await expect(turn(1).locator('.logline__detail--thinking')).toContainText('LIFECYCLE_THINKING_1')
 
     requestPermission()
@@ -472,6 +553,9 @@ test('Work process folds on completion and preserves only the current phase’s 
     await toggle(1).click(); await expectProcess(1, true)
     await expect(thinking(1)).toHaveAttribute('aria-pressed', 'false')
     await thinking(1).click(); await expect(thinking(1)).toHaveAttribute('aria-pressed', 'true')
+    await toggle(1).click(); await expectProcess(1, false)
+    await toggle(1).click(); await expectProcess(1, true)
+    await expect(thinking(1)).toHaveAttribute('aria-pressed', 'true')
     await switchMode('code'); await switchMode('work')
     await expectProcess(1, true); await expect(thinking(1)).toHaveAttribute('aria-pressed', 'true')
     await expect(turn(1).getByText(finalText(1), { exact: true })).toBeVisible()

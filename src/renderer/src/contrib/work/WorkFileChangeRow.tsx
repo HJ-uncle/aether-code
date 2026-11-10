@@ -33,7 +33,7 @@ export const WorkFileChangeRow = memo(function WorkFileChangeRow({ change, state
     aria-label={`查看${action} ${path} · ${stateLabels[state]}`}
     disabled={!onOpenChange} onClick={() => onOpenChange?.(change)}>
     <span className="work-file-change-row__icon" aria-hidden="true">{state === 'running' ? <Spinner size={14} />
-      : failure ? <Icon name="warning" size={14} /> : state === 'waiting' ? <Icon name="clock-outline" size={14} />
+      : failure ? <Icon name="alert-circle" size={14} /> : state === 'waiting' ? <Icon name="clock-outline" size={14} />
         : state === 'cancelled' ? <Icon name="stop" size={14} /> : state === 'unknown' ? <Icon name="info" size={14} /> : <FileGlyph name={path} size={15} />}</span>
     <span className="work-file-change-row__action">{action}</span>
     <span className="work-file-change-row__name">{name}</span>

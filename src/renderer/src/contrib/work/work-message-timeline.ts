@@ -25,6 +25,23 @@ export type WorkPresentationSegment =
 
 export type WorkCollaborationMembership = ReadonlyMap<string, string>
 
+/** A child transcript is a reading surface: all prose stays in chronological
+ * order, while tool output and reasoning mount only after disclosure. */
+export function workTranscriptPresentation(segments: readonly WorkMessageSegment[]): WorkPresentationSegment[] {
+  const result: WorkPresentationSegment[] = []
+  for (const segment of segments) {
+    if (segment.kind === 'content') {
+      if (segment.text.trim()) result.push({ kind: 'answer', key: segment.key, text: segment.text })
+    } else {
+      if (segment.kind === 'thinking' && !segment.text.trim()) continue
+      const previous = result.at(-1)
+      if (previous?.kind === 'process') previous.segments.push(segment)
+      else result.push({ kind: 'process', key: segment.key, segments: [segment] })
+    }
+  }
+  return result
+}
+
 /** Freeze only the disclosure boundaries the user has started reading; receipt
  * objects and statuses still come from the latest message on every render. */
 export function captureWorkCollaborationMembership(presentation: readonly WorkPresentationSegment[]): WorkCollaborationMembership {

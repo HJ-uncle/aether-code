@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -18,6 +19,7 @@ import {
   useReducedContextMotion
 } from './ContextUsageMotion'
 import { formatTokens } from './usage'
+import './context-usage.css'
 
 type ContextRingAnchor = { rect: DOMRect; element: HTMLDivElement }
 
@@ -49,6 +51,7 @@ export function ContextUsageIndicator({
     null
   )
   const ringRef = useRef<HTMLDivElement>(null)
+  const tooltipId = useId()
   const closeTimerRef = useRef(0)
   const scope = `${appMode}:${owner}:${source}`
   const [previousScope, setPreviousScope] = useState(scope)
@@ -135,6 +138,7 @@ export function ContextUsageIndicator({
           'context-ring' + (warn ? ' context-ring--warn' : '') + (busy ? ' context-ring--busy' : '')
         }
         aria-label={title}
+        aria-describedby={hoverAnchor && appMode === owner ? tooltipId : undefined}
         aria-busy={busy}
         data-compaction-phase={phase ?? 'idle'}
         data-context-source={
@@ -195,6 +199,7 @@ export function ContextUsageIndicator({
       {appMode === owner ? (
         <ContextRingCardPresence
           key={scope}
+          tooltipId={tooltipId}
           hoverAnchor={hoverAnchor}
           requestEstimate={requestEstimate}
           used={used}
@@ -212,6 +217,7 @@ export function ContextUsageIndicator({
 }
 
 type ContextRingCardProps = {
+  tooltipId: string
   requestEstimate?: number
   anchor: DOMRect
   anchorElement: HTMLDivElement | null
@@ -236,12 +242,12 @@ function ContextRingCardPresence({ hoverAnchor, ...props }: Omit<ContextRingCard
 }
 
 /**
- * 上下文用量环的 hover 卡片（布局对齐 wuzu ContextUsageRing 的 tooltip）。
- * 结构：标题行（上下文窗口）→ 大号百分比 + 右侧「已用 / 上限」→ 底部状态提示；
- * 自动压缩状态来自引擎；已确认的模型输入快照独立保留。
+ * Compact totals support a quick scan; exact totals remain available directly
+ * below them for users who need to inspect individual token counts.
  * 信息卡不包含操作，鼠标可以穿过卡片继续点击输入框；定位在环的上方并贴边钳制。
  */
 function ContextRingCard({
+  tooltipId,
   requestEstimate,
   anchor,
   anchorElement,
@@ -323,7 +329,8 @@ function ContextRingCard({
     <div
       ref={cardRef}
       {...motionProps}
-      className="git-stashcard ctx-card"
+      id={tooltipId}
+      className="git-stashcard ctx-card ctx-card--compact"
       role="tooltip"
       data-testid="context-usage-card"
       data-reduced-motion={reducedMotion}
@@ -351,32 +358,16 @@ function ContextRingCard({
       </div>
       <div className="ctx-card__tokens">
         <span className="ctx-card__tokens-value">
-          {usageKnown ? (
-            <RollingContextNumber
-              value={used}
-              formatted={formatTokens(used)}
-              reduced={reducedMotion}
-              testId="context-used-compact-number"
-            />
-          ) : (
-            '尚未确认'
-          )}{' '}
-          / {formatTokens(limit)}
+          {usageKnown ? <RollingContextNumber value={used} formatted={formatTokens(used)}
+            reduced={reducedMotion} testId="context-used-compact-number" /> : '尚未确认'}
+          <span className="ctx-card__separator"> / </span>{formatTokens(limit)}
         </span>
         <span className="ctx-card__tokens-label">使用 / 上限</span>
       </div>
       <div className="ctx-card__exact-tokens">
-        {usageKnown ? (
-          <RollingContextNumber
-            value={used}
-            formatted={used.toLocaleString('en-US')}
-            reduced={reducedMotion}
-            testId="context-used-number"
-          />
-        ) : (
-          '尚未确认'
-        )}{' '}
-        / {limit.toLocaleString('en-US')} tokens
+        {usageKnown ? <RollingContextNumber value={used} formatted={used.toLocaleString('en-US')}
+          reduced={reducedMotion} testId="context-used-number" /> : '尚未确认'}
+        {' / '}{limit.toLocaleString('en-US')} tokens
       </div>
       {compactionPhase === 'running' ? (
         <div
@@ -389,38 +380,32 @@ function ContextRingCard({
       ) : (
         <ContextUsageBar ratio={used / limit} reduced={reducedMotion} />
       )}
-      <div className="ctx-card__hint ctx-card__source-hint">
-        {provisional === true
-          ? '当前模型请求'
-          : estimated === false
-            ? '最近确认的模型请求'
-            : streaming
-              ? '当前请求'
-              : '最近一次模型请求'}
-        的输入
-        {provisional === true
-          ? '（模型初步统计）；等待最终确认。'
-          : estimated === true
-            ? '估算（本地预估）；等待模型确认。'
-            : estimated === false
-              ? requestEstimate !== undefined
-                ? '（模型统计）；最新请求输入尚未确认。'
-                : '（模型统计）。'
-              : '（模型统计或估算）。'}
-      </div>
-      <div className="ctx-card__hint ctx-card__status-hint" role="status">
-        {status ? (
-          <span className={compactionPhase === 'failed' ? 'ctx-card__error' : undefined}>
-            {status}
-          </span>
-        ) : streaming ? (
-          '生成中；引擎会在需要时自动压缩上下文。'
-        ) : (
-          '引擎会在需要时自动压缩上下文。'
-        )}
-      </div>
-      <div className="ctx-card__hint ctx-card__billing-hint">
-        此处是单次请求占用，不等于累计计费用量。
+      <div className="ctx-card__details">
+        <p className="ctx-card__hint ctx-card__source-hint">
+          {provisional === true
+            ? '模型初步统计 · 等待最终确认'
+            : estimated === true
+              ? '本地估算 · 等待模型确认'
+              : estimated === false
+                ? requestEstimate !== undefined
+                  ? '模型统计 · 最近确认值，新请求待确认'
+                  : '模型统计 · 最近一次请求输入'
+                : usageKnown ? '请求输入 · 模型统计或本地估算' : '请求输入尚未确认'}
+        </p>
+        <div className="ctx-card__hint ctx-card__status-hint" role="status">
+          {status ? (
+            <span className={compactionPhase === 'failed' ? 'ctx-card__error' : undefined}>
+              {status}
+            </span>
+          ) : streaming ? (
+            '生成中 · 按需自动压缩'
+          ) : (
+            '按需自动压缩 · 非累计计费用量'
+          )}
+        </div>
+        {status || streaming ? <p className="ctx-card__hint ctx-card__billing-hint">
+          单次请求占用 · 非累计计费用量
+        </p> : null}
       </div>
     </div>,
     document.body

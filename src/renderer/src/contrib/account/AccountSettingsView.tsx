@@ -4,6 +4,7 @@ import { Dialog } from '@renderer/workbench/Dialog'
 import { useMotionDismiss } from '@renderer/workbench/MotionPresence'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { Icon } from '@renderer/workbench/icons'
+import { useHoverDetail } from '@renderer/workbench/useHoverDetail'
 import { SettingsContent, SettingsDisclosure, SettingsGroup, SettingsRow } from '../settings/SettingsGroup'
 import { openAppSettings } from '../settings/app-settings-navigation'
 import { ACCOUNT_STATUS_LABELS, dismissAccountOnboarding, publishAccountState, refreshAccount, requestAccountOnboarding, useAccount } from './account-store'
@@ -86,6 +87,21 @@ export function AccountSettingsView(): JSX.Element {
   const displayedError = error || loadError ? accountErrorMessage(error || loadError) : ''
   const accountMessage = account.message ? accountErrorMessage(account.message) : ''
   const user = account.user
+  const { triggerProps: loginHelpTriggerProps, tooltip: loginHelpTooltip } = useHoverDetail({
+    enabled: true,
+    label: '个人账号登录说明',
+    content: <>
+      <strong className="account-login-help__title">个人账号</strong>
+      <p>{user ? `当前账号：${user.name || '未设置姓名'}${user.email ? `（${user.email}）` : ''}` : '当前未登录账号。'}</p>
+      <p>这里的登录方式会连接当前引擎配置的账号服务。按下面的方式登录后，可以继续使用工作区和历史数据。</p>
+      <ul className="account-login-help__list">
+        <li><strong>一键登录</strong>：自动创建一个新账号并登录。</li>
+        <li><strong>已有账号</strong>：导入之前备份的恢复凭证。</li>
+        <li><strong>使用恢复码登录</strong>：输入已保存的恢复码，找回原账号。</li>
+      </ul>
+      {!account.serviceUrl || account.status === 'unavailable' ? <p>账号服务不可用时，先到“引擎设置”检查服务地址。</p> : null}
+    </>
+  })
 
   const perform = async (label: string, task: () => Promise<AccountState | null>, message = ''): Promise<AccountState | null> => {
     // A confirmation dialog may outlive an engine switch. Re-check the current
@@ -148,7 +164,11 @@ export function AccountSettingsView(): JSX.Element {
       }}>{busy === 'http-trust' ? '正在更新…' : httpTrusted ? '撤销信任' : '信任此内网服务'}</button>
     </section> : null}
 
-    {!authenticated ? <SettingsGroup title={account.status === 'expired' ? '重新登录' : '登录账号'}>
+    {!authenticated ? <SettingsGroup title={<span className="account-login-help__heading">
+      {account.status === 'expired' ? '重新登录' : '登录账号'}
+      <button type="button" className="account-login-help__trigger" aria-label="查看个人账号登录说明" {...loginHelpTriggerProps}><Icon name="alert-circle" size={14} /></button>
+      {loginHelpTooltip}
+    </span>}>
       {account.registrationEnabled ? <SettingsRow label="一键登录" description="自动创建账号，无需先填写个人资料。">
         <button type="button" className="btn btn--primary" disabled={loginBlocked} onClick={() => {
           void perform('register', () => window.aether.account.register()).then((next) => {

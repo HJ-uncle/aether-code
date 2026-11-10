@@ -284,6 +284,487 @@
   padding-inline: var(--space-2);
 }
 
+/* Git uses the same quiet, grouped chrome as a native macOS utility. The
+ * toolbar carries status/actions, the commit controls form one inset group,
+ * and the history/stash sections read as a single list instead of floating
+ * cards with unrelated gaps. */
+.git-panel {
+  background: var(--bg-panel);
+  color: var(--fg);
+  overflow: hidden;
+}
+
+.git-panel__toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 38px;
+  padding: var(--space-1) var(--space-3);
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+  border-bottom: 1px solid var(--border);
+}
+
+.git-panel__repository-header {
+  flex: 0 0 auto;
+  min-width: 0;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.git-panel__repository-header > .git-panel__toolbar {
+  border-bottom: 0;
+  background: transparent;
+}
+
+.git-panel__branch-area {
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+.git-panel__summary {
+  color: var(--fg-strong);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.git-panel__tool-btn {
+  width: var(--control-h);
+  min-width: var(--control-h);
+  height: var(--control-h);
+  padding: 0;
+  border-radius: var(--radius-lg);
+  color: var(--fg-muted);
+}
+
+.git-panel__tool-btn:hover:not(:disabled) {
+  color: var(--fg-strong);
+  background: var(--bg-hover);
+}
+
+.git-panel__commit-area {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.git-branchbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: var(--control-h-lg);
+  gap: 0;
+  padding: 0;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--bg-elevated) 72%, transparent);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.git-branchbar__selector,
+.git-branchbar__selector > .popover__trigger {
+  display: flex;
+  min-width: 0;
+}
+
+.git-branchbar__icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--fg-muted);
+}
+
+.git-branchbar__trigger {
+  width: 100%;
+  min-height: var(--control-h-lg);
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+  background: transparent;
+}
+
+.git-branchbar__selector > .popover__trigger {
+  flex: 1;
+}
+
+.git-branchbar__name {
+  flex: 1;
+  text-align: left;
+  font-weight: 500;
+}
+
+.git-branchbar__trigger:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.git-branchbar__menu-btn {
+  width: var(--control-h-lg);
+  height: var(--control-h-lg);
+  border-left: 1px solid var(--border);
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+}
+
+.git-branchbar__menu-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.git-branchbar__trigger:disabled,
+.git-branchbar__menu-btn:disabled {
+  color: var(--fg-faint);
+  cursor: default;
+}
+
+.git-branchbar__trigger:focus-visible,
+.git-branchbar__menu-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.git-branchbar__feedback {
+  grid-column: 1 / -1;
+  padding: var(--space-1) var(--space-3);
+}
+
+.git-commitbar {
+  gap: var(--space-2);
+}
+
+.git-commitbar__input {
+  /* A textarea is inline-block by default. Its baseline gap would enlarge the
+     wrapper and push the independently positioned AI control below center. */
+  display: block;
+  min-height: var(--control-h-lg);
+  padding: var(--space-2) 36px var(--space-2) var(--space-3);
+  border-color: var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-input);
+  color: var(--fg-strong);
+  font-size: 12px;
+}
+
+.git-commitbar__input:focus {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.git-commitbar__ai {
+  right: var(--space-1);
+  bottom: var(--space-1);
+  width: var(--control-h);
+  height: var(--control-h);
+  border-radius: var(--radius);
+}
+
+.git-commitbar__actions {
+  gap: 0;
+  border-radius: var(--radius-lg);
+  background: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 70%, var(--border));
+}
+
+.git-commitbar__actions > .git-commitbar__primary,
+.git-commitbar__actions > .git-commitbar__more {
+  min-height: var(--control-h-lg);
+  background: transparent;
+  opacity: 1;
+}
+
+.git-commitbar__primary {
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+  font-weight: 500;
+}
+
+.git-commitbar__more {
+  width: var(--control-h-lg);
+  border-left: 1px solid color-mix(in srgb, var(--accent-fg) 24%, transparent);
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+}
+
+.git-commitbar__actions > button:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+/* A disabled split button remains a single quiet control, rather than two
+ * translucent accent tiles that suggest an available primary action. */
+.git-commitbar__actions:has(.git-commitbar__primary:disabled) {
+  background: var(--bg-hover);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.git-commitbar__actions > button:disabled {
+  color: var(--fg-faint);
+}
+
+.git-commitbar__actions:has(.git-commitbar__primary:disabled) > .git-commitbar__more {
+  color: var(--fg-muted);
+  border-left-color: var(--border);
+}
+
+.git-commitbar__actions:has(.git-commitbar__primary:disabled) > button:hover:not(:disabled) {
+  background: var(--bg-active);
+  color: var(--fg-strong);
+}
+
+.git-commitbar__actions > button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.git-panel__section {
+  margin: 0 var(--space-3);
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+}
+
+.git-panel__section:first-child {
+  padding-top: var(--space-2);
+}
+
+.git-panel__section:last-child {
+  border-bottom: 0;
+}
+
+.git-panel__group-head {
+  min-height: var(--control-h-lg);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-lg);
+  color: var(--fg-strong);
+}
+
+.git-panel__group-head:hover {
+  background: var(--bg-hover);
+}
+
+.git-panel__count {
+  min-width: 20px;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--bg-active);
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.git-panel__group-btn {
+  width: var(--control-h);
+  height: var(--control-h);
+  border-radius: var(--radius-lg);
+}
+
+.git-panel__group-head .git-panel__group-btn {
+  opacity: .7;
+}
+
+.git-panel__group-head:hover .git-panel__group-btn,
+.git-panel__group-btn:focus-visible {
+  opacity: 1;
+}
+
+.git-panel__batch-bar {
+  margin: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+}
+
+.git-panel__content {
+  background: var(--bg-panel);
+  scroll-padding-top: calc(var(--control-h-lg) + var(--space-2));
+}
+
+/* Keep the existing virtual-list scroll owner. Section headers sit outside
+ * animated content, so each remains available until its own section ends. */
+.git-panel__scroll,
+.git-panel__body,
+.git-panel__section {
+  overflow: visible;
+}
+
+.git-panel__section > .git-panel__group-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-panel);
+  border-radius: 0;
+  box-shadow: 0 1px 0 var(--border);
+}
+
+.git-panel__section > .git-panel__group-head:hover {
+  background: var(--bg-elevated);
+}
+
+.git-panel .git-panel__load-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: var(--control-h-lg);
+  box-sizing: border-box;
+  margin: var(--space-1) 0;
+  padding: var(--space-1) 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 12px;
+  cursor: default;
+}
+
+.git-panel .git-panel__load-more:hover {
+  background: transparent;
+  color: var(--fg-muted);
+}
+
+.git-panel__loading-status,
+.git-panel__load-more-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.git-panel__load-more-button {
+  min-height: var(--control-h);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.git-panel__load-more-button:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--fg-strong);
+}
+
+.git-panel__load-more-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.git-panel__load-more-button:disabled {
+  opacity: .5;
+  cursor: default;
+}
+
+/* Match change rows: the message owns navigation, while the trailing actions
+ * reserve no space until a pointer or keyboard focus enters the row. */
+.git-panel__stash-row {
+  gap: 0;
+  cursor: default;
+}
+
+.git-panel__stash-row > input[type='checkbox'] {
+  flex: 0 0 auto;
+  margin-right: var(--space-2);
+}
+
+.git-panel__stash-row.is-active {
+  background: var(--bg-selected-inactive);
+}
+
+.git-panel__stash-open {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.git-panel__stash-open > svg {
+  flex: 0 0 auto;
+  color: var(--fg-muted);
+}
+
+.git-panel__stash-open .git-panel__stash-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 48%;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.git-panel__stash-open .git-panel__stash-branch {
+  flex: 0 1 auto;
+}
+
+/* Override the shared hover-tools translation so these controls enter from
+ * the trailing edge and animate the space they release back to the message. */
+:root .git-panel .git-panel__stash-actions {
+  width: 0;
+  overflow: hidden;
+  opacity: 0;
+  translate: var(--space-2) 0;
+  pointer-events: none;
+  transition: width var(--motion-hover) var(--motion-ease),
+    opacity var(--motion-hover) var(--motion-ease),
+    translate var(--motion-hover) var(--motion-ease);
+}
+
+:root .git-panel .git-panel__stash-row:is(:hover, :focus-within) .git-panel__stash-actions {
+  width: 126px;
+  opacity: 1;
+  translate: 0 0;
+  pointer-events: auto;
+}
+
+.git-panel__stash-open:focus-visible,
+.git-panel__stash-actions .git-row__btn:focus-visible {
+  outline: 1px solid var(--list-focus-outline);
+  outline-offset: -1px;
+}
+
+.git-panel__stash-actions .git-row__btn:disabled {
+  opacity: .4;
+  cursor: default;
+}
+
+@container (max-width: 360px) {
+  .git-panel__stash-open .git-panel__stash-meta {
+    display: none;
+  }
+}
+
+@media (hover: none) {
+  :root .git-panel .git-panel__stash-actions {
+    width: 126px;
+    opacity: 1;
+    translate: 0 0;
+    pointer-events: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root .git-panel .git-panel__stash-actions {
+    transition: none;
+    translate: none;
+  }
+}
+
+@container workbench (max-width: 520px) {
+  .git-panel__toolbar,
+  .git-panel__branch-area,
+  .git-panel__commit-area {
+    padding-inline: var(--space-2);
+  }
+
+  .git-panel__section {
+    margin-inline: var(--space-2);
+  }
+}
+
 /* 编辑器与浏览器都遵循同一条 tab 基线，活动项用强调色而不是额外阴影堆叠。 */
 .editor-tabs,
 .browser-tabs {
@@ -488,7 +969,7 @@
     box-shadow var(--duration-fast) var(--ease-out);
 }
 
-.search-view__field:focus-within,
+.search-view__field:has(.search-view__input:focus-visible),
 .search-view__filter-input:focus-visible {
   border-color: var(--accent);
   box-shadow: var(--focus-ring);

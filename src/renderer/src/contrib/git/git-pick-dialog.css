@@ -1,0 +1,168 @@
+/* Git choices share a reading layout across branches, tags, remotes and commits.
+   Scoped selectors also keep the generic modal/input defaults from adding a
+   second focus ring inside the search field. */
+.git-pickdlg > .modal__body {
+  overflow: hidden;
+}
+
+.git-pickdlg .git-pickdlg__body {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.git-pickdlg .git-pickdlg__description {
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.git-pickdlg .git-pickdlg__search {
+  flex: 0 0 auto;
+  height: var(--control-h-lg);
+  gap: var(--space-2);
+  padding-inline: var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-input);
+  color: var(--fg-muted);
+  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.git-pickdlg .git-pickdlg__search:has(.git-pickdlg__input:focus-visible) {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.git-pickdlg .git-pickdlg__input,
+.git-pickdlg .git-pickdlg__input:focus-visible {
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  outline: none;
+  box-shadow: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg-strong);
+}
+
+.git-pickdlg .git-pickdlg__clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 var(--control-h-compact);
+  height: var(--control-h-compact);
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+}
+
+.git-pickdlg .git-pickdlg__clear:hover {
+  color: var(--fg-strong);
+  background: var(--bg-hover);
+}
+
+.git-pickdlg .git-pickdlg__list {
+  flex: 0 1 320px;
+  min-height: 96px;
+  max-height: min(360px, 52vh);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-1);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.git-pickdlg .git-pickdlg__item {
+  min-height: 36px;
+  padding: var(--space-2) var(--space-3);
+  gap: var(--space-2);
+  border-radius: var(--radius);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.git-pickdlg .git-pickdlg__item--tall {
+  min-height: 54px;
+  align-items: flex-start;
+}
+
+.git-pickdlg .git-pickdlg__item:hover,
+.git-pickdlg .git-pickdlg__item.is-active {
+  background: var(--menu-hover-bg);
+}
+
+.git-pickdlg .git-pickdlg__item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 18px;
+  height: 19px;
+  margin: 0;
+  color: var(--fg-muted);
+}
+
+.git-pickdlg .git-pickdlg__item-main {
+  gap: var(--space-1);
+}
+
+.git-pickdlg .git-pickdlg__item-row {
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.git-pickdlg .git-pickdlg__item-label {
+  font-weight: 500;
+}
+
+.git-pickdlg .git-pickdlg__item-hint {
+  flex: 0 1 auto;
+  max-width: 48%;
+  color: var(--fg-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.git-pickdlg .git-pickdlg__item-desc {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+.git-pickdlg .git-pickdlg__empty {
+  padding: var(--space-7) var(--space-4);
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.git-pickdlg .git-pickdlg__footer-hint {
+  flex: 0 0 auto;
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 480px) {
+  .git-pickdlg .git-pickdlg__item-row {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+
+  .git-pickdlg .git-pickdlg__item-row > .git-pickdlg__item-label {
+    flex-basis: 100%;
+  }
+
+  .git-pickdlg .git-pickdlg__item-hint {
+    margin-left: 0;
+    max-width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .git-pickdlg .git-pickdlg__search { transition: none; }
+}

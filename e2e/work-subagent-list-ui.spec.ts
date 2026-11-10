@@ -1,5 +1,6 @@
 /** Isolated Electron + authenticated engine fixture: four long Chinese agent
- * rows retain readable statuses, complete hover details and native navigation.
+ * rows retain readable statuses without obstructing hover cards; full details
+ * remain available through native pointer and keyboard navigation.
  * Covers split/single/narrow panes in both themes and real scroll/focus restore.
  * Build first, then use playwright.work-subagent-list.config.ts. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
@@ -341,30 +342,30 @@ test.describe.serial('协作代理列表', () => {
     await expect(row(3).locator('.work-subagents__row-duration')).toHaveAttribute('data-duration-ms', '133000')
   })
 
-  test('悬浮和键盘焦点可阅读完整名称与任务，关闭浮层不进入详情', async ({}, info) => {
+  test('悬浮与键盘焦点不弹出遮挡卡片，完整任务保留在可访问说明中', async ({}, info) => {
     await setWindow(560, 760); await openList()
     for (const index of [0, 1, 2, 3]) {
       await row(index).hover()
-      const tooltip = page.getByRole('tooltip', { name: `${names[index]} 的任务`, exact: true })
-      await expect(tooltip).toBeVisible()
-      await expect(tooltip).toContainText(names[index]); await expect(tooltip).toContainText(tasks[index])
-      await tooltip.hover()
-      await expect(tooltip).toBeVisible()
-      const bounds = await tooltip.evaluate(element => ({ rect: element.getBoundingClientRect().toJSON(), width: innerWidth,
-        height: innerHeight, whiteSpace: getComputedStyle(element).whiteSpace, selection: getComputedStyle(element).userSelect,
-        horizontalOverflow: element.scrollWidth - element.clientWidth }))
-      expect(bounds.rect.left).toBeGreaterThanOrEqual(0); expect(bounds.rect.right).toBeLessThanOrEqual(bounds.width)
-      expect(bounds.rect.top).toBeGreaterThanOrEqual(0); expect(bounds.rect.bottom).toBeLessThanOrEqual(bounds.height)
-      expect(bounds.horizontalOverflow).toBeLessThanOrEqual(1); expect(bounds.whiteSpace).not.toBe('nowrap'); expect(bounds.selection).toBe('text')
-      await page.screenshot({ path: info.outputPath(`subagent-list-hover-${index}.png`), animations: 'disabled' })
-      await page.keyboard.press('Escape'); await expect(tooltip).toHaveCount(0)
+      // Observe beyond the former 400 ms hover delay: an immediate negative
+      // assertion would pass even if the obstructing card were still scheduled.
+      const tooltipAppeared = await page.evaluate(() => new Promise<boolean>(done => {
+        let appeared = Boolean(document.querySelector('[role="tooltip"]'))
+        const observer = new MutationObserver(() => { appeared ||= Boolean(document.querySelector('[role="tooltip"]')) })
+        observer.observe(document.body, { childList: true, subtree: true })
+        setTimeout(() => { observer.disconnect(); done(appeared) }, 650)
+      }))
+      expect(tooltipAppeared).toBe(false)
+      await expect(row(index)).not.toHaveAttribute('title', /.+/)
+      await expect(row(index).locator('[title]')).toHaveCount(0)
+      expect(await row(index).getAttribute('aria-description')).toContain(tasks[index])
+      await page.screenshot({ path: info.outputPath(`subagent-list-unobstructed-${index}.png`), animations: 'disabled' })
       await expect(rows()).toHaveCount(4); await expect(back()).toHaveCount(0)
     }
     await page.mouse.move(0, 0)
     await row(0).focus(); await page.keyboard.press('Tab'); await page.keyboard.press('Shift+Tab')
     await expect(row(0)).toBeFocused()
-    await expect(page.getByRole('tooltip').filter({ hasText: tasks[0] })).toBeVisible()
-    await page.keyboard.press('Escape'); await expect(page.getByRole('tooltip')).toHaveCount(0)
+    await expect(page.getByRole('tooltip')).toHaveCount(0)
+    await expect(back()).toHaveCount(0)
     expect(archiveReads).toEqual([])
   })
 
@@ -385,6 +386,7 @@ test.describe.serial('协作代理列表', () => {
       else await back().click()
       await expect(rows()).toHaveCount(4)
       await expect(row(index)).toBeFocused()
+      await expect(page.getByRole('tooltip')).toHaveCount(0)
       await expect.poll(() => list().evaluate(element => element.scrollTop)).toBeCloseTo(savedTop, 0)
       await page.keyboard.press('Escape')
     }

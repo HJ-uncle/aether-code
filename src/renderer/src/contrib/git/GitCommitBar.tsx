@@ -135,7 +135,13 @@ export function GitCommitBar(): JSX.Element {
     const el = inputRef.current
     if (!el) return
     el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 18 * 10 + 8)}px`
+    // scrollHeight includes padding but not borders. Include both in the
+    // border-box height so a single line doesn't clip or misalign the AI button.
+    const style = getComputedStyle(el)
+    const border = parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth)
+    const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+    const maxHeight = parseFloat(style.lineHeight) * 10 + padding + border
+    el.style.height = `${Math.min(el.scrollHeight + border, maxHeight)}px`
   }
   useEffect(autosize, [s.commitMessage])
 
@@ -222,7 +228,7 @@ export function GitCommitBar(): JSX.Element {
     else toast.error(res.error ?? '提交失败')
   }
 
-  /** SSH 私钥口令：PromptDialog 承载，密码语义靠 note 提示（aether PromptDialog 无 inputType） */
+  /** 口令用密码输入框承载，避免在重试远程操作时暴露明文。 */
   const requestSshPassphrase = (): Promise<string | null> =>
     new Promise((resolve) => setSshAsk({ resolve }))
 
@@ -350,7 +356,7 @@ export function GitCommitBar(): JSX.Element {
       <div className="git-commitbar__input-wrap">
         <textarea
           ref={inputRef}
-          className="git-commitbar__input"
+          className="git-commitbar__input ui-input"
           rows={1}
           value={s.commitMessage}
           placeholder="提交信息"
@@ -438,6 +444,9 @@ export function GitCommitBar(): JSX.Element {
       {sshAsk ? (
         <PromptDialog
           title="加载 SSH 私钥"
+          className="git-dialog"
+          width={480}
+          inputType="password"
           label="请输入 SSH 私钥口令，加载后重试本次操作。"
           confirmLabel="加载并重试"
           validate={(v) => (v ? null : '请输入口令')}
@@ -452,6 +461,8 @@ export function GitCommitBar(): JSX.Element {
       {emptyAsk ? (
         <PromptDialog
           title="空提交"
+          className="git-dialog"
+          width={480}
           label="提交信息"
           confirmLabel="创建空提交"
           onConfirm={async (msg) => {

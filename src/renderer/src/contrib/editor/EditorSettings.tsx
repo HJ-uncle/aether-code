@@ -93,7 +93,7 @@ function PreferenceInput({ label, value, min, max, onCommit }: {
   return (
     <label className="editor-settings__field">
       <span>{label}</span>
-      <input
+      <input className="ui-input ui-input--compact"
         type={typeof value === 'number' ? 'number' : 'text'}
         aria-label={label}
         value={draft}

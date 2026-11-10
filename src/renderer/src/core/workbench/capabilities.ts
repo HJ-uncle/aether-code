@@ -1,4 +1,4 @@
-export const WORKBENCH_ACTIONS = ['artifact.open', 'workspace.context', 'terminal.read'] as const
+export const WORKBENCH_ACTIONS = ['artifact.open', 'workspace.context', 'terminal.read', 'artifact.render'] as const
 export const PREVIEW_FORMATS = ['pdf', 'docx', 'xlsx', 'pptx', 'csv', 'tsv', 'md', 'txt', 'json', 'html', 'htm', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'mp4', 'webm'] as const
 const connected = new Map<string, string>()
 const key = (source: number, sessionId: string, mode: 'work' | 'code') => JSON.stringify([source, sessionId, mode])

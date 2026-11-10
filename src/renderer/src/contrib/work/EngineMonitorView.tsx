@@ -123,7 +123,7 @@ export function EngineMonitorView({ tasks }: { tasks: readonly WorkTask[] }): JS
 
         {snapshot.error ? (
           <p className="engine-monitor__error" role="alert">
-            <Icon name="warning" size={14} />
+            <Icon name="alert-circle" size={14} />
             {snapshot.error}
           </p>
         ) : null}

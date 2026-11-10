@@ -66,7 +66,7 @@ export function EditorPathPicker({ directory, workspaceRoot, currentFile, anchor
       <span title={folder}>{paths.basename(folder)}</span>
       <button type="button" aria-label="关闭路径选择" onClick={onClose}><Icon name="close" size={14} /></button>
     </header>
-    <input aria-label="筛选同级文件" placeholder="筛选文件或文件夹…" value={filter}
+    <input className="ui-input ui-input--compact" aria-label="筛选同级文件" placeholder="筛选文件或文件夹…" value={filter}
       onChange={(event) => { setFilter(event.target.value); setSelected(0) }}
       onKeyDown={(event) => {
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {

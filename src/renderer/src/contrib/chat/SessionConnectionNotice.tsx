@@ -30,7 +30,7 @@ export function SessionConnectionNotice({ ready, sessionId, source, connection, 
   }
   return <div className="session-connection-notice" aria-label="会话连接状态">
     <div className="session-connection-notice__row">
-      <span aria-hidden="true">{presentation.busy || retrying ? <Spinner size={13} /> : <Icon name="warning" size={13} />}</span>
+      <span aria-hidden="true">{presentation.busy || retrying ? <Spinner size={13} /> : <Icon name="alert-circle" size={13} />}</span>
       <span role="status" aria-live="polite">{presentation.label}</span>
       {presentation.retry ? <button type="button" className="chat__toolbar-btn" disabled={retrying} aria-busy={retrying} onClick={() => void retry()}>{retrying ? '正在重试…' : '重新加载'}</button> : null}
     </div>

@@ -74,7 +74,8 @@ export function DivergedStrategyDialogHost(): JSX.Element | null {
       key={req.id}
       open={Boolean(currentRequest)}
       title="本地与远端已分叉"
-      width={420}
+      className="git-dialog git-diverged-dialog"
+      width={480}
       onClose={() => settle(null, req)}
       footer={
         <>
@@ -91,6 +92,17 @@ export function DivergedStrategyDialogHost(): JSX.Element | null {
       }
     >
       <div className="git-diverged-dialog__detail">{req.detail}</div>
+      <dl className="git-diverged-dialog__options">
+        <div>
+          <dt>合并（merge）</dt>
+          <dd>保留双方的提交历史，并生成一次合并提交。</dd>
+        </div>
+        <div>
+          <dt>变基（rebase）</dt>
+          <dd>把本地提交接到远端提交之后，历史更直观，但会改写本地提交。</dd>
+        </div>
+      </dl>
+      <p className="git-diverged-dialog__hint">选择会保存到当前仓库，下次分叉时沿用；取消则保持现状。</p>
     </Dialog>
   )
 }

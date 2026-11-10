@@ -5,7 +5,7 @@ import { Select } from '@renderer/workbench/Select'
 
 export function PreviewMessage({ error, onRetry }: { error?: string; onRetry?: () => void }): JSX.Element {
   return <div className="document-preview__message" role={error ? 'alert' : 'status'}>
-    {error ? <Icon name="warning" size={22} /> : <Spinner size={18} />}
+    {error ? <Icon name="alert-circle" size={22} /> : <Spinner size={18} />}
     <span>{error || '正在准备文档预览…'}</span>
     {error && onRetry ? <button type="button" onClick={onRetry}>重试预览</button> : null}
   </div>

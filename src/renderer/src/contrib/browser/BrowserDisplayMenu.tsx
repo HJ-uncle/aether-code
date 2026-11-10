@@ -53,9 +53,9 @@ export function BrowserDisplayMenu({ tab, inspector, onViewport, onZoom, onInspe
         event.preventDefault(); event.stopPropagation()
         onViewport({ width: Number(width), height: Number(height), mobile: false, deviceScaleFactor: 1 }); setCustom(false)
       }}>
-        <label>宽<input aria-label="视口宽度" type="number" min={240} max={3840} required value={width} onChange={event => setWidth(event.target.value)} /></label>
+        <label>宽<input className="ui-input ui-input--compact" aria-label="视口宽度" type="number" min={240} max={3840} required value={width} onChange={event => setWidth(event.target.value)} /></label>
         <span aria-hidden="true">×</span>
-        <label>高<input aria-label="视口高度" type="number" min={240} max={3840} required value={height} onChange={event => setHeight(event.target.value)} /></label>
+        <label>高<input className="ui-input ui-input--compact" aria-label="视口高度" type="number" min={240} max={3840} required value={height} onChange={event => setHeight(event.target.value)} /></label>
         <button type="submit">应用</button>
         <button type="button" className="browser-tool" aria-label="取消自定义视口" onClick={() => setCustom(false)}><Icon name="close" size={14} /></button>
       </form> : null}

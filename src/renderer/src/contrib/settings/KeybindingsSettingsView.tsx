@@ -92,7 +92,7 @@ export function KeybindingsSettingsView(): JSX.Element {
     <div className="keybindings">
       <div className="keybindings__bar">
         <input
-          className="keybindings__search"
+          className="keybindings__search ui-input ui-input--compact"
           value={query}
           placeholder="按命令名、分类或 ID 过滤…"
           aria-label="搜索命令"

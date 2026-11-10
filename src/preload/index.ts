@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { isTrustedWorkbenchUrl } from '../shared/workbench-url'
 import { IPC } from '../shared/ipc'
+import { OFFICE_RENDER_IPC, type OfficePageRenderInput, type OfficePageRenderResult } from '../shared/office-render'
 import type { ConversationLink } from '../shared/conversation-link'
 import { WORK_QUEUE_IPC, type WorkNextTurnApi, type WorkQueueInvokeResult } from '../shared/work-next-turn-api'
 import { CODE_QUEUE_IPC, type CodeNextTurnApi, type CodeQueueInvokeResult } from '../shared/code-next-turn-api'
@@ -151,6 +152,7 @@ const browserApi: BrowserApi = {
 }
 
 const api = {
+  office: { renderPage: (input: OfficePageRenderInput): Promise<OfficePageRenderResult> => ipcRenderer.invoke(OFFICE_RENDER_IPC, input) },
   system: {
     getOpenWithApps: (): Promise<OpenWithApp[]> => ipcRenderer.invoke(IPC.invoke.systemGetOpenWithApps),
     openWith: (path: string, app: OpenWithAppId): Promise<void> =>

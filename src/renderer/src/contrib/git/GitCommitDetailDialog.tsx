@@ -144,7 +144,7 @@ export function GitCommitDetailDialog({
       open={nextOpen}
       title={`提交 ${info?.shortHash ?? ''}`}
       width={640}
-      className="git-commitdlg"
+      className="git-dialog git-commitdlg"
       onClose={onClose}
       footer={
         <>
@@ -176,13 +176,14 @@ export function GitCommitDetailDialog({
                 {info.author}
               </span>
               <span className="git-commitdlg__meta-item">
-                <Icon name="restart" size={16} />
+                <Icon name="clock-outline" size={16} />
                 {formatFullDate(info.date)}
               </span>
               <button
                 type="button"
                 className="git-commitdlg__meta-item git-commitdlg__hash"
                 title="复制完整哈希"
+                aria-label="复制完整哈希"
                 onClick={copyHash}
               >
                 <span className="git-commitdlg__mono">{info.shortHash}</span>
@@ -212,6 +213,7 @@ export function GitCommitDetailDialog({
                   type="button"
                   className="git-commitdlg__body-copy"
                   title="复制提交信息"
+                  aria-label="复制提交信息"
                   onClick={copyMessage}
                 >
                   <Icon name="copy" size={16} />
@@ -224,8 +226,11 @@ export function GitCommitDetailDialog({
             <div className="git-commitdlg__files-head">变更文件</div>
             <div className="git-commitdlg__files-list">
               {info.fileChanges.map((f) => (
-                <div
+                <button
                   key={f.path}
+                  type="button"
+                  disabled={!onOpenFileDiff}
+                  aria-label={`查看 ${f.path} 的变更`}
                   className={`git-commitdlg__file${onOpenFileDiff ? '' : ' is-disabled'}`}
                   title={onOpenFileDiff ? `点击查看 ${f.path} 的变更内容` : f.path}
                   onClick={() => onOpenFileDiff?.(f, info, detailCwd)}
@@ -237,7 +242,7 @@ export function GitCommitDetailDialog({
                   </span>
                   <span className="git-commitdlg__file-dir">{dirName(f.path)}</span>
                   <Icon name="chevron-right" size={16} className="git-commitdlg__file-arrow" />
-                </div>
+                </button>
               ))}
             </div>
           </div>

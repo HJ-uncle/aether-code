@@ -129,7 +129,7 @@ export function WorkErrorNotice({
   return (
     <section className={`work-error-notice${className ? ` ${className}` : ''}`} role="alert">
       <div className="work-error-notice__heading">
-        <Icon name="warning" size={15} aria-hidden="true" />
+        <Icon name="alert-circle" size={15} aria-hidden="true" />
         <div>
           <strong>{presentation.title}</strong>
           <p>{presentation.summary}</p>

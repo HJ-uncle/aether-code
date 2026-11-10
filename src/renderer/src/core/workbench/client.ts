@@ -8,9 +8,10 @@ import { captureSessionFileTarget, type SessionFileTarget } from '../workspace/f
 import { getTerminalState, getSessionStatus } from '../../contrib/terminal/terminal-store'
 import { PREVIEW_FORMATS, WORKBENCH_ACTIONS, setWorkbenchConnected } from './capabilities'
 import { deferredWorkPreview, isWorkbenchOwnerCurrent } from './connection-scope'
+import { renderWorkbenchPage } from './render'
 
 export interface WorkbenchCommand {
-  requestId: string; sessionId: string; action: typeof WORKBENCH_ACTIONS[number]; args: { path?: string; line?: number; terminalId?: string; maxLines?: number }
+  requestId: string; sessionId: string; action: typeof WORKBENCH_ACTIONS[number]; args: { path?: string; line?: number; terminalId?: string; maxLines?: number; page?: number; expectedHash?: string }
   execution: { rootSessionId: string; rootRunId: string; ownerRunId: string }; expiresAt: number
 }
 export interface WorkbenchAdapter {
@@ -18,6 +19,7 @@ export interface WorkbenchAdapter {
   open(path: string, line: number | undefined, current: () => boolean): Promise<Record<string, unknown>>
 }
 interface Registration { clientId: string; clientToken: string }
+class WorkbenchRequestError extends Error { constructor(message: string, readonly code?: number) { super(message) } }
 const message = (error: unknown) => error instanceof Error ? error.message : String(error)
 
 /** User PTYs have their own owner; a model cannot read another session's terminal. */
@@ -164,7 +166,7 @@ export function useWorkbenchClient(sessionId: string | null, enabled: boolean, m
       const result = await request<T>({ method: 'POST', path, body, expectedEngine, toolProfile: mode === 'work' ? 'general' : 'code' })
       if (!result.ok) {
         if (path === '/workbench/clients' && (result.code === 404 || result.code === 40400)) unsupported = true
-        throw new Error(result.message || '工作台连接失败。')
+        throw new WorkbenchRequestError(result.message || '工作台连接失败。', result.code)
       }
       return result.data as T
     }
@@ -173,7 +175,14 @@ export function useWorkbenchClient(sessionId: string | null, enabled: boolean, m
     }
     const run = async () => {
       try {
-        const client = await send<Registration>('/workbench/clients', { sessionId, actions: WORKBENCH_ACTIONS })
+        let actions: readonly typeof WORKBENCH_ACTIONS[number][] = WORKBENCH_ACTIONS
+        let client: Registration
+        try { client = await send<Registration>('/workbench/clients', { sessionId, actions }) }
+        catch (error) {
+          if (!(error instanceof WorkbenchRequestError) || error.code !== 400) throw error
+          actions = WORKBENCH_ACTIONS.filter(action => action !== 'artifact.render')
+          client = await send<Registration>('/workbench/clients', { sessionId, actions })
+        }
         if (!client || typeof client.clientId !== 'string' || typeof client.clientToken !== 'string') throw new Error('工作台连接响应无效。')
         if (!current()) { await disconnect(client); return }
         registration = client; retryDelay = 3000; markConnected(true)
@@ -184,24 +193,32 @@ export function useWorkbenchClient(sessionId: string | null, enabled: boolean, m
             if (!current()) break
             const prefix = `/workbench/clients/${client.clientId}`
             const envelope = { clientToken: client.clientToken, requestId: command.requestId, execution: command.execution }
-            const commandCurrent = () => current() && command.expiresAt > Date.now()
+            let revoked = false
+            const commandCurrent = () => !revoked && current() && command.expiresAt > Date.now()
             const state = await send<{ active: boolean }>(`${prefix}/state`, envelope)
             if (!commandCurrent() || !state.active || command.sessionId !== sessionId || command.execution.rootSessionId !== sessionId) continue
             let result: { success: boolean; output: string; metadata: { code: string; operationPerformed: boolean | 'unknown' } }
+            // Rendering may outlive the ordinary poll lease. Retain only this
+            // command's exact run identity while the original bytes are painted.
+            const heartbeat = command.action === 'artifact.render' ? setInterval(() => {
+              void send<{ active: boolean }>(`${prefix}/state`, envelope)
+                .then(status => { if (!status.active) revoked = true }).catch(() => { revoked = true })
+            }, 5000) : undefined
             try {
               const data = command.action === 'workspace.context'
-                ? { ...await latest.current.adapter.context(), foreground: mode === getAppMode(), ...terminalSnapshot(sessionId), previewFormats: PREVIEW_FORMATS, actions: WORKBENCH_ACTIONS }
+                ? { ...await latest.current.adapter.context(), foreground: mode === getAppMode(), ...terminalSnapshot(sessionId), previewFormats: PREVIEW_FORMATS, actions }
                 : command.action === 'terminal.read'
                   ? terminalSnapshot(sessionId, command.args.terminalId, command.args.maxLines)
+                  : command.action === 'artifact.render' ? await renderWorkbenchPage(sessionId, command.args, commandCurrent)
                   : command.action === 'artifact.open' && typeof command.args.path === 'string'
                     ? await latest.current.adapter.open(command.args.path, command.args.line, commandCurrent)
                     : (() => { throw new Error('工作台不支持此操作。') })()
               const output = JSON.stringify(data)
-              if (output.length > 64000) throw new Error('工作台状态超过单次返回范围，请缩小查询范围。')
+              if (output.length > (command.action === 'artifact.render' ? 6 * 1024 * 1024 : 64000)) throw new Error('工作台状态超过单次返回范围，请缩小查询范围。')
               result = { success: true, output, metadata: { code: 'WORKBENCH_COMPLETED', operationPerformed: true } }
             } catch (error) {
               result = { success: false, output: message(error), metadata: { code: 'WORKBENCH_OPERATION_FAILED', operationPerformed: command.action === 'artifact.open' ? 'unknown' : false } }
-            }
+            } finally { clearInterval(heartbeat) }
             if (commandCurrent()) await send(`${prefix}/results`, { ...envelope, result })
           }
         }

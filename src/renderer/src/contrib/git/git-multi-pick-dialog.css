@@ -1,12 +1,46 @@
-.git-multipick__selection {
+.git-multipick .git-multipick__selection {
   display: flex;
   align-items: center;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
   gap: var(--space-2);
+  font-size: 12px;
 }
 
 .git-multipick__selection > span {
   flex: 1;
   color: var(--fg-muted);
+}
+
+.git-multipick .git-multipick__selection > .btn {
+  min-height: var(--control-h-compact);
+  padding: var(--space-1) var(--space-2);
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  font-size: 12px;
+}
+
+.git-multipick .git-multipick__selection > .btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.git-multipick .git-multipick__checkbox {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.git-multipick .git-pickdlg__item.is-selected {
+  background: var(--bg-selected-inactive);
+}
+
+.git-multipick .git-pickdlg__item:focus-within {
+  outline: 1px solid var(--list-focus-outline);
+  outline-offset: -1px;
+  background: var(--menu-hover-bg);
 }
 
 .git-push-result {

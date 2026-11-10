@@ -17,7 +17,7 @@ export const InputComposer = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivEl
       <div
         {...props}
         ref={ref}
-        className={`chat__surface input-composer${className ? ` ${className}` : ''}`}
+        className={`chat__surface input-composer ui-input-shell ui-input-shell--multiline${className ? ` ${className}` : ''}`}
       >
         {children}
       </div>
@@ -34,7 +34,7 @@ export const ComposerInput = forwardRef<
       {...props}
       ref={ref}
       ariaLabel={ariaLabel}
-      className={`input-composer__input${className ? ` ${className}` : ''}`}
+      className={`input-composer__input ui-input-field${className ? ` ${className}` : ''}`}
     />
   )
 })

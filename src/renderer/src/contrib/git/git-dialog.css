@@ -1,0 +1,42 @@
+/* Git operations share a quiet header, readable body and aligned action row,
+   including prompts and confirmations rendered by the global dialog hosts. */
+.modal.git-dialog {
+  background: var(--bg-surface);
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 48px);
+}
+.git-dialog > .modal__header {
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px 16px 12px;
+  border-bottom: 0;
+  font-size: 18px;
+  line-height: 1.4;
+  font-weight: 600;
+}
+.git-dialog > .modal__header > span { min-width: 0; overflow-wrap: anywhere; }
+.git-dialog .modal__close { flex: 0 0 auto; width: 28px; height: 28px; justify-content: center; }
+.git-dialog > .modal__body { padding: 4px 16px 16px; gap: 12px; }
+.git-dialog > .modal__footer { padding: 12px 16px 16px; border-top: 0; flex-wrap: wrap; }
+.git-dialog .field__label,
+.git-dialog .git-clone__hint { color: var(--fg-muted); font-size: 12px; line-height: 1.6; }
+.git-dialog .field__input { min-width: 0; }
+.git-dialog .notice { margin-bottom: 0; }
+.git-dialog .git-panel__stash-detail-row { align-items: start; }
+.git-dialog .git-panel__stash-detail-row > :first-child { flex: 0 0 64px; color: var(--fg-muted); }
+.git-dialog .git-panel__stash-detail-row > :last-child { min-width: 0; overflow-wrap: anywhere; }
+.git-dialog .git-panel__stash-detail-file { min-width: 0; overflow-wrap: anywhere; white-space: normal; }
+.git-dialog .git-commitdlg__file { width: 100%; border: 0; background: transparent; text-align: left; font: inherit; color: inherit; }
+.git-dialog .git-commitdlg__file:hover:not(:disabled) { background: var(--bg-hover); }
+.git-dialog .git-commitdlg__file:disabled { cursor: default; }
+.git-dialog .git-commitdlg__subject { overflow-wrap: anywhere; }
+.git-dialog .git-push-result { white-space: pre-wrap; overflow-wrap: anywhere; }
+.git-diverged-dialog__options { display: grid; gap: 12px; margin: 0; }
+.git-diverged-dialog__options > div { display: grid; gap: 4px; }
+.git-diverged-dialog__options dt { font-weight: 600; color: var(--fg-strong); }
+.git-diverged-dialog__options dd { margin: 0; color: var(--fg-muted); line-height: 1.6; }
+.git-diverged-dialog__hint { margin: 0; color: var(--fg-muted); font-size: 12px; line-height: 1.6; }
+@media (max-width: 520px) {
+  .git-dialog > .modal__header { font-size: 16px; }
+  .git-dialog > .modal__footer .btn { flex: 1 1 auto; }
+}

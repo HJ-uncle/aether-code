@@ -5,7 +5,7 @@
  * 接力目录选择与克隆执行。弹窗显隐由 useGitCloneFlow().dialogVisible 驱动。
  * 挂载一次即可（GitChangesPanel 或应用根部）。
  */
-import { useState, type JSX } from 'react'
+import { useId, useState, type JSX } from 'react'
 import { Dialog } from '@renderer/workbench/Dialog'
 import { useMotionPresence } from '@renderer/workbench/MotionPresence'
 import {
@@ -29,6 +29,8 @@ export function GitCloneDialog(): JSX.Element | null {
   const [url, setUrl] = useState('')
   const [validationError, setValidationError] = useState('')
   const [busy, setBusy] = useState(false)
+  const hintId = useId()
+  const errorId = useId()
   const motion = useMotionPresence(dialogVisible, { onExited: () => { setUrl(''); setValidationError('') } })
 
   if (!motion.present) return null
@@ -65,6 +67,7 @@ export function GitCloneDialog(): JSX.Element | null {
       open={dialogVisible}
       closeDisabled={busy || stage !== 'idle'}
       title="克隆仓库"
+      className="git-dialog git-clone-dialog"
       width={440}
       onClose={close}
       footer={
@@ -83,11 +86,17 @@ export function GitCloneDialog(): JSX.Element | null {
         </>
       }
     >
-      <div className="git-clone__hint">
+      <div id={hintId} className="git-clone__hint">
         粘贴仓库地址，或整条 <code>git clone &lt;url&gt;</code> 命令，克隆完成后可选择打开该仓库。
       </div>
       <label className="field">
+        <span className="field__label">仓库地址</span>
         <input
+          type="text"
+          autoComplete="off"
+          spellCheck={false}
+          aria-describedby={`${hintId}${validationError ? ` ${errorId}` : ''}`}
+          aria-invalid={Boolean(validationError)}
           className={`field__input${validationError ? ' git-clone__input--invalid' : ''}`}
           placeholder="https://github.com/user/repo.git"
           value={url}
@@ -104,7 +113,7 @@ export function GitCloneDialog(): JSX.Element | null {
           }}
         />
       </label>
-      {validationError ? <div className="notice notice--error">{validationError}</div> : null}
+      {validationError ? <div id={errorId} className="notice notice--error" role="alert">{validationError}</div> : null}
     </Dialog>
   )
 }

@@ -1,0 +1,84 @@
+.usage-detail--percentages {
+  gap: 1px;
+}
+
+.usage-detail__row--interactive {
+  box-sizing: border-box;
+  min-height: 24px;
+  margin-inline: -6px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  cursor: default;
+}
+
+.usage-detail__row--interactive.usage-detail__row--child {
+  padding-left: 19px;
+}
+
+.usage-detail__row--interactive:hover,
+.usage-detail__row--interactive:focus-visible {
+  background: var(--bg-hover);
+}
+
+.usage-detail__row--interactive:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.usage-detail__row--interactive .usage-detail__value {
+  min-width: 45px;
+  text-align: right;
+}
+
+.usage-detail-tip {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 240px;
+  max-width: 100%;
+  font-variant-numeric: tabular-nums;
+  white-space: normal;
+}
+
+.usage-detail-tip__label {
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+
+.usage-detail-tip__amount {
+  color: var(--fg);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.3px;
+}
+
+.usage-detail-tip__amount span {
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.usage-detail-tip__ratio {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 3px;
+}
+
+.usage-detail-tip__ratio strong {
+  font-weight: 500;
+}
+
+.usage-detail-tip__base,
+.usage-detail-tip__note {
+  color: var(--fg-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.usage-detail-tip__note {
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}

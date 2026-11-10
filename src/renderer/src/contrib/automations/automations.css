@@ -6,6 +6,7 @@
 .automations-search { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-input); color: var(--fg-muted); }
 .automations-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--fg); font: inherit; }
 .automations-search:focus-within { border-color: var(--accent); box-shadow: var(--focus-ring); }
+.automations-search input:focus-visible { outline: none; box-shadow: none; }
 .automation-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-surface); overflow: visible; }
 .automation-list-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) 32px; align-items: start; gap: 12px; padding: 16px; min-width: 0; }
 .automation-list-row + .automation-list-row { border-top: 1px solid var(--border); }
@@ -47,7 +48,7 @@
 .automation-field > span { font-size: 12px; color: var(--fg-muted); }
 .automation-field input, .automation-field textarea { width: 100%; min-width: 0; box-sizing: border-box; border: 1px solid var(--border); border-radius: 7px; padding: 9px 11px; color: var(--fg); background: var(--bg-input); font: inherit; line-height: 1.6; }
 .automation-field textarea { resize: vertical; min-height: 112px; max-height: 280px; }
-.automation-field input:focus-visible, .automation-field textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.automation-field input:focus-visible, .automation-field textarea:focus-visible { border-color: var(--accent); }
 .automation-field input[aria-invalid="true"], .automation-field textarea[aria-invalid="true"] { border-color: var(--danger-fg); }
 .automation-field .select { width: 100%; }
 .automation-field .select__trigger { width: 100%; justify-content: space-between; min-height: 36px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-input); padding: 8px 10px; }

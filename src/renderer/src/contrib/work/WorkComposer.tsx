@@ -254,7 +254,7 @@ export function WorkComposer({
     >
       {controller.actionError ? (
         <div className="work-error" role="alert">
-          <Icon name="warning" size={15} />
+          <Icon name="alert-circle" size={15} />
           <span>{controller.actionError}</span>
           <IconButton icon="close" label="关闭错误提示" onClick={controller.clearError} />
         </div>

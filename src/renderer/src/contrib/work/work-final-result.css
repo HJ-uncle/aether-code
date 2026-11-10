@@ -12,7 +12,7 @@
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--bg-surface);
+  background: var(--bg-elevated);
 }
 /* Information remains selectable; only the two labelled controls open files
    or save them. A large invisible row hit area makes these actions ambiguous. */
@@ -28,7 +28,7 @@
   cursor: default;
   user-select: text;
 }
-.work-final-deliverable__info:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.work-final-deliverable__info:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 /* Every file reserves the same small slot, including loading and failed images.
    A one-pixel asset must never become a full-width media stage. */
 .work-final-deliverable__thumbnail {
@@ -40,7 +40,7 @@
   height: 32px;
   overflow: hidden;
   border-radius: var(--radius);
-  background: var(--bg-inset);
+  background: transparent;
   color: var(--fg-muted);
 }
 .work-final-deliverable__thumbnail--image {
@@ -56,7 +56,7 @@
   display: flex;
   min-width: 0;
   border-top: 1px solid var(--border);
-  background: var(--bg-hover);
+  background: transparent;
 }
 .work-final-deliverable .work-final-deliverable__action {
   display: inline-flex;
@@ -70,8 +70,8 @@
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--fg-muted);
-  font: 11px/1 var(--font-ui);
+  color: var(--fg);
+  font: 12px/1 var(--font-ui);
   cursor: pointer;
   transition: background-color var(--motion-hover) var(--motion-ease), color var(--motion-hover) var(--motion-ease);
 }

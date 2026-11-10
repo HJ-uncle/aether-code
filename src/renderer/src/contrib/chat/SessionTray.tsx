@@ -377,7 +377,7 @@ export function SessionTray({
               {editingId === item.id ? (
                 <span className="session-tray__queue-edit">
                   <textarea
-                    className="session-tray__queue-textarea"
+                    className="session-tray__queue-textarea ui-input"
                     value={editText}
                     aria-label="编辑待发消息"
                     disabled={busy}

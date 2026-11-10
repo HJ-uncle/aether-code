@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState, type JSX } from 'react'
 import { Icon } from '@renderer/workbench/icons'
 import { Popover } from '@renderer/workbench/Popover'
+import { useHoverDetail } from '@renderer/workbench/useHoverDetail'
 import { formatDuration, formatElapsedDuration, formatTimestamp, formatTokens, type UsageDetailRow } from './usage'
+import { usagePercentage } from './usage-percentage'
 import type { ChatMessage } from '@renderer/core/engine/useChat'
 import { sessionExecutionDuration, sessionExecutionTiming } from './session-duration'
+import './conversation-usage.css'
 
 /** 一轮问答的累计用量（并入最后一条 AI 消息底部的过程行） */
 export type TurnUsageInfo = {
@@ -28,21 +31,43 @@ export type TurnUsageInfo = {
  * 外观与顶部会话用量一致，那它就也得能点开 —— 长得一样却有的能点有的不能点，
  * 比不能点本身更让人困惑。明细由调用方传入本轮的汇总行。
  */
-function UsageBreakdown({ summary }: { summary: UsageDetailRow[] }): JSX.Element {
+function UsageBreakdown({ summary, total }: { summary: UsageDetailRow[]; total: number }): JSX.Element {
   return (
-    <div className="usage-detail">
+    <div className="usage-detail usage-detail--percentages">
       {summary.map(row => (
-        <div key={row.label} title={row.title}
-          className={`usage-detail__row${row.child ? ' usage-detail__row--child' : ''}${row.group === 'cache' ? ' usage-detail__row--cache' : ''}${row.subtotal ? ' usage-detail__row--subtotal' : ''}`}>
-          {row.subtotal ? null : <span className={`usage-detail__bar usage-detail__bar--${row.group}`} />}
-          <span className="usage-detail__label">{row.label}</span>
-          <span className="usage-detail__value" title={row.unknown ? undefined : `${row.tokens.toLocaleString('en-US')} tokens${row.title ? `；${row.title}` : ''}`}>
-            {row.unknown ? '未知' : formatTokens(row.tokens)}
-          </span>
-        </div>
+        <UsageBreakdownRow key={row.label} row={row} total={total} summary={summary} />
       ))}
     </div>
   )
+}
+
+function UsageBreakdownRow({ row, total, summary }: { row: UsageDetailRow; total: number; summary: UsageDetailRow[] }): JSX.Element {
+  const percentage = usagePercentage(row, total, summary)
+  const tokensKnown = Number.isFinite(row.tokens) && row.tokens >= 0 && !row.unknown
+  const { triggerProps, tooltip } = useHoverDetail<HTMLDivElement>({
+    enabled: true,
+    placement: 'side',
+    sideAnchor: '.popover__panel',
+    label: `${row.label}用量详情`,
+    content: <div className="usage-detail-tip">
+      <div className="usage-detail-tip__label">{row.label}</div>
+      <div className="usage-detail-tip__amount">{tokensKnown ? <>{row.tokens.toLocaleString('en-US')} <span>tokens</span></> : '用量未报告'}</div>
+      {percentage.reason ? <p className="usage-detail-tip__note">{percentage.reason}</p> : <>
+        <div className="usage-detail-tip__ratio">占{percentage.basisLabel} <strong>{percentage.value}</strong></div>
+        <div className="usage-detail-tip__base">计算基数：{percentage.basisTokens?.toLocaleString('en-US')} tokens</div>
+      </>}
+      {row.title ? <p className="usage-detail-tip__note">{row.title}</p> : null}
+    </div>
+  })
+  return <>
+    <div {...triggerProps} tabIndex={0} role="group" aria-label={`${row.label}：${percentage.value}`}
+      className={`usage-detail__row usage-detail__row--interactive${row.child ? ' usage-detail__row--child' : ''}${row.group === 'cache' ? ' usage-detail__row--cache' : ''}${row.subtotal ? ' usage-detail__row--subtotal' : ''}`}>
+      {row.subtotal ? null : <span aria-hidden="true" className={`usage-detail__bar usage-detail__bar--${row.group}`} />}
+      <span className="usage-detail__label">{row.label}</span>
+      <span className="usage-detail__value">{percentage.value}</span>
+    </div>
+    {tooltip}
+  </>
 }
 
 export function TurnUsage({
@@ -135,7 +160,7 @@ export function TurnUsage({
           ) : null}
         </div>
       ) : null}
-      <UsageBreakdown summary={summary} />
+      <UsageBreakdown summary={summary} total={tokens} />
     </Popover>
   )
 }
@@ -205,7 +230,7 @@ export function UsageMeter({
         <span className="usage-popover__total-value" title={`${total.toLocaleString('en-US')} tokens`}>{formatTokens(total)}</span>
         <span className="usage-popover__total-unit">tokens{summary.some((row) => row.unknown) ? '（已知部分）' : ''}</span>
       </div>
-      <UsageBreakdown summary={summary} />
+      <UsageBreakdown summary={summary} total={total} />
     </Popover>
   )
 }

@@ -56,7 +56,7 @@ export function MentionRefPicker({ root, query, showSearch = false, onSelect, on
           changeTab(event.key === 'ArrowLeft' || event.key === 'Home' ? 'files' : 'agents', true)
         }}>{value === 'files' ? '文件与目录' : '协作 Agent'}</button>)}
     </div>
-    {showSearch ? <input className="mention-ref-picker__search" aria-label="搜索引用" autoFocus value={search}
+    {showSearch ? <input className="mention-ref-picker__search ui-input ui-input--compact" aria-label="搜索引用" autoFocus value={search}
       placeholder={kind === 'files' ? '搜索文件或目录…' : '搜索 Agent 名称…'} onChange={event => setSearch(event.target.value)} /> : null}
     <div id={`${id}-list`} role="tabpanel" aria-labelledby={`${id}-${kind}`} className="mention-ref-picker__content">
       {kind === 'agents' ? <AgentRefPicker query={keyword} onSelect={agent => onSelect({ source: 'agent', path: agent.id, displayText: agent.name })} onClose={onClose} /> : root ?

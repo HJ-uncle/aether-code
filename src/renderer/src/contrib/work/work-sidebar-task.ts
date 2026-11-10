@@ -11,7 +11,7 @@ export interface WorkSidebarStatus { kind: string; label: string; icon?: IconNam
 export function workSidebarStatus(task: WorkTask, ready: boolean, stopping = false): WorkSidebarStatus {
   const active = task.status === 'running' || task.status === 'waiting'
   if (stopping) return { kind: 'stopping', label: '正在停止', active: true }
-  if (!ready && active) return { kind: 'disconnected', label: '连接中断，等待恢复确认', icon: 'warning' }
+  if (!ready && active) return { kind: 'disconnected', label: '连接中断，等待恢复确认', icon: 'alert-circle' }
   if (task.status === 'waiting') {
     const activity = task.activity?.status === 'waiting' ? task.activity : undefined
     if (activity?.pendingPermission) return { kind: 'permission', label: activity.pendingAsk ? '等待授权与回答' : '等待授权', icon: 'shield' }
@@ -23,8 +23,8 @@ export function workSidebarStatus(task: WorkTask, ready: boolean, stopping = fal
   }
   return {
     done: { kind: 'done', label: '已完成', icon: 'check' },
-    error: { kind: 'error', label: '执行失败', icon: 'warning' },
-    interrupted: { kind: 'interrupted', label: '执行已中断', icon: 'warning' },
+    error: { kind: 'error', label: '执行失败', icon: 'alert-circle' },
+    interrupted: { kind: 'interrupted', label: '执行已中断', icon: 'alert-circle' },
     stopped: { kind: 'stopped', label: '已停止', icon: 'stop' },
     draft: { kind: 'draft', label: '草稿', icon: 'pencil' }
   }[task.status] as WorkSidebarStatus

@@ -21,7 +21,7 @@ import { subagentToolPresentation } from '../chat/subagent-tool-presentation'
 import { toolDisplayName } from '../chat/tool-names'
 import { formatWorkSubagentDuration, resolveWorkSubagentGroup, workSubagentGroups, workSubagentStats, type WorkSubagentGroup } from './work-subagents'
 import { newWorkSubagentTranscriptMemory, WorkSubagentTranscript, type WorkSubagentTranscriptMemory } from './WorkSubagentTranscript'
-import { trimWorkSubagentSessionCaches } from './work-subagent-memory'
+import { trimWorkSubagentSessionCaches, trimWorkSubagentTranscriptWindows } from './work-subagent-memory'
 import { searchWorkSubagentGroups, workSubagentTaskSummary } from './work-subagent-list-presentation'
 import { WorkSubagentListRow } from './WorkSubagentListRow'
 import { workSubagentTiming } from './work-subagent-timing'
@@ -268,6 +268,9 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
     memory.transcripts.set(selected.key, transcript)
   }
   while (memory.transcripts.size > 2) memory.transcripts.delete(memory.transcripts.keys().next().value!)
+  const trimTranscriptWindows = (): void => trimWorkSubagentTranscriptWindows(memoryBySession,
+    panelActive && selected ? memory.transcripts.get(selected.key) : undefined)
+  trimTranscriptWindows()
   const timingActive = panelActive && (selected ? selected.active : groups.some(group => group.active))
   useEffect(() => {
     if (!timingActive) return
@@ -455,7 +458,7 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
     const role = builtinAgentName(group.latest.subagent?.continuation?.builtinRole)
     const tone = stats.status === 'queued' || isSubagentNeedsUser(group.latest.subagent) ? 'waiting' : group.active ? 'active' : ['failed', 'error', 'interrupted', 'blocked'].includes(stats.status) ? 'error' : 'complete'
     return <WorkSubagentListRow key={group.key} group={group} stats={stats} now={now} status={status} task={task} role={role} tone={tone}
-      statusHint={stats.status === 'queued' ? QUEUED_HINT : undefined} onOpen={() => openDetail(group)}
+      onOpen={() => openDetail(group)}
       rowRef={node => { if (node) rowRefs.current.set(group.key, node); else rowRefs.current.delete(group.key) }} />
   }
   const listStatus = publishedFixedChildren ? '已发布记录' : discovery.state?.activeCount
@@ -496,7 +499,7 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
       {!publishedFixedChildren || selected && transcriptIdentity?.childSessionId ? <button type="button" className="work-subagents__refresh" disabled={!sessionId || !ready} onClick={() => { manualRefresh.current = true; setRefreshKey(value => value + 1) }} aria-label={selected ? "刷新子代理对话" : "刷新子代理状态"} title={selected ? "刷新对话" : "刷新状态"}><Icon name="restart" size={16} /></button> : null}
     </header>
     {!selected && (groups.length >= 12 || memory.query) ? <div className="work-subagents__searchbar">
-      <label className="work-subagents__search"><Icon name="search" size={14} /><input ref={searchRef} type="search" aria-label="搜索已载入代理" placeholder="搜索已载入代理" value={memory.query}
+      <label className="work-subagents__search"><Icon name="search" size={14} /><input className="ui-input ui-input--compact" ref={searchRef} type="search" aria-label="搜索已载入代理" placeholder="搜索已载入代理" value={memory.query}
         onChange={event => searchGroups(event.currentTarget.value)} onKeyDown={event => { if (event.key === 'Escape' && memory.query) { event.preventDefault(); event.stopPropagation(); searchGroups('') } }} /></label>
       {memory.query.trim() ? <span className="work-subagents__search-count" role="status">{filteredGroups.length} 个匹配 · 已载入 {groups.length} 个</span> : null}
     </div> : null}
@@ -506,7 +509,7 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
         {transcriptRun.compaction.phase === 'running' ? <Spinner size={12} /> : <Icon name={transcriptRun.compaction.phase === 'succeeded' ? 'check' : 'info'} size={12} />}
         {transcriptRun.compaction.phase === 'running' ? '正在自动压缩上下文…' : transcriptRun.compaction.phase === 'succeeded' ? '上下文已自动压缩' : '本次上下文压缩未完成'}
       </p> : null}
-      {transcriptIdentity?.childSessionId ? <WorkSubagentTranscript source={source} parentSessionId={sessionId!} childSessionId={transcriptIdentity.childSessionId} runId={transcriptIdentity.runId} name={selected.label} memory={memory.transcripts.get(selected.key)!} active={panelActive} running={!fixedConversation && selected.active} lastSeq={transcriptRun?.lastSeq} status={transcriptRun?.status} refreshKey={refreshKey} statusNote={!fixedConversation ? transcriptRun?.error?.message : undefined} liveRun={!fixedConversation ? activeRun : undefined} /> : <div className="work-subagents__detail" ref={detailRef} onScroll={event => memory.detailTop.set(selected.key, event.currentTarget.scrollTop)} aria-label={`${selected.label} 的工作记录`}>
+      {transcriptIdentity?.childSessionId ? <WorkSubagentTranscript source={source} parentSessionId={sessionId!} childSessionId={transcriptIdentity.childSessionId} runId={transcriptIdentity.runId} name={selected.label} memory={memory.transcripts.get(selected.key)!} active={panelActive} running={!fixedConversation && selected.active} lastSeq={transcriptRun?.lastSeq} status={transcriptRun?.status} refreshKey={refreshKey} statusNote={!fixedConversation ? transcriptRun?.error?.message : undefined} liveRun={!fixedConversation ? activeRun : undefined} onHistoryLoaded={trimTranscriptWindows} /> : <div className="work-subagents__detail" ref={detailRef} onScroll={event => memory.detailTop.set(selected.key, event.currentTarget.scrollTop)} aria-label={`${selected.label} 的工作记录`}>
         <p className="work-subagents__snapshot-note">{selected.latest.subagentRef || publishedFixedChildren ? '已发布快照 · 此处保留发布时的记录' : '代理开始后可查看独立对话'}</p>
         {[...roundWindow.items].reverse().map((tool, index) => <article className="work-subagents__round" key={tool.subagent?.runId || tool.id} data-run-id={tool.subagent?.runId}>
           <SubagentCard tool={tool} sessionId={sessionId!} defaultOpen={index === roundWindow.items.length - 1} visible={panelActive} readOnly onPublishedLoaded={rememberFixedDetail} surfaceMode="work" round={{ number: selected.tools.length - roundWindow.end + index + 1, createdAt: tool.subagent?.createdAt }} />
@@ -518,8 +521,8 @@ export function WorkSubagentsPanel({ sessionId, rootRunId, tools, busy = false, 
       {liveFollowup.pending || liveFollowup.restoredDraft || liveFollowup.history.length || activeRun && !selected.latest.subagentRef || continuationRun?.continuation && onContinue ? <div className="work-subagents__followup">
         <form id={`${followupId}-form`} className="work-subagents__composer" onSubmit={event => { event.preventDefault(); void submitFollowup(selected) }}>
         <span id={`${followupId}-label`} className="work-subagents__input-label">{selected.active ? '补充要求给' : '继续交给'} {selected.label}</span>
-        <div className="work-subagents__composer-editor">
-        <SubagentFollowupInput id={`${followupId}-input`} value={liveFollowup.pending?.message ?? selectedDraft} readOnly={Boolean(liveFollowup.pending)} onChange={value => { memory.drafts.set(selected.key, value); memory.errors.delete(selected.key); redraw() }} placeholder={selected.active ? '补充要求…' : isSubagentNeedsUser(selected.latest.subagent) ? '回答问题…' : '继续安排任务…'} labelledBy={`${followupId}-label`} describedBy={`${followupId}-hint${memory.errors.has(selected.key) ? ` ${followupId}-error` : ''}`}
+        <div className="work-subagents__composer-editor ui-input-shell ui-input-shell--multiline">
+        <SubagentFollowupInput className="ui-input-field" id={`${followupId}-input`} value={liveFollowup.pending?.message ?? selectedDraft} readOnly={Boolean(liveFollowup.pending)} onChange={value => { memory.drafts.set(selected.key, value); memory.errors.delete(selected.key); redraw() }} placeholder={selected.active ? '补充要求…' : isSubagentNeedsUser(selected.latest.subagent) ? '回答问题…' : '继续安排任务…'} labelledBy={`${followupId}-label`} describedBy={`${followupId}-hint${memory.errors.has(selected.key) ? ` ${followupId}-error` : ''}`}
           onDismiss={() => backRef.current?.focus()} onSubmit={() => void submitFollowup(selected)} />
         <div className="work-subagents__composer-actions">
           {availableAttachments.length ? <Popover align="start" width={280} label="引用任务资料" panelClassName="work-subagents__attachment-menu"

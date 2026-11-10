@@ -749,11 +749,10 @@
   transition: border-color var(--duration-fast) var(--ease-out);
 }
 
-/* 聚焦只染 1px 描边，不加聚焦环：与侧栏搜索容器 (.search-view__field:focus-within)
-   保持一致。--focus-ring 是强调色 45% 半透明，压在深色底上会向外泛出一圈明显紫光，
-   在白底上又被冲淡 —— 同一控件深色/浅色观感对不上，去掉后两套外观完全一致。 */
-.app-settings__search-wrap:focus-within {
+/* 环包住搜索图标和输入；内部按钮聚焦时仍由按钮自己提示。 */
+.app-settings__search-wrap:has(.app-settings__search:focus-visible) {
   border-color: var(--accent);
+  box-shadow: var(--focus-ring);
 }
 
 .app-settings__search {
@@ -771,9 +770,10 @@
   color: var(--fg-faint);
 }
 
-/* 同 .search-view__input：聚焦视觉由 search-wrap 的 :focus-within（边框+环）负责，
+/* 同 .search-view__input：聚焦视觉由 search-wrap（边框+环）负责，
    全局 input:focus-visible 的环会叠在 wrap 内侧，深色下形成双环 */
 .app-settings__search:focus-visible {
+  outline: none;
   box-shadow: none;
 }
 

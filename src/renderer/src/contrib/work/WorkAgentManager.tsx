@@ -156,7 +156,7 @@ function BindingGroup({
       {choices.length ? (
         <>
           <div className="work-agent-manager__binding-toolbar">
-            <input
+            <input className="ui-input"
               aria-label={`搜索${title}`}
               placeholder={`搜索${title}`}
               value={query}
@@ -595,8 +595,8 @@ export function WorkAgentManager({
                 ? resourceKeys.slice(0, 3).some((resource) => resources[resource].error)
                 : key === 'tools' && resources.allowedTools.error
             ) ? (
-              <span className="work-agent-manager__tab-warning" title="部分资源加载失败">
-                !
+              <span className="work-agent-manager__tab-warning" title="部分资源加载失败" aria-label="部分资源加载失败">
+                <Icon name="alert-circle" size={12} />
               </span>
             ) : null}
           </button>
@@ -617,7 +617,7 @@ export function WorkAgentManager({
             </div>
             <label>
               名称
-              <input
+              <input className="ui-input"
                 ref={nameInput}
                 aria-required="true"
                 aria-invalid={error === '请输入 Agent 名称'}
@@ -630,7 +630,7 @@ export function WorkAgentManager({
             </label>
             <label>
               用途
-              <input
+              <input className="ui-input"
                 value={draft.description}
                 disabled={busy}
                 maxLength={500}
@@ -640,7 +640,7 @@ export function WorkAgentManager({
             </label>
             <label>
               工作指令
-              <textarea
+              <textarea className="ui-input"
                 value={draft.systemPrompt}
                 disabled={busy}
                 rows={5}
@@ -675,7 +675,7 @@ export function WorkAgentManager({
               </div>
               <label>
                 温度
-                <input
+                <input className="ui-input"
                   inputMode="decimal"
                   value={draft.temperature}
                   disabled={busy}
@@ -800,7 +800,7 @@ export function WorkAgentManager({
       <div className="work-agent-manager__toolbar">
         <div className="work-agent-manager__search">
           <Icon name="search" size={15} />
-          <input
+          <input className="ui-input ui-input--compact"
             aria-label="搜索 Agent"
             placeholder="搜索 Agent"
             value={query}

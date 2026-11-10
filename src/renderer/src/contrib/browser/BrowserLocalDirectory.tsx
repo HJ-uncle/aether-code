@@ -36,7 +36,7 @@ export function BrowserLocalDirectory({ tabId, content }: { tabId: string; conte
           <td><button type="button" className="browser-directory__entry" title={entry.message ?? entry.name}
             disabled={entry.kind === 'unavailable' || opening !== null} onClick={() => open(entry.path)}>
             {entry.kind === 'directory' ? <Icon name="explorer" size={16} /> : entry.kind === 'unavailable'
-              ? <Icon name="warning" size={16} /> : <FileGlyph name={entry.path} />}
+              ? <Icon name="alert-circle" size={16} /> : <FileGlyph name={entry.path} />}
             <span>{entry.name}</span>
           </button>{entry.message ? <span className="browser-directory__reason">{entry.message}</span> : null}</td>
           <td>{entry.kind === 'directory' ? '文件夹' : entry.size === undefined ? '—' : formatSize(entry.size)}</td>

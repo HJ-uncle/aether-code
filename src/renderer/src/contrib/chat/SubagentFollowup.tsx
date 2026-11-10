@@ -104,11 +104,12 @@ function PublishedCurrentControl({ reference, scope, visible }: { reference: Pub
 }
 
 /** Shared editing and keyboard behavior in the Code card and Work detail. */
-export function SubagentFollowupInput({ id, value, readOnly, onChange, onDismiss, onSubmit, placeholder, labelledBy, describedBy }: {
+export function SubagentFollowupInput({ id, value, readOnly, onChange, onDismiss, onSubmit, placeholder, labelledBy, describedBy, className = 'ui-input' }: {
   id: string; value: string; readOnly: boolean; onChange: (value: string) => void
   onDismiss: () => void; onSubmit: () => void; placeholder: string; labelledBy: string; describedBy: string
+  className?: string
 }): JSX.Element {
-  return <textarea id={id} value={value} readOnly={readOnly} onChange={event => onChange(event.target.value)} rows={2}
+  return <textarea className={className} id={id} value={value} readOnly={readOnly} onChange={event => onChange(event.target.value)} rows={2}
     placeholder={placeholder} aria-labelledby={labelledBy} aria-describedby={describedBy} onKeyDown={event => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onDismiss() }
       if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) { event.preventDefault(); onSubmit() }

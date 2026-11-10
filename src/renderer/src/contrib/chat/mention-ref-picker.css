@@ -16,7 +16,7 @@
 .mention-ref-picker__tabs button { flex: 1; min-height: 28px; border: 0; border-radius: var(--radius); background: transparent; color: var(--fg-muted); font: inherit; font-size: 12px; cursor: pointer; }
 .mention-ref-picker__tabs button[aria-selected="true"] { background: var(--bg-elevated); color: var(--fg-strong); box-shadow: var(--shadow-control); }
 .mention-ref-picker__tabs button:hover { color: var(--fg-strong); }
-.mention-ref-picker button:focus-visible, .mention-ref-picker__search:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.mention-ref-picker button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .mention-ref-picker__content { display: flex; flex: 1; min-height: 0; overflow: hidden; }
 .mention-ref-picker__search { flex-shrink: 0; min-width: 0; margin: 0 8px 6px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-input); color: var(--fg); font: inherit; font-size: 12px; }
 .mention-ref-picker__empty { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 16px 12px; color: var(--fg-muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }

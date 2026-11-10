@@ -48,6 +48,10 @@ export interface UsageDetailRow {
   title?: string
   /** 小计说明，不再作为另一项消耗加入总量。 */
   subtotal?: boolean
+  /** Children name their own billing denominator. Null keeps a missing or
+   * incomparable denominator distinct from a reported zero; top-level rows
+   * omit this field and use the displayed total. */
+  shareOf?: { tokens: number; label: string } | null
 }
 
 export interface UsageTotal {
@@ -145,16 +149,27 @@ interface DisplayInputUsage {
   reportedHit: number
   inputKnown: boolean
   inputMissing: boolean
+  inputInvalid: boolean
+  outputKnown: boolean
+  outputMissing: boolean
+  outputInvalid: boolean
   capped: boolean
   frames: number
 }
 
 // Keep display completeness out of billing snapshots and IPC structures.
 const detailCompleteness = new WeakMap<UsageTotal, boolean>()
+const denominatorGaps = new WeakMap<UsageTotal, { input: boolean; output: boolean }>()
 
 /** A subtotal is redundant only when every contributing frame reported both billing counters. */
 export function hasCompleteUsageDetails(total: UsageTotal): boolean {
   return detailCompleteness.get(total) === true
+}
+
+/** Only observed gaps are evidence. An empty visible window cannot establish
+ * whether an authoritative session-wide counter is complete. */
+export function hasUsageDenominatorGap(total: UsageTotal, side: 'input' | 'output'): boolean {
+  return denominatorGaps.get(total)?.[side] === true
 }
 
 /** The breakdown keeps the provider's complete prompt total and nests cache details beneath it. */
@@ -167,6 +182,15 @@ function usageDetails(acc: Record<string, number>, display: DisplayInputUsage): 
       group: row.group,
       child: row.child,
       tokens: acc[row.key] ?? 0
+    }
+    if (row.child) {
+      const output = row.group === 'output'
+      const known = output ? display.outputKnown && !display.outputMissing && !display.outputInvalid
+        : inputKnown && !inputMissing && !display.inputInvalid
+      detail.shareOf = known ? {
+        tokens: acc[output ? 'completionTokens' : 'promptTokens'] ?? 0,
+        label: output ? '累计输出' : '累计输入'
+      } : null
     }
     if (row.key === 'promptTokens') {
       detail.tokens = acc.promptTokens ?? 0
@@ -200,6 +224,7 @@ export function sumUsage(messages: ChatMessage[]): UsageTotal {
   const acc: Record<string, number> = {}
   const display: DisplayInputUsage = {
     hit: 0, reportedHit: 0, inputKnown: false, inputMissing: false,
+    inputInvalid: false, outputKnown: false, outputMissing: false, outputInvalid: false,
     capped: false, frames: 0
   }
   let completeDetails = true
@@ -229,6 +254,7 @@ export function sumUsage(messages: ChatMessage[]): UsageTotal {
       const input = Math.max(0, frame.promptTokens)
       const hit = Math.min(input, reportedHit)
       display.inputKnown = true
+      display.inputInvalid ||= frame.promptTokens < 0
       display.hit += hit
       display.capped ||= reportedHit > input
     } else {
@@ -236,6 +262,10 @@ export function sumUsage(messages: ChatMessage[]): UsageTotal {
       display.inputMissing = true
       display.hit += reportedHit
     }
+    if (frame.completionTokens !== undefined) {
+      display.outputKnown = true
+      display.outputInvalid ||= frame.completionTokens < 0
+    } else display.outputMissing = true
     completeDetails &&= frame.promptTokens !== undefined && frame.completionTokens !== undefined
     for (const [key, value] of Object.entries(frame)) {
       acc[key] = (acc[key] ?? 0) + (value as number)
@@ -271,6 +301,10 @@ export function sumUsage(messages: ChatMessage[]): UsageTotal {
     ...(endedAt !== undefined ? { endedAt } : {})
   }
   detailCompleteness.set(result, rounds > 0 && completeDetails)
+  denominatorGaps.set(result, {
+    input: display.inputMissing || display.inputInvalid,
+    output: display.outputMissing || display.outputInvalid
+  })
   return result
 }
 

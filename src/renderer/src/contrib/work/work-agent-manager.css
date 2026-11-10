@@ -172,6 +172,8 @@
   font-variant-numeric: tabular-nums;
 }
 .work-agent-manager__tab-warning {
+  display: inline-flex;
+  align-items: center;
   color: var(--danger);
   font-weight: 600;
 }

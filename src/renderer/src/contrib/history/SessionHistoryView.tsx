@@ -659,7 +659,7 @@ function SessionRenameDialog({ value, onChange, onClose, onCommit }: {
     <button type="button" className="btn btn--sm" onClick={onClose}>取消</button>
     <button type="button" className="btn btn--primary btn--sm" onClick={onCommit}>确定</button>
   </>}>
-    <input type="text" className="history-view__rename-input" maxLength={60} autoFocus value={retained.value}
+    <input type="text" className="history-view__rename-input ui-input ui-input--compact" maxLength={60} autoFocus value={retained.value}
       placeholder="留空则恢复默认标题" onChange={event => onChange({ ...retained, value: event.target.value })}
       onKeyDown={event => { if (event.key === 'Enter') onCommit(); if (event.key === 'Escape') { event.stopPropagation(); onClose() } }} />
   </Dialog>

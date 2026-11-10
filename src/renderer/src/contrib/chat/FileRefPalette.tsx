@@ -158,7 +158,7 @@ export function FileRefPalette({
       {showSearch ? (
         <input
           type="text"
-          className="file-palette__search"
+          className="file-palette__search ui-input ui-input--compact"
           placeholder="搜索文件或目录…"
           autoFocus
           value={search}

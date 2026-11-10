@@ -74,7 +74,7 @@ export function ContextWindowInput({
         <div className="context-window-input__field">
           <input
             ref={inputRef}
-            className="field__input context-window-input__value"
+            className="field__input context-window-input__value ui-input--compact"
             role="combobox"
             aria-label="上下文窗口"
             aria-description="单位 K，1 K = 1000 token。可自由输入或用方向键选择预设，留空自动识别"

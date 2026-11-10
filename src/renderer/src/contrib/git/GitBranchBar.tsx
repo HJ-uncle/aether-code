@@ -179,16 +179,14 @@ export function GitBranchBar({ position = 'bottom' }: GitBranchBarProps): JSX.El
       className={`git-branchbar git-branchbar--${position}`}
       title={s.upstream ? `上游：${s.upstream}` : '切换 / 新建分支'}
     >
-      <span className="git-branchbar__icon">
-        <Icon name="git" size={16} />
-      </span>
-
       <Popover
+        className="git-branchbar__selector"
         placement={position === 'top' ? 'down' : 'up'}
         align="start"
         width={320}
         flush
         label="切换或新建分支"
+        disabled={busy}
         trigger={({ open }) => {
           if (open !== prevOpenRef.current) {
             prevOpenRef.current = open
@@ -200,7 +198,8 @@ export function GitBranchBar({ position = 'bottom' }: GitBranchBarProps): JSX.El
             }
           }
           return (
-            <button type="button" className="git-branchbar__trigger" disabled={busy}>
+            <button type="button" className="git-branchbar__trigger" disabled={busy} aria-haspopup="dialog" aria-expanded={open} aria-label={`切换或新建分支：${s.branch || '未选择分支'}`}>
+              <span className="git-branchbar__icon"><Icon name="git" size={16} /></span>
               <span className="git-branchbar__name">{s.branch || '选择分支'}</span>
               {s.upstream && ((s.ahead ?? 0) > 0 || (s.behind ?? 0) > 0) ? (
                 <span className="git-branchbar__badge">
@@ -215,7 +214,7 @@ export function GitBranchBar({ position = 'bottom' }: GitBranchBarProps): JSX.El
       >
         <div className="git-branchbar__panel">
           <input
-            className="git-branchbar__search"
+            className="git-branchbar__search ui-input ui-input--compact"
             value={keyword}
             placeholder="筛选分支，或输入新分支名"
             onChange={(event) => setKeyword(event.target.value)}
@@ -247,10 +246,16 @@ export function GitBranchBar({ position = 'bottom' }: GitBranchBarProps): JSX.El
         type="button"
         className="git-branchbar__menu-btn"
         disabled={busy}
-        title="获取 / 拉取 / 推送 / 同步"
-        onClick={(event) => setMenu({ x: event.clientX, y: event.clientY })}
+        title="分支操作：获取、拉取、推送与同步"
+        aria-label="分支远程操作"
+        aria-haspopup="menu"
+        aria-expanded={menu !== null}
+        onClick={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect()
+          setMenu({ x: rect.left, y: rect.bottom + 4 })
+        }}
       >
-        <Icon name="chevron-up" size={16} />
+        <Icon name="dots-horizontal" size={16} />
       </button>
 
       {feedback ? <span className="git-branchbar__feedback">{feedback}</span> : null}
@@ -262,6 +267,8 @@ export function GitBranchBar({ position = 'bottom' }: GitBranchBarProps): JSX.El
       {creating ? (
         <PromptDialog
           title="新建分支"
+          className="git-dialog"
+          width={480}
           label="分支名"
           initialValue={keyword.trim()}
           confirmLabel="创建并切换"

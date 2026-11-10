@@ -2,6 +2,8 @@
  * resolve from successful tool receipts without a final-result manifest or
  * discovery reads. Valid DOCX/XLSX/PPTX bytes exercise the existing preview;
  * ambiguity, explicit links, source Markdown and session ownership stay intact.
+ * Light/dark inline link styling stays quiet at rest, supports focus/hover,
+ * and wraps long filenames without changing ordinary code rendering.
  * Build first and run with the dedicated workers: 1 configuration. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer } from 'node:http'
@@ -19,6 +21,7 @@ const token = 'inline-file-links-token', modelId = 'inline-file-links-model', no
 const taskA = 'work-inline-links-a', taskB = 'work-inline-links-b'
 const names = ['2048-项目说明书.docx', '2048-项目台账与测试矩阵.xlsx', '2048-项目汇报.pptx']
 const literalName = '#设计 50% 终版.xlsx'
+const longName = '2048-项目交付与质量验收说明-包含玩法规则操作指南测试矩阵与已知限制-跨平台预览和数据存储核对-最终审核版本.docx'
 const titles = new Map([[taskA, '工具记录中的项目文件'], [taskB, '另一个任务的同名文件']])
 const roots = new Map([[taskA, '/remote/inline-links-a'], [taskB, '/remote/inline-links-b']])
 const directories = new Map([[taskA, 'outputs'], [taskB, 'deliverables']])
@@ -28,13 +31,14 @@ const runs = new Map<string, RootRun>([taskA, taskB].map(sessionId => [sessionId
   pending: [], workspacePaths: [roots.get(sessionId)!], createdAt: now, updatedAt: now, finishedAt: now
 }]))
 const sourceMarkdown = new Map([taskA, taskB].map(id => [id, [
+  ...names.map((name, index) => `**${['文档（Word）', '表格（Excel）', '演示（PPT）'][index]}** — \`${name}\`，打开后可在右侧预览。`), '',
   '| 文件 | 说明 |', '| --- | --- |',
   ...names.map((name, index) => `| \`${name}\` | ${['项目说明', '台账与测试矩阵', '项目汇报'][index]} |`), '',
   `显式链接：[\`${names[0]}\`](/api/v1/workspace/file/download?sessionId=${id}&path=${encodeURIComponent(`${directories.get(id)}/${names[0]}`)})。`, '',
   '普通代码：`node --test`、`unknown.docx`、`report.docx`、`failed.docx`。', '',
   id === taskA ? `精确相对路径：\`draft/report.docx\`；精确完整路径：\`${roots.get(id)}/archive/report.docx\`。`
     : '本任务独有文件：`only-in-b.txt`。', '',
-  id === taskA ? `特殊文件：\`${literalName}\`。\n\n其他会话证据不能使用：\`only-in-b.txt\`。` : '另一个会话的路径不能使用：`outputs/2048-项目说明书.docx`。'
+  id === taskA ? `特殊文件：\`${literalName}\`。\n\n长文件名：\`${longName}\`。\n\n其他会话证据不能使用：\`only-in-b.txt\`。` : '另一个会话的路径不能使用：`outputs/2048-项目说明书.docx`。'
 ].join('\n')]))
 interface Asset { bytes: Buffer; marker: string; kind: 'docx' | 'xlsx' | 'pptx' | 'txt' }
 const assets = new Map<string, Asset>()
@@ -70,6 +74,7 @@ async function createAssets(): Promise<void> {
   })
   assets.set(assetKey(taskB, 'notes/only-in-b.txt'), { bytes: Buffer.from('B_ONLY_FILE'), marker: 'B_ONLY_FILE', kind: 'txt' })
   assets.set(assetKey(taskA, literalName), assets.get(assetKey(taskA, `outputs/${names[1]}`))!)
+  assets.set(assetKey(taskA, longName), assets.get(assetKey(taskA, `outputs/${names[0]}`))!)
 }
 function history(sessionId: string): EngineHistoryRow[] {
   const run = runs.get(sessionId)
@@ -81,6 +86,7 @@ function history(sessionId: string): EngineHistoryRow[] {
   if (sessionId === taskA) for (const directory of ['archive', 'draft']) calls.push({ name: 'read_file', args: { path: `${directory}/report.docx` }, success: true })
   else calls.push({ name: 'read_file', args: { file: 'notes/only-in-b.txt' }, success: true })
   if (sessionId === taskA) calls.push({ name: 'read_file', args: { path: literalName }, success: true })
+  if (sessionId === taskA) calls.push({ name: 'read_file', args: { path: longName }, success: true })
   calls.push({ name: 'read_file', args: { path: 'failed.docx' }, success: false })
   for (const [index, call] of calls.entries()) {
     const toolCallId = `${sessionId}-tool-${index}`
@@ -163,6 +169,106 @@ const work = (): Locator => page.locator('.work-view')
 const conversation = (): Locator => work().getByRole('region', { name: '协作对话', exact: true })
 const answer = (): Locator => conversation().locator('.work-message--assistant')
 const table = (): Locator => answer().getByRole('table')
+async function focusTestWindow(): Promise<void> {
+  await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].focus())
+  await page.bringToFront()
+  await expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(true)
+}
+async function settleConversation(): Promise<void> {
+  await conversation().evaluate(async element => {
+    await document.fonts.ready
+    await Promise.all(element.getAnimations({ subtree: true })
+      .filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime))
+      .map(animation => animation.finished.catch(() => undefined)))
+    await new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done())))
+  })
+}
+async function verifyLinkContrast(link: Locator): Promise<void> {
+  const contrast = await link.evaluate(element => {
+    type Rgba = [number, number, number, number]
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1
+    const context = canvas.getContext('2d')!
+    const rgba = (color: string): Rgba => {
+      context.clearRect(0, 0, 1, 1); context.fillStyle = color; context.fillRect(0, 0, 1, 1)
+      const data = context.getImageData(0, 0, 1, 1).data
+      return [data[0], data[1], data[2], data[3] / 255]
+    }
+    const over = (front: Rgba, back: Rgba): Rgba => {
+      const alpha = front[3] + back[3] * (1 - front[3])
+      return [0, 1, 2].map(index => (front[index] * front[3] + back[index] * back[3] * (1 - front[3])) / alpha).concat(alpha) as Rgba
+    }
+    const luminance = (color: Rgba): number => color.slice(0, 3).map(value => {
+      const channel = value / 255
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+    }).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0)
+    const ratio = (foreground: Rgba, background: Rgba): number => {
+      const values = [luminance(over(foreground, background)), luminance(background)].sort((a, b) => a - b)
+      return (values[1] + 0.05) / (values[0] + 0.05)
+    }
+    const style = getComputedStyle(element), foreground = rgba(style.color), tint = rgba(style.backgroundColor)
+    const ancestors: Element[] = []
+    for (let current: Element | null = element; current; current = current.parentElement) ancestors.push(current)
+    const actualBackground = ancestors.reverse().reduce((background, ancestor) => over(rgba(getComputedStyle(ancestor).backgroundColor), background), [255, 255, 255, 1] as Rgba)
+    const probe = document.createElement('span'); document.body.append(probe)
+    const surfaces = ['--bg-editor', '--bg-panel', '--bg-surface', '--bg-elevated'].map(token => {
+      probe.style.backgroundColor = `var(${token})`
+      return { token, ratio: ratio(foreground, over(tint, rgba(getComputedStyle(probe).backgroundColor))) }
+    })
+    probe.remove()
+    return { actual: ratio(foreground, actualBackground), surfaces }
+  })
+  expect(contrast.actual, 'Link text against its composited conversation background').toBeGreaterThanOrEqual(4.5)
+  for (const surface of contrast.surfaces) expect(surface.ratio, `Link text over ${surface.token}`).toBeGreaterThanOrEqual(4.5)
+}
+async function verifyLinkAppearance(): Promise<void> {
+  const paragraphLink = answer().locator('p').filter({ hasText: '文档（Word）' }).getByRole('link', { name: names[0], exact: true })
+  const explicitLink = answer().locator('p').filter({ hasText: '显式链接：' }).getByRole('link')
+  const tableLink = table().getByRole('link', { name: names[0], exact: true })
+  await page.mouse.move(4, 4)
+  for (const link of [paragraphLink, explicitLink, tableLink]) {
+    const styles = await link.evaluate(element => {
+      const anchor = getComputedStyle(element), code = getComputedStyle(element.querySelector('code')!)
+      return { background: anchor.backgroundColor, codeBackground: code.backgroundColor,
+        anchorFont: anchor.fontFamily, codeFont: code.fontFamily, anchorSize: anchor.fontSize, codeSize: code.fontSize,
+        padding: code.paddingInlineStart, decoration: anchor.textDecorationLine }
+    })
+    expect(styles.background).toBe('rgba(0, 0, 0, 0)')
+    expect(styles.codeBackground).toBe('rgba(0, 0, 0, 0)')
+    expect(styles.codeFont).toBe(styles.anchorFont); expect(styles.codeSize).toBe(styles.anchorSize)
+    expect(styles.padding).toBe('0px'); expect(styles.decoration).toBe('none')
+    await verifyLinkContrast(link)
+  }
+  const expected = await page.evaluate(() => {
+    const probe = document.createElement('span'); document.body.append(probe)
+    const color = (token: string): string => { probe.style.background = `var(${token})`; return getComputedStyle(probe).backgroundColor }
+    const colors = { hover: color('--link-hover-bg'), active: color('--link-active-bg'), inset: color('--bg-inset') }
+    probe.remove(); return colors
+  })
+  const plainCode = answer().locator('code').filter({ hasText: /^node --test$/ })
+  await expect(plainCode).toHaveCSS('background-color', expected.inset)
+  expect(expected.hover).not.toBe(expected.active)
+  await settleConversation(); await focusTestWindow()
+  await paragraphLink.locator('code').hover()
+  await expect.poll(() => paragraphLink.evaluate(element => element.matches(':hover'))).toBe(true)
+  await expect(paragraphLink).toHaveCSS('background-color', expected.hover)
+  await expect(paragraphLink).toHaveCSS('text-decoration-line', 'underline')
+  await verifyLinkContrast(paragraphLink)
+  await page.mouse.down()
+  try {
+    await expect(paragraphLink).toHaveCSS('background-color', expected.active)
+    await verifyLinkContrast(paragraphLink)
+  }
+  finally { await page.mouse.move(4, 4); await page.mouse.up() }
+  await focusTestWindow()
+  await page.keyboard.press('Tab'); await paragraphLink.focus()
+  await expect(paragraphLink).toBeFocused()
+  expect(await paragraphLink.evaluate(element => element.matches(':focus-visible'))).toBe(true)
+  expect(await paragraphLink.evaluate(element => getComputedStyle(element).boxShadow)).not.toBe('none')
+  await expect(paragraphLink).toHaveCSS('text-decoration-line', 'underline')
+  await verifyLinkContrast(paragraphLink)
+  await paragraphLink.evaluate(element => (element as HTMLAnchorElement).blur())
+  await expect(paragraphLink).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+}
 async function verifyReferences(id: string): Promise<void> {
   await expect(table()).toBeVisible()
   for (const name of names) {
@@ -170,11 +276,11 @@ async function verifyReferences(id: string): Promise<void> {
     await expect(link).toHaveCount(1); await expect(link).toBeVisible()
     await expect(link).toHaveAttribute('href', `${directories.get(id)}/${name}`)
     const colors = await link.evaluate(element => {
-      const probe = document.createElement('span'); probe.style.color = 'var(--accent)'; document.body.append(probe)
-      const accent = getComputedStyle(probe).color; probe.remove()
-      return { link: getComputedStyle(element).color, code: getComputedStyle(element.querySelector('code')!).color, accent }
+      const probe = document.createElement('span'); probe.style.color = 'var(--link-fg)'; document.body.append(probe)
+      const foreground = getComputedStyle(probe).color; probe.remove()
+      return { link: getComputedStyle(element).color, code: getComputedStyle(element.querySelector('code')!).color, foreground }
     })
-    expect(colors.link).toBe(colors.accent); expect(colors.code).toBe(colors.accent)
+    expect(colors.link).toBe(colors.foreground); expect(colors.code).toBe(colors.foreground)
   }
   const explicit = answer().locator('p').filter({ hasText: '显式链接：' })
   await expect(explicit.locator('a')).toHaveCount(1); await expect(explicit.locator('a code')).toHaveCount(1)
@@ -193,6 +299,7 @@ async function verifyReferences(id: string): Promise<void> {
 async function openDocument(id: string, index: number): Promise<void> {
   const relative = `${directories.get(id)}/${names[index]}`, asset = assets.get(assetKey(id, relative))!, before = contentReads.length
   previewAllowed = true
+  await focusTestWindow()
   await table().getByRole('link', { name: names[index], exact: true }).click()
   await expect.poll(() => contentReads.slice(before).some(read => read.sessionId === id && read.path === relative)).toBe(true)
   const panel = work().locator('.work-artifact-panel-v2:visible')
@@ -224,6 +331,9 @@ test.beforeAll(async () => {
   app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || join(root, 'out/main/index.js'), `--user-data-dir=${fixture}`], cwd: root, env })
   page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message)); page.on('crash', () => errors.push('Renderer crashed'))
   await app.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; window.setContentSize(1440, 1000); window.show(); window.focus() })
+  // Native desktop pointer movement can override Chromium's injected hover.
+  // Keep this fixture driven by Playwright while leaving page hit testing intact.
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setIgnoreMouseEvents(true))
   await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
   const tasks = [...titles].map(([id, title]) => ({ id, title, status: 'done', draft: '', createdAt: now, updatedAt: now,
     workspacePath: roots.get(id), modelId, attachments: [], sources: [] }))
@@ -243,6 +353,10 @@ test.afterEach(async ({}, info) => {
   await info.attach('文件读取与会话归属', { body: JSON.stringify({ contentReads, directoryReads, scans, mutations, errors }, null, 2), contentType: 'application/json' })
   expect(errors).toEqual([]); expect(scans).toEqual([]); expect(mutations).toEqual([])
 })
+test.beforeEach(async () => {
+  await focusTestWindow()
+  await settleConversation()
+})
 test.afterAll(async () => {
   try { await app?.close() } finally {
     server.closeAllConnections(); await new Promise<void>(done => server.close(() => done()))
@@ -254,12 +368,28 @@ test.afterAll(async () => {
   }
 })
 
+for (const appearance of ['light', 'dark'] as const) test(`正文文件链接 ${appearance}：透明底、轻微交互反馈与长名称换行`, async ({}, info) => {
+  await page.locator('html').evaluate((element, value) => element.setAttribute('data-appearance', value), appearance)
+  await verifyReferences(taskA)
+  await verifyLinkAppearance()
+  expect(contentReads).toEqual([])
+  const path = info.outputPath(`inline-links-${appearance}.png`)
+  await answer().screenshot({ path }); await info.attach(`正文文件链接-${appearance}`, { path, contentType: 'image/png' })
+  await app!.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; window.setMinimumSize(600, 600); window.setContentSize(760, 900) })
+  const longLink = answer().getByRole('link', { name: longName, exact: true })
+  await expect(longLink).toBeVisible()
+  expect(await longLink.evaluate(element => element.getClientRects().length)).toBeGreaterThan(1)
+  expect(await conversation().evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+  await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 1000))
+})
+
 test('Work table inline filenames open real Office previews using only the current session’s evidence', async ({}, info) => {
   await verifyReferences(taskA)
   expect(contentReads).toEqual([])
   expect(directoryReads.every(read => ['', '.'].includes(read.path))).toBe(true)
-  await answer().hover()
-  await answer().getByRole('button', { name: '复制回复', exact: true }).click()
+  await focusTestWindow()
+  const copyButton = answer().getByRole('button', { name: '复制回复', exact: true })
+  await copyButton.focus(); await expect(copyButton).toBeFocused(); await page.keyboard.press('Enter')
   await expect.poll(() => app!.evaluate(({ clipboard }) => clipboard.readText().replace(/\r\n/g, '\n'))).toBe(sourceMarkdown.get(taskA))
 
   await app!.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; window.setMinimumSize(600, 600); window.setContentSize(760, 900) })

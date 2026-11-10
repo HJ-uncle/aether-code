@@ -61,7 +61,7 @@ export function WorkTaskActions({
   return (
     <div className="work-task-actions" role="group" aria-label={`${task.title} 操作`}>
       {editing ? (
-        <input
+        <input className="ui-input ui-input--compact"
           aria-label="任务名称"
           value={title}
           onChange={(event) => setTitle(event.target.value)}

@@ -44,7 +44,7 @@ function BrowserLocalPreviewContent({ tab }: { tab: BrowserTabState }): JSX.Elem
     </div>
     {!current ? <div className="browser-empty" role="status"><Spinner size={20} /><span>正在读取文件…</span></div>
       : current.error ? <div className="browser-empty" role="alert">
-        <Icon name="warning" size={28} /><p>{current.error}</p>
+        <Icon name="alert-circle" size={28} /><p>{current.error}</p>
         <button type="button" className="btn" onClick={() => setAttempt(value => value + 1)}>重新读取</button>
       </div>
       : content?.kind === 'directory' ? <BrowserLocalDirectory key={content.path} tabId={tab.tabId} content={content} />

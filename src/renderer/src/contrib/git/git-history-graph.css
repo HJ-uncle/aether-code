@@ -1,0 +1,109 @@
+/* The commit summary owns the row. Distant rails can continue beyond this
+   viewport, but must not increase the width of the shared Git scroll owner. */
+.git-panel__history {
+  container-type: inline-size;
+  min-width: 0;
+}
+
+/* The section owns one sticky surface; putting filters inside the animated
+   list would let an overflow/animation boundary carry them out of view. */
+.git-panel__history-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-panel);
+  box-shadow: 0 1px 0 var(--border);
+}
+
+.git-panel__history-header > .git-panel__group-head {
+  position: static;
+  border-radius: 0;
+}
+
+.git-panel__history-header > .git-panel__history-filter {
+  background: var(--bg-panel);
+}
+
+.git-panel__content:has(.git-panel__section--history[data-history-expanded='true']) {
+  scroll-padding-top: calc(var(--control-h-lg) + var(--control-h) + 12px);
+}
+
+.git-panel__history-viewport {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.git-panel__history-canvas {
+  width: 100%;
+}
+
+.git-panel__history-viewport:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: -1px;
+}
+
+.git-panel__history-filter > .git-panel__graph-toggle {
+  margin-left: 0;
+}
+
+/* Filter controls are permanent navigation, not hover-only row actions. */
+:root .git-panel__history-filter > .git-panel__group-btn {
+  opacity: 1;
+  translate: 0 0;
+}
+
+.git-panel__graph-toggle[aria-pressed='true'] {
+  background: var(--bg-active);
+  color: var(--fg-strong);
+}
+
+.git-panel__history .git-panel__commit-row {
+  box-sizing: border-box;
+  width: 100%;
+  overflow: hidden;
+}
+
+.git-panel__history .git-graph,
+.git-panel__history .git-panel__commit-rail {
+  overflow: hidden;
+}
+
+.git-panel__history .git-graph[data-clipped='true'],
+.git-panel__history .git-panel__commit-rail[data-clipped='true'] {
+  mask-image: linear-gradient(to right, var(--fg) calc(100% - 8px), transparent);
+}
+
+.git-panel__history .git-panel__commit-subject {
+  flex: 1 1 0;
+  min-width: min(96px, 35%);
+}
+
+.git-panel__history .git-panel__commit-author {
+  flex: 0 1 72px;
+  min-width: 0;
+  max-width: 72px;
+}
+
+.git-panel__history .git-panel__ref-badge {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 88px;
+}
+
+.git-panel__history .git-panel__commit-files {
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+/* Panel width, rather than window width, determines whether secondary metadata
+   fits beside the graph. Its full contents remain in the commit detail card. */
+@container (max-width: 420px) {
+  .git-panel__history .git-panel__commit-author { display: none; }
+}
+
+@container (max-width: 320px) {
+  .git-panel__history .git-panel__commit-date { display: none; }
+}

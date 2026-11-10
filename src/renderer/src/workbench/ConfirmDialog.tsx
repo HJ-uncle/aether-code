@@ -25,6 +25,8 @@ export interface ConfirmOptions {
   confirmText?: string
   /** 危险操作（删除/覆盖）确认按钮用警示色 */
   danger?: boolean
+  /** Allows a feature's dialogs to share one layout without restyling other features. */
+  className?: string
   /** 中间附加按钮（如「保存并关闭」）：run 返回 true 视同确认 */
   tertiary?: {
     text: string
@@ -92,6 +94,7 @@ export function ConfirmDialogHost(): JSX.Element | null {
       open={Boolean(currentRequest)}
       closeDisabled={req.busy}
       title={req.title}
+      className={req.className}
       width={440}
       onClose={() => { if (!req.busy) settle(false, req.id) }}
       footer={

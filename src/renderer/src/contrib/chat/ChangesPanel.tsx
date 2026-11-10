@@ -355,7 +355,7 @@ function ChangesPanelContent({
                 aria-label={change.projectionIssue ? issueLabels[change.projectionIssue] : undefined}
                 aria-hidden={change.projectionIssue ? undefined : true}
               >
-                {change.projectionIssue ? '⚠' : ''}
+                {change.projectionIssue ? <Icon name="warning" size={14} /> : null}
               </span>
               <span className="changes-panel__spacer" />
               <span className="changes-panel__stats" title={stats?.approximate ? DIFF_APPROXIMATION_HINT : undefined}>

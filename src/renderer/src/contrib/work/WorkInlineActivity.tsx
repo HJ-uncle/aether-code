@@ -57,7 +57,7 @@ export function WorkInlineActivity({ tools: receipts, fileContext, onOpenFile, o
           setManual(!open)
         }}
       >
-        {state === 'running' ? <Spinner size={14} /> : <Icon name={state === 'done' ? 'check' : state === 'error' || state === 'interrupted' ? 'warning' : 'circle-dot'} size={14} />}
+        {state === 'running' ? <Spinner size={14} /> : <Icon name={state === 'done' ? 'check' : state === 'error' || state === 'interrupted' ? 'alert-circle' : 'circle-dot'} size={14} />}
         <span className="work-process__label">{label}</span>
         {target ? <span className="work-process__target">{target}</span> : null}
         <Icon name="chevron-right" size={12} className="work-inline-activity__chevron" />

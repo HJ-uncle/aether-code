@@ -84,7 +84,9 @@ function sameTurnUsage(previous: TurnUsageInfo | undefined, next: TurnUsageInfo)
     previous.summary.length === next.summary.length && previous.summary.every((row, index) => {
       const other = next.summary[index]
       return row.label === other.label && row.group === other.group && row.tokens === other.tokens &&
-        row.child === other.child && row.unknown === other.unknown && row.title === other.title && row.subtotal === other.subtotal
+        row.child === other.child && row.unknown === other.unknown && row.title === other.title && row.subtotal === other.subtotal &&
+        (row.shareOf === other.shareOf || row.shareOf != null && other.shareOf != null &&
+          row.shareOf.tokens === other.shareOf.tokens && row.shareOf.label === other.shareOf.label)
     }))
 }
 
@@ -2418,7 +2420,7 @@ function PendingCard({
               {group.allowInput ? (
                 <input
                   type="text"
-                  className="pending-card__input"
+                  className="pending-card__input ui-input"
                   aria-label={group.question}
                   placeholder="或直接输入回复…"
                   disabled={disabled}

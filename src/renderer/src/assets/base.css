@@ -4,8 +4,8 @@
  * 只放「全局性」的样式：重置、元素默认值、焦点环、滚动条。
  * 这里不定义任何具体的控件外观 —— 那属于 components.css。
  *
- * 焦点环策略：统一由 :focus-visible 驱动，键盘导航才出现，
- * 鼠标点击不留下"选中框"。这是 HIG 与 Web 无障碍的共识做法。
+ * 焦点环由 :focus-visible 驱动；文本输入用鼠标聚焦时也需要提示。
+ * 一个输入区域只由一层绘制焦点环：独立控件自身，复合控件的外壳。
  */
 
 * {
@@ -77,9 +77,9 @@ textarea::placeholder {
    排除链必须包在 :where() 里归零优先级：这条是「基线」不是「强制」，
    否则排除链的 (0,5,1) 会压过所有业务类的 border:none/background:transparent，
    把内嵌在装饰容器里的输入框（设置搜索、命令面板等）套成「框中框」。 */
-select,
-input:where(:not([type='checkbox'],[type='radio'],[type='file'],.inputarea,.xterm-helper-textarea)),
-textarea:where(:not(.inputarea,.xterm-helper-textarea)) {
+select:where(:not(.monaco-editor *, .xterm *)),
+input:where(:not([type='checkbox'], [type='radio'], [type='file'], [type='range'], [type='color'], [type='hidden'], [type='button'], [type='submit'], [type='reset'], [type='image'], .inputarea, .xterm-helper-textarea, .monaco-editor *, .xterm *)),
+textarea:where(:not(.inputarea, .xterm-helper-textarea, .monaco-editor *, .xterm *)) {
   min-height: var(--control-h);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -91,9 +91,9 @@ textarea:where(:not(.inputarea,.xterm-helper-textarea)) {
     box-shadow var(--duration-fast) var(--ease-out);
 }
 
-select:hover,
-input:where(:not([type='checkbox'],[type='radio'],[type='file'],.inputarea,.xterm-helper-textarea)):hover,
-textarea:where(:not(.inputarea,.xterm-helper-textarea)):hover {
+select:where(:not(.monaco-editor *, .xterm *)):hover,
+input:where(:not([type='checkbox'], [type='radio'], [type='file'], [type='range'], [type='color'], [type='hidden'], [type='button'], [type='submit'], [type='reset'], [type='image'], .inputarea, .xterm-helper-textarea, .monaco-editor *, .xterm *)):hover,
+textarea:where(:not(.inputarea, .xterm-helper-textarea, .monaco-editor *, .xterm *)):hover {
   border-color: var(--border-strong);
 }
 
@@ -113,8 +113,8 @@ pre {
 
 /* ==================== 焦点环 ==================== */
 
-/* 全局兜底：只在键盘操作时出现，鼠标点击不该留下"选中框" */
-:focus-visible {
+/* Monaco / xterm 自带焦点反馈；包括搜索框和输入代理，不叠加应用表单的环。 */
+:focus-visible:where(:not(.inputarea, .xterm-helper-textarea, .monaco-editor *, .xterm *)) {
   outline: none;
   box-shadow: var(--focus-ring);
 }
@@ -128,13 +128,13 @@ pre {
   box-shadow: var(--material-shadow), var(--material-highlight), var(--focus-ring);
 }
 
-/* 输入控件：键盘聚焦时用"边框染色 + 环"双保险，
-   只染边框在浅色外观下太弱，只画环又会被 overflow 裁掉 */
+/* 独立输入控件用一圈完整的边框和柔和外环。
+   复合输入框必须在组件中将环交给外壳，并清除内层控件的焦点阴影。 */
 .field__input:focus-visible,
 .palette__input:focus-visible,
-input:focus-visible,
-textarea:focus-visible,
-select:focus-visible {
+input:where(:not([type='checkbox'], [type='radio'], [type='file'], [type='range'], [type='color'], [type='hidden'], [type='button'], [type='submit'], [type='reset'], [type='image'], .inputarea, .xterm-helper-textarea, .monaco-editor *, .xterm *)):focus-visible,
+textarea:where(:not(.inputarea, .xterm-helper-textarea, .monaco-editor *, .xterm *)):focus-visible,
+select:where(:not(.monaco-editor *, .xterm *)):focus-visible {
   outline: none;
   border-color: var(--accent);
   box-shadow: var(--focus-ring);

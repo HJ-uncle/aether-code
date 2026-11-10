@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type JSX, type KeyboardEvent, type PointerEvent } from 'react'
 import { normalizeAccentHex } from '@shared/accent-color'
 import { Icon } from '@renderer/workbench/icons'
+import { Spinner } from '@renderer/workbench/ui-primitives'
 import { hexToHsv, hexToRgb, hsvToHex, rgbToHex, type ColorHsv, type ColorRgb } from './color-picker-model'
 import './accent-color-picker.css'
 
@@ -240,18 +241,18 @@ export function AccentColorPicker({ value, onPreview, onConfirm, onCancel }: {
             </svg>
           </button>}
         </div>
-        <label className="accent-color-picker__hex-field">
+        <label className="accent-color-picker__hex-field ui-input-shell ui-input-shell--compact">
           <span>HEX</span>
-          <input type="text" aria-label="自定义强调色色值" value={hex} spellCheck={false} autoComplete="off" disabled={saving}
+          <input className="ui-input-field" type="text" aria-label="自定义强调色色值" value={hex} spellCheck={false} autoComplete="off" disabled={saving}
             aria-invalid={invalid === 'hex'} aria-describedby={error ? 'accent-color-picker-error' : undefined}
             onChange={event => { setHex(event.target.value); setInvalid(null); setError('') }} onBlur={applyHex}
             onKeyDown={event => { restoreDraft(event); if (event.key === 'Enter') { event.preventDefault(); applyHex() } }} />
           <span className="accent-color-picker__color-space">sRGB</span>
         </label>
         <div className="accent-color-picker__rgb">
-          {CHANNELS.map(({ key, label, caption }) => <label key={key} className="accent-color-picker__channel">
+          {CHANNELS.map(({ key, label, caption }) => <label key={key} className="accent-color-picker__channel ui-input-shell ui-input-shell--compact">
             <span>{caption}</span>
-            <input type="number" min={0} max={255} step={1} inputMode="numeric" aria-label={label} disabled={saving}
+            <input className="ui-input-field" type="number" min={0} max={255} step={1} inputMode="numeric" aria-label={label} disabled={saving}
               aria-invalid={invalid === 'rgb'} aria-describedby={error ? 'accent-color-picker-error' : undefined}
               value={rgb[key]} onChange={event => { setRgb({ ...rgb, [key]: event.target.value }); setInvalid(null); setError('') }}
               onBlur={applyRgb} onKeyDown={event => { restoreDraft(event); if (event.key === 'Enter') { event.preventDefault(); applyRgb() } }} />
@@ -270,7 +271,7 @@ export function AccentColorPicker({ value, onPreview, onConfirm, onCancel }: {
         {error && <p className="accent-color-picker__error" id="accent-color-picker-error" role="alert">{error}</p>}
       </div>
       <footer className="accent-color-picker__footer">
-        <span><Icon name={error ? 'warning' : 'check'} size={12} />{error ? '尚未保存' : saving ? '正在保存…' : waitingToApply ? '停顿后预览' : color === initialColor.current ? '未修改' : '预览中，完成后保存'}</span>
+        <span>{error ? <Icon name="alert-circle" size={12} /> : saving ? <Spinner size={12} /> : <Icon name="info" size={12} />}{error ? '尚未保存' : saving ? '正在保存…' : waitingToApply ? '停顿后预览' : color === initialColor.current ? '未修改' : '预览中，完成后保存'}</span>
         <button type="button" className="accent-color-picker__done" aria-label="完成颜色选择" disabled={saving || Boolean(invalid)} onClick={() => void confirm()}>完成</button>
       </footer>
     </div>

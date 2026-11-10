@@ -154,6 +154,7 @@ function TaskGitPanel({
           {cloneOpen ? (
             <PromptDialog
               title="克隆仓库到任务工作区"
+              className="git-dialog"
               label="仓库地址"
               confirmLabel="克隆"
               validate={(value) =>

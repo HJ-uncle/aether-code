@@ -1,6 +1,6 @@
 import type { ChatMessage } from '@renderer/core/engine/useChat'
 import type { SubagentRun } from '@shared/subagent'
-import { asUsageFrame, hasCompleteUsageDetails, sumUsage, type UsageDetailRow, type UsageTotal } from './usage'
+import { asUsageFrame, hasCompleteUsageDetails, hasUsageDenominatorGap, sumUsage, type UsageDetailRow, type UsageTotal } from './usage'
 
 export interface SessionSubagentUsage {
   totalTokens: number
@@ -104,7 +104,16 @@ export function sessionUsageTotal(messages: ChatMessage[], anchor?: SessionUsage
       unknown: Math.max(0, anchor.children.unknown + visible.unknownSubagents - anchor.visible.unknownSubagents)
     }
     : { totalTokens: visible.subagentTotal, count: childCount(messages), unknown: visible.unknownSubagents }
-  const summary: UsageDetailRow[] = [...parent.summary]
+  const summary: UsageDetailRow[] = parent.summary.map(row => {
+    if (!anchor.parent || !row.child) return row
+    const side = row.group === 'output' ? 'output' : 'input'
+    if (!hasUsageDenominatorGap(anchor.visible, side) && !hasUsageDenominatorGap(visible, side)) return row
+    // Flattening the authority into one synthetic frame must not turn missing
+    // per-call counters into a verified denominator. This limits the detail's
+    // percentage only; it does not invalidate the authoritative billing total.
+    const gap = `已加载明细存在${side === 'input' ? '输入' : '输出'}统计缺口，无法核对此明细与累计统计的占比。`
+    return { ...row, shareOf: null, title: row.title ? `${row.title} ${gap}` : gap }
+  })
   if (children.count > 0 || children.totalTokens > 0 || children.unknown > 0) {
     if (!hasCompleteUsageDetails(parent) || parentUsage.promptTokens === undefined || parentUsage.completionTokens === undefined ||
       (parentUsage.promptTokens + parentUsage.completionTokens) !== parent.parentTotal) {

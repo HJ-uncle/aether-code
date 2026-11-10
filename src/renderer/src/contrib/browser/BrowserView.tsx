@@ -656,7 +656,7 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
         />
         <input
           ref={addressRef}
-          className="browser-address field__input"
+          className="browser-address field__input ui-input--compact"
           aria-label="网页地址"
           placeholder="输入网址、localhost:端口或本地路径"
           value={address}
@@ -776,7 +776,7 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
           <label>
             宽{' '}
             <input
-              className="field__input"
+              className="field__input ui-input--compact"
               aria-label="视口宽度"
               type="number"
               min={240}
@@ -789,7 +789,7 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
           <label>
             高{' '}
             <input
-              className="field__input"
+              className="field__input ui-input--compact"
               aria-label="视口高度"
               type="number"
               min={240}
@@ -806,7 +806,7 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
       ) : null}
       {tab?.error || state.error ? (
         <div className="browser-error" role="alert">
-          <Icon name="warning" size={16} />
+          <Icon name="alert-circle" size={16} />
           <div>
             <span>页面未能打开</span>
             <details><summary>查看详情</summary><span>{tab?.error || state.error}</span></details>
@@ -819,7 +819,7 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
       {/* 同级网页和调试面板必须使用不同 key，避免更新时残留旧网页容器。 */}
       {tab?.error ? (
         <div className="browser-empty" role="status">
-          <Icon name="warning" size={28} />
+          <Icon name="alert-circle" size={28} />
           <p>当前页面加载失败。</p>
         </div>
       ) : tab && localPreview ? (

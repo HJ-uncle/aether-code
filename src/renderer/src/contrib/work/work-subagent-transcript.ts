@@ -1,7 +1,7 @@
 import type { EngineRequestInput, EngineRequestResult } from '@shared/ipc'
 import type { EngineHistoryRow } from '@renderer/core/engine/chat-history'
 import { normalizeSubagentRun } from '@renderer/core/engine/subagent-state'
-import { checkHistoryPage } from '@renderer/core/engine/history-page'
+import { checkHistoryPage, isHistoryDisplayRow } from '@renderer/core/engine/history-page'
 
 export const SUBAGENT_TRANSCRIPT_PAGE_SIZE = 50
 export const SUBAGENT_TRANSCRIPT_TEXT_STEP = 4000
@@ -38,6 +38,64 @@ function sameChild(a: WorkTranscriptIdentity, b: WorkTranscriptIdentity): boolea
 }
 function checkedPage(result: EngineRequestResult<unknown>, current: number, pageSize: number): { rows: EngineHistoryRow[]; total: number; revision?: string } {
   return checkHistoryPage(result, current, pageSize, '子代理对话')
+}
+
+/** A full read uses one response, so an appending archive cannot shift offset
+ * pages underneath it. The endpoint may still retain only compact history;
+ * preserve its backend metadata so the view can explain that limitation. */
+export async function loadFullWorkSubagentTranscript(
+  identity: WorkTranscriptIdentity,
+  request: WorkTranscriptRequest,
+  isCurrent: () => boolean
+): Promise<WorkTranscriptWindow> {
+  const checkedRequest = async (input: EngineRequestInput): Promise<EngineRequestResult<unknown>> => {
+    if (!isCurrent()) throw new WorkTranscriptSupersededError()
+    const result = await request(input)
+    if (!isCurrent()) throw new WorkTranscriptSupersededError()
+    return result
+  }
+  const ownership = await checkedRequest({ method: 'GET', path: `/subagent/runs/${encodeURIComponent(identity.runId)}`,
+    ...(identity.subagentProtocol === 2 ? { subagentProtocol: 2, query: { view: 'summary', parentSessionId: identity.parentSessionId } } : {}) })
+  if (!ownership.ok) throw new Error(ownership.message || '无法验证子代理对话，请重试')
+  const run = normalizeSubagentRun(ownership.data)
+  if (!run || run.runId !== identity.runId || run.parentSessionId !== identity.parentSessionId ||
+    !run.childSessionId || run.childSessionId !== identity.childSessionId) throw new Error('子代理不属于当前任务，无法读取对话')
+
+  let endpoint: WorkTranscriptWindow['endpoint'] = '/conversation/archive'
+  const read = (): Promise<EngineRequestResult<unknown>> => checkedRequest({ method: 'GET', path: endpoint, query: { sessionId: run.childSessionId } })
+  let result = await read()
+  if (!result.ok && [404, 40401, 501, 50101].includes(result.code)) {
+    endpoint = '/conversation/history'
+    result = await read()
+  }
+  if (!result.ok || !Array.isArray(result.data)) throw new Error(result.message || '读取子代理完整对话失败，请重试')
+  const rows = result.data
+  const total = rows.length
+  const metadata = result.metadata
+  if (metadata?.archiveMessageCount !== undefined && metadata.archiveMessageCount !== total) throw new Error('子代理完整对话数量不一致，请重试')
+  // Some compatible engines attach pagination even without requested offsets.
+  // Accept only a complete first page; never mistake a default page for all rows.
+  const pagination = result.pagination
+  if (pagination && (pagination.current !== 1 || pagination.total !== total || !Number.isSafeInteger(pagination.pageSize) ||
+    pagination.pageSize < 1 || pagination.pageSize < total || pagination.totalPages !== Math.ceil(total / pagination.pageSize))) {
+    throw new Error('子代理完整对话返回了不完整的分页，请重试')
+  }
+  const revision = metadata?.archiveRevision
+  if (revision !== undefined && (typeof revision !== 'string' || !revision || revision.length > 1024) ||
+    metadata?.backend !== undefined && typeof metadata.backend !== 'string' ||
+    metadata?.compressed !== undefined && typeof metadata.compressed !== 'boolean') throw new Error('子代理完整对话信息无效，请重试')
+  const ids = new Set<string>()
+  for (const row of rows) {
+    if (!isHistoryDisplayRow(row)) throw new Error('子代理完整对话内容格式无效，请重试')
+    if (ids.has(row.id!)) throw new Error('子代理完整对话出现重复的消息 ID，请重试')
+    ids.add(row.id!)
+  }
+  const residentBytes = new TextEncoder().encode(JSON.stringify(rows)).byteLength
+  if (!isCurrent()) throw new WorkTranscriptSupersededError()
+  return { identity: { ...identity }, endpoint, rows, firstPage: 1, lastPage: Math.max(1, Math.ceil(total / SUBAGENT_TRANSCRIPT_PAGE_SIZE)),
+    total, ...(typeof revision === 'string' ? { revision } : {}),
+    ...(typeof metadata?.backend === 'string' ? { backend: metadata.backend } : {}),
+    compressed: metadata?.compressed === true, residentBytes, windowed: false }
 }
 
 /** Verify the parent relationship before using a durable child ID to read history. */

@@ -324,6 +324,11 @@
   outline: none;
 }
 
+/* 输入贴着浮层边缘，内描焦点环才能避免被圆角容器裁掉。 */
+.palette__input:focus-visible {
+  box-shadow: inset var(--focus-ring);
+}
+
 .palette__list {
   flex: 1;
   min-height: 0;
@@ -460,7 +465,7 @@
   border-radius: var(--radius);
 }
 
-.search-view__field:focus-within {
+.search-view__field:has(.search-view__input:focus-visible) {
   border-color: var(--accent);
 }
 
@@ -480,10 +485,11 @@
   color: var(--fg-faint);
 }
 
-/* 输入框嵌在 field 容器里：聚焦视觉由容器的 :focus-within 统一负责。
+/* 输入框嵌在 field 容器里：聚焦视觉由容器统一负责。
    全局 input:focus-visible 的聚焦环 (0,1,1) 会压过本类 (0,1,0)，
    在容器描边内侧再画一圈紫环，深色外观下尤其明显，必须显式关掉。 */
 .search-view__input:focus-visible {
+  outline: none;
   box-shadow: none;
 }
 
@@ -2655,12 +2661,37 @@
 }
 
 .md a {
-  color: var(--accent);
+  color: var(--link-fg);
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
   text-decoration: none;
+  text-underline-offset: 0.16em;
+  transition: background-color var(--duration-fast) var(--ease-out);
 }
 
-.md a:hover {
+.md a:hover,
+.md a:focus-visible {
+  background: var(--link-hover-bg);
   text-decoration: underline;
+}
+
+.md a:active {
+  background: var(--link-active-bg);
+}
+
+/* Linked filenames are reading/navigation text; reserve the inset code
+   treatment for literals that cannot be opened from the conversation. */
+.md a .md-inline-code {
+  padding: 0;
+  background: transparent;
+  border-radius: inherit;
+  font: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .md a { transition: none; }
 }
 
 .md img {
@@ -4149,131 +4180,7 @@
   flex-shrink: 0;
 }
 
-/* 上下文用量环（输入框旁） */
-.git-stashcard.ctx-card {
-  /* 固定数值区与说明区的层级，避免精确计数和统计口径挤在一起。 */
-  cursor: default;
-  width: min(320px, calc(100vw - 16px));
-  min-width: 0;
-  max-width: none;
-  box-sizing: border-box;
-  padding: 16px;
-  line-height: 1.55;
-  font-family: var(--font-ui);
-  font-style: normal;
-  text-align: left;
-}
-.ctx-card__header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--fg);
-}
-.ctx-card__warn-icon {
-  color: var(--danger-fg);
-}
-.ctx-card__percent {
-  justify-self: end;
-  font-size: 18px;
-  font-weight: 600;
-  line-height: 1.2;
-  color: var(--fg-strong);
-  font-variant-numeric: tabular-nums;
-  font-style: normal;
-}
-.ctx-card__percent-sign {
-  font-size: 12px;
-  font-weight: 400;
-}
-.ctx-card__tokens {
-  margin-top: 12px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  column-gap: 12px;
-  line-height: 1.55;
-}
-.ctx-card__tokens-value {
-  min-width: 0;
-  justify-self: start;
-  white-space: nowrap;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--fg-strong);
-  font-variant-numeric: tabular-nums;
-  font-style: normal;
-}
-.ctx-card__tokens-label {
-  justify-self: start;
-  white-space: nowrap;
-  font-size: 12px;
-  color: var(--fg-muted);
-}
-.ctx-card__bar {
-  position: relative;
-  margin-top: 10px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--bg-hover);
-  overflow: hidden;
-}
-.ctx-card__bar--compacting::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 35%;
-  border-radius: inherit;
-  background: var(--accent);
-  animation: context-compaction-progress 1.2s ease-in-out infinite;
-}
-.ctx-card__bar--compacting[data-reduced-motion='true']::after {
-  animation: none;
-  left: 32.5%;
-}
-@keyframes context-compaction-progress {
-  from { left: -35%; }
-  to { left: 100%; }
-}
-.ctx-card__bar-fill {
-  height: 100%;
-  border-radius: 2px;
-  background: var(--accent);
-  transition: none;
-}
-.ctx-card__bar-gain {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  opacity: 0;
-  border-radius: inherit;
-  background: linear-gradient(90deg, var(--accent), var(--accent-hover));
-  pointer-events: none;
-}
-.ctx-card__hint.ctx-card__source-hint {
-  margin-top: 12px;
-  /* Keep the portal anchored while a request changes from estimated to
-     confirmed text. Two lines cover the longest normal source description
-     without restoring the old three-line empty block. */
-  min-height: 3.1em;
-}
-.ctx-card__hint.ctx-card__status-hint {
-  min-height: 1.55em;
-  color: var(--fg);
-}
-.ctx-card__exact-tokens {
-  display: block;
-  margin-top: 8px;
-  max-width: 100%;
-  font-size: 13px;
-  color: var(--fg-muted);
-  overflow-wrap: anywhere;
-  font-variant-numeric: tabular-nums;
-  font-style: normal;
-}
+/* 上下文数字滚动动画与输入框旁的用量环。卡片布局见 context-usage.css。 */
 .ctx-number {
   position: relative;
   display: inline-block;
@@ -4334,29 +4241,6 @@
   .ctx-number__reel {
     will-change: auto;
   }
-}
-.ctx-card__bar-fill--warn {
-  background: var(--danger-fg);
-}
-.ctx-card__status {
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--fg-muted);
-}
-.ctx-card__error {
-  font-size: 12px;
-  color: var(--danger-fg);
-  word-break: break-all;
-}
-.ctx-card__hint {
-  margin-top: 10px;
-  font-size: 12px;
-  line-height: 1.55;
-  color: var(--fg-muted);
-}
-.ctx-card__billing-hint {
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
 }
 
 .context-ring {
@@ -4721,9 +4605,8 @@
   z-index: 2;
 }
 
-/* 聚焦：容器只做轻微描边提亮，不画焦点环。
-   环留给真正持有焦点的 <textarea>（见下方 :focus-visible），
-   否则一整块输入区被 3px 光圈围住，视觉噪音太大 */
+/* 内部工具获得焦点时仅轻微提亮；正文的完整焦点环由
+   input-composer.css 交给外壳，避免正文和工具各自再套一圈。 */
 .chat__surface:focus-within {
   border-color: var(--border-strong);
   box-shadow: var(--shadow-card);
@@ -6141,7 +6024,7 @@
   outline: none;
 }
 
-/* 聚焦样式统一走上面的 :focus-visible 组，避免鼠标点击也染色 */
+/* 独立表单控件的聚焦样式统一由 base.css 负责。 */
 textarea.field__input {
   height: auto;
   padding: var(--space-1) var(--space-2);
@@ -10933,18 +10816,25 @@ select.field__input {
   border-radius: var(--radius);
   color: var(--fg-faint);
 }
-.git-pickdlg__search:focus-within {
+.git-pickdlg__search:has(.git-pickdlg__input:focus-visible) {
   border-color: var(--accent);
+  box-shadow: var(--focus-ring);
 }
 .git-pickdlg__input {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   height: 100%;
   border: 0;
   background: transparent;
   color: var(--fg-strong);
   outline: none;
   font-size: 12px;
+}
+/* 图标和文字属于同一个输入区域，焦点环只画在外壳上。 */
+.git-pickdlg__input:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 .git-pickdlg__input::placeholder {
   color: var(--fg-faint);

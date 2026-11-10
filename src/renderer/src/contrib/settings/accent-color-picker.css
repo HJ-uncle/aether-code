@@ -200,7 +200,7 @@
 .accent-color-picker__hex-field:focus-within,
 .accent-color-picker__channel:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft);
+  box-shadow: var(--focus-ring);
 }
 
 .accent-color-picker__hex-field:has([aria-invalid='true']),

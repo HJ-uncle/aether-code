@@ -152,6 +152,9 @@ export function GitSyncButton(): JSX.Element {
       {sshAsk ? (
         <PromptDialog
           title="加载 SSH 私钥"
+          className="git-dialog"
+          width={480}
+          inputType="password"
           label="请输入 SSH 私钥口令，加载后重试本次操作。"
           confirmLabel="加载并重试"
           validate={(v) => (v ? null : '请输入口令')}

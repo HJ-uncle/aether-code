@@ -8,6 +8,9 @@ interface PromptDialogProps {
   /** 输入框初始值（重命名时为原名） */
   initialValue?: string
   confirmLabel?: string
+  className?: string
+  width?: number
+  inputType?: 'text' | 'password'
   /** 返回错误文案表示不允许提交；返回 null 表示合法 */
   validate?: (value: string) => string | null
   onConfirm: (value: string) => void | Promise<void>
@@ -28,6 +31,9 @@ export function PromptDialog({
   label,
   initialValue = '',
   confirmLabel = '确定',
+  className,
+  width,
+  inputType = 'text',
   validate,
   onConfirm,
   onClose: dismiss
@@ -45,7 +51,7 @@ export function PromptDialog({
   }, [])
 
   const submit = async (): Promise<void> => {
-    const trimmed = value.trim()
+    const trimmed = inputType === 'password' ? value : value.trim()
     // A custom validator may deliberately allow an empty optional field.
     const invalid = validate ? validate(trimmed) : trimmed ? null : '名称不能为空'
     if (invalid) {
@@ -71,7 +77,8 @@ export function PromptDialog({
       open={show}
       closeDisabled={busy}
       title={title}
-      className="modal--prompt"
+      className={`modal--prompt${className ? ` ${className}` : ''}`}
+      width={width}
       footer={
         <>
           <button type="button" className="btn" disabled={busy} onClick={onClose}>
@@ -92,6 +99,8 @@ export function PromptDialog({
       <label className="field">
         <span className="field__label">{label}</span>
         <input
+          type={inputType}
+          autoComplete={inputType === 'password' ? 'off' : undefined}
           className="field__input"
           ref={inputRef}
           value={value}

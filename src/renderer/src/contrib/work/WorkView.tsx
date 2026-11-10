@@ -935,9 +935,9 @@ export function WorkView(): JSX.Element {
                       </button>
                     ))}
                   </div>
-                  <label className="work-search">
+                  <label className="work-search ui-input-shell ui-input-shell--compact">
                     <Icon name="search" size={14} />
-                    <input
+                    <input className="ui-input-field"
                       aria-label="搜索 Work 任务"
                       placeholder="搜索任务"
                       value={search}
@@ -1008,7 +1008,7 @@ function TaskStatus({ status, ready }: { status: WorkTask['status']; ready: bool
   return (
     <span className={`work-status work-status--${disconnected ? 'interrupted' : status}`}
       title={disconnected ? '连接中断，等待恢复确认' : undefined}>
-      {disconnected ? <Icon name="warning" size={12} /> : status === 'running' ? (
+      {disconnected ? <Icon name="alert-circle" size={12} /> : status === 'running' ? (
         <Spinner size={12} />
       ) : (
         <Icon
@@ -1016,7 +1016,7 @@ function TaskStatus({ status, ready }: { status: WorkTask['status']; ready: bool
             status === 'done'
               ? 'check'
               : status === 'error' || status === 'interrupted'
-                ? 'warning'
+                ? 'alert-circle'
                 : status === 'waiting'
                   ? 'circle-dot'
                   : 'circle'
@@ -2119,7 +2119,7 @@ function WorkPending({
             </label>
           ))}
           {group.allowInput && (
-            <input
+            <input className="ui-input"
               aria-label={`补充回答：${group.question}`}
               placeholder="也可以直接输入…"
               value={freeText[index] ?? ''}

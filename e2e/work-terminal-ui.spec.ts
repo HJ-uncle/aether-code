@@ -517,6 +517,16 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
       await expect(output()).toBeVisible()
       await expect(selectedRow).toHaveAttribute('aria-current', 'true')
       await settleMotion(work())
+      await selectedRow.focus(); await settleMotion(work())
+      const focusedFill = await selectedRow.evaluate(element => getComputedStyle(element).backgroundColor)
+      await output().focus(); await page.mouse.move(0, 0); await settleMotion(work())
+      const restingFill = await selectedRow.evaluate(element => getComputedStyle(element).backgroundColor)
+      const channels = restingFill.match(/[\d.]+/g)?.map(Number)
+      expect(channels, 'An inactive selected record must retain a subtle neutral fill').toHaveLength(4)
+      expect(Math.max(...channels!.slice(0, 3)) - Math.min(...channels!.slice(0, 3))).toBeLessThanOrEqual(3)
+      expect(channels![3]).toBeGreaterThan(0)
+      expect(channels![3]).toBeLessThanOrEqual(0.25)
+      expect(focusedFill, 'Keyboard focus must be distinguishable from the inactive selection').not.toBe(restingFill)
       const dimensions = await output().evaluate(element => ({ width: element.clientWidth, height: element.clientHeight, overflow: element.scrollWidth - element.clientWidth }))
       expect(dimensions.width).toBeGreaterThan(120)
       expect(dimensions.height).toBeGreaterThan(100)
@@ -555,18 +565,31 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
         await setAppearance(appearance)
         for (const width of [1440, 2000, 980]) {
           await setWindow(width, 900)
-          const collapse = work().getByRole('button', { name: '收起工作区', exact: true })
-          if (await collapse.isVisible()) await collapse.click()
+          // Wait for the task surface after resize before reading the toggle's
+          // intent. A one-shot visibility probe can skip closing the workspace
+          // when the control is temporarily absent.
+          await expect(work().getByRole('heading', { name: titles.get(id), exact: true })).toBeVisible()
+          const workspaceToggle = work().getByRole('button', { name: /^(?:打开|收起)工作区$/ })
+          await expect(workspaceToggle).toBeVisible()
+          await expect(workspaceToggle).toHaveAttribute('aria-pressed', /^(?:true|false)$/)
+          if (await workspaceToggle.getAttribute('aria-pressed') === 'true') await workspaceToggle.click()
+          await expect(workspaceToggle).toHaveAttribute('aria-pressed', 'false')
           await expect(work().locator('.work-workspace')).toHaveCount(0)
+          await expect(work().locator('.work-task-body')).toHaveAttribute('data-pane', 'conversation')
           for (const workspaceOpen of [false, true]) {
             if (workspaceOpen) {
-              await work().getByRole('button', { name: '打开工作区', exact: true }).click()
+              await workspaceToggle.click()
+              await expect(workspaceToggle).toHaveAttribute('aria-pressed', 'true')
               await expect(work().locator('.work-workspace')).toHaveCount(1)
+              await expect(work().locator('.work-task-body')).toHaveAttribute('data-workspace', 'true')
               // At 980px Work intentionally shows one pane at a time. Keep the
               // workspace open and return to conversation before measuring.
-              if (!(await conversation.isVisible())) await work().locator('.work-mobile-tabs').getByRole('button', { name: '协作对话', exact: true }).click()
-              await expect(work().locator('.work-task-body')).toHaveAttribute('data-workspace', 'true')
-              if (width > 990) await expect(workspace()).toBeVisible()
+              if (width <= 990) {
+                const conversationTab = work().locator('.work-mobile-tabs').getByRole('button', { name: '协作对话', exact: true })
+                await expect(conversationTab).toBeVisible(); await conversationTab.click()
+                await expect(conversationTab).toHaveAttribute('aria-pressed', 'true')
+                await expect(work().locator('.work-task-body')).toHaveAttribute('data-pane', 'conversation')
+              } else await expect(workspace()).toBeVisible()
             }
             await expect(conversation).toBeVisible()
             await expect(conversation.locator('.work-conversation-turn')).toHaveCount(id === taskA ? 1 : 2)

@@ -268,10 +268,10 @@ export function AppSettingsView(): JSX.Element {
   return (
     <div className="app-settings">
       <div className="app-settings__toolbar" role="search">
-        <div className="app-settings__search-wrap">
+        <div className="app-settings__search-wrap ui-input-shell ui-input-shell--compact">
           <Icon name="magnify" size={16} />
           <input
-            className="app-settings__search"
+            className="app-settings__search ui-input-field"
             aria-label="搜索设置"
             value={query}
             onChange={(event) => setQuery(event.target.value)}

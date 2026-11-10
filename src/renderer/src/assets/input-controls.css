@@ -1,0 +1,130 @@
+/* Text controls only. Native checkboxes, sliders, file pickers and the
+   Monaco/xterm input proxies keep their own rendering and keyboard contracts.
+
+   ui-input: a standalone first-party text field, textarea or select trigger.
+   ui-input-shell + ui-input-field: one framed surface with an unframed editor.
+   --compact/--multiline preserve the surrounding toolbar or editor dimensions.
+   Existing form and search classes remain aliases during gradual adoption. */
+
+:root :is(.ui-input, .field__input, .sg__input, .select__trigger):not(.ui-input-field):not([data-input-unstyled]) {
+  border-width: 1px;
+  border-style: solid;
+  border-radius: var(--input-radius);
+  background-color: var(--input-bg);
+  color: var(--input-fg);
+  font-size: var(--input-font-size);
+}
+
+/* Only the default standalone field supplies a minimum. No width, padding,
+   line-height or textarea height is imposed on code/configuration editors. */
+:root :is(input.ui-input, input.field__input, input.sg__input):not(.ui-input--compact):not(.ui-input-field):not([data-input-unstyled]) {
+  min-height: var(--input-height);
+}
+
+:root :is(.ui-input, .field__input, .sg__input, .select__trigger):not(.ui-input-field):not([data-input-unstyled]):not(:focus-visible):not([aria-invalid='true']):not(.is-invalid):not(.git-clone__input--invalid) {
+  border-color: var(--input-border);
+}
+
+:root :is(.ui-input, .field__input, .sg__input, .select__trigger):not(.ui-input-field):not([data-input-unstyled]):hover:not(:disabled):not(:focus-visible):not([aria-invalid='true']):not(.is-invalid):not(.git-clone__input--invalid) {
+  border-color: var(--input-border-hover);
+}
+
+:root :is(.ui-input, .field__input, .sg__input):not(.ui-input-field)::placeholder,
+:root .ui-input-field::placeholder {
+  color: var(--input-placeholder);
+  opacity: 1;
+}
+
+:root :is(.ui-input, .field__input, .sg__input, .select__trigger):not(.ui-input-field):disabled {
+  background-color: var(--input-disabled-bg);
+  color: var(--input-disabled-fg);
+}
+
+/* Shell aliases cover older markup as well as explicitly marked components.
+   They deliberately leave layout, spacing and a composer's resting shadow to
+   the feature, so a form field cannot accidentally resize a chat editor. */
+:root :is(
+  .ui-input-shell,
+  .search-view__field,
+  .app-settings__search-wrap,
+  .git-pickdlg__search,
+  .automations-search,
+  .work-search,
+  .work-workspace-panel__filter-wrap,
+  .accent-color-picker__hex-field,
+  .accent-color-picker__channel,
+  .work-subagents__composer-editor,
+  .input-composer.chat__surface
+) {
+  border-width: 1px;
+  border-style: solid;
+  border-radius: var(--input-radius);
+  background-color: var(--input-bg);
+  font-size: var(--input-font-size);
+}
+
+:root :is(
+  .ui-input-shell,
+  .search-view__field,
+  .app-settings__search-wrap,
+  .git-pickdlg__search,
+  .automations-search,
+  .work-search,
+  .work-workspace-panel__filter-wrap,
+  .accent-color-picker__hex-field,
+  .accent-color-picker__channel,
+  .work-subagents__composer-editor,
+  .input-composer.chat__surface
+):not(:focus-within):not(:has([aria-invalid='true'])) {
+  border-color: var(--input-border);
+}
+
+/* The input is the only part that hands focus to its shell. Moving to a clear,
+   attach or send button returns the shell to rest and highlights that button. */
+:root .ui-input-shell:has(.ui-input-field:focus-visible) {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+:root .ui-input-shell:has(.ui-input-field:focus-visible):not(:has([aria-invalid='true'])) {
+  border-color: var(--accent);
+}
+
+:root .ui-input-field,
+:root .ui-input-field:is(:focus, :focus-visible) {
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+  color: var(--input-fg);
+  font-size: inherit;
+}
+
+:root .ui-input-field:disabled {
+  color: var(--input-disabled-fg);
+}
+
+/* Keep a concise inline rename or number control inside its original row. */
+:root .ui-input--compact:not(.ui-input-field):not([data-input-unstyled]),
+:root .ui-input-shell.ui-input-shell--compact {
+  font-size: inherit;
+}
+
+/* This legacy search explicitly pinned a pill radius. Remove only that visual
+   exception; its left padding still reserves space for the search icon. */
+:root .work-agent-manager__search > input.ui-input {
+  border-radius: var(--input-radius) !important;
+}
+
+/* Palettes are edge-to-edge editors with their own inset focus ring. Their
+   flat shape and bottom separator are intentional, rather than a second box. */
+:root .palette__input {
+  background: transparent;
+  color: var(--input-fg);
+  font-size: var(--input-font-size);
+}
+
+:root .palette__input::placeholder {
+  color: var(--input-placeholder);
+}

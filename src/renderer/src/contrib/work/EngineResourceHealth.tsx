@@ -297,7 +297,7 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
       ) : null}
       {currentError ? (
         <p className="engine-resource__message engine-resource__message--error" role="alert">
-          <Icon name="warning" size={14} />
+          <Icon name="alert-circle" size={14} />
           <span>{currentError}</span>
           <button
             type="button"

@@ -1,6 +1,8 @@
 /** Real Electron + authenticated HTTP: execution duration excludes idle gaps,
  * survives history reload, advances only for active runs, and shares the same
- * semantics in Work and Code. Owns one profile/window; build before running. */
+ * semantics in Work and Code. Percentage rows disclose exact tokens and their
+ * denominator by hover/keyboard in both themes. Side details remain readable
+ * outside the owning popup and stay inside resized viewports. Build before running. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer, type ServerResponse } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -35,7 +37,9 @@ function appendRun(id: string, index: number, start: number | undefined, finish:
     { id: run.userMessageId, role: 'user', content: prompts[index - 1] ?? '继续处理', conversationId, metadata, createdAt: at },
     { id: run.assistantMessageId, role: 'assistant', content: status === 'running' ? 'LIVE_EXECUTION' : `FINAL_${id}_${index}`,
       conversationId, metadata, createdAt: finish ?? at,
-      usage: { promptTokens: 7000, completionTokens: index === 3 ? 400 : 300, totalTokens: index === 3 ? 7400 : 7300 } }
+      usage: { promptTokens: 7000, completionTokens: index === 3 ? 400 : 300, totalTokens: index === 3 ? 7400 : 7300,
+        systemPromptTokens: 1400, messagesTokens: 2800, toolResultsTokens: 1400, builtinToolsTokens: 700,
+        mcpToolsTokens: 350, skillTokens: 350, cacheHitTokens: 4200, cacheMissTokens: 2800, reasoningTokens: 100 } }
   ]
   histories.set(id, [...(histories.get(id) ?? []), ...rows])
 }
@@ -93,9 +97,16 @@ const server = createServer((request, response) => { void (async () => {
   }
   if (path === '/api/v1/conversation/display') {
     const users = rows.filter(row => row.role === 'user')
+    const anchor = url.searchParams.get('anchorMessageId'), limit = Number(url.searchParams.get('limit') ?? 2)
+    const start = anchor ? users.findIndex(row => row.id === anchor) : Math.max(0, users.length - limit)
+    if (start < 0) { response.writeHead(404).end(JSON.stringify({ code: 40400, message: 'Unknown display anchor', data: null })); return }
+    const selected = users.slice(start, start + limit)
+    const begin = selected.length ? rows.findIndex(row => row.id === selected[0].id) : 0
+    const next = users[start + selected.length]
+    const end = next ? rows.findIndex(row => row.id === next.id) : rows.length
     response.end(envelope({ schemaVersion: 1, grouping: 'root', turns: users.map(row => ({ userMessageId: row.id,
-      conversationId: row.conversationId, preview: row.content, createdAt: row.createdAt })), messages: rows,
-      loadedTurnIds: users.map(row => row.id), revision: `${id}-${rows.length}-${run?.version ?? 0}`,
+      conversationId: row.conversationId, preview: row.content, createdAt: row.createdAt })), messages: rows.slice(begin, end),
+      loadedTurnIds: selected.map(row => row.id), revision: `${id}-${rows.length}-${run?.version ?? 0}`,
       mutationRevision: 'stable', backend: 'jsonl', completeness: 'complete' })); return
   }
   if (['/api/v1/cron/capabilities', '/api/v1/workbench/clients', '/api/v1/browser/clients', '/api/v1/terminal/create', '/api/v1/lsp/request'].includes(path)) {
@@ -114,6 +125,10 @@ const server = createServer((request, response) => { void (async () => {
     : path === '/api/v1/chat/runs' ? { runs: roots.get(id) ?? [] }
     : path === '/api/v1/conversation/history' ? rows
     : path === '/api/v1/conversation/sessions' ? [...titles].map(([sessionId, title]) => ({ sessionId, title, lastAt: now, messageCount: histories.get(sessionId)?.length ?? 0 }))
+    : path === '/api/v1/chat/admission/context' ? { protocolVersion: 1, tenantId: 'usage-duration-tenant', sessionId: id,
+      namespace: { id: 'usage-duration-db', generation: 'one' },
+      transport: { toolProfile: request.headers['x-aether-tool-profile'] === 'code' ? 'code' : 'general', runLifetime: 'durable', subagentProtocol: 2 },
+      root: null, predecessor: null }
     : path === '/api/v1/workspace/directory' ? { root: '/remote/usage-test', bindingEpoch: `binding-${id}`, entries: [] }
     : path === '/api/v1/subagent/capabilities' ? { schemaVersion: 2, eventVersions: [1, 2], views: ['legacy', 'summary'], toolPagination: true, eventPagination: true, detailChunks: true, exactWatermarks: true }
     : path === '/api/v1/subagent/runs' ? { schemaVersion: 2, runs: [], listComplete: true, hasMore: false, revision: 'empty' }
@@ -130,6 +145,84 @@ const work = (): Locator => page.locator('.work-view')
 const meter = (owner = work()): Locator => owner.locator('.usage-meter')
 const time = (owner = work()): Locator => meter(owner).locator('.usage-meter__time')
 const popover = (): Locator => page.getByRole('dialog', { name: '会话用量明细', exact: true })
+const detailRow = (label: string, owner: Locator = popover()): Locator => owner.locator('.usage-detail__row--interactive').filter({ has: page.getByText(label, { exact: true }) })
+const detailTip = (label: string): Locator => page.getByRole('tooltip', { name: `${label}用量详情`, exact: true })
+
+async function detailGeometry(tip: Locator, owner: Locator = popover()) {
+  const [detail, surface, viewport] = await Promise.all([
+    tip.boundingBox(), owner.boundingBox(), page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
+  ])
+  if (!detail || !surface) throw new Error('Usage detail and owning popup must both be visible')
+  return { detail, surface, viewport }
+}
+
+async function expectDetailInViewport(tip: Locator, owner: Locator = popover()): Promise<void> {
+  const { detail, viewport } = await detailGeometry(tip, owner)
+  expect(detail.x).toBeGreaterThanOrEqual(7)
+  expect(detail.y).toBeGreaterThanOrEqual(7)
+  expect(detail.x + detail.width).toBeLessThanOrEqual(viewport.width - 7)
+  expect(detail.y + detail.height).toBeLessThanOrEqual(viewport.height - 7)
+}
+
+async function expectSideDetail(tip: Locator, owner: Locator = popover(), side?: 'left' | 'right'): Promise<void> {
+  await expect(tip).toHaveAttribute('data-placement', /^(left|right)$/)
+  const { detail, surface, viewport } = await detailGeometry(tip, owner)
+  const expectedSide = side ?? (viewport.width - surface.x - surface.width >= detail.width + 14 ? 'right' : 'left')
+  await expect(tip).toHaveAttribute('data-placement', expectedSide)
+  // A visible gap proves the tooltip clears the whole card, including its padding.
+  const gap = expectedSide === 'left' ? surface.x - detail.x - detail.width : detail.x - surface.x - surface.width
+  expect(gap).toBeGreaterThan(0)
+  await expectDetailInViewport(tip, owner)
+}
+
+async function readHoveredDetail(tip: Locator, owner: Locator = popover()): Promise<void> {
+  const { detail } = await detailGeometry(tip, owner)
+  await page.mouse.move(detail.x + detail.width / 2, detail.y + detail.height / 2, { steps: 4 })
+  // Observe longer than the pointer-leave grace period: a reader must be able
+  // to cross the gap and remain over the detail without it disappearing.
+  await page.waitForTimeout(250)
+  await expect(tip).toBeVisible()
+  await expect(owner).toBeVisible()
+}
+
+async function setAppearance(appearance: 'light' | 'dark'): Promise<void> {
+  await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+  const settings = page.getByRole('dialog', { name: '设置', exact: true })
+  await settings.getByRole('tab', { name: '外观', exact: true }).click()
+  await settings.getByRole('radio', { name: appearance === 'light' ? '浅色' : '深色', exact: true }).click()
+  await expect(page.locator('html')).toHaveAttribute('data-appearance', appearance)
+  await settings.getByRole('button', { name: '关闭', exact: true }).click()
+  // A closing modal is removed from the accessibility tree before its retained
+  // surface unmounts. Wait for that exit before opening another popup.
+  await expect(page.getByRole('dialog', { name: '设置', exact: true, includeHidden: true })).toHaveCount(0)
+}
+
+async function expectPercentages(): Promise<void> {
+  await expect(popover().locator('.usage-popover__total-value')).toHaveText('22k')
+  await expect(popover().locator('.usage-popover__total-value')).toHaveAttribute('title', '22,000 tokens')
+  for (const [label, percentage] of [
+    ['累计输入 Prompt', '95.5%'], ['输出 Completion', '4.5%'], ['系统提示词', '20%'],
+    ['对话历史', '40%'], ['缓存命中', '60%'], ['缓存未命中', '40%'], ['其中推理', '30%']
+  ]) {
+    await expect(detailRow(label)).toHaveAttribute('tabindex', '0')
+    await expect(detailRow(label).locator('.usage-detail__value')).toHaveText(percentage)
+  }
+}
+
+async function focusDetail(label: string, exact: string, basis: string, denominator: string, percentage: string): Promise<void> {
+  // Establish keyboard modality so the real focus-visible path opens details.
+  await page.mouse.move(0, 0); await page.keyboard.press('Tab'); await detailRow(label).focus()
+  await expect(detailRow(label)).toBeFocused()
+  const tip = detailTip(label)
+  await expect(tip).toBeVisible()
+  await expect(tip.locator('.usage-detail-tip__amount')).toHaveText(`${exact} tokens`)
+  await expect(tip).toContainText(`计算基数：${denominator} tokens`)
+  await expect(tip).toContainText(new RegExp(`占${basis}\\s*${percentage.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`))
+  await page.keyboard.press('Escape')
+  await expect(tip).toHaveCount(0)
+  await expect(popover()).toBeVisible()
+  await expect(detailRow(label)).toBeFocused()
+}
 
 async function seed(): Promise<void> {
   resetHistory()
@@ -242,7 +335,96 @@ test.describe.serial('会话累计执行用时', () => {
     await expect(time()).toHaveText('30s')
   })
 
-  test('Code 模式共用累计执行时间，不再显示跨轮空闲跨度', async () => {
+  test('明暗主题的用量行默认显示占比，悬停与键盘详情说明精确量和分母', async ({}, info) => {
+    for (const appearance of ['light', 'dark'] as const) {
+      await setAppearance(appearance)
+      await meter().locator('button').click()
+      await expectPercentages()
+      await page.mouse.move(0, 0)
+      await expect(page.getByRole('tooltip')).toHaveCount(0)
+      const listPath = info.outputPath(`usage-percentage-list-${appearance}.png`)
+      await popover().screenshot({ path: listPath, animations: 'disabled' })
+      await info.attach(`默认用量占比列表 ${appearance}`, { path: listPath, contentType: 'image/png' })
+      const input = detailRow('累计输入 Prompt')
+      await input.hover()
+      const tip = detailTip('累计输入 Prompt')
+      await expect(tip).toBeVisible()
+      await expect(tip.locator('.usage-detail-tip__amount')).toHaveText('21,000 tokens')
+      await expect(tip).toContainText(/占总用量\s*95\.5%/)
+      await expect(tip).toContainText('计算基数：22,000 tokens')
+      await expectSideDetail(tip, popover(), 'left')
+      await readHoveredDetail(tip)
+      const path = info.outputPath(`usage-percentage-${appearance}.png`)
+      await page.screenshot({ path, animations: 'disabled' })
+      await info.attach(`用量占比与精确明细 ${appearance}`, { path, contentType: 'image/png' })
+      await page.keyboard.press('Escape')
+      await expect(tip).toHaveCount(0); await expect(popover()).toBeVisible()
+      await focusDetail('缓存命中', '12,600', '累计输入', '21,000', '60%')
+      await focusDetail('其中推理', '300', '累计输出', '1,000', '30%')
+      await page.keyboard.press('Escape')
+      await expect(popover()).toHaveCount(0)
+      await expect(meter().locator('.usage-meter__tokens')).toHaveText('22k')
+      await expect(time()).toHaveText('30s')
+    }
+  })
+
+  test('用量详情适应应用最小窗口，恢复宽窗后在单轮卡片右侧显示', async ({}, info) => {
+    if (!app) throw new Error('Missing Electron fixture')
+    const original = await app.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0]
+      return { minimum: window.getMinimumSize(), content: window.getContentSize() }
+    })
+    try {
+      // Exercise the application's supported minimum, and read the content
+      // viewport because native window bounds can include platform frame insets.
+      const narrow = await app.evaluate(({ BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows()[0]
+        const [minimumWidth, minimumHeight] = window.getMinimumSize()
+        window.setSize(minimumWidth, Math.max(minimumHeight, window.getSize()[1]))
+        return window.getContentSize()
+      })
+      expect(narrow[0]).toBeLessThan(original.content[0])
+      await expect.poll(() => page.evaluate(() => innerWidth)).toBe(narrow[0])
+      const trigger = work().locator('.turn-usage__trigger').last()
+      await trigger.click()
+      const turn = page.getByRole('dialog', { name: '本次问答用量', exact: true })
+      await expect(turn).toBeVisible()
+      await detailRow('累计输入 Prompt', turn).hover()
+      const tip = detailTip('累计输入 Prompt')
+      await expect(tip).toBeVisible()
+      const { detail, surface, viewport } = await detailGeometry(tip, turn)
+      const sideFits = surface.x >= detail.width + 14 || viewport.width - surface.x - surface.width >= detail.width + 14
+      if (sideFits) await expectSideDetail(tip, turn)
+      else await expect(tip).toHaveAttribute('data-placement', /^(above|below)$/)
+      await expectDetailInViewport(tip, turn)
+      await expect(tip).toContainText('7,000 tokens')
+      await page.keyboard.press('Escape'); await page.keyboard.press('Escape')
+      await expect(page.getByRole('dialog', { name: '本次问答用量', exact: true, includeHidden: true })).toHaveCount(0)
+      await app.evaluate(({ BrowserWindow }, size) => {
+        BrowserWindow.getAllWindows()[0].setContentSize(size[0], size[1])
+      }, original.content)
+      await expect.poll(() => page.evaluate(() => innerWidth)).toBe(original.content[0])
+      // Resizing moves the trigger away from the pointer. A fresh hover tests
+      // the new layout without requiring an intentionally transient tooltip to stick.
+      await trigger.click()
+      await expect(turn).toBeVisible()
+      await detailRow('累计输入 Prompt', turn).hover()
+      await expect(tip).toBeVisible()
+      await expectSideDetail(tip, turn, 'right')
+      await readHoveredDetail(tip, turn)
+      const path = info.outputPath('work-turn-usage-right-side.png')
+      await page.screenshot({ path, animations: 'disabled' })
+      await info.attach('Work 单轮用量右侧详情', { path, contentType: 'image/png' })
+    } finally {
+      await app.evaluate(({ BrowserWindow }, saved) => {
+        const window = BrowserWindow.getAllWindows()[0]
+        window.setContentSize(saved.content[0], saved.content[1])
+      }, original)
+      await page.keyboard.press('Escape'); await page.keyboard.press('Escape')
+    }
+  })
+
+  test('Code 模式共用累计执行时间，不再显示跨轮空闲跨度', async ({}, info) => {
     await page.evaluate(({ key, sessionId }) => {
       localStorage.setItem(key, sessionId)
       localStorage.setItem('aether.app.mode', 'code')
@@ -255,5 +437,30 @@ test.describe.serial('会话累计执行用时', () => {
     await expect(meter(chat).locator('.usage-meter__tokens')).toHaveText('22k')
     await meter(chat).locator('button').click()
     await expect(popover()).toContainText('已加载 3 轮 · 累计 30s')
+    await expectPercentages()
+    await focusDetail('累计输入 Prompt', '21,000', '总用量', '22,000', '95.5%')
+    await focusDetail('缓存命中', '12,600', '累计输入', '21,000', '60%')
+    await page.keyboard.press('Escape')
+    await expect(popover()).toHaveCount(0)
+    await chat.locator('.turn-usage__trigger').last().click()
+    const turn = page.getByRole('dialog', { name: '本次问答用量', exact: true })
+    await expect(turn).toBeVisible()
+    await expect(turn.locator('.usage-popover__total-value')).toHaveText('7.4k')
+    await expect(turn.locator('.usage-popover__total-value')).toHaveAttribute('title', '7,400 tokens')
+    for (const [label, percentage] of [['累计输入 Prompt', '94.6%'], ['输出 Completion', '5.4%'], ['缓存命中', '60%']])
+      await expect(detailRow(label, turn).locator('.usage-detail__value')).toHaveText(percentage)
+    await detailRow('累计输入 Prompt', turn).hover()
+    const tip = detailTip('累计输入 Prompt')
+    await expect(tip).toBeVisible()
+    await expect(tip.locator('.usage-detail-tip__amount')).toHaveText('7,000 tokens')
+    await expect(tip).toContainText(/占总用量\s*94\.6%/)
+    await expect(tip).toContainText('计算基数：7,400 tokens')
+    await expectSideDetail(tip, turn)
+    await readHoveredDetail(tip, turn)
+    const path = info.outputPath('code-turn-usage-percentage.png')
+    await page.screenshot({ path, animations: 'disabled' })
+    await info.attach('Code 单轮用量占比', { path, contentType: 'image/png' })
+    await page.keyboard.press('Escape'); await expect(tip).toHaveCount(0); await expect(turn).toBeVisible()
+    await page.keyboard.press('Escape'); await expect(turn).toHaveCount(0)
   })
 })

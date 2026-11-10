@@ -224,7 +224,7 @@ export function EditorOutline({
       <MotionPresence show={expanded} className="editor-outline__body">
         <>
           <input
-            className="editor-outline__filter"
+            className="editor-outline__filter ui-input ui-input--compact"
             aria-label="筛选大纲符号"
             placeholder="筛选符号…"
             value={query}
