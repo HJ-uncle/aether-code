@@ -5,6 +5,7 @@ import { Popover } from '@renderer/workbench/Popover'
 import { toast } from '@renderer/core/toast'
 import type { WorkTask } from './work-state'
 import { getRunningWorkTasks } from './work-run-list'
+import { workSidebarStatus } from './work-sidebar-task'
 
 export { getRunningWorkTasks } from './work-run-list'
 
@@ -16,10 +17,6 @@ interface WorkRunListProps {
   onStop?: (id: string) => Promise<void>
   /** Embed the switcher in the active task heading instead of the shell. */
   inline?: boolean
-}
-
-function runStatusLabel(status: WorkTask['status']): string {
-  return status === 'waiting' ? '等待处理' : '运行中'
 }
 
 function formatElapsed(start: number | undefined, now: number): string {
@@ -116,7 +113,7 @@ export function WorkRunList({
                   <span className="work-run-list__item-copy">
                     <strong title={run.title}>{run.title}</strong>
                     <span title={run.workspacePath ?? undefined}>
-                      {runStatusLabel(run.status)} · 已运行 {formatElapsed(run.runStartedAt ?? run.updatedAt, now)} ·{' '}
+                      {workSidebarStatus(run, ready, stoppingId === run.id).label} · 已运行 {formatElapsed(run.runStartedAt ?? run.updatedAt, now)} ·{' '}
                       {run.workspacePath
                         ? run.workspacePath.split(/[\\/]/).filter(Boolean).at(-1)
                         : '独立任务'}

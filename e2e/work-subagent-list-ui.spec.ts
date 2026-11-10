@@ -15,6 +15,7 @@ const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
 const token = 'subagent-list-fixture', sessionId = 'work-subagent-list-parent', modelId = 'subagent-list-model'
 const title = '协作代理列表阅读核对', now = Date.now() - 10_000
 const errors: string[] = [], mutations: string[] = [], detailReads: string[] = [], archiveReads: string[] = []
+const requestTimeline: Array<{ time: number; path: string; id: string }> = []
 let app: ElectronApplication | undefined, page: Page, fixture = ''
 const envelope = (data: unknown): string => JSON.stringify({ code: 200, message: 'ok', data })
 const parent: RootRun = { schemaVersion: 1, runId: 'list-parent-run', sessionId, turnId: 'list-turn', userMessageId: 'list-user',
@@ -93,6 +94,7 @@ const server = createServer((request, response) => { void (async () => {
   }
   if (/^\/api\/v1\/subagent\/runs\/[^/]+$/.test(path)) {
     const runId = decodeURIComponent(path.split('/').at(-1)!); detailReads.push(runId)
+    requestTimeline.push({ time: Date.now(), path, id: runId })
     const run = runs.find(item => item.runId === runId)
     if (!run) throw new Error(`Unknown child ${runId}`)
     response.end(envelope(run)); return
@@ -107,6 +109,7 @@ const server = createServer((request, response) => { void (async () => {
   }
   if (path === '/api/v1/conversation/archive') {
     archiveReads.push(id)
+    requestTimeline.push({ time: Date.now(), path, id })
     const child = runs.find(run => run.childSessionId === id)
     if (!child) throw new Error(`Wrong archive ${id}`)
     const index = runs.indexOf(child)
@@ -201,6 +204,23 @@ test.describe.serial('协作代理列表', () => {
     env.AETHER_IDE_REMOTE_INSTANCE_TOKEN = token; env.AETHER_GLOBAL_DIR = join(fixture, 'global')
     app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || join(root, 'out/main/index.js'), `--user-data-dir=${fixture}`], cwd: root, env })
     page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message)); page.on('crash', () => errors.push('Renderer crashed'))
+    await page.addInitScript(() => {
+      const inputEvents: Array<Record<string, unknown>> = []
+      ;(window as typeof window & { __subagentListInputs: typeof inputEvents }).__subagentListInputs = inputEvents
+      for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'keydown', 'focusin']) {
+        document.addEventListener(type, event => {
+          const target = event.target instanceof Element ? event.target : null
+          const control = target?.closest('button, [role="radio"], input, [role="tab"]')
+          inputEvents.push({ time: Date.now(), type, target: target?.tagName, control: control?.className,
+            label: control?.getAttribute('aria-label') || control?.textContent?.trim().slice(0, 140),
+            child: target?.closest('.work-subagents__row')?.getAttribute('data-child-session-id'),
+            modal: document.querySelector('.modal-overlay')?.getAttribute('data-motion-state'),
+            ...(event instanceof MouseEvent ? { x: event.clientX, y: event.clientY, detail: event.detail, trusted: event.isTrusted } : {}),
+            ...(event instanceof KeyboardEvent ? { key: event.key } : {}) })
+          if (inputEvents.length > 1000) inputEvents.shift()
+        }, true)
+      }
+    })
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setMinimumSize(520, 360))
     await setWindow(1440, 900)
     await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
@@ -220,7 +240,9 @@ test.describe.serial('协作代理列表', () => {
       await info.attach('subagent-list-ui', { path, contentType: 'image/png' })
     }
     const log = info.outputPath('app-errors.json')
-    writeFileSync(log, JSON.stringify({ errors, mutations, detailReads, archiveReads }, null, 2))
+    const inputEvents = page && !page.isClosed()
+      ? await page.evaluate(() => (window as typeof window & { __subagentListInputs?: Array<Record<string, unknown>> }).__subagentListInputs ?? []) : []
+    writeFileSync(log, JSON.stringify({ errors, mutations, detailReads, archiveReads, requestTimeline, inputEvents }, null, 2))
     await info.attach('app-errors', { path: log, contentType: 'application/json' })
     expect(errors).toEqual([]); expect(mutations).toEqual([])
   })
@@ -239,6 +261,9 @@ test.describe.serial('协作代理列表', () => {
     expect(archiveReads).toEqual([])
     for (const appearance of ['light', 'dark'] as const) {
       await setWindow(1440, 900); await setAppearance(appearance)
+      // Theme changes must not activate a row behind the settings dialog.
+      await expect(back()).toHaveCount(0)
+      expect(archiveReads).toEqual([])
       for (const width of [1440, 960, 560]) {
         await setWindow(width, 900); await openList()
         for (const [index, run] of runs.entries()) {

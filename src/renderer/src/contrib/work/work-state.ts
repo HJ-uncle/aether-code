@@ -5,7 +5,7 @@ import { visibleChildCommandJobs } from '../../core/engine/command-job-state'
 import { mergeFileChanges } from '../../core/engine/tool-file-changes'
 import { isStoredMention, type Mention } from '@renderer/contrib/chat/mention-context'
 import { createDraftPersistenceScheduler } from './work-draft-persistence'
-import type { RootRun, RootRunStatus } from '@shared/root-run'
+import type { RootRun, RootRunActivity, RootRunStatus } from '@shared/root-run'
 import { normalizeWorkTaskActivity, workTaskStatusFromRun } from './work-status-poller'
 
 export type WorkTaskStatus =
@@ -21,6 +21,7 @@ export interface WorkTaskActivity {
   updatedAt: number
   pendingAsk: number
   pendingPermission: number
+  execution?: RootRunActivity
 }
 export interface WorkTask {
   id: string

@@ -1,5 +1,6 @@
 import type { IconName } from '@renderer/workbench/icons'
 import type { WorkTask, WorkTaskLabelColor } from './work-state'
+import { workDependencyProgress } from './work-dependency-progress'
 
 export const WORK_TASK_COLORS: ReadonlyArray<{ color: WorkTaskLabelColor; label: string }> = [
   { color: 'red', label: '红色' }, { color: 'orange', label: '橙色' }, { color: 'yellow', label: '黄色' },
@@ -16,7 +17,10 @@ export function workSidebarStatus(task: WorkTask, ready: boolean, stopping = fal
     if (activity?.pendingPermission) return { kind: 'permission', label: activity.pendingAsk ? '等待授权与回答' : '等待授权', icon: 'shield' }
     return { kind: 'question', label: activity?.pendingAsk ? '等待回答' : '等待处理', icon: 'chat' }
   }
-  if (task.status === 'running') return { kind: 'running', label: '运行中', active: true }
+  if (task.status === 'running') {
+    const progress = task.activity?.status === 'running' ? workDependencyProgress({ status: 'running', activity: task.activity.execution }) : undefined
+    return { kind: 'running', label: progress?.accessibleLabel ?? '运行中', active: true }
+  }
   return {
     done: { kind: 'done', label: '已完成', icon: 'check' },
     error: { kind: 'error', label: '执行失败', icon: 'warning' },

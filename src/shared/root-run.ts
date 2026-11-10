@@ -1,5 +1,27 @@
 /** Paired engine root-run v1. Transport completion is independent of execution outcome. */
 export type RootRunStatus = 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
+export interface RootRunActivity {
+  phase: 'executing' | 'waiting_children'
+  groups: Array<{ id: string; label: string; state: 'waiting' | 'ready' | 'consumed' | 'blocked'; total: number; settled: number; failed: number }>
+}
+
+/** Match the engine's bounded progress contract; never turn malformed counts into progress. */
+export function normalizeRootRunActivity(raw: unknown): RootRunActivity | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const value = raw as RootRunActivity
+  if (!['executing', 'waiting_children'].includes(value.phase) || !Array.isArray(value.groups) || value.groups.length > 32) return undefined
+  const ids = new Set<string>(), groups: RootRunActivity['groups'] = []
+  for (const group of value.groups) {
+    if (!group || typeof group.id !== 'string' || !group.id.trim() || group.id.length > 240 || ids.has(group.id)
+      || typeof group.label !== 'string' || !group.label.trim() || group.label.length > 240
+      || !['waiting', 'ready', 'consumed', 'blocked'].includes(group.state)
+      || ![group.total, group.settled, group.failed].every(count => Number.isSafeInteger(count) && count >= 0)
+      || group.total < 1 || group.settled > group.total || group.failed > group.settled) return undefined
+    ids.add(group.id)
+    groups.push({ id: group.id, label: group.label, state: group.state, total: group.total, settled: group.settled, failed: group.failed })
+  }
+  return value.phase === 'waiting_children' && !groups.length ? undefined : { phase: value.phase, groups }
+}
 export interface RootPending {
   requestId: string
   kind: 'ask' | 'permission'
@@ -83,6 +105,7 @@ export interface RootRun {
   version: number
   seq: number
   status: RootRunStatus
+  activity?: RootRunActivity
   modelId?: string
   actualModelId?: string
   requestConfig?: RootRunRequestConfig

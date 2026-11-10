@@ -51,6 +51,7 @@ import { getTopOverlayId } from '@renderer/workbench/overlay'
 import { useHoverDetail } from '@renderer/workbench/useHoverDetail'
 import { WorkSidebarTask } from './WorkSidebarTask'
 import { sortWorkSidebarTasks } from './work-sidebar-task'
+import { workDependencyProgress } from './work-dependency-progress'
 import { WorkArtifactPanel, type WorkArtifactPanelProps } from './WorkArtifactPanel'
 import { fileContentBytes } from '@renderer/core/workspace/file-content-bytes'
 import { resourcePreviewEntries } from './work-resource-preview-policy'
@@ -1714,15 +1715,17 @@ function useWorkRunFeedback(controller: WorkController) {
   const recovering = !controller.ready || Boolean(controller.historyRecovery &&
     (controller.historyRecovery.phase === 'blocked' || controller.historyRecovery.failures > 0 &&
       ['connecting', 'retrying'].includes(controller.historyRecovery.phase)))
-  const active = !recovering && (controller.streaming || controller.launching || controller.stopping || waiting)
   const message = controller.messages.findLast((item) => item.role === 'assistant')
+  const terminal = !controller.launching && message?.run && !['running', 'waiting'].includes(message.run.status)
+  const active = !recovering && !terminal && (controller.streaming || controller.launching || controller.stopping || waiting)
   const current = message && (controller.stopping || ['streaming', 'waiting'].includes(message.status)) ? message : null
   const startedAt = current?.run?.startedAt ?? current?.startedAt ?? current?.createdAt
     ?? (controller.launching ? controller.activeTask?.createdAt : undefined)
-  const running = current
+  const compacting = current?.run?.compaction?.phase === 'running'
+  const dependency = !controller.stopping && !controller.launching && !waiting && !compacting ? workDependencyProgress(current?.run) : undefined
+  const running = current && !dependency
     ? [...current.tools].reverse().find((tool) => tool.state === 'running' && isVisibleToolActivity(tool))
     : null
-  const compacting = current?.run?.compaction?.phase === 'running'
   const thinking = current?.items?.at(-1)?.kind === 'thinking' || Boolean(current && !current.items?.length && current.thinking && !current.content && !running)
   const phase = controller.stopping
     ? 'stopping'
@@ -1732,6 +1735,8 @@ function useWorkRunFeedback(controller: WorkController) {
       ? 'waiting'
       : compacting
         ? 'compacting'
+        : dependency
+          ? 'waiting_children'
         : running
           ? 'tool'
           : thinking
@@ -1749,6 +1754,8 @@ function useWorkRunFeedback(controller: WorkController) {
         : '等你补充'
       : compacting
         ? '正在自动压缩上下文…'
+        : dependency
+          ? dependency.label
         : running
           ? `${running.name === 'subagent' || running.subagent ? workSubagentName(running) : toolDisplayName(running.name)}…`
           : thinking
@@ -1767,12 +1774,12 @@ function useWorkRunFeedback(controller: WorkController) {
   const seconds = Math.max(0, Math.floor((now - (startedAt ?? now)) / 1000))
   const elapsed =
     seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`
-  return { active, waiting, phase, label, elapsed, seconds, running }
+  return { active, waiting, phase, label, elapsed, seconds, running, dependency }
 }
 
 /** The first response must be visible in the conversation, including the
  * preflight before the engine has emitted any assistant text or tool frames. */
-function WorkTurnFeedback({ controller, announce, openActivity }: {
+export function WorkTurnFeedback({ controller, announce, openActivity }: {
   controller: WorkController
   announce: boolean
   openActivity: (toolId: string) => void
@@ -1797,6 +1804,8 @@ function WorkTurnFeedback({ controller, announce, openActivity }: {
       ? '请回复上方的问题或确认请求，任务会继续执行。'
       : feedback.phase === 'compacting'
         ? '正在整理上下文，完成后继续当前任务。'
+        : feedback.dependency
+          ? feedback.dependency.detail
         : feedback.phase === 'thinking'
           ? 'Agent 已开始分析任务，结果会接着显示在这里。'
           : feedback.phase === 'generating'
@@ -1814,7 +1823,7 @@ function WorkTurnFeedback({ controller, announce, openActivity }: {
       <div className="work-turn-feedback__body">
         <div className="work-turn-feedback__heading">
           <strong title={agentName}>{agentName}</strong>
-          <span role="status" aria-live={announce ? 'polite' : 'off'} aria-label="任务运行状态">{feedback.label}</span>
+          <span role="status" aria-live={announce ? 'polite' : 'off'} aria-atomic="true" aria-label={feedback.dependency?.accessibleLabel ?? '任务运行状态'}>{feedback.label}</span>
           <div className="work-turn-feedback__controls">
             <WorkRootStop controller={controller} compact />
             <span className="work-turn-feedback__elapsed" title="本轮累计用时（含等待）">{feedback.elapsed}</span>
@@ -1847,7 +1856,7 @@ function WorkRootStop({ controller, compact = false }: { controller: WorkControl
 }
 
 /** Reading earlier messages keeps one compact status beside the composer. */
-function WorkRunStatus({ controller }: { controller: WorkController }): JSX.Element | null {
+export function WorkRunStatus({ controller }: { controller: WorkController }): JSX.Element | null {
   const feedback = useWorkRunFeedback(controller)
   if (!feedback.active) return null
   const { waiting, elapsed } = feedback
@@ -1862,10 +1871,12 @@ function WorkRunStatus({ controller }: { controller: WorkController }): JSX.Elem
         className="work-run-status__label"
         role="status"
         aria-live="polite"
-        aria-label="任务运行状态"
+        aria-atomic="true"
+        aria-label={feedback.dependency?.accessibleLabel ?? '任务运行状态'}
+        title={feedback.dependency?.detail}
       >
         {waiting ? <Icon name="chat" size={14} /> : <Spinner size={13} />}
-        <span>{feedback.label}</span>
+        <span>{feedback.dependency ? feedback.dependency.accessibleLabel : feedback.label}</span>
       </div>
       <WorkRootStop controller={controller} compact />
       <span className="work-run-status__elapsed" title="本轮累计用时（含等待）">

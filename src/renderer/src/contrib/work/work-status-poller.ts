@@ -1,4 +1,4 @@
-import type { RootRunStatus } from '@shared/root-run'
+import { normalizeRootRunActivity, type RootRunStatus } from '@shared/root-run'
 import type { WorkTaskActivity, WorkTaskStatus } from './work-state'
 
 export interface WorkStatusTask {
@@ -7,7 +7,7 @@ export interface WorkStatusTask {
 }
 export interface WorkRunStatus {
   run?: { schemaVersion?: number; sessionId?: string; runId?: string; seq?: number; version?: number; status?: string
-    updatedAt?: number; startedAt?: number; createdAt?: number; pending?: unknown }
+    updatedAt?: number; startedAt?: number; createdAt?: number; pending?: unknown; activity?: unknown }
   finished?: boolean; running?: boolean
 }
 const rootStatuses: readonly RootRunStatus[] = ['running', 'waiting', 'succeeded', 'failed', 'cancelled', 'interrupted']
@@ -22,7 +22,8 @@ export function normalizeWorkTaskActivity(value: unknown): WorkTaskActivity | un
   if (typeof item.runId !== 'string' || !item.runId.trim() || !count(item.seq) || !count(item.version) || item.version < 1 ||
     !rootStatuses.includes(item.status) || !timestamp(item.updatedAt) || !count(item.pendingAsk) || !count(item.pendingPermission)) return undefined
   return { runId: item.runId, seq: item.seq, version: item.version, status: item.status, updatedAt: item.updatedAt,
-    pendingAsk: item.status === 'waiting' ? item.pendingAsk : 0, pendingPermission: item.status === 'waiting' ? item.pendingPermission : 0 }
+    pendingAsk: item.status === 'waiting' ? item.pendingAsk : 0, pendingPermission: item.status === 'waiting' ? item.pendingPermission : 0,
+    execution: item.status === 'running' ? normalizeRootRunActivity(item.execution) : undefined }
 }
 
 export function workTaskActivityFromRun(response: WorkRunStatus, sessionId: string): WorkTaskActivity | undefined {
@@ -34,12 +35,13 @@ export function workTaskActivityFromRun(response: WorkRunStatus, sessionId: stri
       (item.status !== 'pending' && item.status !== 'answered')) return undefined
     if (item.status === 'pending') { if (item.kind === 'ask') pendingAsk++; else pendingPermission++ }
   }
-  return normalizeWorkTaskActivity({ ...run, pendingAsk, pendingPermission })
+  return normalizeWorkTaskActivity({ ...run, pendingAsk, pendingPermission, execution: run.activity })
 }
 
 export function sameWorkTaskActivity(left: WorkTaskActivity | undefined, right: WorkTaskActivity | undefined): boolean {
   return left === right || Boolean(left && right && left.runId === right.runId && left.seq === right.seq && left.version === right.version &&
-    left.status === right.status && left.updatedAt === right.updatedAt && left.pendingAsk === right.pendingAsk && left.pendingPermission === right.pendingPermission)
+    left.status === right.status && left.updatedAt === right.updatedAt && left.pendingAsk === right.pendingAsk && left.pendingPermission === right.pendingPermission &&
+    JSON.stringify(left.execution) === JSON.stringify(right.execution))
 }
 
 /** Session sequence orders roots; version orders observations of one root. */

@@ -1,4 +1,4 @@
-import { normalizeRootRunCompaction, normalizeRootRunRequestConfig, type RootRun, type RootRunStatus } from '@shared/root-run'
+import { normalizeRootRunActivity, normalizeRootRunCompaction, normalizeRootRunRequestConfig, type RootRun, type RootRunStatus } from '@shared/root-run'
 import type { ChatMessage } from './useChat'
 import { normalizeRunPending } from './pending'
 
@@ -8,7 +8,8 @@ export function normalizeRootRun(raw: unknown): RootRun | undefined {
   const run = raw as RootRun
   if (run.schemaVersion !== 1 || !run.runId || !run.sessionId || !run.turnId || !run.userMessageId ||
     !statuses.includes(run.status) || !Number.isInteger(run.version) || !Array.isArray(run.pending)) return undefined
-  return { ...run, requestConfig: normalizeRootRunRequestConfig(run.requestConfig), compaction: normalizeRootRunCompaction(run.compaction) }
+  return { ...run, requestConfig: normalizeRootRunRequestConfig(run.requestConfig), compaction: normalizeRootRunCompaction(run.compaction),
+    activity: run.status === 'running' ? normalizeRootRunActivity(run.activity) : undefined }
 }
 export function rootStatus(status: RootRunStatus): ChatMessage['status'] {
   return status === 'succeeded' ? 'done' : status === 'failed' ? 'error' :

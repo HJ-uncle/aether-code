@@ -25,7 +25,7 @@ const manifest: FinalResult = { schemaVersion: 1, sessionId, turnId: run.turnId,
   text: '报告已经交付。', publishedAt: now, items: [{ id: 'report-item', assetId: 'report-asset', name: fileName, path: `${remoteRoot}/交付/${fileName}`,
     mimeType: 'text/plain', size: Buffer.byteLength(content), sha256: createHash('sha256').update(content).digest('hex'), kind: 'file' }] }
 const changes = [{ id: 'report', path: `${remoteRoot}/交付/${fileName}`, status: 'pending' },
-  { id: 'generator', path: `${remoteRoot}/generator.js`, status: 'accepted', requiresExplicitRevert: true }]
+  { id: 'generator', path: `${remoteRoot}/generator.js`, status: 'pending', requiresExplicitRevert: true }]
 const errors: string[] = [], writes: string[] = [], emptyWrites: string[] = [], reads: string[] = []
 let app: ElectronApplication | undefined, page: Page, fixture = '', disk = '', stage = 0
 let emptyTruncated = false
@@ -99,6 +99,20 @@ const server = createServer((request, response) => { void (async () => {
     reads.push('asset')
     if (stage) { response.writeHead(404).end(JSON.stringify({ code: 404, message: '交付物已撤回', data: null })); return }
     response.end(envelope({ content, isBinary: false, encoding: 'utf8', totalSize: Buffer.byteLength(content), mimeType: 'text/plain', tooLarge: false, truncated: false })); return
+  }
+  if (path === '/api/v1/changes') {
+    const records = id === sessionId ? changes.map(change => ({ ...change, sessionId, turnId: run.turnId, runId: run.runId,
+      kind: 'write', oldContent: null, newContent: change.id === 'report' ? content : '// generated', isNew: true, truncated: false,
+      createdAt: now, status: stage === 2 || stage > 0 && change.id === 'report' ? 'reverted' : 'pending' })) : []
+    response.end(envelope(url.searchParams.get('status') === 'pending' ? records.filter(change => change.status === 'pending') : records)); return
+  }
+  if (path === '/api/v1/workspace/file/content') {
+    expect(id).toBe(sessionId)
+    const relative = url.searchParams.get('path') ?? '', file = localPath(relative)
+    reads.push(`file:${relative}`)
+    if (!existsSync(file)) { response.writeHead(404).end(JSON.stringify({ code: 404, message: '文件已撤回', data: null })); return }
+    const text = readFileSync(file, 'utf8')
+    response.end(envelope({ content: text, isBinary: false, totalSize: Buffer.byteLength(text), root: remoteRoot, bindingEpoch: 'one', truncated: false })); return
   }
   if (path === '/api/v1/workspace/directory') {
     const requested = url.searchParams.get('path') ?? ''
@@ -276,6 +290,41 @@ test('partial rollback removes assets immediately; compact results disclose safe
   await captureNotice(notice, 'partial', info)
   await openTab('成果'); await expect(workspace.getByText(content, { exact: true })).toHaveCount(0)
   await expect(workspace.locator('[data-final-result-item="report-item"]')).toHaveCount(0)
+  // The workspace tree opens its own preview. File history belongs to the
+  // resource viewer, so follow that preview action before entering the ledger.
+  await openTab('工作区')
+  await tree.getByRole('treeitem', { name: 'generator.js', exact: true }).click()
+  await workspace.getByRole('button', { name: '在资源中打开', exact: true }).click()
+  await workspace.getByRole('button', { name: '在成果中查看改动', exact: true }).click()
+  const artifactNotice = workspace.getByRole('region', { name: '文件回退结果', exact: true })
+  await expect(artifactNotice).toBeVisible()
+  await expect(artifactNotice.getByRole('button', { name: '逐文件结果', exact: true })).toHaveAttribute('aria-expanded', 'true')
+  await expect(artifactNotice.getByText('generator.js 已由用户修改，请确认版本后重试。', { exact: true })).toBeVisible()
+  const batch = workspace.locator('.work-session-artifacts__batch')
+  await expect(batch.getByRole('button', { name: '批量改动操作', exact: true })).toBeVisible()
+  const layout = await batch.evaluate(element => {
+    const bounds = (selector: string): { left: number; right: number; top: number; bottom: number; center: number } => {
+      const target = element.querySelector(selector)
+      if (!target) throw new Error(`Missing rollback toolbar element: ${selector}`)
+      const box = target.getBoundingClientRect()
+      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, center: box.top + box.height / 2 }
+    }
+    return { count: bounds('.work-session-artifacts__header'), actions: bounds('.work-change-review__actions'), report: bounds('.change-revert-report') }
+  })
+  expect(Math.abs(layout.count.center - layout.actions.center)).toBeLessThanOrEqual(1)
+  expect(layout.count.bottom).toBeLessThanOrEqual(layout.report.top)
+  expect(layout.actions.bottom).toBeLessThanOrEqual(layout.report.top)
+  expect(Math.abs(layout.report.left - layout.count.left)).toBeLessThanOrEqual(1)
+  expect(Math.abs(layout.report.right - layout.actions.right)).toBeLessThanOrEqual(1)
+  const artifactScreenshot = info.outputPath('rollback-partial-artifact-dark-1560.png')
+  await page.screenshot({ path: artifactScreenshot, animations: 'disabled' })
+  await info.attach('rollback-partial-artifact-dark-1560', { path: artifactScreenshot, contentType: 'image/png' })
+  const partialWrites = [...writes]
+  await artifactNotice.getByRole('button', { name: '关闭回退结果', exact: true }).click()
+  await expect(artifactNotice).toHaveCount(0)
+  await expect(notice).toHaveCount(0)
+  await expect(work.locator('.change-revert-report')).toHaveCount(0)
+  expect(writes).toEqual(partialWrites)
   await work.getByRole('button', { name: '回退文件', exact: true }).click()
   await dialog.getByRole('button', { name: '回退文件', exact: true }).click()
   await expect.poll(() => stage).toBe(2)
