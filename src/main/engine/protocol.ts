@@ -139,6 +139,8 @@ const REMOTE_READ_ROUTES = [
   /^\/api\/v1\/performance\/runtime$/,
   /^\/api\/v1\/(models|models\/capability-defs|tools|system-tools|external-skills|changes|todos)$/,
   /^\/api\/v1\/agents(?:\/[a-zA-Z0-9_-]+)?$/,
+  /^\/api\/v1\/toolkits$/,
+  /^\/api\/v1\/sessions\/[a-zA-Z0-9_-]+\/toolkits$/,
   /^\/api\/v1\/conversation\/(sessions|history|archive|display|result-asset)$/,
   /^\/api\/v1\/(mcp\/servers(?:\/[a-zA-Z0-9_-]+)?|skills(?:\/[a-zA-Z0-9_.-]+)?|knowledge\/(?:formats|documents(?:\/[a-zA-Z0-9_-]+)?|bases(?:\/[a-zA-Z0-9_-]+)?|status))$/,
   /^\/api\/v1\/skills\/imports(?:\/[a-zA-Z0-9_-]+)?(?:\/chunks)?$/,

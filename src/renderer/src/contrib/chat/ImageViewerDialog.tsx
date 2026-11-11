@@ -6,6 +6,7 @@ import { cssColor } from '@renderer/core/theme/palette'
 import { useDocumentContextMenu } from '@renderer/core/editor/useDocumentContextMenu'
 import { useImageConversation } from './image-conversation'
 import { ImageStrokePicker } from './ImageStrokePicker'
+import { ImageColorPicker } from './ImageColorPicker'
 import { commitSnapshotHistory, createSnapshotHistory, drawImageAnnotations, hitTestAnnotation, redoSnapshotHistory,
   undoSnapshotHistory, type ImageAnnotation, type Point, type SnapshotHistory } from './image-annotations'
 import './image-viewer.css'
@@ -325,7 +326,7 @@ export function ImageViewerDialog({ src, title, onClose, open = true, className 
             aria-pressed={tool === item.id} disabled={disabled} onClick={() => setTool(item.id)}><MarkupIcon name={item.id} /></button>)}
         </div>
         <div className="image-editor__group image-editor__style" role="group" aria-label="标注样式">
-          <input type="color" aria-label="标注颜色" title="标注颜色" value={color} disabled={disabled} onChange={event => setColor(event.target.value)} />
+          <ImageColorPicker value={color} onChange={setColor} disabled={disabled || !open} />
           <ImageStrokePicker value={width} onChange={setWidth} disabled={disabled} />
         </div>
         <div className="image-editor__group" role="group" aria-label="编辑历史">

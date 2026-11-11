@@ -1,4 +1,4 @@
-import { normalizeAccentHex } from '../../../../shared/accent-color'
+import { normalizeAccentHex } from '../../../shared/accent-color'
 
 export type ColorHsv = { h: number; s: number; v: number }
 export type ColorRgb = { r: number; g: number; b: number }

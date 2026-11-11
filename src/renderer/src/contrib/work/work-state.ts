@@ -8,6 +8,7 @@ import { storedAttachments } from '@renderer/contrib/chat/attachment-storage'
 import { createDraftPersistenceScheduler } from './work-draft-persistence'
 import type { RootRun, RootRunActivity, RootRunStatus } from '@shared/root-run'
 import { normalizeWorkTaskActivity, workTaskStatusFromRun } from './work-status-poller'
+import { trackWorkTaskCompletion } from './work-completion-state'
 
 export type WorkTaskStatus =
   'draft' | 'running' | 'waiting' | 'done' | 'error' | 'stopped' | 'interrupted'
@@ -24,6 +25,13 @@ export interface WorkTaskActivity {
   pendingPermission: number
   execution?: RootRunActivity
 }
+export interface WorkResources {
+  skills: string[]
+  mcpServers: string[]
+  knowledgeBases: string[]
+  /** Absence restores the engine selection; [] explicitly disables all toolkits. */
+  toolkits?: string[]
+}
 export interface WorkTask {
   id: string
   title: string
@@ -34,6 +42,8 @@ export interface WorkTask {
   pinned?: boolean
   labelColor?: WorkTaskLabelColor
   activity?: WorkTaskActivity
+  /** Cleared by opening the completed conversation, independent of list ordering. */
+  completionUnread?: boolean
   /** Timestamp of the currently active turn. Kept separate from task age so
    * a long-lived task does not look like it has been running for days. */
   runStartedAt?: number
@@ -45,7 +55,7 @@ export interface WorkTask {
   /** The engine fixes this binding at the first send, including the default Agent. */
   agentLocked?: boolean
   mentions?: Mention[]
-  resources?: { skills: string[]; mcpServers: string[]; knowledgeBases: string[] }
+  resources?: WorkResources
   /** 已归档任务仍保留在本地状态中，方便恢复历史与导出，不参与默认任务列表。 */
   archived?: boolean
   archivedAt?: number
@@ -73,7 +83,7 @@ export interface WorkState {
   homeSessionId: string | null
   homeAgentId: string
   homeMentions: Mention[]
-  homeResources: { skills: string[]; mcpServers: string[]; knowledgeBases: string[] }
+  homeResources: WorkResources
 }
 
 const states = new Map<string, WorkState>()
@@ -173,7 +183,7 @@ const emptyState = (): WorkState => ({
   homeSessionId: null,
   homeAgentId: '',
   homeMentions: [],
-  homeResources: { skills: [], mcpServers: [], knowledgeBases: [] }
+  homeResources: { skills: [], mcpServers: [], knowledgeBases: [], toolkits: [] }
 })
 
 function attachments(value: unknown): ChatAttachment[] {
@@ -211,6 +221,7 @@ export function normalizeWorkState(value: unknown): WorkState {
           ...(task.pinned === true ? { pinned: true } : {}),
           ...(WORK_TASK_LABEL_COLORS.includes(task.labelColor!) ? { labelColor: task.labelColor } : {}),
           ...(normalizeWorkTaskActivity(task.activity) ? { activity: normalizeWorkTaskActivity(task.activity) } : {}),
+          ...(task.status === 'done' && task.completionUnread === true ? { completionUnread: true } : {}),
           ...(typeof task.runStartedAt === 'number' && Number.isFinite(task.runStartedAt) && task.runStartedAt > 0
             ? { runStartedAt: task.runStartedAt }
             : {}),
@@ -227,7 +238,8 @@ export function normalizeWorkState(value: unknown): WorkState {
             resources: {
               skills: Array.isArray(task.resources.skills) ? task.resources.skills.filter((v): v is string => typeof v === 'string') : [],
               mcpServers: Array.isArray(task.resources.mcpServers) ? task.resources.mcpServers.filter((v): v is string => typeof v === 'string') : [],
-              knowledgeBases: Array.isArray(task.resources.knowledgeBases) ? task.resources.knowledgeBases.filter((v): v is string => typeof v === 'string') : []
+              knowledgeBases: Array.isArray(task.resources.knowledgeBases) ? task.resources.knowledgeBases.filter((v): v is string => typeof v === 'string') : [],
+              ...(Array.isArray(task.resources.toolkits) ? { toolkits: [...new Set(task.resources.toolkits.filter((v): v is string => typeof v === 'string'))] } : {})
             }
           } : {}),
           ...(task.archived === true
@@ -255,8 +267,9 @@ export function normalizeWorkState(value: unknown): WorkState {
     homeResources: data.homeResources && typeof data.homeResources === 'object' ? {
       skills: Array.isArray(data.homeResources.skills) ? data.homeResources.skills.filter((v): v is string => typeof v === 'string') : [],
       mcpServers: Array.isArray(data.homeResources.mcpServers) ? data.homeResources.mcpServers.filter((v): v is string => typeof v === 'string') : [],
-      knowledgeBases: Array.isArray(data.homeResources.knowledgeBases) ? data.homeResources.knowledgeBases.filter((v): v is string => typeof v === 'string') : []
-    } : { skills: [], mcpServers: [], knowledgeBases: [] }
+      knowledgeBases: Array.isArray(data.homeResources.knowledgeBases) ? data.homeResources.knowledgeBases.filter((v): v is string => typeof v === 'string') : [],
+      toolkits: Array.isArray(data.homeResources.toolkits) ? [...new Set(data.homeResources.toolkits.filter((v): v is string => typeof v === 'string'))] : []
+    } : { skills: [], mcpServers: [], knowledgeBases: [], toolkits: [] }
   }
 }
 
@@ -292,7 +305,13 @@ export function updateWorkState(source: string, update: (state: WorkState) => Wo
       ? { ...task, draft: getWorkDraft(source, task.id).text, mentions: getWorkDraft(source, task.id).mentions }
       : task)
   } : original
-  const next = update(previous)
+  const updated = update(previous)
+  let next = updated
+  if (updated.tasks !== previous.tasks) {
+    const previousTasks = new Map(previous.tasks.map(task => [task.id, task]))
+    const trackedTasks = updated.tasks.map(task => trackWorkTaskCompletion(previousTasks.get(task.id), task))
+    if (trackedTasks.some((task, index) => task !== updated.tasks[index])) next = { ...updated, tasks: trackedTasks }
+  }
   dirtyDrafts.delete(source)
   draftSaves.get(source)?.cancel()
   if (sameFields(original, next) || (
@@ -307,12 +326,36 @@ export function updateWorkState(source: string, update: (state: WorkState) => Wo
     if (!oldTask || oldTask.draft !== task.draft || oldTask.mentions !== task.mentions)
       publishDraft(source, task.id, { text: task.draft, mentions: task.mentions ?? [] })
   }
+  for (const id of originalTasks.keys()) {
+    if (next.tasks.some(task => task.id === id)) continue
+    // A removed task must not retain an editor snapshot that a late autosave
+    // or a mounted draft subscriber can read back after the structural delete.
+    drafts.get(source)?.delete(id)
+    for (const listener of draftListeners.get(source)?.get(id) ?? []) listener()
+  }
   try {
     localStorage.setItem(workStorageKey(source), JSON.stringify(next))
   } catch {
     /* In-memory tasks remain usable when storage is full. */
   }
   for (const listener of listeners.get(source) ?? []) listener()
+}
+
+/** Removes only local conversation state; workspace files belong to the user. */
+export function removeWorkTask(source: string, id: string): void {
+  updateWorkState(source, state => state.tasks.some(task => task.id === id) ? {
+    ...state,
+    tasks: state.tasks.filter(task => task.id !== id),
+    activeTaskId: state.activeTaskId === id ? null : state.activeTaskId
+  } : state)
+}
+
+export function markWorkTaskCompletionRead(source: string, id: string): void {
+  updateWorkState(source, state => {
+    if (!state.tasks.some(task => task.id === id && task.status === 'done' && task.completionUnread)) return state
+    return { ...state, tasks: state.tasks.map(task => task.id === id
+      ? { ...task, completionUnread: undefined } : task) }
+  })
 }
 
 export function onWorkStateChanged(source: string, listener: () => void): () => void {

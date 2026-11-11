@@ -2,7 +2,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { NextTurnQueueError, type NextTurnQueueEnvelope, type NextTurnQueueScope, type QueueAttachmentReceipt } from '../shared/next-turn-queue'
-import { assertQueueEnvelope, assertQueueJsonValue, queueScopeIdentity } from '../shared/next-turn-queue-state'
+import { assertQueueEnvelope, assertQueueJsonValue, queueScopeIdentity, queueResourcesAfterDraftEdit, queueDraftRemovesToolkit } from '../shared/next-turn-queue-state'
+import { parseSessionToolkits } from '../shared/toolkits'
 import type { WorkQueueDraft, WorkQueueTarget } from '../shared/work-next-turn-api'
 import type { EngineSnapshot } from '../shared/ipc'
 import type { TrustedQueueAuthorityLease } from './next-turn-queue-service'
@@ -139,7 +140,7 @@ export class EngineQueueGateway implements QueueDispatchGateway {
       model: context.root.modelId ? { kind: 'explicit', modelId: context.root.modelId } : { kind: 'engine-default' },
       workspace: { kind: scope.source.mode === 'remote' ? 'remote-session' : root ? 'local-workspace' : 'local-scratch', identity: root || 'session:' + scope.taskId },
       agent: { primaryAgentId: context.root.agentId ?? null, collaborators: [] },
-      resources: { skills: resource('skills'), mcpServers: resource('mcpServers'), knowledgeBases: resource('knowledgeBases') },
+      resources: { skills: resource('skills'), mcpServers: resource('mcpServers'), knowledgeBases: resource('knowledgeBases'), toolkits: resource('toolkits') },
       thinking: thinking === undefined ? { kind: 'inherit' } : thinking === false ? { kind: 'off' } : thinking === true ? { kind: 'on' }
         : { kind: 'effort', effort: thinking as 'low' | 'medium' | 'high' },
       memory: memory === undefined ? { kind: 'inherit' } : { kind: 'override', scope: memory as 'off' | 'session' | 'global', version: 'work-recovery-v1' },
@@ -217,11 +218,19 @@ export class EngineQueueGateway implements QueueDispatchGateway {
       ...(file.attachmentId ? { attachmentId: file.attachmentId } : {}),
       ...(file.referenceLabel ? { referenceLabel: file.referenceLabel } : {}) }
   }
-  editDraft(envelope: NextTurnQueueEnvelope, draft: WorkQueueDraft['draft']): NextTurnQueueEnvelope {
+  async editDraft(envelope: NextTurnQueueEnvelope, draft: WorkQueueDraft['draft'], scope?: NextTurnQueueScope): Promise<NextTurnQueueEnvelope> {
+    let inheritedToolkits: string[] | undefined
+    const selected = envelope.resources.toolkits
+    if ((!selected || selected.kind === 'inherit') && queueDraftRemovesToolkit(envelope.draft, draft)) {
+      if (!scope) fail('读取继承的工具包需要可信会话范围')
+      const { facts } = await this.scoped(scope)
+      inheritedToolkits = parseSessionToolkits(await this.request(facts, 'GET', `/sessions/${encodeURIComponent(scope.taskId)}/toolkits`))
+    }
+    const resources = queueResourcesAfterDraftEdit(envelope.draft, draft, envelope.resources, inheritedToolkits)
     const prepared = buildAgentMentionMessage(draft.text, draft.mentions)
     const collaborators = structuredClone(envelope.code?.collaborators ?? [])
     for (const selector of prepared.collaborators) if (!collaborators.some(item => collaboratorIdentity(item) === collaboratorIdentity(selector))) collaborators.push(selector)
-    return { ...structuredClone(envelope), draft: structuredClone(draft), agent: { ...envelope.agent, collaborators } }
+    return { ...structuredClone(envelope), draft: structuredClone(draft), resources: structuredClone(resources), agent: { ...envelope.agent, collaborators } }
   }
   async envelope(scope: NextTurnQueueScope, submission: WorkQueueDraft): Promise<NextTurnQueueEnvelope> {
     assertQueueJsonValue(submission)
@@ -233,11 +242,11 @@ export class EngineQueueGateway implements QueueDispatchGateway {
     if (scope.source.mode === 'embedded') for (const path of paths) this.port.allowed(path)
     else if (canonicalAdmissionJson(paths) !== canonicalAdmissionJson(context.root.workspacePaths)) fail('远端工作区必须与会话已绑定的完整路径一致')
     const root = paths[0], kind = scope.source.mode === 'remote' ? 'remote-session' : root ? 'local-workspace' : 'local-scratch'
-    const envelope: NextTurnQueueEnvelope = this.editDraft({ draft: submission.draft, model: submission.model,
+    const envelope: NextTurnQueueEnvelope = await this.editDraft({ draft: submission.draft, model: submission.model,
       ...(submission.code ? { code: { ...structuredClone(submission.code), workspacePaths: [...paths] } } : {}),
       workspace: { kind, identity: root || 'session:' + scope.taskId }, agent: { primaryAgentId: submission.code?.agentId ?? context.root.agentId ?? null, collaborators: [] },
       resources: submission.resources, thinking: submission.thinking, memory: submission.code?.memoryScope ? { kind: 'override', scope: submission.code.memoryScope, version: 'code-draft-v1' } : { kind: 'inherit' }, security: { policy: 'engine-session' }, attachments: [],
-      ...(submission.subagentModel ? { subagentModel: submission.subagentModel } : {}), ...(submission.utilityModel ? { utilityModel: submission.utilityModel } : {}) }, submission.draft)
+      ...(submission.subagentModel ? { subagentModel: submission.subagentModel } : {}), ...(submission.utilityModel ? { utilityModel: submission.utilityModel } : {}) }, submission.draft, scope)
     // Validate text/options before creating any immutable attachment snapshots.
     if (envelope.model.kind !== 'explicit' && !envelope.model.observedModelId && context.root.modelId) envelope.model.observedModelId = context.root.modelId
     const preflight = !envelope.draft.text.trim() && Array.isArray(submission.attachments) && submission.attachments.length
@@ -281,8 +290,9 @@ export class EngineQueueGateway implements QueueDispatchGateway {
     if (envelope.agent.primaryAgentId) body.agentId = envelope.agent.primaryAgentId
     if (envelope.agent.collaborators.length || envelope.code?.collaborators) body.collaborators = structuredClone(envelope.agent.collaborators)
     if (paths.length || envelope.code?.workspacePaths) body.workspacePaths = [...paths]
-    for (const key of ['skills', 'mcpServers', 'knowledgeBases'] as const) {
+    for (const key of ['skills', 'mcpServers', 'knowledgeBases', 'toolkits'] as const) {
       const selection = envelope.resources[key]
+      if (!selection) continue
       if (selection.kind !== 'inherit') body[key] = selection.kind === 'none' ? [] : [...selection.ids]
     }
     if (envelope.thinking.kind === 'off') body.thinkingMode = false

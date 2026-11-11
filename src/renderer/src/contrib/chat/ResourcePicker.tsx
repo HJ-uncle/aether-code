@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { requestOrThrow } from '@renderer/core/engine/client'
 import { getEngineSource } from '@renderer/core/engine/source'
+import { subscribeResourceCatalogueChanges } from '@renderer/core/engine/resource-catalogue'
 import { listKnowledgeBases, type KnowledgeBase } from '@renderer/core/engine/knowledge'
 import { isMotionInteractive } from '@renderer/workbench/motion'
 import { isTopOverlay } from '@renderer/workbench/overlay'
@@ -29,6 +30,7 @@ export function ResourcePicker({ query, projectPath, source, onSelect, onClose }
   const [reload, setReload] = useState(0)
   const [active, setActive] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
+  useEffect(() => subscribeResourceCatalogueChanges(['skill', 'knowledge'], () => setReload(value => value + 1)), [source])
 
   useEffect(() => {
     let alive = true

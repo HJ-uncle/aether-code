@@ -53,7 +53,7 @@ export async function prepareRemoteChatBody(body: unknown, context: RemoteChatCo
   // credentials remain deliberately stripped from remote requests.
   const allowed = [
     'message', 'sessionId', 'agentId', 'model', 'subagentModel', 'utilityModel',
-    'thinkingMode', 'memoryScope', 'runId', 'skills', 'mcpServers', 'knowledgeBases',
+    'thinkingMode', 'memoryScope', 'runId', 'skills', 'mcpServers', 'knowledgeBases', 'toolkits',
     'allowedTools', 'ragTopK', 'collaborators'
   ]
   const clean = Object.fromEntries(allowed.filter(key => input[key] !== undefined).map(key => [key, input[key]]))
@@ -85,7 +85,7 @@ export async function prepareRemoteChatBody(body: unknown, context: RemoteChatCo
       return value
     })
   }
-  for (const key of ['skills', 'mcpServers', 'knowledgeBases', 'allowedTools']) {
+  for (const key of ['skills', 'mcpServers', 'knowledgeBases', 'allowedTools', 'toolkits']) {
     if (clean[key] !== undefined) {
       if (!Array.isArray(clean[key]) || clean[key].some(item => typeof item !== 'string' || item.length > 256)) {
         throw new Error(`远端聊天 ${key} 选择器无效`)

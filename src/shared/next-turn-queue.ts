@@ -15,7 +15,7 @@ export type QueueModelSelection =
 export type QueueMemorySelection =
   { kind: 'inherit' } | { kind: 'override'; scope: 'off' | 'session' | 'global'; version: string }
 export interface QueueMention {
-  source: 'file' | 'dir' | 'code' | 'terminal' | 'agent' | 'browser' | 'conversation'
+  source: 'file' | 'dir' | 'code' | 'terminal' | 'agent' | 'browser' | 'conversation' | 'toolkit'
   origin?: 'workspace' | 'attachment' | 'artifact'
   attachmentId?: string
   displayText: string
@@ -57,6 +57,8 @@ export interface NextTurnQueueEnvelope {
     skills: QueueResourceSelection
     mcpServers: QueueResourceSelection
     knowledgeBases: QueueResourceSelection
+    /** Absent in older envelopes means inherit; none is an explicit removal. */
+    toolkits?: QueueResourceSelection
   }
   thinking: { kind: 'inherit' | 'off' | 'on' } | { kind: 'effort'; effort: 'low' | 'medium' | 'high' }
   memory: QueueMemorySelection

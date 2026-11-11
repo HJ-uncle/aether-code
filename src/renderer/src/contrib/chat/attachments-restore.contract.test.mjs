@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import vm from 'node:vm'
 import ts from 'typescript'
@@ -10,16 +10,24 @@ const directory = dirname(fileURLToPath(import.meta.url))
 const javascript = ts.transpileModule(readFileSync(join(directory, 'useAttachments.ts'), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
 }).outputText
-const inputLimits = {}
-const inputLimitsJavascript = ts.transpileModule(readFileSync(join(directory, 'input-limits.ts'), 'utf8'), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-}).outputText
-new vm.Script(`(function(exports){${inputLimitsJavascript}\n})`).runInThisContext()(inputLimits)
-const attachmentReferences = {}
-const attachmentReferencesJavascript = ts.transpileModule(readFileSync(join(directory, 'attachment-references.ts'), 'utf8'), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-}).outputText
-new vm.Script(`(function(exports){${attachmentReferencesJavascript}\n})`).runInThisContext()(attachmentReferences)
+const pureModules = new Map()
+function loadPure(relative, from = directory) {
+  const target = resolve(from, relative)
+  const path = [target, `${target}.ts`].find(existsSync)
+  if (!path) throw new Error(`Missing pure dependency: ${target}`)
+  if (pureModules.has(path)) return pureModules.get(path)
+  const exports = {}
+  pureModules.set(path, exports)
+  const code = ts.transpileModule(readFileSync(path, 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+  }).outputText
+  new vm.Script(`(function(require,exports){${code}\n})`, { filename: path }).runInThisContext()(name => {
+    if (!name.startsWith('.')) throw new Error(`Unexpected pure dependency: ${name}`)
+    return loadPure(name, dirname(path))
+  }, exports)
+  return exports
+}
+const attachmentReferences = loadPure('./attachment-references.ts')
 const settle = () => new Promise(done => setImmediate(done))
 const file = (path, remoteUploadId) => ({ path, remoteUploadId, name: path, type: 'text/plain', size: 10 })
 
@@ -62,7 +70,6 @@ function fixture() {
   const forbidden = () => { throw new Error('restore must not use file or upload transport') }
   const imports = {
     react,
-    './input-limits': inputLimits,
     './attachment-references': attachmentReferences,
     '@renderer/core/engine/source': {
       getEngineSource: () => source, isRemoteEngine: () => false,

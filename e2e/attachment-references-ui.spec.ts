@@ -1,5 +1,5 @@
-/** Real Electron: Code/Work attachment identity, all three native mouse drag
- * paths, reference deletion, durable drafts and model-facing send receipts.
+/** Real Electron: Code/Work attachment identity, native drag caret/ghost and
+ * cancellation, long-text clipboard paste, durable drafts and model-facing receipts.
  * Build first; run serially with playwright.attachment-references.config.ts. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer } from 'node:http'
@@ -10,28 +10,63 @@ import type { ChatSsePayload } from '../src/shared/ipc'
 import type { EngineHistoryRow } from '../src/renderer/src/core/engine/chat-history'
 import { engineStorageKey } from '../src/renderer/src/core/engine/source'
 import { parseMentionContent } from '../src/renderer/src/contrib/chat/mention-context'
+import { ATTACHMENT_CHIP_DRAG_TYPE } from '../src/renderer/src/contrib/chat/attachment-editor-transfer'
+import { WORK_TOOLKITS } from '../src/shared/toolkits'
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
 const token = 'attachment-reference-token', model = 'attachment-reference-model'
 const workId = 'work-attachment-references', codeId = 'code-attachment-references', workspaceRoot = '/remote/attachment-references'
+const selectionFile = 'selection-guide.txt'
 const titles = new Map([[workId, '附件引用 Work 验证'], [codeId, '附件引用 Code 验证']])
 type Mode = 'code' | 'work'
 interface UploadedFile { sessionId: string; path: string; bytes: Buffer; type: string }
 interface DraftFile { path: string; name: string; type: string; attachmentId: string; referenceLabel?: string }
-interface SavedDraft { text?: string; draft?: string; mentions: Array<{ attachmentId?: string; path?: string; displayText: string }>; attachments?: DraftFile[] }
+interface SavedDraft { text?: string; draft?: string; mentions: Array<{ attachmentId?: string; path?: string; displayText: string; textOffset?: number }>; attachments?: DraftFile[] }
+interface ClipboardSnapshot { text: string; html: string; rtf: string; image: string | null }
+interface Point {
+  x: number
+  y: number
+  boundary?: { mode: Mode; x: number; proseBefore: string; mentionKeys: string[] }
+}
+interface DragPresentation { caret: { x: number; y: number; width: number; height: number }; ghostOpacity: string | null }
+interface DragSelection { text: string; collapsed: boolean; sourceChipSelected: boolean }
+interface NativeDragEvent extends DragSelection { type: string; types: string[]; chipPayload: string; trusted: boolean; prevented: boolean; target: string }
+interface NativeDragTrace {
+  source: { text: string; chipKey: string | null }
+  target: Point
+  targetElement: string
+  events: NativeDragEvent[]
+  checkpoints: Array<DragSelection & { phase: string }>
+  presentation?: DragPresentation
+  ending: 'drop' | 'escape' | 'outside'
+}
+interface NativeDragProbe {
+  source: NativeDragTrace['source']
+  events: NativeDragEvent[]
+  checkpoints: NativeDragTrace['checkpoints']
+  snapshot: () => DragSelection
+  dispose: () => void
+}
 const errors: string[] = [], chats: Record<string, unknown>[] = [], uploads: UploadedFile[] = []
+const dragTraces: NativeDragTrace[] = []
 const files = new Map<string, UploadedFile>(), histories = new Map<string, EngineHistoryRow[]>(), runs = new Map<string, RootRun[]>()
 const admissions = new Map<string, { admission: Record<string, unknown>; run: RootRun }>()
+const sessionToolkits = new Map<string, string[]>()
+let toolkitDirectorySupported = true
+const unavailableToolkits = new Set<string>()
 let app: ElectronApplication | undefined, page: Page, fixture = '', storageKey = '', generation = 0
 let redPng = Buffer.alloc(0), bluePng = Buffer.alloc(0)
+let clipboardSnapshot: ClipboardSnapshot | undefined
+let menuPreviewFiles: string[] = []
 const envelope = (data: unknown): string => JSON.stringify({ code: 200, message: 'ok', data })
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value))
 const fileKey = (owner: string, path: string): string => JSON.stringify([owner, path])
 const currentRun = (owner: string): RootRun | undefined => runs.get(owner)?.at(-1)
 
 function resetHistory(): void {
-  histories.clear(); runs.clear(); admissions.clear(); generation++
+  histories.clear(); runs.clear(); admissions.clear(); sessionToolkits.clear(); generation++
   for (const [sessionId, title] of titles) {
+    files.set(fileKey(sessionId, selectionFile), { sessionId, path: selectionFile, bytes: Buffer.from('Workspace selection fixture'), type: 'text/plain' })
     const now = Date.now() - 10_000
     const run: RootRun = { schemaVersion: 1, runId: `refs-root-${sessionId}-${generation}`, sessionId, turnId: `refs-turn-${sessionId}-${generation}`,
       userMessageId: `refs-user-${sessionId}-${generation}`, assistantMessageId: `refs-assistant-${sessionId}-${generation}`,
@@ -60,6 +95,15 @@ const server = createServer((request, response) => { void (async () => {
   }
   const parsed: unknown = bytes.length ? JSON.parse(bytes.toString('utf8')) : {}, input = isRecord(parsed) ? parsed : {}
   const current = currentRun(sessionId), rows = histories.get(sessionId) ?? []
+  const toolkitSession = /^\/api\/v1\/sessions\/([^/]+)\/toolkits$/.exec(path)
+  if (path === '/api/v1/toolkits' && request.method === 'GET') {
+    if (!toolkitDirectorySupported) { response.statusCode = 404; response.end(JSON.stringify({ code: 404, message: 'Not found' })); return }
+    response.end(envelope({ toolkits: WORK_TOOLKITS.map(item => ({ ...item, toolNames: [`${item.id}_list`],
+      available: !unavailableToolkits.has(item.id), ...(unavailableToolkits.has(item.id) ? { reason: '此 Agent 没有该工具包权限' } : {}) })) })); return
+  }
+  if (toolkitSession && request.method === 'GET') {
+    response.end(envelope({ toolkits: sessionToolkits.get(decodeURIComponent(toolkitSession[1])) ?? [] })); return
+  }
   if (path === '/api/v1/workspace/file/info' || path === '/api/v1/workspace/file/content') {
     const relative = (url.searchParams.get('path') ?? '').replace(`${workspaceRoot}/`, ''), file = files.get(fileKey(sessionId, relative))
     if (!file) throw new Error(`Missing or cross-session reference read: ${sessionId}/${relative}`)
@@ -85,10 +129,12 @@ const server = createServer((request, response) => { void (async () => {
     const owner = String(input.sessionId)
     if (!titles.has(owner) || typeof input.message !== 'string') throw new Error('Unexpected chat owner or body')
     chats.push(input)
+    if (Array.isArray(input.toolkits)) sessionToolkits.set(owner, input.toolkits.filter((id): id is string => typeof id === 'string'))
     const now = Date.now(), ordinal = (runs.get(owner)?.length ?? 0) + 1
     const run: RootRun = { schemaVersion: 1, runId: `refs-root-${owner}-${generation}-${ordinal}`, sessionId: owner, turnId: `refs-turn-${owner}-${generation}-${ordinal}`,
       userMessageId: `refs-user-${owner}-${generation}-${ordinal}`, assistantMessageId: `refs-assistant-${owner}-${generation}-${ordinal}`,
-      seq: ordinal, version: 1, status: 'running', modelId: model, pending: [], workspacePaths: [workspaceRoot], createdAt: now, updatedAt: now, startedAt: now }
+      seq: ordinal, version: 1, status: 'running', modelId: model, pending: [], workspacePaths: [workspaceRoot], createdAt: now, updatedAt: now, startedAt: now,
+      ...(Array.isArray(input.toolkits) ? { requestConfig: { toolkits: sessionToolkits.get(owner) } } : {}) }
     const user: EngineHistoryRow = { id: run.userMessageId, role: 'user', content: input.message, createdAt: now, conversationId: run.turnId,
       metadata: { rootRunId: run.runId, attachments: Array.isArray(input.attachments) ? input.attachments : [] } }
     const assistant: EngineHistoryRow = { id: run.assistantMessageId, role: 'assistant', content: 'REFERENCES_SENT_OK：已收到附件映射。',
@@ -121,7 +167,7 @@ const server = createServer((request, response) => { void (async () => {
     : path === '/api/v1/chat/runs' ? { runs: runs.get(sessionId) ?? [] }
     : path === '/api/v1/conversation/history' ? rows
     : path === '/api/v1/conversation/sessions' ? [...titles].map(([id, title]) => ({ sessionId: id, title, lastAt: Date.now(), messageCount: histories.get(id)?.length ?? 0 }))
-    : path === '/api/v1/workspace/directory' ? { root: workspaceRoot, entries: [], bindingEpoch: 'refs-binding' }
+    : path === '/api/v1/workspace/directory' ? { root: workspaceRoot, entries: [selectionFile, ...menuPreviewFiles].map(name => ({ name, path: name, isDirectory: false, size: 27, mtimeMs: 1 })), bindingEpoch: 'refs-binding' }
     : path === '/api/v1/subagent/capabilities' ? { schemaVersion: 2, eventVersions: [1, 2], views: ['legacy', 'summary'], toolPagination: true, eventPagination: true, detailChunks: true, exactWatermarks: true }
     : path === '/api/v1/subagent/runs' ? { schemaVersion: 2, runs: [], listComplete: true, hasMore: false, revision: 'empty' }
     : path === '/api/v1/collaboration/capabilities' ? { protocolVersion: 1, userControllerMutation: false, rootUserControllerMutation: false }
@@ -163,7 +209,8 @@ async function seed(mode: Mode): Promise<void> {
   }, { mode, key: storageKey, workId, title: titles.get(workId)!, model, workspaceRoot })
   await page.reload(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
   if (mode === 'code') {
-    await surface(mode).getByRole('button', { name: '会话历史', exact: true }).click()
+    const history = surface(mode).getByRole('button', { name: '会话历史', exact: true })
+    if (await history.getAttribute('aria-pressed') !== 'true') await history.click()
     await surface(mode).locator(`[data-session-id="${codeId}"]`).click()
   }
   await expect(composer(mode)).toBeVisible(); await expect(surface(mode)).toContainText('READY_FOR_REFERENCES')
@@ -171,38 +218,224 @@ async function seed(mode: Mode): Promise<void> {
 async function insertReference(mode: Mode, label: string, keyboard = false): Promise<void> {
   await composer(mode).focus(); await page.keyboard.press('Control+End'); await page.keyboard.insertText('@')
   const picker = page.locator('.mention-ref-picker:visible')
-  await expect(picker.getByRole('tab', { name: '当前附件', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(picker.getByRole('group', { name: '当前附件', exact: true })).toBeVisible()
   if (keyboard) {
     await page.keyboard.insertText(label)
     await expect(picker.getByRole('option')).toHaveCount(1); await page.keyboard.press('Enter')
   } else await picker.getByRole('option').filter({ has: page.locator('strong', { hasText: new RegExp(`^${label}$`) }) }).click()
   await expect(picker).toHaveCount(0)
 }
-async function textPoint(mode: Mode, text: string): Promise<{ x: number; y: number }> {
-  return composer(mode).evaluate((box, needle) => {
+async function textPoint(mode: Mode, text: string, edge: 'start' | 'end' = 'start'): Promise<Point> {
+  return composer(mode).evaluate((box, { mode, needle, edge }) => {
     const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT)
     let node: Node | null
     while ((node = walker.nextNode())) {
       if (node.parentElement?.closest('[data-mention-key]')) continue
       const offset = (node.textContent ?? '').indexOf(needle)
       if (offset < 0) continue
-      const range = document.createRange(); range.setStart(node, offset); range.setEnd(node, offset + 1)
-      const rect = range.getBoundingClientRect(); return { x: rect.left + 1, y: rect.top + rect.height / 2 }
+      const position = edge === 'end' ? offset + needle.length - 1 : offset
+      const range = document.createRange(); range.setStart(node, position); range.setEnd(node, position + 1)
+      const rect = range.getBoundingClientRect(), before = document.createRange()
+      before.selectNodeContents(box); before.setEnd(node, edge === 'end' ? position + 1 : position)
+      const content = before.cloneContents()
+      content.querySelectorAll('[data-mention-key]').forEach(chip => chip.remove())
+      return { x: edge === 'end' ? rect.right - 0.5 : rect.left + 0.5, y: rect.top + rect.height / 2,
+        boundary: { mode, x: edge === 'end' ? rect.right : rect.left,
+          proseBefore: (content.textContent ?? '').replace(/\u200b/g, '').replace(/\s+/g, ' ').trim(),
+          mentionKeys: [...box.querySelectorAll<HTMLElement>('[data-mention-key]')].map(chip => chip.dataset.mentionKey!) } }
     }
     throw new Error(`Missing visible text drop target: ${needle}`)
-  }, text)
+  }, { mode, needle: text, edge })
 }
-async function nativeDrag(source: Locator, target: { x: number; y: number }): Promise<void> {
+async function emptyLinePoint(mode: Mode, anchor: string): Promise<Point> {
+  return composer(mode).evaluate((box, { mode, anchor }) => {
+    const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT)
+    let node: Node | null
+    while ((node = walker.nextNode())) {
+      if (node.parentElement?.closest('[data-mention-key]')) continue
+      const offset = (node.textContent ?? '').indexOf(anchor)
+      if (offset < 0) continue
+      const end = offset + anchor.length, character = document.createRange()
+      character.setStart(node, end - 1); character.setEnd(node, end)
+      const rect = character.getBoundingClientRect(), style = getComputedStyle(box), bounds = box.getBoundingClientRect()
+      const lineHeight = Number.parseFloat(style.lineHeight)
+      if (!Number.isFinite(lineHeight)) throw new Error('The empty-line fixture needs an explicit line height')
+      const left = bounds.left + Number.parseFloat(style.borderLeftWidth) + Number.parseFloat(style.paddingLeft)
+      const before = document.createRange(); before.selectNodeContents(box); before.setEnd(node, end)
+      const content = before.cloneContents(); content.querySelectorAll('[data-mention-key]').forEach(chip => chip.remove())
+      return { x: left + 0.5, y: rect.top + lineHeight + rect.height / 2,
+        boundary: { mode, x: left,
+          proseBefore: (content.textContent ?? '').replace(/\u200b/g, '').replace(/\s+/g, ' ').trim(),
+          mentionKeys: [...box.querySelectorAll<HTMLElement>('[data-mention-key]')].map(chip => chip.dataset.mentionKey!) } }
+    }
+    throw new Error(`Missing empty-line anchor: ${anchor}`)
+  }, { mode, anchor })
+}
+async function expectEmptyLineReference(mode: Mode, reference: Locator, trace: NativeDragTrace, path: string, anchor: string): Promise<void> {
+  const box = await reference.boundingBox()
+  if (!box) throw new Error('Dropped reference has no layout')
+  expect(trace.target.y).toBeGreaterThanOrEqual(box.y - 3)
+  expect(trace.target.y).toBeLessThanOrEqual(box.y + box.height + 3)
+  await expect.poll(async () => {
+    const draft = await savedDraft(mode), mention = draft.mentions.find(item => item.path === path)
+    return typeof mention?.textOffset === 'number' ? (draft.text ?? draft.draft ?? '').slice(0, mention.textOffset).slice(-anchor.length - 2) : null
+  }).toBe(` ${anchor}\n`)
+}
+async function nativeDrag(source: Locator, targetPoint: () => Promise<Point>, ending: NativeDragTrace['ending'] = 'drop'): Promise<NativeDragTrace> {
   await source.scrollIntoViewIfNeeded(); const box = await source.boundingBox()
   if (!box) throw new Error('Drag source has no layout')
+  // Scrolling the source can move both the composer and its cards. Coordinates
+  // captured before this scroll silently drag to the wrong element.
+  const target = await targetPoint()
+  await source.evaluate((element, chipMime) => {
+    const state = window as Window & { __attachmentDragProbe?: NativeDragProbe }
+    state.__attachmentDragProbe?.dispose()
+    const root = document.getElementById('root')
+    if (!root) throw new Error('Missing React delegation root')
+    const chip = element.closest<HTMLElement>('[data-mention-key]')
+    const events: NativeDragEvent[] = [], checkpoints: NativeDragTrace['checkpoints'] = []
+    const snapshot = (): DragSelection => {
+      const selection = window.getSelection()
+      return { text: selection?.toString() ?? '', collapsed: selection?.isCollapsed ?? true,
+        sourceChipSelected: Boolean(chip?.isConnected && selection && !selection.isCollapsed && selection.containsNode(chip, true)) }
+    }
+    const record = (event: Event): void => {
+      if (!(event instanceof DragEvent) || events.length >= 100) return
+      const target = event.target instanceof Element ? event.target : null
+      events.push({ ...snapshot(), type: event.type, types: [...event.dataTransfer?.types ?? []],
+        chipPayload: event.type === 'dragstart' || event.type === 'drop' ? event.dataTransfer?.getData(chipMime) ?? '' : '',
+        trusted: event.isTrusted, prevented: event.defaultPrevented, target: target ? `${target.tagName}.${target.getAttribute('class') ?? ''}` : '' })
+    }
+    // React stops propagation at this root. A later listener on the same node
+    // still observes the actual native event after the product sets its MIME.
+    const types = ['dragstart', 'dragenter', 'dragover', 'drop', 'dragend']
+    types.forEach(type => root.addEventListener(type, record))
+    state.__attachmentDragProbe = { source: { text: element.textContent ?? '', chipKey: chip?.dataset.mentionKey ?? null },
+      events, checkpoints, snapshot, dispose: () => types.forEach(type => root.removeEventListener(type, record)) }
+  }, ATTACHMENT_CHIP_DRAG_TYPE)
   const x = box.x + box.width / 2, y = box.y + box.height / 2
-  await page.mouse.move(x, y); await page.mouse.down()
-  await page.mouse.move(x + 8, y + 3, { steps: 4 })
-  await page.mouse.move(target.x, target.y, { steps: 18 }); await page.mouse.move(target.x, target.y)
-  await page.mouse.up()
+  const checkpoint = async (phase: string): Promise<void> => page.evaluate(value => {
+    const probe = (window as Window & { __attachmentDragProbe?: NativeDragProbe }).__attachmentDragProbe
+    if (probe) probe.checkpoints.push({ phase: value, ...probe.snapshot() })
+  }, phase)
+  let pressed = false, trace: NativeDragTrace | undefined, presentation: DragPresentation | undefined
+  try {
+    await page.mouse.move(x, y); await page.mouse.down(); pressed = true
+    await checkpoint('pointer-down')
+    await page.mouse.move(x + 8, y + 3, { steps: 4 })
+    await checkpoint('drag-started')
+    await page.mouse.move(target.x, target.y, { steps: 18 }); await page.mouse.move(target.x, target.y)
+    await checkpoint('before-drop')
+    if (target.boundary) {
+      const caret = page.locator('.mention-input-drop-caret')
+      await expect(caret).toBeVisible()
+      await expect(caret).toHaveAttribute('aria-hidden', 'true')
+      await expect(caret).toHaveCSS('pointer-events', 'none')
+      const caretBox = await caret.boundingBox()
+      if (!caretBox) throw new Error('Visible drop caret has no layout')
+      expect(caretBox.width).toBeGreaterThan(0); expect(caretBox.width).toBeLessThanOrEqual(4)
+      expect(Math.abs(caretBox.x + caretBox.width / 2 - target.boundary.x)).toBeLessThanOrEqual(3)
+      expect(target.y).toBeGreaterThanOrEqual(caretBox.y - 1)
+      expect(target.y).toBeLessThanOrEqual(caretBox.y + caretBox.height + 1)
+      const ghost = page.locator('.mention-chip-drag-preview')
+      const internal = await source.evaluate(element => Boolean(element.closest('[data-mention-key]')))
+      if (internal) {
+        await expect(ghost).toHaveCount(1)
+        await expect(ghost).toHaveCSS('opacity', '0.45')
+        if (ending === 'drop' && !dragTraces.some(trace => trace.source.chipKey && trace.ending === 'drop' && trace.presentation)) {
+          const clip = await composer(target.boundary.mode).boundingBox()
+          if (clip) {
+            const path = test.info().outputPath(`${target.boundary.mode}-drag-in-progress-${dragTraces.length + 1}.png`)
+            await page.screenshot({ path, clip })
+            await test.info().attach('引用拖拽进行中', { path, contentType: 'image/png' })
+          }
+        }
+      }
+      presentation = { caret: caretBox, ghostOpacity: internal ? await ghost.evaluate(element => getComputedStyle(element).opacity) : null }
+    }
+    if (ending === 'escape') await page.keyboard.press('Escape')
+    if (ending === 'outside') await page.mouse.move(1, 1, { steps: 12 })
+    if (ending !== 'drop') await expect(page.locator('.mention-input-drop-caret')).toBeHidden()
+    await page.mouse.up(); pressed = false
+  } finally {
+    if (pressed) await page.mouse.up()
+    trace = await page.evaluate(({ point, ending, presentation }) => {
+      const state = window as Window & { __attachmentDragProbe?: NativeDragProbe }, probe = state.__attachmentDragProbe
+      if (!probe) throw new Error('Native drag diagnostics were lost')
+      const hit = document.elementFromPoint(point.x, point.y)
+      const result: NativeDragTrace = { source: probe.source, target: point, targetElement: hit ? `${hit.tagName}.${hit.getAttribute('class') ?? ''}` : '',
+        events: probe.events, checkpoints: [...probe.checkpoints, { phase: 'after-drop', ...probe.snapshot() }], ending, presentation }
+      probe.dispose(); delete state.__attachmentDragProbe
+      return result
+    }, { point: target, ending, presentation })
+    dragTraces.push(trace)
+  }
+  const starts = trace.events.filter(event => event.type === 'dragstart'), drops = trace.events.filter(event => event.type === 'drop')
+  expect(starts, JSON.stringify(trace)).toHaveLength(1)
+  expect(drops, JSON.stringify(trace)).toHaveLength(ending === 'drop' ? 1 : 0)
+  expect(starts[0].trusted).toBe(true)
+  expect(trace.events.some(event => event.type === 'dragend' && event.trusted), JSON.stringify(trace)).toBe(true)
+  await expect(page.locator('.mention-input-drop-caret')).toBeHidden()
+  await expect(page.locator('.mention-chip-drag-preview')).toHaveCount(0)
+  if (ending === 'drop') expect(drops[0].trusted).toBe(true)
+  if (trace.source.chipKey) {
+    expect(starts[0].types).toContain(ATTACHMENT_CHIP_DRAG_TYPE)
+    expect(JSON.parse(starts[0].chipPayload)).toMatchObject({ key: trace.source.chipKey })
+    if (ending === 'drop') {
+      expect(drops[0].types).toContain(ATTACHMENT_CHIP_DRAG_TYPE)
+      expect(drops[0].prevented).toBe(true)
+    }
+    expect(trace.checkpoints.filter(value => value.phase !== 'after-drop').map(value => [value.phase, value.sourceChipSelected])).toEqual([
+      ['pointer-down', false], ['drag-started', false], ['before-drop', false]
+    ])
+    expect(starts[0].sourceChipSelected).toBe(false)
+  }
+  if (target.boundary && ending === 'drop') {
+    const { mode, mentionKeys, proseBefore } = target.boundary
+    // Compare the committed document with the same visible boundary; a caret
+    // painted at the pointer must not hide insertion at the previous selection.
+    await expect.poll(() => composer(mode).evaluate((box, { key, previous }) => {
+      const nodes = [...box.querySelectorAll<HTMLElement>('[data-mention-key]')]
+      const chip = nodes.find(node => key ? node.dataset.mentionKey === key : !previous.includes(node.dataset.mentionKey!))
+      if (!chip) return null
+      const before = document.createRange(); before.selectNodeContents(box); before.setEndBefore(chip)
+      const content = before.cloneContents(); content.querySelectorAll('[data-mention-key]').forEach(node => node.remove())
+      return (content.textContent ?? '').replace(/\u200b/g, '').replace(/\s+/g, ' ').trim()
+    }, { key: trace!.source.chipKey, previous: mentionKeys })).toBe(proseBefore)
+  }
+  return trace
 }
 async function beforeChip(chip: Locator): Promise<string> {
   return chip.evaluate(element => { const box = element.closest('[role="textbox"]')!, range = document.createRange(); range.selectNodeContents(box); range.setEndBefore(element); return range.toString().replace(/\u200b/g, '').trim() })
+}
+async function expectNoReferenceUnderline(reference: Locator): Promise<void> {
+  const styles = await reference.evaluate(element => {
+    const label = element.querySelector('.mention-chip__label')!, after = getComputedStyle(element, '::after')
+    return { chip: getComputedStyle(element).textDecorationLine, label: getComputedStyle(label).textDecorationLine,
+      drawnLine: !['none', 'normal'].includes(after.content) && after.display !== 'none' && Number.parseFloat(after.height) > 0 }
+  })
+  expect(styles.chip).not.toContain('underline'); expect(styles.label).not.toContain('underline')
+  expect(styles.drawnLine).toBe(false)
+}
+
+async function expectCompactMentionRows(picker: Locator, descriptions: boolean): Promise<void> {
+  const rows = await picker.getByRole('option').evaluateAll(elements => elements.map(element => {
+    const row = element.getBoundingClientRect(), name = element.querySelector('strong')!, description = element.querySelector('small')!
+    const nameBox = name.getBoundingClientRect(), descriptionBox = description.getBoundingClientRect()
+    const icon = element.querySelector('.mention-ref-picker__icon, .attachment-ref-picker__preview')!
+    return { height: row.height, nameHeight: nameBox.height, nameWhiteSpace: getComputedStyle(name).whiteSpace,
+      descriptionVisible: description.getClientRects().length > 0, verticalOffset: Math.abs(nameBox.top - descriptionBox.top),
+      descriptionRight: descriptionBox.right, rowRight: row.right, iconWidth: icon.getBoundingClientRect().width,
+      title: element.getAttribute('title') }
+  }))
+  expect(rows.length).toBeGreaterThan(0)
+  for (const row of rows) {
+    expect(row.height).toBeGreaterThanOrEqual(28); expect(row.height).toBeLessThanOrEqual(30)
+    expect(row.nameHeight).toBeLessThanOrEqual(18); expect(row.nameWhiteSpace).toBe('nowrap')
+    expect(row.iconWidth).toBe(16); expect(row.title).toBeTruthy()
+    expect(row.descriptionVisible).toBe(descriptions)
+    if (descriptions) { expect(row.verticalOffset).toBeLessThanOrEqual(1); expect(row.descriptionRight).toBeLessThanOrEqual(row.rowRight) }
+  }
 }
 
 test.describe.serial('附件引用真实拖拽与往返', () => {
@@ -220,6 +453,8 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || join(root, 'out/main/index.js'), `--user-data-dir=${fixture}`], cwd: root, env })
     page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message)); page.on('crash', () => errors.push('Renderer crashed'))
     await app.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; window.setContentSize(1440, 1000); window.show(); window.focus() })
+    clipboardSnapshot = await app.evaluate(({ clipboard }) => ({ text: clipboard.readText(), html: clipboard.readHTML(), rtf: clipboard.readRTF(),
+      image: clipboard.readImage().isEmpty() ? null : clipboard.readImage().toDataURL() }))
     await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
     const pngs = await page.evaluate(() => ['#d74343', '#285cdd'].map(color => {
       const canvas = document.createElement('canvas'); canvas.width = 80; canvas.height = 60
@@ -228,21 +463,230 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     }))
     redPng = Buffer.from(pngs[0], 'base64'); bluePng = Buffer.from(pngs[1], 'base64')
   })
+  test.beforeEach(() => { dragTraces.length = 0 })
   test.afterEach(async ({}, info) => {
     if (page && !page.isClosed()) {
       const path = info.outputPath('attachment-references.png'); await page.screenshot({ path, animations: 'disabled' })
       await info.attach('附件引用运行界面', { path, contentType: 'image/png' })
-      if (info.status !== info.expectedStatus) await info.attach('editor-dom', { body: await page.locator('.mention-input:visible').evaluateAll(elements => elements.map(element => element.outerHTML).join('\n')), contentType: 'text/html' })
+      if (info.status !== info.expectedStatus) await info.attach('editor-dom', { body: await page.locator('[contenteditable="true"][role="textbox"]:visible').evaluateAll(elements => elements.map(element => element.outerHTML).join('\n')), contentType: 'text/html' })
     }
+    await info.attach('native-drag-events', { body: JSON.stringify(dragTraces, null, 2), contentType: 'application/json' })
     await info.attach('attachment-http-receipts', { body: JSON.stringify({ errors, chats, uploads: uploads.map(({ bytes, ...file }) => ({ ...file, bytes: bytes.length })) }, null, 2), contentType: 'application/json' })
     expect(errors).toEqual([])
   })
   test.afterAll(async () => {
-    try { await app?.close() } finally {
+    try {
+      if (app && clipboardSnapshot) await app.evaluate(({ clipboard, nativeImage }, saved) => clipboard.write({ text: saved.text, html: saved.html, rtf: saved.rtf,
+        ...(saved.image ? { image: nativeImage.createFromDataURL(saved.image) } : {}) }), clipboardSnapshot)
+      await app?.close()
+    } finally {
       server.closeAllConnections(); if (server.listening) await new Promise<void>(done => server.close(() => done()))
       if (fixture) { const target = resolve(fixture); if (dirname(target) !== fixtureRoot || !basename(target).startsWith('attachment-references-profile-')) throw new Error(`Unsafe fixture cleanup: ${target}`)
         rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
     }
+  })
+
+  test('Work：@ 单列分组、工具包键盘选择、正文保留与会话恢复', async ({}, info) => {
+    await seed('work')
+    const input = composer('work'), picker = page.locator('.mention-ref-picker:visible')
+    const toolkits = input.locator('.mention-chip--toolkit')
+    const beforeChats = chats.length
+    await input.locator('xpath=ancestor::*[contains(@class, "input-composer")][1]').locator('input[type="file"]').setInputFiles([
+      { name: 'grouped-menu-notes.txt', mimeType: 'text/plain', buffer: Buffer.from('GROUPED_MENU_ATTACHMENT') }
+    ])
+    await expect(cards('work')).toHaveCount(1)
+    await input.fill('@')
+    await expect(picker.getByRole('listbox', { name: '选择引用或工具包' })).toHaveAttribute('aria-busy', 'false')
+    await expect(picker.getByRole('tab')).toHaveCount(0)
+    await expect(picker.getByRole('group')).toHaveCount(4)
+    await expect(input).toBeFocused()
+    await expectCompactMentionRows(picker, true)
+    await picker.screenshot({ path: info.outputPath('mention-menu-compact.png'), animations: 'disabled' })
+    await info.attach('mention-menu-compact', { path: info.outputPath('mention-menu-compact.png'), contentType: 'image/png' })
+    // Exercise the menu's own responsive container without changing the user's app or settings.
+    await picker.evaluate(element => { (element as HTMLElement).style.maxWidth = '260px' })
+    await expectCompactMentionRows(picker, false)
+    await picker.screenshot({ path: info.outputPath('mention-menu-narrow-260px.png'), animations: 'disabled' })
+    await info.attach('mention-menu-narrow-260px', { path: info.outputPath('mention-menu-narrow-260px.png'), contentType: 'image/png' })
+    await picker.evaluate(element => { (element as HTMLElement).style.removeProperty('max-width') })
+    await expectCompactMentionRows(picker, true)
+    const active = picker.locator('[role="option"][aria-selected="true"]')
+    await page.keyboard.press('Home')
+    await expect(active).toHaveCount(1); await expect(active).toHaveAttribute('data-attachment-id', /.+/)
+    await page.keyboard.press('ArrowDown'); await expect(active).toHaveAttribute('data-reference-kind', 'file')
+    await page.keyboard.press('ArrowDown'); await expect(active).toHaveAttribute('data-reference-kind', 'agent')
+    await expect(active).toContainText('调研')
+    await page.keyboard.press('End'); await expect(active).toHaveAttribute('data-toolkit-id', 'automation')
+    await input.evaluate(element => element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true })))
+    await expect(picker).toBeVisible(); await expect(toolkits).toHaveCount(0)
+    await page.keyboard.press('Escape'); await expect(picker).toHaveCount(0); await expect(input).toHaveText('@')
+    expect(chats).toHaveLength(beforeChats)
+
+    await input.fill('@工具包')
+    await expect(picker.locator('[data-toolkit-id]')).toHaveCount(4)
+    await expectCompactMentionRows(picker, true)
+    await picker.screenshot({ path: info.outputPath('toolkit-catalogue-four-packages.png'), animations: 'disabled' })
+    await info.attach('toolkit-catalogue-four-packages', { path: info.outputPath('toolkit-catalogue-four-packages.png'), contentType: 'image/png' })
+
+    await input.fill('@agent 调研')
+    await expect(picker.getByRole('option')).toHaveCount(1)
+    await page.keyboard.press('Tab')
+    await expect(input.locator('.mention-chip--agent')).toHaveCount(1)
+    await expect(input.locator('.mention-chip--agent')).toHaveText('调研')
+    await expect(picker).toHaveCount(0)
+
+    await input.fill('BEFORE ')
+    await insertReference('work', '附件1', true)
+    await input.focus(); await page.keyboard.press('Control+End'); await page.keyboard.insertText(' MIDDLE @Agent 管理 AFTER')
+    const draftBefore = await savedDraft('work')
+    await input.evaluate(box => {
+      const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT)
+      let node: Node | null
+      while ((node = walker.nextNode())) {
+        const at = (node.textContent ?? '').indexOf('@Agent 管理')
+        if (at < 0) continue
+        const range = document.createRange(); range.setStart(node, at + '@Agent 管理'.length); range.collapse(true)
+        ;(box as HTMLElement).focus()
+        const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range)
+        return
+      }
+      throw new Error('Missing middle mention query')
+    })
+    await expect(picker.getByRole('group', { name: '工具包' })).toBeVisible()
+    await page.keyboard.press('End'); await page.keyboard.press('Enter')
+    await expect(picker).toHaveCount(0); await expect(toolkits).toHaveCount(1); await expect(input).toBeFocused()
+    await expect(toolkits).toContainText('Agent 管理')
+    await expect(surface('work').locator('.work-resource-strip')).toHaveCount(0)
+    await expect(input.locator('.mention-chip--agent')).toHaveCount(0)
+    await expect.poll(async () => (await savedDraft('work')).mentions.filter(item => item.source === 'toolkit').length).toBe(1)
+    const inlineDraft = await savedDraft('work')
+    expect(inlineDraft.draft).toContain('MIDDLE @toolkit:agent-management')
+    expect(inlineDraft.draft).toContain(' AFTER')
+    expect(inlineDraft.mentions.filter(item => item.source !== 'toolkit')).toEqual(draftBefore.mentions)
+    await expect(chips('work')).toHaveCount(1)
+    await expect(input.locator('.mention-chip')).toHaveCount(2)
+    await input.locator('xpath=ancestor::*[contains(@class, "input-composer")][1]').screenshot({ path: info.outputPath('toolkit-inline-composer.png') })
+    await page.reload(); await expect(input).toBeVisible(); await expect(toolkits).toHaveCount(1)
+    await expect.poll(async () => (await savedDraft('work')).draft).toBe(inlineDraft.draft)
+    expect((await savedDraft('work')).mentions).toEqual(inlineDraft.mentions)
+
+    await input.focus(); await page.keyboard.press('Control+End'); await page.keyboard.insertText(' @Agent 管理')
+    await expect(picker.locator('[data-toolkit-id="agent-management"]')).toHaveAttribute('data-toolkit-selected', 'true')
+    await page.keyboard.press('Enter'); await expect(toolkits).toHaveCount(1)
+    expect((await savedDraft('work')).draft).not.toContain('@Agent 管理')
+    await surface('work').getByRole('button', { name: '发送', exact: true }).click()
+    await expect.poll(() => chats.length).toBe(beforeChats + 1)
+    expect(chats[beforeChats].toolkits).toEqual(['agent-management'])
+    expect(chats[beforeChats].collaborators ?? []).toEqual([])
+    expect(parseMentionContent(String(chats[beforeChats].message)).refs.filter(ref => ref.t === 'agent')).toEqual([])
+    expect(parseMentionContent(String(chats[beforeChats].message)).refs.filter(ref => ref.t === 'toolkit')).toHaveLength(1)
+    await expect(surface('work')).toContainText('REFERENCES_SENT_OK')
+    await expect(input).toBeEmpty()
+    await expect(surface('work').locator('.message__bubble-content .mention-chip--toolkit')).toHaveCount(1)
+    await input.fill('@Agent 管理')
+    await expect(picker.locator('[data-toolkit-id="agent-management"]')).toBeVisible()
+    await page.keyboard.press('Enter'); await expect(toolkits).toHaveCount(1)
+    await input.fill('TOOLKIT_REMOVED')
+    await expect(toolkits).toHaveCount(0)
+    await surface('work').getByRole('button', { name: '发送', exact: true }).click()
+    await expect.poll(() => chats.length).toBe(beforeChats + 2)
+    expect(chats[beforeChats + 1].toolkits).toEqual([])
+    await expect(input).toBeEmpty()
+    await page.reload(); await expect(input).toBeVisible(); await expect(toolkits).toHaveCount(0)
+    await input.fill('@Agent 管理')
+    await expect(picker.locator('[data-toolkit-id="agent-management"]')).toHaveAttribute('data-toolkit-selected', 'false')
+    await picker.screenshot({ path: info.outputPath('grouped-toolkit-menu.png'), animations: 'disabled' })
+    await info.attach('grouped-toolkit-menu', { path: info.outputPath('grouped-toolkit-menu.png'), contentType: 'image/png' })
+    await page.keyboard.press('Escape')
+
+    await input.fill('')
+    const toolkitMessage = surface('work').getByRole('article', { name: '用户消息', exact: true })
+      .filter({ has: page.locator('.mention-chip--toolkit') }).first()
+    await toolkitMessage.getByRole('button', { name: '添加到对话', exact: true }).click()
+    await expect(toolkits).toHaveCount(1)
+    await input.focus(); await page.keyboard.press('Control+End'); await page.keyboard.insertText(' 编辑旧消息 @Agent 管理')
+    await expect(picker.locator('[data-toolkit-id="agent-management"]')).toHaveAttribute('data-toolkit-selected', 'false')
+    // Re-selecting an existing historical chip is explicit opt-in, without duplicating the chip.
+    await page.keyboard.press('Enter'); await expect(toolkits).toHaveCount(1)
+    await surface('work').getByRole('button', { name: '发送', exact: true }).click()
+    await expect.poll(() => chats.length).toBe(beforeChats + 3)
+    expect(chats[beforeChats + 2].toolkits).toEqual(['agent-management'])
+    expect(parseMentionContent(String(chats[beforeChats + 2].message)).refs.filter(ref => ref.t === 'toolkit')).toHaveLength(1)
+  })
+
+  test('Work：工具包目录继承多个选择，单项添加与移除保留其他包', async () => {
+    await seed('work')
+    sessionToolkits.set(workId, ['skill-management', 'knowledge-management'])
+    await page.evaluate(({ key, workId }) => {
+      const state = JSON.parse(localStorage.getItem(key)!)
+      const task = state.tasks.find((item: { id: string }) => item.id === workId)
+      if (task.resources) delete task.resources.toolkits
+      localStorage.setItem(key, JSON.stringify(state))
+    }, { key: storageKey, workId })
+    await page.reload()
+    const input = composer('work'), picker = page.locator('.mention-ref-picker:visible')
+    await expect(input.locator('.mention-chip--toolkit')).toHaveCount(2)
+    await input.focus(); await page.keyboard.press('Control+End'); await page.keyboard.insertText(' @自动化')
+    await expect(picker.locator('[data-toolkit-id="automation"]')).not.toHaveAttribute('aria-disabled', 'true')
+    await page.keyboard.press('Enter')
+    await expect(input.locator('.mention-chip--toolkit')).toHaveCount(3)
+    await input.locator('.mention-chip--toolkit').filter({ hasText: '技能管理' }).evaluate(chip => {
+      const range = document.createRange(); range.selectNode(chip)
+      const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range)
+    })
+    await page.keyboard.press('Backspace')
+    await expect(input.locator('.mention-chip--toolkit')).toHaveCount(2)
+    const before = chats.length
+    await surface('work').getByRole('button', { name: '发送', exact: true }).click()
+    await expect.poll(() => chats.length).toBe(before + 1)
+    expect(chats[before].toolkits).toEqual(['knowledge-management', 'automation'])
+    expect(parseMentionContent(String(chats[before].message)).refs.filter(ref => ref.t === 'toolkit').map(ref => ref.p)).toEqual(['knowledge-management', 'automation'])
+  })
+
+  test('Work：工具包目录按引擎权限禁用，旧引擎不展示静态工具包', async () => {
+    unavailableToolkits.add('skill-management')
+    try {
+      await seed('work')
+      const input = composer('work'), picker = page.locator('.mention-ref-picker:visible')
+      await input.fill('@技能管理')
+      const option = picker.locator('[data-toolkit-id="skill-management"]')
+      await expect(option).toHaveAttribute('aria-disabled', 'true')
+      await expect(option).toHaveAttribute('title', /没有该工具包权限/)
+      await page.keyboard.press('Enter')
+      await expect(picker).toBeVisible()
+      await expect(input.locator('.mention-chip--toolkit')).toHaveCount(0)
+      await page.keyboard.press('Escape')
+      toolkitDirectorySupported = false
+      // A different engine has a new catalogue lifetime; do not reuse the still-closing popover's discovery.
+      await page.reload(); await expect(input).toBeVisible()
+      await input.fill('@工具包')
+      await expect(picker.getByRole('listbox')).toHaveAttribute('aria-busy', 'false')
+      await expect(picker.locator('[data-toolkit-id]')).toHaveCount(0)
+      await expect(input.locator('.mention-chip--toolkit')).toHaveCount(0)
+    } finally { unavailableToolkits.clear(); toolkitDirectorySupported = true }
+  })
+
+  test('Code：@ 单列分组使用同一键盘选择文件与 Agent', async () => {
+    menuPreviewFiles = Array.from({ length: 4 }, (_, index) => `code-reference-preview-${index + 1}.txt`)
+    try {
+    await seed('code')
+    const input = composer('code'), picker = page.locator('.mention-ref-picker:visible')
+    await input.fill('@')
+    await expect(picker.getByRole('listbox', { name: '选择引用或工具包' })).toHaveAttribute('aria-busy', 'false')
+    await expect(picker.getByRole('tab')).toHaveCount(0)
+    await expect(picker.getByRole('group', { name: '文件与目录' }).getByRole('option')).toHaveCount(3)
+    await expect(picker.getByText('输入名称查找更多文件', { exact: true })).toBeVisible()
+    await page.keyboard.press('Home'); await expect(picker.locator('[aria-selected="true"]')).toHaveAttribute('data-reference-kind', 'file')
+    await page.keyboard.press('Enter'); await expect(input.locator('.mention-chip--file')).toHaveText(selectionFile)
+    await input.focus(); await page.keyboard.press('Control+End'); await page.keyboard.insertText(' @code-reference-preview-4')
+    await expect(picker.getByRole('option')).toHaveCount(1)
+    await page.keyboard.press('Enter'); await expect(input.locator('.mention-chip--file')).toHaveCount(2)
+    await input.focus(); await page.keyboard.press('Control+End'); await page.keyboard.insertText(' @agent 执行')
+    await expect(picker.getByRole('option')).toHaveCount(1)
+    await page.keyboard.press('Enter'); await expect(input.locator('.mention-chip--agent')).toHaveText('执行')
+    await expect(input.locator('.mention-chip--file')).toHaveCount(2)
+    await expect(picker).toHaveCount(0)
+    } finally { menuPreviewFiles = [] }
   })
 
   for (const mode of ['work', 'code'] as const) test(`${mode}：三种真实拖拽、编号身份、删除、草稿刷新与发送映射`, async ({}, info) => {
@@ -263,27 +707,30 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     await composer(mode).fill('开头 中段 结尾 ')
     await insertReference(mode, '图1'); await insertReference(mode, '图1', true)
     await expect(chips(mode, redId)).toHaveCount(2); await expect(byId(redId).locator('.attach-chip__reference')).toHaveText('图1')
+    await expectNoReferenceUnderline(chips(mode, redId).first())
     await byId(redId).hover()
     await expect(byId(redId).locator('.attach-chip__reference')).toHaveCSS('opacity', '0')
     await page.mouse.move(0, 0)
     await expect(byId(redId).locator('.attach-chip__reference')).toHaveCSS('opacity', '1')
-    const target = await byId(blueId).boundingBox(); if (!target) throw new Error('Missing second card')
-    await nativeDrag(byId(redId).locator('.attach-chip__image-btn'), { x: target.x + target.width - 3, y: target.y + 12 })
+    await nativeDrag(byId(redId).locator('.attach-chip__image-btn'), async () => {
+      const target = await byId(blueId).boundingBox(); if (!target) throw new Error('Missing second card')
+      return { x: target.x + target.width - 3, y: target.y + 12 }
+    })
     await expect.poll(() => cards(mode).evaluateAll(elements => elements.map(element => (element as HTMLElement).dataset.attachmentId))).toEqual([blueId, redId, textId])
     await expect(chips(mode, redId).locator('.mention-chip__label')).toHaveText(['图2', '图2'])
-    await nativeDrag(byId(blueId).locator('.attach-chip__image-btn'), await textPoint(mode, '中段'))
+    await nativeDrag(byId(blueId).locator('.attach-chip__image-btn'), () => textPoint(mode, '中段'))
     await expect(chips(mode, blueId)).toHaveCount(1); await expect.poll(() => beforeChip(chips(mode, blueId))).toBe('开头')
     await expect(cards(mode)).toHaveCount(3); expect(uploads).toHaveLength(beforeUploads + 3)
-    await nativeDrag(chips(mode, redId).first().locator('.mention-chip__label'), await textPoint(mode, '开头'))
+    await nativeDrag(chips(mode, redId).first().locator('.mention-chip__label'), () => textPoint(mode, '开头'))
     await expect.poll(() => chips(mode).evaluateAll(elements => elements.map(element => (element as HTMLElement).dataset.attachmentId))).toEqual([redId, blueId, redId])
     await composer(mode).focus(); await page.keyboard.press('Control+Z')
     await expect.poll(() => chips(mode).evaluateAll(elements => elements.map(element => (element as HTMLElement).dataset.attachmentId))).toEqual([blueId, redId, redId])
     await page.keyboard.press('Control+Y')
     await expect.poll(() => chips(mode).evaluateAll(elements => elements.map(element => (element as HTMLElement).dataset.attachmentId))).toEqual([redId, blueId, redId])
-    await nativeDrag(chips(mode, blueId).locator('.mention-chip__label'), await textPoint(mode, '结尾'))
+    await nativeDrag(chips(mode, blueId).locator('.mention-chip__label'), () => textPoint(mode, '结尾'))
     await expect(chips(mode)).toHaveCount(3); await expect.poll(() => beforeChip(chips(mode, blueId))).toContain('中段')
-    // Inline references share the text underline; Delete removes the focused
-    // occurrence without removing its underlying attachment or other copies.
+    // Delete removes the focused occurrence without removing its underlying
+    // attachment or other copies.
     await chips(mode, blueId).focus(); await page.keyboard.press('Delete')
     await expect(chips(mode, blueId)).toHaveCount(0); await expect(byId(blueId).locator('.attach-chip__reference')).toHaveCount(0)
     await chips(mode, redId).first().focus(); await page.keyboard.press('Delete')
@@ -326,7 +773,7 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     ])
     await expect(cards(mode)).toHaveCount(1)
     await composer(mode).fill('保留正文 末尾 ')
-    await nativeDrag(cards(mode).locator('.attach-chip__image-btn'), await textPoint(mode, '末尾'))
+    await nativeDrag(cards(mode).locator('.attach-chip__image-btn'), () => textPoint(mode, '末尾'))
     await expect(chips(mode)).toHaveCount(1)
     await insertReference(mode, '图1')
     await expect(chips(mode)).toHaveCount(2)
@@ -335,5 +782,184 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     await expect(composer(mode)).toContainText('保留正文')
     await composer(mode).focus(); await page.keyboard.press('Control+z')
     await expect(chips(mode)).toHaveCount(0)
+  })
+
+  test('code：原生长文本转附件并插入原光标，完整字节与既有引用随发送保留', async () => {
+    await seed('code')
+    const input = composer('code'), label = '附件1'
+    const longText = `CODE_PASTED_TEXT\n${Array.from({ length: 90 }, (_, index) => `第${index + 1}行：完整正文🙂，保留 Unicode 和空格。`).join('\n')}\nCODE_PASTED_TEXT_END`
+    expect(Array.from(longText).length).toBeGreaterThan(1000)
+    const beforeUploads = uploads.length, beforeChats = chats.length
+    await input.locator('xpath=ancestor::*[contains(@class, "input-composer")][1]').locator('input[type="file"]').setInputFiles([
+      { name: 'existing-paste-reference.txt', mimeType: 'text/plain', buffer: Buffer.from('EXISTING_ATTACHMENT_CONTENT') }
+    ])
+    await expect(cards('code')).toHaveCount(1)
+    await expect.poll(() => uploads.length).toBe(beforeUploads + 1)
+    await expect.poll(async () => (await savedDraft('code')).attachments?.length ?? 0).toBe(1)
+    const file = (await savedDraft('code')).attachments![0]
+    await input.fill('CODE_BEFORE_REFERENCE '); await insertReference('code', label)
+    const reference = chips('code', file.attachmentId), suffix = ' CODE_PASTE_RIGHT'
+    await input.focus(); await page.keyboard.press('Control+End'); await page.keyboard.insertText(` CODE_PASTE_LEFT ${suffix}`)
+    await expect.poll(async () => (await savedDraft('code')).text?.endsWith(suffix)).toBe(true)
+    const beforePaste = await savedDraft('code'), beforeText = beforePaste.text!
+    expect(beforeText.endsWith(suffix)).toBe(true)
+    expect(beforePaste.mentions.map(mention => [mention.attachmentId, mention.path, mention.displayText])).toEqual([[file.attachmentId, file.path, label]])
+    // The right marker remains after the caret. Pasting at the end instead
+    // would still show the whole text but lose the user's intended placement.
+    for (let index = 0; index < suffix.length; index++) await page.keyboard.press('ArrowLeft')
+    await app!.evaluate(({ clipboard }, text) => clipboard.writeText(text), longText)
+    await page.keyboard.press('Control+V')
+    await expect(cards('code')).toHaveCount(2); await expect(reference).toHaveCount(1)
+    await expect(chips('code')).toHaveCount(2)
+    await expect.poll(() => uploads.length).toBe(beforeUploads + 2)
+    const uploaded = uploads[beforeUploads + 1]
+    expect(uploaded.bytes.equals(Buffer.from(longText))).toBe(true)
+    expect(uploaded.sessionId).toBe(codeId)
+    await expect.poll(async () => (await savedDraft('code')).text?.includes(`@${uploaded.path}`)).toBe(true)
+    const afterPaste = await savedDraft('code'), pasted = afterPaste.attachments!.find(item => item.path === uploaded.path)!
+    expect(pasted).toBeDefined()
+    const pastedLabel = '粘贴文本 · CODE_PASTED_TEXT', pastedReference = chips('code', pasted.attachmentId)
+    await expect(pastedReference.locator('.mention-chip__label')).toHaveText(pastedLabel)
+    const parts = afterPaste.text!.split(`@${pasted.path}`)
+    expect(parts).toHaveLength(2); expect(parts[0]).toBe(beforeText.slice(0, -suffix.length))
+    expect([suffix, ' ' + suffix]).toContain(parts[1])
+    expect(afterPaste.text!.includes(longText)).toBe(false)
+    expect(afterPaste.mentions.map(mention => [mention.attachmentId, mention.path, mention.displayText]))
+      .toEqual([[file.attachmentId, file.path, label], [pasted.attachmentId, pasted.path, pastedLabel]])
+    expect(chats).toHaveLength(beforeChats)
+    // Ordinary edits around the new reference retain the complete attachment
+    // identity through browser history, persistence and request serialization.
+    await input.focus(); await page.keyboard.press('Control+End')
+    await page.keyboard.press('Shift+Enter')
+    // serializeNodes omits the empty trailing line until it contains prose.
+    const beforeEdit = afterPaste.text!
+    await expect.poll(async () => (await savedDraft('code')).text).toBe(beforeEdit)
+    await page.keyboard.insertText('CODE_EDITED_IN_PLACE')
+    const editedText = beforeEdit + '\nCODE_EDITED_IN_PLACE'
+    await expect.poll(async () => (await savedDraft('code')).text).toBe(editedText)
+    await page.keyboard.press('Control+Z')
+    await expect.poll(async () => (await savedDraft('code')).text).toBe(beforeEdit)
+    expect((await savedDraft('code')).mentions).toEqual(afterPaste.mentions)
+    await page.keyboard.press('Control+Y')
+    await expect.poll(async () => (await savedDraft('code')).text).toBe(editedText)
+    await expect(reference.locator('.mention-chip__label')).toHaveText(label)
+
+    await page.reload(); await expect(input).toBeVisible()
+    await expect.poll(async () => (await savedDraft('code')).text).toBe(editedText)
+    await expect(input).toContainText('CODE_EDITED_IN_PLACE')
+    await expect(reference.locator('.mention-chip__label')).toHaveText(label)
+    expect((await savedDraft('code')).mentions).toEqual(afterPaste.mentions)
+    await expect(cards('code')).toHaveCount(2); await expect(pastedReference.locator('.mention-chip__label')).toHaveText(pastedLabel)
+    const send = surface('code').getByRole('button', { name: '发送', exact: true })
+    await expect(send).toBeEnabled(); await send.click()
+    await expect.poll(() => chats.length).toBe(beforeChats + 1)
+    await expect(surface('code').locator(`[data-message-id="${currentRun(codeId)!.assistantMessageId}"]`)).toContainText('REFERENCES_SENT_OK')
+    const request = chats[beforeChats], sent = parseMentionContent(String(request.message))
+    expect(request.sessionId).toBe(codeId)
+    expect(String(request.message).includes(longText)).toBe(false)
+    expect(sent.body).toContain('CODE_EDITED_IN_PLACE')
+    expect(sent.body.startsWith('CODE_BEFORE_REFERENCE ')).toBe(true)
+    expect(request.attachments).toEqual([expect.objectContaining({ name: file.path, type: file.type,
+      attachmentId: file.attachmentId, displayName: file.name, referenceLabel: label }),
+      expect.objectContaining({ name: pasted.path, type: uploaded.type, size: uploaded.bytes.length,
+        attachmentId: pasted.attachmentId, displayName: pasted.name, referenceLabel: pastedLabel })])
+    expect(sent.refs.map(ref => [ref.a, ref.p, ref.d])).toEqual([[file.attachmentId, file.path, label], [pasted.attachmentId, pasted.path, pastedLabel]])
+    await expect(surface('code').locator('.message--user').getByRole('button', { name: `查看引用：${label}`, exact: true })).toHaveCount(1)
+    await expect(input).toBeEmpty(); await expect(cards('code')).toHaveCount(0)
+    await expect(surface('code').locator('.message--user').getByRole('button', { name: `查看引用：${pastedLabel}`, exact: true })).toHaveCount(1)
+    expect(uploads).toHaveLength(beforeUploads + 2)
+  })
+
+  for (const mode of ['work', 'code'] as const) test(`${mode}：原生拖拽落点与取消清理，跨 Agent 和文件的正文仍可复制`, async () => {
+    await seed(mode)
+    const input = composer(mode), references = input.locator('[data-mention-key]')
+    const picker = page.locator('.mention-ref-picker:visible')
+    await input.fill('COPY_START ')
+    await page.keyboard.press('Control+End'); await page.keyboard.insertText('@agent')
+    await expect(picker.getByRole('group', { name: '协作 Agent', exact: true })).toBeVisible()
+    await picker.getByRole('option').filter({ has: page.locator('strong', { hasText: /^执行$/ }) }).click()
+    await expect(picker).toHaveCount(0)
+    await input.focus(); await page.keyboard.press('Control+End'); await page.keyboard.insertText(' BETWEEN @selection-guide')
+    await expect(picker).toBeVisible()
+    await expect(picker.getByRole('group', { name: '文件与目录', exact: true })).toBeVisible()
+    await expect(picker.getByRole('option')).toHaveCount(1)
+    await picker.getByRole('option').click()
+    await expect(picker).toHaveCount(0)
+    await input.focus(); await page.keyboard.press('Control+End'); await page.keyboard.insertText(' COPY_END DROP_TARGET')
+    await expect(references).toHaveCount(2)
+    const agent = input.locator('.mention-chip--agent'), file = input.locator('.mention-chip--file')
+    await expect(agent.locator('.mention-chip__label')).toHaveText('执行')
+    await expect(file.locator('.mention-chip__label')).toHaveText(selectionFile)
+    await expect(input.locator('.mention-chip--attachment')).toHaveCount(0)
+    await expect.poll(async () => (await savedDraft(mode)).mentions.length).toBe(2)
+    const original = (await savedDraft(mode)).mentions
+    expect(original[0].path).toMatch(/^builtin-agent:executor:/)
+    expect(original[1].path).toBe(selectionFile)
+    const keys = await references.evaluateAll(elements => elements.map(element => (element as HTMLElement).dataset.mentionKey!))
+    await expectNoReferenceUnderline(agent)
+    await file.hover(); await expectNoReferenceUnderline(file)
+
+    // Start from ordinary prose, not a chip. Native selection and clipboard
+    // must keep both labels; permanently disabling chip selection loses them.
+    await input.scrollIntoViewIfNeeded()
+    const start = await textPoint(mode, 'COPY_START'), end = await textPoint(mode, 'COPY_END', 'end')
+    await page.mouse.move(start.x, start.y); await page.mouse.down()
+    await page.mouse.move(end.x, end.y, { steps: 20 }); await page.mouse.up()
+    const selected = await page.evaluate(() => window.getSelection()?.toString() ?? '')
+    for (const text of ['COPY_START', '执行', 'BETWEEN', selectionFile, 'COPY_END']) expect(selected).toContain(text)
+    await app!.evaluate(({ clipboard }) => clipboard.writeText('COPY_NOT_HANDLED'))
+    await page.keyboard.press('Control+c')
+    // Windows clipboard uses CRLF even when the browser Selection exposes LF.
+    // Normalize only line endings so missing labels or whitespace still fail.
+    await expect.poll(async () => (await app!.evaluate(({ clipboard }) => clipboard.readText())).replace(/\r\n/g, '\n'))
+      .toBe(selected.replace(/\r\n/g, '\n'))
+    // Collapse this intentional range before starting the next pointer gesture.
+    await page.keyboard.press('ArrowRight')
+    const beforeCancelledDrag = await input.innerText()
+    await nativeDrag(agent.locator('.mention-chip__label'), () => textPoint(mode, 'DROP_TARGET', 'end'), 'escape')
+    await nativeDrag(file.locator('.mention-chip__label'), () => textPoint(mode, 'COPY_START'), 'outside')
+    expect(await input.innerText()).toBe(beforeCancelledDrag)
+    expect(await references.evaluateAll(elements => elements.map(element => (element as HTMLElement).dataset.mentionKey!))).toEqual(keys)
+    expect((await savedDraft(mode)).mentions).toEqual(original)
+    const movedAgent = await nativeDrag(agent.locator('.mention-chip__label'), () => textPoint(mode, 'DROP_TARGET', 'end'))
+    expect(movedAgent.source.chipKey).toBe(keys[0])
+    await expect.poll(() => references.evaluateAll(elements => elements.map(element => (element as HTMLElement).dataset.mentionKey!))).toEqual([keys[1], keys[0]])
+    await expect.poll(async () => (await savedDraft(mode)).mentions.map(mention => mention.path)).toEqual([original[1].path, original[0].path])
+    await expect(references).toHaveCount(2)
+    expect((await input.innerText()).match(/执行/g)).toHaveLength(1)
+
+    await input.focus(); await page.keyboard.press('Control+Z')
+    await expect.poll(async () => (await savedDraft(mode)).mentions.map(mention => mention.path)).toEqual(original.map(mention => mention.path))
+    await page.keyboard.press('Control+Y')
+    await expect.poll(async () => (await savedDraft(mode)).mentions.map(mention => mention.path)).toEqual([original[1].path, original[0].path])
+    // Undo/redo rebuilds DOM keys, so retain the new key when testing a file.
+    const fileKeyBeforeDrag = await file.getAttribute('data-mention-key')
+    const movedFile = await nativeDrag(file.locator('.mention-chip__label'), () => textPoint(mode, 'COPY_START'))
+    expect(movedFile.source.chipKey).toBe(fileKeyBeforeDrag)
+    await expect.poll(() => beforeChip(file)).toBe('')
+    await expect(references).toHaveCount(2)
+    expect((await input.innerText()).split(selectionFile)).toHaveLength(2)
+    await expect.poll(async () => (await savedDraft(mode)).mentions.map(mention => mention.path).sort()).toEqual(original.map(mention => mention.path).sort())
+
+    await input.focus(); await page.keyboard.press('Control+End'); await page.keyboard.insertText(' EMPTY_LINE_ANCHOR')
+    await page.keyboard.press('Shift+Enter'); await page.keyboard.press('Shift+Enter')
+    const emptyLineFileKey = await file.getAttribute('data-mention-key')
+    const emptyLineDrag = await nativeDrag(file.locator('.mention-chip__label'), () => emptyLinePoint(mode, 'EMPTY_LINE_ANCHOR'))
+    await expect(file).toHaveAttribute('data-mention-key', emptyLineFileKey!)
+    await expect(references).toHaveCount(2)
+    await expectEmptyLineReference(mode, file, emptyLineDrag, selectionFile, 'EMPTY_LINE_ANCHOR')
+
+    await input.locator('xpath=ancestor::*[contains(@class, "input-composer")][1]').locator('input[type="file"]').setInputFiles([
+      { name: 'empty-line-reference.png', mimeType: 'image/png', buffer: redPng }
+    ])
+    await expect(cards(mode)).toHaveCount(1)
+    await expect.poll(async () => (await savedDraft(mode)).attachments?.length ?? 0).toBe(1)
+    const image = (await savedDraft(mode)).attachments![0]
+    await input.focus(); await page.keyboard.press('Control+End'); await page.keyboard.insertText(' CARD_EMPTY_LINE_ANCHOR')
+    await page.keyboard.press('Shift+Enter'); await page.keyboard.press('Shift+Enter')
+    const cardLineDrag = await nativeDrag(cards(mode).locator('.attach-chip__image-btn'), () => emptyLinePoint(mode, 'CARD_EMPTY_LINE_ANCHOR'))
+    const imageReference = chips(mode, image.attachmentId)
+    await expect(imageReference).toHaveCount(1); await expect(references).toHaveCount(3)
+    await expectEmptyLineReference(mode, imageReference, cardLineDrag, image.path, 'CARD_EMPTY_LINE_ANCHOR')
   })
 })

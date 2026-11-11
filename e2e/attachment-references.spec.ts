@@ -1,10 +1,53 @@
-/** Pure composer identity and numbering: file order, repeated references,
+/** Pure composer identity, pasted text labels and numbering: file order, repeated references,
  * frozen messages and stale drag events; no Electron/engine required. */
 import { test, expect } from '@playwright/test'
 import { attachmentIdentity, attachmentMention, attachmentReferences, freezeAttachmentReferences, referencesAttachment, reorderAttachments } from '../src/renderer/src/contrib/chat/attachment-references'
 import type { ChatAttachment } from '../src/renderer/src/core/engine/useChat'
+import { pastedTextLabel } from '../src/shared/pasted-text-label'
 
 const file = (id: string, type = 'image/png'): ChatAttachment => ({ attachmentId: id, path: `${id}.png`, name: '同名附件', type, size: 10 })
+
+test('pasted text labels recognize only the generated plain-text filenames', () => {
+  expect(pastedTextLabel('粘贴的文本.txt', 'text/plain')).toBe('粘贴文本')
+  expect(pastedTextLabel('粘贴的文本-需求说明.txt', 'text/plain;charset=utf-8')).toBe('粘贴文本 · 需求说明')
+  expect(pastedTextLabel('粘贴的文本-需求说明.txt', 'Text/Plain; charset=UTF-8')).toBe('粘贴文本 · 需求说明')
+  for (const name of ['说明.txt', '旧粘贴的文本.txt', '粘贴的文本-.txt', '粘贴的文本.txt.bak',
+    '粘贴的文本.TXT', '粘贴的文本.txt\n', 'folder/粘贴的文本.txt', '粘贴的文本-标题-副标题.txt', '粘贴的文本- 标题.txt',
+    `粘贴的文本-${'字'.repeat(49)}.txt`]) {
+    expect(pastedTextLabel(name, 'text/plain'), name).toBeNull()
+  }
+  for (const mime of ['', 'text/markdown', 'application/octet-stream', 'image/png', 'text/plain-extra']) {
+    expect(pastedTextLabel('粘贴的文本-需求说明.txt', mime), mime).toBeNull()
+  }
+})
+
+test('pasted text excerpts preserve whole Unicode characters at the label boundary', () => {
+  const exact = '字'.repeat(24)
+  expect(pastedTextLabel(`粘贴的文本-${exact}.txt`, 'text/plain')).toBe(`粘贴文本 · ${exact}`)
+  expect(pastedTextLabel(`粘贴的文本-${exact}尾.txt`, 'text/plain')).toBe(`粘贴文本 · ${exact}…`)
+  expect(pastedTextLabel(`粘贴的文本-${'😀'.repeat(48)}.txt`, 'text/plain')).toBe(`粘贴文本 · ${'😀'.repeat(24)}…`)
+  for (const emoji of ['😀', '👍🏽', '👨‍👩‍👧‍👦']) {
+    const title = 'a'.repeat(23) + emoji
+    expect(pastedTextLabel(`粘贴的文本-${title}尾.txt`, 'text/plain')).toBe(`粘贴文本 · ${title}…`)
+  }
+})
+
+test('pasted text keeps its semantic label across reorder and freeze without consuming file numbers', () => {
+  const pasted = { ...file('paste', 'text/plain;charset=utf-8'), name: '粘贴的文本-需求说明.txt' }
+  const blank = { ...file('blank', 'text/plain'), name: '粘贴的文本.txt' }
+  const files = [file('image'), pasted, file('document', 'text/plain'), blank, file('pdf', 'application/pdf')]
+  expect(attachmentReferences(files).map(({ id, label }) => [id, label])).toEqual([
+    ['image', '图1'], ['paste', '粘贴文本 · 需求说明'], ['document', '附件1'], ['blank', '粘贴文本'], ['pdf', '附件2']
+  ])
+  const sent = freezeAttachmentReferences(files)
+  const changed = freezeAttachmentReferences(reorderAttachments(files, ['pdf', 'blank', 'paste']))
+  expect(sent.map(item => item.referenceLabel)).toEqual(['图1', '粘贴文本 · 需求说明', '附件1', '粘贴文本', '附件2'])
+  expect(changed.map(item => item.referenceLabel)).toEqual(['附件1', '粘贴文本', '粘贴文本 · 需求说明', '图1', '附件2'])
+  expect(attachmentMention(attachmentReferences([pasted])[0])).toMatchObject({
+    attachmentId: 'paste', path: pasted.path, displayText: '粘贴文本 · 需求说明'
+  })
+  expect(pasted.referenceLabel).toBeUndefined()
+})
 
 test('image and document labels follow their own order while same filenames retain separate identities', () => {
   const files = [file('a'), file('b', 'text/plain'), file('c'), file('d', 'application/pdf')]

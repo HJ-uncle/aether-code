@@ -1,5 +1,6 @@
 import { NextTurnQueueError, type QueueMention, type QueueAttachmentReceipt } from './next-turn-queue'
 import { queueMentionToken } from './next-turn-queue-state'
+import { pastedTextLabel } from './pasted-text-label'
 
 export interface QueueDraftReferenceInput {
   text: string
@@ -75,7 +76,8 @@ export function mergeQueueAttachmentReferences(draft: QueueDraftReferenceInput, 
   }
   let images = 0, files = 0
   const attachments = [...byIdentity.values()].map(file => ({ ...file,
-    referenceLabel: file.mime.startsWith('image/') ? `图${++images}` : `附件${++files}` }))
+    referenceLabel: pastedTextLabel(file.name, file.mime) ??
+      (file.mime.startsWith('image/') ? `图${++images}` : `附件${++files}`) }))
   const remapped = remapQueueAttachmentReferences(draft, paths)
   return { attachments, draft: { ...remapped, mentions: remapped.mentions.map(mention => {
     if (!mention.attachmentId || mention.source !== 'file' || mention.content !== undefined) return mention

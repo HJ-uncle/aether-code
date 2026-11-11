@@ -91,6 +91,9 @@
 .document-preview__body--continuous { padding: 16px; overflow: auto; overscroll-behavior: contain; }
 .document-preview__continuous-content { min-width: 0; }
 .document-preview__continuous-page { position: relative; width: 100%; min-height: 200px; margin: 0 auto 16px; overflow: hidden; background: var(--document-paper); }
+.document-preview__continuous-page--pptx { background: transparent; }
+/* Match the sandbox's scheme so Chromium does not insert an opaque canvas in dark mode. */
+.document-preview__continuous-page--pptx > .document-preview__frame { color-scheme: light; }
 .document-preview__continuous-page:last-child { margin-bottom: 0; }
 .document-preview__body--pdf.document-preview__body--continuous { display: flex; flex-direction: column; align-items: center; gap: 16px; }
 .document-preview__body--pdf .document-preview__pdf-shell { flex: none; min-height: 0; }

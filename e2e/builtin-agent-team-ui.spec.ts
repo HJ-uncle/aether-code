@@ -230,8 +230,8 @@ test('builtin instances, resume and live followup keep their exact child identit
     await work.getByRole('button', { name: '新任务', exact: true }).click()
     for (let i = 0; i < 2; i++) {
       await input.pressSequentially('@agent ')
-      await expect(page.getByRole('listbox', { name: '选择协作 Agent' })).toBeVisible()
-      await expect(page.getByRole('option')).toHaveCount(3)
+      await expect(page.getByRole('group', { name: '协作 Agent' })).toBeVisible()
+      await expect(page.getByRole('group', { name: '协作 Agent' }).getByRole('option')).toHaveCount(3)
       if (i === 0) await page.screenshot({ path: info.outputPath('builtin-picker-light.png') })
       await page.getByRole('option', { name: /^执行/ }).click()
     }

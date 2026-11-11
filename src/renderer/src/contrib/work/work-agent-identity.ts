@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react'
 import { requestOrThrow } from '@renderer/core/engine/client'
 import { getEngineSource } from '@renderer/core/engine/source'
-
-const AGENTS_CHANGED = 'aether:work-agents-changed'
+import { notifyAgentCatalogueChanged, subscribeAgentCatalogueChanges } from '@renderer/core/engine/agent-catalogue'
 
 /** Agent edits can happen while a task stays selected; refresh its identity
  * without resetting the conversation or changing the task's fixed Agent ID. */
 export function notifyWorkAgentsChanged(): void {
-  window.dispatchEvent(new Event(AGENTS_CHANGED))
+  notifyAgentCatalogueChanged()
 }
 
 export function useWorkAgentIdentity(
@@ -30,8 +29,7 @@ export function useWorkAgentIdentity(
   } | null>(null)
   useEffect(() => {
     const refresh = (): void => setRevision((value) => value + 1)
-    window.addEventListener(AGENTS_CHANGED, refresh)
-    return () => window.removeEventListener(AGENTS_CHANGED, refresh)
+    return subscribeAgentCatalogueChanges(refresh)
   }, [])
   useEffect(() => {
     if (!id || !ready) return

@@ -28,6 +28,7 @@ export const IPC = {
     engineRequest: 'engine:request',
     engineUpload: 'engine:upload',
     engineUploadAttachment: 'engine:upload-attachment',
+    engineReadWorkspaceAttachment: 'engine:read-workspace-attachment',
     engineSaveWorkspaceFile: 'engine:save-workspace-file',
     engineCancelAttachmentUpload: 'engine:cancel-attachment-upload',
     engineStreamStart: 'engine:stream:start',
@@ -584,6 +585,15 @@ export interface RemoteAttachmentResult {
   name: string
   type: string
   size: number
+}
+
+/** Read one draft resource without preview decoding or changing its workspace. */
+export interface EngineWorkspaceAttachmentInput {
+  sessionId: string
+  path: string
+  workspaceRoot?: string
+  bindingEpoch?: string
+  expectedEngine?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>
 }
 
 /** A user-initiated save retains the original engine and session binding. */

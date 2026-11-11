@@ -1,4 +1,41 @@
-/* References share the existing underline and text baseline. The attachment
- * strip owns thumbnails; moving an inline reference keeps its identity. */
+/* Keep the reference on the text baseline; the thumbnail is a visual cue,
+ * not a second drag target or an independently selectable image. */
 [contenteditable='true'] .mention-chip[draggable='true'] { cursor: grab; }
 [contenteditable='true'] .mention-chip[draggable='true']:active { cursor: grabbing; }
+[contenteditable='true'] .mention-chip.is-pointer-drag,
+[contenteditable='true'] .mention-chip.is-pointer-drag * {
+  -webkit-user-select: none;
+  user-select: none;
+}
+.mention-chip__thumbnail {
+  align-self: center;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  background: var(--bg-elevated);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* These live outside the editable DOM so feedback cannot alter authored text,
+ * selection, undo history or the drop target's layout. */
+.mention-input-drop-caret {
+  position: fixed;
+  z-index: var(--z-popover);
+  width: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--bg-elevated);
+  pointer-events: none;
+  user-select: none;
+}
+.mention-chip-drag-preview {
+  position: fixed;
+  z-index: -1;
+  opacity: 0.45;
+  pointer-events: none;
+  user-select: none;
+}

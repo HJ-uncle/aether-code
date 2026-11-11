@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import type { CronAutomationRun, CronCapabilities, CronThinkingMode } from '@shared/automation'
 import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
+import { subscribeResourceCatalogueChanges } from '@renderer/core/engine/resource-catalogue'
 import { Dialog } from '@renderer/workbench/Dialog'
 import { useMotionPresence, useMotionValue } from '@renderer/workbench/MotionPresence'
 import { ActionMenu } from '@renderer/workbench/ActionMenu'
@@ -48,6 +49,7 @@ export function AutomationsView(props: {
     } catch (cause) { if (owned.current && id === generation.current && stamp === getEngineSource()) setError(cause instanceof Error ? cause.message : '无法读取自动化') }
     finally { if (owned.current && id === generation.current && stamp === getEngineSource()) setLoading(false) }
   }, [ready])
+  useEffect(() => subscribeResourceCatalogueChanges(['automation'], () => { void refresh() }), [refresh, source])
   useEffect(() => { setBusy(null) }, [source])
   useEffect(() => {
     owned.current = true; setJobs([]); setCapabilities(null); setLoadedSource(null); setEditor(null); setRemoving(null); setInbox(false); setUnreadCount(0); setError(''); handledRequest.current = null

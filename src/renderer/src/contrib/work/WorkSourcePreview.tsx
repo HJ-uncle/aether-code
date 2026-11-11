@@ -1,25 +1,28 @@
-import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import type { FsFileContent } from '@shared/ipc'
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
-import { getEngineSource, isRemoteEngine } from '@renderer/core/engine/source'
-import { paths, readFile, readLocalRecoveryFile, readSessionFile, workspaceRecoveryCandidates } from '@renderer/core/workspace/fs-client'
+import { getEngineSource, isEngineReady, isRemoteEngine, subscribeEngineReadiness, subscribeEngineSource } from '@renderer/core/engine/source'
+import { readFile, readLocalRecoveryFile, readSessionFile, workspaceRecoveryCandidates } from '@renderer/core/workspace/fs-client'
 import { Icon } from '@renderer/workbench/icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { TextPreview } from '@renderer/core/editor/TextPreview'
 import { FilePreview } from '../editor/FilePreview'
 import { fileContentUrl } from '@renderer/core/workspace/file-content-bytes'
 import { DocumentMenuProvider, useDocumentContextMenu } from '@renderer/core/editor/useDocumentContextMenu'
+import { resolveChatPath } from '../chat/chat-file-path'
+import { ImageViewerDialog } from '../chat/ImageViewerDialog'
 
 /** The task owns uploaded files even when the user has not opened a project. */
 export function useWorkSourceFile(source: ChatAttachment, sessionId?: string, root?: string | null, enabled = true) {
-  const epoch = getEngineSource()
-  const key = JSON.stringify([epoch, sessionId, root, source.path, source.type, enabled])
+  const epoch = useSyncExternalStore(subscribeEngineSource, getEngineSource)
+  const ready = useSyncExternalStore(subscribeEngineReadiness, isEngineReady)
+  const key = JSON.stringify([epoch, ready, sessionId, root, source.path, source.type, enabled])
   const [attempt, retry] = useState(0)
   const [state, setState] = useState<{ key: string; file?: FsFileContent; error?: string }>({ key })
   useEffect(() => {
     let active = true
     setState({ key })
-    if (!enabled) return () => { active = false }
+    if (!enabled || (sessionId && !ready)) return () => { active = false }
     const request = sessionId ? readSessionFile(sessionId, source.path, root).catch(async (reason: unknown) => {
       if (isRemoteEngine() || !root) throw reason
       const candidates = workspaceRecoveryCandidates(source.path, root)
@@ -28,7 +31,7 @@ export function useWorkSourceFile(source: ChatAttachment, sessionId?: string, ro
       }
       throw reason
     })
-      : root ? readFile(paths.join(root, source.path))
+      : root ? readFile(resolveChatPath(source.path, root)?.filePath ?? source.path)
         : Promise.reject(new Error('资料没有关联任务，请重新选择任务'))
     void request.then(file => {
       if (active && epoch === getEngineSource()) setState({ key, file })
@@ -36,8 +39,31 @@ export function useWorkSourceFile(source: ChatAttachment, sessionId?: string, ro
       if (active && epoch === getEngineSource()) setState({ key, error: reason instanceof Error ? reason.message : String(reason) })
     })
     return () => { active = false }
-  }, [key, epoch, sessionId, root, source.path, enabled, attempt])
+  }, [key, epoch, ready, sessionId, root, source.path, enabled, attempt])
   return { ...(state.key === key ? state : { key }), retry: () => retry(value => value + 1) }
+}
+
+/** Inline references and attachment cards share the full image viewing and editing surface. */
+export function WorkSourceImageDialog({ source, sessionId, root, onClose, onApply, images = [], onNavigate }: {
+  source: ChatAttachment
+  sessionId?: string
+  root: string | null
+  onClose: () => void
+  onApply?: (file: File) => Promise<void>
+  images?: ChatAttachment[]
+  onNavigate?: (source: ChatAttachment) => void
+}): JSX.Element {
+  const { file, error } = useWorkSourceFile(source, sessionId, root)
+  const image = useMemo(() => file ? fileContentUrl(file, source.type) : null, [file, source.type])
+  useEffect(() => () => image?.revoke(), [image])
+  const index = images.findIndex(item => item.path === source.path)
+  return <ImageViewerDialog src={image?.url ?? null} title={source.name} root={root} filePath={source.path}
+    loadError={error || (file?.tooLarge ? '图片超过当前读取上限' : file && !image ? '图片内容无法读取' : undefined)}
+    onClose={onClose} onApply={onApply}
+    positionLabel={images.length > 1 && index >= 0 ? `${index + 1} / ${images.length}` : undefined}
+    onPrevious={onNavigate && images.length > 1 ? () => { if (index > 0) onNavigate(images[index - 1]) } : undefined}
+    onNext={onNavigate && images.length > 1 ? () => { if (index >= 0 && index < images.length - 1) onNavigate(images[index + 1]) } : undefined}
+    canPrevious={index > 0} canNext={index >= 0 && index < images.length - 1} />
 }
 
 interface WorkSourcePreviewProps {

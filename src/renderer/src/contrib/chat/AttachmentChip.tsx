@@ -1,11 +1,14 @@
-import { useEffect, useRef, useState, type JSX } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { readFile, readSessionFile } from '@renderer/core/workspace/fs-client'
+import { getEngineSource, isEngineReady, subscribeEngineReadiness, subscribeEngineSource } from '@renderer/core/engine/source'
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
 import { Dialog } from '@renderer/workbench/Dialog'
 import { Icon } from '@renderer/workbench/icons'
 import { ImageViewerDialog } from './ImageViewerDialog'
 import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
 import { useDocumentContextMenu } from '@renderer/core/editor/useDocumentContextMenu'
+import { resolveChatPath } from './chat-file-path'
+import { pastedTextLabel } from '@shared/pasted-text-label'
 
 /** 字节数 → 人类可读（附件条上展示大小） */
 export function formatAttachmentBytes(bytes: number): string {
@@ -16,12 +19,17 @@ export function formatAttachmentBytes(bytes: number): string {
 
 /** 按工作区相对路径读 base64 data URL（图片缩略图 / 放大查看共用） */
 export function useAttachmentImageSrc(root: string | null, file: ChatAttachment, sessionId?: string): string | null {
-  const identity = JSON.stringify([root, sessionId, file.path, file.type])
+  const source = useSyncExternalStore(subscribeEngineSource, getEngineSource)
+  const ready = useSyncExternalStore(subscribeEngineReadiness, isEngineReady)
+  const identity = JSON.stringify([source, ready, root, sessionId, file.path, file.type])
   const [loaded, setLoaded] = useState<{ identity: string; src: string } | null>(null)
   useEffect(() => {
     let alive = true
+    // Restored drafts mount before the engine snapshot; a failed early read
+    // must not leave a permanent placeholder once the connection is ready.
+    if (sessionId && !ready) return
     if ((root || sessionId) && file.type.startsWith('image/')) {
-      const request = sessionId ? readSessionFile(sessionId, file.path, root) : readFile(`${root}/${file.path}`)
+      const request = sessionId ? readSessionFile(sessionId, file.path, root) : readFile(resolveChatPath(file.path, root)?.filePath ?? file.path)
       void request
         .then((result) => {
           if (alive && result.base64) setLoaded({ identity, src: `data:${file.type};base64,${result.base64}` })
@@ -31,7 +39,7 @@ export function useAttachmentImageSrc(root: string | null, file: ChatAttachment,
     return () => {
       alive = false
     }
-  }, [root, file.path, file.type, sessionId, identity])
+  }, [root, file.path, file.type, sessionId, identity, ready])
   return loaded?.identity === identity ? loaded.src : null
 }
 
@@ -53,21 +61,24 @@ export function AttachmentPreviewDialog({ root, preview, onClose, images = [], o
 }): JSX.Element {
   const { file, src: initialSrc } = preview
   const isImage = file.type.startsWith('image/')
-  const identity = JSON.stringify([root, sessionId, file.path, file.type])
+  const source = useSyncExternalStore(subscribeEngineSource, getEngineSource)
+  const ready = useSyncExternalStore(subscribeEngineReadiness, isEngineReady)
+  const identity = JSON.stringify([source, ready, root, sessionId, file.path, file.type])
   const [loaded, setLoaded] = useState<{ identity: string; src: string | null; text: string | null; error?: string } | null>(null)
   const textRef = useRef<HTMLPreElement>(null)
   useEffect(() => {
     let active = true
     if (isImage && initialSrc) return
     if (!root && !sessionId) return
-    const request = sessionId ? readSessionFile(sessionId, file.path, root) : readFile(`${root}/${file.path}`)
+    if (sessionId && !ready) return
+    const request = sessionId ? readSessionFile(sessionId, file.path, root) : readFile(resolveChatPath(file.path, root)?.filePath ?? file.path)
     void request.then(result => {
       if (active) setLoaded({ identity, src: result.base64 ? `data:${file.type};base64,${result.base64}` : null,
         error: isImage && !result.base64 ? '图片内容无法读取' : undefined,
         text: result.truncated ? `${result.content}\n\n…（内容过长已截断）` : result.content })
     }).catch(() => { if (active) setLoaded({ identity, src: null, text: '（读取失败）', error: '图片读取失败，请关闭后重试' }) })
     return () => { active = false }
-  }, [root, sessionId, file.path, file.type, isImage, initialSrc, identity])
+  }, [root, sessionId, file.path, file.type, isImage, initialSrc, identity, ready])
   const result = loaded?.identity === identity ? loaded : null
   const { menu } = useDocumentContextMenu(textRef, { identity: file.path, path: file.path, root,
     active: !isImage && result?.text != null, getText: () => result?.text ?? '' })
@@ -108,6 +119,7 @@ export function AttachmentChip({
     (file.type.startsWith('text/') ||
       /\.(txt|md|markdown|json|jsonc|log|csv|tsv|xml|ya?ml|toml|ini)$/i.test(file.name))
   const src = useAttachmentImageSrc(root, file, sessionId)
+  const pastedLabel = pastedTextLabel(file.name, file.type)
 
   if (isImage) {
     return (
@@ -141,8 +153,8 @@ export function AttachmentChip({
   const body = (
     <>
       {isImage ? <Icon name="image" size={16} /> : <FileGlyph name={file.name} mimeType={file.type} />}
-      {referenceLabel ? <span className="attach-chip__reference">{referenceLabel}</span> : null}
-      <span className="attach-chip__name">{file.name}</span>
+      {referenceLabel && !pastedLabel ? <span className="attach-chip__reference">{referenceLabel}</span> : null}
+      <span className="attach-chip__name">{pastedLabel ?? file.name}</span>
       {file.size > 0 ? <span className="attach-chip__size">{formatAttachmentBytes(file.size)}</span> : null}
     </>
   )
@@ -153,7 +165,7 @@ export function AttachmentChip({
         <button
           type="button"
           className="attach-chip__open"
-          title={`查看 ${file.name}`}
+          title={pastedLabel ? `${file.name}\n长文本已折叠，点击查看全文` : `查看 ${file.name}`}
           onClick={() => onPreview(file, null)}
         >
           {body}

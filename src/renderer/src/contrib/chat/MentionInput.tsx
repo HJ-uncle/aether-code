@@ -19,6 +19,8 @@ import {
   useEffect,
   useImperativeHandle,
   useRef,
+  useState,
+  useSyncExternalStore,
   type ClipboardEvent,
   type JSX
 } from 'react'
@@ -31,12 +33,18 @@ import {
   type MentionSource
 } from './mention-context'
 import { toast } from '@renderer/core/toast'
-import { CHAT_OUTLINE_PATH } from '@renderer/workbench/icons'
-import { acceptsComposerChange, composerInputIssue } from './input-limits'
-import { getEngineSource } from '@renderer/core/engine/source'
+import { AGENT_ICON_GLYPHS, CHAT_OUTLINE_PATH, PACKAGE_VARIANT_CLOSED_PATH, Icon } from '@renderer/workbench/icons'
+import { toolkitName } from '@shared/toolkits'
+import { ContextMenu, type ContextMenuItem } from '@renderer/workbench/ContextMenu'
+import { agentMentionIcon } from './agent-mention-icon'
+import { acceptsComposerChange, COMPOSER_INPUT_LIMIT_MESSAGE } from './input-limits'
+import { getEngineSource, isEngineReady, isRemoteEngine, subscribeEngineReadiness, subscribeEngineSource } from '@renderer/core/engine/source'
+import { useAttachmentImageSrc } from './AttachmentChip'
 import { ATTACHMENT_DRAG_TYPE, attachmentMention, referencesAttachment, type AttachmentReference } from './attachment-references'
 import { ATTACHMENT_CHIP_DRAG_TYPE, ATTACHMENT_CLIPBOARD_TYPE, attachmentDragKey, attachmentDropReference, rebindAttachmentClipboard } from './attachment-editor-transfer'
 import { createMentionEditHistory, sameAuthoredDraft } from './mention-edit-history'
+import { createMentionDragPreview, mentionDropTarget } from './mention-drag-feedback'
+import { pastedTextLabel } from '@shared/pasted-text-label'
 import './attachment-mention-input.css'
 export { formatPathDisplay, type Mention, type MentionSource } from './mention-context'
 
@@ -51,6 +59,8 @@ export interface MentionInputHandle {
   insertMention: (mention: Mention) => void
   /** @ 补全选中：把光标前的「@关键词」文本替换为 chip */
   completeMention: (mention: Mention) => void
+  /** Consume only the active @ query for a resource action, without inserting a reference. */
+  dismissMentionQuery: () => void
   /** / 资源补全：把光标前的 /关键词消费掉；资源以 composer chip 展示并走独立绑定字段 */
   completeSlash: (token: string) => void
   /** 删除遗留的手工资源 token（兼容旧草稿），同时保留其它 @ 引用 chip */
@@ -72,6 +82,11 @@ export interface MentionInputHandle {
  * 这个空格后 DOM 会紧贴，正文里 `@a/b.ts在帮我改` 这种边界谁也认不出来。
  */
 function spacerAfter(chip: HTMLElement): Text {
+  const next = chip.nextSibling
+  if (next instanceof Text && /^[ \u00a0]/.test(next.data)) {
+    if (next.length > 1) next.splitText(1)
+    return next
+  }
   const spacer = document.createTextNode(' ')
   chip.after(spacer)
   return spacer
@@ -84,6 +99,8 @@ function spacerAfter(chip: HTMLElement): Text {
  * chip 只是它在 DOM 里的投影。
  */
 function makeChip(mention: Mention, key: string, interactive = false): HTMLElement {
+  const toolkit = mention.source === 'toolkit'
+  const displayText = toolkit ? toolkitName(mention.path ?? '') : mention.displayText
   const chip = document.createElement('span')
   chip.className = `mention-chip mention-chip--${mention.source}`
   chip.contentEditable = 'false'
@@ -92,27 +109,38 @@ function makeChip(mention: Mention, key: string, interactive = false): HTMLEleme
   chip.title = mentionTitle(mention)
   const label = document.createElement('span')
   label.className = 'mention-chip__label'
-  label.textContent = mention.displayText
+  label.textContent = displayText
   chip.appendChild(label)
-  if (mention.source === 'conversation') {
+  const agentIcon = agentMentionIcon(mention)
+  if (mention.source === 'conversation' || agentIcon || toolkit) {
+    const glyph = agentIcon ? AGENT_ICON_GLYPHS[agentIcon]
+      : toolkit ? { path: PACKAGE_VARIANT_CLOSED_PATH, fill: 'currentColor', strokeWidth: undefined }
+      : { path: CHAT_OUTLINE_PATH, fill: 'none', strokeWidth: 1.75 }
     const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
     icon.classList.add('mention-chip__icon')
-    icon.setAttribute('width', '14')
-    icon.setAttribute('height', '14')
+    if (agentIcon) icon.classList.add('mention-chip__icon--agent')
+    if (toolkit) icon.classList.add('mention-chip__icon--toolkit')
+    icon.setAttribute('width', agentIcon || toolkit ? '16' : '14')
+    icon.setAttribute('height', agentIcon || toolkit ? '16' : '14')
     icon.setAttribute('viewBox', '0 0 24 24')
     icon.setAttribute('aria-hidden', 'true')
     icon.setAttribute('focusable', 'false')
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-    path.setAttribute('d', CHAT_OUTLINE_PATH)
-    path.setAttribute('fill', 'none')
-    path.setAttribute('stroke', 'currentColor')
-    path.setAttribute('stroke-width', '1.75')
+    path.setAttribute('d', glyph.path)
+    path.setAttribute('fill', glyph.fill)
+    if (glyph.strokeWidth) {
+      path.setAttribute('stroke', 'currentColor')
+      path.setAttribute('stroke-width', String(glyph.strokeWidth))
+    }
     path.setAttribute('stroke-linecap', 'round')
     path.setAttribute('stroke-linejoin', 'round')
     icon.appendChild(path)
     chip.prepend(icon)
   }
-  if (interactive) {
+  if (toolkit) {
+    chip.setAttribute('aria-label', `工具包：${displayText}`)
+    chip.tabIndex = 0
+  } else if (interactive) {
     chip.setAttribute('role', 'button')
     chip.setAttribute('aria-label', `查看引用：${mention.displayText}`)
     chip.tabIndex = 0
@@ -127,29 +155,70 @@ function paintAttachmentChip(chip: HTMLElement, mention: Mention, reference?: At
   chip.tabIndex = 0
   chip.setAttribute('aria-label', chip.getAttribute('role') === 'button'
     ? `查看引用：${mention.displayText}` : `引用 ${mention.displayText}`)
-  chip.title = `${reference?.file.name ?? mention.path ?? mention.displayText}\n拖动调整位置；Delete 删除引用`
+  const pasted = reference && pastedTextLabel(reference.file.name, reference.file.type)
+  chip.title = `${reference?.file.name ?? mention.path ?? mention.displayText}\n${pasted ? '长文本已折叠，点击查看全文；' : ''}拖动调整位置；Delete 删除引用`
   const label = chip.querySelector<HTMLElement>('.mention-chip__label')
   if (label && label.textContent !== mention.displayText) label.textContent = mention.displayText
 }
 
-/** Native drop selection can point inside an atomic chip. Resolve it to the
- * visual edge under the pointer, never to the editor's previous caret. */
-function dropRangeAt(box: HTMLElement, x: number, y: number): Range {
-  const range = document.caretRangeFromPoint(x, y) ?? document.createRange()
-  if (!box.contains(range.startContainer)) {
-    range.selectNodeContents(box)
-    range.collapse(y < box.getBoundingClientRect().top)
-    return range
-  }
-  const element = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement
-  const chip = element?.closest<HTMLElement>('[data-mention-key]')
-  if (chip && box.contains(chip)) {
-    const rect = chip.getBoundingClientRect()
-    if (x < rect.left + rect.width / 2) range.setStartBefore(chip)
-    else range.setStartAfter(chip)
-  }
+interface InlineAttachmentImage {
+  scope: string
+  id: string
+  path: string
+  type: string
+  src: string | null
+}
+
+function attachmentImageKey(reference: AttachmentReference): string {
+  return JSON.stringify([reference.id, reference.file.path, reference.file.type])
+}
+
+/** Edited attachments retain their ID; history can also reference an older file. */
+function resolveAttachmentReference(mention: Mention, references: readonly AttachmentReference[]): AttachmentReference | undefined {
+  const matches = references.filter(reference => referencesAttachment(mention, reference))
+  return matches.find(reference => reference.file.path.replace(/\\/g, '/') === mention.path?.replace(/\\/g, '/')) ?? matches[0]
+}
+
+/** Load once per attachment, even when the draft references it several times. */
+function AttachmentImageSource({ reference, root, sessionId, scope, onImage }: {
+  reference: AttachmentReference
+  root: string | null
+  sessionId?: string
+  scope: string
+  onImage: (image: InlineAttachmentImage) => void
+}): null {
+  const { id, file: { path, type } } = reference
+  const src = useAttachmentImageSrc(root, reference.file, sessionId)
+  useEffect(() => { onImage({ scope, id, path, type, src }) }, [scope, id, path, type, src, onImage])
+  return null
+}
+
+function paintAttachmentThumbnail(chip: HTMLElement, src: string | null): void {
+  const previous = chip.querySelector<HTMLImageElement>('.mention-chip__thumbnail')
+  if (!src) { previous?.remove(); return }
+  if (previous?.getAttribute('src') === src) return
+  const thumbnail = document.createElement('img')
+  thumbnail.className = 'mention-chip__thumbnail'
+  thumbnail.alt = ''
+  thumbnail.setAttribute('aria-hidden', 'true')
+  thumbnail.draggable = false
+  thumbnail.style.visibility = 'hidden'
+  thumbnail.onload = () => { thumbnail.style.removeProperty('visibility') }
+  thumbnail.onerror = () => thumbnail.remove()
+  thumbnail.src = src
+  if (previous) previous.replaceWith(thumbnail)
+  else chip.prepend(thumbnail)
+}
+
+function collapseChipSelection(box: HTMLElement, chip: HTMLElement): void {
+  const selection = window.getSelection()
+  if (!selection?.rangeCount || selection.isCollapsed) return
+  const range = selection.getRangeAt(0)
+  if (!box.contains(range.commonAncestorContainer) || !range.intersectsNode(chip)) return
+  range.setStartBefore(chip)
   range.collapse(true)
-  return range
+  selection.removeAllRanges()
+  selection.addRange(range)
 }
 
 interface InputDraft { text: string; mentions: Mention[] }
@@ -234,7 +303,6 @@ interface MentionInputProps {
   /** 粘贴的文本超过阈值时交给附件体系落成「粘贴的文本-xxx.txt」；返回 true 表示已接管 */
   onPasteText?: (text: string, insertion: MentionInsertion) => boolean
   onOpenMention?: (mention: Mention) => void
-  onInputLimit?: (message: string) => void
   /**
    * @ 补全触发：光标前出现「@关键词」时回调关键词（可为空串），
    * 光标移开或关键词失效时回调 null。父组件据此弹出/关闭文件选择面板。
@@ -246,7 +314,7 @@ interface MentionInputProps {
 
 export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
   function MentionInput(
-    { value, disabled, placeholder, ariaLabel, className, baseClassName, includeMentionClass = true, attachmentReferences = [], attachmentRoot = null, attachmentSessionId, onChange, onSubmit, onPasteFiles, onPasteText, onOpenMention, onInputLimit, onMentionQuery, onSlashQuery },
+    { value, disabled, placeholder, ariaLabel, className, baseClassName, includeMentionClass = true, attachmentReferences = [], attachmentRoot = null, attachmentSessionId, onChange, onSubmit, onPasteFiles, onPasteText, onOpenMention, onMentionQuery, onSlashQuery },
     ref
   ): JSX.Element {
     const boxRef = useRef<HTMLDivElement>(null)
@@ -265,13 +333,25 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
     disabledRef.current = disabled
     const instanceRef = useRef(crypto.randomUUID())
     const clipboardRef = useRef<{ token: string; draft: InputDraft; scope: string } | null>(null)
-    const draftScope = JSON.stringify([getEngineSource(), attachmentRoot, attachmentSessionId])
+    const engineSource = useSyncExternalStore(subscribeEngineSource, getEngineSource)
+    const engineReady = useSyncExternalStore(subscribeEngineReadiness, isEngineReady)
+    const draftScope = JSON.stringify([engineSource, attachmentRoot, attachmentSessionId])
+    const imageScope = JSON.stringify([draftScope, engineReady])
+    const imageScopeRef = useRef(imageScope)
+    imageScopeRef.current = imageScope
+    const imageSourcesRef = useRef(new Map<string, InlineAttachmentImage>())
+    const imageSessionId = !isRemoteEngine() && attachmentRoot ? undefined : attachmentSessionId
     const draftScopeRef = useRef(draftScope)
     draftScopeRef.current = draftScope
     const domDraftScopeRef = useRef(draftScope)
     const pointerRef = useRef<{ x: number; y: number; moved: boolean } | null>(null)
     const localTextDragRef = useRef(false)
     const suppressClickUntilRef = useRef(0)
+    const pointerChipRef = useRef<HTMLElement | null>(null)
+    const dragPreviewRef = useRef<HTMLElement | null>(null)
+    const dropCaretRef = useRef<HTMLElement | null>(null)
+    const dropPointRef = useRef<{ x: number; y: number } | null>(null)
+    const [chipMenu, setChipMenu] = useState<{ chip: HTMLElement; key: string; scope: string; x: number; y: number } | null>(null)
     const editHistoryRef = useRef(createMentionEditHistory())
     const restoringHistoryRef = useRef(false)
 
@@ -280,20 +360,118 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       clipboardRef.current = null
     }, [draftScope])
 
+    const releasePointerChip = useCallback((): void => {
+      pointerChipRef.current?.classList.remove('is-pointer-drag')
+      pointerChipRef.current = null
+    }, [])
+
+    const hideDropCaret = useCallback((): void => {
+      dropCaretRef.current?.remove()
+      dropCaretRef.current = null
+      dropPointRef.current = null
+    }, [])
+    const clearDragFeedback = useCallback((): void => {
+      hideDropCaret()
+      dragPreviewRef.current?.remove()
+      dragPreviewRef.current = null
+    }, [hideDropCaret])
+    const showDropCaret = useCallback((x: number, y: number): void => {
+      const box = boxRef.current
+      if (!box || disabledRef.current || composingRef.current) { hideDropCaret(); return }
+      const bounds = box.getBoundingClientRect()
+      if (x < bounds.left || x > bounds.right || y < bounds.top || y > bounds.bottom) { hideDropCaret(); return }
+      const { caret } = mentionDropTarget(box, x, y)
+      const indicator = dropCaretRef.current ?? document.createElement('span')
+      indicator.className = 'mention-input-drop-caret'
+      indicator.setAttribute('aria-hidden', 'true')
+      const top = Math.max(bounds.top, caret.top), bottom = Math.min(bounds.bottom, caret.top + caret.height)
+      Object.assign(indicator.style, { left: `${caret.left - 1}px`, top: `${top}px`, height: `${Math.max(0, bottom - top)}px` })
+      if (!dropCaretRef.current) document.body.appendChild(indicator)
+      dropCaretRef.current = indicator
+      dropPointRef.current = { x, y }
+    }, [hideDropCaret])
+
+    useEffect(() => {
+      const refresh = (): void => { const point = dropPointRef.current; if (point) showDropCaret(point.x, point.y) }
+      const escape = (event: KeyboardEvent): void => { if (event.key === 'Escape') clearDragFeedback() }
+      document.addEventListener('dragend', clearDragFeedback)
+      document.addEventListener('drop', clearDragFeedback, true)
+      document.addEventListener('keydown', escape, true)
+      document.addEventListener('scroll', refresh, true)
+      window.addEventListener('resize', refresh)
+      window.addEventListener('blur', clearDragFeedback)
+      return () => {
+        clearDragFeedback()
+        document.removeEventListener('dragend', clearDragFeedback)
+        document.removeEventListener('drop', clearDragFeedback, true)
+        document.removeEventListener('keydown', escape, true)
+        document.removeEventListener('scroll', refresh, true)
+        window.removeEventListener('resize', refresh)
+        window.removeEventListener('blur', clearDragFeedback)
+      }
+    }, [clearDragFeedback, showDropCaret])
+    useEffect(clearDragFeedback, [draftScope, disabled, clearDragFeedback])
+
+    useEffect(() => {
+      // Disable selection only for a gesture that starts on a reference. A
+      // selection started in surrounding prose can still include and copy it.
+      const preventChipSelection = (event: Event): void => {
+        if (pointerChipRef.current && event.target instanceof Node && boxRef.current?.contains(event.target)) event.preventDefault()
+      }
+      const cancel = (): void => { releasePointerChip(); pointerRef.current = null }
+      document.addEventListener('selectstart', preventChipSelection)
+      document.addEventListener('pointerup', releasePointerChip)
+      document.addEventListener('pointercancel', releasePointerChip)
+      document.addEventListener('dragend', releasePointerChip)
+      window.addEventListener('blur', cancel)
+      return () => {
+        releasePointerChip()
+        document.removeEventListener('selectstart', preventChipSelection)
+        document.removeEventListener('pointerup', releasePointerChip)
+        document.removeEventListener('pointercancel', releasePointerChip)
+        document.removeEventListener('dragend', releasePointerChip)
+        window.removeEventListener('blur', cancel)
+      }
+    }, [releasePointerChip])
+
+    useEffect(() => { releasePointerChip(); setChipMenu(null) }, [draftScope, disabled, releasePointerChip])
+
     const decorateChip = useCallback((chip: HTMLElement, mention: Mention): Mention => {
-      const reference = attachmentReferencesRef.current.find(item => referencesAttachment(mention, item))
+      const reference = resolveAttachmentReference(mention, attachmentReferencesRef.current)
       // Reordering changes presentation only. A replacement file's path and
       // serialized text are committed together by the owning composer.
-      const updated = reference ? { ...mention, displayText: reference.label, attachmentId: reference.id } : mention
+      const updated = mention.source === 'toolkit' ? { ...mention, displayText: toolkitName(mention.path ?? '') }
+        : reference ? { ...mention, displayText: reference.label, attachmentId: reference.id } : mention
       chip.draggable = !disabledRef.current
       paintAttachmentChip(chip, updated, reference)
+      const image = reference ? imageSourcesRef.current.get(attachmentImageKey(reference)) : undefined
+      paintAttachmentThumbnail(chip, image?.scope === imageScopeRef.current && image.path === reference?.file.path &&
+        image.type === reference.file.type ? image.src : null)
       return updated
     }, [])
 
-    const reportInputLimit = useCallback((message: string) => {
-      if (onInputLimit) onInputLimit(message)
-      else toast.info(message)
-    }, [onInputLimit])
+    const updateAttachmentImage = useCallback((image: InlineAttachmentImage): void => {
+      if (image.scope !== imageScopeRef.current) return
+      const reference = attachmentReferencesRef.current.find(item => item.id === image.id &&
+        item.file.path === image.path && item.file.type === image.type)
+      if (!reference) return
+      imageSourcesRef.current.set(attachmentImageKey(reference), image)
+      // Only replace the decorative image. The chip and its surrounding text
+      // retain their nodes, selection, undo state and authored offsets.
+      boxRef.current?.querySelectorAll<HTMLElement>('[data-mention-key]').forEach(chip => {
+        const mention = mentionsRef.current.get(chip.dataset.mentionKey!)
+        if (mention && resolveAttachmentReference(mention, attachmentReferencesRef.current) === reference) {
+          paintAttachmentThumbnail(chip, image.src)
+        }
+      })
+    }, [])
+
+    useEffect(() => {
+      const keys = new Set(attachmentReferences.map(attachmentImageKey))
+      for (const [key, image] of imageSourcesRef.current) {
+        if (!keys.has(key) || image.scope !== imageScope) imageSourcesRef.current.delete(key)
+      }
+    }, [attachmentReferences, imageScope])
 
     const invalidateInsertions = useCallback(() => {
       draftGenerationRef.current++
@@ -395,23 +573,21 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
     }, [serialize])
 
     /** 把当前 DOM 序列化并抛给父组件（IME 组合中不抛，避免打断输入法） */
-    const emitChange = useCallback((typing = false): boolean => {
+    const emitChange = useCallback((typing = false, textEdit = true): boolean => {
       if (composingRef.current) return true
       dropEmptyResidue()
       const { text, mentions } = serialize()
-      if (!acceptsComposerChange(acceptedDraftRef.current.text, text)) {
+      if (textEdit && !restoringHistoryRef.current && !acceptsComposerChange(acceptedDraftRef.current, { text, mentions })) {
         const accepted = acceptedDraftRef.current
         restoreDraft(accepted.text, accepted.mentions, false)
         const box = boxRef.current
         if (box && document.activeElement === box) {
           const range = document.createRange()
-          range.selectNodeContents(box)
-          range.collapse(false)
+          range.selectNodeContents(box); range.collapse(false)
           const selection = window.getSelection()
-          selection?.removeAllRanges()
-          selection?.addRange(range)
+          selection?.removeAllRanges(); selection?.addRange(range)
         }
-        reportInputLimit(composerInputIssue(text)!)
+        toast.info(COMPOSER_INPUT_LIMIT_MESSAGE)
         return false
       }
       if (!restoringHistoryRef.current) editHistoryRef.current.record(acceptedDraftRef.current, { text, mentions }, typing)
@@ -419,7 +595,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       acceptedDraftRef.current = { text, mentions }
       onChange(text, mentions)
       return true
-    }, [onChange, serialize, dropEmptyResidue, reportInputLimit, restoreDraft])
+    }, [onChange, serialize, dropEmptyResidue, restoreDraft])
 
     const restoreHistory = useCallback((redo: boolean, current = serialize()): boolean => {
       const next = redo ? editHistoryRef.current.redo(current) : editHistoryRef.current.undo(current)
@@ -466,16 +642,19 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       if (changed) emitChange()
     }, [decorateChip, emitChange])
 
-    useEffect(refreshAttachmentChips, [attachmentReferences, refreshAttachmentChips])
+    useEffect(refreshAttachmentChips, [attachmentReferences, imageScope, refreshAttachmentChips])
 
     const insertMentionAt = useCallback(
-      (mention: Mention, target?: Range, preserveSelection = false): boolean => {
+      (mention: Mention, target?: Range, options: { preserveSelection?: boolean; preserveLineBreak?: boolean } = {}): boolean => {
+        const { preserveSelection = false, preserveLineBreak = false } = options
         const box = boxRef.current
         if (!box) return false
         for (const [existingKey, existing] of mentionsRef.current) {
           if (mention.origin !== 'attachment' && sameMention(existing, mention) && box.querySelector(`[data-mention-key="${existingKey}"]`)) {
             if (!preserveSelection) box.focus()
-            return true
+            // Completion may already have consumed its @ query before finding
+            // an existing chip. Persist that deletion even when insertion deduplicates.
+            return emitChange(false, false)
           }
         }
         const key = `m${++keySeqRef.current}`
@@ -499,8 +678,9 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         const boundaries = caretBoundaries(range, box)
         const hasRight = boundaries.hasRight
         let left = boundaries.left
-        // 末尾换行是视觉残留，算进正文会把 chip 顶到下一行；插入前先吃掉它
-        if (/\n$/.test(left) && range.startContainer.nodeType === Node.TEXT_NODE && range.startOffset > 0) {
+        // Drop targets are explicit visual positions: consuming a newline here
+        // would move the reference above the insertion indicator.
+        if (!preserveLineBreak && /\n$/.test(left) && range.startContainer.nodeType === Node.TEXT_NODE && range.startOffset > 0) {
           range.setStart(range.startContainer, range.startOffset - 1)
           left = left.slice(0, -1)
         }
@@ -525,7 +705,8 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
           selection?.removeAllRanges()
           selection?.addRange(savedSelection)
         }
-        return emitChange()
+        // Reference chips and their separating spaces do not consume the user's text allowance.
+        return emitChange(false, false)
       },
       [emitChange, onOpenMention, decorateChip]
     )
@@ -589,10 +770,10 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
             cancel()
             return false
           }
-          // The range follows anchor removal; consume before the insertion so a
-          // limit rollback or a synchronous parent update cannot reuse it.
+          // The range follows anchor removal; consume before insertion so a
+          // synchronous parent update cannot reuse it.
           cancel()
-          return insertMentionAt(mention, target, true)
+          return insertMentionAt(mention, target, { preserveSelection: true })
         }
       }
     }, [insertMentionAt])
@@ -756,6 +937,24 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       [insertMention, onMentionQuery]
     )
 
+    const dismissMentionQuery = useCallback((): void => {
+      if (disabledRef.current || composingRef.current) return
+      const box = boxRef.current
+      const selection = window.getSelection()
+      const keyword = detectMentionQuery()
+      if (box && selection?.rangeCount && keyword !== null) {
+        const range = selection.getRangeAt(0).cloneRange()
+        range.setStart(range.startContainer, range.startOffset - keyword.length - 1)
+        range.deleteContents()
+        range.collapse(true)
+        box.focus()
+        selection.removeAllRanges()
+        selection.addRange(range)
+        emitChange()
+      } else box?.focus()
+      onMentionQuery?.(null)
+    }, [detectMentionQuery, emitChange, onMentionQuery])
+
     const completeSlash = useCallback((_token: string) => {
       const box = boxRef.current
       const selection = window.getSelection()
@@ -826,6 +1025,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       () => ({
         insertMention,
         completeMention,
+        dismissMentionQuery,
         completeSlash,
         removeTextToken,
         removeAttachmentReferences,
@@ -842,7 +1042,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         },
         focus: () => boxRef.current?.focus()
       }),
-      [insertMention, completeMention, completeSlash, removeTextToken, removeAttachmentReferences, rebuildFromText, restoreDraft, emitChange, invalidateInsertions]
+      [insertMention, completeMention, dismissMentionQuery, completeSlash, removeTextToken, removeAttachmentReferences, rebuildFromText, restoreDraft, emitChange, invalidateInsertions]
     )
 
     // 光标移动（点击/方向键）不产生 input 事件，用 selectionchange 补齐 @ 触发检测
@@ -872,7 +1072,11 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       boxRef.current?.querySelectorAll<HTMLElement>('[data-mention-key]').forEach((chip) => {
         const mention = mentionsRef.current.get(chip.dataset.mentionKey ?? '')
         chip.draggable = Boolean(mention) && !disabled
-        if (onOpenMention && mention) {
+        if (mention?.source === 'toolkit') {
+          chip.removeAttribute('role')
+          chip.setAttribute('aria-label', `工具包：${toolkitName(mention.path ?? '')}`)
+          chip.tabIndex = 0
+        } else if (onOpenMention && mention) {
           chip.setAttribute('role', 'button')
           chip.setAttribute('aria-label', `查看引用：${mention.displayText}`)
           chip.tabIndex = 0
@@ -897,10 +1101,10 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement
       const enclosingChip = ancestor?.closest<HTMLElement>('[data-mention-key]')
       const enclosingMention = enclosingChip ? mentionsRef.current.get(enclosingChip.dataset.mentionKey ?? '') : undefined
-      if (enclosingChip && (enclosingMention?.source === 'conversation' || enclosingMention?.origin === 'attachment')) range.selectNode(enclosingChip)
+      if (enclosingChip && (enclosingMention?.source === 'conversation' || enclosingMention?.source === 'toolkit' || enclosingMention?.origin === 'attachment')) range.selectNode(enclosingChip)
       const fragment = range.cloneContents()
       const draft = serializeNodes(fragment.childNodes, mentionsRef.current, false)
-      if (draft.mentions.some(mention => mention.origin === 'attachment' && mention.content === undefined)) {
+      if (draft.mentions.some(mention => mention.source === 'toolkit' || mention.origin === 'attachment' && mention.content === undefined)) {
         const token = crypto.randomUUID()
         clipboardRef.current = { token, draft, scope: draftScopeRef.current }
         event.clipboardData.setData(ATTACHMENT_CLIPBOARD_TYPE, token)
@@ -942,12 +1146,6 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       if (!box) return
       let range = selection?.rangeCount ? selection.getRangeAt(0) : document.createRange()
       if (!box.contains(range.commonAncestorContainer)) { range = document.createRange(); range.selectNodeContents(box); range.collapse(false) }
-      const before = document.createRange(), after = document.createRange()
-      before.selectNodeContents(box); before.setEnd(range.startContainer, range.startOffset)
-      after.selectNodeContents(box); after.setStart(range.endContainer, range.endOffset)
-      const projected = serializeNodes(before.cloneContents().childNodes, mentionsRef.current, false).text + draft.text +
-        serializeNodes(after.cloneContents().childNodes, mentionsRef.current, false).text
-      if (!acceptsComposerChange(serialize().text, projected)) { reportInputLimit(composerInputIssue(projected)!); return }
       const fragment = document.createDocumentFragment()
       let cursor = 0
       for (const mention of draft.mentions) {
@@ -964,7 +1162,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       box.focus(); range.setStartAfter(last); range.collapse(true)
       selection?.removeAllRanges(); selection?.addRange(range)
       emitChange(); syncMentionQuery(); syncSlashQuery()
-    }, [decorateChip, emitChange, onOpenMention, reportInputLimit, serialize, syncMentionQuery, syncSlashQuery])
+    }, [decorateChip, emitChange, onOpenMention, syncMentionQuery, syncSlashQuery])
 
     const moveMentionChip = useCallback((chip: HTMLElement, range: Range): void => {
       const box = boxRef.current
@@ -980,7 +1178,49 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       emitChange(); syncMentionQuery(); syncSlashQuery()
     }, [emitChange, syncMentionQuery, syncSlashQuery])
 
-    return (
+    const menuMention = chipMenu?.scope === draftScope && boxRef.current?.contains(chipMenu.chip)
+      ? mentionsRef.current.get(chipMenu.key) : undefined
+    const menuItems: ContextMenuItem[] = []
+    if (chipMenu && menuMention) {
+      // Menu actions resolve the registered node again: a draft replacement
+      // while the menu is open must never act on the next session's reference.
+      const act = (action: (mention: Mention, chip: HTMLElement) => void): (() => void) => () => {
+        const mention = mentionsRef.current.get(chipMenu.key)
+        if (mention && chipMenu.scope === draftScopeRef.current && boxRef.current?.contains(chipMenu.chip)) action(mention, chipMenu.chip)
+      }
+      const copy = (text: string): void => {
+        void navigator.clipboard.writeText(text).catch(() => toast.error('复制失败，请重试'))
+      }
+      const reference = resolveAttachmentReference(menuMention, attachmentReferences)
+      const isImage = reference?.file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(menuMention.path ?? '')
+      const openLabel = menuMention.source === 'agent' ? '查看 Agent' : menuMention.source === 'dir' ? '打开文件夹'
+        : menuMention.source === 'conversation' ? '打开会话' : menuMention.source === 'browser' ? '打开网页'
+        : isImage ? '预览图片' : menuMention.source === 'file' || menuMention.source === 'code' ? '打开文件' : '查看引用'
+      if (onOpenMention && menuMention.source !== 'toolkit') menuItems.push({ id: 'open', label: openLabel, icon: <Icon name="open-in-new" size={16} />,
+        onSelect: act(mention => onOpenMention(mention)) })
+      if (menuMention.path && menuMention.source !== 'agent' && menuMention.source !== 'toolkit' &&
+        (menuMention.source !== 'browser' || /^https?:\/\//i.test(menuMention.path))) menuItems.push({ id: 'copy-path',
+        label: ['conversation', 'browser'].includes(menuMention.source) ? '复制链接' : '复制路径', icon: <Icon name="copy" size={16} />,
+        onSelect: act(mention => copy(mention.path!)) })
+      else menuItems.push({ id: 'copy-name', label: '复制名称', icon: <Icon name="copy" size={16} />,
+        onSelect: act(mention => copy(mention.displayText)) })
+      if (menuMention.content !== undefined) menuItems.push({ id: 'copy-content', label: '复制内容', icon: <Icon name="copy" size={16} />,
+        onSelect: act(mention => copy(mention.content ?? '')) })
+      menuItems.push({ id: 'continue', label: '在后面继续输入', separatorBefore: true, disabled,
+        icon: <Icon name="pencil" size={16} />, onSelect: act((_mention, chip) => {
+          if (disabledRef.current) return
+          const spacer = chip.nextSibling?.nodeType === Node.TEXT_NODE ? chip.nextSibling : spacerAfter(chip)
+          boxRef.current?.focus()
+          const range = document.createRange()
+          range.setStart(spacer, /^\s/.test(spacer.textContent ?? '') ? 1 : 0); range.collapse(true)
+          const selection = window.getSelection()
+          selection?.removeAllRanges(); selection?.addRange(range)
+        }) })
+      menuItems.push({ id: 'remove', label: '移除引用', hint: 'Delete', disabled, icon: <Icon name="close" size={16} />,
+        onSelect: act((_mention, chip) => { if (!disabledRef.current) removeChip(chip) }) })
+    }
+
+    return (<>
       <div
         ref={boxRef}
         className={[baseClassName ?? 'chat__input', className, includeMentionClass ? 'mention-input' : undefined].filter(Boolean).join(' ')}
@@ -1019,7 +1259,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
             const draft = clipboard.scope === draftScopeRef.current
               ? rebindAttachmentClipboard(clipboard.draft, attachmentReferencesRef.current) : null
             if (draft) pasteAttachmentDraft(draft)
-            else toast.info('复制的附件已不在当前草稿中，请重新添加后引用。')
+            else toast.info('复制的引用已不在当前会话中，请重新添加。')
             return
           }
           const files = [...event.clipboardData.files]
@@ -1032,7 +1272,8 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
           event.preventDefault()
           const text = event.clipboardData.getData('text/plain')
           if (!text) return
-          // 长文本优先落成附件（wuzu-client 同款「粘贴的文本-xxx.txt」），未接管才插入光标处
+          // Long text is saved as an attachment by the owner before the editor
+          // applies its plain-text budget to an ordinary short paste.
           if (onPasteText) {
             const insertion = createPasteInsertion()
             try {
@@ -1043,35 +1284,23 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
             }
             insertion.cancel()
           }
-          const current = serialize().text
-          let projected = current + text
-          const box = boxRef.current
-          const selection = window.getSelection()
-          if (box && selection?.rangeCount) {
-            const range = selection.getRangeAt(0)
-            if (box.contains(range.commonAncestorContainer)) {
-              const before = document.createRange()
-              before.selectNodeContents(box)
-              before.setEnd(range.startContainer, range.startOffset)
-              const after = document.createRange()
-              after.selectNodeContents(box)
-              after.setStart(range.endContainer, range.endOffset)
-              projected = serializeNodes(before.cloneContents().childNodes, mentionsRef.current, false).text + text +
-                serializeNodes(after.cloneContents().childNodes, mentionsRef.current, false).text
-            }
-          }
-          if (!acceptsComposerChange(current, projected)) {
-            reportInputLimit(composerInputIssue(projected)!)
-            return
-          }
-          document.execCommand('insertText', false, text)
+          // Chromium's insertText can split a following atomic reference into
+          // another block on multiline paste, adding a newline the user never
+          // authored. Insert text nodes through the same undo-aware draft path.
+          pasteAttachmentDraft({ text, mentions: [] })
         }}
         onPointerDown={(event) => {
+          releasePointerChip()
           suppressClickUntilRef.current = 0
           const chip = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-mention-key]') : null
-          pointerRef.current = !disabled && !composingRef.current && chip && event.currentTarget.contains(chip) &&
+          pointerRef.current = event.button === 0 && !disabled && !composingRef.current && chip && event.currentTarget.contains(chip) &&
             mentionsRef.current.has(chip.dataset.mentionKey ?? '')
             ? { x: event.clientX, y: event.clientY, moved: false } : null
+          if (pointerRef.current && chip) {
+            pointerChipRef.current = chip
+            chip.classList.add('is-pointer-drag')
+            collapseChipSelection(event.currentTarget, chip)
+          }
         }}
         onPointerMove={(event) => {
           const pointer = pointerRef.current
@@ -1085,13 +1314,18 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
           if (disabled || composingRef.current) { event.preventDefault(); return }
           const mention = mentionsRef.current.get(chip.dataset.mentionKey ?? '')
           if (!mention) { event.preventDefault(); return }
+          collapseChipSelection(event.currentTarget, chip)
           event.dataTransfer.effectAllowed = 'move'
           event.dataTransfer.setData(ATTACHMENT_CHIP_DRAG_TYPE, JSON.stringify({ owner: instanceRef.current, key: chip.dataset.mentionKey }))
           event.dataTransfer.setData('text/plain', mention.displayText)
-          event.dataTransfer.setDragImage(chip, 12, 12)
+          dragPreviewRef.current?.remove()
+          dragPreviewRef.current = createMentionDragPreview(chip)
+          event.dataTransfer.setDragImage(dragPreviewRef.current, 12, 12)
           suppressClickUntilRef.current = Date.now() + 700
         }}
         onDragEnd={(event) => {
+          clearDragFeedback()
+          releasePointerChip()
           localTextDragRef.current = false
           const chip = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-mention-key]') : null
           if (!chip || !event.currentTarget.contains(chip)) return
@@ -1106,11 +1340,17 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         }}
         onDragOver={(event) => {
           const internal = event.dataTransfer.types.includes(ATTACHMENT_CHIP_DRAG_TYPE)
-          if (!internal && !event.dataTransfer.types.includes(ATTACHMENT_DRAG_TYPE)) return
+          if (!internal && !event.dataTransfer.types.includes(ATTACHMENT_DRAG_TYPE)) { hideDropCaret(); return }
           event.preventDefault(); event.stopPropagation()
           event.dataTransfer.dropEffect = disabled || composingRef.current ? 'none' : internal ? 'move' : 'copy'
+          showDropCaret(event.clientX, event.clientY)
+        }}
+        onDragLeave={(event) => {
+          if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return
+          hideDropCaret()
         }}
         onDrop={(event) => {
+          clearDragFeedback()
           const internal = event.dataTransfer.types.includes(ATTACHMENT_CHIP_DRAG_TYPE)
           if (!internal && !event.dataTransfer.types.includes(ATTACHMENT_DRAG_TYPE)) {
             // Browser HTML from another surface must not acquire registered
@@ -1119,7 +1359,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
             event.preventDefault(); event.stopPropagation()
             const box = boxRef.current, text = event.dataTransfer.getData('text/plain')
             if (disabled || composingRef.current || !box || !text) return
-            const range = dropRangeAt(box, event.clientX, event.clientY), selection = window.getSelection()
+            const { range } = mentionDropTarget(box, event.clientX, event.clientY), selection = window.getSelection()
             selection?.removeAllRanges(); selection?.addRange(range)
             pasteAttachmentDraft({ text, mentions: [] })
             return
@@ -1127,14 +1367,14 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
           event.preventDefault(); event.stopPropagation()
           const box = boxRef.current
           if (disabled || composingRef.current || !box) return
-          const range = dropRangeAt(box, event.clientX, event.clientY)
+          const { range } = mentionDropTarget(box, event.clientX, event.clientY)
           if (internal) {
             const key = attachmentDragKey(event.dataTransfer.getData(ATTACHMENT_CHIP_DRAG_TYPE), instanceRef.current)
             const chip = key ? [...box.querySelectorAll<HTMLElement>('[data-mention-key]')].find(node => node.dataset.mentionKey === key) : undefined
             if (chip && key && mentionsRef.current.has(key)) moveMentionChip(chip, range)
           } else {
             const reference = attachmentDropReference(event.dataTransfer.getData(ATTACHMENT_DRAG_TYPE), attachmentReferencesRef.current)
-            if (reference) insertMentionAt(attachmentMention(reference), range)
+            if (reference) insertMentionAt(attachmentMention(reference), range, { preserveLineBreak: true })
           }
           onMentionQuery?.(null); onSlashQuery?.(null)
         }}
@@ -1148,10 +1388,18 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
             }
             pointerRef.current = null
           }
-          if (mention && onOpenMention) {
+          if (mention && mention.source !== 'toolkit' && onOpenMention) {
             event.stopPropagation()
             onOpenMention(mention)
           }
+        }}
+        onContextMenu={(event) => {
+          const chip = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-mention-key]') : null
+          const key = chip?.dataset.mentionKey
+          if (!chip || !key || !event.currentTarget.contains(chip) || !mentionsRef.current.has(key)) return
+          event.preventDefault(); event.stopPropagation(); releasePointerChip()
+          pointerRef.current = null
+          setChipMenu({ chip, key, scope: draftScopeRef.current, x: event.clientX, y: event.clientY })
         }}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || composingRef.current) return
@@ -1164,6 +1412,15 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
           const focusedChip = event.target instanceof HTMLElement
             ? event.target.closest<HTMLElement>('[data-mention-key]') : null
           const focusedMention = focusedChip ? mentionsRef.current.get(focusedChip.dataset.mentionKey ?? '') : undefined
+          if (focusedChip && focusedMention && (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10')) {
+            event.preventDefault(); event.stopPropagation()
+            const rect = focusedChip.getBoundingClientRect()
+            setChipMenu({ chip: focusedChip, key: focusedChip.dataset.mentionKey!, scope: draftScopeRef.current, x: rect.left, y: rect.bottom })
+            return
+          }
+          if (focusedMention?.source === 'toolkit' && (event.key === 'Enter' || event.key === ' ')) {
+            event.preventDefault(); event.stopPropagation(); return
+          }
           if (focusedMention && onOpenMention && (event.key === 'Enter' || event.key === ' ')) {
             event.preventDefault()
             event.stopPropagation()
@@ -1173,8 +1430,6 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
           if (disabled) return
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
             event.preventDefault()
-            const issue = composerInputIssue(serialize().text)
-            if (issue) { reportInputLimit(issue); return }
             onSubmit()
             return
           }
@@ -1191,7 +1446,12 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         }}
         suppressContentEditableWarning
       />
-    )
+      {attachmentReferences.filter(reference => reference.file.type.startsWith('image/')).map(reference =>
+        <AttachmentImageSource key={attachmentImageKey(reference)} reference={reference} root={attachmentRoot} sessionId={imageSessionId}
+          scope={imageScope} onImage={updateAttachmentImage} />)}
+      {chipMenu && menuMention ? <ContextMenu x={chipMenu.x} y={chipMenu.y} anchor={chipMenu.chip}
+        items={menuItems} onClose={() => setChipMenu(null)} /> : null}
+    </>)
   }
 )
 

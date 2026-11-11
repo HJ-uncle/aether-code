@@ -8,10 +8,11 @@
  * 数据源：fs.listAll（递归列工作区文件，跳过 node_modules 等），目录列表从
  * 文件路径的父目录推导。键盘 ↑↓ 选择、Enter/Tab 确认、Esc 关闭。
  */
-import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
 import { listAllFiles } from '@renderer/core/workspace/fs-client'
-import { formatPathDisplay, type Mention } from './MentionInput'
+import { formatPathDisplay, type Mention } from './mention-context'
+import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
 import { isMotionInteractive } from '@renderer/workbench/motion'
 import { isTopOverlay } from '@renderer/workbench/overlay'
 
@@ -26,35 +27,27 @@ interface FileRefPaletteProps {
   onClose: () => void
 }
 
-interface Entry {
+export interface FileReferenceEntry {
   /** 相对工作区路径 */
   path: string
   isDir: boolean
 }
 
-export function FileRefPalette({
-  root,
-  keyword,
-  showSearch = false,
-  onSelect,
-  onClose
-}: FileRefPaletteProps): JSX.Element {
-  const [entries, setEntries] = useState<Entry[] | null>(null)
+export function useFileReferences(root: string | null, query: string) {
+  const source = useSyncExternalStore(subscribeEngineSource, getEngineSource)
+  const [entries, setEntries] = useState<FileReferenceEntry[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [reload, setReload] = useState(0)
-  const [activeIndex, setActiveIndex] = useState(0)
-  const [search, setSearch] = useState('')
-  const listRef = useRef<HTMLDivElement>(null)
-  const query = showSearch ? search : keyword
 
   // 全量列表只拉一次（按 root 缓存于组件存活期内）
   useEffect(() => {
     let cancelled = false
     setEntries(null)
     setError(null)
+    if (!root) { setEntries([]); return }
     void listAllFiles(root)
       .then((files) => {
-        if (cancelled) return
+        if (cancelled || source !== getEngineSource()) return
         const dirs = new Set<string>()
         for (const file of files) {
           const normalized = file.replace(/\\/g, '/')
@@ -68,7 +61,7 @@ export function FileRefPalette({
         ])
       })
       .catch((cause) => {
-        if (!cancelled) {
+        if (!cancelled && source === getEngineSource()) {
           setEntries([])
           setError(cause instanceof Error ? cause.message : '无法读取工作区文件')
         }
@@ -76,7 +69,7 @@ export function FileRefPalette({
     return () => {
       cancelled = true
     }
-  }, [root, reload])
+  }, [root, reload, source])
 
   const filtered = useMemo(() => {
     if (!entries) return []
@@ -93,6 +86,15 @@ export function FileRefPalette({
     scored.sort((a, b) => a.score - b.score)
     return scored.slice(0, 30).map((item) => item.entry)
   }, [entries, query])
+  return { filtered, loading: entries === null, error, retry: () => setReload(value => value + 1) }
+}
+
+export function FileRefPalette({ root, keyword, showSearch = false, onSelect, onClose }: FileRefPaletteProps): JSX.Element {
+  const [activeIndex, setActiveIndex] = useState(0)
+  const [search, setSearch] = useState('')
+  const listRef = useRef<HTMLDivElement>(null)
+  const query = showSearch ? search : keyword
+  const { filtered, loading, error, retry } = useFileReferences(root, query)
 
   // 关键词变化后回到第一项
   useEffect(() => setActiveIndex(0), [query])
@@ -165,11 +167,11 @@ export function FileRefPalette({
           onChange={(event) => setSearch(event.target.value)}
         />
       ) : null}
-      <div ref={listRef} className="file-palette__list" role="listbox" aria-label="选择文件或目录" aria-busy={entries === null}>
-        {entries === null ? (
+      <div ref={listRef} className="file-palette__list" role="listbox" aria-label="选择文件或目录" aria-busy={loading}>
+        {loading ? (
           <div className="file-palette__empty" role="status">正在加载文件与目录…</div>
         ) : error ? (
-          <div className="file-palette__empty" role="alert">{error}<button type="button" data-mention-list-control className="mention-ref-picker__retry" onClick={() => setReload(value => value + 1)}>重试</button></div>
+          <div className="file-palette__empty" role="alert">{error}<button type="button" data-mention-list-control className="mention-ref-picker__retry" onClick={retry}>重试</button></div>
         ) : filtered.length === 0 ? (
           <div className="file-palette__empty">没有匹配的文件或目录</div>
         ) : (

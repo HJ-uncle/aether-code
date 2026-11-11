@@ -47,6 +47,7 @@ export interface RootRunRequestConfig {
   skills?: string[]
   mcpServers?: string[]
   knowledgeBases?: string[]
+  toolkits?: string[]
   memoryScope?: 'off' | 'global' | 'session'
 }
 
@@ -57,7 +58,7 @@ export function normalizeRootRunRequestConfig(raw: unknown): RootRunRequestConfi
   for (const key of ['agentId', 'subagentModel', 'utilityModel', 'cronJobId', 'automationRunId'] as const) {
     if (typeof value[key] === 'string') config[key] = value[key]
   }
-  for (const key of ['skills', 'mcpServers', 'knowledgeBases'] as const) {
+  for (const key of ['skills', 'mcpServers', 'knowledgeBases', 'toolkits'] as const) {
     const ids = value[key]
     if (Array.isArray(ids) && ids.every(id => typeof id === 'string')) config[key] = [...ids]
   }

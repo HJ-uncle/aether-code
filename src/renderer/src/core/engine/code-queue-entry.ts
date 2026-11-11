@@ -1,5 +1,6 @@
 import type { CodeQueueDraft } from '@shared/code-next-turn-api'
 import type { NextTurnQueueEntry, QueueResourceSelection } from '@shared/next-turn-queue'
+import { queueResourcesAfterDraftEdit, queueDraftRemovesToolkit } from '@shared/next-turn-queue-state'
 import type { ChatAttachment, QueuedMessage, SendOptions } from './useChat'
 import { mentionToken, userMessageDraft } from '@renderer/contrib/chat/mention-context'
 import { queuedDraft } from '@renderer/contrib/work/work-next-turn-queue'
@@ -13,7 +14,8 @@ export function codeQueueSubmission(text: string, options: SendOptions): CodeQue
   return {
     draft: structuredClone(options.queueDraft ?? queuedDraft(restored.text, restored.mentions, 1)),
     model: options.model ? { kind: 'explicit', modelId: options.model } : { kind: 'engine-default' },
-    resources: { skills: resource(options.skills), mcpServers: resource(options.mcpServers), knowledgeBases: resource(options.knowledgeBases) },
+    resources: { skills: resource(options.skills), mcpServers: resource(options.mcpServers), knowledgeBases: resource(options.knowledgeBases),
+      ...(options.toolkits !== undefined ? { toolkits: resource(options.toolkits) } : {}) },
     thinking: options.thinkingMode === true ? { kind: 'on' } : options.thinkingMode === false ? { kind: 'off' }
       : typeof options.thinkingMode === 'string' ? { kind: 'effort', effort: options.thinkingMode } : { kind: 'inherit' },
     ...(options.subagentModel ? { subagentModel: options.subagentModel } : {}),
@@ -54,7 +56,12 @@ export function editCodeQueueDraft(entry: NextTurnQueueEntry, text: string, atta
     if (offset < 0 || text.slice(offset, offset + token.length) !== token) return []
     return [{ ...mention, textOffset: offset }]
   })
-  return { ...submission, draft: queuedDraft(text, mentions, submission.draft.revision + 1), attachments: structuredClone(attachments) }
+  const draft = queuedDraft(text, mentions, submission.draft.revision + 1)
+  const selection = submission.resources.toolkits
+  // Preserve unresolved inheritance for the trusted main process; never replace it with an empty array.
+  const inheritedRemoval = (!selection || selection.kind === 'inherit') && queueDraftRemovesToolkit(submission.draft, draft)
+  return { ...submission, draft, resources: inheritedRemoval ? submission.resources
+    : queueResourcesAfterDraftEdit(submission.draft, draft, submission.resources), attachments: structuredClone(attachments) }
 }
 
 export function visibleCodeQueueEntry(entry: NextTurnQueueEntry): QueuedMessage {

@@ -23,6 +23,7 @@ import {
   type KnowledgeSearchResult
 } from '@renderer/core/engine/knowledge'
 import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
+import { subscribeResourceCatalogueChanges } from '@renderer/core/engine/resource-catalogue'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { SettingsContent, SettingsGroup, SettingsRow } from './SettingsGroup'
 import './knowledge-settings.css'
@@ -99,6 +100,10 @@ function KnowledgeSettingsContent({ source }: { source: number }): JSX.Element {
       if (isCurrent() && sequence === refreshSequence.current && sourceAtStart === getEngineSource()) setRefreshing(false)
     }
   }, [isCurrent])
+
+  useEffect(() => subscribeResourceCatalogueChanges(['knowledge'], () => {
+    void refresh(selectedBase).catch(reason => { if (isCurrent()) setError(reason instanceof Error ? reason.message : String(reason)) })
+  }), [source, refresh, selectedBase, isCurrent])
 
   useEffect(() => {
     mounted.current = true

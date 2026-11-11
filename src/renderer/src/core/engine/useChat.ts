@@ -5,6 +5,8 @@ import type { SubagentRun, SubagentDiscoveryRef } from '@shared/subagent'
 import { normalizeRootRunCompaction, normalizeRootRunRequestConfig, type RootRun, type RootRunCompaction, type RootRunRequestConfig } from '@shared/root-run'
 import { applyRootRun, finishTransport, mergeRootRun, normalizeRootRun } from './root-run-state'
 import { applyToolResult, normalizeTool, type EngineHistoryRow } from './chat-history'
+import { hasAgentCatalogueChange, notifyAgentCatalogueChanged } from './agent-catalogue'
+import { resourceCatalogueChange, notifyResourceCatalogueChanged } from './resource-catalogue'
 export { extractText } from './chat-history'
 import { attachSubagentRuns, applySubagentDeletions } from './subagent-state'
 import { ingestSubagentEventResult, ingestSubagentRun, ingestSubagentRunResult, getSubagentRuns, refreshSubagentRuns, subscribeSubagents, subscribeSubagentDeletions, hasActiveSubagents } from './subagent-store'
@@ -186,6 +188,8 @@ export interface SendOptions {
   skills?: string[]
   /** MCP server IDs explicitly selected from the composer resource menu. */
   mcpServers?: string[]
+  /** Explicit session capability selection; [] removes previously enabled toolkits. */
+  toolkits?: string[]
   /**
    * 绑定的工作区路径。
    *
@@ -987,6 +991,9 @@ export function useChat(options: { commandOwner?: string } = {}): {
       }
 
       const payload = event.payload
+      if (hasAgentCatalogueChange(payload.toolEnd ?? payload.toolResult)) notifyAgentCatalogueChanged(eventScope.source)
+      const resourceChange = resourceCatalogueChange(payload.toolEnd ?? payload.toolResult)
+      if (resourceChange) notifyResourceCatalogueChanged(resourceChange, eventScope.source)
       const receipt = { now: Date.now(), fallbackId: newId() }
       const ownerRunId = activeRunIdRef.current ?? undefined
       const rawPlanTool = payload.toolEnd ?? payload.toolResult ?? payload.toolCall

@@ -1,4 +1,4 @@
-/* 使用同一材质浮层承载调色器，色谱本身保持不透明，避免背景污染色值。 */
+/* 主题设置与标注共用同一材质浮层；色谱保持不透明，避免背景污染色值。 */
 .popover__panel:has(> .accent-color-picker) {
   max-width: calc(100vw - 16px);
   max-height: calc(100vh - 16px);

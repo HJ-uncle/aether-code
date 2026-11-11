@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { NextTurnQueueError, type NextTurnQueueEnvelope, type NextTurnQueueScope, type NextTurnQueueState, type QueueCommitResult } from '../shared/next-turn-queue'
 import { queueScopeIdentity, sameQueueScope } from '../shared/next-turn-queue-state'
 import { mergeQueueAttachmentReferences } from '../shared/queue-attachment-references'
+import { queueDraftRemovesToolkit } from '../shared/next-turn-queue-state'
 import type { WorkQueueDraft, WorkQueueRead } from '../shared/work-next-turn-api'
 import type { CodeQueueAction } from '../shared/code-next-turn-api'
 import { NextTurnQueueMutationService, type QueueOwnerCapability, type TrustedQueueAuthority } from './next-turn-queue-service'
@@ -15,7 +16,7 @@ export interface QueueDispatchGateway extends TrustedQueueAuthority {
   prepare(scope: NextTurnQueueScope, envelope: NextTurnQueueEnvelope, context: AdmissionContext): Promise<Record<string, unknown>>
   envelope(scope: NextTurnQueueScope, draft: WorkQueueDraft): Promise<NextTurnQueueEnvelope>
   recoveryEnvelope?(scope: NextTurnQueueScope, runId: string): Promise<NextTurnQueueEnvelope>
-  editDraft(envelope: NextTurnQueueEnvelope, draft: WorkQueueDraft['draft']): NextTurnQueueEnvelope
+  editDraft(envelope: NextTurnQueueEnvelope, draft: WorkQueueDraft['draft'], scope?: NextTurnQueueScope): NextTurnQueueEnvelope | Promise<NextTurnQueueEnvelope>
   submit(scope: NextTurnQueueScope, wireBody: string, signal: AbortSignal): Promise<void>
   receipt(scope: NextTurnQueueScope, entry: Exclude<NextTurnQueueState['entries'][number], { phase: 'pending' }>): Promise<ExactAdmission>
 }
@@ -283,7 +284,14 @@ export class NextTurnDispatcher {
           return entry
         }).sort((a, b) => state.entries.indexOf(a) - state.entries.indexOf(b))
         let replacements: { id: string; envelope: NextTurnQueueEnvelope }[]
-        if (input.kind === 'replace-submission') replacements = [{ id: input.id, envelope: await this.gateway.envelope(job.scope, input.submission) }]
+        if (input.kind === 'replace-submission') {
+          const before = selected[0].envelope
+          const edited = await this.gateway.editDraft(before, input.submission.draft, job.scope)
+          const envelope = await this.gateway.envelope(job.scope, input.submission)
+          // A textarea sends an unresolved selection; only main can resolve and revoke inherited capabilities.
+          if (queueDraftRemovesToolkit(before.draft, input.submission.draft)) envelope.resources.toolkits = edited.resources.toolkits
+          replacements = [{ id: input.id, envelope }]
+        }
         else if (input.kind === 'retarget-model') {
           const model = structuredClone(input.model)
           if (model.kind !== 'explicit' && !model.observedModelId) {
@@ -312,7 +320,7 @@ export class NextTurnDispatcher {
             for (const file of envelope.attachments) if (!attachments.some(item => item.receiptId === file.receiptId)) attachments.push(file)
           }
           const merged = mergeQueueAttachmentReferences({ text, mentions, revision: Math.max(...envelopes.map(envelope => envelope.draft.revision)) + 1 }, attachments)
-          replacements = [{ id: input.id, envelope: { ...this.gateway.editDraft(base, merged.draft), attachments: merged.attachments } }]
+          replacements = [{ id: input.id, envelope: { ...await this.gateway.editDraft(base, merged.draft, job.scope), attachments: merged.attachments } }]
         }
         for (const replacement of replacements) replacement.envelope.submissionDigest = digest
         const result = await this.service.mutate(job.capability, input.expectedRevision, input.operationId,
@@ -326,7 +334,7 @@ export class NextTurnDispatcher {
     const job = await this.bind(taskId), state = (await this.service.read(job.capability)).state
     const entry = state.entries.find(item => item.id === id)
     if (!entry || entry.phase !== 'pending') throw new NextTurnQueueError('CONFLICT', 'Only pending messages can be edited')
-    const envelope = this.gateway.editDraft(entry.envelope, structuredClone(draft))
+    const envelope = await this.gateway.editDraft(entry.envelope, structuredClone(draft), job.scope)
     const result = await this.service.mutate(job.capability, expectedRevision, operationId, { kind: 'edit', id, entryRevision, envelope, at: Date.now() })
     this.observe(job, result.state)
     this.publish(result.state.scope, result.state.revision); this.wake(job); return result

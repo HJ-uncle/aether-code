@@ -209,6 +209,23 @@ Word/PDF/Excel 详细证据：引擎 `.tmp/office-acceptance-20261110/round5-fin
 
 证据：引擎 `.tmp/office-evaluation-20261110/round5-audit.md`、`round5-ppt-structure-audit.md`；客户端 `.e2e-tmp/ppt-production-review-L22hpe/review.md` 与 8 张实际页面图。
 
+## 2048 项目封面改进 · 2026-11-11
+
+用户反馈第一屏需要项目示例图。原 `web-2048/交付/2048-项目介绍.pptx` 共 7 页，首屏无图片，真实截图只在第 2/5/6 页；原文件 SHA256 为 `0f47bd65a5123023b2196e5132542c780511180d3266739757a62b521fa563fe`。根因是首屏使用仅支持标题/副标题的 `cover`，已有图片能力没有用于封面。
+
+- Skill 改为有界面产品/游戏优先采用真实项目主图与可编辑标题；使用现有 `custom` 组合图文，明确标题/副标题均放在 `elements`。没有增加固定模板，用户指定纯文字封面或没有合适图源时不强行配图。
+- 在真实 Work 新任务使用数据库模型 `deepseek-v4.1-flash-1017` 生成一页独立样例，未覆盖原件，也未重做其它格式。任务 `d632c6cf-f5b0-42c4-811c-616347082700` 自然完成；实际加载新版 Skill 已由真实 `get_skill` 回执确认。
+- 样例：`C:/Users/wb.xielin02/wuzu_workspace/test01/web-2048/交付/封面优化/2048-封面示例.pptx`，SHA256 `349a47a3ab206565cefcfdeb8694462e33bfdd263e95eb373bae6cfa3ec35864`。1 页、1 张真实项目裁剪图、10 个原生文本节点，主标题可编辑。
+- 独立使用当前客户端转换器渲染真实 PPT，逐项目视首屏：大标题明确、棋盘完整可辨、深色配色协调，无可见重叠/裁切；图源是初始棋盘，不宣称为完整玩法演示。预览 PNG 同目录保存。未使用 WPS、Office 或 LibreOffice。
+- 生成过程 28 次工具调用，23 成功、3 interrupted、2 failed。第一次 create 因文字框容量不足被原子拒绝，调整后成功；成功版本 inspect/render 各 1 次，无同版本重复验收、删除或重建循环。四份旧成品 hash 和设置均保持不变，客户端页面错误为 0。
+- 过程并非一次成功：读取截图宽高触发过一次命令审批；模型另尝试手写 PNG 取色且缺少命令字段。针对这两处绕路，新增 PNG/GIF 图片头宽高元数据并贯通模型请求，Skill 明确复用项目主题配色。新尺寸回归 16/16，相关多模态/结算单元合计 47/47，引擎 typecheck 通过。
+- 尺寸修复的独立真实 Work 窄验证：新 root `a790ebda-6a21-48ee-a628-eabef4586c11`，同指定模型、构建 `16fdc1bfbff70737246ff480a4bb20da2a6b84c68cc3ba4b2f87bc0825c21e4e`，7.977 秒自然完成。仅 1 次 `read_file(mode=vision)`，回执和最终回答均为 `1565 × 978 px`；无 shell、审批、写入、重复调用或页面错误。此结果验证图片尺寸贯通，不当作整套 PPT 流程的再次验收。
+- 针对本轮文字框预检错误不指明元素的问题，补充 `custom` 错误中的精确字段路径、当前宽高、按原字号测得的所需高度及对应 `.h` 修改位置。新 3 项测试用真实 `2048 / 72pt / w=5.4 / h=1.1` 失败数据及中文换行验证：调整建议高度后成功、字号不变；超出画布仍拒绝。未放宽容量检查或改变正常页面输出，typecheck 通过。
+- 单页运行约 9 分 3 秒，含约 3 分 28 秒审批等待。原始调用统计保留在审计报告中；本轮证明首屏图片和停止重复验收的效果，不据此宣称整个办公生成流程已完美。
+- 最终引擎构建 `73b9e843fcbdd2a575db840512bac05cc91a97af4bd7ccdb449b63401c9bcf77` 通过；客户端 build（含 node/web 类型检查）通过。2026-11-11 10:23 恢复 `node scripts/dev.mjs`，真实 UI `/meta` 确认最终版本、指定模型、引擎 ready，待确认卡与观察到的页面错误均为 0。恢复过程未发送任务，证据 `.e2e-tmp/office-cover-dev/verification.json`。
+
+过程审计：引擎 `.tmp/office-evaluation-20261110/cover-run-audit.md`、`cover-metadata-audit.md`。成品检查：客户端 `.e2e-tmp/ppt-production-review-1eidRM/review.json`、`page-01.png`。真实 Work：`.e2e-tmp/office-cover-driver/report.json`、`.e2e-tmp/office-cover-metadata-driver/report.json`。
+
 ## 新增验收用例索引
 
 | 用例 | 操作与判断 | 本轮结果 |
@@ -228,6 +245,9 @@ Word/PDF/Excel 详细证据：引擎 `.tmp/office-acceptance-20261110/round5-fin
 | OF-13 命令环境 | 必要 Windows 目录、敏感变量过滤、隐式 Python 安装默认禁用 | 新 7/7，通过真实 Node 子进程核对 |
 | OF-14 摘要中的视觉结论 | 保留真实文件/版本/范围/结论，不把清理图片误当未检查 | 新合同 3 项及持久化回归通过；真实混合短夹具第二轮单次复测通过 |
 | OF-15 Excel 区域导航 | 从目录定位指定工作表与图表，不猜区域号 | 新 Electron 2/2；真实 provider 投影/导航 6 项；第 6 轮 Work 实际定位通过 |
+| OF-16 项目封面主视觉 | 新 Work 任务由实际模型读取新版 Skill，封面采用真实图和可编辑文字 | 2048 单页实际成品目视通过；原四份成品不变，新版只检查一次 |
+| OF-17 图片尺寸元数据 | 图片头宽高经过读取、预算、流与 provider 请求后仍保留 | 新 16 项回归及相关单元通过；真实 Work 单次读取正确回答，无 shell/审批；未知/损坏头不猜尺寸 |
+| OF-18 文本容量定位 | custom 文字框失败指出具体元素和所需高度，保持原字号及边界约束 | 新 3 项定向回归通过；真实封面失败输入按提示可修复 |
 
 本索引中的 E2E 均为本次针对实际问题新增的用例，不运行旧 E2E 集合，也不点击或测试导出按钮。隔离用例通过不代表真实模型的所有生成过程都已达标。
 

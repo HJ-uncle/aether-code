@@ -37,9 +37,9 @@ function load(relative) {
   }, exports)
   return exports
 }
-const limits = load('input-limits.ts')
 const attachments = load('useAttachments.ts')
 const mentions = load('mention-context.ts')
+const limits = load('input-limits.ts')
 const { UserMessageContent } = load('UserMessageContent.tsx')
 const { assertQueueEnvelope } = load('../../../../shared/next-turn-queue-state.ts')
 
@@ -50,32 +50,69 @@ function nodes(value, found = []) {
   return found
 }
 
-test('the paste threshold is strictly 1000 Unicode code points and ignores line count', () => {
-  for (const char of ['a', '中', '😀']) {
-    assert.equal(attachments.shouldAttachPastedText(char.repeat(1000)), false)
-    assert.equal(attachments.shouldAttachPastedText(char.repeat(1001)), true)
+test('one paste becomes an attachment above 1000 Unicode code points regardless of line count', () => {
+  for (const character of ['a', '中', '😀']) {
+    assert.equal(attachments.shouldAttachPastedText(character.repeat(1000)), false)
+    assert.equal(attachments.shouldAttachPastedText(character.repeat(1001)), true)
   }
   assert.equal(attachments.shouldAttachPastedText('\n'.repeat(900)), false)
+  assert.equal(attachments.shouldAttachPastedText('\n'.repeat(1001)), true)
 })
 
-test('pasted TXT preserves all bytes, leading whitespace, CRLF, emoji and the entire tail', async () => {
-  const text = '  # 标题 😀\r\n' + '内容\r\n'.repeat(400) + '\u0000\tEND  \n'
+test('pasted TXT above 100000 characters preserves all bytes, whitespace, CRLF, emoji and the tail', async () => {
+  const text = '  # 标题 😀\r\n' + '内容\r\n'.repeat(40_000) + '\u0000\tEND  \n'
+  assert.ok(Array.from(text).length > 100_000)
   const file = attachments.createPastedTextFile(text)
   assert.equal(file.name.endsWith('.txt'), true)
   assert.equal(file.type, 'text/plain;charset=utf-8')
   assert.deepEqual(new Uint8Array(await file.arrayBuffer()), new TextEncoder().encode(text))
 })
 
-test('100000 code points are accepted; rejected changes never truncate and old oversized drafts may shrink', () => {
+test('the editor limits only Unicode prose and excludes real reference tokens and snapshots', () => {
   const full = '😀'.repeat(limits.COMPOSER_MAX_CHARS)
-  assert.equal(limits.composerCharacterCount(full), 100000)
-  assert.equal(limits.composerInputIssue(full), null)
-  assert.match(limits.composerInputIssue(full + '中'), /100,000.*字符/)
-  assert.equal(limits.acceptsComposerChange(full, full + '中'), false)
-  assert.equal(limits.acceptsComposerChange(full + '多余', full + '余'), true)
-  assert.equal(limits.acceptsComposerChange(full + '余', full + '更多'), false)
-  assert.equal(limits.acceptsComposerChange(full + '余', full + '换'), true)
-  assert.equal(full.length, 200000)
+  const file = { source: 'file', origin: 'attachment', path: 'very-long-path/'.repeat(2000) + 'notes.txt', displayText: '资料', textOffset: full.length }
+  const snapshot = { source: 'code', origin: 'workspace', path: 'src/main.ts', displayText: '源码', content: 'snapshot'.repeat(20_000) }
+  const fileToken = mentions.mentionToken(file), snapshotToken = mentions.mentionToken(snapshot)
+  snapshot.textOffset = full.length + fileToken.length
+  const withReferences = { text: full + fileToken + snapshotToken, mentions: [file, snapshot] }
+  assert.equal(limits.composerCharacterCount(full), 100_000)
+  assert.equal(limits.composerCharacterCount(withReferences.text, withReferences.mentions), 100_000)
+  assert.equal(limits.acceptsComposerChange({ text: full, mentions: [] }, withReferences), true)
+  assert.equal(limits.acceptsComposerChange(withReferences, { ...withReferences, text: withReferences.text + '中' }), false)
+  assert.equal(limits.acceptsComposerChange({ text: full, mentions: [] }, { text: full.slice(2) + '中', mentions: [] }), true)
+  assert.equal(limits.composerCharacterCount(withReferences.text, [{ ...file, textOffset: 1 }]), Array.from(withReferences.text).length)
+  assert.equal(limits.composerCharacterCount(full + '@not-a-real-ref', [file]), 100_015)
+})
+
+test('legacy oversized editor drafts may shrink without forced truncation or blocking a same-size replacement', () => {
+  const oversized = { text: '中'.repeat(100_000) + '旧草稿', mentions: [] }
+  assert.equal(limits.acceptsComposerChange(oversized, { ...oversized, text: oversized.text + '增' }), false)
+  assert.equal(limits.acceptsComposerChange(oversized, { ...oversized, text: oversized.text.slice(0, -1) }), true)
+  assert.equal(limits.acceptsComposerChange(oversized, { ...oversized, text: oversized.text.slice(0, -1) + '新' }), true)
+  assert.equal(oversized.text.length, 100_003)
+})
+
+test('one valid chip separator costs no prose capacity and deleting the chip never traps the draft', () => {
+  const prose = 'a'.repeat(99_999)
+  const ref = { source: 'file', origin: 'attachment', path: 'notes.txt', displayText: '资料', textOffset: prose.length }
+  const token = mentions.mentionToken(ref)
+  for (const separator of [' ', '\u00a0']) {
+    const before = { text: prose + token + separator, mentions: [ref] }
+    const full = { ...before, text: before.text + 'x' }
+    assert.equal(limits.composerCharacterCount(before.text, before.mentions), 99_999)
+    assert.equal(limits.composerCharacterCount(full.text, full.mentions), 100_000)
+    assert.equal(limits.acceptsComposerChange(before, full), true)
+    assert.equal(limits.acceptsComposerChange(full, { ...full, text: full.text + 'y' }), false)
+    assert.equal(limits.composerCharacterCount(prose + token + separator + separator, [ref]), 100_000)
+    const deleted = { text: prose + separator + 'x', mentions: [] }
+    assert.equal(limits.composerCharacterCount(deleted.text, deleted.mentions), 100_001)
+    assert.equal(limits.acceptsComposerChange(full, deleted), true)
+    assert.equal(limits.acceptsComposerChange(deleted, { ...deleted, text: deleted.text + 'y' }), false)
+    const short = { text: 'short', mentions: [] }
+    assert.equal(limits.acceptsComposerChange(deleted, short), true)
+    assert.equal(limits.acceptsComposerChange(short, { ...short, text: 'shorter draft' }), true)
+  }
+  assert.equal(limits.composerCharacterCount(prose + token + ' ', [{ ...ref, textOffset: 0 }]), 100_010)
 })
 
 test('each reference origin survives send, history replay, draft restoration and resending', () => {

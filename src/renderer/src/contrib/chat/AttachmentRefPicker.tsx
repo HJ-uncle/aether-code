@@ -8,17 +8,19 @@ import { attachmentMention, type AttachmentReference } from './attachment-refere
 import type { Mention } from './mention-context'
 import './attachment-references.css'
 
-function AttachmentOption({ root, sessionId, reference, active, onSelect, onActivate }: {
+export function AttachmentOption({ root, sessionId, reference, active, onSelect, onActivate, optionId, tabIndex }: {
   root: string | null
   sessionId?: string
   reference: AttachmentReference
   active: boolean
   onSelect: () => void
   onActivate: () => void
+  optionId?: string
+  tabIndex?: number
 }): JSX.Element {
   const src = useAttachmentImageSrc(root, reference.file, sessionId)
   const isImage = reference.file.type.startsWith('image/')
-  return <button type="button" role="option" aria-selected={active}
+  return <button type="button" role="option" aria-selected={active} id={optionId} tabIndex={tabIndex}
     className={`attachment-ref-picker__item${active ? ' is-active' : ''}`}
     data-attachment-id={reference.id} title={reference.file.name}
     onMouseDown={event => event.preventDefault()} onClick={onSelect} onMouseEnter={onActivate}>

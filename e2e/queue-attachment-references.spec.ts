@@ -1,9 +1,42 @@
-/** Pure queue freezing regressions: authored reference identity, UTF-16 offsets,
+/** Pure queue freezing regressions: pasted text labels, authored reference identity, UTF-16 offsets,
  * untouched user text and persisted mention replay. No Electron or engine. */
 import { expect, test } from '@playwright/test'
-import type { QueueMention } from '../src/shared/next-turn-queue'
-import { remapQueueAttachmentReferences } from '../src/shared/queue-attachment-references'
+import type { QueueAttachmentReceipt, QueueMention } from '../src/shared/next-turn-queue'
+import { mergeQueueAttachmentReferences, remapQueueAttachmentReferences } from '../src/shared/queue-attachment-references'
 import { buildMentionMessage, userMessageDraft } from '../src/renderer/src/contrib/chat/mention-context'
+import { freezeAttachmentReferences } from '../src/renderer/src/contrib/chat/attachment-references'
+
+test('queue merging and composer freezing agree on pasted text labels and independent file numbering', () => {
+  const receipt = (id: string, name: string, mime: string): QueueAttachmentReceipt => ({
+    kind: 'local-workspace', scope: { source: { mode: 'embedded', endpoint: '', accountId: null },
+      tenantId: 't', namespace: { id: 'n', generation: 'g' }, owner: 'code', taskId: 's' },
+    attachmentId: id, referenceLabel: '附件9', path: `.ae/${id}`, name, mime, bytes: 25,
+    receiptId: id, sha256: 'a'.repeat(64)
+  })
+  const pasted = receipt('paste', `粘贴的文本-${'字'.repeat(24)}尾.txt`, 'text/plain;charset=utf-8')
+  const receipts = [receipt('image', '截图.png', 'image/png'), pasted,
+    receipt('document', '说明.txt', 'text/plain'), receipt('blank', '粘贴的文本.txt', 'text/plain'),
+    receipt('pdf', '资料.pdf', 'application/pdf')]
+  const repeated = { ...pasted, receiptId: 'paste-copy', path: '.ae/paste-copy' }
+  const input = [...receipts, repeated]
+  const text = input.map(file => '@' + file.path).join(' ')
+  const mentions: QueueMention[] = input.map(file => ({ source: 'file', origin: 'attachment',
+    attachmentId: file.attachmentId, path: file.path, displayText: '附件9', textOffset: text.indexOf('@' + file.path) }))
+  const before = structuredClone({ text, mentions, input })
+  const result = mergeQueueAttachmentReferences({ text, mentions, revision: 3 }, input)
+  const labels = ['图1', `粘贴文本 · ${'字'.repeat(24)}…`, '附件1', '粘贴文本', '附件2']
+  expect(result.attachments.map(file => file.referenceLabel)).toEqual(labels)
+  expect(result.draft.mentions.map(mention => mention.displayText)).toEqual([...labels, labels[1]])
+  expect(result.draft.mentions.at(-1)).toMatchObject({ attachmentId: 'paste', path: pasted.path })
+  expect(result.draft.text).toBe([...receipts, pasted].map(file => '@' + file.path).join(' '))
+  const frozen = freezeAttachmentReferences(receipts.map(file => ({ attachmentId: file.attachmentId,
+    path: file.path, name: file.name, type: file.mime, size: file.bytes })))
+  expect(frozen.map(file => file.referenceLabel)).toEqual(labels)
+  expect(userMessageDraft(buildMentionMessage(result.draft.text, result.draft.mentions))).toEqual({
+    text: result.draft.text, mentions: result.draft.mentions
+  })
+  expect({ text, mentions, input }).toEqual(before)
+})
 
 test('freezing queued files preserves plain labels and shifts later chips after longer and shorter paths', () => {
   const prefix = '😀 原文 @report.txt；参考 '

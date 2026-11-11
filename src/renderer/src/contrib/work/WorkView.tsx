@@ -25,6 +25,7 @@ import { toast } from '@renderer/core/toast'
 import { getAppMode, setAppMode, useAppMode } from '@renderer/core/platform/app-mode'
 import { buildConversationLink, parseConversationLink } from '@shared/conversation-link'
 import { conversationLinkTask } from './work-conversation-reference'
+import { onOpenConversationRequest } from './work-conversation-navigation'
 import { getEngineSource, getEngineStorageKey, isEngineReady } from '@renderer/core/engine/source'
 import { changeSecurityMode } from '@renderer/core/engine/security-store'
 import { setBrowserSessionOverride } from '@renderer/core/browser/connection'
@@ -53,6 +54,7 @@ import { getTopOverlayId } from '@renderer/workbench/overlay'
 import { useHoverDetail } from '@renderer/workbench/useHoverDetail'
 import { WorkSidebarTask } from './WorkSidebarTask'
 import { sortWorkSidebarTasks } from './work-sidebar-task'
+import { markWorkTaskCompletionRead } from './work-state'
 import { workDependencyProgress } from './work-dependency-progress'
 import { WorkArtifactPanel, type WorkArtifactPanelProps } from './WorkArtifactPanel'
 import { fileContentBytes } from '@renderer/core/workspace/file-content-bytes'
@@ -83,13 +85,15 @@ import { useWorkProgressChanges } from './useWorkProgressChanges'
 import { workProgressTurnScope, workTurnProgressChanges } from './work-turn-progress'
 import { MotionPresence, useMotionPresence } from '@renderer/workbench/MotionPresence'
 import { WorkAgentManager } from './WorkAgentManager'
+import { WorkPermissionCard } from './WorkPermissionCard'
+import { WorkQuestionCard } from './WorkQuestionCard'
 import { workToolTarget } from './work-message-timeline'
 import { workMessageRunning } from './work-tool-presentation'
 import { buildWorkInlineFileResolver } from './work-inline-file-references'
 import { WorkMessageContent } from './WorkMessageContent'
 import { workSubagentName } from './work-subagents'
 import { serializeMessages } from '../chat/message-export'
-import { WORK_MESSAGE_PAGE_SIZE, WORK_TASK_PAGE_SIZE, workMessageRange, workPaneRatio, workSplitRatio, workToolSnapshot, type WorkToolSnapshot } from './work-view-performance'
+import { WORK_MESSAGE_PAGE_SIZE, workMessageRange, workPaneRatio, workSplitRatio, workToolSnapshot, type WorkToolSnapshot } from './work-view-performance'
 import { workConversationAwayFromBottom } from './work-conversation-scroll'
 import { useWorkConversationScrollIntent } from './useWorkConversationScrollIntent'
 import { requestedThinkingMode } from '../chat/session-request-config'
@@ -109,6 +113,10 @@ import { WorkResourceTabs } from './WorkResourceTabs'
 import { closeWorkResource, openExternalWorkFileResource, resolvedWorkResourceId, selectWorkResource, useWorkResources, workResourceBrowserTabs } from './work-resource-store'
 import { workChangePathKey, type SessionFileChange } from './work-file-changes'
 import { getRunningWorkTasks, WorkRunList } from './WorkRunList'
+import { WorkProjects } from './WorkProjects'
+import { WorkHome, type WorkHomeFilter } from './WorkHome'
+import { WorkTaskStatus as TaskStatus } from './WorkTaskStatus'
+import { workWaitingStatus } from './work-waiting-status'
 import { WorkServiceTray, partitionWorkServices } from './WorkServiceTray'
 import { WorkTerminalPanel, type WorkTerminalPanelProps } from './WorkTerminalPanel'
 import { onWorkTerminalRequest } from './work-terminal-navigation'
@@ -117,13 +125,12 @@ import { createLocalSession } from '../terminal/terminal-store'
 
 type WorkController = ReturnType<typeof useWorkController>
 type WorkTask = WorkController['tasks'][number]
-type Page = 'home' | 'projects' | 'browser' | 'automations' | 'connections' | 'agents' | 'monitor'
+type Page = 'home' | 'projects' | 'browser' | 'automations' | 'agents' | 'monitor'
 type WorkspaceTab = 'files' | 'workspace' | 'sources' | 'browser' | 'subagents' | 'git' | 'terminal'
 type ArtifactNavigation = Omit<WorkArtifactSelection, 'revision'>
 type FinalSelection = { sessionId: string; runId: string; itemId: string; revision: number }
 type WorkspaceEntry = { kind: 'surface'; id: WorkspaceTab } | { kind: 'resource'; id: string }
 type ActivitySelection = { taskId: string; toolId: string; revision: number }
-type TaskFilter = 'all' | 'running' | 'waiting' | 'done'
 type ViewState = {
   page: Page
   collapsed: boolean
@@ -172,42 +179,8 @@ const NAVIGATION: Array<{ id: Page; label: string; icon: IconName }> = [
   { id: 'agents', label: 'Agent', icon: 'account-outline' },
   { id: 'browser', label: '浏览器', icon: 'search' },
   { id: 'automations', label: '自动化', icon: 'clock-outline' },
-  { id: 'connections', label: '连接', icon: 'graph' },
   { id: 'monitor', label: '引擎监控', icon: 'engine' }
 ]
-const TEMPLATES: Array<{ title: string; icon: IconName; text: string }> = [
-  {
-    title: '调研一个主题',
-    icon: 'search',
-    text: '请帮我调研以下主题，整理关键发现并列出可核对的来源：\n'
-  },
-  {
-    title: '起草一份文档',
-    icon: 'pencil',
-    text: '请帮我起草一份文档。目标读者：\n文档主题：\n需要包含：'
-  },
-  {
-    title: '分析资料',
-    icon: 'graph',
-    text: '请分析我提供的资料，提取关键数据、变化趋势和需要关注的问题。\n重点关注：'
-  },
-  {
-    title: '整理行动计划',
-    icon: 'check-all',
-    text: '请将以下目标整理为清晰的行动计划，列出步骤、依赖和交付物：\n'
-  }
-]
-const STATUS_LABEL: Record<WorkTask['status'], string> = {
-  draft: '草稿',
-  running: '进行中',
-  waiting: '等你补充',
-  done: '已完成',
-  error: '执行失败',
-  stopped: '已停止',
-  interrupted: '连接中断'
-}
-
-
 function initialView(): ViewState {
   const fallback: ViewState = {
     page: 'home',
@@ -252,10 +225,6 @@ function initialView(): ViewState {
 
 function filename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).at(-1) || path
-}
-const workDateFormatter = new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-function shortDate(value: number): string {
-  return workDateFormatter.format(value)
 }
 function fileSize(value: number): string {
   return value < 1024
@@ -314,7 +283,7 @@ export function WorkView(): JSX.Element {
   const [view, setView] = useState(initialView)
   const workspaceMotion = useMotionPresence(view.workspace)
   const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState<TaskFilter>('all')
+  const [filter, setFilter] = useState<WorkHomeFilter>('all')
   const [artifactSelection, setArtifactSelection] = useState<{ scope: string; id: string | null } | null>(null)
   const [fileRevealRequest, setFileRevealRequest] = useState<WorkFileRevealRequest | null>(null)
   const [terminalReveal, setTerminalReveal] = useState<{ scope: string; request: WorkTerminalPanelProps['reveal'] } | null>(null)
@@ -374,10 +343,6 @@ export function WorkView(): JSX.Element {
   const sidebarTasks = useMemo(() => sortWorkSidebarTasks(activeTasks), [activeTasks])
   const sidebarArchivedTasks = useMemo(() => sortWorkSidebarTasks(archivedTasks), [archivedTasks])
   const waiting = useMemo(() => activeTasks.filter((item) => item.status === 'waiting').length, [activeTasks])
-  const filteredTasks = useMemo(() => {
-    const query = search.toLocaleLowerCase()
-    return activeTasks.filter(item => (filter === 'all' || item.status === filter) && item.title.toLocaleLowerCase().includes(query))
-  }, [activeTasks, filter, search])
   const revealRequestId = browser.revealRequest?.requestId ?? null
   const handledRevealRef = useRef<string | null>(null)
   useEffect(() => {
@@ -507,6 +472,7 @@ export function WorkView(): JSX.Element {
       openTask(target.id)
     } catch (error) { toast.error(error instanceof Error ? error.message : '无法打开引用会话。') }
   }, [openTask])
+  useEffect(() => onOpenConversationRequest(openConversation), [openConversation])
   useEffect(() => {
     if (!controller.ready) return
     let draining = false
@@ -540,6 +506,14 @@ export function WorkView(): JSX.Element {
     setSearch('')
     setFilter('all')
   }, [set, controller.showHome])
+  const newProjectTask = useCallback(async (path: string): Promise<void> => {
+    const id = await controller.createProjectTask(path)
+    if (!id) throw new Error('资料仍在上传，请完成后再新建任务。')
+    setNavigationOpen(false)
+    set({ page: 'home', pane: 'conversation', workspace: false })
+    setSearch('')
+    setFilter('all')
+  }, [set, controller.createProjectTask])
   useEffect(() => subscribeAutomationEditor(jobId => {
     setAutomationRequest({ jobId, revision: ++automationRequestRevision.current })
     setNavigationOpen(false)
@@ -729,7 +703,7 @@ export function WorkView(): JSX.Element {
           ))}
         </nav>
         <div className="work-sidebar__recent">
-          <span className="work-eyebrow">最近任务</span>
+          <span className="work-eyebrow">最近</span>
           {sidebarTasks.map(item => <WorkSidebarTask key={`${browserSource}:${item.id}`} task={item} controller={controller}
             selected={task?.id === item.id && view.page === 'home'} onOpen={openTask} />)}
           {!activeTasks.length && <p>开始后，任务会保存在这里。</p>}
@@ -801,7 +775,7 @@ export function WorkView(): JSX.Element {
                       total={controller.sessionUsage.total} rounds={controller.sessionUsage.rounds} summary={controller.sessionUsage.summary}
                       messages={controller.messages} /> : null}
                     {controller.usageSyncNotice ? <span className="work-usage-notice" role="status" title={controller.usageSyncNotice}>统计待同步</span> : null}
-                    <TaskStatus status={task.status} ready={controller.ready} />
+                    <TaskStatus task={task} ready={controller.ready} />
                     <WorkRunList
                       tasks={activeTasks}
                       activeTaskId={task.id}
@@ -891,79 +865,8 @@ export function WorkView(): JSX.Element {
             </div>
           </>
         ) : view.page === 'home' ? (
-          <div className="work-page work-home">
-            <div className="work-page__inner">
-              <SectionHeading
-                eyebrow="WORK · 办公助手"
-                title="今天，想完成什么？"
-                description="交代目标、补充资料，把研究、写作和分析交给 AI 协作完成。"
-              />
-              <WorkComposerV2 controller={controller} home />
-              <p className="work-capability-note">
-                支持文件与 Agent 引用、技能与 MCP 资源、成果预览、活动追踪和自动化任务。
-              </p>
-              <div className="work-templates" aria-label="任务模板">
-                {TEMPLATES.map((template) => (
-                  <button
-                    type="button"
-                    key={template.title}
-                    onClick={() => controller.setDraft(template.text)}
-                  >
-                    <Icon name={template.icon} size={17} />
-                    <span>{template.title}</span>
-                  </button>
-                ))}
-              </div>
-              <section className="work-recent">
-                <header>
-                  <h2>最近任务</h2>
-                  <span>{activeTasks.length} 项</span>
-                </header>
-                <div className="work-list-tools">
-                  <div className="work-filters" aria-label="任务筛选">
-                    {(
-                      [
-                        ['all', '全部'],
-                        ['running', '进行中'],
-                        ['waiting', '需要处理'],
-                        ['done', '已完成']
-                      ] as const
-                    ).map(([id, label]) => (
-                      <button
-                        type="button"
-                        key={id}
-                        aria-pressed={filter === id}
-                        onClick={() => setFilter(id)}
-                      >
-                        {label}
-                        {id === 'waiting' && waiting ? ` ${waiting}` : ''}
-                      </button>
-                    ))}
-                  </div>
-                  <label className="work-search ui-input-shell ui-input-shell--compact">
-                    <Icon name="search" size={14} />
-                    <input className="ui-input-field"
-                      aria-label="搜索 Work 任务"
-                      placeholder="搜索任务"
-                      value={search}
-                      onChange={(event) => setSearch(event.target.value)}
-                    />
-                  </label>
-                </div>
-                <TaskList
-                  key={`${filter}:${search}`}
-                  tasks={filteredTasks}
-                  ready={controller.ready}
-                  onSelect={openTask}
-                  empty={
-                    activeTasks.length
-                      ? '没有符合筛选条件的任务。'
-                      : '还没有任务。从上方写下你的目标，或选择一个模板开始。'
-                  }
-                />
-              </section>
-            </div>
-          </div>
+          <WorkHome controller={controller} tasks={activeTasks} filter={filter} onFilter={setFilter}
+            search={search} onSearch={setSearch} onOpenTask={openTask} />
         ) : view.page === 'browser' ? (
           <section className="work-standalone-browser" aria-label="Work 浏览器">
             <header className="work-task-heading">
@@ -973,9 +876,9 @@ export function WorkView(): JSX.Element {
             <WorkBrowser />
           </section>
         ) : view.page === 'projects' ? (
-          <Projects controller={controller} openTask={openTask} />
-        ) : view.page === 'connections' ? (
-          <Connections ready={controller.ready} />
+          <WorkProjects key={getEngineStorageKey()} source={getEngineStorageKey()}
+            tasks={controller.tasks} ready={controller.ready} controller={controller} onOpenTask={openTask} onNewTask={newProjectTask}
+            remote={controller.remote} uploading={controller.uploading} />
         ) : view.page === 'monitor' ? (
           <EngineMonitorView tasks={controller.tasks} />
         ) : view.page === 'agents' ? (
@@ -1008,33 +911,6 @@ export function WorkView(): JSX.Element {
   )
 }
 
-function TaskStatus({ status, ready }: { status: WorkTask['status']; ready: boolean }): JSX.Element {
-  // A lost observer cannot assert whether the durable run has reached a terminal state.
-  const disconnected = !ready && (status === 'running' || status === 'waiting')
-  return (
-    <span className={`work-status work-status--${disconnected ? 'interrupted' : status}`}
-      title={disconnected ? '连接中断，等待恢复确认' : undefined}>
-      {disconnected ? <Icon name="alert-circle" size={12} /> : status === 'running' ? (
-        <Spinner size={12} />
-      ) : (
-        <Icon
-          name={
-            status === 'done'
-              ? 'check'
-              : status === 'error' || status === 'interrupted'
-                ? 'alert-circle'
-                : status === 'waiting'
-                  ? 'circle-dot'
-                  : 'circle'
-          }
-          size={12}
-        />
-      )}
-      {disconnected ? '连接中断' : STATUS_LABEL[status]}
-    </span>
-  )
-}
-
 function EmptyState({
   icon,
   title,
@@ -1050,47 +926,6 @@ function EmptyState({
       <h3>{title}</h3>
       <p>{description}</p>
     </div>
-  )
-}
-
-function TaskList({
-  tasks,
-  ready,
-  onSelect,
-  empty
-}: {
-  tasks: WorkTask[]
-  ready: boolean
-  onSelect: (id: string) => void
-  empty: string
-}): JSX.Element {
-  const [visibleCount, setVisibleCount] = useState(WORK_TASK_PAGE_SIZE)
-  return tasks.length ? (
-    <div className="work-task-list">
-      {tasks.slice(0, visibleCount).map((task) => (
-        <button
-          type="button"
-          className="work-task-row"
-          key={task.id}
-          onClick={() => onSelect(task.id)}
-        >
-          <Icon name="chat" size={17} />
-          <span className="work-task-row__name">
-            <strong>{task.title}</strong>
-            <span>{task.workspacePath ? filename(task.workspacePath) : '独立任务'}</span>
-          </span>
-          <TaskStatus status={task.status} ready={ready} />
-          <time dateTime={new Date(task.updatedAt).toISOString()}>{shortDate(task.updatedAt)}</time>
-          <Icon name="chevron-right" size={14} />
-        </button>
-      ))}
-      {visibleCount < tasks.length && <div className="work-list-pagination">
-        <span>已显示 {Math.min(visibleCount, tasks.length)} / {tasks.length} 项任务</span>
-        <button type="button" className="btn btn--sm" onClick={() => setVisibleCount(count => count + WORK_TASK_PAGE_SIZE)}>显示更多任务</button>
-      </div>}
-    </div>
-  ) : (
-    <p className="work-list-empty">{empty}</p>
   )
 }
 
@@ -1211,7 +1046,7 @@ function Conversation({
   // (the user request together with the Agent response), so exporting one
   // item never produces a contextless half of a turn.
   const [selectMode, setSelectMode] = useState(false)
-  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set())
+  const [selection, setSelection] = useState<{ all: boolean; ids: ReadonlySet<string> }>({ all: false, ids: new Set() })
   const [selectionNotice, setSelectionNotice] = useState<string | null>(null)
   const expandedHistory = useRef(conversationPositions.get(positionKey)?.expanded ?? false)
   const [historyBrowsing, setHistoryBrowsing] = useState(expandedHistory.current)
@@ -1224,6 +1059,28 @@ function Conversation({
   const hasNewerContent = newer > 0 || Boolean(controller.archivePage?.unversioned && controller.archivePage.lastPage < controller.archivePage.totalPages)
   hasNewerContentRef.current = hasNewerContent
   const showLatest = latestPending || hasNewerContent || awayFromBottom
+  useEffect(() => {
+    // Reading old turns (or retaining this component in Code mode) is not
+    // seeing the new result. Reuse the conversation's existing scroll state.
+    if (!task.completionUnread || task.status !== 'done' || !active || mode !== 'work' || !following ||
+      hasNewerContent || awayFromBottom || !controller.historyReady || controller.historyError ||
+      controller.displayHistoryLoading || controller.displayHistoryError ||
+      task.activity && (controller.currentRun?.runId !== task.activity.runId || controller.currentRun.status !== 'succeeded')) return
+    const acknowledge = (): void => {
+      const element = scrollRef.current
+      if (element && workConversationAwayFromBottom(element) === false && !document.hidden && document.hasFocus() && !getTopOverlayId())
+        markWorkTaskCompletionRead(controller.draftSource, task.id)
+    }
+    acknowledge()
+    window.addEventListener('focus', acknowledge)
+    document.addEventListener('visibilitychange', acknowledge)
+    return () => {
+      window.removeEventListener('focus', acknowledge)
+      document.removeEventListener('visibilitychange', acknowledge)
+    }
+  }, [task.id, task.completionUnread, task.status, task.activity, active, mode, following, hasNewerContent, awayFromBottom,
+    controller.historyReady, controller.historyError, controller.displayHistoryLoading, controller.displayHistoryError,
+    controller.currentRun?.runId, controller.currentRun?.status, controller.draftSource])
   const showPinnedFeedback = showLatest && !inlineFeedbackVisible
   const conversationGroups = useMemo(() => workConversationGroups(controller.messages), [controller.messages])
   const turnTodos = useMemo(() => controller.assignTodos(conversationGroups.map(group => ({
@@ -1260,6 +1117,11 @@ function Conversation({
   }, [displayTurns, conversationGroups])
   const selectableGroups = useMemo(() => conversationGroups.filter(group => workConversationComplete(group, controller.displayTurns, controller.displayLoadedTurnIds)),
     [conversationGroups, controller.displayTurns, controller.displayLoadedTurnIds])
+  // Keep the user's all/except choice as older turns finish loading, without
+  // reselecting a turn they explicitly unchecked or eagerly mounting history.
+  const selectedIds = useMemo(() => new Set(selectMode ? selectableGroups.filter(group =>
+    selection.all ? !selection.ids.has(group.id) : selection.ids.has(group.id)).map(group => group.id) : []),
+  [selectMode, selectableGroups, selection])
   const turnUsage = useMemo(() => new Map(conversationGroups.map(group => [group.id, summarizeTurnUsage(group.messages)])), [conversationGroups])
   const visibleConversationGroups = useMemo(
     () => conversationGroups.filter((group) => group.endIndex > start && group.startIndex < end),
@@ -1465,9 +1327,9 @@ function Conversation({
     } else setFirstId(group.messages[0].id)
   }, [displayRequest, controller.displayLoadedTurnIds, conversationGroups, firstId])
   const toggleSelectMode = useCallback(() => {
-    setSelectMode((value) => !value)
-    setSelectedIds(new Set())
-  }, [])
+    setSelectMode(!selectMode)
+    setSelection({ all: !selectMode, ids: new Set() })
+  }, [selectMode])
   useEffect(() => {
     selectionToggleRef.current = toggleSelectMode
     return () => {
@@ -1478,24 +1340,24 @@ function Conversation({
     onSelectionModeChange(selectMode)
   }, [onSelectionModeChange, selectMode])
   const toggleConversation = useCallback((id: string) => {
-    setSelectedIds((previous) => {
-      const next = new Set(previous)
+    setSelection((previous) => {
+      const next = new Set(previous.ids)
       if (next.has(id)) next.delete(id)
       else next.add(id)
-      return next
+      return { ...previous, ids: next }
     })
   }, [])
   const allSelected = selectableGroups.length > 0 && selectableGroups.every((group) => selectedIds.has(group.id))
   const toggleAll = useCallback(() => {
-    setSelectedIds(allSelected ? new Set() : new Set(selectableGroups.map((group) => group.id)))
-  }, [allSelected, selectableGroups])
+    setSelection({ all: !allSelected, ids: new Set() })
+  }, [allSelected])
   const selectedGroups = useMemo(
     () => selectableGroups.filter((group) => selectedIds.has(group.id)),
     [selectableGroups, selectedIds]
   )
   const buildExportText = useCallback(() => {
-    // The conversation is windowed for performance; export still uses the
-    // complete task history so older messages are never silently omitted.
+    // Include complete loaded turns beyond the mounted viewport; incomplete
+    // history remains unavailable until its original body has been loaded.
     return serializeMessages(selectedGroups.flatMap((group) => group.messages))
   }, [selectedGroups])
   const copySelected = useCallback(() => {
@@ -1505,7 +1367,7 @@ function Conversation({
       () => {
         setSelectionNotice(`已复制 ${selectedGroups.length} 轮对话`)
         setSelectMode(false)
-        setSelectedIds(new Set())
+        setSelection({ all: false, ids: new Set() })
       },
       () => setSelectionNotice('复制失败')
     )
@@ -1783,9 +1645,8 @@ function useWorkRunFeedback(controller: WorkController) {
     : controller.launching
     ? '正在准备任务…'
     : waiting
-      ? controller.pending.some((item) => item.kind === 'permission')
-        ? '等待确认'
-        : '等你补充'
+      ? workWaitingStatus(controller.pending.filter(item => item.kind === 'ask').length,
+          controller.pending.filter(item => item.kind === 'permission').length).label
       : compacting
         ? '正在自动压缩上下文…'
         : dependency
@@ -2138,88 +1999,26 @@ function WorkPending({
   }
   return (
     <form
-      className="work-pending"
+      className={`work-pending${isPermission ? ' work-pending--permission' : ' work-pending--question'}`}
+      aria-label={isPermission ? '操作确认' : '补充信息'}
       aria-busy={submitting !== null}
       onSubmit={(event) => {
         event.preventDefault()
         submit()
       }}
     >
-      <h3>{pending.kind === 'permission' ? '需要你的确认' : '请补充一下'}</h3>
-      {isPermission ? <>
-        <p className="work-pending__question">{pending.question}</p>
-        <div className="work-pending__actions">
-          {pending.options.map(option => <button
-            key={option.value}
-            type="button"
-            className={`btn btn--sm${option.value === 'approved' ? ' btn--primary' : ''}`}
-            disabled={blocked}
-            title={option.description}
-            onClick={() => void reply([option.value])}
-          >{option.label}</button>)}
-        </div>
-        <div className="work-pending__footer">
-          <button type="button" className="btn btn--sm btn--danger-ghost"
-            disabled={blocked}
-            title="仅对本会话生效：后续命令不再询问，并放行当前操作；同时解除工作区路径限制"
-            onClick={() => void reply(['approved'], true)}>
-            <Icon name="shield" size={14} />
-            {submitting === 'full-access' ? '切换并放行中…' : '本会话改为完全访问并放行'}
-          </button>
-        </div>
-      </> : pending.groups.map((group, index) => (
-        <fieldset key={index} disabled={blocked}>
-          <legend>{group.question}</legend>
-          {group.options.map((option) => (
-            <label className="work-pending__option" key={option.value}>
-              <input
-                type={group.multiSelect ? 'checkbox' : 'radio'}
-                name={`${pending.toolCallId}-${index}`}
-                checked={values[index]?.includes(option.value) ?? false}
-                onChange={(event) =>
-                  setValues((previous) =>
-                    previous.map((list, groupIndex) =>
-                      groupIndex !== index
-                        ? list
-                        : group.multiSelect
-                          ? event.target.checked
-                            ? [...list, option.value]
-                            : list.filter((value) => value !== option.value)
-                          : [option.value]
-                    )
-                  )
-                }
-              />
-              <span>
-                <strong>{option.label}</strong>
-                {option.description && <small>{option.description}</small>}
-              </span>
-            </label>
-          ))}
-          {group.allowInput && (
-            <input className="ui-input"
-              aria-label={`补充回答：${group.question}`}
-              placeholder="也可以直接输入…"
-              value={freeText[index] ?? ''}
-              onChange={(event) =>
-                setFreeText((previous) =>
-                  previous.map((value, groupIndex) =>
-                    groupIndex === index ? event.target.value : value
-                  )
-                )
-              }
-            />
-          )}
-        </fieldset>
-      ))}
+      {isPermission ? <WorkPermissionCard pending={pending} blocked={blocked} submitting={submitting}
+        onReply={(values, fullAccess) => { void reply(values, fullAccess) }} /> : (
+        <WorkQuestionCard pending={pending} values={values} freeText={freeText} blocked={blocked}
+          submitting={submitting !== null}
+          onSelect={(index, value, checked) => setValues(previous => previous.map((list, groupIndex) =>
+            groupIndex !== index ? list : pending.groups[index].multiSelect
+              ? checked ? [...list, value] : list.filter(item => item !== value)
+              : [value]))}
+          onText={(index, text) => setFreeText(previous => previous.map((value, groupIndex) =>
+            groupIndex === index ? text : value))} />
+      )}
       {error ? <p className="work-pending__error" role="alert">{error}</p> : null}
-      {!isPermission ? <button
-        className="btn btn--primary"
-        type="submit"
-        disabled={blocked || answers.some((answer) => !answer)}
-      >
-        {submitting ? '正在提交…' : '提交回复'}
-      </button> : null}
       {submitting ? <span className="work-pending__status" role="status">{submitting === 'full-access' ? '正在切换权限并放行当前操作…' : '正在提交回复…'}</span> : null}
     </form>
   )
@@ -3078,131 +2877,4 @@ function SourceRow({
     </li>
   )
 }
-
-function Projects({
-  controller,
-  openTask
-}: {
-  controller: WorkController
-  openTask: (id: string) => void
-}): JSX.Element {
-  const groups = useMemo(() => {
-    const result = new Map<string, WorkTask[]>()
-    for (const task of controller.tasks) {
-      if (task.archived || !task.workspacePath) continue
-      const group = result.get(task.workspacePath)
-      if (group) group.push(task)
-      else result.set(task.workspacePath, [task])
-    }
-    return [...result]
-  }, [controller.tasks])
-  return (
-    <div className="work-page">
-      <div className="work-page__inner">
-        <SectionHeading title="项目" description="按任务使用的工作目录，汇集相关工作。" />
-        {groups.length ? (
-          groups.map(([path, tasks]) => (
-            <section className="work-project" key={path}>
-              <header>
-                <Icon name="folder-outline" size={20} />
-                <div>
-                  <h2>{filename(path)}</h2>
-                  <p>{path}</p>
-                </div>
-                <span>{tasks.length} 项任务</span>
-              </header>
-              <TaskList tasks={tasks} ready={controller.ready} onSelect={openTask} empty="" />
-            </section>
-          ))
-        ) : (
-          <EmptyState
-            icon="folder-outline"
-            title="将相关工作放在一起"
-            description="开始任务时选择工作目录，使用同一目录的任务会自动汇集到这里。项目指令和团队共享将在后续版本接入。"
-          />
-        )}
-      </div>
-    </div>
-  )
-}
-
-function Connections({ ready }: { ready: boolean }): JSX.Element {
-  const { engine } = useApp()
-  return (
-    <div className="work-page">
-      <div className="work-page__inner">
-        <SectionHeading title="连接" description="管理执行引擎、模型和可供任务使用的能力。" />
-        <div className="work-connection-list">
-          <ConnectionRow
-            icon="account-outline"
-            title="个人账号"
-            description="登录、个人资料和设备会话"
-            section="account"
-          />
-          <ConnectionRow
-            icon="engine"
-            title="AI 引擎"
-            description={engine.snapshot.mode === 'remote' ? '远程引擎' : '本地引擎'}
-            status={ready ? '已连接' : '未就绪'}
-            section="general"
-          />
-          <ConnectionRow
-            icon="model"
-            title="模型"
-            description="设置研究、写作与分析使用的模型"
-            section="models"
-          />
-          <ConnectionRow
-            icon="sparkles"
-            title="技能"
-            description="查看和管理已安装技能"
-            section="skills"
-          />
-          <ConnectionRow
-            icon="graph"
-            title="MCP 服务"
-            description="管理外部工具连接与授权"
-            section="mcp"
-          />
-          <ConnectionRow
-            icon="package-variant-closed"
-            title="知识库"
-            description="管理任务可引用的资料与检索范围"
-            section="knowledge"
-          />
-        </div>
-        <p className="work-note">连接设置会沿用当前引擎与账号范围，切换 Work 任务不会串用其他工作区。</p>
-      </div>
-    </div>
-  )
-}
-
-function ConnectionRow({
-  icon,
-  title,
-  description,
-  status,
-  section
-}: {
-  icon: IconName
-  title: string
-  description: string
-  status?: string
-  section: string
-}): JSX.Element {
-  return (
-    <div className="work-connection-row">
-      <Icon name={icon} size={21} />
-      <div>
-        <h3>{title}</h3>
-        <p>{description}</p>
-      </div>
-      {status && <span>{status}</span>}
-      <button type="button" className="btn btn--sm" onClick={() => openAppSettings(section)}>
-        管理
-      </button>
-    </div>
-  )
-}
-
 

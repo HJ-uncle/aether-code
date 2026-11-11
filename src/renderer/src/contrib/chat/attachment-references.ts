@@ -1,4 +1,5 @@
 import type { ChatAttachment } from '../../core/engine/useChat'
+import { pastedTextLabel } from '../../../../shared/pasted-text-label'
 import type { Mention } from './mention-context'
 
 export const ATTACHMENT_DRAG_TYPE = 'application/x-aether-attachment-reference'
@@ -17,7 +18,8 @@ export function attachmentIdentity(file: Pick<ChatAttachment, 'attachmentId' | '
 export function attachmentReferences(files: readonly ChatAttachment[]): AttachmentReference[] {
   let image = 0, document = 0
   return files.map(file => ({ id: attachmentIdentity(file), file,
-    label: file.type.startsWith('image/') ? `图${++image}` : `附件${++document}` }))
+    label: pastedTextLabel(file.name, file.type) ??
+      (file.type.startsWith('image/') ? `图${++image}` : `附件${++document}`) }))
 }
 
 export function attachmentMention(reference: AttachmentReference): Mention {

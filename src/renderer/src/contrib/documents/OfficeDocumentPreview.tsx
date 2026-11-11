@@ -22,7 +22,7 @@ function ContinuousPage({ html, name, kind, index, scale, height, retained, acti
   const resize = useRef<(() => void) | null>(null)
   // Changing srcdoc navigates the child document and decodes every image again.
   // Only this trusted parent changes zoom; the sandbox never enables scripts.
-  const srcDoc = useMemo(() => documentFrame(html, name, 1), [html, name])
+  const srcDoc = useMemo(() => documentFrame(html, name, 1, kind), [html, name, kind])
   useEffect(() => {
     return frame.current && retained && active ? bridgeFrameSelection(frame.current) : undefined
   }, [retained, active, srcDoc])
@@ -53,7 +53,7 @@ function ContinuousPage({ html, name, kind, index, scale, height, retained, acti
     return () => { resize.current = null; child.removeEventListener('load', loaded); observer.disconnect() }
   }, [retained, active, srcDoc, index])
   useLayoutEffect(() => { resize.current?.() }, [scale])
-  return <div className="document-preview__continuous-page" data-document-page={index + 1} style={{ height }}>
+  return <div className={`document-preview__continuous-page${kind === 'pptx' ? ' document-preview__continuous-page--pptx' : ''}`} data-document-page={index + 1} style={{ height }}>
     {retained ? <iframe ref={frame} className="document-preview__frame" sandbox="allow-same-origin" referrerPolicy="no-referrer" data-document-selection-frame="true"
       title={`${name} · ${kind === 'docx' ? '预览区段' : '第'} ${index + 1}${kind === 'docx' ? '' : ' 页'}`} srcDoc={srcDoc} /> : null}
   </div>

@@ -26,7 +26,9 @@ export function passiveDocumentHtml(html: string): string {
 
 const escape = (text: string): string => text.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] || '')
 
-export function documentFrame(html: string, name: string, scale: number): string {
+export function documentFrame(html: string, name: string, scale: number, kind: 'docx' | 'pptx'): string {
   const zoom = Number.isFinite(scale) ? Math.min(2, Math.max(0.2, scale)) : 1
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; connect-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'"><meta name="referrer" content="no-referrer"><title>${escape(name)}</title><style>html{color-scheme:light}body{margin:0;background:Canvas;color:CanvasText;font-family:system-ui,sans-serif}.document-page{zoom:${zoom};width:max-content;min-width:100%;box-sizing:border-box}.document-page>section.docx{margin:0 auto;box-shadow:none}.document-page>.slide-container{margin:0 auto}a{color:inherit;text-decoration:none;pointer-events:none}img{max-width:100%}</style></head><body><main class="document-page">${html}</main></body></html>`
+  // A slide owns its background; the iframe's unused gutters must not add paper around it.
+  const background = kind === 'pptx' ? 'transparent' : 'Canvas'
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; connect-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'"><meta name="referrer" content="no-referrer"><title>${escape(name)}</title><style>html{color-scheme:light}body{margin:0;background:${background};color:CanvasText;font-family:system-ui,sans-serif}.document-page{zoom:${zoom};width:max-content;min-width:100%;box-sizing:border-box}.document-page>section.docx{margin:0 auto;box-shadow:none}.document-page>.slide-container{margin:0 auto}a{color:inherit;text-decoration:none;pointer-events:none}img{max-width:100%}</style></head><body><main class="document-page">${html}</main></body></html>`
 }

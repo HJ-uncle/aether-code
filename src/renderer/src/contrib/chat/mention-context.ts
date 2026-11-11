@@ -17,7 +17,9 @@
  * 能可靠往返的只有正文这段字符串。
  */
 
-export type MentionSource = 'file' | 'dir' | 'code' | 'terminal' | 'agent' | 'browser' | 'conversation'
+import { toolkitName } from '@shared/toolkits'
+
+export type MentionSource = 'file' | 'dir' | 'code' | 'terminal' | 'agent' | 'browser' | 'conversation' | 'toolkit'
 export type MentionOrigin = 'workspace' | 'attachment' | 'artifact'
 
 /** 每种引用标签的配色与悬停提示：输入框 chip 与气泡 chip 共用这一份 */
@@ -27,6 +29,7 @@ export const MENTION_META: Record<MentionSource, { color: string; hint: string }
   code: { color: '#8b5cf6', hint: '源码位置' },
   terminal: { color: '#0ea5e9', hint: '终端输出' },
   agent: { color: '#10b981', hint: '协作 Agent' },
+  toolkit: { color: 'var(--accent)', hint: '工具包' },
   browser: { color: 'var(--accent)', hint: '浏览器网页' },
   conversation: { color: 'var(--accent)', hint: '会话' }
 }
@@ -100,6 +103,7 @@ const LANG_BY_EXT: Record<string, string> = {
 
 export function mentionToken(mention: Mention): string {
   if (!mention.path) return mention.displayText
+  if (mention.source === 'toolkit') return `@toolkit:${mention.path}`
   if (mention.source === 'code' && mention.startLine) {
     const range = mention.endLine && mention.endLine !== mention.startLine
       ? `${mention.startLine}-${mention.endLine}` : `${mention.startLine}`
@@ -117,6 +121,7 @@ export function formatPathDisplay(path: string): string {
 /** 引用 chip 的悬停提示：给出类型、真实路径与行号区间 */
 export function mentionTitle(mention: Pick<Mention, 'source' | 'path' | 'startLine' | 'endLine' | 'content'>): string {
   if (mention.source === 'conversation') return '打开会话'
+  if (mention.source === 'toolkit') return `工具包：${toolkitName(mention.path ?? '')}`
   const hint = MENTION_META[mention.source].hint
   const head = mention.path ? `${hint}：${mention.path}` : hint
   const lines = mention.startLine
@@ -135,7 +140,9 @@ export function isStoredMention(value: unknown): value is Mention {
   if (!value || typeof value !== 'object') return false
   const record = value as Record<string, unknown>
   return typeof record.displayText === 'string' &&
-    ['file', 'dir', 'code', 'terminal', 'agent', 'browser', 'conversation'].includes(String(record.source)) &&
+    ['file', 'dir', 'code', 'terminal', 'agent', 'browser', 'conversation', 'toolkit'].includes(String(record.source)) &&
+    (record.source !== 'toolkit' || typeof record.path === 'string' && /^[a-z][a-z0-9-]{0,127}$/.test(record.path) &&
+      Object.keys(record).every(key => ['source', 'path', 'displayText', 'textOffset'].includes(key))) &&
     (record.origin === undefined || typeof record.origin === 'string' && ['workspace', 'attachment', 'artifact'].includes(record.origin)) &&
     (record.attachmentId === undefined || typeof record.attachmentId === 'string' && record.attachmentId.length > 0 && record.attachmentId.length <= 4096) &&
     ['path', 'content'].every((key) => record[key] === undefined || typeof record[key] === 'string') &&
@@ -256,7 +263,7 @@ export function buildMentionMessage(text: string, mentions: readonly Mention[], 
       ...(mention.origin ? { o: mention.origin } : {}),
       ...(mention.attachmentId ? { a: mention.attachmentId } : {}),
       p: mention.path ?? '',
-      d: mention.displayText,
+      d: mention.source === 'toolkit' ? toolkitName(mention.path ?? '') : mention.displayText,
       s: refStart,
       e: refStart + block.length,
       ...(mention.source === 'code' && mention.startLine
@@ -285,10 +292,12 @@ export function buildMentionMessage(text: string, mentions: readonly Mention[], 
 function isValidRefShape(value: unknown): value is PromptRef {
   if (!value || typeof value !== 'object') return false
   const r = value as Record<string, unknown>
-  if (!['file', 'dir', 'code', 'terminal', 'agent', 'browser', 'conversation'].includes(String(r.t))) return false
+  if (!['file', 'dir', 'code', 'terminal', 'agent', 'browser', 'conversation', 'toolkit'].includes(String(r.t))) return false
   if (r.o !== undefined && (typeof r.o !== 'string' || !['workspace', 'attachment', 'artifact'].includes(r.o))) return false
   if (r.a !== undefined && (typeof r.a !== 'string' || !r.a || r.a.length > 4096)) return false
   if (typeof r.p !== 'string' || typeof r.d !== 'string') return false
+  if (r.t === 'toolkit' && (!/^[a-z][a-z0-9-]{0,127}$/.test(r.p) ||
+    Object.keys(r).some(key => !['t', 'p', 'd', 's', 'e'].includes(key)))) return false
   if (typeof r.s !== 'number' || typeof r.e !== 'number') return false
   if (!Number.isInteger(r.s) || !Number.isInteger(r.e)) return false
   const pair = (value: unknown): value is [number, number] => Array.isArray(value) && value.length === 2 &&
@@ -404,7 +413,7 @@ export function contentFromBody(body: string, ref: PromptRef): string | undefine
 /** 机器数据 → 输入框引用（气泡 chip 与回填共用） */
 export function refToMention(ref: PromptRef, content?: string): Mention {
   return {
-    displayText: ref.d,
+    displayText: ref.t === 'toolkit' ? toolkitName(ref.p) : ref.d,
     source: ref.t,
     ...(ref.o ? { origin: ref.o } : {}),
     ...(ref.a ? { attachmentId: ref.a } : {}),

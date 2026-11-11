@@ -11,6 +11,7 @@ import {
 import { builtinAgentReference } from './builtin-agents'
 import { parseConversationLink } from './conversation-link'
 import type { BuiltinAgentRole } from './subagent'
+import { WORK_TOOLKITS } from './toolkits'
 
 function fail(message: string): never {
   throw new NextTurnQueueError('INVALID', message)
@@ -209,6 +210,7 @@ function selection(value: unknown, label: string): void {
 export function queueMentionToken(
   mention: Pick<QueueMention, 'path' | 'source' | 'displayText' | 'startLine' | 'endLine'>
 ): string {
+  if (mention.source === 'toolkit') return `@toolkit:${mention.path ?? ''}`
   if (!mention.path) return mention.displayText
   if (mention.source === 'code' && mention.startLine) {
     const range =
@@ -219,6 +221,107 @@ export function queueMentionToken(
   }
   return `@${mention.path}`
 }
+/** Shared validation for persisted envelopes and edits before comparing authored chip identities. */
+function checkedQueueDraft(value: unknown, limits: NextTurnQueueLimits = DEFAULT_NEXT_TURN_QUEUE_LIMITS): {
+  draft: NextTurnQueueEnvelope['draft']; agentIds: Set<string>; toolkitIds: Set<string>
+} {
+  assertQueueJsonValue(value, limits.maxStateBytes)
+  const draft = object(value, ['text', 'revision', 'mentions'], 'draft')
+  if (typeof draft.text !== 'string') fail('Draft text must be text')
+  if (bytes(draft.text) > limits.maxTextBytes)
+    throw new NextTurnQueueError('CAPACITY', 'Draft UTF-8 byte budget exceeded')
+  integer(draft.revision, 'draft revision')
+  list(draft.mentions, 'mentions', limits.maxMentions)
+  let previousEnd = 0
+  const agentIds = new Set<string>(), toolkitIds = new Set<string>()
+  for (const item of draft.mentions) {
+    const mention = object(
+      item,
+      [
+        'source',
+        'origin',
+        'attachmentId',
+        'displayText',
+        'textOffset',
+        'path',
+        'content',
+        'startLine',
+        'endLine',
+        'startColumn',
+        'endColumn'
+      ],
+      'mention'
+    )
+    oneOf(mention.source, ['file', 'dir', 'code', 'terminal', 'agent', 'browser', 'conversation', 'toolkit'], 'mention source')
+    if (mention.origin !== undefined) oneOf(mention.origin, ['workspace', 'attachment', 'artifact'], 'mention origin')
+    if (mention.attachmentId !== undefined) string(mention.attachmentId, 'attachment identity', 4096)
+    string(mention.displayText, 'mention label', 512)
+    integer(mention.textOffset, 'mention offset')
+    if (mention.path !== undefined) string(mention.path, 'mention path', mention.source === 'conversation' ? 8192 : 4096, true)
+    if (mention.source === 'conversation' && !parseConversationLink(mention.path)) fail('Conversation mention link is invalid')
+    if (mention.source === 'toolkit') {
+      oneOf(mention.path, WORK_TOOLKITS.map(toolkit => toolkit.id), 'Toolkit mention ID')
+      toolkitIds.add(mention.path as string)
+      if (['origin', 'attachmentId', 'content', 'startLine', 'endLine', 'startColumn', 'endColumn'].some(key => mention[key] !== undefined))
+        fail('Toolkit mention cannot carry file or snapshot fields')
+    }
+    if (mention.content !== undefined && typeof mention.content !== 'string')
+      fail('Mention content must be text')
+    for (const name of ['startLine', 'endLine', 'startColumn', 'endColumn'])
+      if (mention[name] !== undefined) integer(mention[name], 'mention ' + name, 1)
+    const token = queueMentionToken({
+      source: mention.source as QueueMention['source'],
+      displayText: mention.displayText,
+      path: typeof mention.path === 'string' ? mention.path : undefined,
+      startLine: typeof mention.startLine === 'number' ? mention.startLine : undefined,
+      endLine: typeof mention.endLine === 'number' ? mention.endLine : undefined
+    })
+    const end = mention.textOffset + token.length
+    if (
+      mention.textOffset < previousEnd ||
+      end > draft.text.length ||
+      draft.text.slice(mention.textOffset, end) !== token
+    )
+      fail('Mention position does not match the authored chip')
+    previousEnd = end
+    if (mention.source === 'agent') {
+      string(mention.path, 'Agent mention ID')
+      agentIds.add(mention.path)
+    }
+  }
+  return { draft: value as NextTurnQueueEnvelope['draft'], agentIds, toolkitIds }
+}
+
+/** Editing prose can revoke an existing chip selection; it can never enable a capability. */
+export function queueDraftRemovesToolkit(previous: NextTurnQueueEnvelope['draft'], next: NextTurnQueueEnvelope['draft']): boolean {
+  const before = checkedQueueDraft(previous).toolkitIds, after = checkedQueueDraft(next).toolkitIds
+  return [...before].some(id => !after.has(id))
+}
+
+export function queueResourcesAfterDraftEdit(
+  previous: NextTurnQueueEnvelope['draft'],
+  next: NextTurnQueueEnvelope['draft'],
+  resources: NextTurnQueueEnvelope['resources'],
+  inheritedToolkits?: readonly string[],
+): NextTurnQueueEnvelope['resources'] {
+  const beforeIds = checkedQueueDraft(previous).toolkitIds
+  const afterIds = checkedQueueDraft(next).toolkitIds
+  const removed = new Set([...beforeIds].filter(id => !afterIds.has(id)))
+  if (!removed.size) return resources
+  const current = resources.toolkits
+  if (current !== undefined) selection(current, 'toolkits')
+  if (current?.kind === 'none') return resources
+  if (current?.kind === 'override') {
+    const ids = current.ids.filter(id => !removed.has(id))
+    if (ids.length === current.ids.length) return resources
+    return { ...resources, toolkits: ids.length ? { kind: 'override', ids } : { kind: 'none' } }
+  }
+  // Main resolves this from the scoped engine session, never from draft metadata.
+  if (inheritedToolkits === undefined) fail('Resolve the inherited toolkit selection before removing part of it')
+  const ids = inheritedToolkits.filter(id => !removed.has(id))
+  return { ...resources, toolkits: ids.length ? { kind: 'override', ids: [...ids] } : { kind: 'none' } }
+}
+
 export function assertQueueEnvelope(
   value: unknown,
   scope: NextTurnQueueScope,
@@ -267,63 +370,7 @@ export function assertQueueEnvelope(
     }
   } else if (envelope.code !== undefined) fail('Work queue cannot carry Code options')
   if (envelope.submissionDigest !== undefined && (typeof envelope.submissionDigest !== 'string' || !/^[a-f0-9]{64}$/.test(envelope.submissionDigest))) fail('Enqueue submission digest is invalid')
-  const draft = object(envelope.draft, ['text', 'revision', 'mentions'], 'draft')
-  if (typeof draft.text !== 'string') fail('Draft text must be text')
-  if (bytes(draft.text) > limits.maxTextBytes)
-    throw new NextTurnQueueError('CAPACITY', 'Draft UTF-8 byte budget exceeded')
-  integer(draft.revision, 'draft revision')
-  list(draft.mentions, 'mentions', limits.maxMentions)
-  let previousEnd = 0
-  const agentIds = new Set<string>()
-  for (const item of draft.mentions) {
-    const mention = object(
-      item,
-      [
-        'source',
-        'origin',
-        'attachmentId',
-        'displayText',
-        'textOffset',
-        'path',
-        'content',
-        'startLine',
-        'endLine',
-        'startColumn',
-        'endColumn'
-      ],
-      'mention'
-    )
-    oneOf(mention.source, ['file', 'dir', 'code', 'terminal', 'agent', 'browser', 'conversation'], 'mention source')
-    if (mention.origin !== undefined) oneOf(mention.origin, ['workspace', 'attachment', 'artifact'], 'mention origin')
-    if (mention.attachmentId !== undefined) string(mention.attachmentId, 'attachment identity', 4096)
-    string(mention.displayText, 'mention label', 512)
-    integer(mention.textOffset, 'mention offset')
-    if (mention.path !== undefined) string(mention.path, 'mention path', mention.source === 'conversation' ? 8192 : 4096, true)
-    if (mention.source === 'conversation' && !parseConversationLink(mention.path)) fail('Conversation mention link is invalid')
-    if (mention.content !== undefined && typeof mention.content !== 'string')
-      fail('Mention content must be text')
-    for (const name of ['startLine', 'endLine', 'startColumn', 'endColumn'])
-      if (mention[name] !== undefined) integer(mention[name], 'mention ' + name, 1)
-    const token = queueMentionToken({
-      source: mention.source as QueueMention['source'],
-      displayText: mention.displayText,
-      path: typeof mention.path === 'string' ? mention.path : undefined,
-      startLine: typeof mention.startLine === 'number' ? mention.startLine : undefined,
-      endLine: typeof mention.endLine === 'number' ? mention.endLine : undefined
-    })
-    const end = mention.textOffset + token.length
-    if (
-      mention.textOffset < previousEnd ||
-      end > draft.text.length ||
-      draft.text.slice(mention.textOffset, end) !== token
-    )
-      fail('Mention position does not match the authored chip')
-    previousEnd = end
-    if (mention.source === 'agent') {
-      string(mention.path, 'Agent mention ID')
-      agentIds.add(mention.path)
-    }
-  }
+  const { draft, agentIds } = checkedQueueDraft(envelope.draft, limits)
   const model = object(envelope.model, ['kind', 'modelId', 'observedModelId'], 'model')
   oneOf(model.kind, ['explicit', 'client-default', 'engine-default'], 'model kind')
   if (model.kind === 'explicit') {
@@ -368,10 +415,11 @@ export function assertQueueEnvelope(
     fail('Authored Agent chip is missing its collaborator selector')
   const resources = object(
     envelope.resources,
-    ['skills', 'mcpServers', 'knowledgeBases'],
+    ['skills', 'mcpServers', 'knowledgeBases', 'toolkits'],
     'resources'
   )
   for (const name of ['skills', 'mcpServers', 'knowledgeBases']) selection(resources[name], name)
+  if (resources.toolkits !== undefined) selection(resources.toolkits, 'toolkits')
   const thinking = object(envelope.thinking, ['kind', 'effort'], 'thinking')
   oneOf(thinking.kind, ['inherit', 'off', 'on', 'effort'], 'thinking kind')
   if (thinking.kind === 'effort')

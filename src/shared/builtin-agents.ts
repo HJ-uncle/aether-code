@@ -1,9 +1,11 @@
 import type { AgentCollaborator, BuiltinAgentRole } from './subagent'
 
-export const BUILTIN_AGENTS: ReadonlyArray<{ role: BuiltinAgentRole; name: string; description: string; icon: 'search' | 'terminal' | 'account-outline' }> = [
-  { role: 'research', name: '调研', description: '只读调查与分析，返回结论和证据', icon: 'search' },
-  { role: 'executor', name: '执行', description: '完成代码、文档与附件，也可负责集成', icon: 'terminal' },
-  { role: 'general', name: '通用', description: '处理综合需求与特殊任务', icon: 'account-outline' }
+export type BuiltinAgentIconName = 'agent-research' | 'agent-executor' | 'agent-general'
+
+export const BUILTIN_AGENTS: ReadonlyArray<{ role: BuiltinAgentRole; name: string; description: string; icon: BuiltinAgentIconName }> = [
+  { role: 'research', name: '调研', description: '只读调查与分析，返回结论和证据', icon: 'agent-research' },
+  { role: 'executor', name: '执行', description: '完成代码、文档与附件，也可负责集成', icon: 'agent-executor' },
+  { role: 'general', name: '通用', description: '处理综合需求与特殊任务', icon: 'agent-general' }
 ]
 
 export function builtinAgentName(role: unknown): string | undefined {

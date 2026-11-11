@@ -30,6 +30,7 @@ import type {
 import { engineRequest, engineUpload } from './engine/client'
 import { cancelRemoteAttachmentUpload, uploadRemoteAttachment } from './engine/upload-remote-attachment'
 import { saveWorkspaceFile } from './engine/save-workspace-file'
+import { readWorkspaceAttachment } from './engine/read-workspace-attachment'
 import { engineHost } from './engine/host'
 import { getEngineResourceSnapshot, getEngineStorageSnapshot } from './engine/diagnostics'
 import type { EngineDiagnostics } from '../shared/engine-diagnostics'
@@ -357,6 +358,14 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.invoke.engineUploadAttachment, (event, input) => {
     assertTrustedRenderer(event, '附件上传')
     return uploadRemoteAttachment(input, event.sender.id)
+  })
+  ipcMain.handle(IPC.invoke.engineReadWorkspaceAttachment, async (event, input) => {
+    assertTrustedRenderer(event, '资料读取')
+    const controller = new AbortController()
+    const closed = (): void => controller.abort(new Error('读取资料的窗口已关闭'))
+    event.sender.once('destroyed', closed)
+    try { return await readWorkspaceAttachment(input, controller.signal) }
+    finally { event.sender.removeListener('destroyed', closed) }
   })
   ipcMain.handle(IPC.invoke.engineSaveWorkspaceFile, (event, input) => {
     const owner = assertTrustedRenderer(event, '成果下载')

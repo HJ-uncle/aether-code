@@ -25,6 +25,7 @@ import type {
   EngineUploadInput,
   EngineFileSaveInput,
   EngineFileSaveResult,
+  EngineWorkspaceAttachmentInput,
   RemoteAttachmentInput,
   RemoteAttachmentResult,
   EngineRequestResult,
@@ -211,6 +212,8 @@ const api = {
       ipcRenderer.invoke(IPC.invoke.engineUpload, input),
     uploadAttachment: (input: RemoteAttachmentInput): Promise<RemoteAttachmentResult> =>
       ipcRenderer.invoke(IPC.invoke.engineUploadAttachment, input),
+    readWorkspaceAttachment: (input: EngineWorkspaceAttachmentInput): Promise<Uint8Array> =>
+      ipcRenderer.invoke(IPC.invoke.engineReadWorkspaceAttachment, input),
     saveWorkspaceFile: (input: EngineFileSaveInput): Promise<EngineFileSaveResult> =>
       ipcRenderer.invoke(IPC.invoke.engineSaveWorkspaceFile, input),
     cancelAttachmentUpload: (requestId: string): Promise<void> =>

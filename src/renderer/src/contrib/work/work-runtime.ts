@@ -9,18 +9,24 @@ import {
   assertEngineSource,
   getEngineStorageKey,
   getEngineSource,
+  getExpectedEngine,
   isRemoteEngine,
   sessionStorageKey
 } from '@renderer/core/engine/source'
 import {
   cancelAttachmentUpload,
+  request,
   requestOrThrow,
   uploadAttachment
 } from '@renderer/core/engine/client'
-import { allowRoot, bindSessionWorkspace, copyIntoWorkspace, pickFolder } from '@renderer/core/workspace/fs-client'
+import { invalidateHistoryRuntimeCache } from '@renderer/core/engine/history-runtime-cache'
+import { clearKnowledgeBinding } from '@renderer/core/engine/knowledge'
+import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
+import { removeSessionMeta } from '../history/session-meta'
+import { removePendingSession } from '../history/pending-sessions'
+import { allowRoot, bindSessionWorkspace, copyIntoWorkspace, pickFolder, sessionWorkspaceContext, stat } from '@renderer/core/workspace/fs-client'
 import { createPastedTextFile, isSupportedFile } from '@renderer/contrib/chat/useAttachments'
 import { mentionToken, userMessageDraft, type Mention } from '@renderer/contrib/chat/mention-context'
-import { composerInputIssue } from '@renderer/contrib/chat/input-limits'
 import { buildConversationLink } from '@shared/conversation-link'
 import { resolveConversationReference } from './work-conversation-reference'
 import { appendWorkMentions, workspaceReferenceMentions } from './work-reference-draft'
@@ -43,10 +49,16 @@ import { restoreMessageDraft } from '../chat/message-draft-merge'
 import { getAppMode } from '@renderer/core/platform/app-mode'
 import { replaceImageAttachmentReferences } from '../chat/image-attachment-reference'
 import { useWorkAgentIdentity } from './work-agent-identity'
+import { editDraftToolkits } from './work-toolkit-mentions'
+import { sameToolkits, parseSessionToolkits } from '@shared/toolkits'
+import { rememberWorkWorkspace, validWorkWorkspacePath, workWorkspaceChoices } from './work-workspace-history'
+import { workWorkspacePathKey } from './work-workspace-history'
+import { planWorkWorkspaceTransfer, remapWorkWorkspaceDraft, workspaceTransferRelativePath } from './work-workspace-transfer'
 import {
   flushWorkDrafts,
   getWorkDraft,
   getWorkState,
+  removeWorkTask,
   updateWorkDraft,
   updateWorkState,
   useWorkState,
@@ -54,6 +66,7 @@ import {
   workStatus,
   WORK_TASK_LABEL_COLORS,
   type WorkArtifact,
+  type WorkResources,
   type WorkTask,
   type WorkTaskLabelColor
 } from './work-state'
@@ -89,6 +102,21 @@ function saveWorkDefaultModelSelection(id: string, selection: WorkDefaultModelSe
   while (keys.length > 100) delete table[keys.shift()!]
   try { localStorage.setItem(sessionStorageKey(WORK_DEFAULT_MODELS_KEY, source), JSON.stringify(table)) }
   catch { /* The current unsent choice remains usable without storage. */ }
+}
+
+function forgetWorkTaskPreferences(id: string, source: string): void {
+  saveWorkDefaultModelSelection(id, null, source)
+  saveSessionModelSelection(id, null, source)
+  clearKnowledgeBinding(id, source)
+  try {
+    const key = sessionStorageKey('aether:sessionThinkingModes', source)
+    const stored: unknown = JSON.parse(localStorage.getItem(key) ?? '{}')
+    if (stored && typeof stored === 'object' && !Array.isArray(stored) && Object.hasOwn(stored, id)) {
+      const table = { ...stored } as Record<string, unknown>
+      delete table[id]
+      localStorage.setItem(key, JSON.stringify(table))
+    }
+  } catch { /* Deleting history must still succeed when preference storage is unavailable. */ }
 }
 
 /** Keep attachment bytes inside the engine-owned scratch workspace when the
@@ -168,7 +196,13 @@ export function useWorkController() {
   const [loaded, setLoaded] = useState<{ source: string; epoch: number; id: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [uploadCount, setUploadCount] = useState(0)
+  const uploadCountRef = useRef(0)
+  const workspaceSelectionRef = useRef<{ source: string; epoch: number; activeId: string | null } | null>(null)
+  const [workspaceSelection, setWorkspaceSelection] = useState<{ source: string; epoch: number; activeId: string | null } | null>(null)
+  const workspaceSendRef = useRef(new Set<string>())
   const [historyAttempt, setHistoryAttempt] = useState(0)
+  const [toolkitSelectionAttempt, setToolkitSelectionAttempt] = useState(0)
+  const retryToolkitSelection = useCallback(() => setToolkitSelectionAttempt(value => value + 1), [])
   const [draftFocusRequest, setDraftFocusRequest] = useState<{ source: string; taskId: string | null; token: number } | null>(null)
   const messageActionRef = useRef<{ source: string; taskId: string; action: WorkUserMessageAction } | null>(null)
   const [messageAction, setMessageAction] = useState<{ source: string; taskId: string; action: WorkUserMessageAction } | null>(null)
@@ -182,6 +216,9 @@ export function useWorkController() {
   )
   const stoppingTaskIdsRef = useRef(new Set<string>())
   const [stoppingTaskIds, setStoppingTaskIds] = useState<ReadonlySet<string>>(() => new Set())
+  const taskDeletionsRef = useRef(new Map<string, Promise<void>>())
+  const deletingTaskKeysRef = useRef(new Set<string>())
+  const [deletingTaskKeys, setDeletingTaskKeys] = useState<ReadonlySet<string>>(() => new Set())
   const taskRevisionsRef = useRef(new Map<string, number>())
   const invalidateStatusProbe = (id: string): void => {
     taskRevisionsRef.current.set(id, (taskRevisionsRef.current.get(id) ?? 0) + 1)
@@ -244,6 +281,23 @@ export function useWorkController() {
   )
 
   useEffect(() => {
+    if (!engineReady || !activeId || activeTask?.resources?.toolkits !== undefined) return
+    let cancelled = false
+    void requestOrThrow<{ toolkits: string[] }>({ method: 'GET', path: `/sessions/${encodeURIComponent(activeId)}/toolkits` })
+      .then(result => {
+        if (cancelled || epoch !== getEngineSource()) return
+        const toolkits = parseSessionToolkits(result)
+        // A delayed restore must not replace a selection made in the meantime.
+        const task = getWorkState(source).tasks.find(item => item.id === activeId)
+        if (task && task.resources?.toolkits === undefined) updateTask(activeId, {
+          resources: { skills: [], mcpServers: [], knowledgeBases: [], ...task.resources, toolkits }
+        })
+      })
+      .catch(() => { /* Keep absence: the next send inherits the engine's durable selection. */ })
+    return () => { cancelled = true }
+  }, [engineReady, activeId, activeTask?.resources?.toolkits, epoch, source, updateTask, toolkitSelectionAttempt])
+
+  useEffect(() => {
     if (!activeId || !sessionModelReady || epoch !== getEngineSource()) return
     // An external/cron run can change its requested model without touching Work
     // metadata. Persist the resolved selection so the next request and restart
@@ -272,7 +326,7 @@ export function useWorkController() {
         await pollWorkTaskStatuses({
           tasks: () => getWorkState(source).tasks,
           revision: id => taskRevisionsRef.current.get(id) ?? 0,
-          shouldPoll: task => !stoppingTaskIdsRef.current.has(task.id) &&
+          shouldPoll: task => !stoppingTaskIdsRef.current.has(task.id) && !deletingTaskKeysRef.current.has(`${source}\0${task.id}`) &&
             !(messageActionRef.current?.source === source && messageActionRef.current.taskId === task.id) &&
             !(pendingStart.current?.source === source && pendingStart.current.id === task.id) &&
             !(probeAuthorityRef.current.selectedId === task.id && probeAuthorityRef.current.selectedLive),
@@ -321,7 +375,8 @@ export function useWorkController() {
       // source of truth otherwise.
       skills: task.resources?.skills?.filter(Boolean).length ? task.resources.skills : undefined,
       mcpServers: task.resources?.mcpServers?.filter(Boolean).length ? task.resources.mcpServers : undefined,
-      knowledgeBases: task.resources?.knowledgeBases?.filter(Boolean).length ? task.resources.knowledgeBases : undefined
+      knowledgeBases: task.resources?.knowledgeBases?.filter(Boolean).length ? task.resources.knowledgeBases : undefined,
+      toolkits: task.resources?.toolkits
       // The engine resolves global preferences and this session's override at
       // admission. A cached legacy scope must not overwrite those settings.
     }),
@@ -340,7 +395,8 @@ export function useWorkController() {
     const submission: WorkQueueDraft = {
       draft: queuedDraft(text, mentions, draftRevision),
       model: chosen ? { kind: 'explicit', modelId: chosen } : { kind: 'engine-default' },
-      resources: { skills: resources(options.skills), mcpServers: resources(options.mcpServers), knowledgeBases: resources(options.knowledgeBases) },
+      resources: { skills: resources(options.skills), mcpServers: resources(options.mcpServers), knowledgeBases: resources(options.knowledgeBases),
+        toolkits: options.toolkits === undefined ? { kind: 'inherit' } : options.toolkits.length ? { kind: 'override', ids: [...options.toolkits] } : { kind: 'none' } },
       thinking: options.thinkingMode === false ? { kind: 'off' } : typeof options.thinkingMode === 'string' ? { kind: 'effort', effort: options.thinkingMode } : { kind: 'inherit' },
       ...(options.subagentModel ? { subagentModel: options.subagentModel } : {}), ...(options.utilityModel ? { utilityModel: options.utilityModel } : {}),
       attachments: sentAttachments.map(file => ({ path: file.path, name: file.name, type: file.type, size: file.size,
@@ -357,16 +413,25 @@ export function useWorkController() {
   const sendTask = useCallback(
     async (task: WorkTask, text: string, mentions: Mention[] = task.mentions ?? [], mode: 'composer' | 'follow-up' | 'replay' = 'composer', collaborators?: AgentCollaborator[]): Promise<void> => {
       assertEngineSource(epoch)
+      if (workspaceSelectionRef.current?.epoch === epoch) throw new Error('正在切换工作区，请稍后发送。')
       // The stream IPC resolves after its reader closes, possibly after an
       // authoritative terminal snapshot or a later task has been selected.
       // The hook's exact current-session gate owns admission; old IPC promises
       // must not turn into a cross-task or cross-turn composer lock.
-      if (getWorkState(source).activeTaskId !== task.id || hasSessionWork(task.id) || restartBlockingRef.current) return
+      if (getWorkState(source).activeTaskId !== task.id || hasSessionWork(task.id) || restartBlockingRef.current ||
+        deletingTaskKeysRef.current.has(`${source}\0${task.id}`)) return
       setError(null)
       // Authenticated Work sessions start on a private scratch root until an
       // explicitly selected project is bound. Do that before the first turn so
       // files, Git and tool output all use the task's selected workspace.
-      if (task.workspacePath) await bindSessionWorkspace(task.id, task.workspacePath)
+      const workspaceSendKey = JSON.stringify([source, epoch, task.id])
+      workspaceSendRef.current.add(workspaceSendKey)
+      try { if (task.workspacePath) await bindSessionWorkspace(task.id, task.workspacePath) }
+      finally { workspaceSendRef.current.delete(workspaceSendKey) }
+      // Deleting while the binding request is in flight must not let its late
+      // continuation send a new first message into the just-deleted session.
+      if (epoch !== getEngineSource() || deletingTaskKeysRef.current.has(`${source}\0${task.id}`) ||
+        !getWorkState(source).tasks.some(item => item.id === task.id)) return
       updateTask(task.id, { status: 'running', agentLocked: true, runStartedAt: Date.now(), updatedAt: Date.now() })
       const preserveDraft = mode !== 'composer'
       const sentAttachments = mode === 'follow-up' ? [] : mode === 'replay'
@@ -488,9 +553,14 @@ export function useWorkController() {
   const messages = restored || previewReady ? chat.messages : []
   const preparing = Boolean(activeId && pendingStart.current?.source === source && pendingStart.current.id === activeId)
   const agentLocked = Boolean(activeTask && (activeTask.agentLocked || activeTask.status !== 'draft' || messages.length > 0 || preparing))
-  const workspaceLocked = isRemoteEngine() || Boolean(activeTask
-    ? activeTask.status !== 'draft' || activeTask.attachments.length || activeTask.sources.length || preparing
-    : state.homeAttachments.length || state.homeSources.length)
+  const workspaceLocked = agentLocked || Boolean(activeTask?.activity)
+  const defaultWorkspacePath = isRemoteEngine() ? settings.remoteWorkspaceRoot.trim() || null : null
+  const defaultWorkspacePathRef = useRef(defaultWorkspacePath)
+  defaultWorkspacePathRef.current = defaultWorkspacePath
+  const workspaceSelectionBusy = Boolean(workspaceSelection && workspaceSelection.source === source && workspaceSelection.epoch === epoch)
+  const workspaceSelectionReason = uploadCount > 0 ? '资料正在上传，完成后可切换工作区。'
+    : activeTask && (workspaceLocked || hasSessionWork(activeTask.id)) ? '任务已开始，工作目录保持固定。'
+      : activeTask && !restored ? '正在读取会话，完成后可切换工作区。' : null
   const streaming = Boolean((restored || previewReady) && chat.streaming)
   const recoveryEntries = nextTurnQueue.state?.scope.taskId === activeId
     ? nextTurnQueue.state.entries.filter(entry => entry.envelope.recovery) : []
@@ -621,9 +691,13 @@ export function useWorkController() {
   }, [epoch, chat.messages, chat.streaming, chat.sessionModel, source, updateTask, isHistoryReady])
 
   const createTask = useCallback(
-    async (text?: string, mentions: Mention[] = []): Promise<void> => {
+    async (text?: string, mentions: Mention[] = [], projectPath?: string): Promise<string | undefined> => {
       flushWorkDrafts(source)
-      if (uploadCount) {
+      if (workspaceSelectionRef.current?.epoch === epoch) {
+        setError('正在切换工作区，请稍后开始任务。')
+        return
+      }
+      if (uploadCountRef.current) {
         setError('资料仍在上传，请完成后再新建任务。')
         return
       }
@@ -646,13 +720,13 @@ export function useWorkController() {
         // back to an engine scratch directory, making the Work Git pane look
         // like a non-repository even when the configured remote project was a
         // valid Git checkout.
-        workspacePath: current.homeWorkspacePath || (isRemoteEngine() ? settings.remoteWorkspaceRoot.trim() || null : null),
+        workspacePath: projectPath ?? (current.homeWorkspacePath || (isRemoteEngine() ? settings.remoteWorkspaceRoot.trim() || null : null)),
         modelId: current.homeModelId || settings.lastModelId,
         attachments: fromHome ? current.homeAttachments : [],
         sources: fromHome ? current.homeSources : [],
         agentId: fromHome ? current.homeAgentId || undefined : undefined,
         mentions,
-        resources: fromHome ? current.homeResources : { skills: [], mcpServers: [], knowledgeBases: [] },
+        resources: fromHome ? current.homeResources : { skills: [], mcpServers: [], knowledgeBases: [], toolkits: [] },
         archived: false
       }
       if (fromHome && (draft.trim() || task.attachments.length))
@@ -661,18 +735,36 @@ export function useWorkController() {
         ...previous,
         tasks: [task, ...previous.tasks],
         activeTaskId: id,
-        ...(fromHome ? { homeDraft: '', homeAttachments: [], homeSources: [], homeSessionId: null, homeAgentId: '', homeMentions: [], homeResources: { skills: [], mcpServers: [], knowledgeBases: [] } } : {})
+        ...(fromHome ? { homeDraft: '', homeAttachments: [], homeSources: [], homeSessionId: null, homeAgentId: '', homeMentions: [], homeResources: { skills: [], mcpServers: [], knowledgeBases: [], toolkits: [] } } : {})
       }))
+      return id
     },
-    [source, settings.lastModelId, settings.remoteWorkspaceRoot, uploadCount]
+    [source, epoch, settings.lastModelId, settings.remoteWorkspaceRoot]
   )
+
+  const createProjectTask = useCallback(async (path: string): Promise<string | undefined> => {
+    if (epoch !== getEngineSource() || source !== getEngineStorageKey())
+      throw new Error('工作区连接已变化，请重新打开项目菜单。')
+    if (!path || !getWorkState(source).tasks.some(task => !task.archived && task.workspacePath === path))
+      throw new Error('此项目已不在当前列表中，请重新选择项目。')
+    setError(null)
+    // An explicit project starts a fresh unsent draft. Reusing or temporarily
+    // rewriting Home would consume its session, attachments, or unsent text.
+    return createTask(undefined, [], path)
+  }, [createTask, epoch, source])
 
   const selectTask = useCallback(
     (id: string): void => {
       flushWorkDrafts(source)
       if (!getWorkState(source).tasks.some((task) => task.id === id)) return
       setError(null)
-      updateWorkState(source, (previous) => ({ ...previous, activeTaskId: id }))
+      updateWorkState(source, previous => {
+        const task = previous.tasks.find(item => item.id === id)
+        return { ...previous, activeTaskId: id,
+          ...(task?.status === 'done' && task.completionUnread ? {
+            tasks: previous.tasks.map(item => item.id === id ? { ...item, completionUnread: undefined } : item)
+          } : {}) }
+      })
       setHistoryAttempt((attempt) => attempt + 1)
     },
     [source]
@@ -715,6 +807,58 @@ export function useWorkController() {
     [source, activeId]
   )
 
+  const deleteTask = useCallback((id: string): Promise<void> => {
+    const key = `${source}\0${id}`
+    const existing = taskDeletionsRef.current.get(key)
+    if (existing) return existing
+    const operation = (async (): Promise<void> => {
+      const task = getWorkState(source).tasks.find(item => item.id === id)
+      if (!task) return
+      const confirmed = await confirmDialog({ title: '删除任务', danger: true, confirmText: '删除',
+        body: `删除「${task.title}」？对话记录将永久删除，工作区文件会保留。` })
+      if (!confirmed) return
+      assertEngineSource(epoch)
+      const latest = getWorkState(source).tasks.find(item => item.id === id)
+      if (!latest) return
+      deletingTaskKeysRef.current.add(key)
+      setDeletingTaskKeys(new Set(deletingTaskKeysRef.current))
+      invalidateStatusProbe(id)
+      flushWorkDrafts(source)
+      if (pendingStart.current?.source === source && pendingStart.current.id === id) pendingStart.current = null
+      const unstartedDraft = latest.status === 'draft' && !latest.activity && !latest.agentLocked &&
+        !submitted.current.has(id) && !(chat.sessionModel?.sessionId === id && chat.messages.length > 0)
+      const result = await request({ method: 'DELETE', path: `/sessions/${encodeURIComponent(id)}`,
+        query: { keepWorkspace: 'true' }, expectedEngine: getExpectedEngine(), toolProfile: 'general' })
+      // Older engines may report a missing session for a never-sent local draft.
+      // Only that explicit absence is equivalent to success; transport failures retain it.
+      if (!result.ok && !(unstartedDraft && (result.code === 404 || result.code === 40400))) {
+        throw new Error(result.message || '删除任务失败，请重试')
+      }
+      const wasActive = getWorkState(source).activeTaskId === id
+      removeWorkTask(source, id)
+      forgetWorkTaskPreferences(id, source)
+      if (submitted.current.get(id)?.source === source) submitted.current.delete(id)
+      recoveredSources.current.delete(`${source}\0${epoch}\0${id}`)
+      setLoaded(previous => previous?.source === source && previous.id === id ? null : previous)
+      setSelectedModel(previous => previous?.source === source && previous.id === id ? null : previous)
+      setNextModel(previous => previous?.source === source && previous.taskId === id ? null : previous)
+      setThinkingSelection(previous => previous?.source === source && previous.id === id ? null : previous)
+      if (epoch === getEngineSource() && source === getEngineStorageKey()) {
+        invalidateHistoryRuntimeCache(id)
+        removeSessionMeta(id)
+        removePendingSession(id)
+        if (wasActive) setError(null)
+      }
+    })().finally(() => {
+      taskDeletionsRef.current.delete(key)
+      deletingTaskKeysRef.current.delete(key)
+      setDeletingTaskKeys(new Set(deletingTaskKeysRef.current))
+      if (epoch === getEngineSource()) invalidateStatusProbe(id)
+    })
+    taskDeletionsRef.current.set(key, operation)
+    return operation
+  }, [source, epoch, chat.sessionModel, chat.messages])
+
   const continueTask = useCallback(
     (id: string): void => {
       invalidateStatusProbe(id)
@@ -753,11 +897,33 @@ export function useWorkController() {
     },
     [activeId, source]
   )
+  const editDraft = useCallback((text: string, mentions: Mention[]): boolean => {
+    if (epoch !== getEngineSource()) return false
+    const before = getWorkDraft(source, activeId)
+    const current = getWorkState(source)
+    const currentResources = activeId ? current.tasks.find(item => item.id === activeId)?.resources : current.homeResources
+    let selection: string[] | undefined
+    try { selection = editDraftToolkits(currentResources?.toolkits, before, { text, mentions }) }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); retryToolkitSelection(); return false }
+    updateWorkDraft(source, activeId, text, mentions)
+    // Ordinary typing keeps the existing debounced draft persistence.
+    if ((selection === undefined) === (currentResources?.toolkits === undefined) && sameToolkits(selection, currentResources?.toolkits)) return true
+    updateWorkState(source, previous => {
+      const task = activeId ? previous.tasks.find(item => item.id === activeId) : undefined
+      if (activeId && !task) return previous
+      const resources = task ? task.resources : previous.homeResources
+      const toolkits = editDraftToolkits(resources?.toolkits, before, { text, mentions })
+      if ((toolkits === undefined) === (resources?.toolkits === undefined) && sameToolkits(toolkits, resources?.toolkits)) return previous
+      const next = { skills: [], mcpServers: [], knowledgeBases: [], ...resources, toolkits }
+      return task ? { ...previous, tasks: previous.tasks.map(item => item.id === task.id ? { ...item, resources: next } : item) }
+        : { ...previous, homeResources: next }
+    })
+    return true
+  }, [activeId, source, epoch, retryToolkitSelection])
   const addMentions = useCallback((mentions: readonly Mention[]): boolean => {
+    if (workspaceSelectionRef.current?.epoch === epoch) return false
     if (epoch !== getEngineSource() || selectedViewRef.current !== selectedView || getWorkState(source).activeTaskId !== activeId) return false
     const draft = appendWorkMentions(getWorkDraft(source, activeId), mentions)
-    const issue = composerInputIssue(draft.text)
-    if (issue) throw new Error(issue)
     setDraft(draft.text, draft.mentions)
     setDraftFocusRequest(previous => ({ source, taskId: activeId, token: (previous?.token ?? 0) + 1 }))
     return true
@@ -796,23 +962,37 @@ export function useWorkController() {
     [activeId, agentLocked, source, updateTask]
   )
   const resources = activeTask ? activeTask.resources ?? { skills: [], mcpServers: [], knowledgeBases: [] } : state.homeResources
-  const setResource = useCallback((kind: 'skill' | 'mcp' | 'kb', id: string): void => {
-    const key = kind === 'skill' ? 'skills' : kind === 'mcp' ? 'mcpServers' : 'knowledgeBases'
-    const update = (current: { skills: string[]; mcpServers: string[]; knowledgeBases: string[] }) => ({
-      ...current, [key]: current[key].includes(id) ? current[key] : [...current[key], id]
+  const setResource = useCallback((kind: 'skill' | 'mcp' | 'kb' | 'toolkit', id: string): boolean => {
+    if (epoch !== getEngineSource()) return false
+    const key = kind === 'skill' ? 'skills' : kind === 'mcp' ? 'mcpServers' : kind === 'toolkit' ? 'toolkits' : 'knowledgeBases'
+    let changed = false
+    updateWorkState(source, previous => {
+      const task = activeId ? previous.tasks.find(item => item.id === activeId) : undefined
+      if (activeId && !task) return previous
+      const current = task ? task.resources ?? { skills: [], mcpServers: [], knowledgeBases: [] } : previous.homeResources
+      if (kind === 'toolkit' && current.toolkits === undefined) return previous
+      changed = true
+      const next = { ...current, [key]: current[key]?.includes(id) ? current[key] : [...(current[key] ?? []), id] }
+      return task ? { ...previous, tasks: previous.tasks.map(item => item.id === task.id ? { ...item, resources: next } : item) }
+        : { ...previous, homeResources: next }
     })
+    if (!changed && kind === 'toolkit') setError('正在读取会话工具包选择，请稍后再修改工具包。')
+    return changed
+  }, [activeId, source, epoch])
+  const removeResource = useCallback((kind: 'skill' | 'mcp' | 'kb' | 'toolkit', id: string): void => {
+    if (epoch !== getEngineSource()) return
+    const key = kind === 'skill' ? 'skills' : kind === 'mcp' ? 'mcpServers' : kind === 'toolkit' ? 'toolkits' : 'knowledgeBases'
+    const update = (current: WorkResources) => {
+      if (kind === 'toolkit' && current.toolkits === undefined) { setError('正在读取会话工具包选择，请稍后再修改工具包。'); return current }
+      return { ...current, [key]: (current[key] ?? []).filter(item => item !== id) }
+    }
     if (activeId) updateTask(activeId, { resources: update(activeTask?.resources ?? { skills: [], mcpServers: [], knowledgeBases: [] }) })
     else updateWorkState(source, previous => ({ ...previous, homeResources: update(previous.homeResources) }))
-  }, [activeId, activeTask?.resources, source, updateTask])
-  const removeResource = useCallback((kind: 'skill' | 'mcp' | 'kb', id: string): void => {
-    const key = kind === 'skill' ? 'skills' : kind === 'mcp' ? 'mcpServers' : 'knowledgeBases'
-    const update = (current: { skills: string[]; mcpServers: string[]; knowledgeBases: string[] }) => ({ ...current, [key]: current[key].filter(item => item !== id) })
-    if (activeId) updateTask(activeId, { resources: update(activeTask?.resources ?? { skills: [], mcpServers: [], knowledgeBases: [] }) })
-    else updateWorkState(source, previous => ({ ...previous, homeResources: update(previous.homeResources) }))
-  }, [activeId, activeTask?.resources, source, updateTask])
+  }, [activeId, activeTask?.resources, source, updateTask, epoch])
   const send = useCallback(
     async (text?: string, mentions: Mention[] = []): Promise<void> => {
       flushWorkDrafts(source)
+      if (workspaceSelectionRef.current?.epoch === epoch) { setError('正在切换工作区，请稍后发送。'); return }
       const currentTaskSending = activeTask ? hasSessionWork(activeTask.id) : false
       if (!engineReady || streaming || restartPending || currentTaskSending || pending.length || uploadCount > 0 || messageActionRef.current?.taskId === activeId) return
       if (!activeTask) {
@@ -841,7 +1021,8 @@ export function useWorkController() {
       restored,
       sendTask,
       isHistoryReady,
-      source
+      source,
+      epoch
     ]
   )
 
@@ -1130,74 +1311,179 @@ export function useWorkController() {
     chat.assertPendingResponse(requestId, activeTask.id, runId)
   }, [activeTask, restored, source, chat.assertPendingResponse])
 
-  const clearWorkspace = useCallback((): void => {
-    if (epoch !== getEngineSource() || isRemoteEngine()) return
-    const latest = getWorkState(source)
-    // Only the home selection is unbound. Existing tasks may already own a
-    // persisted engine binding even when their local status reads "draft".
-    if (activeId || latest.activeTaskId) return
-    if (uploadCount > 0 || latest.homeAttachments.length || latest.homeSources.length) {
-      setError('请先完成上传并移除已添加的资料，再更换工作目录。')
-      return
-    }
-    setError(null)
-    updateWorkState(source, previous => ({ ...previous, homeWorkspacePath: null }))
-  }, [activeId, epoch, source, uploadCount])
-
-  const chooseWorkspace = useCallback(async (): Promise<void> => {
-    setError(null)
-    if (uploadCount > 0) {
-      setError('资料上传完成后再更换项目，已添加的资料会保留。')
-      return
-    }
-    if (isRemoteEngine()) {
-      setError('远端任务使用独立沙箱，不能选择本机目录。')
-      return
-    }
-    if (activeTask && (workspaceLocked || (pendingStart.current?.source === source && pendingStart.current.id === activeTask.id))) {
-      setError('任务开始或添加资料后，工作目录保持固定。请新建任务以使用另一个目录。')
-      return
-    }
-    if (!activeTask && (state.homeAttachments.length || state.homeSources.length)) {
-      setError('请先移除已添加的资料，再更换工作目录。')
-      return
+  const selectWorkspace = useCallback(async (path: string | null): Promise<boolean> => {
+    if (workspaceSelectionRef.current?.epoch === epoch) return false
+    const operation = { source, epoch, activeId }
+    const initial = getWorkState(source)
+    const originalTask = activeId ? initial.tasks.find(task => task.id === activeId) : null
+    const originalPath = originalTask ? originalTask.workspacePath : initial.homeWorkspacePath
+    const originalSession = activeId ?? initial.homeSessionId
+    const originalDraft = getWorkDraft(source, activeId)
+    const originalAttachments = originalTask?.attachments ?? initial.homeAttachments
+    const originalSources = originalTask?.sources ?? initial.homeSources
+    const originalResources = JSON.stringify([originalAttachments, originalSources])
+    const remote = isRemoteEngine()
+    const root = path ?? (remote ? settings.remoteWorkspaceRoot.trim() || null : null)
+    const originalRoot = originalPath ?? (remote ? settings.remoteWorkspaceRoot.trim() || null : null)
+    let previousBinding: string | undefined
+    let rebound = false
+    const assertCurrent = (): void => {
+      assertEngineSource(epoch)
+      if (source !== getEngineStorageKey() || selectedViewRef.current !== selectedView) throw new Error('当前任务已变化，请重新选择工作区。')
+      if (remote && (path === null || !originalPath) && defaultWorkspacePathRef.current !== (settings.remoteWorkspaceRoot.trim() || null))
+        throw new Error('默认工作区设置已变化，请重新选择。')
+      const latest = getWorkState(source)
+      const task = activeId ? latest.tasks.find(item => item.id === activeId) : null
+      if (latest.activeTaskId !== activeId || activeId && !task || (task ? task.workspacePath : latest.homeWorkspacePath) !== originalPath
+        || (!activeId && latest.homeSessionId !== originalSession)) throw new Error('当前工作区已变化，请重新选择。')
+      if (uploadCountRef.current) throw new Error('资料正在上传，工作目录保持不变。')
+      if (task && (task.agentLocked || task.activity || messages.length || task.status !== 'draft' || hasSessionWork(task.id) || workspaceSendRef.current.has(JSON.stringify([source, epoch, task.id])) ||
+        pendingStart.current?.source === source && pendingStart.current.id === task.id)) throw new Error('任务已开始，工作目录保持固定。请新建任务以使用另一个目录。')
+      if (task && !isHistoryReady(task.id)) throw new Error('正在读取会话，请稍后切换工作区。')
+      if (getWorkDraft(source, activeId) !== originalDraft ||
+        JSON.stringify([task?.attachments ?? latest.homeAttachments, task?.sources ?? latest.homeSources]) !== originalResources)
+        throw new Error('草稿或资料已变化，本次切换已取消，请重试。')
     }
     try {
-      const root = await pickFolder()
-      if (!root || epoch !== getEngineSource()) return
-      // Folder selection is asynchronous. A task may be sent while the native
-      // picker is open; recheck its current scope before applying the result.
-      const latest = getWorkState(source)
-      const latestTask = activeId ? latest.tasks.find(task => task.id === activeId) : null
-      if (latest.activeTaskId !== activeId || (latestTask
-        ? latestTask.status !== 'draft' || latestTask.attachments.length || latestTask.sources.length ||
-          (pendingStart.current?.source === source && pendingStart.current.id === activeId)
-        : latest.homeAttachments.length || latest.homeSources.length)) {
-        setError('任务或资料状态已变化，工作目录保持固定。请新建任务以使用另一个目录。')
-        return
+      assertCurrent()
+      if (path !== null && !validWorkWorkspacePath(path) || root !== null && !validWorkWorkspacePath(root)) throw new Error('请输入有效的绝对目录路径。')
+      setError(null)
+      if ((!root && !originalRoot) || root && originalRoot && workWorkspacePathKey(root) === workWorkspacePathKey(originalRoot)) {
+        updateWorkState(source, previous => activeId
+          ? { ...previous, tasks: previous.tasks.map(task => task.id === activeId ? { ...task, workspacePath: path } : task) }
+          : { ...previous, homeWorkspacePath: path })
+        return true
       }
-      if (activeId) updateTask(activeId, { workspacePath: root })
-      else updateWorkState(source, (previous) => ({ ...previous, homeWorkspacePath: root }))
+      workspaceSelectionRef.current = operation
+      setWorkspaceSelection(operation)
+      // Stage through a separate session so an interrupted copy never changes
+      // the original draft's binding. Only one file's bytes are held at a time.
+      const destinationSession = (activeId ? 'work-transfer-' : 'work-home-') + crypto.randomUUID()
+      const hasFiles = originalAttachments.length || originalSources.length ||
+        originalDraft.mentions.some(mention => mention.path && ['file', 'dir', 'code', 'terminal'].includes(mention.source))
+      if (!originalSession && hasFiles) throw new Error('资料所属任务尚未准备好，请稍后重试。')
+      const previousContext = originalSession && (remote && activeId || hasFiles && (remote || !originalRoot))
+        ? await sessionWorkspaceContext(originalSession) : undefined
+      assertCurrent()
+      previousBinding = previousContext?.root
+      const sourceRoot = previousContext?.root ?? originalRoot ?? ''
+      if (!remote && originalRoot && hasFiles) await allowRoot(originalRoot)
+      let canonicalRoot = root
+      if (remote && root) {
+        const context = await bindSessionWorkspace(destinationSession, root)
+        canonicalRoot = context.root
+        assertCurrent()
+      } else if (!remote && root) {
+        await allowRoot(root)
+        assertCurrent()
+        if (!(await stat(root)).isDirectory) throw new Error('工作区必须是可访问的目录。')
+        assertCurrent()
+      }
+      const destinationRoot = canonicalRoot ?? (hasFiles || activeId
+        ? (await sessionWorkspaceContext(destinationSession)).root : '')
+      assertCurrent()
+      const plan = planWorkWorkspaceTransfer(originalDraft, originalAttachments, originalSources, sourceRoot, destinationRoot)
+      if (activeId && !root && !plan.files.length) {
+        // Listing a fresh scratch scope only resolves its path; binding needs
+        // a real directory even when this draft has no file bytes to write.
+        await requestOrThrow({ method: 'POST', path: '/workspace/folder/create',
+          body: { sessionId: destinationSession, path: ATTACHMENTS_DIRECTORY } })
+        assertCurrent()
+      }
+      const replacements = new Map<string, ChatAttachment>()
+      for (const file of plan.files) {
+        assertCurrent()
+        const data = await window.aether.engine.readWorkspaceAttachment({ sessionId: originalSession!, path: workspaceTransferRelativePath(sourceRoot, file.path),
+          ...(remote ? { workspaceRoot: sourceRoot } : originalRoot ? { workspaceRoot: originalRoot } : {}),
+          ...(previousContext?.epoch ? { bindingEpoch: previousContext.epoch } : {}), expectedEngine: getExpectedEngine() })
+        assertCurrent()
+        const result = remote ? await uploadAttachment({ requestId: crypto.randomUUID(), sessionId: destinationSession,
+          fileName: file.name, type: file.type, data })
+          : canonicalRoot ? await copyIntoWorkspace({ root: canonicalRoot, fileName: file.name, data })
+            : await (async () => {
+              const relativePath = scratchAttachmentPath(file.name)
+              await requestOrThrow({ method: 'POST', path: '/workspace/file', body: { sessionId: destinationSession,
+                path: relativePath, content: encodeBase64(data), encoding: 'base64' } })
+              return { relativePath, path: relativePath, size: data.byteLength }
+            })()
+        assertCurrent()
+        // An active draft keeps its ID. The new relative receipt remains valid
+        // after binding; the staging session's opaque upload token does not.
+        const { remoteUploadId: _oldToken, ...metadata } = file
+        replacements.set(plan.key(file.path), { ...metadata, attachmentId: attachmentIdentity(file),
+          path: 'relativePath' in result ? result.relativePath : result.path, size: result.size,
+          ...(!activeId && 'remoteUploadId' in result ? { remoteUploadId: result.remoteUploadId } : {}) })
+      }
+      const draft = remapWorkWorkspaceDraft(originalDraft, sourceRoot, replacements)
+      const attachments = originalAttachments.map(file => replacements.get(plan.key(file.path))!)
+      const sources = mergeWorkAttachments(originalSources.map(file => replacements.get(plan.key(file.path))!),
+        plan.files.filter(file => !originalAttachments.includes(file) && !originalSources.includes(file)).map(file => replacements.get(plan.key(file.path))!))
+      if (activeId && (remote || !root)) {
+        previousBinding ??= (await sessionWorkspaceContext(activeId)).root
+        assertCurrent()
+        rebound = true
+        await bindSessionWorkspace(activeId, destinationRoot)
+        assertCurrent()
+      }
+      if (!activeId) saveSessionThinkingMode(destinationSession, thinkingMode, source)
+      updateWorkState(source, previous => activeId
+        ? { ...previous, tasks: previous.tasks.map(task => task.id === activeId ? { ...task, workspacePath: path === null ? null : canonicalRoot,
+          attachments, sources, draft: draft.text, mentions: draft.mentions } : task) }
+        : { ...previous, homeWorkspacePath: path === null ? null : canonicalRoot, homeSessionId: destinationSession,
+          homeAttachments: attachments, homeSources: sources, homeDraft: draft.text, homeMentions: draft.mentions })
+      if (path !== null && canonicalRoot) rememberWorkWorkspace(source, canonicalRoot)
+      return true
     } catch (cause) {
-      setError(messageOf(cause))
+      let failure = messageOf(cause)
+      if (rebound && previousBinding && originalSession && epoch === getEngineSource()) {
+        try { await bindSessionWorkspace(originalSession, previousBinding) }
+        catch { failure += ' 原工作区连接暂时无法恢复，请恢复连接后重试；草稿与原文件仍保留。' }
+      }
+      if (epoch === getEngineSource() && source === getEngineStorageKey() && getWorkState(source).activeTaskId === activeId) setError(failure)
+      return false
+    } finally {
+      if (workspaceSelectionRef.current === operation) workspaceSelectionRef.current = null
+      setWorkspaceSelection(previous => previous === operation ? null : previous)
     }
-  }, [activeTask, activeId, workspaceLocked, state.homeAttachments.length, state.homeSources.length, epoch, source, updateTask, uploadCount])
+  }, [source, epoch, activeId, selectedView, settings.remoteWorkspaceRoot, thinkingMode, hasSessionWork, isHistoryReady, messages.length])
+
+  const clearWorkspace = useCallback((): Promise<boolean> => selectWorkspace(null), [selectWorkspace])
+
+  const chooseWorkspace = useCallback(async (): Promise<boolean> => {
+    if (isRemoteEngine()) { setError('请选择历史工作区，或输入远端的绝对目录。'); return false }
+    if (workspaceSelectionReason || workspaceSelectionRef.current?.epoch === epoch) { setError(workspaceSelectionReason); return false }
+    try {
+      const before = getWorkState(source)
+      const beforeRoot = activeId ? before.tasks.find(task => task.id === activeId)?.workspacePath : before.homeWorkspacePath
+      const root = await pickFolder()
+      if (!root || epoch !== getEngineSource() || selectedViewRef.current !== selectedView) return false
+      const latest = getWorkState(source)
+      const latestRoot = activeId ? latest.tasks.find(task => task.id === activeId)?.workspacePath : latest.homeWorkspacePath
+      if (latest.activeTaskId !== activeId || beforeRoot !== latestRoot || !activeId && before.homeSessionId !== latest.homeSessionId) return false
+      return selectWorkspace(root)
+    } catch (cause) {
+      if (epoch === getEngineSource()) setError(messageOf(cause))
+      return false
+    }
+  }, [epoch, source, activeId, selectedView, workspaceSelectionReason, selectWorkspace])
 
   const storeFiles = useCallback(
     async (files: File[], referenceOnly = false, imageEdit?: { replacePath?: string; assertCurrent: () => void }): Promise<ChatAttachment[]> => {
       if (!files.length) return []
       imageEdit?.assertCurrent()
       assertEngineSource(epoch)
+      if (workspaceSelectionRef.current?.epoch === epoch) throw new Error('正在切换工作区，请稍后添加资料。')
       setError(null)
       const taskId = activeId
       const initial = getWorkState(source)
       if (initial.activeTaskId !== taskId) throw new Error('任务已切换，请在当前任务中重新添加资料')
       const task = taskId ? initial.tasks.find(item => item.id === taskId) : null
       if (taskId && !task) throw new Error('资料所属任务已不可用，请返回任务后重试')
-      const root = task ? task.workspacePath : initial.homeWorkspacePath
+      const remote = isRemoteEngine()
+      const selectedRoot = task ? task.workspacePath : initial.homeWorkspacePath
+      const root = selectedRoot || (!task && remote ? settings.remoteWorkspaceRoot.trim() || null : null)
       if (imageEdit?.replacePath && !(task?.attachments ?? initial.homeAttachments).some(file => file.path === imageEdit.replacePath))
         throw new Error('原图片已不在当前草稿中，请重新打开图片。')
-      const remote = isRemoteEngine()
       let sessionId = taskId ?? initial.homeSessionId
       if (!sessionId) {
         sessionId = 'work-' + crypto.randomUUID()
@@ -1205,9 +1491,13 @@ export function useWorkController() {
         updateWorkState(source, (previous) => ({ ...previous, homeSessionId }))
       }
       const uploaded: ChatAttachment[] = []
+      uploadCountRef.current += 1
       setUploadCount((count) => count + 1)
       try {
         if (!remote && root) await allowRoot(root)
+        // Remote upload resolves a session binding, not the renderer's hint.
+        // Establish the explicit/default project before any bytes are written.
+        if (remote && root) await bindSessionWorkspace(sessionId, root)
         for (const file of files) {
           if (!isSupportedFile(file)) throw new Error(`「${file.name}」的格式暂不支持`)
           if (file.size > 20 * 1024 * 1024)
@@ -1288,7 +1578,7 @@ export function useWorkController() {
                   : { ...item, attachments: applyImage(item.attachments), ...(draft ? { draft: draft.text, mentions: draft.mentions } : {}) }
                 : item) }
             }
-            if (taskId || previous.homeSessionId !== sessionId || previous.homeWorkspacePath !== root)
+            if (taskId || previous.homeSessionId !== sessionId || previous.homeWorkspacePath !== selectedRoot)
               throw new Error('资料所属任务已变化，请返回原任务后重试')
             const draft = imageEdit?.replacePath ? replaceImageAttachmentReferences({ text: previous.homeDraft, mentions: previous.homeMentions },
               { path: imageEdit.replacePath }, attachment) : null
@@ -1303,10 +1593,11 @@ export function useWorkController() {
         if (!referenceOnly && epoch === getEngineSource() && [taskId, sessionId].includes(getWorkState(source).activeTaskId)) setError(messageOf(cause))
         throw cause
       } finally {
+        uploadCountRef.current -= 1
         setUploadCount((count) => count - 1)
       }
     },
-    [activeId, epoch, source]
+    [activeId, epoch, source, settings.remoteWorkspaceRoot]
   )
 
   const addFiles = useCallback(async (files: File[]): Promise<void> => {
@@ -1370,6 +1661,7 @@ export function useWorkController() {
   }, [source, activeId, epoch])
   const addReference = useCallback(
     (artifact: WorkArtifact): void => {
+      if (workspaceSelectionRef.current?.epoch === epoch || epoch !== getEngineSource()) return
       const latest = getWorkDraft(source, activeId)
       const current = latest.text
       const existing = latest.mentions
@@ -1384,7 +1676,7 @@ export function useWorkController() {
       const token = mentionToken(mention)
       setDraft(`${prefix}${token}：\n`, [...existing, mention])
     },
-    [source, activeId, setDraft]
+    [source, activeId, setDraft, epoch]
   )
 
   const removeSource = useCallback((path: string): void => {
@@ -1396,7 +1688,7 @@ export function useWorkController() {
   }, [source, activeId, epoch])
 
   const addSourceReference = useCallback((attachment: ChatAttachment): void => {
-    if (epoch !== getEngineSource()) return
+    if (epoch !== getEngineSource() || workspaceSelectionRef.current?.epoch === epoch) return
     const latest = getWorkDraft(source, activeId)
     const prefix = `${latest.text}${latest.text ? '\n\n' : ''}参考资料 `
     const mention: Mention = { source: 'file', origin: 'attachment', displayText: attachment.name, path: attachment.path, textOffset: prefix.length }
@@ -1417,9 +1709,15 @@ export function useWorkController() {
     agentIdentity,
     agentLocked,
     workspaceLocked,
+    defaultWorkspacePath,
+    workspaceHistory: workWorkspaceChoices(source, state.tasks, activeTask ? activeTask.workspacePath : state.homeWorkspacePath, defaultWorkspacePath ?? undefined),
+    workspaceSelectionBusy,
+    workspaceSelectionReason,
     get mentions() { return getWorkDraft(source, activeId).mentions },
     utilityModel: settings.utilityModelId,
     resources,
+    retryToolkitSelection,
+    editDraft,
     securitySessionId,
     thinkingMode,
     setThinkingMode,
@@ -1479,6 +1777,7 @@ export function useWorkController() {
     actionError: error,
     historyError: activeId ? chat.historyError : null,
     createTask,
+    createProjectTask,
     selectTask,
     showHome,
     setDraft,
@@ -1494,11 +1793,14 @@ export function useWorkController() {
     setTaskPinned,
     setTaskLabelColor,
     archiveTask,
+    deleteTask,
+    deletingTaskIds: new Set(state.tasks.filter(task => deletingTaskKeys.has(`${source}\0${task.id}`)).map(task => task.id)),
     continueTask,
     exportTask,
     respond,
     chooseWorkspace,
     clearWorkspace,
+    selectWorkspace,
     addFiles,
     addImage,
     addPastedText,

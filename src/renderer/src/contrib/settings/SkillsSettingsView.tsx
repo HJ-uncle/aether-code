@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type DragEvent, type JSX } from 'react'
 import { request, requestOrThrow } from '@renderer/core/engine/client'
+import { subscribeResourceCatalogueChanges } from '@renderer/core/engine/resource-catalogue'
 import { useApp } from '@renderer/core/app-context'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { assertEngineSource, getEngineSource, getExpectedEngine, subscribeEngineSource } from '@renderer/core/engine/source'
@@ -150,6 +151,7 @@ function SkillsSettingsContent({ source, projectRoot }: { source: number; projec
   }, [projectRoot, scope, isCurrent])
 
   useEffect(() => { void refresh(); void refreshHistory() }, [refresh, refreshHistory])
+  useEffect(() => subscribeResourceCatalogueChanges(['skill'], () => { void refresh(); void refreshHistory() }), [refresh, refreshHistory, source])
 
   // Import status and an opened detail belong to the selected layer. Clear
   // them when the target changes so a completed project import is never shown

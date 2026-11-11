@@ -1,91 +1,169 @@
-import { useEffect, useId, useMemo, useRef, useState, type JSX } from 'react'
-import { AgentRefPicker } from './AgentRefPicker'
-import { agentMentionSearch } from './agent-references'
-import { FileRefPalette } from './FileRefPalette'
-import { AttachmentRefPicker } from './AttachmentRefPicker'
-import type { AttachmentReference } from './attachment-references'
-import type { Mention } from './mention-context'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type JSX } from 'react'
+import { selectedAgentReference, useAgentReferences } from './AgentRefPicker'
+import { agentMentionSearch, type AgentReferenceIdentity } from './agent-references'
+import { useFileReferences, type FileReferenceEntry } from './FileRefPalette'
+import { AttachmentOption } from './AttachmentRefPicker'
+import { attachmentMention, type AttachmentReference } from './attachment-references'
+import { formatPathDisplay, type Mention } from './mention-context'
+import { agentReferenceIcon } from './agent-mention-icon'
+import { useToolkitCatalogue } from '@renderer/core/engine/toolkit-catalogue'
+import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
+import { Icon } from '@renderer/workbench/icons'
 import { isMotionInteractive } from '@renderer/workbench/motion'
 import { isTopOverlay } from '@renderer/workbench/overlay'
 import './mention-ref-picker.css'
 
-type ReferenceKind = 'attachments' | 'files' | 'agents'
 const NO_ATTACHMENTS: readonly AttachmentReference[] = []
+const NO_TOOLKITS: readonly string[] = []
+type ReferenceOption = { id: string } & (
+  | { kind: 'attachment'; reference: AttachmentReference }
+  | { kind: 'file'; entry: FileReferenceEntry }
+  | { kind: 'agent'; agent: AgentReferenceIdentity }
+  | { kind: 'toolkit'; toolkitId: string; name: string; description: string; available: boolean; reason?: string }
+)
 
-/** Modes share discovery and keyboard behavior; the composer still owns its draft. */
-export function MentionRefPicker({ root, query, open = true, showSearch = false, attachments = NO_ATTACHMENTS, sessionId, onSelect, onClose }: {
+/** One list owns keyboard selection; data providers never compete for events. */
+export function MentionRefPicker({ root, query, open = true, showSearch = false, attachments = NO_ATTACHMENTS, sessionId,
+  selectedToolkits = NO_TOOLKITS, toolkitSessionId, toolkitAgentId, toolkitSelectionReady = true, onSelectToolkit, onSelect, onClose }: {
   root: string | null
   query: string
   open?: boolean
   showSearch?: boolean
   attachments?: readonly AttachmentReference[]
   sessionId?: string
+  selectedToolkits?: readonly string[]
+  toolkitSessionId?: string
+  toolkitAgentId?: string
+  toolkitSelectionReady?: boolean
+  onSelectToolkit?: (id: string) => void
   onSelect: (mention: Mention) => void
   onClose: () => void
 }): JSX.Element {
-  const [kind, setKind] = useState<ReferenceKind>(() => agentMentionSearch(query) !== null ? 'agents' : attachments.length ? 'attachments' : root ? 'files' : 'agents')
-  const hasAttachments = attachments.length > 0
-  const kinds = useMemo<ReferenceKind[]>(() => hasAttachments ? ['attachments', 'files', 'agents'] : ['files', 'agents'], [hasAttachments])
   const [search, setSearch] = useState('')
+  const [activeId, setActiveId] = useState<string | null>(null)
   const id = useId()
   const rootRef = useRef<HTMLDivElement>(null)
-  const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
   const wasOpen = useRef(false)
   const keyword = showSearch ? search : query
+  const agentAlias = agentMentionSearch(keyword)
+  const agents = useAgentReferences(keyword)
+  const files = useFileReferences(agentAlias === null ? root : null, keyword)
+  const toolkits = useToolkitCatalogue(open && Boolean(onSelectToolkit), toolkitSessionId, toolkitAgentId, root)
+  const attachmentOptions = useMemo<ReferenceOption[]>(() => agentAlias !== null ? [] : attachments
+    .filter(reference => `${reference.label} ${reference.file.name}`.toLowerCase().includes(keyword.trim().toLowerCase()))
+    .map(reference => ({ id: `attachment:${reference.id}`, kind: 'attachment', reference })), [attachments, keyword, agentAlias])
+  const fileOptions = useMemo<ReferenceOption[]>(() => agentAlias !== null ? [] : (keyword.trim() ? files.filtered : files.filtered.slice(0, 3))
+    .map(entry => ({ id: `${entry.isDir ? 'dir' : 'file'}:${entry.path}`, kind: 'file', entry })), [files.filtered, agentAlias, keyword])
+  const agentOptions = useMemo<ReferenceOption[]>(() => agents.filtered
+    .map(agent => ({ id: `agent:${agent.id}`, kind: 'agent', agent })), [agents.filtered])
+  const toolkitOptions = useMemo<ReferenceOption[]>(() => !onSelectToolkit ? [] : toolkits.items
+    .filter(toolkit => `${toolkit.name} ${toolkit.description} ${toolkit.id} 工具包`.toLowerCase().includes(keyword.trim().toLowerCase()))
+    .map(toolkit => ({ id: `toolkit:${toolkit.id}`, kind: 'toolkit', toolkitId: toolkit.id, name: toolkit.name, description: toolkit.description,
+      available: toolkit.available && toolkitSelectionReady, reason: toolkitSelectionReady ? toolkit.reason : '正在读取会话工具包选择…' })), [keyword, onSelectToolkit, toolkits.items, toolkitSelectionReady])
+  const options = useMemo(() => [...attachmentOptions, ...fileOptions, ...agentOptions, ...toolkitOptions],
+    [attachmentOptions, fileOptions, agentOptions, toolkitOptions])
+  const active = options.find(option => option.id === activeId) ?? options[0]
+  const activeIndex = active ? options.indexOf(active) : -1
+  const optionId = (option: ReferenceOption): string => `${id}-option-${encodeURIComponent(option.id)}`
+
   useEffect(() => {
-    // Exit animations keep this component mounted across a quick reopen.
     const opening = open && !wasOpen.current
     wasOpen.current = open
-    if (!opening) return
-    setKind(agentMentionSearch(query) !== null ? 'agents' : hasAttachments ? 'attachments' : root ? 'files' : 'agents')
-    setSearch('')
-  }, [open, query, hasAttachments, root])
+    if (opening) { setSearch(''); setActiveId(null) }
+  }, [open])
+  useEffect(() => setActiveId(null), [keyword])
   useEffect(() => {
-    if (!showSearch && agentMentionSearch(query) !== null) setKind('agents')
-  }, [query, showSearch])
+    // Async discovery may add rows ahead of the active item. Preserve its identity.
+    setActiveId(previous => options.some(option => option.id === previous) ? previous : options[0]?.id ?? null)
+  }, [options])
   useEffect(() => {
-    if (!hasAttachments && kind === 'attachments') setKind(root ? 'files' : 'agents')
-  }, [hasAttachments, kind, root])
+    if (!open || !isMotionInteractive(rootRef.current)) return
+    rootRef.current?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
+  }, [active?.id, open])
+
+  const select = useCallback((option: ReferenceOption): void => {
+    if (option.kind === 'toolkit' && !option.available) return
+    if (option.kind === 'attachment') onSelect(attachmentMention(option.reference))
+    else if (option.kind === 'file') onSelect({ source: option.entry.isDir ? 'dir' : 'file', path: option.entry.path, displayText: formatPathDisplay(option.entry.path) })
+    else if (option.kind === 'agent') {
+      const agent = selectedAgentReference(option.agent)
+      onSelect({ source: 'agent', path: agent.id, displayText: agent.name })
+    } else onSelectToolkit?.(option.toolkitId)
+    onClose()
+  }, [onSelect, onSelectToolkit, onClose])
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (!isMotionInteractive(rootRef.current)) return
+      if (!open || !isMotionInteractive(rootRef.current)) return
       const owner = rootRef.current?.closest<HTMLElement>('[data-overlay-id]')?.dataset.overlayId
-      if (owner && !isTopOverlay(owner)) return
-      if (event.isComposing || event.keyCode === 229 || !event.altKey || event.ctrlKey || event.metaKey ||
-        !['ArrowLeft', 'ArrowRight'].includes(event.key)) return
+      if (owner && (!isTopOverlay(owner) || event.key === 'Escape')) return
+      if (event.isComposing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+      if (event.target instanceof Element && event.target.closest('[data-mention-list-control]')) return
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return }
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter', 'Tab'].includes(event.key)) return
       event.preventDefault()
       event.stopPropagation()
-      setKind(current => kinds[(kinds.indexOf(current) + (event.key === 'ArrowRight' ? 1 : -1) + kinds.length) % kinds.length])
+      if (!options.length) return
+      if (event.key === 'Enter' || event.key === 'Tab') { if (active) select(active); return }
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1
+        : (activeIndex + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length
+      setActiveId(options[next].id)
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [kinds])
-  const changeTab = (next: ReferenceKind, focusTab = false): void => {
-    setKind(next)
-    if (focusTab) tabRefs.current[kinds.indexOf(next)]?.focus()
+  }, [open, options, active, activeIndex, select, onClose])
+
+  const renderOption = (option: ReferenceOption): JSX.Element => {
+    const selected = active?.id === option.id
+    if (option.kind === 'attachment') return <AttachmentOption key={option.id} optionId={optionId(option)} tabIndex={-1}
+      root={root} sessionId={sessionId} reference={option.reference} active={selected}
+      onActivate={() => setActiveId(option.id)} onSelect={() => select(option)} />
+    const isFile = option.kind === 'file'
+    const name = isFile ? option.entry.path.split('/').pop() ?? option.entry.path : option.kind === 'agent' ? option.agent.name : option.name
+    const description = isFile ? option.entry.path : option.kind === 'agent' ? option.agent.description || option.agent.id : option.reason || option.description
+    const enabled = option.kind === 'toolkit' && selectedToolkits.includes(option.toolkitId)
+    return <button key={option.id} id={optionId(option)} type="button" role="option" aria-selected={selected} tabIndex={-1}
+      aria-disabled={option.kind === 'toolkit' && !option.available || undefined}
+      className={`mention-ref-picker__item${selected ? ' is-active' : ''}${isFile ? ' mention-ref-picker__item--file' : ''}`}
+      data-reference-kind={option.kind} data-toolkit-id={option.kind === 'toolkit' ? option.toolkitId : undefined}
+      data-toolkit-selected={option.kind === 'toolkit' ? enabled : undefined}
+      title={`${name}\n${description}`}
+      aria-label={enabled ? `${name}，已添加，${description}` : undefined}
+      onMouseDown={event => event.preventDefault()} onClick={() => select(option)} onMouseEnter={() => setActiveId(option.id)}>
+      <span className="mention-ref-picker__icon" aria-hidden="true">{isFile
+        ? option.entry.isDir ? <span className="file-palette__dir" /> : <FileGlyph name={name} size={16} />
+        : <Icon name={option.kind === 'agent' ? agentReferenceIcon(option.agent.id, option.agent.builtinRole) : 'settings'} size={16} />}</span>
+      <span className="mention-ref-picker__copy"><strong>{name}</strong><small className={isFile ? 'file-palette__path' : undefined}>{description}</small></span>
+      {enabled ? <span className="mention-ref-picker__check" aria-hidden="true"><Icon name="check" size={14} /></span> : null}
+    </button>
   }
+  const showFiles = agentAlias === null && Boolean(root) && (fileOptions.length > 0 || files.loading || files.error)
+  const showAgents = agentOptions.length > 0 || agents.loading || agents.error
+  const loading = agents.loading || toolkits.loading || Boolean(root && agentAlias === null && files.loading)
   return <div ref={rootRef} className="mention-ref-picker">
-    <div className="mention-ref-picker__tabs" role="tablist" aria-label="引用类型">
-      {kinds.map((value, index) => <button key={value} ref={node => { tabRefs.current[index] = node }}
-        type="button" role="tab" id={`${id}-${value}`} aria-controls={`${id}-list`} aria-selected={kind === value}
-        tabIndex={kind === value ? 0 : -1} data-mention-list-control
-        onMouseDown={event => event.preventDefault()} onClick={() => changeTab(value)}
-        onKeyDown={event => {
-          if (event.nativeEvent.isComposing || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-          event.preventDefault()
-          event.stopPropagation()
-          const next = event.key === 'Home' ? 0 : event.key === 'End' ? kinds.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + kinds.length) % kinds.length
-          changeTab(kinds[next], true)
-        }}>{value === 'attachments' ? '当前附件' : value === 'files' ? '文件与目录' : '协作 Agent'}</button>)}
-    </div>
     {showSearch ? <input className="mention-ref-picker__search ui-input ui-input--compact" aria-label="搜索引用" autoFocus value={search}
-      placeholder={kind === 'attachments' ? '搜索图号或附件名称…' : kind === 'files' ? '搜索文件或目录…' : '搜索 Agent 名称…'} onChange={event => setSearch(event.target.value)} /> : null}
-    <div id={`${id}-list`} role="tabpanel" aria-labelledby={`${id}-${kind}`} className="mention-ref-picker__content">
-      {kind === 'attachments' ? <AttachmentRefPicker root={root} sessionId={sessionId} references={attachments} query={keyword} onSelect={onSelect} onClose={onClose} /> :
-        kind === 'agents' ? <AgentRefPicker query={keyword} onSelect={agent => onSelect({ source: 'agent', path: agent.id, displayText: agent.name })} onClose={onClose} /> : root ?
-        <FileRefPalette root={root} keyword={keyword} onSelect={onSelect} onClose={onClose} /> :
-        <div className="mention-ref-picker__empty"><span>选择工作区后可引用文件与目录</span><button type="button" data-mention-list-control className="mention-ref-picker__retry" onClick={() => changeTab('agents')}>选择协作 Agent</button></div>}
+      aria-controls={`${id}-list`} aria-activedescendant={active ? optionId(active) : undefined}
+      placeholder="搜索文件、附件、Agent 或工具包…" onChange={event => setSearch(event.target.value)} /> : null}
+    <div id={`${id}-list`} className="mention-ref-picker__list" role="listbox" aria-label="选择引用或工具包" aria-busy={loading}
+      aria-activedescendant={active ? optionId(active) : undefined}>
+      {attachmentOptions.length ? <div role="group" aria-label="当前附件" className="mention-ref-picker__group">
+        <div className="mention-ref-picker__heading" aria-hidden="true">当前附件</div>{attachmentOptions.map(renderOption)}
+      </div> : null}
+      {showFiles ? <div role="group" aria-label="文件与目录" className="mention-ref-picker__group">
+        <div className="mention-ref-picker__heading" aria-hidden="true">文件与目录</div>{fileOptions.map(renderOption)}
+        {!keyword.trim() && files.filtered.length > 3 ? <div className="mention-ref-picker__more">输入名称查找更多文件</div> : null}
+        {files.loading ? <div className="mention-ref-picker__empty" role="status">正在加载文件与目录…</div> : files.error ?
+          <div className="mention-ref-picker__empty" role="alert">{files.error}<button type="button" data-mention-list-control className="mention-ref-picker__retry" onClick={files.retry}>重试</button></div> : null}
+      </div> : null}
+      {showAgents ? <div role="group" aria-label="协作 Agent" aria-busy={agents.loading} className="mention-ref-picker__group">
+        <div className="mention-ref-picker__heading" aria-hidden="true">协作 Agent</div>{agentOptions.map(renderOption)}
+        {agents.loading ? <div className="mention-ref-picker__empty" role="status">正在加载自定义 Agent…</div> : agents.error ?
+          <div className="mention-ref-picker__empty" role="alert">{agents.error}<button type="button" data-mention-list-control className="mention-ref-picker__retry" onClick={agents.retry}>重试</button></div> : null}
+      </div> : null}
+      {toolkitOptions.length ? <div role="group" aria-label="工具包" className="mention-ref-picker__group">
+        <div className="mention-ref-picker__heading" aria-hidden="true">工具包</div>{toolkitOptions.map(renderOption)}
+      </div> : null}
+      {!options.length && !loading && !files.error && !agents.error ? <div className="mention-ref-picker__empty">没有匹配的引用或工具包</div> : null}
     </div>
-    <div className="mention-ref-picker__footer">{kind === 'attachments' ? '可多次引用同一附件 · 拖入正文也可插入' : kind === 'agents' ? '内置角色可多次添加 · 已有代理可在详情中继续' : '引用文件或整个目录'}<span>↑↓ 选择 · Enter / Tab 确认 · Alt + ←→ 切换 · Esc 关闭</span></div>
   </div>
 }

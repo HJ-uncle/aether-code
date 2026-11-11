@@ -1,7 +1,9 @@
 /** Real Electron image markup: exported PNG/clipboard pixels, undo/redo branches,
  * rotation coordinates, whole-vector erasure, draft replacement, owned uploads,
- * and native attachment/reference dragging with persisted identities and offsets.
- * Build first, then run with playwright.image-markup.config.ts (one window only). */
+ * and native attachment/reference dragging with persisted identities and offsets,
+ * including distinct builtin Agent glyphs shared by the picker and inline chips,
+ * and the shared color panel's preview/cancel ownership without changing the app theme.
+ * Build first, then run with playwright.work-local-attachment-preview.config.ts (one window only). */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page, type TestInfo } from '@playwright/test'
 import { createServer } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -93,6 +95,7 @@ const server = createServer((request, response) => { void (async () => {
   const data = path === '/health' ? { status: 'ok' }
     : path === '/meta' ? { version: '2.0.0', buildId: `sha256:${'8'.repeat(64)}`, protocolVersion: 1, toolProfiles: ['general', 'code'], subagentSchemaVersion: 1, instanceId: 'image-markup' }
     : path === '/api/v1/models' ? [{ id: modelId, modelId, provider: 'openai', displayName: '图片测试模型', isEnabled: true, capabilities: { toolCalling: true } }]
+    : path === '/api/v1/agents' ? [{ id: 'custom-reference-fixture', name: '自定义审阅', description: '验证自定义 Agent 的通用图标' }]
     : path === '/api/v1/chat/snapshot' ? { schemaVersion: 1, sessionId: owner, source: 'persisted', eventId: null, finished: true,
       history: rows, projection: [], run: matching, runs: matching ? [matching] : [], subagentRuns: [], todos: [], changes: [], commandJobs: [] }
     : path === '/api/v1/chat/status' ? { running: false, finished: true, run: matching, lastEventId: null }
@@ -116,10 +119,10 @@ const editor = (): Locator => page.locator('.image-editor')
 const canvas = (): Locator => editor().locator('.image-editor__canvas')
 const work = (): Locator => page.locator('.work-view')
 
-async function seedTask(seed?: { text: string; mentions: Mention[]; attachments: ChatAttachment[] }): Promise<void> {
+async function seedTask(seed?: { text: string; mentions: Mention[]; attachments: ChatAttachment[]; sources?: ChatAttachment[] }): Promise<void> {
   await page.evaluate(({ key, sessionId, title, now, modelId, workspaceRoot, seed }) => {
     localStorage.setItem(key, JSON.stringify({ tasks: [{ id: sessionId, title, status: 'done', draft: seed.text, mentions: seed.mentions, createdAt: now,
-      updatedAt: now, workspacePath: workspaceRoot, modelId, attachments: seed.attachments, sources: [] }], activeTaskId: sessionId }))
+      updatedAt: now, workspacePath: workspaceRoot, modelId, attachments: seed.attachments, sources: seed.sources ?? [] }], activeTaskId: sessionId }))
     localStorage.setItem('aether.app.mode', 'work')
     localStorage.setItem('aether.work.view.v1', JSON.stringify({ page: 'home', collapsed: false, workspace: false, tab: 'files', pane: 'conversation', ratio: 50 }))
   }, { key: storageKey, sessionId, title, now, modelId, workspaceRoot, seed: seed ?? { text: '', mentions: [], attachments: [] } })
@@ -137,6 +140,7 @@ async function savedDraft(): Promise<{ draft: string; mentions: Mention[]; attac
 
 /** Use native HTML drag/drop; the read-only Range locates a real text boundary. */
 async function dragToDraftText(chip: Locator, input: Locator, marker: string, after: boolean): Promise<void> {
+  await chip.scrollIntoViewIfNeeded()
   const targetPosition = await input.evaluate((element, { marker, after }) => {
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
     let node: Node | null
@@ -150,7 +154,29 @@ async function dragToDraftText(chip: Locator, input: Locator, marker: string, af
     }
     throw new Error(`Draft boundary ${marker} is missing`)
   }, { marker, after })
-  await chip.dragTo(input, { targetPosition })
+  const source = await chip.boundingBox(), target = await input.boundingBox()
+  if (!source || !target) throw new Error('Reference drag has no visible layout')
+  const x = source.x + source.width / 2, y = source.y + source.height / 2
+  const to = { x: target.x + targetPosition.x, y: target.y + targetPosition.y }
+  // The decorative image can delegate pointer events to its parent. Starting
+  // at its real screen coordinates still exercises the user's native gesture.
+  await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x + 8, y + 3, { steps: 4 })
+  await page.mouse.move(to.x, to.y, { steps: 18 }); await page.mouse.move(to.x, to.y); await page.mouse.up()
+}
+
+async function expectInlineImage(reference: Locator): Promise<void> {
+  const image = reference.locator('img.mention-chip__thumbnail')
+  await expect(image).toHaveCount(1); await expect(image).toHaveJSProperty('naturalWidth', imageWidth)
+  await expect(image).toHaveJSProperty('naturalHeight', imageHeight)
+  const layout = await reference.evaluate(element => {
+    const image = element.querySelector('img.mention-chip__thumbnail'), label = element.querySelector('.mention-chip__label')
+    if (!image || !label) throw new Error('Missing inline image reference content')
+    const bounds = image.getBoundingClientRect(), text = label.getBoundingClientRect()
+    return { width: bounds.width, height: bounds.height, before: Boolean(image.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING), right: bounds.right, labelLeft: text.left }
+  })
+  expect(layout.before).toBe(true); expect(layout.right).toBeLessThanOrEqual(layout.labelLeft + 1)
+  expect(layout.width).toBeGreaterThan(0); expect(layout.width).toBeLessThanOrEqual(22)
+  expect(layout.height).toBeGreaterThan(0); expect(layout.height).toBeLessThanOrEqual(22)
 }
 
 async function openToolImage(toolId = 'markup-render'): Promise<void> {
@@ -202,8 +228,19 @@ async function draw(tool: string, start: [number, number], end: [number, number]
   await expect(editor().getByRole('button', { name: '撤销', exact: true })).toBeEnabled()
 }
 
+async function setInkColor(color = '#e11d48'): Promise<void> {
+  const trigger = editor().getByRole('button', { name: '标注颜色', exact: true })
+  await trigger.click()
+  const picker = page.getByRole('dialog', { name: '选择标注颜色', exact: true })
+  const hex = picker.getByRole('textbox', { name: 'HEX 色值', exact: true })
+  await hex.fill(color); await hex.press('Enter')
+  await picker.getByRole('button', { name: '完成颜色选择', exact: true }).click()
+  await expect(picker).toHaveCount(0)
+  await expect(trigger).toHaveAttribute('title', `标注颜色：${color}`)
+}
+
 async function setInk(): Promise<void> {
-  await editor().getByLabel('标注颜色', { exact: true }).fill('#e11d48')
+  await setInkColor()
   await editor().getByRole('button', { name: '标注粗细', exact: true }).click()
   const picker = page.getByRole('dialog', { name: '选择标注粗细', exact: true })
   await picker.getByRole('menuitemradio', { name: '粗，8 px', exact: true }).click()
@@ -375,6 +412,154 @@ test.describe.serial('图片标注与真实导出', () => {
     await closeEditor()
   })
 
+  test('共享标注调色板支持预览确认与取消，键盘不切图且浅深主题均不改强调色', async ({}, info) => {
+    const savedAccent = (): { accent: unknown; customAccentColor: unknown } => {
+      const settings = JSON.parse(readFileSync(join(fixture, 'settings.json'), 'utf8'))
+      return { accent: settings.accent, customAccentColor: settings.customAccentColor }
+    }
+    const theme = (): Promise<{ appearance: string | undefined; accent: string | undefined; color: string }> => page.evaluate(() => ({
+      appearance: document.documentElement.dataset.appearance,
+      accent: document.documentElement.dataset.accent,
+      color: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()
+    }))
+    for (const appearance of ['light', 'dark'] as const) {
+      await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+      const settings = page.getByRole('dialog', { name: '设置', exact: true })
+      await settings.getByRole('tab', { name: '外观', exact: true }).click()
+      await settings.getByRole('radio', { name: appearance === 'light' ? '浅色' : '深色', exact: true }).click()
+      await settings.getByRole('button', { name: '关闭', exact: true }).click()
+      await expect(settings).toHaveCount(0)
+      await expect(page.locator('html')).toHaveAttribute('data-appearance', appearance)
+      const beforeTheme = await theme(), beforeSavedAccent = savedAccent()
+      await openToolImage()
+      const trigger = editor().getByRole('button', { name: '标注颜色', exact: true })
+      const picker = page.getByRole('dialog', { name: '选择标注颜色', exact: true })
+      const originalTitle = await trigger.getAttribute('title')
+      if (!originalTitle) throw new Error('The color well must expose its current color')
+      const originalImage = await editor().locator('.image-editor__surface > img').getAttribute('src')
+      const originalPosition = await editor().locator('.image-editor__position').innerText()
+      await expect(editor().getByRole('button', { name: '下一张', exact: true })).toBeEnabled()
+      await expect(editor().locator('input[type="color"]')).toHaveCount(0)
+      await trigger.click()
+      await expect(picker).toHaveAttribute('data-motion-state', 'open')
+      const spectrum = picker.getByRole('slider', { name: '饱和度和亮度', exact: true })
+      const hex = picker.getByRole('textbox', { name: 'HEX 色值', exact: true })
+      await expect(spectrum).toBeFocused()
+      const panelBox = await picker.boundingBox(), triggerBox = await trigger.boundingBox()
+      if (!panelBox || !triggerBox) throw new Error('Color panel or trigger is not laid out')
+      expect(panelBox.y + panelBox.height).toBeLessThanOrEqual(triggerBox.y)
+      expect(panelBox.x).toBeGreaterThanOrEqual(8)
+      expect(panelBox.x + panelBox.width).toBeLessThanOrEqual(await page.evaluate(() => innerWidth - 8))
+      expect(await spectrum.evaluate(element => {
+        const bounds = element.getBoundingClientRect()
+        return element.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2))
+      })).toBe(true)
+
+      await hex.fill('#2384d1'); await hex.press('Enter')
+      await expect(trigger).toHaveAttribute('title', '标注颜色：#2384d1')
+      expect(await theme()).toEqual(beforeTheme); expect(savedAccent()).toEqual(beforeSavedAccent)
+      await spectrum.focus(); await page.keyboard.press('ArrowRight')
+      await expect(hex).not.toHaveValue('#2384d1')
+      await expect(editor().locator('.image-editor__surface > img')).toHaveAttribute('src', originalImage!)
+      await expect(editor().locator('.image-editor__position')).toHaveText(originalPosition)
+      await picker.getByRole('button', { name: '完成颜色选择', exact: true }).focus()
+      await page.keyboard.press('Tab')
+      await expect(picker.getByRole('button', { name: '还原', exact: true })).toBeFocused()
+      await screenshot(`image-color-picker-${appearance}`, info)
+      await page.keyboard.press('Escape')
+      await expect(picker).toHaveCount(0); await expect(editor()).toBeVisible()
+      await expect(trigger).toBeFocused(); await expect(trigger).toHaveAttribute('title', originalTitle)
+
+      // The existing six-tool PNG test uses this same confirmation path and
+      // verifies the actual exported pixels, rather than just the well's label.
+      await setInkColor()
+      await expect(trigger).toBeFocused()
+      await trigger.click(); await hex.fill('#34c759'); await hex.press('Enter')
+      await expect(trigger).toHaveAttribute('title', '标注颜色：#34c759')
+      await editor().getByRole('button', { name: '移动', exact: true }).click()
+      await expect(picker).toHaveCount(0); await expect(editor()).toBeVisible()
+      await expect(trigger).toHaveAttribute('title', '标注颜色：#e11d48')
+      expect(await theme()).toEqual(beforeTheme); expect(savedAccent()).toEqual(beforeSavedAccent)
+      if (appearance === 'dark') {
+        const previousSize = await app!.evaluate(({ BrowserWindow }) => {
+          const window = BrowserWindow.getAllWindows()[0], size = window.getContentSize()
+          window.setContentSize(960, 680)
+          return size
+        })
+        try {
+          await trigger.click(); await expect(picker).toHaveAttribute('data-motion-state', 'open')
+          const bounds = await picker.evaluate(element => {
+            const box = element.getBoundingClientRect()
+            return { left: box.left, top: box.top, right: box.right, bottom: box.bottom, width: innerWidth, height: innerHeight }
+          })
+          expect(bounds.left).toBeGreaterThanOrEqual(8); expect(bounds.top).toBeGreaterThanOrEqual(8)
+          expect(bounds.right).toBeLessThanOrEqual(bounds.width - 8); expect(bounds.bottom).toBeLessThanOrEqual(bounds.height - 8)
+          await hex.fill('#2384d1'); await hex.press('Enter')
+          await picker.getByRole('button', { name: '完成颜色选择', exact: true }).click()
+          await expect(picker).toHaveCount(0); await expect(trigger).toHaveAttribute('title', '标注颜色：#2384d1')
+          await trigger.click(); await expect(hex).toHaveValue('#2384d1')
+          await expect(picker).toHaveAttribute('data-motion-state', 'open')
+          await expect(hex).toBeVisible()
+          await screenshot('image-color-picker-narrow', info)
+          await page.keyboard.press('Escape'); await expect(picker).toHaveCount(0)
+        } finally {
+          await app!.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setContentSize(size[0], size[1]), previousSize)
+        }
+      }
+      await closeEditor()
+    }
+  })
+
+  test('共享调色板仍支持设置页预览取消与确认持久化，重载后恢复原主题', async () => {
+    const original = await page.evaluate(async () => {
+      const settings = await window.aether.settings.get()
+      return { accent: settings.accent, customAccentColor: settings.customAccentColor, appearance: settings.appearance }
+    })
+    const theme = (): Promise<{ accent: string | undefined; custom: string | undefined; appearance: string | undefined }> => page.evaluate(() => ({
+      accent: document.documentElement.dataset.accent,
+      custom: document.documentElement.dataset.customAccent,
+      appearance: document.documentElement.dataset.appearance
+    }))
+    const beforeTheme = await theme()
+    const savedAccent = (): { accent: unknown; customAccentColor: unknown } => {
+      const settings = JSON.parse(readFileSync(join(fixture, 'settings.json'), 'utf8'))
+      return { accent: settings.accent, customAccentColor: settings.customAccentColor }
+    }
+    const beforeSavedAccent = savedAccent()
+    try {
+      await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+      const settings = page.getByRole('dialog', { name: '设置', exact: true })
+      await settings.getByRole('tab', { name: '外观', exact: true }).click()
+      const trigger = settings.getByRole('radio', { name: '自定义颜色', exact: true })
+      const picker = page.getByRole('dialog', { name: '自定义强调色', exact: true })
+      const hex = picker.getByRole('textbox', { name: '自定义强调色色值', exact: true })
+      await trigger.click(); await expect(hex).toHaveValue(original.customAccentColor)
+      await hex.fill('#c14681'); await hex.press('Enter')
+      await expect(page.locator('html')).toHaveAttribute('data-accent', 'custom')
+      await expect(page.locator('html')).toHaveAttribute('data-custom-accent', '#c14681')
+      expect(savedAccent()).toEqual(beforeSavedAccent)
+      await page.keyboard.press('Escape')
+      await expect(picker).toHaveCount(0); await expect(settings).toBeVisible(); await expect(trigger).toBeFocused()
+      expect(await theme()).toEqual(beforeTheme); expect(savedAccent()).toEqual(beforeSavedAccent)
+
+      await trigger.click(); await expect(hex).toHaveValue(original.customAccentColor)
+      await hex.fill('#316fbd'); await hex.press('Enter')
+      await picker.getByRole('button', { name: '完成颜色选择', exact: true }).click()
+      await expect(picker).toHaveCount(0); await expect(trigger).toBeFocused()
+      await expect.poll(savedAccent).toEqual({ accent: 'custom', customAccentColor: '#316fbd' })
+      await settings.getByRole('button', { name: '关闭', exact: true }).click()
+      await page.reload()
+      await expect(page.locator('html')).toHaveAttribute('data-accent', 'custom')
+      await expect(page.locator('html')).toHaveAttribute('data-custom-accent', '#316fbd')
+    } finally {
+      // Fixture cleanup bypasses the UI so a failed assertion cannot leak the
+      // saved custom color into later specs sharing this Electron profile.
+      await page.evaluate(patch => window.aether.settings.update(patch), original)
+      await page.reload()
+      await expect.poll(theme).toEqual(beforeTheme)
+    }
+  })
+
   test('默认100%保留清晰度，粗细菜单向上展开、支持键盘且PNG保留真实线宽', async ({}, info) => {
     await openToolImage()
     await expectFullscreenLayout()
@@ -387,7 +572,7 @@ test.describe.serial('图片标注与真实导出', () => {
     expect(fitted!.height).toBeLessThanOrEqual(stage!.height + 1)
     await zoom.click(); await readyEditor(); await expectFullscreenLayout()
 
-    await editor().getByLabel('标注颜色', { exact: true }).fill('#e11d48')
+    await setInkColor()
     const trigger = editor().getByRole('button', { name: '标注粗细', exact: true })
     const picker = page.getByRole('dialog', { name: '选择标注粗细', exact: true })
     await expect(trigger).toHaveAttribute('title', '标注粗细：4 px')
@@ -555,6 +740,75 @@ test.describe.serial('图片标注与真实导出', () => {
     expect(files.get(userImagePath)!.bytes.equals(originalBytes)).toBe(true)
   })
 
+  test('标注新版与同身份历史原图可同时引用，附件栏只保留新版且缩略图拖拽可撤销', async ({}, info) => {
+    const input = work().getByRole('textbox', { name: '继续对话', exact: true })
+    const cards = work().locator('.work-attachments .attachment-strip__item')
+    // Restore through the actual history action. A second localStorage seed
+    // races the mounted renderer's draft flush and history-source hydration.
+    await work().locator('.work-message--user').getByRole('button', { name: '添加到对话', exact: true }).click()
+    await expect(cards).toHaveCount(2)
+    await work().getByRole('button', { name: '移除附件 duplicate-user-image.png', exact: true }).click()
+    await expect(cards).toHaveCount(1)
+    const id = await cards.getAttribute('data-attachment-id')
+    expect(id).not.toBeNull()
+    await expect.poll(async () => (await savedDraft()).attachments.length).toBe(1)
+    const original: ChatAttachment = { ...(await savedDraft()).attachments[0], attachmentId: id! }
+    expect(original.path).toBe(userImagePath)
+    await input.fill('START_TARGET '); await page.keyboard.insertText('@')
+    const picker = page.locator('.mention-ref-picker:visible')
+    const attachmentGroup = picker.getByRole('group', { name: '当前附件', exact: true })
+    await expect(attachmentGroup).toBeVisible()
+    await expect(attachmentGroup.getByRole('option')).toHaveCount(1); await attachmentGroup.getByRole('option').click()
+    await expect(picker).toHaveCount(0)
+    await input.focus(); await page.keyboard.press('Control+End'); await page.keyboard.insertText(' END_TARGET')
+    await expect.poll(async () => (await savedDraft()).mentions.map(item => item.path)).toEqual([original.path])
+    const before = uploads.length
+    await cards.locator('.attach-chip__image-btn').click(); await readyEditor(); await setInk()
+    await draw('画笔', [80, 100], [240, 100])
+    await editor().getByRole('button', { name: '应用编辑', exact: true }).click()
+    await expect(editor()).toHaveCount(0); await expect.poll(() => uploads.length).toBe(before + 1)
+    const edited = uploads[before], editedSrc = `data:image/png;base64,${edited.bytes.toString('base64')}`
+    expect(edited.path).not.toBe(original.path)
+    await expect.poll(async () => (await savedDraft()).attachments.map(file => ({ id: file.attachmentId, path: file.path })))
+      .toEqual([{ id: original.attachmentId, path: edited.path }])
+    await expect.poll(async () => (await savedDraft()).mentions.map(item => item.path)).toEqual([edited.path])
+
+    await work().getByRole('button', { name: '打开工作区', exact: true }).click()
+    await work().getByRole('button', { name: '更多工作区', exact: true }).click()
+    await page.getByRole('menuitem', { name: '资料', exact: true }).click()
+    const source = work().locator('.work-source-row').filter({ has: page.locator(`.work-source-row__main[title="${original.path}"]`) })
+    await expect(source).toHaveCount(1)
+    await source.getByRole('button', { name: '添加到对话', exact: true }).click()
+    await work().getByRole('button', { name: '收起工作区', exact: true }).click()
+    const references = input.locator('.mention-chip--attachment')
+    const imageFor = (label: string): Locator => references.filter({ has: page.locator('.mention-chip__label', { hasText: new RegExp(`^${label}$`) }) })
+    const expectVersions = async (): Promise<void> => {
+      await expect(cards).toHaveCount(1); await expect(cards).toHaveAttribute('data-attachment-id', original.attachmentId!)
+      await expect(cards.locator('.attach-chip__thumb')).toHaveAttribute('src', editedSrc)
+      await expect(references).toHaveCount(2)
+      await expect.poll(() => references.evaluateAll(elements => elements.map(element => element.getAttribute('data-attachment-id'))))
+        .toEqual([original.attachmentId, original.attachmentId])
+      await expectInlineImage(imageFor('图1')); await expectInlineImage(imageFor('图2'))
+      await expect(imageFor('图1').locator('img')).toHaveAttribute('src', editedSrc)
+      await expect(imageFor('图2').locator('img')).toHaveAttribute('src', imageDataUrl)
+    }
+    await expect(references.locator('.mention-chip__label')).toHaveText(['图1', '图2']); await expectVersions()
+    await expect.poll(async () => (await savedDraft()).mentions.map(item => item.path)).toEqual([edited.path, original.path])
+    expect((await inspectPng(await imageFor('图1').locator('img').getAttribute('src') ?? '', [[160, 100]])).pixels[0]).toEqual([225, 29, 72, 255])
+    expect((await inspectPng(await imageFor('图2').locator('img').getAttribute('src') ?? '', [[160, 100]])).pixels[0]).toEqual([255, 255, 255, 255])
+
+    await dragToDraftText(imageFor('图2').locator('img'), input, 'START_TARGET', false)
+    await expect(references.locator('.mention-chip__label')).toHaveText(['图2', '图1']); await expectVersions()
+    await expect.poll(async () => (await savedDraft()).mentions.map(item => item.path)).toEqual([original.path, edited.path])
+    await input.focus(); await page.keyboard.press('Control+Z')
+    await expect(references.locator('.mention-chip__label')).toHaveText(['图1', '图2']); await expectVersions()
+    await expect.poll(async () => (await savedDraft()).mentions.map(item => item.path)).toEqual([edited.path, original.path])
+    await page.reload(); await expect(work().getByRole('heading', { name: title, exact: true })).toBeVisible()
+    await expect(references.locator('.mention-chip__label')).toHaveText(['图1', '图2']); await expectVersions()
+    expect(uploads.length).toBe(before + 1); expect(files.get(original.path)!.bytes.equals(originalBytes)).toBe(true)
+    await screenshot('edited-and-historical-reference', info)
+  })
+
   test('相同字节的不同图片保持独立标注，关闭图库会提醒其它图片未导出的编辑', async () => {
     await work().locator('.work-message--user .attach-chip__image-btn').first().click()
     await readyEditor(); await setInk(); await draw('画笔', [80, 100], [240, 100])
@@ -658,6 +912,7 @@ test.describe.serial('图片标注与真实导出', () => {
     const reference = input.locator('.mention-chip--attachment')
     await expect(reference).toHaveAttribute('data-attachment-id', firstId!)
     await expect(reference.locator('.mention-chip__label')).toHaveText('图2')
+    await expectInlineImage(reference)
     await expect(first.locator('.attach-chip__reference')).toHaveText('图2')
     await expect.poll(async () => (await savedDraft()).mentions.map(mention => ({ id: mention.attachmentId, label: mention.displayText })))
       .toEqual([{ id: firstId, label: '图2' }])
@@ -667,13 +922,12 @@ test.describe.serial('图片标注与真实导出', () => {
     await expect.poll(() => items.evaluateAll(elements => elements.map(element => element.getAttribute('data-attachment-id')))).toEqual([secondId, firstId])
     await expect(reference).toHaveAttribute('data-attachment-id', firstId!)
     await expect(reference.locator('.mention-chip__label')).toHaveText('图2')
+    await expectInlineImage(reference)
     await reference.click()
-    const preview = work().locator('.work-sources__preview-image')
-    await expect(preview).toHaveAttribute('alt', 'drag-first.png')
-    await expect(preview).toHaveJSProperty('naturalWidth', imageWidth)
+    await readyEditor(); await expect(editor()).toContainText('drag-first.png'); await closeEditor()
   })
 
-  test('所有引用标签都可拖动，附件与文件共用下划线且拖后草稿保留元数据', async ({}, info) => {
+  test('所有引用无下划线且保留轻量选中反馈，附件与文件一致并可拖动撤销', async ({}, info) => {
     const attachments: ChatAttachment[] = [
       { attachmentId: 'drag-image-first', path: userImagePath, name: 'original-user-image.png', type: 'image/png', size: originalBytes.length },
       { attachmentId: 'drag-image-second', path: duplicateImagePath, name: 'duplicate-user-image.png', type: 'image/png', size: originalBytes.length }
@@ -696,21 +950,43 @@ test.describe.serial('图片标注与真实导出', () => {
     const chips = input.locator('[data-mention-key]'), attachment = input.locator('.mention-chip--attachment')
     await expect(chips).toHaveCount(mentions.length)
     await expect.poll(() => chips.evaluateAll(elements => elements.map(element => element.getAttribute('draggable')))).toEqual(mentions.map(() => 'true'))
-    await expect(attachment.locator('img, svg, button, .mention-chip__remove, .mention-chip__thumb')).toHaveCount(0)
+    await expectInlineImage(attachment)
+    await expect(input.locator('.mention-chip:not(.mention-chip--attachment) img')).toHaveCount(0)
+    await expect(attachment.locator('svg, button, .mention-chip__remove, .mention-chip__thumb')).toHaveCount(0)
     const appearance = await input.evaluate(element => {
       const style = (selector: string): object => {
         const chip = element.querySelector(selector); if (!chip) throw new Error(`Missing reference ${selector}`)
-        const main = getComputedStyle(chip), underline = getComputedStyle(chip, '::after')
+        const main = getComputedStyle(chip), after = getComputedStyle(chip, '::after')
         return { display: main.display, background: main.backgroundColor, border: main.borderWidth, padding: main.padding,
-          align: main.verticalAlign, underlineContent: underline.content, underlineColor: underline.backgroundColor, underlineHeight: underline.height }
+          align: main.verticalAlign, decoration: main.textDecorationLine, afterContent: after.content }
       }
       return { file: style('.mention-chip--file:not(.mention-chip--attachment)'), attachment: style('.mention-chip--attachment') }
     })
     expect(appearance.attachment).toEqual(appearance.file)
+    const decorations = await chips.evaluateAll(elements => elements.map(element => {
+      const label = element.querySelector('.mention-chip__label')!
+      return { decoration: getComputedStyle(element).textDecorationLine, labelDecoration: getComputedStyle(label).textDecorationLine,
+        afterContent: getComputedStyle(element, '::after').content }
+    }))
+    for (const style of decorations) {
+      expect(style.decoration).not.toContain('underline'); expect(style.labelDecoration).not.toContain('underline')
+      expect(['none', 'normal']).toContain(style.afterContent)
+    }
     await dragToDraftText(input.locator('.mention-chip--code'), input, 'END_TARGET', true)
-    await dragToDraftText(attachment, input, 'START_TARGET', false)
+    const beforeImageDrag = ['文件', '目录', '终端', 'Agent', '网页', '会话', '图2', '源码']
+    await expect(chips.locator('.mention-chip__label')).toHaveText(beforeImageDrag)
+    // Starting on the miniature must move the atomic reference, not an image URL.
+    await dragToDraftText(attachment.locator('img.mention-chip__thumbnail'), input, 'START_TARGET', false)
     const expectedLabels = ['图2', '文件', '目录', '终端', 'Agent', '网页', '会话', '源码']
     await expect(chips.locator('.mention-chip__label')).toHaveText(expectedLabels)
+    await expect(attachment).toHaveAttribute('data-attachment-id', 'drag-image-second')
+    await input.focus(); await page.keyboard.press('Control+Z')
+    await expect(chips.locator('.mention-chip__label')).toHaveText(beforeImageDrag)
+    await expect(attachment).toHaveAttribute('data-attachment-id', 'drag-image-second'); await expectInlineImage(attachment)
+    await expect.poll(async () => (await savedDraft()).mentions.map(mention => mention.displayText)).toEqual(beforeImageDrag)
+    await page.keyboard.press('Control+Y')
+    await expect(chips.locator('.mention-chip__label')).toHaveText(expectedLabels)
+    await expect(attachment).toHaveAttribute('data-attachment-id', 'drag-image-second'); await expectInlineImage(attachment)
     await expect.poll(async () => (await savedDraft()).mentions.map(mention => mention.displayText)).toEqual(expectedLabels)
     const saved = await savedDraft()
     expect(saved.attachments.map(file => file.attachmentId)).toEqual(['drag-image-first', 'drag-image-second'])
@@ -726,6 +1002,8 @@ test.describe.serial('图片标注与真实导出', () => {
     await page.reload(); await expect(work().getByRole('heading', { name: title, exact: true })).toBeVisible()
     await expect(chips.locator('.mention-chip__label')).toHaveText(expectedLabels)
     await expect(attachment).toHaveAttribute('data-attachment-id', 'drag-image-second')
+    await expectInlineImage(attachment)
+    await expect(input.locator('.mention-chip:not(.mention-chip--attachment) img')).toHaveCount(0)
     for (const appearance of ['light', 'dark'] as const) {
       await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
       const settings = page.getByRole('dialog', { name: '设置', exact: true })
@@ -733,12 +1011,195 @@ test.describe.serial('图片标注与真实导出', () => {
       await settings.getByRole('radio', { name: appearance === 'light' ? '浅色' : '深色', exact: true }).click()
       await settings.getByRole('button', { name: '关闭', exact: true }).click()
       await page.mouse.move(0, 0)
+      const focusAppearance = async (reference: Locator) => {
+        await input.focus()
+        for (let index = 0; index < mentions.length + 1; index++) {
+          await page.keyboard.press('Tab')
+          if (await reference.evaluate(element => document.activeElement === element)) break
+        }
+        await expect(reference).toBeFocused()
+        const style = await reference.evaluate(element => {
+          const main = getComputedStyle(element), sample = document.createElement('canvas'); sample.width = sample.height = 1
+          const context = sample.getContext('2d'); if (!context) throw new Error('Focus color probe unavailable')
+          context.fillStyle = main.backgroundColor; context.fillRect(0, 0, 1, 1)
+          return { visible: element.matches(':focus-visible'), outline: main.outlineStyle, border: parseFloat(main.borderWidth), shadow: main.boxShadow,
+            radius: parseFloat(main.borderTopLeftRadius), background: main.backgroundColor, pixel: [...context.getImageData(0, 0, 1, 1).data] }
+        })
+        expect(style.visible).toBe(true); expect(style.outline).toBe('none'); expect(style.border).toBe(0); expect(style.shadow).toBe('none')
+        expect(style.radius).toBeGreaterThan(0); expect(style.pixel[3]).toBeGreaterThan(0); expect(style.pixel[3]).toBeLessThanOrEqual(64)
+        return style
+      }
+      const fileFocus = await focusAppearance(input.locator('.mention-chip--file:not(.mention-chip--attachment)'))
+      const imageFocus = await focusAppearance(attachment)
+      expect(imageFocus).toEqual(fileFocus)
       await screenshot(`reference-labels-${appearance}`, info)
+      await input.focus(); await page.keyboard.press('Control+Home'); await page.keyboard.press('Control+Shift+End')
+      const selected = await input.evaluate(element => {
+        const selection = getSelection(), range = selection?.rangeCount ? selection.getRangeAt(0) : null
+        return { text: selection?.toString() ?? '', collapsed: selection?.isCollapsed ?? true,
+          inside: Boolean(range && element.contains(range.commonAncestorContainer)), width: range?.getBoundingClientRect().width ?? 0 }
+      })
+      expect(selected.collapsed).toBe(false); expect(selected.inside).toBe(true); expect(selected.width).toBeGreaterThan(0)
+      for (const label of ['START_TARGET', 'END_TARGET', '文件', '图2']) expect(selected.text).toContain(label)
+      const selectionColors = await chips.locator('.mention-chip__label').evaluateAll(elements => elements.map(element => {
+        const selected = getComputedStyle(element, '::selection'), sample = document.createElement('canvas'); sample.width = sample.height = 1
+        const context = sample.getContext('2d'); if (!context) throw new Error('Selection color probe unavailable')
+        context.fillStyle = selected.backgroundColor; context.fillRect(0, 0, 1, 1)
+        return { background: selected.backgroundColor, pixel: [...context.getImageData(0, 0, 1, 1).data] }
+      }))
+      for (const selection of selectionColors) {
+        expect(selection.pixel[3]).toBeGreaterThan(0); expect(selection.pixel[3]).toBeLessThanOrEqual(64)
+        expect(selection.background).toBe(imageFocus.background)
+      }
+      await screenshot(`reference-native-selection-${appearance}`, info)
+      await page.keyboard.press('Control+End')
     }
     await attachment.click()
-    const preview = work().locator('.work-sources__preview-image')
-    await expect(preview).toHaveAttribute('alt', 'duplicate-user-image.png')
-    await expect(preview).toHaveJSProperty('naturalWidth', imageWidth)
+    await readyEditor(); await expect(editor()).toContainText('duplicate-user-image.png'); await closeEditor()
+  })
+
+  test('引用右键菜单按类型打开和复制，只移除当前引用且支持撤销与键盘', async ({}, info) => {
+    const image: ChatAttachment = { attachmentId: 'menu-image', path: userImagePath, name: 'original-user-image.png', type: 'image/png', size: originalBytes.length }
+    const mentions: Mention[] = [
+      { source: 'file', origin: 'attachment', attachmentId: image.attachmentId, path: image.path, displayText: '图1' },
+      { source: 'file', origin: 'attachment', attachmentId: image.attachmentId, path: image.path, displayText: '图1' },
+      { source: 'dir', origin: 'workspace', path: 'icons', displayText: 'icons' },
+      { source: 'agent', path: 'builtin-agent:executor:menu-instance', displayText: '执行' },
+      { source: 'code', path: 'sample.ts', displayText: 'sample.ts', content: 'const MENU_REFERENCE = 42;' }
+    ]
+    let text = 'MENU_START '
+    for (const mention of mentions) { mention.textOffset = text.length; text += `${mentionToken(mention)} ` }
+    text += 'MENU_END'
+    await seedTask({ text, mentions, attachments: [image] })
+    const input = work().getByRole('textbox', { name: '继续对话', exact: true }), menu = page.getByRole('menu')
+    const chips = input.locator('[data-mention-key]'), images = input.locator('.mention-chip--attachment')
+    await expect(chips).toHaveCount(5)
+    await images.first().click({ button: 'right' })
+    await expect(menu.getByRole('menuitem', { name: '预览图片', exact: true })).toBeVisible()
+    await expect(menu).toHaveAttribute('data-motion-state', 'open')
+    await screenshot('reference-context-menu', info)
+    await menu.getByRole('menuitem', { name: '预览图片', exact: true }).click()
+    await readyEditor(); await expect(editor().getByRole('toolbar', { name: '图片标注工具' })).toBeVisible(); await closeEditor()
+    await input.locator('.mention-chip--dir').click({ button: 'right' })
+    await expect(menu.getByRole('menuitem', { name: '打开文件夹', exact: true })).toBeVisible()
+    await menu.getByRole('menuitem', { name: '复制路径', exact: true }).click()
+    await expect.poll(() => app!.evaluate(({ clipboard }) => clipboard.readText())).toBe('icons')
+    await input.locator('.mention-chip--agent').click({ button: 'right' })
+    await expect(menu.getByRole('menuitem', { name: '查看 Agent', exact: true })).toBeVisible()
+    await menu.getByRole('menuitem', { name: '复制名称', exact: true }).click()
+    await expect.poll(() => app!.evaluate(({ clipboard }) => clipboard.readText())).toBe('执行')
+    await input.locator('.mention-chip--code').focus(); await page.keyboard.press('Shift+F10')
+    await menu.getByRole('menuitem', { name: '复制内容', exact: true }).click()
+    await expect.poll(() => app!.evaluate(({ clipboard }) => clipboard.readText())).toBe('const MENU_REFERENCE = 42;')
+    const before = await savedDraft()
+    await images.first().click({ button: 'right' })
+    await menu.getByRole('menuitem', { name: '移除引用 Delete', exact: true }).click()
+    await expect(images).toHaveCount(1); await expect(work().locator('.attachment-strip__item')).toHaveCount(1)
+    await expect.poll(async () => (await savedDraft()).mentions.length).toBe(4)
+    await input.focus(); await page.keyboard.press('Control+Z')
+    await expect(images).toHaveCount(2)
+    await expect.poll(async () => (await savedDraft()).mentions).toEqual(before.mentions)
+    await input.locator('.mention-chip--agent').click({ button: 'right' })
+    await menu.getByRole('menuitem', { name: '在后面继续输入', exact: true }).click()
+    await page.keyboard.insertText('插入位置 ')
+    await expect.poll(async () => (await savedDraft()).draft).toContain('@builtin-agent:executor:menu-instance 插入位置 @sample.ts')
+    await expect(chips).toHaveCount(5)
+  })
+
+  test('内置Agent图标区分角色并与正文一致，多实例拖动撤销保留身份', async ({}, info) => {
+    const input = work().getByRole('textbox', { name: '继续对话', exact: true })
+    const chips = input.locator('.mention-chip--agent')
+    const picker = page.getByRole('group', { name: '协作 Agent', exact: true })
+    const roles = [{ role: 'research', name: '调研' }, { role: 'executor', name: '执行' }, { role: 'general', name: '通用' }]
+    const pathsByName = new Map<string, string[]>()
+    const svgPaths = (target: Locator): Promise<string[]> => target.locator('svg path').evaluateAll(paths => paths.map(path => path.getAttribute('d') ?? ''))
+    const openPicker = async (): Promise<void> => {
+      await input.focus(); await page.keyboard.press('Control+End'); await page.keyboard.insertText(' @agent')
+      await expect(picker).toBeVisible()
+      await expect(picker).toHaveAttribute('aria-busy', 'false')
+    }
+    await input.fill('START_AGENT ')
+    await openPicker()
+    for (const name of [...roles.map(item => item.name), '自定义审阅']) {
+      const option = picker.getByRole('option').filter({ has: page.locator('strong', { hasText: new RegExp(`^${name}$`) }) })
+      await expect(option).toBeVisible(); await expect(option.locator('svg')).toHaveCount(1)
+      const paths = await svgPaths(option)
+      expect(paths.length).toBeGreaterThan(0)
+      for (const path of paths) expect(path.length).toBeGreaterThan(10)
+      pathsByName.set(name, paths)
+    }
+    // Compare the rendered paths rather than duplicating the icon implementation
+    // in the test; this still rejects a generic avatar reused for every role.
+    expect(new Set(roles.map(item => JSON.stringify(pathsByName.get(item.name)))).size).toBe(3)
+    expect(roles.every(item => JSON.stringify(pathsByName.get(item.name)) !== JSON.stringify(pathsByName.get('自定义审阅')))).toBe(true)
+    await screenshot('builtin-agent-picker-icons', info)
+    const labels = roles.flatMap(item => [item.name, item.name]).concat('自定义审阅')
+    for (const [index, name] of labels.entries()) {
+      if (index > 0) await openPicker()
+      await picker.getByRole('option').filter({ has: page.locator('strong', { hasText: new RegExp(`^${name}$`) }) }).click()
+      await expect(picker).toHaveCount(0); await expect(chips).toHaveCount(index + 1)
+      await expect.poll(() => svgPaths(chips.nth(index))).toEqual(pathsByName.get(name))
+    }
+    await input.focus(); await page.keyboard.press('Control+End'); await page.keyboard.insertText(' END_AGENT')
+    await expect.poll(async () => (await savedDraft()).mentions.map(mention => mention.displayText)).toEqual(labels)
+    const inserted = (await savedDraft()).mentions
+    const ids = inserted.map(mention => mention.path!)
+    expect(new Set(ids.slice(0, 6)).size).toBe(6)
+    for (const [index, item] of roles.entries()) {
+      for (const id of ids.slice(index * 2, index * 2 + 2)) expect(id).toMatch(new RegExp(`^builtin-agent:${item.role}:[a-zA-Z0-9_-]+$`))
+    }
+    expect(ids.at(-1)).toBe('custom-reference-fixture')
+    const expectIcons = async (): Promise<void> => {
+      const draft = await savedDraft()
+      await expect(chips.locator('.mention-chip__label')).toHaveText(draft.mentions.map(mention => mention.displayText))
+      for (const [index, mention] of draft.mentions.entries()) await expect.poll(() => svgPaths(chips.nth(index))).toEqual(pathsByName.get(mention.displayText))
+      for (const mention of draft.mentions) {
+        const token = mentionToken(mention), offset = mention.textOffset!
+        expect(draft.draft.slice(offset, offset + token.length)).toBe(token)
+      }
+    }
+    let order = [...ids]
+    for (const [index, item] of roles.entries()) {
+      const movingId = ids[index * 2], before = [...order]
+      const roleChips = chips.filter({ has: page.locator('.mention-chip__label', { hasText: new RegExp(`^${item.name}$`) }) })
+      // Begin on the glyph itself, so native SVG dragging cannot copy a URL or
+      // insert another instance instead of moving the existing atomic chip.
+      await dragToDraftText(roleChips.first().locator('svg'), input, 'END_AGENT', true)
+      order = [...order.filter(id => id !== movingId), movingId]
+      await expect.poll(async () => (await savedDraft()).mentions.map(mention => mention.path)).toEqual(order)
+      await expectIcons()
+      await input.focus(); await page.keyboard.press('Control+Z')
+      await expect.poll(async () => (await savedDraft()).mentions.map(mention => mention.path)).toEqual(before)
+      await expectIcons()
+      await page.keyboard.press('Control+Y')
+      await expect.poll(async () => (await savedDraft()).mentions.map(mention => mention.path)).toEqual(order)
+      await expectIcons()
+      if (index < roles.length - 1) {
+        // Restore the same text boundary before the next role: otherwise a
+        // prior chip already after END_AGENT would change the next drop target.
+        await page.keyboard.press('Control+Z'); order = before
+        await expect.poll(async () => (await savedDraft()).mentions.map(mention => mention.path)).toEqual(order)
+      }
+    }
+    await screenshot('builtin-agent-inline-icons', info)
+    await page.reload(); await expect(work().getByRole('heading', { name: title, exact: true })).toBeVisible()
+    await expect(chips).toHaveCount(labels.length)
+    expect((await savedDraft()).mentions.map(mention => mention.path)).toEqual(order)
+    await expectIcons()
+    const restored = await savedDraft()
+    for (const appearance of ['light', 'dark'] as const) {
+      await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+      const settings = page.getByRole('dialog', { name: '设置', exact: true })
+      await settings.getByRole('tab', { name: '外观', exact: true }).click()
+      await settings.getByRole('radio', { name: appearance === 'light' ? '浅色' : '深色', exact: true }).click()
+      await settings.getByRole('button', { name: '关闭', exact: true }).click()
+      await openPicker(); await page.mouse.move(0, 0)
+      await screenshot(`builtin-agent-picker-and-inline-${appearance}`, info)
+      await page.keyboard.press('Escape'); await expect(picker).toHaveCount(0)
+      await input.focus(); await page.keyboard.press('Control+End')
+      for (let index = 0; index < ' @agent'.length; index++) await page.keyboard.press('Backspace')
+      await expect.poll(async () => (await savedDraft()).draft).toBe(restored.draft)
+    }
   })
 
   test('浅深主题显示完整工具栏、画布与导出操作', async ({}, info) => {

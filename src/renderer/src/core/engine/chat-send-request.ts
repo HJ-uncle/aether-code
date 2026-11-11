@@ -31,6 +31,7 @@ export async function dispatchChatRequest(
     knowledgeBases: options.knowledgeBases,
     skills: options.skills,
     mcpServers: options.mcpServers,
+    toolkits: options.toolkits,
     workspacePaths: !remote && options.workspacePaths?.length ? options.workspacePaths : undefined,
     thinkingMode: options.thinkingMode,
     subagentModel: options.subagentModel,

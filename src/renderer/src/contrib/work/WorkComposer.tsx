@@ -27,7 +27,7 @@ import { WorkComposerWorkspace } from './WorkComposerWorkspace'
 import { openAppSettings } from '../settings/app-settings-navigation'
 import { useAppMode } from '@renderer/core/platform/app-mode'
 import { toast } from '@renderer/core/toast'
-import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
+import { getEngineSource, isRemoteEngine, subscribeEngineSource } from '@renderer/core/engine/source'
 import { WorkAgentManager } from './WorkAgentManager'
 import { CompletionPopover } from '@renderer/workbench/CompletionPopover'
 import type { useWorkController } from './work-runtime'
@@ -38,7 +38,6 @@ import {
 } from '../chat/AttachmentChip'
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
 import { shouldAttachPastedText } from '../chat/useAttachments'
-import { composerInputIssue } from '../chat/input-limits'
 import { useWorkReferenceNavigation } from './WorkReferenceNavigation'
 import { parseConversationLink } from '@shared/conversation-link'
 import { resolveConversationReference } from './work-conversation-reference'
@@ -46,6 +45,9 @@ import { useImageConversation } from '../chat/image-conversation'
 import { ipcErrorMessage } from '@renderer/core/ipc-error'
 import { AttachmentStrip } from '../chat/AttachmentStrip'
 import { attachmentIdentity, attachmentReferences } from '../chat/attachment-references'
+import { sameToolkits, toolkitName } from '@shared/toolkits'
+import { appendWorkMentions } from './work-reference-draft'
+import { draftToolkitIds } from './work-toolkit-mentions'
 
 type WorkController = ReturnType<typeof useWorkController>
 
@@ -63,32 +65,35 @@ export function WorkComposer({
   const [resolvingReference, setResolvingReference] = useState(false)
   const inputRef = useRef<MentionInputHandle>(null)
   const composerRef = useRef<HTMLDivElement>(null)
-  const workspaceButtonRef = useRef<HTMLButtonElement>(null)
   const references = useWorkReferenceNavigation()
   const imageConversation = useImageConversation()
   const draftState = useWorkDraft(controller.draftSource, controller.activeTask?.id ?? null)
   const userDraftRef = useRef<WorkDraft | null>(null)
+  const restoredToolkitDraftScopes = useRef(new Set<string>())
   const mentionsRef = useRef<Mention[]>(draftState.mentions)
   mentionsRef.current = draftState.mentions
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
   const [resourceQuery, setResourceQuery] = useState<string | null>(null)
   const [polishing, setPolishing] = useState(false)
   const [agentsOpen, setAgentsOpen] = useState(false)
-  // Native folder dialogs are asynchronous. Keep the chip visibly busy while
-  // the dialog is open so a click never looks like it was ignored (and avoid
-  // opening multiple pickers when a user double-clicks it).
-  const [workspacePicking, setWorkspacePicking] = useState(false)
   const previewScope = JSON.stringify([getEngineSource(), controller.activeTask?.id ?? 'home', controller.workspacePath])
+  // Pending local uploads are written directly into the selected project;
+  // the home session remains unbound until send. Match that write location
+  // without rebinding a session merely to preview a draft attachment.
+  const attachmentPreviewSessionId = !isRemoteEngine() && controller.workspacePath
+    ? undefined : controller.securitySessionId ?? undefined
   const [previewState, setPreview] = useState<(AttachmentPreview & { scope: string }) | null>(null)
   const preview = previewState?.scope === previewScope ? previewState : null
   const polishEpoch = useRef(0)
   const appMode = useAppMode()
   const draft = draftState.text
-  const inputIssue = composerInputIssue(draft)
   const referencedAttachments = controller.attachmentsForMentions(draftState.mentions)
   const currentAttachmentReferences = attachmentReferences(referencedAttachments)
+  // Applying image edits preserves identity; its historical path remains a
+  // valid inline reference but must not become another pending upload card.
   const pendingAttachmentReferences = currentAttachmentReferences.filter(reference =>
-    controller.attachments.some(file => attachmentIdentity(file) === reference.id))
+    controller.attachments.some(file => attachmentIdentity(file) === reference.id &&
+      file.path.replace(/\\/g, '/') === reference.file.path.replace(/\\/g, '/')))
   const draftLiveRef = useRef(draft)
   const taskLiveRef = useRef(controller.activeTask?.id ?? 'home')
   const draftRevisionRef = useRef(0)
@@ -98,6 +103,13 @@ export function WorkComposer({
   const terminal = controller.currentRun && !['running', 'waiting'].includes(controller.currentRun.status)
   const taskActive = !home && (controller.launching || controller.pendingInitialStart || !terminal &&
     (controller.streaming || awaitingAnswer || ['running', 'waiting'].includes(controller.activeTask?.status ?? '')))
+  const selectedToolkits = controller.resources.toolkits ?? []
+  const toolkitChangePending = Boolean(taskActive && controller.resources.toolkits !== undefined &&
+    !sameToolkits(selectedToolkits, controller.currentRun?.requestConfig?.toolkits))
+  const toolkitLimitation = toolkitChangePending ? '工具包变更将在下一轮生效，请选择排到下一轮。' : ''
+  useEffect(() => {
+    if (mentionQuery !== null && controller.resources.toolkits === undefined) controller.retryToolkitSelection()
+  }, [mentionQuery !== null, controller.activeTask?.id, controller.draftSource, controller.retryToolkitSelection])
   const followupRun = useMemo(() => rootFollowupRun(controller.messages, controller.activeTask?.id ?? null, controller.workspaceRunId), [controller.messages, controller.activeTask?.id, controller.workspaceRunId])
   // Approval pauses close the current controller attempt. Keep the draft until
   // the resumed run can supply a fresh target instead of posting to a dead one.
@@ -106,7 +118,7 @@ export function WorkComposer({
   const rootFollowup = useRootFollowup({ sessionId: controller.activeTask?.id ?? null, rootRunId: followupRun?.runId,
     source: getEngineSource(), active: rootAccepting, ready: controller.ready && controller.historyReady && appMode === 'work', toolProfile: 'general' })
   const immediateIntent = taskActive && rootFollowup.delivery === 'current'
-  const busy = controller.streaming || controller.uploading || controller.loading || !controller.historyReady || awaitingAnswer || controller.messageActionBusy
+  const busy = controller.streaming || controller.uploading || controller.loading || !controller.historyReady || awaitingAnswer || controller.messageActionBusy || controller.workspaceSelectionBusy
   const queueIntent = !home && !immediateIntent && (taskActive || controller.nextTurnQueue.pendingCount > 0 || controller.nextTurnQueue.state?.entries.some(entry => ['dispatching', 'admission-unknown', 'accepted'].includes(entry.phase))) && !controller.pendingInitialStart
   const queueBusy = controller.uploading || controller.loading || !controller.historyReady || controller.restartPending || controller.nextTurnQueue.saving || !controller.nextTurnQueue.ready
   const canAddFiles = controller.ready && !(queueIntent ? queueBusy : taskActive || busy)
@@ -146,10 +158,10 @@ export function WorkComposer({
     })
   }
   const submit = (): void => {
-    if (inputIssue) { toast.info(inputIssue); return }
     onPreserveReading?.()
     if (addingFilesRef.current || rootFollowup.busy || rootFollowup.pending || controller.stopping) return
     if (immediateIntent) {
+      if (toolkitChangePending) { toast.info(toolkitLimitation); return }
       if (mentionQuery !== null || resourceQuery !== null || !draft.trim() || !controller.ready || controller.uploading || controller.loading || !controller.historyReady || !rootFollowupCanSubmit(rootAccepting, rootFollowup.capability)) return
       let message: string
       try { message = rootFollowupMessage(draft, mentionsRef.current, controller.attachmentsForMentions(mentionsRef.current)) }
@@ -192,6 +204,20 @@ export function WorkComposer({
     const request = controller.draftFocusRequest
     if (request?.source === controller.draftSource && request.taskId === (controller.activeTask?.id ?? null)) inputRef.current?.focus()
   }, [controller.draftFocusRequest])
+  useEffect(() => {
+    const scope = JSON.stringify([controller.draftSource, controller.activeTask?.id ?? null])
+    if (restoredToolkitDraftScopes.current.has(scope) || controller.resources.toolkits === undefined ||
+      controller.loading || controller.streaming || controller.launching || !home && !controller.historyReady) return
+    restoredToolkitDraftScopes.current.add(scope)
+    const draft = getWorkDraft(controller.draftSource, controller.activeTask?.id ?? null)
+    const existing = draftToolkitIds(draft)
+    const missing = selectedToolkits.filter(id => !existing.includes(id) && !controller.currentRun?.requestConfig?.toolkits?.includes(id))
+    if (!missing.length) return
+    // Restore selections authored with the earlier resource-strip UI as editable inline labels.
+    const restored = appendWorkMentions(draft, missing.map(id => ({ source: 'toolkit', path: id, displayText: toolkitName(id) })))
+    controller.setDraft(restored.text, restored.mentions)
+  }, [controller.draftSource, controller.activeTask?.id, controller.resources.toolkits, controller.currentRun,
+    controller.loading, controller.streaming, controller.launching, controller.historyReady, home])
   useEffect(
     () =>
       subscribeEngineSource(() => {
@@ -237,8 +263,6 @@ export function WorkComposer({
       )
         return
       const polished = result.text.trim()
-      const polishedIssue = composerInputIssue(polished)
-      if (polishedIssue) { toast.info(polishedIssue); return }
       if (polished && polished !== requestDraft) {
         const next = preserveMentions(polished, mentionsRef.current)
         mentionsRef.current = next.mentions
@@ -291,7 +315,7 @@ export function WorkComposer({
         {controller.attachments.length ? (
           <div className="work-attachments">
               <AttachmentStrip
-                sessionId={controller.securitySessionId ?? undefined}
+                sessionId={attachmentPreviewSessionId}
                 root={controller.workspacePath ?? null}
                 references={pendingAttachmentReferences}
                 mentions={draftState.mentions}
@@ -350,18 +374,24 @@ export function WorkComposer({
           ariaLabel={home ? '任务目标' : '继续对话'}
           baseClassName="work-chat__input"
           includeMentionClass={false}
-          disabled={false}
+          disabled={controller.workspaceSelectionBusy}
           placeholder={
             home
-              ? '描述你想完成的工作；@ 引用文件或 Agent，/ 选择技能、MCP、知识库…'
-              : '补充要求；@ 引用文件或 Agent，/ 选择资源…'
+              ? '想完成什么？@ 引用文件或 Agent，/ 添加资源'
+              : '补充要求；@ 添加引用、Agent 或工具包…'
           }
           onChange={(text, mentions) => {
+            if (!controller.editDraft(text, mentions)) {
+              inputRef.current?.setDraft(controller.draft, controller.mentions)
+              return
+            }
+            const previousToolkits = mentionsRef.current.filter(mention => mention.source === 'toolkit').map(mention => mention.path)
+            const nextToolkits = mentions.filter(mention => mention.source === 'toolkit').map(mention => mention.path)
+            if (taskActive && (previousToolkits.length !== nextToolkits.length || previousToolkits.some(id => !nextToolkits.includes(id)))) rootFollowup.setDelivery('next')
             draftRevisionRef.current += 1
             draftLiveRef.current = text
             mentionsRef.current = mentions
             userDraftRef.current = { text, mentions }
-            controller.setDraft(text, mentions)
           }}
           onSubmit={submit}
           onPasteFiles={addFiles}
@@ -415,13 +445,12 @@ export function WorkComposer({
             if (query !== null) setMentionQuery(null)
           }}
         />
-        {inputIssue ? <div className="work-composer__input-issue" role="alert">{inputIssue}</div> : null}
-        <ComposerPolish
+        {!home && <ComposerPolish
           busy={polishing}
           disabled={!draft.trim() || busy || !controller.ready}
           title="AI 润色"
           onClick={() => void polish()}
-        />
+        />}
         <ComposerToolbar
           leading={
             <>
@@ -450,55 +479,6 @@ export function WorkComposer({
                   >
                     {controller.uploading ? <Spinner /> : <Icon name="plus" size={16} />}
                   </button>
-                </>
-              ) : null}
-              {!controller.workspaceLocked ? (
-                <>
-                <button
-                  type="button"
-                  ref={workspaceButtonRef}
-                  className="work-quiet-button work-folder-button"
-                  aria-label="选择工作区"
-                  onClick={() => {
-                    if (workspacePicking) return
-                    setWorkspacePicking(true)
-                    void controller.chooseWorkspace()
-                      .catch(reportError)
-                      .finally(() => setWorkspacePicking(false))
-                  }}
-                  disabled={controller.streaming || controller.uploading || workspacePicking}
-                  title={
-                    workspacePicking
-                      ? '正在等待选择工作区…'
-                      : controller.workspacePath
-                      ? controller.workspacePath
-                      : '默认工作区：每个任务使用独立沙箱；点击可选择本地项目'
-                  }
-                >
-                  {workspacePicking ? <Spinner size={14} /> : <Icon name="folder-outline" size={16} />}
-                  <span>
-                    {workspacePicking
-                      ? '选择中…'
-                      : controller.workspacePath
-                      ? controller.workspacePath.split(/[\\/]/).pop()
-                      : '默认工作区'}
-                  </span>
-                </button>
-                {!controller.activeTask && controller.workspacePath ? (
-                  <button
-                    type="button"
-                    className="work-quiet-button work-folder-clear"
-                    aria-label="清除工作区选择，使用默认工作区"
-                    title="清除工作区选择，使用默认工作区"
-                    disabled={controller.streaming || controller.uploading || workspacePicking}
-                    onClick={() => {
-                      controller.clearWorkspace()
-                      workspaceButtonRef.current?.focus()
-                    }}
-                  >
-                    <Icon name="close" size={14} />
-                  </button>
-                ) : null}
                 </>
               ) : null}
               {!controller.agentLocked ? (
@@ -531,6 +511,8 @@ export function WorkComposer({
           }
           trailing={
             <>
+              {home && <ComposerPolish busy={polishing} disabled={!draft.trim() || busy || !controller.ready}
+                title="AI 润色" onClick={() => void polish()} />}
               {contextUsage !== null || controller.contextCompaction ? (
                 <ContextUsageIndicator
                   owner="work"
@@ -571,8 +553,8 @@ export function WorkComposer({
                 loadingLabel={resolvingReference ? '正在读取引用会话…' : immediateIntent ? '正在提交补充…' : queueIntent ? '正在加入下一轮…' : '正在发送…'}
                 onClick={submit}
                 disabled={
-                  resolvingReference || Boolean(inputIssue) || controller.stopping || Boolean(rootFollowup.pending) || (immediateIntent
-                    ? controller.uploading || controller.loading || !controller.historyReady || !rootFollowupCanSubmit(rootAccepting, rootFollowup.capability) || Boolean(rootFollowupLimitation(mentionsRef.current, referencedAttachments))
+                  resolvingReference || controller.stopping || Boolean(rootFollowup.pending) || (immediateIntent
+                    ? controller.uploading || controller.loading || !controller.historyReady || !rootFollowupCanSubmit(rootAccepting, rootFollowup.capability) || Boolean(toolkitLimitation || rootFollowupLimitation(mentionsRef.current, referencedAttachments))
                     : queueIntent ? queueBusy : taskActive || busy) || !controller.ready || (!draft.trim() && !controller.attachments.length)
                 }
               />
@@ -588,9 +570,21 @@ export function WorkComposer({
               <MentionRefPicker
                 open={mentionQuery !== null && appMode === 'work'}
                 root={controller.workspacePath ?? null}
-                sessionId={controller.securitySessionId ?? undefined}
+                sessionId={attachmentPreviewSessionId}
+                toolkitSessionId={controller.activeTask?.id}
+                toolkitAgentId={controller.agentId || undefined}
+                toolkitSelectionReady={controller.resources.toolkits !== undefined}
                 attachments={pendingAttachmentReferences}
                 query={mentionQuery ?? ''}
+                selectedToolkits={selectedToolkits}
+                onSelectToolkit={id => {
+                  if (!inputRef.current) return
+                  // Explicit selection also enables an existing, restored chip without duplicating it.
+                  if (!controller.setResource('toolkit', id)) return
+                  inputRef.current.completeMention({ source: 'toolkit', path: id, displayText: toolkitName(id) })
+                  if (taskActive) rootFollowup.setDelivery('next')
+                  setMentionQuery(null)
+                }}
                 onSelect={(mention) => {
                   inputRef.current?.completeMention({ ...mention, origin: mention.origin ?? (mention.source === 'agent' ? undefined : 'workspace') })
                   setMentionQuery(null)
@@ -618,14 +612,23 @@ export function WorkComposer({
             />
           </CompletionPopover>
       </InputComposer>
-      <RootFollowupFeedback key={JSON.stringify([getEngineSource(), controller.activeTask?.id])} controller={rootFollowup} active={taskActive} limitation={rootWaiting ? '请先处理上方确认，任务恢复后可立即补充；草稿已保留。' : !rootAccepting && taskActive ? '正在确认当前任务是否可接收补充，草稿已保留。' : rootFollowupLimitation(mentionsRef.current, referencedAttachments)}
+      <RootFollowupFeedback key={JSON.stringify([getEngineSource(), controller.activeTask?.id])} controller={rootFollowup} active={taskActive} limitation={rootWaiting ? '请先处理上方确认，任务恢复后可立即补充；草稿已保留。' : !rootAccepting && taskActive ? '正在确认当前任务是否可接收补充，草稿已保留。' : toolkitLimitation || rootFollowupLimitation(mentionsRef.current, referencedAttachments)}
         onFocusInput={() => inputRef.current?.focus()}
-        fallbackHint={!controller.ready ? '引擎尚未就绪，草稿会保留。' : queueIntent ? 'Enter 排到下一轮 · Shift + Enter 换行' : taskActive ? '任务正在准备，草稿会保留。' : 'Enter 发送 · Shift + Enter 换行'}
+        fallbackHint={!controller.ready ? '引擎尚未就绪，草稿会保留。' : toolkitChangePending ? '工具包变更将在下一轮生效' : queueIntent ? 'Enter 排到下一轮 · Shift + Enter 换行' : taskActive ? '任务正在准备，草稿会保留。' : 'Enter 发送 · Shift + Enter 换行'}
         footerAction={<>
           {home && controller.sources.length ? <button type="button" className="input-composer__history-button" onClick={references?.openSources}>资料 · {controller.sources.length}</button> : null}
-          <WorkComposerWorkspace sessionId={controller.activeTask?.id ?? null} selectedPath={controller.workspacePath}
+          <WorkComposerWorkspace key={JSON.stringify([getEngineSource(), controller.securitySessionId, home])}
+            sessionId={controller.activeTask?.id ?? null} selectedPath={controller.workspacePath}
             runId={controller.workspaceRunId} draft={home || controller.activeTask?.status === 'draft'}
-            ready={controller.ready} active={appMode === 'work'} remote={controller.remote} />
+            ready={controller.ready} active={appMode === 'work'} remote={controller.remote}
+            selection={home || controller.activeTask?.status === 'draft' ? {
+              history: controller.workspaceHistory,
+              defaultPath: controller.defaultWorkspacePath,
+              busy: controller.workspaceSelectionBusy,
+              reason: controller.workspaceSelectionReason,
+              onSelect: controller.selectWorkspace,
+              onBrowse: controller.chooseWorkspace
+            } : undefined} />
           {!controller.ready ? <button type="button" className="input-composer__history-button" onClick={() => openAppSettings('general')}>引擎设置</button> : null}
         </>}
         onResolve={resolveRootFollowup}
@@ -649,7 +652,7 @@ export function WorkComposer({
       ) : null}
       {preview && appMode === 'work' ? (
         <AttachmentPreviewDialog
-          sessionId={controller.securitySessionId ?? undefined}
+          sessionId={attachmentPreviewSessionId}
           root={controller.workspacePath ?? null}
           preview={preview}
           images={controller.attachments.filter((a) => a.type.startsWith('image/'))}

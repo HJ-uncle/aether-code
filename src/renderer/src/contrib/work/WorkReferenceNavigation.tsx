@@ -2,6 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
 import { getEngineSource } from '@renderer/core/engine/source'
 import { TextPreview } from '@renderer/core/editor/TextPreview'
+import { mimeFor } from '@renderer/core/editor/preview'
+import { paths } from '@renderer/core/workspace/fs-client'
 import { DocumentMenuProvider } from '@renderer/core/editor/useDocumentContextMenu'
 import { Dialog } from '@renderer/workbench/Dialog'
 import { requestOrThrow } from '@renderer/core/engine/client'
@@ -10,7 +12,8 @@ import type { AgentReferenceIdentity } from '../chat/agent-references'
 import type { Mention } from '../chat/mention-context'
 import type { ChatFileContext } from '../chat/chat-link'
 import { FileGlyph } from '../explorer/FileGlyph'
-import { WorkSourcePreview } from './WorkSourcePreview'
+import { DirectoryReferencePreview } from '../chat/DirectoryReferencePreview'
+import { WorkSourceImageDialog, WorkSourcePreview } from './WorkSourcePreview'
 import { workChangePathKey } from './work-file-changes'
 import type { useWorkController } from './work-runtime'
 
@@ -38,12 +41,14 @@ export function WorkReferenceProvider({ controller, onSources, onWorkspaceFile, 
   onConversation: (url: string) => void
   children: ReactNode
 }): JSX.Element {
-  const scope = JSON.stringify([getEngineSource(), controller.activeTask?.id ?? null, controller.securitySessionId])
+  const scope = JSON.stringify([getEngineSource(), controller.activeTask?.id ?? null, controller.securitySessionId, controller.workspacePath])
   const dialogRevision = useRef(0)
   const [library, setLibrary] = useState<{ scope: string; revision: number } | null>(null)
   const [selection, setSelection] = useState<{ scope: string; value: SourceSelection } | null>(null)
-  const [preview, setPreview] = useState<{ scope: string; revision: number; mention: Mention; source: ChatAttachment; root: string | null; context?: ChatFileContext } | null>(null)
+  const [preview, setPreview] = useState<{ scope: string; revision: number; mention: Mention; source: ChatAttachment; root: string | null;
+    readSessionId?: string; editable: boolean; images: ChatAttachment[] } | null>(null)
   const openMention = useCallback((mention: Mention, context?: ChatFileContext, receipt?: ChatAttachment): void => {
+    if (mention.source === 'toolkit') return
     if (mention.source === 'conversation') { onConversation(mention.path ?? ''); return }
     const sessionId = context?.sessionId ?? controller.securitySessionId ?? undefined
     const root = context ? context.workspaceRoot ?? null : controller.workspacePath ?? null
@@ -51,13 +56,19 @@ export function WorkReferenceProvider({ controller, onSources, onWorkspaceFile, 
     const path = mention.path ?? ''
     const samePath = (file: { path: string }): boolean => workChangePathKey(file.path, root) === workChangePathKey(path, root)
     const knownSource = sessionId === controller.securitySessionId ? [...controller.sources, ...controller.attachments].find(samePath) : undefined
-    const source: ChatAttachment = receipt ?? knownSource ?? { path, name: mention.displayText, type: 'text/plain', size: 0 }
-    const showOriginal = (): void => setPreview({ scope, revision: ++dialogRevision.current, mention, source, root, context: sessionId ? { sessionId, workspaceRoot: root } : undefined })
+    const source: ChatAttachment = receipt ?? knownSource ?? { path, name: paths.basename(path) || mention.displayText, type: mimeFor(path) ?? 'text/plain', size: 0 }
+    const showOriginal = (): void => setPreview({ scope, revision: ++dialogRevision.current, mention, source, root,
+      // Current local drafts belong to the explicitly selected project before
+      // their home session is admitted; historical receipts keep session ownership.
+      readSessionId: !controller.remote && root && !context ? undefined : sessionId,
+      editable: !context && controller.attachments.some(samePath),
+      images: !context && knownSource ? controller.attachments.filter(file => file.type.startsWith('image/')) : [source] })
 
     // A snapshot must continue to show what was sent even after its original tab changes.
     if (mention.content !== undefined) { showOriginal(); return }
     if (mention.source === 'agent') { showOriginal(); return }
     if (mention.source === 'browser') { onBrowser(path); return }
+    if (mention.source === 'dir' || source.type.startsWith('image/')) { showOriginal(); return }
     if (currentTask && knownSource && (!mention.origin || mention.origin === 'attachment')) {
       setSelection(previous => ({ scope, value: { sessionId: sessionId!, source, revision: (previous?.value.revision ?? 0) + 1 } }))
       onSources()
@@ -79,6 +90,7 @@ export function WorkReferenceProvider({ controller, onSources, onWorkspaceFile, 
   }, [controller.activeTask, onSources, scope])
   const value = useMemo(() => ({ openMention, openSources, sourceSelection: selection?.scope === scope ? selection.value : null }), [openMention, openSources, selection, scope])
   const visiblePreview = preview?.scope === scope ? preview : null
+  const imagePreview = visiblePreview?.mention.content === undefined && visiblePreview?.mention.source !== 'dir' && visiblePreview?.source.type.startsWith('image/') ? visiblePreview : null
   return <NavigationContext.Provider value={value}>
     {children}
     {library?.scope === scope ? <Dialog key={library.revision} title="任务资料" width={640} onClose={() => setLibrary(current => current === library ? null : current)}>
@@ -91,7 +103,12 @@ export function WorkReferenceProvider({ controller, onSources, onWorkspaceFile, 
         {!controller.sources.length ? <p>还没有添加资料</p> : null}
       </div>
     </Dialog> : null}
-    {visiblePreview ? <Dialog key={visiblePreview.revision} title={visiblePreview.mention.displayText}
+    {imagePreview ? <WorkSourceImageDialog key={imagePreview.revision} source={imagePreview.source} root={imagePreview.root}
+      sessionId={imagePreview.readSessionId} images={imagePreview.images}
+      onNavigate={source => setPreview(current => current === imagePreview ? { ...current, source } : current)}
+      onApply={imagePreview.editable ? file => controller.addImage(file, imagePreview.source.path) : undefined}
+      onClose={() => setPreview(current => current === imagePreview ? null : current)} />
+      : visiblePreview ? <Dialog key={visiblePreview.revision} title={visiblePreview.mention.displayText}
       width={860} className="work-reference-preview" onClose={() => setPreview(current => current === visiblePreview ? null : current)}
       footer={visiblePreview.mention.source === 'browser' ? <button type="button" className="work-quiet-button" onClick={() => { onBrowser(visiblePreview.mention.path ?? ''); setPreview(null) }}>打开浏览器</button>
         : visiblePreview.mention.source === 'agent' ? <button type="button" className="work-quiet-button" onClick={() => { onAgent(); setPreview(null) }}>管理 Agent</button> : undefined}>
@@ -104,13 +121,18 @@ export function WorkReferenceProvider({ controller, onSources, onWorkspaceFile, 
             </DocumentMenuProvider>
             : <TextPreview content={visiblePreview.mention.content} name={visiblePreview.mention.displayText} />
           : visiblePreview.mention.source === 'agent' ? <AgentReferencePreview id={visiblePreview.mention.path ?? ''} />
-          : <WorkSourcePreview source={visiblePreview.source} root={visiblePreview.context?.workspaceRoot ?? null} sessionId={visiblePreview.context?.sessionId} />}
+          : visiblePreview.mention.source === 'dir' ? <DirectoryReferencePreview path={visiblePreview.mention.path ?? ''}
+            root={visiblePreview.root} sessionId={visiblePreview.readSessionId}
+            onOpenFile={entry => setPreview(current => current === visiblePreview ? { ...current, revision: ++dialogRevision.current,
+              mention: { source: 'file', origin: 'workspace', path: entry.path, displayText: entry.name },
+              source: { path: entry.path, name: entry.name, type: mimeFor(entry.name) ?? 'text/plain', size: entry.size }, editable: false, images: [] } : current)} />
+          : <WorkSourcePreview source={visiblePreview.source} root={visiblePreview.root} sessionId={visiblePreview.readSessionId} />}
       </div>
     </Dialog> : null}
   </NavigationContext.Provider>
 }
 
-function AgentReferencePreview({ id }: { id: string }): JSX.Element {
+export function AgentReferencePreview({ id }: { id: string }): JSX.Element {
   const builtin = BUILTIN_AGENTS.find(item => item.role === parseBuiltinAgentReference(id)?.builtinRole)
   const [agent, setAgent] = useState<AgentReferenceIdentity | null>(null)
   const [error, setError] = useState('')

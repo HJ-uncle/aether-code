@@ -204,6 +204,8 @@
 
   /* 语义色（macOS Dark） */
   --danger: #ff453a;
+  --danger-hover: #e83c32;
+  --danger-active: #ce3128;
   --warn: #ffd60a;
   --ok: #32d74b;
   /* 语义色的浅色文字版：深色底上直接用 --danger 当文字会偏暗，
@@ -374,6 +376,8 @@
 
   /* 语义色（macOS Light）：比 Dark 版更深，浅底上才有足够对比 */
   --danger: #d70015;
+  --danger-hover: #c20013;
+  --danger-active: #ab0011;
   --warn: #b25000;
   --ok: #1a7f37;
   --danger-fg: #b3261e;

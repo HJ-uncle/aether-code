@@ -4,7 +4,6 @@ import type { ChatAttachment } from '@renderer/core/engine/useChat'
 import { ipcErrorMessage } from '@renderer/core/ipc-error'
 import { copyIntoWorkspace } from '@renderer/core/workspace/fs-client'
 import { cancelAttachmentUpload, uploadAttachment } from '@renderer/core/engine/client'
-import { composerCharacterCount } from './input-limits'
 import { attachmentIdentity, reorderAttachments } from './attachment-references'
 
 /**
@@ -21,24 +20,29 @@ import { attachmentIdentity, reorderAttachments } from './attachment-references'
 const MAX_FILE_BYTES = 20 * 1024 * 1024
 const UPLOAD_TIMEOUT_MS = 120_000
 
-const PASTED_TEXT_MAX_CHARS = 1_000
-
-/** Emoji and other supplementary characters count once, just like typed text. */
+/** Count Unicode characters only until the attachment threshold is crossed. */
 export function shouldAttachPastedText(text: string): boolean {
-  return composerCharacterCount(text) > PASTED_TEXT_MAX_CHARS
+  let count = 0
+  for (const _character of text) if (++count > 1_000) return true
+  return false
 }
 
-/** 把一段长文本包成「粘贴的文本-<首行>.txt」File（照抄 wuzu-client 命名规则） */
+/** Keep the first meaningful line in the persisted name so folded text stays recognizable. */
 export function createPastedTextFile(text: string): File {
-  const title = text
-    .split(/\r\n|\r|\n/)
-    .find((line) => line.trim())
-    ?.trim()
-    .replace(/^#+\s*/, '')
-    .replace(/[\\/:*?"<>|-]/g, '')
-    .slice(0, 48)
-    .trim()
-  return new File([text], `粘贴的文本${title ? `-${title}` : ''}.txt`, {
+  let title = ''
+  for (const [line] of text.matchAll(/[^\r\n]+/g)) {
+    if (!line.trim()) continue
+    title = line.trim().replace(/^#+\s*/, '').replace(/[\\/:*?"<>|-]/g, '').trim()
+    break
+  }
+  let excerpt = '', count = 0
+  // A filename needs only its prefix; segmenting the whole attachment creates
+  // unnecessary work and allocations for very long single-line documents.
+  for (const part of new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(title)) {
+    excerpt += part.segment
+    if (++count === 48) break
+  }
+  return new File([text], `粘贴的文本${excerpt ? `-${excerpt}` : ''}.txt`, {
     type: 'text/plain;charset=utf-8'
   })
 }
@@ -175,6 +179,8 @@ export interface UseAttachmentsResult {
   accept: (files: File[]) => void
   /** 图片编辑/引用等待实际上传；仅能替换仍在当前草稿中的原附件。 */
   addImage: (file: File, replacePath?: string) => Promise<void>
+  /** Preserve the paste's captured insertion range until its TXT upload succeeds. */
+  addPastedText: (text: string) => Promise<ChatAttachment>
   /** 拖拽进入 / 离开输入区 */
   setDragging: (value: boolean) => void
   /** 最近一次失败原因，保留到关闭、再次上传或切换会话。 */
@@ -362,15 +368,16 @@ export function useAttachments(root: string | null, sessionId = '', imageOptions
     [root, renderSource, sessionId, syncPendingUploads, setAttachments]
   )
 
-  const addImage = useCallback(async (file: File, replacePath?: string): Promise<void> => {
+  const addFile = useCallback(async (file: File, replacePath?: string, imageOnly = false): Promise<ChatAttachment> => {
     const generation = generationRef.current
     const isCurrent = (): boolean => scope.active && scope === scopeRef.current &&
       generation === generationRef.current && scope.source === getEngineSource() && imageOwner.active && imageOwner === imageLifetime.current
-    const assertCurrent = (): void => { if (!isCurrent()) throw new Error('会话或工作区已变化，请重新打开图片') }
+    const assertCurrent = (): void => { if (!isCurrent()) throw new Error(imageOnly ? '会话或工作区已变化，请重新打开图片' : '会话或工作区已变化，请重新粘贴文本') }
     assertCurrent()
     const remote = isRemoteEngine()
-    if (!IMAGE_RE.test(file.type)) throw new Error('仅支持添加图片')
-    if (file.size > MAX_FILE_BYTES) throw new Error(`「${file.name}」超过 20MB，请缩小图片后重试`)
+    if (imageOnly && !IMAGE_RE.test(file.type)) throw new Error('仅支持添加图片')
+    if (!isSupportedFile(file)) throw new Error(`「${file.name}」类型不支持`)
+    if (file.size > MAX_FILE_BYTES) throw new Error(`「${file.name}」超过 20MB，${imageOnly ? '请缩小图片后重试' : '请缩小文件后重试'}`)
     if (remote && !sessionId) throw new Error('请先建立远端会话，再上传附件')
     if (!remote && !root) throw new Error('请先打开一个项目目录，附件需要落盘到工作区')
     const original = replacePath === undefined ? undefined : attachmentsRef.current.find(item => item.path === replacePath)
@@ -409,6 +416,7 @@ export function useAttachments(root: string | null, sessionId = '', imageOptions
       }
       if (original) imageReplacement.current?.(original, attachment)
       setAttachments(previous => original ? previous.map(item => item === original ? attachment : item) : [...previous, attachment])
+      return attachment
     } catch (error) {
       const reason: unknown = signal.aborted ? signal.reason : error
       if (isCurrent() && !(reason instanceof Error && reason.name === 'AbortError')) {
@@ -424,6 +432,11 @@ export function useAttachments(root: string | null, sessionId = '', imageOptions
       }
     }
   }, [root, sessionId, scope, imageOwner, setAttachments, syncPendingUploads])
+
+  const addImage = useCallback(async (file: File, replacePath?: string): Promise<void> => {
+    await addFile(file, replacePath, true)
+  }, [addFile])
+  const addPastedText = useCallback((text: string): Promise<ChatAttachment> => addFile(createPastedTextFile(text)), [addFile])
 
   const pick = useCallback(() => {
     if (renderSource !== getEngineSource()) return
@@ -465,6 +478,7 @@ export function useAttachments(root: string | null, sessionId = '', imageOptions
     restore,
     accept,
     addImage,
+    addPastedText,
     setDragging,
     error,
     clearError

@@ -57,6 +57,8 @@ export interface PendingInteraction {
   toolCallId: string
   /** 回传时 toolResponse.name 该填什么 */
   toolName: string
+  /** 原始工具参数仅用于审批展示；应答仍沿用原工具名与 approved/rejected。 */
+  args?: Record<string, unknown>
   multiSelect: boolean
   /** 问题分组（提问场景可能多组；授权场景恒为一组） */
   groups: PendingQuestionGroup[]
@@ -126,6 +128,7 @@ export function normalizePending(payload: ChatSsePayload): PendingInteraction | 
 
     const description = readString(permission, 'description', 'question', 'message')
     const question = description || `安全策略拦截了 ${toolDisplayName(toolName)}，是否允许执行？`
+    const args = Array.isArray(permission.args) ? null : asRecord(permission.args)
     return {
       kind: 'permission',
       question,
@@ -133,6 +136,7 @@ export function normalizePending(payload: ChatSsePayload): PendingInteraction | 
       toolCallId,
       // 关键：授权回传必须用被拦截的真实工具名
       toolName,
+      ...(args ? { args } : {}),
       multiSelect: false,
       groups: [
         { tab: '', question, options: PERMISSION_OPTIONS, multiSelect: false, allowInput: false }

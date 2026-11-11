@@ -1,6 +1,6 @@
-/** Real Electron + authenticated HTTP: Work paste thresholds, byte-preserving
- * materials, inline references, input limits and task ownership races.
- * Build first and run with playwright.work-composer-paste.config.ts. This spec
+/** Real Electron + authenticated HTTP: long paste becomes byte-preserving TXT;
+ * the editor's prose limit excludes references and does not limit send payloads.
+ * Build first and run this spec with --workers=1 --timeout=120000. This spec
  * owns one profile/window/port; never run it alongside another Electron spec. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer, type ServerResponse } from 'node:http'
@@ -10,10 +10,11 @@ import type { RootRun } from '../src/shared/root-run'
 import type { ChatSsePayload } from '../src/shared/ipc'
 import type { EngineHistoryRow } from '../src/renderer/src/core/engine/chat-history'
 import { engineStorageKey } from '../src/renderer/src/core/engine/source'
+import { userMessageDraft } from '../src/renderer/src/contrib/chat/mention-context'
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
 const token = 'composer-paste-token', model = 'composer-paste-model'
-const taskA = 'work-paste-a', taskB = 'work-paste-b', bodyLimit = 100_000
+const taskA = 'work-paste-a', taskB = 'work-paste-b', previousInputLimit = 100_000
 const titles = new Map([[taskA, '粘贴资料任务 A'], [taskB, '粘贴资料任务 B']])
 const roots = new Map([[taskA, '/remote/paste/task-a'], [taskB, '/remote/paste/task-b']])
 const ownedSessions = new Set([taskA, taskB])
@@ -22,8 +23,10 @@ const reads: Array<{ sessionId: string; path: string }> = []
 interface UploadedFile { sessionId: string; path: string; bytes: Buffer; type: string }
 interface SavedSource { path: string; name: string; type: string; size: number; attachmentId?: string }
 interface SavedTask { id: string; draft: string; mentions: Array<Record<string, unknown>>; sources: SavedSource[]; attachments: SavedSource[] }
+interface SavedHome { homeSessionId: string; homeDraft: string; homeMentions: Array<Record<string, unknown>>; homeSources: SavedSource[]; homeAttachments: SavedSource[] }
 const uploads: UploadedFile[] = [], files = new Map<string, UploadedFile>()
 const histories = new Map<string, EngineHistoryRow[]>(), runs = new Map<string, RootRun[]>()
+const chatReceipts = new Map<Record<string, unknown>, { receivedAt: number; run: RootRun }>()
 const admissions = new Map<string, { admission: Record<string, unknown>; run: RootRun }>()
 let uploadMode: 'normal' | 'hold' | 'reject' = 'normal'
 let held: { response: ServerResponse; file: UploadedFile } | undefined
@@ -73,11 +76,7 @@ const server = createServer((request, response) => { void (async () => {
       headers: { 'content-type': String(request.headers['content-type']) }, body: Uint8Array.from(bytes) }).formData()
     const blob = form.get('file'), owner = form.get('sessionId'), relative = form.get('path')
     if (!blob || typeof blob === 'string' || typeof owner !== 'string' || typeof relative !== 'string') throw new Error('Malformed upload')
-    if (!ownedSessions.has(owner)) {
-      // The home draft acquires a real session before the task is created.
-      if (!/^work-(?:home-)?[a-f\d-]{36}$/i.test(owner)) throw new Error(`Upload crossed task ownership: ${owner}`)
-      ownedSessions.add(owner); roots.set(owner, '/remote/paste/home')
-    }
+    if (!ownedSessions.has(owner)) throw new Error(`Upload crossed task ownership or preceded workspace binding: ${owner}`)
     const file: UploadedFile = { sessionId: owner, path: relative, bytes: Buffer.from(await blob.arrayBuffer()), type: blob.type }
     uploads.push(file)
     if (uploadMode === 'reject') {
@@ -98,7 +97,8 @@ const server = createServer((request, response) => { void (async () => {
     if (path.endsWith('/info')) response.end(envelope({ workspacePath: `${roots.get(sessionId)}/${relative}`, size: file.bytes.length, isDirectory: false }))
     else {
       reads.push({ sessionId, path: relative })
-      response.end(envelope({ content: file.bytes.toString('utf8'), isBinary: false, totalSize: file.bytes.length,
+      const image = file.type.startsWith('image/')
+      response.end(envelope({ content: file.bytes.toString(image ? 'base64' : 'utf8'), isBinary: image, totalSize: file.bytes.length,
         root: roots.get(sessionId), bindingEpoch: `binding-${sessionId}` }))
     }
     return
@@ -126,6 +126,7 @@ const server = createServer((request, response) => { void (async () => {
     const run: RootRun = { schemaVersion: 1, runId: `paste-root-${owner}-${historyGeneration}-${ordinal}`, sessionId: owner, turnId: `paste-turn-${owner}-${historyGeneration}-${ordinal}`,
       userMessageId: `paste-user-${owner}-${historyGeneration}-${ordinal}`, assistantMessageId: `paste-assistant-${owner}-${historyGeneration}-${ordinal}`, seq: ordinal, version: 1,
       status: 'running', modelId: model, pending: [], workspacePaths: [roots.get(owner)!], createdAt: now, updatedAt: now, startedAt: now }
+    chatReceipts.set(input, { receivedAt: now, run })
     const attachments = Array.isArray(input.attachments) ? input.attachments.flatMap(file => isRecord(file) && typeof file.name === 'string'
       ? [{ name: file.name, type: typeof file.type === 'string' ? file.type : 'application/octet-stream',
         displayName: typeof file.displayName === 'string' ? file.displayName : undefined,
@@ -147,6 +148,11 @@ const server = createServer((request, response) => { void (async () => {
   if (path === '/api/v1/chat/stream') { response.writeHead(200, { 'content-type': 'text/event-stream' }).end('data: [DONE]\n\n'); return }
   if (path === '/api/v1/workspace/bind') {
     const owner = String(input.sessionId), workspaceRoot = String(input.workspaceRoot)
+    // Home binds its selected project before upload; registering it only when
+    // bytes arrive misclassifies this legitimate first bind as Code bootstrap.
+    if (!ownedSessions.has(owner) && /^work-(?:home-)?[a-f\d-]{36}$/i.test(owner) && workspaceRoot === '/remote/paste/home') {
+      ownedSessions.add(owner); roots.set(owner, workspaceRoot)
+    }
     if (ownedSessions.has(owner) && roots.get(owner) !== workspaceRoot) throw new Error('Work bound the wrong workspace')
     if (!ownedSessions.has(owner) && workspaceRoot !== '/remote/configured-default') throw new Error('Unexpected Code bootstrap bind')
     bindings.push(input); response.end(envelope({ workspaceRoot })); return
@@ -205,16 +211,24 @@ async function savedTask(id = taskA): Promise<SavedTask> {
     return task
   }, { key: storageKey, id })
 }
-async function seed(draft = '', options: { home?: boolean; mentions?: Array<Record<string, unknown>> } = {}): Promise<void> {
+async function savedHome(): Promise<SavedHome> {
+  return page.evaluate(key => {
+    window.dispatchEvent(new Event('blur'))
+    return JSON.parse(localStorage.getItem(key) ?? '{}') as SavedHome
+  }, storageKey)
+}
+async function seed(draft = '', options: { home?: boolean; mentions?: Array<Record<string, unknown>>; attachments?: SavedSource[]; sources?: SavedSource[] } = {}): Promise<void> {
   resetHistory()
   const tasks = [...titles].map(([id, title]) => ({ id, title, status: 'done', draft: id === taskA ? draft : '',
-    mentions: id === taskA ? options.mentions ?? [] : [], createdAt: Date.now(), updatedAt: Date.now(), workspacePath: roots.get(id), modelId: model, attachments: [], sources: [] }))
-  await page.evaluate(({ key, tasks, activeTaskId, homeDraft, homeWorkspacePath }) => {
+    mentions: id === taskA ? options.mentions ?? [] : [], createdAt: Date.now(), updatedAt: Date.now(), workspacePath: roots.get(id), modelId: model,
+    attachments: id === taskA ? options.attachments ?? [] : [], sources: id === taskA ? options.sources ?? [] : [] }))
+  await page.evaluate(({ key, tasks, activeTaskId, homeDraft, homeWorkspacePath, homeMentions }) => {
     window.dispatchEvent(new Event('blur'))
-    localStorage.setItem(key, JSON.stringify({ tasks, activeTaskId, homeWorkspacePath, homeDraft, homeSources: [] }))
+    localStorage.setItem(key, JSON.stringify({ tasks, activeTaskId, homeWorkspacePath, homeDraft, homeMentions, homeSources: [], homeAttachments: [] }))
     localStorage.setItem('aether.app.mode', 'work')
     localStorage.setItem('aether.work.view.v1', JSON.stringify({ page: 'home', collapsed: false, workspace: false, tab: 'files', pane: 'conversation', ratio: 56 }))
-  }, { key: storageKey, tasks, activeTaskId: options.home ? null : taskA, homeDraft: options.home ? draft : '', homeWorkspacePath: options.home ? '/remote/paste/home' : null })
+  }, { key: storageKey, tasks, activeTaskId: options.home ? null : taskA, homeDraft: options.home ? draft : '',
+    homeWorkspacePath: options.home ? '/remote/paste/home' : null, homeMentions: options.home ? options.mentions ?? [] : [] })
   await page.reload()
   await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
   await expect(options.home ? work().getByRole('textbox', { name: '任务目标', exact: true }) : composer()).toBeVisible()
@@ -223,8 +237,7 @@ async function seed(draft = '', options: { home?: boolean; mentions?: Array<Reco
 async function selectText(start: number, end = start): Promise<void> {
   await composer().evaluate((element, offsets) => {
     ;(element as HTMLElement).focus()
-    // Paste bookmarks can split a text node even when an upload fails. Walk
-    // the existing nodes without normalizing away production Range anchors.
+    // Existing browser edits can split a text node; retain their live ranges.
     const nodes: Text[] = [], walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
     let node: Node | null
     while ((node = walker.nextNode())) {
@@ -245,9 +258,9 @@ async function selectText(start: number, end = start): Promise<void> {
     const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range)
   }, { start, end })
 }
-async function nativePaste(text: string): Promise<void> {
+async function nativePaste(text: string, input = composer()): Promise<void> {
   await app!.evaluate(({ clipboard }, value) => clipboard.writeText(value), text)
-  await composer().focus(); await page.keyboard.press('Control+V')
+  await input.focus(); await page.keyboard.press('Control+V')
 }
 async function exactPaste(text: string, input = composer()): Promise<void> {
   // Windows clipboard may normalize newlines before Chromium sees them. This
@@ -258,8 +271,8 @@ async function exactPaste(text: string, input = composer()): Promise<void> {
     element.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData }))
   }, text)
 }
-async function adjacentToChip(direction: 'before' | 'after', input = composer()): Promise<void> {
-  await input.locator('[data-mention-key]').first().evaluate((chip, direction) => {
+async function adjacentToChip(chip: Locator, direction: 'before' | 'after'): Promise<void> {
+  await chip.evaluate((chip, direction) => {
     const box = chip.closest<HTMLElement>('[role="textbox"]'); box?.focus()
     const range = document.createRange()
     if (direction === 'before') range.setStartBefore(chip); else range.setStartAfter(chip)
@@ -267,15 +280,34 @@ async function adjacentToChip(direction: 'before' | 'after', input = composer())
     const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range)
   }, direction)
 }
-async function send(): Promise<Record<string, unknown>> {
-  const before = chats.length, button = work().getByRole('button', { name: '发送', exact: true })
-  await expect(button).toBeEnabled(); await button.click()
+async function send(button = work().getByRole('button', { name: '发送', exact: true })): Promise<Record<string, unknown>> {
+  const before = chats.length
+  await expect(button).toBeEnabled()
+  const startedAt = Date.now()
+  await button.click()
   await expect.poll(() => chats.length).toBe(before + 1)
-  await expect(work()).toContainText('PASTE_SENT_OK')
-  return chats[before]
+  const request = chats[before], receipt = chatReceipts.get(request)
+  if (!receipt) throw new Error('Missing accepted chat receipt')
+  let renderedAt: number | null = null
+  try {
+    // Waiting on this response excludes the previous turn and avoids repeatedly
+    // extracting the entire >100k-character conversation while it lays out.
+    await expect(work().locator(`[data-message-id="${receipt.run.assistantMessageId}"]`))
+      .toContainText('PASTE_SENT_OK', { timeout: 30_000 })
+    renderedAt = Date.now()
+  } finally {
+    await test.info().attach('paste-response-timing', { contentType: 'application/json', body: JSON.stringify({
+      sessionId: receipt.run.sessionId, runId: receipt.run.runId, messageLength: String(request.message).length,
+      sendToReceiptMs: receipt.receivedAt - startedAt,
+      sendToRenderMs: renderedAt === null ? null : renderedAt - startedAt,
+      receiptToRenderMs: renderedAt === null ? null : renderedAt - receipt.receivedAt,
+      elapsedMs: Date.now() - startedAt
+    }) })
+  }
+  return request
 }
 
-test.describe.serial('Work 长文本粘贴与资料引用', () => {
+test.describe.serial('Work 长文本资料与纯正文输入上限', () => {
   test.beforeAll(async () => {
     await new Promise<void>((done, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', done) })
     const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing fixture port')
@@ -318,109 +350,114 @@ test.describe.serial('Work 长文本粘贴与资料引用', () => {
     }
   })
 
-  test('短粘贴替换选区，1000 个 Unicode 字符仍为正文，1001 个转为资料', async () => {
+  test('短粘贴替换选区，1000 个 Unicode 字符为正文，1001 个转为资料', async () => {
     const before = uploads.length
     await composer().fill('左侧待替换右侧'); await selectText(2, 5); await nativePaste('新的')
     await expect(composer()).toHaveText('左侧新的右侧')
     const boundary = '😀'.repeat(500) + '中'.repeat(500)
     await composer().fill(''); await nativePaste(boundary)
     await expect(composer()).toHaveText(boundary); await expect(chips()).toHaveCount(0)
-    expect(uploads).toHaveLength(before)
+    expect((await savedTask()).draft).toBe(boundary); expect(uploads).toHaveLength(before)
     await composer().fill(''); await nativePaste(`${boundary}终`)
     await expect(chips()).toHaveCount(1); await expect.poll(() => uploads.length).toBe(before + 1)
     expect(uploads[before].bytes.equals(Buffer.from(`${boundary}终`, 'utf8'))).toBe(true)
     const saved = await savedTask()
     expect(saved.sources).toHaveLength(1); expect(saved.attachments).toEqual([]); expect(saved.mentions).toHaveLength(1)
-    await expect(work().locator('.work-attachments')).toHaveCount(0)
+    expect(saved.draft.includes(boundary)).toBe(false)
+    const request = await send()
+    expect(String(request.message).includes(boundary)).toBe(false)
+    expect(request.attachments).toEqual([expect.objectContaining({ name: uploads[before].path, size: uploads[before].bytes.length })])
+    expect(uploads).toHaveLength(before + 1)
   })
 
-  test('长文本保留精确字节并插在原光标，点击引用打开资料且发送仅携带一次', async ({}, info) => {
-    const original = `  精确原文_START\r\n${'中文🙂\t空格  \r\n'.repeat(110)}原文_END\r\n \t`
+  test('超过十万字符粘贴保留全部 TXT 字节和原草稿，引用可预览并只发送一次', async ({}, info) => {
+    const original = `  精确原文_START\r\n${'中文🙂\t空格  '.repeat(15_000)}\r\n原文_END\r\n \t`
     const before = uploads.length
-    await composer().fill('左侧 右侧'); await selectText(3); await exactPaste(original)
+    await seed('左侧 右侧'); await selectText(3); await exactPaste(original)
     await expect(chips()).toHaveCount(1); await expect.poll(() => uploads.length).toBe(before + 1)
-    const file = uploads[before]
+    const file = uploads[before], stored = await savedTask(), source = stored.sources[0]
     expect(file.sessionId).toBe(taskA); expect(file.bytes.equals(Buffer.from(original, 'utf8'))).toBe(true)
+    expect(Array.from(original).length).toBeGreaterThan(previousInputLimit)
     expect(await composer().evaluate(element => {
       const chip = element.querySelector('[data-mention-key]')!, left = document.createRange(), right = document.createRange()
       left.selectNodeContents(element); left.setEndBefore(chip); right.selectNodeContents(element); right.setStartAfter(chip)
       return { left: left.toString(), right: right.toString() }
     })).toEqual({ left: '左侧 ', right: expect.stringMatching(/^\s*右侧$/) })
-    const stored = await savedTask(), source = stored.sources[0]
     expect(stored.attachments).toEqual([]); expect(stored.mentions).toHaveLength(1)
-    expect(stored.draft).not.toContain('原文_END')
-    await composer().getByRole('button', { name: '查看引用：附件1', exact: true }).click()
+    expect(stored.draft.includes('原文_END')).toBe(false)
+    await page.reload(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
+    await expect(chips()).toHaveCount(1); expect((await savedTask()).draft).toBe(stored.draft)
+    const label = '查看引用：粘贴文本 · 精确原文_START'
+    await composer().getByRole('button', { name: label, exact: true }).click()
     await expect(sourcePanel()).toBeVisible()
-    await expect(sourcePanel().getByRole('option', { name: source.name, exact: false })).toHaveAttribute('aria-selected', 'true')
-    await expect(sourcePanel()).toContainText('精确原文_START'); await expect(sourcePanel()).toContainText('原文_END')
+    const previewLines = original.split('\r\n')
+    await expect.poll(async () => JSON.stringify(await sourcePanel().getByRole('gridcell').allTextContents()) === JSON.stringify(previewLines)).toBe(true)
     await expect.poll(() => reads.some(read => read.sessionId === taskA && read.path === file.path)).toBe(true)
     const request = await send(), message = String(request.message)
     expect(request.sessionId).toBe(taskA)
-    expect(source.attachmentId).toEqual(expect.stringMatching(/\S+/))
-    expect(request.attachments).toEqual([{ name: file.path, type: file.type,
-      displayName: source.name, size: file.bytes.length, attachmentId: source.attachmentId, referenceLabel: '附件1' }])
-    expect(message).not.toContain(original); expect(message).not.toContain('原文_END')
-    expect(message.split('\n<!--aether-refs:')[0].split(file.path)).toHaveLength(2)
-    expect((await savedTask()).sources.map(item => item.path)).toContain(file.path)
+    expect(request.attachments).toEqual([{ name: file.path, type: file.type, displayName: source.name,
+      size: file.bytes.length, attachmentId: source.attachmentId, referenceLabel: '粘贴文本 · 精确原文_START' }])
+    expect(message.includes(original)).toBe(false); expect(message.includes('原文_END')).toBe(false)
+    expect(userMessageDraft(message).text).toBe(stored.draft)
     const userMessage = work().locator(`[data-message-id="${latestRun(taskA)!.userMessageId}"]`)
-    const sentReference = userMessage.getByRole('button', { name: '查看引用：附件1', exact: true })
-    await expect(sentReference).toHaveCount(1); await expect(sentReference).toBeVisible()
-    // The fixture also returns the real attachment receipt in the user row.
-    // A zero attachment strip therefore verifies deduplication, not absent data.
-    expect(histories.get(taskA)?.find(row => row.id === latestRun(taskA)!.userMessageId)?.metadata?.attachments).toEqual(request.attachments)
-    await expect(userMessage.locator('.work-message__attachments')).toHaveCount(0)
+    const sentReference = userMessage.getByRole('button', { name: label, exact: true })
+    await expect(sentReference).toHaveCount(1); await expect(userMessage.locator('.work-message__attachments')).toHaveCount(0)
     await work().getByRole('button', { name: '关闭资料', exact: true }).click()
-    await expect(sourcePanel()).not.toBeVisible()
-    await sentReference.click()
-    await expect(sourcePanel()).toBeVisible()
-    await expect(sourcePanel().getByRole('option', { name: source.name, exact: false })).toHaveAttribute('aria-selected', 'true')
-    await expect(sourcePanel()).toContainText('精确原文_START'); await expect(sourcePanel()).toContainText('原文_END')
-    await expect(userMessage.locator('.work-message__attachments')).toHaveCount(0)
-    await page.mouse.move(0, 0)
-    const screenshot = info.outputPath('sent-reference-opens-material.png')
+    await expect(sourcePanel()).not.toBeVisible(); await sentReference.click(); await expect(sourcePanel()).toBeVisible()
+    await expect.poll(async () => JSON.stringify(await sourcePanel().getByRole('gridcell').allTextContents()) === JSON.stringify(previewLines)).toBe(true)
+    const screenshot = info.outputPath('long-paste-reference-preview.png')
     await page.screenshot({ path: screenshot, animations: 'disabled' })
-    await info.attach('发送后的引用与资料原文', { path: screenshot, contentType: 'image/png' })
+    await info.attach('超过十万字符的原文资料预览', { path: screenshot, contentType: 'image/png' })
+    expect(uploads).toHaveLength(before + 1)
   })
 
-  test('Backspace 与 Delete 整枚移除引用但保留资料，再发送不携带已删除引用', async () => {
-    const original = 'DELETE_REFERENCE_ONLY_'.repeat(80)
-    await composer().fill('引用前 引用后'); await selectText(4); await exactPaste(original)
-    await expect(chips()).toHaveCount(1)
+  test('图片和文件引用旁长粘贴生成新资料，保留原引用身份与短正文', async () => {
+    const imageBytes = Buffer.from(await page.evaluate(() => {
+      const canvas = document.createElement('canvas'); canvas.width = 12; canvas.height = 12
+      const context = canvas.getContext('2d')!; context.fillStyle = '#c43d4c'; context.fillRect(0, 0, 12, 12)
+      return canvas.toDataURL('image/png').split(',')[1]
+    }), 'base64')
+    const attachments: SavedSource[] = [
+      { path: '.ae/attachments/existing-image.png', name: 'existing-image.png', type: 'image/png', size: imageBytes.length, attachmentId: 'existing-image' },
+      { path: '.ae/attachments/existing-notes.txt', name: 'existing-notes.txt', type: 'text/plain', size: 14, attachmentId: 'existing-file' }
+    ]
+    files.set(fileKey(taskA, attachments[0].path), { sessionId: taskA, path: attachments[0].path, type: 'image/png', bytes: imageBytes })
+    files.set(fileKey(taskA, attachments[1].path), { sessionId: taskA, path: attachments[1].path, type: 'text/plain', bytes: Buffer.from('EXISTING_NOTES') })
+    const draft = `开始 @${attachments[0].path} 中段 @${attachments[1].path} 结束`
+    await seed(draft, { attachments, mentions: attachments.map((file, index) => ({ source: 'file', origin: 'attachment',
+      path: file.path, attachmentId: file.attachmentId, displayText: index === 0 ? '图1' : '附件1', textOffset: draft.indexOf(`@${file.path}`) })) })
+    const before = uploads.length
+    const imageChip = composer().locator('[data-attachment-id="existing-image"]'), fileChip = composer().locator('[data-attachment-id="existing-file"]')
+    await expect(chips()).toHaveCount(2)
+    const imageText = `图片旁资料\n${'图片旁🙂'.repeat(26_000)}\nIMAGE_SIDE_END `
+    await adjacentToChip(imageChip, 'before'); await exactPaste(imageText)
+    await expect(chips()).toHaveCount(3); await expect.poll(() => uploads.length).toBe(before + 1)
+    expect(uploads[before].bytes.equals(Buffer.from(imageText))).toBe(true)
     const source = (await savedTask()).sources[0]
-    await composer().getByRole('button', { name: '查看引用：附件1', exact: true }).click()
-    await expect(sourcePanel()).toBeVisible()
-    await adjacentToChip('after'); await page.keyboard.press('Backspace')
-    await expect(chips()).toHaveCount(0)
-    expect((await savedTask()).sources.map(item => item.path)).toContain(source.path)
-    await sourcePanel().getByRole('option', { name: source.name, exact: false }).click()
-    await expect(sourcePanel()).toContainText('DELETE_REFERENCE_ONLY_')
-    await sourcePanel().getByRole('button', { name: '添加到对话', exact: true }).click()
-    await expect(chips()).toHaveCount(1)
-    await adjacentToChip('before'); await page.keyboard.press('Delete')
-    await expect(chips()).toHaveCount(0)
+    const fileText = `\nFILE_SIDE_START\n${'文件旁😀'.repeat(100)}\nFILE_SIDE_END `
+    await adjacentToChip(fileChip, 'after'); await exactPaste(fileText)
     const saved = await savedTask()
-    expect(saved.mentions).toEqual([]); expect(saved.sources.map(item => item.path)).toContain(source.path)
+    expect(saved.draft.startsWith('开始 ')).toBe(true); expect(saved.draft).toContain(' 中段 ')
+    expect(saved.draft).toContain(fileText); expect(saved.draft.endsWith(' 结束')).toBe(true)
+    expect(saved.draft.includes(imageText)).toBe(false)
+    expect(saved.mentions.map(mention => mention.attachmentId)).toEqual([source.attachmentId, 'existing-image', 'existing-file'])
+    await expect(chips()).toHaveCount(3)
+    await expect(imageChip.locator('.mention-chip__label')).toHaveText('图1')
+    await expect(fileChip.locator('.mention-chip__label')).toHaveText('附件1')
     const request = await send()
-    expect(request.attachments ?? []).toEqual([]); expect(String(request.message)).not.toContain(source.path)
+    expect(String(request.message).includes(imageText)).toBe(false)
+    expect(userMessageDraft(String(request.message)).text).toBe(saved.draft)
+    expect(userMessageDraft(String(request.message)).mentions.map(mention => mention.attachmentId)).toEqual([source.attachmentId, 'existing-image', 'existing-file'])
+    expect(request.attachments).toHaveLength(3)
+    expect(request.attachments).toEqual(expect.arrayContaining(attachments.map((file, index) => ({ name: file.path, displayName: file.name, type: file.type,
+      size: file.size, attachmentId: file.attachmentId, referenceLabel: index === 0 ? '图1' : '附件1' }))))
+    expect(request.attachments).toEqual(expect.arrayContaining([expect.objectContaining({ name: source.path, attachmentId: source.attachmentId,
+      referenceLabel: '粘贴文本 · 图片旁资料', size: uploads[before].bytes.length })]))
+    expect(uploads).toHaveLength(before + 1)
   })
 
-  test('正文达到 100000 Unicode 字符后拒绝短粘贴和输入，保留草稿并允许选区替换', async () => {
-    const original = '😀'.repeat(bodyLimit - 2) + '尾端', before = uploads.length
-    await seed(original)
-    await expect(composer()).toHaveText(original)
-    await selectText(original.length); await nativePaste('超限')
-    await expect(composer()).toHaveText(original)
-    await expect(page.getByText(/(?:100,?000|10\s*万).*(?:字|字符)|(?:字|字符).*(?:100,?000|10\s*万)/).first()).toBeVisible()
-    expect((await savedTask()).draft).toBe(original)
-    expect(uploads).toHaveLength(before)
-    await page.keyboard.type('x'); await expect(composer()).toHaveText(original)
-    await selectText(original.length - 2, original.length); await nativePaste('🙂')
-    await expect(composer()).toHaveText(original.slice(0, -2) + '🙂')
-    expect(Array.from((await savedTask()).draft)).toHaveLength(bodyLimit - 1)
-  })
-
-  test('上传失败保留已有文字和选区内容，重试可正常生成资料引用', async () => {
-    const draft = '失败前 保留选中的内容 失败后', original = 'FAILED_UPLOAD_RETRY_'.repeat(80), before = uploads.length
+  test('上传失败保留已有文字和选区内容，重试完整保存长资料', async () => {
+    const draft = '失败前 保留选中的内容 失败后', original = 'FAILED_UPLOAD_RETRY_'.repeat(6_000), before = uploads.length
     await composer().fill(draft); await selectText(4, 12)
     uploadMode = 'reject'; await exactPaste(original)
     await expect.poll(() => uploads.length).toBe(before + 1)
@@ -429,30 +466,19 @@ test.describe.serial('Work 长文本粘贴与资料引用', () => {
     expect((await savedTask()).sources).toEqual([]); expect((await savedTask()).draft).toBe(draft)
     await selectText(4, 12); await exactPaste(original)
     await expect(chips()).toHaveCount(1); expect((await savedTask()).sources).toHaveLength(1)
+    expect(uploads).toHaveLength(before + 2)
+    expect(uploads[before + 1].bytes.equals(Buffer.from(original))).toBe(true)
   })
 
   test('延迟上传保留原插入位置和当前选区，原选区被改写时只保留资料', async () => {
     const before = uploads.length, chatsBefore = chats.length
-    const original = 'ASYNC_ORIGINAL_CARET_'.repeat(80)
+    const original = 'ASYNC_ORIGINAL_CARET_'.repeat(6_000)
     await composer().fill('左侧 右侧'); await selectText(3)
     uploadMode = 'hold'; await exactPaste(original)
     await expect.poll(() => Boolean(held)).toBe(true)
     await page.keyboard.press('Control+End'); await page.keyboard.insertText(' 继续输入')
     await expect(composer()).toHaveText('左侧 右侧 继续输入')
-    await composer().evaluate(element => {
-      // Anchors split text nodes; choose the real new text, independently of
-      // where the upload implementation leaves its invisible markers.
-      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
-      let node: Node | null
-      while ((node = walker.nextNode())) {
-        const offset = (node.textContent ?? '').indexOf('继续输入')
-        if (offset < 0) continue
-        const range = document.createRange(); range.setStart(node, offset); range.setEnd(node, offset + 4)
-        const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range)
-        return
-      }
-      throw new Error('Newly typed selection is missing')
-    })
+    await selectText(6, 10)
     expect(await page.evaluate(() => window.getSelection()?.toString())).toBe('继续输入')
     releaseUpload(); await expect(chips()).toHaveCount(1)
     expect(await composer().evaluate(element => {
@@ -461,11 +487,8 @@ test.describe.serial('Work 长文本粘贴与资料引用', () => {
       return { left: left.toString(), right: right.toString(), selected: window.getSelection()?.toString(), focused: document.activeElement === element }
     })).toEqual({ left: '左侧 ', right: expect.stringMatching(/^\s*右侧 继续输入$/), selected: '继续输入', focused: true })
     await page.keyboard.insertText('继续保留')
-    await expect(composer()).toContainText('右侧 继续保留')
-    await expect(chips()).toHaveCount(1)
+    await expect(composer()).toContainText('右侧 继续保留'); await expect(chips()).toHaveCount(1)
     expect(uploads[before].bytes.equals(Buffer.from(original))).toBe(true)
-    await expect(work().getByRole('button', { name: '发送', exact: true })).toBeEnabled()
-
     const changedSelection = 'ASYNC_CHANGED_SELECTION_'.repeat(80)
     await composer().fill('选区前 旧选区 选区后'); await selectText(4, 7)
     uploadMode = 'hold'; await exactPaste(changedSelection)
@@ -477,14 +500,14 @@ test.describe.serial('Work 长文本粘贴与资料引用', () => {
     await expect(page.getByText('原文已保存到任务资料，草稿已变化，可从资料中重新引用。', { exact: true })).toBeVisible()
     await expect(composer()).toHaveText('选区前 改写的新选区 选区后'); await expect(chips()).toHaveCount(0)
     const saved = await savedTask()
-    expect(saved.draft).toBe('选区前 改写的新选区 选区后'); expect(saved.mentions).toEqual([])
+    expect(saved.mentions).toEqual([])
     expect(saved.sources.map(source => source.path)).toEqual([uploads[before].path, uploads[before + 1].path])
     expect(uploads[before + 1].bytes.equals(Buffer.from(changedSelection))).toBe(true)
     expect(chats).toHaveLength(chatsBefore)
   })
 
   test('上传中切换任务，迟到资料只归原任务且不向另一任务光标插入引用', async () => {
-    const draftA = '任务 A 保留原草稿', draftB = '任务 B 独立草稿', original = 'HELD_UPLOAD_FOR_A_'.repeat(80), before = uploads.length
+    const draftA = '任务 A 保留原草稿', draftB = '任务 B 独立草稿', original = 'HELD_UPLOAD_FOR_A_'.repeat(6_000), before = uploads.length
     await composer().fill(draftA); await selectText(5); uploadMode = 'hold'; await exactPaste(original)
     await expect.poll(() => Boolean(held)).toBe(true)
     await selectTask(taskB); await composer().fill(draftB)
@@ -493,12 +516,116 @@ test.describe.serial('Work 长文本粘贴与资料引用', () => {
     await expect(composer()).toHaveText(draftB); await expect(chips()).toHaveCount(0)
     const savedB = await savedTask(taskB)
     expect(savedB.sources).toEqual([]); expect(savedB.attachments).toEqual([]); expect(savedB.mentions).toEqual([])
-    expect(uploads[before].sessionId).toBe(taskA)
+    expect(uploads[before].sessionId).toBe(taskA); expect(uploads[before].bytes.equals(Buffer.from(original))).toBe(true)
     await selectTask(taskA); await expect(composer()).toHaveText(draftA); await expect(chips()).toHaveCount(0)
     expect((await savedTask()).sources[0].path).toBe(uploads[before].path)
   })
 
-  test('工作区来源的文件引用打开对应工作区预览，不进入资料页', async () => {
+  test('十万纯正文限制只约束编辑，满额仍可粘贴超十万附件并完整发送', async () => {
+    const before = uploads.length, original = 'a '.repeat(49_998) + 'TAIL'
+    const full = await test.step('输入十万正文，拒绝扩增并允许替换和删除', async () => {
+      expect(original.length).toBe(previousInputLimit)
+      await composer().fill(original); await selectText(original.length); await page.keyboard.type('x')
+      await expect.poll(async () => (await savedTask()).draft === original).toBe(true)
+      await expect(page.getByText(/输入框正文最多 100,000/).first()).toBeVisible()
+      const start = original.length - 4
+      await selectText(start, original.length); await page.keyboard.insertText('EDIT')
+      const replaced = original.slice(0, start) + 'EDIT'
+      await expect.poll(async () => (await savedTask()).draft === replaced).toBe(true)
+      await selectText(replaced.length - 1, replaced.length); await page.keyboard.press('Backspace')
+      await expect.poll(async () => (await savedTask()).draft === replaced.slice(0, -1)).toBe(true)
+      await page.keyboard.insertText('R')
+      const full = replaced.slice(0, -1) + 'R'
+      await expect.poll(async () => (await savedTask()).draft === full).toBe(true)
+      return full
+    })
+    const { file, saved, source } = await test.step('满额正文在原光标接收超十万字符资料', async () => {
+      const attachmentText = `满额正文的资料\r\n${'附件完整 '.repeat(20_001)}\r\nFULL_ATTACHMENT_END`, caret = 200
+      await selectText(caret); await exactPaste(attachmentText)
+      await expect(chips()).toHaveCount(1); await expect.poll(() => uploads.length).toBe(before + 1)
+      const file = uploads[before], saved = await savedTask(), source = saved.sources[0]
+      expect(file.bytes.equals(Buffer.from(attachmentText))).toBe(true)
+      expect(Array.from(attachmentText).length).toBeGreaterThan(previousInputLimit)
+      expect(await composer().evaluate((element, { full, caret }) => {
+        const chip = element.querySelector('[data-mention-key]')!, left = document.createRange(), right = document.createRange()
+        left.selectNodeContents(element); left.setEndBefore(chip); right.selectNodeContents(element); right.setStartAfter(chip)
+        return left.toString() === full.slice(0, caret) &&
+          [full.slice(caret), ' ' + full.slice(caret)].includes(right.toString())
+      }, { full, caret })).toBe(true)
+      return { file, saved, source }
+    })
+    await test.step('刷新后正文与资料均完整发送', async () => {
+      await page.reload(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
+      await expect(chips()).toHaveCount(1); expect((await savedTask()).draft === saved.draft).toBe(true)
+      const request = await send()
+      expect(userMessageDraft(String(request.message)).text === saved.draft).toBe(true)
+      expect(request.attachments).toEqual([{ name: file.path, type: file.type, displayName: source.name,
+        size: file.bytes.length, attachmentId: source.attachmentId, referenceLabel: '粘贴文本 · 满额正文的资料' }])
+      expect((await savedTask()).draft).toBe(''); expect(uploads).toHaveLength(before + 1)
+    })
+  })
+
+  test('引用的一个光标分隔空格不抢正文额度，满额也可删除引用并继续编辑', async () => {
+    const original = 'a '.repeat(49_999) + '尾'
+    expect(Array.from(original)).toHaveLength(99_999)
+    const before = uploads.length, attachmentText = '边界资料\n' + '附件完整内容'.repeat(200)
+    const source = await test.step('99999 正文末尾插入长资料引用', async () => {
+      await composer().fill(original); await selectText(original.length); await exactPaste(attachmentText)
+      await expect(chips()).toHaveCount(1); await expect.poll(() => uploads.length).toBe(before + 1)
+      expect(uploads[before].bytes.equals(Buffer.from(attachmentText))).toBe(true)
+      return (await savedTask()).sources[0]
+    })
+    await test.step('第100000字可输入，第100001字被拒绝', async () => {
+      await composer().focus(); await page.keyboard.press('Control+End'); await page.keyboard.type('x')
+      const full = original + `@${source.path} x`
+      await expect.poll(async () => (await savedTask()).draft === full).toBe(true)
+      await page.keyboard.type('y')
+      await expect.poll(async () => (await savedTask()).draft === full).toBe(true)
+      await expect(page.getByText(/输入框正文最多 100,000/).first()).toBeVisible()
+    })
+    await test.step('满额删除引用保留正文，缩短后可继续编辑', async () => {
+      const reference = composer().locator(`[data-attachment-id="${source.attachmentId}"]`)
+      await adjacentToChip(reference, 'before'); await page.keyboard.press('Delete')
+      await expect(chips()).toHaveCount(0)
+      await expect.poll(async () => (await savedTask()).draft === original + ' x').toBe(true)
+      expect((await savedTask()).sources.map(file => file.path)).toEqual([source.path])
+      await composer().fill('短正文'); await page.keyboard.press('Control+End'); await page.keyboard.type('ok')
+      await expect(composer()).toHaveText('短正文ok'); expect((await savedTask()).draft).toBe('短正文ok')
+    })
+  })
+
+  test('历史超额草稿不截断，可缩短且发送不校验组装消息长度', async () => {
+    const original = 'history '.repeat(12_501) + 'LEGACY_EXTRA'
+    await seed(original)
+    await expect.poll(async () => (await savedTask()).draft === original).toBe(true)
+    await selectText(original.length); await page.keyboard.type('x')
+    await expect.poll(async () => (await savedTask()).draft === original).toBe(true)
+    const start = original.indexOf('LEGACY_EXTRA')
+    await selectText(start, original.length); await page.keyboard.insertText('余')
+    const shortened = original.slice(0, start) + '余'
+    await expect.poll(async () => (await savedTask()).draft === shortened).toBe(true)
+    expect(Array.from(shortened).length).toBeGreaterThan(previousInputLimit)
+    const request = await send()
+    expect(request.message === shortened).toBe(true); expect(request.attachments ?? []).toEqual([])
+  })
+
+  test('既有粘贴资料仍可打开全文，删除引用后不随新正文发送', async () => {
+    const original = '既有资料\n' + 'PERSISTED_SOURCE_CONTENT_'.repeat(80), path = '.ae/attachments/persisted-paste.txt'
+    const source: SavedSource = { path, name: '粘贴的文本-既有资料.txt', type: 'text/plain', size: Buffer.byteLength(original), attachmentId: 'persisted-paste' }
+    files.set(fileKey(taskA, path), { sessionId: taskA, path, type: source.type, bytes: Buffer.from(original) })
+    await seed(`请查看 @${path}`, { sources: [source], mentions: [{ source: 'file', origin: 'attachment', path,
+      attachmentId: source.attachmentId, displayText: '附件1', textOffset: 4 }] })
+    const before = uploads.length, reference = composer().getByRole('button', { name: '查看引用：粘贴文本 · 既有资料', exact: true })
+    await reference.click(); await expect(sourcePanel()).toBeVisible()
+    await expect.poll(() => sourcePanel().getByRole('gridcell').allTextContents()).toEqual(original.split('\n'))
+    await adjacentToChip(reference, 'after'); await page.keyboard.press('Backspace')
+    await expect(chips()).toHaveCount(0); expect((await savedTask()).sources).toEqual([source])
+    const request = await send()
+    expect(request.attachments ?? []).toEqual([]); expect(String(request.message)).not.toContain(path)
+    expect(uploads).toHaveLength(before)
+  })
+
+  test('工作区来源的文件引用仍打开对应工作区预览', async () => {
     const path = 'README-paste.txt', content = 'WORKSPACE_REFERENCE_TARGET：这是工作区文件，不是上传资料。'
     files.set(fileKey(taskA, path), { sessionId: taskA, path, bytes: Buffer.from(content), type: 'text/plain' })
     await seed(`请查看 @${path}`, { mentions: [{ source: 'file', origin: 'workspace', path, displayText: path, textOffset: 4 }] })
@@ -506,53 +633,57 @@ test.describe.serial('Work 长文本粘贴与资料引用', () => {
     await expect(chip).toBeVisible(); await chip.focus(); await page.keyboard.press('Enter')
     const panel = work().getByRole('tabpanel', { name: '工作区', exact: true })
     await expect(panel).toBeVisible(); await expect(panel).toContainText('WORKSPACE_REFERENCE_TARGET')
-    await expect.poll(() => reads.some(read => read.sessionId === taskA && read.path === path)).toBe(true)
     expect((await savedTask()).sources).toEqual([])
-    await expect(sourcePanel()).not.toBeVisible()
   })
 
-  test('首页粘贴资料在刷新后保留，创建任务时迁移到同一会话并只发送一次', async () => {
-    await seed('首页资料说明 ', { home: true })
-    const home = work().getByRole('textbox', { name: '任务目标', exact: true }), original = 'HOME_SOURCE_PRESERVED_'.repeat(80), before = uploads.length
-    await home.focus(); await page.keyboard.press('Control+End'); await exactPaste(original, home)
-    await expect(home.locator('[data-mention-key]')).toHaveCount(1)
+  test('首页超十万原生粘贴作为资料保留，刷新可预览并随新任务发送一次', async ({}, info) => {
+    const path = 'README-home.txt', initial = `首页说明 @${path} 接着说明 `
+    await seed(initial, { home: true, mentions: [{ source: 'file', origin: 'workspace', path, displayText: path, textOffset: 5 }] })
+    const home = work().getByRole('textbox', { name: '任务目标', exact: true }), before = uploads.length
+    const original = 'HOME_SOURCE_PRESERVED_'.repeat(6_000) + 'HOME_PASTE_TAIL'
+    await home.focus(); await page.keyboard.press('Control+End'); await nativePaste(original, home)
+    await expect(home.locator('[data-mention-key]')).toHaveCount(2)
     await expect.poll(() => uploads.length).toBe(before + 1)
     const file = uploads[before]
-    const state = await page.evaluate(key => {
-      window.dispatchEvent(new Event('blur'))
-      return JSON.parse(localStorage.getItem(key) ?? '{}') as { homeSessionId: string; homeSources: SavedSource[]; homeAttachments: SavedSource[]; homeMentions: unknown[] }
-    }, storageKey)
+    expect(file.bytes.equals(Buffer.from(original))).toBe(true)
+    const state = await savedHome()
+    const source = state.homeSources[0]
     expect(state.homeSessionId).toBe(file.sessionId); expect(state.homeSources.map(source => source.path)).toEqual([file.path])
-    expect(state.homeAttachments).toEqual([]); expect(state.homeMentions).toHaveLength(1)
-    await page.reload(); await expect(home.locator('[data-mention-key]')).toHaveCount(1)
-    const libraryButton = work().getByRole('button', { name: '资料 · 1', exact: true })
+    expect(state.homeAttachments).toEqual([])
+    expect(state.homeDraft.startsWith(initial)).toBe(true); expect(state.homeDraft.includes(original)).toBe(false)
+    expect(state.homeMentions).toEqual([expect.objectContaining({ path, source: 'file', origin: 'workspace' }),
+      expect.objectContaining({ path: file.path, source: 'file', origin: 'attachment', attachmentId: source.attachmentId })])
+    await page.reload(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
+    await expect(home.locator('[data-mention-key]')).toHaveCount(2)
+    expect((await savedHome()).homeDraft).toBe(state.homeDraft)
     const library = page.getByRole('dialog', { name: '任务资料', exact: true })
-    const preview = page.getByRole('dialog', { name: state.homeSources[0].name, exact: true })
-    await libraryButton.click(); await expect(library).toBeVisible()
-    await library.getByRole('button', { name: state.homeSources[0].name, exact: true }).click()
-    await expect(preview).toContainText('HOME_SOURCE_PRESERVED_')
+    const preview = page.getByRole('dialog', { name: source.name, exact: true })
+    await work().getByRole('button', { name: '资料 · 1', exact: true }).click()
+    await expect(library).toBeVisible(); await library.getByRole('button', { name: source.name, exact: true }).click()
+    await expect.poll(async () => await preview.getByRole('gridcell').textContent() === original).toBe(true)
     await expect.poll(() => reads.some(read => read.sessionId === file.sessionId && read.path === file.path)).toBe(true)
+    const screenshot = info.outputPath('home-long-paste-material-preview.png')
+    await page.screenshot({ path: screenshot, animations: 'disabled' })
+    await info.attach('首页长资料原文预览', { path: screenshot, contentType: 'image/png' })
     await preview.getByRole('button', { name: '关闭', exact: true }).click(); await expect(preview).toHaveCount(0)
     await library.getByRole('button', { name: '关闭', exact: true }).click(); await expect(library).toHaveCount(0)
-    await adjacentToChip('after', home); await page.keyboard.press('Backspace')
-    await expect(home.locator('[data-mention-key]')).toHaveCount(0)
-    await libraryButton.click(); await expect(library).toBeVisible()
-    await library.getByRole('button', { name: '添加到对话', exact: true }).click()
-    await expect(library).toHaveCount(0); await expect(home.locator('[data-mention-key]')).toHaveCount(1)
+    const request = await send(work().getByRole('button', { name: '开始任务', exact: true }))
+    expect(request.sessionId).toBe(state.homeSessionId)
+    const sentDraft = userMessageDraft(String(request.message))
+    // buildMentionMessage trims the editor's leading/trailing whitespace while
+    // retaining both reference origins and their original identities.
+    expect(sentDraft.text).toBe(state.homeDraft.trim())
+    expect(sentDraft.mentions).toEqual([
+      expect.objectContaining({ source: 'file', origin: 'workspace', path, displayText: path }),
+      expect.objectContaining({ source: 'file', origin: 'attachment', path: source.path, attachmentId: source.attachmentId })
+    ])
+    expect(String(request.message).includes(original)).toBe(false)
+    expect(request.attachments).toEqual([{ name: file.path, type: file.type, displayName: source.name,
+      size: file.bytes.length, attachmentId: source.attachmentId, referenceLabel: expect.stringMatching(/^粘贴文本/) }])
     expect(uploads).toHaveLength(before + 1)
-    const sentBefore = chats.length, start = work().getByRole('button', { name: '开始任务', exact: true })
-    await expect(start).toBeEnabled(); await start.click()
-    await expect.poll(() => chats.length).toBe(sentBefore + 1)
-    await expect(work()).toContainText('PASTE_SENT_OK')
-    const request = chats[sentBefore]
-    expect(request.sessionId).toBe(file.sessionId)
-    expect(state.homeSources[0].attachmentId).toEqual(expect.stringMatching(/\S+/))
-    expect(request.attachments).toEqual([{ name: file.path, type: file.type,
-      displayName: state.homeSources[0].name, size: file.bytes.length,
-      attachmentId: state.homeSources[0].attachmentId, referenceLabel: '附件1' }])
-    expect(String(request.message)).not.toContain(original)
-    expect((await savedTask(file.sessionId)).sources.map(source => source.path)).toEqual([file.path])
-    const migrated = await page.evaluate(key => JSON.parse(localStorage.getItem(key) ?? '{}') as { homeSources: unknown[]; homeAttachments: unknown[]; homeMentions: unknown[] }, storageKey)
-    expect(migrated.homeSources).toEqual([]); expect(migrated.homeAttachments).toEqual([]); expect(migrated.homeMentions).toEqual([])
+    const task = await savedTask(state.homeSessionId)
+    expect(task.sources.map(source => source.path)).toEqual([file.path]); expect(task.attachments).toEqual([])
+    const cleared = await savedHome()
+    expect(cleared.homeDraft).toBe(''); expect(cleared.homeMentions).toEqual([]); expect(cleared.homeSources).toEqual([])
   })
 })

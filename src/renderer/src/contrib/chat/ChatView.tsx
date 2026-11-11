@@ -22,6 +22,16 @@ import { SubagentControllerContext } from './SubagentFollowup'
 import { subagentControllerScope } from './subagent-controller-scope'
 import { Markdown } from './Markdown'
 import { UserMessageContent } from './UserMessageContent'
+import { DirectoryReferencePreview } from './DirectoryReferencePreview'
+import { AgentReferencePreview } from '../work/WorkReferenceNavigation'
+import { requestOpenConversation } from '../work/work-conversation-navigation'
+import { getBrowserSurfaceOwner } from '@renderer/core/browser/presentation'
+import { getBrowserState, initializeBrowser, revealBrowserTab, selectBrowserTab } from '../browser/browser-store'
+import { Dialog } from '@renderer/workbench/Dialog'
+import { TextPreview } from '@renderer/core/editor/TextPreview'
+import { mimeFor } from '@renderer/core/editor/preview'
+import { paths } from '@renderer/core/workspace/fs-client'
+import { openFileFromChat } from './open-file'
 import { getSessionMeta, subscribeSessionMeta } from '../history/session-meta'
 import type { ChatFileContext } from './chat-link'
 import { toolDisplayName } from './tool-names'
@@ -54,12 +64,12 @@ import { normalizeRootRunRequestConfig, type RootRunRequestConfig } from '@share
 import { MessageNavRail, type NavTurn } from './MessageNavRail'
 import { groupIntoTurns } from './usage'
 import { TurnUsage, UsageMeter, type TurnUsageInfo } from './ConversationUsage'
-import { useAttachments, shouldAttachPastedText, createPastedTextFile } from './useAttachments'
+import { useAttachments, shouldAttachPastedText } from './useAttachments'
 import { ImageConversationProvider } from './image-conversation'
 import { ToolImageGalleryProvider } from './ToolImageGalleryProvider'
 import { replaceImageAttachmentReferences } from './image-attachment-reference'
 import { AttachmentStrip } from './AttachmentStrip'
-import { attachmentIdentity, attachmentReferences, freezeAttachmentReferences } from './attachment-references'
+import { attachmentIdentity, attachmentMention, attachmentReferences, freezeAttachmentReferences } from './attachment-references'
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
 import { knowledgeBindingKey, saveKnowledgeBinding } from '@renderer/core/engine/knowledge'
 import { ResourcePicker, type ResourceItem } from './ResourcePicker'
@@ -97,6 +107,7 @@ function sameTurnUsage(previous: TurnUsageInfo | undefined, next: TurnUsageInfo)
 
 type ComposerResources = { skills: string[]; mcpServers: string[]; knowledgeBases: string[] }
 type RejectedDraft = { text: string; mentions: Mention[]; attachments: ChatAttachment[]; root: string | null }
+type AttachmentPreviewOwner = { root: string | null; readSessionId?: string }
 function loadLegacyComposerResources(sessionId: string, source: string): RootRunRequestConfig {
   try {
     const raw = localStorage.getItem(`aether:composer-resources:${source || 'embedded'}:${sessionId}`)
@@ -295,13 +306,57 @@ export function ChatView(): JSX.Element {
   attachmentStateRef.current = attach.attachments
   const imageConversationScope = JSON.stringify([sourceEpoch, sessionId, workspace.root])
   /** 附件点击预览（图片放大 / 文本查看，统一 AttachmentPreviewDialog） */
-  const [previewImage, setPreviewImage] = useState<(AttachmentPreview & { scope: string; draft: boolean }) | null>(null)
+  const [previewImage, setPreviewImage] = useState<(AttachmentPreview & { scope: string; draft: boolean; owner: AttachmentPreviewOwner }) | null>(null)
   /** 预览来源的同组图片（查看器内左右翻页） */
   const [previewGroup, setPreviewGroup] = useState<ChatAttachment[]>([])
-  const previewAttachment = useCallback((file: ChatAttachment, src: string | null, group?: ChatAttachment[], draft = false) => {
-    setPreviewImage({ file, src, scope: imageConversationScope, draft })
+  const previewAttachment = useCallback((file: ChatAttachment, src: string | null, group?: ChatAttachment[], draft = false, owner?: AttachmentPreviewOwner) => {
+    setPreviewImage({ file, src, scope: imageConversationScope, draft, owner: owner ?? {
+      root: remoteReadOnly ? null : workspace.root,
+      readSessionId: remoteReadOnly || !workspace.root ? sessionId : undefined
+    } })
     setPreviewGroup(group ?? (file.type.startsWith('image/') ? [file] : []))
-  }, [imageConversationScope])
+  }, [imageConversationScope, remoteReadOnly, workspace.root, sessionId])
+  // History keeps the session's file owner even after the selected project changes.
+  const previewHistoryAttachment = useCallback((file: ChatAttachment, src: string | null, group?: ChatAttachment[]) => {
+    previewAttachment(file, src, group, false, { root: null, readSessionId: sessionId })
+  }, [previewAttachment, sessionId])
+  const [referencePreview, setReferencePreview] = useState<{ scope: string; mention: Mention } | null>(null)
+  const openReference = useCallback((mention: Mention, receipt?: ChatAttachment, draft = false, owner?: AttachmentPreviewOwner): void => {
+    const path = mention.path ?? ''
+    if (mention.source === 'conversation') {
+      try { requestOpenConversation(path) }
+      catch (reason) { setToast(reason instanceof Error ? reason.message : '无法打开引用会话') }
+      return
+    }
+    if (mention.source === 'browser') {
+      const browserOwner = getBrowserSurfaceOwner()
+      void initializeBrowser().then(() => {
+        if (browserOwner !== getBrowserSurfaceOwner()) return
+        const browser = getBrowserState('code')
+        if (!browser.tabs.some(tab => tab.tabId === path)) throw new Error(browser.error || '此网页标签已关闭或不属于当前会话。')
+        selectBrowserTab(path)
+        revealBrowserTab(path)
+      }).catch(reason => { setToast(reason instanceof Error ? reason.message : '无法打开引用网页') })
+      return
+    }
+    if (mention.content !== undefined || !['file', 'code'].includes(mention.source)) {
+      setReferencePreview({ scope: imageConversationScope, mention })
+      return
+    }
+    const current = draft ? attach.attachments.find(file => mention.attachmentId
+      ? attachmentIdentity(file) === mention.attachmentId : file.path === path) : undefined
+    const file = receipt ?? current ?? { path, name: paths.basename(path) || mention.displayText, type: mimeFor(path) ?? 'text/plain', size: 0 }
+    if (file.type.startsWith('image/')) {
+      previewAttachment(file, null, current ? attach.attachments.filter(item => item.type.startsWith('image/')) : [file], Boolean(current), owner)
+      return
+    }
+    void openFileFromChat(path, { sessionId, workspaceRoot: workspace.root }).catch(reason => {
+      setToast(reason instanceof Error ? reason.message : '无法打开引用文件')
+    })
+  }, [imageConversationScope, attach.attachments, previewAttachment, sessionId, workspace.root])
+  const openHistoryReference = useCallback((mention: Mention, receipt?: ChatAttachment): void => {
+    openReference(mention, receipt, false, { root: null, readSessionId: sessionId })
+  }, [openReference, sessionId])
   useEffect(() => { setPreviewImage(null); setPreviewGroup([]) }, [imageConversationScope])
 
   /** AI 润色输入框内容：用轻任务模型改写得更清晰；chip 引用会随文本一起被序列化给模型 */
@@ -474,6 +529,9 @@ export function ChatView(): JSX.Element {
   const draftRecoveryKey = JSON.stringify([storageSource, sessionId])
   const rejectedDraft = rejectedDrafts[draftRecoveryKey]
   const attachmentRoot = remoteReadOnly ? null : workspace.root
+  // Local draft uploads belong to the selected directory before the first
+  // message binds the engine session; remote uploads belong to the session.
+  const attachmentPreviewSessionId = attachmentRoot ? undefined : sessionId
   const draftScopeRef = useRef({ key: sourceSessionKey, root: attachmentRoot })
   if (draftScopeRef.current.key !== sourceSessionKey || draftScopeRef.current.root !== attachmentRoot) {
     draftScopeRef.current = { key: sourceSessionKey, root: attachmentRoot }
@@ -1441,7 +1499,8 @@ export function ChatView(): JSX.Element {
                   onDeleteTurn={deleteTurnById}
                   canAct={canExecute && !streaming && !selectMode && !historyEdit}
                   workspaceRoot={workspace.root}
-                  onPreviewImage={previewAttachment}
+                  onPreviewImage={previewHistoryAttachment}
+                  onOpenMention={openHistoryReference}
                 />
                 ))}
             </div>
@@ -1532,7 +1591,7 @@ export function ChatView(): JSX.Element {
         <InputComposer ref={composerRef}>
           {(attach.attachments.length > 0 || attach.uploading) ? (
             <div className="chat__attach-strip">
-              <AttachmentStrip root={workspace.root} sessionId={sessionId}
+              <AttachmentStrip root={workspace.root} sessionId={attachmentPreviewSessionId}
                 references={currentAttachmentReferences} mentions={mentionsRef.current}
                 onPreview={(file, src) => previewAttachment(file, src, attach.attachments.filter(item => item.type.startsWith('image/')), true)}
                 onRemove={file => { inputRef.current?.removeAttachmentReferences(attachmentIdentity(file)); attach.remove(file.path) }}
@@ -1580,21 +1639,29 @@ export function ChatView(): JSX.Element {
             onSubmit={submit}
             onPasteFiles={(files) => { if (canExecute) attach.accept(files) }}
             onPasteText={(text, insertion) => {
-              // 长文本落成「粘贴的文本-xxx.txt」附件；短文本返回 false 由输入框自行插入
               if (!canExecute || !shouldAttachPastedText(text) || (!remoteReadOnly && !workspace.root)) return false
-              insertion.cancel()
-              attach.accept([createPastedTextFile(text)])
+              const scope = draftScopeRef.current
+              void attach.addPastedText(text).then(file => {
+                if (draftScopeRef.current !== scope) { insertion.cancel(); return }
+                insertion.insertMention(attachmentMention(attachmentReferences([file])[0]))
+              }).catch(reason => {
+                insertion.cancel()
+                if (draftScopeRef.current === scope && !(reason instanceof Error && reason.name === 'AbortError')) {
+                  setToast(reason instanceof Error ? reason.message : '粘贴文本上传失败，请重试')
+                }
+              })
               return true
             }}
             onMentionQuery={(query) => { setMentionQuery(query); if (query !== null) setResourceQuery(null) }}
             onSlashQuery={(query) => { setResourceQuery(query); if (query !== null) setMentionQuery(null) }}
+            onOpenMention={mention => openReference(mention, undefined, true)}
           />
           <ComposerPolish busy={polishing} disabled={!canExecute || !input.trim()} title="AI 润色：让指令更清晰具体（使用轻任务模型）" onClick={() => void handlePolish()} />
             <CompletionPopover open={canExecute && appMode === 'code' && (mentionQuery !== null || manualPalette)} anchorRef={composerRef} onClose={() => { setManualPalette(false); setMentionQuery(null) }}>
             <MentionRefPicker
               open={canExecute && appMode === 'code' && (mentionQuery !== null || manualPalette)}
               root={workspace.root}
-              sessionId={sessionId}
+              sessionId={attachmentPreviewSessionId}
               attachments={currentAttachmentReferences}
               query={mentionQuery ?? ''}
               showSearch={manualPalette && mentionQuery === null}
@@ -1630,7 +1697,8 @@ export function ChatView(): JSX.Element {
           ) : null}
           {appMode === 'code' && previewImage?.scope === imageConversationScope ? (
             <AttachmentPreviewDialog
-              root={workspace.root}
+              root={previewImage.owner.root}
+              sessionId={previewImage.owner.readSessionId}
               preview={previewImage}
               images={previewGroup}
               onNavigate={(file) => setPreviewImage(previous => previous ? { ...previous, file, src: null } : null)}
@@ -1638,6 +1706,17 @@ export function ChatView(): JSX.Element {
               onClose={() => setPreviewImage(null)}
             />
           ) : null}
+          {appMode === 'code' && referencePreview?.scope === imageConversationScope ? <Dialog
+            title={referencePreview.mention.displayText} width={860} onClose={() => setReferencePreview(null)}>
+            <div className="reference-preview-body">
+              {referencePreview.mention.content !== undefined ? <TextPreview content={referencePreview.mention.content} name={referencePreview.mention.displayText} />
+                : referencePreview.mention.source === 'dir' ? <DirectoryReferencePreview path={referencePreview.mention.path ?? ''}
+                  root={workspace.root} sessionId={attachmentPreviewSessionId}
+                  onOpenFile={entry => { setReferencePreview(null); openReference({ source: 'file', origin: 'workspace', path: entry.path, displayText: entry.name }) }} />
+                  : referencePreview.mention.source === 'agent' ? <AgentReferencePreview id={referencePreview.mention.path ?? ''} />
+                    : <TextPreview content={referencePreview.mention.path ?? referencePreview.mention.displayText} name={referencePreview.mention.displayText} />}
+            </div>
+          </Dialog> : null}
           <input
             ref={attach.fileInputRef}
             type="file"
@@ -1796,7 +1875,8 @@ const MessageItem = memo(function MessageItem({
   onDeleteTurn,
   canAct,
   workspaceRoot,
-  onPreviewImage
+  onPreviewImage,
+  onOpenMention
 }: {
   message: ChatMessage
   /** 当前会话 ID（子代理停止按钮走 /subagent/cancel 要用） */
@@ -1830,6 +1910,7 @@ const MessageItem = memo(function MessageItem({
   workspaceRoot: string | null
   /** 图片附件点击放大 */
   onPreviewImage: (file: ChatAttachment, src: string | null, group?: ChatAttachment[]) => void
+  onOpenMention: (mention: Mention, receipt?: ChatAttachment) => void
 }): JSX.Element {
   const isUser = message.role === 'user'
   const streaming = message.status === 'streaming'
@@ -1939,7 +2020,9 @@ const MessageItem = memo(function MessageItem({
         <div className="message__bubble-wrap">
           {actions}
           <div className="message__bubble">
-            <UserMessageContent content={message.content} />
+            <UserMessageContent content={message.content} onOpenMention={mention => onOpenMention(mention,
+              message.attachments?.find(file => file.path.replace(/\\/g, '/') === mention.path?.replace(/\\/g, '/')) ??
+              message.attachments?.find(file => Boolean(mention.attachmentId) && attachmentIdentity(file) === mention.attachmentId))} />
           </div>
           {message.attachments && message.attachments.length > 0 ? (
             <div className="message__attachments">

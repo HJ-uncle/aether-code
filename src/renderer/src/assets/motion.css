@@ -80,7 +80,7 @@
   .editor-tab__close, .work-workspace__tab-close, .work-resource-tabs__close,
   .session-tray__queue-remove, .welcome__recent-remove, .recent-dialog__remove,
   .git-panel__group-btn, .git-panel__stash-actions, .explorer__recent-del,
-  .work-sidebar__task-actions, .logline__chevron, .work-agent-card__actions) {
+  .logline__chevron, .work-agent-card__actions) {
   transition: opacity var(--motion-hover) var(--motion-ease),
     translate var(--motion-hover) var(--motion-ease), transform var(--motion-hover) var(--motion-ease),
     background-color var(--motion-hover) var(--motion-ease), color var(--motion-hover) var(--motion-ease);
@@ -93,7 +93,7 @@
     .editor-tab__close, .work-workspace__tab-close, .work-resource-tabs__close,
     .session-tray__queue-remove, .welcome__recent-remove, .recent-dialog__remove,
     .git-panel__group-btn, .git-panel__stash-actions, .explorer__recent-del,
-    .work-sidebar__task-actions, .logline__chevron, .work-agent-card__actions),
+    .logline__chevron, .work-agent-card__actions),
 :root .editor-tab.is-active .editor-tab__close,
 :root .logline[aria-expanded='true'] .logline__chevron { translate: 0 0; }
 

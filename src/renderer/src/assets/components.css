@@ -4661,7 +4661,7 @@
   pointer-events: none;
 }
 
-/* A single underline joins the icon and label without changing the text baseline. */
+/* References keep the text baseline and use a quiet tint for keyboard focus. */
 .mention-chip {
   position: relative;
   display: inline-flex;
@@ -4677,22 +4677,14 @@
   cursor: default;
   user-select: all;
   border: 0;
+  border-radius: var(--radius-sm);
   background: none;
-}
-
-.mention-chip::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0.12em;
-  height: 1px;
-  background: color-mix(in srgb, currentColor 55%, transparent);
-  pointer-events: none;
+  text-decoration: none;
 }
 
 .mention-chip--file,
 .mention-chip--conversation,
+.mention-chip--toolkit,
 .mention-chip--browser {
   color: var(--accent);
 }
@@ -4709,6 +4701,14 @@
   height: 14px;
 }
 
+.mention-chip__icon--agent,
+.mention-chip__icon--toolkit {
+  flex-basis: 16px;
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+}
+
 .mention-chip__label {
   min-width: 0;
   /* Clip long labels while retaining their text baseline beside the user's words. */
@@ -4719,12 +4719,17 @@
 .mention-chip[role="button"] {
   cursor: pointer;
 }
-.mention-chip[role="button"]:hover::after {
-  background: currentColor;
+.mention-chip:focus {
+  outline: none;
 }
-.mention-chip[role="button"]:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.mention-chip:focus-visible {
+  background: var(--link-active-bg);
+  box-shadow: none;
+}
+.mention-chip::selection,
+.mention-chip *::selection {
+  background: var(--link-active-bg);
+  color: inherit;
 }
 
 .mention-chip--dir {
@@ -5526,13 +5531,18 @@
   padding: 0 var(--space-3);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
-  background: var(--bg-elevated);
+  background: transparent;
   color: var(--fg-strong);
   font-size: 12px;
-  box-shadow: var(--shadow-control);
+  box-shadow: none;
 }
 
-.btn:hover:not(:disabled) {
+/* Neutral feedback must not replace the fill of semantic button variants. */
+.btn:where(:not(.btn--primary, .btn--danger, .btn--danger-ghost)):hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.btn:where(:not(.btn--primary, .btn--danger, .btn--danger-ghost)):active:not(:disabled) {
   background: var(--bg-active);
 }
 
@@ -5544,14 +5554,15 @@
 }
 
 .btn--primary:hover:not(:disabled) {
-  filter: brightness(1.12);
-}
-
-/* 自定义色的悬停令牌已保证文字对比；再次 brightness 会破坏该保证。 */
-[data-accent='custom'] .btn--primary:hover:not(:disabled) {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
-  filter: none;
+  color: var(--accent-fg);
+}
+
+.btn--primary:active:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
 }
 
 .btn--danger {
@@ -5559,6 +5570,19 @@
   border-color: var(--danger);
   color: var(--danger-contrast);
   box-shadow: none;
+}
+
+/* Danger wins when a confirmation uses both primary and danger classes. */
+.btn--danger:hover:not(:disabled) {
+  background: var(--danger-hover);
+  border-color: var(--danger-hover);
+  color: var(--danger-contrast);
+}
+
+.btn--danger:active:not(:disabled) {
+  background: var(--danger-active);
+  border-color: var(--danger-active);
+  color: var(--danger-contrast);
 }
 
 /* ==================== 输出面板 ==================== */
@@ -6639,8 +6663,10 @@ select.field__input {
   border-color: var(--border-strong);
 }
 
-.btn--danger-ghost:hover:not(:disabled) {
+.btn--danger-ghost:hover:not(:disabled),
+.btn--danger-ghost:active:not(:disabled) {
   background: var(--danger-soft);
+  color: var(--danger-fg);
 }
 
 /* ==================== 资源管理器 ==================== */
@@ -10504,15 +10530,6 @@ select.field__input {
 .btn {
   min-height: 30px;
   border-radius: var(--radius);
-}
-
-.btn:not(.btn--primary):not(.btn--danger) {
-  background: transparent;
-  box-shadow: none;
-}
-
-.btn:not(.btn--primary):not(.btn--danger):hover:not(:disabled) {
-  background: var(--bg-hover);
 }
 
 .segmented {

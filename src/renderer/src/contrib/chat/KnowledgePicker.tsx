@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type JSX } from 'react'
 import { getEngineSource, getEngineStorageKey } from '@renderer/core/engine/source'
+import { subscribeResourceCatalogueChanges } from '@renderer/core/engine/resource-catalogue'
 import {
   getKnowledgeBaseBindingIds,
   isKnowledgeSourceCurrent,
@@ -24,6 +25,8 @@ export function KnowledgePicker({ sessionId, source, disabled, selectedIds, onSe
   const [loadError, setLoadError] = useState('')
   const [bases, setBases] = useState<KnowledgeBase[]>([])
   const requestRef = useRef(0)
+  const [revision, setRevision] = useState(0)
+  useEffect(() => subscribeResourceCatalogueChanges(['knowledge'], () => setRevision(value => value + 1)), [source])
   const [selected, setSelected] = useState<string[]>(() => selectedIds ? [...selectedIds] : getKnowledgeBaseBindingIds(sessionId, getEngineStorageKey()))
 
   useEffect(() => {
@@ -62,7 +65,7 @@ export function KnowledgePicker({ sessionId, source, disabled, selectedIds, onSe
         if (requestRef.current === requestId && isKnowledgeSourceCurrent(sourceAtStart, getEngineSource())) setLoading(false)
       })
     return () => { requestRef.current += 1 }
-  }, [open, sessionId, source])
+  }, [open, sessionId, source, revision])
 
   const toggle = (id: string): void => {
     if (source !== getEngineSource()) return
