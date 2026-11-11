@@ -14,6 +14,23 @@ export interface OfficePageRenderInput {
 }
 export interface OfficePageRenderResult { dataUrl: string; width: 960; height: 540 }
 
+export type XlsxPreviewRegion = { sheet: number; name: string } & (
+  { kind: 'cells'; range: string } | { kind: 'chart'; title: string }
+)
+export interface XlsxPreviewSheet {
+  sheet: number
+  name: string
+  firstPage: number
+  lastPage: number
+  chartPages: number[]
+}
+export interface XlsxPreviewNavigation { sheets: XlsxPreviewSheet[] }
+export interface XlsxRenderedDocument {
+  pages: string[]
+  regions: XlsxPreviewRegion[]
+  navigation: XlsxPreviewNavigation
+}
+
 export function validateOfficePageRender(input: OfficePageRenderInput): void {
   if (!input || typeof input.html !== 'string' || input.html.length > 16 * 1024 * 1024 || !input.html.trim() ||
     (input.format !== 'docx' && input.format !== 'xlsx' && input.format !== 'pptx' && input.format !== 'pdf') ||

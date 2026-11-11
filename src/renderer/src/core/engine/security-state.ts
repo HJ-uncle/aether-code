@@ -148,7 +148,7 @@ export function createSecurityModeStore(transport: SecurityModeTransport) {
     return promise
   }
 
-  const change = (sessionId: string, mode: SecurityMode): Promise<void> => {
+  const change = (sessionId: string, mode: SecurityMode, assertBeforeWrite?: () => void): Promise<void> => {
     if (!sessionId) return Promise.reject(new Error('缺少会话 ID，无法切换安全模式'))
     const storageSource = getEngineStorageKey()
     const source = getEngineSource()
@@ -156,7 +156,9 @@ export function createSecurityModeStore(transport: SecurityModeTransport) {
     // A network failure may happen after the server applied a PUT. Neither optimistic
     // success nor restoring an earlier local mode is evidence of the server's state.
     publish({ sessionId, mode: null, loaded: false, loading: true, error: null })
-    const promise = write(sessionId, mode, source)
+    // Approval cards can expire while an earlier session write is in flight.
+    // Recheck their owner at the actual transport boundary, not only on click.
+    const promise = write(sessionId, mode, source, () => { assertBeforeWrite?.(); return true })
       .then(() => {
         // A confirmed selection still belongs to its original session after the
         // user switches sessions. Source changes must not persist a stale result.

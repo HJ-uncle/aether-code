@@ -1,0 +1,10 @@
+/* Product table rules; shared by live preview and passive review after migration. */
+.document-preview__table, .document-preview__table * { box-sizing: border-box; }
+.document-preview__table { border-collapse: separate; border-spacing: 0; font-size: 12px; table-layout: fixed; }
+.document-preview__table th, .document-preview__table td { height: 30px; padding: 5px 10px; border-right: 1px solid var(--document-grid); border-bottom: 1px solid var(--document-grid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.document-preview__table td { background: var(--document-paper); }
+.document-preview__table th { position: sticky; background: var(--document-header-bg); color: var(--document-header-fg); font-weight: 500; }
+.document-preview__table thead th { top: 0; z-index: 2; }
+.document-preview__table tr>th:first-child { left: 0; min-width: 52px; width: 52px; text-align: center; z-index: 1; }
+.document-preview__table thead tr>th:first-child { z-index: 3; }
+

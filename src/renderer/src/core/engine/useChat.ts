@@ -289,6 +289,8 @@ export function useChat(options: { commandOwner?: string } = {}): {
     options: Pick<SendOptions, 'sessionId' | 'model' | 'workspacePaths'> &
       Partial<Pick<SendOptions, 'thinkingMode' | 'subagentModel' | 'utilityModel'>>
   ) => Promise<void>
+  /** Recheck the selected durable request before a related UI side effect. */
+  assertPendingResponse: (requestId: string, sessionId: string, runId: string) => void
   abort: () => Promise<void>
   /** 清空当前会话；传入 sessionId 时同步删除引擎侧历史；失败时抛错且不清理界面 */
   clear: (sessionId?: string) => Promise<void>
@@ -1508,6 +1510,32 @@ export function useChat(options: { commandOwner?: string } = {}): {
     await resumeStream(sessionId)
   }, [resumeStream])
 
+  const pendingResponseTarget = useCallback((requestId: string, sessionId: string, expectedRunId?: string) => {
+    assertEngineSource(renderSource)
+    const target = messages.find(message => message.interactions?.some(item => item.requestId === requestId && item.status === 'pending'))
+    const pending = target?.interactions?.find(item => item.requestId === requestId && item.status === 'pending')
+    const currentRun = pending?.runId ? rootRunsRef.current.get(pending.runId) : undefined
+    const currentPending = currentRun?.pending.find(item => item.requestId === requestId)
+    // History keeps unanswered requests after cancellation. Only the currently
+    // bound waiting root can authorize an interaction, including before React
+    // has committed the terminal frame and unmounted its old card.
+    if (viewSessionRef.current !== sessionId || !target?.run || !pending?.runId || target.run.status !== 'waiting' ||
+      target.run.sessionId !== sessionId || pending.runId !== target.run.runId || target.runId !== pending.runId ||
+      activeRunIdRef.current !== pending.runId || (expectedRunId !== undefined && expectedRunId !== pending.runId) ||
+      currentRun?.sessionId !== sessionId || currentRun.status !== 'waiting' || currentPending?.status !== 'pending' ||
+      currentPending.toolCallId !== pending.toolCallId || currentPending.toolName !== pending.toolName || currentPending.kind !== pending.kind) {
+      throw new Error('待应答请求已变化，请重新加载会话')
+    }
+    return { target, pending }
+  }, [messages, renderSource])
+
+  const assertPendingResponse = useCallback((requestId: string, sessionId: string, runId: string): void => {
+    pendingResponseTarget(requestId, sessionId, runId)
+    if (activeStreamRef.current || approvalRefreshRef.current || stoppingRef.current || answeringRef.current.has(requestId)) {
+      throw new Error('当前请求正在更新或任务已停止，请等待会话同步')
+    }
+  }, [pendingResponseTarget])
+
   /**
    * 应答提问/授权。
    *
@@ -1527,16 +1555,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
       // callbacks must never retarget the hook to the session they captured.
       if (viewSessionRef.current !== options.sessionId) return
       if (activeStreamRef.current || approvalRefreshRef.current || answeringRef.current.has(requestId)) return
-      const target = messages.find(message => message.interactions?.some(item => item.requestId === requestId && item.status === 'pending'))
-      const pending = target?.interactions?.find(item => item.requestId === requestId && item.status === 'pending')
-      const currentRun = pending?.runId ? rootRunsRef.current.get(pending.runId) : undefined
-      const currentPending = currentRun?.pending.find(item => item.requestId === requestId)
-      if (!target?.run || !pending?.runId || target.run.status !== 'waiting' ||
-        target.run.sessionId !== options.sessionId || pending.runId !== target.run.runId || target.runId !== pending.runId ||
-        currentRun?.sessionId !== options.sessionId || currentRun.status !== 'waiting' || currentPending?.status !== 'pending' ||
-        currentPending.toolCallId !== pending.toolCallId || currentPending.toolName !== pending.toolName || currentPending.kind !== pending.kind) {
-        throw new Error('待应答请求已变化，请重新加载会话')
-      }
+      const { target, pending } = pendingResponseTarget(requestId, options.sessionId)
       answeringRef.current.add(requestId)
       activeRunIdRef.current = target.runId ?? null
       optimisticIdsRef.current = { assistantId: target.id }
@@ -1559,7 +1578,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
         setStreaming(false)
         throw error
       }
-    }, [messages, runStream, renderSource, recoveryScope, scopeIsCurrent]
+    }, [pendingResponseTarget, runStream, renderSource, recoveryScope, scopeIsCurrent]
   )
 
   const abort = useCallback((): Promise<void> => {
@@ -1946,6 +1965,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
     assignTodos,
     send,
     respond,
+    assertPendingResponse,
     abort,
     clear,
     loadHistory,

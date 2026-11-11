@@ -51,7 +51,7 @@ export async function captureOfficePage(input: OfficePageRenderInput, owner: Web
       if (png.length > 4 * 1024 * 1024) throw new Error('办公文件画面超过单次返回预算。')
       return { dataUrl: `data:image/png;base64,${png.toString('base64')}`, width: 960, height: 540 }
     }
-    return await Promise.race([work(), new Promise<never>((_resolve, reject) => { timer = setTimeout(() => { destroy(); reject(new Error('幻灯片绘制超时。')) }, 15_000) })])
+    return await Promise.race([work(), new Promise<never>((_resolve, reject) => { timer = setTimeout(() => { destroy(); reject(new Error('办公文件绘制超时。')) }, 15_000) })])
   } finally {
     clearTimeout(timer); owner.removeListener('destroyed', destroy); destroy(); active.delete(owner.id)
   }

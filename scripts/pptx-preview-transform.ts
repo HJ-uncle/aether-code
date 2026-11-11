@@ -22,13 +22,33 @@ function aetherChartFontSizes(doc) {
     legend: size(first(doc, "legend")), data: size(first(doc, "dLbls")) };
 }
 function aetherChartFont(el, kind, fallback) { return el.fontSizes?.[kind] || fallback; }
+// Chart text colors are independent from series fills. Keep the source text
+// properties (including theme references) instead of guessing from the slide.
+function aetherChartFontColors(doc, themeColors) {
+  const first = (root, name) => root?.getElementsByTagNameNS("*", name)[0];
+  const direct = (root, name) => Array.from(root?.childNodes || []).find(node => node.localName === name);
+  const valid = color => /^#[0-9a-f]{6}$/i.test(color || "") ? color : undefined;
+  const textColor = properties => {
+    for (const name of ["defRPr", "rPr", "endParaRPr"]) {
+      for (const run of Array.from(properties?.getElementsByTagNameNS("*", name) || [])) {
+        const color = valid(XmlHelper.getColorFromElement(direct(run, "solidFill"), themeColors));
+        if (color) return color;
+      }
+    }
+  };
+  const inherited = textColor(direct(doc.documentElement, "txPr")) || valid(themeColors?.tx1 || themeColors?.dk1);
+  const color = root => textColor(direct(root, "txPr")) || inherited;
+  return { category: color(first(doc, "catAx") || first(doc, "dateAx")), value: color(first(doc, "valAx")),
+    legend: color(first(doc, "legend")), data: color(first(doc, "dLbls")) };
+}
+function aetherChartColor(el, kind, fallback) { return el.fontColors?.[kind] || fallback; }
 function aetherChartShowsLabels(plotArea) {
   return Array.from(plotArea.getElementsByTagNameNS("*", "dLbls")).some(labels =>
     ["showVal", "showCatName", "showSerName", "showPercent", "showBubbleSize"].some(name =>
       Array.from(labels.getElementsByTagNameNS("*", name)).some(node => ["1", "true", "on"].includes(node.getAttribute("val")))));
 }
 var ChartExtractor = class {`)
-  replace('showLegend: parsed.showLegend,', 'showLegend: parsed.showLegend,\n\t\t\t\tfontSizes: aetherChartFontSizes(doc),')
+  replace('showLegend: parsed.showLegend,', 'showLegend: parsed.showLegend,\n\t\t\t\tfontSizes: aetherChartFontSizes(doc),\n\t\t\t\tfontColors: aetherChartFontColors(doc, themeColors),')
   replace('const showDataLabels = !!plotArea.getElementsByTagNameNS("*", "dLbls")[0];', 'const showDataLabels = aetherChartShowsLabels(plotArea);')
   // The upstream renderer hardcodes 10px for axis/data/legend text, ignoring
   // OOXML settings. Limit replacements to its chart region, never text boxes.
@@ -41,10 +61,10 @@ var ChartExtractor = class {`)
     chart = chart.split(before).join(after)
   }
   chartReplace('const padding = 24;', 'const padding = Math.max(24, aetherChartFont(el, "value", 10) * 3, aetherChartFont(el, "category", 12) * 2);', 1)
-  chartReplace('font-size="10" fill="#666"', 'data-pptx-chart-label="value" font-size="${aetherChartFont(el, "value", 10)}" fill="#666"', 5)
-  chartReplace('font-size="10" fill="#000"', 'data-pptx-chart-label="data" font-size="${aetherChartFont(el, "data", 10)}" fill="#000"', 7)
-  chartReplace('font-size="10" fill="#333"', 'data-pptx-chart-label="legend" font-size="${aetherChartFont(el, "legend", 10)}" fill="#333"', 1)
-  chartReplace('font-size="${labelSize}" fill="#333"', 'data-pptx-chart-label="category" font-size="${labelSize}" fill="#333"', 3)
+  chartReplace('font-size="10" fill="#666"', 'data-pptx-chart-label="value" font-size="${aetherChartFont(el, "value", 10)}" fill="${aetherChartColor(el, "value", "#666")}"', 5)
+  chartReplace('font-size="10" fill="#000"', 'data-pptx-chart-label="data" font-size="${aetherChartFont(el, "data", 10)}" fill="${aetherChartColor(el, "data", "#000")}"', 7)
+  chartReplace('font-size="10" fill="#333"', 'data-pptx-chart-label="legend" font-size="${aetherChartFont(el, "legend", 10)}" fill="${aetherChartColor(el, "legend", "#333")}"', 1)
+  chartReplace('font-size="${labelSize}" fill="#333"', 'data-pptx-chart-label="category" font-size="${labelSize}" fill="${aetherChartColor(el, "category", "#333")}"', 3)
   chartReplace('<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">', '<svg data-pptx-chart="${el.chartType}" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">', 1)
   chartReplace('const labelSize = Math.max(10, Math.min(12, chartH / (catCount * 2)));', 'const labelSize = aetherChartFont(el, "category", Math.max(10, Math.min(12, chartH / (catCount * 2))));', 1)
   chartReplace('const labelSize = Math.max(10, Math.min(12, chartW / (catCount * 4)));', 'const labelSize = aetherChartFont(el, "category", Math.max(10, Math.min(12, chartW / (catCount * 4))));', 2)

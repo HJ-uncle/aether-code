@@ -199,6 +199,8 @@ export interface BrowserElement {
   value?: string
   /** Main-page viewport CSS pixels; null means no layout position was available, omitted for old records. */
   bounds?: { x: number; y: number; width: number; height: number } | null
+  /** Geometry only, not clickability: false also includes normal scroll-reachable content. */
+  inViewport?: boolean
 }
 
 /** The whole visible CSS viewport, stored as PNG; dimensions describe actual image pixels. */

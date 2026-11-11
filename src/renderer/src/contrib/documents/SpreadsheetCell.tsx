@@ -1,0 +1,8 @@
+// Shared by the interactive preview and passive review so values and styles cannot drift.
+import { memo, type JSX } from 'react'
+import type { SheetCell } from '@renderer/contrib/documents/spreadsheet-preview-contract'
+export const SpreadsheetCell = memo(function Cell({ cell }: { cell: SheetCell }): JSX.Element | null {
+  if (cell.covered) return null
+  return <td title={cell.text} colSpan={cell.colSpan} rowSpan={cell.rowSpan} style={{ fontFamily: cell.fontFamily, fontSize: cell.fontSize === undefined ? undefined : cell.fontSize + 'pt', fontWeight: cell.bold ? 600 : undefined, fontStyle: cell.italic ? 'italic' : undefined, textAlign: cell.align, verticalAlign: cell.verticalAlign, whiteSpace: cell.wrap ? 'pre-wrap' : undefined, overflowWrap: cell.wrap ? 'anywhere' : undefined, color: cell.color, backgroundColor: cell.background, textDecoration: cell.underline && cell.strike ? 'underline line-through' : cell.underline ? 'underline' : cell.strike ? 'line-through' : undefined, borderTop: cell.borders?.top ? `${cell.borders.top.width || 1}px ${cell.borders.top.style || 'solid'} ${cell.borders.top.color || 'currentColor'}` : undefined, borderRight: cell.borders?.right ? `${cell.borders.right.width || 1}px ${cell.borders.right.style || 'solid'} ${cell.borders.right.color || 'currentColor'}` : undefined, borderBottom: cell.borders?.bottom ? `${cell.borders.bottom.width || 1}px ${cell.borders.bottom.style || 'solid'} ${cell.borders.bottom.color || 'currentColor'}` : undefined, borderLeft: cell.borders?.left ? `${cell.borders.left.width || 1}px ${cell.borders.left.style || 'solid'} ${cell.borders.left.color || 'currentColor'}` : undefined }}>{cell.text}</td>
+})
+

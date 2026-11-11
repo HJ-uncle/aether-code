@@ -4653,12 +4653,9 @@
   cursor: text;
 }
 
-/* 空内容时显示占位文字（contenteditable 没有 placeholder 属性）。
-   判空不能只靠 :empty：contenteditable 删掉最后一个字符后会留一个孤立的
-   <br> 当光标落脚点，DOM 非空，:empty 便永久失效、提示再也回不来。
-   第二个选择器把「只剩一个 <br>」也算作空（MentionInput 另有一层归一化兜底）。 */
-.mention-input:empty::before,
-.mention-input:has(> br):not(:has(> :not(br)))::before {
+/* MentionInput 清理语义为空的浏览器残留节点。仅按 DOM 真空判定：
+   :has(> br) 无法排除文本节点，会让正文加换行时再次显示占位文字。 */
+.mention-input:empty::before {
   content: attr(data-placeholder);
   color: var(--fg-faint);
   pointer-events: none;

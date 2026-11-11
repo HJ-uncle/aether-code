@@ -40,8 +40,9 @@
   outline: none;
   box-shadow: none;
 }
-.input-composer__input:empty::before,
-.input-composer__input:has(> br):not(:has(> :not(br)))::before {
+/* MentionInput removes empty browser residue. Element-only :has() checks
+ * cannot distinguish a lone <br> from authored text followed by <br>. */
+.input-composer__input:empty::before {
   content: attr(data-placeholder);
   color: var(--fg-faint);
   pointer-events: none;

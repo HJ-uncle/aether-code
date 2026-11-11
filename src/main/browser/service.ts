@@ -61,11 +61,12 @@ interface RuntimeResult<T> {
 
 /** Only layout fields may enter the public snapshot; CDP string-table/input-value data stays private. */
 interface DOMLayoutSnapshot {
+  strings: string[]
   documents: {
     scrollOffsetX?: number
     scrollOffsetY?: number
-    nodes: { backendNodeId?: number[] }
-    layout: { nodeIndex: number[]; bounds: number[][] }
+    nodes: { backendNodeId?: number[]; parentIndex?: number[]; attributes?: number[][] }
+    layout: { nodeIndex: number[]; bounds: number[][]; styles?: number[][] }
   }[]
 }
 
@@ -94,6 +95,24 @@ interface BrowserReadBudget {
 }
 
 const PAGE_FRAME_EXPRESSION = `({pageUrl:location.href,viewport:{width:innerWidth,height:innerHeight,deviceScaleFactor:devicePixelRatio,scrollX,scrollY}})`
+
+interface ClickPreparation { attempted: boolean; scrolled?: boolean }
+
+// Physical hit-testing differs from AX visibility: aria-hidden alone may hide a
+// visually usable control from assistive tech. Composed hidden/inert still apply.
+const CLICK_TARGET_CHECK_FUNCTION = `function(element){
+  if(!(element instanceof Element)||!element.isConnected) throw new Error('元素已离开页面');
+  if(element.matches(':disabled,[aria-disabled="true"]')) throw new Error('元素已禁用');
+  const own=getComputedStyle(element);
+  if(own.visibility==='hidden'||own.visibility==='collapse') throw new Error('元素不可见');
+  for(let node=element;node instanceof Element;node=node.parentElement||node.getRootNode().host){
+    if(node.hasAttribute('inert')||node.hasAttribute('hidden'))
+      throw new Error('元素位于已隐藏或关闭的区域');
+    const style=getComputedStyle(node);
+    if(style.display==='none'||style.contentVisibility==='hidden') throw new Error('元素不可见');
+  }
+  if(!element.getClientRects().length) throw new Error('元素不可见');
+}`
 
 // Both target modes capture geometry, URL and a bounded label in the same page evaluation.
 // Text extraction excludes form/editable contents so click diagnostics never read input values.
@@ -521,6 +540,7 @@ export class BrowserService {
   async execute(request: BrowserToolRequest, context: BrowserContext, signal?: AbortSignal,
     owner?: { execution: Readonly<BrowserExecutionIdentity>; requestId: string }): Promise<BrowserToolResult> {
     let dispatched = false
+    const clickPreparation: ClickPreparation = { attempted: false }
     let targetEntry: BrowserEntry | undefined
     const metadata = (success: boolean): NonNullable<BrowserToolResult['metadata']> => ({
       code: success ? dispatched ? 'BROWSER_OPERATION_COMPLETE' : 'BROWSER_OBSERVATION_COMPLETE' : dispatched ? 'BROWSER_OPERATION_UNCONFIRMED' : 'BROWSER_OPERATION_NOT_PERFORMED',
@@ -563,7 +583,7 @@ export class BrowserService {
           if (operationSignal?.aborted) throw operationSignal.reason ?? new Error('浏览器操作已取消')
         }
         const markDispatch = (): void => { assertOperation(); lease?.markInputDispatched(); dispatched = true }
-        return this.executeEntry(entry, request, assertOperation, operationSignal, markDispatch)
+        return this.executeEntry(entry, request, assertOperation, operationSignal, markDispatch, clickPreparation)
       }
       const task = entry.queue.then(() => {
         // Reads and waits do not seize the window. Inputs on different roots
@@ -579,7 +599,9 @@ export class BrowserService {
     } catch (error) {
       // Ownership may change while awaiting native work. Recheck it before
       // disclosing state, including when a user explicitly shares the tab away.
-      return { success: false, error: browserError(error), ...(targetEntry && contextsMatch(targetEntry.state.context, context) ? { output: this.state(targetEntry) } : {}), metadata: error instanceof BrowserInputQueueError
+      const preparation = request?.action === 'click' && !dispatched && clickPreparation.attempted
+        ? `；未发送鼠标点击。${clickPreparation.scrolled === true ? '定位时已滚动页面或容器' : clickPreparation.scrolled === false ? '定位时未发生滚动' : '已尝试定位滚动，是否发生滚动无法确认'}` : ''
+      return { success: false, error: browserError(error) + preparation, ...(targetEntry && contextsMatch(targetEntry.state.context, context) ? { output: this.state(targetEntry) } : {}), metadata: error instanceof BrowserInputQueueError
         ? { code: error.operationPerformed === false ? 'BROWSER_INPUT_NOT_PERFORMED' : 'BROWSER_INPUT_UNCONFIRMED', operationPerformed: error.operationPerformed }
         : metadata(false) }
     }
@@ -948,7 +970,7 @@ export class BrowserService {
     const tree = await this.command<{ nodes: AXNode[] }>(entry, 'Accessibility.getFullAXTree', undefined, budget)
     // A single layout capture also covers text nodes; resolving every AX node separately
     // would add hundreds of round trips and collect geometry from different page states.
-    const layout = await this.command<DOMLayoutSnapshot>(entry, 'DOMSnapshot.captureSnapshot', { computedStyles: [] }, budget)
+    const layout = await this.command<DOMLayoutSnapshot>(entry, 'DOMSnapshot.captureSnapshot', { computedStyles: ['display', 'content-visibility'] }, budget)
     const metrics = await this.command<PageLayoutMetrics>(entry, 'Page.getLayoutMetrics', undefined, budget)
     const page = await this.evaluate<BrowserPageFrame & { text: string }>(entry,
       `({...${PAGE_FRAME_EXPRESSION},text:(document.body?.innerText||'').slice(0,${MAX_TEXT + 1})})`, budget)
@@ -963,6 +985,29 @@ export class BrowserService {
     }).find(scale => Number.isFinite(scale) && scale > 0)
     if (layoutScale === undefined) throw new Error('无法读取页面布局比例，请重新读取快照')
     const boundsByNode = new Map<number, NonNullable<BrowserElement['bounds']>>()
+    const hiddenNodes = new Set<number>()
+    // Preserve normal below-the-fold controls. Only explicit hidden ancestry is
+    // removed; a viewport flag below describes geometry without promising a hit.
+    for (const captured of layout.documents) {
+      const hidden = new Set<number>(), styleHidden = new Set<number>()
+      for (let index = 0; index < captured.layout.nodeIndex.length; index += 1) {
+        const styles = captured.layout.styles?.[index]
+        if (styles && (layout.strings[styles[0]] === 'none' || layout.strings[styles[1]] === 'hidden')) styleHidden.add(captured.layout.nodeIndex[index])
+      }
+      for (let index = 0; index < (captured.nodes.backendNodeId?.length ?? 0); index += 1) {
+        const attributes = captured.nodes.attributes?.[index] ?? []
+        let explicitlyHidden = styleHidden.has(index)
+        for (let attr = 0; attr < attributes.length; attr += 2) {
+          const name = layout.strings[attributes[attr]], value = layout.strings[attributes[attr + 1]]
+          explicitlyHidden ||= name === 'hidden' || name === 'inert' || name === 'aria-hidden' && value?.toLowerCase() === 'true'
+        }
+        // DOMSnapshot's flattened tree visits each parent before its children.
+        if (explicitlyHidden || hidden.has(captured.nodes.parentIndex?.[index] ?? -1)) {
+          hidden.add(index)
+          hiddenNodes.add(captured.nodes.backendNodeId![index])
+        }
+      }
+    }
     // CDP guarantees documents[0] is the root document. Child-frame bounds use a
     // different coordinate space, so never label them as main-page viewport positions.
     const document = layout.documents[0]
@@ -998,11 +1043,15 @@ export class BrowserService {
     entry.refs.clear()
     const elements: BrowserElement[] = []
     for (const node of tree.nodes) {
-      if (node.ignored) continue
+      if (node.ignored || node.backendDOMNodeId && hiddenNodes.has(node.backendDOMNodeId)) continue
       const role = node.role?.value ?? ''
       const name = text(node.name?.value, 1000)
       if (!role || (['generic', 'none', 'InlineTextBox'].includes(role) && !name)) continue
       const element: BrowserElement = { role, name, bounds: node.backendDOMNodeId ? boundsByNode.get(node.backendDOMNodeId) ?? null : null }
+      if (element.bounds) {
+        const { x, y, width, height } = element.bounds
+        element.inViewport = width > 0 && height > 0 && x < page.viewport.width && y < page.viewport.height && x + width > 0 && y + height > 0
+      }
       if (node.backendDOMNodeId) {
         element.ref = `${navigationId}:${node.backendDOMNodeId}`
         entry.refs.set(element.ref, node.backendDOMNodeId)
@@ -1119,7 +1168,7 @@ export class BrowserService {
       width: png.readUInt32BE(16), height: png.readUInt32BE(20), viewport }
   }
 
-  private async executeEntry(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal, markDispatch = (): void => {}): Promise<unknown> {
+  private async executeEntry(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal, markDispatch = (): void => {}, clickPreparation: ClickPreparation = { attempted: false }): Promise<unknown> {
     if (!['navigate', 'close', 'network', 'network_detail', 'console'].includes(request.action)) {
       await this.ensureInitialized(entry)
       assertActive()
@@ -1139,7 +1188,7 @@ export class BrowserService {
         await this.applyViewport(entry); this.changed(entry); return this.snapshot(entry, { deadline: Infinity, assertActive, signal })
       }
       case 'click': {
-        const interaction = await this.click(entry, request, assertActive, signal, markDispatch)
+        const interaction = await this.click(entry, request, assertActive, signal, markDispatch, clickPreparation)
         return { ...await this.postActionSnapshot(entry, assertActive, signal), interaction }
       }
       case 'fill': await this.fill(entry, request, assertActive, signal, markDispatch); return this.postActionSnapshot(entry, assertActive, signal)
@@ -1279,7 +1328,7 @@ export class BrowserService {
     } finally { this.command(entry, 'Runtime.releaseObject', { objectId }).catch(() => undefined) }
   }
 
-  private async click(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal, markDispatch = (): void => {}): Promise<BrowserClickInteraction> {
+  private async click(entry: BrowserEntry, request: BrowserToolRequest, assertActive: () => void, signal?: AbortSignal, markDispatch = (): void => {}, preparation: ClickPreparation = { attempted: false }): Promise<BrowserClickInteraction> {
     const navigationId = entry.state.navigationId
     await this.focus(entry, assertActive, signal)
     this.assertInputVisible(entry, assertActive)
@@ -1288,16 +1337,47 @@ export class BrowserService {
       const objectId = await this.elementObject(entry, request)
       try {
         this.assertInputVisible(entry, assertActive)
-        markDispatch()
+        const preflight = await this.command<RuntimeResult<unknown>>(entry, 'Runtime.callFunctionOn', { objectId, returnByValue: true,
+          functionDeclaration: `function(){(${CLICK_TARGET_CHECK_FUNCTION})(this)}` })
+        if (preflight.exceptionDetails) throw new Error(preflight.exceptionDetails.exception?.description ?? preflight.exceptionDetails.text ?? '元素不可见')
+        this.assertInputVisible(entry, assertActive)
+        // A scroll is observable preparation, not a dispatched click. Keep it
+        // separate even when cancellation wins before CDP returns its result.
+        preparation.attempted = true
         capture = await this.command<RuntimeResult<unknown>>(entry, 'Runtime.callFunctionOn', { objectId, returnByValue: false, functionDeclaration: `function(){
-          if (!(this instanceof Element) || !this.isConnected) throw new Error('元素已离开页面');
-          if (this.matches(':disabled,[aria-disabled="true"]')) throw new Error('元素已禁用');
-          this.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
-          const r=this.getBoundingClientRect(); if(!r.width||!r.height) throw new Error('元素不可见');
-          const x=Math.max(0,Math.min(innerWidth-1,r.x+r.width/2)),y=Math.max(0,Math.min(innerHeight-1,r.y+r.height/2));
-          const top=document.elementFromPoint(x,y); if(top!==this&&!this.contains(top)) throw new Error('元素被其他内容遮挡');
-          return {element:this,context:(${CLICK_CONTEXT_FUNCTION})(this,x,y)};
+          const ancestors=[];
+          for(let node=this;node instanceof Element;node=node.parentElement||node.getRootNode().host)
+            ancestors.push({node,x:node.scrollLeft,y:node.scrollTop});
+          const beforeX=scrollX,beforeY=scrollY;
+          let context,error;
+          try{
+            (${CLICK_TARGET_CHECK_FUNCTION})(this);
+            this.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
+            (${CLICK_TARGET_CHECK_FUNCTION})(this);
+            const visible=Array.from(this.getClientRects()).map(r=>({left:Math.max(0,r.left),right:Math.min(innerWidth,r.right),
+              top:Math.max(0,r.top),bottom:Math.min(innerHeight,r.bottom)})).find(r=>r.right>r.left&&r.bottom>r.top);
+            if(!visible) throw new Error('元素在视口外，定位滚动后仍不可见；区域可能已关闭，请重新读取快照');
+            const x=(visible.left+visible.right)/2,y=(visible.top+visible.bottom)/2;
+            const top=document.elementFromPoint(x,y);
+            if(top!==this&&!this.contains(top)) throw new Error('元素被其他内容遮挡');
+            context=(${CLICK_CONTEXT_FUNCTION})(this,x,y);
+          }catch(cause){error=String(cause?.message||cause);}
+          const scrolled=scrollX!==beforeX||scrollY!==beforeY||ancestors.some(item=>item.node.scrollLeft!==item.x||item.node.scrollTop!==item.y);
+          return {element:this,context,error,scrolled};
         }` })
+        if (capture.result?.objectId) {
+          try {
+            const state = await this.command<RuntimeResult<{ scrolled: boolean; error?: string }>>(entry, 'Runtime.callFunctionOn', {
+              objectId: capture.result.objectId, returnByValue: true, functionDeclaration: 'function(){return {scrolled:this.scrolled,error:this.error}}'
+            })
+            if (state.exceptionDetails || typeof state.result?.value?.scrolled !== 'boolean') throw new Error('无法确认定位滚动结果')
+            preparation.scrolled = state.result.value.scrolled
+            if (state.result.value.error) throw new Error(state.result.value.error)
+          } catch (error) {
+            this.command(entry, 'Runtime.releaseObject', { objectId: capture.result.objectId }).catch(() => undefined)
+            throw error
+          }
+        }
       } finally { this.command(entry, 'Runtime.releaseObject', { objectId }).catch(() => undefined) }
     } else {
       if (!Number.isFinite(request.x) || !Number.isFinite(request.y) || request.x! < 0 || request.y! < 0) throw new Error('点击坐标无效')
@@ -1330,6 +1410,7 @@ export class BrowserService {
           throw new Error('页面视口已变化，请重新读取快照后点击');
         const top=document.elementFromPoint(context.x,context.y);
         if(!element){if(top) throw new Error('点击目标已变化，请重新读取快照后点击');return true;}
+        (${CLICK_TARGET_CHECK_FUNCTION})(element);
         if(!element.isConnected||top!==element&&!element.contains(top)) throw new Error('点击目标已变化，请重新读取快照后点击');
         const bounds=element.getBoundingClientRect();
         if(context.target?.bounds&&Object.keys(context.target.bounds).some(key=>bounds[key]!==context.target.bounds[key]))

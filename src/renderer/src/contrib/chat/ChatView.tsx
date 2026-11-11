@@ -186,7 +186,8 @@ export function ChatView(): JSX.Element {
   const canExecute = ready && sessionModelReady
   const taskActive = streaming || stopping || hasSessionWork(sessionId)
   const followupRun = useMemo(() => rootFollowupRun(messages, sessionId, sessionModelReady ? sessionModel.runId : undefined), [messages, sessionId, sessionModelReady, sessionModel])
-  const rootAccepting = taskActive && !stopping && Boolean(followupRun && ['running', 'waiting'].includes(followupRun.status))
+  const rootWaiting = followupRun?.status === 'waiting'
+  const rootAccepting = taskActive && !stopping && !rootWaiting && followupRun?.status === 'running'
   const rootFollowup = useRootFollowup({ sessionId, rootRunId: followupRun?.runId, source: sourceEpoch,
     active: rootAccepting, ready: canExecute && appMode === 'code', toolProfile: 'code' })
   const immediateIntent = taskActive && rootFollowup.delivery === 'current'
@@ -1751,7 +1752,7 @@ export function ChatView(): JSX.Element {
                 || (immediateIntent && (!rootFollowupCanSubmit(rootAccepting, rootFollowup.capability) || Boolean(rootFollowupLimitation(mentionsRef.current, attach.attachments))))} onClick={submit} />
           </>} />
         </InputComposer>
-          <RootFollowupFeedback key={JSON.stringify([sourceEpoch, sessionId])} controller={rootFollowup} active={taskActive} limitation={!rootAccepting && taskActive ? '正在确认当前任务是否可接收补充，草稿已保留。' : rootFollowupLimitation(mentionsRef.current, attach.attachments)}
+          <RootFollowupFeedback key={JSON.stringify([sourceEpoch, sessionId])} controller={rootFollowup} active={taskActive} limitation={rootWaiting ? '请先处理上方确认，任务恢复后可立即补充；草稿已保留。' : !rootAccepting && taskActive ? '正在确认当前任务是否可接收补充，草稿已保留。' : rootFollowupLimitation(mentionsRef.current, attach.attachments)}
             onFocusInput={() => inputRef.current?.focus()}
             fallbackHint={!ready ? '引擎尚未就绪，草稿会保留。' : taskActive && !immediateIntent ? 'Enter 排到下一轮 · Shift + Enter 换行' : 'Enter 发送 · Shift + Enter 换行'}
             onResolve={resolveRootFollowup}

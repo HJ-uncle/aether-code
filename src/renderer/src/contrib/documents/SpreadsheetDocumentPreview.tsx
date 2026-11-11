@@ -1,21 +1,17 @@
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type JSX, type UIEvent } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type JSX, type UIEvent } from 'react'
 import { spreadsheetColumn } from './document-kind'
 import { PreviewCapabilityNotice, PreviewMessage } from './preview-controls'
-import type { SheetCell, SheetLayout } from './spreadsheet-preview-contract'
+import type { SheetLayout } from './spreadsheet-preview-contract'
 import { bufferedSpreadsheetRange, buildSpreadsheetAxis, spreadsheetAxisIndex } from './spreadsheet-page'
 import { acquireSpreadsheetSession, getSpreadsheetSession, subscribeSpreadsheetSessions } from './spreadsheet-preview-session'
 import { Select } from '@renderer/workbench/Select'
 import { SpreadsheetChart } from './SpreadsheetChart'
+import { SpreadsheetCell } from './SpreadsheetCell'
 
 const HEADER_HEIGHT = 30
 const ROW_HEADER_WIDTH = 52
 const OVERSCAN_ROWS = 8
 const OVERSCAN_COLUMNS = 3
-
-const Cell = memo(function Cell({ cell }: { cell: SheetCell }): JSX.Element | null {
-  if (cell.covered) return null
-  return <td title={cell.text} colSpan={cell.colSpan} rowSpan={cell.rowSpan} style={{ fontFamily: cell.fontFamily, fontSize: cell.fontSize === undefined ? undefined : cell.fontSize + 'pt', fontWeight: cell.bold ? 600 : undefined, fontStyle: cell.italic ? 'italic' : undefined, textAlign: cell.align, verticalAlign: cell.verticalAlign, whiteSpace: cell.wrap ? 'pre-wrap' : undefined, color: cell.color, backgroundColor: cell.background, textDecoration: cell.underline && cell.strike ? 'underline line-through' : cell.underline ? 'underline' : cell.strike ? 'line-through' : undefined, borderTop: cell.borders?.top ? `${cell.borders.top.width || 1}px ${cell.borders.top.style || 'solid'} ${cell.borders.top.color || 'currentColor'}` : undefined, borderRight: cell.borders?.right ? `${cell.borders.right.width || 1}px ${cell.borders.right.style || 'solid'} ${cell.borders.right.color || 'currentColor'}` : undefined, borderBottom: cell.borders?.bottom ? `${cell.borders.bottom.width || 1}px ${cell.borders.bottom.style || 'solid'} ${cell.borders.bottom.color || 'currentColor'}` : undefined, borderLeft: cell.borders?.left ? `${cell.borders.left.width || 1}px ${cell.borders.left.style || 'solid'} ${cell.borders.left.color || 'currentColor'}` : undefined }}>{cell.text}</td>
-})
 
 function dimensions(rows: number, columns: number, layout?: SheetLayout): SheetLayout {
   return {
@@ -138,7 +134,7 @@ export default function SpreadsheetDocumentPreview({ data, sessionKey, onRetry }
               {firstColumn ? <td aria-hidden="true" colSpan={firstColumn} style={{ padding: 0, border: 0 }} /> : null}
               {Array.from({ length: endColumn - firstColumn }, (_, index) => firstColumn + index).map(column => {
                 const cell = range?.cells[row - firstRow]?.[column - firstColumn]
-                return cell ? <Cell key={column} cell={cell} /> : <td key={column} />
+                return cell ? <SpreadsheetCell key={column} cell={cell} /> : <td key={column} />
               })}
               {endColumn < columnCount ? <td aria-hidden="true" colSpan={columnCount - endColumn} style={{ padding: 0, border: 0 }} /> : null}
             </tr>)}

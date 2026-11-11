@@ -33,6 +33,8 @@ import { ATTACHMENTS_DIRECTORY } from '@shared/attachments'
 import { loadSessionThinkingMode, saveSessionThinkingMode, type SessionThinkingMode } from '../chat/session-thinking-store'
 import { loadSessionModelSelection, resolveSessionComposerModel, saveSessionModelSelection, type SessionModelSelection } from '../chat/session-model-store'
 import { requestedThinkingMode } from '../chat/session-request-config'
+import { rootFollowupRun } from '../chat/root-followup'
+import { normalizeRunPending, type PendingInteraction } from '@renderer/core/engine/pending'
 import type { AgentCollaborator, SubagentRun } from '@shared/subagent'
 import { createWorkStatusDiscovery, pollWorkTaskStatuses, workTaskActivityFromRun, workTaskRunAdmitted, workTaskRunPatch } from './work-status-poller'
 import { cancelWorkTask } from './work-task-cancel'
@@ -542,13 +544,14 @@ export function useWorkController() {
     artifactCache.current = { scope, value: next }
     return next
   }, [activeId, messages, source, chat.commandJobs])
-  const pending = useMemo(
-    () =>
-      messages
-        .flatMap((message) => message.interactions ?? (message.pending ? [message.pending] : []))
-        .filter((item) => item.status !== 'answered'),
-    [messages]
-  )
+  const workspaceRunId = restored && chat.sessionModel?.source === epoch && chat.sessionModel.sessionId === activeId ? chat.sessionModel.runId : undefined
+  const currentRun = useMemo(() => rootFollowupRun(messages, activeId, workspaceRunId), [messages, activeId, workspaceRunId])
+  // Durable unanswered requests remain in the transcript after cancellation;
+  // they are history, not actionable approvals for this or a later root.
+  const pending = useMemo(() => currentRun?.status === 'waiting'
+    ? currentRun.pending.filter(item => item.status === 'pending').map(item => normalizeRunPending(item, currentRun.runId))
+      .filter((item): item is PendingInteraction => item !== null)
+    : [], [currentRun])
 
   const recoveredSources = useRef(new Map<string, Set<string>>())
   useEffect(() => {
@@ -1120,6 +1123,13 @@ export function useWorkController() {
     [activeTask, restored, chatRespond, optionsFor]
   )
 
+  const assertPendingResponse = useCallback((requestId: string, runId: string): void => {
+    if (!activeTask || !restored || getWorkState(source).activeTaskId !== activeTask.id) {
+      throw new Error('当前任务已变化，请在当前会话重试')
+    }
+    chat.assertPendingResponse(requestId, activeTask.id, runId)
+  }, [activeTask, restored, source, chat.assertPendingResponse])
+
   const clearWorkspace = useCallback((): void => {
     if (epoch !== getEngineSource() || isRemoteEngine()) return
     const latest = getWorkState(source)
@@ -1432,12 +1442,14 @@ export function useWorkController() {
     enqueueNextTurn,
     nextQueueModelId: nextModel?.source === source && nextModel.taskId === activeId ? nextModel.modelId : modelId,
     setNextQueueModel: (value: string) => { if (activeId) setNextModel({ source, taskId: activeId, modelId: canonicalModelId(value) }) },
-    workspaceRunId: restored && chat.sessionModel?.source === epoch && chat.sessionModel.sessionId === activeId ? chat.sessionModel.runId : undefined,
+    workspaceRunId,
+    currentRun,
     contextCompaction: restored && chat.sessionModel?.source === epoch && chat.sessionModel.sessionId === activeId ? chat.sessionModel.compaction : undefined,
     todos: restored ? chat.todos : [],
     assignTodos: restored ? chat.assignTodos : () => new Map(),
     artifacts,
     pending,
+    assertPendingResponse,
     streaming,
     pendingInitialStart: preparing,
     launching: Boolean(engineReady && !error && !chat.historyError && activeId && pendingStart.current?.source === source && pendingStart.current.id === activeId),

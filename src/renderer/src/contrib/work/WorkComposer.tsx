@@ -95,9 +95,14 @@ export function WorkComposer({
   draftLiveRef.current = draft
   taskLiveRef.current = controller.activeTask?.id ?? 'home'
   const awaitingAnswer = controller.pending.length > 0
-  const taskActive = !home && (controller.streaming || controller.launching || awaitingAnswer || ['running', 'waiting'].includes(controller.activeTask?.status ?? ''))
+  const terminal = controller.currentRun && !['running', 'waiting'].includes(controller.currentRun.status)
+  const taskActive = !home && (controller.launching || controller.pendingInitialStart || !terminal &&
+    (controller.streaming || awaitingAnswer || ['running', 'waiting'].includes(controller.activeTask?.status ?? '')))
   const followupRun = useMemo(() => rootFollowupRun(controller.messages, controller.activeTask?.id ?? null, controller.workspaceRunId), [controller.messages, controller.activeTask?.id, controller.workspaceRunId])
-  const rootAccepting = taskActive && !controller.stopping && Boolean(followupRun && ['running', 'waiting'].includes(followupRun.status))
+  // Approval pauses close the current controller attempt. Keep the draft until
+  // the resumed run can supply a fresh target instead of posting to a dead one.
+  const rootWaiting = awaitingAnswer || followupRun?.status === 'waiting'
+  const rootAccepting = taskActive && !controller.stopping && !rootWaiting && followupRun?.status === 'running'
   const rootFollowup = useRootFollowup({ sessionId: controller.activeTask?.id ?? null, rootRunId: followupRun?.runId,
     source: getEngineSource(), active: rootAccepting, ready: controller.ready && controller.historyReady && appMode === 'work', toolProfile: 'general' })
   const immediateIntent = taskActive && rootFollowup.delivery === 'current'
@@ -613,7 +618,7 @@ export function WorkComposer({
             />
           </CompletionPopover>
       </InputComposer>
-      <RootFollowupFeedback key={JSON.stringify([getEngineSource(), controller.activeTask?.id])} controller={rootFollowup} active={taskActive} limitation={!rootAccepting && taskActive ? '正在确认当前任务是否可接收补充，草稿已保留。' : rootFollowupLimitation(mentionsRef.current, referencedAttachments)}
+      <RootFollowupFeedback key={JSON.stringify([getEngineSource(), controller.activeTask?.id])} controller={rootFollowup} active={taskActive} limitation={rootWaiting ? '请先处理上方确认，任务恢复后可立即补充；草稿已保留。' : !rootAccepting && taskActive ? '正在确认当前任务是否可接收补充，草稿已保留。' : rootFollowupLimitation(mentionsRef.current, referencedAttachments)}
         onFocusInput={() => inputRef.current?.focus()}
         fallbackHint={!controller.ready ? '引擎尚未就绪，草稿会保留。' : queueIntent ? 'Enter 排到下一轮 · Shift + Enter 换行' : taskActive ? '任务正在准备，草稿会保留。' : 'Enter 发送 · Shift + Enter 换行'}
         footerAction={<>

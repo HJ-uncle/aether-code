@@ -1676,6 +1676,8 @@ function Conversation({
                     onFileLink={onFileLink}
                     openFile={openActivityFile}
                     respond={respond}
+                    actionablePending={controller.pending}
+                    assertPendingResponse={controller.assertPendingResponse}
                     restartFailedTask={restartFailedTask}
                     restart={restartPresentations.get(message.id)}
                     canRestart={message.id === restartableMessageId && Boolean(message.run && ['failed', 'interrupted'].includes(message.run.status))}
@@ -1901,7 +1903,9 @@ export function WorkTurnFeedback({ controller, announce, openActivity, onVisibil
 /** Root cancellation stays discoverable when the conversation pane is hidden. */
 function WorkRootStop({ controller, compact = false }: { controller: WorkController; compact?: boolean }): JSX.Element | null {
   const stopping = controller.stopping
-  const active = controller.pendingInitialStart || controller.streaming || controller.launching || stopping || controller.pending.length > 0 || ['running', 'waiting'].includes(controller.activeTask?.status ?? '')
+  const terminal = controller.currentRun && !['running', 'waiting'].includes(controller.currentRun.status)
+  const active = controller.pendingInitialStart || controller.launching || !terminal &&
+    (controller.streaming || stopping || controller.pending.length > 0 || ['running', 'waiting'].includes(controller.activeTask?.status ?? ''))
   if (!active) return null
   return <button className={compact ? 'work-quiet-button work-run-stop' : 'btn btn--sm'} type="button"
     aria-label={stopping ? '正在停止任务' : '停止任务'} aria-busy={stopping} title={stopping ? '正在停止任务' : '停止当前任务'}
@@ -1956,6 +1960,8 @@ const WorkMessage = memo(function WorkMessage({
   onFileLink,
   openFile,
   respond,
+  actionablePending,
+  assertPendingResponse,
   restartFailedTask,
   restart,
   canRestart,
@@ -1982,6 +1988,8 @@ const WorkMessage = memo(function WorkMessage({
   onFileLink: (event: MouseEvent<HTMLElement>) => void
   openFile: (path: string) => void
   respond: WorkController['respond']
+  actionablePending: readonly PendingInteraction[]
+  assertPendingResponse: WorkController['assertPendingResponse']
   restartFailedTask: WorkController['restartFailedTask']
   restart?: WorkTaskRestartPresentation
   canRestart: boolean
@@ -1999,8 +2007,9 @@ const WorkMessage = memo(function WorkMessage({
   revealTool: ActivitySelection | null
 }): JSX.Element {
   const pending = useMemo(() =>
-    message.interactions?.filter((item) => item.status === 'pending') ??
-    (message.pending ? [message.pending] : []), [message.interactions, message.pending])
+    (message.interactions ?? (message.pending ? [message.pending] : [])).filter(item =>
+      actionablePending.some(current => current.runId === item.runId && current.requestId === item.requestId && current.toolCallId === item.toolCallId)),
+    [message.interactions, message.pending, actionablePending])
   return (
     <WorkMessageContent
       message={message}
@@ -2039,6 +2048,7 @@ const WorkMessage = memo(function WorkMessage({
           sessionId={taskId}
           disabled={!active || !canRespond}
           respond={respond}
+          assertPendingResponse={assertPendingResponse}
         />
       ))}
       {message.answered && <p className="work-note">已回复：{message.answered}</p>}
@@ -2050,12 +2060,14 @@ function WorkPending({
   pending,
   sessionId,
   disabled,
-  respond
+  respond,
+  assertPendingResponse
 }: {
   pending: PendingInteraction
   sessionId: string
   disabled: boolean
   respond: WorkController['respond']
+  assertPendingResponse: WorkController['assertPendingResponse']
 }): JSX.Element {
   const source = getEngineSource()
   const key = JSON.stringify([source, sessionId, pending.runId, pending.requestId, pending.toolCallId])
@@ -2081,26 +2093,33 @@ function WorkPending({
   const answers = pending.groups.map((_, index) =>
     [...(values[index] ?? []), freeText[index]?.trim()].filter(Boolean).join('、')
   )
-  const blocked = disabled || submitting !== null || !pending.requestId
+  const blocked = disabled || submitting !== null || !pending.requestId || !pending.runId
   const reply = async (replyValues: string[], fullAccess = false): Promise<void> => {
     const operation = scope.current
     const isCurrent = (): boolean => Boolean(operation?.current && !disabled &&
       source === getEngineSource() && isEngineReady() && getAppMode() === 'work' &&
       getWorkState(getEngineStorageKey()).activeTaskId === sessionId)
-    if (busy.current || !isCurrent() || !pending.requestId || (fullAccess && !isPermission)) return
+    const requestId = pending.requestId, runId = pending.runId
+    if (busy.current || !isCurrent() || !requestId || !runId || (fullAccess && !isPermission)) return
+    const assertCurrent = (): void => {
+      if (!isCurrent()) throw new Error('当前确认请求已结束或变化')
+      assertPendingResponse(requestId, runId)
+    }
     busy.current = true
     setSubmitting(fullAccess ? 'full-access' : 'reply')
     setError('')
     let modeChanged = false
     try {
+      assertCurrent()
       if (fullAccess) {
-        await changeSecurityMode(sessionId, 'full-access')
+        await changeSecurityMode(sessionId, 'full-access', assertCurrent)
         modeChanged = true
       }
       // The controller wrapper follows the selected task. Never let a late
       // mode update submit the old approval through a different task's controller.
       if (!isCurrent()) return
-      await respond(pending.requestId, replyValues)
+      assertCurrent()
+      await respond(requestId, replyValues)
     } catch (reason) {
       if (isCurrent()) {
         const detail = reason instanceof Error ? reason.message : String(reason)
