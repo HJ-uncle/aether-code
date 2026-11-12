@@ -95,7 +95,7 @@ export function AutomationsView(props: {
   return <section className="automations-view" aria-label="自动化管理">
     <header className="automations-toolbar"><div><p>让重复工作按计划完成，运行与结果随时可查看。</p></div><div>
       {capabilities?.persistentNotifications ? <button className="btn" type="button" aria-pressed={inbox} onClick={() => setInbox(value => !value)}>通知{unreadCount ? <span className="automation-unread">{unreadCount}</span> : null}</button> : null}
-      <button className="btn" type="button" disabled={!ready || loading} onClick={() => void refresh()} aria-label="刷新自动化"><Icon name="restart" size={14} /></button>
+      <button className="btn" type="button" disabled={!ready || loading} onClick={() => void refresh()} aria-label="刷新自动化"><Icon name="refresh" size={14} /></button>
       <button className="btn btn--primary" type="button" disabled={!ready || loading || !currentScope || (!capabilities && !currentSessionId)} title={!capabilities && !currentSessionId ? '旧版引擎需要已有聊天，新版引擎支持独立新建' : undefined} onClick={() => open()}><Icon name="plus" size={15} />新建自动化</button>
     </div></header>
     {error ? <div className="automation-error" role="alert"><span>{error}</span><button className="btn btn--sm" type="button" disabled={loading} onClick={() => void refresh()}>重试</button></div> : null}

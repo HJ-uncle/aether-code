@@ -1,6 +1,5 @@
 import type { EngineSnapshot } from '../shared/ipc'
 import { WORK_QUEUE_IPC, type WorkQueueRequest, type WorkQueueInvokeResult } from '../shared/work-next-turn-api'
-import { CODE_QUEUE_IPC, type CodeQueueRequest } from '../shared/code-next-turn-api'
 import { NextTurnQueueError, type NextTurnQueueScope } from '../shared/next-turn-queue'
 import { assertQueueJsonValue, sameQueueScope } from '../shared/next-turn-queue-state'
 import type { NextTurnQueueRepository } from './next-turn-queue-repository'
@@ -12,7 +11,7 @@ export interface WorkQueueOwnerEvent { sender: { isDestroyed(): boolean } }
 export interface WorkQueueOwnerPorts {
   engine: { snapshot(): EngineSnapshot; signal(): AbortSignal; subscribe(listener: () => void): () => void }
   ipc: {
-    handle(channel: string, listener: (event: WorkQueueOwnerEvent, input: WorkQueueRequest | CodeQueueRequest) => Promise<WorkQueueInvokeResult>): void
+    handle(channel: string, listener: (event: WorkQueueOwnerEvent, input: WorkQueueRequest) => Promise<WorkQueueInvokeResult>): void
     removeHandler(channel: string): void
   }
   store: NextTurnQueueRepository
@@ -47,8 +46,8 @@ const sourceMatches = (scope: NextTurnQueueScope, snapshot: EngineSnapshot): boo
 }
 
 /** Electron and restart contracts run this same owned IPC controller with different external ports. */
-export function createWorkNextTurnOwner(ports: WorkQueueOwnerPorts, owner: NextTurnQueueScope['owner'] = 'work') {
-  const channels = owner === 'code' ? CODE_QUEUE_IPC : WORK_QUEUE_IPC
+export function createWorkNextTurnOwner(ports: WorkQueueOwnerPorts) {
+  const channels = WORK_QUEUE_IPC
   const service = new NextTurnQueueMutationService(ports.store, ports.gateway)
   const dispatcher = new NextTurnDispatcher(service, ports.gateway, ports.changed)
   const clock = ports.clock ?? { now: () => Date.now(), schedule: (callback: () => void, delay: number) => setTimeout(callback, delay),
@@ -98,7 +97,7 @@ export function createWorkNextTurnOwner(ports: WorkQueueOwnerPorts, owner: NextT
         try {
           const scopes = await ports.store.listScopes()
           if (!current(candidate)) return
-          candidate.items = scopes.filter(scope => scope.owner === owner).map(scope => ({ scope: structuredClone(scope), status: 'pending', attempts: 0, nextAt: 0 }))
+          candidate.items = scopes.filter(scope => scope.owner === 'work').map(scope => ({ scope: structuredClone(scope), status: 'pending', attempts: 0, nextAt: 0 }))
           for (const item of candidate.items) if (!sourceMatches(item.scope, candidate.snapshot)) blocked(item, '此队列属于另一个引擎或账号，未自动投递')
           candidate.enumerated = true; delete candidate.error
         } catch (error) {
@@ -121,7 +120,7 @@ export function createWorkNextTurnOwner(ports: WorkQueueOwnerPorts, owner: NextT
       operation.finally(() => { restores.delete(operation); restore() }).catch(() => {})
     }
   }
-  const invoke = async (event: WorkQueueOwnerEvent, input: WorkQueueRequest | CodeQueueRequest) => {
+  const invoke = async (event: WorkQueueOwnerEvent, input: WorkQueueRequest) => {
     if (closing || event.sender.isDestroyed()) throw new NextTurnQueueError('AUTHORITY', 'Queue owner is unavailable')
     assertQueueJsonValue(input)
     if (!input || typeof input.taskId !== 'string' || !input.taskId || !input.expectedEngine
@@ -133,15 +132,7 @@ export function createWorkNextTurnOwner(ports: WorkQueueOwnerPorts, owner: NextT
     if (!action || typeof action !== 'object') throw new NextTurnQueueError('INVALID', 'Queue action is missing')
     switch (action.kind) {
       case 'restart':
-        if (owner !== 'work') throw new NextTurnQueueError('AUTHORITY', 'Task restart requires Work ownership')
         return dispatcher.restart(input.taskId, action.runId)
-      case 'set-connected':
-        if (owner !== 'code' || !ports.gateway.setConnected || typeof action.connected !== 'boolean') throw new NextTurnQueueError('INVALID', 'Connection binding is invalid')
-        await ports.gateway.setConnected(input.taskId, event.sender, action.connected)
-        return dispatcher.read(input.taskId)
-      case 'replace-submission': case 'retarget-model': case 'merge-pending':
-        if (owner !== 'code') throw new NextTurnQueueError('AUTHORITY', 'Code queue controls require Code ownership')
-        return dispatcher.changePending(input.taskId, action)
       case 'read': {
         const value = await dispatcher.read(input.taskId)
         const candidate = epoch

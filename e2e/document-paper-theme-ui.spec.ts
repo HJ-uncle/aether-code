@@ -305,18 +305,7 @@ test('Office scriptless iframe uses the shared menu, preserves exact copy and re
   await expect(copyItem()).toBeEnabled()
   await page.keyboard.press('Escape'); await expect(frame).toBeFocused()
 
-  await page.getByRole('tab', { name: 'Code 开发', exact: true }).click()
-  const hiddenFrame = page.locator('.document-preview[data-document-preview="docx"] .document-preview__frame').first()
-  await expect(hiddenFrame).toHaveCount(1); await expect(hiddenFrame).toBeHidden()
-  await hiddenFrame.evaluate(element => {
-    const child = (element as HTMLIFrameElement).contentDocument
-    child?.querySelector('main.document-page')?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 20 }))
-  })
-  await expect(menu()).toHaveCount(0)
-  await page.getByRole('tab', { name: 'Work 办公', exact: true }).click()
-  await expect(text).toBeVisible()
-  await text.click({ button: 'right' }); await expect(menu()).toBeVisible()
-  await page.keyboard.press('Escape')
+  // Code's hidden document surface was retired; Work remains the sole owner.
 })
 
 test('PDF text, complete text preview and image use shared document actions without stale selection', async ({}, info) => {

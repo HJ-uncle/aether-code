@@ -83,7 +83,7 @@ test('history and export retain original filenames and frozen labels', () => {
 })
 
 function receipt(id: string, path: string, hash = 'a'.repeat(64)): QueueAttachmentReceipt {
-  return { kind: 'local-workspace', scope: { source: { mode: 'embedded', endpoint: '', accountId: null }, tenantId: 't', namespace: { id: 'n', generation: 'g' }, owner: 'code', taskId: 's' },
+  return { kind: 'local-workspace', scope: { source: { mode: 'embedded', endpoint: '', accountId: null }, tenantId: 't', namespace: { id: 'n', generation: 'g' }, owner: 'work', taskId: 's' },
     attachmentId: id, referenceLabel: '图1', path, name: path, mime: 'image/png', bytes: 25, receiptId: path, sha256: hash }
 }
 

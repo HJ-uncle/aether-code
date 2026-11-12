@@ -197,7 +197,7 @@ async function seed(options: { locked?: boolean; page?: 'agents' | 'home'; selec
     localStorage.setItem('aether.app.mode', 'work')
     localStorage.setItem('aether.work.view.v1', JSON.stringify({ page: destination, collapsed: false, workspace: false, tab: 'files', pane: 'conversation', ratio: 50 }))
   }, { storageKey, task: seededTask, selectedId: options.selectedId, destination: options.page ?? 'agents', workspace })
-  await page.reload(); await expect(page.locator('.work-sidebar')).toContainText('引擎已连接')
+  await page.reload(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
   if ((options.page ?? 'agents') === 'agents') await expect(manager().getByRole('button', { name: `编辑 Agent ${alpha.name}`, exact: true })).toBeVisible()
 }
 async function setWindow(width: number, height: number): Promise<void> {

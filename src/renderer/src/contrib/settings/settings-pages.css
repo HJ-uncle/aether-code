@@ -798,38 +798,6 @@
   color: var(--accent);
 }
 
-.app-settings__scope {
-  display: inline-flex;
-  flex: none;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-inset);
-}
-
-.app-settings__scope button {
-  min-width: 52px;
-  height: 28px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--fg-muted);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.app-settings__scope button:hover {
-  color: var(--fg-strong);
-}
-
-.app-settings__scope button.is-active {
-  background: var(--bg-elevated);
-  color: var(--fg-strong);
-  box-shadow: var(--shadow-card);
-}
-
 .app-settings__search-results {
   position: absolute;
   top: calc(100% - 2px);
@@ -915,9 +883,6 @@
   .app-settings__search-wrap {
     flex-basis: 100%;
     max-width: none;
-  }
-  .app-settings__scope {
-    margin-left: auto;
   }
   .app-settings__search-results {
     right: 12px;

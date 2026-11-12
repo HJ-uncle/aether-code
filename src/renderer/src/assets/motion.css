@@ -135,16 +135,16 @@
     padding var(--motion-enter) var(--motion-ease);
 }
 :root :is(.work-sidebar__brand, .work-navigation__item > span, .work-new-task > span,
-  .work-sidebar__recent, .work-connection-status, .work-count) {
+  .work-sidebar__history, .work-count) {
   transition: opacity var(--motion-enter) var(--motion-ease), translate var(--motion-enter) var(--motion-ease),
     display var(--motion-exit) allow-discrete;
 }
 :root .work-view[data-collapsed='true']:not([data-nav-open='true'])
   :is(.work-sidebar__brand, .work-navigation__item > span, .work-new-task > span,
-    .work-sidebar__recent, .work-connection-status, .work-count) { opacity: 0; translate: -4px 0; }
+    .work-sidebar__history, .work-count) { opacity: 0; translate: -4px 0; }
 @starting-style {
   :root :is(.work-sidebar__brand, .work-navigation__item > span, .work-new-task > span,
-    .work-sidebar__recent, .work-connection-status, .work-count) { opacity: 0; translate: -4px 0; }
+    .work-sidebar__history, .work-count) { opacity: 0; translate: -4px 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -170,6 +170,8 @@ export interface UseAttachmentsResult {
   /** 移除一个已上传附件 */
   remove: (path: string) => void
   reorder: (ids: readonly string[]) => void
+  /** Move newly uploaded or legacy document receipts into the authored draft once. */
+  inlinePendingFiles: (insert: (file: ChatAttachment) => boolean) => void
   removeSubmitted: (submitted: readonly ChatAttachment[]) => void
   /** 清空（发送后调用） */
   clear: () => void
@@ -410,6 +412,7 @@ export function useAttachments(root: string | null, sessionId = '', imageOptions
       if (original && !attachmentsRef.current.includes(original)) throw new Error('原附件已被移除或发送，请重新添加编辑后的图片')
       const attachment: ChatAttachment = {
         attachmentId: original ? attachmentIdentity(original) : id,
+        ...(!imageOnly ? { inlineReference: true } : {}),
         path: 'relativePath' in result ? result.relativePath : result.path,
         ...('remoteUploadId' in result ? { remoteUploadId: result.remoteUploadId } : {}),
         name: file.name, type: file.type, size: result.size
@@ -457,6 +460,17 @@ export function useAttachments(root: string | null, sessionId = '', imageOptions
   const reorder = useCallback((ids: readonly string[]) => {
     setAttachments(previous => reorderAttachments(previous, ids))
   }, [setAttachments])
+  const inlinePendingFiles = useCallback((insert: (file: ChatAttachment) => boolean): void => {
+    if (!scope.active || scope !== scopeRef.current || scope.source !== getEngineSource()) return
+    const files = attachmentsRef.current.filter(file => !file.type.startsWith('image/') && !file.inlineReference)
+    if (!files.length) return
+    // Read the live receipt list, since a scope-restoring effect can run before
+    // React renders the new session's attachments. Persist only after the
+    // inserted mentions have reached the owner's draft callbacks.
+    const ids = new Set(files.filter(file => insert(file)).map(attachmentIdentity))
+    if (!ids.size) return
+    setAttachments(previous => previous.map(file => ids.has(attachmentIdentity(file)) ? { ...file, inlineReference: true } : file))
+  }, [scope, setAttachments])
   const removeSubmitted = useCallback((submitted: readonly ChatAttachment[]) => {
     setAttachments(prev => prev.filter(item => !submitted.includes(item)))
   }, [setAttachments])
@@ -473,6 +487,7 @@ export function useAttachments(root: string | null, sessionId = '', imageOptions
     pick,
     remove,
     reorder,
+    inlinePendingFiles,
     removeSubmitted,
     clear,
     restore,

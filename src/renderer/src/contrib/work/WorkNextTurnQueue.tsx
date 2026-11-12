@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState, type JSX } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react'
 import { MotionPresence } from '@renderer/workbench/MotionPresence'
 import { IconButton } from '@renderer/workbench/ui-primitives'
 import { Icon } from '@renderer/workbench/icons'
+import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
+import { getEngineSource } from '@renderer/core/engine/source'
+import { sameQueueScope } from '@shared/next-turn-queue-state'
 import { ComposerInput } from '../chat/InputComposer'
 import type { MentionInputHandle } from '../chat/MentionInput'
 import type { Mention } from '../chat/mention-context'
@@ -14,6 +17,15 @@ export function WorkNextTurnQueuePanel({ queue, scopeKey }: { queue: WorkNextTur
   const entries = visibleQueueEntries(queue.state), pending = entries.filter(entry => entry.phase === 'pending')
   const paused = Boolean(queue.state?.paused || queue.state?.recoveryBarrier)
   const current = entries.find(entry => entry.id === editing)
+  const source = getEngineSource()
+  const confirmationScope = useRef<{ current: boolean } | null>(null)
+  const latestQueue = useRef(queue)
+  latestQueue.current = queue
+  useLayoutEffect(() => {
+    const scope = { current: true }
+    confirmationScope.current = scope
+    return () => { scope.current = false }
+  }, [scopeKey, source])
   useEffect(() => { setEditing(null); setError(null); setExpanded(false) }, [scopeKey])
   useEffect(() => { if (current && current.phase === 'pending') { editor.current?.setDraft(current.envelope.draft.text, current.envelope.draft.mentions); editor.current?.focus() } }, [editing])
   const run = async (operation: () => Promise<unknown>) => { try { setError(null); await operation() } catch (cause) {
@@ -36,6 +48,23 @@ export function WorkNextTurnQueuePanel({ queue, scopeKey }: { queue: WorkNextTur
   }
   const save = () => { if (!current || current.phase !== 'pending') return
     void run(async () => { await queue.editDraft(current.id, current.revision, queuedDraft(text, mentions, current.envelope.draft.revision + 1)); closeEditor() }) }
+  const clearPending = async (): Promise<void> => {
+    if (queue.saving || !queue.state || !pending.length) return
+    const scope = confirmationScope.current, state = queue.state
+    const currentScope = (): boolean => Boolean(scope?.current && source === getEngineSource() &&
+      latestQueue.current.state && sameQueueScope(state.scope, latestQueue.current.state.scope))
+    if (!await confirmDialog({ title: '清空待发消息', body: `取消 ${pending.length} 条待发消息？正在执行的任务会继续。`, confirmText: '清空待发', danger: true }) || !currentScope()) return
+    setError(null)
+    try {
+      // Keep the confirmed queue revision. Its existing CAS rejects any new
+      // messages or edits that arrived while the confirmation was open.
+      await queue.mutate({ kind: 'clear-pending', at: Date.now() })
+    } catch (cause) {
+      if (!currentScope()) return
+      setError(cause instanceof Error ? cause.message : '操作未保存')
+      requestAnimationFrame(() => { if (currentScope()) errorRef.current?.focus() })
+    }
+  }
   // Recovery feedback belongs beside its failed turn, not in a second queue card.
   if (!entries.length && (!queue.error || queue.state?.entries.some(entry => entry.envelope.recovery))) return null
   const unknown = entries.some(entry => entry.phase === 'admission-unknown' || entry.phase === 'dispatching')
@@ -71,7 +100,7 @@ export function WorkNextTurnQueuePanel({ queue, scopeKey }: { queue: WorkNextTur
             </div></MotionPresence>
           </li> })}
       </ol>
-      {pending.length ? <div className="work-next-turn__footer"><span>逐条发送 · 暂停只影响后续消息</span><button type="button" className="btn btn--sm" disabled={queue.saving} onClick={() => { if (window.confirm(`取消 ${pending.length} 条待发消息？正在执行的任务会继续。`)) void run(() => queue.mutate({ kind: 'clear-pending', at: Date.now() })) }}>清空待发</button></div> : null}
+      {pending.length ? <div className="work-next-turn__footer"><span>逐条发送 · 暂停只影响后续消息</span><button type="button" className="btn btn--sm" disabled={queue.saving} onClick={() => void clearPending()}>清空待发</button></div> : null}
     </div></MotionPresence>
   </section>
 }

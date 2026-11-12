@@ -208,7 +208,7 @@ test.describe.serial('本轮成果只在运行结束后显示', () => {
   test('运行和等待期间隐藏本轮成果，完成后显示且旧轮一直保留', async () => {
     const old = runs[0], run = await begin('继续生成本轮文件')
     await expect(card(run)).toHaveCount(0); await expect(card(old)).toBeVisible()
-    transition('waiting'); await expect(work().locator('.work-task-heading__actions')).toContainText('等你补充')
+    transition('waiting'); await expect(work().locator('.work-task-heading__actions')).toContainText('待处理')
     await expect(card(run)).toHaveCount(0); await expect(card(old)).toBeVisible()
     await expect(taskList(run)).toBeVisible()
     transition('running'); await expect(work().locator('.work-task-heading__actions')).toContainText('进行中')
@@ -216,7 +216,8 @@ test.describe.serial('本轮成果只在运行结束后显示', () => {
     transition('succeeded'); await expect(card(run)).toBeVisible(); await expect(card(old)).toBeVisible()
     await expect(taskLists()).toHaveCount(0)
     await expect(card(run)).toContainText('1 个文件')
-    await card(run).getByRole('button', { name: '成果 1 个文件', exact: true }).click()
+    await card(run).getByRole('button', { name: '展开成果文件列表，共 1 个文件', exact: true }).focus()
+    await page.keyboard.press('Enter')
     await expect(card(run).getByRole('button', { name: /result-2\.txt/ })).toBeVisible()
     await page.reload(); await expect(card(run)).toBeVisible(); await expect(card(old)).toBeVisible()
     await expect(taskLists()).toHaveCount(0)
@@ -252,6 +253,84 @@ test.describe.serial('本轮成果只在运行结束后显示', () => {
     await expect(taskLists()).toHaveCount(0)
   })
 
+  test('单文件成果没有重复底栏，标题直达且待确认按钮完整可点击', async ({}, info) => {
+    const run = { ...current }
+    changes[0] = { ...changes[0], path: workspaceRoot + '/办公验收/第6轮/围棋Web项目介绍-客户版.pptx',
+      isNew: false, oldContent: null, newContent: null, oldHash: 'a'.repeat(64), newHash: 'b'.repeat(64), truncated: true }
+    await page.reload()
+    const summary = card(run), toggle = summary.locator('.work-progress-panel__changes-toggle')
+    await expect(summary).toBeVisible()
+    await toggle.focus(); await page.keyboard.press('Enter')
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    await expect(summary.locator('.work-progress-panel__footer')).toHaveCount(0)
+    const file = summary.locator('.work-progress-panel__file')
+    await expect(file).toContainText('围棋Web项目介绍-客户版.pptx')
+    await expect(file.locator('.tree-row__glyph')).toHaveCount(1)
+    await expect(file.locator('[data-change-code="M"]')).toHaveText('M')
+    const pending = summary.getByRole('button', { name: '查看本轮成果，1 个文件待确认', exact: true })
+    await expect(pending.locator('svg')).toHaveCount(1)
+    expect(await pending.evaluate(node => getComputedStyle(node).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
+    expect((await pending.boundingBox())!.height).toBeGreaterThanOrEqual(30)
+    for (const theme of ['light', 'dark'] as const) for (const width of [1440, 720]) {
+      await app!.evaluate(({ BrowserWindow }, width) => { const win = BrowserWindow.getAllWindows()[0]; win.setMinimumSize(520, 600); win.setContentSize(width, 900) }, width)
+      await expect.poll(() => page.evaluate(() => innerWidth)).toBe(width)
+      if (await page.locator('html').getAttribute('data-appearance') !== theme) {
+        await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+        const settings = page.getByRole('dialog', { name: '设置', exact: true })
+        await settings.getByRole('tab', { name: '外观', exact: true }).click()
+        await settings.getByRole('group', { name: '主题', exact: true }).getByRole('radio', { name: theme === 'dark' ? '深色' : '浅色', exact: true }).click()
+        await page.keyboard.press('Escape'); await expect(settings).toBeHidden()
+      }
+      await expect(page.locator('html')).toHaveAttribute('data-appearance', theme)
+      await summary.scrollIntoViewIfNeeded()
+      expect(await summary.evaluate(node => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1)
+      await toggle.hover({ position: { x: 8, y: 12 } })
+      expect(await toggle.evaluate(node => getComputedStyle(node).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
+      expect(await toggle.evaluate(node => getComputedStyle(node).cursor)).toBe('default')
+      expect(await summary.locator('.work-progress-panel__review-summary').evaluate(node => getComputedStyle(node).cursor)).toBe('default')
+      const path = info.outputPath('single-result-' + theme + '-' + width + '.png')
+      await page.mouse.move(4, 4)
+      await page.screenshot({ path, animations: 'disabled' })
+      await info.attach('单文件成果 ' + theme + ' ' + width, { path, contentType: 'image/png' })
+    }
+    await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 900))
+    await summary.getByRole('button', { name: '撤回本轮成果', exact: true }).click()
+    const confirmation = page.getByRole('dialog', { name: '撤回本轮成果', exact: true })
+    await expect(confirmation).toBeVisible()
+    await confirmation.getByRole('button', { name: '取消', exact: true }).click()
+    await expect(confirmation).toBeHidden()
+    expect(changes[0].status).toBe('pending')
+    await toggle.focus(); await page.keyboard.press('Enter')
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await pending.click()
+    await expect(page.getByRole('region', { name: '本会话成果与改动', exact: true })).toBeVisible()
+    // Opening review is distinct from the disclosure and preserves its state.
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await page.reload()
+    await expect(summary).toBeVisible()
+    await summary.getByRole('button', { name: '查看本轮全部成果', exact: true }).click()
+    await expect(page.getByRole('region', { name: '本会话成果与改动', exact: true })).toBeVisible()
+  })
+
+  test('二进制文件用 U M D 标识，同轮新增后删除的文件不出现在摘要', async () => {
+    const original = changes[0], run = { ...current }
+    changes.length = 0
+    changes.push(
+      { ...original, id: original.id + '-u', path: workspaceRoot + '/新增.png', oldContent: null, newContent: null, oldHash: 'missing', newHash: 'a'.repeat(64), isNew: true, truncated: true },
+      { ...original, id: original.id + '-m', path: workspaceRoot + '/修改.pptx', oldContent: null, newContent: null, oldHash: 'a'.repeat(64), newHash: 'b'.repeat(64), isNew: false, truncated: true },
+      { ...original, id: original.id + '-d', path: workspaceRoot + '/删除.pdf', kind: 'delete', oldContent: null, newContent: null, oldHash: 'a'.repeat(64), newHash: 'missing', isNew: false, truncated: true },
+      { ...original, id: original.id + '-temp-u', path: workspaceRoot + '/临时.png', oldContent: null, newContent: null, oldHash: 'missing', newHash: 'a'.repeat(64), isNew: true, truncated: true, seq: 4 },
+      { ...original, id: original.id + '-temp-d', path: workspaceRoot + '/临时.png', kind: 'delete', oldContent: null, newContent: null, oldHash: 'a'.repeat(64), newHash: 'missing', isNew: false, truncated: true, seq: 5, createdAt: original.createdAt + 1 }
+    )
+    await page.reload()
+    await expect(card(run)).toContainText('3 个文件')
+    await card(run).locator('.work-progress-panel__changes-toggle').focus(); await page.keyboard.press('Enter')
+    await expect(card(run).locator('.work-progress-panel__file')).toHaveCount(3)
+    for (const code of ['U', 'M', 'D']) await expect(card(run).locator('[data-change-code="' + code + '"]')).toHaveText(code)
+    await expect(card(run)).not.toContainText('临时.png')
+    await expect(card(run).locator('.work-progress-panel__footer')).toHaveCount(0)
+  })
+
   test('仅有已发布交付物的一轮历史仍读取成果记录并显示摘要', async ({}, info) => {
     // A fresh renderer with only a manifest-bearing turn must start its own
     // ledger reader; an older legacy turn must not accidentally keep it alive.
@@ -272,7 +351,8 @@ test.describe.serial('本轮成果只在运行结束后显示', () => {
     await expect(card(run)).toBeVisible()
     await expect(card(run)).toContainText('7 个文件')
     await expect(taskLists()).toHaveCount(0)
-    await card(run).getByRole('button', { name: '成果 7 个文件', exact: true }).click()
+    await card(run).getByRole('button', { name: '展开成果文件列表，共 7 个文件', exact: true }).focus()
+    await page.keyboard.press('Enter')
     const rows = card(run).locator('.work-progress-panel__files > li')
     await expect(rows).toHaveCount(5)
     await expect(card(run)).toContainText('还有 2 个文件')
@@ -284,12 +364,12 @@ test.describe.serial('本轮成果只在运行结束后显示', () => {
       const layout = await rows.evaluateAll(elements => elements.map(element => {
         const name = element.querySelector<HTMLElement>('.work-progress-panel__file-name')!, path = element.querySelector<HTMLElement>('.work-progress-panel__file-path')!
         const nameRect = name.getBoundingClientRect(), pathRect = path.getBoundingClientRect(), button = element.querySelector('button')!
-        return { centerDelta: Math.abs(nameRect.top + nameRect.height / 2 - pathRect.top - pathRect.height / 2),
-          gap: pathRect.left - nameRect.right, overflow: button.scrollWidth - button.clientWidth,
+        return { leftDelta: Math.abs(nameRect.left - pathRect.left),
+          gap: pathRect.top - nameRect.bottom, overflow: button.scrollWidth - button.clientWidth,
           nameClipped: name.scrollWidth > name.clientWidth, pathClipped: path.scrollWidth > path.clientWidth,
           nameEllipsis: getComputedStyle(name).textOverflow, pathEllipsis: getComputedStyle(path).textOverflow }
       }))
-      for (const row of layout) { expect(row.centerDelta).toBeLessThanOrEqual(2); expect(row.gap).toBeGreaterThanOrEqual(0); expect(row.overflow).toBeLessThanOrEqual(1) }
+      for (const row of layout) { expect(row.leftDelta).toBeLessThanOrEqual(2); expect(row.gap).toBeGreaterThanOrEqual(0); expect(row.overflow).toBeLessThanOrEqual(1) }
       expect(layout[0]).toMatchObject({ nameClipped: true, pathClipped: true, nameEllipsis: 'ellipsis', pathEllipsis: 'ellipsis' })
     }
     await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 1000))

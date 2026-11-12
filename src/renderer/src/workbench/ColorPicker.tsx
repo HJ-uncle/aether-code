@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type JSX, type KeyboardEvent, type PointerEvent } from 'react'
 import { normalizeAccentHex } from '@shared/accent-color'
 import { Icon } from '@renderer/workbench/icons'
+import { OUTLINE_ICON_STROKE } from './outline-icons'
 import { Spinner } from '@renderer/workbench/ui-primitives'
 import { hexToHsv, hexToRgb, hsvToHex, rgbToHex, type ColorHsv, type ColorRgb } from './color-picker-model'
 import './color-picker.css'
@@ -242,7 +243,7 @@ export function ColorPicker({ value, onPreview, onConfirm, onCancel, title = '�
             onPointerUp={flush} onKeyUp={flush} onBlur={flush} />
           {EyeDropper && <button type="button" className="accent-color-picker__eyedropper" aria-label="从屏幕取色" title="从屏幕取色"
             disabled={sampling || saving} onClick={() => void sampleScreen()}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={OUTLINE_ICON_STROKE} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
               <path d="m14 5 5 5M13 7l4 4M15 3l6 6-3 3-1-1-9 9H4v-4l9-9-1-1 3-3Z" />
             </svg>
           </button>}

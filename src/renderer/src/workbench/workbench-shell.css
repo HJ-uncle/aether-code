@@ -1,0 +1,32 @@
+/* Work is the only mounted surface, but the shell still needs a bounded flex
+ * track so page-local lists can own their scroll containers. */
+.mode-deck {
+  display: flex;
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.mode-deck > * {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-app);
+}
+.work-settings-dialog {
+  height: min(780px, calc(100vh - 48px));
+  max-width: calc(100vw - 48px);
+}
+.work-settings-dialog > .modal__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.work-settings-dialog .app-settings {
+  flex: 1;
+  min-height: 0;
+}

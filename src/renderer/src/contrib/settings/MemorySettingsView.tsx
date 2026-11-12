@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { Icon } from '@renderer/workbench/icons'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { Select } from '@renderer/workbench/Select'
+import { Dialog } from '@renderer/workbench/Dialog'
+import { Spinner } from '@renderer/workbench/ui-primitives'
 import { useApp } from '@renderer/core/app-context'
 import { useMemoryPreferences } from '@renderer/core/engine/memory-store'
-import { SettingsContent, SettingsGroup, SettingsRow, Toggle } from './SettingsGroup'
+import { Toggle } from './SettingsGroup'
+import { ResourceSettingsEmpty, ResourceSettingsField, ResourceSettingsHeader, ResourceSettingsMenu } from './ResourceSettings'
 import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
 import {
   createMemoryRecord, deleteMemoryRecord, getMemoryRecord, listMemoryRecords, listMemorySessions, updateMemoryRecord,
@@ -49,9 +52,13 @@ function MemorySettingsContent({ source }: { source: number }): JSX.Element {
   const [tagsText, setTagsText] = useState('')
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [reading, setReading] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const requestSeq = useRef(0)
+  const contextSeq = useRef(0)
+  const detailSeq = useRef(0)
+  const formId = useId()
   const mounted = useRef(true)
   const activeSession = scope === 'session' ? sessionId.trim() : undefined
   const isCurrent = useCallback(() => mounted.current && source === getEngineSource(), [source])
@@ -71,7 +78,11 @@ function MemorySettingsContent({ source }: { source: number }): JSX.Element {
     if (!isCurrent() || (scope === 'session' && !activeSession)) return
     const seq = ++requestSeq.current; const sourceAtStart = getEngineSource(); setLoading(true); setError('')
     try {
-      const result = await listMemoryRecords({ scope, sessionId: activeSession, keyword, type, current: page, pageSize: pagination.pageSize })
+      let result = await listMemoryRecords({ scope, sessionId: activeSession, keyword, type, current: page, pageSize: pagination.pageSize })
+      if (!isCurrent() || seq !== requestSeq.current || sourceAtStart !== getEngineSource()) return
+      // Deleting the final row on a page must not strand the remaining records off-screen.
+      const lastPage = Math.max(1, result.pagination.totalPages)
+      if (page > lastPage) result = await listMemoryRecords({ scope, sessionId: activeSession, keyword, type, current: lastPage, pageSize: pagination.pageSize })
       if (!isCurrent() || seq !== requestSeq.current || sourceAtStart !== getEngineSource()) return
       setRecords(result.data); setPagination(result.pagination)
     } catch (reason: unknown) { if (isCurrent() && seq === requestSeq.current) setError(reason instanceof Error ? reason.message : String(reason)) }
@@ -81,74 +92,140 @@ function MemorySettingsContent({ source }: { source: number }): JSX.Element {
   useEffect(() => { mounted.current = true; void listMemorySessions().then(value => { if (isCurrent()) setSessions(value) }).catch(() => undefined); return () => { mounted.current = false; requestSeq.current++ } }, [isCurrent])
   useEffect(() => { if (scope === 'global' || activeSession) void refresh(1) }, [activeSession, refresh, scope])
 
-  const selectedSessionTitle = useMemo(() => sessions.find(item => item.sessionId === sessionId)?.title || sessionId, [sessionId, sessions])
-  const resetContext = (): void => { requestSeq.current++; setRecords([]); setPagination(value => ({ ...value, current: 1, total: 0, totalPages: 1 })); setEditing(null); setDetail(null); setBusy(false); setError('') }
-  const beginCreate = (): void => { setEditing({ id: '', scope, sessionId: activeSession, type: 'fact', summary: '' }); setDetail(null); setForm({ summary: '', type: 'fact', detail: '', importance: 0.5, tags: [] }); setTagsText(''); setError('') }
+  const resetContext = (): void => { contextSeq.current++; detailSeq.current++; requestSeq.current++; setRecords([]); setPagination(value => ({ ...value, current: 1, total: 0, totalPages: 1 })); setEditing(null); setDetail(null); setBusy(false); setLoading(false); setReading(false); setError(''); setNotice('') }
+  const closeEditor = (): void => { detailSeq.current++; setReading(false); setEditing(null); setDetail(null); setError('') }
+  const changeScope = (next: MemoryRecordScope): void => { if (next === scope) return; resetContext(); setKeyword(''); setType(''); setScope(next); if (next === 'global') { setSessionId(''); setSessionInput('') } }
+  const beginCreate = (): void => { detailSeq.current++; setReading(false); setEditing({ id: '', scope, sessionId: activeSession, type: 'fact', summary: '' }); setDetail(null); setForm({ summary: '', type: 'fact', detail: '', importance: 0.5, tags: [] }); setTagsText(''); setError('') }
   const beginEdit = async (record: MemoryRecord): Promise<void> => {
-    const scopeAtStart = scope; const sessionAtStart = activeSession
-    setError(''); setBusy(true)
-    try { const full = await getMemoryRecord(record.id, scopeAtStart, sessionAtStart); if (!isCurrent() || scope !== scopeAtStart || activeSession !== sessionAtStart) return; setDetail(full); setEditing(full); setForm({ summary: full.summary, type: full.type, detail: full.detail ?? '', importance: full.importance ?? 0.5, tags: full.tags ?? [] }); setTagsText((full.tags ?? []).join(', ')) }
-    catch (reason: unknown) { if (isCurrent() && scope === scopeAtStart && activeSession === sessionAtStart) setError(reason instanceof Error ? reason.message : String(reason)) } finally { if (isCurrent() && scope === scopeAtStart && activeSession === sessionAtStart) setBusy(false) }
+    const contextAtStart = contextSeq.current; const scopeAtStart = scope; const sessionAtStart = activeSession
+    const sequence = ++detailSeq.current
+    setError(''); setReading(true)
+    try { const full = await getMemoryRecord(record.id, scopeAtStart, sessionAtStart); if (!isCurrent() || contextSeq.current !== contextAtStart || detailSeq.current !== sequence) return; setDetail(full); setEditing(full); setForm({ summary: full.summary, type: full.type, detail: full.detail ?? '', importance: full.importance ?? 0.5, tags: full.tags ?? [] }); setTagsText((full.tags ?? []).join(', ')) }
+    catch (reason: unknown) { if (isCurrent() && detailSeq.current === sequence) setError(reason instanceof Error ? reason.message : String(reason)) } finally { if (isCurrent() && detailSeq.current === sequence) setReading(false) }
   }
-  const showDetail = async (record: MemoryRecord): Promise<void> => { const scopeAtStart = scope; const sessionAtStart = activeSession; try { const full = await getMemoryRecord(record.id, scopeAtStart, sessionAtStart); if (isCurrent() && scope === scopeAtStart && activeSession === sessionAtStart) setDetail(full) } catch (reason: unknown) { if (isCurrent() && scope === scopeAtStart && activeSession === sessionAtStart) setError(reason instanceof Error ? reason.message : String(reason)) } }
+  const showDetail = async (record: MemoryRecord): Promise<void> => {
+    const sequence = ++detailSeq.current
+    setError(''); setReading(true)
+    try { const full = await getMemoryRecord(record.id, scope, activeSession); if (isCurrent() && detailSeq.current === sequence) setDetail(full) }
+    catch (reason: unknown) { if (isCurrent() && detailSeq.current === sequence) setError(reason instanceof Error ? reason.message : String(reason)) }
+    finally { if (isCurrent() && detailSeq.current === sequence) setReading(false) }
+  }
   const save = async (): Promise<void> => {
     if (!form.summary.trim() || busy || !isCurrent()) return
-    const scopeAtStart = scope; const sessionAtStart = activeSession
+    const contextAtStart = contextSeq.current; const scopeAtStart = scope; const sessionAtStart = activeSession
     setBusy(true); setError(''); setNotice('')
     const payload = { ...form, summary: form.summary.trim(), detail: form.detail?.trim() || null, tags: tagsText.split(',').map(tag => tag.trim()).filter(Boolean) }
-    try { if (editing?.id) await updateMemoryRecord(editing.id, scopeAtStart, sessionAtStart, payload); else await createMemoryRecord(scopeAtStart, sessionAtStart, payload); if (!isCurrent() || scope !== scopeAtStart || activeSession !== sessionAtStart) return; setEditing(null); setDetail(null); setNotice(editing?.id ? '记忆已更新' : '记忆已创建'); await refresh(1) }
-    catch (reason: unknown) { if (isCurrent() && scope === scopeAtStart && activeSession === sessionAtStart) setError(reason instanceof Error ? reason.message : String(reason)) } finally { if (isCurrent() && scope === scopeAtStart && activeSession === sessionAtStart) setBusy(false) }
+    try { if (editing?.id) await updateMemoryRecord(editing.id, scopeAtStart, sessionAtStart, payload); else await createMemoryRecord(scopeAtStart, sessionAtStart, payload); if (!isCurrent() || contextSeq.current !== contextAtStart) return; setEditing(null); setDetail(null); setNotice(editing?.id ? '记忆已更新' : '记忆已创建'); await refresh(1) }
+    catch (reason: unknown) { if (isCurrent() && contextSeq.current === contextAtStart) setError(reason instanceof Error ? reason.message : String(reason)) } finally { if (isCurrent() && contextSeq.current === contextAtStart) setBusy(false) }
   }
   const remove = async (record: MemoryRecord): Promise<void> => {
-    const scopeAtStart = scope; const sessionAtStart = activeSession
+    const contextAtStart = contextSeq.current; const scopeAtStart = scope; const sessionAtStart = activeSession
     if (busy || !(await confirmDialog({ title: '删除记忆？', body: `将删除“${record.summary}”，此操作不可撤销。`, confirmText: '删除记忆', danger: true }))) return
-    if (!isCurrent() || scope !== scopeAtStart || activeSession !== sessionAtStart) return
+    if (!isCurrent() || contextSeq.current !== contextAtStart) return
     setBusy(true); setError('')
-    try { await deleteMemoryRecord(record.id, scopeAtStart, sessionAtStart); if (!isCurrent() || scope !== scopeAtStart || activeSession !== sessionAtStart) return; if (detail?.id === record.id) setDetail(null); setNotice('记忆已删除'); await refresh(pagination.current) }
-    catch (reason: unknown) { if (isCurrent() && scope === scopeAtStart && activeSession === sessionAtStart) setError(reason instanceof Error ? reason.message : String(reason)) } finally { if (isCurrent() && scope === scopeAtStart && activeSession === sessionAtStart) setBusy(false) }
+    try { await deleteMemoryRecord(record.id, scopeAtStart, sessionAtStart); if (!isCurrent() || contextSeq.current !== contextAtStart) return; if (detail?.id === record.id) setDetail(null); setNotice('记忆已删除'); await refresh(pagination.current) }
+    catch (reason: unknown) { if (isCurrent() && contextSeq.current === contextAtStart) setError(reason instanceof Error ? reason.message : String(reason)) } finally { if (isCurrent() && contextSeq.current === contextAtStart) setBusy(false) }
   }
 
-  return <div className="settings-view memory-settings">
-    <SettingsGroup title="记忆偏好" footer="记忆用于在后续回答中参考已保存的信息。关闭记忆不会删除或停用聊天历史。">
-      <SettingsRow label="全局记忆" description="默认关闭。开启后，可在不同会话中参考全局记忆。">
-        <Toggle label="全局记忆" checked={preferences?.globalEnabled ?? false} disabled={preferencesDisabled || (preferences?.enabled === false && !preferences.globalEnabled)} onChange={globalEnabled => changePreference({ globalEnabled })} />
-      </SettingsRow>
-      <SettingsRow label="默认开启会话记忆" description="默认关闭。开启后，未单独设置的会话会使用会话记忆；会话中可单独开关或恢复默认。">
-        <Toggle label="默认开启会话记忆" checked={preferences?.sessionDefaultEnabled ?? false} disabled={preferencesDisabled} onChange={sessionDefaultEnabled => changePreference({ sessionDefaultEnabled })} />
-      </SettingsRow>
-      {preferencesLoading || !ready || !preferencesLoaded || preferences?.enabled === false || preferencesError ? <SettingsContent>
-        <div className="memory-settings__preference-status" aria-live="polite" aria-busy={preferencesLoading}>
-          <span>{!ready ? '连接引擎后可设置记忆偏好。' : preferencesLoading ? '正在同步记忆偏好…' : preferences?.enabled === false ? '服务端已关闭长期记忆，当前无法启用。仍可关闭全局记忆或调整会话默认值；聊天历史会继续保留。' : preferencesError ? '记忆偏好未能同步，请重新读取后再试。' : '尚未确认记忆偏好。'}</span>
-          {ready && !preferencesLoading ? <button type="button" className="btn" onClick={() => void refreshPreferences()}>重新读取记忆偏好</button> : null}
+  return <div className="settings-view resource-settings memory-settings">
+    <section className="memory-preferences" aria-label="记忆偏好">
+      <h2>使用偏好</h2>
+      <div className="resource-list">
+        <div className="memory-preferences__row">
+          <div><strong>全局记忆</strong><p>在不同会话中参考已保存的信息。</p></div>
+          <Toggle label="全局记忆" checked={preferences?.globalEnabled ?? false}
+            disabled={preferencesDisabled || (preferences?.enabled === false && !preferences.globalEnabled)} onChange={globalEnabled => changePreference({ globalEnabled })} />
         </div>
-        {preferencesError ? <details className="memory-settings__preference-error"><summary>查看诊断信息</summary><p>{preferencesError}</p></details> : null}
-      </SettingsContent> : null}
-    </SettingsGroup>
-    <SettingsGroup title="记忆范围" footer="全局记忆可被其他会话使用；会话记忆只属于所选会话。">
-      <SettingsContent>
-        <div className="memory-settings__scope" role="tablist" aria-label="记忆范围">
-          <button type="button" className={scope === 'global' ? 'is-active' : ''} onClick={() => { resetContext(); setKeyword(''); setType(''); setScope('global'); setSessionId('') }}>全局记忆</button>
-          <button type="button" className={scope === 'session' ? 'is-active' : ''} onClick={() => { resetContext(); setKeyword(''); setType(''); setScope('session') }}>会话记忆</button>
+        <div className="memory-preferences__row">
+          <div><strong>默认开启会话记忆</strong><p>未单独设置的会话跟随此默认值。</p></div>
+          <Toggle label="默认开启会话记忆" checked={preferences?.sessionDefaultEnabled ?? false} disabled={preferencesDisabled} onChange={sessionDefaultEnabled => changePreference({ sessionDefaultEnabled })} />
         </div>
-        {scope === 'session' ? <div className="memory-settings__session">
-          <Select className="settings-menu-field" value={sessionId} onChange={value => { resetContext(); setKeyword(''); setType(''); setSessionId(value); setSessionInput(value) }} ariaLabel="选择会话"
-            options={[{ value: '', label: '选择已有会话…' }, ...sessions.map(item => ({ value: item.sessionId, label: item.title || item.sessionId }))]} />
-          <input className="field__input" value={sessionInput} onChange={event => { resetContext(); setKeyword(''); setType(''); setSessionInput(event.target.value); setSessionId(event.target.value) }} placeholder="或输入会话 ID" aria-label="会话 ID" />
-          {selectedSessionTitle ? <small>当前：{selectedSessionTitle}</small> : null}
-        </div> : null}
-      </SettingsContent>
-    </SettingsGroup>
+      </div>
+      {preferencesLoading || !ready || !preferencesLoaded || preferences?.enabled === false || preferencesError ? <div className="memory-preferences__status" aria-live="polite" aria-busy={preferencesLoading}>
+        <p>{!ready ? '连接引擎后可设置记忆偏好。' : preferencesLoading ? '正在同步记忆偏好…' : preferences?.enabled === false ? '服务端已关闭长期记忆；聊天历史仍会保留。' : preferencesError ? '记忆偏好同步失败，请重新读取。' : '尚未读取记忆偏好。'}</p>
+        {ready && !preferencesLoading ? <button type="button" className="btn" onClick={() => void refreshPreferences()}>重新读取记忆偏好</button> : null}
+        {preferencesError ? <details className="resource-disclosure"><summary>诊断信息</summary><p>{preferencesError}</p></details> : null}
+      </div> : null}
+    </section>
 
-    <SettingsGroup title="记忆条目" footer="可以搜索、查看详情、编辑或删除记忆。">
-      <SettingsContent>
-        <div className="memory-settings__toolbar"><input className="field__input" value={keyword} onChange={event => setKeyword(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void refresh(1) }} placeholder="搜索记忆内容" aria-label="搜索记忆" /><Select value={type} onChange={value => { if (!value || TYPES.some(item => item.value === value)) setType(value as MemoryRecordType | '') }} ariaLabel="按类型筛选" options={[{ value: '', label: '全部类型' }, ...TYPES]} /><button type="button" className="btn btn--primary" disabled={busy || (scope === 'session' && !activeSession)} onClick={beginCreate}><Icon name="plus" size={14} /> 新建记忆</button><button type="button" className="btn" disabled={loading} onClick={() => void refresh(1)}><Icon name="sync" size={14} /> 刷新</button></div>
-        {scope === 'session' && !activeSession ? <div className="memory-settings__empty">先选择或输入会话 ID，再管理会话记忆。</div> : loading ? <div className="memory-settings__empty">读取中…</div> : records.length === 0 ? <div className="memory-settings__empty">暂无记忆条目</div> : <div className="memory-settings__list">{records.map(record => <div className="memory-settings__item" key={record.id}><div><div className="memory-settings__summary">{record.summary}</div><div className="memory-settings__meta"><span>{TYPES.find(item => item.value === record.type)?.label ?? record.type}</span><span>重要度 {Math.round((record.importance ?? 0) * 100)}%</span><span>{dateLabel(record.updatedAt ?? record.timestamp)}</span>{record.tags?.length ? <span>#{record.tags.join(' #')}</span> : null}</div></div><div className="memory-settings__actions"><button type="button" className="btn" aria-label="查看记忆" onClick={() => void showDetail(record)}><Icon name="eye-outline" size={14} /></button><button type="button" className="btn" aria-label="编辑记忆" onClick={() => void beginEdit(record)}><Icon name="pencil" size={14} /></button><button type="button" className="btn" aria-label="删除记忆" onClick={() => void remove(record)}><Icon name="trash" size={14} /></button></div></div>)}</div>}
-        {pagination.totalPages > 1 ? <div className="memory-settings__pager"><button type="button" className="btn" disabled={pagination.current <= 1 || loading} onClick={() => void refresh(pagination.current - 1)}>上一页</button><span>{pagination.current} / {pagination.totalPages} · 共 {pagination.total} 条</span><button type="button" className="btn" disabled={pagination.current >= pagination.totalPages || loading} onClick={() => void refresh(pagination.current + 1)}>下一页</button></div> : null}
-      </SettingsContent>
-    </SettingsGroup>
+    <section className="memory-records" aria-label="记忆条目">
+      <ResourceSettingsHeader title="记忆条目" count={pagination.total}>
+        <button type="button" className="resource-icon-button" aria-label="刷新记忆" title="刷新" disabled={loading || (scope === 'session' && !activeSession)} onClick={() => void refresh(1)}>
+          {loading ? <Spinner size={15} /> : <Icon name="refresh" size={16} />}
+        </button>
+        <button type="button" className="btn btn--primary" disabled={busy || (scope === 'session' && !activeSession)} onClick={beginCreate}><Icon name="plus" size={14} />新建记忆</button>
+      </ResourceSettingsHeader>
+      <div className="memory-scope-row">
+        <div className="segmented" role="radiogroup" aria-label="记忆范围">
+          {([{ value: 'global', label: '全局记忆' }, { value: 'session', label: '会话记忆' }] as const).map(option =>
+            <button type="button" role="radio" aria-checked={scope === option.value} key={option.value}
+              tabIndex={scope === option.value ? 0 : -1} className={'segmented__item' + (scope === option.value ? ' is-active' : '')}
+              onClick={() => changeScope(option.value)} onKeyDown={event => {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+                event.preventDefault()
+                const next = event.key === 'Home' ? 'global' : event.key === 'End' ? 'session' : scope === 'global' ? 'session' : 'global'
+                changeScope(next)
+                event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`[data-memory-scope="${next}"]`)?.focus()
+              }} data-memory-scope={option.value}>{option.label}</button>)}
+        </div>
+        <span>{scope === 'global' ? '可供不同会话参考' : '仅属于所选会话'}</span>
+      </div>
+      {scope === 'session' ? <div className="memory-settings__session">
+        <Select className="settings-menu-field" value={sessionId} onChange={value => { if (value === sessionId) return; resetContext(); setKeyword(''); setType(''); setSessionId(value); setSessionInput('') }} ariaLabel="选择会话"
+          options={[{ value: '', label: '选择已有会话…' }, ...sessions.map(item => ({ value: item.sessionId, label: item.title || item.sessionId }))]} />
+        <input className="field__input" value={sessionInput} onChange={event => { resetContext(); setKeyword(''); setType(''); setSessionInput(event.target.value); setSessionId(event.target.value) }} placeholder="或输入会话 ID" aria-label="会话 ID" />
+      </div> : null}
+      <div className="memory-settings__toolbar">
+        <div className="memory-search"><Icon name="search" size={15} /><input className="field__input" value={keyword} onChange={event => setKeyword(event.target.value)}
+          onKeyDown={event => { if (event.key === 'Enter') void refresh(1) }} placeholder="搜索记忆" aria-label="搜索记忆" /></div>
+        <Select value={type} onChange={value => { const match = TYPES.find(item => item.value === value); setType(match?.value ?? '') }} ariaLabel="按类型筛选" options={[{ value: '', label: '全部类型' }, ...TYPES]} />
+      </div>
+      {!editing && !detail && error ? <p className="resource-feedback is-error" role="alert">{error}</p> : null}
+      {notice ? <p className="resource-feedback is-success" role="status">{notice}</p> : null}
+      {reading ? <p className="resource-feedback" role="status">正在读取记忆详情…</p> : null}
+      <div className="resource-list" role="list" aria-label="记忆列表" aria-busy={loading}>
+        {scope === 'session' && !activeSession ? <ResourceSettingsEmpty icon="chat-outline" title="选择一个会话" description="从已有会话中选择，或输入会话 ID。" />
+          : loading && records.length === 0 ? <ResourceSettingsEmpty loading title="正在读取记忆…" />
+          : records.length === 0 ? <ResourceSettingsEmpty icon="brain" title={keyword || type ? '没有匹配的记忆' : '暂无记忆条目'} description={keyword || type ? '试试其他关键词或类型。' : '新建一条记忆，保存值得参考的信息。'} />
+          : records.map(record => <article className="resource-row memory-record" role="listitem" aria-label={record.summary} key={record.id}>
+            <button type="button" className="resource-row__main" aria-label={`查看记忆：${record.summary}`} disabled={busy} onClick={() => void showDetail(record)}>
+              <span className="resource-row__icon"><Icon name={record.type === 'preference' ? 'star-outline' : record.type === 'decision' ? 'check' : 'brain'} size={18} /></span>
+              <span className="resource-row__copy"><strong>{record.summary}</strong><span className="resource-row__meta">
+                <span>{TYPES.find(item => item.value === record.type)?.label ?? record.type}</span><span>重要度 {Math.round((record.importance ?? 0) * 100)}%</span><span>{dateLabel(record.updatedAt ?? record.timestamp)}</span>
+              </span>{record.tags?.length ? <span className="memory-record__tags">{record.tags.map(tag => `#${tag}`).join('  ')}</span> : null}</span>
+            </button>
+            <ResourceSettingsMenu label={record.summary} disabled={busy} actions={[
+              { label: '查看详情', icon: 'eye-outline', onSelect: () => void showDetail(record) },
+              { label: '编辑', icon: 'pencil', onSelect: () => void beginEdit(record) },
+              { label: '删除', icon: 'trash', danger: true, onSelect: () => void remove(record) }
+            ]} />
+          </article>)}
+      </div>
+      {pagination.totalPages > 1 ? <nav className="memory-settings__pager" aria-label="记忆分页">
+        <button type="button" className="resource-icon-button" aria-label="上一页" disabled={pagination.current <= 1 || loading} onClick={() => void refresh(pagination.current - 1)}><Icon name="chevron-left" size={16} /></button>
+        <span>{pagination.current} / {pagination.totalPages} · 共 {pagination.total} 条</span>
+        <button type="button" className="resource-icon-button" aria-label="下一页" disabled={pagination.current >= pagination.totalPages || loading} onClick={() => void refresh(pagination.current + 1)}><Icon name="chevron-right" size={16} /></button>
+      </nav> : null}
+    </section>
 
-    {editing ? <SettingsGroup title={editing.id ? '编辑记忆' : '新建记忆'}><SettingsContent><div className="memory-settings__editor"><div className="memory-settings__editor-row"><input className="field__input" value={form.summary} onChange={event => setForm(value => ({ ...value, summary: event.target.value }))} placeholder="记忆摘要（必填）" aria-label="记忆摘要" autoFocus /><Select value={form.type ?? 'fact'} onChange={next => { const picked = TYPES.find(item => item.value === next); if (picked) setForm(value => ({ ...value, type: picked.value })) }} ariaLabel="记忆类型" options={TYPES} /></div><textarea className="field__input" rows={5} value={form.detail ?? ''} onChange={event => setForm(value => ({ ...value, detail: event.target.value }))} placeholder="详细内容（可选）" aria-label="记忆详情" /><div className="memory-settings__editor-row"><input className="field__input" type="number" min="0" max="1" step="0.05" value={form.importance ?? 0.5} onChange={event => setForm(value => ({ ...value, importance: Number(event.target.value) }))} aria-label="重要度" /><input className="field__input" value={tagsText} onChange={event => setTagsText(event.target.value)} placeholder="标签，用逗号分隔" aria-label="记忆标签" /></div><div className="memory-settings__editor-actions"><button type="button" className="btn" disabled={busy} onClick={() => setEditing(null)}>取消</button><button type="button" className="btn btn--primary" disabled={busy || !form.summary.trim()} onClick={() => void save()}>{busy ? '保存中…' : '保存'}</button></div></div></SettingsContent></SettingsGroup> : null}
-    {detail && !editing ? <SettingsGroup title="记忆详情"><SettingsContent><div className="memory-settings__summary">{detail.summary}</div><div className="memory-settings__meta"><span>{TYPES.find(item => item.value === detail.type)?.label ?? detail.type}</span><span>创建于 {dateLabel(detail.createdAt)}</span><span>更新于 {dateLabel(detail.updatedAt)}</span><span>来源会话：{detail.sourceSessionId || detail.sessionId || '—'}</span></div><pre className="memory-settings__detail">{detail.detail || '暂无详细内容'}</pre>{detail.tags?.length ? <div className="memory-settings__meta">标签：{detail.tags.join('、')}</div> : null}<div className="memory-settings__editor-actions"><button type="button" className="btn" onClick={() => setDetail(null)}>关闭</button><button type="button" className="btn btn--primary" onClick={() => void beginEdit(detail)}>编辑</button></div></SettingsContent></SettingsGroup> : null}
-    {error ? <div className="memory-settings__error" role="alert">{error}</div> : null}{notice ? <div className="memory-settings__notice" role="status">{notice}</div> : null}
+    {editing || detail ? <Dialog title={editing ? editing.id ? '编辑记忆' : '新建记忆' : '记忆详情'} width={620} className="resource-editor memory-editor" closeDisabled={busy} onClose={closeEditor}
+      footer={editing ? <><button type="button" className="btn" disabled={busy} onClick={closeEditor}>取消</button><button type="submit" form={formId} className="btn btn--primary" disabled={busy || !form.summary.trim()}>{busy ? '保存中…' : '保存'}</button></>
+        : <><button type="button" className="btn" onClick={closeEditor}>关闭</button><button type="button" className="btn btn--primary" disabled={busy} onClick={() => { if (detail) void beginEdit(detail) }}>编辑</button></>}>
+      {editing ? <form id={formId} className="resource-form" onSubmit={event => { event.preventDefault(); void save() }}>
+        <ResourceSettingsField label="摘要" wide><input className="field__input" value={form.summary} disabled={busy} onChange={event => setForm(value => ({ ...value, summary: event.target.value }))} placeholder="需要记住的内容" aria-label="记忆摘要" autoFocus /></ResourceSettingsField>
+        <ResourceSettingsField label="类型"><Select value={form.type ?? 'fact'} disabled={busy} onChange={next => { const picked = TYPES.find(item => item.value === next); if (picked) setForm(value => ({ ...value, type: picked.value })) }} ariaLabel="记忆类型" options={TYPES} /></ResourceSettingsField>
+        <ResourceSettingsField label="重要度 · 0–1"><input className="field__input" type="number" min="0" max="1" step="any" value={form.importance ?? 0.5} disabled={busy} onChange={event => setForm(value => ({ ...value, importance: Number(event.target.value) }))} aria-label="重要度" /></ResourceSettingsField>
+        <ResourceSettingsField label="详细内容 · 可选" wide><textarea className="field__input" rows={6} value={form.detail ?? ''} disabled={busy} onChange={event => setForm(value => ({ ...value, detail: event.target.value }))} aria-label="记忆详情" /></ResourceSettingsField>
+        <ResourceSettingsField label="标签 · 可选" wide><input className="field__input" value={tagsText} disabled={busy} onChange={event => setTagsText(event.target.value)} placeholder="用逗号分隔多个标签" aria-label="记忆标签" /></ResourceSettingsField>
+        {error ? <p className="resource-feedback is-error is-wide" role="alert">{error}</p> : null}
+      </form> : detail ? <div className="memory-detail">
+        <h3>{detail.summary}</h3>
+        <div className="memory-detail__metadata"><span>{TYPES.find(item => item.value === detail.type)?.label ?? detail.type}</span><span>重要度 {Math.round((detail.importance ?? 0) * 100)}%</span></div>
+        <p className="memory-detail__content">{detail.detail || '暂无详细内容'}</p>
+        {detail.tags?.length ? <div className="memory-detail__tags">{detail.tags.map(tag => <span key={tag}>{tag}</span>)}</div> : null}
+        <dl><div><dt>创建时间</dt><dd>{dateLabel(detail.createdAt)}</dd></div><div><dt>更新时间</dt><dd>{dateLabel(detail.updatedAt)}</dd></div><div><dt>来源会话</dt><dd>{detail.sourceSessionId || detail.sessionId || '—'}</dd></div></dl>
+        {error ? <p className="resource-feedback is-error" role="alert">{error}</p> : null}
+      </div> : null}
+    </Dialog> : null}
   </div>
 }

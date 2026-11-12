@@ -14,7 +14,8 @@ export function SettingsGroup({
   title,
   footer,
   children,
-  className
+  className,
+  ariaLabel
 }: {
   title: ReactNode
   /** 组下方的灰字说明 */
@@ -22,9 +23,10 @@ export function SettingsGroup({
   children: ReactNode
   /** 供复杂设置页在保留统一卡片原语的同时附加页面语义类名 */
   className?: string
+  ariaLabel?: string
 }): JSX.Element {
   return (
-    <section className={`sg${className ? ` ${className}` : ''}`}>
+    <section className={`sg${className ? ` ${className}` : ''}`} aria-label={ariaLabel}>
       <h3 className="sg__title">{title}</h3>
       <GlassSurface className="sg__card">{children}</GlassSurface>
       {footer ? <p className="sg__footer">{footer}</p> : null}
@@ -37,13 +39,15 @@ export function SettingsRow({
   label,
   description,
   children,
-  onClick
+  onClick,
+  ariaLabel
 }: {
   label: ReactNode
   description?: string
   children?: ReactNode
   /** 整行可点（如配合 Toggle 使用时点行即切换） */
   onClick?: () => void
+  ariaLabel?: string
 }): JSX.Element {
   const body = (
     <>
@@ -59,6 +63,7 @@ export function SettingsRow({
       <div
         className="sg__row sg__row--clickable"
         role="button"
+        aria-label={ariaLabel}
         tabIndex={0}
         onClick={onClick}
         onKeyDown={(event) => {
@@ -72,7 +77,11 @@ export function SettingsRow({
       </div>
     )
   }
-  return <div className="sg__row">{body}</div>
+  return (
+    <div className="sg__row" role={ariaLabel ? 'group' : undefined} aria-label={ariaLabel}>
+      {body}
+    </div>
+  )
 }
 
 /** 分组内的静态内容行（kv 信息、自定义内容），无控件槽位 */

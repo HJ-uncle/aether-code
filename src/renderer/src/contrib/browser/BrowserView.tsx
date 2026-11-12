@@ -211,7 +211,7 @@ export function BrowserSurface({
   return (
     <div ref={host} className="browser-surface" aria-label="网页内容区域">
       <div className="browser-surface__placeholder">
-        <Icon name="eye-outline" size={28} />
+        <Icon name="globe" size={28} />
         <span>
           {tab.loading
             ? '正在加载网页…'
@@ -284,7 +284,7 @@ function InspectorDrawer({
         <div className="browser-spacer" />
         <ToolButton
           label="刷新记录"
-          icon="restart"
+          icon="refresh"
           onClick={() => setRevision((value) => value + 1)}
         />
         <ToolButton label="关闭调试面板" icon="close" onClick={onClose} />
@@ -534,7 +534,7 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
             >
               {item.loading ? <Spinner size={12} /> : item.localFile
                 ? item.localFile.kind === 'directory' ? <Icon name="explorer" size={14} /> : <FileGlyph name={item.localFile.path} size={14} />
-                : <Icon name="eye-outline" size={14} />}
+                : <Icon name="globe" size={14} />}
               <span>{item.title || (item.url === 'about:blank' ? '新标签页' : item.url)}</span>
             </button>
             <button
@@ -650,7 +650,7 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
         />
         <ToolButton
           label={tab?.loading ? '停止加载' : '刷新网页（Ctrl+R）'}
-          icon={tab?.loading ? 'stop' : 'restart'}
+          icon={tab?.loading ? 'stop' : 'refresh'}
           disabled={!tab}
           onClick={() => run(tab?.loading ? 'stop' : 'reload')}
         />
@@ -835,7 +835,7 @@ export function BrowserView({ surfaceMode = 'code', hideTabStrip = false, tabId 
         />
       ) : (
         <div className="browser-empty">
-          <Icon name="eye-outline" size={36} />
+          <Icon name="globe" size={36} />
           <h2>打开网页、文件或目录</h2>
           <p>输入开发服务地址、文件或目录路径，即可在这里查看。</p>
           <button

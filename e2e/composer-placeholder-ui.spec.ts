@@ -1,5 +1,5 @@
 /** Fresh Electron placeholder regression: real keyboard line breaks, native clipboard
- * paste, draft reload and CDP IME composition in Work and Code. No model send,
+ * paste, draft reload and CDP IME composition in Work. No model send,
  * old E2E suite or export flow; isolated settings and authenticated fixture. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page, type TestInfo } from '@playwright/test'
 import { createServer } from 'node:http'
@@ -88,11 +88,8 @@ test.afterAll(async () => {
   }
 })
 
-type Mode = 'Work 办公' | 'Code 开发'
-async function editorFor(mode: Mode): Promise<Locator> {
-  const tab = page.getByRole('tab', { name: mode, exact: true })
-  await tab.click(); await expect(tab).toHaveAttribute('aria-selected', 'true')
-  const editor = page.getByRole('tabpanel', { name: mode, exact: true }).locator('.input-composer__input')
+async function editorFor(): Promise<Locator> {
+  const editor = page.locator('.work-view .input-composer__input')
   await expect(editor).toBeVisible(); return editor
 }
 async function clear(editor: Locator): Promise<void> {
@@ -117,9 +114,8 @@ async function noPlaceholder(editor: Locator): Promise<void> {
   expect(Math.abs(position!.actual - position!.expected)).toBeLessThanOrEqual(2)
 }
 
-for (const mode of ['Work 办公', 'Code 开发'] as const) {
-  test(`${mode}：text+br 回归及真实键盘、中文组合输入、清空提示`, async () => {
-    const editor = await editorFor(mode); await clear(editor)
+test('Work 办公：text+br 回归及真实键盘、中文组合输入、清空提示', async () => {
+    const editor = await editorFor(); await clear(editor)
     await page.keyboard.type('PLACEHOLDER_REGRESSION')
     await noPlaceholder(editor)
     await page.keyboard.press('End'); await page.keyboard.press('Shift+Enter')
@@ -149,9 +145,9 @@ for (const mode of ['Work 办公', 'Code 开发'] as const) {
     } finally { await cdp.detach() }
   })
 
-  test(`${mode}：原生剪贴板多行粘贴及草稿重载不混入提示`, async () => {
+  test('Work 办公：原生剪贴板多行粘贴及草稿重载不混入提示', async () => {
     if (!app) throw new Error('Missing Electron application')
-    const editor = await editorFor(mode); await clear(editor)
+    const editor = await editorFor(); await clear(editor)
     const original = await app.evaluate(({ clipboard }) => ({ text: clipboard.readText(), html: clipboard.readHTML(), rtf: clipboard.readRTF(), image: clipboard.readImage().toDataURL() }))
     try {
       for (const text of ['CLIPBOARD_ONE', 'CLIPBOARD_FIRST\nCLIPBOARD_SECOND\n']) {
@@ -164,13 +160,11 @@ for (const mode of ['Work 办公', 'Code 开发'] as const) {
       const persisted = 'CLIPBOARD_FIRST\nCLIPBOARD_SECOND'
       await expect.poll(() => page.evaluate(value => Object.keys(localStorage).some(key => /chatDrafts|work.state/.test(key) && (localStorage.getItem(key) ?? '').includes(value)), persisted.replace(/\n/g, '\\n'))).toBe(true)
       await page.reload(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
-      const restored = await editorFor(mode)
+      const restored = await editorFor()
       await expect(restored).toContainText('CLIPBOARD_SECOND'); await noPlaceholder(restored)
       await clear(restored)
     } finally {
       await app.evaluate(({ clipboard, nativeImage }, data) => clipboard.write({ text: data.text, html: data.html, rtf: data.rtf, image: nativeImage.createFromDataURL(data.image) }), original)
     }
   })
-
-}
 

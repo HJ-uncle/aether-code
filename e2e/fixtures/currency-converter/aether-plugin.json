@@ -1,0 +1,389 @@
+{
+  "apiVersion": 1,
+  "id": "currency-converter",
+  "name": "货币换算器",
+  "version": "1.0.1",
+  "description": "输入金额与币种即可换算；支持单笔、批量和交叉表。内置数值仅用于演示，实际换算请提供汇率。",
+  "runtime": "node",
+  "tools": [
+    {
+      "name": "convert",
+      "description": "把一笔金额从一种货币换算成另一种，返回汇率、结果、反向汇率与可读表达式。",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "amount": {
+            "description": "金额，需大于等于 0",
+            "type": "number",
+            "title": "金额",
+            "minimum": 0,
+            "maximum": 1000000000000000
+          },
+          "from": {
+            "description": "源货币 3 位代码，例如 USD、CNY",
+            "type": "string",
+            "title": "源币种",
+            "enum": [
+              "USD",
+              "CNY",
+              "EUR",
+              "GBP",
+              "JPY",
+              "HKD",
+              "KRW",
+              "TWD",
+              "SGD",
+              "AUD",
+              "CAD",
+              "CHF",
+              "INR",
+              "RUB",
+              "BRL",
+              "THB",
+              "MYR",
+              "IDR",
+              "PHP",
+              "VND",
+              "NZD",
+              "SEK",
+              "NOK",
+              "DKK",
+              "PLN",
+              "CZK",
+              "HUF",
+              "TRY",
+              "ZAR",
+              "AED",
+              "SAR",
+              "MXN",
+              "EGP",
+              "ILS"
+            ]
+          },
+          "rate": {
+            "description": "可选。直接用 1 单位 from 兑换多少 to，优先于 rates 与内置汇率",
+            "type": "number",
+            "title": "指定汇率",
+            "minimum": 1e-12,
+            "maximum": 1000000000000
+          },
+          "rates": {
+            "additionalProperties": {
+              "type": "number",
+              "minimum": 1e-12,
+              "maximum": 1000000000000
+            },
+            "description": "以 1 USD 可兑换数量为基准；USD 必须为 1。未填写的币种使用内置演示值。",
+            "type": "object",
+            "title": "自定义汇率表"
+          },
+          "to": {
+            "description": "目标货币 3 位代码，例如 CNY、EUR",
+            "type": "string",
+            "title": "目标币种",
+            "enum": [
+              "USD",
+              "CNY",
+              "EUR",
+              "GBP",
+              "JPY",
+              "HKD",
+              "KRW",
+              "TWD",
+              "SGD",
+              "AUD",
+              "CAD",
+              "CHF",
+              "INR",
+              "RUB",
+              "BRL",
+              "THB",
+              "MYR",
+              "IDR",
+              "PHP",
+              "VND",
+              "NZD",
+              "SEK",
+              "NOK",
+              "DKK",
+              "PLN",
+              "CZK",
+              "HUF",
+              "TRY",
+              "ZAR",
+              "AED",
+              "SAR",
+              "MXN",
+              "EGP",
+              "ILS"
+            ]
+          }
+        },
+        "required": [
+          "amount",
+          "from",
+          "to"
+        ],
+        "type": "object",
+        "title": "单笔换算"
+      },
+      "entry": "main.mjs"
+    },
+    {
+      "name": "batch_convert",
+      "description": "把一笔金额同时换算成多种目标货币。",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "amount": {
+            "description": "金额，需大于等于 0",
+            "type": "number",
+            "title": "金额",
+            "minimum": 0,
+            "maximum": 1000000000000000
+          },
+          "from": {
+            "description": "源货币 3 位代码",
+            "type": "string",
+            "title": "源币种",
+            "enum": [
+              "USD",
+              "CNY",
+              "EUR",
+              "GBP",
+              "JPY",
+              "HKD",
+              "KRW",
+              "TWD",
+              "SGD",
+              "AUD",
+              "CAD",
+              "CHF",
+              "INR",
+              "RUB",
+              "BRL",
+              "THB",
+              "MYR",
+              "IDR",
+              "PHP",
+              "VND",
+              "NZD",
+              "SEK",
+              "NOK",
+              "DKK",
+              "PLN",
+              "CZK",
+              "HUF",
+              "TRY",
+              "ZAR",
+              "AED",
+              "SAR",
+              "MXN",
+              "EGP",
+              "ILS"
+            ]
+          },
+          "rates": {
+            "additionalProperties": {
+              "type": "number",
+              "minimum": 1e-12,
+              "maximum": 1000000000000
+            },
+            "description": "以 1 USD 可兑换数量为基准；USD 必须为 1。未填写的币种使用内置演示值。",
+            "type": "object",
+            "title": "自定义汇率表"
+          },
+          "targets": {
+            "description": "目标货币代码数组，例如 [\"CNY\",\"EUR\",\"JPY\"]",
+            "items": {
+              "type": "string",
+              "enum": [
+                "USD",
+                "CNY",
+                "EUR",
+                "GBP",
+                "JPY",
+                "HKD",
+                "KRW",
+                "TWD",
+                "SGD",
+                "AUD",
+                "CAD",
+                "CHF",
+                "INR",
+                "RUB",
+                "BRL",
+                "THB",
+                "MYR",
+                "IDR",
+                "PHP",
+                "VND",
+                "NZD",
+                "SEK",
+                "NOK",
+                "DKK",
+                "PLN",
+                "CZK",
+                "HUF",
+                "TRY",
+                "ZAR",
+                "AED",
+                "SAR",
+                "MXN",
+                "EGP",
+                "ILS"
+              ]
+            },
+            "maxItems": 60,
+            "minItems": 1,
+            "type": "array",
+            "title": "目标币种"
+          }
+        },
+        "required": [
+          "amount",
+          "from",
+          "targets"
+        ],
+        "type": "object",
+        "title": "批量换算"
+      },
+      "entry": "main.mjs"
+    },
+    {
+      "name": "cross_table",
+      "description": "生成以某种货币为基准的交叉汇率表；不传 targets 时输出全部支持货币。",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "amount": {
+            "description": "可选。基准金额，默认 1",
+            "type": "number",
+            "title": "金额",
+            "minimum": 0,
+            "maximum": 1000000000000000
+          },
+          "base": {
+            "description": "基准货币 3 位代码",
+            "type": "string",
+            "title": "基准币种",
+            "enum": [
+              "USD",
+              "CNY",
+              "EUR",
+              "GBP",
+              "JPY",
+              "HKD",
+              "KRW",
+              "TWD",
+              "SGD",
+              "AUD",
+              "CAD",
+              "CHF",
+              "INR",
+              "RUB",
+              "BRL",
+              "THB",
+              "MYR",
+              "IDR",
+              "PHP",
+              "VND",
+              "NZD",
+              "SEK",
+              "NOK",
+              "DKK",
+              "PLN",
+              "CZK",
+              "HUF",
+              "TRY",
+              "ZAR",
+              "AED",
+              "SAR",
+              "MXN",
+              "EGP",
+              "ILS"
+            ]
+          },
+          "rates": {
+            "additionalProperties": {
+              "type": "number",
+              "minimum": 1e-12,
+              "maximum": 1000000000000
+            },
+            "description": "以 1 USD 可兑换数量为基准；USD 必须为 1。未填写的币种使用内置演示值。",
+            "type": "object",
+            "title": "自定义汇率表"
+          },
+          "targets": {
+            "description": "可选。限定目标货币，例如 [\"USD\",\"EUR\"]",
+            "items": {
+              "type": "string",
+              "enum": [
+                "USD",
+                "CNY",
+                "EUR",
+                "GBP",
+                "JPY",
+                "HKD",
+                "KRW",
+                "TWD",
+                "SGD",
+                "AUD",
+                "CAD",
+                "CHF",
+                "INR",
+                "RUB",
+                "BRL",
+                "THB",
+                "MYR",
+                "IDR",
+                "PHP",
+                "VND",
+                "NZD",
+                "SEK",
+                "NOK",
+                "DKK",
+                "PLN",
+                "CZK",
+                "HUF",
+                "TRY",
+                "ZAR",
+                "AED",
+                "SAR",
+                "MXN",
+                "EGP",
+                "ILS"
+              ]
+            },
+            "maxItems": 60,
+            "type": "array",
+            "title": "目标币种"
+          }
+        },
+        "required": [
+          "base"
+        ],
+        "type": "object",
+        "title": "汇率表"
+      },
+      "entry": "main.mjs"
+    },
+    {
+      "name": "list_currencies",
+      "description": "列出支持的货币及其参考汇率，可按代码或中文名筛选。",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "description": "可选筛选词，匹配货币代码或中文名，例如 CNY 或 人民币",
+            "type": "string",
+            "title": "搜索币种"
+          }
+        },
+        "type": "object",
+        "title": "查询币种"
+      },
+      "entry": "main.mjs"
+    }
+  ]
+}

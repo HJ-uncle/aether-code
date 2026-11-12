@@ -1,8 +1,9 @@
 /** Real Electron + authenticated owned engine: Work home draft/template
  * retention, recent-task filters and search, true multipart upload + Enter
- * delivery, workspace selection/ownership, and light/dark responsive layouts. */
+ * delivery, home run-list navigation, workspace selection/ownership, and
+ * light/dark responsive layouts. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
-import { createServer } from 'node:http'
+import { createServer, type ServerResponse } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { RootRun } from '../src/shared/root-run'
@@ -11,6 +12,7 @@ import type { EngineHistoryRow } from '../src/renderer/src/core/engine/chat-hist
 import type { WorkState, WorkTask } from '../src/renderer/src/contrib/work/work-state'
 import type { ChatAttachment } from '../src/renderer/src/core/engine/useChat'
 import { engineStorageKey, sessionStorageKey } from '../src/renderer/src/core/engine/source'
+import { OUTLINE_ICON_PATHS } from '../src/renderer/src/workbench/outline-icons'
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
 const token = 'disposable-work-home-token', modelId = 'work-home-model'
@@ -43,6 +45,8 @@ interface UploadedFile { sessionId: string; path: string; bytes: Buffer; type: s
 const uploads: UploadedFile[] = [], files = new Map<string, UploadedFile>(), bindings = new Map<string, string>()
 const homeSessions = new Set([homeId])
 const runs = new Map<string, RootRun[]>(), histories = new Map<string, EngineHistoryRow[]>()
+const liveStreams = new Map<string, Set<ServerResponse>>()
+const streamRequests: Array<{ sessionId: string; lastEventId: string | null }> = []
 const admissions = new Map<string, { admission: Record<string, unknown>; run: RootRun }>()
 let app: ElectronApplication | undefined, page: Page, fixture = '', storageKey = '', workspaceHistoryKey = '', foreignHistoryKey = '', generation = 0
 const envelope = (data: unknown): string => JSON.stringify({ code: 200, message: 'ok', data })
@@ -50,13 +54,20 @@ const record = (value: unknown): value is Record<string, unknown> => Boolean(val
 const fileKey = (owner: string, path: string): string => JSON.stringify([owner, path])
 const latest = (id: string): RootRun | undefined => runs.get(id)?.at(-1)
 const workspaceFor = (id: string): string => bindings.get(id) ?? (homeSessions.has(id) ? `/remote/home-ui/scratch/${id}` : workspaceRoot)
+const streamCursor = (run: RootRun): string => `${run.runId}:${run.version}`
 
-function resetFixture(): void {
+function closeLiveStreams(): void {
+  for (const streams of liveStreams.values()) for (const response of streams) response.end('data: [DONE]\n\n')
+  liveStreams.clear()
+}
+
+function resetFixture(fixtureTasks: readonly WorkTask[] = tasks): void {
+  closeLiveStreams(); streamRequests.length = 0
   generation++; runs.clear(); histories.clear(); admissions.clear(); bindings.clear(); uploads.length = 0; files.clear(); chats.length = 0; chatWorkspaces.length = 0; bindingEvents.length = 0
   homeSessions.clear(); homeSessions.add(homeId)
   bindingFault = undefined
   bindings.set(homeId, workspaceRoot)
-  for (const task of tasks) {
+  for (const task of fixtureTasks) {
     const run: RootRun = { schemaVersion: 1, runId: `home-root-${generation}-${task.id}`, sessionId: task.id, turnId: `home-turn-${task.id}`,
       userMessageId: `home-user-${task.id}`, assistantMessageId: `home-assistant-${task.id}`, seq: 1, version: 2,
       status: task.status === 'running' ? 'running' : task.status === 'waiting' ? 'waiting' : task.status === 'error' ? 'failed' : task.status === 'stopped' ? 'cancelled' : 'succeeded',
@@ -147,7 +158,19 @@ const server = createServer((request, response) => { void (async () => {
     events.forEach((payload, index) => response.write(`id: ${run.runId}:${index + 1}\ndata: ${JSON.stringify(payload)}\n\n`))
     response.end('data: [DONE]\n\n'); return
   }
-  if (path === '/api/v1/chat/stream') { response.writeHead(200, { 'content-type': 'text/event-stream' }).end('data: [DONE]\n\n'); return }
+  if (path === '/api/v1/chat/stream') {
+    streamRequests.push({ sessionId: id, lastEventId: url.searchParams.get('lastEventId') })
+    response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+    if (current?.status !== 'running') { response.end('data: [DONE]\n\n'); return }
+    // Recovery must attach to a live cursor; ending an executing run's stream would immediately request recovery again.
+    const streams = liveStreams.get(id) ?? new Set<ServerResponse>()
+    liveStreams.set(id, streams); streams.add(response)
+    response.on('close', () => {
+      streams.delete(response)
+      if (!streams.size && liveStreams.get(id) === streams) liveStreams.delete(id)
+    })
+    response.write(': connected\n\n'); return
+  }
   if (path === '/api/v1/conversation/display') {
     const users = rows.filter(row => row.role === 'user')
     response.end(envelope({ schemaVersion: 1, grouping: 'root', turns: users.map(row => ({ userMessageId: row.id, conversationId: row.conversationId,
@@ -162,9 +185,9 @@ const server = createServer((request, response) => { void (async () => {
   const data = path === '/health' ? { status: 'ok' }
     : path === '/meta' ? { version: '2.0.0', buildId: `sha256:${'c'.repeat(64)}`, protocolVersion: 1, toolProfiles: ['general', 'code'], subagentSchemaVersion: 1, instanceId: 'work-home-fixture' }
     : path === '/api/v1/models' ? [{ id: modelId, modelId, provider: 'openai', displayName: modelName, isEnabled: true, capabilities: { toolCalling: true, contextWindow: 200000 } }]
-    : path === '/api/v1/chat/snapshot' ? { schemaVersion: 1, sessionId: id, source: 'persisted', eventId: null, finished: !active,
+    : path === '/api/v1/chat/snapshot' ? { schemaVersion: 1, sessionId: id, source: current?.status === 'running' ? 'live' : 'persisted', eventId: current?.status === 'running' ? streamCursor(current) : null, finished: !active,
       history: rows, projection: [], run: current, runs: runs.get(id) ?? [], subagentRuns: [], todos: [], changes: [], commandJobs: [] }
-    : path === '/api/v1/chat/status' ? { running: Boolean(active), finished: !active, run: current, lastEventId: null }
+    : path === '/api/v1/chat/status' ? { running: Boolean(active), finished: !active, run: current, lastEventId: current?.status === 'running' ? streamCursor(current) : null }
     : path === '/api/v1/chat/runs' ? { runs: runs.get(id) ?? [] }
     : path === '/api/v1/conversation/history' ? rows
     : path === '/api/v1/conversation/sessions' ? []
@@ -189,8 +212,8 @@ const taskSearch = (): Locator => recent().getByRole('searchbox', { name: '搜�
 async function savedHome(): Promise<WorkState> {
   return page.evaluate(key => { window.dispatchEvent(new Event('blur')); return JSON.parse(localStorage.getItem(key) ?? '{}') as WorkState }, storageKey)
 }
-async function seed(options: Partial<Pick<WorkState, 'homeDraft' | 'homeWorkspacePath' | 'homeAttachments' | 'homeMentions' | 'homeSources'>> = {}, workspaceHistory: WorkspaceHistoryEntry[] = []): Promise<void> {
-  resetFixture()
+async function seed(options: Partial<Pick<WorkState, 'homeDraft' | 'homeWorkspacePath' | 'homeAttachments' | 'homeMentions' | 'homeSources'>> = {}, workspaceHistory: WorkspaceHistoryEntry[] = [], fixtureTasks: readonly WorkTask[] = tasks): Promise<void> {
+  resetFixture(fixtureTasks)
   if (options.homeWorkspacePath === null) bindings.delete(homeId)
   await page.evaluate(({ key, tasks, modelId, workspaceRoot, homeId, options, workspaceHistoryKey, foreignHistoryKey, workspaceHistory, foreignWorkspace }) => {
     window.dispatchEvent(new Event('blur'))
@@ -200,9 +223,9 @@ async function seed(options: Partial<Pick<WorkState, 'homeDraft' | 'homeWorkspac
     localStorage.setItem(workspaceHistoryKey, JSON.stringify(workspaceHistory))
     localStorage.setItem(foreignHistoryKey, JSON.stringify([{ path: foreignWorkspace, updatedAt: Date.now() }]))
     localStorage.setItem('aether.work.view.v1', JSON.stringify({ page: 'home', collapsed: false, workspace: false, tab: 'files', pane: 'conversation', ratio: 50 }))
-  }, { key: storageKey, tasks: tasks.slice().reverse(), modelId, workspaceRoot, homeId, options, workspaceHistoryKey, foreignHistoryKey, workspaceHistory, foreignWorkspace })
+  }, { key: storageKey, tasks: fixtureTasks.slice().reverse(), modelId, workspaceRoot, homeId, options, workspaceHistoryKey, foreignHistoryKey, workspaceHistory, foreignWorkspace })
   await page.reload(); await expect(home()).toBeVisible(); await expect(composer()).toBeVisible()
-  await expect(page.locator('.work-sidebar')).toContainText('引擎已连接')
+  await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
 }
 async function setWindow(width: number, height = 900): Promise<void> {
   await app!.evaluate(({ BrowserWindow }, size) => { const win = BrowserWindow.getAllWindows()[0]; win.setMinimumSize(520, 600); win.setContentSize(size.width, size.height) }, { width, height })
@@ -223,8 +246,11 @@ async function settleLayout(): Promise<void> {
   })
 }
 async function setAppearance(appearance: 'light' | 'dark'): Promise<void> {
+  // A dismissed dialog leaves the accessibility tree before its exit callback unmounts it.
+  await expect(page.locator('.work-settings-dialog')).toHaveCount(0)
   await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
   const settings = page.getByRole('dialog', { name: '设置', exact: true })
+  await expect(settings).toBeVisible()
   await settings.getByRole('tab', { name: '外观', exact: true }).click()
   await settings.getByRole('radio', { name: appearance === 'dark' ? '深色' : '浅色', exact: true }).click()
   await expect(page.locator('html')).toHaveAttribute('data-appearance', appearance)
@@ -242,6 +268,28 @@ async function setDefaultWorkspace(path: string): Promise<void> {
   await settings.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(page.locator('.modal-overlay')).toHaveCount(0)
   await settleLayout()
+}
+
+async function expectOutlineIcons(container: Locator, minimum = 1): Promise<void> {
+  const icons = await container.locator('svg[data-icon]:visible').evaluateAll(elements => elements.map(element => ({
+    name: element.getAttribute('data-icon'), style: element.getAttribute('data-icon-style'),
+    hidden: element.getAttribute('aria-hidden'), viewBox: element.getAttribute('viewBox'),
+    shapes: [...element.querySelectorAll('path, circle, rect, line, polyline, polygon')].map(shape => {
+      const style = getComputedStyle(shape)
+      return { fill: style.fill, stroke: style.stroke, width: Number.parseFloat(style.strokeWidth), cap: style.strokeLinecap, join: style.strokeLinejoin }
+    }),
+  })))
+  expect(icons.length).toBeGreaterThanOrEqual(minimum)
+  for (const icon of icons.filter(icon => icon.name !== 'vscode')) {
+    expect(icon.style, `${icon.name} must inherit the Work icon style`).toBe('outline')
+    expect(icon.hidden).toBe('true'); expect(icon.viewBox).toBe('0 0 24 24')
+    expect(icon.shapes.length, `${icon.name} must contain visible geometry`).toBeGreaterThan(0)
+    for (const shape of icon.shapes) {
+      expect(shape.fill, `${icon.name} must not fall back to the old solid glyph`).toBe('none')
+      expect(shape.stroke).not.toBe('none'); expect(shape.width).toBeCloseTo(1.5, 2)
+      expect(shape.cap).toBe('round'); expect(shape.join).toBe('round')
+    }
+  }
 }
 
 test.describe.serial('Work 首页', () => {
@@ -279,12 +327,12 @@ test.describe.serial('Work 首页', () => {
       }
       const path = info.outputPath('work-home.png'); await page.screenshot({ path }); await info.attach('work-home', { path, contentType: 'image/png' })
     }
-    await info.attach('home-fixture-requests', { body: JSON.stringify({ errors, forbidden, chats, chatWorkspaces, bindingEvents, uploads: uploads.map(file => ({ ...file, bytes: file.bytes.toString('utf8') })) }, null, 2), contentType: 'application/json' })
+    await info.attach('home-fixture-requests', { body: JSON.stringify({ errors, forbidden, chats, chatWorkspaces, bindingEvents, streamRequests, uploads: uploads.map(file => ({ ...file, bytes: file.bytes.toString('utf8') })) }, null, 2), contentType: 'application/json' })
     expect(errors).toEqual([]); expect(forbidden).toEqual([])
   })
   test.afterAll(async () => {
     try { await app?.close() } finally {
-      server.closeAllConnections(); await new Promise<void>(done => server.close(() => done()))
+      closeLiveStreams(); server.closeAllConnections(); await new Promise<void>(done => server.close(() => done()))
       if (fixture) {
         const target = resolve(fixture)
         if (dirname(target) !== fixtureRoot || !basename(target).startsWith('work-home-profile-')) throw new Error('Unsafe home fixture cleanup')
@@ -293,13 +341,243 @@ test.describe.serial('Work 首页', () => {
     }
   })
 
+  test('首页运行列表：仅首页右上角显示，真实切换任务与浅深窄窗键盘交互可用', async ({}, info) => {
+    const navigation = page.locator('.work-navigation')
+    const entry = page.locator('.work-main > .work-run-list')
+    const trigger = entry.getByRole('button', { name: '查看运行列表，共 2 项任务', exact: true })
+    const dialog = page.getByRole('dialog', { name: '运行列表', exact: true })
+    const assertHomeEntry = async (): Promise<void> => {
+      await expect(home()).toBeVisible()
+      expect((await savedHome()).activeTaskId).toBeNull()
+      await expect(page.locator('.work-run-list')).toHaveCount(1)
+      await expect(entry).toHaveCount(1)
+      await expect(page.locator('.work-sidebar .work-run-list, .work-task-heading .work-run-list')).toHaveCount(0)
+      await expect(trigger).toBeVisible(); await expect(trigger).toBeEnabled()
+      await expect(trigger.locator('.work-run-list__label')).toHaveText('运行列表')
+      await expect(trigger.locator('.work-run-list__count')).toHaveText('2')
+      await expect(trigger.locator('svg[data-icon="list-play"]')).toHaveCount(1)
+      await settleLayout()
+      expect(await entry.evaluate(element => {
+        const bounds = element.getBoundingClientRect(), main = element.parentElement!.getBoundingClientRect()
+        return bounds.left >= main.left + main.width / 2 && bounds.right <= main.right + 1 && main.right - bounds.right <= 48 &&
+          bounds.top >= main.top && bounds.top - main.top <= 48
+      })).toBe(true)
+    }
+    const assertNoEntry = async (): Promise<void> => {
+      await expect(page.locator('.work-run-list')).toHaveCount(0)
+      await expect(page.getByRole('button', { name: /^查看运行列表，共/ })).toHaveCount(0)
+      await expect(dialog).toHaveCount(0)
+    }
+    const returnHome = async (): Promise<void> => {
+      await page.locator('.work-sidebar').getByRole('button', { name: '新任务', exact: true }).click()
+      await assertHomeEntry()
+      await expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    }
+    const openList = async (): Promise<void> => {
+      await trigger.click(); await expect(dialog).toBeVisible()
+      await expect(dialog.locator('.work-run-list__item-main strong')).toHaveText([tasks[0].title, tasks[1].title])
+      await expect(dialog.locator('.work-run-list__status--running')).toHaveCount(1)
+      await expect(dialog.locator('.work-run-list__status--waiting')).toHaveCount(1)
+      await expect(dialog.locator('.work-run-list__item')).toHaveCount(2)
+      await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    }
+    const closeWithEscape = async (): Promise<void> => {
+      await page.keyboard.press('Escape'); await expect(dialog).toHaveCount(0)
+      await expect(trigger).toHaveAttribute('aria-expanded', 'false'); await expect(trigger).toBeFocused()
+    }
+    const selectListedTask = async (task: WorkTask): Promise<void> => {
+      await dialog.locator('.work-run-list__item-main').filter({ hasText: task.title }).click()
+      await expect(dialog).toHaveCount(0)
+      await expect.poll(async () => (await savedHome()).activeTaskId).toBe(task.id)
+      await expect(page.locator('.work-task-heading h1')).toHaveText(task.title)
+      await expect(page.locator('.work-conversation')).toContainText(`HOME_OPENED:${task.id}`)
+      await assertNoEntry()
+    }
+    try {
+      await assertHomeEntry(); await openList(); await closeWithEscape()
+      await taskRows().filter({ hasText: longTitle }).click()
+      await expect.poll(async () => (await savedHome()).activeTaskId).toBe(tasks[4].id)
+      await expect(page.locator('.work-task-heading h1')).toHaveText(longTitle)
+      await assertNoEntry()
+      await returnHome(); await openList(); await selectListedTask(tasks[0])
+      await returnHome(); await openList(); await selectListedTask(tasks[1])
+      await navigation.getByRole('button', { name: '项目', exact: true }).click()
+      await expect(navigation.getByRole('button', { name: '项目', exact: true })).toHaveAttribute('aria-current', 'page')
+      await expect(page.locator('.work-task-heading')).toHaveCount(0)
+      await assertNoEntry(); await returnHome()
+      for (const appearance of ['light', 'dark'] as const) {
+        await setWindow(1440); await setAppearance(appearance)
+        for (const width of [1440, 540]) {
+          await setWindow(width, width === 540 ? 650 : 900)
+          await assertHomeEntry(); await openList(); await settleLayout()
+          expect(await dialog.evaluate(element => {
+            const bounds = element.getBoundingClientRect()
+            return bounds.left >= 0 && bounds.top >= 0 && bounds.right <= window.innerWidth + 1 && bounds.bottom <= window.innerHeight + 1
+          })).toBe(true)
+          const screenshot = info.outputPath(`home-run-list-${appearance}-${width}.png`)
+          await page.screenshot({ path: screenshot, animations: 'disabled' })
+          await info.attach(`首页运行列表-${appearance}-${width}`, { path: screenshot, contentType: 'image/png' })
+          await closeWithEscape()
+        }
+      }
+      await setWindow(1440)
+      await page.locator('.work-sidebar').getByRole('button', { name: '收起 Work 导航', exact: true }).click()
+      await expect(page.locator('.work-view')).toHaveAttribute('data-collapsed', 'true')
+      await assertHomeEntry(); await openList(); await closeWithEscape()
+      await openList(); await selectListedTask(tasks[1])
+      expect(chats).toHaveLength(0)
+    } finally {
+      await page.keyboard.press('Escape'); await setWindow(1440); await setAppearance('light')
+    }
+  })
+
+  test('首页运行列表：单项任务实时归零后再出现保持关闭', async () => {
+    await seed({}, [], [tasks[0]])
+    const trigger = page.locator('.work-main > .work-run-list').getByRole('button', { name: '查看运行列表，共 1 项任务', exact: true })
+    const dialog = page.getByRole('dialog', { name: '运行列表', exact: true })
+    await expect(trigger).toBeVisible(); await trigger.click()
+    await expect(dialog.locator('.work-run-list__item-main strong')).toHaveText([tasks[0].title])
+    await expect(dialog.locator('.work-run-list__item-main.is-active')).toHaveCount(0)
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    const id = tasks[0].id, running = latest(id)!
+    const finishedAt = Date.now(), terminal: RootRun = { ...running, status: 'succeeded', version: running.version + 1, updatedAt: finishedAt, finishedAt }
+    runs.set(id, [terminal])
+    await expect.poll(async () => (await savedHome()).tasks.find(task => task.id === id)?.status).toBe('done')
+    await expect(dialog).toHaveCount(0)
+    await expect(page.locator('.work-run-list')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /^查看运行列表，共/ })).toHaveCount(0)
+    expect((await savedHome()).tasks.filter(task => ['running', 'waiting'].includes(task.status))).toEqual([])
+    expect((await savedHome()).activeTaskId).toBeNull()
+    await expect(home()).toBeVisible()
+
+    // Idle-row discovery has a 15-second cooldown. Keep the same home mounted and wait for its real server probe.
+    const restartedAt = Date.now(), seq = running.seq + 1
+    const restarted: RootRun = { ...running, runId: `${running.runId}-next`, turnId: `${running.turnId}-${seq}`,
+      userMessageId: `${running.userMessageId}-${seq}`, assistantMessageId: `${running.assistantMessageId}-${seq}`,
+      seq, version: 1, createdAt: restartedAt, updatedAt: restartedAt, startedAt: restartedAt }
+    runs.set(id, [terminal, restarted])
+    histories.set(id, [...histories.get(id)!,
+      { id: restarted.userMessageId, role: 'user', content: tasks[0].title, createdAt: restartedAt, conversationId: restarted.turnId, metadata: { rootRunId: restarted.runId } },
+      { id: restarted.assistantMessageId, role: 'assistant', content: `HOME_RESTARTED:${id}`, createdAt: restartedAt, conversationId: restarted.turnId, metadata: { rootRunId: restarted.runId } },
+    ])
+    await expect(trigger).toBeVisible({ timeout: 30_000 })
+    await expect.poll(async () => (await savedHome()).tasks.find(task => task.id === id)?.status).toBe('running')
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false'); await expect(dialog).toHaveCount(0)
+    expect((await savedHome()).activeTaskId).toBeNull()
+    await expect(home()).toBeVisible(); await expect(page.locator('.work-sidebar .work-run-list')).toHaveCount(0)
+    await trigger.click(); await expect(dialog.locator('.work-run-list__item-main.is-active')).toHaveCount(0)
+    await expect(dialog.locator('.work-run-list__item-main strong')).toHaveText([tasks[0].title])
+    await page.keyboard.press('Escape'); await expect(dialog).toHaveCount(0); await expect(trigger).toBeFocused()
+    await trigger.click(); await dialog.locator('.work-run-list__item-main').click()
+    await expect.poll(async () => (await savedHome()).activeTaskId).toBe(id)
+    await expect(page.locator('.work-conversation')).toContainText(`HOME_RESTARTED:${id}`)
+    await expect(page.locator('.work-run-list')).toHaveCount(0)
+    await expect.poll(() => liveStreams.get(id)?.size ?? 0).toBeGreaterThan(0)
+    expect(streamRequests).toContainEqual({ sessionId: id, lastEventId: streamCursor(restarted) })
+    await page.locator('.work-sidebar').getByRole('button', { name: '新任务', exact: true }).click()
+    await expect(home()).toBeVisible(); await expect(trigger).toBeVisible()
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false'); await expect(dialog).toHaveCount(0)
+    expect(chats).toHaveLength(0)
+  })
+
+  test('Work 图标：导航语义、跨门户一致性与浅深主题', async ({}, info) => {
+    const sidebar = page.getByRole('complementary', { name: 'Work 导航', exact: true })
+    const navigation = [
+      ['工作台', 'dashboard'], ['项目', 'folder-outline'], ['Agent', 'account-outline'],
+      ['插件', 'puzzle'], ['浏览器', 'globe'], ['自动化', 'clock-outline'], ['引擎监控', 'activity'],
+    ]
+    await expect(sidebar.locator('.work-navigation > button')).toHaveCount(navigation.length)
+    for (const [label, icon] of navigation) {
+      const glyph = sidebar.getByTitle(label, { exact: true }).locator('svg[data-icon]')
+      await expect(glyph).toHaveAttribute('data-icon', icon)
+      await expect(glyph).toHaveAttribute('width', '18'); await expect(glyph).toHaveAttribute('height', '18')
+    }
+    await expect(sidebar.getByRole('button', { name: '新任务', exact: true }).locator('svg[data-icon="plus"]')).toHaveAttribute('width', '16')
+    for (const appearance of ['light', 'dark'] as const) {
+      await setAppearance(appearance)
+      await expectOutlineIcons(sidebar, 9)
+      await expectOutlineIcons(home(), 6)
+      const screenshot = info.outputPath(`work-icons-navigation-${appearance}.png`)
+      await sidebar.screenshot({ path: screenshot, animations: 'disabled' })
+      await info.attach(`work-icons-navigation-${appearance}`, { path: screenshot, contentType: 'image/png' })
+      await page.screenshot({ path: info.outputPath(`work-icons-surface-${appearance}.png`), animations: 'disabled' })
+      await home().locator('.work-composer-workspace__trigger').click()
+      const picker = page.getByRole('dialog', { name: '选择工作区', exact: true })
+      await expect(picker).toBeVisible(); await settleLayout()
+      expect(await picker.evaluate(element => element.closest('.work-view') === null)).toBe(true)
+      await expectOutlineIcons(picker)
+      const portalScreenshot = info.outputPath(`work-icons-portal-${appearance}.png`)
+      await picker.screenshot({ path: portalScreenshot, animations: 'disabled' })
+      await page.keyboard.press('Escape'); await expect(picker).toHaveCount(0)
+      await sidebar.getByRole('button', { name: '设置', exact: true }).click()
+      const settings = page.getByRole('dialog', { name: '设置', exact: true })
+      await expect(settings).toBeVisible(); await settleLayout()
+      expect(await settings.evaluate(element => element.closest('.work-view') === null)).toBe(true)
+      await expectOutlineIcons(settings, 8)
+      await settings.getByRole('button', { name: '关闭', exact: true }).click(); await expect(settings).toHaveCount(0)
+      await expect(page.locator('.modal-overlay')).toHaveCount(0)
+      await settleLayout()
+    }
+    await setAppearance('light')
+    await expect(home()).toBeVisible(); await expectOutlineIcons(sidebar, 9)
+  })
+
+  test('Work 图标：全目录路径边界与浅深色图谱', async ({}, info) => {
+    const entries = Object.entries(OUTLINE_ICON_PATHS)
+    expect(entries.length).toBeGreaterThan(80)
+    expect(entries.some(([name]) => name === 'vscode')).toBe(false)
+    await setWindow(1440, 1200)
+    try {
+      for (const appearance of ['light', 'dark'] as const) {
+        await setAppearance(appearance)
+        await page.evaluate(entries => {
+          const sheet = document.createElement('div')
+          sheet.id = 'work-icon-contact-sheet'
+          sheet.style.cssText = 'position:fixed;left:24px;top:24px;width:calc(100vw - 48px);z-index:2147483647;box-sizing:border-box;padding:24px;display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:16px 8px;background:var(--bg-panel);color:var(--fg);font-family:var(--font-ui);border:1px solid var(--border);border-radius:12px'
+          for (const [name, geometry] of entries) {
+            const tile = document.createElement('div')
+            tile.style.cssText = 'display:flex;min-width:0;min-height:64px;align-items:center;justify-content:flex-start;flex-direction:column;gap:8px;text-align:center'
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+            svg.setAttribute('width', '24'); svg.setAttribute('height', '24'); svg.setAttribute('viewBox', '0 0 24 24')
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+            path.setAttribute('d', geometry); path.setAttribute('fill', 'none'); path.setAttribute('stroke', 'currentColor')
+            path.setAttribute('stroke-width', '1.5'); path.setAttribute('stroke-linecap', 'round'); path.setAttribute('stroke-linejoin', 'round')
+            path.dataset.icon = name; svg.appendChild(path)
+            const label = document.createElement('span')
+            label.style.cssText = 'font-size:11px;line-height:14px;overflow-wrap:anywhere'
+            label.textContent = name; tile.append(svg, label); sheet.appendChild(tile)
+          }
+          document.body.appendChild(sheet)
+        }, entries)
+        const sheet = page.locator('#work-icon-contact-sheet')
+        try {
+          const geometry = await sheet.locator('path').evaluateAll(paths => paths.map(path => {
+            const svgPath = path as SVGPathElement, box = svgPath.getBBox()
+            return { name: path.getAttribute('data-icon'), length: svgPath.getTotalLength(), x: box.x, y: box.y, right: box.x + box.width, bottom: box.y + box.height }
+          }))
+          expect(geometry).toHaveLength(entries.length)
+          for (const glyph of geometry) {
+            expect(glyph.length, `${glyph.name} must draw a non-empty SVG path`).toBeGreaterThan(0)
+            expect(glyph.x, `${glyph.name} left edge`).toBeGreaterThanOrEqual(-0.1)
+            expect(glyph.y, `${glyph.name} top edge`).toBeGreaterThanOrEqual(-0.1)
+            expect(glyph.right, `${glyph.name} right edge`).toBeLessThanOrEqual(24.1)
+            expect(glyph.bottom, `${glyph.name} bottom edge`).toBeLessThanOrEqual(24.1)
+          }
+          const screenshot = info.outputPath(`work-icon-catalogue-${appearance}.png`)
+          await sheet.screenshot({ path: screenshot, animations: 'disabled' })
+          await info.attach(`work-icon-catalogue-${appearance}`, { path: screenshot, contentType: 'image/png' })
+        } finally { await sheet.evaluate(element => element.remove()) }
+      }
+    } finally { await setWindow(1440); await setAppearance('light') }
+  })
+
   test('模板追加到最新草稿，引用和附件在切页及重载后保留', async () => {
     const initial = `请保留已有说明 @${attachments[0].path}`
     const mention = { source: 'file' as const, origin: 'attachment' as const, displayText: '附件1', path: attachments[0].path,
       attachmentId: attachments[0].attachmentId, textOffset: '请保留已有说明 '.length }
     await seed({ homeDraft: initial, homeAttachments: attachments, homeMentions: [mention] })
-    await expect(home().locator('.attach-chip')).toHaveCount(3)
-    await expect(composer().locator('[data-mention-key]')).toHaveCount(1)
+    await expect(home().locator('.attach-chip')).toHaveCount(0)
+    await expect(composer().locator('.mention-chip--attachment .mention-chip__label')).toHaveText(attachments.map(file => file.name))
     await composer().press('Control+End'); await composer().press('Shift+Enter'); await composer().pressSequentially('补充要求')
     expect(chats).toHaveLength(0)
     await home().getByRole('button', { name: '分析资料', exact: true }).click()
@@ -307,7 +585,8 @@ test.describe.serial('Work 首页', () => {
     let saved = await savedHome()
     expect(saved.homeDraft).toContain(initial); expect(saved.homeDraft).toContain('补充要求')
     expect(saved.homeDraft).toContain('请分析我提供的资料')
-    expect(saved.homeAttachments).toEqual(attachments); expect(saved.homeMentions).toContainEqual(mention)
+    expect(saved.homeAttachments).toEqual(attachments.map(file => ({ ...file, inlineReference: true })))
+    expect(saved.homeMentions).toContainEqual({ ...mention, displayText: attachments[0].name })
     const draft = saved.homeDraft
     await page.locator('.work-sidebar').getByRole('button', { name: '项目', exact: true }).click()
     await expect(home()).toHaveCount(0)
@@ -315,8 +594,8 @@ test.describe.serial('Work 首页', () => {
     await expect(composer()).toContainText('补充要求')
     await page.reload(); await expect(composer()).toBeVisible()
     saved = await savedHome()
-    expect(saved.homeDraft).toBe(draft); expect(saved.homeAttachments).toEqual(attachments)
-    expect(saved.homeMentions).toContainEqual(mention); expect(chats).toHaveLength(0)
+    expect(saved.homeDraft).toBe(draft); expect(saved.homeAttachments).toEqual(attachments.map(file => ({ ...file, inlineReference: true })))
+    expect(saved.homeMentions).toContainEqual({ ...mention, displayText: attachments[0].name }); expect(chats).toHaveLength(0)
   })
 
   test('分页前后切换保留焦点，筛选搜索覆盖全量任务并重置页码', async ({}, info) => {
@@ -391,8 +670,9 @@ test.describe.serial('Work 首页', () => {
     await home().locator('input[type="file"]').setInputFiles(path)
     await expect.poll(() => uploads.length).toBe(1)
     expect(uploads[0].sessionId).toBe(homeId); expect(uploads[0].bytes.equals(Buffer.from(contents))).toBe(true)
-    await expect(home().locator('.attach-chip')).toHaveCount(1)
-    await composer().fill('请整理这份资料')
+    await expect(home().locator('.attach-chip')).toHaveCount(0)
+    await expect(composer().locator('.mention-chip--attachment .mention-chip__label')).toHaveText('首页上传资料.txt')
+    await composer().focus(); await composer().press('Control+End'); await composer().pressSequentially('请整理这份资料')
     await composer().press('Shift+Enter'); await composer().pressSequentially('保留关键结论')
     expect(chats).toHaveLength(0)
     const pending = await savedHome()
@@ -479,7 +759,7 @@ test.describe.serial('Work 首页', () => {
     expect(chats[0].workspacePaths).toEqual([])
     expect(chatWorkspaces).toEqual([{ sessionId: homeId, root: otherWorkspace }])
     expect(latest(homeId)?.workspacePaths).toEqual([otherWorkspace])
-    expect(String(chats[0].message)).toBe(draft)
+    expect(String(chats[0].message)).toContain(draft)
     await expect(page.locator('.work-conversation')).toContainText('HOME_SEND_OK')
     saved = await savedHome()
     expect(saved.tasks.find(task => task.id === homeId)?.workspacePath).toBe(otherWorkspace)
@@ -516,7 +796,8 @@ test.describe.serial('Work 首页', () => {
     await page.reload(); await expect(composer().locator('[data-mention-key]')).toHaveCount(1)
     const saved = await savedHome()
     expect(saved.homeWorkspacePath).toBe(workspaceRoot); expect(saved.homeDraft).toBe(draft); expect(saved.homeSessionId).toBe(homeId)
-    expect(saved.homeAttachments).toEqual([attachments[0]]); expect(saved.homeSources).toEqual([attachments[1]]); expect(saved.homeMentions).toEqual([mention])
+    expect(saved.homeAttachments).toEqual([{ ...attachments[0], inlineReference: true }]); expect(saved.homeSources).toEqual([attachments[1]])
+    expect(saved.homeMentions).toEqual([{ ...mention, displayText: attachments[0].name }])
     expect(bindingEvents.filter(event => event.sessionId === homeId)).toEqual([]); expect(chats).toEqual([])
   })
 
@@ -609,7 +890,8 @@ test.describe.serial('Work 首页', () => {
         await page.mouse.move(5, 5)
         await settleLayout()
         await home().evaluate(element => { element.scrollTop = 0 })
-        await expect(composer()).toBeVisible(); await expect(home().locator('.attach-chip')).toHaveCount(3)
+        await expect(composer()).toBeVisible(); await expect(home().locator('.attach-chip')).toHaveCount(0)
+        await expect(composer().locator('.mention-chip--attachment .mention-chip__label')).toHaveText(attachments.map(file => file.name))
         await expect(taskRows()).toHaveCount(5)
         await expect(home().locator('.input-composer .work-composer-workspace')).toHaveCount(0)
         const footerGeometry = await home().evaluate(element => {

@@ -23,26 +23,9 @@
   border-bottom: 1px solid var(--border);
 }
 
-.work-workspace-panel__title {
-  display: flex;
-  align-items: baseline;
-  min-width: 0;
-  gap: var(--space-2);
-  overflow: hidden;
-  color: var(--fg-strong);
-  white-space: nowrap;
-}
-
-.work-workspace-panel__root-label { flex: 0 0 auto; color: var(--fg-muted); font-size: 11px; }
-.work-workspace-panel__title strong { min-width: 0; overflow: hidden; color: var(--fg); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .work-workspace-panel__actions { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; }
 
-.work-workspace-panel__switch { display: inline-flex; align-items: center; gap: 2px; }
-.work-workspace-panel__switch button { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1); height: 26px; padding: 0 var(--space-2); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--fg-muted); font: inherit; font-size: 12px; cursor: pointer; }
-.work-workspace-panel__switch button:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg-strong); }
-.work-workspace-panel__switch button[aria-pressed="true"] { background: var(--bg-active); color: var(--fg-strong); }
-.work-workspace-panel__switch button:focus-visible { outline: 1px solid var(--list-focus-outline); outline-offset: -1px; }
-.work-workspace-panel__switch button:disabled { opacity: .5; cursor: default; }
+.work-workspace-panel__search-toggle[aria-pressed="true"] { background: var(--bg-active); color: var(--fg-strong); }
 
 .work-workspace-panel__files,
 .work-workspace-panel__search { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
@@ -55,21 +38,26 @@
 .work-workspace-panel .search-view__summary { overflow-wrap: anywhere; }
 .work-workspace-panel .search-view__input:focus-visible { outline: none; box-shadow: none; }
 
-.work-workspace-panel__actions .work-quiet-button {
+.work-workspace-panel__actions .work-quiet-button,
+.work-workspace-panel .work-workspace-panel__search-toggle {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 24px;
   height: 24px;
+  flex: 0 0 auto;
   padding: 0;
   color: var(--fg-muted);
   border-radius: var(--radius-sm);
 }
+.work-workspace-panel__search-toggle > svg { flex: none; }
 .work-workspace-panel__actions .work-quiet-button > svg + svg { position: absolute; right: 1px; bottom: 2px; background: var(--bg-surface); }
-.work-workspace-panel__actions .work-quiet-button:hover:not(:disabled) { color: var(--fg-strong); background: var(--bg-hover); }
+.work-workspace-panel__actions .work-quiet-button:hover:not(:disabled),
+.work-workspace-panel__search-toggle:hover:not(:disabled) { color: var(--fg-strong); background: var(--bg-hover); }
 
 .work-workspace-panel__actions .work-quiet-button:focus-visible,
+.work-workspace-panel__search-toggle:focus-visible,
 .work-workspace-panel__filter-wrap button:focus-visible { outline: 1px solid var(--list-focus-outline); outline-offset: -1px; }
 
 .work-workspace-panel__filter-wrap {
@@ -91,6 +79,9 @@
 .work-workspace-panel__filter-wrap input::placeholder { color: var(--fg-muted); }
 .work-workspace-panel__filter-wrap button { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--radius-round); background: transparent; color: var(--fg-muted); cursor: pointer; }
 .work-workspace-panel__filter-wrap button:hover { color: var(--fg-strong); background: var(--bg-hover); }
+
+.work-workspace-panel__filter-status { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; margin: var(--space-1) var(--space-3); color: var(--fg-muted); font-size: 12px; line-height: 1.5; }
+.work-workspace-panel__filter-status > svg { flex: 0 0 auto; }
 
 .work-workspace-panel__tree { flex: 1; min-height: 0; padding: var(--space-1) 0 var(--space-3); overflow: auto; outline: none; }
 
@@ -124,8 +115,6 @@
 }
 
 @container work-file-panel (max-width: 330px) {
-  .work-workspace-panel__switch button { padding-inline: 5px; }
-  .work-workspace-panel__switch button > svg { display: none; }
   .work-workspace-panel__actions { gap: 0; }
   .work-workspace-panel__actions .work-quiet-button { width: 22px; }
 }

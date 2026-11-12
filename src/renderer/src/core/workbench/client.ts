@@ -139,7 +139,7 @@ export function waitForWorkPreview(sessionId: string, path: string, current: () 
   })
 }
 
-/** Each mounted mode retains its own session bridge while the other mode is visible. */
+/** Work is the only mounted session bridge. */
 export function useWorkbenchClient(sessionId: string | null, enabled: boolean, mode: AppMode, adapter: WorkbenchAdapter): void {
   const source = getEngineSource()
   const latest = useRef({ adapter, sessionId, source, mode, enabled })
@@ -151,19 +151,12 @@ export function useWorkbenchClient(sessionId: string | null, enabled: boolean, m
     let registration: Registration | undefined
     let retry: ReturnType<typeof setTimeout> | undefined
     const owner = crypto.randomUUID()
-    const markConnected = (value: boolean) => {
-      if (!setWorkbenchConnected(source, sessionId, owner, value, mode)) return
-      if (mode === 'code' && source === getEngineSource()) {
-        // The dispatcher outlives this renderer and cannot read its capability map.
-        void window.aether.codeQueue.invoke({ taskId: sessionId, expectedEngine,
-          action: { kind: 'set-connected', connected: value } }).catch(() => {})
-      }
-    }
+    const markConnected = (value: boolean) => { setWorkbenchConnected(source, sessionId, owner, value, mode) }
     let retryDelay = 3000
     let unsupported = false
     const current = () => isWorkbenchOwnerCurrent({ source, sessionId, mode, enabled }, latest.current, getEngineSource(), disposed)
     const send = async <T,>(path: string, body: unknown): Promise<T> => {
-      const result = await request<T>({ method: 'POST', path, body, expectedEngine, toolProfile: mode === 'work' ? 'general' : 'code' })
+      const result = await request<T>({ method: 'POST', path, body, expectedEngine, toolProfile: 'general' })
       if (!result.ok) {
         if (path === '/workbench/clients' && (result.code === 404 || result.code === 40400)) unsupported = true
         throw new WorkbenchRequestError(result.message || '工作台连接失败。', result.code)

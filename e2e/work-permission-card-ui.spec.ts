@@ -4,6 +4,7 @@
  * actually executed, and opening details cannot authorize a response or write. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer, type ServerResponse } from 'node:http'
+import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { RootPending, RootRun } from '../src/shared/root-run'
@@ -37,7 +38,50 @@ const questionGroups = [
   { question: '还有哪些必须保留的要求？', options: [], allowInput: true },
 ]
 const singleQuestion = '请补充需要保留的交付要求。'
-type Scenario = 'create' | 'update' | 'delete' | 'command' | 'questions' | 'single-question'
+const longMultiQuestion = { question: '这次项目交付需要重点检查哪些方面？可以选择多项，并补充需要保留的要求。', multiSelect: true, allowInput: true,
+  options: [
+    { label: '功能范围与交付完整性', description: '逐项核对本次计划中的功能、实际完成的内容与尚未处理的事项，说明每一项交付的对应文件、适用场景和检查方式。对于暂时不能验证的部分，保留原因与后续处理建议，方便继续跟进。' },
+    { label: '资料来源与关键数据', description: '检查引用材料、原始数据和结论之间是否一致，保留可访问的来源链接、采集时间与必要的上下文。存在不同口径、缺失记录或需要再次确认的数据时，应明确标注，避免把推测写成已经确认的事实。' },
+    { label: '文档结构与阅读体验', description: '按阅读顺序检查标题、段落、表格和图片的关系，让项目背景、主要结论与后续行动容易查找。保留完整说明和图片原始比例，确保较窄窗口下文字能自然换行，不会被截断或遮挡。' },
+    { label: '可编辑文件与后续维护', description: '核对最终材料是否包含可继续编辑的源文件、必要附件与使用说明，并检查文件之间的引用关系。对于后续需要更新的内容，说明维护位置、修改方式和验证步骤，让接手者可以直接继续工作。' },
+  ] }
+const pluginSource = Array.from({ length: 72 }, (_, index) => `// 插件源码核对 ${index + 1}：保留完整内容。`).join('\n') +
+  '\nlet input = "";\nfor await (const chunk of process.stdin) input += chunk;\nconst request = JSON.parse(input);\nconsole.log(JSON.stringify({ result: request.args }));\n// PLUGIN_SOURCE_END_完整源码末尾'
+const pluginManifest = { apiVersion: 1, id: 'permission-report-plugin', name: '项目资料整理插件', version: '1.0.0',
+  description: '汇总项目资料并生成可核对的交付说明。', runtime: 'node', tools: [
+    { name: 'summarize', description: '汇总资料中的重点与待确认信息。', entry: 'main.mjs',
+      inputSchema: { type: 'object', properties: { text: { type: 'string', description: '待整理的资料正文' } }, required: ['text'], additionalProperties: false } },
+    { name: 'export_report', description: '生成包含来源与结论的交付说明。', entry: 'main.mjs',
+      inputSchema: { type: 'object', properties: { title: { type: 'string' } }, required: ['title'], additionalProperties: false } },
+  ] }
+const pluginFiles = { 'main.mjs': pluginSource, 'README.md': '# 项目资料整理插件\n只读取本次调用传入的资料。\nREADME_END_文件末尾' }
+const updatedPluginManifest = { ...pluginManifest, name: '项目资料整理与审阅插件', version: '1.1.0', description: '增加来源复核与交付审阅。' }
+const updatedPluginFiles = { ...pluginFiles, 'main.mjs': `${pluginSource}\n// UPDATE_SOURCE_END_更新源码末尾` }
+const knowledgeCreateArgs = { name: '项目交付知识库', description: '保存项目背景、资料来源与交付核对记录。' }
+const knowledgeCreateId = '6b9a04f4-a1fd-4da1-b1de-dbd0041d9cb5'
+const knowledgeDocumentId = 'b719ae24-c753-477b-9d57-25b27a8c8464'
+const knowledgeBefore = { id: 'cc365864-7310-4847-888b-926e5aca3345', tenantId: 'permission-card-tenant', revision: 5,
+  name: '现有项目资料库', description: '保留来源信息。', documentCount: 3, createdAt: 1_700_000_000_000, updatedAt: 1_700_000_100_000 }
+const knowledgeContent = Array.from({ length: 92 }, (_, index) => `第 ${index + 1} 条核对记录：来源、证据与待确认信息都必须完整保留。`).join('\n') + '\nKNOWLEDGE_CONTENT_END_完整知识文档末尾'
+const knowledgeContentHash = `sha256:${createHash('sha256').update(knowledgeContent).digest('hex')}`
+const knowledgeImportArgs = { knowledgeBaseId: knowledgeBefore.id, filename: '项目交付核对记录.txt', content: knowledgeContent }
+const skillArgs = { name: 'delivery-review', description: '核对交付资料与来源，保留完整审阅记录。', scope: 'project',
+  content: '# 交付审阅\n\n' + '逐项检查资料、来源和待确认信息。\n'.repeat(45) + 'SKILL_CONTENT_END_技能正文末尾' }
+const skillId = `skill-${'a1'.repeat(16)}`, skillDirectory = `${workspaceRoot}/.aether/skills/${skillArgs.name}`
+const preparedSkillContent = `---\nname: ${skillArgs.name}\ndescription: ${skillArgs.description}\n---\n\n${skillArgs.content.trim()}\n`
+const cronArgs = { name: '工作日资料核对', description: '整理项目新增资料并记录待确认事项。',
+  message: '检查资料来源并核对本次新增内容。\n'.repeat(45) + 'CRON_MESSAGE_END_任务指令末尾',
+  configuration: { version: 2, schedule: { kind: 'calendar', localTime: '09:30', timeZone: 'Asia/Shanghai', daysOfWeek: [1, 2, 3, 4, 5] },
+    target: { kind: 'standalone' }, notificationPolicy: 'silent', toolProfile: 'general' }, enabled: false, thinkingMode: 'high', timeoutSeconds: 120 }
+const mcpArgs = { id: 'delivery-docs', scope: 'project', name: '交付资料服务', description: '提供交付资料的只读检索。',
+  transportType: 'stdio', command: 'node', args: ['fixture-server.mjs', '--read-only'], timeoutMs: 15000, disabledTools: [] }
+const mcpConfigFile = `${workspaceRoot}/.aether/mcp.json`
+const commandScript = 'const reports = [];\n' + Array.from({ length: 60 }, (_, index) =>
+  `reports.push({ index: ${index}, message: "保留第 ${index + 1} 项的原始内容与空格" });`).join('\n') +
+  '\nconsole.log(JSON.stringify({ reports, note: "原样保留分号 ; 和空格" }));\n// COMMAND_ARGV_END_完整脚本末尾'
+const commandArgvArgs = { command: 'node', args: ['-e', commandScript], cwd: 'mcp-test-server', timeoutMs: 120000,
+  options: { keepOriginal: true, limits: { retries: 0, label: null }, destinations: ['第一处', '第二处'] } }
+type Scenario = 'create' | 'update' | 'delete' | 'command' | 'command-argv' | 'questions' | 'single-question' | 'long-multi-question' | 'plugin-create' | 'plugin-update' | 'plugin-delete' | 'knowledge-create' | 'knowledge-import' | 'skill-create' | 'cron-create' | 'mcp-create'
 type Decision = 'approved' | 'rejected'
 const errors: string[] = [], forbidden: string[] = [], history: EngineHistoryRow[] = [], projection: ChatSsePayload[] = []
 const chats: Record<string, unknown>[] = [], decisions: Array<{ sessionId: string; runId: string; toolResponse: Record<string, unknown> }> = []
@@ -54,8 +98,62 @@ function pendingFor(kind: Scenario, sequence: number): RootPending {
   const common = { requestId: `permission-request-${sequence}`, toolCallId: `permission-tool-call-${sequence}`, kind: 'permission' as const, status: 'pending' as const }
   if (kind === 'questions') return { ...common, kind: 'ask', toolName: 'ask_user', args: { questions: questionGroups } }
   if (kind === 'single-question') return { ...common, kind: 'ask', toolName: 'ask_user', args: { question: singleQuestion, options: [] }, question: singleQuestion }
+  if (kind === 'long-multi-question') return { ...common, kind: 'ask', toolName: 'ask_user', args: { questions: [longMultiQuestion] } }
   if (kind === 'command') return { ...common, toolName: 'execute_cmd', args: { command: 'printf "permission-fixture-only"', cwd: workspaceRoot },
     description: '需要执行这条命令以检查工作目录，实际命令只在隔离夹具中展示。' }
+  if (kind === 'command-argv') return { ...common, toolName: 'execute_cmd', args: commandArgvArgs,
+    description: '需要检查本地测试服务的输入参数；仅展示待确认的程序和完整脚本，不执行真实命令。' }
+  if (kind === 'skill-create' || kind === 'cron-create' || kind === 'mcp-create') {
+    const revision = `sha256:${'b'.repeat(64)}`
+    const after = { id: mcpArgs.id, scope: mcpArgs.scope, name: mcpArgs.name, description: mcpArgs.description,
+      enabled: false, transportType: 'stdio', revision, connection: { command: 'node', argumentCount: 2, envKeys: [], headerKeys: [] },
+      timeoutMs: 15000, disabledTools: [], isBuiltIn: false }
+    const specs = {
+      'skill-create': { title: '创建技能', toolName: 'skill_create', args: skillArgs,
+        operation: { version: 1, tenantId: 'permission-card-tenant', action: 'create', scope: 'project', projectRoot: workspaceRoot,
+          root: `${workspaceRoot}/.aether/skills`, anchor: workspaceRoot, configPath: `${workspaceRoot}/.aether/skills/skills.config.json`,
+          file: `${skillDirectory}/SKILL.md`, dir: skillDirectory, id: skillId, name: skillArgs.name, expectedHash: 'missing', revision, content: preparedSkillContent },
+        preview: { action: 'create', id: skillId, scope: 'project', name: skillArgs.name, directory: skillDirectory, content: preparedSkillContent } },
+      'cron-create': { title: '创建定时任务', toolName: 'cron_create', args: cronArgs,
+        operation: { version: 1, tenantId: 'permission-card-tenant', id: '552775bc-7f91-49aa-90b5-d4d37bd5e840', input: cronArgs }, preview: cronArgs },
+      'mcp-create': { title: '创建 MCP 服务器', toolName: 'mcp_server_create', args: mcpArgs,
+        operation: { version: 1, tenantId: 'permission-card-tenant', action: 'create', id: mcpArgs.id, scope: 'project', projectRoot: workspaceRoot,
+          source: mcpConfigFile, target: mcpConfigFile, revision, argsHash: `sha256:${createHash('sha256').update(JSON.stringify(mcpArgs)).digest('hex')}`, after },
+        preview: { action: 'create', id: mcpArgs.id, scope: 'project', configFile: mcpConfigFile, after } },
+    }
+    const spec = specs[kind], reason = `${spec.title}确认\n\n${JSON.stringify(spec.preview, null, 2)}\n\n确认后执行以上操作。`
+    return { ...common, toolName: spec.toolName, args: spec.args,
+      description: `安全策略拦截了此操作，是否允许执行？\n原因：${reason}`,
+      pendingAction: { type: spec.toolName, operation: spec.operation, reason } }
+  }
+  if (kind === 'knowledge-create' || kind === 'knowledge-import') {
+    const creating = kind === 'knowledge-create', action = creating ? 'create' : 'import', toolName = `knowledge_${action}`
+    const args = creating ? knowledgeCreateArgs : knowledgeImportArgs
+    const input = creating ? knowledgeCreateArgs : { ...knowledgeImportArgs, contentType: 'text/plain' }
+    const operation = { version: 1, tenantId: 'permission-card-tenant', action, id: creating ? knowledgeCreateId : knowledgeDocumentId, input,
+      ...(!creating ? { before: knowledgeBefore, expectedRevision: knowledgeBefore.revision } : {}) }
+    // The knowledge preview adds content bytes/hash while the durable operation
+    // retains the exact text and generated resource ID for the later approval.
+    const preview = { action, id: operation.id, ...(!creating ? { before: knowledgeBefore } : {}),
+      input: creating ? input : { ...input, bytes: Buffer.byteLength(knowledgeContent, 'utf8'), sha256: knowledgeContentHash } }
+    const reason = `${creating ? '创建知识库' : '导入知识文档'}确认\n\n${JSON.stringify(preview, null, 2)}\n\n确认后执行以上操作。`
+    return { ...common, toolName, args, description: `安全策略拦截了此操作，是否允许执行？\n原因：${reason}`,
+      pendingAction: { type: toolName, operation, reason } }
+  }
+  if (kind === 'plugin-create' || kind === 'plugin-update' || kind === 'plugin-delete') {
+    const toolName = kind.replace('-', '_')
+    const args = kind === 'plugin-create' ? { manifest: pluginManifest, files: pluginFiles }
+      : kind === 'plugin-update' ? { id: pluginManifest.id, manifest: updatedPluginManifest, files: updatedPluginFiles, expectedRevision: 3 }
+        : { id: pluginManifest.id }
+    // Plugin management uses the complete prepared operation as its preview;
+    // deletion intentionally contains identity/revision only, not a made-up manifest.
+    const operation = { version: 1, tenantId: 'permission-card-tenant', action: toolName, input: args,
+      ...(kind !== 'plugin-create' ? { expectedRevision: 3, expectedUpdatedAt: 1_700_000_000_000 } : {}) }
+    const title = { 'plugin-create': '创建插件', 'plugin-update': '编辑插件', 'plugin-delete': '删除插件' }[kind]
+    const reason = `${title}确认\n\n${JSON.stringify(operation, null, 2)}\n\n确认后执行以上操作。`
+    return { ...common, toolName, args, description: `安全策略拦截了此操作，是否允许执行？\n原因：${reason}`,
+      pendingAction: { type: toolName, operation, reason } }
+  }
   const toolName = `agent_${kind}`, args = kind === 'create'
     ? { name: preparedCreate.name, description: preparedCreate.description, systemPrompt: longPrompt }
     : kind === 'update' ? { id: previousAgent.id, ...updateChanges } : { id: previousAgent.id }
@@ -98,6 +196,9 @@ function finishDecision(output: string): void {
     assistantMessageId: current.assistantMessageId, text, publishedAt: Date.now(), items: [] }
   const assistant = history.find(row => row.id === current!.assistantMessageId)!
   assistant.content = text; assistant.metadata = { ...assistant.metadata, finalResult }
+  // The engine emits response text before the manifest; Code displays that
+  // transcript while Work uses the final-result projection.
+  publish({ content: `\n\n${text}` })
   publish({ finalResult }); publish({ run: updateRun({ status: 'succeeded', finishedAt: Date.now() }) })
   activeStream.end('data: [DONE]\n\n'); activeStream = undefined
 }
@@ -201,7 +302,7 @@ const questionNavigation = (): Locator => questionCard().getByRole('group', { na
 const questionTab = (label: string): Locator => questionNavigation().getByRole('button', { name: label, exact: true })
 const body = (): Locator => card().getByRole('region', { name: '操作详情', exact: true })
 const detailbar = (): Locator => card().getByRole('group', { name: '配置详情', exact: true })
-const detail = (label: string): Locator => detailbar().getByRole('button', { name: label, exact: true })
+const detail = (label: string): Locator => card().getByRole('button', { name: label, exact: true })
 async function resize(width: number): Promise<void> {
   await app!.evaluate(({ BrowserWindow }, width) => { const win = BrowserWindow.getAllWindows()[0]; win.setMinimumSize(520, 600); win.setContentSize(width, 900) }, width)
   await expect.poll(() => page.evaluate(() => innerWidth)).toBe(width)
@@ -224,15 +325,16 @@ async function start(kind: Scenario, appearance: 'light' | 'dark' = 'light', wid
   await settings.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(settings).toHaveCount(0)
   await resize(width)
+  const next = ordinal + 1
   await work().getByRole('button', { name: '新任务', exact: true }).click()
   await work().getByRole('textbox', { name: '任务目标', exact: true }).fill(`PERMISSION_SCENARIO_${kind}`)
-  const next = ordinal + 1
   await work().getByRole('button', { name: '开始任务', exact: true }).click()
   await expect(conversation()).toContainText(`PERMISSION_ACTIVE_${next}`)
   requestPermission()
-  if (kind === 'questions' || kind === 'single-question') {
+  if (kind === 'questions' || kind === 'single-question' || kind === 'long-multi-question') {
     await expect(questionCard()).toHaveCount(1)
-    await expect(questionCard().getByRole('button', { name: '提交回复', exact: true })).toBeDisabled()
+    const submit = questionCard().getByRole('button', { name: '提交回复', exact: true })
+    await expect(submit).toBeDisabled()
   } else {
     await expect(card()).toHaveCount(1)
     await expect(card().getByRole('button', { name: '拒绝', exact: true })).toBeEnabled()
@@ -262,7 +364,7 @@ async function expectDecisionsVisible(confirmLabel: string): Promise<void> {
 async function expectSinglePanel(label: string): Promise<void> {
   await expect(detail(label)).toHaveAttribute('aria-expanded', 'true')
   await expect(body()).toHaveCount(1)
-  await expect(detailbar().locator('button[aria-expanded="true"]')).toHaveCount(1)
+  await expect(card().locator('button[aria-controls][aria-expanded="true"]')).toHaveCount(1)
 }
 async function openDetail(label: string): Promise<Locator> {
   const button = detail(label)
@@ -305,7 +407,6 @@ test.beforeAll(async () => {
   page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message)); page.on('crash', () => errors.push('Renderer crashed'))
   await app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.setContentSize(1440, 900); win.show(); win.focus() })
   await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
-  await page.getByRole('tab', { name: 'Work 办公', exact: true }).click()
 })
 test.afterEach(async ({}, info) => {
   if (page && !page.isClosed()) await shot('permission-card-final')
@@ -418,23 +519,268 @@ test('删除 Agent 清楚标识目标并使用删除语义，批准只恢复对�
 
 for (const output of ['approved', 'rejected'] as const) test(`普通命令显示命令与原因，${output}沿用原审批响应`, async () => {
   const pending = await start('command')
-  await expect(card().locator('pre[aria-label="命令"]')).toBeVisible()
-  await expect(card().locator('pre[aria-label="命令"]')).toHaveText(String(pending.args.command))
-  await expectSinglePanel('完整参数')
+  await expect(card().locator('pre[aria-label="程序"], pre[aria-label="命令"]')).toHaveText(String(pending.args.command))
+  await expect(body()).toHaveCount(0)
+  await expect(card().locator('.work-permission__raw')).toHaveCount(0)
+  await expect(detail('完整参数')).toHaveAttribute('aria-expanded', 'false')
   await expect(card().locator('.work-permission__reason')).toHaveText(pending.description!)
   await expect(card().locator('.work-permission__fields')).toContainText(workspaceRoot)
   await expectDecisionsVisible('允许执行'); expectUntouched(); await shot(`command-${output}`)
+  const raw = await openDetail('完整参数')
+  expect(await raw.locator('.work-permission__raw').textContent()).toContain(pending.description)
+  expect(await raw.locator('.work-permission__raw').textContent()).toContain(JSON.stringify(pending.args, null, 2))
+  expectUntouched()
   await decide(pending, output, card().getByRole('button', { name: output === 'approved' ? '允许执行' : '拒绝', exact: true }))
 })
 
 test('完全访问仅在明确点击后写当前会话权限，再放行原始请求', async () => {
   const pending = await start('command')
   const sessionId = current!.sessionId
-  await expectSinglePanel('完整参数')
+  await expect(body()).toHaveCount(0)
+  await expect(card().locator('.work-permission__raw')).toHaveCount(0)
+  const raw = await openDetail('完整参数')
+  expect(await raw.locator('.work-permission__raw').textContent()).toContain(JSON.stringify(pending.args, null, 2))
   await repeatCurrentDetail('完整参数'); expectUntouched()
   await decide(pending, 'approved', card().getByRole('button', { name: '本会话改为完全访问并放行', exact: true }), true)
   expect(securityWrites).toEqual([{ sessionId, mode: 'full-access' }])
   expect(audit).toEqual(['security', 'decision'])
+})
+
+for (const [appearance, width] of [['light', 1440], ['dark', 760]] as const) {
+  test(`${appearance} / ${width}：创建插件以功能和文件摘要展示，完整源码按需展开且审批身份不变`, async () => {
+    const pending = await start('plugin-create', appearance, width)
+    await expect(card().getByRole('heading', { name: '创建插件', exact: true })).toBeVisible()
+    await expect(card().locator('.work-permission__summary')).toHaveText(pluginManifest.name)
+    await expect(card().locator('.work-permission__description')).toHaveText(pluginManifest.description)
+    await expect(card().locator('.work-permission__metadata')).toContainText(pluginManifest.version)
+    await expect(card().locator('.work-permission__metadata')).toContainText(/node/i)
+    await expectSinglePanel('功能')
+    await expect(detailbar().getByRole('button')).toHaveCount(4)
+    for (const label of ['文件', '插件信息', '完整参数']) await expect(detail(label)).toHaveAttribute('aria-expanded', 'false')
+    await expect(body().locator('[data-section="plugin-tools"]')).toBeVisible()
+    for (const tool of pluginManifest.tools) {
+      await expect(body()).toContainText(tool.name); await expect(body()).toContainText(tool.description)
+    }
+    await expect(card().locator('pre:visible')).toHaveCount(0)
+    expect(await card().innerText()).not.toContain('"apiVersion"')
+    expect(await card().innerText()).not.toContain('PLUGIN_SOURCE_END_完整源码末尾')
+    await repeatCurrentDetail('功能'); expectUntouched()
+    await expectDecisionsVisible('创建插件'); await shot(`plugin-create-${appearance}-${width}-summary`)
+    const toolParameters = body().locator('[data-section="plugin-tools"] details').first()
+    await expect(toolParameters.locator('summary')).toHaveText('参数与入口')
+    await toolParameters.locator('summary').click()
+    await expect(toolParameters).toHaveAttribute('open', '')
+    await expect(toolParameters).toContainText('main.mjs')
+    await expect(toolParameters).toContainText('待整理的资料正文')
+    expectUntouched()
+
+    const fileBody = await openDetail('文件'), fileSection = fileBody.locator('[data-section="plugin-files"]')
+    await expect(fileBody.locator('[data-section="plugin-tools"]')).toHaveCount(0)
+    await expect(fileSection.locator('details')).toHaveCount(2)
+    await expect(fileSection.locator('details[open]')).toHaveCount(0)
+    await expect(fileSection.locator('pre:visible')).toHaveCount(0)
+    const source = fileSection.locator('details').filter({ has: page.locator('summary').filter({ hasText: 'main.mjs' }) })
+    const readme = fileSection.locator('details').filter({ has: page.locator('summary').filter({ hasText: 'README.md' }) })
+    await expect(source.locator('summary')).toContainText(new RegExp(`${pluginSource.split('\n').length}\\s*行`))
+    await expect(readme.locator('summary')).toContainText('README.md')
+    expect(await card().innerText()).not.toContain('PLUGIN_SOURCE_END_完整源码末尾')
+    await source.locator('summary').click(); await expect(source).toHaveAttribute('open', '')
+    await expect(source.locator('pre')).toBeVisible()
+    expect(await source.locator('pre').textContent()).toBe(pluginSource)
+    await verifyBoundedScroll('创建插件'); expectUntouched()
+    await shot(`plugin-create-${appearance}-${width}-source`)
+    const info = await openDetail('插件信息')
+    await expect(info.locator('[data-section="plugin-details"]')).toContainText(pluginManifest.id)
+    await expect(info.locator('[data-section="plugin-files"]')).toHaveCount(0)
+    await expectDecisionsVisible('创建插件'); expectUntouched()
+
+    const raw = await openDetail('完整参数')
+    const complete = await raw.locator('.work-permission__raw').textContent()
+    expect(complete).toContain(pending.description)
+    expect(complete).toContain(JSON.stringify(pending.args, null, 2))
+    expect(complete).toContain('PLUGIN_SOURCE_END_完整源码末尾')
+    expect(complete).toContain('README_END_文件末尾')
+    await verifyBoundedScroll('创建插件')
+    await repeatCurrentDetail('完整参数'); expectUntouched()
+    await decide(pending, 'approved', card().getByRole('button', { name: '创建插件', exact: true }))
+    expect(decisions[0].toolResponse.name).toBe('plugin_create'); expect(audit).toEqual(['decision'])
+  })
+}
+
+test('编辑插件展示新清单及精确源码，原始版本约束完整保留', async () => {
+  const pending = await start('plugin-update')
+  await expect(card().getByRole('heading', { name: '编辑插件', exact: true })).toBeVisible()
+  await expect(card().locator('.work-permission__summary')).toHaveText(updatedPluginManifest.name)
+  await expect(card().locator('.work-permission__description')).toHaveText(updatedPluginManifest.description)
+  await expect(card().locator('.work-permission__metadata')).toContainText(updatedPluginManifest.version)
+  await expectSinglePanel('功能')
+  await expect(card().locator('pre:visible')).toHaveCount(0)
+  const files = await openDetail('文件')
+  const source = files.locator('[data-section="plugin-files"] details').filter({ has: page.locator('summary').filter({ hasText: 'main.mjs' }) })
+  await expect(source.locator('pre')).not.toBeVisible()
+  await source.locator('summary').click()
+  expect(await source.locator('pre').textContent()).toBe(updatedPluginFiles['main.mjs'])
+  const info = await openDetail('插件信息')
+  await expect(info.locator('[data-section="plugin-details"]')).toContainText(pluginManifest.id)
+  const raw = await openDetail('完整参数')
+  expect(await raw.locator('.work-permission__raw').textContent()).toContain(pending.description)
+  expect(await raw.locator('.work-permission__raw').textContent()).toContain(JSON.stringify(pending.args, null, 2))
+  expect(await raw.locator('.work-permission__raw').textContent()).toContain('"expectedRevision": 3')
+  await expectDecisionsVisible('编辑插件'); expectUntouched(); await shot('plugin-update-preview')
+  await decide(pending, 'approved', card().getByRole('button', { name: '编辑插件', exact: true }))
+  expect(decisions[0].toolResponse.name).toBe('plugin_update'); expect(audit).toEqual(['decision'])
+})
+
+test('创建知识库显示名称用途与结构化信息，确认保留原始请求标识', async () => {
+  const pending = await start('knowledge-create', 'light', 760)
+  expect(pending.args).toEqual(knowledgeCreateArgs)
+  expect(pending.args).not.toHaveProperty('id')
+  await expect(card().getByRole('heading', { name: '创建知识库', exact: true })).toBeVisible()
+  await expect(card().locator('.work-permission__summary')).toHaveText(knowledgeCreateArgs.name)
+  await expect(card().locator('.work-permission__description')).toHaveText(knowledgeCreateArgs.description)
+  await expectSinglePanel('知识库信息')
+  await expect(body().getByRole('region', { name: '知识库信息', exact: true })).toContainText(knowledgeCreateId)
+  await expect(card().locator('pre:visible')).toHaveCount(0)
+  expect(await card().innerText()).not.toContain('"action"')
+  expect(await card().innerText()).not.toContain('"input"')
+  await expect(detail('完整参数')).toHaveAttribute('aria-expanded', 'false')
+  await repeatCurrentDetail('知识库信息'); expectUntouched()
+  await expectDecisionsVisible('创建知识库'); await shot('knowledge-create-structured')
+  const raw = await openDetail('完整参数')
+  expect(await raw.locator('.work-permission__raw').textContent()).toContain(pending.description)
+  expect(await raw.locator('.work-permission__raw').textContent()).toContain(JSON.stringify(pending.args, null, 2))
+  await openDetail('知识库信息'); expectUntouched()
+  await decide(pending, 'approved', card().getByRole('button', { name: '创建知识库', exact: true }))
+  expect(decisions[0].toolResponse.name).toBe('knowledge_create'); expect(audit).toEqual(['decision'])
+})
+
+test('导入知识文档展示完整正文和归属信息，浏览不提交且批准身份不变', async () => {
+  const pending = await start('knowledge-import', 'dark', 760)
+  expect(pending.args).toEqual(knowledgeImportArgs)
+  expect(pending.args).not.toHaveProperty('contentType')
+  await expect(card().getByRole('heading', { name: '导入知识文档', exact: true })).toBeVisible()
+  await expect(card().locator('.work-permission__summary')).toHaveText(knowledgeImportArgs.filename)
+  await expectSinglePanel('文档内容')
+  const content = body().getByRole('region', { name: '文档内容', exact: true })
+  expect(await content.locator('.work-permission__detail-content > p').textContent()).toBe(knowledgeContent)
+  await expect(content).toContainText(knowledgeContentHash)
+  await expect(card().locator('pre:visible')).toHaveCount(0)
+  expect(await card().innerText()).not.toContain('"content"')
+  await verifyBoundedScroll('导入知识文档')
+  await repeatCurrentDetail('文档内容'); expectUntouched()
+  await shot('knowledge-import-complete-content')
+  const details = await openDetail('文档信息')
+  await expect(details).toContainText(knowledgeDocumentId)
+  await expect(details).toContainText(knowledgeBefore.name)
+  await expect(details).toContainText(knowledgeBefore.id)
+  await expect(details).toContainText('text/plain')
+  const raw = await openDetail('完整参数')
+  const full = await raw.locator('.work-permission__raw').textContent()
+  expect(full).toContain(pending.description); expect(full).toContain(JSON.stringify(pending.args, null, 2))
+  expect(full).toContain(knowledgeContentHash); expect(full).toContain('KNOWLEDGE_CONTENT_END_完整知识文档末尾')
+  expect(full).toContain(`"bytes": ${Buffer.byteLength(knowledgeContent, 'utf8')}`)
+  await openDetail('文档内容')
+  expect(await content.locator('.work-permission__detail-content > p').textContent()).toBe(knowledgeContent)
+  await expectDecisionsVisible('导入知识文档'); expectUntouched()
+  await decide(pending, 'approved', card().getByRole('button', { name: '导入知识文档', exact: true }))
+  expect(decisions[0].toolResponse.name).toBe('knowledge_import'); expect(audit).toEqual(['decision'])
+})
+
+test('创建技能展示完整技能文档与作用域，批准仍对应原始工具调用', async () => {
+  const pending = await start('skill-create', 'light', 760)
+  await expect(card().getByRole('heading', { name: '创建技能', exact: true })).toBeVisible()
+  await expect(card().locator('.work-permission__summary')).toHaveText(skillArgs.name)
+  await expect(card().locator('.work-permission__description')).toHaveText(skillArgs.description)
+  await expectSinglePanel('技能内容')
+  const content = body().getByRole('region', { name: '技能内容', exact: true })
+  expect(await content.locator('.work-permission__detail-content > p').textContent()).toBe(preparedSkillContent)
+  await expect(card().locator('pre:visible')).toHaveCount(0)
+  expect(await card().innerText()).not.toContain('"action"')
+  await shot('skill-create-complete-content'); await verifyBoundedScroll('创建技能'); expectUntouched()
+  const details = await openDetail('技能信息')
+  await expect(details).toContainText(skillId); await expect(details).toContainText(skillDirectory)
+  await expect(details).toContainText('当前项目')
+  const raw = await openDetail('完整参数')
+  expect(await raw.locator('.work-permission__raw').textContent()).toContain(pending.description)
+  expect(await raw.locator('.work-permission__raw').textContent()).toContain(JSON.stringify(pending.args, null, 2))
+  await openDetail('技能内容'); await expectDecisionsVisible('创建技能'); expectUntouched()
+  await decide(pending, 'approved', card().getByRole('button', { name: '创建技能', exact: true }))
+  expect(decisions[0].toolResponse.name).toBe('skill_create'); expect(audit).toEqual(['decision'])
+})
+
+test('创建定时任务分别显示任务指令和暂停计划设置，批准身份保持原样', async () => {
+  const pending = await start('cron-create', 'dark', 760)
+  await expect(card().getByRole('heading', { name: '创建定时任务', exact: true })).toBeVisible()
+  await expect(card().locator('.work-permission__summary')).toHaveText(cronArgs.name)
+  await expect(card().locator('.work-permission__description')).toHaveText(cronArgs.description)
+  await expectSinglePanel('任务指令')
+  const instructions = body().getByRole('region', { name: '任务指令', exact: true })
+  expect(await instructions.locator('.work-permission__detail-content > p').textContent()).toBe(cronArgs.message)
+  await expect(card().locator('pre:visible')).toHaveCount(0)
+  await verifyBoundedScroll('创建定时任务'); expectUntouched()
+  const settings = await openDetail('执行设置')
+  await expect(settings).toContainText('09:30')
+  await expect(settings).toContainText('每次创建独立会话')
+  await expect(settings).toContainText('静默'); await expect(settings).toContainText('通用')
+  await expect(settings).toContainText('暂停'); await expect(settings).toContainText('启用前不会按计划运行')
+  await expect(settings).toContainText('120 秒')
+  await expect(settings).toContainText('思考模式')
+  expect(await settings.innerText()).not.toContain('"configuration"')
+  await shot('cron-create-execution-settings')
+  const raw = await openDetail('完整参数')
+  expect(await raw.locator('.work-permission__raw').textContent()).toContain(pending.description)
+  expect(await raw.locator('.work-permission__raw').textContent()).toContain(JSON.stringify(pending.args, null, 2))
+  await openDetail('任务指令'); await expectDecisionsVisible('创建定时任务'); expectUntouched()
+  await decide(pending, 'approved', card().getByRole('button', { name: '创建定时任务', exact: true }))
+  expect(decisions[0].toolResponse.name).toBe('cron_create'); expect(audit).toEqual(['decision'])
+})
+
+test('创建 MCP 服务器展示脱敏连接摘要与精确服务器信息，批准不改原参数', async () => {
+  const pending = await start('mcp-create', 'light', 760)
+  await expect(card().getByRole('heading', { name: '创建 MCP 服务器', exact: true })).toBeVisible()
+  await expect(card().locator('.work-permission__summary')).toHaveText(mcpArgs.name)
+  await expect(card().locator('.work-permission__description')).toHaveText(mcpArgs.description)
+  await expectSinglePanel('连接配置')
+  const connection = body().getByRole('region', { name: '连接配置', exact: true })
+  await expect(connection).toContainText('stdio'); await expect(connection).toContainText('node')
+  await expect(connection).toContainText('参数数量'); await expect(connection).toContainText('2')
+  await expect(connection).toContainText('15000 毫秒'); await expect(connection).toContainText('停用')
+  await expect(card().locator('pre:visible')).toHaveCount(0)
+  expect(await card().innerText()).not.toContain('fixture-server.mjs')
+  expect(await card().innerText()).not.toContain('"transportType"')
+  await expectDecisionsVisible('创建 MCP 服务器'); expectUntouched(); await shot('mcp-create-connection-summary')
+  const details = await openDetail('服务器信息')
+  await expect(details).toContainText(mcpArgs.id); await expect(details).toContainText('当前项目')
+  await expect(details).toContainText(mcpConfigFile)
+  const raw = await openDetail('完整参数')
+  expect(await raw.locator('.work-permission__raw').textContent()).toContain(pending.description)
+  expect(await raw.locator('.work-permission__raw').textContent()).toContain(JSON.stringify(pending.args, null, 2))
+  expect(await raw.locator('.work-permission__raw').textContent()).toContain('fixture-server.mjs')
+  await openDetail('连接配置'); expectUntouched()
+  await decide(pending, 'approved', card().getByRole('button', { name: '创建 MCP 服务器', exact: true }))
+  expect(decisions[0].toolResponse.name).toBe('mcp_server_create'); expect(audit).toEqual(['decision'])
+})
+
+test('删除插件仅展示真实标识与操作说明，批准沿用原删除请求', async () => {
+  const pending = await start('plugin-delete', 'dark', 760)
+  expect(pending.args).toEqual({ id: pluginManifest.id })
+  await expect(card().getByRole('heading', { name: '删除插件', exact: true })).toBeVisible()
+  await expect(card().locator('.work-permission__summary')).toHaveText(pluginManifest.id)
+  await expectSinglePanel('操作说明')
+  await expect(detail('功能')).toHaveCount(0); await expect(detail('文件')).toHaveCount(0)
+  await expect(card()).not.toContainText(pluginManifest.name)
+  await expect(card().locator('pre:visible')).toHaveCount(0)
+  await expect(body()).toContainText('删除')
+  const confirm = card().getByRole('button', { name: '删除插件', exact: true })
+  await expect(confirm).toHaveClass(/\bbtn--danger\b/)
+  await repeatCurrentDetail('操作说明'); expectUntouched(); await shot('plugin-delete-summary')
+  const raw = await openDetail('完整参数')
+  expect(await raw.locator('.work-permission__raw').textContent()).toContain(pending.description)
+  expect(await raw.locator('.work-permission__raw').textContent()).toContain(JSON.stringify(pending.args, null, 2))
+  expect(await raw.locator('.work-permission__raw').textContent()).toContain('"expectedRevision": 3')
+  await expectDecisionsVisible('删除插件'); expectUntouched()
+  await decide(pending, 'approved', confirm)
+  expect(decisions[0].toolResponse.name).toBe('plugin_delete'); expect(audit).toEqual(['decision'])
 })
 
 for (const appearance of ['light', 'dark'] as const) for (const width of [1440, 760]) {
@@ -481,13 +827,20 @@ for (const appearance of ['light', 'dark'] as const) for (const width of [1440, 
     await sources.press('Space'); await expect(sources).toBeChecked()
     const extra = question.getByRole('textbox', { name: `补充回答：${questionGroups[1].question}`, exact: true })
     await extra.fill(`  ${supplement}  `)
+    await expect(extra).toHaveCSS('font-size', '13px')
     await expect(progress).toHaveText('已回答 2 / 3'); await expect(submit).toBeDisabled()
     const footer = question.locator('.work-question__footer'), before = await footer.boundingBox()
+    const legend = question.locator('legend'), titleBefore = await legend.boundingBox()
+    await expect(legend).toHaveText(questionGroups[1].question)
     await expect.poll(() => questionBody.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(100)
+    await questionBody.evaluate(element => { element.scrollTop = 0 })
+    await expect.poll(async () => Math.abs((await legend.boundingBox())!.y - titleBefore!.y)).toBeLessThan(2)
     await questionBody.evaluate(element => { element.scrollTop = element.scrollHeight })
     await expect.poll(() => questionBody.evaluate(element => element.scrollTop)).toBeGreaterThan(100)
     const after = await footer.boundingBox()
     expect(Math.abs(after!.y - before!.y)).toBeLessThan(2)
+    expect(Math.abs((await legend.boundingBox())!.y - titleBefore!.y)).toBeLessThan(2)
+    await expect(legend).toBeInViewport({ ratio: 1 })
     await expect(submit).toBeInViewport({ ratio: 1 })
     expect(await question.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
     expectUntouched(); await shot(`questions-${appearance}-${width}-multiple-choice`)
@@ -547,4 +900,142 @@ test('单组自由提问无需导航，换行保留且仅提交按钮发送回�
   await shot('single-question-free-text')
   await decide(pending, '保留完整来源\n需要可编辑文件', submit)
   expect(audit).toEqual(['decision'])
+})
+
+for (const { appearance, width } of [{ appearance: 'light', width: 1440 }, { appearance: 'dark', width: 760 }] as const) {
+  test(`${appearance} / ${width}：四项长说明整行可选，滚动保留完整问题与提交入口`, async () => {
+    const pending = await start('long-multi-question', appearance, width)
+    const question = questionCard(), submit = question.getByRole('button', { name: '提交回复', exact: true })
+    const questionBody = question.locator('.work-question__body'), legend = question.locator('legend')
+    const footer = question.locator('.work-question__footer'), rows = question.locator('.work-question__option')
+    const progress = question.locator('.work-question__progress')
+    const supplement = '保留源文件和完整引用。\n尚未确认的信息请单独标注。'
+    const input = question.getByRole('textbox', { name: `补充回答：${longMultiQuestion.question}`, exact: true })
+    await expect(questionNavigation()).toHaveCount(0)
+    await expect(question.locator('fieldset')).toHaveCount(1)
+    await expect(legend).toHaveText(longMultiQuestion.question)
+    await expect(legend).toHaveAttribute('tabindex', '-1')
+    await expect(rows).toHaveCount(4)
+    await expect(question.getByRole('checkbox')).toHaveCount(4)
+    await expect(question.getByRole('radio')).toHaveCount(0)
+    await expect(input).toHaveCSS('font-size', '13px')
+    await expect.poll(() => questionBody.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(40)
+    const titleBefore = await legend.boundingBox(), footerBefore = await footer.boundingBox()
+
+    // Hit the explanation and the row's trailing padding, rather than the small
+    // checkbox, to exercise the two otherwise ambiguous targets from the report.
+    const first = rows.nth(0).getByRole('checkbox'), third = rows.nth(2).getByRole('checkbox')
+    await expect(first).not.toBeChecked(); await expect(third).not.toBeChecked()
+    await rows.nth(0).locator('small').click(); await expect(first).toBeChecked()
+    await rows.nth(2).scrollIntoViewIfNeeded()
+    const thirdBounds = await rows.nth(2).boundingBox()
+    await rows.nth(2).click({ position: { x: thirdBounds!.width - 8, y: 12 } })
+    await expect(third).toBeChecked(); await expect(progress).toHaveText('已选 2 项')
+    await expect(rows.nth(1).getByRole('checkbox')).not.toBeChecked()
+    await expect(rows.nth(3).getByRole('checkbox')).not.toBeChecked()
+    await expect(submit).toBeEnabled(); expectUntouched()
+    await input.fill(`  ${supplement}  `)
+    await expect(input).toHaveValue(`  ${supplement}  `)
+    await rows.nth(2).locator('small').click(); await expect(third).not.toBeChecked()
+    await expect(progress).toHaveText('已选 1 项')
+    await rows.nth(2).locator('strong').click(); await expect(third).toBeChecked()
+    await expect(progress).toHaveText('已选 2 项')
+    await expect(input).toHaveValue(`  ${supplement}  `)
+    await expect(first).toBeChecked(); expectUntouched()
+
+    // Full text may extend vertically inside the scrollable body, but each line
+    // must remain within its own row; clipping cannot masquerade as compactness.
+    const textGeometry = await rows.evaluateAll(elements => elements.map(row => {
+      const bounds = row.getBoundingClientRect()
+      return [...row.querySelectorAll('strong, small')].map(text => {
+        const range = document.createRange(); range.selectNodeContents(text)
+        const lines = [...range.getClientRects()]
+        return { text: text.textContent, horizontalOverflow: text.scrollWidth - text.clientWidth,
+          verticalOverflow: text.scrollHeight - text.clientHeight,
+          withinRow: lines.every(line => line.left >= bounds.left - 1 && line.right <= bounds.right + 1 &&
+            line.top >= bounds.top - 1 && line.bottom <= bounds.bottom + 1) }
+      })
+    }))
+    for (const [index, texts] of textGeometry.entries()) {
+      expect(texts.map(text => text.text)).toEqual([longMultiQuestion.options[index].label, longMultiQuestion.options[index].description])
+      for (const text of texts) {
+        expect(text.horizontalOverflow).toBeLessThanOrEqual(1)
+        expect(text.verticalOverflow).toBeLessThanOrEqual(1)
+        expect(text.withinRow).toBe(true)
+      }
+    }
+
+    for (const position of ['top', 'bottom'] as const) {
+      await questionBody.evaluate((element, position) => { element.scrollTop = position === 'top' ? 0 : element.scrollHeight }, position)
+      if (position === 'bottom') await expect.poll(() => questionBody.evaluate(element => element.scrollTop)).toBeGreaterThan(40)
+      else await expect.poll(() => questionBody.evaluate(element => element.scrollTop)).toBe(0)
+      expect(Math.abs((await legend.boundingBox())!.y - titleBefore!.y)).toBeLessThan(2)
+      expect(Math.abs((await footer.boundingBox())!.y - footerBefore!.y)).toBeLessThan(2)
+      await expect(legend).toBeInViewport({ ratio: 1 }); await expect(submit).toBeInViewport({ ratio: 1 })
+      const titleGeometry = await legend.evaluate(element => {
+        const bounds = element.getBoundingClientRect(), range = document.createRange()
+        range.selectNodeContents(element)
+        const body = element.parentElement!.querySelector('.work-question__body')!.getBoundingClientRect()
+        const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+        return { aboveBody: bounds.bottom <= body.top + 1, unobscured: hit === element || element.contains(hit),
+          complete: [...range.getClientRects()].every(line => line.left >= bounds.left - 1 && line.right <= bounds.right + 1 &&
+            line.top >= bounds.top - 1 && line.bottom <= bounds.bottom + 1) }
+      })
+      expect(titleGeometry).toEqual({ aboveBody: true, unobscured: true, complete: true })
+      expect(await question.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+      expect(await questionBody.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+      expectUntouched(); await shot(`questions-${appearance}-${width}-four-long-options-${position}`)
+    }
+    await expect(input).toHaveValue(`  ${supplement}  `)
+    await decide(pending, `${longMultiQuestion.options[0].label}、${longMultiQuestion.options[2].label}、${supplement}`, submit)
+    expect(audit).toEqual(['decision'])
+  })
+}
+
+test('Work：命令程序与每个启动参数分开呈现，完整脚本和嵌套配置可查且审批身份不变', async () => {
+    const pending = await start('command-argv')
+    expect(pending.args).toEqual(commandArgvArgs)
+    const program = card().locator('pre[aria-label="程序"], pre[aria-label="命令"]')
+    await expect(program).toHaveText('node')
+    await expect(card().locator('.work-permission__fields')).toContainText('工作目录')
+    await expect(card().locator('.work-permission__fields')).toContainText('mcp-test-server')
+    await expect(card().locator('.work-permission__fields')).toContainText('120000 毫秒')
+    await expect(card().locator('.work-permission__reason')).toHaveText(pending.description!)
+    await expectSinglePanel('启动参数')
+    await expect(card().locator('.work-permission__raw')).toHaveCount(0)
+    const argumentsPanel = body().locator('[data-section="command-arguments"]')
+    await expect(argumentsPanel.locator('pre')).toHaveCount(2)
+    expect(await argumentsPanel.locator('pre').allTextContents()).toEqual(commandArgvArgs.args)
+    expect(await program.textContent()).not.toContain('-e')
+    expect(await program.textContent()).not.toContain(commandScript)
+    await expect(card().getByRole('heading', { name: '执行命令', exact: true })).toBeInViewport({ ratio: 1 })
+    expectUntouched(); await shot('command-argv-work-separate-arguments')
+    await verifyBoundedScroll('允许执行')
+    await expect(card().getByRole('heading', { name: '执行命令', exact: true })).toBeInViewport({ ratio: 1 })
+    await expect(argumentsPanel.getByText('COMMAND_ARGV_END_完整脚本末尾', { exact: false })).toBeVisible()
+
+    const tree = (await openDetail('其他参数')).locator('[data-section="arguments"]')
+    await expect(tree.locator('pre')).toHaveCount(0)
+    await expect(tree.getByText('options', { exact: true })).toBeVisible()
+    await expect(tree.getByText('keepOriginal', { exact: true })).toBeVisible()
+    await expect(tree.getByText('true', { exact: true })).toBeVisible()
+    const limits = tree.locator('dt').filter({ hasText: /^limits$/ }).locator('..')
+    await limits.locator('summary').click()
+    await expect(limits.getByText('retries', { exact: true })).toBeVisible()
+    await expect(limits.getByText('0', { exact: true })).toBeVisible()
+    await expect(limits.getByText('null', { exact: true })).toBeVisible()
+    const destinations = tree.locator('dt').filter({ hasText: /^destinations$/ }).locator('..')
+    await destinations.locator('summary').click()
+    await expect(destinations.getByText('第一处', { exact: true })).toBeVisible()
+    await expect(destinations.getByText('第二处', { exact: true })).toBeVisible()
+    expectUntouched(); await shot('command-argv-work-parameter-tree')
+
+    const raw = await openDetail('完整参数')
+    expect(await raw.locator('.work-permission__raw').textContent()).toContain(pending.description)
+    expect(await raw.locator('.work-permission__raw').textContent()).toContain(JSON.stringify(commandArgvArgs, null, 2))
+    await openDetail('启动参数')
+    expect(await argumentsPanel.locator('pre').allTextContents()).toEqual(commandArgvArgs.args)
+    expectUntouched()
+    await decide(pending, 'approved', card().getByRole('button', { name: '允许执行', exact: true }))
+    expect(decisions[0].toolResponse.name).toBe('execute_cmd'); expect(audit).toEqual(['decision'])
 })

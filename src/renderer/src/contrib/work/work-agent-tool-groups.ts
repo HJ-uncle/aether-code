@@ -12,6 +12,7 @@ export const AGENT_TOOL_CATEGORIES = [
   { id: 'code', label: '代码分析' },
   { id: 'collaboration', label: '协作' },
   { id: 'agent-management', label: 'Agent 管理' },
+  { id: 'mcp-management', label: 'MCP 管理' },
   { id: 'memory', label: '记忆与历史' },
   { id: 'automation', label: '定时任务' },
   { id: 'tasks', label: '任务与待办' },
@@ -96,6 +97,7 @@ const builtinGroups: ReadonlyArray<readonly [AgentToolCategory, readonly string[
     ]
   ],
   ['agent-management', ['agent_list', 'agent_get', 'agent_create', 'agent_update', 'agent_delete']],
+  ['mcp-management', ['mcp_server_list', 'mcp_server_get', 'mcp_server_create', 'mcp_server_update', 'mcp_server_set_enabled', 'mcp_server_delete', 'mcp_server_test']],
   [
     'memory',
     [
@@ -129,6 +131,7 @@ const builtinCategories = new Map<string, AgentToolCategory>(
 
 export function agentToolCategory(tool: AgentToolIdentity): AgentToolCategory {
   if (tool.unavailable) return 'other'
+  if ((!tool.source || tool.source === 'builtin') && builtinCategories.get(tool.id) === 'mcp-management') return 'mcp-management'
   if (tool.source === 'mcp' || tool.id.startsWith('mcp_')) return 'mcp'
   if (tool.source === 'skill') return 'skills'
   // A new source cannot accidentally look like a built-in permission just

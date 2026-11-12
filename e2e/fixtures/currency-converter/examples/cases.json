@@ -1,0 +1,429 @@
+{
+  "cases": [
+    {
+      "name": "100 美元兑人民币（内置汇率）",
+      "tool": "convert",
+      "args": {
+        "amount": 100,
+        "from": "USD",
+        "to": "CNY"
+      },
+      "expected": {
+        "amount": 100,
+        "from": "USD",
+        "fromName": "美元",
+        "to": "CNY",
+        "toName": "人民币",
+        "rate": 7.1,
+        "rateText": "7.1",
+        "result": 710,
+        "resultText": "710.00 CNY",
+        "expression": "100 USD × 7.1 = 710.00 CNY",
+        "inverseRate": 0.14084507,
+        "resultDecimals": 2,
+        "rateSource": "builtin",
+        "overriddenRates": [],
+        "note": "内置汇率仅为演示数值，无可验证的数据来源和日期，非实时行情；实际换算请指定 rate 或完整的 rates（1 USD 可兑换数量）。"
+      }
+    },
+    {
+      "name": "100 人民币兑日元（直接汇率、日元取整）",
+      "tool": "convert",
+      "args": {
+        "amount": 100,
+        "from": "CNY",
+        "to": "JPY",
+        "rate": 20.5
+      },
+      "expected": {
+        "amount": 100,
+        "from": "CNY",
+        "fromName": "人民币",
+        "to": "JPY",
+        "toName": "日元",
+        "rate": 20.5,
+        "rateText": "20.5",
+        "result": 2050,
+        "resultText": "2,050 JPY",
+        "expression": "100 CNY × 20.5 = 2,050 JPY",
+        "inverseRate": 0.04878049,
+        "resultDecimals": 0,
+        "rateSource": "direct",
+        "overriddenRates": [],
+        "note": "汇率来自本次调用参数，仅用于本次换算。"
+      }
+    },
+    {
+      "name": "100 美元兑人民币（自定义汇率表）",
+      "tool": "convert",
+      "args": {
+        "amount": 100,
+        "from": "USD",
+        "to": "CNY",
+        "rates": {
+          "CNY": 7.25
+        }
+      },
+      "expected": {
+        "amount": 100,
+        "from": "USD",
+        "fromName": "美元",
+        "to": "CNY",
+        "toName": "人民币",
+        "rate": 7.25,
+        "rateText": "7.25",
+        "result": 725,
+        "resultText": "725.00 CNY",
+        "expression": "100 USD × 7.25 = 725.00 CNY",
+        "inverseRate": 0.13793103,
+        "resultDecimals": 2,
+        "rateSource": "custom",
+        "overriddenRates": [
+          "CNY"
+        ],
+        "note": "汇率来自本次调用参数，仅用于本次换算。"
+      }
+    },
+    {
+      "name": "100 美元批量换成三种货币",
+      "tool": "batch_convert",
+      "args": {
+        "amount": 100,
+        "from": "USD",
+        "targets": [
+          "CNY",
+          "EUR",
+          "JPY"
+        ]
+      },
+      "expected": {
+        "amount": 100,
+        "from": "USD",
+        "fromName": "美元",
+        "targets": [
+          "CNY",
+          "EUR",
+          "JPY"
+        ],
+        "count": 3,
+        "results": [
+          {
+            "to": "CNY",
+            "toName": "人民币",
+            "rate": 7.1,
+            "rateText": "7.1",
+            "result": 710,
+            "resultText": "710.00 CNY"
+          },
+          {
+            "to": "EUR",
+            "toName": "欧元",
+            "rate": 0.92,
+            "rateText": "0.92",
+            "result": 92,
+            "resultText": "92.00 EUR"
+          },
+          {
+            "to": "JPY",
+            "toName": "日元",
+            "rate": 152,
+            "rateText": "152",
+            "result": 15200,
+            "resultText": "15,200 JPY"
+          }
+        ],
+        "rateSource": "builtin",
+        "overriddenRates": [],
+        "note": "内置汇率仅为演示数值，无可验证的数据来源和日期，非实时行情；实际换算请指定 rate 或完整的 rates（1 USD 可兑换数量）。"
+      }
+    },
+    {
+      "name": "以人民币为基准的两行交叉表",
+      "tool": "cross_table",
+      "args": {
+        "base": "CNY",
+        "targets": [
+          "USD",
+          "EUR"
+        ]
+      },
+      "expected": {
+        "base": "CNY",
+        "baseName": "人民币",
+        "amount": 1,
+        "unit": "1 CNY 兑换",
+        "count": 2,
+        "rows": [
+          {
+            "code": "USD",
+            "name": "美元",
+            "rate": 0.14084507,
+            "rateText": "0.140845",
+            "result": 0.14,
+            "resultText": "0.14 USD",
+            "inverseRate": 7.1
+          },
+          {
+            "code": "EUR",
+            "name": "欧元",
+            "rate": 0.12957746,
+            "rateText": "0.129577",
+            "result": 0.13,
+            "resultText": "0.13 EUR",
+            "inverseRate": 7.7173913
+          }
+        ],
+        "rateSource": "builtin",
+        "overriddenRates": [],
+        "note": "内置汇率仅为演示数值，无可验证的数据来源和日期，非实时行情；实际换算请指定 rate 或完整的 rates（1 USD 可兑换数量）。"
+      }
+    },
+    {
+      "name": "按中文名筛选货币",
+      "tool": "list_currencies",
+      "args": {
+        "query": "人民币"
+      },
+      "expected": {
+        "total": 34,
+        "count": 1,
+        "query": "人民币",
+        "currencies": [
+          {
+            "code": "CNY",
+            "name": "人民币",
+            "decimals": 2,
+            "perUsd": 7.1,
+            "usdPerUnit": 0.14084507
+          }
+        ],
+        "note": "内置汇率仅为演示数值，无可验证的数据来源和日期，非实时行情；实际换算请指定 rate 或完整的 rates（1 USD 可兑换数量）。"
+      }
+    },
+    {
+      "name": "非默认金额的单位与计算结果一致",
+      "tool": "cross_table",
+      "args": {
+        "amount": 10000,
+        "base": "JPY",
+        "targets": [
+          "CNY",
+          "USD"
+        ]
+      },
+      "expected": {
+        "base": "JPY",
+        "baseName": "日元",
+        "amount": 10000,
+        "unit": "10,000 JPY 兑换",
+        "count": 2,
+        "rows": [
+          {
+            "code": "CNY",
+            "name": "人民币",
+            "rate": 0.04671053,
+            "rateText": "0.046711",
+            "result": 467.11,
+            "resultText": "467.11 CNY",
+            "inverseRate": 21.4084507
+          },
+          {
+            "code": "USD",
+            "name": "美元",
+            "rate": 0.00657895,
+            "rateText": "0.006579",
+            "result": 65.79,
+            "resultText": "65.79 USD",
+            "inverseRate": 152
+          }
+        ],
+        "rateSource": "builtin",
+        "overriddenRates": [],
+        "note": "内置汇率仅为演示数值，无可验证的数据来源和日期，非实时行情；实际换算请指定 rate 或完整的 rates（1 USD 可兑换数量）。"
+      }
+    },
+    {
+      "name": "十进制单笔 half-up 不受乘法浮点尾差影响",
+      "tool": "convert",
+      "args": {
+        "amount": 1.005,
+        "from": "USD",
+        "to": "CNY",
+        "rate": 3
+      },
+      "expected": {
+        "amount": 1.005,
+        "from": "USD",
+        "fromName": "美元",
+        "to": "CNY",
+        "toName": "人民币",
+        "rate": 3,
+        "rateText": "3",
+        "result": 3.02,
+        "resultText": "3.02 CNY",
+        "expression": "1.005 USD × 3 ≈ 3.02 CNY",
+        "inverseRate": 0.33333333,
+        "resultDecimals": 2,
+        "rateSource": "direct",
+        "overriddenRates": [],
+        "note": "汇率来自本次调用参数，仅用于本次换算。"
+      }
+    },
+    {
+      "name": "批量换算先精确乘除再 half-up",
+      "tool": "batch_convert",
+      "args": {
+        "amount": 1.005,
+        "from": "USD",
+        "targets": [
+          "CNY"
+        ],
+        "rates": {
+          "CNY": 3
+        }
+      },
+      "expected": {
+        "amount": 1.005,
+        "from": "USD",
+        "fromName": "美元",
+        "targets": [
+          "CNY"
+        ],
+        "count": 1,
+        "results": [
+          {
+            "to": "CNY",
+            "toName": "人民币",
+            "rate": 3,
+            "rateText": "3",
+            "result": 3.02,
+            "resultText": "3.02 CNY"
+          }
+        ],
+        "rateSource": "custom",
+        "overriddenRates": [
+          "CNY"
+        ],
+        "note": "汇率来自本次调用参数，仅用于本次换算。"
+      }
+    },
+    {
+      "name": "交叉表先精确乘除再 half-up",
+      "tool": "cross_table",
+      "args": {
+        "amount": 1.005,
+        "base": "USD",
+        "targets": [
+          "CNY"
+        ],
+        "rates": {
+          "CNY": 3
+        }
+      },
+      "expected": {
+        "base": "USD",
+        "baseName": "美元",
+        "amount": 1.005,
+        "unit": "1.005 USD 兑换",
+        "count": 1,
+        "rows": [
+          {
+            "code": "CNY",
+            "name": "人民币",
+            "rate": 3,
+            "rateText": "3",
+            "result": 3.02,
+            "resultText": "3.02 CNY",
+            "inverseRate": 0.33333333
+          }
+        ],
+        "rateSource": "custom",
+        "overriddenRates": [
+          "CNY"
+        ],
+        "note": "汇率来自本次调用参数，仅用于本次换算。"
+      }
+    },
+    {
+      "name": "正小汇率不显示为零",
+      "tool": "convert",
+      "args": {
+        "amount": 10000000000,
+        "from": "USD",
+        "to": "CNY",
+        "rate": 1e-10
+      },
+      "expected": {
+        "amount": 10000000000,
+        "from": "USD",
+        "fromName": "美元",
+        "to": "CNY",
+        "toName": "人民币",
+        "rate": 1e-10,
+        "rateText": "1e-10",
+        "result": 1,
+        "resultText": "1.00 CNY",
+        "expression": "10,000,000,000 USD × 1e-10 = 1.00 CNY",
+        "inverseRate": 10000000000,
+        "resultDecimals": 2,
+        "rateSource": "direct",
+        "overriddenRates": [],
+        "note": "汇率来自本次调用参数，仅用于本次换算。"
+      }
+    },
+    {
+      "name": "大金额的高精度直接汇率不截断，不出现 22 元表达式错差",
+      "tool": "convert",
+      "args": {
+        "amount": 100000000,
+        "from": "USD",
+        "to": "CNY",
+        "rate": 7.12345678
+      },
+      "expected": {
+        "amount": 100000000,
+        "from": "USD",
+        "fromName": "美元",
+        "to": "CNY",
+        "toName": "人民币",
+        "rate": 7.12345678,
+        "rateText": "7.12345678",
+        "result": 712345678,
+        "resultText": "712,345,678.00 CNY",
+        "expression": "100,000,000 USD × 7.12345678 = 712,345,678.00 CNY",
+        "inverseRate": 0.14038128,
+        "resultDecimals": 2,
+        "rateSource": "direct",
+        "overriddenRates": [],
+        "note": "汇率来自本次调用参数，仅用于本次换算。"
+      }
+    },
+    {
+      "name": "直接汇率数值和文本保留完整输入精度",
+      "tool": "convert",
+      "args": {
+        "amount": 1,
+        "from": "USD",
+        "to": "CNY",
+        "rate": 1.0000000000000002
+      },
+      "expected": {
+        "amount": 1,
+        "from": "USD",
+        "fromName": "美元",
+        "to": "CNY",
+        "toName": "人民币",
+        "rate": 1.0000000000000002,
+        "rateText": "1.0000000000000002",
+        "result": 1,
+        "resultText": "1.00 CNY",
+        "expression": "1 USD × 1.0000000000000002 ≈ 1.00 CNY",
+        "inverseRate": 1,
+        "resultDecimals": 2,
+        "rateSource": "direct",
+        "overriddenRates": [],
+        "note": "汇率来自本次调用参数，仅用于本次换算。"
+      }
+    }
+  ]
+}

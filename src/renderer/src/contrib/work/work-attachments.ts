@@ -1,5 +1,6 @@
 import type { ChatAttachment, ChatMessage } from '../../core/engine/useChat'
 import type { Mention } from '../chat/mention-context'
+import { draftAttachmentSelection } from '../chat/attachment-references'
 
 const attachmentKey = (path: string): string => path.replace(/\\/g, '/')
 
@@ -34,7 +35,7 @@ export function draftAttachments(
   // Snapshot references already carry the original bytes inside the message.
   const embedded = new Set(mentions.filter(mention => mention.path && mention.content !== undefined)
     .map(mention => attachmentKey(mention.path!)))
-  return mergeWorkAttachments(pending, sources.filter(file => referenced.has(file)))
+  return mergeWorkAttachments(draftAttachmentSelection(pending, mentions), sources.filter(file => referenced.has(file)))
     .filter(file => !embedded.has(attachmentKey(file.path)))
 }
 

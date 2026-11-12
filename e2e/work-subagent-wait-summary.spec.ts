@@ -99,8 +99,8 @@ test.describe('wait header DOM', () => {
     await expect(header).toHaveAttribute('aria-expanded', 'false')
   })
 
-  test('legacy single waits remain readable in Work, Code and exported transcript', async () => {
-    for (const mode of ['work', 'code']) {
+  test('legacy single waits remain readable in Work and exported transcript', async () => {
+    for (const mode of ['work']) {
       await render({ mode, args: '{"runId":"legacy-child","timeoutMs":1000}', state: 'done', result: 'completed' })
       await expect(page.locator('.logline__summary')).toHaveText('1 个任务')
       await expect(page.locator('.logline__name')).toHaveText('等待子代理')
@@ -110,13 +110,10 @@ test.describe('wait header DOM', () => {
   })
 
   test('partial arguments show neither a fabricated count nor opaque JSON identifiers', async () => {
-    for (const mode of ['work', 'code']) {
+    for (const mode of ['work']) {
       await render({ mode, args: '{"runIds":["private-child-id",' })
       await expect(page.locator('.logline__summary')).toHaveCount(0)
       await expect(page.locator('.compact-tool-row > button')).not.toContainText('private-child-id')
     }
-    await render({ mode: 'code', name: 'read_file', args: '{"path":"D:/fixture/README.md","runIds":["not-a-wait"]}', state: 'done' })
-    await expect(page.locator('.logline__summary')).toContainText('README.md')
-    await expect(page.locator('.logline__summary')).not.toContainText('个任务')
   })
 })

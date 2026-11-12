@@ -190,7 +190,9 @@ export async function previewRemoteReplace(transport: RemoteSearchTransport, que
     const previews: ReplacePreviewOutcome['files'][number]['lines'] = []
     for (const row of changed.changes) {
       result.total += row.count
-      if (rows++ < MAX_HITS) previews.push({ line: row.line, before: row.before.slice(0, MAX_LINE_CHARS), after: row.after.slice(0, MAX_LINE_CHARS) })
+      // Keep confirmation values complete even when the search list uses a
+      // bounded snippet. The existing row limit still reports truncation.
+      if (rows++ < MAX_HITS) previews.push({ line: row.line, before: row.before, after: row.after })
       else result.truncated = true
     }
     if (previews.length) result.files.push({ path, lines: previews })

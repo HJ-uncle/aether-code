@@ -1,7 +1,8 @@
 import type { SubagentRun, SubagentRunStatus, SubagentToolCall, SubagentToolSummary } from '@shared/subagent'
 import type { ToolActivity } from '@renderer/core/engine/useChat'
 import { mergeSubagentRun, runToolState } from '@renderer/core/engine/subagent-state'
-import { builtinAgentName } from '@shared/builtin-agents'
+import { BUILTIN_AGENTS, builtinAgentName, type BuiltinAgentIconName } from '@shared/builtin-agents'
+import { formatWorkElapsed } from './work-elapsed'
 
 export interface WorkSubagentGroup {
   key: string
@@ -95,11 +96,7 @@ export function workSubagentStats(group: WorkSubagentGroup, now = Date.now()): W
 
 export function formatWorkSubagentDuration(durationMs: number | undefined): string | undefined {
   if (!validTime(durationMs)) return undefined
-  const seconds = Math.floor(durationMs / 1000)
-  if (seconds < 60) return `${seconds} 秒`
-  const minutes = Math.floor(seconds / 60)
-  const remainder = seconds % 60
-  return remainder ? `${minutes} 分 ${remainder} 秒` : `${minutes} 分`
+  return formatWorkElapsed(durationMs, true)
 }
 
 /**
@@ -125,6 +122,12 @@ function workSubagentArgs(value: string): Record<string, unknown> {
     const parsed: unknown = JSON.parse(value)
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
   } catch { return {} }
+}
+
+/** Role identity, rather than a renamed display label, determines the agent symbol. */
+export function workSubagentIcon(tool: ToolActivity): BuiltinAgentIconName | 'account-outline' {
+  const role = tool.subagent?.continuation?.builtinRole ?? workSubagentArgs(tool.args).builtinRole
+  return BUILTIN_AGENTS.find(agent => agent.role === role)?.icon ?? 'account-outline'
 }
 
 /** Keep the original invocation metadata while reconciling independently running children. */

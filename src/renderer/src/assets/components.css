@@ -4685,6 +4685,9 @@
 .mention-chip--file,
 .mention-chip--conversation,
 .mention-chip--toolkit,
+.mention-chip--skill,
+.mention-chip--mcp,
+.mention-chip--kb,
 .mention-chip--browser {
   color: var(--accent);
 }
@@ -6869,35 +6872,36 @@ select.field__input {
   color: var(--fg-strong);
 }
 
-/* 多选中的行。与 is-active 分开：active 表示"正在编辑"，selected 表示"被选中待操作"，
-   两者可以同时成立，因此选中底色必须比 active 更实，否则叠加后看不出选区 */
 .tree-row.is-selected {
   background: var(--bg-selected);
+  color: var(--fg-strong);
+}
+
+/* 选区使用系统强调色的柔和底色，与中性的悬停、已打开文件区分。
+   单选与多选共用此表面，不给每个选中项叠加焦点边框。 */
+.explorer__tree.is-focused .tree-row.is-selected,
+.explorer__tree.is-focused + .explorer__sticky .tree-row.is-selected {
+  background: var(--accent-soft);
   color: var(--fg-strong);
 }
 
 /* 焦点不在树上时，选区退到更弱的底色（对齐 VS Code 的 inactiveSelectionBackground）。
    选区本身不消失 —— 它记录的是"选了哪些"，与谁持有键盘焦点无关；
    变的只是"当前该由谁响应键盘"这个提示的强度。 */
-.explorer__tree:not(.is-focused) .tree-row.is-selected {
+.explorer__tree:not(.is-focused) .tree-row.is-selected,
+.explorer__tree:not(.is-focused) + .explorer__sticky .tree-row.is-selected {
   background: var(--bg-selected-inactive);
   color: var(--fg);
 }
 
-/* 树持有焦点时的当前行：一圈内描边。
-   outline 不参与布局，所以不会把行挤歪；offset 取负值让它压在行边缘内侧，
-   否则会被邻居行盖住一半。层级：焦点行 > 选中行 > 活动文件 > 悬停。 */
-.explorer__tree.is-focused .tree-row.is-selected {
-  outline: 1px solid var(--list-focus-outline);
-  outline-offset: -1px;
+/* 只有键盘导航时才标出当前光标；鼠标点击也会聚焦树，不能仅凭
+   is-focused 给选区画框。失焦后保留选区，但不保留键盘提示。 */
+.explorer__tree:focus-visible:has(.tree-row.is-cursor) {
+  outline: none;
+  box-shadow: none;
 }
 
-/* 键盘（方向键）移动到的行，与鼠标多选分开：
-   焦点行不参与多选集合，但必须能一眼看到"光标停在哪一行"。
-   同样限定在 .is-focused 下 —— cursorPath 是"上次点/按过的位置"，
-   焦点跑走之后它还在，但那时描边已失去意义（键盘不再作用在树上），
-   不限定就会留下一个无人认领的方框。 */
-.explorer__tree.is-focused .tree-row.is-cursor {
+.explorer__tree.is-focused:focus-visible .tree-row.is-cursor {
   outline: 1px solid var(--list-focus-outline);
   outline-offset: -1px;
 }
@@ -8679,59 +8683,41 @@ select.field__input {
   color: var(--warn);
 }
 
-/* 标记色板（右键「标记」弹出的二级面板） */
-.tag-panel {
-  position: fixed;
-  z-index: var(--z-popover);
-  background: var(--material-bg);
-  border: 1px solid var(--material-border);
-  border-radius: var(--radius-panel);
-  box-shadow: var(--material-shadow);
-  padding: 8px;
+/* 颜色选择保留在共享 Dialog 中，文字和选中标记都可用键盘访问。 */
+.history-tag-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
 }
 
-.tag-panel__backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: calc(var(--z-popover) - 1);
-  border: none;
-  background: transparent;
-  cursor: default;
-}
-
-.tag-panel__grid {
+.history-tag-options > button {
   display: flex;
   align-items: center;
-  gap: 8px;
-}
-
-.tag-panel__clear {
-  border: 1px solid var(--border);
+  gap: var(--space-2);
+  min-height: 34px;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
   border-radius: var(--radius);
   background: transparent;
-  color: var(--fg-muted);
-  font-size: 11px;
-  padding: 3px 8px;
-  cursor: pointer;
+  color: var(--fg);
+  text-align: left;
 }
-
-.tag-panel__clear:hover {
+.history-tag-options > button:is(:hover, [aria-pressed='true']) {
   color: var(--fg-strong);
   background: var(--bg-hover);
 }
-
-.tag-panel__dot {
-  width: 16px;
-  height: 16px;
-  border: none;
+.history-tag-options > button > i {
+  flex: none;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
-  cursor: pointer;
-  padding: 0;
-  transition: transform 0.1s ease;
 }
-
-.tag-panel__dot:hover {
-  transform: scale(1.2);
+.history-tag-options > button > svg {
+  margin-left: auto;
+}
+.history-tag-options > .history-tag-options__clear {
+  grid-column: 1 / -1;
+  color: var(--fg-muted);
 }
 
 /* 重命名弹窗里的输入框 */
@@ -10868,16 +10854,23 @@ select.field__input {
   color: var(--fg-strong);
 }
 
+.replace-preview__header > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .replace-preview__spacer {
   flex: 1;
 }
 
 .replace-preview__apply,
 .replace-preview__cancel {
+  flex: none;
   height: var(--control-h);
   padding: 0 var(--space-3);
   border-radius: var(--radius);
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .replace-preview__apply {
@@ -10906,15 +10899,28 @@ select.field__input {
   padding: var(--space-1) var(--space-2);
   color: var(--fg-strong);
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .replace-preview__row {
-  display: flex;
-  align-items: baseline;
+  display: grid;
+  grid-template-columns: minmax(28px, max-content) minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: start;
   gap: var(--space-2);
-  padding: 2px var(--space-2) 2px var(--space-4);
-  white-space: nowrap;
-  overflow: hidden;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-4);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Search result rows may truncate, but a write confirmation must show both
+   complete values, including long scripts, whitespace and replacement lines. */
+.replace-preview__row > .search-view__hit-text,
+.replace-preview__after {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .replace-preview__line {
@@ -10942,8 +10948,6 @@ select.field__input {
 
 .replace-preview__after {
   color: var(--ok);
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .replace-preview__empty {
@@ -12018,16 +12022,11 @@ select.field__input {
   min-height: 30px;
 }
 
-/* 设置顶部的清除、筛选和范围切换保持同一命中区，小窗口下仍易于点击。 */
+/* 设置顶部的清除和筛选保持同一命中区，小窗口下仍易于点击。 */
 .app-settings__search-clear,
 .app-settings__filter {
   width: var(--control-h-lg);
   height: var(--control-h-lg);
-  border-radius: var(--radius-lg);
-}
-
-.app-settings__scope button {
-  min-height: var(--control-h-lg);
   border-radius: var(--radius-lg);
 }
 

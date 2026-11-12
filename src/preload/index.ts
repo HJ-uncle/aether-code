@@ -6,7 +6,6 @@ import { IPC } from '../shared/ipc'
 import { OFFICE_RENDER_IPC, type OfficePageRenderInput, type OfficePageRenderResult } from '../shared/office-render'
 import type { ConversationLink } from '../shared/conversation-link'
 import { WORK_QUEUE_IPC, type WorkNextTurnApi, type WorkQueueInvokeResult } from '../shared/work-next-turn-api'
-import { CODE_QUEUE_IPC, type CodeNextTurnApi, type CodeQueueInvokeResult } from '../shared/code-next-turn-api'
 import type { GraphicsSnapshot } from '../shared/graphics'
 import { BROWSER_IPC, type BrowserApi, type BrowserConnectionState } from '../shared/browser-api'
 import type { BrowserEvent } from '../shared/browser'
@@ -108,14 +107,6 @@ const workQueue: WorkNextTurnApi = {
     return () => ipcRenderer.removeListener(WORK_QUEUE_IPC.changed, handler)
   }
 }
-const codeQueue: CodeNextTurnApi = {
-  invoke: async input => await ipcRenderer.invoke(CODE_QUEUE_IPC.invoke, input) as CodeQueueInvokeResult,
-  onChanged: listener => {
-    const handler = (_event: unknown, payload: Parameters<Parameters<CodeNextTurnApi['onChanged']>[0]>[0]): void => listener(payload)
-    ipcRenderer.on(CODE_QUEUE_IPC.changed, handler)
-    return () => ipcRenderer.removeListener(CODE_QUEUE_IPC.changed, handler)
-  }
-}
 const browserApi: BrowserApi = {
   getHostZoomFactor: () => webFrame.getZoomFactor(),
   list: () => invokeBrowser('list'),
@@ -168,7 +159,6 @@ const api = {
     }
   },
   workQueue,
-  codeQueue,
   browser: browserApi,
   account: {
     getState: () => invokeAccount('getState'),

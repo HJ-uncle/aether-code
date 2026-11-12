@@ -21,6 +21,7 @@ import { validateWorkEntryName, workCopyName, workOperationPaths } from './work-
 import { resolveWorkWorkspaceReferences, workWorkspaceReferencePaths, type WorkWorkspaceReferenceEntry } from './work-workspace-reference'
 import { syncWorkFileOperation } from './work-resource-store'
 import { WorkWorkspaceSearch } from './WorkWorkspaceSearch'
+import { collapseWorkFilterRows, scanWorkFileDirectories, WORK_FILTER_SKIP_DIRS, type WorkFileScan } from './work-file-filter'
 import type { TextPreviewReveal } from '@renderer/core/editor/TextPreview'
 import './work-workspace-panel.css'
 
@@ -151,6 +152,9 @@ export function WorkWorkspacePanel({ sessionId, workspaceRoot, active = true, re
   revealRef.current = revealRequest
   const handledReveal = useRef<WorkFileRevealRequest | null>(null)
   const pendingReveal = useRef<{ request: WorkFileRevealRequest; path: string } | null>(null)
+  const [fileScan, setFileScan] = useState<{ key: string; done: boolean; progress: WorkFileScan } | null>(null)
+  const completedScan = useRef<typeof fileScan>(null)
+  const [filterCollapsed, setFilterCollapsed] = useState<{ key: string; paths: ReadonlySet<string> }>({ key: '', paths: new Set() })
 
   useLayoutEffect(() => {
     setReferencing(false)
@@ -289,28 +293,60 @@ export function WorkWorkspacePanel({ sessionId, workspaceRoot, active = true, re
   }, [sessionId, workspaceRoot, loadDirectory, loadGitStatus, source, requestKey])
 
   const nameFilter = nameFilterRaw.trim().toLowerCase()
+  const filterKey = JSON.stringify([requestKey, nameFilter])
+  const scanKey = JSON.stringify([target?.key, generation.current])
+  const filterEnabled = Boolean(nameFilter && active && !searchVisible && ready && target)
+  const currentScan = fileScan?.key === scanKey ? fileScan : null
+  const filtering = Boolean(nameFilter && (!ready || !currentScan?.done))
+  const collapsedFilterPaths = useMemo(() => filterCollapsed.key === filterKey ? filterCollapsed.paths : new Set<string>(), [filterCollapsed, filterKey])
+
+  useEffect(() => {
+    if (!filterEnabled || !target) return
+    if (completedScan.current?.key === scanKey) { setFileScan(completedScan.current); return }
+    let cancelled = false
+    const requestGeneration = generation.current
+    const current = (): boolean => !cancelled && activeRef.current && requestKeyRef.current === requestKey && generation.current === requestGeneration
+    setFileScan({ key: scanKey, done: false, progress: { directories: 0, entries: 0, failed: 0, limited: false } })
+    // Debounce starting I/O, not each keystroke. Once loaded, changing the
+    // query filters the same metadata cache without another directory walk.
+    const timer = setTimeout(() => {
+      void scanWorkFileDirectories({ root: target.root, current,
+        readDirectory: directory => loadDirectory(target, directory, requestGeneration),
+        onProgress: progress => { if (current()) setFileScan({ key: scanKey, done: false, progress }) }
+      }).then(progress => {
+        if (!progress || !current()) return
+        const state = { key: scanKey, done: true, progress }
+        completedScan.current = state
+        setFileScan(state)
+      })
+    }, 150)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [filterEnabled, target, requestKey, scanKey, loadDirectory])
+
   const snapshot = useMemo(() => ({
     root: target?.root ?? null,
     showRoot: Boolean(workspaceRoot),
-    children: new Map(Object.entries(entriesByDir)),
+    children: new Map(Object.entries(entriesByDir).map(([directory, entries]) => [directory,
+      nameFilter ? entries.filter(entry => !entry.isDirectory || !WORK_FILTER_SKIP_DIRS.has(entry.name)) : entries])),
     expanded,
     loading: loadingDirs,
     selection,
     activeFilePath
-  }), [target, workspaceRoot, entriesByDir, expanded, loadingDirs, activeFilePath, selection])
+  }), [target, workspaceRoot, entriesByDir, expanded, loadingDirs, activeFilePath, selection, nameFilter])
   const decorations = useMemo(() => ({
     byPath: new Map(Object.entries(gitDecorations).map(([key, value]) => [key, { code: value.code, title: value.title, className: value.className }])),
     dirtyDirs: gitDirtyDirs
   }), [gitDecorations, gitDirtyDirs])
-  const rows = useMemo(() => buildFileTreeRows({ snapshot, filter: nameFilter, decorations, sortMode,
-    cutPaths: clipboard?.owner === requestKey && clipboard.mode === 'cut' ? clipboard.paths : [] }).map(row => {
+  const rows = useMemo(() => collapseWorkFilterRows(buildFileTreeRows({ snapshot, filter: nameFilter, decorations, sortMode,
+    cutPaths: clipboard?.owner === requestKey && clipboard.mode === 'cut' ? clipboard.paths : [] }),
+    nameFilter ? collapsedFilterPaths : new Set(), pathKey).map(row => {
     const status = gitDecorations[pathKey(row.entry.path)]
     return status ? { ...row, gitCode: undefined, trailing: <span className="work-workspace-row__meta">
       <span className={`work-workspace-row__status work-workspace-row__status--${status.className}`} title={status.title}>{status.code}</span>
       {status.additions > 0 ? <span className="work-workspace-row__additions">+{status.additions}</span> : null}
       {status.deletions > 0 ? <span className="work-workspace-row__deletions">-{status.deletions}</span> : null}
     </span> } : row
-  }), [snapshot, nameFilter, decorations, gitDecorations, sortMode, clipboard, requestKey])
+  }), [snapshot, nameFilter, decorations, gitDecorations, sortMode, clipboard, requestKey, collapsedFilterPaths])
   const { viewportHeight, scrollTop, onScroll } = useFileTreeViewport({
     scopeKey: scope?.key, treeRef, memory, updateMemory, ready: ready && active, rowCount: rows.length
   })
@@ -371,6 +407,13 @@ export function WorkWorkspacePanel({ sessionId, workspaceRoot, active = true, re
 
   const toggleDirectory = (directory: string): void => {
     if (!target || !scope) return
+    if (nameFilter) {
+      const paths = new Set(collapsedFilterPaths), key = pathKey(directory)
+      if (paths.has(key)) paths.delete(key)
+      else paths.add(key)
+      setFilterCollapsed({ key: filterKey, paths })
+      return
+    }
     const key = pathKey(directory), rootKey = pathKey(target.root)
     const latest = readFileTreeMemory(scope).expanded.map(path => pathKey(path) === rootKey ? target.root : path)
     if (latest.some(path => pathKey(path) === key)) {
@@ -475,7 +518,7 @@ export function WorkWorkspacePanel({ sessionId, workspaceRoot, active = true, re
     }
   }
 
-  const refresh = async (invalidateCached = false): Promise<void> => {
+  const refresh = async (invalidateCached = true): Promise<void> => {
     if (!sessionId || busyRef.current || requestKeyRef.current !== requestKey) return
     const requestGeneration = ++generation.current
     const restoreRequest = ++restoration.current
@@ -493,7 +536,7 @@ export function WorkWorkspacePanel({ sessionId, workspaceRoot, active = true, re
       const saved = readFileTreeMemory(nextScope)
       // Collapsed branches are not reread below. Drop their stale children so
       // opening one after rollback cannot resurrect deleted file rows.
-      if (invalidateCached) { entriesRef.current = {}; setEntriesByDir({}) }
+      if (invalidateCached || nameFilter) { entriesRef.current = {}; setEntriesByDir({}) }
       if (target?.key !== nextTarget.key) {
         // Rows and operations captured under the old binding cannot be shown
         // as if they belonged to the newly recovered directory.
@@ -747,19 +790,23 @@ export function WorkWorkspacePanel({ sessionId, workspaceRoot, active = true, re
 
   return <section className="work-workspace-panel" aria-label="工作区文件" data-session-id={sessionId} data-view={searchVisible ? 'search' : 'files'}>
     <header className="work-workspace-panel__header">
-      <div className="work-workspace-panel__title" title={target?.root ?? workspaceRoot ?? ''}>
-        <div className="work-workspace-panel__switch" role="group" aria-label="工作区浏览方式">
-          <button type="button" aria-label="浏览工作区文件" aria-pressed={!searchVisible} onClick={() => setSearchScope(null)}><Icon name="folder-outline" size={14} /><span>文件</span></button>
-          <button type="button" aria-label="搜索工作区内容" aria-pressed={searchVisible} disabled={!target} onClick={() => { setSearchScope(requestKey); setVisitedSearchScope(requestKey) }}><Icon name="search" size={14} /><span>搜索</span></button>
-        </div>
-      </div>
+      <button type="button" className="work-quiet-button work-workspace-panel__search-toggle"
+        aria-label="搜索工作区内容" aria-pressed={searchVisible} title={searchVisible ? '返回文件列表' : '搜索工作区内容'} disabled={!target}
+        onClick={() => {
+          if (searchVisible) setSearchScope(null)
+          else { setSearchScope(requestKey); setVisitedSearchScope(requestKey) }
+        }}><Icon name="search" size={15} /></button>
       <div className="work-workspace-panel__actions" role="toolbar" aria-label="工作区工具" hidden={searchVisible}>
         <button type="button" className="work-quiet-button" title="新建文件" aria-label="新建文件" onClick={() => { const directory = destination(entryFor(cursorPath)); if (directory) beginName({ kind: 'file', directory }) }} disabled={!target || busy}><Icon name="file-plus-outline" size={15} /></button>
-        <button type="button" className="work-quiet-button" title="新建文件夹" aria-label="新建文件夹" onClick={() => { const directory = destination(entryFor(cursorPath)); if (directory) beginName({ kind: 'folder', directory }) }} disabled={!target || busy}><Icon name="folder-outline" size={15} /><Icon name="plus" size={8} /></button>
+        <button type="button" className="work-quiet-button" title="新建文件夹" aria-label="新建文件夹" onClick={() => { const directory = destination(entryFor(cursorPath)); if (directory) beginName({ kind: 'folder', directory }) }} disabled={!target || busy}><Icon name="folder-plus" size={15} /></button>
         <button type="button" className="work-quiet-button" title={sortMode === 'default' ? '排序：文件夹在前' : '排序：按名称'} aria-label="切换排序方式" onClick={() => setSortMode(previous => previous === 'default' ? 'name' : 'default')} disabled={!target}><Icon name="sort" size={15} /></button>
         <button type="button" className="work-quiet-button" title="定位当前文件" aria-label="定位当前文件" onClick={() => void locateActive()} disabled={!target || !activeFilePath}><Icon name="locate" size={15} /></button>
-        <button type="button" className="work-quiet-button" title="全部收起" aria-label="全部收起" onClick={() => target && setExpanded(new Set([target.root]))} disabled={!target}><Icon name="collapse-all" size={15} /></button>
-        <button type="button" className="work-quiet-button" title="刷新" aria-label="刷新工作区文件" onClick={() => void refresh()} disabled={!target || busy || loadingDirs.size > 0}>{loadingDirs.size > 0 ? <Spinner size={14} /> : <Icon name="restart" size={15} />}</button>
+        <button type="button" className="work-quiet-button" title="全部收起" aria-label="全部收起" onClick={() => {
+          if (!target) return
+          if (nameFilter) setFilterCollapsed({ key: filterKey, paths: new Set(rows.filter(row => row.entry.isDirectory && pathKey(row.entry.path) !== pathKey(target.root)).map(row => pathKey(row.entry.path))) })
+          else setExpanded(new Set([target.root]))
+        }} disabled={!target}><Icon name="collapse-all" size={15} /></button>
+        <button type="button" className="work-quiet-button" title="刷新" aria-label="刷新工作区文件" onClick={() => void refresh()} disabled={!target || busy || loadingDirs.size > 0}>{loadingDirs.size > 0 ? <Spinner size={14} /> : <Icon name="refresh" size={15} />}</button>
       </div>
     </header>
     {target && visitedSearchScope === requestKey ? <div className="work-workspace-panel__search" hidden={!searchVisible}>
@@ -770,9 +817,14 @@ export function WorkWorkspacePanel({ sessionId, workspaceRoot, active = true, re
     <div className="work-workspace-panel__files" hidden={searchVisible}>
     <div className="work-workspace-panel__filter-wrap ui-input-shell ui-input-shell--compact">
       <Icon name="search" size={15} />
-      <input className="ui-input-field" type="text" value={nameFilterRaw} onChange={event => setNameFilterRaw(event.target.value)} placeholder="筛选文件…" aria-label="筛选文件" />
+      <input className="ui-input-field" type="text" value={nameFilterRaw} onChange={event => setNameFilterRaw(event.target.value)} placeholder="筛选文件名（含子目录）…" aria-label="筛选文件"
+        title="按文件名筛选所有子目录，不含 node_modules 和 .git；不读取文件内容" />
       {nameFilterRaw ? <button type="button" aria-label="清除筛选" onClick={() => setNameFilterRaw('')}><Icon name="close" size={13} /></button> : null}
     </div>
+    {nameFilter && (filtering || currentScan?.progress.failed || currentScan?.progress.limited) ? <div className="work-workspace-panel__filter-status" role="status" aria-live="polite">
+      {filtering ? <><Spinner size={12} /><span>正在查找子目录中的文件…</span></>
+        : <span>{currentScan?.progress.limited ? '项目较大，未能检索全部目录；可选择更小的工作区重试。' : '部分目录读取失败，筛选结果可能不完整。请刷新重试。'}</span>}
+    </div> : null}
     {error ? <div className="work-workspace-panel__error" role="alert">
       <div className="work-workspace-panel__error-summary"><Icon name="alert-circle" size={15} />
         <span>{/ENOENT|no such file|Bound workspace is no longer available/i.test(error) ? '工作区目录暂时不可用' : '工作区操作未完成'}</span>
@@ -781,9 +833,9 @@ export function WorkWorkspacePanel({ sessionId, workspaceRoot, active = true, re
       <details key={error}><summary>详细信息</summary><pre>{error}</pre></details>
     </div> : null}
     <FileTreeView rows={rows} motionScope={scope?.key ?? requestKey} treeRef={treeRef} focused={focused} viewportHeight={viewportHeight} scrollTop={scrollTop}
-      cursorPath={cursorPath} filter={nameFilter} onScroll={onScroll} aria-busy={!ready || loadingDirs.size > 0} multiSelect
-      empty={!loadingDirs.size && rows.length === (workspaceRoot ? 1 : 0) && Boolean(target && expanded.has(target.root))}
-      emptyText={nameFilter ? '没有匹配的文件（仅筛选已加载目录）' : '此目录为空'}
+      cursorPath={cursorPath} filter={nameFilter} onScroll={onScroll} aria-busy={!ready || loadingDirs.size > 0 || filtering} multiSelect
+      empty={!loadingDirs.size && !filtering && (!nameFilter || !currentScan?.progress.failed && !currentScan?.progress.limited) && rows.length === (workspaceRoot ? 1 : 0) && Boolean(target && (nameFilter || expanded.has(target.root)))}
+      emptyText={nameFilter ? '没有匹配的文件' : '此目录为空'}
       onRowMouseDown={selectRow} onRowContextMenu={openContext}
       onContextMenu={event => { if (!(event.target as HTMLElement).closest('.tree-row')) openContext(event, null) }}
       onStickyMouseDown={(_event, entry) => { setCursorPath(entry.path); revealRow(entry.path) }}

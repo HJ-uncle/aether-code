@@ -206,11 +206,10 @@ test.beforeAll(async () => {
     remoteWorkspaceRoot: '/remote/team', lastSessionId: '', lastModelId: modelId, thinkingMode: 'off', appearance: 'light', lastFolder: '' }))
   const env = Object.fromEntries(Object.entries(process.env).flatMap(([key, value]) => value === undefined ? [] : [[key, value]]))
   env.AETHER_IDE_REMOTE_INSTANCE_TOKEN = token; env.AETHER_GLOBAL_DIR = join(fixture, 'global'); delete env.ELECTRON_RUN_AS_NODE
-  app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || join(root, '.e2e-tmp/builtin-agent-team-build/main/index.js'), `--user-data-dir=${fixture}`], cwd: root, env })
+  app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || join(root, 'out/main/index.js'), `--user-data-dir=${fixture}`], cwd: root, env })
   page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message))
   await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(1440, 900) })
   await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 45_000 })
-  await page.getByRole('tab', { name: 'Work 办公', exact: true }).click()
 })
 test.afterAll(async () => {
   try { await app?.close() }

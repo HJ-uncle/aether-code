@@ -2,7 +2,7 @@
 import { expect, test } from '@playwright/test'
 import { createServer } from 'node:http'
 import { dispatchChatRequest } from '../src/renderer/src/core/engine/chat-send-request'
-import { codeQueueSubmission, queueEntryDraft } from '../src/renderer/src/core/engine/code-queue-entry'
+import { queueSubmission, queueEntryDraft } from '../src/renderer/src/core/engine/work-queue-entry'
 import { hasAgentCatalogueChange } from '../src/renderer/src/core/engine/agent-catalogue'
 import { prepareRemoteChatBody } from '../src/main/engine/remote-workspace'
 import { normalizeRootRunRequestConfig } from '../src/shared/root-run'
@@ -14,7 +14,7 @@ import { buildAgentMentionMessage } from '../src/renderer/src/contrib/chat/agent
 import { rebindAttachmentClipboard } from '../src/renderer/src/contrib/chat/attachment-editor-transfer'
 
 const scope: NextTurnQueueScope = { source: { mode: 'embedded', endpoint: '', accountId: null }, tenantId: 'toolkit-tenant',
-  namespace: { id: 'toolkit-db', generation: 'one' }, owner: 'code', taskId: 'toolkit-session' }
+  namespace: { id: 'toolkit-db', generation: 'one' }, owner: 'work', taskId: 'toolkit-session' }
 const cases = [
   { name: 'explicit enable', ids: ['agent-management'], selection: { kind: 'override', ids: ['agent-management'] } },
   { name: 'explicit removal', ids: [], selection: { kind: 'none' } },
@@ -22,7 +22,7 @@ const cases = [
 ] as const
 
 function envelope(toolkits: string[] | undefined): NextTurnQueueEnvelope {
-  const submission = codeQueueSubmission('Continue the task', { sessionId: scope.taskId, toolkits })
+  const submission = queueSubmission('Continue the task', { sessionId: scope.taskId, toolkits })
   return { ...submission, workspace: { kind: 'local-scratch', identity: 'session:' + scope.taskId },
     agent: { primaryAgentId: null, collaborators: [] }, memory: { kind: 'inherit' }, security: { policy: 'engine-session' }, attachments: [] }
 }

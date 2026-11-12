@@ -424,7 +424,9 @@ test.describe.serial('会话累计执行用时', () => {
     }
   })
 
-  test('Code 模式共用累计执行时间，不再显示跨轮空闲跨度', async ({}, info) => {
+  // Retired Code surface; Work execution duration remains covered by the
+  // preceding real-session assertions.
+  test.skip('Code 模式共用累计执行时间，不再显示跨轮空闲跨度', async ({}, info) => {
     await page.evaluate(({ key, sessionId }) => {
       localStorage.setItem(key, sessionId)
       localStorage.setItem('aether.app.mode', 'code')

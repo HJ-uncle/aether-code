@@ -1,11 +1,42 @@
 /** Pure composer identity, pasted text labels and numbering: file order, repeated references,
  * frozen messages and stale drag events; no Electron/engine required. */
 import { test, expect } from '@playwright/test'
-import { attachmentIdentity, attachmentMention, attachmentReferences, freezeAttachmentReferences, referencesAttachment, reorderAttachments } from '../src/renderer/src/contrib/chat/attachment-references'
+import { attachmentIdentity, attachmentMention, attachmentReferences, draftAttachmentSelection, freezeAttachmentReferences, referencesAttachment, reorderAttachments } from '../src/renderer/src/contrib/chat/attachment-references'
+import { storedAttachments } from '../src/renderer/src/contrib/chat/attachment-storage'
 import type { ChatAttachment } from '../src/renderer/src/core/engine/useChat'
 import { pastedTextLabel } from '../src/shared/pasted-text-label'
 
 const file = (id: string, type = 'image/png'): ChatAttachment => ({ attachmentId: id, path: `${id}.png`, name: '同名附件', type, size: 10 })
+
+test('inline documents show filenames while image and pasted-text references keep their compact labels', () => {
+  const references = attachmentReferences([file('image'), { ...file('yaml', 'text/yaml'), name: 'latest.yml' },
+    { ...file('paste', 'text/plain'), name: '粘贴的文本-需求.txt' }])
+  expect(references.map(attachmentMention).map(mention => mention.displayText)).toEqual(['图1', 'latest.yml', '粘贴文本 · 需求'])
+  expect(references.map(reference => reference.label)).toEqual(['图1', '附件1', '粘贴文本 · 需求'])
+})
+
+test('deleting inline document tags excludes their receipts and undo restores each receipt only once', () => {
+  const selected = { ...file('selected', 'text/plain'), inlineReference: true, remoteUploadId: 'keep-token' }
+  const removed = { ...file('removed', 'application/pdf'), inlineReference: true }
+  const image = { ...file('image'), inlineReference: true }
+  const legacy = file('legacy', 'text/plain')
+  const files = [selected, removed, image, legacy]
+  const [selectedMention, removedMention] = attachmentReferences(files).map(attachmentMention)
+  expect(draftAttachmentSelection(files, [])).toEqual([image, legacy])
+  expect(draftAttachmentSelection(files, [selectedMention, selectedMention])).toEqual([selected, image, legacy])
+  expect(draftAttachmentSelection(files, [selectedMention, removedMention])).toEqual(files)
+  expect(draftAttachmentSelection(files, [{ ...removedMention, origin: 'workspace' }])).toEqual([image, legacy])
+  expect(selected.remoteUploadId).toBe('keep-token')
+})
+
+test('draft persistence retains inline selection state without retaining live upload tokens', () => {
+  const receipt = { ...file('document', 'text/plain'), inlineReference: true, remoteUploadId: 'temporary-token' }
+  const [restored] = storedAttachments(JSON.parse(JSON.stringify([receipt])))
+  expect(restored).toEqual({ ...file('document', 'text/plain'), inlineReference: true })
+  expect(draftAttachmentSelection([restored], [])).toEqual([])
+  expect(draftAttachmentSelection([restored], [attachmentMention(attachmentReferences([restored])[0])])).toEqual([restored])
+  expect(storedAttachments([{ ...receipt, inlineReference: 'true' }])[0].inlineReference).toBeUndefined()
+})
 
 test('pasted text labels recognize only the generated plain-text filenames', () => {
   expect(pastedTextLabel('粘贴的文本.txt', 'text/plain')).toBe('粘贴文本')

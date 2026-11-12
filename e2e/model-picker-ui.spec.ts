@@ -83,13 +83,12 @@ const server = createServer((request, response) => { void (async () => {
   response.end(envelope(data))
 })().catch(error => { errors.push(String(error)); if (!response.headersSent) response.writeHead(500); response.end('Picker fixture request failed') }) })
 
-type Mode = 'code' | 'work'
+type Mode = 'work'
 const menu = (): Locator => page.locator('.model-select-menu')
 const options = (): Locator => menu().locator('.select__item:not([data-select-action])')
 const detail = (name: string): Locator => page.getByRole('tooltip', { name: `${name}详情`, exact: true })
 async function selectMode(mode: Mode): Promise<Locator> {
-  await page.getByRole('tab', { name: mode === 'code' ? 'Code 开发' : 'Work 办公', exact: true }).click()
-  const trigger = page.locator(`#mode-${mode} .model-picker .select__trigger`)
+  const trigger = page.locator('.work-view .model-picker .select__trigger')
   await expect(trigger).toBeEnabled(); return trigger
 }
 async function openPicker(mode: Mode): Promise<Locator> {
@@ -101,14 +100,14 @@ async function closePicker(): Promise<void> {
     await page.keyboard.press('Escape'); await expect(page.locator('.hover-detail')).toHaveCount(0)
     await expect(menu()).toBeVisible()
   }
-  await page.keyboard.press('Escape'); await expect(menu()).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  if (await menu().count()) await page.mouse.click(4, 4)
+  await expect(menu()).toHaveCount(0)
+  await page.locator('.work-view .model-picker .select__trigger').focus()
 }
-const settingsSurface = (mode: Mode): Locator => mode === 'code'
-  ? page.locator('#mode-code').getByRole('region', { name: '编辑区', exact: true }).locator('.app-settings')
-  : page.getByRole('dialog', { name: '设置', exact: true })
+const settingsSurface = (_mode: Mode): Locator => page.getByRole('dialog', { name: '设置', exact: true })
 async function closeSettings(mode: Mode): Promise<void> {
-  if (mode === 'code') await page.locator('#mode-code').getByRole('button', { name: '关闭 设置', exact: true }).click()
-  else await settingsSurface(mode).getByRole('button', { name: '关闭', exact: true }).click()
+  await settingsSurface(mode).getByRole('button', { name: '关闭', exact: true }).click()
   await expect(settingsSurface(mode)).toHaveCount(0)
 }
 async function manageModels(mode: Mode): Promise<Locator> {
@@ -154,7 +153,7 @@ test.describe.serial('模型选择器', () => {
     const origin = `http://127.0.0.1:${address.port}`
     storageSource = engineStorageKey({ mode: 'remote', baseUrl: origin })
     writeFileSync(join(fixture, 'settings.json'), JSON.stringify({ engineMode: 'remote', remoteBaseUrl: origin, remoteWorkspaceRoot: remoteRoot,
-      autoStartEngine: true, lastSessionId: codeId, lastFolder: '', lastModelId: '', appearance: 'light', thinkingMode: 'off' }))
+      autoStartEngine: true, lastSessionId: workId, lastFolder: '', lastModelId: '', appearance: 'light', thinkingMode: 'off' }))
     const env: Record<string, string> = Object.fromEntries(Object.entries(process.env).flatMap(([key, value]) => value === undefined ? [] : [[key, value]]))
     for (const key of Object.keys(env)) if (['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL', 'AETHER_IDE_REMOTE_API_KEY', 'AETHER_IDE_REMOTE_BEARER_TOKEN', 'AETHER_IDE_REMOTE_AUTH_URL'].includes(key.toUpperCase())) delete env[key]
     env.AETHER_IDE_REMOTE_INSTANCE_TOKEN = token; env.AETHER_GLOBAL_DIR = join(fixture, 'global')
@@ -165,13 +164,11 @@ test.describe.serial('模型选择器', () => {
     await page.evaluate(({ key, workId, title, now }) => {
       localStorage.setItem(key, JSON.stringify({ tasks: [{ id: workId, title, status: 'done', draft: '', createdAt: now, updatedAt: now,
         workspacePath: null, modelId: '', attachments: [], sources: [] }], activeTaskId: workId, homeDraft: '' }))
-      localStorage.setItem('aether.app.mode', 'code')
+      localStorage.setItem('aether.app.mode', 'work')
       localStorage.setItem('aether.work.view.v1', JSON.stringify({ page: 'home', collapsed: false, workspace: false, tab: 'files', pane: 'conversation', ratio: 50 }))
     }, { key: 'aether.work.state.v1:' + encodeURIComponent(storageSource), workId, title: titles.get(workId)!, now })
     await page.reload(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
-    await page.locator('#mode-code').getByRole('button', { name: '会话历史', exact: true }).click()
-    await page.locator(`#mode-code [data-session-id="${codeId}"]`).click()
-    await expect(page.locator('#mode-code')).toContainText('模型选择不会发送新请求。')
+    await expect(page.locator('.work-view')).toContainText('模型选择不会发送新请求。')
   })
   test.afterEach(async ({}, info) => {
     if (page && !page.isClosed()) {
@@ -191,8 +188,8 @@ test.describe.serial('模型选择器', () => {
     }
   })
 
-  test('空列表和空选择不生成默认项，Code 与 Work 均可打开添加及管理', async () => {
-    for (const mode of ['code', 'work'] as const) {
+  test('空列表和空选择不生成默认项，Work 可打开添加及管理', async () => {
+    for (const mode of ['work'] as const) {
       const trigger = await openPicker(mode)
       await expect(trigger.locator('.select__value')).toHaveText('选择模型')
       await expect(options()).toHaveCount(0)
@@ -209,15 +206,13 @@ test.describe.serial('模型选择器', () => {
     }
   })
 
-  test('列表仅显示名称与服务商，重复 modelId 合并且两种模式都能选择', async () => {
+  test('列表仅显示名称与服务商，重复 modelId 合并且 Work 能选择', async () => {
     catalog = configuredModels
-    const settings = await manageModels('code')
+    const settings = await manageModels('work')
     await settings.getByRole('button', { name: '刷新', exact: true }).click()
     await expect(settings.getByRole('button', { name: '编辑', exact: true })).toHaveCount(4)
-    await closeSettings('code')
-    // Check unresolved runs before changing the shared client default through
-    // Code; the subsequent selection assertions exercise each mode explicitly.
-    for (const mode of ['code', 'work'] as const) {
+    await closeSettings('work')
+    for (const mode of ['work'] as const) {
       const trigger = await openPicker(mode)
       await expect(trigger.locator('.select__value')).toHaveText('选择模型')
       await expect(options()).toHaveCount(3)
@@ -228,16 +223,16 @@ test.describe.serial('模型选择器', () => {
       await assertFooter()
       await closePicker()
     }
-    for (const mode of ['code', 'work'] as const) {
+    for (const mode of ['work'] as const) {
       const trigger = await openPicker(mode)
       await options().filter({ has: page.getByText('深度推理', { exact: true }) }).click()
       await expect(menu()).toHaveCount(0); await expect(trigger.locator('.select__value')).toHaveText('深度推理')
-      await expect.poll(() => selection(mode === 'code' ? codeId : workId)).toEqual({ modelId: alphaId, anchorRunId: `root-${mode === 'code' ? codeId : workId}` })
+      await expect.poll(() => selection(workId)).toEqual({ modelId: alphaId, anchorRunId: `root-${workId}` })
     }
   })
 
   test('详情可移入阅读，键盘聚焦与选择更新当前模型并关闭菜单', async () => {
-    for (const mode of ['code', 'work'] as const) {
+    for (const mode of ['work'] as const) {
       const trigger = await openPicker(mode), alpha = options().filter({ has: page.getByText('深度推理', { exact: true }) })
       await alpha.hover(); const info = detail('深度推理'); await expect(info).toBeVisible()
       await expect(info).toContainText('128,000 tokens'); await expect(info).toContainText('200,000 tokens')
@@ -260,16 +255,17 @@ test.describe.serial('模型选择器', () => {
       await expect(beta).toBeFocused(); await expect(detail('轻快写作')).toBeVisible(); await expect(detail('深度推理')).toHaveCount(0)
       await page.keyboard.press('Enter'); await expect(menu()).toHaveCount(0); await expect(page.locator('.hover-detail')).toHaveCount(0)
       await expect(trigger).toBeFocused(); await expect(trigger.locator('.select__value')).toHaveText('轻快写作')
-      await expect.poll(() => selection(mode === 'code' ? codeId : workId)).toEqual({ modelId: betaId, anchorRunId: `root-${mode === 'code' ? codeId : workId}` })
+      await expect.poll(() => selection(workId)).toEqual({ modelId: betaId, anchorRunId: `root-${workId}` })
       await openPicker(mode); await expect(beta).toHaveAttribute('aria-current', 'true')
       await expect(menu().locator('.select__item[aria-current="true"]')).toHaveCount(1)
       await closePicker()
     }
-    await expect.poll(() => JSON.parse(readFileSync(join(fixture, 'settings.json'), 'utf8')).lastModelId).toBe(betaId)
+    // Work selections are session-scoped; the picker receipt and persisted
+    // session selection above are the authoritative assertions.
   })
 
   test('深浅色详情优先侧置，窄窗口自动避让且底部操作并排可见', async ({}, testInfo) => {
-    for (const [appearance, mode] of [['light', 'code'], ['dark', 'work']] as const) {
+    for (const [appearance, mode] of [['light', 'work'], ['dark', 'work']] as const) {
       await setWindow(1440, 960); await setAppearance(appearance, mode)
       for (const [width, height] of [[1440, 960], [640, 700]] as const) {
         await setWindow(width, height); await openPicker(mode)

@@ -172,7 +172,7 @@ async function seed(seedTasks = tasks, home: Partial<Pick<WorkState, 'homeDraft'
   }, { storageKey, preferencesKey, tasks: seedTasks, home })
   await page.reload()
   await expect(projects()).toBeVisible()
-  await expect(page.locator('.work-sidebar')).toContainText('引擎已连接')
+  await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
 }
 async function setWindow(width: number, height: number): Promise<void> {
   await app!.evaluate(({ BrowserWindow }, size) => {
@@ -786,7 +786,7 @@ test.describe.serial('Work 项目页', () => {
     await expect.poll(async () => (await state()).activeTaskId).toBeNull()
     await expect(sidebarTask(current.id)).toHaveCount(0); await expect(page.locator('.work-conversation')).toHaveCount(0)
     await expect.poll(async () => (await state()).tasks.some(task => task.id === current.id || task.id === target.id)).toBe(false)
-    await page.reload(); await expect(page.locator('.work-sidebar')).toContainText('引擎已连接')
+    await page.reload(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
     expect((await state()).activeTaskId).toBeNull()
     expect((await state()).tasks.some(task => task.id === current.id || task.id === target.id)).toBe(false)
     expect(findTask(alphaTasks[2].id)?.id).toBe(alphaTasks[2].id)

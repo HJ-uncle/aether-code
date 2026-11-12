@@ -1,5 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { Select } from '@renderer/workbench/Select'
+import { Dialog } from '@renderer/workbench/Dialog'
+import { Icon } from '@renderer/workbench/icons'
+import { Spinner } from '@renderer/workbench/ui-primitives'
+import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
 import {
   createKnowledgeBase,
   deleteKnowledgeBase,
@@ -25,7 +29,8 @@ import {
 import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
 import { subscribeResourceCatalogueChanges } from '@renderer/core/engine/resource-catalogue'
 import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
-import { SettingsContent, SettingsGroup, SettingsRow } from './SettingsGroup'
+import { Segmented } from './SettingsGroup'
+import { ResourceSettingsEmpty, ResourceSettingsField, ResourceSettingsHeader, ResourceSettingsMenu } from './ResourceSettings'
 import './knowledge-settings.css'
 import './settings-pages.css'
 
@@ -48,6 +53,12 @@ function KnowledgeSettingsContent({ source }: { source: number }): JSX.Element {
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([])
   const [selectedBase, setSelectedBase] = useState('')
   const [editingBase, setEditingBase] = useState(false)
+  const [creatingBase, setCreatingBase] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
+  const [importMode, setImportMode] = useState<'file' | 'text'>('file')
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searched, setSearched] = useState(false)
+  const [detailLoading, setDetailLoading] = useState('')
   const [editBaseName, setEditBaseName] = useState('')
   const [editBaseDescription, setEditBaseDescription] = useState('')
   const [name, setName] = useState('')
@@ -72,6 +83,8 @@ function KnowledgeSettingsContent({ source }: { source: number }): JSX.Element {
   // replacement.
   const [fileError, setFileError] = useState('')
   const [refreshing, setRefreshing] = useState(false)
+  const formId = useId()
+  const fileInput = useRef<HTMLInputElement>(null)
 
   const refreshSequence = useRef(0)
   const detailRequest = useRef(0)
@@ -144,6 +157,7 @@ function KnowledgeSettingsContent({ source }: { source: number }): JSX.Element {
       if (!isCurrent()) return
       setName('')
       setDescription('')
+      setCreatingBase(false)
       setSelectedBase(created.id)
       await refresh(created.id)
       if (isCurrent()) setNotice('知识库已创建')
@@ -241,6 +255,7 @@ function KnowledgeSettingsContent({ source }: { source: number }): JSX.Element {
       if (!isCurrent()) return
       setContent('')
       setSelectedFile(null)
+      setImportOpen(false)
       await refresh(selectedBase)
       if (isCurrent()) setNotice('文档已加入索引')
     })
@@ -274,6 +289,7 @@ function KnowledgeSettingsContent({ source }: { source: number }): JSX.Element {
     const requestId = ++detailRequest.current
     const sourceAtStart = getEngineSource()
     setError('')
+    setDetailLoading(document.id)
     try {
       const detail = await getKnowledgeDocument(document.id)
       if (!isCurrent() || requestId !== detailRequest.current || sourceAtStart !== getEngineSource()) return
@@ -285,6 +301,7 @@ function KnowledgeSettingsContent({ source }: { source: number }): JSX.Element {
         setEditContent(detail.content ?? '')
       }
     } catch (reason: unknown) { if (isCurrent() && requestId === detailRequest.current) setError(reason instanceof Error ? reason.message : String(reason)) }
+    finally { if (isCurrent() && requestId === detailRequest.current) setDetailLoading('') }
   }
 
   const saveDocumentEdit = async (): Promise<void> => {
@@ -310,108 +327,139 @@ function KnowledgeSettingsContent({ source }: { source: number }): JSX.Element {
     setBusy('search')
     await run(async () => {
       const next = await searchKnowledge(query, 8, selectedBase ? [selectedBase] : undefined)
-      if (isCurrent()) setResults(next)
+      if (isCurrent()) { setResults(next); setSearched(true) }
     })
     if (isCurrent()) setBusy(null)
   }
 
+  const closeDocument = (): void => { detailRequest.current++; setDetailDocument(null); setEditingDocumentId(''); setError('') }
+  const modalOpen = creatingBase || editingBase || importOpen || searchOpen || Boolean(detailDocument)
+  const importDisabled = busy !== null || Boolean(fileError) || (importMode === 'file' ? !selectedFile : !filename.trim() || !content.trim() || contentTooLarge)
+  const beginImport = (): void => { setError(''); setNotice(''); setImportOpen(true) }
   return (
-    <div className="settings-view settings-view--knowledge">
-      <SettingsGroup title="知识库内容" footer="知识库按引擎租户隔离；文档会切块并建立全文检索索引。">
-        <SettingsContent className="knowledge-toolbar">
-          <div className="knowledge-toolbar__fields">
-            <input className="field__input" value={name} onChange={event => setName(event.target.value)} placeholder="新知识库名称" aria-label="知识库名称" />
-            <input className="field__input" value={description} onChange={event => setDescription(event.target.value)} placeholder="描述（可选）" aria-label="知识库描述" />
-            <button type="button" className="btn btn--primary" disabled={!name.trim() || busy !== null} onClick={() => void addBase()}>{busy === 'base' ? '保存中…' : '新建知识库'}</button>
-          </div>
-          <div className="knowledge-toolbar__base">
-            <span>当前知识库</span>
-            <Select ariaLabel="当前知识库" className="settings-menu-field" value={selectedBase} onChange={next => { setSelectedBase(next); setDetailDocument(null); setEditingDocumentId(''); setResults([]); void refresh(next) }} options={[{ value: '', label: '全部知识库' }, ...bases.map(base => ({ value: base.id, label: base.name }))]} />
-            <button type="button" className="btn btn--danger-ghost" disabled={!selected || busy !== null} onClick={() => void removeBase()}>删除</button>
-          </div>
-        </SettingsContent>
-        {selected ? <SettingsRow label="当前知识库" description={selected.description || '没有描述'}>
-          {editingBase ? <div className="knowledge-edit-form">
-            <input className="field__input" value={editBaseName} onChange={event => setEditBaseName(event.target.value)} aria-label="编辑知识库名称" />
-            <input className="field__input" value={editBaseDescription} onChange={event => setEditBaseDescription(event.target.value)} aria-label="编辑知识库描述" />
-            <button type="button" className="btn btn--primary" disabled={!editBaseName.trim() || busy !== null} onClick={() => void saveBaseEdit()}>{busy === 'base' ? '保存中…' : '保存知识库'}</button>
-            <button type="button" className="btn" disabled={busy !== null} onClick={() => setEditingBase(false)}>取消</button>
-          </div> : <div className="knowledge-meta-actions"><span className="knowledge-meta">{selected.documentCount ?? documents.length} 篇文档</span><button type="button" className="btn" disabled={busy !== null} onClick={beginBaseEdit}>编辑知识库</button></div>}
-        </SettingsRow> : null}
-      </SettingsGroup>
-
-      <SettingsGroup title="文档">
-        <SettingsContent className="knowledge-upload">
-          <div className="knowledge-upload__fields">
-            <input className="field__input" value={filename} onChange={event => setFilename(event.target.value)} placeholder="文件名" aria-label="文档文件名" />
-            <label
-              className={`knowledge-file-drop${fileDragging ? ' is-dragging' : ''}`}
-              onDragEnter={event => { event.preventDefault(); setFileDragging(true) }}
-              onDragOver={event => { event.preventDefault(); setFileDragging(true) }}
-              onDragLeave={event => {
-                const nextTarget = event.relatedTarget
-                if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) setFileDragging(false)
-              }}
-              onDrop={event => {
-                event.preventDefault()
-                setFileDragging(false)
-                const file = event.dataTransfer.files?.[0]
-                if (file) void readFile(file)
-              }}
-            >
-              <span className="knowledge-file-drop__title">拖拽文件到这里</span>
-              <span className="knowledge-file-drop__hint">或</span>
-              <span role="button" tabIndex={0} className="btn knowledge-file-drop__button" onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.currentTarget.closest('label')?.querySelector<HTMLInputElement>('input[type="file"]')?.click() } }}>选择文件</span>
-              {selectedFile ? <span className="knowledge-file-drop__selected" title={selectedFile.name}>已选择：{selectedFile.name}</span> : null}
-              <input className="knowledge-file-input" type="file" accept={supportedExtensions.length ? supportedExtensions.join(',') : '.txt,.md,.markdown,.json,.html,.htm,.xml,.svg,.csv,.ts,.tsx,.js,.jsx,.py,.go,.java,.c,.cpp,.h,.hpp,.rs,.css,.scss,.less,.sh,.yaml,.yml,.toml,.ini,.lock,.log,.xlsx,.xls,.docx,.doc,.pdf,.png,.jpg,.jpeg,.gif,.webp,.bmp,.tiff'} onChange={event => { const file = event.target.files?.[0]; event.currentTarget.value = ''; if (file) void readFile(file) }} aria-label="选择文档文件" />
-            </label>
-            <details className="knowledge-formats"><summary>支持的文件格式</summary><p>{supportedFormats}</p></details>
-            <textarea className="field__input knowledge-upload__textarea" value={content} onChange={event => { setFileError(''); setSelectedFile(null); setContent(event.target.value) }} placeholder="粘贴文档文本" aria-label="文档内容" rows={6} />
-            <div className="knowledge-size-hint">{documentBytes(content)} / {MAX_DOCUMENT_BYTES} bytes</div>
-            {contentTooLarge ? <div className="knowledge-validation-error" role="alert">文档正文不能超过 1 MiB</div> : null}
-            <button type="button" className="btn btn--primary" disabled={Boolean(fileError) || !filename.trim() || (!content.trim() && !selectedFile) || contentTooLarge || busy !== null} onClick={() => void upload()}>{busy === 'document' ? '索引中…' : '上传并索引'}</button>
-          </div>
-        </SettingsContent>
-        <SettingsContent className="knowledge-document-summary">
-          <div><strong>{selected ? `“${selected.name}”中的文档` : '全部知识库文档'}</strong><span>{documents.length} 篇 · {refreshing ? '同步中…' : '已同步'}</span></div>
-          <button type="button" className="btn" disabled={busy !== null || refreshing} onClick={() => void refresh(selectedBase)}>刷新</button>
-        </SettingsContent>
-        <div className="knowledge-documents" aria-label="知识库文档列表">
-          {documents.length === 0 ? <div className="knowledge-empty">暂无文档</div> : documents.map(document => (
-            <div className="knowledge-document" key={document.id}>
-              <div><strong>{document.filename}</strong><span>{document.chunkCount} 个片段 · {statusLabel(document.status)} · {formatDate(document.createdAt)}</span></div>
-              <div className="knowledge-document__actions">
-                <button type="button" className="btn" disabled={busy !== null} onClick={() => void showDocument(document)}>详情</button>
-                <button type="button" className="btn" disabled={busy !== null} onClick={() => void showDocument(document, true)}>编辑</button>
-                <button type="button" className="btn btn--danger-ghost" disabled={busy !== null} onClick={() => void removeDocument(document)}>删除</button>
+    <div className="settings-view settings-view--knowledge resource-settings">
+      <div className="knowledge-library-bar">
+        <div className="knowledge-library-bar__selection"><Icon name="library" size={17} />
+          <Select ariaLabel="当前知识库" value={selectedBase} disabled={busy !== null} onChange={next => {
+            detailRequest.current++; setDetailLoading(''); setSelectedBase(next); setDetailDocument(null); setEditingDocumentId(''); setResults([]); setSearched(false)
+            void run(() => refresh(next))
+          }} options={[{ value: '', label: '全部知识库' }, ...bases.map(base => ({ value: base.id, label: base.name }))]} />
+        </div>
+        <div className="resource-toolbar">
+          <button type="button" className="btn" disabled={busy !== null} onClick={() => { setError(''); setCreatingBase(true) }}><Icon name="plus" size={14} />新建知识库</button>
+          {selected ? <ResourceSettingsMenu label={selected.name} disabled={busy !== null} actions={[
+            { label: '编辑知识库', icon: 'pencil', onSelect: beginBaseEdit },
+            { label: '删除知识库', icon: 'trash', danger: true, onSelect: () => void removeBase() }
+          ]} /> : null}
+        </div>
+      </div>
+      {selected?.description ? <p className="knowledge-library-description">{selected.description}</p> : null}
+      <section aria-label="知识库文档">
+        <ResourceSettingsHeader title="文档" count={documents.length} description={selected ? selected.name : '查看和管理所有知识库文档'}>
+          <button type="button" className="resource-icon-button" title="刷新" aria-label="刷新知识库" disabled={busy !== null || refreshing} onClick={() => void run(() => refresh(selectedBase))}>
+            {refreshing ? <Spinner size={15} /> : <Icon name="refresh" size={16} />}
+          </button>
+          <button type="button" className="btn" disabled={busy !== null} onClick={() => { setError(''); setSearchOpen(true) }}><Icon name="search" size={14} />检索测试</button>
+          <button type="button" className="btn btn--primary" disabled={busy !== null} onClick={beginImport}><Icon name="plus" size={14} />导入文档</button>
+        </ResourceSettingsHeader>
+        {!modalOpen && error ? <div className="resource-feedback is-error" role="alert">{error}</div> : null}
+        {!modalOpen && notice ? <div className="resource-feedback is-success" role="status"><Icon name="check" size={14} />{notice}</div> : null}
+        <div className="resource-list knowledge-documents" aria-label="知识库文档列表" aria-busy={refreshing}>
+          {documents.length === 0 ? <ResourceSettingsEmpty icon="book-open" loading={refreshing} title={refreshing ? '正在读取文档…' : '暂无文档'} description={refreshing ? undefined : '导入文件或文本，建立可检索的资料。'} /> : documents.map(document => (
+            <article className="resource-row knowledge-document" key={document.id} aria-label={document.filename}>
+              <button type="button" className="resource-row__main" disabled={busy !== null} onClick={() => void showDocument(document)} aria-label={'查看 ' + document.filename}>
+                <span className="resource-row__icon"><FileGlyph name={document.filename} mimeType={document.contentType} size={21} /></span>
+                <span className="resource-row__copy"><strong>{document.filename}</strong>
+                  <span className="resource-row__meta"><span className={document.status === 'error' ? 'knowledge-document__error' : undefined}>{statusLabel(document.status)}</span><span>{document.chunkCount} 个片段</span><span>{formatDate(document.createdAt)}</span></span>
+                </span>
+              </button>
+              <div className="resource-row__actions">
+                {detailLoading === document.id ? <Spinner size={15} /> : null}
+                <ResourceSettingsMenu label={document.filename} disabled={busy !== null} actions={[
+                  { label: '查看详情', icon: 'eye-outline', onSelect: () => void showDocument(document) },
+                  { label: '编辑', icon: 'pencil', onSelect: () => void showDocument(document, true) },
+                  { label: '删除', icon: 'trash', danger: true, onSelect: () => void removeDocument(document) }
+                ]} />
               </div>
-            </div>
+            </article>
           ))}
         </div>
-        {detailDocument ? <div className="knowledge-document-detail" aria-label="文档详情">
-          <div className="knowledge-document-detail__heading"><strong>{editingDocumentId ? '编辑文档' : '文档详情'}</strong><button type="button" className="btn" onClick={() => { detailRequest.current += 1; setDetailDocument(null); setEditingDocumentId('') }}>关闭</button></div>
-          {editingDocumentId ? <div className="knowledge-edit-form">
-            <input className="field__input" value={editFilename} onChange={event => setEditFilename(event.target.value)} aria-label="编辑文档文件名" />
-            <textarea className="field__input knowledge-upload__textarea" value={editContent} disabled={!documentContentEditable} onChange={event => setEditContent(event.target.value)} aria-label="编辑文档内容" placeholder={documentContentEditable ? '文档正文' : '此文件未保存原文，仅支持修改文件名'} rows={8} />
-            <div className="knowledge-size-hint">{documentBytes(editContent)} / {MAX_DOCUMENT_BYTES} bytes</div>
-            {editContentTooLarge ? <div className="knowledge-validation-error" role="alert">文档正文不能超过 1 MiB</div> : null}
-            <div className="knowledge-meta-actions"><button type="button" className="btn btn--primary" disabled={!editFilename.trim() || (documentContentEditable && !editContent.trim()) || (documentContentEditable && editContentTooLarge) || busy !== null} onClick={() => void saveDocumentEdit()}>{busy === 'document' ? '保存中…' : '保存文档'}</button><button type="button" className="btn" disabled={busy !== null} onClick={() => setEditingDocumentId('')}>取消</button></div>
-          </div> : <div className="knowledge-document-detail__body"><div><strong>{detailDocument.filename}</strong><span>{detailDocument.contentType} · {detailDocument.chunkCount} 个片段 · {detailDocument.contentExact === false ? '原文不可用' : '原文已保存'}</span></div><pre>{detailDocument.content ?? '暂无原文'}</pre><button type="button" className="btn" disabled={busy !== null} onClick={() => { setEditingDocumentId(detailDocument.id); setEditFilename(detailDocument.filename); setEditContent(detailDocument.content ?? '') }}>编辑文档</button></div>}
-        </div> : null}
-      </SettingsGroup>
+      </section>
 
-      <SettingsGroup title="检索测试" footer="测试查询只返回所选知识库中的片段，不会写入对话。">
-        <SettingsContent className="knowledge-search">
-          <div className="knowledge-search__bar">
-            <input className="field__input" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void search() }} placeholder="输入问题或关键词" aria-label="知识库检索关键词" />
-            <button type="button" className="btn" disabled={!query.trim() || busy !== null} onClick={() => void search()}>{busy === 'search' ? '检索中…' : '检索'}</button>
-          </div>
-          {results.length === 0 ? <div className="knowledge-empty">输入关键词查看命中片段</div> : <div className="knowledge-results">{results.map(result => <article className="knowledge-result" key={result.chunkId}><strong>{result.filename}</strong><span>{result.content}</span></article>)}</div>}
-        </SettingsContent>
-      </SettingsGroup>
-      {error ? <div className="settings-view__error" role="alert">{error}</div> : null}
-      {notice ? <div className="knowledge-notice" role="status">{notice}</div> : null}
+      {creatingBase || editingBase ? <Dialog title={editingBase ? '编辑知识库' : '新建知识库'} width={520} className="resource-editor knowledge-base-editor" closeDisabled={busy !== null}
+        onClose={() => { setCreatingBase(false); setEditingBase(false); setError('') }}
+        footer={<><button type="button" className="btn" disabled={busy !== null} onClick={() => { setCreatingBase(false); setEditingBase(false); setError('') }}>取消</button>
+          <button type="submit" form={formId + '-base'} className="btn btn--primary" disabled={busy !== null || !(editingBase ? editBaseName : name).trim()}>{busy === 'base' ? '保存中…' : editingBase ? '保存知识库' : '创建知识库'}</button></>}>
+        <form id={formId + '-base'} className="resource-form" onSubmit={event => { event.preventDefault(); void (editingBase ? saveBaseEdit() : addBase()) }}>
+          <ResourceSettingsField label="名称" wide><input className="field__input" autoFocus value={editingBase ? editBaseName : name} disabled={busy !== null}
+            onChange={event => editingBase ? setEditBaseName(event.target.value) : setName(event.target.value)} placeholder="例如：项目资料" aria-label={editingBase ? '编辑知识库名称' : '知识库名称'} /></ResourceSettingsField>
+          <ResourceSettingsField label="描述 · 可选" wide><textarea className="field__input" value={editingBase ? editBaseDescription : description} disabled={busy !== null}
+            onChange={event => editingBase ? setEditBaseDescription(event.target.value) : setDescription(event.target.value)} rows={3} placeholder="简要说明资料的用途" aria-label={editingBase ? '编辑知识库描述' : '知识库描述'} /></ResourceSettingsField>
+          {error ? <div className="resource-feedback is-error knowledge-form-feedback" role="alert">{error}</div> : null}
+        </form>
+      </Dialog> : null}
+
+      {importOpen ? <Dialog title="导入文档" width={640} className="resource-editor knowledge-import-editor" closeDisabled={busy !== null} onClose={() => { setImportOpen(false); setFileDragging(false); setError('') }}
+        footer={<><button type="button" className="btn" disabled={busy !== null} onClick={() => { setImportOpen(false); setFileDragging(false); setError('') }}>取消</button>
+          <button type="button" className="btn btn--primary" disabled={importDisabled} onClick={() => void upload()}>{busy === 'document' ? '索引中…' : '上传并索引'}</button></>}>
+        <div className="knowledge-import">
+          <div className="knowledge-import__heading"><Segmented value={importMode} disabled={busy !== null} options={[{ value: 'file', label: '文件' }, { value: 'text', label: '文本' }]}
+            onChange={mode => { setImportMode(mode); setError(''); setFileError(''); if (mode === 'text') setSelectedFile(null) }} />
+            <span title={selected?.name ?? '未归属知识库'}>保存到：{selected?.name ?? '未归属知识库'}</span></div>
+          {importMode === 'file' ? <>
+            <div className={'knowledge-file-drop' + (fileDragging ? ' is-dragging' : '')}
+              onDragEnter={event => { event.preventDefault(); if (!busy) setFileDragging(true) }}
+              onDragOver={event => { event.preventDefault(); if (!busy) setFileDragging(true) }}
+              onDragLeave={event => { const next = event.relatedTarget; if (!(next instanceof Node) || !event.currentTarget.contains(next)) setFileDragging(false) }}
+              onDrop={event => { event.preventDefault(); setFileDragging(false); const file = event.dataTransfer.files?.[0]; if (file && !busy) void readFile(file) }}>
+              <span className="knowledge-file-drop__icon">{selectedFile ? <FileGlyph name={selectedFile.name} mimeType={selectedFile.type} size={30} /> : <Icon name="upload-outline" size={28} />}</span>
+              <div className="knowledge-file-drop__copy"><strong>{selectedFile ? selectedFile.name : '拖拽文件到这里'}</strong><span>{selectedFile ? `${(selectedFile.size / 1024).toFixed(1)} KB · 待上传` : '文档、表格、图片或文本文件'}</span></div>
+              <button type="button" className="btn" disabled={busy !== null} onClick={() => fileInput.current?.click()}>{selectedFile ? '更换文件' : '选择文件'}</button>
+              <input ref={fileInput} className="knowledge-file-input" type="file" disabled={busy !== null}
+                accept={supportedExtensions.length ? supportedExtensions.join(',') : '.txt,.md,.markdown,.json,.html,.htm,.xml,.svg,.csv,.ts,.tsx,.js,.jsx,.py,.go,.java,.c,.cpp,.h,.hpp,.rs,.css,.scss,.less,.sh,.yaml,.yml,.toml,.ini,.lock,.log,.xlsx,.xls,.docx,.doc,.pdf,.png,.jpg,.jpeg,.gif,.webp,.bmp,.tiff'}
+                onChange={event => { const file = event.target.files?.[0]; event.currentTarget.value = ''; if (file) void readFile(file) }} aria-label="选择文档文件" />
+            </div>
+            <details className="resource-disclosure knowledge-formats"><summary>支持的文件格式</summary><p>{supportedFormats}</p></details>
+          </> : <div className="resource-form">
+            <ResourceSettingsField label="文件名" wide><input className="field__input" value={filename} disabled={busy !== null} onChange={event => setFilename(event.target.value)} placeholder="例如：notes.txt" aria-label="文档文件名" /></ResourceSettingsField>
+            <ResourceSettingsField label="正文" wide><textarea className="field__input knowledge-content-editor" value={content} disabled={busy !== null} onChange={event => { setFileError(''); setSelectedFile(null); setContent(event.target.value) }} placeholder="粘贴或输入文档内容" aria-label="文档内容" rows={9} /></ResourceSettingsField>
+            <div className="knowledge-size-hint">{(documentBytes(content) / 1024).toFixed(1)} / {MAX_DOCUMENT_BYTES / 1024} KB</div>
+            {contentTooLarge ? <div className="resource-feedback is-error knowledge-form-feedback" role="alert">文档正文不能超过 1 MiB</div> : null}
+          </div>}
+          {error ? <div className="resource-feedback is-error" role="alert">{error}</div> : null}
+        </div>
+      </Dialog> : null}
+
+      {/* A mode switch must replace the action node so the edit click cannot submit the newly mounted form. */}
+      {detailDocument ? <Dialog title={editingDocumentId ? '编辑文档' : '文档详情'} width={720} className="resource-editor knowledge-detail-editor" closeDisabled={busy !== null} onClose={closeDocument}
+        footer={editingDocumentId ? <><button type="button" className="btn" disabled={busy !== null} onClick={() => { setEditingDocumentId(''); setError('') }}>取消</button>
+          <button key="save-document" type="submit" form={formId + '-document'} className="btn btn--primary" disabled={!editFilename.trim() || (documentContentEditable && (!editContent.trim() || editContentTooLarge)) || busy !== null}>{busy === 'document' ? '保存中…' : '保存文档'}</button></> :
+          <><button type="button" className="btn" onClick={closeDocument}>关闭</button><button key="edit-document" type="button" className="btn btn--primary" disabled={busy !== null} onClick={() => { setEditingDocumentId(detailDocument.id); setEditFilename(detailDocument.filename); setEditContent(detailDocument.content ?? ''); setError('') }}>编辑文档</button></>}>
+        {editingDocumentId ? <form id={formId + '-document'} className="resource-form" onSubmit={event => { event.preventDefault(); void saveDocumentEdit() }}>
+          <ResourceSettingsField label="文件名" wide><input className="field__input" value={editFilename} disabled={busy !== null} onChange={event => setEditFilename(event.target.value)} aria-label="编辑文档文件名" autoFocus /></ResourceSettingsField>
+          <ResourceSettingsField label="正文" wide><textarea className="field__input knowledge-content-editor" value={editContent} disabled={!documentContentEditable || busy !== null} onChange={event => setEditContent(event.target.value)} aria-label="编辑文档内容" placeholder={documentContentEditable ? '文档正文' : '此文件未保存原文，仅支持修改文件名'} rows={12} /></ResourceSettingsField>
+          <div className="knowledge-size-hint">{documentContentEditable ? `${(documentBytes(editContent) / 1024).toFixed(1)} / ${MAX_DOCUMENT_BYTES / 1024} KB` : '此文档未保存原文，可修改文件名。'}</div>
+          {documentContentEditable && editContentTooLarge ? <div className="resource-feedback is-error knowledge-form-feedback" role="alert">文档正文不能超过 1 MiB</div> : null}
+          {error ? <div className="resource-feedback is-error knowledge-form-feedback" role="alert">{error}</div> : null}
+        </form> : <div className="knowledge-document-detail">
+          <div className="knowledge-document-detail__heading"><FileGlyph name={detailDocument.filename} mimeType={detailDocument.contentType} size={28} /><div><strong>{detailDocument.filename}</strong><span>{detailDocument.contentType} · {detailDocument.chunkCount} 个片段 · {statusLabel(detailDocument.status)}</span></div></div>
+          {detailDocument.error ? <div className="resource-feedback is-error" role="alert">{detailDocument.error}</div> : null}
+          <pre className="knowledge-document-detail__content">{detailDocument.content ?? '暂无原文'}</pre>
+          <div className="knowledge-document-detail__meta"><span>创建于 {formatDate(detailDocument.createdAt)}</span><span>{detailDocument.contentExact === false ? '原文不可用' : '原文已保存'}</span></div>
+          {error ? <div className="resource-feedback is-error" role="alert">{error}</div> : null}
+        </div>}
+      </Dialog> : null}
+
+      {searchOpen ? <Dialog title="检索测试" width={640} className="resource-editor knowledge-search-dialog" closeDisabled={busy !== null} onClose={() => { setSearchOpen(false); setError('') }}
+        footer={<button type="button" className="btn" disabled={busy !== null} onClick={() => { setSearchOpen(false); setError('') }}>关闭</button>}>
+        <form className="knowledge-search__bar" onSubmit={event => { event.preventDefault(); void search() }}>
+          <input className="field__input" value={query} disabled={busy !== null} onChange={event => setQuery(event.target.value)} placeholder="输入问题或关键词" aria-label="知识库检索关键词" autoFocus />
+          <button type="submit" className="btn btn--primary" disabled={!query.trim() || busy !== null}>{busy === 'search' ? '检索中…' : '检索'}</button>
+        </form>
+        <p className="knowledge-search__context">检索范围：{selected?.name ?? '全部知识库'}</p>
+        {error ? <div className="resource-feedback is-error" role="alert">{error}</div> : null}
+        {results.length === 0 ? <ResourceSettingsEmpty icon="search" loading={busy === 'search'} title={busy === 'search' ? '正在检索…' : searched ? '未找到相关内容' : '输入关键词开始检索'} description={searched ? '可以尝试其他词语或切换知识库。' : '查看资料中的相关片段。'} /> : <div className="knowledge-results" aria-label="知识库检索结果">{results.map(result => <article className="knowledge-result" key={result.chunkId}><div><FileGlyph name={result.filename} size={16} /><strong>{result.filename}</strong><span>片段 {result.chunkIndex + 1}</span></div><p>{result.content}</p></article>)}</div>}
+      </Dialog> : null}
     </div>
   )
 }
-

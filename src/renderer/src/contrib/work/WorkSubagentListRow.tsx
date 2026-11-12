@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { Icon } from '@renderer/workbench/icons'
 import type { WorkSubagentGroup, workSubagentStats } from './work-subagents'
 import { workSubagentTiming } from './work-subagent-timing'
+import { workSubagentIcon } from './work-subagents'
 
 interface WorkSubagentListRowProps {
   group: WorkSubagentGroup
@@ -23,7 +24,7 @@ export function WorkSubagentListRow({ group, stats, now, status, task, role, ton
       data-model-id={stats.modelId || undefined} data-tool-count={stats.toolCount}
       data-active-tool-count={stats.activeToolCount} data-pending={stats.pending ? 'true' : 'false'}
       onClick={onOpen} aria-label={`查看 ${group.label} 子代理详情`} aria-description={`${status}。${timing.summary}。${task}`}>
-      <span className="work-subagents__row-icon" aria-hidden="true"><Icon name="account-outline" size={16} /></span>
+      <span className="work-subagents__row-icon" aria-hidden="true"><Icon name={workSubagentIcon(group.latest)} size={16} /></span>
       <span className="work-subagents__row-content">
         <span className="work-subagents__row-heading">
           <strong>{group.label}</strong>

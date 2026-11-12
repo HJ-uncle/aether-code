@@ -1,0 +1,56 @@
+/* Card surfaces, row spacing and typography belong to SettingsGroup. Only
+   appearance-specific control arrangements live here. */
+.appearance-group-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; }
+.appearance-accent-control { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; min-width: 0; max-width: 100%; }
+
+/* Preserve the shared picker while removing raised swatch tiles and motion. */
+.settings-view--appearance .accent-grid { display: flex; justify-content: flex-end; width: auto; gap: 3px; }
+.settings-view--appearance .accent-swatch { width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--radius-round); background: transparent; }
+.settings-view--appearance .accent-swatch:hover { border-color: transparent; background: var(--bg-hover); transform: none; }
+.settings-view--appearance .accent-swatch.is-active { background: transparent; }
+.settings-view--appearance .accent-swatch__dot { width: 18px; height: 18px; border: 2px solid var(--bg-elevated); box-shadow: 0 0 0 1px var(--border); }
+.settings-view--appearance .accent-swatch.is-active .accent-swatch__dot { box-shadow: 0 0 0 2px var(--accent); }
+.settings-view--appearance .accent-swatch:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 1px; }
+.settings-view--appearance .accent-swatch--custom { gap: 7px; width: auto; padding: 0 7px; margin-left: 5px; border-radius: var(--radius); }
+.settings-view--appearance .accent-swatch--custom.is-active { background: var(--bg-hover); }
+.settings-view--appearance .accent-swatch__label { color: var(--fg-muted); font-size: 12px; }
+.settings-view--appearance .custom-accent-summary { justify-content: flex-end; gap: 10px; margin: 0; padding: 0; border: 0; }
+.settings-view--appearance .custom-accent-summary__edit { min-height: 26px; padding: 3px 6px; border: 0; background: transparent; }
+.settings-view--appearance .custom-accent-summary__edit:hover { background: var(--bg-hover); }
+.settings-view--appearance .custom-accent-summary__edit:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 1px; }
+
+.appearance-render-status { display: inline-flex; align-items: baseline; gap: 8px; color: var(--fg-muted); font-size: 11px; font-weight: 400; line-height: 1.5; }
+.appearance-render-status strong { color: var(--fg); font-weight: 500; }
+.appearance-recovery { display: flex; align-items: center; gap: 10px; min-width: 0; width: 100%; }
+.appearance-recovery > svg { flex: none; color: var(--fg-muted); }
+.appearance-recovery > div { flex: 1; min-width: 0; }
+.appearance-recovery strong { color: var(--fg); font-size: 12px; font-weight: 500; line-height: 1.5; }
+.appearance-recovery p { margin: 3px 0 0; color: var(--fg-muted); font-size: 11px; line-height: 1.55; }
+.appearance-recovery .btn { flex: none; }
+.appearance-explanation dl { display: grid; gap: 12px; margin: 6px 0 2px; }
+.appearance-explanation dl > div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 12px; font-size: 12px; line-height: 1.6; }
+.appearance-explanation dt { color: var(--fg); }
+.appearance-explanation dd { margin: 0; color: var(--fg-muted); overflow-wrap: anywhere; }
+
+.settings-view--appearance .sg__row.appearance-preview__content { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; }
+.appearance-preview__controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.appearance-preview__controls > .btn { min-height: 30px; }
+.appearance-preview__switch { display: flex; align-items: center; gap: 9px; margin-left: 6px; color: var(--fg-muted); font-size: 12px; }
+.appearance-preview__status { color: var(--fg-muted); font-size: 11px; line-height: 1.5; }
+
+@container settings-body (max-width: 460px) {
+  .settings-view--appearance .sg__row-control .segmented { margin-left: 0; }
+  .appearance-accent-control { align-items: flex-start; }
+  .settings-view--appearance .accent-grid { justify-content: flex-start; }
+  .appearance-recovery { align-items: flex-start; flex-wrap: wrap; }
+  .appearance-recovery > div { flex-basis: calc(100% - 30px); }
+  .appearance-recovery .btn { margin-left: 26px; }
+}
+@container settings-body (max-width: 340px) {
+  .settings-view--appearance .segmented { width: 100%; box-sizing: border-box; }
+  .settings-view--appearance .segmented__item { flex: 1; min-width: 0; padding-inline: 10px; }
+  .appearance-explanation dl > div { grid-template-columns: 1fr; gap: 4px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-view--appearance .accent-swatch { transition: none; }
+}

@@ -1,7 +1,7 @@
 /** Task status semantics and real Electron sidebar/home rendering in both themes.
  * An isolated profile keeps the engine stopped; seeded local tasks cannot issue
  * model calls or modify a user's account, workspace or task history. */
-import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test'
+import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { workSidebarStatus } from '../src/renderer/src/contrib/work/work-sidebar-task'
@@ -15,14 +15,14 @@ const task = (status: WorkTaskStatus, patch: Partial<WorkTask> = {}): WorkTask =
 })
 const tasks = (['error', 'interrupted', 'done', 'running', 'waiting', 'stopped', 'draft'] as const).map(status => task(status))
 
-test('异常状态使用圆圈感叹号，完成保留勾号', () => {
+test('异常状态保留警示语义，完成状态保持独立', () => {
   for (const status of ['error', 'interrupted'] as const) {
     for (const ready of [false, true]) expect(workSidebarStatus(task(status), ready)).toMatchObject({ kind: status, icon: 'alert-circle' })
   }
   for (const status of ['running', 'waiting'] as const) {
     expect(workSidebarStatus(task(status), false)).toMatchObject({ kind: 'disconnected', icon: 'alert-circle', label: '连接中断，等待恢复确认' })
   }
-  for (const ready of [false, true]) expect(workSidebarStatus(task('done'), ready)).toEqual({ kind: 'done', label: '已完成', icon: 'check' })
+  for (const ready of [false, true]) expect(workSidebarStatus(task('done'), ready)).toEqual({ kind: 'done', label: '已完成' })
 })
 
 test('运行、等待回答、等待授权和停止的状态表达保持独立', () => {
@@ -31,13 +31,30 @@ test('运行、等待回答、等待授权和停止的状态表达保持独立',
   expect(workSidebarStatus(task('waiting'), true)).toMatchObject({ kind: 'question', icon: 'chat' })
   expect(workSidebarStatus(task('waiting', { activity: { runId: 'permission-run', seq: 1, version: 1,
     status: 'waiting', updatedAt: now, pendingAsk: 0, pendingPermission: 1 } }), true)).toMatchObject({ kind: 'permission', icon: 'shield' })
-  expect(workSidebarStatus(task('stopped'), true)).toMatchObject({ kind: 'stopped', icon: 'stop' })
+  expect(workSidebarStatus(task('stopped'), true)).toEqual({ kind: 'stopped', label: '已停止' })
 })
+
+async function expectStatusGlyph(status: Locator, name: 'alert-circle' | 'check'): Promise<void> {
+  const icon = status.locator('svg[data-icon]')
+  await expect(icon).toHaveCount(1)
+  await expect(icon).toHaveAttribute('data-icon', name)
+  await expect(icon).toHaveAttribute('data-icon-style', 'outline')
+  await expect(icon).toHaveAttribute('aria-hidden', 'true')
+  const shapes = await icon.locator('path, circle, line, polyline').evaluateAll(elements => elements.map(element => {
+    const style = getComputedStyle(element)
+    return { fill: style.fill, stroke: style.stroke, width: Number.parseFloat(style.strokeWidth), cap: style.strokeLinecap, join: style.strokeLinejoin }
+  }))
+  expect(shapes.length).toBeGreaterThan(0)
+  for (const shape of shapes) {
+    expect(shape.fill).toBe('none'); expect(shape.stroke).not.toBe('none')
+    expect(shape.width).toBeCloseTo(1.5, 2); expect(shape.cap).toBe('round'); expect(shape.join).toBe('round')
+  }
+}
 
 test.describe.serial('任务状态图标真机回归', () => {
   const errors: string[] = []
   let app: ElectronApplication | undefined, page: Page, fixture = ''
-  const work = () => page.locator('#mode-work')
+  const work = () => page.locator('.work-view')
   const sidebarStatus = (status: WorkTaskStatus) => work().locator(`[data-task-id="work-status-icon-${status}"] .work-sidebar__task-status`)
   const homeStatus = (status: WorkTaskStatus) => work().locator('.work-task-row').filter({ hasText: `图标核对 ${status}` }).locator('.work-status')
 
@@ -83,27 +100,32 @@ test.describe.serial('任务状态图标真机回归', () => {
     }
   })
 
-  for (const appearance of ['dark', 'light'] as const) test(`${appearance}：侧栏和首页异常为圆圈感叹号，完成仍为勾号`, async ({}, info) => {
+  for (const appearance of ['dark', 'light'] as const) test(`${appearance}：侧栏和首页状态语义一致，异常与完成图标保持独立`, async ({}, info) => {
+    await expect(page.locator('.work-settings-dialog')).toHaveCount(0)
     await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
     const settings = page.getByRole('dialog', { name: '设置', exact: true })
+    await expect(settings).toBeVisible()
     await settings.getByRole('tab', { name: '外观', exact: true }).click()
     await settings.getByRole('radio', { name: appearance === 'dark' ? '深色' : '浅色', exact: true }).click()
     await expect(page.locator('html')).toHaveAttribute('data-appearance', appearance)
     await settings.getByRole('button', { name: '关闭', exact: true }).click()
+    // Hidden/inert leaves the accessibility tree before the exit callback unmounts the dialog.
+    await expect(page.locator('.modal-overlay')).toHaveCount(0)
     for (const status of ['error', 'interrupted', 'running', 'waiting'] as const) {
       const expected = status === 'running' || status === 'waiting' ? 'disconnected' : status
       await expect(sidebarStatus(status)).toHaveAttribute('data-task-status', expected)
-      for (const icon of [sidebarStatus(status), homeStatus(status)]) {
-        await expect(icon).toBeVisible()
-        await expect(icon.locator('svg circle')).toHaveCount(1)
-        await expect(icon.locator('svg path')).toHaveCount(2)
-      }
+      await expect(sidebarStatus(status)).toHaveAttribute('role', 'img')
+      await expect(sidebarStatus(status)).toHaveAttribute('aria-label', expected === 'error' ? '执行失败'
+        : expected === 'interrupted' ? '执行已中断' : '连接中断，等待恢复确认')
+      await expect(sidebarStatus(status)).toHaveText(expected === 'error' ? '失败' : expected === 'interrupted' ? '已中断' : '连接中断')
+      await expect(homeStatus(status)).toBeVisible()
+      await expect(homeStatus(status)).toContainText(status === 'error' ? '执行失败' : '连接中断')
+      await expectStatusGlyph(homeStatus(status), 'alert-circle')
     }
-    await expect(sidebarStatus('done')).toHaveAttribute('aria-label', '已完成')
-    for (const icon of [sidebarStatus('done'), homeStatus('done')]) {
-      await expect(icon.locator('svg circle')).toHaveCount(0)
-      await expect(icon.locator('svg path')).toHaveAttribute('d', /^M9\.55 17\.05/)
-    }
+    // Read completions stay quiet in the compact sidebar; the home list carries the explicit result.
+    await expect(sidebarStatus('done')).toHaveCount(0)
+    await expect(homeStatus('done')).toContainText('已完成')
+    await expectStatusGlyph(homeStatus('done'), 'check')
     const path = info.outputPath(`task-status-icons-${appearance}.png`)
     await page.screenshot({ path }); await info.attach(`任务状态图标-${appearance}`, { path, contentType: 'image/png' })
     const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('aether.work.state.v1') ?? '{}') as { tasks: WorkTask[] })

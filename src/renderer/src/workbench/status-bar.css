@@ -1,0 +1,23 @@
+.status-bar__engine {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.status-bar__engine .status-bar__item {
+  gap: var(--space-2);
+  padding-inline: var(--space-2);
+  background: transparent;
+  transition: color var(--motion-hover) var(--motion-ease);
+}
+
+.status-bar__engine .status-bar__item:hover:not(:disabled) {
+  background: transparent;
+  color: var(--fg-strong);
+}
+
+.status-bar__engine .status-bar__item:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+@media (prefers-reduced-motion: reduce) {
+  .status-bar__engine .status-bar__item { transition: none; }
+}

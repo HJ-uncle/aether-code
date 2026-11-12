@@ -137,7 +137,7 @@ export class EngineHost extends EventEmitter {
   get requestSignal(): AbortSignal {
     return this.transportController.signal
   }
-  accountTarget(baseUrl?: string, toolProfile: ToolProfile = 'code'): AccountTarget {
+  accountTarget(baseUrl?: string, toolProfile: ToolProfile = 'general'): AccountTarget {
     const settings = getSettings()
     const active = !!baseUrl || this.snapshot.phase === 'ready'
     const remote = active ? this.snapshot.mode === 'remote' : settings.engineMode === 'remote'
@@ -147,7 +147,7 @@ export class EngineHost extends EventEmitter {
     return { scope: remote ? url : 'embedded', url, headers: engineHeaders(token, toolProfile) }
   }
 
-  async prepareRequestHeaders(baseUrl?: string, toolProfile: ToolProfile = 'code'): Promise<Record<string, string>> {
+  async prepareRequestHeaders(baseUrl?: string, toolProfile: ToolProfile = 'general'): Promise<Record<string, string>> {
     const target = this.accountTarget(baseUrl || this.baseUrl, toolProfile)
     if (target.url) await ensureAccountSession(target)
     return this.requestHeaders(toolProfile)
@@ -161,7 +161,7 @@ export class EngineHost extends EventEmitter {
     this.patch({ accountId: readAccountCredential(this.accountTarget().scope).credential?.user.id ?? null })
   }
 
-  requestHeaders(toolProfile: ToolProfile = 'code'): Record<string, string> {
+  requestHeaders(toolProfile: ToolProfile = 'general'): Record<string, string> {
     const headers = engineHeaders(this.instanceToken, toolProfile)
     // User credentials are scoped to the exact remote service URL and are kept
     // separate from the instance token. Use remoteTarget during the handshake
@@ -684,7 +684,7 @@ export class EngineHost extends EventEmitter {
     method: 'GET' | 'POST' = 'POST',
     query?: Record<string, string>,
     expectedEngine?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>,
-    toolProfile: ToolProfile = 'code',
+    toolProfile: ToolProfile = 'general',
     subagentProtocol?: 2
   ): Promise<void> {
     const snapshot = this.snapshot

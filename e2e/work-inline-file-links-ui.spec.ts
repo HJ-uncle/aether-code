@@ -314,7 +314,6 @@ async function openDocument(id: string, index: number): Promise<void> {
     await expect(preview.frameLocator('iframe').first().getByText(asset.marker, { exact: true })).toBeVisible()
   }
   expect(contentReads.slice(before).every(read => read.sessionId === id)).toBe(true)
-  await expect(page.getByRole('tab', { name: 'Work 办公', exact: true })).toHaveAttribute('aria-selected', 'true')
 }
 
 test.beforeAll(async () => {

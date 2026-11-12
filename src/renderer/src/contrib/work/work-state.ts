@@ -29,6 +29,10 @@ export interface WorkResources {
   skills: string[]
   mcpServers: string[]
   knowledgeBases: string[]
+  /** Sent labels stay out of the draft while the conversation keeps its knowledge scope. */
+  knowledgeBaseMentionsConsumed?: string[]
+  /** An authored empty selection overrides the previous run; absent keys still inherit Agent defaults. */
+  resourceOverrides?: Array<'skills' | 'mcpServers' | 'knowledgeBases'>
   /** Absence restores the engine selection; [] explicitly disables all toolkits. */
   toolkits?: string[]
 }
@@ -190,6 +194,15 @@ function attachments(value: unknown): ChatAttachment[] {
   return storedAttachments(value)
 }
 
+function resourceOverrides(value: unknown): NonNullable<WorkResources['resourceOverrides']> {
+  return Array.isArray(value) ? [...new Set(value.filter((key): key is NonNullable<WorkResources['resourceOverrides']>[number] =>
+    key === 'skills' || key === 'mcpServers' || key === 'knowledgeBases'))] : []
+}
+
+function consumedKnowledgeMentions(value: unknown, selected: unknown): string[] {
+  return Array.isArray(value) && Array.isArray(selected) ? [...new Set(value.filter((id): id is string => typeof id === 'string' && selected.includes(id)))] : []
+}
+
 export function normalizeWorkState(value: unknown): WorkState {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return emptyState()
   const data = value as Partial<WorkState>
@@ -239,6 +252,8 @@ export function normalizeWorkState(value: unknown): WorkState {
               skills: Array.isArray(task.resources.skills) ? task.resources.skills.filter((v): v is string => typeof v === 'string') : [],
               mcpServers: Array.isArray(task.resources.mcpServers) ? task.resources.mcpServers.filter((v): v is string => typeof v === 'string') : [],
               knowledgeBases: Array.isArray(task.resources.knowledgeBases) ? task.resources.knowledgeBases.filter((v): v is string => typeof v === 'string') : [],
+              ...(Array.isArray(task.resources.knowledgeBaseMentionsConsumed) ? { knowledgeBaseMentionsConsumed: consumedKnowledgeMentions(task.resources.knowledgeBaseMentionsConsumed, task.resources.knowledgeBases) } : {}),
+              ...(Array.isArray(task.resources.resourceOverrides) ? { resourceOverrides: resourceOverrides(task.resources.resourceOverrides) } : {}),
               ...(Array.isArray(task.resources.toolkits) ? { toolkits: [...new Set(task.resources.toolkits.filter((v): v is string => typeof v === 'string'))] } : {})
             }
           } : {}),
@@ -268,6 +283,8 @@ export function normalizeWorkState(value: unknown): WorkState {
       skills: Array.isArray(data.homeResources.skills) ? data.homeResources.skills.filter((v): v is string => typeof v === 'string') : [],
       mcpServers: Array.isArray(data.homeResources.mcpServers) ? data.homeResources.mcpServers.filter((v): v is string => typeof v === 'string') : [],
       knowledgeBases: Array.isArray(data.homeResources.knowledgeBases) ? data.homeResources.knowledgeBases.filter((v): v is string => typeof v === 'string') : [],
+      ...(Array.isArray(data.homeResources.knowledgeBaseMentionsConsumed) ? { knowledgeBaseMentionsConsumed: consumedKnowledgeMentions(data.homeResources.knowledgeBaseMentionsConsumed, data.homeResources.knowledgeBases) } : {}),
+      ...(Array.isArray(data.homeResources.resourceOverrides) ? { resourceOverrides: resourceOverrides(data.homeResources.resourceOverrides) } : {}),
       toolkits: Array.isArray(data.homeResources.toolkits) ? [...new Set(data.homeResources.toolkits.filter((v): v is string => typeof v === 'string'))] : []
     } : { skills: [], mcpServers: [], knowledgeBases: [], toolkits: [] }
   }

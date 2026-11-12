@@ -64,7 +64,7 @@ export function DirectoryReferencePreview({ path, root, sessionId, onOpenFile }:
         <Icon name="chevron-up" size={16} /><span>上级目录</span>
       </button>
       <p aria-label="当前目录" title={visible?.path ?? currentPath}>{visible?.path ?? currentPath}</p>
-      <button type="button" className="reference-directory__button" aria-label="刷新目录" onClick={() => setAttempt(value => value + 1)}><Icon name="restart" size={16} /></button>
+      <button type="button" className="reference-directory__button" aria-label="刷新目录" onClick={() => setAttempt(value => value + 1)}><Icon name="refresh" size={16} /></button>
     </div>
     {!visible ? <div className="reference-directory__status" role="status"><Spinner size={16} />正在读取目录…</div>
       : visible.error ? <div className="reference-directory__status" role="alert"><span>{visible.error}</span>

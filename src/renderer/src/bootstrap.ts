@@ -7,12 +7,8 @@
 import { registerContributions } from './contrib'
 import { installKeybindingDispatcher } from './core/platform/keybindings'
 import { installHorizontalWheelScrolling } from './core/platform/horizontal-scroll'
-import { restoreLastFolder } from './core/workspace/workspace-store'
-import { wireWorkspaceLiveSync } from './core/workspace/live-sync'
-import { wireGitLiveSync } from './core/git/live-sync'
 import { wireBrowserConnection } from './core/browser/connection'
 import { wireBrowserPresentation } from './core/browser/presentation'
-import { wireTsLsp } from './core/lsp/lifecycle'
 
 /**
  * Monaco's native quick-input hover list rejects its pending Delayer when the
@@ -29,20 +25,29 @@ function installMonacoCancellationGuard(): () => void {
   return () => window.removeEventListener('unhandledrejection', onUnhandledRejection)
 }
 
+/** Remove only storage owned by the retired Code surface.
+ * Work state, shared editor layout and engine records intentionally stay put:
+ * this is a namespace cleanup, not a reset of the user's workspace. */
+function clearRetiredCodeStorage(): void {
+  const prefixes = ['aether.code-queue-command.v1:']
+  try {
+    localStorage.removeItem('aether.app.mode')
+    for (let index = localStorage.length - 1; index >= 0; index--) {
+      const key = localStorage.key(index)
+      if (key && prefixes.some(prefix => key.startsWith(prefix))) localStorage.removeItem(key)
+    }
+  } catch { /* Storage may be unavailable during a restricted bootstrap. */ }
+}
+
 export function bootstrapRenderer(): () => void {
+  clearRetiredCodeStorage()
   const disposeBrowserPresentation = wireBrowserPresentation()
   const disposeMonacoCancellationGuard = installMonacoCancellationGuard()
   const disposeContributions = registerContributions()
   const disposeKeybindings = installKeybindingDispatcher()
   const disposeHorizontalScrolling = installHorizontalWheelScrolling()
 
-  // TS 语言服务跟随工作区启动/停止。监听必须在 restoreLastFolder 之前注册：
-  // 后者是异步的，完成后才触发工作区变化回调，先注册就不会漏掉首次启动
-  wireTsLsp()
-  const disposeWorkspaceLiveSync = wireWorkspaceLiveSync()
-  const disposeGitLiveSync = wireGitLiveSync()
   const disposeBrowserConnection = wireBrowserConnection()
-  void restoreLastFolder()
 
   return () => {
     disposeBrowserPresentation()
@@ -50,8 +55,6 @@ export function bootstrapRenderer(): () => void {
     disposeContributions()
     disposeKeybindings()
     disposeHorizontalScrolling()
-    disposeWorkspaceLiveSync()
-    disposeGitLiveSync()
     disposeBrowserConnection()
   }
 }

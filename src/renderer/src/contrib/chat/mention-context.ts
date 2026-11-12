@@ -19,7 +19,8 @@
 
 import { toolkitName } from '@shared/toolkits'
 
-export type MentionSource = 'file' | 'dir' | 'code' | 'terminal' | 'agent' | 'browser' | 'conversation' | 'toolkit'
+export type ResourceMentionSource = 'skill' | 'mcp' | 'kb'
+export type MentionSource = 'file' | 'dir' | 'code' | 'terminal' | 'agent' | 'browser' | 'conversation' | 'toolkit' | ResourceMentionSource
 export type MentionOrigin = 'workspace' | 'attachment' | 'artifact'
 
 /** 每种引用标签的配色与悬停提示：输入框 chip 与气泡 chip 共用这一份 */
@@ -30,6 +31,9 @@ export const MENTION_META: Record<MentionSource, { color: string; hint: string }
   terminal: { color: '#0ea5e9', hint: '终端输出' },
   agent: { color: '#10b981', hint: '协作 Agent' },
   toolkit: { color: 'var(--accent)', hint: '工具包' },
+  skill: { color: 'var(--accent)', hint: '技能' },
+  mcp: { color: 'var(--accent)', hint: 'MCP 服务' },
+  kb: { color: 'var(--accent)', hint: '知识库' },
   browser: { color: 'var(--accent)', hint: '浏览器网页' },
   conversation: { color: 'var(--accent)', hint: '会话' }
 }
@@ -48,6 +52,18 @@ export interface Mention {
   content?: string
   /** 草稿恢复时准确区分引用 chip 与用户手工输入的同名 @ 文本。 */
   textOffset?: number
+}
+
+export function isResourceSource(source: unknown): source is ResourceMentionSource {
+  return source === 'skill' || source === 'mcp' || source === 'kb'
+}
+
+export function isResourceMention(mention: Pick<Mention, 'source'>): boolean {
+  return isResourceSource(mention.source)
+}
+
+function isResourceId(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= 2048 && !/[\r\n]/.test(value)
 }
 
 /** 一枚引用的机器数据（藏在正文末尾的 HTML 注释里） */
@@ -103,6 +119,7 @@ const LANG_BY_EXT: Record<string, string> = {
 
 export function mentionToken(mention: Mention): string {
   if (!mention.path) return mention.displayText
+  if (isResourceSource(mention.source)) return `/${mention.source}:${mention.path}`
   if (mention.source === 'toolkit') return `@toolkit:${mention.path}`
   if (mention.source === 'code' && mention.startLine) {
     const range = mention.endLine && mention.endLine !== mention.startLine
@@ -119,9 +136,10 @@ export function formatPathDisplay(path: string): string {
 }
 
 /** 引用 chip 的悬停提示：给出类型、真实路径与行号区间 */
-export function mentionTitle(mention: Pick<Mention, 'source' | 'path' | 'startLine' | 'endLine' | 'content'>): string {
+export function mentionTitle(mention: Pick<Mention, 'source' | 'path' | 'startLine' | 'endLine' | 'content' | 'displayText'>): string {
   if (mention.source === 'conversation') return '打开会话'
-  if (mention.source === 'toolkit') return `工具包：${toolkitName(mention.path ?? '')}`
+  if (mention.source === 'toolkit') return `工具包：${toolkitName(mention.path ?? '', mention.displayText)}`
+  if (isResourceSource(mention.source)) return `${MENTION_META[mention.source].hint}：${mention.displayText}`
   const hint = MENTION_META[mention.source].hint
   const head = mention.path ? `${hint}：${mention.path}` : hint
   const lines = mention.startLine
@@ -140,7 +158,9 @@ export function isStoredMention(value: unknown): value is Mention {
   if (!value || typeof value !== 'object') return false
   const record = value as Record<string, unknown>
   return typeof record.displayText === 'string' &&
-    ['file', 'dir', 'code', 'terminal', 'agent', 'browser', 'conversation', 'toolkit'].includes(String(record.source)) &&
+    ['file', 'dir', 'code', 'terminal', 'agent', 'browser', 'conversation', 'toolkit', 'skill', 'mcp', 'kb'].includes(String(record.source)) &&
+    (!isResourceSource(record.source) || isResourceId(record.path) &&
+      Object.keys(record).every(key => ['source', 'path', 'displayText', 'textOffset'].includes(key))) &&
     (record.source !== 'toolkit' || typeof record.path === 'string' && /^[a-z][a-z0-9-]{0,127}$/.test(record.path) &&
       Object.keys(record).every(key => ['source', 'path', 'displayText', 'textOffset'].includes(key))) &&
     (record.origin === undefined || typeof record.origin === 'string' && ['workspace', 'attachment', 'artifact'].includes(record.origin)) &&
@@ -165,6 +185,11 @@ function escapeAttr(value: string): string {
 function attachmentReferenceText(mention: Mention): string | undefined {
   return mention.source === 'file' && mention.attachmentId && mention.path && mention.content === undefined
     ? `${mention.displayText}（文件：${mention.path}）` : undefined
+}
+
+/** Bindings travel in structured request fields; prose carries only their display names. */
+function resourceReferenceText(mention: Mention): string | undefined {
+  return isResourceSource(mention.source) ? `${MENTION_META[mention.source].hint}：${mention.displayText}` : undefined
 }
 
 function fenceFor(content: string): string {
@@ -254,16 +279,17 @@ export function buildMentionMessage(text: string, mentions: readonly Mention[], 
     out += prefix
     if (out && !/\s$/.test(out)) out += ' '
     const refStart = out.length
-    const block = (mention.content !== undefined ? formatReferenceBlock(mention, mention.content) : undefined)
+    const block = resourceReferenceText(mention)
+      ?? (mention.content !== undefined ? formatReferenceBlock(mention, mention.content) : undefined)
       ?? attachmentReferenceText(mention)
       ?? body.slice(start, end)
     out += block
     refs.push({
       t: mention.source,
-      ...(mention.origin ? { o: mention.origin } : {}),
-      ...(mention.attachmentId ? { a: mention.attachmentId } : {}),
+      ...(mention.origin && !isResourceMention(mention) ? { o: mention.origin } : {}),
+      ...(mention.attachmentId && !isResourceMention(mention) ? { a: mention.attachmentId } : {}),
       p: mention.path ?? '',
-      d: mention.source === 'toolkit' ? toolkitName(mention.path ?? '') : mention.displayText,
+      d: mention.source === 'toolkit' ? toolkitName(mention.path ?? '', mention.displayText) : mention.displayText,
       s: refStart,
       e: refStart + block.length,
       ...(mention.source === 'code' && mention.startLine
@@ -292,11 +318,13 @@ export function buildMentionMessage(text: string, mentions: readonly Mention[], 
 function isValidRefShape(value: unknown): value is PromptRef {
   if (!value || typeof value !== 'object') return false
   const r = value as Record<string, unknown>
-  if (!['file', 'dir', 'code', 'terminal', 'agent', 'browser', 'conversation', 'toolkit'].includes(String(r.t))) return false
+  if (!['file', 'dir', 'code', 'terminal', 'agent', 'browser', 'conversation', 'toolkit', 'skill', 'mcp', 'kb'].includes(String(r.t))) return false
   if (r.o !== undefined && (typeof r.o !== 'string' || !['workspace', 'attachment', 'artifact'].includes(r.o))) return false
   if (r.a !== undefined && (typeof r.a !== 'string' || !r.a || r.a.length > 4096)) return false
   if (typeof r.p !== 'string' || typeof r.d !== 'string') return false
   if (r.t === 'toolkit' && (!/^[a-z][a-z0-9-]{0,127}$/.test(r.p) ||
+    Object.keys(r).some(key => !['t', 'p', 'd', 's', 'e'].includes(key)))) return false
+  if (isResourceSource(r.t) && (!isResourceId(r.p) ||
     Object.keys(r).some(key => !['t', 'p', 'd', 's', 'e'].includes(key)))) return false
   if (typeof r.s !== 'number' || typeof r.e !== 'number') return false
   if (!Number.isInteger(r.s) || !Number.isInteger(r.e)) return false
@@ -391,7 +419,7 @@ export function parseMentionContent(content: string): { body: string; refs: Prom
     if (candidate.s < searchFrom || candidate.e > body.length) continue
     const isBlock = blocks.some(ref => ref.s === candidate.s && ref.e === candidate.e && ref.t === candidate.t && ref.p === candidate.p)
     const mention = refToMention(candidate)
-    if (!isBlock && body.slice(candidate.s, candidate.e) !== (attachmentReferenceText(mention) ?? mentionToken(mention))) continue
+    if (!isBlock && body.slice(candidate.s, candidate.e) !== (resourceReferenceText(mention) ?? attachmentReferenceText(mention) ?? mentionToken(mention))) continue
     refs.push({ ...candidate })
     searchFrom = candidate.e
   }
@@ -413,7 +441,7 @@ export function contentFromBody(body: string, ref: PromptRef): string | undefine
 /** 机器数据 → 输入框引用（气泡 chip 与回填共用） */
 export function refToMention(ref: PromptRef, content?: string): Mention {
   return {
-    displayText: ref.t === 'toolkit' ? toolkitName(ref.p) : ref.d,
+    displayText: ref.t === 'toolkit' ? toolkitName(ref.p, ref.d) : ref.d,
     source: ref.t,
     ...(ref.o ? { origin: ref.o } : {}),
     ...(ref.a ? { attachmentId: ref.a } : {}),

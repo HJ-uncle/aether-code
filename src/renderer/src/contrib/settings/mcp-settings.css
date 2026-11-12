@@ -1,154 +1,259 @@
-.settings-view--mcp .mcp-toolbar,.settings-view--mcp .mcp-actions,.settings-view--mcp .mcp-form__actions{display:flex;align-items:center;gap:8px}.settings-view--mcp .mcp-toolbar{justify-content:flex-end;flex-wrap:wrap;width:100%}.settings-view--mcp .mcp-actions{flex-wrap:wrap;justify-content:flex-end}.settings-view--mcp .mcp-empty{color:var(--fg-muted)}.settings-view--mcp .mcp-form{display:grid;gap:10px;width:100%;max-width:700px}.settings-view--mcp .mcp-form textarea{resize:vertical}.settings-view--mcp .mcp-scope{display:grid;grid-template-columns:120px minmax(0,1fr);align-items:center;gap:10px}.settings-view--mcp .mcp-notice{margin:10px 0;color:var(--fg-muted)}
-.settings-view--mcp .mcp-json__toolbar{display:flex;align-items:center;gap:16px;justify-content:space-between;flex-wrap:wrap}.settings-view--mcp .mcp-json__scope{display:flex;align-items:center;gap:10px;color:var(--fg-muted);font-size:13px}.settings-view--mcp .mcp-json__scope .select__trigger{width:140px}.settings-view--mcp .mcp-json__editor{display:block;width:100%;min-height:250px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;line-height:1.5;tab-size:2}.settings-view--mcp label.btn{cursor:pointer}.settings-view--mcp .mcp-server-block{border-top:1px solid var(--border);padding:4px 0}.settings-view--mcp .mcp-server-block:first-of-type{border-top:0}
-.settings-view--mcp .mcp-json__toolbar>.mcp-toolbar{width:auto}
-
-/* Keep the compact form aligned with the shared Apple control rhythm. */
-.settings-view--mcp .mcp-form,
-.settings-view--mcp .mcp-scope { gap: var(--space-3); }
-.settings-view--mcp .mcp-toolbar,
-.settings-view--mcp .mcp-actions,
-.settings-view--mcp .mcp-form__actions { gap: var(--space-2); }
-
-/* MCP is an advanced page: use a quiet editor surface and reserve stronger
- * contrast for the explicit server actions. */
-.settings-view--mcp .mcp-json__editor {
-  min-height: 280px;
-  padding: 14px;
-  border-radius: 9px;
-  background: var(--bg-inset);
+.settings-view.settings-view--mcp {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.mcp-servers__header,
+.mcp-toolbar,
+.mcp-server__actions,
+.mcp-json__toolbar,
+.mcp-json__footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mcp-servers__header {
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.mcp-servers__header h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
   color: var(--fg-strong);
-  font-size: 12px;
+  font-size: 14px;
+  font-weight: 600;
 }
-
-.settings-view--mcp .mcp-json__toolbar {
-  align-items: flex-start;
-}
-
-.settings-view--mcp .mcp-json__scope {
-  min-height: 30px;
-  padding-top: 2px;
+.mcp-servers__header h2 span {
   color: var(--fg-muted);
   font-size: 12px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
 }
-
-.settings-view--mcp .mcp-json__scope .select__trigger {
-  min-height: 30px;
-  border-radius: 7px;
+.mcp-servers__header p {
+  margin: 4px 0 0;
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
-
-.settings-view--mcp .mcp-toolbar,
-.settings-view--mcp .mcp-actions,
-.settings-view--mcp .mcp-form__actions {
-  flex-wrap: wrap;
+.mcp-toolbar { flex: none; flex-wrap: wrap; }
+.mcp-context {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-bottom: 12px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  line-height: 1.5;
 }
-
-.settings-view--mcp .mcp-server-block {
-  padding: 0;
-  border-top-color: var(--border);
+.mcp-context > svg,
+.mcp-context > span:not(.mcp-context__path) { flex: none; }
+.mcp-context__path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcp-server-list,
+.mcp-json {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--bg-panel);
 }
-
-.settings-view--mcp .mcp-server-block .sg__row {
-  min-height: 56px;
+.mcp-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 126px;
+  padding: 22px;
+  box-sizing: border-box;
+  color: var(--fg-muted);
 }
-
-.settings-view--mcp .mcp-form {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  max-width: none;
+.mcp-empty > svg { flex: none; }
+.mcp-empty strong { color: var(--fg); font-size: 13px; font-weight: 500; }
+.mcp-empty p { margin: 5px 0 0; font-size: 12px; line-height: 1.5; }
+.mcp-server + .mcp-server { border-top: 1px solid var(--border); }
+.mcp-server__row {
+  display: flex;
+  align-items: flex-start;
   gap: 12px;
+  padding: 16px;
 }
-
-.settings-view--mcp .mcp-form .field__input,
-.settings-view--mcp .mcp-form textarea {
+.mcp-server__icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 32px;
+  height: 32px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-control-subtle);
+  color: var(--fg-muted);
+}
+.mcp-server__copy { flex: 1; min-width: 0; }
+.mcp-server__copy h3 {
+  margin: 0;
+  color: var(--fg-strong);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.mcp-server__metadata { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 3px; color: var(--fg-muted); font-size: 11px; line-height: 1.5; }
+.mcp-server__copy p { margin: 6px 0 0; color: var(--fg-muted); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.mcp-server__actions { flex: none; gap: 10px; }
+.mcp-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.mcp-icon-button:hover:not(:disabled),
+.mcp-icon-button[aria-expanded='true'] { background: var(--bg-hover); color: var(--fg-strong); }
+.mcp-icon-button:disabled { opacity: 0.45; cursor: default; }
+.mcp-icon-button:focus-visible,
+.mcp-json__disclosure:focus-visible,
+.mcp-server__tools > summary:focus-visible,
+.mcp-server-menu__actions button:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: -2px; }
+.mcp-server-menu__actions { display: grid; gap: 2px; }
+.mcp-server-menu__actions button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 32px;
   width: 100%;
-  min-height: 34px;
-  border-radius: 8px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg);
+  font: 12px/1.5 var(--font-ui);
+  text-align: left;
+  cursor: pointer;
 }
-
-.settings-view--mcp .mcp-form textarea {
-  min-height: 90px;
+.mcp-server-menu__actions button:hover:not(:disabled) { background: var(--bg-hover); }
+.mcp-server-menu__actions .is-danger { color: var(--danger-fg); }
+.mcp-server-menu__actions button:disabled { opacity: 0.45; cursor: default; }
+.mcp-server__tools { padding: 0 16px 12px 60px; }
+.mcp-server__tools > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  min-height: 28px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+  font-size: 11px;
+  list-style: none;
+  cursor: pointer;
 }
-
-.settings-view--mcp .mcp-form > :nth-child(4),
-.settings-view--mcp .mcp-form > :nth-child(5),
-.settings-view--mcp .mcp-form > :nth-child(6),
-.settings-view--mcp .mcp-form > :nth-child(7),
-.settings-view--mcp .mcp-form > :nth-child(8),
-.settings-view--mcp .mcp-form > :nth-child(9),
-.settings-view--mcp .mcp-form__actions {
-  grid-column: 1 / -1;
+.mcp-server__tools > summary::-webkit-details-marker { display: none; }
+.mcp-server__tools > summary > span:last-child { margin-left: 8px; color: var(--ok-fg); }
+.mcp-server__tools[open] > summary > svg { transform: rotate(90deg); }
+.mcp-tool-list { margin-top: 6px; padding-top: 4px; border-top: 1px solid var(--border); }
+.mcp-tool {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 0;
 }
-
-.settings-view--mcp .mcp-form__actions {
-  justify-content: flex-end;
-  padding-top: 4px;
+.mcp-tool + .mcp-tool { border-top: 1px solid var(--border); }
+.mcp-tool > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.mcp-tool strong { color: var(--fg); font-size: 12px; font-weight: 500; }
+.mcp-tool p,
+.mcp-tool-list__empty { margin: 4px 0 0; color: var(--fg-muted); font-size: 11px; line-height: 1.55; }
+.mcp-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0 0 12px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
 }
-
-@media (max-width: 640px) {
-  .settings-view--mcp .mcp-form { grid-template-columns: 1fr; }
-  .settings-view--mcp .mcp-form > * { grid-column: 1; }
+.mcp-message svg { flex: none; margin-top: 2px; }
+.mcp-message.is-error { color: var(--danger-fg); }
+.mcp-json__disclosure {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 14px 16px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  text-align: left;
+  font-family: var(--font-ui);
+  cursor: pointer;
 }
-
-/* SettingsContent is an sg__row as well; these full-width MCP surfaces own
-   their inset so the generic row padding is not added a second time. */
-.settings-view--mcp .sg__row.mcp-json__toolbar,
-.settings-view--mcp .sg__row:has(.mcp-json__editor),
-.settings-view--mcp .sg__row:has(> .mcp-toolbar) {
-  align-items: stretch;
-  padding: 14px 18px;
+.mcp-json__disclosure:hover { background: var(--bg-hover); }
+.mcp-json__disclosure > svg { flex: none; }
+.mcp-json__disclosure > span { display: grid; flex: 1; gap: 3px; }
+.mcp-json__disclosure strong { color: var(--fg); font-size: 13px; font-weight: 500; }
+.mcp-json__disclosure small { font-size: 11px; line-height: 1.5; }
+.mcp-json__body { padding: 0 16px 16px; border-top: 1px solid var(--border); }
+.mcp-json__toolbar { justify-content: space-between; flex-wrap: wrap; padding: 12px 0; gap: 10px; }
+.mcp-json__scope { display: flex; align-items: center; gap: 8px; color: var(--fg-muted); font-size: 12px; }
+.mcp-json__scope .select__trigger { width: 108px; }
+.settings-view--mcp .mcp-json__editor {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 180px;
+  height: 220px;
+  padding: 12px;
+  resize: vertical;
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  color: var(--fg);
+  font: 12px/1.65 var(--font-mono);
+  tab-size: 2;
 }
-
-@container settings-body (max-width: 640px) {
-  .settings-view--mcp .mcp-form { grid-template-columns: 1fr; }
-  .settings-view--mcp .mcp-form > * { grid-column: 1; }
-}
+.mcp-json__footer { justify-content: space-between; flex-wrap: wrap; margin-top: 12px; gap: 10px; }
+.mcp-json__footer p { margin: 0; color: var(--fg-muted); font-size: 11px; line-height: 1.5; }
+.mcp-json__footer .btn { margin-left: auto; }
+.mcp-editor .modal__body { padding: 20px; }
+.mcp-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.mcp-form__field { display: grid; align-content: start; gap: 7px; min-width: 0; }
+.mcp-form__field > span { color: var(--fg-muted); font-size: 12px; line-height: 1.5; }
+.mcp-form__field.is-wide,
+.mcp-form__advanced,
+.mcp-form__error { grid-column: 1 / -1; }
+.mcp-form .ui-input { box-sizing: border-box; width: 100%; min-height: 34px; padding: 7px 10px; color: var(--fg); font: 13px/1.5 var(--font-ui); }
+.mcp-form textarea.ui-input { min-height: 88px; resize: vertical; }
+.mcp-form .ui-input.mcp-form__code { font: 12px/1.6 var(--font-mono); }
+.mcp-form .select,
+.mcp-form .popover__trigger,
+.mcp-form .select__trigger { width: 100%; min-width: 0; }
+.mcp-form .select__trigger { min-height: 34px; }
+.mcp-form__advanced { margin: 0; border-top: 1px solid var(--border); padding-top: 3px; }
+.mcp-form__advanced .sg__disclosure-summary { padding-inline: 0; }
+.mcp-form__advanced .sg__disclosure-body { display: grid; gap: 14px; padding: 4px 0 0; }
+.mcp-form__error { margin: 0; }
 
 @container settings-body (max-width: 560px) {
-  .settings-view--mcp .mcp-json__toolbar {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .settings-view--mcp .mcp-json__scope,
-  .settings-view--mcp .mcp-json__scope .select__trigger,
-  .settings-view--mcp .mcp-toolbar,
-  .settings-view--mcp .mcp-toolbar .btn {
-    width: 100%;
-  }
-
-  .settings-view--mcp .mcp-json__scope {
-    justify-content: space-between;
-  }
-
-  .settings-view--mcp .mcp-toolbar,
-  .settings-view--mcp .mcp-actions,
-  .settings-view--mcp .mcp-form__actions {
-    justify-content: flex-start;
-  }
-
-  .settings-view--mcp .mcp-actions {
-    width: 100%;
-  }
-
-  .settings-view--mcp .mcp-actions .btn {
-    flex: 1 1 auto;
-  }
-
-  .settings-view--mcp .mcp-scope {
-    grid-template-columns: 1fr;
-    align-items: stretch;
-  }
+  .mcp-server__row { flex-wrap: wrap; gap: 10px; padding: 14px; }
+  .mcp-server__copy { flex-basis: calc(100% - 44px); }
+  .mcp-server__actions { width: 100%; justify-content: flex-end; }
+  .mcp-server__tools { padding-inline: 14px; }
+  .mcp-servers__header { align-items: flex-start; }
+  .mcp-servers__header .mcp-toolbar { flex-wrap: nowrap; }
+  .mcp-json__toolbar { align-items: flex-start; }
 }
-
-.settings-view--mcp .mcp-timeout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, 180px); align-items: center; gap: var(--space-3); grid-column: 1 / -1; }
-.settings-view--mcp .mcp-timeout small { display: block; color: var(--fg-muted); font-size: 12px; margin-top: var(--space-1); }
-@container settings-body (max-width: 560px) { .settings-view--mcp .mcp-timeout { grid-template-columns: 1fr; } }
-.settings-view--mcp .mcp-form > .mcp-scope { grid-column: 1 / -1; }
-
-.settings-view--mcp .mcp-scope > .select,
-.settings-view--mcp .mcp-scope > .select > .popover__trigger,
-.settings-view--mcp .mcp-scope .select__trigger { width: 100%; min-width: 0; }
-@container settings-body (max-width: 560px) {
-  .settings-view--mcp .mcp-json__scope > .select,
-  .settings-view--mcp .mcp-json__scope > .select > .popover__trigger { flex: 1; min-width: 0; }
+@media (max-width: 560px) {
+  .mcp-form { grid-template-columns: 1fr; }
+  .mcp-editor .modal__body { padding: 16px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .mcp-icon-button,
+  .mcp-json__disclosure,
+  .mcp-server-menu__actions button { transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
 }

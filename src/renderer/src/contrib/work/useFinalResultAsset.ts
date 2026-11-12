@@ -42,7 +42,10 @@ export async function readFinalResultAsset(result: FinalResult, item: FinalResul
     assertFresh()
     return asset
   })()
-  const entry = { promise, size: item.size }
+  // A decoded preview retains bytes, Base64 and possibly UTF-16 text. Reserve
+  // their upper bound, rather than allowing a 64 MiB file budget to retain
+  // several times that amount after source files become readable previews.
+  const entry = { promise, size: item.size * 3 + Math.ceil(item.size / 3) * 8 }
   cache.set(key, entry)
   let retainedBytes = [...cache.values()].reduce((sum, value) => sum + value.size, 0)
   for (const [oldKey, oldEntry] of cache) {

@@ -35,7 +35,6 @@ import { useApp } from '@renderer/core/app-context'
 import { getSettingsDefinitions, onSettingsRegistryChanged, searchSettings, type SettingDefinition } from './settings-registry'
 import type { IconName } from '@renderer/workbench/icons'
 import { Icon } from '@renderer/workbench/icons'
-import { SettingsScopeContext } from './settings-scope'
 import './settings-pages.css'
 
 /**
@@ -227,7 +226,6 @@ export function AppSettingsView(): JSX.Element {
   const [active, setActive] = useState(request?.section ?? DEFAULT_SETTINGS_SECTION)
   const [consumedNonce, setConsumedNonce] = useState(request?.nonce ?? 0)
   const [query, setQuery] = useState('')
-  const [scope, setScope] = useState<'user' | 'workspace'>('user')
   const [modifiedOnly, setModifiedOnly] = useState(false)
   // 渲染期消费新请求（React 官方「渲染时调整 state」模式）：覆盖「已挂载时再次跳转」的场景
   if (request && request.nonce !== consumedNonce) {
@@ -243,10 +241,10 @@ export function AppSettingsView(): JSX.Element {
   }, [browserSettings, editorOptions, gitPreferences, layout, settings, terminalPreferences, userKeybindings])
   const results = useMemo(() => {
     const candidates = query.trim()
-      ? searchSettings(query, scope, modifiedKeys)
-      : settingDefinitions.filter((item) => item.scope === 'both' || item.scope === scope)
+      ? searchSettings(query, undefined, modifiedKeys)
+      : settingDefinitions
     return modifiedOnly ? candidates.filter((item) => modifiedKeys.has(item.key)) : candidates
-  }, [modifiedKeys, modifiedOnly, query, scope, settingDefinitions])
+  }, [modifiedKeys, modifiedOnly, query, settingDefinitions])
   const visibleSections = useMemo(() => {
     if (!query.trim() && !modifiedOnly) return SECTIONS
     const ids = new Set(results.map((result) => result.section))
@@ -290,14 +288,6 @@ export function AppSettingsView(): JSX.Element {
             onClick={() => setModifiedOnly((value) => !value)}
           >
             <Icon name="filter-remove" size={15} />
-          </button>
-        </div>
-        <div className="app-settings__scope" role="tablist" aria-label="设置范围">
-          <button type="button" role="tab" aria-selected={scope === 'user'} className={scope === 'user' ? 'is-active' : ''} onClick={() => setScope('user')}>
-            用户
-          </button>
-          <button type="button" role="tab" aria-selected={scope === 'workspace'} className={scope === 'workspace' ? 'is-active' : ''} onClick={() => setScope('workspace')}>
-            工作区
           </button>
         </div>
         {query.trim() ? (
@@ -364,9 +354,7 @@ export function AppSettingsView(): JSX.Element {
           <h1 className="app-settings__title">{visibleSection.label}</h1>
           <p className="app-settings__subtitle">{visibleSection.description}</p>
         </header>
-        <SettingsScopeContext.Provider value={scope}>
-          <SectionBody />
-        </SettingsScopeContext.Provider>
+        <SectionBody />
       </main>
     </div>
   )

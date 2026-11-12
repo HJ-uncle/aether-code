@@ -50,10 +50,13 @@ export function parseEngineManifest(value: unknown): EngineManifest {
     data.protocolVersion !== 1 ||
     data.subagentSchemaVersion !== 1 ||
     !Array.isArray(data.toolProfiles) ||
-    !data.toolProfiles.includes('code') ||
+    // Work is the only desktop surface. The engine may still expose the
+    // optional Code profile for other clients, but it is no longer a
+    // connection prerequisite for this application.
+    !data.toolProfiles.includes('general') ||
     !data.toolProfiles.every((profile) => typeof profile === 'string')
   ) {
-    throw new Error('引擎协议或编程工具范围不兼容，请使用配套构建')
+    throw new Error('引擎协议或通用工具范围不兼容，请使用配套构建')
   }
   return data as unknown as EngineManifest
 }
@@ -202,6 +205,27 @@ const REMOTE_CHAT_ROUTES = [
 export function remoteRequestError(mode: 'embedded' | 'remote', method: string, path: string, body?: unknown): string | null {
   if (mode !== 'remote') return null
   const pathname = normalizeEnginePath(path).split('?')[0]
+  // Plugin management always executes on the authenticated engine, including
+  // import paths, tests and revisions. Renderer-local paths are never resolved.
+  if (pathname === '/api/v1/plugins') return method === 'GET' || method === 'POST' ? null : '此插件路径不支持该方法。'
+  if (pathname.startsWith('/api/v1/plugins/')) {
+    if (/^\/api\/v1\/plugins\/runtime\/apps(?:\/|$)/.test(pathname)) {
+      return (method === 'GET' && /^\/api\/v1\/plugins\/runtime\/apps\/[a-z0-9][a-z0-9-]{0,47}$/.test(pathname))
+        || (method === 'POST' && /^\/api\/v1\/plugins\/runtime\/apps\/[a-z0-9][a-z0-9-]{0,47}\/invoke$/.test(pathname)) ? null : '此插件运行路径或方法尚未接入远端服务。'
+    }
+    // Project templates use a separate namespace, preserving existing plugin IDs.
+    if (/^\/api\/v1\/plugins\/project\/templates(?:\/|$)/.test(pathname)) {
+      return method === 'GET' && /^\/api\/v1\/plugins\/project\/templates(?:\/[a-z0-9][a-z0-9-]{0,47})?$/.test(pathname) ? null : '此插件模板路径或方法尚未接入远端服务。'
+    }
+    if (/^\/api\/v1\/plugins\/project\/exports(?:\/|$)/.test(pathname)) {
+      return method === 'GET' && /^\/api\/v1\/plugins\/project\/exports\/[a-z0-9][a-z0-9-]{0,47}$/.test(pathname) ? null : '此插件导出路径或方法尚未接入远端服务。'
+    }
+    const supported = (method === 'GET' && (/^\/api\/v1\/plugins\/[a-z0-9][a-z0-9-]{0,47}$/.test(pathname) || /^\/api\/v1\/plugins\/imports\/[a-zA-Z0-9_-]+$/.test(pathname)))
+      || (method === 'POST' && (/^\/api\/v1\/plugins\/[a-z0-9][a-z0-9-]{0,47}\/(publish|test)$/.test(pathname) || pathname === '/api/v1/plugins/imports/preview' || /^\/api\/v1\/plugins\/imports\/[a-zA-Z0-9_-]+\/install$/.test(pathname)))
+      || (['PUT', 'PATCH', 'DELETE'].includes(method) && /^\/api\/v1\/plugins\/[a-z0-9][a-z0-9-]{0,47}$/.test(pathname))
+      || (method === 'DELETE' && /^\/api\/v1\/plugins\/imports\/[a-zA-Z0-9_-]+$/.test(pathname))
+    return supported ? null : '此插件路径或方法尚未接入远端服务。'
+  }
   // Reserved automation endpoints must not fall through as a generic job ID.
   if (/^\/api\/v1\/cron\/(?:capabilities|preview|notifications|runs)(?:\/|$)/.test(pathname)) {
     const supported = method === 'GET' && (
@@ -291,7 +315,7 @@ export function remoteWorkspacePathError(mode: 'embedded' | 'remote', method: st
 }
 
 /** Used by both ordinary requests and every SSE method, including resume. */
-export function engineHeaders(instanceToken: string, toolProfile: ToolProfile = 'code'): Record<string, string> {
+export function engineHeaders(instanceToken: string, toolProfile: ToolProfile = 'general'): Record<string, string> {
   return {
     ...toolProfileHeaders(toolProfile),
     ...(instanceToken ? { 'X-Aether-Instance-Token': instanceToken } : {})

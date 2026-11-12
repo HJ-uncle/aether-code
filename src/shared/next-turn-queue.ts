@@ -15,7 +15,7 @@ export type QueueModelSelection =
 export type QueueMemorySelection =
   { kind: 'inherit' } | { kind: 'override'; scope: 'off' | 'session' | 'global'; version: string }
 export interface QueueMention {
-  source: 'file' | 'dir' | 'code' | 'terminal' | 'agent' | 'browser' | 'conversation' | 'toolkit'
+  source: 'file' | 'dir' | 'code' | 'terminal' | 'agent' | 'browser' | 'conversation' | 'toolkit' | 'skill' | 'mcp' | 'kb'
   origin?: 'workspace' | 'attachment' | 'artifact'
   attachmentId?: string
   displayText: string
@@ -42,8 +42,6 @@ export interface QueueAttachmentReceipt {
 export interface NextTurnQueueEnvelope {
   /** Main-owned continuation identity; retained even after the linked run finishes. */
   recovery?: { runId: string }
-  /** Code's explicit options survive restart; Work retains its task-owned configuration. */
-  code?: import('./code-next-turn-api').CodeQueueOptions
   /** Main-owned enqueue identity; no provider or credential fields are stored. */
   submissionDigest?: string
   draft: { text: string; revision: number; mentions: QueueMention[] }

@@ -1,8 +1,11 @@
 import { memo, useId, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react'
-import { Icon } from '@renderer/workbench/icons'
+import { Icon, ResourceIcon } from '@renderer/workbench/icons'
+import { ToolkitIcon } from './toolkit-icons'
 import { agentReferenceIcon } from './agent-mention-icon'
 import {
   mentionTitle,
+  isResourceMention,
+  isResourceSource,
   contentFromBody,
   parseMentionContent,
   refToMention,
@@ -74,11 +77,11 @@ export const UserMessageContent = memo(function UserMessageContent({ content, co
               title={segment.ref.origin === 'attachment' && /^粘贴文本(?: · |$)/.test(segment.ref.displayText)
                 ? `${segment.ref.displayText}\n长文本已折叠，点击查看全文`
                 : segment.ref.source === 'conversation' ? mentionTitle(segment.ref) : `${segment.ref.displayText}\n${mentionTitle(segment.ref)}`}
-              role={onOpenMention && segment.ref.source !== 'toolkit' ? 'button' : undefined}
-              tabIndex={onOpenMention && segment.ref.source !== 'toolkit' ? 0 : undefined}
-              aria-label={segment.ref.source === 'toolkit' ? `工具包：${segment.ref.displayText}` : onOpenMention ? `查看引用：${segment.ref.displayText}` : undefined}
-              onClick={onOpenMention && segment.ref.source !== 'toolkit' ? () => onOpenMention(segment.ref!) : undefined}
-              onKeyDown={onOpenMention && segment.ref.source !== 'toolkit' ? (event) => {
+              role={onOpenMention && segment.ref.source !== 'toolkit' && !isResourceMention(segment.ref) ? 'button' : undefined}
+              tabIndex={onOpenMention && segment.ref.source !== 'toolkit' && !isResourceMention(segment.ref) ? 0 : undefined}
+              aria-label={segment.ref.source === 'toolkit' || isResourceMention(segment.ref) ? mentionTitle(segment.ref) : onOpenMention ? `查看引用：${segment.ref.displayText}` : undefined}
+              onClick={onOpenMention && segment.ref.source !== 'toolkit' && !isResourceMention(segment.ref) ? () => onOpenMention(segment.ref!) : undefined}
+              onKeyDown={onOpenMention && segment.ref.source !== 'toolkit' && !isResourceMention(segment.ref) ? (event) => {
                 if (event.key !== 'Enter' && event.key !== ' ') return
                 event.preventDefault()
                 event.stopPropagation()
@@ -87,7 +90,8 @@ export const UserMessageContent = memo(function UserMessageContent({ content, co
             >
               {segment.ref.source === 'conversation' ? <Icon name="chat-outline" size={14} className="mention-chip__icon" /> : null}
               {segment.ref.source === 'agent' ? <Icon name={agentReferenceIcon(segment.ref.path)} size={16} className="mention-chip__icon mention-chip__icon--agent" /> : null}
-              {segment.ref.source === 'toolkit' ? <Icon name="package-variant-closed" size={16} className="mention-chip__icon mention-chip__icon--toolkit" /> : null}
+              {segment.ref.source === 'toolkit' ? <ToolkitIcon id={segment.ref.path} size={16} className="mention-chip__icon mention-chip__icon--toolkit" /> : null}
+              {isResourceSource(segment.ref.source) ? <ResourceIcon kind={segment.ref.source} className="mention-chip__icon" /> : null}
               <span className="mention-chip__label">{segment.ref.displayText}</span>
             </span>
           ) : (

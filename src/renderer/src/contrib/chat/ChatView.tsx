@@ -1,4 +1,6 @@
 import { CommandJobCard } from './CommandJobCard'
+import { WorkPermissionCard } from '../work/WorkPermissionCard'
+import { WorkQuestionCard } from '../work/WorkQuestionCard'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { PublishedRecoveryNotice } from './PublishedRecoveryNotice'
 import { SessionConnectionNotice } from './SessionConnectionNotice'
@@ -69,10 +71,12 @@ import { ImageConversationProvider } from './image-conversation'
 import { ToolImageGalleryProvider } from './ToolImageGalleryProvider'
 import { replaceImageAttachmentReferences } from './image-attachment-reference'
 import { AttachmentStrip } from './AttachmentStrip'
-import { attachmentIdentity, attachmentMention, attachmentReferences, freezeAttachmentReferences } from './attachment-references'
+import { attachmentIdentity, attachmentMention, attachmentReferences, draftAttachmentSelection, freezeAttachmentReferences, referencesAttachment } from './attachment-references'
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
 import { knowledgeBindingKey, saveKnowledgeBinding } from '@renderer/core/engine/knowledge'
 import { ResourcePicker, type ResourceItem } from './ResourcePicker'
+import { consumedResourcePatch, editResourceBindings, hasNonResourceContent, resourceBindingEdits, resourceFollowupChanges, resourceMention, restoredResourcePatch, sameResourceBindings } from './resource-mentions'
+import { useResourceMentions } from './useResourceMentions'
 import './apple-chat-panels.css'
 import { RootFollowupDelivery, RootFollowupFeedback, useRootFollowup } from './RootFollowup'
 import { rootFollowupCanSubmit, rootFollowupLimitation, rootFollowupMessage, rootFollowupRun } from './root-followup'
@@ -129,7 +133,8 @@ import { loadChatDraftState, saveChatDraft, saveChatDraftForSubmission, nextChat
 import {
   preserveMentions,
   userMessageDraft,
-  userMessageText
+  userMessageText,
+  isResourceSource
 } from './mention-context'
 import { MentionRefPicker } from './MentionRefPicker'
 import { buildAgentMentionMessage } from './agent-references'
@@ -177,7 +182,7 @@ export function ChatView(): JSX.Element {
   const [polishing, setPolishing] = useState(false)
   /** 输入框里的引用 chip（文件/目录/源码/终端），由 MentionInput 序列化时同步 */
   const mentionsRef = useRef<Mention[]>([])
-  const [, refreshMentionLabels] = useState(0)
+  const [mentionRevision, refreshMentionLabels] = useState(0)
   /** 多选模式：按消息粒度勾选，复制或导出为 Markdown */
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set())
@@ -205,6 +210,15 @@ export function ChatView(): JSX.Element {
   const storedThinkingMode = useMemo(() => loadSessionThinkingMode(sessionId, storageSource), [sessionId, storageSource])
   const storedRequestSelection = useMemo(() => loadSessionRequestSelection(sessionId, storageSource), [sessionId, storageSource])
   const legacyResources = useMemo(() => loadLegacyComposerResources(sessionId, storageSource), [sessionId, storageSource])
+  const [selectedResources, setSelectedResources] = useState<{ source: string; sessionId: string; config: Partial<ComposerResources> } | null>(null)
+  // Resource chips belong to the next authored message. Their explicit empty
+  // selections must survive the admitted run changing the session anchor.
+  const resourceSelection = selectedResources?.source === storageSource && selectedResources.sessionId === sessionId
+    ? selectedResources.config : { ...(legacyResources.skills !== undefined ? { skills: legacyResources.skills } : {}),
+      ...(legacyResources.mcpServers !== undefined ? { mcpServers: legacyResources.mcpServers } : {}),
+      ...(legacyResources.knowledgeBases !== undefined ? { knowledgeBases: legacyResources.knowledgeBases } : {}) }
+  const resourceSelectionRef = useRef(resourceSelection)
+  resourceSelectionRef.current = resourceSelection
   const [selectedRequest, setSelectedRequest] = useState<{ source: string; sessionId: string; selection: SessionRequestSelection } | null>(null)
   const requestSelection = selectedRequest?.source === storageSource && selectedRequest.sessionId === sessionId ? selectedRequest.selection : storedRequestSelection
   /**
@@ -226,11 +240,22 @@ export function ChatView(): JSX.Element {
     fallbackConfig: { ...legacyResources, agentId: settings.lastAgentId || undefined,
       subagentModel: settings.subagentModelId || undefined, utilityModel: settings.utilityModelId || undefined,
       thinkingMode: requestedThinkingMode(storedThinkingMode ?? settings.thinkingMode) }
-  }), ...(pendingRequestPatch?.source === storageSource && pendingRequestPatch.epoch === sourceEpoch && pendingRequestPatch.sessionId === sessionId ? pendingRequestPatch.patch : {}) }
+  }), ...(pendingRequestPatch?.source === storageSource && pendingRequestPatch.epoch === sourceEpoch && pendingRequestPatch.sessionId === sessionId ? pendingRequestPatch.patch : {}), ...resourceSelection }
   const composerResources: ComposerResources = { skills: composerRequest.skills ?? [], mcpServers: composerRequest.mcpServers ?? [], knowledgeBases: composerRequest.knowledgeBases ?? [] }
+  const resourceChangePending = taskActive && resourceFollowupChanges(composerRequest, followupRun?.requestConfig ?? (sessionModelReady ? sessionModel.requestConfig : undefined))
   const thinkingMode = composerThinkingMode(composerRequest.thinkingMode)
   const updateComposerRequest = useCallback((patch: RootRunRequestConfig): void => {
     if (!sessionId || sourceEpoch !== getEngineSource()) return
+    const resourcePatch: Partial<ComposerResources> = {}
+    for (const key of ['skills', 'mcpServers', 'knowledgeBases'] as const)
+      if (patch[key] !== undefined) resourcePatch[key] = patch[key]
+    if (Object.keys(resourcePatch).length) {
+      const config = { ...resourceSelectionRef.current, ...resourcePatch }
+      resourceSelectionRef.current = config
+      setSelectedResources({ source: storageSource, sessionId, config })
+      try { localStorage.setItem(`aether:composer-resources:${storageSource || 'embedded'}:${sessionId}`, JSON.stringify(config)) } catch { /* The active draft remains usable. */ }
+      if (resourcePatch.knowledgeBases !== undefined) saveKnowledgeBinding(sessionId, resourcePatch.knowledgeBases, storageSource)
+    }
     if (!sessionModelReady) {
       setPendingRequestPatch(previous => previous?.source === storageSource && previous.epoch === sourceEpoch && previous.sessionId === sessionId
         ? { ...previous, patch: { ...previous.patch, ...patch } }
@@ -244,6 +269,14 @@ export function ChatView(): JSX.Element {
     setSelectedRequest({ source: storageSource, sessionId, selection })
     saveSessionRequestSelection(sessionId, storageSource, selection)
   }, [sessionId, sessionModelReady, sourceEpoch, sessionModel, requestSelection, storageSource])
+  const consumeDraftResources = useCommittedCallback((draft: { text: string; mentions: readonly Mention[] }, sentSelection: Partial<ComposerResources>): void => {
+    const patch = consumedResourcePatch({ ...composerResources, ...resourceSelectionRef.current }, draft, sentSelection)
+    if (Object.keys(patch).length) updateComposerRequest(patch)
+  })
+  const restoreDraftResources = useCommittedCallback((draft: { text: string; mentions: readonly Mention[] }): void => {
+    const patch = restoredResourcePatch({ ...composerResources, ...resourceSelectionRef.current }, draft)
+    if (Object.keys(patch).length) updateComposerRequest(patch)
+  })
   useEffect(() => {
     if (!sessionModelReady || !sessionId || pendingRequestPatch?.source !== storageSource || pendingRequestPatch.epoch !== sourceEpoch || pendingRequestPatch.sessionId !== sessionId) return
     const patch = pendingRequestPatch.patch
@@ -302,6 +335,9 @@ export function ChatView(): JSX.Element {
     },
     onChange: files => attachmentChangeRef.current(files) })
   const currentAttachmentReferences = useMemo(() => attachmentReferences(attach.attachments), [attach.attachments])
+  const imageAttachmentReferences = currentAttachmentReferences.filter(reference => reference.file.type.startsWith('image/'))
+  const selectedAttachments = draftAttachmentSelection(attach.attachments, mentionsRef.current)
+  const hasPrompt = hasNonResourceContent({ text: input, mentions: mentionsRef.current })
   const attachmentStateRef = useRef(attach.attachments)
   attachmentStateRef.current = attach.attachments
   const imageConversationScope = JSON.stringify([sourceEpoch, sessionId, workspace.root])
@@ -322,6 +358,7 @@ export function ChatView(): JSX.Element {
   }, [previewAttachment, sessionId])
   const [referencePreview, setReferencePreview] = useState<{ scope: string; mention: Mention } | null>(null)
   const openReference = useCallback((mention: Mention, receipt?: ChatAttachment, draft = false, owner?: AttachmentPreviewOwner): void => {
+    if (isResourceSource(mention.source) || mention.source === 'toolkit') return
     const path = mention.path ?? ''
     if (mention.source === 'conversation') {
       try { requestOpenConversation(path) }
@@ -362,7 +399,7 @@ export function ChatView(): JSX.Element {
   /** AI 润色输入框内容：用轻任务模型改写得更清晰；chip 引用会随文本一起被序列化给模型 */
   const handlePolish = async (): Promise<void> => {
     const text = input.trim()
-    if (!canExecute || polishing || !text) return
+    if (!canExecute || polishing || !hasPrompt) return
     const requestSessionId = sessionId
     activeSessionIdRef.current = requestSessionId
     setPolishing(true)
@@ -550,63 +587,23 @@ export function ChatView(): JSX.Element {
   }, [sessionId, storageSource, sourceEpoch])
 
   const chooseComposerResource = useCallback((item: ResourceItem): void => {
-    const key = item.kind === 'skill' ? 'skills' : item.kind === 'mcp' ? 'mcpServers' : 'knowledgeBases'
-    const current = composerResources[key]
-    // A binding is session-scoped. Selecting the same row again should focus the
-    // existing chip instead of appending a second raw `/kind:id` token that cannot
-    // be removed independently from the single binding entry.
-    if (current.includes(item.id)) {
-      // The binding already exists (for example, selected through the dedicated
-      // KB picker), but the slash query still needs to be consumed from the draft.
-      suppressResourceReconcileRef.current = true
-      inputRef.current?.completeSlash(`/${item.kind}:${item.id}`)
-      suppressResourceReconcileRef.current = false
-      inputRef.current?.focus()
-      setResourceQuery(null)
-      return
-    }
-    const next = current.includes(item.id) ? current : [...current, item.id]
-    updateComposerRequest({ [key]: next })
-    if (item.kind === 'kb' && sessionId) saveKnowledgeBinding(sessionId, next, storageSource)
-    suppressResourceReconcileRef.current = true
-    inputRef.current?.completeSlash(`/${item.kind}:${item.id}`)
-    suppressResourceReconcileRef.current = false
-    setResourceQuery(null)
-  }, [composerResources, sessionId, storageSource, updateComposerRequest])
+    if (inputRef.current?.completeSlash(resourceMention(item.kind, item.id, item.label))) setResourceQuery(null)
+  }, [])
 
-  /** Remove bindings whose slash token the user deleted from the draft. */
-  const reconcileComposerResources = useCallback((text: string): void => {
-    const previous = resourceTextRef.current
+  /** Atomic edits, including undo/redo, update the request's independent bindings. */
+  const reconcileComposerResources = useCallback((text: string, mentions: Mention[]): void => {
+    const before = { text: inputValueRef.current, mentions: mentionsRef.current }
     resourceTextRef.current = text
-    if (suppressResourceReconcileRef.current || !previous || !sessionId) return
-    const removed: Array<{ kind: 'skill' | 'mcp' | 'kb'; id: string }> = []
-    const inspect = (kind: 'skill' | 'mcp' | 'kb', ids: readonly string[]): void => {
-      for (const id of ids) {
-        const token = `/${kind}:${id}`
-        if (previous.includes(token) && !text.includes(token)) removed.push({ kind, id })
-      }
-    }
-    inspect('skill', composerResources.skills)
-    inspect('mcp', composerResources.mcpServers)
-    inspect('kb', composerResources.knowledgeBases)
-    if (!removed.length) return
+    if (suppressResourceReconcileRef.current || !sessionId) return
+    const next = editResourceBindings(composerResources, before, { text, mentions })
+    if (sameResourceBindings(composerResources, next)) return
+    if (taskActive) rootFollowup.setDelivery('next')
+    if (!sameResourceBindings({ knowledgeBases: composerResources.knowledgeBases }, { knowledgeBases: next.knowledgeBases }))
+      saveKnowledgeBinding(sessionId, next.knowledgeBases, storageSource)
     const patch: RootRunRequestConfig = {}
-    for (const { kind, id } of removed) {
-      const key = kind === 'skill' ? 'skills' : kind === 'mcp' ? 'mcpServers' : 'knowledgeBases'
-      const values = (patch[key] ?? composerResources[key]).filter(value => value !== id)
-      patch[key] = values
-      if (kind === 'kb') saveKnowledgeBinding(sessionId, values, storageSource)
-    }
+    for (const key of resourceBindingEdits(before, { text, mentions })) patch[key] = next[key]
     updateComposerRequest(patch)
-  }, [composerResources.knowledgeBases, composerResources.mcpServers, composerResources.skills, sessionId, storageSource, updateComposerRequest])
-
-  const removeComposerResource = useCallback((kind: 'skill' | 'mcp' | 'kb', id: string): void => {
-    const key = kind === 'skill' ? 'skills' : kind === 'mcp' ? 'mcpServers' : 'knowledgeBases'
-    const next = composerResources[key].filter(item => item !== id)
-    updateComposerRequest({ [key]: next })
-    inputRef.current?.removeTextToken(`/${kind}:${id}`)
-    if (kind === 'kb') saveKnowledgeBinding(sessionId, next, storageSource)
-  }, [composerResources, sessionId, storageSource, updateComposerRequest])
+  }, [composerResources.knowledgeBases, composerResources.mcpServers, composerResources.skills, sessionId, storageSource, updateComposerRequest, taskActive, rootFollowup.setDelivery])
 
   // 切换会话时重置分页窗口（sessionId 声明之后，依赖其值）
   useEffect(() => {
@@ -661,9 +658,25 @@ export function ChatView(): JSX.Element {
     inputValueRef.current = draft.text
     draftEditRevision.current = draft.revision
   }, [sessionId, sourceSessionKey, storageSource])
-  useEffect(() => () => {
-    window.clearTimeout(draftTimerRef.current)
-    pendingDraftSaveRef.current?.()
+  useEffect(() => {
+    const flush = (): void => {
+      window.clearTimeout(draftTimerRef.current)
+      const pending = pendingDraftSaveRef.current
+      pendingDraftSaveRef.current = null
+      pending?.()
+    }
+    const visibility = (): void => { if (document.hidden) flush() }
+    window.addEventListener('beforeunload', flush)
+    window.addEventListener('pagehide', flush)
+    window.addEventListener('blur', flush)
+    document.addEventListener('visibilitychange', visibility)
+    return () => {
+      flush()
+      window.removeEventListener('beforeunload', flush)
+      window.removeEventListener('pagehide', flush)
+      window.removeEventListener('blur', flush)
+      document.removeEventListener('visibilitychange', visibility)
+    }
   }, [])
 
   // 先恢复草稿再插入新引用，避免打开隐藏的对话面板时被恢复 effect 覆盖。
@@ -715,6 +728,18 @@ export function ChatView(): JSX.Element {
     inputRef.current?.setDraft(draft.text, draft.mentions)
     scheduleDraftSave(draft.text)
   }
+  useEffect(() => {
+    if (appMode !== 'code' || !settingsLoaded || !sessionId || sourceEpoch !== getEngineSource() || !inputRef.current) return
+    attach.inlinePendingFiles(file => {
+      const reference = attachmentReferences([file])[0]
+      return mentionsRef.current.some(mention => referencesAttachment(mention, reference)) ||
+        inputRef.current?.insertMention(attachmentMention(reference)) === true
+    })
+  }, [appMode, settingsLoaded, sessionId, sourceEpoch, attach.attachments, attach.inlinePendingFiles, input, mentionRevision])
+  useResourceMentions({ scope: `${sourceSessionKey}:${attachmentRoot ?? ''}`,
+    active: appMode === 'code' && settingsLoaded && sessionModelReady && !submitting && !rootFollowup.busy,
+    projectPath: workspace.root ?? undefined, bindings: composerResources,
+    mentions: mentionsRef.current, insert: mention => inputRef.current?.insertMention(mention) === true })
 
   // ── 吸底跟随（对齐 wuzu-client CliChatView）──
   // 内容增高不能改变用户的阅读选择；手势暂停后，回到底部才恢复跟随。
@@ -969,8 +994,10 @@ export function ChatView(): JSX.Element {
     const current = inputValueRef.current
     const recovered = preserveMentions(current.trim() ? `${current}\n\n${draft.text}` : draft.text,
       [...mentionsRef.current, ...draft.mentions])
+    restoreDraftResources(recovered)
     inputValueRef.current = recovered.text
     mentionsRef.current = recovered.mentions
+    resourceTextRef.current = recovered.text
     setInput(recovered.text)
     inputRef.current?.setDraft(recovered.text, recovered.mentions)
     attach.restore(draft.attachments)
@@ -980,35 +1007,41 @@ export function ChatView(): JSX.Element {
     setRejectedDrafts(previous => {
       const next = { ...previous }; delete next[draftRecoveryKey]; return next
     })
-  }, [attach.restore, attachmentRoot, draftRecoveryKey, sessionId, storageSource])
+  }, [attach.restore, attachmentRoot, draftRecoveryKey, sessionId, storageSource, restoreDraftResources])
 
   const resolveRootFollowup = useCallback((operation: () => Promise<boolean>, sentMessage: string): void => {
     const original = inputValueRef.current, originalMentions = mentionsRef.current, revision = draftEditRevision.current, sentScope = draftScopeRef.current
+    const sentResources = { ...composerResources, ...resourceSelectionRef.current }
+    const receipts = attach.attachments
     let sameDraft = false
-    try { sameDraft = rootFollowupMessage(original, originalMentions, attach.attachments) === sentMessage } catch { /* Later attachment edits belong to the user. */ }
+    try { sameDraft = rootFollowupMessage(original, originalMentions, draftAttachmentSelection(receipts, originalMentions), resourceChangePending) === sentMessage } catch { /* Later attachment edits belong to the user. */ }
     void operation().then(accepted => {
       if (!accepted || !sameDraft || sourceEpoch !== getEngineSource() || displayedSessionRef.current !== sourceSessionKey || draftScopeRef.current !== sentScope
         || inputValueRef.current !== original || mentionsRef.current !== originalMentions || draftEditRevision.current !== revision) return
+      consumeDraftResources({ text: original, mentions: originalMentions }, sentResources)
       inputValueRef.current = ''; mentionsRef.current = []; setInput('')
-      suppressResourceReconcileRef.current = true; inputRef.current?.clear(); suppressResourceReconcileRef.current = false
+      inputRef.current?.setDraft('', [])
       resourceTextRef.current = ''
+      attach.removeSubmitted(receipts)
       window.clearTimeout(draftTimerRef.current); pendingDraftSaveRef.current = null
-      draftEditRevision.current = saveChatDraft(sessionId, '', storageSource)
+      draftEditRevision.current = saveChatDraft(sessionId, '', storageSource, [],
+        nextChatDraftRevision(draftEditRevision.current), { attachments: attachmentStateRef.current, root: attachmentRoot })
     })
-  }, [attach.attachments, sourceEpoch, sourceSessionKey, sessionId, storageSource])
+  }, [attach.attachments, attach.removeSubmitted, sourceEpoch, sourceSessionKey, sessionId, storageSource, attachmentRoot, resourceChangePending, consumeDraftResources, composerResources.skills, composerResources.mcpServers, composerResources.knowledgeBases])
 
   const submit = useCallback(() => {
     // When the slash palette is open, Enter belongs to palette selection;
     // ResourcePicker's document listener consumes it after this guard.
     if (resourceQuery !== null || mentionQuery !== null || manualPalette) return
-    const text = input.trim()
+    const hasText = hasNonResourceContent({ text: input, mentions: mentionsRef.current })
     // 允许「只发附件」：丢张截图直接问，是视觉模型的常见用法
-    const files = attach.attachments
-    if ((!text && files.length === 0) || submissionFlight.current || stopping || rootFollowup.busy || rootFollowup.pending || attach.uploading || !canExecute || !sessionId || sourceEpoch !== getEngineSource() || historyEditRef.current?.key === sourceSessionKey) return
+    const receipts = attach.attachments
+    const files = draftAttachmentSelection(receipts, mentionsRef.current)
+    if ((!hasText && files.length === 0) || submissionFlight.current || stopping || rootFollowup.busy || rootFollowup.pending || attach.uploading || !canExecute || !sessionId || sourceEpoch !== getEngineSource() || historyEditRef.current?.key === sourceSessionKey) return
     if (immediateIntent) {
       if (!rootFollowupCanSubmit(rootAccepting, rootFollowup.capability)) return
       let message: string
-      try { message = rootFollowupMessage(input, mentionsRef.current, files) }
+      try { message = rootFollowupMessage(input, mentionsRef.current, files, resourceChangePending) }
       catch (cause) { setToast(cause instanceof Error ? cause.message : String(cause)); return }
       resolveRootFollowup(() => rootFollowup.send(message), message)
       return
@@ -1019,6 +1052,7 @@ export function ChatView(): JSX.Element {
     // against the session-bound server workspace.
     const { message, collaborators } = buildAgentMentionMessage(input, mentionsRef.current)
     const original: RejectedDraft = { text: input, mentions: [...mentionsRef.current], attachments: files, root: attachmentRoot }
+    const sendOptions = buildSendOptions()
     const sentScope = draftScopeRef.current
     const revision = draftEditRevision.current
     let authored: ReturnType<typeof queuedDraft>
@@ -1043,12 +1077,14 @@ export function ChatView(): JSX.Element {
       try {
         if (sourceEpoch !== getEngineSource() || displayedSessionRef.current !== sourceSessionKey || draftScopeRef.current !== sentScope
           || draftEditRevision.current !== revision || inputValueRef.current !== original.text) return
+        consumeDraftResources(original, sendOptions)
         setInput(''); inputValueRef.current = ''; mentionsRef.current = []
-        suppressResourceReconcileRef.current = true; inputRef.current?.clear(); suppressResourceReconcileRef.current = false
+        inputRef.current?.setDraft('', [])
         resourceTextRef.current = ''
-        attach.removeSubmitted(files)
+        attach.removeSubmitted(receipts)
         window.clearTimeout(draftTimerRef.current); pendingDraftSaveRef.current = null
-        draftEditRevision.current = saveChatDraft(sessionId, '', storageSource)
+        draftEditRevision.current = saveChatDraft(sessionId, '', storageSource, [],
+          nextChatDraftRevision(draftEditRevision.current), { attachments: attachmentStateRef.current, root: attachmentRoot })
       } finally { releaseComposer() }
     }
     // 占位条目（若该会话是本次新建的）刷新时间戳，继续待在列表顶部；
@@ -1058,7 +1094,7 @@ export function ChatView(): JSX.Element {
     // 否则 80ms 流式节流窗口内 followBottom 已是 false 时整轮都不再跟随
     resumeFollowBottom()
     void send(message, {
-      ...buildSendOptions(),
+      ...sendOptions,
       queueDraft: authored,
       ...(collaborators.length ? { collaborators } : {}),
       attachments: files.length > 0 ? freezeAttachmentReferences(files) : undefined
@@ -1071,7 +1107,7 @@ export function ChatView(): JSX.Element {
       if (current) setToast(cause instanceof Error ? cause.message : String(cause))
     }).finally(releaseComposer)
     scrollToBottom(true)
-  }, [attach, attachmentRoot, buildSendOptions, input, canExecute, stopping, sourceEpoch, sourceSessionKey, draftRecoveryKey, storageSource, send, sessionId, resumeFollowBottom, scrollToBottom, resourceQuery, mentionQuery, manualPalette, rootFollowup, rootAccepting, immediateIntent, resolveRootFollowup])
+  }, [attach, attachmentRoot, buildSendOptions, input, canExecute, stopping, sourceEpoch, sourceSessionKey, draftRecoveryKey, storageSource, send, sessionId, resumeFollowBottom, scrollToBottom, resourceQuery, mentionQuery, manualPalette, rootFollowup, rootAccepting, immediateIntent, resolveRootFollowup, resourceChangePending, consumeDraftResources])
 
   /** 托盘的「发送」：空闲时按当前模式（逐条/合并）立即发出队列 */
   const flushQueueFromTray = useCallback(async () => {
@@ -1200,7 +1236,8 @@ export function ChatView(): JSX.Element {
         danger: true
       }).then((confirmed) => {
         if (!confirmed || sourceEpoch !== getEngineSource() || historyEditRef.current) return
-        void retryFrom(userMessage, buildSendOptions()).catch(showError)
+        const options = buildSendOptions()
+        void retryFrom(userMessage, { ...options, ...restoredResourcePatch(options, userMessageDraft(userMessage.content)) }).catch(showError)
       })
     }
   )
@@ -1229,6 +1266,7 @@ export function ChatView(): JSX.Element {
   const refillFromMessage = useCallback((message: ChatMessage) => {
     if (sourceEpoch !== getEngineSource() || displayedSessionRef.current !== sourceSessionKey || historyEditRef.current) return
     const draft = appendMessageDraft({ text: inputValueRef.current, mentions: mentionsRef.current }, userMessageDraft(message.content))
+    restoreDraftResources(draft)
     inputValueRef.current = draft.text
     mentionsRef.current = draft.mentions
     resourceTextRef.current = draft.text
@@ -1239,7 +1277,7 @@ export function ChatView(): JSX.Element {
     pendingDraftSaveRef.current = null
     draftEditRevision.current = saveChatDraft(sessionId, draft.text, storageSource, draft.mentions, nextChatDraftRevision(draftEditRevision.current), { attachments: attachmentStateRef.current, root: attachmentRoot })
     inputRef.current?.focus()
-  }, [attach.restore, sessionId, storageSource, sourceEpoch, sourceSessionKey])
+  }, [attach.restore, sessionId, storageSource, sourceEpoch, sourceSessionKey, restoreDraftResources])
 
   const editFromMessage = useCommittedCallback((message: ChatMessage) => {
     if (!canExecute || taskActive || sourceEpoch !== getEngineSource() || displayedSessionRef.current !== sourceSessionKey || historyEditRef.current) return
@@ -1263,6 +1301,7 @@ export function ChatView(): JSX.Element {
         // Read the live draft after the server settles: text typed while the
         // request was pending belongs to the user and must survive recovery.
         const draft = restoreMessageDraft({ text: inputValueRef.current, mentions: mentionsRef.current }, userMessageDraft(message.content))
+        restoreDraftResources(draft)
         inputValueRef.current = draft.text
         mentionsRef.current = draft.mentions
         resourceTextRef.current = draft.text
@@ -1297,6 +1336,7 @@ export function ChatView(): JSX.Element {
             if (sourceEpoch !== getEngineSource()) return
             const revision = saveChatDraft(sessionId, draft.text, storageSource, draft.mentions, nextChatDraftRevision())
             if (displayedSessionRef.current !== sourceSessionKey) return
+            restoreDraftResources(draft)
             mentionsRef.current = draft.mentions
             resourceTextRef.current = draft.text
             inputRef.current?.setDraft(draft.text, draft.mentions)
@@ -1589,10 +1629,10 @@ export function ChatView(): JSX.Element {
           </div>
         ) : null}
         <InputComposer ref={composerRef}>
-          {(attach.attachments.length > 0 || attach.uploading) ? (
+          {(imageAttachmentReferences.length > 0 || attach.uploading) ? (
             <div className="chat__attach-strip">
               <AttachmentStrip root={workspace.root} sessionId={attachmentPreviewSessionId}
-                references={currentAttachmentReferences} mentions={mentionsRef.current}
+                references={imageAttachmentReferences} mentions={mentionsRef.current}
                 onPreview={(file, src) => previewAttachment(file, src, attach.attachments.filter(item => item.type.startsWith('image/')), true)}
                 onRemove={file => { inputRef.current?.removeAttachmentReferences(attachmentIdentity(file)); attach.remove(file.path) }}
                 onReorder={attach.reorder} />
@@ -1609,14 +1649,6 @@ export function ChatView(): JSX.Element {
             </div>
           ) : null}
 
-          {(composerResources.skills.length + composerResources.mcpServers.length + composerResources.knowledgeBases.length) > 0 ? (
-            <div className="resource-binding-strip" aria-label="本轮对话资源">
-              {composerResources.skills.map(id => <button key={`skill:${id}`} type="button" aria-label={`移除技能 ${id}`} className="resource-binding-chip is-skill" title={`移除技能 ${id}`} onClick={() => removeComposerResource('skill', id)}>技能 · {id}<span aria-hidden="true">×</span></button>)}
-              {composerResources.mcpServers.map(id => <button key={`mcp:${id}`} type="button" aria-label={`移除 MCP ${id}`} className="resource-binding-chip is-mcp" title={`移除 MCP ${id}`} onClick={() => removeComposerResource('mcp', id)}>MCP · {id}<span aria-hidden="true">×</span></button>)}
-              {composerResources.knowledgeBases.map(id => <button key={`kb:${id}`} type="button" aria-label={`移除知识库 ${id}`} className="resource-binding-chip is-kb" title={`移除知识库 ${id}`} onClick={() => removeComposerResource('kb', id)}>知识库 · {id}<span aria-hidden="true">×</span></button>)}
-            </div>
-          ) : null}
-
           <ComposerInput
             ref={inputRef}
             value={input}
@@ -1629,9 +1661,9 @@ export function ChatView(): JSX.Element {
             }
             onChange={(text, mentions) => {
               draftEditRevision.current += 1
+              reconcileComposerResources(text, mentions)
               mentionsRef.current = mentions
               refreshMentionLabels(revision => revision + 1)
-              reconcileComposerResources(text)
               inputValueRef.current = text
               setInput(text)
               scheduleDraftSave(text)
@@ -1656,7 +1688,7 @@ export function ChatView(): JSX.Element {
             onSlashQuery={(query) => { setResourceQuery(query); if (query !== null) setMentionQuery(null) }}
             onOpenMention={mention => openReference(mention, undefined, true)}
           />
-          <ComposerPolish busy={polishing} disabled={!canExecute || !input.trim()} title="AI 润色：让指令更清晰具体（使用轻任务模型）" onClick={() => void handlePolish()} />
+          <ComposerPolish busy={polishing} disabled={!canExecute || !hasPrompt} title="AI 润色：让指令更清晰具体（使用轻任务模型）" onClick={() => void handlePolish()} />
             <CompletionPopover open={canExecute && appMode === 'code' && (mentionQuery !== null || manualPalette)} anchorRef={composerRef} onClose={() => { setManualPalette(false); setMentionQuery(null) }}>
             <MentionRefPicker
               open={canExecute && appMode === 'code' && (mentionQuery !== null || manualPalette)}
@@ -1827,17 +1859,19 @@ export function ChatView(): JSX.Element {
             {taskActive ? <ComposerStop loading={stopping} disabled={!ready} onClick={() => { void abort().catch(() => {}) }} /> : null}
             {taskActive ? <RootFollowupDelivery controller={rootFollowup} disabled={stopping || !canExecute} /> : null}
             <ComposerSend label={historyEditBusy ? '正在重新编辑…' : immediateIntent ? '立即补充' : taskActive ? '排到下一轮' : '发送'} loading={rootFollowup.busy} loadingLabel="正在提交补充…"
-              disabled={submitting || historyEditBusy || !canExecute || stopping || Boolean(rootFollowup.pending) || attach.uploading || (!input.trim() && attach.attachments.length === 0)
-                || (immediateIntent && (!rootFollowupCanSubmit(rootAccepting, rootFollowup.capability) || Boolean(rootFollowupLimitation(mentionsRef.current, attach.attachments))))} onClick={submit} />
+              disabled={submitting || historyEditBusy || !canExecute || stopping || Boolean(rootFollowup.pending) || attach.uploading || (!hasPrompt && selectedAttachments.length === 0)
+                || (immediateIntent && (!rootFollowupCanSubmit(rootAccepting, rootFollowup.capability) || Boolean(rootFollowupLimitation(mentionsRef.current, selectedAttachments, resourceChangePending))))} onClick={submit} />
           </>} />
         </InputComposer>
-          <RootFollowupFeedback key={JSON.stringify([sourceEpoch, sessionId])} controller={rootFollowup} active={taskActive} limitation={rootWaiting ? '请先处理上方确认，任务恢复后可立即补充；草稿已保留。' : !rootAccepting && taskActive ? '正在确认当前任务是否可接收补充，草稿已保留。' : rootFollowupLimitation(mentionsRef.current, attach.attachments)}
+          <RootFollowupFeedback key={JSON.stringify([sourceEpoch, sessionId])} controller={rootFollowup} active={taskActive} limitation={rootWaiting ? '请先处理上方确认，任务恢复后可立即补充；草稿已保留。' : !rootAccepting && taskActive ? '正在确认当前任务是否可接收补充，草稿已保留。' : rootFollowupLimitation(mentionsRef.current, selectedAttachments, resourceChangePending)}
             onFocusInput={() => inputRef.current?.focus()}
             fallbackHint={!ready ? '引擎尚未就绪，草稿会保留。' : taskActive && !immediateIntent ? 'Enter 排到下一轮 · Shift + Enter 换行' : 'Enter 发送 · Shift + Enter 换行'}
             onResolve={resolveRootFollowup}
-            canRestore={!input.trim() && !attach.attachments.length} onRestore={message => {
-              if (inputValueRef.current.trim()) return
+            canRestore={!hasPrompt && !selectedAttachments.length} onRestore={message => {
+              if (hasNonResourceContent({ text: inputValueRef.current, mentions: mentionsRef.current })) return
               const recovered = userMessageDraft(message)
+              restoreDraftResources(recovered)
+              resourceTextRef.current = recovered.text
               draftEditRevision.current += 1; inputValueRef.current = recovered.text; mentionsRef.current = recovered.mentions
               setInput(recovered.text); inputRef.current?.setDraft(recovered.text, recovered.mentions); scheduleDraftSave(recovered.text)
               inputRef.current?.focus()
@@ -2448,18 +2482,6 @@ function PendingCard({
   }, [pending.requestId, pending.runId, sourceEpoch])
   const isPermission = pending.kind === 'permission'
 
-  const toggle = (groupIndex: number, value: string, multi: boolean): void => {
-    setGroupSelected((prev) => {
-      const current = prev[groupIndex] ?? []
-      const next = current.includes(value)
-        ? current.filter((item) => item !== value)
-        : multi
-          ? [...current, value]
-          : [value]
-      return { ...prev, [groupIndex]: next }
-    })
-  }
-
   /**
    * 一键放行：先切会话模式，再放行当前这一步。
    *
@@ -2481,143 +2503,43 @@ function PendingCard({
     if (currentRequestRef.current && sourceEpoch === getEngineSource()) onRespond(['approved'])
   }
 
+  const submitAnswers = (): void => {
+    if (disabled || allowAllBusy) return
+    const values: string[] = []
+    pending.groups.forEach((group, index) => {
+      const selected = groupSelected[index] ?? []
+      values.push(...(group.multiSelect ? selected : selected.slice(0, 1)))
+      const text = groupInput[index]?.trim()
+      if (text) values.push(text)
+    })
+    onRespond(values.length ? values : ['跳过'])
+  }
   return (
-    <div className={`pending-card${isPermission ? ' pending-card--permission' : ''}`}>
-      <div className="pending-card__title">
-        <span>{isPermission ? '允许这次操作？' : '需要你确认'}</span>
-        <span className="pending-card__state">等待你的选择</span>
-      </div>
-
+    <form
+      className={`work-pending${isPermission ? ' work-pending--permission' : ' work-pending--question'}`}
+      aria-label={isPermission ? '操作确认' : '补充信息'}
+      onSubmit={(event) => { event.preventDefault(); if (!isPermission) submitAnswers() }}
+    >
       {isPermission ? (
-        <>
-          <div className="pending-card__question">{pending.question}</div>
-          <div className="pending-card__options">
-            {pending.options.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={`btn btn--sm${option.value === 'approved' ? ' btn--primary' : ''}`}
-                disabled={disabled}
-                title={option.description}
-                onClick={() => onRespond([option.value])}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </>
+        <WorkPermissionCard pending={pending} blocked={disabled || allowAllBusy}
+          submitting={allowAllBusy ? 'full-access' : null}
+          onReply={(values, fullAccess) => { if (fullAccess) void allowAll(); else onRespond(values) }} />
       ) : (
-        // 提问：对齐 wuzu AskUserQuestion —— 每个问题一组：tab 胶囊 + 标题 +
-        // 选项卡（标题 + 描述 + 勾选框）+ 自由输入框，底部「跳过 / 提交」
-        <>
-          {pending.groups.map((group, groupIndex) => (
-            <div key={groupIndex} className="pending-card__group">
-              <div className="pending-card__group-head">
-                {group.tab ? <span className="pending-card__tab">{group.tab}</span> : null}
-                <span className="pending-card__group-question">{group.question}</span>
-              </div>
-              {group.options.length > 0 ? (
-                <div className="pending-card__choices">
-                  {group.options.map((option) => {
-                    const checked = (groupSelected[groupIndex] ?? []).includes(option.value)
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        className={`pending-card__choice${checked ? ' pending-card__choice--on' : ''}`}
-                        aria-pressed={checked}
-                        disabled={disabled}
-                        onClick={() => toggle(groupIndex, option.value, group.multiSelect)}
-                      >
-                        <span className="pending-card__choice-body">
-                          <span className="pending-card__choice-label">{option.label}</span>
-                          {option.description ? (
-                            <span className="pending-card__choice-desc">{option.description}</span>
-                          ) : null}
-                        </span>
-                        <span
-                          className={`pending-card__choice-box${group.multiSelect ? '' : ' pending-card__choice-box--radio'}`}
-                        >
-                          {checked ? <Icon name="check" size={16} /> : null}
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-              ) : null}
-              {group.allowInput ? (
-                <input
-                  type="text"
-                  className="pending-card__input ui-input"
-                  aria-label={group.question}
-                  placeholder="或直接输入回复…"
-                  disabled={disabled}
-                  value={groupInput[groupIndex] ?? ''}
-                  onChange={(event) =>
-                    setGroupInput((prev) => ({ ...prev, [groupIndex]: event.target.value }))
-                  }
-                />
-              ) : null}
-            </div>
-          ))}
-          <div className="pending-card__actions">
-            <button
-              type="button"
-              className="btn btn--sm"
-              disabled={disabled}
-              onClick={() => onRespond(['跳过'])}
-            >
-              跳过
-            </button>
-            <button
-              type="button"
-              className="btn btn--primary btn--sm"
-              disabled={disabled}
-              onClick={() => {
-                const values: string[] = []
-                pending.groups.forEach((group, groupIndex) => {
-                  const picked = groupSelected[groupIndex] ?? []
-                  const freeText = (groupInput[groupIndex] ?? '').trim()
-                  if (group.multiSelect) {
-                    values.push(...picked)
-                  } else if (picked.length > 0) {
-                    values.push(picked[0])
-                  }
-                  if (freeText) values.push(freeText)
-                })
-                onRespond(values.length > 0 ? values : ['跳过'])
-              }}
-            >
-              提交
-            </button>
-          </div>
-        </>
+        <WorkQuestionCard pending={pending} blocked={disabled} submitting={false}
+          values={pending.groups.map((_, index) => groupSelected[index] ?? [])}
+          freeText={pending.groups.map((_, index) => groupInput[index] ?? '')}
+          allowIncomplete onSkip={() => onRespond(['跳过'])}
+          onSelect={(index, value, checked) => setGroupSelected(previous => {
+            const current = previous[index] ?? []
+            return { ...previous, [index]: pending.groups[index].multiSelect
+              ? checked ? [...current, value] : current.filter(item => item !== value)
+              : [value] }
+          })}
+          onText={(index, value) => setGroupInput(previous => ({ ...previous, [index]: value }))} />
       )}
-
-      {isPermission ? (
-        <div className="pending-card__footer">
-          <button
-            type="button"
-            className="btn btn--sm btn--danger-ghost"
-            disabled={disabled || allowAllBusy}
-            title="本会话内所有命令不再询问，并放行当前这一步（注意：同时会解除 Agent 的工作区路径限制）"
-            onClick={() => void allowAll()}
-          >
-            <Icon name="shield" size={16} />
-            {allowAllBusy ? '切换中…' : '本会话改为完全访问并放行'}
-          </button>
-          {allowAllError ? (
-            <span className="pending-card__hint pending-card__hint--error">
-              未切换会话模式：{allowAllError}
-            </span>
-          ) : (
-            <span className="pending-card__hint">连续被拦时用它一次放开</span>
-          )}
-        </div>
-      ) : null}
-
-      {disabled ? <div className="pending-card__hint">等待上一轮响应结束后可继续操作</div> : null}
-    </div>
+      {allowAllError ? <p className="work-pending__error" role="alert">未切换会话模式：{allowAllError}</p> : null}
+      {disabled ? <p className="work-pending__status">等待上一轮响应结束后可继续操作</p> : null}
+    </form>
   )
 }
 

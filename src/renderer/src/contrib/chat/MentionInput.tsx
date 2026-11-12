@@ -28,19 +28,22 @@ import {
   MENTION_META,
   mentionToken,
   mentionTitle,
+  isResourceSource,
   sameMention,
   type Mention,
   type MentionSource
 } from './mention-context'
 import { toast } from '@renderer/core/toast'
-import { AGENT_ICON_GLYPHS, CHAT_OUTLINE_PATH, PACKAGE_VARIANT_CLOSED_PATH, Icon } from '@renderer/workbench/icons'
-import { toolkitName } from '@shared/toolkits'
+import { AGENT_ICON_GLYPHS, CHAT_OUTLINE_PATH, RESOURCE_ICON_GLYPHS, Icon } from '@renderer/workbench/icons'
+import { toolkitIconGlyph } from './toolkit-icons'
+import { isToolkitNameQuery, toolkitName, pluginToolkitIdentity } from '@shared/toolkits'
 import { ContextMenu, type ContextMenuItem } from '@renderer/workbench/ContextMenu'
 import { agentMentionIcon } from './agent-mention-icon'
 import { acceptsComposerChange, COMPOSER_INPUT_LIMIT_MESSAGE } from './input-limits'
 import { getEngineSource, isEngineReady, isRemoteEngine, subscribeEngineReadiness, subscribeEngineSource } from '@renderer/core/engine/source'
-import { useAttachmentImageSrc } from './AttachmentChip'
-import { ATTACHMENT_DRAG_TYPE, attachmentMention, referencesAttachment, type AttachmentReference } from './attachment-references'
+import { formatAttachmentBytes, useAttachmentImageSrc } from './AttachmentChip'
+import { resolveFileIcon } from '../explorer/file-icons'
+import { ATTACHMENT_DRAG_TYPE, attachmentMention, inlineAttachmentLabel, referencesAttachment, type AttachmentReference } from './attachment-references'
 import { ATTACHMENT_CHIP_DRAG_TYPE, ATTACHMENT_CLIPBOARD_TYPE, attachmentDragKey, attachmentDropReference, rebindAttachmentClipboard } from './attachment-editor-transfer'
 import { createMentionEditHistory, sameAuthoredDraft } from './mention-edit-history'
 import { createMentionDragPreview, mentionDropTarget } from './mention-drag-feedback'
@@ -56,13 +59,15 @@ export interface MentionInsertion {
 
 /** 父组件通过 ref 调用的命令式接口（插 chip / 清空 / 聚焦） */
 export interface MentionInputHandle {
-  insertMention: (mention: Mention) => void
+  insertMention: (mention: Mention) => boolean
   /** @ 补全选中：把光标前的「@关键词」文本替换为 chip */
   completeMention: (mention: Mention) => void
   /** Consume only the active @ query for a resource action, without inserting a reference. */
   dismissMentionQuery: () => void
-  /** / 资源补全：把光标前的 /关键词消费掉；资源以 composer chip 展示并走独立绑定字段 */
-  completeSlash: (token: string) => void
+  /** Replace the active slash query with an atomic resource label. */
+  completeSlash: (mention: Mention) => boolean
+  /** Consume the active slash query and remove this resource's unsent labels together. */
+  removeSlashResource: (mention: Mention) => boolean
   /** 删除遗留的手工资源 token（兼容旧草稿），同时保留其它 @ 引用 chip */
   removeTextToken: (token: string) => void
   /** Removing a pending attachment explicitly removes all its inline occurrences. */
@@ -100,7 +105,8 @@ function spacerAfter(chip: HTMLElement): Text {
  */
 function makeChip(mention: Mention, key: string, interactive = false): HTMLElement {
   const toolkit = mention.source === 'toolkit'
-  const displayText = toolkit ? toolkitName(mention.path ?? '') : mention.displayText
+  const resource = isResourceSource(mention.source)
+  const displayText = toolkit ? toolkitName(mention.path ?? '', mention.displayText) : mention.displayText
   const chip = document.createElement('span')
   chip.className = `mention-chip mention-chip--${mention.source}`
   chip.contentEditable = 'false'
@@ -112,10 +118,11 @@ function makeChip(mention: Mention, key: string, interactive = false): HTMLEleme
   label.textContent = displayText
   chip.appendChild(label)
   const agentIcon = agentMentionIcon(mention)
-  if (mention.source === 'conversation' || agentIcon || toolkit) {
+  if (mention.source === 'conversation' || agentIcon || toolkit || resource) {
     const glyph = agentIcon ? AGENT_ICON_GLYPHS[agentIcon]
-      : toolkit ? { path: PACKAGE_VARIANT_CLOSED_PATH, fill: 'currentColor', strokeWidth: undefined }
-      : { path: CHAT_OUTLINE_PATH, fill: 'none', strokeWidth: 1.75 }
+      : toolkit ? toolkitIconGlyph(mention.path)
+      : isResourceSource(mention.source) ? RESOURCE_ICON_GLYPHS[mention.source]
+      : { path: CHAT_OUTLINE_PATH, fill: 'none', strokeWidth: 1.5 }
     const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
     icon.classList.add('mention-chip__icon')
     if (agentIcon) icon.classList.add('mention-chip__icon--agent')
@@ -137,8 +144,8 @@ function makeChip(mention: Mention, key: string, interactive = false): HTMLEleme
     icon.appendChild(path)
     chip.prepend(icon)
   }
-  if (toolkit) {
-    chip.setAttribute('aria-label', `工具包：${displayText}`)
+  if (toolkit || resource) {
+    chip.setAttribute('aria-label', mentionTitle(mention))
     chip.tabIndex = 0
   } else if (interactive) {
     chip.setAttribute('role', 'button')
@@ -156,7 +163,24 @@ function paintAttachmentChip(chip: HTMLElement, mention: Mention, reference?: At
   chip.setAttribute('aria-label', chip.getAttribute('role') === 'button'
     ? `查看引用：${mention.displayText}` : `引用 ${mention.displayText}`)
   const pasted = reference && pastedTextLabel(reference.file.name, reference.file.type)
-  chip.title = `${reference?.file.name ?? mention.path ?? mention.displayText}\n${pasted ? '长文本已折叠，点击查看全文；' : ''}拖动调整位置；Delete 删除引用`
+  chip.title = `${reference?.file.name ?? mention.path ?? mention.displayText}${reference ? ` · ${formatAttachmentBytes(reference.file.size)}` : ''}\n${pasted ? '长文本已折叠，点击查看全文；' : '点击预览；'}拖动调整位置；Delete 删除引用`
+  const isDocument = reference && !reference.file.type.startsWith('image/')
+  chip.classList.toggle('mention-chip--document', Boolean(isDocument))
+  let glyph = chip.querySelector<SVGElement>('.mention-chip__file-icon')
+  if (isDocument && reference) {
+    const icon = resolveFileIcon(reference.file.name, reference.file.type)
+    if (!glyph) {
+      glyph = chip.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg')
+      glyph.classList.add('mention-chip__icon', 'mention-chip__file-icon')
+      glyph.setAttribute('viewBox', '0 0 24 24')
+      glyph.setAttribute('aria-hidden', 'true')
+      glyph.setAttribute('focusable', 'false')
+      chip.prepend(glyph)
+    }
+    // Resolve through the same trusted icon catalogue used by the file tree.
+    if (glyph.innerHTML !== icon.body) glyph.innerHTML = icon.body
+    glyph.style.color = icon.color
+  } else glyph?.remove()
   const label = chip.querySelector<HTMLElement>('.mention-chip__label')
   if (label && label.textContent !== mention.displayText) label.textContent = mention.displayText
 }
@@ -440,8 +464,8 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       const reference = resolveAttachmentReference(mention, attachmentReferencesRef.current)
       // Reordering changes presentation only. A replacement file's path and
       // serialized text are committed together by the owning composer.
-      const updated = mention.source === 'toolkit' ? { ...mention, displayText: toolkitName(mention.path ?? '') }
-        : reference ? { ...mention, displayText: reference.label, attachmentId: reference.id } : mention
+      const updated = mention.source === 'toolkit' ? { ...mention, displayText: toolkitName(mention.path ?? '', mention.displayText) }
+        : reference ? { ...mention, displayText: inlineAttachmentLabel(reference), attachmentId: reference.id } : mention
       chip.draggable = !disabledRef.current
       paintAttachmentChip(chip, updated, reference)
       const image = reference ? imageSourcesRef.current.get(attachmentImageKey(reference)) : undefined
@@ -648,9 +672,18 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       (mention: Mention, target?: Range, options: { preserveSelection?: boolean; preserveLineBreak?: boolean } = {}): boolean => {
         const { preserveSelection = false, preserveLineBreak = false } = options
         const box = boxRef.current
-        if (!box) return false
+        if (!box || disabledRef.current || composingRef.current) return false
         for (const [existingKey, existing] of mentionsRef.current) {
-          if (mention.origin !== 'attachment' && sameMention(existing, mention) && box.querySelector(`[data-mention-key="${existingKey}"]`)) {
+          const identity = mention.source === 'toolkit' ? pluginToolkitIdentity(mention.path) : undefined
+          const existingChip = box.querySelector(`[data-mention-key="${existingKey}"]`)
+          if (identity && existing.source === 'toolkit' && identity === pluginToolkitIdentity(existing.path) && existingChip) {
+            const replacement = makeChip(mention, existingKey, Boolean(onOpenMention))
+            mentionsRef.current.set(existingKey, decorateChip(replacement, mention))
+            existingChip.replaceWith(replacement)
+            if (!preserveSelection) box.focus()
+            return emitChange(false, false)
+          }
+          if (mention.origin !== 'attachment' && (sameMention(existing, mention) || isResourceSource(mention.source) && existing.source === mention.source && existing.path === mention.path) && box.querySelector(`[data-mention-key="${existingKey}"]`)) {
             if (!preserveSelection) box.focus()
             // Completion may already have consumed its @ query before finding
             // an existing chip. Persist that deletion even when insertion deduplicates.
@@ -711,7 +744,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       [emitChange, onOpenMention, decorateChip]
     )
 
-    const insertMention = useCallback((mention: Mention) => { insertMentionAt(mention) }, [insertMentionAt])
+    const insertMention = useCallback((mention: Mention): boolean => insertMentionAt(mention), [insertMentionAt])
 
     const createPasteInsertion = useCallback((): MentionInsertion => {
       const box = boxRef.current
@@ -873,7 +906,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       const keyword = before.slice(at + 1)
       const namedAgent = /^(?:agent|智能体)[ \u00a0\u3000]/i.test(keyword) &&
         !/[\s@]/.test(keyword.replace(/[ \u00a0\u3000]/g, ''))
-      if (/[\s　@]/.test(keyword) && !namedAgent) return null
+      if (/[\s　@]/.test(keyword) && !namedAgent && !isToolkitNameQuery(keyword)) return null
       return keyword
     }, [])
 
@@ -955,10 +988,11 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       onMentionQuery?.(null)
     }, [detectMentionQuery, emitChange, onMentionQuery])
 
-    const completeSlash = useCallback((_token: string) => {
+    const completeSlash = useCallback((mention: Mention): boolean => {
+      if (disabledRef.current || composingRef.current) return false
       const box = boxRef.current
       const selection = window.getSelection()
-      if (!box || !selection || selection.rangeCount === 0) return
+      if (!box || !selection || selection.rangeCount === 0) return false
       const range = selection.getRangeAt(0)
       const node = range.startContainer
       if (range.collapsed && node.nodeType === Node.TEXT_NODE && box.contains(node)) {
@@ -973,13 +1007,26 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
           selection.addRange(replace)
         }
       }
-      // Resource bindings are carried in the chat request's skills/mcpServers/
-      // knowledgeBases fields. Do not leave a raw `/mcp:id` command in the
-      // user-visible prompt: it duplicated the binding chip and was easy to
-      // desynchronise when either one was removed.
       onSlashQuery?.(null)
-      emitChange()
-    }, [emitChange, onSlashQuery])
+      return insertMention(mention)
+    }, [insertMention, onSlashQuery])
+
+    const removeSlashResource = useCallback((mention: Mention): boolean => {
+      if (disabledRef.current || composingRef.current || !isResourceSource(mention.source)) return false
+      const box = boxRef.current, selection = window.getSelection(), query = detectSlashQuery()
+      if (!box || !selection?.rangeCount || query === null) return false
+      const range = selection.getRangeAt(0).cloneRange()
+      range.setStart(range.startContainer, range.startOffset - query.length - 1)
+      range.deleteContents(); range.collapse(true)
+      box.querySelectorAll<HTMLElement>('[data-mention-key]').forEach(chip => {
+        const key = chip.dataset.mentionKey!, current = mentionsRef.current.get(key)
+        if (current?.source !== mention.source || current.path !== mention.path) return
+        mentionsRef.current.delete(key); chip.remove()
+      })
+      box.focus(); selection.removeAllRanges(); selection.addRange(range)
+      emitChange(); onSlashQuery?.(null)
+      return true
+    }, [detectSlashQuery, emitChange, onSlashQuery])
 
     const removeTextToken = useCallback((token: string) => {
       const box = boxRef.current
@@ -1027,6 +1074,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         completeMention,
         dismissMentionQuery,
         completeSlash,
+        removeSlashResource,
         removeTextToken,
         removeAttachmentReferences,
         setText: (text: string) => {
@@ -1042,7 +1090,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         },
         focus: () => boxRef.current?.focus()
       }),
-      [insertMention, completeMention, dismissMentionQuery, completeSlash, removeTextToken, removeAttachmentReferences, rebuildFromText, restoreDraft, emitChange, invalidateInsertions]
+      [insertMention, completeMention, dismissMentionQuery, completeSlash, removeSlashResource, removeTextToken, removeAttachmentReferences, rebuildFromText, restoreDraft, emitChange, invalidateInsertions]
     )
 
     // 光标移动（点击/方向键）不产生 input 事件，用 selectionchange 补齐 @ 触发检测
@@ -1072,9 +1120,9 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       boxRef.current?.querySelectorAll<HTMLElement>('[data-mention-key]').forEach((chip) => {
         const mention = mentionsRef.current.get(chip.dataset.mentionKey ?? '')
         chip.draggable = Boolean(mention) && !disabled
-        if (mention?.source === 'toolkit') {
+        if (mention && (mention.source === 'toolkit' || isResourceSource(mention.source))) {
           chip.removeAttribute('role')
-          chip.setAttribute('aria-label', `工具包：${toolkitName(mention.path ?? '')}`)
+          chip.setAttribute('aria-label', mentionTitle(mention))
           chip.tabIndex = 0
         } else if (onOpenMention && mention) {
           chip.setAttribute('role', 'button')
@@ -1101,10 +1149,10 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement
       const enclosingChip = ancestor?.closest<HTMLElement>('[data-mention-key]')
       const enclosingMention = enclosingChip ? mentionsRef.current.get(enclosingChip.dataset.mentionKey ?? '') : undefined
-      if (enclosingChip && (enclosingMention?.source === 'conversation' || enclosingMention?.source === 'toolkit' || enclosingMention?.origin === 'attachment')) range.selectNode(enclosingChip)
+      if (enclosingChip && (enclosingMention?.source === 'conversation' || enclosingMention?.source === 'toolkit' || isResourceSource(enclosingMention?.source) || enclosingMention?.origin === 'attachment')) range.selectNode(enclosingChip)
       const fragment = range.cloneContents()
       const draft = serializeNodes(fragment.childNodes, mentionsRef.current, false)
-      if (draft.mentions.some(mention => mention.source === 'toolkit' || mention.origin === 'attachment' && mention.content === undefined)) {
+      if (draft.mentions.some(mention => mention.source === 'toolkit' || isResourceSource(mention.source) || mention.origin === 'attachment' && mention.content === undefined)) {
         const token = crypto.randomUUID()
         clipboardRef.current = { token, draft, scope: draftScopeRef.current }
         event.clipboardData.setData(ATTACHMENT_CLIPBOARD_TYPE, token)
@@ -1196,9 +1244,9 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       const openLabel = menuMention.source === 'agent' ? '查看 Agent' : menuMention.source === 'dir' ? '打开文件夹'
         : menuMention.source === 'conversation' ? '打开会话' : menuMention.source === 'browser' ? '打开网页'
         : isImage ? '预览图片' : menuMention.source === 'file' || menuMention.source === 'code' ? '打开文件' : '查看引用'
-      if (onOpenMention && menuMention.source !== 'toolkit') menuItems.push({ id: 'open', label: openLabel, icon: <Icon name="open-in-new" size={16} />,
+      if (onOpenMention && menuMention.source !== 'toolkit' && !isResourceSource(menuMention.source)) menuItems.push({ id: 'open', label: openLabel, icon: <Icon name="open-in-new" size={16} />,
         onSelect: act(mention => onOpenMention(mention)) })
-      if (menuMention.path && menuMention.source !== 'agent' && menuMention.source !== 'toolkit' &&
+      if (menuMention.path && menuMention.source !== 'agent' && menuMention.source !== 'toolkit' && !isResourceSource(menuMention.source) &&
         (menuMention.source !== 'browser' || /^https?:\/\//i.test(menuMention.path))) menuItems.push({ id: 'copy-path',
         label: ['conversation', 'browser'].includes(menuMention.source) ? '复制链接' : '复制路径', icon: <Icon name="copy" size={16} />,
         onSelect: act(mention => copy(mention.path!)) })
@@ -1388,7 +1436,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
             }
             pointerRef.current = null
           }
-          if (mention && mention.source !== 'toolkit' && onOpenMention) {
+          if (mention && mention.source !== 'toolkit' && !isResourceSource(mention.source) && onOpenMention) {
             event.stopPropagation()
             onOpenMention(mention)
           }
@@ -1418,7 +1466,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
             setChipMenu({ chip: focusedChip, key: focusedChip.dataset.mentionKey!, scope: draftScopeRef.current, x: rect.left, y: rect.bottom })
             return
           }
-          if (focusedMention?.source === 'toolkit' && (event.key === 'Enter' || event.key === ' ')) {
+          if ((focusedMention?.source === 'toolkit' || isResourceSource(focusedMention?.source)) && (event.key === 'Enter' || event.key === ' ')) {
             event.preventDefault(); event.stopPropagation(); return
           }
           if (focusedMention && onOpenMention && (event.key === 'Enter' || event.key === ' ')) {

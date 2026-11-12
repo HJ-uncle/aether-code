@@ -46,7 +46,7 @@ function FinalAssetPreview({ result, item, active }: { result: FinalResult; item
       <div className="work-final-result__title"><strong title={item.name}>{item.name}</strong><span title={item.path}>{item.path}</span></div>
       <span className="work-final-result__size">{formatSize(item.size)}</span>
       <button type="button" className="work-quiet-button" aria-label={`下载 ${item.name}`} disabled={!active || !asset || !current} onClick={download}>
-        <Icon name="cloud-download-outline" size={14} />下载
+        <Icon name="download" size={14} />下载
       </button>
     </header>
     <div className="work-final-result__body">

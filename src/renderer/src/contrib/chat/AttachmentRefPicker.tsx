@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { useEffect, useMemo, useRef, useState, type JSX, type PointerEvent } from 'react'
 import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
 import { Icon } from '@renderer/workbench/icons'
 import { isMotionInteractive } from '@renderer/workbench/motion'
 import { isTopOverlay } from '@renderer/workbench/overlay'
+import { usePickerPointerSelection } from '@renderer/workbench/usePickerPointerSelection'
 import { useAttachmentImageSrc } from './AttachmentChip'
 import { attachmentMention, type AttachmentReference } from './attachment-references'
 import type { Mention } from './mention-context'
@@ -14,7 +15,7 @@ export function AttachmentOption({ root, sessionId, reference, active, onSelect,
   reference: AttachmentReference
   active: boolean
   onSelect: () => void
-  onActivate: () => void
+  onActivate: (event: PointerEvent<HTMLButtonElement>) => void
   optionId?: string
   tabIndex?: number
 }): JSX.Element {
@@ -23,7 +24,7 @@ export function AttachmentOption({ root, sessionId, reference, active, onSelect,
   return <button type="button" role="option" aria-selected={active} id={optionId} tabIndex={tabIndex}
     className={`attachment-ref-picker__item${active ? ' is-active' : ''}`}
     data-attachment-id={reference.id} title={reference.file.name}
-    onMouseDown={event => event.preventDefault()} onClick={onSelect} onMouseEnter={onActivate}>
+    onMouseDown={event => event.preventDefault()} onClick={onSelect} onPointerEnter={onActivate} onPointerMove={onActivate}>
     <span className="attachment-ref-picker__preview" aria-hidden="true">
       {src ? <img src={src} alt="" draggable={false} /> : isImage ? <Icon name="image" size={18} /> : <FileGlyph name={reference.file.name} mimeType={reference.file.type} size={18} />}
     </span>
@@ -41,6 +42,7 @@ export function AttachmentRefPicker({ root, sessionId, references, query, onSele
 }): JSX.Element {
   const [active, setActive] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
+  const pointerSelection = usePickerPointerSelection()
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase()
     return references.filter(reference => `${reference.label} ${reference.file.name}`.toLowerCase().includes(keyword))
@@ -59,6 +61,7 @@ export function AttachmentRefPicker({ root, sessionId, references, query, onSele
       if (event.target instanceof Element && event.target.closest('[data-mention-list-control]')) return
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return }
       if (!['ArrowDown', 'ArrowUp', 'Enter', 'Tab'].includes(event.key) || event.shiftKey) return
+      pointerSelection.markKeyboard()
       event.preventDefault()
       event.stopPropagation()
       if (!filtered.length) return
@@ -68,10 +71,10 @@ export function AttachmentRefPicker({ root, sessionId, references, query, onSele
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [active, filtered, onClose, onSelect])
+  }, [active, filtered, onClose, onSelect, pointerSelection.markKeyboard])
   return <div ref={rootRef} className="attachment-ref-picker" role="listbox" aria-label="选择当前附件">
     {filtered.map((reference, index) => <AttachmentOption key={reference.id} root={root} sessionId={sessionId}
-      reference={reference} active={index === active} onActivate={() => setActive(index)}
+      reference={reference} active={index === active} onActivate={event => { if (pointerSelection.canActivate(event)) setActive(index) }}
       onSelect={() => onSelect(attachmentMention(reference))} />)}
     {!filtered.length ? <div className="mention-ref-picker__empty">{references.length ? '没有匹配的附件' : '暂无可用附件'}</div> : null}
   </div>

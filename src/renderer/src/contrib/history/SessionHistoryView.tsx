@@ -141,8 +141,8 @@ export function SessionHistoryView(): JSX.Element {
   const [sort, setSort] = useState<SortState>({ field: 'updatedAt', order: 'desc' })
   /** 右键菜单：命中的会话 + 视口坐标 */
   const [menu, setMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null)
-  /** 标记色板（在原菜单位置弹出的二级面板，对齐 wuzu openTagPanel） */
-  const [tagPanel, setTagPanel] = useState<{ x: number; y: number; sessionId: string } | null>(null)
+  const [tagPanel, setTagPanel] = useState<{ sessionId: string; source: number } | null>(null)
+  const tagTrigger = useRef<HTMLButtonElement | null>(null)
   /** 排序菜单 */
   const [sortMenu, setSortMenu] = useState<{ x: number; y: number } | null>(null)
   /** 重命名弹窗 */
@@ -430,8 +430,7 @@ export function SessionHistoryView(): JSX.Element {
         id: 'tag-color',
         label: '标记',
         onSelect: () => {
-          // 在原菜单位置弹色板（对齐 wuzu openTagPanel 的位置记忆）
-          setTagPanel({ x: menu.x, y: menu.y, sessionId: menu.sessionId })
+          setTagPanel({ sessionId: menu.sessionId, source })
           setMenu(null)
         }
       },
@@ -454,7 +453,7 @@ export function SessionHistoryView(): JSX.Element {
         }
       }
     ]
-  }, [menu, metaTable, togglePin, toggleFavorite, startRename, openProjectDir, deleteSession])
+  }, [menu, metaTable, source, togglePin, toggleFavorite, startRename, openProjectDir, deleteSession])
 
   const sortMenuItems = useMemo((): ContextMenuItem[] => {
     const fields: SortField[] = ['updatedAt', 'title', 'tagColor']
@@ -568,6 +567,7 @@ export function SessionHistoryView(): JSX.Element {
                   onClick={() => openSession(item.sessionId)}
                   onContextMenu={(event) => {
                     event.preventDefault()
+                    tagTrigger.current = event.currentTarget
                     setMenu({ x: event.clientX, y: event.clientY, sessionId: item.sessionId })
                   }}
                 >
@@ -602,43 +602,32 @@ export function SessionHistoryView(): JSX.Element {
         />
       ) : null}
 
-      {tagPanel ? (
-        <>
-          {/* 透明遮罩：点面板外任意处关闭（对齐 ContextMenu 的 dismiss 行为） */}
-          <button
-            type="button"
-            className="tag-panel__backdrop"
-            aria-label="关闭标记面板"
-            onClick={() => setTagPanel(null)}
-          />
-          <div className="tag-panel" style={{ left: tagPanel.x, top: tagPanel.y }}>
-            <div className="tag-panel__grid">
-              <button
-                type="button"
-                className="tag-panel__clear"
-                onClick={() => {
-                  patchSessionMeta(tagPanel.sessionId, { color: undefined })
-                  setTagPanel(null)
-                }}
-              >
-                清除
-              </button>
-              {SESSION_TAG_COLORS.map((color) => (
-                <button
-                  key={color.key}
-                  type="button"
-                  className="tag-panel__dot"
-                  title={color.label}
-                  style={{ background: color.dot }}
-                  onClick={() => {
-                    patchSessionMeta(tagPanel.sessionId, { color: color.key })
-                    setTagPanel(null)
-                  }}
-                />
-              ))}
-            </div>
+      {tagPanel?.source === source ? (
+        <Dialog title="颜色标记" width={320} onClose={() => {
+          setTagPanel(null)
+          requestAnimationFrame(() => tagTrigger.current?.focus({ preventScroll: true }))
+        }}>
+          <div className="history-tag-options" role="group" aria-label="会话颜色标记">
+            {SESSION_TAG_COLORS.map(color => <button key={color.key} type="button"
+              aria-pressed={metaTable[tagPanel.sessionId]?.color === color.key}
+              onClick={() => {
+                if (tagPanel.source !== getEngineSource()) return
+                patchSessionMeta(tagPanel.sessionId, { color: color.key })
+                setTagPanel(null)
+                requestAnimationFrame(() => tagTrigger.current?.focus({ preventScroll: true }))
+              }}>
+              <i aria-hidden="true" style={{ background: `var(--task-label-${color.key})` }} />
+              <span>{color.label}</span>
+              {metaTable[tagPanel.sessionId]?.color === color.key ? <Icon name="check" size={14} /> : null}
+            </button>)}
+            <button type="button" className="history-tag-options__clear" onClick={() => {
+              if (tagPanel.source !== getEngineSource()) return
+              patchSessionMeta(tagPanel.sessionId, { color: undefined })
+              setTagPanel(null)
+              requestAnimationFrame(() => tagTrigger.current?.focus({ preventScroll: true }))
+            }}>清除</button>
           </div>
-        </>
+        </Dialog>
       ) : null}
 
       <SessionRenameDialog key={source} value={renaming} onChange={setRenaming} onClose={() => setRenaming(null)} onCommit={commitRename} />

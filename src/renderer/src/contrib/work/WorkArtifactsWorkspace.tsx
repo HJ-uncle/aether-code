@@ -71,7 +71,7 @@ function ArtifactsWorkspace({ finalSelection, ...props }: WorkArtifactsWorkspace
         </button>)}
       </nav>
       {item ? <WorkFinalResult result={result} itemId={item.id} active={active && props.ready} /> : <div className="work-final-result__status" role="status">所选交付物不在本轮发布清单中。</div>}
-    </div> : <div className="work-artifacts-workspace__empty" role="status"><Icon name="file" size={28} />
+    </div> : <div className="work-artifacts-workspace__empty" role="status"><Icon name="file-check" size={28} />
       <strong>{result ? '本轮没有文件交付物' : '本轮尚无成果'}</strong>
       <span>{result ? '本轮结果已在对话中回复。' : props.streaming ? '完成后，最终交付的文件和图片会显示在这里。' : '明确交付的文件和图片会显示在这里。'}</span>
     </div>}

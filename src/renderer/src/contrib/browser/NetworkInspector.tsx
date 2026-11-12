@@ -208,7 +208,7 @@ export function NetworkInspector({
           title="刷新网络请求"
           onClick={() => setRevision((value) => value + 1)}
         >
-          <Icon name="restart" size={15} />
+          <Icon name="refresh" size={15} />
         </button>
         <button
           type="button"

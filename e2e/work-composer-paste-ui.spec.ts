@@ -443,7 +443,7 @@ test.describe.serial('Work 长文本资料与纯正文输入上限', () => {
     expect(saved.mentions.map(mention => mention.attachmentId)).toEqual([source.attachmentId, 'existing-image', 'existing-file'])
     await expect(chips()).toHaveCount(3)
     await expect(imageChip.locator('.mention-chip__label')).toHaveText('图1')
-    await expect(fileChip.locator('.mention-chip__label')).toHaveText('附件1')
+    await expect(fileChip.locator('.mention-chip__label')).toHaveText('existing-notes.txt')
     const request = await send()
     expect(String(request.message).includes(imageText)).toBe(false)
     expect(userMessageDraft(String(request.message)).text).toBe(saved.draft)

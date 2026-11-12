@@ -1,4 +1,5 @@
 import type { ToolActivity } from '@renderer/core/engine/useChat'
+import { formatWorkElapsed } from './work-elapsed'
 
 export interface WorkSubagentTiming {
   durationText: string
@@ -16,12 +17,8 @@ function validDuration(value: number | undefined): value is number {
 }
 
 export function formatSubagentElapsed(durationMs: number): string {
-  const seconds = Math.floor(durationMs / 1000)
-  if (seconds < 1) return '不足 1 秒'
-  if (seconds < 60) return `${seconds} 秒`
-  const minutes = Math.floor(seconds / 60), remainder = seconds % 60
-  if (minutes < 60) return `${minutes} 分${remainder ? ` ${remainder} 秒` : ''}`
-  return `${Math.floor(minutes / 60)} 小时${minutes % 60 ? ` ${minutes % 60} 分` : ''}`
+  if (durationMs < 1000) return '不足 1 秒'
+  return formatWorkElapsed(durationMs, true)
 }
 
 function timestamp(value: number | undefined, label: '开始' | '创建', now: number): WorkSubagentTiming['timestamp'] {

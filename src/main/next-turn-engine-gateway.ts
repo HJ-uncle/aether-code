@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { NextTurnQueueError, type NextTurnQueueEnvelope, type NextTurnQueueScope, type QueueAttachmentReceipt } from '../shared/next-turn-queue'
-import { assertQueueEnvelope, assertQueueJsonValue, queueScopeIdentity, queueResourcesAfterDraftEdit, queueDraftRemovesToolkit } from '../shared/next-turn-queue-state'
+import { assertQueueEnvelope, assertQueueJsonValue, queueResourcesAfterDraftEdit, queueDraftRemovesToolkit } from '../shared/next-turn-queue-state'
 import { parseSessionToolkits } from '../shared/toolkits'
 import type { WorkQueueDraft, WorkQueueTarget } from '../shared/work-next-turn-api'
 import type { EngineSnapshot } from '../shared/ipc'
@@ -12,8 +12,6 @@ import { engineHost } from './engine/host'
 import { engineRequest } from './engine/client'
 import { engineTargetError, subagentProtocolHeaders } from './engine/protocol'
 import { prepareRemoteChatBody } from './engine/remote-workspace'
-import { remoteAttachmentsForRequest } from './engine/remote-attachments'
-import { PREVIEW_FORMATS, WORKBENCH_ACTIONS } from '../renderer/src/core/workbench/capabilities'
 import { assertAllowed } from './fs/file-service'
 import { ATTACHMENTS_DIRECTORY } from '../shared/attachments'
 import { buildAgentMentionMessage } from '../renderer/src/contrib/chat/agent-references'
@@ -50,26 +48,10 @@ const relativeFile = (value: string): string => {
 /** Actual authenticated transport authority. Renderer scope, tenant and permission claims never enter it. */
 export class EngineQueueGateway implements QueueDispatchGateway {
   constructor(private readonly port: QueueEnginePort = enginePort, private readonly owner: NextTurnQueueScope['owner'] = 'work') {}
-  private get profile(): 'general' | 'code' { return this.owner === 'code' ? 'code' : 'general' }
-  private readonly connections = new Map<string, Map<{ isDestroyed(): boolean }, LeaseFacts>>()
-  async setConnected(taskId: string, sender: { isDestroyed(): boolean }, connected: boolean): Promise<void> {
-    const lease = await this.capture(taskId), key = queueScopeIdentity(lease.scope)
-    if (!connected) { const bindings = this.connections.get(key); bindings?.delete(sender); if (!bindings?.size) this.connections.delete(key); return }
-    const bindings = this.connections.get(key) ?? new Map()
-    bindings.set(sender, this.leases.get(lease)!); this.connections.set(key, bindings)
-  }
-  private connected(scope: NextTurnQueueScope): boolean {
-    const bindings = this.connections.get(queueScopeIdentity(scope))
-    if (!bindings) return false
-    for (const [sender, facts] of bindings) {
-      try { this.assertFacts(facts); if (sender.isDestroyed()) bindings.delete(sender) } catch { bindings.delete(sender) }
-    }
-    if (!bindings.size) this.connections.delete(queueScopeIdentity(scope))
-    return bindings.size > 0
-  }
+  private get profile(): 'general' { return 'general' }
   private readonly leases = new WeakMap<TrustedQueueAuthorityLease, LeaseFacts>()
   private readonly controller = new AbortController()
-  close(): void { this.controller.abort(); this.connections.clear() }
+  close(): void { this.controller.abort() }
   private target(): LeaseFacts {
     const snapshot = this.port.snapshot()
     if (this.controller.signal.aborted) fail('队列所有者已关闭')
@@ -191,8 +173,7 @@ export class EngineQueueGateway implements QueueDispatchGateway {
   }
   private async stageAttachment(scope: NextTurnQueueScope, file: WorkQueueDraft['attachments'][number], budget: number, paths?: string[]): Promise<QueueAttachmentReceipt> {
     const { facts, context } = await this.scoped(scope)
-    const source = scope.owner === 'code' && scope.source.mode === 'remote' && file.remoteUploadId
-      ? remoteAttachmentsForRequest([{ remoteUploadId: file.remoteUploadId }], facts.target, scope.taskId)[0]?.name : file.path
+    const source = file.path
     if (!source) fail('远端附件回执无效，请重新上传')
     const bytes = await this.fileBytes(scope, source, budget, paths)
     if (bytes.length !== file.size) fail('附件大小已改变，请重新选择文件')
@@ -228,7 +209,7 @@ export class EngineQueueGateway implements QueueDispatchGateway {
     }
     const resources = queueResourcesAfterDraftEdit(envelope.draft, draft, envelope.resources, inheritedToolkits)
     const prepared = buildAgentMentionMessage(draft.text, draft.mentions)
-    const collaborators = structuredClone(envelope.code?.collaborators ?? [])
+    const collaborators = structuredClone(envelope.agent.collaborators)
     for (const selector of prepared.collaborators) if (!collaborators.some(item => collaboratorIdentity(item) === collaboratorIdentity(selector))) collaborators.push(selector)
     return { ...structuredClone(envelope), draft: structuredClone(draft), resources: structuredClone(resources), agent: { ...envelope.agent, collaborators } }
   }
@@ -236,16 +217,14 @@ export class EngineQueueGateway implements QueueDispatchGateway {
     assertQueueJsonValue(submission)
     const { context } = await this.scoped(scope)
     if (!context.root) fail('先启动任务，再排下一轮；首页草稿不会被自动启动')
-    if (scope.owner === 'code' && !submission.code || scope.owner === 'work' && submission.code) fail('队列提交配置与模式不一致')
-    const paths = scope.owner === 'code' ? submission.code?.workspacePaths ?? context.root.workspacePaths : context.root.workspacePaths
+    const paths = context.root.workspacePaths
     if (!Array.isArray(paths) || paths.some(path => typeof path !== 'string' || !path)) fail('工作区路径无效')
     if (scope.source.mode === 'embedded') for (const path of paths) this.port.allowed(path)
     else if (canonicalAdmissionJson(paths) !== canonicalAdmissionJson(context.root.workspacePaths)) fail('远端工作区必须与会话已绑定的完整路径一致')
     const root = paths[0], kind = scope.source.mode === 'remote' ? 'remote-session' : root ? 'local-workspace' : 'local-scratch'
     const envelope: NextTurnQueueEnvelope = await this.editDraft({ draft: submission.draft, model: submission.model,
-      ...(submission.code ? { code: { ...structuredClone(submission.code), workspacePaths: [...paths] } } : {}),
-      workspace: { kind, identity: root || 'session:' + scope.taskId }, agent: { primaryAgentId: submission.code?.agentId ?? context.root.agentId ?? null, collaborators: [] },
-      resources: submission.resources, thinking: submission.thinking, memory: submission.code?.memoryScope ? { kind: 'override', scope: submission.code.memoryScope, version: 'code-draft-v1' } : { kind: 'inherit' }, security: { policy: 'engine-session' }, attachments: [],
+      workspace: { kind, identity: root || 'session:' + scope.taskId }, agent: { primaryAgentId: context.root.agentId ?? null, collaborators: [] },
+      resources: submission.resources, thinking: submission.thinking, memory: { kind: 'inherit' }, security: { policy: 'engine-session' }, attachments: [],
       ...(submission.subagentModel ? { subagentModel: submission.subagentModel } : {}), ...(submission.utilityModel ? { utilityModel: submission.utilityModel } : {}) }, submission.draft, scope)
     // Validate text/options before creating any immutable attachment snapshots.
     if (envelope.model.kind !== 'explicit' && !envelope.model.observedModelId && context.root.modelId) envelope.model.observedModelId = context.root.modelId
@@ -272,7 +251,7 @@ export class EngineQueueGateway implements QueueDispatchGateway {
     if (envelope.recovery && (current.root.runId !== envelope.recovery.runId || !['failed', 'interrupted'].includes(current.root.status)))
       fail('待恢复的任务已变化，请同步当前任务后重试')
     if (scope.owner === 'work' && ((current.root.agentId ?? null) !== envelope.agent.primaryAgentId || (current.root.workspacePaths[0] || 'session:' + scope.taskId) !== envelope.workspace.identity)) fail('任务的 Agent 或工作区绑定已变化，未投递队列消息')
-    const paths = envelope.code?.workspacePaths ?? current.root.workspacePaths
+    const paths = current.root.workspacePaths
     if (scope.source.mode === 'embedded') for (const path of paths) this.port.allowed(path)
     const selectedModel = envelope.model.kind === 'explicit' ? envelope.model.modelId : envelope.model.observedModelId
     if (selectedModel) {
@@ -288,8 +267,8 @@ export class EngineQueueGateway implements QueueDispatchGateway {
     const body: Record<string, unknown> = { sessionId: scope.taskId, message: prepared.message }
     if (selectedModel) body.model = selectedModel
     if (envelope.agent.primaryAgentId) body.agentId = envelope.agent.primaryAgentId
-    if (envelope.agent.collaborators.length || envelope.code?.collaborators) body.collaborators = structuredClone(envelope.agent.collaborators)
-    if (paths.length || envelope.code?.workspacePaths) body.workspacePaths = [...paths]
+    if (envelope.agent.collaborators.length) body.collaborators = structuredClone(envelope.agent.collaborators)
+    if (paths.length) body.workspacePaths = [...paths]
     for (const key of ['skills', 'mcpServers', 'knowledgeBases', 'toolkits'] as const) {
       const selection = envelope.resources[key]
       if (!selection) continue
@@ -312,11 +291,7 @@ export class EngineQueueGateway implements QueueDispatchGateway {
     // The remote renderer sanitizer intentionally drops metadata. Install only
     // this main-owned recovery evidence after it, before freezing the digest.
     if (envelope.recovery) { final.inheritContext = true; final.metadata = { workRecovery: { runId: envelope.recovery.runId } } }
-    if (scope.owner === 'code') {
-      if (canonicalAdmissionJson(final.workspacePaths ?? []) !== canonicalAdmissionJson(paths)) fail('远端工作区已变化，未发送排队消息')
-      final.clientCapabilities = { version: 1, application: 'aether', mode: 'code', platform: process.platform,
-        previewFormats: [...PREVIEW_FORMATS], actions: [...WORKBENCH_ACTIONS], connected: this.connected(scope) }
-    }
+    if (canonicalAdmissionJson(final.workspacePaths ?? []) !== canonicalAdmissionJson(paths)) fail('远端工作区已变化，未发送排队消息')
     this.assertFacts(facts); return final
   }
   async submit(scope: NextTurnQueueScope, wireBody: string, signal: AbortSignal): Promise<void> {

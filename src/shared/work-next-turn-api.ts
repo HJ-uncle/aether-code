@@ -3,7 +3,6 @@ import type { NextTurnQueueEnvelope, NextTurnQueueState, NextTurnQueueUserMutati
 export const WORK_QUEUE_IPC = { invoke: 'work:next-turn-queue', changed: 'work:next-turn-queue:changed' } as const
 export type WorkQueueTarget = Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>
 export interface WorkQueueDraft {
-  code?: import('./code-next-turn-api').CodeQueueOptions
   draft: NextTurnQueueEnvelope['draft']; model: NextTurnQueueEnvelope['model']; resources: NextTurnQueueEnvelope['resources']
   thinking: NextTurnQueueEnvelope['thinking']; subagentModel?: string; utilityModel?: string
   attachments: { path: string; name: string; type: string; size: number; remoteUploadId?: string; attachmentId?: string; referenceLabel?: string }[]

@@ -3,6 +3,7 @@ import { parseWorkToolkits, type WorkToolkit } from '@shared/toolkits'
 import { request } from './client'
 import { getEngineSource, subscribeEngineSource } from './source'
 import { subscribeAgentCatalogueChanges } from './agent-catalogue'
+import { subscribeResourceCatalogueChanges } from './resource-catalogue'
 
 /** No static fallback: an older or differently configured engine may not support these tools. */
 export function useToolkitCatalogue(enabled: boolean, sessionId?: string, agentId?: string, path?: string | null) {
@@ -11,6 +12,7 @@ export function useToolkitCatalogue(enabled: boolean, sessionId?: string, agentI
   const [result, setResult] = useState<{ scope: string; items: WorkToolkit[]; loading: boolean }>({ scope: '', items: [], loading: false })
   const [revision, setRevision] = useState(0)
   useEffect(() => subscribeAgentCatalogueChanges(() => setRevision(value => value + 1)), [])
+  useEffect(() => subscribeResourceCatalogueChanges(['plugin'], () => setRevision(value => value + 1)), [source])
   useEffect(() => {
     if (!enabled) return
     let cancelled = false

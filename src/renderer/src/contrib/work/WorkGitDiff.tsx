@@ -140,7 +140,7 @@ export function WorkGitDiff({
             aria-label="刷新差异"
             onClick={() => setRevision((value) => value + 1)}
           >
-            <Icon name="restart" size={14} />
+            <Icon name="refresh" size={14} />
           </button>
           {onOpenFile && diff?.changeType !== 'deleted' ? (
             <button type="button" onClick={() => onOpenFile(path)}>

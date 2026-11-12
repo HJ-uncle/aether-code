@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test'
 import { applyNextTurnQueueMutation, assertQueueEnvelope, assertQueueState, emptyNextTurnQueue, queueMentionToken, queueResourcesAfterDraftEdit } from '../src/shared/next-turn-queue-state'
 import { mergeQueueAttachmentReferences, remapQueueAttachmentReferences } from '../src/shared/queue-attachment-references'
 import type { NextTurnQueueEntry, NextTurnQueueEnvelope, NextTurnQueueScope, QueueAttachmentReceipt, QueueMention, QueueResourceSelection } from '../src/shared/next-turn-queue'
-import { editCodeQueueDraft } from '../src/renderer/src/core/engine/code-queue-entry'
+import { editQueueDraft } from '../src/renderer/src/core/engine/work-queue-entry'
 
 const scope: NextTurnQueueScope = { source: { mode: 'embedded', endpoint: '', accountId: null },
   tenantId: 'toolkit-fixture', namespace: { id: 'fixture-db', generation: 'one' }, owner: 'work', taskId: 'work-toolkit-fixture' }
@@ -183,21 +183,21 @@ test('revocation validates both old and edited drafts before trusting toolkit me
   expect(original.resources.toolkits).toEqual({ kind: 'override', ids: ['agent-management'] })
 })
 
-test('Code textarea edits share revocation while pasted token text stays unprivileged', () => {
+test('Work textarea edits share revocation while pasted token text stays unprivileged', () => {
   const entry: NextTurnQueueEntry = { id: 'code-fixture', revision: 1, createdAt: 1, updatedAt: 1, phase: 'pending',
     envelope: { ...envelope({ kind: 'override', ids: ['agent-management'] }), code: {} } }
-  const kept = editCodeQueueDraft(entry, `${entry.envelope.draft.text}；追加说明`, [])
+  const kept = editQueueDraft(entry, `${entry.envelope.draft.text}；追加说明`, [])
   expect(kept.resources.toolkits).toEqual(entry.envelope.resources.toolkits)
   expect(kept.draft.mentions).toEqual([mention])
-  const removed = editCodeQueueDraft(entry, '继续普通任务', [])
+  const removed = editQueueDraft(entry, '继续普通任务', [])
   expect(removed.resources.toolkits).toEqual({ kind: 'none' })
   expect(removed.draft.mentions).toEqual([])
   const plain = { ...entry, envelope: { ...envelope(), code: {}, draft: { text: '普通任务', revision: 1, mentions: [] } } }
-  const pasted = editCodeQueueDraft(plain, `普通任务 ${token}`, [])
+  const pasted = editQueueDraft(plain, `普通任务 ${token}`, [])
   expect(pasted.resources).not.toHaveProperty('toolkits')
   expect(pasted.draft.mentions).toEqual([])
   const inherited = { ...entry, envelope: { ...entry.envelope, resources: { ...entry.envelope.resources, toolkits: { kind: 'inherit' as const } } } }
-  const deferred = editCodeQueueDraft(inherited, '移除标签后保持其他工具包', [])
+  const deferred = editQueueDraft(inherited, '移除标签后保持其他工具包', [])
   expect(deferred.resources.toolkits).toEqual({ kind: 'inherit' })
   expect(deferred.draft.mentions).toEqual([])
 })

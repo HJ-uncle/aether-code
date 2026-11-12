@@ -8,8 +8,9 @@ import { assertQueueEnvelope } from '../src/shared/next-turn-queue-state'
 import type { NextTurnQueueEnvelope, NextTurnQueueScope } from '../src/shared/next-turn-queue'
 import { prepareRemoteChatBody } from '../src/main/engine/remote-workspace'
 import { normalizeFinalResult } from '../src/shared/final-result'
-import { workSubagentGroups } from '../src/renderer/src/contrib/work/work-subagents'
+import { workSubagentGroups, workSubagentIcon } from '../src/renderer/src/contrib/work/work-subagents'
 import type { SubagentRunV1 } from '../src/shared/subagent'
+import type { ToolActivity } from '../src/renderer/src/core/engine/useChat'
 import { subagentFollowupMessage } from '../src/renderer/src/contrib/work/subagent-followup-message'
 import { controllerSavedStatus, parseControllerContext, type ControllerSavedRecord } from '../src/renderer/src/core/engine/collaboration-contract'
 import { normalizeSubagentRun, isSubagentNeedsUser, toolStatusLabel } from '../src/renderer/src/core/engine/subagent-state'
@@ -72,6 +73,34 @@ test('same child has one group across completed and resumed invocations', () => 
   expect(toolStatusLabel(question.latest)).toBe('待回答')
   expect(question.active).toBe(false)
   expect(isSubagentNeedsUser({ ...blocked, stopReason: 'permission', error: { ...blocked.error!, code: 'PERMISSION_REQUIRED' } })).toBe(false)
+})
+
+test('resumed role icons use continuation identity before stale invocation arguments', () => {
+  const cases = [
+    ['research', 'executor', 'agent-research'],
+    ['executor', 'general', 'agent-executor'],
+    ['general', 'research', 'agent-general']
+  ] as const
+  for (const [role, previousRole, icon] of cases) {
+    const run: SubagentRunV1 = { schemaVersion: 1, runId: 'resumed-run', tenantId: 'tenant', rootSessionId: 'parent', parentSessionId: 'parent',
+      parentConversationId: 'turn', parentMessageId: 'assistant', parentToolCallId: 'tool', childSessionId: 'stable-child', task: '继续工作',
+      description: '已改名的协作任务', modelId: 'model', status: 'succeeded', lastSeq: 1, createdAt: 1, updatedAt: 2, usage: {}, toolCalls: [],
+      continuation: { builtinRole: role, builtinRoleVersion: 1, readOnly: role === 'research' } }
+    const tool: ToolActivity = { id: 'tool', name: 'subagent_followup', args: JSON.stringify({ builtinRole: previousRole }), result: '', state: 'done', subagent: run }
+    expect(workSubagentIcon(tool)).toBe(icon)
+    expect(workSubagentIcon({ ...tool, subagent: undefined, args: JSON.stringify({ builtinRole: role }) })).toBe(icon)
+  }
+})
+
+test('custom agents and malformed invocation arguments retain the generic agent icon', () => {
+  for (const args of [
+    JSON.stringify({ agentId: 'research', name: '调研', role: 'executor' }),
+    JSON.stringify({ builtinRole: 'custom-reviewer' }),
+    '{incomplete', 'null', '[]', '{}'
+  ]) {
+    const tool: ToolActivity = { id: 'custom-tool', name: 'subagent_start', args, result: '', state: 'done' }
+    expect(workSubagentIcon(tool)).toBe('account-outline')
+  }
 })
 test('published child provenance is preserved, incomplete claims rejected', () => {
   const item = { id: 'file', assetId: 'asset', name: '报告.md', path: '报告.md', mimeType: 'text/markdown', size: 100, sha256: 'f'.repeat(64), kind: 'file',

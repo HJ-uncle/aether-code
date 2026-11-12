@@ -2,6 +2,10 @@
  * not a second drag target or an independently selectable image. */
 [contenteditable='true'] .mention-chip[draggable='true'] { cursor: grab; }
 [contenteditable='true'] .mention-chip[draggable='true']:active { cursor: grabbing; }
+[contenteditable='true'] :is(.mention-chip--document, .mention-chip--skill, .mention-chip--mcp, .mention-chip--kb) {
+  gap: 4px;
+  max-width: min(280px, calc(100% - 4px));
+}
 [contenteditable='true'] .mention-chip.is-pointer-drag,
 [contenteditable='true'] .mention-chip.is-pointer-drag * {
   -webkit-user-select: none;

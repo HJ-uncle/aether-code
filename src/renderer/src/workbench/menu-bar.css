@@ -16,8 +16,7 @@
   flex-shrink: 0;
 }
 .menu-bar .menu-bar__trigger,
-.menu-bar .account-menu__trigger,
-.menu-bar .app-mode-switch button {
+.menu-bar .account-menu__trigger {
   white-space: nowrap;
 }
 .menu-bar .menu-bar__compact-trigger {
@@ -51,7 +50,5 @@
   .menu-bar .menu-bar__brand { min-width: auto; padding: 0; }
   .menu-bar .menu-bar__brand-name,
   .menu-bar .account-menu__trigger > span:not(.account-avatar) { display: none; }
-  .menu-bar .app-mode-switch { margin-inline: var(--space-1); }
-  .menu-bar .app-mode-switch button { width: 76px; padding-inline: var(--space-1); }
   .menu-bar .menu-bar__actions { gap: var(--space-1); }
 }

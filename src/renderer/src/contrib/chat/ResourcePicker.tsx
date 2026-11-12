@@ -5,6 +5,8 @@ import { subscribeResourceCatalogueChanges } from '@renderer/core/engine/resourc
 import { listKnowledgeBases, type KnowledgeBase } from '@renderer/core/engine/knowledge'
 import { isMotionInteractive } from '@renderer/workbench/motion'
 import { isTopOverlay } from '@renderer/workbench/overlay'
+import { usePickerPointerSelection } from '@renderer/workbench/usePickerPointerSelection'
+import { Icon, ResourceIcon } from '@renderer/workbench/icons'
 import './resource-picker.css'
 
 export type ResourceKind = 'skill' | 'mcp' | 'kb'
@@ -15,29 +17,36 @@ interface Props {
   projectPath?: string
   /** Engine generation; forces a fresh query when local/remote source changes. */
   source?: number
+  selectedKnowledgeBases?: readonly string[]
   onSelect: (item: ResourceItem) => void
   onClose: () => void
 }
 
 interface SkillRow { id?: string; name: string; description?: string; enabled?: boolean }
 interface McpRow { id: string; name?: string; description?: string; enabled?: boolean; scope?: string }
+const RESOURCE_GROUPS: Array<{ kind: ResourceKind; label: string }> = [
+  { kind: 'skill', label: '技能' },
+  { kind: 'mcp', label: 'MCP 服务' },
+  { kind: 'kb', label: '知识库' }
+]
 
 /** Slash resource palette. It is deliberately read-only: management remains in Settings. */
-export function ResourcePicker({ query, projectPath, source, onSelect, onClose }: Props): JSX.Element {
+export function ResourcePicker({ query, projectPath, source, selectedKnowledgeBases, onSelect, onClose }: Props): JSX.Element {
   const [items, setItems] = useState<ResourceItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [reload, setReload] = useState(0)
   const [active, setActive] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
-  useEffect(() => subscribeResourceCatalogueChanges(['skill', 'knowledge'], () => setReload(value => value + 1)), [source])
+  const pointerSelection = usePickerPointerSelection()
+  useEffect(() => subscribeResourceCatalogueChanges(['skill', 'knowledge', 'mcp'], () => setReload(value => value + 1)), [source])
 
   useEffect(() => {
     let alive = true
     const sourceAtStart = source ?? getEngineSource()
     setLoading(true); setItems([]); setError(''); setActive(0)
     void Promise.allSettled([
-      requestOrThrow<{ list?: SkillRow[] }>({ method: 'GET', path: '/skills', query: { reload: 1, path: projectPath || undefined } }),
+      requestOrThrow<{ list?: SkillRow[] }>({ method: 'GET', path: '/skills', query: { reload: 1, available: 1, path: projectPath || undefined } }),
       requestOrThrow<McpRow[]>({ method: 'GET', path: '/mcp/servers', query: projectPath ? { path: projectPath } : undefined }),
       listKnowledgeBases()
     ]).then(([skillsResult, mcpResult, basesResult]) => {
@@ -78,6 +87,9 @@ export function ResourcePicker({ query, projectPath, source, onSelect, onClose }
     }
     return items.filter(item => `${item.label} ${item.id} ${item.description ?? ''}`.toLocaleLowerCase().includes(needle))
   }, [items, query])
+  const groups = RESOURCE_GROUPS.map(group => ({ ...group,
+    items: filtered.flatMap((item, index) => item.kind === group.kind ? [{ item, index }] : [])
+  })).filter(group => group.items.length)
 
   // Narrowing `/mcp foo` or switching category must never leave the highlight
   // on an index that no longer exists in the filtered list.
@@ -93,16 +105,19 @@ export function ResourcePicker({ query, projectPath, source, onSelect, onClose }
       if ((event.key === 'Enter' || event.key === 'Tab') && event.target instanceof HTMLButtonElement && event.target.classList.contains('resource-picker__retry')) return
       // Own the selection keys before the contenteditable handles Enter as send,
       // including the loading/empty state where there is nothing to select yet.
-      if (!['ArrowDown', 'ArrowUp', 'Enter', 'Tab'].includes(event.key)) return
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter', 'Tab'].includes(event.key)) return
+      pointerSelection.markKeyboard()
       event.preventDefault(); event.stopPropagation()
       if (filtered.length === 0) return
       if (event.key === 'ArrowDown') setActive(index => (index + 1) % filtered.length)
       else if (event.key === 'ArrowUp') setActive(index => (index - 1 + filtered.length) % filtered.length)
+      else if (event.key === 'Home') setActive(0)
+      else if (event.key === 'End') setActive(filtered.length - 1)
       else onSelect(filtered[active] ?? filtered[0])
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [active, filtered, onClose, onSelect])
+  }, [active, filtered, onClose, onSelect, pointerSelection.markKeyboard])
 
   // Match the file palette / context menu behaviour: clicking elsewhere should
   // dismiss the transient picker. Without this, the list stayed pinned above the
@@ -138,16 +153,27 @@ export function ResourcePicker({ query, projectPath, source, onSelect, onClose }
 
   useEffect(() => {
     if (isMotionInteractive(rootRef.current)) rootRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
-  }, [active])
+  }, [active, filtered])
 
   return <div ref={rootRef} className="resource-picker" role="listbox" aria-label="选择 MCP、技能或知识库">
-    <div className="resource-picker__title">添加资源 <span>/skill、/mcp、/kb</span></div>
-    {!loading && error ? <div className="resource-picker__hint is-error" role="alert">{error}<button type="button" className="resource-picker__retry" onClick={() => setReload(value => value + 1)}>重试加载资源</button></div> : null}
-    {loading ? <div className="resource-picker__hint" role="status">加载中…</div> : filtered.length === 0 ? <div className="resource-picker__hint">{error ? '目录暂不可用，重试后继续选择。' : '没有匹配资源，请先在设置中创建。'}</div> : filtered.map((item, index) => <button key={`${item.kind}:${item.id}`} type="button" role="option" aria-selected={index === active} className={`resource-picker__item${index === active ? ' is-active' : ''}`} onMouseEnter={() => setActive(index)} onMouseDown={(event) => { event.preventDefault(); onSelect(item) }}>
-      <span className={`resource-picker__badge is-${item.kind}`}>{item.kind === 'skill' ? '技' : item.kind === 'mcp' ? 'MCP' : '库'}</span>
-      <span className="resource-picker__copy"><strong>{item.label}</strong><small>{item.description || item.id}</small></span>
-      <kbd>/{item.kind}</kbd>
-    </button>)}
-    <div className="resource-picker__footer">↑↓ 选择 · Enter 插入 · Esc 关闭</div>
+    <div className="resource-picker__list">
+      {!loading && error ? <div className="resource-picker__hint is-error" role="alert">{error}<button type="button" className="resource-picker__retry" onClick={() => setReload(value => value + 1)}>重试加载资源</button></div> : null}
+      {loading ? <div className="resource-picker__hint" role="status">加载中…</div> : filtered.length === 0 ? <div className="resource-picker__hint">{error ? '目录暂不可用，重试后继续选择。' : '没有匹配资源，请先在设置中创建。'}</div> : groups.map(group => (
+        <div key={group.kind} role="group" aria-label={group.label} className="resource-picker__group">
+          <div className="resource-picker__heading" aria-hidden="true">{group.label}</div>
+          {group.items.map(({ item, index }) => <button key={`${item.kind}:${item.id}`} type="button" role="option" aria-selected={index === active}
+            aria-checked={item.kind === 'kb' && selectedKnowledgeBases ? selectedKnowledgeBases.includes(item.id) : undefined}
+            aria-label={item.kind === 'kb' && selectedKnowledgeBases?.includes(item.id) ? `${item.label}，当前会话已选，点击取消` : undefined}
+            data-checked={item.kind === 'kb' && selectedKnowledgeBases?.includes(item.id) ? 'true' : undefined} title={`${item.label}\n${item.description || item.id}${item.kind === 'kb' && selectedKnowledgeBases?.includes(item.id) ? '\n当前会话已选，点击取消' : ''}`} className={`resource-picker__item${index === active ? ' is-active' : ''}`}
+            onPointerEnter={event => { if (pointerSelection.canActivate(event)) setActive(index) }}
+            onPointerMove={event => { if (pointerSelection.canActivate(event)) setActive(index) }}
+            onMouseDown={(event) => { event.preventDefault(); onSelect(item) }}>
+            <span className="resource-picker__icon" aria-hidden="true"><ResourceIcon kind={group.kind} /></span>
+            <span className="resource-picker__copy"><strong>{item.label}</strong><small>{item.description || (item.id !== item.label ? item.id : '')}</small></span>
+            {item.kind === 'kb' && selectedKnowledgeBases?.includes(item.id) ? <span className="resource-picker__check" aria-hidden="true"><Icon name="check" size={14} /></span> : null}
+          </button>)}
+        </div>
+      ))}
+    </div>
   </div>
 }

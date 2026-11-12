@@ -186,7 +186,6 @@ test.beforeAll(async () => {
   page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message)); page.on('crash', () => errors.push('Renderer crashed'))
   await app.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; window.setContentSize(1440, 900); window.show(); window.focus() })
   await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
-  await page.getByRole('tab', { name: 'Work 办公', exact: true }).click()
 })
 test.afterEach(async ({}, info) => {
   if (page && !page.isClosed()) {

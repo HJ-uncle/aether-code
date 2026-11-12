@@ -332,11 +332,6 @@ async function sendNext(ordinal: number): Promise<void> {
   await expect.poll(() => roots.length).toBe(ordinal)
   await expectProcess(ordinal, true)
 }
-async function switchMode(mode: 'code' | 'work'): Promise<void> {
-  await page.getByRole('tab', { name: mode === 'code' ? 'Code 开发' : 'Work 办公', exact: true }).click()
-  if (mode === 'work') await expect(conversation()).toBeVisible()
-  else await expect(work()).toBeHidden()
-}
 async function setAppearance(appearance: 'light' | 'dark'): Promise<void> {
   if (await page.locator('html').getAttribute('data-appearance') === appearance) return
   await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
@@ -452,7 +447,6 @@ test.beforeAll(async () => {
   })
   await app.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; window.setContentSize(1440, 1000); window.show(); window.focus() })
   await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
-  await page.getByRole('tab', { name: 'Work 办公', exact: true }).click()
 })
 test.afterEach(async ({}, info) => {
   if (page && !page.isClosed() && info.status !== info.expectedStatus) {
@@ -586,7 +580,6 @@ test('Work process folds on completion and preserves only the current phase’s 
     await toggle(1).click(); await expectProcess(1, false)
     await toggle(1).click(); await expectProcess(1, true)
     await expect(thinking(1)).toHaveAttribute('aria-pressed', 'true')
-    await switchMode('code'); await switchMode('work')
     await expectProcess(1, true); await expect(thinking(1)).toHaveAttribute('aria-pressed', 'true')
     await expect(turn(1).getByText(finalText(1), { exact: true })).toBeVisible()
   })

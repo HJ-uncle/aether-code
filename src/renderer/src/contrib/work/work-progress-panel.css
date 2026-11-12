@@ -98,3 +98,115 @@
   .work-progress-panel__changes-toggle,
   .work-progress-panel__changes-chevron { transition: none; }
 }
+
+/* A result is one compact disclosure surface. The title opens its complete
+   review; the remaining heading area and leading chevron reveal the files.
+   Scope these rules to result cards so the task-list surface stays independent. */
+.work-progress-panel[data-result-turn-id] > .work-progress-panel__section--changes {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+  box-shadow: none;
+}
+.work-progress-panel[data-result-turn-id] .work-progress-panel__heading {
+  position: relative;
+  grid-template-columns: 28px minmax(0, 1fr) auto auto;
+  gap: 0 6px;
+  min-height: 34px;
+}
+.work-progress-panel[data-result-turn-id] .work-progress-panel__changes-toggle {
+  grid-area: 1 / 1 / 2 / -1;
+  z-index: 0;
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 7px;
+  border-radius: var(--radius);
+  background: transparent;
+}
+.work-progress-panel[data-result-turn-id] .work-progress-panel__changes-toggle:is(:hover, :active) {
+  background: transparent;
+}
+.work-progress-panel[data-result-turn-id] .work-progress-panel__changes-toggle,
+.work-progress-panel[data-result-turn-id] .work-progress-panel__review-summary { cursor: default; }
+.work-progress-panel[data-result-turn-id] .work-progress-panel__changes-toggle > .work-progress-panel__changes-chevron { width: 14px; }
+.work-progress-panel[data-result-turn-id] .work-progress-panel__review-summary {
+  grid-area: 1 / 2;
+  z-index: 1;
+  justify-self: start;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 8px;
+  background: transparent;
+  color: var(--fg);
+}
+.work-progress-panel[data-result-turn-id] .work-progress-panel__review-summary:is(:hover, :active) { background: transparent; }
+.work-progress-panel[data-result-turn-id] .work-progress-panel__title { gap: 8px; overflow: hidden; font-size: 12px; }
+.work-progress-panel[data-result-turn-id] .work-progress-panel__title > span:first-child { flex: none; font-weight: 600; }
+.work-progress-panel[data-result-turn-id] .work-progress-panel__count { overflow: hidden; font-size: 11px; text-overflow: ellipsis; }
+.work-progress-panel[data-result-turn-id] .work-change-review--turn > .work-change-review__actions {
+  grid-area: 1 / 3;
+  z-index: 1;
+  gap: 2px;
+}
+.work-progress-panel[data-result-turn-id] .work-change-review--turn .work-change-review__actions button {
+  min-height: 28px;
+  padding: 4px 6px;
+  font-size: 11px;
+}
+.work-progress-panel[data-result-turn-id] .work-change-review--turn > :not(.work-change-review__actions) {
+  position: relative;
+  z-index: 1;
+  margin-inline: 8px;
+}
+.work-progress-panel[data-result-turn-id] .work-progress-panel__pending {
+  grid-area: 1 / 4;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--bg-control-subtle);
+  color: var(--fg);
+  font: 12px/1.5 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.work-progress-panel[data-result-turn-id] .work-progress-panel__pending > svg { flex: none; color: var(--fg-muted); }
+.work-progress-panel[data-result-turn-id] .work-progress-panel__pending:hover { background: var(--bg-hover); color: var(--fg-strong); }
+.work-progress-panel[data-result-turn-id] .work-progress-panel__files { margin: 3px 0 0; }
+.work-progress-panel[data-result-turn-id] .work-progress-panel__files > li + li { border-top: 1px solid var(--border); }
+.work-progress-panel[data-result-turn-id] .work-progress-panel__file {
+  gap: 10px;
+  min-height: 48px;
+  padding: 7px 8px;
+  box-sizing: border-box;
+}
+.work-progress-panel[data-result-turn-id] .work-progress-panel__file-icon { flex-basis: 20px; }
+.work-progress-panel[data-result-turn-id] .work-progress-panel__file-name { font-size: 12px; line-height: 18px; }
+.work-progress-panel[data-result-turn-id] .work-progress-panel__file-path { margin-top: 1px; font-size: 11px; line-height: 16px; }
+.work-progress-panel[data-result-turn-id] .work-progress-panel__file-meta { gap: 1px; padding-left: 4px; }
+.work-progress-panel[data-result-turn-id] .work-progress-panel__file-code { min-width: 14px; color: var(--fg-muted); font: 11px/16px var(--font-mono); text-align: center; }
+.work-progress-panel[data-result-turn-id] .work-progress-panel__file-state { color: var(--fg-muted); font-size: 10px; }
+.work-progress-panel[data-result-turn-id] .work-progress-panel__overflow { margin: 2px 0 0; padding: 0; border: 0; }
+.work-progress-panel[data-result-turn-id] .work-progress-panel__overflow button {
+  min-height: 28px;
+  padding: 4px 8px 4px 38px;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+.work-progress-panel[data-result-turn-id] .work-progress-panel__overflow button:is(:hover, :active) { color: var(--fg); background: var(--bg-hover); }
+.work-progress-panel[data-result-turn-id] button:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: -2px; }
+@container work-result (max-width: 360px) {
+  .work-progress-panel[data-result-turn-id] .work-progress-panel__heading { column-gap: 2px; }
+  .work-progress-panel[data-result-turn-id] .work-progress-panel__review-summary { padding-inline: 5px; }
+  .work-progress-panel[data-result-turn-id] .work-progress-panel__title { gap: 5px; }
+  .work-progress-panel[data-result-turn-id] .work-progress-panel__file { gap: 8px; padding-inline: 5px; }
+  .work-progress-panel[data-result-turn-id] .work-progress-panel__overflow button { padding-left: 33px; }
+}

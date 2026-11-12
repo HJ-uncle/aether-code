@@ -2,13 +2,14 @@ import { useEffect, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
 import { useEditor } from '@renderer/core/editor/editor-store'
 import { useGit } from '@renderer/core/git/git-store'
-import { executeCommand } from '@renderer/core/platform/commands'
 import { togglePanel, toggleSidebarView } from '@renderer/core/platform/layout-state'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { useProblems } from '@renderer/core/lsp/problems-store'
 import { GitSyncButton } from '@renderer/contrib/git/GitSyncButton'
+import { openAppSettings } from '@renderer/contrib/settings/app-settings-navigation'
 import { Icon } from './icons'
 import type { EnginePhase } from '@shared/ipc'
+import './status-bar.css'
 
 const PHASE_LABEL: Record<EnginePhase, string> = {
   idle: '未启动',
@@ -23,7 +24,7 @@ const PHASE_LABEL: Record<EnginePhase, string> = {
  * 状态栏
  *
  * 引擎状态是 IDE 里最关键的可观测项：不知道引擎是否可用，
- * 用户就无法判断"是我的问题还是环境的问题"。因此常驻状态栏左侧并可一键启停。
+ * 用户就无法判断"是我的问题还是环境的问题"。状态常驻，维护操作统一放在引擎管理。
  */
 export function StatusBar(): JSX.Element {
   const { engine } = useApp()
@@ -35,13 +36,8 @@ export function StatusBar(): JSX.Element {
   // 问题计数：点击打开问题面板（对齐 VS Code 状态栏的错误/警告计数）
   const { byFile: problemFiles } = useProblems()
 
-  // During a remote outage EngineHost reports `starting` while retrying. The
-  // Stop command must remain usable to cancel that reconnect loop.
+  // A remote retry shares the starting phase but needs a distinct status label.
   const remoteReconnecting = snapshot.mode === 'remote' && snapshot.phase === 'starting' && snapshot.error?.includes('正在重新连接') === true
-  const busy =
-    (snapshot.phase === 'starting' && !remoteReconnecting) ||
-    snapshot.phase === 'installing' ||
-    snapshot.phase === 'stopping'
 
   let problemErrors = 0
   let problemWarnings = 0
@@ -69,22 +65,19 @@ export function StatusBar(): JSX.Element {
 
   return (
     <footer className="status-bar">
-      <button
-        type="button"
-        className={`status-bar__item status-bar__item--${snapshot.phase}`}
-        title={snapshot.error ?? snapshot.baseUrl ?? '引擎状态'}
-        onClick={() => void executeCommand('aether.output.show')}
-      >
-        <span className={`status-dot status-dot--${snapshot.phase}`} />
-        引擎：{remoteReconnecting ? '重新连接中' : snapshot.mode === 'remote' && snapshot.phase === 'starting' ? '连接中' : PHASE_LABEL[snapshot.phase]}
-        {snapshot.baseUrl ? ` · ${snapshot.baseUrl.replace('http://', '')}` : ''}
-      </button>
-
-      <span className="status-bar__item status-bar__item--muted">
-        {snapshot.mode === 'embedded' ? '本地' : '远端'}
-        {snapshot.adopted ? ' · 复用已有引擎' : ''}
-        {snapshot.pid ? ` · pid ${snapshot.pid}` : ''}
-      </span>
+      <div className="status-bar__engine">
+        {/* Connection details and raw errors belong in the explicit settings
+         * view, not in a persistent surface or its hover text. */}
+        <button
+          type="button"
+          className={`status-bar__item status-bar__item--${snapshot.phase}`}
+          title="打开引擎设置"
+          onClick={() => openAppSettings('general')}
+        >
+          <span className={`status-dot status-dot--${snapshot.phase}`} aria-hidden="true" />
+          引擎：{remoteReconnecting ? '重新连接中' : snapshot.mode === 'remote' && snapshot.phase === 'starting' ? '连接中' : PHASE_LABEL[snapshot.phase]}
+        </button>
+      </div>
 
       {/* 版本控制：分支 + 同步操作 + 改动计数，对齐 wuzu-client 状态栏布局 */}
       {workspace.root ? (
@@ -107,7 +100,6 @@ export function StatusBar(): JSX.Element {
           {git.status?.isRepo ? <GitSyncButton /> : null}
         </>
       ) : null}
-
       <div className="status-bar__spacer" />
 
       {problemErrors + problemWarnings > 0 ? (
@@ -141,38 +133,6 @@ export function StatusBar(): JSX.Element {
         </span>
       ) : null}
 
-      {busy ? <span className="status-bar__item status-bar__item--muted">处理中…</span> : null}
-
-      <button
-        type="button"
-        className="status-bar__item"
-        disabled={busy}
-        title="启动引擎"
-        aria-label="启动引擎"
-        onClick={() => void executeCommand('aether.engine.start')}
-      >
-        <Icon name="play" size={16} />
-      </button>
-      <button
-        type="button"
-        className="status-bar__item"
-        disabled={busy || snapshot.phase === 'idle'}
-        title="停止引擎"
-        aria-label="停止引擎"
-        onClick={() => void executeCommand('aether.engine.stop')}
-      >
-        <Icon name="stop" size={16} />
-      </button>
-      <button
-        type="button"
-        className="status-bar__item"
-        disabled={busy}
-        title={snapshot.mode === 'remote' ? '重新连接远端引擎' : '重启引擎'}
-        aria-label={snapshot.mode === 'remote' ? '重新连接远端引擎' : '重启引擎'}
-        onClick={() => void executeCommand('aether.engine.restart')}
-      >
-        <Icon name="restart" size={16} />
-      </button>
     </footer>
   )
 }

@@ -189,7 +189,7 @@ export function WorkProjects({ tasks, ready, controller, onOpenTask, onNewTask, 
         await window.aether.fs.allowRoot(menuProject.path); assertCurrent()
         await window.aether.system.openWith(menuProject.path, 'file-explorer')
       }) },
-    { id: 'archive', label: menuProject.archived ? '恢复项目' : '归档项目', icon: <Icon name={menuProject.archived ? 'undo' : 'folder-outline'} size={16} />, separatorBefore: true,
+    { id: 'archive', label: menuProject.archived ? '恢复项目' : '归档项目', icon: <Icon name={menuProject.archived ? 'undo' : 'archive'} size={16} />, separatorBefore: true,
       onSelect: () => perform(async assertCurrent => {
         if (!menuProject.archived && !await confirmDialog({ title: '归档项目',
           body: `归档“${menuProject.name}”后，可在“已归档”中查看和恢复。已有任务与磁盘文件会保留，正在进行的任务不受影响。`, confirmText: '归档' })) return

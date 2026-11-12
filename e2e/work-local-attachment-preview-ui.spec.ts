@@ -1,5 +1,5 @@
-/** Embedded Electron regression: native clipboard images in unsent Work home
- * and Code drafts must read the same local project that copyIntoWorkspace wrote;
+/** Embedded Electron regression: native clipboard images in an unsent Work home
+ * must read the same local project that copyIntoWorkspace wrote;
  * home inline image/directory references open their real viewer and local files.
  * The mock engine resolves unbound sessions to a different real scratch root;
  * local filesystem IPC remains production code throughout this test.
@@ -49,7 +49,7 @@ const server = createServer((request, response) => { void (async () => {
   }
   if (path === '/api/v1/workspace/file' && request.method === 'POST') {
     const id = String(input.sessionId), directory = sessionRoot(id), candidate = String(input.path), target = inside(directory, candidate)
-    if (id !== homeId || directory === project || input.encoding !== 'base64' || typeof input.content !== 'string') throw new Error('Invalid scratch image write')
+    if (!/^work-home-[a-z0-9-]+$/i.test(id) || directory === project || input.encoding !== 'base64' || typeof input.content !== 'string') throw new Error('Invalid scratch image write')
     mkdirSync(dirname(target), { recursive: true }); writeFileSync(target, Buffer.from(input.content, 'base64'))
     fileWrites.push({ sessionId: id, path: candidate, root: directory }); response.end(envelope({ path: target })); return
   }
@@ -169,7 +169,7 @@ async function inspectPicker(width: number): Promise<void> {
   await expectInlineImage(composer(), width)
 }
 
-test.describe.serial('Work 与 Code 本地图片及会话沙箱预览', () => {
+test.describe.serial('Work 本地图片及会话沙箱预览', () => {
   test.beforeAll(async () => {
     mkdirSync(fixtureRoot, { recursive: true }); fixture = mkdtempSync(join(fixtureRoot, 'work-local-attachment-profile-'))
     project = join(fixture, '已选择的本地项目'); mkdirSync(project, { recursive: true })
@@ -257,18 +257,18 @@ http.createServer((req, res) => {
     await work().getByRole('button', { name: '清除工作区选择，使用默认工作区', exact: true }).click()
     await expect.poll(async () => (await home()).homeWorkspacePath).toBeNull()
     await nativePasteImage(72, 48, '#245fd8')
-    const scratchState = await home(), scratchFile = scratchState.homeAttachments[0], scratchPath = inside(scratch(homeId), scratchFile.path)
-    expect(scratchState.homeSessionId).toBe(homeId); expect(existsSync(scratchPath)).toBe(true)
+    const scratchState = await home(), scratchSessionId = scratchState.homeSessionId, scratchFile = scratchState.homeAttachments[0], scratchPath = inside(scratch(scratchSessionId), scratchFile.path)
+    expect(scratchSessionId).toMatch(/^work-home-[a-f\d-]{36}$/i); expect(existsSync(scratchPath)).toBe(true)
     const scratchBytes = readFileSync(scratchPath)
     expect(scratchBytes.readUInt32BE(16)).toBe(72); expect(scratchBytes.readUInt32BE(20)).toBe(48)
     expect(existsSync(inside(project, scratchFile.path))).toBe(false); expect(readFileSync(localPath).equals(localBytes)).toBe(true)
     await inspectPreview(72, 48); await inspectPicker(72)
-    expect(fileWrites).toEqual([{ sessionId: homeId, path: scratchFile.path, root: scratch(homeId) }])
-    expect(contentReads.some(read => read.sessionId === homeId && read.path === scratchFile.path && read.root === scratch(homeId))).toBe(true)
-    expect(directories.filter(item => item.sessionId === homeId).every(item => item.root === scratch(homeId))).toBe(true)
+    expect(fileWrites).toEqual([{ sessionId: scratchSessionId, path: scratchFile.path, root: scratch(scratchSessionId) }])
+    expect(contentReads.some(read => read.sessionId === scratchSessionId && read.path === scratchFile.path && read.root === scratch(scratchSessionId))).toBe(true)
+    expect(directories.filter(item => item.sessionId === scratchSessionId).every(item => item.root === scratch(scratchSessionId))).toBe(true)
     await page.reload(); await expect(thumbnail()).toHaveJSProperty('naturalWidth', 72); await expectInlineImage(composer(), 72); await inspectPreview(72, 48)
     await inspectInlinePreview(72, 48, [36, 95, 216, 255])
-    expect((await home()).homeAttachments[0]).toEqual(scratchFile); expect(bindings.has(homeId)).toBe(false)
+    expect((await home()).homeAttachments[0]).toEqual(scratchFile); expect(bindings.has(scratchSessionId)).toBe(false)
   })
 
   test('首页 @ 目录引用显示本地目录列表，可进入子目录、返回上级并打开真实文件', async ({}, info) => {
@@ -312,64 +312,5 @@ http.createServer((req, res) => {
     await dialog.getByRole('button', { name: '关闭', exact: true }).click()
   })
 
-  test('Code 新会话从实际文件夹入口选择项目后，粘贴图片与 @ 预览从本地项目恢复', async ({}, info) => {
-    await page.getByRole('tab', { name: 'Code 开发', exact: true }).click()
-    const code = page.locator('#mode-code'), input = code.getByRole('textbox', { name: '消息', exact: true })
-    await expect(input).toBeVisible()
-    // Only the OS chooser result is controlled. The real menu command,
-    // fs:pick-folder authorization, openFolderAt and all file IPC stay intact.
-    await app!.evaluate(({ dialog }, selected) => {
-      const original = dialog.showOpenDialog
-      dialog.showOpenDialog = (async () => {
-        dialog.showOpenDialog = original
-        return { canceled: false, filePaths: [selected] }
-      }) as typeof dialog.showOpenDialog
-    }, project)
-    await page.locator('.menu-bar').getByRole('button', { name: '文件', exact: true }).click()
-    await page.getByRole('menuitem', { name: /打开文件夹/ }).click()
-    await expect(code.locator('.chat__workspace')).toHaveAttribute('title', `Agent 的工作区：${project}`)
-    const priorSession = await page.evaluate(async () => (await window.aether.settings.get()).lastSessionId)
-    await code.getByRole('button', { name: '新建', exact: true }).click()
-    await expect.poll(() => page.evaluate(async () => (await window.aether.settings.get()).lastSessionId)).not.toBe(priorSession)
-    const sessionId = await page.evaluate(async () => (await window.aether.settings.get()).lastSessionId)
-    expect(sessionId).not.toBe(homeId); expect(bindings.has(sessionId)).toBe(false)
-    const beforeWrites = fileWrites.length
-    await writeClipboardImage(120, 80, '#8252c7')
-    await input.focus(); await page.keyboard.press('Control+V')
-    const thumb = code.locator('.attachment-strip .attach-chip__thumb')
-    await expect(thumb).toHaveCount(1); await expect(thumb).toHaveJSProperty('naturalWidth', 120)
-    await expect(thumb).toHaveJSProperty('naturalHeight', 80)
-    const readDraft = (): Promise<{ text: string; attachments?: StoredFile[]; mentions?: Array<{ attachmentId?: string }> }> => page.evaluate(id => {
-      window.dispatchEvent(new Event('blur'))
-      const table = JSON.parse(localStorage.getItem('aether:chatDrafts') ?? '{}') as Record<string, { text: string; attachments?: StoredFile[]; mentions?: Array<{ attachmentId?: string }> }>
-      return table[id] ?? { text: '' }
-    }, sessionId)
-    await expect.poll(async () => (await readDraft()).attachments?.length ?? 0).toBe(1)
-    const file = (await readDraft()).attachments![0], localPath = inside(project, file.path)
-    expect(existsSync(localPath)).toBe(true)
-    const bytes = readFileSync(localPath)
-    expect([...bytes.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10])
-    expect(bytes.readUInt32BE(16)).toBe(120); expect(bytes.readUInt32BE(20)).toBe(80)
-    expect(existsSync(inside(scratch(sessionId), file.path))).toBe(false)
-    await code.locator('.attachment-strip .attach-chip__image-btn').click()
-    await expect(page.locator('.image-editor__canvas')).toHaveJSProperty('width', 120)
-    await expect(page.locator('.image-editor__canvas')).toHaveJSProperty('height', 80)
-    await page.locator('.modal--image-editor').getByRole('button', { name: '关闭', exact: true }).click()
-    await expect(page.locator('.image-editor__canvas')).toHaveCount(0)
-    await input.focus(); await page.keyboard.insertText('@')
-    const picker = page.locator('.mention-ref-picker:visible')
-    await expect(picker.getByRole('group', { name: '当前附件', exact: true })).toBeVisible()
-    await expect(picker.locator('.attachment-ref-picker__preview img')).toHaveJSProperty('naturalWidth', 120)
-    await picker.getByRole('group', { name: '当前附件', exact: true }).getByRole('option').click(); await expect(picker).toHaveCount(0)
-    await expectInlineImage(input, 120)
-    await expect.poll(async () => (await readDraft()).mentions?.length ?? 0).toBe(1)
-    await page.reload(); await expect(thumb).toHaveJSProperty('naturalWidth', 120)
-    await expectInlineImage(input, 120)
-    await inspectInlinePreview(120, 80, [130, 82, 199, 255], input)
-    expect((await readDraft()).attachments).toEqual([file])
-    expect(contentReads.filter(read => read.sessionId === sessionId)).toEqual([])
-    expect(fileWrites).toHaveLength(beforeWrites); expect(bindings.has(sessionId)).toBe(false)
-    const screenshot = info.outputPath('code-local-project-restored.png'); await page.screenshot({ path: screenshot, animations: 'disabled' })
-    await info.attach('Code 本地项目图片刷新恢复', { path: screenshot, contentType: 'image/png' })
-  })
+
 })

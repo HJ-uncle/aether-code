@@ -1,10 +1,22 @@
 import type { PendingInteraction } from '../../core/engine/pending'
 import { toolDisplayName } from '../../core/engine/tool-labels'
+import { pluginPermissionPresentation } from './work-plugin-permission-presentation'
+import { appendManagementPresentation } from './work-management-permission-presentation'
+import { appendMcpPresentation } from './work-mcp-permission-presentation'
+import { appendToolPresentation } from './work-tool-permission-presentation'
+import { permissionValueTree } from './work-permission-value-tree'
 
 export interface PermissionField {
   label: string
   value: string
   previous?: string
+}
+
+export interface PermissionValueNode {
+  label: string
+  kind: 'string' | 'number' | 'boolean' | 'null' | 'undefined' | 'array' | 'object'
+  value?: string
+  children?: PermissionValueNode[]
 }
 
 export interface PermissionSection {
@@ -15,9 +27,15 @@ export interface PermissionSection {
   entries?: Array<{ id: string; label: string }>
   previous?: string
   previousEntries?: Array<{ id: string; label: string }>
+  pluginTools?: Array<{ name: string; description: string; entry: string; inputSchema: string }>
+  files?: Array<{ path: string; content: string }>
+  facts?: PermissionField[]
+  tree?: PermissionValueNode[]
+  code?: boolean
 }
 
 export interface PermissionPresentation {
+  kind?: 'plugin' | 'management' | 'tool'
   title: string
   summary?: string
   confirmLabel: string
@@ -77,6 +95,12 @@ function validConfig(config: Record<string, unknown>): boolean {
 
 function permissionReason(question: string): string {
   return question.trim().replace(/^安全策略拦截了此操作，是否允许执行？\r?\n原因：/, '')
+}
+
+function repeatsArguments(reason: string, args: Record<string, unknown> | undefined): boolean {
+  if (!args) return false
+  try { return JSON.stringify(JSON.parse(reason)) === JSON.stringify(args) }
+  catch { return false }
 }
 
 /** Only the engine's complete, action-matched preview envelope is authoritative.
@@ -145,10 +169,10 @@ function appendAgentConfig(
   config: Record<string, unknown>,
   before?: Record<string, unknown>
 ): void {
-  const extra: Record<string, unknown> = {}
+  const extra: Record<string, unknown> = Object.create(null)
   for (const [key, value] of Object.entries(config)) {
     if (key === 'name' && !before && value === presentation.summary) continue
-    const label = agentLabels[key]
+    const label = Object.hasOwn(agentLabels, key) ? agentLabels[key] : undefined
     if (!label) {
       // Identity is shown separately; storage metadata stays in the full preview.
       if (!['id', 'tenantId', 'createdAt', 'updatedAt'].includes(key)) extra[key] = value
@@ -201,28 +225,8 @@ function appendAgentConfig(
     presentation.sections.push({
       id: 'additional-config',
       label: '其他配置',
-      text: valueText(extra)
+      tree: permissionValueTree(extra)
     })
-}
-
-const argumentLabels: Record<string, string> = {
-  command: '命令',
-  cmd: '命令',
-  script: '脚本',
-  path: '路径',
-  file: '文件',
-  filePath: '文件路径',
-  file_path: '文件路径',
-  cwd: '工作目录',
-  workdir: '工作目录',
-  workingDirectory: '工作目录',
-  source: '来源',
-  target: '目标',
-  destination: '目标路径',
-  url: '网址',
-  method: '请求方法',
-  id: 'ID',
-  name: '名称'
 }
 
 /** Presentation only: approval identity, parameter payload and response values are untouched. */
@@ -238,6 +242,8 @@ export function permissionPresentation(pending: PendingInteraction): PermissionP
       ? `${pending.question}\n\n原始调用参数\n${JSON.stringify(args, null, 2)}`
       : pending.question
   }
+  const plugin = pluginPermissionPresentation(pending, presentation)
+  if (plugin) return plugin
   const action = /^agent_(?:do_)?(create|update|delete)$/.exec(pending.toolName)?.[1] as
     AgentAction | undefined
   if (action) {
@@ -254,23 +260,12 @@ export function permissionPresentation(pending: PendingInteraction): PermissionP
     return presentation
   }
 
-  const additional: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(args ?? {})) {
-    const label = argumentLabels[key]
-    const scalar = value === null || ['string', 'number', 'boolean'].includes(typeof value)
-    if (label && scalar) {
-      if (['command', 'cmd', 'script'].includes(key)) {
-        const command = presentation.sections.find((section) => section.id === 'command')
-        if (command) command.text += `\n\n${label}\n${valueText(value)}`
-        else presentation.sections.push({ id: 'command', label, text: valueText(value) })
-      } else if (/[\r\n]/.test(String(value)))
-        presentation.sections.push({ id: key, label, text: valueText(value) })
-      else presentation.fields.push({ label, value: valueText(value) })
-    } else additional[key] = value
-  }
-  if (Object.keys(additional).length)
-    presentation.sections.push({ id: 'arguments', label: '其他参数', text: valueText(additional) })
+  if (appendManagementPresentation(presentation, pending)) return presentation
+  if (appendMcpPresentation(presentation, pending)) return presentation
+
+  appendToolPresentation(presentation, pending)
   const reason = permissionReason(pending.question)
+  if (repeatsArguments(reason, args)) return presentation
   if (reason.length > 280 || /\r?\n\s*\r?\n/.test(reason))
     presentation.sections.push({ id: 'description', label: '请求说明', text: reason })
   else if (reason) presentation.reason = reason

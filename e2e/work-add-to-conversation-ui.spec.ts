@@ -1,5 +1,6 @@
 /** Real Electron + authenticated HTTP: resource-tree mixed references, chat-menu
- * references, native Work code menus and exact selection snapshots. Build first;
+ * references, native Work code menus, exact selection snapshots and workspace
+ * file/search switching with retained drafts/tree state. Build first;
  * this suite owns one profile/window/server and must run alone. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer, type ServerResponse } from 'node:http'
@@ -35,6 +36,7 @@ const code = codeLines.join('\n') + '\n'
 const selectedCode = codeLines.slice(1, 3).join('\n') + '\n'
 const files = new Map([['demo.ts', code], ['notes.txt', 'The project notes.\n'], ['docs/guide.md', '# Guide\n']])
 const fileReads: Array<{ sessionId: string; path: string; operation: string }> = []
+const workspaceSearches: Record<string, unknown>[] = []
 let holdStat = false
 let heldStat: { response: ServerResponse; data: unknown } | undefined
 function releaseStat(): void {
@@ -90,6 +92,21 @@ const server = createServer((request, response) => { void (async () => {
   const bytes = Buffer.concat(chunks), parsed: unknown = bytes.length ? JSON.parse(bytes.toString('utf8')) : {}, input = isRecord(parsed) ? parsed : {}
   const current = latestRun(sessionId), rows = histories.get(sessionId) ?? []
   if (request.method !== 'GET') mutations.push(`${request.method} ${path}`)
+
+  if (path === '/api/v1/workspace/search' && request.method === 'POST') {
+    if (input.sessionId !== taskA || input.expectedRoot !== roots.get(taskA) || input.bindingEpoch !== `binding-${taskA}`
+      || typeof input.requestId !== 'string' || !input.requestId || input.query !== 'Guide' || !isRecord(input.options)
+      || input.options.include !== '*.md' || input.options.exclude !== 'ignored/**') throw new Error('Workspace search lost its session, root or saved filters')
+    workspaceSearches.push(input)
+    const text = files.get('docs/guide.md')!.split('\n')[0]
+    response.end(envelope({ root: roots.get(taskA), bindingEpoch: `binding-${taskA}`, strategy: 'scan', truncated: false,
+      hits: [{ path: 'docs/guide.md', line: 1, column: text.indexOf('Guide') + 1, length: 5, text }] })); return
+  }
+  if (path === '/api/v1/workspace/search/cancel' && request.method === 'POST') {
+    if (input.sessionId !== taskA || typeof input.requestId !== 'string'
+      || !workspaceSearches.some(search => search.requestId === input.requestId)) throw new Error('Workspace search cancellation escaped its session')
+    response.end(envelope({ cancelled: true })); return
+  }
 
   if (path === '/api/v1/workspace/file/info' || path === '/api/v1/workspace/file/content') {
     const codeSession = Boolean(sessionId && !sessionId.startsWith('work-'))
@@ -295,7 +312,7 @@ test.describe.serial('Work 资源添加到对话', () => {
       const path = info.outputPath('add-to-conversation-failure.png')
       await page.screenshot({ path }); await info.attach('失败时页面', { path, contentType: 'image/png' })
     }
-    await info.attach('add-to-conversation-http', { body: JSON.stringify({ errors, chats, mutations, reads, fileReads }, null, 2), contentType: 'application/json' })
+    await info.attach('add-to-conversation-http', { body: JSON.stringify({ errors, chats, mutations, reads, fileReads, workspaceSearches }, null, 2), contentType: 'application/json' })
     expect(errors).toEqual([])
   })
   test.afterAll(async () => {
@@ -389,22 +406,49 @@ test.describe.serial('Work 资源添加到对话', () => {
     await page.evaluate(() => { document.documentElement.dataset.appearance = 'light' })
   })
 
-  test('根目录和目录内文件都能引用，父目录不会吞掉多选子文件', async () => {
+  test('根目录和目录内文件都能引用，父目录不会吞掉多选子文件', async ({}, info) => {
     const before = chats.length
-    await composer().fill('根目录说明 ')
-    await openWorkspace()
-    await exactRow('').click({ button: 'right' })
-    await page.getByRole('menuitem', { name: '添加到对话', exact: true }).click()
-    const rootDraft = await waitMentions(1)
-    expect(rootDraft.mentions[0]).toMatchObject({ source: 'dir', origin: 'workspace', path: roots.get(taskA) })
-    await exactRow('docs').click()
-    await expect(exactRow('docs/guide.md')).toBeVisible()
-    await exactRow('docs/guide.md').click({ modifiers: ['Control'] })
-    await exactRow('docs').click({ button: 'right' })
-    await page.getByRole('menuitem', { name: '添加 2 项到对话', exact: true }).click()
-    const draft = await waitMentions(3)
-    expect(draft.mentions.slice(1).map(item => [item.source, item.path])).toEqual([['dir', 'docs'], ['file', 'docs/guide.md']])
-    expect(chats).toHaveLength(before)
+    const theme = await page.evaluate(() => ({ appearance: document.documentElement.getAttribute('data-appearance'), accent: document.documentElement.getAttribute('data-accent') }))
+    const capture = async (state: string, appearances: Array<'light' | 'dark'> = ['light', 'dark']): Promise<void> => {
+      for (const appearance of appearances) {
+        await page.evaluate(value => { document.documentElement.dataset.appearance = value; document.documentElement.dataset.accent = 'purple' }, appearance)
+        await page.mouse.move(2, 2)
+        const path = info.outputPath(`workspace-tree-${state}-${appearance}-purple.png`)
+        await tree().screenshot({ path, animations: 'disabled' })
+        await info.attach(`文件树 ${state} ${appearance}-purple`, { path, contentType: 'image/png' })
+      }
+    }
+    try {
+      await composer().fill('根目录说明 ')
+      await openWorkspace()
+      await exactRow('').click({ button: 'right' })
+      await page.getByRole('menuitem', { name: '添加到对话', exact: true }).click()
+      const rootDraft = await waitMentions(1)
+      expect(rootDraft.mentions[0]).toMatchObject({ source: 'dir', origin: 'workspace', path: roots.get(taskA) })
+      await exactRow('docs').click()
+      await expect(exactRow('docs/guide.md')).toBeVisible()
+      await capture('pointer-single')
+      await exactRow('docs/guide.md').click({ modifiers: ['Control'] })
+      await capture('pointer-multiple')
+      await exactRow('docs').click({ button: 'right' })
+      await page.getByRole('menuitem', { name: '添加 2 项到对话', exact: true }).click()
+      const draft = await waitMentions(3)
+      expect(draft.mentions.slice(1).map(item => [item.source, item.path])).toEqual([['dir', 'docs'], ['file', 'docs/guide.md']])
+      expect(chats).toHaveLength(before)
+      // Capture keyboard and inactive treatments only after the reference
+      // assertions, so these visual states cannot alter the tested payload.
+      await tree().getByRole('tree').focus(); await page.keyboard.press('Home')
+      await capture('keyboard-current', ['light'])
+      await composer().focus()
+      await capture('unfocused', ['light'])
+    } finally {
+      await page.evaluate(value => {
+        for (const [name, setting] of Object.entries(value)) {
+          if (setting === null) document.documentElement.removeAttribute('data-' + name)
+          else document.documentElement.setAttribute('data-' + name, setting)
+        }
+      }, theme)
+    }
   })
 
   test('读取资源类型时切换任务，迟到回执不会向新会话插入标签', async () => {
@@ -517,93 +561,67 @@ test.describe.serial('Work 资源添加到对话', () => {
     expect(chats).toHaveLength(before)
   })
 
-  test('Code 与 Work 的原生代码菜单共享外观，保留选区、原生命令与键盘关闭', async ({}, info) => {
-    const visuals = async (menu: Locator, row: Locator) => ({
-      surface: await menu.evaluate(element => {
-        const style = getComputedStyle(element)
-        return { radius: style.borderTopLeftRadius, padding: style.padding, background: style.backgroundColor,
-          border: style.borderTopColor, font: style.fontFamily, fontSize: style.fontSize }
-      }),
-      row: await row.evaluate(element => {
-        const style = getComputedStyle(element)
-        return { minHeight: style.minHeight, padding: style.padding, radius: style.borderTopLeftRadius }
-      })
-    })
-    const nativeMenu = (): Locator => page.locator('.monaco-menu:visible')
-    const verifyCornerMenu = async (editor: Locator, label: string): Promise<void> => {
-      const textViewport = editor.locator('.monaco-scrollable-element.editor-scrollable')
-      const box = await textViewport.boundingBox()
-      if (!box) throw new Error(`Missing ${label} editor bounds`)
-      const minimap = editor.locator('.minimap:visible')
-      const minimapBox = await minimap.count() ? await minimap.boundingBox() : null
-      // The scrollable box includes Code's overlaid minimap; use the actual
-      // visible text boundary so this tests document menus, not minimap input.
-      const right = Math.min(box.x + box.width, minimapBox?.x ?? Number.POSITIVE_INFINITY)
-      expect(right - box.x).toBeGreaterThan(48)
-      await textViewport.click({ button: 'right', position: { x: right - box.x - 24, y: box.height - 24 } })
-      await expect(nativeMenu()).toBeVisible()
-      const items = nativeMenu().locator('[role="menuitem"]:not([aria-disabled="true"])')
-      expect(await items.count()).toBeGreaterThan(1)
-      for (const row of [items.first(), items.last()]) {
-        await expect(row).toBeVisible()
-        const hit = await row.evaluate(element => {
-          const rect = element.getBoundingClientRect(), x = rect.left + rect.width / 2, y = rect.top + rect.height / 2
-          let target = element.ownerDocument.elementFromPoint(x, y)
-          while (target?.shadowRoot) {
-            const inner = target.shadowRoot.elementFromPoint(x, y)
-            if (!inner || inner === target) break
-            target = inner
-          }
-          return { label: element.textContent, insideViewport: x >= 0 && y >= 0 && x < innerWidth && y < innerHeight,
-            receivesPointer: Boolean(target && element.contains(target)), target: target?.tagName + '.' + target?.className }
-        })
-        expect(hit, `${label} menu rows must remain reachable outside editor clipping`).toMatchObject({ insideViewport: true, receivesPointer: true })
-      }
-      const path = info.outputPath(`${label}-corner-document-menu.png`)
-      await page.screenshot({ path, animations: 'disabled' }); await info.attach(`${label} 右下角菜单`, { path, contentType: 'image/png' })
-      await page.keyboard.press('Escape'); await expect(nativeMenu()).toHaveCount(0)
-    }
-    for (const appearance of ['light', 'dark'] as const) {
-      await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
-      const settings = page.getByRole('dialog', { name: '设置', exact: true })
-      await settings.getByRole('tab', { name: '外观', exact: true }).click()
-      await settings.getByRole('radio', { name: appearance === 'dark' ? '深色' : '浅色', exact: true }).click()
-      await settings.getByRole('button', { name: '关闭', exact: true }).click()
-      await expect(settings).toHaveCount(0)
-      await openTaskMenu(taskB)
-      const sharedMenu = page.locator('.context-menu:not(.context-menu--submenu):not([aria-hidden="true"])')
-      const baseline = await visuals(sharedMenu, sharedMenu.getByRole('menuitem', { name: '重命名任务', exact: true }))
-      await page.keyboard.press('Escape'); await expect(sharedMenu).toHaveCount(0)
-      await openCode(); await selectCode(); await codeContext()
-      await expect(nativeMenu().getByRole('menuitem', { name: /^查找/ })).toBeVisible()
-      expect(await visuals(nativeMenu(), nativeMenu().locator('.action-menu-item').filter({ hasText: '添加选区到对话' }).first())).toEqual(baseline)
-      const workScreenshot = info.outputPath(`work-document-menu-${appearance}.png`)
-      await page.screenshot({ path: workScreenshot, animations: 'disabled' }); await info.attach(`Work ${appearance}`, { path: workScreenshot, contentType: 'image/png' })
-      await page.keyboard.press('Escape'); await expect(nativeMenu()).toHaveCount(0)
-      await app!.evaluate(({ clipboard }) => clipboard.writeText('SELECTION_AFTER_ESCAPE'))
-      await page.keyboard.press('Control+C')
-      await expect.poll(async () => (await app!.evaluate(({ clipboard }) => clipboard.readText())).replace(/\r\n/g, '\n')).toBe(selectedCode)
-      await verifyCornerMenu(codePreview().locator('.monaco-editor'), `work-${appearance}`)
 
-      await page.getByRole('tab', { name: 'Code 开发', exact: true }).click()
-      const codePanel = page.getByRole('tabpanel', { name: 'Code 开发', exact: true })
-      await expect(codePanel).toBeVisible(); await expect(work()).toBeHidden()
-      const explorer = codePanel.locator('.explorer__tree')
-      if (!await explorer.isVisible()) await codePanel.getByRole('button', { name: '资源管理器', exact: true }).click()
-      const codeRow = explorer.locator('[role="treeitem"][data-path$="/demo.ts"]')
-      await expect(codeRow).toBeVisible(); await codeRow.dblclick()
-      const editor = codePanel.getByRole('region', { name: '编辑区', exact: true }).locator('.monaco-editor:visible')
-      await expect(editor.locator('.view-line').first()).toContainText('OUTSIDE_BEFORE')
-      await editor.locator('.view-line').nth(1).click({ button: 'right', position: { x: 35, y: 8 } })
-      await expect(nativeMenu()).toBeVisible()
-      expect(await visuals(nativeMenu(), nativeMenu().locator('.action-menu-item').filter({ hasText: /复制|Copy/ }).first())).toEqual(baseline)
-      await expect(nativeMenu().getByRole('menuitem', { name: /剪切|Cut/ })).toBeVisible()
-      const codeScreenshot = info.outputPath(`code-document-menu-${appearance}.png`)
-      await page.screenshot({ path: codeScreenshot, animations: 'disabled' }); await info.attach(`Code ${appearance}`, { path: codeScreenshot, contentType: 'image/png' })
-      await page.keyboard.press('Escape'); await expect(nativeMenu()).toHaveCount(0)
-      await verifyCornerMenu(editor, `code-${appearance}`)
-      await page.getByRole('tab', { name: 'Work 办公', exact: true }).click()
-      await expect(composer()).toBeVisible(); await expect(codePanel).toBeHidden()
-    }
+  test('工作区搜索图标双向切换，保留搜索条件、文件筛选与目录展开', async ({}, info) => {
+    await openWorkspace()
+    const toggle = tree().getByRole('button', { name: '搜索工作区内容', exact: true })
+    const fileFilter = tree().getByRole('textbox', { name: '筛选文件', exact: true })
+    const docs = exactRow('docs'), wasExpanded = await docs.getAttribute('aria-expanded') === 'true'
+    if (!wasExpanded) await docs.click()
+    await expect(exactRow('docs/guide.md')).toBeVisible()
+    await fileFilter.fill('guide')
+    await expect(exactRow('demo.ts')).toHaveCount(0)
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    await expect(toggle).toHaveAttribute('title', '搜索工作区内容')
+    await expect(toggle.locator('svg')).toBeVisible()
+    const searchGlyph = await toggle.locator('svg').boundingBox()
+    const createGlyph = await tree().getByRole('button', { name: '新建文件', exact: true }).locator('svg').boundingBox()
+    expect(searchGlyph).not.toBeNull(); expect(createGlyph).not.toBeNull()
+    // Rendered geometry catches flex shrinking from later shared button CSS;
+    // the SVG's width attribute alone can still claim 15 while painting at 10.
+    expect(searchGlyph!.width).toBeGreaterThanOrEqual(14)
+    expect(searchGlyph!.height).toBeGreaterThanOrEqual(14)
+    expect(Math.abs(searchGlyph!.width - createGlyph!.width)).toBeLessThanOrEqual(1)
+    expect(Math.abs(searchGlyph!.height - createGlyph!.height)).toBeLessThanOrEqual(1)
+
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    await expect(toggle).toHaveAttribute('title', '返回文件列表')
+    const query = tree().getByRole('textbox', { name: '搜索内容', exact: true })
+    await expect(query).toBeFocused(); await expect(fileFilter).toBeHidden()
+    await tree().getByRole('button', { name: '切换文件过滤', exact: true }).click()
+    await tree().getByRole('textbox', { name: '包含', exact: true }).fill('*.md')
+    await tree().getByRole('textbox', { name: '排除', exact: true }).fill('ignored/**')
+    const beforeSearch = workspaceSearches.length
+    await query.fill('Guide')
+    await expect(tree().locator('.search-view__summary')).toContainText('1 个文件 1 处命中')
+    await expect.poll(() => workspaceSearches.length).toBeGreaterThan(beforeSearch)
+    await expect(tree().locator('.search-view__hit')).toContainText('Guide')
+    await tree().screenshot({ path: info.outputPath('workspace-search-icon-active.png'), animations: 'disabled' })
+
+    await toggle.press('Space')
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    await expect(toggle).toHaveAttribute('title', '搜索工作区内容')
+    await expect(fileFilter).toHaveValue('guide'); await expect(query).toBeHidden()
+    await expect(docs).toHaveAttribute('aria-expanded', 'true')
+    await expect(exactRow('docs/guide.md')).toBeVisible(); await expect(exactRow('demo.ts')).toHaveCount(0)
+
+    await toggle.press('Enter')
+    await expect(query).toHaveValue('Guide')
+    await expect(tree().getByRole('textbox', { name: '包含', exact: true })).toHaveValue('*.md')
+    await expect(tree().getByRole('textbox', { name: '排除', exact: true })).toHaveValue('ignored/**')
+    await expect(tree().locator('.search-view__summary')).toContainText('1 个文件 1 处命中')
+    for (const search of workspaceSearches.slice(beforeSearch)) expect(search).toMatchObject({ sessionId: taskA, expectedRoot: roots.get(taskA),
+      bindingEpoch: `binding-${taskA}`, query: 'Guide', options: { include: '*.md', exclude: 'ignored/**' } })
+    await toggle.click()
+    await expect(fileFilter).toHaveValue('guide')
+    await tree().screenshot({ path: info.outputPath('workspace-search-icon-files.png'), animations: 'disabled' })
+    await page.mouse.move(2, 2)
+    const defaultShot = info.outputPath('workspace-search-icon-default.png')
+    await tree().screenshot({ path: defaultShot, animations: 'disabled' })
+    await info.attach('工作区放大镜默认状态', { path: defaultShot, contentType: 'image/png' })
+    // File-tree memory survives reloads, so restore only this case's changes.
+    await fileFilter.fill('')
+    if (!wasExpanded) await docs.click()
   })
 })

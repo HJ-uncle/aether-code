@@ -152,6 +152,35 @@
 .input-composer__followup-row > p { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .input-composer__followup-row > .popover { flex-shrink: 0; }
 .input-composer__followup-row > button { flex-shrink: 0; }
+/* The home and conversation use one Work composer; only their page placement differs. */
+.input-composer.work-composer.chat__surface {
+  padding: 14px 14px 0;
+  gap: 10px;
+  border-radius: var(--radius-panel);
+  transition: box-shadow var(--duration-fast) var(--ease-out);
+}
+.input-composer.work-composer.chat__surface:focus-within { box-shadow: var(--shadow-card); }
+.input-composer.work-composer.chat__surface:has(> .input-composer__input:focus-visible) { box-shadow: var(--composer-focus-shadow); }
+.input-composer.work-composer > .input-composer__input { min-height: 72px; max-height: 240px; padding: 0 2px; font-size: 14px; line-height: 1.7; }
+.input-composer.work-composer > :is(.work-attachments, .work-resource-strip) { padding: 0 2px; }
+.work-composer .input-composer__toolbar { padding: 8px 0 6px; border-top: 1px solid var(--border); min-height: 44px; }
+.work-composer .input-composer__trailing > .chat__polish-btn { position: static; width: 28px; height: 28px; padding: 0; color: var(--fg-muted); }
+.work-composer .input-composer__leading > .work-quiet-button { color: var(--fg-muted); }
+.input-composer.work-composer .model-picker { max-width: 228px; }
+/* These are toolbar menus, so the shared text-field baseline must not frame them. */
+:root .input-composer.work-composer :is(.model-picker, .input-composer__delivery) .select__trigger:not([aria-invalid='true']):not(.is-invalid) {
+  min-height: 28px;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 12px;
+}
+:root .input-composer.work-composer :is(.model-picker, .input-composer__delivery) .select__trigger:is(:hover, [aria-expanded='true']):not(:disabled) { background: var(--bg-hover); }
+.work-composer-wrap .input-composer__followup { margin: 6px 0 0; height: auto; min-height: 28px; padding: 0 2px; font-size: 11px; }
+.work-composer-wrap .input-composer__followup-row { min-height: 22px; flex-wrap: wrap; gap: 0 8px; }
+.work-composer-wrap .input-composer__followup-row > p { text-align: right; }
 .input-composer__history-button { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; padding: 3px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--fg-muted); font: inherit; cursor: pointer; }
 .input-composer__history-button:hover, .input-composer__history-button[aria-expanded="true"] { color: var(--fg); background: var(--bg-hover); }
 .input-composer__history-button:focus-visible, .root-followup-history summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -182,6 +211,7 @@
 .root-followup-details__body pre { max-height: 160px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
 .root-followup-details__body summary { cursor: pointer; }
 @container input-composer (max-width: 520px) {
+  .input-composer.work-composer .model-picker { max-width: 160px; }
   /* The same permission control remains in the preferences popover. */
   .input-composer__leading .composer-access-picker {
     display: none;
@@ -213,6 +243,15 @@
     display: inline;
     white-space: nowrap;
   }
+  .work-composer .input-composer__toolbar { flex-wrap: wrap; gap: 6px; }
+  .work-composer .input-composer__toolbar > .chat__toolbar-spacer { display: none; }
+  .work-composer .input-composer__leading { flex: 1 1 100%; }
+  .work-composer .input-composer__trailing { flex: 1 1 100%; justify-content: flex-end; }
+  .input-composer.work-composer .model-picker.select { flex: 0 1 220px; width: auto; max-width: 220px; }
+  .input-composer.work-composer .model-picker .select__value { display: block; }
+  .input-composer.work-composer .model-picker .select__caret { display: inline; }
+  .input-composer.work-composer .model-picker .select__compact-value { display: none; }
+  .input-composer.work-composer .model-picker .select__trigger { justify-content: space-between; }
 }
 @container input-composer (max-width: 390px) {
   .input-composer__leading,

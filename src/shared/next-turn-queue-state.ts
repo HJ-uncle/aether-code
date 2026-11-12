@@ -11,7 +11,7 @@ import {
 import { builtinAgentReference } from './builtin-agents'
 import { parseConversationLink } from './conversation-link'
 import type { BuiltinAgentRole } from './subagent'
-import { WORK_TOOLKITS } from './toolkits'
+import { isToolkitId } from './toolkits'
 
 function fail(message: string): never {
   throw new NextTurnQueueError('INVALID', message)
@@ -212,6 +212,7 @@ export function queueMentionToken(
 ): string {
   if (mention.source === 'toolkit') return `@toolkit:${mention.path ?? ''}`
   if (!mention.path) return mention.displayText
+  if (['skill', 'mcp', 'kb'].includes(mention.source)) return `/${mention.source}:${mention.path}`
   if (mention.source === 'code' && mention.startLine) {
     const range =
       mention.endLine && mention.endLine !== mention.startLine
@@ -252,7 +253,7 @@ function checkedQueueDraft(value: unknown, limits: NextTurnQueueLimits = DEFAULT
       ],
       'mention'
     )
-    oneOf(mention.source, ['file', 'dir', 'code', 'terminal', 'agent', 'browser', 'conversation', 'toolkit'], 'mention source')
+    oneOf(mention.source, ['file', 'dir', 'code', 'terminal', 'agent', 'browser', 'conversation', 'toolkit', 'skill', 'mcp', 'kb'], 'mention source')
     if (mention.origin !== undefined) oneOf(mention.origin, ['workspace', 'attachment', 'artifact'], 'mention origin')
     if (mention.attachmentId !== undefined) string(mention.attachmentId, 'attachment identity', 4096)
     string(mention.displayText, 'mention label', 512)
@@ -260,10 +261,16 @@ function checkedQueueDraft(value: unknown, limits: NextTurnQueueLimits = DEFAULT
     if (mention.path !== undefined) string(mention.path, 'mention path', mention.source === 'conversation' ? 8192 : 4096, true)
     if (mention.source === 'conversation' && !parseConversationLink(mention.path)) fail('Conversation mention link is invalid')
     if (mention.source === 'toolkit') {
-      oneOf(mention.path, WORK_TOOLKITS.map(toolkit => toolkit.id), 'Toolkit mention ID')
+      if (!isToolkitId(mention.path)) fail('Toolkit mention ID is invalid')
       toolkitIds.add(mention.path as string)
       if (['origin', 'attachmentId', 'content', 'startLine', 'endLine', 'startColumn', 'endColumn'].some(key => mention[key] !== undefined))
         fail('Toolkit mention cannot carry file or snapshot fields')
+    }
+    if (['skill', 'mcp', 'kb'].includes(String(mention.source))) {
+      if (typeof mention.path !== 'string' || !mention.path.trim() || mention.path.length > 2048 || /[\r\n]/.test(mention.path))
+        fail('Resource mention ID is invalid')
+      if (['origin', 'attachmentId', 'content', 'startLine', 'endLine', 'startColumn', 'endColumn'].some(key => mention[key] !== undefined))
+        fail('Resource mention cannot carry file or snapshot fields')
     }
     if (mention.content !== undefined && typeof mention.content !== 'string')
       fail('Mention content must be text')
@@ -304,22 +311,37 @@ export function queueResourcesAfterDraftEdit(
   resources: NextTurnQueueEnvelope['resources'],
   inheritedToolkits?: readonly string[],
 ): NextTurnQueueEnvelope['resources'] {
-  const beforeIds = checkedQueueDraft(previous).toolkitIds
-  const afterIds = checkedQueueDraft(next).toolkitIds
+  const before = checkedQueueDraft(previous), after = checkedQueueDraft(next)
+  let updated = resources
+  // A removed authored chip can revoke an explicit captured binding. Resource
+  // IDs supplied by new metadata never grant access or resolve inheritance.
+  for (const [source, key] of [['skill', 'skills'], ['mcp', 'mcpServers'], ['kb', 'knowledgeBases']] as const) {
+    const beforeIds = new Set(before.draft.mentions.filter(mention => mention.source === source).map(mention => mention.path!))
+    const afterIds = new Set(after.draft.mentions.filter(mention => mention.source === source).map(mention => mention.path!))
+    const removed = new Set([...beforeIds].filter(id => !afterIds.has(id)))
+    const current = resources[key]
+    if (!removed.size || current.kind !== 'override') continue
+    selection(current, key)
+    const ids = current.ids.filter(id => !removed.has(id))
+    if (ids.length !== current.ids.length)
+      updated = { ...updated, [key]: ids.length ? { kind: 'override', ids } : { kind: 'none' } }
+  }
+  const beforeIds = before.toolkitIds
+  const afterIds = after.toolkitIds
   const removed = new Set([...beforeIds].filter(id => !afterIds.has(id)))
-  if (!removed.size) return resources
+  if (!removed.size) return updated
   const current = resources.toolkits
   if (current !== undefined) selection(current, 'toolkits')
-  if (current?.kind === 'none') return resources
+  if (current?.kind === 'none') return updated
   if (current?.kind === 'override') {
     const ids = current.ids.filter(id => !removed.has(id))
-    if (ids.length === current.ids.length) return resources
-    return { ...resources, toolkits: ids.length ? { kind: 'override', ids } : { kind: 'none' } }
+    if (ids.length === current.ids.length) return updated
+    return { ...updated, toolkits: ids.length ? { kind: 'override', ids } : { kind: 'none' } }
   }
   // Main resolves this from the scoped engine session, never from draft metadata.
   if (inheritedToolkits === undefined) fail('Resolve the inherited toolkit selection before removing part of it')
   const ids = inheritedToolkits.filter(id => !removed.has(id))
-  return { ...resources, toolkits: ids.length ? { kind: 'override', ids: [...ids] } : { kind: 'none' } }
+  return { ...updated, toolkits: ids.length ? { kind: 'override', ids: [...ids] } : { kind: 'none' } }
 }
 
 export function assertQueueEnvelope(
@@ -332,7 +354,6 @@ export function assertQueueEnvelope(
     value,
     [
       'draft',
-      'code',
       'recovery',
       'submissionDigest',
       'model',
@@ -353,22 +374,6 @@ export function assertQueueEnvelope(
     string(recovery.runId, 'recovery run')
     if (scope.owner !== 'work') fail('Only Work owns task recovery')
   }
-  if (scope.owner === 'code') {
-    const code = object(envelope.code, ['agentId', 'collaborators', 'workspacePaths', 'memoryScope'], 'Code options')
-    if (code.agentId !== undefined) string(code.agentId, 'Code Agent ID')
-    if (code.memoryScope !== undefined) oneOf(code.memoryScope, ['off', 'session', 'global'], 'Code memory scope')
-    if (code.workspacePaths !== undefined) {
-      list(code.workspacePaths, 'Code workspace paths', 100)
-      for (const path of code.workspacePaths) string(path, 'Code workspace path', 4096)
-      if (new Set(code.workspacePaths).size !== code.workspacePaths.length) fail('Duplicate Code workspace path')
-    }
-    if (code.collaborators !== undefined) {
-      list(code.collaborators, 'Code collaborators', 8)
-      for (const value of code.collaborators) {
-        collaboratorFields(value)
-      }
-    }
-  } else if (envelope.code !== undefined) fail('Work queue cannot carry Code options')
   if (envelope.submissionDigest !== undefined && (typeof envelope.submissionDigest !== 'string' || !/^[a-f0-9]{64}$/.test(envelope.submissionDigest))) fail('Enqueue submission digest is invalid')
   const { draft, agentIds } = checkedQueueDraft(envelope.draft, limits)
   const model = object(envelope.model, ['kind', 'modelId', 'observedModelId'], 'model')

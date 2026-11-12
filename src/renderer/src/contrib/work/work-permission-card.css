@@ -19,6 +19,10 @@
 .work-permission__header > svg {
   flex: none;
 }
+.work-permission__header > .work-permission__more {
+  margin-left: auto;
+  margin-block: -6px;
+}
 .work-permission__header.is-destructive {
   color: var(--danger-fg);
 }
@@ -142,7 +146,7 @@
   border-radius: var(--radius-lg);
   background: var(--bg-input);
 }
-.work-view .work-permission__segments > button {
+:is(.work-permission, .work-question) .work-permission__segments > button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -161,7 +165,7 @@
 .work-permission__segments > button:hover {
   color: var(--fg-strong);
 }
-.work-view .work-permission__segments > button.is-selected {
+:is(.work-permission, .work-question) .work-permission__segments > button.is-selected {
   background: var(--bg-panel);
   color: var(--fg-strong);
   box-shadow: var(--shadow-control);
@@ -201,7 +205,7 @@
 }
 .work-permission__body {
   box-sizing: border-box;
-  max-height: min(36vh, 300px);
+  max-height: min(36vh, 300px, var(--pending-body-space, 300px));
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
@@ -234,12 +238,153 @@
   margin: 0;
   white-space: pre-wrap;
 }
+.work-permission__detail-content > p + .work-permission__fields {
+  margin-top: 10px;
+}
 .work-permission__resource-list {
   display: grid;
   gap: 5px;
   margin: 0;
   padding: 0;
   list-style: none;
+}
+.work-permission__plugin-tools,
+.work-permission__file-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.work-permission__plugin-tools > li + li,
+.work-permission__file-list > li + li {
+  border-top: 1px solid var(--border);
+}
+.work-permission__plugin-tools > li {
+  padding-block: 12px;
+}
+.work-permission__plugin-tools > li:first-child {
+  padding-top: 0;
+}
+.work-permission__plugin-tools > li > h5 {
+  margin-bottom: 3px;
+  color: var(--fg-strong);
+  font-size: 12px;
+  font-weight: 600;
+}
+.work-permission__disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  width: fit-content;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 3px 6px;
+  margin-inline: -6px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+  font-size: 11px;
+  list-style: none;
+  cursor: pointer;
+}
+.work-permission__disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.work-permission__disclosure > summary:hover {
+  background: var(--bg-hover);
+  color: var(--fg-strong);
+}
+.work-permission__disclosure > summary:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+.work-permission__disclosure > summary > svg {
+  flex: none;
+}
+.work-permission__disclosure[open] > summary > svg:last-child {
+  transform: rotate(90deg);
+}
+.work-permission__disclosure > .work-permission__fields {
+  margin-block: 6px;
+}
+.work-permission__file > summary {
+  width: 100%;
+  min-height: 36px;
+  margin: 0;
+  padding-inline: 4px;
+  gap: 8px;
+}
+.work-permission__file-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--fg);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.work-permission__file-size {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.work-permission__code {
+  margin: 6px 0 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--fg);
+  font: 11px/1.65 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.work-permission__value-tree {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+.work-permission__value-tree > div {
+  display: grid;
+  grid-template-columns: minmax(64px, 24%) minmax(0, 1fr);
+  gap: 10px;
+}
+.work-permission__value-tree dt {
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+.work-permission__value-tree dd {
+  min-width: 0;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.work-permission__value-tree .work-permission__value-tree > div {
+  display: block;
+}
+.work-permission__value-tree .work-permission__value-tree dt {
+  margin-bottom: 3px;
+  font-size: 11px;
+}
+.work-permission__argument-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.work-permission__argument-list > li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.work-permission__argument-index {
+  flex: none;
+  min-width: 12px;
+  color: var(--fg-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.work-permission__argument-list .work-permission__code {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
 }
 .work-permission__before {
   margin-bottom: 16px;
@@ -304,27 +449,31 @@
   min-width: 76px;
   min-height: 30px;
 }
-.work-view .work-permission__access {
+.work-permission .work-permission__access {
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
   gap: 6px;
   min-width: 0;
-  min-height: 28px;
-  padding: 4px 0;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--fg-muted);
-  font-size: 11px;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: var(--warn-action-bg);
+  color: var(--warn-action-fg);
+  font-size: 12px;
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
 }
 .work-permission__access > svg {
   flex: none;
 }
-.work-permission__access:hover:not(:disabled) {
-  color: var(--fg-strong);
+.work-permission .work-permission__access:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--warn-action-fg) 5%, var(--warn-action-bg));
+}
+.work-permission .work-permission__access:active:not(:disabled) {
+  background: color-mix(in srgb, var(--warn-action-fg) 10%, var(--warn-action-bg));
 }
 .work-permission__access:focus-visible {
   outline: 2px solid var(--focus-ring-color);
@@ -349,7 +498,7 @@
   .work-permission__inspector {
     padding-inline: 16px;
   }
-  .work-view .work-permission__segments > button {
+  :is(.work-permission, .work-question) .work-permission__segments > button {
     padding-inline: 7px;
   }
   .work-permission__footer {

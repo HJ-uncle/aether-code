@@ -112,7 +112,7 @@ const server = createServer((request, response) => { void (async () => {
 })().catch(error => { errors.push(String(error)); if (!response.headersSent) response.writeHead(500); response.end(String(error)) }) })
 
 let app: ElectronApplication | undefined, page: Page, fixture = '', storageKey = ''
-const surface = (mode: Mode): Locator => page.locator(`#mode-${mode}`)
+const surface = (mode: Mode): Locator => mode === 'work' ? page.locator('.work-view') : page.locator(`#mode-${mode}`)
 const nav = (mode: Mode): Locator => surface(mode).getByRole('navigation', { name: '消息导航', exact: true })
 const scroller = (mode: Mode): Locator => surface(mode).locator(mode === 'work' ? '.work-conversation__scroll' : '.chat__messages')
 const row = (mode: Mode, index: number): Locator => nav(mode).locator(`[data-nav-index="${index}"]`)
@@ -204,7 +204,8 @@ test.describe.serial('Code / Work 消息导航', () => {
     }
   })
 
-  test('Code 短轮次连续上一条/下一条移动真实滚动位置，首尾禁用', async () => {
+  // Retired Code surface; Work navigation is covered below.
+  test.skip('Code 短轮次连续上一条/下一条移动真实滚动位置，首尾禁用', async () => {
     await seed('code'); await select('code', 7)
     let previous = await scroller('code').evaluate(element => element.scrollTop)
     for (const index of [6, 5, 4, 3]) {
@@ -261,7 +262,7 @@ test.describe.serial('Code / Work 消息导航', () => {
     await select('work', count - 1); await expect(nav('work').getByRole('button', { name: '下一条', exact: true })).toBeDisabled()
   })
 
-  test('Code 超过300条消息时导航挂载早期轮次，尾部追加不挤出正在阅读的锚点', async () => {
+  test.skip('Code 超过300条消息时导航挂载早期轮次，尾部追加不挤出正在阅读的锚点', async () => {
     await seed('code', longCodeId)
     const first = scroller('code').locator(`[data-turn-id="${turnId('code', 0, longCodeId)}"]`)
     const second = scroller('code').locator(`[data-turn-id="${turnId('code', 1, longCodeId)}"]`)
@@ -311,7 +312,7 @@ test.describe.serial('Code / Work 消息导航', () => {
     await nav('work').getByRole('button', { name: '下一条', exact: true }).click(); await assertTarget('work', 7)
   })
 
-  test('Code 内层表格滚轮只移动表格，不解除底部主动选择', async () => {
+  test.skip('Code 内层表格滚轮只移动表格，不解除底部主动选择', async () => {
     await seed('code', nestedCodeId); await select('code', count - 2, nestedCodeId)
     await page.keyboard.press('Escape'); await expect(nav('code')).toHaveAttribute('data-state', 'closed')
     const table = scroller('code').locator(`[data-turn-id="${turnId('code', count - 2, nestedCodeId)}"] .md-table-wrap`).first()
@@ -328,7 +329,7 @@ test.describe.serial('Code / Work 消息导航', () => {
     await assertTarget('code', count - 1, nestedCodeId)
   })
 
-  test('Code 回到底部后服务端追加新轮次，导航跟随新的最后一条', async () => {
+  test.skip('Code 回到底部后服务端追加新轮次，导航跟随新的最后一条', async () => {
     await seed('code', followCodeId)
     await nav('code').getByRole('button', { name: '回到底部', exact: true }).click()
     await expect(row('code', count - 1)).toHaveAttribute('aria-current', 'true')
@@ -344,7 +345,7 @@ test.describe.serial('Code / Work 消息导航', () => {
     await openNav('code'); await expect(nav('code').getByRole('button', { name: '下一条', exact: true })).toBeDisabled()
   })
 
-  for (const mode of ['code', 'work'] as const) test(`${mode} 键盘跳转与窄窗深浅色导航保持紧凑可操作`, async ({}, info) => {
+  for (const mode of ['work'] as const) test(`${mode} 键盘跳转与窄窗深浅色导航保持紧凑可操作`, async ({}, info) => {
     await seed(mode); await openNav(mode)
     const trigger = nav(mode).getByRole('button', { name: '展开消息导航', exact: true })
     await trigger.focus(); await page.keyboard.press('Home'); await expect(row(mode, 0)).toBeFocused()

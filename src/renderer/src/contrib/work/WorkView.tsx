@@ -52,10 +52,10 @@ import { WorkTaskActions } from './WorkTaskActions'
 import { WorkSelectionCheckbox } from './WorkSelectionCheckbox'
 import { getTopOverlayId } from '@renderer/workbench/overlay'
 import { useHoverDetail } from '@renderer/workbench/useHoverDetail'
-import { WorkSidebarTask } from './WorkSidebarTask'
-import { sortWorkSidebarTasks } from './work-sidebar-task'
+import { WorkSidebarHistory } from './WorkSidebarHistory'
 import { markWorkTaskCompletionRead } from './work-state'
 import { workDependencyProgress } from './work-dependency-progress'
+import { formatWorkElapsed } from './work-elapsed'
 import { WorkArtifactPanel, type WorkArtifactPanelProps } from './WorkArtifactPanel'
 import { fileContentBytes } from '@renderer/core/workspace/file-content-bytes'
 import { resourcePreviewEntries } from './work-resource-preview-policy'
@@ -70,6 +70,7 @@ import { PublishedRecoveryNotice } from '../chat/PublishedRecoveryNotice'
 import { SessionConnectionNotice } from '../chat/SessionConnectionNotice'
 import { WorkMessageNav } from './WorkMessageNav'
 import { workConversationGroups, workConversationEntries, workConversationComplete } from './work-conversation-turns'
+import { formatWorkConversationTime, useWorkConversationDate, workConversationStartedAt } from './work-conversation-time'
 import { workGroupedDisplayTurns } from './work-message-nav'
 import { WorkArtifactsWorkspace } from './WorkArtifactsWorkspace'
 import { workFinalResultCatalog } from './work-final-results'
@@ -85,6 +86,7 @@ import { useWorkProgressChanges } from './useWorkProgressChanges'
 import { workProgressTurnScope, workTurnProgressChanges } from './work-turn-progress'
 import { MotionPresence, useMotionPresence } from '@renderer/workbench/MotionPresence'
 import { WorkAgentManager } from './WorkAgentManager'
+import { WorkPluginManager } from './WorkPluginManager'
 import { WorkPermissionCard } from './WorkPermissionCard'
 import { WorkQuestionCard } from './WorkQuestionCard'
 import { workToolTarget } from './work-message-timeline'
@@ -92,7 +94,7 @@ import { workMessageRunning } from './work-tool-presentation'
 import { buildWorkInlineFileResolver } from './work-inline-file-references'
 import { WorkMessageContent } from './WorkMessageContent'
 import { workSubagentName } from './work-subagents'
-import { serializeMessages } from '../chat/message-export'
+import { buildMessageExportDocument, serializeMessages } from '../chat/message-export'
 import { WORK_MESSAGE_PAGE_SIZE, workMessageRange, workPaneRatio, workSplitRatio, workToolSnapshot, type WorkToolSnapshot } from './work-view-performance'
 import { workConversationAwayFromBottom } from './work-conversation-scroll'
 import { useWorkConversationScrollIntent } from './useWorkConversationScrollIntent'
@@ -125,7 +127,7 @@ import { createLocalSession } from '../terminal/terminal-store'
 
 type WorkController = ReturnType<typeof useWorkController>
 type WorkTask = WorkController['tasks'][number]
-type Page = 'home' | 'projects' | 'browser' | 'automations' | 'agents' | 'monitor'
+type Page = 'home' | 'projects' | 'browser' | 'automations' | 'agents' | 'plugins' | 'monitor'
 type WorkspaceTab = 'files' | 'workspace' | 'sources' | 'browser' | 'subagents' | 'git' | 'terminal'
 type ArtifactNavigation = Omit<WorkArtifactSelection, 'revision'>
 type FinalSelection = { sessionId: string; runId: string; itemId: string; revision: number }
@@ -174,12 +176,13 @@ function rememberPendingDraft(id: string, value: { values: string[][]; freeText:
   }
 }
 const NAVIGATION: Array<{ id: Page; label: string; icon: IconName }> = [
-  { id: 'home', label: '工作台', icon: 'chat' },
+  { id: 'home', label: '工作台', icon: 'dashboard' },
   { id: 'projects', label: '项目', icon: 'folder-outline' },
   { id: 'agents', label: 'Agent', icon: 'account-outline' },
-  { id: 'browser', label: '浏览器', icon: 'search' },
+  { id: 'plugins', label: '插件', icon: 'puzzle' },
+  { id: 'browser', label: '浏览器', icon: 'globe' },
   { id: 'automations', label: '自动化', icon: 'clock-outline' },
-  { id: 'monitor', label: '引擎监控', icon: 'engine' }
+  { id: 'monitor', label: '引擎监控', icon: 'activity' }
 ]
 function initialView(): ViewState {
   const fallback: ViewState = {
@@ -339,9 +342,6 @@ export function WorkView(): JSX.Element {
   const handledFileReveal = useRef({ scope: fileResourceScope, revision: fileResources.reveal, selected: fileResources.selected })
   const activeTasks = useMemo(() => controller.tasks.filter((item) => !item.archived), [controller.tasks])
   const runningTasks = useMemo(() => getRunningWorkTasks(activeTasks), [activeTasks])
-  const archivedTasks = useMemo(() => controller.tasks.filter((item) => item.archived), [controller.tasks])
-  const sidebarTasks = useMemo(() => sortWorkSidebarTasks(activeTasks), [activeTasks])
-  const sidebarArchivedTasks = useMemo(() => sortWorkSidebarTasks(archivedTasks), [archivedTasks])
   const waiting = useMemo(() => activeTasks.filter((item) => item.status === 'waiting').length, [activeTasks])
   const revealRequestId = browser.revealRequest?.requestId ?? null
   const handledRevealRef = useRef<string | null>(null)
@@ -702,24 +702,10 @@ export function WorkView(): JSX.Element {
             </button>
           ))}
         </nav>
-        <div className="work-sidebar__recent">
-          <span className="work-eyebrow">最近</span>
-          {sidebarTasks.map(item => <WorkSidebarTask key={`${browserSource}:${item.id}`} task={item} controller={controller}
-            selected={task?.id === item.id && view.page === 'home'} onOpen={openTask} />)}
-          {!activeTasks.length && <p>开始后，任务会保存在这里。</p>}
-          {archivedTasks.length > 0 && (
-            <details className="work-sidebar__archived">
-              <summary>已归档 {archivedTasks.length}</summary>
-              {sidebarArchivedTasks.map(item => <WorkSidebarTask key={`${browserSource}:${item.id}`} task={item} controller={controller}
-                selected={task?.id === item.id && view.page === 'home'} onOpen={openTask} />)}
-            </details>
-          )}
-        </div>
+        <WorkSidebarHistory key={browserSource} tasks={controller.tasks} controller={controller}
+          selectedTaskId={view.page === 'home' ? task?.id ?? null : null}
+          visible={compactNavigation ? navigationOpen : !view.collapsed} onOpen={openTask} />
         <div className="work-sidebar__bottom">
-          <span className="work-connection-status">
-            <i data-ready={controller.ready} />
-            <span>{controller.ready ? '引擎已连接' : '引擎未就绪'}</span>
-          </span>
           <button
             type="button"
             className="work-navigation__item"
@@ -731,10 +717,11 @@ export function WorkView(): JSX.Element {
           </button>
         </div>
       </aside>
-      <main className="work-main" data-running-tasks={runningTasks.length ? 'true' : undefined}>
-        {!(view.page === 'home' && task) ? <WorkRunList
+      <main className="work-main">
+        {view.page === 'home' && !task ? <WorkRunList
+          key={browserSource}
           tasks={activeTasks}
-          activeTaskId={task?.id ?? null}
+          activeTaskId={null}
           ready={controller.ready}
           onSelect={openTask}
           onStop={controller.stopTask}
@@ -776,14 +763,6 @@ export function WorkView(): JSX.Element {
                       messages={controller.messages} /> : null}
                     {controller.usageSyncNotice ? <span className="work-usage-notice" role="status" title={controller.usageSyncNotice}>统计待同步</span> : null}
                     <TaskStatus task={task} ready={controller.ready} />
-                    <WorkRunList
-                      tasks={activeTasks}
-                      activeTaskId={task.id}
-                      ready={controller.ready}
-                      onSelect={openTask}
-                      onStop={controller.stopTask}
-                      inline
-                    />
                     <WorkTaskActions
                       task={task}
                       controller={controller}
@@ -881,6 +860,11 @@ export function WorkView(): JSX.Element {
             remote={controller.remote} uploading={controller.uploading} />
         ) : view.page === 'monitor' ? (
           <EngineMonitorView tasks={controller.tasks} />
+        ) : view.page === 'plugins' ? (
+          <div className="work-page"><WorkPluginManager key={getEngineSource()} ready={controller.ready} onCreateWithAI={() => {
+            controller.preparePluginTask()
+            set({ page: 'home', pane: 'conversation', workspace: false })
+          }} /></div>
         ) : view.page === 'agents' ? (
           <div className="work-page work-page--agents"><div className="work-page__inner work-page__inner--agents"><WorkAgentManager
             key={getEngineSource()}
@@ -1082,6 +1066,7 @@ function Conversation({
     controller.historyReady, controller.historyError, controller.displayHistoryLoading, controller.displayHistoryError,
     controller.currentRun?.runId, controller.currentRun?.status, controller.draftSource])
   const showPinnedFeedback = showLatest && !inlineFeedbackVisible
+  const conversationDate = useWorkConversationDate(active)
   const conversationGroups = useMemo(() => workConversationGroups(controller.messages), [controller.messages])
   const turnTodos = useMemo(() => controller.assignTodos(conversationGroups.map(group => ({
     id: group.id, identity: group.identity,
@@ -1115,6 +1100,17 @@ function Conversation({
     }
     return result
   }, [displayTurns, conversationGroups])
+  // A short gap is an implementation detail of the display-history index:
+  // loading the latest two complete turns avoids a large first response, but
+  // leaving a one-turn button in the transcript makes a normal conversation
+  // look incomplete. Fill a few small gaps in the background and retain the
+  // explicit affordance only for genuinely large history jumps.
+  const autoDisplayAnchorsRef = useRef(new Set<string>())
+  const autoDisplayLoadsRef = useRef(0)
+  useEffect(() => {
+    autoDisplayAnchorsRef.current.clear()
+    autoDisplayLoadsRef.current = 0
+  }, [positionKey])
   const selectableGroups = useMemo(() => conversationGroups.filter(group => workConversationComplete(group, controller.displayTurns, controller.displayLoadedTurnIds)),
     [conversationGroups, controller.displayTurns, controller.displayLoadedTurnIds])
   // Keep the user's all/except choice as older turns finish loading, without
@@ -1315,6 +1311,18 @@ function Conversation({
       if (ok) setDisplayRequest(value => value + 1)
     })
   }
+  useEffect(() => {
+    if (!active || mode !== 'work' || !following || !controller.displayTurns || controller.displayHistoryLoading ||
+      controller.displayHistoryError || autoDisplayLoadsRef.current >= 3) return
+    const candidate = [...historyGaps.values()].find(gap => gap.count > 0 && gap.count <= 2)
+    if (!candidate || autoDisplayAnchorsRef.current.has(candidate.anchor)) return
+    autoDisplayAnchorsRef.current.add(candidate.anchor)
+    autoDisplayLoadsRef.current += 1
+    lastDisplayRequest.current = candidate.anchor
+    void controller.loadDisplayTurn(candidate.anchor).then(ok => {
+      if (!ok) autoDisplayAnchorsRef.current.delete(candidate.anchor)
+    })
+  }, [active, mode, following, historyGaps, controller.displayTurns, controller.displayHistoryLoading, controller.displayHistoryError, controller.loadDisplayTurn])
   useLayoutEffect(() => {
     const id = pendingDisplayTurn.current
     if (!id || !controller.displayLoadedTurnIds.includes(id)) return
@@ -1358,8 +1366,13 @@ function Conversation({
   const buildExportText = useCallback(() => {
     // Include complete loaded turns beyond the mounted viewport; incomplete
     // history remains unavailable until its original body has been loaded.
-    return serializeMessages(selectedGroups.flatMap((group) => group.messages))
-  }, [selectedGroups])
+    const body = serializeMessages(selectedGroups.flatMap((group) => group.messages))
+    return buildMessageExportDocument(body, {
+      title: task.title,
+      workspace: task.workspacePath,
+      turnCount: selectedGroups.length
+    })
+  }, [selectedGroups, task.title, task.workspacePath])
   const copySelected = useCallback(() => {
     const text = buildExportText()
     if (!text) return
@@ -1440,7 +1453,7 @@ function Conversation({
             </div>
             <div className="work-conversation__selection-actions">
               <button type="button" className="work-conversation__selection-button" disabled={selectedGroups.length === 0} onClick={copySelected}><Icon name="copy" size={14} />复制</button>
-              <button type="button" className="work-conversation__selection-button" disabled={selectedGroups.length === 0} onClick={exportSelected}><Icon name="upload-outline" size={14} />导出</button>
+              <button type="button" className="work-conversation__selection-button" disabled={selectedGroups.length === 0} onClick={exportSelected}><Icon name="download" size={14} />导出</button>
               <span className="work-conversation__selection-separator" aria-hidden="true" />
               <button type="button" className="work-conversation__selection-button work-conversation__selection-button--done" title="退出选择（Esc）" onClick={toggleSelectMode}>完成</button>
             </div>
@@ -1508,9 +1521,11 @@ function Conversation({
             const finalResult = finalMessage ? getMessageFinalResult(finalMessage, task.id) : undefined
             const gap = historyGaps.get(group.id)
             const complete = selectableGroups.includes(group)
+            const time = formatWorkConversationTime(workConversationStartedAt(group), conversationDate)
             return (
               <section key={group.id} data-turn-id={group.id} className={`work-conversation-turn${selectMode ? ' is-selectable' : ''}${selected ? ' is-selected' : ''}`}>
-                {gap ? <button type="button" className="btn btn--sm work-history-load" disabled={controller.displayHistoryLoading} onClick={() => loadDisplayHistory(gap.anchor)}>加载前面的 {gap.count} 轮对话</button> : null}
+                {gap && (gap.count > 2 || !following) ? <button type="button" className="btn btn--sm work-history-load" disabled={controller.displayHistoryLoading} onClick={() => loadDisplayHistory(gap.anchor)}>加载前面的 {gap.count} 轮对话</button> : null}
+                {time ? <div className="work-conversation-turn__timestamp"><time dateTime={time.dateTime} title={time.title}>{time.label}</time></div> : null}
                 <MotionPresence show={selectMode}>
                   <header className="work-conversation-turn__header">
                     <label className="work-conversation-turn__pick" title={complete ? `选择完整一轮对话（${group.messages.length} 条消息）` : '请先加载完整对话'}>
@@ -1667,8 +1682,7 @@ function useWorkRunFeedback(controller: WorkController) {
   }, [active, mode])
 
   const seconds = Math.max(0, Math.floor((now - (startedAt ?? now)) / 1000))
-  const elapsed =
-    seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`
+  const elapsed = formatWorkElapsed(seconds * 1000)
   return { active, waiting, phase, label, elapsed, seconds, running, dependency }
 }
 
@@ -2266,15 +2280,15 @@ function Workspace({
     })
   }, [resourceSignature])
   const tabs: Array<[WorkspaceTab, string, IconName]> = [
-    ['files', '成果', 'file'],
+    ['files', '成果', 'file-check'],
     ['workspace', '工作区', 'folder-outline'],
-    ['sources', '资料', 'file'],
-    ['subagents', '子代理', 'account-outline'],
+    ['sources', '资料', 'library'],
+    ['subagents', '子代理', 'users'],
     ['terminal', '终端', 'terminal'],
     ['git', 'Git', 'git']
   ]
   const labelFor = (id: WorkspaceTab): string => tabs.find(([candidate]) => candidate === id)?.[1] ?? '成果'
-  const iconFor = (id: WorkspaceTab): IconName => tabs.find(([candidate]) => candidate === id)?.[2] ?? 'file'
+  const iconFor = (id: WorkspaceTab): IconName => tabs.find(([candidate]) => candidate === id)?.[2] ?? 'file-check'
   const resourceById = new Map(orderedResources.map(item => [item.id, item]))
   const visibleEntries = openEntries.filter(entry => {
     // Browser is an implementation surface for resource tabs, not a second
@@ -2360,7 +2374,7 @@ function Workspace({
     {
       id: 'artifacts',
       label: '成果',
-      icon: 'file',
+      icon: 'file-check',
       onSelect: () => activateTab('files')
     },
     {
@@ -2369,8 +2383,8 @@ function Workspace({
       icon: 'folder-outline',
       onSelect: () => activateTab('workspace')
     },
-    { id: 'sources', label: '资料', icon: 'file', onSelect: () => activateTab('sources') },
-    { id: 'subagents', label: '子代理', icon: 'account-outline', onSelect: () => activateTab('subagents') },
+    { id: 'sources', label: '资料', icon: 'library', onSelect: () => activateTab('sources') },
+    { id: 'subagents', label: '子代理', icon: 'users', onSelect: () => activateTab('subagents') },
     { id: 'terminal', label: '终端', icon: 'terminal', onSelect: () => activateTab('terminal') },
     { id: 'git', label: 'Git', icon: 'git', onSelect: () => activateTab('git') }
   ]
@@ -2430,7 +2444,7 @@ function Workspace({
             return <div className={`work-workspace__tab work-workspace__tab--resource${active ? ' is-active' : ''}`} key={`resource:${resource.id}`}>
               <button type="button" role="tab" id={`work-resource-tab-${encodeURIComponent(resource.id)}`} aria-controls="work-panel-browser" aria-selected={active} tabIndex={active ? 0 : -1} className="work-workspace__tab-button" title={resource.title} onClick={() => activateResource(resource.id)} onKeyDown={onTabKeyDown}>
                 {resource.directory ? <Icon name="folder-outline" size={16} /> : resource.fileName
-                  ? <FileGlyph name={resource.fileName} size={16} /> : <Icon name="eye-outline" size={16} />}
+                  ? <FileGlyph name={resource.fileName} size={16} /> : <Icon name="globe" size={16} />}
                 <span className="work-workspace__tab-label">{resource.name}</span>
               </button>
               <button type="button" className="work-workspace__tab-close" aria-label={`关闭${resource.file ? '文档' : '网页'} ${resource.name}`} onClick={() => closeResource(resource.id)}><Icon name="close" size={12} /></button>

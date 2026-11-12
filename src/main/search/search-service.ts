@@ -225,8 +225,10 @@ export async function previewReplaceWorkspace(
       if (rows < MAX_PREVIEW_ROWS) {
         lines.push({
           line: i + 1,
-          before: split[i].slice(0, MAX_LINE_CHARS),
-          after: after.slice(0, MAX_LINE_CHARS)
+          // Confirmation needs the complete change; search snippets may hide
+          // the actual match or a replacement beyond their character limit.
+          before: split[i],
+          after
         })
         rows += 1
       } else {

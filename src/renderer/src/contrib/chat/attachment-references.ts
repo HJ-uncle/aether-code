@@ -24,7 +24,19 @@ export function attachmentReferences(files: readonly ChatAttachment[]): Attachme
 
 export function attachmentMention(reference: AttachmentReference): Mention {
   return { source: 'file', origin: 'attachment', attachmentId: reference.id,
-    path: reference.file.path, displayText: reference.label }
+    path: reference.file.path, displayText: inlineAttachmentLabel(reference) }
+}
+
+export function inlineAttachmentLabel(reference: AttachmentReference): string {
+  return pastedTextLabel(reference.file.name, reference.file.type) ??
+    (reference.file.type.startsWith('image/') ? reference.label : reference.file.name)
+}
+
+/** Deleted inline tags keep their receipts for undo without silently sending their files. */
+export function draftAttachmentSelection(files: readonly ChatAttachment[], mentions: readonly Mention[]): ChatAttachment[] {
+  return attachmentReferences(files).filter(reference => reference.file.type.startsWith('image/') ||
+    !reference.file.inlineReference || mentions.some(mention => referencesAttachment(mention, reference)))
+    .map(reference => reference.file)
 }
 
 export function freezeAttachmentReferences(files: readonly ChatAttachment[]): ChatAttachment[] {

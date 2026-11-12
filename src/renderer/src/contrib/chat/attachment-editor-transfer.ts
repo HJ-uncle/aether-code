@@ -1,5 +1,5 @@
 import { attachmentMention, referencesAttachment, type AttachmentReference } from './attachment-references'
-import { isStoredMention, mentionToken, type Mention } from './mention-context'
+import { isResourceMention, isStoredMention, mentionToken, type Mention } from './mention-context'
 import { toolkitName } from '@shared/toolkits'
 
 export const ATTACHMENT_CHIP_DRAG_TYPE = 'application/x-aether-attachment-chip'
@@ -24,7 +24,7 @@ export function attachmentDragKey(raw: string, owner: string): string | undefine
 }
 
 /** Only a locally captured, same-session clipboard snapshot reaches this function.
- * Keep authored toolkit chips; rebind attachment IDs so removed files cannot revive.
+ * Keep authored resource/toolkit chips; rebind attachment IDs so removed files cannot revive.
  * Text and Agent tokens never become executable selectors through this path. */
 export function rebindAttachmentClipboard(draft: { text: string; mentions: readonly Mention[] }, references: readonly AttachmentReference[]):
   { text: string; mentions: Mention[] } | null {
@@ -32,14 +32,16 @@ export function rebindAttachmentClipboard(draft: { text: string; mentions: reado
   const mentions: Mention[] = []
   for (const mention of draft.mentions) {
     const toolkit = mention.source === 'toolkit'
-    if (!toolkit && (mention.origin !== 'attachment' || mention.content !== undefined)) continue
-    if (toolkit && !isStoredMention(mention)) return null
+    const resource = isResourceMention(mention), binding = toolkit || resource
+    if (!binding && (mention.origin !== 'attachment' || mention.content !== undefined)) continue
+    if (binding && !isStoredMention(mention)) return null
     const token = mentionToken(mention), start = mention.textOffset
     if (start === undefined || start < cursor || draft.text.slice(start, start + token.length) !== token) return null
-    const reference = toolkit ? undefined : references.find(item => referencesAttachment(mention, item))
-    if (!toolkit && !reference) return null
+    const reference = binding ? undefined : references.find(item => referencesAttachment(mention, item))
+    if (!binding && !reference) return null
     text += draft.text.slice(cursor, start)
-    const rebound: Mention = toolkit ? { source: 'toolkit', path: mention.path, displayText: toolkitName(mention.path!) } : attachmentMention(reference!)
+    const rebound: Mention = toolkit ? { source: 'toolkit', path: mention.path, displayText: toolkitName(mention.path!) }
+      : resource ? { source: mention.source, path: mention.path, displayText: mention.displayText } : attachmentMention(reference!)
     mentions.push({ ...rebound, textOffset: text.length })
     text += mentionToken(rebound)
     cursor = start + token.length

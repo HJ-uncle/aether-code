@@ -46,33 +46,38 @@ export const WorkProgressPanel = memo(function WorkProgressPanel({ sessionId, tu
   const turnRecords = useMemo(() => visibleChanges.flatMap(file => file.records), [visibleChanges])
   const pendingFiles = visibleChanges.filter(change => workProgressChangeStatus(change.records).pending > 0).length
   const viewLabel = scopedToTurn ? '查看本轮成果' : '查看成果记录'
+  const remainingFiles = Math.max(0, visibleChanges.length - PREVIEW_FILE_COUNT)
   if (!visibleChanges.length) return null
   return <section className="work-progress-panel" aria-label="本轮成果摘要" data-result-turn-id={turnKey}>
     <section className="work-progress-panel__section work-progress-panel__section--changes">
       <div className="work-progress-panel__changes">
         <div className="work-progress-panel__heading">
           <button type="button" className="work-progress-panel__changes-toggle" aria-expanded={changesOpen} aria-controls={bodyId}
+            aria-label={`${changesOpen ? '收起' : '展开'}成果文件列表，共 ${visibleChanges.length} 个文件`}
+            title={changesOpen ? '收起文件列表' : '展开文件列表'}
             onClick={() => setChangesOpen(!changesOpen)}>
-            <Icon className="work-progress-panel__changes-chevron" name="chevron-right" size={12} />
+            <Icon className="work-progress-panel__changes-chevron" name="chevron-right" size={14} />
+          </button>
+          <button type="button" className="work-progress-panel__review-summary" aria-label={scopedToTurn ? '查看本轮全部成果' : '查看全部成果记录'} title={viewLabel} onClick={onShowChanges}>
             <span className="work-progress-panel__title"><span>成果</span><span className="work-progress-panel__count" title={`${visibleChanges.length} 个文件`}>{visibleChanges.length} 个文件</span></span>
           </button>
           {scopedToTurn ? <WorkChangeReviewActions key={turnKey} sessionId={sessionId} workspacePath={workspacePath}
             changes={turnRecords} mode="turn" compact streaming={streaming} refreshing={sync.syncing}
             disabled={sync.syncError || sync.retryDisabled && !sync.syncing} onChanged={sync.retry} /> : null}
-          <button type="button" className="work-progress-panel__review-summary" aria-label={scopedToTurn ? '查看本轮全部成果' : '查看全部成果记录'} title={viewLabel} onClick={onShowChanges}>
-            <span>{pendingFiles ? `${pendingFiles} 个待确认` : '查看全部'}</span><Icon name="chevron-right" size={12} />
-          </button>
+          {pendingFiles ? <button type="button" className="work-progress-panel__pending" aria-label={`${viewLabel}，${pendingFiles} 个文件待确认`} onClick={onShowChanges}>
+            <span>{pendingFiles} 待确认</span><Icon name="chevron-right" size={13} />
+          </button> : null}
         </div>
         <div id={bodyId} className="work-progress-panel__changes-body" hidden={!changesOpen}>
           <ul className="work-progress-panel__files">
             {visibleChanges.slice(0, PREVIEW_FILE_COUNT).map(change => <WorkProgressFileRow key={change.key} change={change} workspacePath={workspacePath}
               onOpenFile={onOpenFile} onOpenChange={onOpenChange} onShowChanges={onShowChanges} />)}
           </ul>
-          <footer className="work-progress-panel__footer">
+          {remainingFiles > 0 ? <footer className="work-progress-panel__footer work-progress-panel__overflow">
             <button type="button" aria-label={`${viewLabel}，共 ${visibleChanges.length} 个文件`} onClick={onShowChanges}>
-              <span>查看全部 {visibleChanges.length} 个文件</span><Icon name="chevron-right" size={12} />
+              <span>还有 {remainingFiles} 个文件</span><Icon name="chevron-right" size={12} />
             </button>
-          </footer>
+          </footer> : null}
         </div>
       </div>
     </section>
@@ -117,7 +122,7 @@ const WorkProgressFileRow = memo(function WorkProgressFileRow({ change: { latest
           aria-label={`最新修改${stats.approximate ? '估算' : ''}：新增 ${stats.added} 行，删除 ${stats.removed} 行`}>
           {stats.approximate ? <span className="work-progress-panel__file-estimate">约</span> : null}
           <span className="work-progress-panel__file-added">+{stats.added}</span><span className="work-progress-panel__file-removed">-{stats.removed}</span>
-        </span> : <span className="work-progress-panel__file-code" data-change-code={code} title={kindLabel} aria-label={kindLabel}>{kindLabel}</span>}
+        </span> : <span className="work-progress-panel__file-code" data-change-code={code} title={kindLabel} aria-label={kindLabel}>{code}</span>}
         {!status.pending ? <span className="work-progress-panel__file-state" title={status.detail}>{status.label}</span> : null}
       </span>
       <Icon name="chevron-right" size={12} />

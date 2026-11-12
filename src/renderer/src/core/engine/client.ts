@@ -24,7 +24,6 @@ import type {
   SubagentCapabilities, SubagentDiscoveryPage, SubagentResultPage
 } from '@shared/subagent'
 import { getExpectedEngine, getEngineSource } from './source'
-import { getAppMode } from '@renderer/core/platform/app-mode'
 import { parseSubagentDiscoveryPage } from './subagent-discovery'
 import { withSubagentReadPermit } from './subagent-refresh'
 import { registerStreamOwner } from './stream-owner'
@@ -77,7 +76,10 @@ export function onEngineLog(
 export function request<T = unknown>(input: EngineRequestInput): Promise<EngineRequestResult<T>> {
   return bridge().engine.request<T>({
     ...input,
-    toolProfile: input.toolProfile ?? (getAppMode() === 'work' ? 'general' : 'code'),
+    // Work is the only mounted desktop surface; callers that need a distinct
+    // engine profile must opt in explicitly rather than inheriting a retired
+    // application mode.
+    toolProfile: input.toolProfile ?? 'general',
     expectedEngine: input.expectedEngine ?? getExpectedEngine()
   })
 }
@@ -121,7 +123,7 @@ type SubagentPageOptions = { cursor?: string; limit?: number }
 let subagentCapabilities: { key: string; promise: Promise<SubagentCapabilities> } | undefined
 
 export function captureSubagentConnection(): SubagentConnection {
-  return { source: getEngineSource(), expectedEngine: getExpectedEngine(), toolProfile: getAppMode() === 'work' ? 'general' : 'code' }
+  return { source: getEngineSource(), expectedEngine: getExpectedEngine(), toolProfile: 'general' }
 }
 export function assertSubagentConnection(connection: SubagentConnection): void {
   if (connection.source !== getEngineSource() || JSON.stringify(connection.expectedEngine) !== JSON.stringify(getExpectedEngine()))
@@ -383,7 +385,7 @@ export async function listSubagentEvents(runId: string, options: SubagentScope &
 // ==================== 流式 ====================
 
 export function startStream(input: StreamStartInput): Promise<StreamStartResult> {
-  const profile = input.toolProfile ?? (getAppMode() === 'work' ? 'general' : 'code')
+  const profile = input.toolProfile ?? 'general'
   const body = input.body
   const sessionId = input.query?.sessionId ?? (body && typeof body === 'object' && 'sessionId' in body && typeof body.sessionId === 'string' ? body.sessionId : '')
   if (sessionId) registerStreamOwner(input.streamId, { source: getEngineSource(), sessionId, profile })

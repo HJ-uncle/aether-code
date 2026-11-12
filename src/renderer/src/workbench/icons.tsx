@@ -4,11 +4,21 @@
  * 刻意不引入图标库：P0 只需要几个图标，引入一个 1MB+ 的依赖不值得。
  * 后续若图标数量增长，替换为 vscode-icons / lucide 也只影响本文件。
  */
-import type { JSX } from 'react'
+import { createContext, useContext, type JSX, type ReactNode } from 'react'
 import type { BuiltinAgentIconName } from '@shared/builtin-agents'
+import { OUTLINE_ICON_PATHS, OUTLINE_ICON_STROKE } from './outline-icons'
+
+type OutlineOnlyIconName = 'dashboard' | 'puzzle' | 'globe' | 'activity' | 'list-play' | 'library' | 'users' | 'refresh' | 'folder-plus' | 'file-check' | 'book-open' | 'extensions' | 'plug' | 'archive' | 'redo'
+const IconStyleContext = createContext<'default' | 'outline'>('default')
+
+/** React context follows dialogs and menus through portals, unlike a DOM ancestor selector. */
+export function IconProvider({ variant, children }: { variant: 'default' | 'outline'; children: ReactNode }): JSX.Element {
+  return <IconStyleContext.Provider value={variant}>{children}</IconStyleContext.Provider>
+}
 
 export type IconName =
   | BuiltinAgentIconName
+  | OutlineOnlyIconName
   | 'chat'
   | 'chat-outline'
   | 'vscode'
@@ -110,6 +120,23 @@ export const PACKAGE_VARIANT_CLOSED_PATH = 'M21 16.5c0 .38-.21.71-.53.88l-7.9 4.
 
 export type AgentReferenceIconName = BuiltinAgentIconName | 'account-outline'
 
+/** Resource menus, inline labels and history use the same glyphs as the settings entry. */
+export const RESOURCE_ICON_GLYPHS: Record<'skill' | 'mcp' | 'kb', {
+  path: string; fill: 'none' | 'currentColor'; strokeWidth?: number
+}> = {
+  skill: { path: OUTLINE_ICON_PATHS['package-variant-closed'], fill: 'none', strokeWidth: OUTLINE_ICON_STROKE },
+  mcp: { path: OUTLINE_ICON_PATHS.plug, fill: 'none', strokeWidth: OUTLINE_ICON_STROKE },
+  kb: { path: OUTLINE_ICON_PATHS['book-open'], fill: 'none', strokeWidth: OUTLINE_ICON_STROKE }
+}
+
+export function ResourceIcon({ kind, size = 16, className }: { kind: keyof typeof RESOURCE_ICON_GLYPHS; size?: number; className?: string }): JSX.Element {
+  const glyph = RESOURCE_ICON_GLYPHS[kind]
+  return <svg width={size} height={size} viewBox="0 0 24 24" className={className} aria-hidden="true" focusable="false">
+    <path d={glyph.path} fill={glyph.fill} stroke={glyph.strokeWidth ? 'currentColor' : undefined}
+      strokeWidth={glyph.strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+}
+
 /** The picker, history and imperative composer share geometry, including custom agents. */
 export const AGENT_ICON_GLYPHS: Readonly<Record<AgentReferenceIconName, {
   path: string
@@ -117,20 +144,20 @@ export const AGENT_ICON_GLYPHS: Readonly<Record<AgentReferenceIconName, {
   strokeWidth?: number
 }>> = {
   'agent-research': {
-    path: 'M10 21H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6.5L17 7.5V10M12.5 3v4.5H17M7.5 11h3.5M7.5 14.5h1M19 15.5a4 4 0 1 1-8 0 4 4 0 0 1 8 0Zm-1.2 2.8 3.2 3.2',
-    fill: 'none', strokeWidth: 1.65
+    path: OUTLINE_ICON_PATHS['agent-research'],
+    fill: 'none', strokeWidth: OUTLINE_ICON_STROKE
   },
   'agent-executor': {
-    path: 'M6.5 3.5h11A2.5 2.5 0 0 1 20 6v12a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 18V6a2.5 2.5 0 0 1 2.5-2.5ZM7 9l1.5 1.5L11 8m2.5 1.5H17M7 15l1.5 1.5L11 14m2.5 1.5H17',
-    fill: 'none', strokeWidth: 1.65
+    path: OUTLINE_ICON_PATHS['agent-executor'],
+    fill: 'none', strokeWidth: OUTLINE_ICON_STROKE
   },
   'agent-general': {
-    path: 'M12.5 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM3.5 20v-1.5A4.5 4.5 0 0 1 8 14h3a4.5 4.5 0 0 1 4.5 4.5V20h-12ZM18 3l1 2.5 2.5 1-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1L18 3Z',
-    fill: 'none', strokeWidth: 1.65
+    path: OUTLINE_ICON_PATHS['agent-general'],
+    fill: 'none', strokeWidth: OUTLINE_ICON_STROKE
   },
   'account-outline': {
-    path: 'M12 4a4 4 0 0 1 4 4 4 4 0 0 1-4 4 4 4 0 0 1-4-4 4 4 0 0 1 4-4m0 2a2 2 0 0 0-2 2 2 2 0 0 0 2 2 2 2 0 0 0 2-2 2 2 0 0 0-2-2m0 7c2.67 0 8 1.33 8 4v3H4v-3c0-2.67 5.33-4 8-4m0 1.9c-2.97 0-6.1 1.46-6.1 2.1v1.1h12.2V17c0-.64-3.13-2.1-6.1-2.1z',
-    fill: 'currentColor'
+    path: OUTLINE_ICON_PATHS['account-outline'],
+    fill: 'none', strokeWidth: OUTLINE_ICON_STROKE
   }
 }
 
@@ -140,7 +167,7 @@ function agentIconPath(name: AgentReferenceIconName): JSX.Element {
     strokeWidth={glyph.strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
 }
 
-const PATHS: Record<IconName, JSX.Element> = {
+const PATHS: Record<Exclude<IconName, OutlineOnlyIconName>, JSX.Element> = {
   'agent-research': agentIconPath('agent-research'),
   'agent-executor': agentIconPath('agent-executor'),
   'agent-general': agentIconPath('agent-general'),
@@ -591,9 +618,13 @@ export function Icon({
   size?: number
   className?: string
 }): JSX.Element {
+  const variant = useContext(IconStyleContext)
+  const outline = name !== 'vscode' && (variant === 'outline' || !(name in PATHS))
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" className={className}>
-      {PATHS[name]}
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false" className={className}
+      data-icon={name} data-icon-style={outline ? 'outline' : 'default'}>
+      {outline ? <path d={OUTLINE_ICON_PATHS[name]} fill="none" stroke="currentColor" strokeWidth={OUTLINE_ICON_STROKE}
+        strokeLinecap="round" strokeLinejoin="round" /> : PATHS[name as keyof typeof PATHS]}
     </svg>
   )
 }

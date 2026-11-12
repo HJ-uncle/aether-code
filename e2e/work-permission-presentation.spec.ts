@@ -9,6 +9,7 @@ import {
   type PendingInteraction
 } from '../src/renderer/src/core/engine/pending'
 import { permissionPresentation } from '../src/renderer/src/contrib/work/work-permission-presentation'
+import { toolDisplayName } from '../src/renderer/src/core/engine/tool-labels'
 
 function pending(
   toolName: string,
@@ -328,11 +329,16 @@ test('generic approval surfaces commands and paths while preserving every comple
     { label: '网址', value: args.url },
     { label: '请求方法', value: 'POST' }
   ])
-  expect(result.sections[0]).toEqual({ id: 'command', label: '命令', text: command })
-  expect(JSON.parse(result.sections.find((section) => section.id === 'arguments')!.text!)).toEqual({
-    flags: args.flags,
-    customValue: args.customValue
-  })
+  expect(result.sections[0]).toEqual({ id: 'command', label: '程序', text: command, code: true })
+  expect(result.sections.find((section) => section.id === 'arguments')!.tree).toEqual([
+    { label: 'flags', kind: 'object', children: [
+      { label: 'overwrite', kind: 'boolean', value: 'false' },
+      { label: 'nested', kind: 'array', children: [
+        { label: '第 1 项', kind: 'string', value: '完整' }, { label: '第 2 项', kind: 'number', value: '0' }
+      ] }
+    ] },
+    { label: 'customValue', kind: 'string', value: args.customValue }
+  ])
   expect(result.reason).toBe('运行前请检查工作目录。')
 })
 
@@ -346,9 +352,13 @@ test('long multiline instructions and unknown configuration stay complete withou
   const original = JSON.stringify(item)
   const result = permissionPresentation(item)
   expect(result.sections.find((section) => section.id === 'systemPrompt')?.text).toBe(systemPrompt)
-  expect(
-    JSON.parse(result.sections.find((section) => section.id === 'additional-config')!.text!)
-  ).toEqual({ futureConfig: data.futureConfig })
+  expect(result.sections.find((section) => section.id === 'additional-config')!.tree).toEqual([
+    { label: 'futureConfig', kind: 'object', children: [{ label: 'nested', kind: 'array', children: [
+      { label: '第 1 项', kind: 'string', value: '全量内容' },
+      { label: '第 2 项', kind: 'number', value: '0' },
+      { label: '第 3 项', kind: 'boolean', value: 'false' }
+    ] }] }
+  ])
   expect(result.raw).toContain(JSON.stringify(data, null, 2))
   expect(JSON.stringify(item)).toBe(original)
 })
@@ -512,4 +522,411 @@ test('clearing a long tool list keeps previous permissions in the tool section i
   expect(section.previousEntries?.[0]).toEqual({ id: 'read_file', label: '读取文件' })
   expect(section.previous).toContain('custom_tool_79')
   expect(result.raw).toBe(question)
+})
+
+const pluginManifest = {
+  apiVersion: 1,
+  id: 'report-helper',
+  name: '报告助手',
+  version: '1.2.0',
+  description: '整理资料并生成报告。',
+  runtime: 'node',
+  tools: [
+    {
+      name: 'report',
+      description: '根据输入生成报告。',
+      entry: 'main.mjs',
+      inputSchema: {
+        type: 'object',
+        properties: { title: { type: 'string' } },
+        required: ['title']
+      }
+    }
+  ]
+}
+const pluginInput = {
+  manifest: pluginManifest,
+  files: {
+    'main.mjs':
+      'const input = await readInput();\nconsole.log(JSON.stringify({ result: input }));\n'
+  }
+}
+const pluginTitles: Record<string, string> = {
+  plugin_create: '创建插件',
+  plugin_update: '编辑插件',
+  plugin_publish: '发布插件',
+  plugin_set_enabled: '启停插件',
+  plugin_delete: '删除插件',
+  plugin_test: '测试插件',
+  plugin_import_install: '安装插件'
+}
+function pluginPreview(
+  action: string,
+  input: Record<string, unknown>,
+  extra: Record<string, unknown> = {}
+): string {
+  return `${pluginTitles[action]}确认\n\n${JSON.stringify({ version: 1, tenantId: 'tenant-fixture', action, input, ...extra }, null, 2)}\n\n确认后执行以上操作。`
+}
+
+test('plugin creation presents prepared manifest and complete tools and files instead of raw-call values', () => {
+  const question = pluginPreview('plugin_create', pluginInput)
+  const args = { ...pluginInput, manifest: { ...pluginManifest, name: '原调用名称' } }
+  const result = permissionPresentation(pending('plugin_create', question, args))
+  expect(result.kind).toBe('plugin')
+  expect(result.title).toBe('创建插件')
+  expect(result.confirmLabel).toBe('创建插件')
+  expect(result.summary).toBe('报告助手')
+  expect(result.destructive).toBe(false)
+  expect(result.fields).toEqual([
+    { label: '用途', value: pluginManifest.description },
+    { label: '版本', value: '1.2.0' },
+    { label: '运行环境', value: 'Node.js' }
+  ])
+  expect(result.sections.find((section) => section.id === 'plugin-tools')).toEqual({
+    id: 'plugin-tools',
+    label: '功能',
+    pluginTools: [
+      {
+        name: 'report',
+        description: pluginManifest.tools[0].description,
+        entry: 'main.mjs',
+        inputSchema: JSON.stringify(pluginManifest.tools[0].inputSchema, null, 2)
+      }
+    ]
+  })
+  expect(result.sections.find((section) => section.id === 'plugin-files')).toEqual({
+    id: 'plugin-files',
+    label: '文件',
+    files: [{ path: 'main.mjs', content: pluginInput.files['main.mjs'] }]
+  })
+  expect(result.sections.find((section) => section.id === 'plugin-details')?.facts).toEqual([
+    { label: '插件 ID', value: 'report-helper' },
+    { label: 'API 版本', value: '1' }
+  ])
+  expect(result.raw).toBe(`${question}\n\n原始调用参数\n${JSON.stringify(args, null, 2)}`)
+})
+
+test('plugin update accepts the exact engine security wrapper and never invents before values', () => {
+  const input = { id: pluginManifest.id, ...pluginInput, expectedRevision: 4 }
+  const direct = pluginPreview('plugin_update', input, {
+    expectedRevision: 4,
+    expectedUpdatedAt: 1000
+  })
+  for (const question of [
+    direct,
+    `安全策略拦截了此操作，是否允许执行？\n原因：${direct}`.replace(/\n/g, '\r\n')
+  ]) {
+    const result = permissionPresentation(pending('plugin_update', question))
+    expect(result.title).toBe('编辑插件')
+    expect(result.confirmLabel).toBe('编辑插件')
+    expect(result.summary).toBe(pluginManifest.name)
+    expect(
+      result.sections.find((section) => section.id === 'plugin-details')?.facts
+    ).toContainEqual({ label: '当前修订', value: '4' })
+    expect(result.fields.every((field) => field.previous === undefined)).toBe(true)
+    expect(result.sections.every((section) => section.previous === undefined)).toBe(true)
+    expect(result.raw).toBe(question)
+  }
+})
+
+test('plugin test displays the prepared revision and independent test parameters', () => {
+  const args = {
+    id: pluginManifest.id,
+    tool: 'report',
+    args: { title: '实际标题', nested: { empty: '', enabled: false } }
+  }
+  const question = pluginPreview(
+    'plugin_test',
+    { ...args, revision: 7 },
+    { expectedRevision: 9, expectedUpdatedAt: 1000 }
+  )
+  const result = permissionPresentation(pending('plugin_test', question, args))
+  expect(result.title).toBe('测试插件')
+  expect(result.summary).toBe(pluginManifest.id)
+  expect(result.sections.find((section) => section.id === 'plugin-details')?.facts).toEqual([
+    { label: '插件 ID', value: pluginManifest.id },
+    { label: '当前修订', value: '9' },
+    { label: '测试功能', value: 'report' },
+    { label: '测试修订', value: '7' }
+  ])
+  expect(result.sections.find((section) => section.id === 'plugin-test-args')!.tree).toEqual([
+    { label: '参数', kind: 'object', children: [
+      { label: 'title', kind: 'string', value: '实际标题' },
+      { label: 'nested', kind: 'object', children: [
+        { label: 'empty', kind: 'string', value: '' }, { label: 'enabled', kind: 'boolean', value: 'false' }
+      ] }
+    ] }
+  ])
+  const fallback = permissionPresentation(pending('plugin_test', '确认测试。', args))
+  expect(fallback.sections.find((section) => section.id === 'plugin-details')?.facts).toEqual([
+    { label: '插件 ID', value: pluginManifest.id },
+    { label: '测试功能', value: 'report' }
+  ])
+})
+
+test('batched plugin approval preserves every case and expected business result in one request', () => {
+  const input = { id: 'text-helper', revision: 3, cases: [
+    { name: 'Unicode 示例', tool: 'normalize_text', args: { text: '  你好 🌟  ' }, expected: { text: '你好 🌟', characters: 4 } },
+    { name: '空文本', tool: 'normalize_text', args: { text: '' }, expected: { text: '', characters: 0 } }
+  ] }
+  const question = pluginPreview('plugin_test',input,{ expectedRevision: 3, expectedUpdatedAt: 1000 })
+  const result = permissionPresentation(pending('plugin_test',question,input))
+  expect(result.summary).toBe('text-helper')
+  expect(result.sections.find(section => section.id === 'plugin-details')?.facts).toContainEqual({ label: '测试用例', value: '2' })
+  const section = result.sections.find(section => section.id === 'plugin-test-args')!
+  expect(section.label).toBe('测试用例与预期结果')
+  const items = section.tree![0].children!
+  expect(items).toHaveLength(2)
+  expect(items[0].children).toEqual([
+    { label: 'name', kind: 'string', value: 'Unicode 示例' },
+    { label: 'tool', kind: 'string', value: 'normalize_text' },
+    { label: 'args', kind: 'object', children: [{ label: 'text', kind: 'string', value: '  你好 🌟  ' }] },
+    { label: 'expected', kind: 'object', children: [{ label: 'text', kind: 'string', value: '你好 🌟' },{ label: 'characters', kind: 'number', value: '4' }] }
+  ])
+  expect(items[1].children!.find(node => node.label === 'expected')?.children).toContainEqual({ label: 'characters', kind: 'number', value: '0' })
+  expect(result.raw).toContain(question)
+  for (const cases of [[],[{ tool: 'normalize_text',args: [] }]]) {
+    const malformed = permissionPresentation(pending('plugin_test','保留原始确认。',{ id:'text-helper',cases }))
+    expect(malformed.sections).toEqual([])
+    expect(malformed.raw).toContain('保留原始确认。')
+  }
+  expect(toolDisplayName('plugin_get_template')).toBe('插件工程模板')
+  expect(toolDisplayName('plugin_export_archive')).toBe('plugin_export_archive')
+})
+
+test('plugin publish and deletion use exact IDs and known revisions without invented names or states', () => {
+  for (const [action, input] of [
+    ['plugin_publish', { id: pluginManifest.id, expectedRevision: 6 }],
+    ['plugin_delete', { id: pluginManifest.id }]
+  ] as const) {
+    const result = permissionPresentation(
+      pending(
+        action,
+        pluginPreview(action, input, { expectedRevision: 6, expectedUpdatedAt: 1000 })
+      )
+    )
+    expect(result.title).toBe(pluginTitles[action])
+    expect(result.confirmLabel).toBe(pluginTitles[action])
+    expect(result.destructive).toBe(action === 'plugin_delete')
+    expect(result.summary).toBe(pluginManifest.id)
+    expect(result.fields).toEqual([])
+    expect(result.sections.find((section) => section.id === 'plugin-details')?.facts).toEqual([
+      { label: '插件 ID', value: pluginManifest.id },
+      { label: '当前修订', value: '6' }
+    ])
+    expect(result.sections.map((section) => section.id)).toEqual([
+      'plugin-operation',
+      'plugin-details'
+    ])
+  }
+})
+
+test('plugin enable and disable display the requested boolean state, not a guessed current state', () => {
+  for (const enabled of [true, false]) {
+    const input = { id: pluginManifest.id, enabled }
+    const result = permissionPresentation(
+      pending('plugin_set_enabled', pluginPreview('plugin_set_enabled', input), {
+        ...input,
+        enabled: !enabled
+      })
+    )
+    expect(result.title).toBe(enabled ? '启用插件' : '停用插件')
+    expect(result.confirmLabel).toBe(result.title)
+    expect(result.summary).toBe(pluginManifest.id)
+    expect(result.sections.find((section) => section.id === 'plugin-details')?.facts).toEqual([
+      { label: '插件 ID', value: pluginManifest.id }
+    ])
+    expect(result.sections.every((section) => section.previous === undefined)).toBe(true)
+  }
+})
+
+test('plugin imports expose only actual prepared sources and dependencies without an invented manifest', () => {
+  const input = { jobId: 'immutable-job-1' }
+  const source = {
+    type: 'github',
+    repository: 'example/report',
+    url: 'https://github.com/example/report',
+    requestedRef: 'v1',
+    resolvedCommit: 'a'.repeat(40),
+    archiveSha256: 'b'.repeat(64),
+    subdirectory: 'plugin',
+    format: 'remark',
+    adapter: 'remark-v1',
+    importJobId: input.jobId
+  }
+  const requirements = [
+    { type: 'npm', packages: { 'remark-gfm': '4.0.1', unified: '^11' }, scripts: 'disabled' }
+  ]
+  const question = pluginPreview('plugin_import_install', input, { source, requirements })
+  const result = permissionPresentation(pending('plugin_import_install', question, input))
+  expect(result.title).toBe('安装插件')
+  expect(result.summary).toBeUndefined()
+  expect(result.fields).toEqual([])
+  expect(result.sections.find((section) => section.id === 'plugin-source')?.facts).toEqual([
+    { label: '来源类型', value: 'GitHub' },
+    { label: '仓库', value: source.repository },
+    { label: '网址', value: source.url },
+    { label: '请求引用', value: source.requestedRef },
+    { label: '提交', value: source.resolvedCommit },
+    { label: '压缩包 SHA-256', value: source.archiveSha256 },
+    { label: '子目录', value: source.subdirectory },
+    { label: '格式', value: source.format },
+    { label: '适配器', value: source.adapter },
+    { label: '导入作业 ID', value: source.importJobId }
+  ])
+  expect(result.sections.find((section) => section.id === 'plugin-dependencies')?.facts).toEqual([
+    { label: '依赖管理器', value: 'npm' },
+    { label: 'remark-gfm', value: '4.0.1' },
+    { label: 'unified', value: '^11' },
+    { label: '生命周期脚本', value: '禁用' }
+  ])
+  expect(
+    result.sections.some(
+      (section) => section.id === 'plugin-tools' || section.id === 'plugin-files'
+    )
+  ).toBe(false)
+  const fallback = permissionPresentation(pending('plugin_import_install', '确认安装', input))
+  expect(fallback.sections.map((section) => section.id)).toEqual([
+    'plugin-operation',
+    'plugin-details'
+  ])
+  expect(fallback.sections.find((section) => section.id === 'plugin-details')?.facts).toEqual([
+    { label: '导入作业 ID', value: input.jobId }
+  ])
+})
+
+test('plugin import source types display local directories and ZIP archives with actual paths', () => {
+  for (const [type, label, path] of [
+    ['local', '本地目录', 'D:\\plugins\\report-helper'],
+    ['zip', '压缩包', 'D:\\plugins\\report-helper.zip']
+  ] as const) {
+    const source = { type, path, format: 'native', ...(type === 'zip' ? { archiveSha256: 'c'.repeat(64) } : {}) }
+    const input = { jobId: `job-${type}` }
+    const result = permissionPresentation(
+      pending('plugin_import_install', pluginPreview('plugin_import_install', input, { source }))
+    )
+    expect(result.summary).toBeUndefined()
+    const facts = result.sections.find((section) => section.id === 'plugin-source')?.facts
+    expect(facts).toContainEqual({ label: '来源类型', value: label })
+    expect(facts).toContainEqual({ label: '路径', value: path })
+    expect(facts?.some((entry) => entry.label === '压缩包 SHA-256')).toBe(type === 'zip')
+  }
+})
+
+for (const [action, args] of [
+  ['plugin_create', pluginInput],
+  ['plugin_update', { id: pluginManifest.id, ...pluginInput, expectedRevision: 2 }],
+  ['plugin_publish', { id: pluginManifest.id, expectedRevision: 2 }],
+  ['plugin_delete', { id: pluginManifest.id }],
+  ['plugin_set_enabled', { id: pluginManifest.id, enabled: false }],
+  ['plugin_test', { id: pluginManifest.id, tool: 'report', args: {} }],
+  ['plugin_import_install', { jobId: 'job-fallback' }]
+] as const)
+  test(`${action} uses valid original arguments when there is no prepared preview`, () => {
+    const result = permissionPresentation(pending(action, '请确认操作', args))
+    expect(result.kind).toBe('plugin')
+    expect(result.sections.length).toBeGreaterThan(0)
+    expect(result.raw).toContain(JSON.stringify(args, null, 2))
+    expect(buildToolResponse(pending(action, '请确认操作', args), ['approved']).name).toBe(action)
+  })
+
+test('plugin prepared parsing rejects action, envelope, wrapper and structure mismatches', () => {
+  const fallback = { ...pluginInput, manifest: { ...pluginManifest, name: '兜底参数名称' } }
+  const correct = pluginPreview('plugin_create', pluginInput)
+  const invalid = [
+    correct.replace('"action": "plugin_create"', '"action": "plugin_update"'),
+    correct.replace('"version": 1,', '"version": 2,'),
+    correct.replace('"tenantId": "tenant-fixture"', '"tenantId": ""'),
+    correct.replace('创建插件确认', '编辑插件确认'),
+    correct.replace('确认后执行以上操作。', '确认后执行以上配置。'),
+    `来源说明：\n${correct}`,
+    `${correct}\n额外文字`,
+    pluginPreview('plugin_create', { ...pluginInput, files: ['not-a-map'] }),
+    pluginPreview('plugin_create', {
+      ...pluginInput,
+      manifest: { ...pluginManifest, tools: [{ name: 'broken' }] }
+    }),
+    '创建插件确认\n\n{invalid json}\n\n确认后执行以上操作。'
+  ]
+  for (const question of invalid) {
+    const result = permissionPresentation(pending('plugin_create', question, fallback))
+    expect(result.summary).toBe('兜底参数名称')
+    expect(result.raw.startsWith(question)).toBe(true)
+  }
+  const updateInput = { id: pluginManifest.id, ...fallback, expectedRevision: 2 }
+  const conflicting = pluginPreview(
+    'plugin_update',
+    { ...updateInput, manifest: pluginManifest },
+    { expectedRevision: 3 }
+  )
+  expect(permissionPresentation(pending('plugin_update', conflicting, updateInput)).summary).toBe(
+    '兜底参数名称'
+  )
+})
+
+test('plugin-like tools outside the exact management whitelist keep generic presentation', () => {
+  const question = pluginPreview('plugin_create', pluginInput)
+  for (const tool of [
+    'plugin_create_extra',
+    'plugin_report_create',
+    'mcp__server__plugin_create',
+    'custom_plugin_create',
+    'plugin_import_preview',
+    'plugin_get'
+  ]) {
+    const result = permissionPresentation(pending(tool, question, pluginInput))
+    expect(result.kind).toBeUndefined()
+    expect(result.sections.some((section) => section.pluginTools || section.files)).toBe(false)
+    expect(result.raw).toContain(question)
+  }
+  for (const [tool, title] of Object.entries(pluginTitles))
+    expect(toolDisplayName(tool)).toBe(title)
+})
+
+test('malformed plugin arguments cannot invent disabled state, name, revision or an empty manifest', () => {
+  for (const [action, args] of [
+    ['plugin_create', { manifest: { name: '不完整' } }],
+    ['plugin_set_enabled', { id: 'plugin-id', enabled: 'false' }],
+    ['plugin_test', { id: 'plugin-id', tool: 'report', args: [] }],
+    ['plugin_publish', { id: 'plugin-id', expectedRevision: 0 }]
+  ] as const) {
+    const result = permissionPresentation(pending(action, '审批原文', args))
+    expect(result.title).toBe(pluginTitles[action])
+    expect(result.summary).toBeUndefined()
+    expect(result.fields).toEqual([])
+    expect(result.sections).toEqual([])
+    expect(result.raw).toContain(JSON.stringify(args, null, 2))
+  }
+})
+
+test('plugin source and schemas remain complete, unknown extensions survive in raw, and inputs are not mutated', () => {
+  const source = Array.from({ length: 3000 }, (_, index) => `// 完整源码第 ${index} 行`).join('\n')
+  const input = {
+    ...pluginInput,
+    files: { 'main.mjs': source, 'empty.txt': '' },
+    futureMetadata: { complete: ['未知字段', 0, false] }
+  }
+  const item = pending('plugin_create', pluginPreview('plugin_create', input), {
+    manifest: pluginManifest,
+    files: input.files
+  })
+  const original = JSON.stringify(item)
+  const result = permissionPresentation(item)
+  expect(result.sections.find((section) => section.id === 'plugin-files')?.files).toEqual([
+    { path: 'main.mjs', content: source },
+    { path: 'empty.txt', content: '' }
+  ])
+  expect(result.raw).toBe(`${item.question}\n\n原始调用参数\n${JSON.stringify(item.args, null, 2)}`)
+  expect(result.raw).toContain('"futureMetadata":')
+  expect(JSON.stringify(item)).toBe(original)
+  const empty = { manifest: { ...pluginManifest, tools: [] }, files: {} }
+  const emptyResult = permissionPresentation(pending('plugin_create', '待确认配置', empty))
+  expect(emptyResult.sections.find((section) => section.id === 'plugin-tools')).toMatchObject({
+    text: '无工具',
+    pluginTools: []
+  })
+  expect(emptyResult.sections.find((section) => section.id === 'plugin-files')).toMatchObject({
+    text: '无文件',
+    files: []
+  })
 })

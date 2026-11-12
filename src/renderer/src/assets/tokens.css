@@ -232,6 +232,9 @@
   --danger-soft: rgba(241, 76, 76, 0.14);
   --ok-soft: rgba(50, 215, 75, 0.14);
   --warn-soft: rgba(255, 214, 10, 0.14);
+  /* 系统黄实底搭配中性深色文字，避免浅底上的黄色文字失去对比。 */
+  --warn-action-fg: #1c1c1e;
+  --warn-action-bg: #ffd60a;
   /* 压在 --danger 实底上的文字色：危险是安全色，不随强调色变 */
   --danger-contrast: #ffffff;
   /* 今日提交高亮色（对齐 wuzu-client） */
@@ -401,6 +404,8 @@
   --danger-soft: rgba(215, 0, 21, 0.08);
   --ok-soft: rgba(26, 127, 55, 0.1);
   --warn-soft: rgba(178, 80, 0, 0.1);
+  --warn-action-fg: #1c1c1e;
+  --warn-action-bg: #ffcc00;
   --danger-contrast: #ffffff;
   /* 今日提交高亮色（对齐 wuzu-client） */
   --today-commit-color: #4b95f1;

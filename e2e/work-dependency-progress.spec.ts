@@ -1,4 +1,5 @@
-/** Actual Work feedback components in isolated headless Chromium; no Electron, model or engine. */
+/** Actual Work feedback components in isolated headless Chromium, including
+ * long-running elapsed clocks at hour boundaries; no Electron, model or engine. */
 import { chromium, expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test'
 import { build } from 'esbuild'
 import { existsSync, readFileSync } from 'node:fs'
@@ -156,5 +157,25 @@ test.describe('Work dependency feedback DOM', () => {
     await expect(page.getByRole('status')).toHaveAccessibleName(new RegExp(long.groups[1].label))
     await expect(page.getByRole('status')).toHaveAttribute('title', new RegExp(long.groups[1].label))
     expect(await page.locator('#fixture').evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+  })
+  test('waiting feedback and pinned status keep seconds across hour boundaries without narrow overflow', async ({}, info) => {
+    const clockAt = new Date(2026, 10, 11, 12, 0, 0).getTime()
+    await page.clock.install({ time: clockAt - 1000 })
+    await page.clock.pauseAt(clockAt)
+    for (const footer of [false, true]) {
+      await page.clock.setSystemTime(clockAt)
+      await render({ footer, run: root({ status: 'waiting', startedAt: clockAt - 3_599_000 }), pending: [{ kind: 'permission' }] })
+      const elapsed = page.locator(footer ? '.work-run-status__elapsed' : '.work-turn-feedback__elapsed')
+      await expect(elapsed).toHaveText('59 分 59 秒')
+      await page.clock.runFor(1000)
+      await expect(elapsed).toHaveText('1 小时 0 分 0 秒')
+      await page.clock.fastForward(7_406_000)
+      await expect(elapsed).toHaveText('3 小时 3 分 26 秒')
+      await expect(page.getByRole('status')).toHaveText('待授权')
+      expect(await page.locator('#fixture').evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+      const path = info.outputPath(footer ? 'elapsed-hours-pinned.png' : 'elapsed-hours-feedback.png')
+      await page.screenshot({ path })
+      await info.attach(footer ? 'pinned elapsed time' : 'feedback elapsed time', { path, contentType: 'image/png' })
+    }
   })
 })

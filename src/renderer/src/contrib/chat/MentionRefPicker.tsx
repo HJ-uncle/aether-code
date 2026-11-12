@@ -9,8 +9,11 @@ import { agentReferenceIcon } from './agent-mention-icon'
 import { useToolkitCatalogue } from '@renderer/core/engine/toolkit-catalogue'
 import { FileGlyph } from '@renderer/contrib/explorer/FileGlyph'
 import { Icon } from '@renderer/workbench/icons'
+import { isPluginToolkitId } from '@shared/toolkits'
+import { ToolkitIcon } from './toolkit-icons'
 import { isMotionInteractive } from '@renderer/workbench/motion'
 import { isTopOverlay } from '@renderer/workbench/overlay'
+import { usePickerPointerSelection } from '@renderer/workbench/usePickerPointerSelection'
 import './mention-ref-picker.css'
 
 const NO_ATTACHMENTS: readonly AttachmentReference[] = []
@@ -35,7 +38,7 @@ export function MentionRefPicker({ root, query, open = true, showSearch = false,
   toolkitSessionId?: string
   toolkitAgentId?: string
   toolkitSelectionReady?: boolean
-  onSelectToolkit?: (id: string) => void
+  onSelectToolkit?: (id: string, name: string) => void
   onSelect: (mention: Mention) => void
   onClose: () => void
 }): JSX.Element {
@@ -43,6 +46,7 @@ export function MentionRefPicker({ root, query, open = true, showSearch = false,
   const [activeId, setActiveId] = useState<string | null>(null)
   const id = useId()
   const rootRef = useRef<HTMLDivElement>(null)
+  const pointerSelection = usePickerPointerSelection(open)
   const wasOpen = useRef(false)
   const keyword = showSearch ? search : query
   const agentAlias = agentMentionSearch(keyword)
@@ -57,11 +61,16 @@ export function MentionRefPicker({ root, query, open = true, showSearch = false,
   const agentOptions = useMemo<ReferenceOption[]>(() => agents.filtered
     .map(agent => ({ id: `agent:${agent.id}`, kind: 'agent', agent })), [agents.filtered])
   const toolkitOptions = useMemo<ReferenceOption[]>(() => !onSelectToolkit ? [] : toolkits.items
-    .filter(toolkit => `${toolkit.name} ${toolkit.description} ${toolkit.id} 工具包`.toLowerCase().includes(keyword.trim().toLowerCase()))
+    .filter(toolkit => `${toolkit.name} ${toolkit.description} ${toolkit.id} ${isPluginToolkitId(toolkit.id) ? '插件工具包' : '内置工具包'}`.toLowerCase().includes(keyword.replace(/[ \u00a0\u3000]+/g, ' ').trim().toLowerCase()))
     .map(toolkit => ({ id: `toolkit:${toolkit.id}`, kind: 'toolkit', toolkitId: toolkit.id, name: toolkit.name, description: toolkit.description,
       available: toolkit.available && toolkitSelectionReady, reason: toolkitSelectionReady ? toolkit.reason : '正在读取会话工具包选择…' })), [keyword, onSelectToolkit, toolkits.items, toolkitSelectionReady])
-  const options = useMemo(() => [...attachmentOptions, ...fileOptions, ...agentOptions, ...toolkitOptions],
-    [attachmentOptions, fileOptions, agentOptions, toolkitOptions])
+  const toolkitGroups = useMemo(() => [
+    { name: '内置工具包', items: toolkitOptions.filter(option => option.kind === 'toolkit' && !isPluginToolkitId(option.toolkitId)) },
+    { name: '插件工具包', items: toolkitOptions.filter(option => option.kind === 'toolkit' && isPluginToolkitId(option.toolkitId)) },
+  ].filter(group => group.items.length), [toolkitOptions])
+  // Keyboard traversal must follow the visible groups even if the engine interleaves sources.
+  const options = useMemo(() => [...attachmentOptions, ...fileOptions, ...agentOptions, ...toolkitGroups.flatMap(group => group.items)],
+    [attachmentOptions, fileOptions, agentOptions, toolkitGroups])
   const active = options.find(option => option.id === activeId) ?? options[0]
   const activeIndex = active ? options.indexOf(active) : -1
   const optionId = (option: ReferenceOption): string => `${id}-option-${encodeURIComponent(option.id)}`
@@ -88,7 +97,7 @@ export function MentionRefPicker({ root, query, open = true, showSearch = false,
     else if (option.kind === 'agent') {
       const agent = selectedAgentReference(option.agent)
       onSelect({ source: 'agent', path: agent.id, displayText: agent.name })
-    } else onSelectToolkit?.(option.toolkitId)
+    } else onSelectToolkit?.(option.toolkitId, option.name)
     onClose()
   }, [onSelect, onSelectToolkit, onClose])
 
@@ -101,6 +110,7 @@ export function MentionRefPicker({ root, query, open = true, showSearch = false,
       if (event.target instanceof Element && event.target.closest('[data-mention-list-control]')) return
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return }
       if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter', 'Tab'].includes(event.key)) return
+      pointerSelection.markKeyboard()
       event.preventDefault()
       event.stopPropagation()
       if (!options.length) return
@@ -111,13 +121,13 @@ export function MentionRefPicker({ root, query, open = true, showSearch = false,
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [open, options, active, activeIndex, select, onClose])
+  }, [open, options, active, activeIndex, select, onClose, pointerSelection.markKeyboard])
 
   const renderOption = (option: ReferenceOption): JSX.Element => {
     const selected = active?.id === option.id
     if (option.kind === 'attachment') return <AttachmentOption key={option.id} optionId={optionId(option)} tabIndex={-1}
       root={root} sessionId={sessionId} reference={option.reference} active={selected}
-      onActivate={() => setActiveId(option.id)} onSelect={() => select(option)} />
+      onActivate={event => { if (pointerSelection.canActivate(event)) setActiveId(option.id) }} onSelect={() => select(option)} />
     const isFile = option.kind === 'file'
     const name = isFile ? option.entry.path.split('/').pop() ?? option.entry.path : option.kind === 'agent' ? option.agent.name : option.name
     const description = isFile ? option.entry.path : option.kind === 'agent' ? option.agent.description || option.agent.id : option.reason || option.description
@@ -129,10 +139,13 @@ export function MentionRefPicker({ root, query, open = true, showSearch = false,
       data-toolkit-selected={option.kind === 'toolkit' ? enabled : undefined}
       title={`${name}\n${description}`}
       aria-label={enabled ? `${name}，已添加，${description}` : undefined}
-      onMouseDown={event => event.preventDefault()} onClick={() => select(option)} onMouseEnter={() => setActiveId(option.id)}>
+      onMouseDown={event => event.preventDefault()} onClick={() => select(option)}
+      onPointerEnter={event => { if (pointerSelection.canActivate(event)) setActiveId(option.id) }}
+      onPointerMove={event => { if (pointerSelection.canActivate(event)) setActiveId(option.id) }}>
       <span className="mention-ref-picker__icon" aria-hidden="true">{isFile
         ? option.entry.isDir ? <span className="file-palette__dir" /> : <FileGlyph name={name} size={16} />
-        : <Icon name={option.kind === 'agent' ? agentReferenceIcon(option.agent.id, option.agent.builtinRole) : 'settings'} size={16} />}</span>
+        : option.kind === 'agent' ? <Icon name={agentReferenceIcon(option.agent.id, option.agent.builtinRole)} size={16} />
+        : <ToolkitIcon id={option.toolkitId} />}</span>
       <span className="mention-ref-picker__copy"><strong>{name}</strong><small className={isFile ? 'file-palette__path' : undefined}>{description}</small></span>
       {enabled ? <span className="mention-ref-picker__check" aria-hidden="true"><Icon name="check" size={14} /></span> : null}
     </button>
@@ -160,9 +173,9 @@ export function MentionRefPicker({ root, query, open = true, showSearch = false,
         {agents.loading ? <div className="mention-ref-picker__empty" role="status">正在加载自定义 Agent…</div> : agents.error ?
           <div className="mention-ref-picker__empty" role="alert">{agents.error}<button type="button" data-mention-list-control className="mention-ref-picker__retry" onClick={agents.retry}>重试</button></div> : null}
       </div> : null}
-      {toolkitOptions.length ? <div role="group" aria-label="工具包" className="mention-ref-picker__group">
-        <div className="mention-ref-picker__heading" aria-hidden="true">工具包</div>{toolkitOptions.map(renderOption)}
-      </div> : null}
+      {toolkitGroups.map(group => <div key={group.name} role="group" aria-label={group.name} className="mention-ref-picker__group">
+        <div className="mention-ref-picker__heading" aria-hidden="true">{group.name}</div>{group.items.map(renderOption)}
+      </div>)}
       {!options.length && !loading && !files.error && !agents.error ? <div className="mention-ref-picker__empty">没有匹配的引用或工具包</div> : null}
     </div>
   </div>

@@ -1,7 +1,6 @@
 import { app, ipcMain, webContents } from 'electron'
 import { join } from 'node:path'
 import { WORK_QUEUE_IPC } from '../shared/work-next-turn-api'
-import { CODE_QUEUE_IPC } from '../shared/code-next-turn-api'
 import { NextTurnQueueStore } from './next-turn-queue-store'
 import { EngineQueueGateway } from './next-turn-engine-gateway'
 import { engineHost } from './engine/host'
@@ -11,7 +10,6 @@ import { BUNDLED_QUEUE_WORKER } from 'virtual:aether-queue-worker'
 import { NextTurnQueueError } from '../shared/next-turn-queue'
 
 let owner: ReturnType<typeof createWorkNextTurnOwner> | undefined
-let codeOwner: ReturnType<typeof createWorkNextTurnOwner> | undefined
 export function registerWorkNextTurnQueue(): void {
   if (owner) throw new Error('Work next-turn owner is already installed')
   const nativeOptIn = process.env.AETHER_NEXT_TURN_BACKEND === 'sqlite-worker-opt-in'
@@ -38,18 +36,5 @@ export function registerWorkNextTurnQueue(): void {
       }
     }
   })
-  codeOwner = createWorkNextTurnOwner({
-    gateway: new EngineQueueGateway(undefined, 'code'), store: createStore(),
-    engine: {
-      snapshot: () => engineHost.getSnapshot(), signal: () => engineHost.requestSignal,
-      subscribe: listener => { engineHost.on('snapshot', listener); return () => { engineHost.removeListener('snapshot', listener) } }
-    },
-    ipc: { handle: (channel, listener) => { ipcMain.handle(channel, listener) }, removeHandler: channel => { ipcMain.removeHandler(channel) } },
-    changed: (scope, revision) => {
-      for (const sender of webContents.getAllWebContents()) if (!sender.isDestroyed()) {
-        try { sender.send(CODE_QUEUE_IPC.changed, { scope, revision }) } catch (error) { console.error('[code-next-turn] renderer delivery failed:', error instanceof Error ? error.message : 'unknown') }
-      }
-    }
-  }, 'code')
 }
-export async function closeWorkNextTurnQueue(): Promise<void> { await Promise.all([owner?.close(), codeOwner?.close()]) }
+export async function closeWorkNextTurnQueue(): Promise<void> { await owner?.close() }

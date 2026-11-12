@@ -1,4 +1,5 @@
 import type { FinalResultItem } from '@shared/final-result'
+import { finalResultText } from './final-result-text'
 
 export const MAX_FINAL_RESULT_ASSET_BYTES = 32 * 1024 * 1024
 
@@ -49,6 +50,6 @@ export async function decodeFinalResultAsset(value: unknown, item: FinalResultIt
   if (!value.isBinary) {
     try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
     catch { throw new Error('交付物文本编码无效') }
-  }
+  } else text = finalResultText(bytes, item)
   return { bytes: bytes.buffer, base64, text, mimeType: item.mimeType }
 }

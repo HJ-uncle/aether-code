@@ -175,7 +175,7 @@ export function WorkSubagentTranscript({ source, parentSessionId, childSessionId
   const liveMessage = useMemo(() => memory.window ? workSubagentLiveMessage(liveRun, childSessionId, messages) : undefined, [memory.window, liveRun, childSessionId, messages])
   const window = memory.window
   return <section className="work-subagent-transcript" aria-label={`${name} 的对话`}>
-    {error ? <div className="work-subagent-transcript__error" role="alert"><span>{error}</span><button type="button" disabled={!ready || loading} onClick={() => schedule(true)} aria-label="重新读取子代理对话" title="重新读取"><Icon name="restart" size={14} /></button></div> : null}
+    {error ? <div className="work-subagent-transcript__error" role="alert"><span>{error}</span><button type="button" disabled={!ready || loading} onClick={() => schedule(true)} aria-label="重新读取子代理对话" title="重新读取"><Icon name="refresh" size={14} /></button></div> : null}
     <div className="work-subagent-transcript__scroll work-conversation__scroll" ref={scroller} onScroll={event => {
       const node = event.currentTarget
       if (memory.window) memory.scrollTop = node.scrollTop

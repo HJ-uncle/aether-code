@@ -65,7 +65,7 @@ export function AutomationRuns({ jobId, capabilities, onOpenRun }: {
   }
   return <section className="automation-runs" aria-label="自动化运行记录">
     <header className="automation-section-heading"><div><h3>运行记录</h3><p>暂停计划影响未来触发；停止只作用于选中的这一次运行。</p></div>
-      <button type="button" className="btn btn--sm" disabled={loading} onClick={() => void load()}><Icon name="restart" size={14} />刷新记录</button>
+      <button type="button" className="btn btn--sm" disabled={loading} onClick={() => void load()}><Icon name="refresh" size={14} />刷新记录</button>
     </header>
     {error ? <p className="automation-error" role="alert">{error}<button className="btn btn--sm" type="button" onClick={() => void load()}>重试</button></p> : null}
     {!runs.length && loading ? <p className="automation-loading" role="status"><Spinner size={16} />正在读取运行记录…</p> : !runs.length ? <div className="automation-empty"><Icon name="clock-outline" size={24} /><h3>还没有运行记录</h3><p>按计划触发后，这里会显示实际结果。</p></div> : <div className="automation-runs__list">

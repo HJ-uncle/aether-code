@@ -374,7 +374,7 @@ function SessionArtifacts({ sessionId, workspacePath: workspaceHint, ready, stre
           }} />
         </label>
         <button type="button" className="work-session-artifacts__refresh" aria-label="刷新" title="刷新文件记录与当前内容" disabled={!enabled || syncing} onClick={refreshSelectedFile}>
-          {syncing ? <Spinner size={13} /> : <Icon name="restart" size={13} />}
+          {syncing ? <Spinner size={13} /> : <Icon name="refresh" size={13} />}
         </button>
       </div>
     </div>

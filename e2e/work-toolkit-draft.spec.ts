@@ -41,3 +41,14 @@ test('removing one package preserves all other resolved inherited packages', () 
   expect(editDraftToolkits(inherited, selected, empty)).toEqual(['skill-management', 'automation'])
   expect(inherited).toEqual(['agent-management', 'skill-management', 'automation'])
 })
+
+test('MCP management edits preserve plugin management and versioned plugin choices', () => {
+  const mcp: Mention = { source: 'toolkit', path: 'mcp-management', displayText: 'MCP 管理', textOffset: 0 }
+  const draft = { text: mentionToken(mcp), mentions: [mcp] }
+  const inherited = ['plugin-management', 'plugin-document-reader--r3', 'automation']
+  expect(draftToolkitIds(draft)).toEqual(['mcp-management'])
+  expect(editDraftToolkits(inherited, empty, draft)).toEqual([...inherited, 'mcp-management'])
+  expect(editDraftToolkits([...inherited, 'mcp-management'], draft, empty)).toEqual(inherited)
+  expect(editDraftToolkits(inherited, empty, { ...draft, mentions: [] })).toEqual(inherited)
+  expect(() => editDraftToolkits(undefined, empty, draft)).toThrow('读取会话工具包')
+})

@@ -9,7 +9,7 @@ import { freezeAttachmentReferences } from '../src/renderer/src/contrib/chat/att
 test('queue merging and composer freezing agree on pasted text labels and independent file numbering', () => {
   const receipt = (id: string, name: string, mime: string): QueueAttachmentReceipt => ({
     kind: 'local-workspace', scope: { source: { mode: 'embedded', endpoint: '', accountId: null },
-      tenantId: 't', namespace: { id: 'n', generation: 'g' }, owner: 'code', taskId: 's' },
+      tenantId: 't', namespace: { id: 'n', generation: 'g' }, owner: 'work', taskId: 's' },
     attachmentId: id, referenceLabel: '附件9', path: `.ae/${id}`, name, mime, bytes: 25,
     receiptId: id, sha256: 'a'.repeat(64)
   })

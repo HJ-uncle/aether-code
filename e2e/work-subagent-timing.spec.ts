@@ -196,6 +196,7 @@ test('elapsed formatting remains compact through second, minute and hour boundar
   for (const [milliseconds, text] of [
     [0, '不足 1 秒'], [999, '不足 1 秒'], [1_000, '1 秒'], [59_999, '59 秒'],
     [60_000, '1 分'], [61_000, '1 分 1 秒'], [3_599_000, '59 分 59 秒'],
-    [3_600_000, '1 小时'], [3_661_000, '1 小时 1 分'], [90_000_000, '25 小时']
+    [3_600_000, '1 小时'], [3_601_000, '1 小时 1 秒'], [3_661_000, '1 小时 1 分 1 秒'],
+    [11_006_000, '3 小时 3 分 26 秒'], [90_000_000, '25 小时']
   ] as const) expect(formatSubagentElapsed(milliseconds)).toBe(text)
 })

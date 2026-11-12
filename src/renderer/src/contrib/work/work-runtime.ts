@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '@renderer/core/app-context'
 import { workTaskTitle } from './work-task-title'
+import { consumedWorkResourcePatch, workResourceSelection } from './work-resource-selection'
 import { useChat, type ChatAttachment, type ChatMessage, type SendOptions } from '@renderer/core/engine/useChat'
 import type { ArchivePageAction } from '@renderer/core/engine/archive-pages'
 import { useModels } from '@renderer/core/engine/model-store'
@@ -50,7 +51,8 @@ import { getAppMode } from '@renderer/core/platform/app-mode'
 import { replaceImageAttachmentReferences } from '../chat/image-attachment-reference'
 import { useWorkAgentIdentity } from './work-agent-identity'
 import { editDraftToolkits } from './work-toolkit-mentions'
-import { sameToolkits, parseSessionToolkits } from '@shared/toolkits'
+import { editResourceBindings, hasNonResourceContent, resourceBindingEdits, restoredResourcePatch, sameResourceBindings, type ResourceBindings, type ResourceDraft } from '../chat/resource-mentions'
+import { sameToolkits, parseSessionToolkits, withToolkitSelection } from '@shared/toolkits'
 import { rememberWorkWorkspace, validWorkWorkspacePath, workWorkspaceChoices } from './work-workspace-history'
 import { workWorkspacePathKey } from './work-workspace-history'
 import { planWorkWorkspaceTransfer, remapWorkWorkspaceDraft, workspaceTransferRelativePath } from './work-workspace-transfer'
@@ -73,6 +75,13 @@ import {
 
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
+
+function withDraftResourcePatch(resources: WorkResources | undefined, patch: Partial<WorkResources>): WorkResources | undefined {
+  const keys = (['skills', 'mcpServers', 'knowledgeBases'] as const).filter(key => patch[key] !== undefined)
+  if (!Object.keys(patch).length) return resources
+  return { skills: [], mcpServers: [], knowledgeBases: [], ...resources, ...patch,
+    resourceOverrides: [...new Set([...(resources?.resourceOverrides ?? []), ...keys])] }
+}
 
 export type WorkUserMessageAction = 'add' | 'retry' | 'edit' | 'revert' | 'delete'
 
@@ -367,15 +376,9 @@ export function useWorkController() {
       subagentModel: settings.subagentModelId || undefined,
       utilityModel: settings.utilityModelId || undefined,
       agentId: task.agentId || undefined,
-      // An empty task resource array means "no manual override". Sending it
-      // on every turn would be interpreted by the engine as an explicit
-      // whitelist and would silently erase the selected Agent's own bindings.
-      // The composer has no separate "disable all" state, so only non-empty
-      // selections become request-level overrides; Agent bindings remain the
-      // source of truth otherwise.
-      skills: task.resources?.skills?.filter(Boolean).length ? task.resources.skills : undefined,
-      mcpServers: task.resources?.mcpServers?.filter(Boolean).length ? task.resources.mcpServers : undefined,
-      knowledgeBases: task.resources?.knowledgeBases?.filter(Boolean).length ? task.resources.knowledgeBases : undefined,
+      skills: workResourceSelection(task.resources, 'skills'),
+      mcpServers: workResourceSelection(task.resources, 'mcpServers'),
+      knowledgeBases: workResourceSelection(task.resources, 'knowledgeBases'),
       toolkits: task.resources?.toolkits
       // The engine resolves global preferences and this session's override at
       // admission. A cached legacy scope must not overwrite those settings.
@@ -390,7 +393,8 @@ export function useWorkController() {
     const originalDraft = getWorkDraft(source, task.id), options = optionsFor(task), pendingAttachments = [...task.attachments]
     const sentAttachments = freezeAttachmentReferences(draftAttachments(pendingAttachments, task.sources, mentions))
     const queuedModel = nextModel?.source === source && nextModel.taskId === task.id ? nextModel.modelId : undefined
-    const resources = (ids: string[] | undefined): WorkQueueDraft['resources']['skills'] => ids?.length ? { kind: 'override', ids: [...ids] } : { kind: 'inherit' }
+    const resources = (ids: string[] | undefined): WorkQueueDraft['resources']['skills'] => ids === undefined ? { kind: 'inherit' }
+      : ids.length ? { kind: 'override', ids: [...ids] } : { kind: 'none' }
     const chosen = queuedModel === undefined ? options.model : canonicalModelId(queuedModel)
     const submission: WorkQueueDraft = {
       draft: queuedDraft(text, mentions, draftRevision),
@@ -405,9 +409,11 @@ export function useWorkController() {
     await nextTurnQueue.enqueue(submission)
     if (epoch !== getEngineSource()) return
     // An ACK belongs to the captured draft. Later typing, navigation and new uploads win over cleanup.
-    if (getWorkDraft(source, task.id) === originalDraft) updateWorkDraft(source, task.id, '', [])
+    const clearDraft = getWorkDraft(source, task.id) === originalDraft
     updateWorkState(source, previous => ({ ...previous, tasks: previous.tasks.map(item => item.id === task.id
-      ? { ...item, attachments: item.attachments.filter(file => !pendingAttachments.some(sent => sent.path === file.path)), updatedAt: Date.now() } : item) }))
+      ? { ...item, ...(clearDraft ? { draft: '', mentions: [],
+        resources: withDraftResourcePatch(item.resources, consumedWorkResourcePatch(item.resources, originalDraft, options)) } : {}),
+        attachments: item.attachments.filter(file => !pendingAttachments.some(sent => sent.path === file.path)), updatedAt: Date.now() } : item) }))
   }
 
   const sendTask = useCallback(
@@ -420,6 +426,7 @@ export function useWorkController() {
       // must not turn into a cross-task or cross-turn composer lock.
       if (getWorkState(source).activeTaskId !== task.id || hasSessionWork(task.id) || restartBlockingRef.current ||
         deletingTaskKeysRef.current.has(`${source}\0${task.id}`)) return
+      const originalDraft = getWorkDraft(source, task.id)
       setError(null)
       // Authenticated Work sessions start on a private scratch root until an
       // explicitly selected project is bound. Do that before the first turn so
@@ -454,10 +461,12 @@ export function useWorkController() {
         const prepared = buildWorkAgentMessage(text, mentions)
         const delegation = collaborators ?? prepared.collaborators
         const sendOptions = optionsFor({ ...task, attachments: sentAttachments })
-        // Clear the input box the moment the request is dispatched (not after the
-        // stream finishes). Attachments/mentions are captured in sendOptions first,
-        // so wiping the live store does not drop them from the outgoing request.
-        if (!preserveDraft) {
+        const onAdmitted = (): void => {
+          submission.admitted = true
+          // A rejected request keeps its complete draft. Admission consumes only
+          // the captured message; later edits and selections belong to the user.
+          if (preserveDraft || epoch !== getEngineSource() || getWorkState(source).activeTaskId !== task.id ||
+            getWorkDraft(source, task.id) !== originalDraft) return
           updateWorkState(source, (previous) => ({
             ...previous,
             tasks: previous.tasks.map((item) =>
@@ -466,6 +475,7 @@ export function useWorkController() {
                     ...item,
                     draft: '',
                     mentions: [],
+                    resources: withDraftResourcePatch(item.resources, consumedWorkResourcePatch(item.resources, { text, mentions }, sendOptions)),
                     attachments: item.attachments.filter(
                       (file) => !submission.attachments.some((sent) => sent.path === file.path)
                     ),
@@ -478,7 +488,7 @@ export function useWorkController() {
         await chatSend(prepared.message, {
           ...sendOptions,
           ...(delegation.length ? { collaborators: delegation } : {})
-        })
+        }, onAdmitted)
         if (epoch !== getEngineSource()) return
         // A follow-up from the Agent panel is independent of an unsent composer
         // draft. Its attachments and mention offsets must stay untouched.
@@ -487,7 +497,7 @@ export function useWorkController() {
           ...previous,
           tasks: previous.tasks.map((item) => {
             if (item.id !== task.id) return item
-            // Draft/attachments were already cleared on dispatch; here we only fold
+            // Draft/attachments were already cleared on admission; here we only fold
             // the sent attachments into sources and refresh the title. Any text the
             // user typed while the request was in flight is preserved as-is.
             const combined = [...item.sources, ...sentAttachments]
@@ -558,8 +568,14 @@ export function useWorkController() {
   const defaultWorkspacePathRef = useRef(defaultWorkspacePath)
   defaultWorkspacePathRef.current = defaultWorkspacePath
   const workspaceSelectionBusy = Boolean(workspaceSelection && workspaceSelection.source === source && workspaceSelection.epoch === epoch)
+  const draftHasWorkspaceReferences = Boolean(
+    (activeTask?.attachments ?? state.homeAttachments).length ||
+    (activeTask?.sources ?? state.homeSources).length ||
+    getWorkDraft(source, activeId).mentions.some(mention => Boolean(mention.path))
+  )
   const workspaceSelectionReason = uploadCount > 0 ? '资料正在上传，完成后可切换工作区。'
     : activeTask && (workspaceLocked || hasSessionWork(activeTask.id)) ? '任务已开始，工作目录保持固定。'
+      : draftHasWorkspaceReferences ? '移除草稿中的资料或文件引用后可切换工作区。'
       : activeTask && !restored ? '正在读取会话，完成后可切换工作区。' : null
   const streaming = Boolean((restored || previewReady) && chat.streaming)
   const recoveryEntries = nextTurnQueue.state?.scope.taskId === activeId
@@ -677,9 +693,11 @@ export function useWorkController() {
     ) {
       if (last.status === 'error' && task && !sent.preserveDraft) {
         const draft = getWorkDraft(source, observedId)
+        const recovered = !hasNonResourceContent(draft) ? restoreMessageDraft(draft, { text: sent.text, mentions: sent.mentions }) : null
         const attachments = [...task.attachments, ...sent.attachments]
         updateTask(observedId, {
-          ...(!draft.text ? { draft: sent.text, mentions: [...sent.mentions] } : {}),
+          ...(recovered ? { draft: recovered.text, mentions: recovered.mentions,
+            resources: withDraftResourcePatch(task.resources, restoredResourcePatch(task.resources ?? {}, recovered)) } : {}),
           attachments: attachments.filter(
             (item, index) => attachments.findIndex((other) => other.path === item.path) === index
           )
@@ -729,7 +747,7 @@ export function useWorkController() {
         resources: fromHome ? current.homeResources : { skills: [], mcpServers: [], knowledgeBases: [], toolkits: [] },
         archived: false
       }
-      if (fromHome && (draft.trim() || task.attachments.length))
+      if (fromHome && (hasNonResourceContent({ text: draft, mentions }) || draftAttachments(task.attachments, task.sources, mentions).length))
         pendingStart.current = { source, id, text: draft, mentions }
       updateWorkState(source, (previous) => ({
         ...previous,
@@ -891,12 +909,34 @@ export function useWorkController() {
     setError(null)
     updateWorkState(source, (previous) => ({ ...previous, activeTaskId: null }))
   }, [source])
+  const preparePluginTask = useCallback((): void => {
+    assertEngineSource(epoch)
+    const draft = appendWorkMentions(getWorkDraft(source, null), [{ source: 'toolkit', path: 'plugin-management', displayText: '插件管理' }])
+    updateWorkDraft(source, null, `${draft.text}\n请帮我创建一个自定义插件：\n`, draft.mentions)
+    updateWorkState(source, previous => ({ ...previous, activeTaskId: null, homeResources: {
+      ...previous.homeResources, toolkits: [...new Set([...(previous.homeResources.toolkits ?? []), 'plugin-management'])]
+    } }))
+    setDraftFocusRequest(previous => ({ source, taskId: null, token: (previous?.token ?? 0) + 1 }))
+  }, [source, epoch])
   const setDraft = useCallback(
     (draft: string, mentions: Mention[] = []): void => {
       updateWorkDraft(source, activeId, draft, mentions)
     },
     [activeId, source]
   )
+  const updateDraftResources = useCallback((draft: ResourceDraft, restore = false, sentSelection?: Partial<ResourceBindings>): void => {
+    if (epoch !== getEngineSource()) return
+    updateWorkState(source, previous => {
+      const task = activeId ? previous.tasks.find(item => item.id === activeId) : undefined
+      if (activeId && !task) return previous
+      const current = task ? task.resources : previous.homeResources
+      const patch = restore ? restoredResourcePatch(current ?? {}, draft) : consumedWorkResourcePatch(current, draft, sentSelection)
+      const resources = withDraftResourcePatch(current, patch)
+      if (resources === current) return previous
+      return task ? { ...previous, tasks: previous.tasks.map(item => item.id === task.id ? { ...item, resources } : item) }
+        : { ...previous, homeResources: resources ?? previous.homeResources }
+    })
+  }, [activeId, source, epoch])
   const editDraft = useCallback((text: string, mentions: Mention[]): boolean => {
     if (epoch !== getEngineSource()) return false
     const before = getWorkDraft(source, activeId)
@@ -905,16 +945,23 @@ export function useWorkController() {
     let selection: string[] | undefined
     try { selection = editDraftToolkits(currentResources?.toolkits, before, { text, mentions }) }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); retryToolkitSelection(); return false }
+    const bindingSelection = editResourceBindings(currentResources, before, { text, mentions })
+    const bindingEdits = resourceBindingEdits(before, { text, mentions })
     updateWorkDraft(source, activeId, text, mentions)
     // Ordinary typing keeps the existing debounced draft persistence.
-    if ((selection === undefined) === (currentResources?.toolkits === undefined) && sameToolkits(selection, currentResources?.toolkits)) return true
+    if ((selection === undefined) === (currentResources?.toolkits === undefined) && sameToolkits(selection, currentResources?.toolkits) && sameResourceBindings(currentResources, bindingSelection) &&
+      bindingEdits.every(key => currentResources?.resourceOverrides?.includes(key))) return true
     updateWorkState(source, previous => {
       const task = activeId ? previous.tasks.find(item => item.id === activeId) : undefined
       if (activeId && !task) return previous
       const resources = task ? task.resources : previous.homeResources
       const toolkits = editDraftToolkits(resources?.toolkits, before, { text, mentions })
-      if ((toolkits === undefined) === (resources?.toolkits === undefined) && sameToolkits(toolkits, resources?.toolkits)) return previous
-      const next = { skills: [], mcpServers: [], knowledgeBases: [], ...resources, toolkits }
+      const bindings = editResourceBindings(resources, before, { text, mentions })
+      if ((toolkits === undefined) === (resources?.toolkits === undefined) && sameToolkits(toolkits, resources?.toolkits) && sameResourceBindings(resources, bindings) &&
+        bindingEdits.every(key => resources?.resourceOverrides?.includes(key))) return previous
+      const next = { ...resources, ...bindings, toolkits,
+        ...(resources?.knowledgeBaseMentionsConsumed ? { knowledgeBaseMentionsConsumed: resources.knowledgeBaseMentionsConsumed.filter(id => bindings.knowledgeBases.includes(id)) } : {}),
+        ...(bindingEdits.length ? { resourceOverrides: [...new Set([...(resources?.resourceOverrides ?? []), ...bindingEdits])] } : {}) }
       return task ? { ...previous, tasks: previous.tasks.map(item => item.id === task.id ? { ...item, resources: next } : item) }
         : { ...previous, homeResources: next }
     })
@@ -972,7 +1019,7 @@ export function useWorkController() {
       const current = task ? task.resources ?? { skills: [], mcpServers: [], knowledgeBases: [] } : previous.homeResources
       if (kind === 'toolkit' && current.toolkits === undefined) return previous
       changed = true
-      const next = { ...current, [key]: current[key]?.includes(id) ? current[key] : [...(current[key] ?? []), id] }
+      const next = { ...current, [key]: kind === 'toolkit' ? withToolkitSelection(current.toolkits ?? [], id) : current[key]?.includes(id) ? current[key] : [...(current[key] ?? []), id] }
       return task ? { ...previous, tasks: previous.tasks.map(item => item.id === task.id ? { ...item, resources: next } : item) }
         : { ...previous, homeResources: next }
     })
@@ -984,11 +1031,14 @@ export function useWorkController() {
     const key = kind === 'skill' ? 'skills' : kind === 'mcp' ? 'mcpServers' : kind === 'toolkit' ? 'toolkits' : 'knowledgeBases'
     const update = (current: WorkResources) => {
       if (kind === 'toolkit' && current.toolkits === undefined) { setError('正在读取会话工具包选择，请稍后再修改工具包。'); return current }
-      return { ...current, [key]: (current[key] ?? []).filter(item => item !== id) }
+      return { ...current, [key]: (current[key] ?? []).filter(item => item !== id),
+        ...(kind === 'kb' ? { knowledgeBaseMentionsConsumed: current.knowledgeBaseMentionsConsumed?.filter(item => item !== id),
+          resourceOverrides: [...new Set([...(current.resourceOverrides ?? []), 'knowledgeBases' as const])] } : {}) }
     }
-    if (activeId) updateTask(activeId, { resources: update(activeTask?.resources ?? { skills: [], mcpServers: [], knowledgeBases: [] }) })
-    else updateWorkState(source, previous => ({ ...previous, homeResources: update(previous.homeResources) }))
-  }, [activeId, activeTask?.resources, source, updateTask, epoch])
+    updateWorkState(source, previous => activeId ? { ...previous, tasks: previous.tasks.map(task => task.id === activeId
+      ? { ...task, resources: update(task.resources ?? { skills: [], mcpServers: [], knowledgeBases: [] }) } : task) }
+      : { ...previous, homeResources: update(previous.homeResources) })
+  }, [activeId, source, epoch])
   const send = useCallback(
     async (text?: string, mentions: Mention[] = []): Promise<void> => {
       flushWorkDrafts(source)
@@ -1004,7 +1054,7 @@ export function useWorkController() {
       const currentTask = getWorkState(source).tasks.find(task => task.id === activeTask.id)
       if (!currentTask) return
       const draft = text ?? currentTask.draft
-      if (!draft.trim() && !currentTask.attachments.length) return
+      if (!hasNonResourceContent({ text: draft, mentions: mentions.length ? mentions : currentTask.mentions ?? [] }) && !draftAttachments(currentTask.attachments, currentTask.sources, mentions.length ? mentions : currentTask.mentions ?? []).length) return
       await sendTask(currentTask, draft, mentions.length ? mentions : currentTask.mentions ?? [])
     },
     [
@@ -1058,7 +1108,8 @@ export function useWorkController() {
     updateWorkDraft(source, taskId, draft.text, draft.mentions)
     updateWorkState(source, previous => ({ ...previous, tasks: previous.tasks.map(task => {
       if (task.id !== taskId) return task
-      return { ...task, ...restoreWorkAttachments(task.attachments, task.sources, original.attachments, original.mentions) }
+      return { ...task, ...restoreWorkAttachments(task.attachments, task.sources, original.attachments, original.mentions),
+        resources: withDraftResourcePatch(task.resources, restoredResourcePatch(task.resources ?? {}, draft)) }
     }) }))
     setDraftFocusRequest(previous => ({ source, taskId, token: (previous?.token ?? 0) + 1 }))
   }, [activeId, epoch, source, hasSessionWork, messages, restartPending])
@@ -1077,7 +1128,8 @@ export function useWorkController() {
       updateWorkDraft(source, taskId, merged.text, merged.mentions)
       updateWorkState(source, previous => ({ ...previous, tasks: previous.tasks.map(item => {
         if (item.id !== taskId) return item
-        return { ...item, ...restoreWorkAttachments(item.attachments, item.sources, message.attachments ?? [], draft.mentions) }
+        return { ...item, ...restoreWorkAttachments(item.attachments, item.sources, message.attachments ?? [], draft.mentions),
+          resources: withDraftResourcePatch(item.resources, restoredResourcePatch(item.resources ?? {}, merged)) }
       }) }))
       setDraftFocusRequest(previous => ({ source, taskId, token: (previous?.token ?? 0) + 1 }))
     }
@@ -1099,7 +1151,8 @@ export function useWorkController() {
     try {
       if (action === 'retry') {
         const prepared = buildWorkAgentMessage(draft.text, draft.mentions)
-        await chat.retryFrom(message, { ...optionsFor(task), attachments: message.attachments,
+        const retryTask = { ...task, resources: withDraftResourcePatch(task.resources, restoredResourcePatch(task.resources ?? {}, draft)) }
+        await chat.retryFrom(message, { ...optionsFor(retryTask), attachments: message.attachments,
           ...(prepared.collaborators.length ? { collaborators: prepared.collaborators } : {}) }, resetHistoryStatus)
       } else if (action === 'delete') {
         await chat.deleteTurn(taskId, message, resetHistoryStatus)
@@ -1327,6 +1380,8 @@ export function useWorkController() {
     const originalRoot = originalPath ?? (remote ? settings.remoteWorkspaceRoot.trim() || null : null)
     let previousBinding: string | undefined
     let rebound = false
+    let rollbackFailed = false
+    let destinationSession = originalSession ?? ''
     const assertCurrent = (): void => {
       assertEngineSource(epoch)
       if (source !== getEngineStorageKey() || selectedViewRef.current !== selectedView) throw new Error('当前任务已变化，请重新选择工作区。')
@@ -1337,6 +1392,7 @@ export function useWorkController() {
       if (latest.activeTaskId !== activeId || activeId && !task || (task ? task.workspacePath : latest.homeWorkspacePath) !== originalPath
         || (!activeId && latest.homeSessionId !== originalSession)) throw new Error('当前工作区已变化，请重新选择。')
       if (uploadCountRef.current) throw new Error('资料正在上传，工作目录保持不变。')
+      if (draftHasWorkspaceReferences) throw new Error('移除草稿中的资料或文件引用后可切换工作区。')
       if (task && (task.agentLocked || task.activity || messages.length || task.status !== 'draft' || hasSessionWork(task.id) || workspaceSendRef.current.has(JSON.stringify([source, epoch, task.id])) ||
         pendingStart.current?.source === source && pendingStart.current.id === task.id)) throw new Error('任务已开始，工作目录保持固定。请新建任务以使用另一个目录。')
       if (task && !isHistoryReady(task.id)) throw new Error('正在读取会话，请稍后切换工作区。')
@@ -1358,17 +1414,23 @@ export function useWorkController() {
       setWorkspaceSelection(operation)
       // Stage through a separate session so an interrupted copy never changes
       // the original draft's binding. Only one file's bytes are held at a time.
-      const destinationSession = (activeId ? 'work-transfer-' : 'work-home-') + crypto.randomUUID()
       const hasFiles = originalAttachments.length || originalSources.length ||
         originalDraft.mentions.some(mention => mention.path && ['file', 'dir', 'code', 'terminal'].includes(mention.source))
       if (!originalSession && hasFiles) throw new Error('资料所属任务尚未准备好，请稍后重试。')
-      const previousContext = originalSession && (remote && activeId || hasFiles && (remote || !originalRoot))
+      // A home draft without attachments already has a stable session target.
+      // Rebinding that target keeps late responses and binding receipts attached
+      // to the same task; a transfer session is only needed when bytes must move.
+      destinationSession = !activeId && !hasFiles && originalSession && root !== null
+        ? originalSession
+        : (activeId ? 'work-transfer-' : 'work-home-') + crypto.randomUUID()
+      const previousContext = originalSession && (!activeId || remote && activeId || hasFiles && (remote || !originalRoot))
         ? await sessionWorkspaceContext(originalSession) : undefined
       assertCurrent()
       previousBinding = previousContext?.root
       const sourceRoot = previousContext?.root ?? originalRoot ?? ''
       if (!remote && originalRoot && hasFiles) await allowRoot(originalRoot)
       let canonicalRoot = root
+      if (!activeId && destinationSession === originalSession && (previousBinding || originalRoot)) rebound = true
       if (remote && root) {
         const context = await bindSessionWorkspace(destinationSession, root)
         canonicalRoot = context.root
@@ -1435,9 +1497,19 @@ export function useWorkController() {
       return true
     } catch (cause) {
       let failure = messageOf(cause)
-      if (rebound && previousBinding && originalSession && epoch === getEngineSource()) {
-        try { await bindSessionWorkspace(originalSession, previousBinding) }
-        catch { failure += ' 原工作区连接暂时无法恢复，请恢复连接后重试；草稿与原文件仍保留。' }
+      const rollbackRoot = previousBinding ?? originalRoot
+      if (rebound && rollbackRoot && originalSession && epoch === getEngineSource()) {
+        try { await bindSessionWorkspace(originalSession, rollbackRoot) }
+        catch { rollbackFailed = true; failure += ' 原工作区连接暂时无法恢复，请恢复连接后重试；草稿与原文件仍保留。' }
+      }
+      if (!activeId && originalRoot === null && destinationSession === originalSession && rollbackFailed && epoch === getEngineSource() && source === getEngineStorageKey()) {
+        // A home draft with no configured default directory must remain
+        // usable even when the old session's binding cannot be restored.
+        // Move only the session identity; preserve the user's draft text.
+        const safeSession = `work-home-${crypto.randomUUID()}`
+        saveSessionThinkingMode(safeSession, thinkingMode, source)
+        updateWorkState(source, previous => ({ ...previous, homeSessionId: safeSession, homeWorkspacePath: null,
+          homeAttachments: [], homeSources: [], homeMentions: [] }))
       }
       if (epoch === getEngineSource() && source === getEngineStorageKey() && getWorkState(source).activeTaskId === activeId) setError(failure)
       return false
@@ -1445,7 +1517,7 @@ export function useWorkController() {
       if (workspaceSelectionRef.current === operation) workspaceSelectionRef.current = null
       setWorkspaceSelection(previous => previous === operation ? null : previous)
     }
-  }, [source, epoch, activeId, selectedView, settings.remoteWorkspaceRoot, thinkingMode, hasSessionWork, isHistoryReady, messages.length])
+  }, [source, epoch, activeId, selectedView, settings.remoteWorkspaceRoot, thinkingMode, hasSessionWork, isHistoryReady, messages.length, draftHasWorkspaceReferences])
 
   const clearWorkspace = useCallback((): Promise<boolean> => selectWorkspace(null), [selectWorkspace])
 
@@ -1632,6 +1704,22 @@ export function useWorkController() {
     return draftAttachments(task?.attachments ?? current.homeAttachments, task?.sources ?? current.homeSources, mentions)
   }, [source, activeId])
 
+  const inlinePendingFiles = useCallback((insert: (file: ChatAttachment) => boolean): void => {
+    if (epoch !== getEngineSource() || selectedViewRef.current !== selectedView || getWorkState(source).activeTaskId !== activeId) return
+    const current = getWorkState(source)
+    const files = (activeId ? current.tasks.find(task => task.id === activeId)?.attachments ?? [] : current.homeAttachments)
+      .filter(file => !file.type.startsWith('image/') && !file.inlineReference)
+    if (!files.length) return
+    const ids = new Set(files.filter(file => insert(file)).map(attachmentIdentity))
+    if (!ids.size) return
+    const mark = (attachments: ChatAttachment[]): ChatAttachment[] => attachments.map(file =>
+      ids.has(attachmentIdentity(file)) ? { ...file, inlineReference: true } : file)
+    // Keep receipts after deleting a tag so undo and @ can reselect the same upload.
+    updateWorkState(source, previous => activeId
+      ? { ...previous, tasks: previous.tasks.map(task => task.id === activeId ? { ...task, attachments: mark(task.attachments) } : task) }
+      : { ...previous, homeAttachments: mark(previous.homeAttachments) })
+  }, [source, activeId, epoch, selectedView])
+
   const removeAttachment = useCallback(
     (path: string): void => {
       updateWorkState(source, (previous) =>
@@ -1718,6 +1806,9 @@ export function useWorkController() {
     resources,
     retryToolkitSelection,
     editDraft,
+    consumeDraftResources: (draft: ResourceDraft, sentSelection: Partial<ResourceBindings>) => updateDraftResources(draft, false, sentSelection),
+    restoreDraftResources: (draft: ResourceDraft) => updateDraftResources(draft, true),
+    preparePluginTask,
     securitySessionId,
     thinkingMode,
     setThinkingMode,
@@ -1805,6 +1896,7 @@ export function useWorkController() {
     addImage,
     addPastedText,
     attachmentsForMentions,
+    inlinePendingFiles,
     addMentions,
     addWorkspaceReferences,
     addConversationReference,

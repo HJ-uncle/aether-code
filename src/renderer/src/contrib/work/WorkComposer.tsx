@@ -44,10 +44,14 @@ import { resolveConversationReference } from './work-conversation-reference'
 import { useImageConversation } from '../chat/image-conversation'
 import { ipcErrorMessage } from '@renderer/core/ipc-error'
 import { AttachmentStrip } from '../chat/AttachmentStrip'
-import { attachmentIdentity, attachmentReferences } from '../chat/attachment-references'
+import { attachmentIdentity, attachmentMention, attachmentReferences, referencesAttachment } from '../chat/attachment-references'
+import { mergeWorkAttachments } from './work-attachments'
 import { sameToolkits, toolkitName } from '@shared/toolkits'
 import { appendWorkMentions } from './work-reference-draft'
 import { draftToolkitIds } from './work-toolkit-mentions'
+import { draftResourceBindings, hasNonResourceContent, resourceMention, sameResourceBindings } from '../chat/resource-mentions'
+import { useResourceMentions } from '../chat/useResourceMentions'
+import { workResourceFollowupChanges, workResourceSelection } from './work-resource-selection'
 
 type WorkController = ReturnType<typeof useWorkController>
 
@@ -71,10 +75,12 @@ export function WorkComposer({
   const userDraftRef = useRef<WorkDraft | null>(null)
   const restoredToolkitDraftScopes = useRef(new Set<string>())
   const mentionsRef = useRef<Mention[]>(draftState.mentions)
+  const [mentionRevision, refreshMentionLabels] = useState(0)
   mentionsRef.current = draftState.mentions
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
   const [resourceQuery, setResourceQuery] = useState<string | null>(null)
   const [polishing, setPolishing] = useState(false)
+  const [sendingDraft, setSendingDraft] = useState(false)
   const [agentsOpen, setAgentsOpen] = useState(false)
   const previewScope = JSON.stringify([getEngineSource(), controller.activeTask?.id ?? 'home', controller.workspacePath])
   // Pending local uploads are written directly into the selected project;
@@ -87,13 +93,15 @@ export function WorkComposer({
   const polishEpoch = useRef(0)
   const appMode = useAppMode()
   const draft = draftState.text
+  const hasPrompt = hasNonResourceContent(draftState)
   const referencedAttachments = controller.attachmentsForMentions(draftState.mentions)
-  const currentAttachmentReferences = attachmentReferences(referencedAttachments)
+  const currentAttachmentReferences = attachmentReferences(mergeWorkAttachments(controller.attachments, referencedAttachments))
   // Applying image edits preserves identity; its historical path remains a
   // valid inline reference but must not become another pending upload card.
   const pendingAttachmentReferences = currentAttachmentReferences.filter(reference =>
     controller.attachments.some(file => attachmentIdentity(file) === reference.id &&
       file.path.replace(/\\/g, '/') === reference.file.path.replace(/\\/g, '/')))
+  const imageAttachmentReferences = pendingAttachmentReferences.filter(reference => reference.file.type.startsWith('image/'))
   const draftLiveRef = useRef(draft)
   const taskLiveRef = useRef(controller.activeTask?.id ?? 'home')
   const draftRevisionRef = useRef(0)
@@ -107,6 +115,11 @@ export function WorkComposer({
   const toolkitChangePending = Boolean(taskActive && controller.resources.toolkits !== undefined &&
     !sameToolkits(selectedToolkits, controller.currentRun?.requestConfig?.toolkits))
   const toolkitLimitation = toolkitChangePending ? '工具包变更将在下一轮生效，请选择排到下一轮。' : ''
+  const resourceChangePending = taskActive && workResourceFollowupChanges({
+    skills: workResourceSelection(controller.resources, 'skills'),
+    mcpServers: workResourceSelection(controller.resources, 'mcpServers'),
+    knowledgeBases: workResourceSelection(controller.resources, 'knowledgeBases')
+  }, controller.currentRun?.requestConfig)
   useEffect(() => {
     if (mentionQuery !== null && controller.resources.toolkits === undefined) controller.retryToolkitSelection()
   }, [mentionQuery !== null, controller.activeTask?.id, controller.draftSource, controller.retryToolkitSelection])
@@ -147,13 +160,16 @@ export function WorkComposer({
     const sessionId = controller.activeTask?.id
     if (!sessionId) return
     const source = getEngineSource(), original = getWorkDraft(controller.draftSource, sessionId), revision = draftRevisionRef.current
+    const sentResources = controller.resources
     let sameDraft = false
-    try { sameDraft = rootFollowupMessage(original.text, original.mentions, controller.attachmentsForMentions(original.mentions)) === sentMessage } catch { /* Keep later attachment edits. */ }
+    try { sameDraft = rootFollowupMessage(original.text, original.mentions, controller.attachmentsForMentions(original.mentions), resourceChangePending) === sentMessage } catch { /* Keep later attachment edits. */ }
     flushWorkDrafts(controller.draftSource)
     void operation().then(accepted => {
       if (!accepted || !sameDraft || source !== getEngineSource() || taskLiveRef.current !== sessionId || draftRevisionRef.current !== revision
         || getWorkDraft(controller.draftSource, sessionId) !== original) return
-      controller.setDraft('', []); inputRef.current?.clear(); mentionsRef.current = []; draftLiveRef.current = ''
+      controller.consumeDraftResources(original, sentResources)
+      controller.setDraft('', []); inputRef.current?.setDraft('', [])
+      mentionsRef.current = []; draftLiveRef.current = ''
       flushWorkDrafts(controller.draftSource)
     })
   }
@@ -162,20 +178,21 @@ export function WorkComposer({
     if (addingFilesRef.current || rootFollowup.busy || rootFollowup.pending || controller.stopping) return
     if (immediateIntent) {
       if (toolkitChangePending) { toast.info(toolkitLimitation); return }
-      if (mentionQuery !== null || resourceQuery !== null || !draft.trim() || !controller.ready || controller.uploading || controller.loading || !controller.historyReady || !rootFollowupCanSubmit(rootAccepting, rootFollowup.capability)) return
+      if (mentionQuery !== null || resourceQuery !== null || !hasPrompt || !controller.ready || controller.uploading || controller.loading || !controller.historyReady || !rootFollowupCanSubmit(rootAccepting, rootFollowup.capability)) return
       let message: string
-      try { message = rootFollowupMessage(draft, mentionsRef.current, controller.attachmentsForMentions(mentionsRef.current)) }
+      try { message = rootFollowupMessage(draft, mentionsRef.current, controller.attachmentsForMentions(mentionsRef.current), resourceChangePending) }
       catch (cause) { reportError(cause); return }
       resolveRootFollowup(() => rootFollowup.send(message), message)
       return
     }
-    if (mentionQuery !== null || resourceQuery !== null || (!draft.trim() && !controller.attachments.length) || !controller.ready || (queueIntent ? queueBusy : taskActive || busy)) return
+    if (mentionQuery !== null || resourceQuery !== null || (!hasPrompt && !referencedAttachments.length) || !controller.ready || (queueIntent ? queueBusy : taskActive || busy)) return
     flushWorkDrafts(controller.draftSource)
+    setSendingDraft(true)
     void (
       queueIntent ? controller.enqueueNextTurn(draft, mentionsRef.current, draftRevisionRef.current) : home
         ? controller.createTask(draft, mentionsRef.current)
         : controller.send(draft, mentionsRef.current)
-    ).catch(reportError)
+    ).catch(reportError).finally(() => setSendingDraft(false))
   }
   useEffect(() => {
     mentionsRef.current = controller.mentions
@@ -200,6 +217,20 @@ export function WorkComposer({
     userDraftRef.current = null
     inputRef.current?.setDraft(draftState.text, draftState.mentions)
   }, [draftState])
+  useEffect(() => {
+    if (!inputRef.current || controller.workspaceSelectionBusy) return
+    controller.inlinePendingFiles(file => {
+      const reference = attachmentReferences([file])[0]
+      return mentionsRef.current.some(mention => referencesAttachment(mention, reference)) ||
+        inputRef.current?.insertMention(attachmentMention(reference)) === true
+    })
+  }, [controller.attachments, controller.inlinePendingFiles, controller.workspaceSelectionBusy, draftState, mentionRevision])
+  useResourceMentions({ scope: JSON.stringify([controller.draftSource, controller.activeTask?.id ?? null]),
+    active: appMode === 'work' && !controller.workspaceSelectionBusy && !controller.loading && !sendingDraft && !controller.launching &&
+      !controller.pendingInitialStart && !controller.nextTurnQueue.saving && !rootFollowup.busy && (home || controller.historyReady),
+    projectPath: controller.workspacePath ?? undefined, bindings: controller.resources,
+    consumedKnowledgeBases: controller.resources.knowledgeBaseMentionsConsumed,
+    mentions: draftState.mentions, insert: mention => inputRef.current?.insertMention(mention) === true })
   useEffect(() => {
     const request = controller.draftFocusRequest
     if (request?.source === controller.draftSource && request.taskId === (controller.activeTask?.id ?? null)) inputRef.current?.focus()
@@ -237,7 +268,7 @@ export function WorkComposer({
     setAgentsOpen(false)
   }, [appMode, controller.draftSource])
   const polish = async (): Promise<void> => {
-    if (!draft.trim() || polishing || !controller.ready) return
+    if (!hasPrompt || polishing || !controller.ready) return
     const requestEpoch = ++polishEpoch.current
     const requestSource = getEngineSource()
     const requestTaskId = taskLiveRef.current
@@ -279,10 +310,14 @@ export function WorkComposer({
     }
   }
   const selectResource = (item: ResourceItem): void => {
-    controller.setResource(item.kind, item.id)
-    inputRef.current?.completeSlash(`/${item.kind}:${item.id}`)
-    setResourceQuery(null)
-    inputRef.current?.focus()
+    if (item.kind === 'kb' && controller.resources.knowledgeBases.includes(item.id)) {
+      if (inputRef.current?.removeSlashResource(resourceMention(item.kind, item.id, item.label))) {
+        controller.removeResource('kb', item.id)
+        setResourceQuery(null)
+      }
+      return
+    }
+    if (inputRef.current?.completeSlash(resourceMention(item.kind, item.id, item.label))) setResourceQuery(null)
   }
   return (
     <div
@@ -312,12 +347,12 @@ export function WorkComposer({
           }
         }}
       >
-        {controller.attachments.length ? (
+        {imageAttachmentReferences.length ? (
           <div className="work-attachments">
               <AttachmentStrip
                 sessionId={attachmentPreviewSessionId}
                 root={controller.workspacePath ?? null}
-                references={pendingAttachmentReferences}
+                references={imageAttachmentReferences}
                 mentions={draftState.mentions}
                 onPreview={(target: ChatAttachment, src: string | null) =>
                   references && !target.type.startsWith('image/') ? references.openMention({ source: 'file', origin: 'attachment', path: target.path, displayText: target.name }, undefined, target)
@@ -326,43 +361,6 @@ export function WorkComposer({
                 onRemove={file => { inputRef.current?.removeAttachmentReferences(attachmentIdentity(file)); controller.removeAttachment(file.path) }}
                 onReorder={controller.reorderAttachments}
               />
-          </div>
-        ) : null}
-        {controller.resources.skills.length +
-          controller.resources.mcpServers.length +
-          controller.resources.knowledgeBases.length >
-        0 ? (
-          <div className="work-resource-strip">
-            {controller.resources.skills.map((id) => (
-              <button
-                key={`skill:${id}`}
-                type="button"
-                className="work-resource-chip"
-                onClick={() => controller.removeResource('skill', id)}
-              >
-                技能 · {id} ×
-              </button>
-            ))}
-            {controller.resources.mcpServers.map((id) => (
-              <button
-                key={`mcp:${id}`}
-                type="button"
-                className="work-resource-chip"
-                onClick={() => controller.removeResource('mcp', id)}
-              >
-                MCP · {id} ×
-              </button>
-            ))}
-            {controller.resources.knowledgeBases.map((id) => (
-              <button
-                key={`kb:${id}`}
-                type="button"
-                className="work-resource-chip"
-                onClick={() => controller.removeResource('kb', id)}
-              >
-                知识库 · {id} ×
-              </button>
-            ))}
           </div>
         ) : null}
         <ComposerInput
@@ -387,11 +385,14 @@ export function WorkComposer({
             }
             const previousToolkits = mentionsRef.current.filter(mention => mention.source === 'toolkit').map(mention => mention.path)
             const nextToolkits = mentions.filter(mention => mention.source === 'toolkit').map(mention => mention.path)
-            if (taskActive && (previousToolkits.length !== nextToolkits.length || previousToolkits.some(id => !nextToolkits.includes(id)))) rootFollowup.setDelivery('next')
+            const resourceChanged = !sameResourceBindings(draftResourceBindings({ text: draftLiveRef.current, mentions: mentionsRef.current }), draftResourceBindings({ text, mentions }))
+            if (taskActive && (resourceChanged || previousToolkits.length !== nextToolkits.length || previousToolkits.some(id => !nextToolkits.includes(id)))) rootFollowup.setDelivery('next')
             draftRevisionRef.current += 1
             draftLiveRef.current = text
             mentionsRef.current = mentions
             userDraftRef.current = { text, mentions }
+            // Finishing or cancelling IME can leave the text unchanged while uploads await insertion.
+            refreshMentionLabels(revision => revision + 1)
           }}
           onSubmit={submit}
           onPasteFiles={addFiles}
@@ -445,12 +446,6 @@ export function WorkComposer({
             if (query !== null) setMentionQuery(null)
           }}
         />
-        {!home && <ComposerPolish
-          busy={polishing}
-          disabled={!draft.trim() || busy || !controller.ready}
-          title="AI 润色"
-          onClick={() => void polish()}
-        />}
         <ComposerToolbar
           leading={
             <>
@@ -511,8 +506,8 @@ export function WorkComposer({
           }
           trailing={
             <>
-              {home && <ComposerPolish busy={polishing} disabled={!draft.trim() || busy || !controller.ready}
-                title="AI 润色" onClick={() => void polish()} />}
+              <ComposerPolish busy={polishing} disabled={!hasPrompt || busy || !controller.ready}
+                title="AI 润色" onClick={() => void polish()} />
               {contextUsage !== null || controller.contextCompaction ? (
                 <ContextUsageIndicator
                   owner="work"
@@ -554,8 +549,8 @@ export function WorkComposer({
                 onClick={submit}
                 disabled={
                   resolvingReference || controller.stopping || Boolean(rootFollowup.pending) || (immediateIntent
-                    ? controller.uploading || controller.loading || !controller.historyReady || !rootFollowupCanSubmit(rootAccepting, rootFollowup.capability) || Boolean(toolkitLimitation || rootFollowupLimitation(mentionsRef.current, referencedAttachments))
-                    : queueIntent ? queueBusy : taskActive || busy) || !controller.ready || (!draft.trim() && !controller.attachments.length)
+                    ? controller.uploading || controller.loading || !controller.historyReady || !rootFollowupCanSubmit(rootAccepting, rootFollowup.capability) || Boolean(toolkitLimitation || rootFollowupLimitation(mentionsRef.current, referencedAttachments, resourceChangePending))
+                    : queueIntent ? queueBusy : taskActive || busy) || !controller.ready || (!hasPrompt && !referencedAttachments.length)
                 }
               />
             </>
@@ -577,11 +572,11 @@ export function WorkComposer({
                 attachments={pendingAttachmentReferences}
                 query={mentionQuery ?? ''}
                 selectedToolkits={selectedToolkits}
-                onSelectToolkit={id => {
+                onSelectToolkit={(id, name) => {
                   if (!inputRef.current) return
                   // Explicit selection also enables an existing, restored chip without duplicating it.
                   if (!controller.setResource('toolkit', id)) return
-                  inputRef.current.completeMention({ source: 'toolkit', path: id, displayText: toolkitName(id) })
+                  inputRef.current.completeMention({ source: 'toolkit', path: id, displayText: name })
                   if (taskActive) rootFollowup.setDelivery('next')
                   setMentionQuery(null)
                 }}
@@ -604,6 +599,7 @@ export function WorkComposer({
             <ResourcePicker
               query={resourceQuery ?? ''}
               projectPath={controller.workspacePath ?? undefined}
+              selectedKnowledgeBases={controller.resources.knowledgeBases}
               onSelect={selectResource}
               onClose={() => {
                 setResourceQuery(null)
@@ -612,7 +608,7 @@ export function WorkComposer({
             />
           </CompletionPopover>
       </InputComposer>
-      <RootFollowupFeedback key={JSON.stringify([getEngineSource(), controller.activeTask?.id])} controller={rootFollowup} active={taskActive} limitation={rootWaiting ? '请先处理上方确认，任务恢复后可立即补充；草稿已保留。' : !rootAccepting && taskActive ? '正在确认当前任务是否可接收补充，草稿已保留。' : toolkitLimitation || rootFollowupLimitation(mentionsRef.current, referencedAttachments)}
+      <RootFollowupFeedback key={JSON.stringify([getEngineSource(), controller.activeTask?.id])} controller={rootFollowup} active={taskActive} limitation={rootWaiting ? '请先处理上方确认，任务恢复后可立即补充；草稿已保留。' : !rootAccepting && taskActive ? '正在确认当前任务是否可接收补充，草稿已保留。' : toolkitLimitation || rootFollowupLimitation(mentionsRef.current, referencedAttachments, resourceChangePending)}
         onFocusInput={() => inputRef.current?.focus()}
         fallbackHint={!controller.ready ? '引擎尚未就绪，草稿会保留。' : toolkitChangePending ? '工具包变更将在下一轮生效' : queueIntent ? 'Enter 排到下一轮 · Shift + Enter 换行' : taskActive ? '任务正在准备，草稿会保留。' : 'Enter 发送 · Shift + Enter 换行'}
         footerAction={<>
@@ -632,9 +628,10 @@ export function WorkComposer({
           {!controller.ready ? <button type="button" className="input-composer__history-button" onClick={() => openAppSettings('general')}>引擎设置</button> : null}
         </>}
         onResolve={resolveRootFollowup}
-        canRestore={!draft.trim() && !controller.attachments.length} onRestore={message => {
+        canRestore={!hasPrompt && !referencedAttachments.length} onRestore={message => {
           if (draftLiveRef.current.trim()) return
           const recovered = userMessageDraft(message)
+          controller.restoreDraftResources(recovered)
           draftRevisionRef.current += 1; draftLiveRef.current = recovered.text; mentionsRef.current = recovered.mentions
           controller.setDraft(recovered.text, recovered.mentions); inputRef.current?.setDraft(recovered.text, recovered.mentions)
           inputRef.current?.focus()

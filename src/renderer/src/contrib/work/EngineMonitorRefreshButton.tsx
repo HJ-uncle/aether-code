@@ -17,6 +17,6 @@ export function EngineMonitorRefreshButton({ label, busy, disabled, onRefresh }:
       event.stopPropagation()
       void onRefresh()
     }}>
-    {busy ? <Spinner size={14} /> : <Icon name="restart" size={16} />}
+    {busy ? <Spinner size={14} /> : <Icon name="refresh" size={16} />}
   </button>
 }

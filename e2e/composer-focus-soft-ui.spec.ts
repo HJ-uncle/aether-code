@@ -1,4 +1,4 @@
-/** New isolated Electron coverage only: Work/Code shared composer keeps its neutral
+/** New isolated Electron coverage: Work's composer keeps its neutral
  * border and gains a soft editing shadow without an outer ring, with local toolbar
  * focus. Both themes are captured; no messages, uploads or exports are sent. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page, type TestInfo } from '@playwright/test'
@@ -55,21 +55,12 @@ async function screenshot(name: string, info: TestInfo): Promise<void> {
 async function theme(appearance: 'light' | 'dark'): Promise<void> {
   if (await page.locator('html').getAttribute('data-appearance') === appearance) return
   await page.keyboard.press('Escape')
-  const codeTab = page.getByRole('tab', { name: 'Code 开发', exact: true })
-  const returnToCode = await codeTab.getAttribute('aria-selected') === 'true'
-  // Code opens settings as an editor tab. Change the shared theme through
-  // Work's real modal, then restore the mode whose composer is under test.
-  if (returnToCode) {
-    const workTab = page.getByRole('tab', { name: 'Work 办公', exact: true })
-    await workTab.click(); await expect(workTab).toHaveAttribute('aria-selected', 'true')
-  }
   await page.getByRole('button', { name: '设置', exact: true }).first().click()
   const settings = page.locator('.modal[aria-label="设置"]')
   await settings.locator('.app-settings__nav-item', { hasText: '外观' }).click()
   await settings.getByRole('radio', { name: appearance === 'dark' ? '深色' : '浅色', exact: true }).click()
   await expect(page.locator('html')).toHaveAttribute('data-appearance', appearance)
   await settings.getByRole('button', { name: '关闭', exact: true }).click(); await expect(settings).toHaveCount(0)
-  if (returnToCode) { await codeTab.click(); await expect(codeTab).toHaveAttribute('aria-selected', 'true') }
 }
 async function assertEditorFocus(shell: Locator, editor: Locator, border: string, shadow: string): Promise<void> {
   await expect(editor).toBeFocused()
@@ -119,14 +110,15 @@ test.afterAll(async () => {
   }
 })
 
-for (const mode of ['Work 办公', 'Code 开发'] as const) test(`${mode}：明暗编辑焦点保持中性边框与柔和阴影，工具栏独立聚焦`, async ({}, info) => {
-  const modeTab = page.getByRole('tab', { name: mode, exact: true })
-  await modeTab.click(); await expect(modeTab).toHaveAttribute('aria-selected', 'true')
-  const shell = page.getByRole('tabpanel', { name: mode, exact: true }).locator('.input-composer'), editor = shell.locator('.input-composer__input')
+test('Work 办公：明暗编辑焦点保持中性边框与柔和阴影，工具栏独立聚焦', async ({}, info) => {
+  const shell = page.locator('.work-view .input-composer'), editor = shell.locator('.input-composer__input')
   await expect(shell).toHaveCount(1); await expect(editor).toBeVisible()
   await editor.fill('请检查这段输入的焦点样式，保留草稿，不发送。')
   for (const appearance of ['light', 'dark'] as const) {
-    await theme(appearance); await modeTab.click()
+    await theme(appearance)
+    // Closing Settings can restore focus to the contenteditable; move focus
+    // to a stable chrome control before asserting the resting state.
+    await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).focus()
     await expect(editor).not.toBeFocused()
     const styles = await shell.evaluate(element => {
       const style = getComputedStyle(element), token = style.getPropertyValue('--composer-focus-shadow').trim()
@@ -148,7 +140,7 @@ for (const mode of ['Work 办公', 'Code 开发'] as const) test(`${mode}：明�
     await expect(shell).toHaveCSS('border-top-color', styles.border)
     await expect(shell).toHaveCSS('box-shadow', styles.restingShadow)
     await editor.click(); await assertEditorFocus(shell, editor, styles.border, styles.focusedShadow)
-    await screenshot(`composer-soft-${mode.startsWith('Work') ? 'work' : 'code'}-${appearance}-pointer`, info)
+    await screenshot(`composer-soft-work-${appearance}-pointer`, info)
 
     const toolbarButton = shell.locator('.input-composer__toolbar button:enabled').first()
     await toolbarButton.focus(); await page.keyboard.press('Shift+Tab'); await page.keyboard.press('Tab')
@@ -167,6 +159,6 @@ for (const mode of ['Work 办公', 'Code 开发'] as const) test(`${mode}：明�
     await expect(editor).toBeFocused()
     expect(await editor.evaluate(element => element.matches(':focus-visible'))).toBe(true)
     await assertEditorFocus(shell, editor, styles.border, styles.focusedShadow)
-    await screenshot(`composer-soft-${mode.startsWith('Work') ? 'work' : 'code'}-${appearance}-keyboard`, info)
+    await screenshot(`composer-soft-work-${appearance}-keyboard`, info)
   }
 })

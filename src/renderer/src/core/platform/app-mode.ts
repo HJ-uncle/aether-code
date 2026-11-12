@@ -1,14 +1,10 @@
 import { useSyncExternalStore } from 'react'
 
 export type AppMode = 'code' | 'work'
-const STORAGE_KEY = 'aether.app.mode'
 const listeners = new Set<() => void>()
-let mode: AppMode = 'code'
-try {
-  if (localStorage.getItem(STORAGE_KEY) === 'work') mode = 'work'
-} catch {
-  /* 模式存储不可用时仍可进入默认工作台。 */
-}
+// Work is the sole user-facing workbench. Keep the union type temporarily so
+// shared protocol code can be removed independently without widening this diff.
+const mode: AppMode = 'work'
 
 export function getAppMode(): AppMode {
   return mode
@@ -20,34 +16,21 @@ export function onAppModeChanged(listener: () => void): () => void {
   }
 }
 export function setAppMode(next: AppMode): void {
-  if (mode === next) return
-  mode = next
-  try {
-    localStorage.setItem(STORAGE_KEY, next)
-  } catch {
-    /* 本次切换仍然生效。 */
-  }
+  // The Code surface was retired before release; old navigation calls are
+  // intentionally ignored instead of resurrecting a second workbench.
+  if (next !== 'work') return
   for (const listener of listeners) listener()
 }
 export function useAppMode(): AppMode {
   return useSyncExternalStore(onAppModeChanged, getAppMode)
 }
 
-/** 隐藏 Code 工作台时，不让全局快捷键修改它的文件、布局或会话。 */
+/** Commands now run against the single Work surface. */
 export function isCommandAvailableInMode(id: string): boolean {
   if (id.startsWith('aether.work.')) return mode === 'work'
-  return (
-    mode === 'code' ||
-    id.startsWith('aether.mode.') ||
-    id.startsWith('aether.engine.') ||
-    [
-      'aether.commandPalette.toggle',
-      // These commands route to the active mode's session-scoped terminal.
-      'aether.panel.terminal',
-      'aether.terminal.newLocal',
-      'aether.view.appSettings',
-      'aether.view.models',
-      'aether.view.security'
-    ].includes(id)
-  )
+  if (id.startsWith('aether.mode.') || id.startsWith('aether.code.')) return false
+  if (/^aether\.(?:workspace|file|explorer|editor|lsp)\./.test(id)) return false
+  if (['aether.view.explorer', 'aether.view.sessionHistory', 'aether.view.search', 'aether.view.git',
+    'aether.view.chat', 'aether.chat.newSession', 'aether.panel.problems', 'aether.panel.output', 'aether.output.show'].includes(id)) return false
+  return true
 }

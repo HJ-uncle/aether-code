@@ -44,9 +44,7 @@ import { createHistoryMutationGuard } from './history-mutation'
 import { cacheDisplayHistory, checkDisplayHistory, mergeDisplayHistory, type DisplayHistoryCache, type DisplayHistoryCompleteness, type DisplayHistoryTurn } from './display-history'
 import { normalizeRootFollowupMessage, type RootFollowupMessage } from './root-followup-message'
 import { applyProjectedFinalResult } from './final-result'
-import { getAppMode, onAppModeChanged } from '@renderer/core/platform/app-mode'
-import { useCodeNextTurnQueue } from './useCodeNextTurnQueue'
-import { codeQueueSubmission } from './code-queue-entry'
+import { getAppMode } from '@renderer/core/platform/app-mode'
 import { applyProjectedUserMessage, bindProjectedAssistantId, applyProjectedUsage } from './chat-timeline'
 import { ChatRequestRejectedError, dispatchChatRequest } from './chat-send-request'
 
@@ -151,6 +149,8 @@ export interface ChatAttachment {
   attachmentId?: string
   /** Label frozen for the submitted turn; never renumber a historical message. */
   referenceLabel?: string
+  /** Draft receipt retained for undo; only an inline mention selects it for sending. */
+  inlineReference?: boolean
   /** 相对工作区根的路径（引擎 attachments[].name 用的就是它） */
   path: string
   /** 远端上传后由主进程分配的 opaque 引用；本地附件不设置。 */
@@ -235,7 +235,7 @@ export interface ChatSessionModelContext {
   compaction?: RootRunCompaction
 }
 
-export function useChat(options: { commandOwner?: string } = {}): {
+export function useChat(options: { commandOwner?: 'work' } = {}): {
   messages: ChatMessage[]
   /** Authoritative lifetime billing plus only usage added after the current snapshot. */
   sessionUsage: UsageTotal
@@ -335,7 +335,10 @@ export function useChat(options: { commandOwner?: string } = {}): {
    */
   resumeStream: (sessionId: string) => Promise<boolean>
 } {
-  const commandOwner = options.commandOwner ?? 'code'
+  // Work is the sole mounted chat owner after Code mode removal. Keep the
+  // optional argument for callers compiled against the older hook contract,
+  // but default every unscoped consumer to the surviving Work transport.
+  const commandOwner = options.commandOwner ?? 'work'
   const renderSource = getEngineSource()
   const sourceRef = useRef(renderSource)
   const [messages, dispatchMessages] = useState<ChatMessage[]>([])
@@ -487,8 +490,6 @@ export function useChat(options: { commandOwner?: string } = {}): {
   const activeSessionRef = useRef<string | null>(null)
   /** Viewing a session outlives its parent stream; child results must still reach its dispatch card. */
   const viewSessionRef = useRef<string | null>(null)
-  const [queueSessionId, setQueueSessionId] = useState<string | null>(null)
-  const durableQueue = useCodeNextTurnQueue(commandOwner === 'code' ? queueSessionId : null, renderSource, isEngineReady() && commandOwner === 'code')
   const rootRunsRef = useRef(new Map<string, RootRun>())
   const activeRunIdRef = useRef<string | null>(null)
   const optimisticIdsRef = useRef<{ userId?: string; assistantId?: string }>({})
@@ -617,7 +618,6 @@ export function useChat(options: { commandOwner?: string } = {}): {
     const oldStream = activeStreamRef.current
     invalidateRecovery()
     viewSessionRef.current = sessionId
-    setQueueSessionId(sessionId)
     restoredSessionRef.current = null
     setHistoryError(null)
     consumedEventIdRef.current = null
@@ -663,14 +663,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
     }
   }, [invalidateRecovery])
 
-  // Queued requests are dispatched by main even while another session is visible.
-  // No renderer drain remains that could bypass the durable admission claim.
   const sendInternalRef = useRef<(text: string, options: SendOptions, onAdmitted?: () => void) => Promise<void>>(async () => {})
-  useEffect(() => {
-    if (!queueSessionId || commandOwner !== 'code' || activeStreamRef.current || stoppingRef.current) return
-    const accepted = durableQueue.state?.entries.find(entry => entry.phase === 'accepted')
-    if (accepted?.phase === 'accepted' && activeRunIdRef.current !== accepted.receipt.runId) void recoverRef.current(queueSessionId).catch(() => {})
-  }, [queueSessionId, commandOwner, durableQueue.state, streaming])
 
   useEffect(() => subscribeEngineSource(() => {
     const oldStream = activeStreamRef.current
@@ -680,7 +673,6 @@ export function useChat(options: { commandOwner?: string } = {}): {
     activeSessionRef.current = null
     viewSessionRef.current = null
     todoLedgerRef.current.reset()
-    setQueueSessionId(null)
     restoredSessionRef.current = null
     setHistoryError(null)
     activeRunIdRef.current = null
@@ -786,7 +778,6 @@ export function useChat(options: { commandOwner?: string } = {}): {
       }).catch(() => {})
     }
     const timer = setInterval(reconcile, 2500)
-    const offMode = onAppModeChanged(reconcile)
     const onVisible = (): void => { if (!document.hidden) reconcileChildren(true) }
     document.addEventListener('visibilitychange', onVisible)
     const off = engine.onStreamEvent((event: StreamEvent) => {
@@ -850,7 +841,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
       applyEvent(event)
     })
     return () => {
-      off(); offSubagents(); offDeletions(); offCommands(); offMode(); clearInterval(timer)
+      off(); offSubagents(); offDeletions(); offCommands(); clearInterval(timer)
       document.removeEventListener('visibilitychange', onVisible)
       if (subagentAttachTimerRef.current) clearTimeout(subagentAttachTimerRef.current)
       subagentAttachTimerRef.current = null
@@ -1055,7 +1046,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
       // A Work stream may be resumed while its surface is hidden behind Code;
       // derive the profile from the hook owner so a mode switch cannot turn a
       // general-profile run into a Code-profile resume.
-      toolProfile: commandOwner === 'work' ? 'general' : 'code'
+      toolProfile: 'general'
     })
     if (result?.rejection) throw new ChatRequestRejectedError(result.rejection.message)
     if (submission && !submission.admitted) throw new Error('尚未取得这条消息的接纳确认，原稿已保留，请先核对任务状态')
@@ -1093,20 +1084,10 @@ export function useChat(options: { commandOwner?: string } = {}): {
         patchSessionMeta(options.sessionId, { workspacePath })
       }
 
-      if (commandOwner === 'code' && queueSessionId === options.sessionId) {
-        const saved = await durableQueue.refresh()
-        if (!saved) throw new ChatRequestRejectedError('队列尚未同步，草稿已保留，请重试')
-        if (durableQueue.consumeConfirmedEnqueue(codeQueueSubmission(trimmed, options))) { onAdmitted?.(); return }
-        if (hasSessionWork(options.sessionId) || saved.state.entries.some(entry => entry.phase !== 'terminal')) {
-          await durableQueue.enqueue(codeQueueSubmission(trimmed, options))
-          onAdmitted?.()
-          return
-        }
-      }
       if (hasSessionWork(options.sessionId)) throw new ChatRequestRejectedError('当前任务正在运行，请使用本轮补充或待发队列')
       await sendInternalRef.current(trimmed, options, onAdmitted)
     },
-    [commandOwner, queueSessionId, durableQueue, renderSource, hasSessionWork]
+    [renderSource, hasSessionWork]
   )
 
   /**
@@ -1114,19 +1095,17 @@ export function useChat(options: { commandOwner?: string } = {}): {
    * 本条已在流中时合并队列全部；本条未发送时只合并队列。
    */
   const mergeAndSend = useCallback(
-    async (text: string, options: SendOptions): Promise<void> => {
+    async (_text: string, _options: SendOptions): Promise<void> => {
       assertEngineSource(renderSource)
-      if (commandOwner !== 'code' || queueSessionId !== options.sessionId) throw new ChatRequestRejectedError('会话已变化，请重新选择待发消息')
-      const submission = text.trim() || options.attachments?.length ? codeQueueSubmission(text, options) : undefined
-      await durableQueue.merge(submission)
-      if (!hasSessionWork(options.sessionId)) await durableQueue.resume()
+      throw new ChatRequestRejectedError('Work 使用任务队列，请从当前任务发送待发消息')
     },
-    [commandOwner, queueSessionId, durableQueue, renderSource, hasSessionWork]
+    [renderSource]
   )
 
   const flushQueue = useCallback(async () => {
-    await durableQueue.resume()
-  }, [durableQueue])
+    // The retired Code chat had its own durable queue. Work owns queue
+    // dispatch through work-next-turn-queue and does not use this hook API.
+  }, [])
 
   const sendInternal = useCallback(
     async (text: string, options: SendOptions, onAdmitted?: () => void) => {
@@ -1494,7 +1473,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
     }
     void engine.startStream({ streamId, path: '/chat/stream', method: 'GET',
       ...(protocol === 2 ? { subagentProtocol: 2 as const } : {}),
-      toolProfile: commandOwner === 'work' ? 'general' : 'code',
+      toolProfile: 'general',
       query: { sessionId, lastEventId: snapshot.eventId! }, body: undefined }).then(result => {
         // IPC can fail before the stream reader is registered (for example
         // when the engine switches during recovery). Do not leave the task
@@ -1642,9 +1621,6 @@ export function useChat(options: { commandOwner?: string } = {}): {
             ? '引擎已确认停止，但运行状态尚未同步，请稍后重试'
             : '停止未确认，任务仍可能在运行，请重试')
         }
-        // Stop the run, not the user's unsent requirements. Keep the queue
-        // paused until an explicit queue send, just like the Work composer.
-        if (run.status === 'cancelled' && commandOwner === 'code') void durableQueue.refresh()
       } catch (error) {
         if (!scopeIsCurrent(scope)) return
         setStopError(error instanceof Error ? error.message : String(error))
@@ -1665,7 +1641,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
     })()
     stoppingFlightRef.current = { scope, promise }
     return promise
-  }, [commandOwner, durableQueue, flushStreamPatches, renderSource, hasSessionWork, invalidateRecovery, recoveryScope, scopeIsCurrent, restoreSession, resumeStream])
+  }, [flushStreamPatches, renderSource, hasSessionWork, invalidateRecovery, recoveryScope, scopeIsCurrent, restoreSession, resumeStream])
 
   /**
    * 清空当前会话。
@@ -1936,7 +1912,7 @@ export function useChat(options: { commandOwner?: string } = {}): {
     displayLiveTurnIdsRef.current, [...rootRunsRef.current.values()]), [displayHistory, messages])
 
   return {
-    messages: commandOwner === 'work' ? displayMessages : messages,
+    messages: displayMessages,
     sessionUsage,
     usageSyncNotice,
     publishedRecovery,
@@ -1981,17 +1957,17 @@ export function useChat(options: { commandOwner?: string } = {}): {
     truncateFrom,
     revertFrom,
     mergeAndSend,
-    queue: durableQueue.queue,
-    queueState: { ready: durableQueue.ready, saving: durableQueue.saving, paused: durableQueue.paused, unknown: durableQueue.unknown, error: durableQueue.error },
-    removeQueued: durableQueue.remove,
-    clearQueue: durableQueue.clear,
+    queue: [],
+    queueState: { ready: true, saving: false, paused: false, unknown: false, error: null },
+    removeQueued: async () => {},
+    clearQueue: async () => {},
     flushQueue,
-    updateQueued: (id, text, attachments) => durableQueue.edit(id, text, attachments).then(() => {}),
-    moveQueued: durableQueue.move,
-    mergeQueued: () => durableQueue.merge(),
-    pauseQueue: durableQueue.pause,
-    reconcileQueue: durableQueue.reconcile,
-    retargetQueuedModel: durableQueue.retarget,
+    updateQueued: async () => {},
+    moveQueued: async () => {},
+    mergeQueued: async () => {},
+    pauseQueue: async () => {},
+    reconcileQueue: async () => {},
+    retargetQueuedModel: async () => {},
     resumeStream
   }
 }

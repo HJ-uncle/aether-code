@@ -15,8 +15,6 @@ interface WorkRunListProps {
   ready: boolean
   onSelect: (id: string) => void
   onStop?: (id: string) => Promise<void>
-  /** Embed the switcher in the active task heading instead of the shell. */
-  inline?: boolean
 }
 
 function formatElapsed(start: number | undefined, now: number): string {
@@ -29,36 +27,33 @@ function formatElapsed(start: number | undefined, now: number): string {
 }
 
 /**
- * A compact Codex-style run switcher for long-running Work jobs.  It stays
- * mounted in the shell but renders nothing when there is no live run, keeping
- * idle sessions free of another toolbar control.  The component intentionally
- * accepts task callbacks instead of reaching into the controller so it can
- * later host scheduled runs, commands, or child-agent actions.
+ * The new-task home hosts this cross-conversation list. Conversation headings
+ * retain only their own status and actions, and the sidebar stays compact.
  */
 export function WorkRunList({
   tasks,
   activeTaskId,
   ready,
   onSelect,
-  onStop,
-  inline = false
+  onStop
 }: WorkRunListProps): JSX.Element | null {
   const runs = useMemo(() => getRunningWorkTasks(tasks), [tasks])
   const [open, setOpen] = useState(false)
   const [stoppingId, setStoppingId] = useState<string | null>(null)
   const [now, setNow] = useState(Date.now)
-  const shown = runs.length > 0 && !(inline && runs.length === 1 && runs[0]?.id === activeTaskId)
+  const shown = runs.length > 0
   const presence = useMotionPresence(shown)
 
   useEffect(() => {
-    if (!shown) return
+    if (!shown) {
+      // A later run must not reopen a popover left open by the last task.
+      setOpen(false)
+      return
+    }
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [shown])
 
-  // The active task already exposes its running status and stop action in the
-  // heading. Keep the switcher for parallel work (or a background task) where
-  // it provides an actual task-switching affordance.
   if (!presence.present) return null
 
   const stop = (id: string): void => {
@@ -72,26 +67,26 @@ export function WorkRunList({
   }
 
   return (
-    <div className={`work-run-list${inline ? ' work-run-list--inline' : ''}`} {...presence.motionProps}>
-      <Popover open={open && shown} onOpenChange={setOpen} align="end" label="运行列表" panelClassName="work-run-list__popover" flush
+    <div className="work-run-list" {...presence.motionProps}>
+      <Popover open={open && shown} onOpenChange={setOpen} align="end" width={360} label="运行列表" panelClassName="work-run-list__popover" flush
         trigger={() => (
       <button
         type="button"
         className="work-run-list__trigger"
-        aria-expanded={open}
+        aria-expanded={open && shown}
         aria-haspopup="dialog"
-        aria-label={`查看运行中的任务，共 ${runs.length} 项`}
-        title="查看运行中的任务"
+        aria-label={`查看运行列表，共 ${runs.length} 项任务`}
+        title="所有会话的运行和待处理任务"
       >
-        <span className="work-run-list__pulse" aria-hidden="true" />
-        <span className="work-run-list__label">{inline ? '后台' : '运行中'}</span>
-        <b className="work-run-list__count" aria-live="polite" aria-atomic="true">{runs.length}</b>
+        <Icon name="list-play" size={16} />
+        <span className="work-run-list__label">运行列表</span>
+        <b className="work-run-list__count" aria-hidden="true">{runs.length}</b>
         <Icon name={open ? 'chevron-up' : 'chevron-down'} size={13} />
       </button>
         )}>
           <header className="work-run-list__header">
             <strong>运行列表</strong>
-            <span>{runs.length} 项任务</span>
+            <span>所有会话 · {runs.length} 项任务</span>
           </header>
           <ul className="work-run-list__items">
             {runs.map((run) => (
@@ -99,6 +94,7 @@ export function WorkRunList({
                 <button
                   type="button"
                   className={`work-run-list__item-main${run.id === activeTaskId ? ' is-active' : ''}`}
+                  aria-current={run.id === activeTaskId ? 'true' : undefined}
                   onClick={() => {
                     onSelect(run.id)
                     setOpen(false)
@@ -108,7 +104,7 @@ export function WorkRunList({
                     className={`work-run-list__status work-run-list__status--${run.status}`}
                     aria-hidden="true"
                   >
-                    <Icon name={run.status === 'running' ? 'engine' : 'circle-dot'} size={14} />
+                    <Icon name={workSidebarStatus(run, ready, stoppingId === run.id).icon ?? 'activity'} size={14} />
                   </span>
                   <span className="work-run-list__item-copy">
                     <strong title={run.title}>{run.title}</strong>

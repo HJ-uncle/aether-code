@@ -9,7 +9,7 @@ import type { useWorkController, WorkUserMessageAction } from './work-runtime'
 type WorkController = ReturnType<typeof useWorkController>
 
 const actions: Array<{ id: WorkUserMessageAction; name: string; icon: IconName; detail: string }> = [
-  { id: 'add', name: '添加到对话', icon: 'pencil', detail: '将原文、引用与附件放回输入框，保留已有草稿' },
+  { id: 'add', name: '添加到对话', icon: 'plus', detail: '将原文、引用与附件放回输入框，保留已有草稿' },
   { id: 'retry', name: '重新发起', icon: 'restart', detail: '删除此条及后续对话，按原指令重新发送；文件保持原样' },
   { id: 'edit', name: '从此处重新编辑', icon: 'file-edit-outline', detail: '删除此条及后续对话，将原指令放回输入框；文件保持原样' },
   { id: 'revert', name: '回退文件', icon: 'undo', detail: '回退此条及后续 AI 文件改动，成功后删除对应对话' }

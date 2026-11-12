@@ -1,10 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { NextTurnQueueError, type NextTurnQueueEnvelope, type NextTurnQueueScope, type NextTurnQueueState, type QueueCommitResult } from '../shared/next-turn-queue'
 import { queueScopeIdentity, sameQueueScope } from '../shared/next-turn-queue-state'
-import { mergeQueueAttachmentReferences } from '../shared/queue-attachment-references'
-import { queueDraftRemovesToolkit } from '../shared/next-turn-queue-state'
 import type { WorkQueueDraft, WorkQueueRead } from '../shared/work-next-turn-api'
-import type { CodeQueueAction } from '../shared/code-next-turn-api'
 import { NextTurnQueueMutationService, type QueueOwnerCapability, type TrustedQueueAuthority } from './next-turn-queue-service'
 import type { AdmissionContext, ExactAdmission } from './next-turn-admission-protocol'
 import { freezeQueueRequest, assertFrozenQueueRequest, canonicalAdmissionJson } from './next-turn-admission-protocol'
@@ -255,80 +252,6 @@ export class NextTurnDispatcher {
   }
   editDraft(taskId: string, expectedRevision: number, operationId: string, id: string, entryRevision: number, draft: WorkQueueDraft['draft']) {
     return this.owned(() => this.editDraftOnce(taskId, expectedRevision, operationId, id, entryRevision, draft), taskId)
-  }
-  changePending(taskId: string, action: Extract<CodeQueueAction, { kind: 'replace-submission' | 'retarget-model' | 'merge-pending' }>) {
-    return this.owned(async () => {
-      const stagesAttachments = action.kind === 'replace-submission' || action.kind === 'merge-pending' && !!action.submission
-      if (stagesAttachments && this.enqueues >= 2) throw new NextTurnQueueError('CAPACITY', '队列正在准备附件，请稍后重试')
-      if (stagesAttachments) this.enqueues++
-      try {
-        const input = structuredClone(action), job = await this.bind(taskId)
-        if (job.scope.owner !== 'code') throw new NextTurnQueueError('AUTHORITY', 'Code queue mutation requires Code ownership')
-        const digest = createHash('sha256').update(canonicalAdmissionJson(input)).digest('hex')
-        const prior = await this.service.findCommitted(job.capability, input.operationId)
-        const outputIds = input.kind === 'retarget-model' ? input.entries.map(item => item.id) : [input.id]
-        if (prior) {
-          if (prior.state.revision !== input.expectedRevision + 1 || outputIds.some(id => prior.state.entries.find(entry => entry.id === id)?.envelope.submissionDigest !== digest))
-            throw new NextTurnQueueError('CONFLICT', 'Queue operation ID was already used for another edit')
-          const current = await this.service.read(job.capability); this.observe(job, current.state)
-          return { state: current.state, receipt: prior.receipt, replayed: true, durabilityWarnings: [] }
-        }
-        const state = (await this.service.read(job.capability)).state
-        if (state.revision !== input.expectedRevision) throw new NextTurnQueueError('CAS', 'Queue revision changed')
-        const selectors = input.kind === 'replace-submission' ? [{ id: input.id, entryRevision: input.entryRevision }] : input.entries
-        if (!selectors.length || new Set(selectors.map(item => item.id)).size !== selectors.length) throw new NextTurnQueueError('INVALID', 'Select distinct pending messages')
-        const selected = selectors.map(selector => {
-          const entry = state.entries.find(item => item.id === selector.id)
-          if (!entry || entry.phase !== 'pending') throw new NextTurnQueueError('CONFLICT', 'Only pending messages can be edited')
-          if (entry.revision !== selector.entryRevision) throw new NextTurnQueueError('CAS', 'Entry revision changed')
-          return entry
-        }).sort((a, b) => state.entries.indexOf(a) - state.entries.indexOf(b))
-        let replacements: { id: string; envelope: NextTurnQueueEnvelope }[]
-        if (input.kind === 'replace-submission') {
-          const before = selected[0].envelope
-          const edited = await this.gateway.editDraft(before, input.submission.draft, job.scope)
-          const envelope = await this.gateway.envelope(job.scope, input.submission)
-          // A textarea sends an unresolved selection; only main can resolve and revoke inherited capabilities.
-          if (queueDraftRemovesToolkit(before.draft, input.submission.draft)) envelope.resources.toolkits = edited.resources.toolkits
-          replacements = [{ id: input.id, envelope }]
-        }
-        else if (input.kind === 'retarget-model') {
-          const model = structuredClone(input.model)
-          if (model.kind !== 'explicit' && !model.observedModelId) {
-            const context = await this.gateway.context(job.scope)
-            if (!context.root) throw new NextTurnQueueError('AUTHORITY', '任务绑定已变化，请刷新后重新选择模型')
-            if (context.root.modelId) model.observedModelId = context.root.modelId
-          }
-          replacements = selected.map(entry => ({ id: entry.id, envelope: { ...entry.envelope, model } }))
-        }
-        else {
-          if (state.entries.some(entry => entry.id === input.id) || state.removed.some(entry => entry.id === input.id)) throw new NextTurnQueueError('CONFLICT', 'Merged message requires a new identity')
-          const envelopes = selected.map(entry => entry.envelope)
-          if (input.submission) envelopes.push(await this.gateway.envelope(job.scope, input.submission))
-          const configuration = (envelope: NextTurnQueueEnvelope) => {
-            const { draft: _draft, attachments: _attachments, submissionDigest: _digest, ...config } = envelope
-            return canonicalAdmissionJson(config)
-          }
-          const base = envelopes[0]
-          if (envelopes.some(envelope => configuration(envelope) !== configuration(base)))
-            throw new NextTurnQueueError('CONFLICT', '所选消息的模型、工作区或协作配置不同，请逐条发送或统一配置后合并')
-          let text = ''; const mentions: NextTurnQueueEnvelope['draft']['mentions'] = [], attachments: NextTurnQueueEnvelope['attachments'] = []
-          for (const envelope of envelopes) {
-            if (text && envelope.draft.text) text += '\n\n'
-            const offset = text.length; text += envelope.draft.text
-            mentions.push(...envelope.draft.mentions.map(mention => ({ ...mention, textOffset: mention.textOffset + offset })))
-            for (const file of envelope.attachments) if (!attachments.some(item => item.receiptId === file.receiptId)) attachments.push(file)
-          }
-          const merged = mergeQueueAttachmentReferences({ text, mentions, revision: Math.max(...envelopes.map(envelope => envelope.draft.revision)) + 1 }, attachments)
-          replacements = [{ id: input.id, envelope: { ...await this.gateway.editDraft(base, merged.draft, job.scope), attachments: merged.attachments } }]
-        }
-        for (const replacement of replacements) replacement.envelope.submissionDigest = digest
-        const result = await this.service.mutate(job.capability, input.expectedRevision, input.operationId,
-          { kind: 'replace-pending', entries: selectors, replacements, at: Date.now() })
-        this.observe(job, result.state); this.publish(result.state.scope, result.state.revision); this.wake(job)
-        return result
-      } finally { if (stagesAttachments) this.enqueues-- }
-    }, taskId)
   }
   private async editDraftOnce(taskId: string, expectedRevision: number, operationId: string, id: string, entryRevision: number, draft: WorkQueueDraft['draft']) {
     const job = await this.bind(taskId), state = (await this.service.read(job.capability)).state

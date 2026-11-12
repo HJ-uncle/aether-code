@@ -2,8 +2,14 @@ import { useId, useMemo, useRef, useState, type JSX } from 'react'
 import type { PendingInteraction } from '@renderer/core/engine/pending'
 import { useModels } from '@renderer/core/engine/model-store'
 import { Icon } from '@renderer/workbench/icons'
-import { permissionPresentation, type PermissionSection } from './work-permission-presentation'
+import { FileGlyph } from '../explorer/FileGlyph'
+import {
+  permissionPresentation,
+  type PermissionSection,
+  type PermissionValueNode
+} from './work-permission-presentation'
 import { groupAgentTools } from './work-agent-tool-groups'
+import { usePendingCardBodySpace } from './usePendingCardBodySpace'
 import './work-permission-card.css'
 
 interface Props {
@@ -42,6 +48,46 @@ function ToolList({ entries }: { entries: Array<{ id: string; label: string }> }
   )
 }
 
+function ValueTree({
+  nodes,
+  depth = 0
+}: {
+  nodes: PermissionValueNode[]
+  depth?: number
+}): JSX.Element {
+  return (
+    <dl className="work-permission__value-tree">
+      {nodes.map((node, index) => (
+        <div key={node.label + index}>
+          {node.children ? (
+            <>
+              <dt className="work-permission__tree-label">{node.label}</dt>
+              <dd>
+                <details className="work-permission__disclosure" open={depth === 0}>
+                  <summary>
+                    <span>{node.children.length} 项</span>
+                    <Icon name="chevron-right" size={12} />
+                  </summary>
+                  {node.children.length ? (
+                    <ValueTree nodes={node.children} depth={depth + 1} />
+                  ) : (
+                    <span>无</span>
+                  )}
+                </details>
+              </dd>
+            </>
+          ) : (
+            <>
+              <dt>{node.label}</dt>
+              <dd>{node.value === '' ? '（空）' : node.value}</dd>
+            </>
+          )}
+        </div>
+      ))}
+    </dl>
+  )
+}
+
 function DetailContent({ section }: { section: PermissionSection }): JSX.Element {
   return (
     <div className="work-permission__detail-content" data-section={section.id}>
@@ -50,15 +96,101 @@ function DetailContent({ section }: { section: PermissionSection }): JSX.Element
           <h5>修改前</h5>
           {section.previousEntries?.length ? (
             <ToolList entries={section.previousEntries} />
+          ) : section.code ? (
+            <pre className="work-permission__code">{section.previous || '（空内容）'}</pre>
           ) : (
             <p>{section.previous}</p>
           )}
         </div>
       ) : null}
       {section.previous !== undefined ? <h5>修改后</h5> : null}
-      {section.text !== undefined ? <p>{section.text}</p> : null}
+      {section.text !== undefined ? (
+        section.code ? (
+          <pre className="work-permission__code">{section.text || '（空内容）'}</pre>
+        ) : (
+          <p>{section.text}</p>
+        )
+      ) : null}
+      {section.tree ? <ValueTree nodes={section.tree} /> : null}
+      {section.facts?.length ? (
+        <dl className="work-permission__fields">
+          {section.facts.map((field, index) => (
+            <div className="work-permission__field" key={field.label + index}>
+              <dt>{field.label}</dt>
+              <dd>
+                {field.previous !== undefined ? (
+                  <span className="work-permission__previous">
+                    <span>原值</span>
+                    {field.previous}
+                  </span>
+                ) : null}
+                <span>{field.value}</span>
+              </dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+      {section.pluginTools?.length ? (
+        <ul className="work-permission__plugin-tools">
+          {section.pluginTools.map((tool, index) => (
+            <li key={tool.name + index}>
+              <h5>{tool.name}</h5>
+              <p>{tool.description}</p>
+              <details className="work-permission__disclosure">
+                <summary>
+                  <span>参数与入口</span>
+                  <Icon name="chevron-right" size={12} />
+                </summary>
+                <dl className="work-permission__fields">
+                  <div className="work-permission__field">
+                    <dt>入口</dt>
+                    <dd>{tool.entry}</dd>
+                  </div>
+                </dl>
+                <pre className="work-permission__code" aria-label={`${tool.name} 参数定义`}>
+                  {tool.inputSchema}
+                </pre>
+              </details>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {section.files?.length ? (
+        <ul className="work-permission__file-list">
+          {section.files.map((file) => (
+            <li key={file.path}>
+              <details className="work-permission__disclosure work-permission__file">
+                <summary title={file.path}>
+                  <FileGlyph name={file.path} size={16} />
+                  <span className="work-permission__file-name">{file.path}</span>
+                  <span className="work-permission__file-size">
+                    {file.content ? file.content.split(/\r\n|\r|\n/).length : 0} 行
+                  </span>
+                  <Icon name="chevron-right" size={12} />
+                </summary>
+                <pre className="work-permission__code" aria-label={`${file.path} 源码`}>
+                  {file.content}
+                </pre>
+              </details>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {section.entries ? (
         <ToolList entries={section.entries} />
+      ) : section.code && section.items ? (
+        <ol className="work-permission__argument-list">
+          {section.items.map((item, index) => (
+            <li key={index}>
+              <span className="work-permission__argument-index" aria-hidden="true">
+                {index + 1}
+              </span>
+              <pre className="work-permission__code" aria-label={`参数 ${index + 1}`}>
+                {item || '（空参数）'}
+              </pre>
+            </li>
+          ))}
+        </ol>
       ) : section.items ? (
         <ul className="work-permission__resource-list">
           {section.items.map((item, index) => (
@@ -86,7 +218,8 @@ export function WorkPermissionCard({ pending, blocked, submitting, onReply }: Pr
     (field) => field.label === '用途' && field.previous === undefined
   )
   const metadata = presentation.fields.filter(
-    (field) => ['模型', '温度'].includes(field.label) && field.previous === undefined
+    (field) =>
+      ['模型', '温度', '版本', '运行环境'].includes(field.label) && field.previous === undefined
   )
   const fields = presentation.fields.filter(
     (field) => field !== description && !metadata.includes(field)
@@ -100,30 +233,40 @@ export function WorkPermissionCard({ pending, blocked, submitting, onReply }: Pr
   const extra = presentation.sections.filter(
     (section) => ![...commands, ...resources, ...instructions, ...tools].includes(section)
   )
-  const pages: DetailPage[] = [
-    ...(instructions.length
-      ? [{ id: 'instructions', label: '工作指令', sections: instructions }]
-      : []),
-    ...(resources.length
-      ? [
-          {
-            id: 'resources',
-            label: '资源',
-            count: resources.reduce((sum, section) => sum + (section.items?.length ?? 0), 0),
-            sections: resources
-          }
-        ]
-      : []),
-    ...(tools.length
-      ? [{ id: 'tools', label: '工具权限', count: tools[0].items?.length, sections: tools }]
-      : []),
-    ...(extra.length ? [{ id: 'other', label: '更多详情', sections: extra }] : [])
-  ]
+  const pages: DetailPage[] = presentation.kind
+    ? presentation.sections
+        .filter((section) => section.id !== 'command')
+        .map((section) => ({
+          id: section.id,
+          label: section.label,
+          count: section.pluginTools?.length ?? section.files?.length,
+          sections: [section]
+        }))
+    : [
+        ...(instructions.length
+          ? [{ id: 'instructions', label: '工作指令', sections: instructions }]
+          : []),
+        ...(resources.length
+          ? [
+              {
+                id: 'resources',
+                label: '资源',
+                count: resources.reduce((sum, section) => sum + (section.items?.length ?? 0), 0),
+                sections: resources
+              }
+            ]
+          : []),
+        ...(tools.length
+          ? [{ id: 'tools', label: '工具权限', count: tools[0].items?.length, sections: tools }]
+          : []),
+        ...(extra.length ? [{ id: 'other', label: '更多详情', sections: extra }] : [])
+      ]
   const activePage =
     selectedPage === 'raw' || pages.some((page) => page.id === selectedPage)
       ? selectedPage
-      : (pages[0]?.id ?? 'raw')
+      : (pages[0]?.id ?? null)
   const currentPage = pages.find((page) => page.id === activePage)
+  usePendingCardBodySpace(panel, activePage)
   const selectPage = (id: string): void => {
     if (id === activePage) return
     setSelectedPage(id)
@@ -132,6 +275,19 @@ export function WorkPermissionCard({ pending, blocked, submitting, onReply }: Pr
   }
   const options = [...pending.options].sort(
     (a, b) => Number(a.value === 'approved') - Number(b.value === 'approved')
+  )
+  const rawButton = (
+    <button
+      type="button"
+      className={`work-permission__more${activePage === 'raw' ? ' is-selected' : ''}`}
+      aria-label="完整参数"
+      title="完整参数"
+      aria-expanded={activePage === 'raw'}
+      aria-controls={panelId}
+      onClick={() => selectPage('raw')}
+    >
+      <Icon name="dots-horizontal" size={18} />
+    </button>
   )
   return (
     <div className="work-permission" aria-labelledby={titleId}>
@@ -143,12 +299,25 @@ export function WorkPermissionCard({ pending, blocked, submitting, onReply }: Pr
             presentation.destructive
               ? 'trash'
               : /^agent_(?:do_)?/.test(pending.toolName)
-                ? 'agent-general'
-                : 'shield'
+                ? 'account-outline'
+                : presentation.kind === 'plugin'
+                  ? 'extensions'
+                  : presentation.kind === 'management'
+                    ? pending.toolName.startsWith('knowledge_')
+                      ? 'book-open'
+                      : pending.toolName.startsWith('skill_')
+                        ? 'package-variant-closed'
+                        : pending.toolName.startsWith('cron_')
+                          ? 'clock-outline'
+                          : pending.toolName.startsWith('mcp_')
+                            ? 'plug'
+                            : 'extensions'
+                    : 'shield'
           }
           size={18}
         />
         <h3 id={titleId}>{presentation.title}</h3>
+        {!pages.length ? rawButton : null}
       </header>
       <div className="work-permission__overview">
         {presentation.summary ? (
@@ -195,70 +364,66 @@ export function WorkPermissionCard({ pending, blocked, submitting, onReply }: Pr
         ))}
       </div>
 
-      <div className="work-permission__inspector">
-        <div className="work-permission__detailbar" role="group" aria-label="配置详情">
+      {pages.length || activePage === 'raw' ? (
+        <div className="work-permission__inspector">
           {pages.length ? (
-            <div className="work-permission__segments">
-              {pages.map((page) => (
-                <button
-                  type="button"
-                  key={page.id}
-                  aria-label={page.label}
-                  aria-expanded={activePage === page.id}
-                  aria-controls={panelId}
-                  className={activePage === page.id ? 'is-selected' : ''}
-                  onClick={() => selectPage(page.id)}
-                >
-                  {page.label}
-                  {page.count !== undefined ? <span aria-hidden="true">{page.count}</span> : null}
-                </button>
-              ))}
+            <div className="work-permission__detailbar" role="group" aria-label="配置详情">
+              {pages.length ? (
+                <div className="work-permission__segments">
+                  {pages.map((page) => (
+                    <button
+                      type="button"
+                      key={page.id}
+                      aria-label={page.label}
+                      aria-expanded={activePage === page.id}
+                      aria-controls={panelId}
+                      className={activePage === page.id ? 'is-selected' : ''}
+                      onClick={() => selectPage(page.id)}
+                    >
+                      {page.label}
+                      {page.count !== undefined ? (
+                        <span aria-hidden="true">{page.count}</span>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <span className="work-permission__detailbar-label">操作详情</span>
+              )}
+              {rawButton}
             </div>
-          ) : (
-            <span className="work-permission__detailbar-label">操作详情</span>
-          )}
-          <button
-            type="button"
-            className={`work-permission__more${activePage === 'raw' ? ' is-selected' : ''}`}
-            aria-label="完整参数"
-            title="完整参数"
-            aria-expanded={activePage === 'raw'}
-            aria-controls={panelId}
-            onClick={() => selectPage('raw')}
-          >
-            <Icon name="dots-horizontal" size={18} />
-          </button>
+          ) : null}
+          {activePage && (currentPage || activePage === 'raw') ? (
+            <div
+              ref={panel}
+              id={panelId}
+              className="work-permission__body"
+              role="region"
+              aria-label="操作详情"
+              tabIndex={0}
+            >
+              {activePage === 'raw' ? (
+                <pre className="work-permission__raw">{presentation.raw}</pre>
+              ) : (
+                currentPage?.sections.map((section) => (
+                  <section
+                    className="work-permission__section"
+                    key={section.id}
+                    aria-label={section.label}
+                  >
+                    {currentPage.sections.length > 1 ||
+                    currentPage.id === 'resources' ||
+                    currentPage.id === 'other' ? (
+                      <h4>{section.label}</h4>
+                    ) : null}
+                    <DetailContent section={section} />
+                  </section>
+                ))
+              )}
+            </div>
+          ) : null}
         </div>
-        {activePage && (currentPage || activePage === 'raw') ? (
-          <div
-            ref={panel}
-            id={panelId}
-            className="work-permission__body"
-            role="region"
-            aria-label="操作详情"
-            tabIndex={0}
-          >
-            {activePage === 'raw' ? (
-              <pre className="work-permission__raw">{presentation.raw}</pre>
-            ) : (
-              currentPage?.sections.map((section) => (
-                <section
-                  className="work-permission__section"
-                  key={section.id}
-                  aria-label={section.label}
-                >
-                  {currentPage.sections.length > 1 ||
-                  currentPage.id === 'resources' ||
-                  currentPage.id === 'other' ? (
-                    <h4>{section.label}</h4>
-                  ) : null}
-                  <DetailContent section={section} />
-                </section>
-              ))
-            )}
-          </div>
-        ) : null}
-      </div>
+      ) : null}
 
       <footer className="work-permission__footer">
         <button

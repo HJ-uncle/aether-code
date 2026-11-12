@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { Dialog } from '@renderer/workbench/Dialog'
 import { Icon } from '@renderer/workbench/icons'
+import { OUTLINE_ICON_PATHS, OUTLINE_ICON_STROKE } from '@renderer/workbench/outline-icons'
 import { toast } from '@renderer/core/toast'
 import { cssColor } from '@renderer/core/theme/palette'
 import { useDocumentContextMenu } from '@renderer/core/editor/useDocumentContextMenu'
@@ -31,10 +32,10 @@ function MarkupIcon({ name }: { name: Tool | 'undo' | 'redo' }): JSX.Element {
     ellipse: <ellipse cx="12" cy="12" rx="9" ry="7" />,
     text: <><path d="M5 6V4h14v2M12 4v16M8 20h8" /></>,
     eraser: <><path d="m4 13 9-9a2 2 0 0 1 3 0l4 4a2 2 0 0 1 0 3l-9 9H7l-3-3a3 3 0 0 1 0-4ZM9 8l8 8M11 20h10" /></>,
-    undo: <><path d="m8 4-5 5 5 5M3 9h11a6 6 0 0 1 0 12h-3" /></>,
-    redo: <><path d="m16 4 5 5-5 5M21 9H10a6 6 0 0 0 0 12h3" /></>
+    undo: <><path d={OUTLINE_ICON_PATHS.undo} /></>,
+    redo: <><path d={OUTLINE_ICON_PATHS.redo} /></>
   }
-  return <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{shapes[name]}</svg>
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={OUTLINE_ICON_STROKE} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">{shapes[name]}</svg>
 }
 
 function pngName(title: string): string {

@@ -388,7 +388,7 @@ function ArtifactContent({
                 )
             }}
           />}
-          <IconButton icon="restart" size={14} label="刷新成果预览"
+          <IconButton icon="refresh" size={14} label="刷新成果预览"
             className="work-artifact-panel-v2__action"
             onClick={() => { if (epoch === getEngineSource()) setReadVersion(value => value + 1) }}
             disabled={loading || !artifact.path}
@@ -396,7 +396,7 @@ function ArtifactContent({
           />
           <IconButton icon="copy" size={14} label={copyLabel} title={copyLabel}
             className="work-artifact-panel-v2__action" onClick={() => void copy()} disabled={content === null} />
-          <IconButton icon="cloud-download-outline" size={14} label={saveLabel} title={saveLabel}
+          <IconButton icon="download" size={14} label={saveLabel} title={saveLabel}
             className="work-artifact-panel-v2__action"
             onClick={() => void download()}
             disabled={saving || (content === null && !(value?.isBinary && (externalFile || externalPath ? Boolean(value.base64 || value.bytes) : Boolean(sessionId))))}

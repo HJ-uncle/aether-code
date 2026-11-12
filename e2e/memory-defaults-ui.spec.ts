@@ -105,13 +105,12 @@ const server = createServer((request, response) => { void (async () => {
   response.end(envelope(data))
 })().catch(error => { errors.push(String(error)); if (!response.headersSent) response.writeHead(500); response.end('Memory fixture request failed') }) })
 
-async function selectMode(mode: 'code' | 'work'): Promise<Locator> {
-  await page.getByRole('tab', { name: mode === 'code' ? 'Code 开发' : 'Work 办公', exact: true }).click()
-  const surface = page.locator(`#mode-${mode}`)
+async function selectMode(mode: 'work'): Promise<Locator> {
+  const surface = page.locator('.work-view')
   await expect(surface.getByRole('button', { name: '对话偏好', exact: true })).toBeEnabled()
   return surface
 }
-async function openPreference(mode: 'code' | 'work', label = '跟随默认 · 关闭'): Promise<Locator> {
+async function openPreference(mode: 'work', label = '跟随默认 · 关闭'): Promise<Locator> {
   const surface = await selectMode(mode)
   await surface.getByRole('button', { name: '对话偏好', exact: true }).click()
   const choice = page.getByRole('button', { name: `本会话记忆：${label}`, exact: true })
@@ -157,7 +156,7 @@ test.describe.serial('记忆默认关闭与明确开启', () => {
     const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing fixture port')
     const origin = `http://127.0.0.1:${address.port}`
     writeFileSync(join(fixture, 'settings.json'), JSON.stringify({ engineMode: 'remote', remoteBaseUrl: origin, remoteWorkspaceRoot: remoteRoot,
-      autoStartEngine: true, lastSessionId: codeId, lastFolder: '', lastModelId: modelId, appearance: 'light', thinkingMode: 'off' }))
+      autoStartEngine: true, lastSessionId: workId, lastFolder: '', lastModelId: modelId, appearance: 'light', thinkingMode: 'off' }))
     const env: Record<string, string> = Object.fromEntries(Object.entries(process.env).flatMap(([key, value]) => value === undefined ? [] : [[key, value]]))
     for (const key of Object.keys(env)) if (['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL', 'AETHER_IDE_REMOTE_API_KEY', 'AETHER_IDE_REMOTE_BEARER_TOKEN', 'AETHER_IDE_REMOTE_AUTH_URL'].includes(key.toUpperCase())) delete env[key]
     env.AETHER_IDE_REMOTE_INSTANCE_TOKEN = token; env.AETHER_GLOBAL_DIR = join(fixture, 'global')
@@ -168,15 +167,11 @@ test.describe.serial('记忆默认关闭与明确开启', () => {
     await page.evaluate(({ key, workId, title, now, modelId }) => {
       localStorage.setItem(key, JSON.stringify({ tasks: [{ id: workId, title, status: 'done', draft: '', createdAt: now, updatedAt: now,
         workspacePath: null, modelId, attachments: [], sources: [] }], activeTaskId: workId, homeDraft: '' }))
-      localStorage.setItem('aether.app.mode', 'code')
+      localStorage.setItem('aether.app.mode', 'work')
       localStorage.setItem('aether.work.view.v1', JSON.stringify({ page: 'home', collapsed: false, workspace: false, tab: 'files', pane: 'conversation', ratio: 50 }))
     }, { key: 'aether.work.state.v1:' + encodeURIComponent(engineStorageKey({ mode: 'remote', baseUrl: origin })), workId, title: titles.get(workId)!, now, modelId })
     await reload()
-    // A newly connected remote source intentionally ignores the previous
-    // source's lastSessionId. Select its real history entry through the UI.
-    await page.locator('#mode-code').getByRole('button', { name: '会话历史', exact: true }).click()
-    await page.locator(`#mode-code [data-session-id="${codeId}"]`).click()
-    await expect(page.locator('#mode-code')).toContainText('已有聊天历史仍然保留。')
+    await expect(page.locator('.work-view')).toContainText('已有聊天历史仍然保留。')
   })
   test.afterEach(async ({}, info) => {
     if (page && !page.isClosed()) {
@@ -197,13 +192,13 @@ test.describe.serial('记忆默认关闭与明确开启', () => {
     }
   })
 
-  test('Code 与 Work 均跟随默认关闭，打开偏好不会写设置或删除历史', async () => {
-    for (const mode of ['code', 'work'] as const) {
+  test('Work 跟随默认关闭，打开偏好不会写设置或删除历史', async () => {
+    for (const mode of ['work'] as const) {
       const choice = await openPreference(mode); await choice.click()
       await expect(page.getByRole('menuitem', { name: /^恢复默认/ })).toHaveAttribute('aria-current', 'true')
       await expect(page.getByRole('menuitem', { name: /^恢复默认/ })).toContainText('跟随默认关闭')
       await page.keyboard.press('Escape'); await closePreference()
-      await expect(page.locator(`#mode-${mode}`)).toContainText('已有聊天历史仍然保留。')
+      await expect(page.locator('.work-view')).toContainText('已有聊天历史仍然保留。')
     }
     expect(writes).toEqual([]); expect(disk()).toEqual(initial)
   })
@@ -235,8 +230,8 @@ test.describe.serial('记忆默认关闭与明确开启', () => {
     ])
   })
 
-  for (const mode of ['code', 'work'] as const) test(`${mode} 会话开启经重载保留，恢复默认后关闭且不影响另一模式`, async () => {
-    const id = mode === 'code' ? codeId : workId, other = mode === 'code' ? workId : codeId, start = writes.length
+  for (const mode of ['work'] as const) test(`${mode} 会话开启经重载保留，恢复默认后关闭`, async () => {
+    const id = workId, other = codeId, start = writes.length
     await (await openPreference(mode)).click()
     await page.getByRole('menuitem', { name: /^本会话开启/ }).click()
     await expect(page.getByRole('button', { name: '本会话记忆：本会话开启', exact: true })).toBeEnabled()
@@ -250,18 +245,18 @@ test.describe.serial('记忆默认关闭与明确开启', () => {
     await expect.poll(() => disk().overrides[id]).toBeNull()
     expect(settings(id).effectiveScopes).toEqual([]); expect(settings(other).sessionEnabled).toBe(false)
     await closePreference(); await reload(); await openPreference(mode); await closePreference()
-    await expect(page.locator(`#mode-${mode}`)).toContainText('已有聊天历史仍然保留。')
+    await expect(page.locator('.work-view')).toContainText('已有聊天历史仍然保留。')
     expect(writes.slice(start)).toEqual([
       { path: '/api/v1/memory/settings', body: { sessionId: id, sessionEnabled: true } },
       { path: '/api/v1/memory/settings', body: { sessionId: id, sessionEnabled: null } }
     ])
   })
 
-  test('Code 与 Work 偏好仅保留三项设置，菜单逐层关闭，模型选择保留在输入框外侧', async () => {
+  test('Work 偏好仅保留三项设置，菜单逐层关闭，模型选择保留在输入框外侧', async () => {
     const previousWrites = structuredClone(writes), previousDisk = disk()
-    for (const mode of ['code', 'work'] as const) {
+    for (const mode of ['work'] as const) {
       await openPreference(mode)
-      const panel = preferencePanel(), surface = page.locator(`#mode-${mode}`)
+      const panel = preferencePanel(), surface = page.locator('.work-view')
       const model = surface.locator('.model-picker .select__trigger')
       await expect(panel.locator('.composer-options__header')).toContainText('对话偏好')
       await expect(panel.getByText('当前模型', { exact: true })).toHaveCount(0)
@@ -312,7 +307,7 @@ test.describe.serial('记忆默认关闭与明确开启', () => {
       await setWindow(1440, 960); await setAppearance(appearance)
       for (const [width, height] of [[1440, 960], [640, 700]] as const) {
         await setWindow(width, height)
-        for (const mode of ['code', 'work'] as const) {
+        for (const mode of ['work'] as const) {
           await openPreference(mode)
           const panel = preferencePanel()
           await expect(preferenceRow('本会话记忆').locator('.composer-options__summary'))

@@ -9,7 +9,7 @@ import { Dialog } from '@renderer/workbench/Dialog'
 import { requestOrThrow } from '@renderer/core/engine/client'
 import { BUILTIN_AGENTS, parseBuiltinAgentReference } from '@shared/builtin-agents'
 import type { AgentReferenceIdentity } from '../chat/agent-references'
-import type { Mention } from '../chat/mention-context'
+import { isResourceSource, type Mention } from '../chat/mention-context'
 import type { ChatFileContext } from '../chat/chat-link'
 import { FileGlyph } from '../explorer/FileGlyph'
 import { DirectoryReferencePreview } from '../chat/DirectoryReferencePreview'
@@ -48,7 +48,7 @@ export function WorkReferenceProvider({ controller, onSources, onWorkspaceFile, 
   const [preview, setPreview] = useState<{ scope: string; revision: number; mention: Mention; source: ChatAttachment; root: string | null;
     readSessionId?: string; editable: boolean; images: ChatAttachment[] } | null>(null)
   const openMention = useCallback((mention: Mention, context?: ChatFileContext, receipt?: ChatAttachment): void => {
-    if (mention.source === 'toolkit') return
+    if (mention.source === 'toolkit' || isResourceSource(mention.source)) return
     if (mention.source === 'conversation') { onConversation(mention.path ?? ''); return }
     const sessionId = context?.sessionId ?? controller.securitySessionId ?? undefined
     const root = context ? context.workspaceRoot ?? null : controller.workspacePath ?? null

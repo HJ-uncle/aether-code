@@ -5,6 +5,52 @@ import { exportToolDiagnostics } from '@renderer/core/engine/tool-feedback'
 import { toolDisplayName, toolParamSummary } from './tool-names'
 import { mentionToken, userMessageDraft } from './mention-context'
 
+export interface MessageExportDocumentOptions {
+  /** The conversation title shown as the document heading. */
+  title: string
+  /** The task workspace, or null for a standalone conversation. */
+  workspace?: string | null
+  /** Number of complete conversation turns included in the document. */
+  turnCount: number
+  /** Injectable for deterministic tests; callers normally omit it. */
+  exportedAt?: Date
+}
+
+function exportDate(value: Date): string {
+  const pad = (part: number): string => String(part).padStart(2, '0')
+  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ${pad(value.getHours())}:${pad(value.getMinutes())}`
+}
+
+function singleLine(value: string, fallback: string): string {
+  const normalized = value.replace(/[\r\n]+/g, ' ').trim()
+  return normalized || fallback
+}
+
+/**
+ * Add the small amount of context needed when a selected Work conversation is
+ * copied or downloaded. Keeping this separate from message serialization
+ * preserves the existing message-level export format used by Code and by
+ * individual message actions.
+ */
+export function buildMessageExportDocument(body: string, options: MessageExportDocumentOptions): string {
+  if (!body.trim()) return ''
+  const title = singleLine(options.title, '未命名会话')
+  const workspace = singleLine(options.workspace ?? '', '独立任务')
+  const turnCount = Math.max(0, Math.floor(options.turnCount))
+  const lines = [
+    `# ${title}`,
+    '',
+    `- 工作目录：${workspace}`,
+    `- 导出时间：${exportDate(options.exportedAt ?? new Date())}`,
+    `- 对话轮次：${turnCount}`,
+    '',
+    '---',
+    '',
+    body
+  ]
+  return lines.join('\n')
+}
+
 function exportedUserText(content: string): string {
   const draft = userMessageDraft(content)
   let text = '', cursor = 0

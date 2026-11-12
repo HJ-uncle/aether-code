@@ -9,6 +9,7 @@ import type { ToolActivity } from '@renderer/core/engine/useChat'
 import { cancelCommandJob, commandJobMissing, deleteCommandJob, ingestCommandJob, refreshCommandOutput, restartCommandJob, useCommandJob } from '@renderer/core/engine/command-job-store'
 import { MotionPresence } from '@renderer/workbench/MotionPresence'
 import { Icon } from '@renderer/workbench/icons'
+import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
 import { exportToolDiagnostics } from '@renderer/core/engine/tool-feedback'
 import { toast } from '@renderer/core/toast'
 import { WorkToolOutcome } from '../work/WorkToolOutcome'
@@ -39,6 +40,14 @@ export function CommandJobCard({ job: initial, sessionId, surfaceMode = 'code', 
   const [commandOpen, setCommandOpen] = useState(false)
   const active = commandJobActive(job)
   const belongs = job.sessionId === sessionId
+  const historyScope = useRef<{ current: boolean } | null>(null)
+  const historyState = useRef({ readOnly, ready, belongs, active, historyAction })
+  historyState.current = { readOnly, ready, belongs, active, historyAction }
+  useLayoutEffect(() => {
+    const scope = { current: true }
+    historyScope.current = scope
+    return () => { scope.current = false }
+  }, [sourceEpoch, sessionId, job.jobId, surfaceMode, mode, surfaceActive, visible])
   const commandText = commandJobInvocation(job)
   const commandPreview = commandText.replace(/\s+/g, ' ').trim()
   const commandIsLong = commandPreview.length > 180
@@ -131,11 +140,17 @@ export function CommandJobCard({ job: initial, sessionId, surfaceMode = 'code', 
   }
   const remove = async (): Promise<void> => {
     if (readOnly || !ready || sourceEpoch !== getEngineSource() || !belongs || active || historyAction) return
-    if (!window.confirm('删除这条服务历史及其日志？此操作无法撤销。')) return
+    const scope = historyScope.current
+    const current = (): boolean => Boolean(scope?.current && sourceEpoch === getEngineSource())
+    if (!await confirmDialog({ title: '删除服务历史', body: '删除这条服务历史及其日志？此操作无法撤销。', confirmText: '删除', danger: true })) return
+    const latest = historyState.current
+    // Unlike a native blocking dialog, this confirmation allows the target
+    // session or job to change while the user reviews it.
+    if (!current() || latest.readOnly || !latest.ready || !latest.belongs || latest.active || latest.historyAction) return
     setHistoryAction('delete'); setActionError('')
-    try { await deleteCommandJob(sessionId, job.jobId); setDeleted(true) }
-    catch (error) { if (sourceEpoch === getEngineSource()) setActionError(`删除失败：${error instanceof Error ? error.message : String(error)}`) }
-    finally { if (sourceEpoch === getEngineSource()) setHistoryAction(null) }
+    try { await deleteCommandJob(sessionId, job.jobId); if (current()) setDeleted(true) }
+    catch (error) { if (current()) setActionError(`删除失败：${error instanceof Error ? error.message : String(error)}`) }
+    finally { if (current()) setHistoryAction(null) }
   }
   if (servicePresentation) {
     // The row identifies a process; its exact invocation belongs in the disclosure.

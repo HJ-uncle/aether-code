@@ -8,7 +8,7 @@ import { Spinner } from '@renderer/workbench/ui-primitives'
 import { useHoverDetail } from '@renderer/workbench/useHoverDetail'
 import { builtinAgentName } from '@shared/builtin-agents'
 import type { ChatFileContext } from '../chat/chat-link'
-import { workSubagentName } from './work-subagents'
+import { workSubagentIcon, workSubagentName } from './work-subagents'
 import { requestWorkSubagent } from './work-subagent-navigation'
 import { formatSubagentElapsed, workSubagentTiming } from './work-subagent-timing'
 import './work-subagent-card.css'
@@ -67,7 +67,7 @@ export function WorkSubagentCard({ tool, fileContext, active = true }: {
     </div> })
   const duration = compact && timing.durationMs !== undefined ? formatSubagentElapsed(timing.durationMs) : timing.durationText
   const heading = <>{compact ? <>
-    <span className="work-subagent-card__icon" aria-hidden="true">{running ? <Spinner size={13} /> : <Icon name="account-outline" size={13} />}</span>
+    <span className="work-subagent-card__icon" aria-hidden="true">{running ? <Spinner size={13} /> : <Icon name={workSubagentIcon(current)} size={13} />}</span>
     <span className="work-subagent-card__action">{role ? `${role}任务` : '协作任务'}</span>
   </> : null}<span className="work-subagent-card__identity">
     <span className="work-subagent-card__name">{name}</span>

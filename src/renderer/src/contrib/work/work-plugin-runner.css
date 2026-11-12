@@ -1,0 +1,51 @@
+.work-plugin-app { max-width: 1040px; }
+.work-plugin-app__canvas { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; padding: 22px 0; border-top: 1px solid var(--border); }
+.work-plugin-app__canvas > form { min-width: 0; }
+.work-plugin-app__tool { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.work-plugin-app__tool > label { color: var(--fg-muted); font-size: 12px; }
+.work-plugin-app__tool > select { flex: 1; min-width: 0; }
+.work-plugin-app__tool > span { color: var(--fg-faint); font-size: 11px; }
+.work-plugin-app__description { color: var(--fg-muted); font-size: 12px; line-height: 1.6; margin: 0 0 24px; }
+.work-plugin-app__fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 14px; }
+.work-plugin-app__field { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.work-plugin-app__field > label { display: flex; align-items: center; gap: 8px; color: var(--fg); font-size: 12px; }
+.work-plugin-app__required { margin-left: auto; color: var(--fg-faint); font-size: 10px; font-weight: 400; }
+.work-plugin-app__field .ui-input { width: 100%; }
+.work-plugin-app__field > p { margin: 0; color: var(--fg-muted); font-size: 11px; line-height: 1.5; }
+.work-plugin-app__field--boolean { display: grid; grid-template-columns: 1fr auto; align-content: start; }
+.work-plugin-app__field--boolean > input { accent-color: var(--accent); }
+.work-plugin-app__field--boolean > p { grid-column: 1 / -1; }
+.work-plugin-app .work-plugin-app__field-error, .work-plugin-app__error { color: var(--danger-fg); font-size: 12px; line-height: 1.6; }
+.work-plugin-app__field [aria-invalid='true'] { border-color: var(--danger); }
+.work-plugin-app__advanced { padding-top: 14px; border-top: 1px solid var(--border); }
+.work-plugin-app__advanced > summary { margin-bottom: 14px; color: var(--fg-muted); }
+.work-plugin-app__advanced > .work-plugin-app__field + .work-plugin-app__field { margin-top: 14px; }
+.work-plugin-app textarea.work-plugin-app__json { min-height: 110px; font: 12px/1.6 var(--font-mono); }
+.work-plugin-app__submit { display: flex; align-items: center; gap: 12px; margin-top: 24px; }
+.work-plugin-app__submit > span { color: var(--fg-faint); font-size: 11px; }
+.work-plugin-app__json-toggle { margin-left: auto; color: var(--fg-muted); font-size: 11px; }
+.work-plugin-app__result { min-width: 0; padding: 2px 0 0 26px; border-left: 1px solid var(--border); }
+.work-plugin-app__result-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.work-plugin-app__result-heading > span { color: var(--fg-faint); font-size: 11px; }
+.work-plugin-app__headline { margin: 0 0 20px; color: var(--fg-strong); font-size: clamp(20px, 2.5vw, 30px); line-height: 1.4; font-weight: 600; letter-spacing: -.5px; overflow-wrap: anywhere; }
+.work-plugin-app__expression { color: var(--fg); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.work-plugin-app__result-note { color: var(--fg-muted); font-size: 11px; line-height: 1.7; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.work-plugin-app dl.work-plugin-app__values { display: block; border: 0; padding: 0; margin: 0; }
+.work-plugin-app__values > div { display: grid; grid-template-columns: minmax(70px, 34%) minmax(0, 1fr); align-items: baseline; gap: 14px; padding: 9px 0; border-bottom: 1px solid var(--border); }
+.work-plugin-app__values > div:last-child { border-bottom: 0; }
+.work-plugin-app__values dd { display: block; font-variant-numeric: tabular-nums; line-height: 1.5; }
+.work-plugin-app__values > div:has(table), .work-plugin-app__values > div:has(dl) { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.work-plugin-app__values ul { margin: 0; padding-left: 18px; }
+.work-plugin-app__table-wrap { min-width: 0; max-height: 460px; overflow: auto; }
+.work-plugin-app__table-wrap table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; font-variant-numeric: tabular-nums; }
+.work-plugin-app__table-wrap th { color: var(--fg-muted); font-weight: 500; }
+.work-plugin-app__table-wrap th, .work-plugin-app__table-wrap td { padding: 8px 10px 8px 0; border-bottom: 1px solid var(--border); vertical-align: top; max-width: 260px; overflow-wrap: anywhere; }
+.work-plugin-app__raw { padding-top: 10px; border-top: 1px solid var(--border); }
+.work-plugin-app__raw > pre { max-height: 340px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.work-plugin-app__artifacts h3 { font-size: 12px; margin-bottom: 6px; }
+.work-plugin-app__artifacts > p { font-size: 11px; color: var(--fg-muted); }
+.work-plugin-app__artifacts pre { max-height: 240px; white-space: pre-wrap; }
+.work-plugin-app__placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 260px; padding: 28px; color: var(--fg-faint); text-align: center; font-size: 12px; }
+.work-plugin-app__loading { color: var(--fg-muted); font-size: 12px; }
+@media (max-width: 1100px) { .work-plugin-app__canvas { grid-template-columns: minmax(0, 1fr); gap: 24px; max-width: 720px; margin-inline: auto; } .work-plugin-app__result { padding: 22px 0 0; border-left: 0; border-top: 1px solid var(--border); } .work-plugin-app__placeholder { min-height: 120px; } }
+@media (max-width: 620px) { .work-plugin-app__fields { grid-template-columns: minmax(0, 1fr); } .work-plugin-app__submit { flex-wrap: wrap; } }

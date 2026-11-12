@@ -596,7 +596,7 @@ export function WorkAgentManager({
     if (draft) nameInput.current?.focus()
   }, [Boolean(draft)])
   useEffect(() => subscribeAgentCatalogueChanges(() => setReload((value) => value + 1)), [])
-  useEffect(() => subscribeResourceCatalogueChanges(['skill', 'knowledge'], () => setResourceReload(value => value + 1)), [])
+  useEffect(() => subscribeResourceCatalogueChanges(['skill', 'knowledge', 'mcp'], () => setResourceReload(value => value + 1)), [])
   useEffect(() => {
     let cancelled = false
     setLoading(true)
