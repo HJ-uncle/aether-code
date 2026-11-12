@@ -1,7 +1,6 @@
 import type { SendOptions } from './useChat'
 import { clientCapabilities } from '../workbench/capabilities'
 import { getEngineSource } from './source'
-import { getAppMode } from '../platform/app-mode'
 
 export class ChatRequestRejectedError extends Error {
   readonly requestRejected = true
@@ -37,7 +36,7 @@ export async function dispatchChatRequest(
     subagentModel: options.subagentModel,
     utilityModel: options.utilityModel,
     memoryScope: options.memoryScope,
-    clientCapabilities: clientCapabilities(getEngineSource(), options.sessionId, getAppMode()),
+    clientCapabilities: clientCapabilities(getEngineSource(), options.sessionId, 'work'),
     attachments: serializedAttachments.length ? serializedAttachments : undefined
   })
 }

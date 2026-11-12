@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { createReadonlyWorkQueueReader } from '../office-readonly-work-queue.mjs';
+import { createReadonlySessionQueueReader } from '../office-readonly-work-queue.mjs';
 
 const fixtures = path.resolve('.e2e-tmp');
 const sha = value => createHash('sha256').update(value).digest('hex');
@@ -26,7 +26,7 @@ async function using(fn) {
     const record = { ...unsigned, snapshotDigest: sha(canonical(unsigned)) };
     fs.writeFileSync(path.join(bucket, 'r0000000000.json'), JSON.stringify(record) + '\n');
   };
-  try { await fn({ profile, bucket, write, reader: options => createReadonlyWorkQueueReader({ profile, backend: 'json-journal', ...options }) }); }
+  try { await fn({ profile, bucket, write, reader: options => createReadonlySessionQueueReader({ profile, backend: 'json-journal', ...options }) }); }
   finally {
     const resolved = fs.realpathSync(profile);
     assert.equal(path.dirname(resolved).toLowerCase(), fs.realpathSync(fixtures).toLowerCase());
@@ -41,7 +41,8 @@ test('missing bucket reads actual empty product state without creating files', (
 test('actual journal checksum and shared state contract produce a bounded read receipt', () => using(async f => {
   f.write(); const reader = f.reader(); const result = await reader.read(scope);
   assert.deepEqual(result.state, state()); assert.equal(result.readEvidence.files.length, 1);
-  assert.equal(Object.keys(result.sourceHashes).length, 3);
+  assert.deepEqual(Object.keys(result.sourceHashes).sort(), ['src/shared/next-turn-queue.ts', 'src/shared/next-turn-queue-state.ts',
+    'src/main/next-turn-queue-store.ts', 'src/shared/builtin-agents.ts', 'src/shared/conversation-link.ts', 'src/shared/toolkits.ts'].sort());
   assert.throws(() => reader.validateQueueState({ ...state(), paused: 'false' }, scope));
   assert.deepEqual(fs.readdirSync(f.bucket), ['r0000000000.json']);
 }));

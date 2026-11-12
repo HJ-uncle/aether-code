@@ -16,14 +16,14 @@ import ExcelJS from 'exceljs'
 import ts from 'typescript'
 
 const project = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const directory = path.join(project, 'src/renderer/src/contrib/documents')
+const directory = path.join(project, 'src/renderer/src/features/documents')
 const require = createRequire(import.meta.url)
 const modules = new Map(), sourceHashes = {}
 function load(name) {
   if (modules.has(name)) return modules.get(name)
   assert.match(name, /^[a-z][a-z0-9-]*$/, 'Only local document helper modules may be loaded')
   const source = readFileSync(path.join(directory, `${name}.ts`), 'utf8')
-  sourceHashes[`src/renderer/src/contrib/documents/${name}.ts`] = createHash('sha256').update(source).digest('hex')
+  sourceHashes[`src/renderer/src/features/documents/${name}.ts`] = createHash('sha256').update(source).digest('hex')
   const javascript = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   const exports = {}
   modules.set(name, exports)
@@ -92,7 +92,7 @@ const report = {
     baselineSha256: digest(baseline.pages), optimizedSha256: digest(optimized.pages), differences },
   sourceHashes
 }
-const output = path.join(project, '.e2e-tmp', `spreadsheet-viewport-${Date.now()}.json`)
+const output = path.join(project, '.e2e-tmp', 'spreadsheet-viewport', `report-${Date.now()}.json`)
 await fs.mkdir(path.dirname(output), { recursive: true })
 await fs.writeFile(output, JSON.stringify(report, null, 2) + '\n')
 console.log(JSON.stringify({ report: output, preparation, baseline: { ...baseline.metrics, sampleMs: undefined }, optimized: { ...optimized.metrics, sampleMs: undefined }, equality: report.equality }, null, 2))

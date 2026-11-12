@@ -84,7 +84,7 @@ const profile = fs.mkdtempSync(path.join(output, 'profile-'))
 fs.writeFileSync(path.join(profile, 'settings.json'), JSON.stringify({ engineMode: 'remote', remoteBaseUrl: baseUrl, remoteWorkspaceRoot: '', autoStartEngine: true, lastSessionId: '', lastFolder: '', lastModelId: items[0].modelId, thinkingMode: 'off', appearance: 'dark' }))
 const startedAt = Date.now(), targetIntervalMs = 30_000, maxActionMs = Number(initial.maxUiActionMs ?? 10_000)
 if (!Number.isFinite(maxActionMs) || maxActionMs < 1000 || maxActionMs > 30_000) throw new Error('maxUiActionMs must be between 1000 and 30000')
-const result = { schemaVersion: 1, runId: initial.runId, scope: 'Real Electron observing six existing runner-owned sessions; workload execution and scheduler evidence are owned by the main runner. Imported task indexes are recovery setup, not UI CRUD coverage.', startedAt: new Date(startedAt).toISOString(), runnerStartedAt: initial.startedAt, deadline: initial.deadline, baseUrl, appRoot, clientMain, clientBuildRoot, frozenClient: Boolean(initial.clientMain), buildFingerprint, profile, output, status: 'running', passed: false, cycle: 0, rendererErrors: [], consoleErrors: [], failures: [], responsiveness: [], observations: [], samples: [], sessions: Object.fromEntries(items.map(item => [item.sessionId, { kind: item.kind, visits: 0, activeVisits: 0, completedVisits: 0, modelIdsSeen: [], actualModelIdsSeen: [], modelEvidence: [], runIdsSeen: [], childIdsSeen: [], planVisits: 0, detailVisits: 0, reloadRecoveries: 0, apiEventIdsSeen: [] }])), counters: { clicks: 0, keypresses: 0, codeVisits: 0, workVisits: 0, cronSessionVisits: 0, automationVisits: 0, automationEditCancellations: 0, childDetailVisits: 0, transcriptVisits: 0, artifactVisits: 0, planVisits: 0, toolDetailVisits: 0, reloads: 0, streamEvents: 0 } }
+const result = { schemaVersion: 1, runId: initial.runId, scope: 'Real Electron observing six existing runner-owned sessions; workload execution and scheduler evidence are owned by the main runner. Imported task indexes are recovery setup, not UI CRUD coverage.', startedAt: new Date(startedAt).toISOString(), runnerStartedAt: initial.startedAt, deadline: initial.deadline, baseUrl, appRoot, clientMain, clientBuildRoot, frozenClient: Boolean(initial.clientMain), buildFingerprint, profile, output, status: 'running', passed: false, cycle: 0, rendererErrors: [], consoleErrors: [], failures: [], responsiveness: [], observations: [], samples: [], sessions: Object.fromEntries(items.map(item => [item.sessionId, { kind: item.kind, visits: 0, activeVisits: 0, completedVisits: 0, modelIdsSeen: [], actualModelIdsSeen: [], modelEvidence: [], runIdsSeen: [], childIdsSeen: [], planVisits: 0, detailVisits: 0, reloadRecoveries: 0, apiEventIdsSeen: [] }])), counters: { clicks: 0, keypresses: 0, codeVisits: 0, sessionVisits: 0, cronSessionVisits: 0, automationVisits: 0, automationEditCancellations: 0, childDetailVisits: 0, transcriptVisits: 0, artifactVisits: 0, planVisits: 0, toolDetailVisits: 0, reloads: 0, streamEvents: 0 } }
 for (const stats of Object.values(result.sessions)) { stats.transcriptVisits = 0; stats.transcriptReceipts = [] }
 let app, page, health, stopped = false, models = [], lastStreamTotal = 0, subagentProtocol
 process.once('SIGINT', () => { stopped = true })
@@ -218,7 +218,7 @@ async function reload(label) {
   await ready(); await installStreamProbe()
 }
 const codeSurface = () => page.locator('.mode-surface[data-mode="code"]')
-const workSurface = () => page.locator('.work-view')
+const sessionSurface = () => page.locator('.work-view')
 async function switchMode(kind) {
   await click(page.getByRole('tab', { name: kind === 'code' ? 'Code 开发' : 'Work 办公', exact: true }), `switch-${kind}`)
   await expect(page.locator(`.mode-surface[data-mode="${kind}"]`)).toBeVisible()
@@ -246,8 +246,8 @@ async function showHistory() {
   await expect(code.locator('.history-view')).toBeVisible()
   await click(codeSurface().getByRole('button', { name: '刷新会话列表', exact: true }), 'refresh-code-history')
 }
-async function openWorkTab(name) {
-  const work = workSurface()
+async function openSessionTab(name) {
+  const work = sessionSurface()
   const tabs = work.getByRole('tablist', { name: '工作区内容', exact: true })
   // The artifact count is part of the accessible name once the first file is
   // produced. Keep the same label contract as the Work E2E selectors and scope
@@ -271,8 +271,8 @@ async function openWorkTab(name) {
   await expect(panel).toHaveCount(1)
   await expect(panel, `workspace tab ${name} reveals its controlled panel`).toBeVisible()
 }
-async function showWorkConversation() {
-  const button = workSurface().locator('.work-mobile-tabs').getByRole('button', { name: '协作对话', exact: true })
+async function showSessionConversation() {
+  const button = sessionSurface().locator('.work-mobile-tabs').getByRole('button', { name: '协作对话', exact: true })
   if (await button.isVisible()) await click(button, 'show-mobile-conversation')
 }
 async function showSession(item) {
@@ -283,13 +283,13 @@ async function showSession(item) {
     await click(row, 'select-code-session'); await expect(row).toHaveClass(/is-active/)
   } else {
     await switchMode('work')
-    await click(workSurface().getByRole('button', { name: '新任务', exact: true }), 'show-work-home')
-    const input = workSurface().getByRole('textbox', { name: '搜索 Work 任务', exact: true })
+    await click(sessionSurface().getByRole('button', { name: '新任务', exact: true }), 'show-work-home')
+    const input = sessionSurface().getByRole('textbox', { name: '搜索 Work 任务', exact: true })
     await action('search-work-task', () => input.fill(item.clientTitle))
-    const row = workSurface().locator('.work-task-row').filter({ hasText: item.clientTitle })
+    const row = sessionSurface().locator('.work-task-row').filter({ hasText: item.clientTitle })
     await expect(row).toHaveCount(1); await click(row, 'select-work-session')
-    await expect(workSurface().locator('.work-task-heading h1')).toHaveText(item.clientTitle)
-    await showWorkConversation()
+    await expect(sessionSurface().locator('.work-task-heading h1')).toHaveText(item.clientTitle)
+    await showSessionConversation()
   }
 }
 function snapshotUser(snapshot) {
@@ -300,7 +300,7 @@ function snapshotUser(snapshot) {
 async function verifyUser(item, snapshot) {
   const user = snapshotUser(snapshot)
   if (!user?.id) throw new Error(`Session ${item.sessionId} has no real persisted/projected user to verify`)
-  const root = item.kind === 'code' ? codeSurface() : workSurface()
+  const root = item.kind === 'code' ? codeSurface() : sessionSurface()
   const selector = item.kind === 'code' ? '.message--user' : '.work-message--user'
   const row = root.locator(`${selector}[data-message-id=${attribute(user.id)}]`)
   for (let attempt = 0; attempt < 8 && await row.count() === 0; attempt++) {
@@ -327,7 +327,7 @@ async function verifyModel(item, snapshot) {
   const label = model?.displayName?.trim() || canonical
   const picker = item.kind === 'code'
     ? codeSurface().locator('.model-picker .select__trigger')
-    : workSurface().getByRole('button', { name: 'Work 使用的模型', exact: true })
+    : sessionSurface().getByRole('button', { name: '使用的模型', exact: true })
   await expect(picker, 'composer selection must match the actual selected-session request model').toHaveAttribute('title', `当前模型：${canonical}`)
   await expect(picker.locator('.select__value')).toHaveText(label)
   uniquePush(stats.modelIdsSeen, selected); uniquePush(stats.actualModelIdsSeen, snapshot.run?.actualModelId)
@@ -365,7 +365,7 @@ async function inspectCompletedTurn(item, snapshot) {
     .sort((left, right) => right.createdAt - left.createdAt)
   const target = completed.find(run => (snapshot.history ?? []).some(row => row.role === 'assistant' && row.id === run.assistantMessageId && textContent(row.content).trim()))
   if (!target) return { uiChecked: false }
-  const root = item.kind === 'code' ? codeSurface() : workSurface()
+  const root = item.kind === 'code' ? codeSurface() : sessionSurface()
   const row = root.locator(`${item.kind === 'code' ? '.message--assistant' : '.work-message--assistant'}[data-message-id=${attribute(target.assistantMessageId)}]`)
   for (let attempt = 0; attempt < 8 && await row.count() === 0; attempt++) {
     const earlier = root.locator(item.kind === 'code' ? '.chat__load-earlier' : '.work-history-load').first()
@@ -399,17 +399,17 @@ function planReceipts(snapshot) {
   }
 }
 async function verifySilentControls(item, snapshot) {
-  const root = item.kind === 'code' ? codeSurface() : workSurface()
+  const root = item.kind === 'code' ? codeSurface() : sessionSurface()
   const forbidden = planReceipts(snapshot)
   const rendered = await root.locator('.compact-tool-row[data-tool-id]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-tool-id')))
   expect(rendered.filter(id => forbidden.ids.includes(id)), 'internal successful plans cannot reappear in ordinary tool lists').toEqual([])
   let sidebarLabels = []
   if (item.kind !== 'code') {
-    await openWorkTab('活动')
+    await openSessionTab('活动')
     sidebarLabels = await root.locator('.work-activities__list [role="option"]').evaluateAll(nodes => nodes.map(node => node.getAttribute('title') ?? ''))
     const forbiddenLabels = forbidden.silentOnlyNames.map(toolDisplayName)
     expect(sidebarLabels.filter(label => forbiddenLabels.some(name => label === name || label.startsWith(`${name} · `))), 'successful built-in plan controls cannot appear in the activity sidebar').toEqual([])
-    await showWorkConversation()
+    await showSessionConversation()
   }
   return { legacySilentCount: forbidden.ids.length, renderedOrdinaryTools: rendered.length, sidebarToolCount: sidebarLabels.length, sidebarPlanLabelsChecked: forbidden.silentOnlyNames }
 }
@@ -427,8 +427,8 @@ async function inspectPlan(item, snapshot) {
     await expect(tray).toBeVisible()
     await expect(tray).toContainText(todos[0].title)
   } else {
-    await openWorkTab('活动')
-    const steps = workSurface().locator('.work-steps')
+    await openSessionTab('活动')
+    const steps = sessionSurface().locator('.work-steps')
     await expect(steps).toBeVisible()
     if (await steps.getAttribute('open') === null) await click(steps.locator('summary'), 'expand-work-plan')
     await expect(steps).toContainText(todos[0].title)
@@ -494,7 +494,7 @@ async function inspectLiveChildIndicators(panel, view) {
   // observation instead of claiming a finished child exercised the ring.
   return { view, indicators }
 }
-function workTranscriptCoverageReasons(items, sessions, startedAt, deadline) {
+function sessionTranscriptCoverageReasons(items, sessions, startedAt, deadline) {
   const reasons = [], start = Date.parse(startedAt), end = Date.parse(deadline)
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return ['Work transcript evidence has no valid formal observation window']
   for (const item of items) {
@@ -519,7 +519,7 @@ function workTranscriptCoverageReasons(items, sessions, startedAt, deadline) {
   }
   return reasons
 }
-async function verifyLoadedWorkTranscript(panel) {
+async function verifyLoadedSessionTranscript(panel) {
   const transcript = panel.locator('.work-subagent-transcript')
   await expect(transcript).toBeVisible()
   // Loading completion and actual records establish readiness; the old label
@@ -553,9 +553,9 @@ async function verifyLoadedWorkTranscript(panel) {
   expect(new Set(ids).size, 'the resident transcript contains no duplicate records').toBe(ids.length)
   return { resident, total, visibleRecords: ids.length }
 }
-async function inspectWorkDetails(item, childRuns) {
-  const work = workSurface(), stats = result.sessions[item.sessionId]
-  await openWorkTab('活动')
+async function inspectSessionDetails(item, childRuns) {
+  const work = sessionSurface(), stats = result.sessions[item.sessionId]
+  await openSessionTab('活动')
   const completedTools = await work.locator('.work-activities__list:visible').getByRole('option').filter({ has: page.locator('.work-tool-state--done') }).all()
   let toolResult = null
   for (const tool of completedTools.reverse()) {
@@ -571,7 +571,7 @@ async function inspectWorkDetails(item, childRuns) {
     stats.toolDetailVisits = (stats.toolDetailVisits ?? 0) + 1
     break
   }
-  await openWorkTab('子代理')
+  await openSessionTab('子代理')
   const panel = work.getByRole('region', { name: '协作代理', exact: true })
   await expect(panel).toBeVisible()
   const back = panel.getByRole('button', { name: '返回子代理列表', exact: true })
@@ -600,7 +600,7 @@ async function inspectWorkDetails(item, childRuns) {
         const childRunId = await panel.locator('.work-subagents__round[data-run-id]').last().getAttribute('data-run-id')
         if (!childRunId || !childRuns.some(child => child.runId === childRunId && child.childSessionId === childSessionId)) throw new Error('The transcript admission round does not belong to the selected owned child')
         await click(transcript, 'open-real-child-transcript')
-        const window = await verifyLoadedWorkTranscript(panel)
+        const window = await verifyLoadedSessionTranscript(panel)
         liveIndicators.push(await inspectLiveChildIndicators(panel, 'transcript'))
         guardWorkload()
         const at = new Date().toISOString()
@@ -612,7 +612,7 @@ async function inspectWorkDetails(item, childRuns) {
       } else emit({ type: 'work-child-transcript-not-yet-inspectable', sessionId: item.sessionId, kind: item.kind, childSessionId })
     }
   }
-  await openWorkTab('成果')
+  await openSessionTab('成果')
   const artifact = work.locator('.work-artifacts-shell__list:visible').getByRole('option').first()
   if (await artifact.isVisible()) {
     await click(artifact, 'open-work-artifact')
@@ -622,7 +622,7 @@ async function inspectWorkDetails(item, childRuns) {
     if (await changes.isVisible()) { await click(changes, 'inspect-work-file-changes'); if (await preview.isVisible()) await click(preview, 'return-artifact-preview') }
     result.counters.artifactVisits++
   }
-  await showWorkConversation()
+  await showSessionConversation()
   return { childSessionId, uiChildIds, toolResult, liveIndicators, transcriptReceipt }
 }
 let expectedViewport = null
@@ -649,7 +649,7 @@ async function visit(item) {
   const childRuns = await childPages(item.sessionId)
   for (const child of childRuns) { expect(child.parentSessionId).toBe(item.sessionId); expect(child.rootSessionId).toBe(item.sessionId); uniquePush(stats.childIdsSeen, child.childSessionId || child.runId) }
   const plan = await inspectPlan(item, snapshot)
-  const details = item.kind === 'code' ? { uiChildIds: await inspectCodeTools(item) } : await inspectWorkDetails(item, childRuns)
+  const details = item.kind === 'code' ? { uiChildIds: await inspectCodeTools(item) } : await inspectSessionDetails(item, childRuns)
   await verifyChildOwnership(item, childRuns, details.uiChildIds ?? [])
   const controls = await verifySilentControls(item, snapshot)
   const layout = await layoutMetrics()
@@ -670,8 +670,8 @@ async function visit(item) {
 }
 async function inspectAutomation() {
   await switchMode('work')
-  await click(workSurface().locator('.work-navigation__item[title="自动化"]'), 'open-automation-entry')
-  const management = workSurface().getByRole('region', { name: '自动化管理', exact: true })
+  await click(sessionSurface().locator('.work-navigation__item[title="自动化"]'), 'open-automation-entry')
+  const management = sessionSurface().getByRole('region', { name: '自动化管理', exact: true })
   await expect(management).toBeVisible()
   const jobs = await api('/cron'), list = Array.isArray(jobs) ? jobs : jobs.list ?? []
   const records = []
@@ -849,7 +849,7 @@ try {
     for (const required of initial.requiredActualModelIds ?? []) if (!stats.actualModelIdsSeen.includes(required)) throw new Error(`Session ${id} lacks confirmed actual receipt for required model ${required}`)
   }
   if (!result.counters.automationVisits || !result.counters.automationEditCancellations || !result.counters.childDetailVisits || !result.counters.toolDetailVisits || !result.counters.planVisits) throw new Error('Missing actual automation edit/cancel, child, tool-result or task-plan interaction evidence')
-  const transcriptReasons = workTranscriptCoverageReasons(items, result.sessions, initial.startedAt, initial.deadline)
+  const transcriptReasons = sessionTranscriptCoverageReasons(items, result.sessions, initial.startedAt, initial.deadline)
   if (transcriptReasons.length) throw new Error(transcriptReasons.join('; '))
   const observedModels = new Set(Object.values(result.sessions).flatMap(session => session.modelIdsSeen))
   if (observedModels.size < 2) throw new Error('Client did not observe at least two actual configured models')

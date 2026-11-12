@@ -1,4 +1,4 @@
-import type { ConfirmOptions } from '../../workbench/ConfirmDialog'
+import type { ConfirmOptions } from '../../ui/ConfirmDialog'
 
 export interface ClosableDocument {
   path: string

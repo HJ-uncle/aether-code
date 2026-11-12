@@ -58,7 +58,7 @@ export async function restoreResourceArtifactSelection({ page, before, workspace
   await step('restored artifact resource selected', () => page.waitForFunction(resourceFileSelected, { path: file }, { timeout: 34000 }), 35000);
 }
 
-export function activeWorkBinding({ storageKey }) {
+export function activeSessionBinding({ storageKey }) {
   const value = localStorage.getItem(storageKey);
   if (!value || value.length > 4 * 1024 * 1024) throw new Error('WORK_STATE_MISSING_OR_OVERSIZED');
   const state = JSON.parse(value), selected = state.tasks?.find(task => task.id === state.activeTaskId);
@@ -79,7 +79,7 @@ function assertActiveBinding(binding, expected) {
   assert.equal(binding.modelId, expected.modelId); assert.equal(binding.draftSource, ':account:' + expected.engine.accountId);
 }
 async function activeRole(c, proof) {
-  const binding = await c.page.evaluate(activeWorkBinding, { storageKey: 'aether.work.state.v1:' + encodeURIComponent(':account:' + proof.engine.accountId) });
+  const binding = await c.page.evaluate(activeSessionBinding, { storageKey: 'aether.work.state.v1:' + encodeURIComponent(':account:' + proof.engine.accountId) });
   const role = Object.keys(proof.expectedTargets).find(key => proof.expectedTargets[key].sessionId === binding.selected?.id);
   assert.ok(role, 'CURRENT_TASK_NOT_OWNED'); assertActiveBinding(binding, proof.expectedTargets[role]); return role;
 }
@@ -131,7 +131,7 @@ export function resourceUiSnapshot() {
   const sheet = preview?.querySelector('select[aria-label="工作表"]');
   const scrollable = work ? [...work.querySelectorAll('*')].filter(element => typeof element.className === 'string'
     && (element.scrollHeight > element.clientHeight + 10 || element.scrollWidth > element.clientWidth + 10)) : [];
-  return { workVisible: visible(work) && work.getAttribute('aria-hidden') === 'false', resourceListCount: lists.length, toolbarCount: tools.length,
+  return { sessionVisible: visible(work) && work.getAttribute('aria-hidden') === 'false', resourceListCount: lists.length, toolbarCount: tools.length,
     activeTaskTitles: work ? [...work.querySelectorAll('.work-sidebar__task[aria-current="true"]')].filter(visible).map(row => row.getAttribute('title')) : [],
     selectedTool: tools.length === 1 ? tools[0].querySelector('button[aria-pressed="true"]')?.id || null : null,
     artifactTitle: work?.querySelector('[role="listbox"][aria-label="成果文件"] [role="option"][aria-selected="true"]')?.getAttribute('title') || null,
@@ -223,7 +223,7 @@ function noOtherOwner(c) {
   for (const name of Object.keys(c)) if (/MaintenanceLease/.test(name)) assert.ok(!c[name]?.active, 'MAINTENANCE_OWNS_RUNNER');
 }
 function validateUi(ui) {
-  assert.ok(ui.workVisible && ui.resourceListCount === 1 && ui.toolbarCount === 1 && ui.activeTaskTitles.length === 1, 'UNIFIED_WORK_RESOURCE_UI_UNAVAILABLE');
+  assert.ok(ui.sessionVisible && ui.resourceListCount === 1 && ui.toolbarCount === 1 && ui.activeTaskTitles.length === 1, 'UNIFIED_WORK_RESOURCE_UI_UNAVAILABLE');
   assert.ok(ui.tabs.length <= 64 && ui.tabs.every(tab => tab.id && tab.closeLabel) && new Set(ui.tabs.map(tab => tab.id)).size === ui.tabs.length, 'RESOURCE_IDENTITY_AMBIGUOUS');
 }
 
@@ -315,7 +315,7 @@ async function selectRole(lease, role) {
     }
     return false;
   }, expected.sessionId, 'selected task controller');
-  const current = await call(lease, 'active task binding', () => lease.c.page.evaluate(activeWorkBinding, {
+  const current = await call(lease, 'active task binding', () => lease.c.page.evaluate(activeSessionBinding, {
     storageKey: 'aether.work.state.v1:' + encodeURIComponent(':account:' + expected.engine.accountId),
   }));
   assertActiveBinding(current, expected);

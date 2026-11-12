@@ -423,7 +423,7 @@ export async function runCompactionProbe({ app, page, state, request, artifact, 
     }
     return result.runs
   }
-  const workState = () => page.evaluate(async () => {
+  const sessionState = () => page.evaluate(async () => {
     const engine = await window.aether.engine.getSnapshot()
     const endpoint = engine.mode === 'embedded' ? '' : 'remote:' + engine.baseUrl.replace(/\/+$/, '')
     const source = engine.accountId ? endpoint + ':account:' + engine.accountId : endpoint
@@ -436,10 +436,10 @@ export async function runCompactionProbe({ app, page, state, request, artifact, 
   }
   async function activateTask(id) {
     await selectWork()
-    const stored = await workState(), task = stored?.tasks.find(item => item.id === id)
+    const stored = await sessionState(), task = stored?.tasks.find(item => item.id === id)
     assert.ok(task, 'Existing Work task must be present in the current account')
     if (stored.activeTaskId !== id) {
-      const expand = page.locator('#mode-work').getByRole('button', { name: '展开 Work 导航', exact: true })
+      const expand = page.locator('#mode-work').getByRole('button', { name: '展开 应用导航', exact: true })
       if (await expand.isVisible()) await expand.click()
       const candidate = page.locator('#mode-work .work-sidebar__task').filter({ has: page.locator('span').filter({ hasText: new RegExp('^' + task.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$') }) })
       if (await candidate.count() === 1) await candidate.click()
@@ -449,7 +449,7 @@ export async function runCompactionProbe({ app, page, state, request, artifact, 
         assert.equal(await row.count(), 1, 'Task selection must be unambiguous'); await row.click()
       }
     }
-    await expect.poll(async () => (await workState())?.activeTaskId, { timeout: 30_000 }).toBe(id)
+    await expect.poll(async () => (await sessionState())?.activeTaskId, { timeout: 30_000 }).toBe(id)
     await expect.poll(() => page.evaluate(() => window.aether.browser.getConnection()).then(value => value.sessionId), { timeout: 30_000 }).toBe(id)
     return task
   }
@@ -660,7 +660,7 @@ export async function runCompactionProbe({ app, page, state, request, artifact, 
     }
     probe.records.push(record); write(record.promptFile, prompt); save()
     const surface = page.locator('#mode-work')
-    const modelPicker = surface.getByRole('button', { name: 'Work 使用的模型', exact: true })
+    const modelPicker = surface.getByRole('button', { name: '使用的模型', exact: true })
     await expect(modelPicker).toBeEnabled({ timeout: 90_000 })
     const composer = surface.locator('.work-composer .input-composer__input[role="textbox"]').first()
     await expect(composer).toBeEditable({ timeout: 90_000 }); await composer.fill(prompt)
@@ -716,7 +716,7 @@ export async function runCompactionProbe({ app, page, state, request, artifact, 
     probe.inputTransportEvidence = { inspectedAt: now(), httpBodyLimitBytes: 100 * 1024 * 1024, admissionBodyLimitBytes: 2 * 1024 * 1024,
       envelopeReserveBytes: 65_536, packetSizeSamples, composer: 'MentionInput contenteditable serializer; no maxLength; complete DOM text checked before click',
       storage: 'Immutable admission seed TEXT plus append-only JSONL payload; no per-message truncation on this path',
-      sourceReferences: ['src/renderer/src/contrib/chat/MentionInput.tsx:154', '../ai-agent-engine/src/api/http/server.ts:60',
+      sourceReferences: ['src/renderer/src/features/conversation/shared/MentionInput.tsx:154', '../ai-agent-engine/src/api/http/server.ts:60',
         '../ai-agent-engine/src/storage/root-admission/index.ts:23', '../ai-agent-engine/src/storage/root-admission/index.ts:119',
         '../ai-agent-engine/src/storage/conversation/jsonl-history.ts:703'] }
     activeSegment = { startedAt: now(), engine: { instanceId: engine.instanceId, accountId: engine.accountId, baseUrl: engine.baseUrl, buildId: engine.buildId } }
@@ -724,26 +724,26 @@ export async function runCompactionProbe({ app, page, state, request, artifact, 
     save(); await samplePerformance(true); emit('preflight', { workspace, budget: BUDGET, targetCycles: TARGET, packetTokens })
     if (!probe.sessionId || !probe.records.some(item => item.key === 'bootstrap')) {
       await selectWork()
-      const expand = page.locator('#mode-work').getByRole('button', { name: '展开 Work 导航', exact: true })
+      const expand = page.locator('#mode-work').getByRole('button', { name: '展开 应用导航', exact: true })
       if (await expand.isVisible()) await expand.click()
       await page.locator('#mode-work .work-new-task').click()
-      await expect.poll(async () => (await workState())?.activeTaskId).toBeNull()
+      await expect.poll(async () => (await sessionState())?.activeTaskId).toBeNull()
       if (officeHost) {
         await page.locator('#mode-work .work-navigation').getByRole('button', { name: 'Agent', exact: true }).click()
         await page.locator('.work-agent-manager__choose').filter({ hasText: '默认助手' }).click()
       }
-      assert.ok(!(await workState())?.homeAgentId, 'The new probe task must select the default assistant before admission')
+      assert.ok(!(await sessionState())?.homeAgentId, 'The new probe task must select the default assistant before admission')
       // Reuse the normal folder workflow, but return only this explicit new
       // directory from its OS picker so the experiment opens no extra window.
       folderPicker = probeFolderPickerOverride(app, workspace)
       await folderPicker.install()
       await page.locator('#mode-work .work-folder-button').click()
       await expect(page.locator('#mode-work .work-folder-button')).toContainText(basename(workspace))
-      const picker = page.locator('#mode-work').getByRole('button', { name: 'Work 使用的模型', exact: true })
+      const picker = page.locator('#mode-work').getByRole('button', { name: '使用的模型', exact: true })
       await expect(picker).toBeEnabled({ timeout: 90_000 }); await picker.click()
       await page.getByRole('menuitem', { name: new RegExp('^' + (model.displayName || model.modelId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }).click()
-      await expect.poll(async () => (await workState())?.homeSessionId, { timeout: 30_000 }).toMatch(/^work-/)
-      const homeSessionId = (await workState()).homeSessionId
+      await expect.poll(async () => (await sessionState())?.homeSessionId, { timeout: 30_000 }).toMatch(/^work-/)
+      const homeSessionId = (await sessionState()).homeSessionId
       if (probe.sessionId) assert.equal(homeSessionId, probe.sessionId, 'A prepared home owner must not silently change on resume')
       probe.sessionId = homeSessionId; probe.phase = 'creating'; save()
       // This is the supported session override API, never a history write.
@@ -762,7 +762,7 @@ export async function runCompactionProbe({ app, page, state, request, artifact, 
       record.phase = 'dispatching'; record.dispatchAttemptedAt = now(); save()
       await start.click()
       record.phase = 'dispatched'; record.dispatchedAt = now(); save()
-      await expect.poll(async () => (await workState())?.activeTaskId, { timeout: 30_000 }).toBe(probe.sessionId)
+      await expect.poll(async () => (await sessionState())?.activeTaskId, { timeout: 30_000 }).toBe(probe.sessionId)
       await settle(record)
     } else {
       await activateTask(probe.sessionId); await assertIdentity()

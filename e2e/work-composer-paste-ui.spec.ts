@@ -10,7 +10,7 @@ import type { RootRun } from '../src/shared/root-run'
 import type { ChatSsePayload } from '../src/shared/ipc'
 import type { EngineHistoryRow } from '../src/renderer/src/core/engine/chat-history'
 import { engineStorageKey } from '../src/renderer/src/core/engine/source'
-import { userMessageDraft } from '../src/renderer/src/contrib/chat/mention-context'
+import { userMessageDraft } from '../src/renderer/src/features/conversation/shared/mention-context'
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
 const token = 'composer-paste-token', model = 'composer-paste-model'

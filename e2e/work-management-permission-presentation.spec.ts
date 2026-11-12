@@ -1,9 +1,9 @@
 /** Pure knowledge/skill/cron approval rendering: authentic previews, safe fallback,
  * full content, exact changes, and unchanged approval identity. No Electron. */
 import { expect, test } from '@playwright/test'
-import { appendManagementPresentation } from '../src/renderer/src/contrib/work/work-management-permission-presentation'
+import { appendManagementPresentation } from '../src/renderer/src/features/interactions/management-permission-presentation'
 import { buildToolResponse, normalizePending } from '../src/renderer/src/core/engine/pending'
-import type { PermissionPresentation } from '../src/renderer/src/contrib/work/work-permission-presentation'
+import type { PermissionPresentation } from '../src/renderer/src/features/interactions/permission-presentation'
 
 const hash = `sha256:${'a'.repeat(64)}`
 const skillId = `skill-${'b'.repeat(32)}`

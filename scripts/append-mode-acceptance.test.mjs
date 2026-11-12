@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { assertCodeQueue, assertContext, assertControllerProvenance, assertDeliveredReceipt, assertEngine, assertFiveCurrent, assertIntegrated, assertNavigationItems, assertNextTurn, assertPending,
-  assertReceipt, planFor, queryOriginalReceipt, readCompleteArchive, reserveDispatch, rootInvocationId, runAttempt, sha, waitForWorkQueueEntry, workQueueScope, workTaskRows } from './append-mode-acceptance.mjs'
+  assertReceipt, planFor, queryOriginalReceipt, readCompleteArchive, reserveDispatch, rootInvocationId, runAttempt, sha, waitForSessionQueueEntry, sessionQueueScope, sessionTaskRows } from './append-mode-acceptance.mjs'
 
 const engine = { mode: 'embedded', baseUrl: 'http://127.0.0.1:12542', instanceId: 'instance-A', accountId: 'account-A' }
 const owner = { mode: 'work', sessionId: 'session-A', engine }
@@ -211,7 +211,7 @@ test('Work selection is by the real component session key, independent of duplic
   const prior = globalThis.document
   globalThis.document = { querySelectorAll: () => [{ title: '相同标题', '__reactFiber$test': { key: 'session-A' }, getClientRects: () => [1] },
     { title: '相同标题', '__reactFiber$test': { key: 'session-B' }, getClientRects: () => [1] }] }
-  try { assert.deepEqual(workTaskRows().map(row => row.sessionId), ['session-A', 'session-B']) }
+  try { assert.deepEqual(sessionTaskRows().map(row => row.sessionId), ['session-A', 'session-B']) }
   finally { if (prior === undefined) delete globalThis.document; else globalThis.document = prior }
 })
 
@@ -247,7 +247,7 @@ test('Work next read waits for a committed target while preserving empty r0 obse
   const row = { id: 'queued', phase: 'pending', envelope: { draft: { text: '下一轮' } } }
   let count = 0, elapsed = 0
   const saved = []
-  const result = await waitForWorkQueueEntry({ scope, message: '下一轮', now: () => elapsed, pause: async ms => { elapsed += ms },
+  const result = await waitForSessionQueueEntry({ scope, message: '下一轮', now: () => elapsed, pause: async ms => { elapsed += ms },
     read: async () => ({ ok: true, value: { state: { scope, revision: count++, entries: count < 3 ? [] : [row] } } }),
     onObservation: value => saved.push(structuredClone(value)) })
   assert.equal(result.response.value.state.revision, 2)
@@ -262,25 +262,25 @@ test('Work next read never swallows errors, foreign scope or duplicate target', 
     { ok: true, value: { state: { scope: { ...scope, taskId: 'foreign' }, revision: 0, entries: [] } } },
     { ok: true, value: { state: { scope, revision: 1, entries: [row, row] } } }]) {
     let calls = 0, writes = 0
-    await assert.rejects(waitForWorkQueueEntry({ scope, message: '下一轮', read: async () => { calls++; return response },
+    await assert.rejects(waitForSessionQueueEntry({ scope, message: '下一轮', read: async () => { calls++; return response },
       onObservation: () => { writes++ }, pause: async () => assert.fail('must fail immediately') }))
     assert.equal(calls, 1); assert.equal(writes, 1)
   }
 })
 
 test('Work next read times out without mutation and derives complete admitted scope', async () => {
-  const scope = workQueueScope(owner, { serverAdmissionReceipt: { tenantId: 'tenant-A', namespace: { id: 'ns-A', generation: 'generation-A' } } })
+  const scope = sessionQueueScope(owner, { serverAdmissionReceipt: { tenantId: 'tenant-A', namespace: { id: 'ns-A', generation: 'generation-A' } } })
   assert.deepEqual(scope, { source: { mode: 'embedded', endpoint: '', accountId: engine.accountId }, owner: 'work', taskId: owner.sessionId,
     tenantId: 'tenant-A', namespace: { id: 'ns-A', generation: 'generation-A' } })
   let elapsed = 0, calls = 0
-  await assert.rejects(waitForWorkQueueEntry({ scope, message: 'missing', timeoutMs: 400, now: () => elapsed, pause: async ms => { elapsed += ms },
+  await assert.rejects(waitForSessionQueueEntry({ scope, message: 'missing', timeoutMs: 400, now: () => elapsed, pause: async ms => { elapsed += ms },
     read: async () => { calls++; return { ok: true, value: { state: { scope, revision: 0, entries: [] } } } } }), /NOT_COMMITTED/)
   assert.equal(elapsed, 400); assert.equal(calls, 3)
 })
 
 test('a stalled Work IPC read cannot exceed the total wait budget or hide its observation', async () => {
   const observed = []; let calls = 0
-  await assert.rejects(waitForWorkQueueEntry({ scope: {}, message: 'target', timeoutMs: 10,
+  await assert.rejects(waitForSessionQueueEntry({ scope: {}, message: 'target', timeoutMs: 10,
     read: () => { calls++; return new Promise(() => {}) }, onObservation: value => observed.push(value) }), /WAIT_BUDGET_EXCEEDED/)
   assert.equal(calls, 1); assert.match(observed[0].observations[0].readError, /WAIT_BUDGET_EXCEEDED/)
 })

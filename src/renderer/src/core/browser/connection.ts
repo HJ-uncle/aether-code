@@ -6,7 +6,7 @@ import {
   subscribeEngineSource
 } from '../engine/source'
 import { onWorkspaceConnectionChanged } from '../workspace/connection'
-import { getAppMode, onAppModeChanged } from '../platform/app-mode'
+import type { ClientSurfaceScope } from '../platform/surface-scope'
 
 // Work owns a different session from Code even before its browser panel is visible.
 // Keeping the override here means the single native browser bridge never has two
@@ -19,7 +19,7 @@ export function onBrowserSessionChanged(listener: () => void): () => void {
   identityListeners.add(listener)
   return () => { identityListeners.delete(listener) }
 }
-export function getBrowserSessionId(mode = getAppMode()): string | null {
+export function getBrowserSessionId(mode: ClientSurfaceScope = 'work'): string | null {
   return mode === 'work' ? overrideSource === getEngineSource() ? sessionOverride : null : getAppSettings().lastSessionId || null
 }
 
@@ -46,7 +46,7 @@ export function wireBrowserConnection(): () => void {
     // A missing/pending Work identity must never attach its pages to Code's
     // remembered session. Generation guards prevent a hidden view's old account
     // identity from being reused during an engine/source transition.
-    const mode = getAppMode(), sessionId = getBrowserSessionId(mode)
+    const mode = 'work', sessionId = getBrowserSessionId(mode)
     const key = isEngineReady() && sessionId ? JSON.stringify([expectedEngine, sessionId, mode]) : ''
     if (key === lastKey) return
     lastKey = key
@@ -70,7 +70,6 @@ export function wireBrowserConnection(): () => void {
   const settings = onAppSettingsChanged(schedule)
   const source = subscribeEngineSource(schedule)
   const workspace = onWorkspaceConnectionChanged(schedule)
-  const mode = onAppModeChanged(schedule)
   schedule()
   return () => {
     disposed = true
@@ -78,7 +77,6 @@ export function wireBrowserConnection(): () => void {
     settings()
     source()
     workspace()
-    mode()
     void window.aether.browser.disconnect().catch(() => {})
   }
 }

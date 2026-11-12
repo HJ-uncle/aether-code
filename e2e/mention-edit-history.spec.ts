@@ -1,7 +1,7 @@
 /** Pure mixed text/chip undo checks: atomic attachment operations share history
  * with ordinary typing; external draft replacement is an explicit boundary. */
 import { expect, test } from '@playwright/test'
-import { createMentionEditHistory, type MentionDraft } from '../src/renderer/src/contrib/chat/mention-edit-history'
+import { createMentionEditHistory, type MentionDraft } from '../src/renderer/src/features/conversation/shared/mention-edit-history'
 
 const empty: MentionDraft = { text: '', mentions: [] }
 const chip: MentionDraft = { text: '@a.png ', mentions: [

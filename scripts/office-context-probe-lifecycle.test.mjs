@@ -20,7 +20,7 @@ function fixture() {
   const children = new Map(), jobs = new Map(), turns = new Map(), queues = new Map(), requests = [], effects = []
   const c = { state: { runRoot: root, profile: root, roles, commands: [], engine },
     app: { evaluate: async () => ({ profile: root, nativeQueue: false }) }, page: { evaluate: async () => structuredClone(engine) },
-    workTasks: async () => [{ id: 'session0', active: true }],
+    sessionTasks: async () => [{ id: 'session0', active: true }],
     request: async (method, route, body, query) => {
       assert.equal(method, 'GET', 'Observation must not mutate the engine'); assert.equal(body, undefined)
       requests.push({ method, route, query })

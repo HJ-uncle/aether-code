@@ -11,9 +11,9 @@ import type { RootRun } from '../src/shared/root-run'
 import { engineStorageKey } from '../src/renderer/src/core/engine/source'
 
 const root = resolve(__dirname, '..'), fixtures = join(root, '.e2e-tmp')
-const codeId = 'memory-default-code', workId = 'work-memory-default', modelId = 'memory-ui-fixture'
+const codeId = 'memory-default-code', sessionId = 'work-memory-default', modelId = 'memory-ui-fixture'
 const token = 'disposable-memory-ui-token', remoteRoot = '/remote/memory-ui', now = Date.now() - 1000
-const titles = new Map([[codeId, 'Code 记忆默认测试'], [workId, 'Work 记忆默认测试']])
+const titles = new Map([[codeId, 'Code 记忆默认测试'], [sessionId, 'Work 记忆默认测试']])
 type MemoryDisk = { globalEnabled: boolean; sessionDefaultEnabled: boolean; overrides: Record<string, boolean | null> }
 const initial: MemoryDisk = { globalEnabled: false, sessionDefaultEnabled: false, overrides: {} }
 const errors: string[] = [], forbidden: string[] = [], writes: Array<{ path: string; body: Record<string, unknown> }> = []
@@ -156,7 +156,7 @@ test.describe.serial('记忆默认关闭与明确开启', () => {
     const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing fixture port')
     const origin = `http://127.0.0.1:${address.port}`
     writeFileSync(join(fixture, 'settings.json'), JSON.stringify({ engineMode: 'remote', remoteBaseUrl: origin, remoteWorkspaceRoot: remoteRoot,
-      autoStartEngine: true, lastSessionId: workId, lastFolder: '', lastModelId: modelId, appearance: 'light', thinkingMode: 'off' }))
+      autoStartEngine: true, lastSessionId: sessionId, lastFolder: '', lastModelId: modelId, appearance: 'light', thinkingMode: 'off' }))
     const env: Record<string, string> = Object.fromEntries(Object.entries(process.env).flatMap(([key, value]) => value === undefined ? [] : [[key, value]]))
     for (const key of Object.keys(env)) if (['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL', 'AETHER_IDE_REMOTE_API_KEY', 'AETHER_IDE_REMOTE_BEARER_TOKEN', 'AETHER_IDE_REMOTE_AUTH_URL'].includes(key.toUpperCase())) delete env[key]
     env.AETHER_IDE_REMOTE_INSTANCE_TOKEN = token; env.AETHER_GLOBAL_DIR = join(fixture, 'global')
@@ -164,12 +164,12 @@ test.describe.serial('记忆默认关闭与明确开启', () => {
     page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message)); page.on('crash', () => errors.push('Renderer crashed'))
     await app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.setContentSize(1440, 960); win.show(); win.focus() })
     await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
-    await page.evaluate(({ key, workId, title, now, modelId }) => {
-      localStorage.setItem(key, JSON.stringify({ tasks: [{ id: workId, title, status: 'done', draft: '', createdAt: now, updatedAt: now,
-        workspacePath: null, modelId, attachments: [], sources: [] }], activeTaskId: workId, homeDraft: '' }))
+    await page.evaluate(({ key, sessionId, title, now, modelId }) => {
+      localStorage.setItem(key, JSON.stringify({ tasks: [{ id: sessionId, title, status: 'done', draft: '', createdAt: now, updatedAt: now,
+        workspacePath: null, modelId, attachments: [], sources: [] }], activeTaskId: sessionId, homeDraft: '' }))
       localStorage.setItem('aether.app.mode', 'work')
       localStorage.setItem('aether.work.view.v1', JSON.stringify({ page: 'home', collapsed: false, workspace: false, tab: 'files', pane: 'conversation', ratio: 50 }))
-    }, { key: 'aether.work.state.v1:' + encodeURIComponent(engineStorageKey({ mode: 'remote', baseUrl: origin })), workId, title: titles.get(workId)!, now, modelId })
+    }, { key: 'aether.work.state.v1:' + encodeURIComponent(engineStorageKey({ mode: 'remote', baseUrl: origin })), sessionId, title: titles.get(sessionId)!, now, modelId })
     await reload()
     await expect(page.locator('.work-view')).toContainText('已有聊天历史仍然保留。')
   })
@@ -231,7 +231,7 @@ test.describe.serial('记忆默认关闭与明确开启', () => {
   })
 
   for (const mode of ['work'] as const) test(`${mode} 会话开启经重载保留，恢复默认后关闭`, async () => {
-    const id = workId, other = codeId, start = writes.length
+    const id = sessionId, other = codeId, start = writes.length
     await (await openPreference(mode)).click()
     await page.getByRole('menuitem', { name: /^本会话开启/ }).click()
     await expect(page.getByRole('button', { name: '本会话记忆：本会话开启', exact: true })).toBeEnabled()

@@ -2,7 +2,7 @@ import type { EngineRequestInput } from '../../shared/ipc'
 import { normalizeEnginePath } from './protocol'
 
 const DEFAULT_MANAGEMENT_TIMEOUT_MS = 120000
-const WORK_STATUS_TIMEOUT_MS = 5000
+const SESSION_STATUS_TIMEOUT_MS = 5000
 const HISTORY_OBSERVATION_TIMEOUT_MS = 15000
 const SUBAGENT_OBSERVATION_TIMEOUT_MS = 5000
 const MAX_TIMEOUT_MS = 2147483647
@@ -16,8 +16,8 @@ export function managementRequestTimeout(
 ): number | null {
   const path = normalizeEnginePath(input.path).split('?')[0]
   // A hung status probe must not block every task's next reconciliation cycle.
-  if (input.method === 'GET' && path === '/api/v1/chat/status') return WORK_STATUS_TIMEOUT_MS
-  if (input.method === 'GET' && path === '/api/v1/performance/runtime') return WORK_STATUS_TIMEOUT_MS
+  if (input.method === 'GET' && path === '/api/v1/chat/status') return SESSION_STATUS_TIMEOUT_MS
+  if (input.method === 'GET' && path === '/api/v1/performance/runtime') return SESSION_STATUS_TIMEOUT_MS
   // History maintenance may delay a snapshot while the durable run continues.
   // Cancel the real fetch promptly so observation cannot monopolize recovery.
   if (input.method === 'GET' && (path === '/api/v1/chat/snapshot' ||

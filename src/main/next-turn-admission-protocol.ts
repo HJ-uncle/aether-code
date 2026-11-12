@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { NextTurnQueueError, type FrozenQueueSubmission, type NextTurnQueueScope } from '../shared/next-turn-queue'
 
-export const WORK_QUEUE_TRANSPORT = Object.freeze({ toolProfile: 'general', runLifetime: 'durable', subagentProtocol: 2 })
+export const SESSION_QUEUE_TRANSPORT = Object.freeze({ toolProfile: 'general', runLifetime: 'durable', subagentProtocol: 2 })
 export const CODE_QUEUE_TRANSPORT = Object.freeze({ toolProfile: 'code', runLifetime: 'durable', subagentProtocol: 2 })
-export const queueTransport = (owner: NextTurnQueueScope['owner']) => owner === 'code' ? CODE_QUEUE_TRANSPORT : WORK_QUEUE_TRANSPORT
+export const queueTransport = (owner: NextTurnQueueScope['owner']) => owner === 'code' ? CODE_QUEUE_TRANSPORT : SESSION_QUEUE_TRANSPORT
 export interface AdmissionOutcomeRoot {
   runId: string; version: number
   startedAt?: number
@@ -14,7 +14,7 @@ export interface AdmissionRoot extends AdmissionOutcomeRoot { attemptId: string 
 export interface AdmissionContext {
   protocolVersion: 1; tenantId: string; sessionId: string
   namespace: NextTurnQueueScope['namespace']; predecessor: FrozenQueueSubmission['anchor']
-  root: AdmissionRoot | null; transport: typeof WORK_QUEUE_TRANSPORT | typeof CODE_QUEUE_TRANSPORT
+  root: AdmissionRoot | null; transport: typeof SESSION_QUEUE_TRANSPORT | typeof CODE_QUEUE_TRANSPORT
 }
 function fail(message: string): never { throw new NextTurnQueueError('AUTHORITY', message) }
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value)

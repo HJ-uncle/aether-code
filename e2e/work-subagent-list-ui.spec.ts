@@ -2,7 +2,7 @@
  * rows retain readable statuses without obstructing hover cards; full details
  * remain available through native pointer and keyboard navigation.
  * Covers split/single/narrow panes in both themes and real scroll/focus restore.
- * Build first, then use playwright.work-subagent-list.config.ts. */
+ * Run with npm run test:e2e -- e2e/work-subagent-list-ui.spec.ts. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'

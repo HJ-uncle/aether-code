@@ -1,7 +1,7 @@
 /** Pure Work transcript metadata: the copied/downloaded document has a useful
  * session heading without exposing implementation details such as mode or engine. */
 import { expect, test } from '@playwright/test'
-import { buildMessageExportDocument } from '../src/renderer/src/contrib/chat/message-export'
+import { buildMessageExportDocument } from '../src/renderer/src/features/conversation/shared/message-export'
 
 test('Work export starts with the session name and compact conversation details', () => {
   const exported = buildMessageExportDocument('## 用户\n\n检查结果', {

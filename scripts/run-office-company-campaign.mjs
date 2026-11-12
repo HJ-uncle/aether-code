@@ -49,11 +49,11 @@ async function main(){
         }else if(command.action==='ui'){
           if(command.role)await c.selectTask(command.role)
           await c.page.screenshot({path:join(c.state.evidenceRoot,command.id+'.png')})
-          c.artifact(command.id+'-ui.json',{text:await c.page.locator('body').innerText(),tasks:await c.workTasks()})
+          c.artifact(command.id+'-ui.json',{text:await c.page.locator('body').innerText(),tasks:await c.sessionTasks()})
           record.result='UI captured'
         }else throw new Error('Unsupported office command '+command.action)
         record.status='completed'
-      }catch(error){record.status='failed';record.error=error.message;c.artifact(command.id+'-failure-ui.json',{text:await c.page.locator('body').innerText().catch(()=>''),tasks:await c.workTasks().catch(()=>[])});await c.page.screenshot({path:join(c.state.evidenceRoot,command.id+'-failure.png')}).catch(()=>{})}
+      }catch(error){record.status='failed';record.error=error.message;c.artifact(command.id+'-failure-ui.json',{text:await c.page.locator('body').innerText().catch(()=>''),tasks:await c.sessionTasks().catch(()=>[])});await c.page.screenshot({path:join(c.state.evidenceRoot,command.id+'-failure.png')}).catch(()=>{})}
       c.log('command-result',record);console.log(JSON.stringify(record))
     }
     await delay(2000)
@@ -136,15 +136,15 @@ export async function launchOfficeCampaign() {
     if(!r.ok) throw new Error(scrub(`${method} ${path}: ${r.code} ${r.message}`))
     return r.data
   }
-  const workTasks = () => page.evaluate(()=>Object.entries(localStorage).filter(([key])=>key.startsWith('aether.work.state.v1')).map(([,v])=>JSON.parse(v)).flatMap(v=>v.tasks.map(t=>({...t,active:v.activeTaskId===t.id}))))
+  const sessionTasks = () => page.evaluate(()=>Object.entries(localStorage).filter(([key])=>key.startsWith('aether.work.state.v1')).map(([,v])=>JSON.parse(v)).flatMap(v=>v.tasks.map(t=>({...t,active:v.activeTaskId===t.id}))))
   const status = id => request('GET','/chat/status',undefined,{sessionId:state.roles[id].sessionId})
   const selectWork = async()=>{await page.getByRole('tab',{name:'Work 办公',exact:true}).click();await expect(page.locator('#mode-work')).toHaveAttribute('aria-hidden','false')}
   const selectTask = async id => {
     await selectWork()
-    const task = (await workTasks()).find(t=>t.id===state.roles[id].sessionId)
+    const task = (await sessionTasks()).find(t=>t.id===state.roles[id].sessionId)
     if(!task) throw new Error('Missing real Work task '+id)
     const row=page.locator('#mode-work .work-sidebar__task').filter({hasText:task.title}).first()
-    await row.click(); await expect.poll(async()=>(await workTasks()).find(t=>t.active)?.id).toBe(task.id)
+    await row.click(); await expect.poll(async()=>(await sessionTasks()).find(t=>t.active)?.id).toBe(task.id)
   }
   const submit = async (id,stage) => {
     const owner=state.roles[id]
@@ -159,11 +159,11 @@ export async function launchOfficeCampaign() {
     const send=surface.getByRole('button',{name:/^(开始任务|排到下一轮|发送)$/,exact:true}).filter({visible:true}).last()
     await expect(send).toBeEnabled();record.phase='dispatching';save();await send.click()
     await expect(composer).toHaveText('')
-    if(!owner.sessionId){await expect.poll(async()=>(await workTasks()).find(t=>t.active)?.agentId).toBe(owner.agentId);owner.sessionId=(await workTasks()).find(t=>t.active).id}
+    if(!owner.sessionId){await expect.poll(async()=>(await sessionTasks()).find(t=>t.active)?.agentId).toBe(owner.agentId);owner.sessionId=(await sessionTasks()).find(t=>t.active).id}
     record.phase='dispatched';save()
     await expect.poll(async()=>{const run=(await status(id)).run;return Boolean(run?.runId&&run.runId!==beforeRunId)},{timeout:90000}).toBe(true)
     const value=await status(id);record.initialObservedRun=value.run;record.runId=value.run?.runId
-    const task=(await workTasks()).find(t=>t.id===owner.sessionId)
+    const task=(await sessionTasks()).find(t=>t.id===owner.sessionId)
     if(task.agentId!==owner.agentId||resolve(task.workspacePath)!==resolve(companyRoot)||task.modelId!==model.modelId) throw new Error('Work UI binding differs from expected '+id)
     artifact(stage.id+'-binding.json',{task,run:value.run});record.phase='admitted';log('submitted',{id,stageId:stage.id,sessionId:owner.sessionId,runId:record.runId})
     return {id,sessionId:owner.sessionId,runId:record.runId}
@@ -195,7 +195,7 @@ export async function launchOfficeCampaign() {
       state.issues=state.issues.slice(-200);save()
     }catch(error){log('observer-failure',{message:scrub(error.message)})}finally{busy=false}
   }
-  const controller={app,page,state,plan,request,artifact,log,save,submit,status,workTasks,selectTask,observe,
+  const controller={app,page,state,plan,request,artifact,log,save,submit,status,sessionTasks,selectTask,observe,
     startMonitoring(){if(!timer)timer=setInterval(()=>void observe(),10000)},stopMonitoring(){clearInterval(timer);timer=null},
     async createAndStart(id){
       const owner=state.roles[id],role=plan.roles.find(r=>r.id===id)
@@ -204,7 +204,7 @@ export async function launchOfficeCampaign() {
       await page.locator('#mode-work .work-navigation').getByRole('button',{name:'Agent',exact:true}).click()
       await page.getByRole('button',{name:'使用 Agent '+owner.name,exact:true}).click()
       await page.locator('#mode-work .work-folder-button').click()
-      const trigger=page.locator('#mode-work').getByRole('button',{name:'Work 使用的模型',exact:true});await expect(trigger).toBeEnabled();await trigger.click()
+      const trigger=page.locator('#mode-work').getByRole('button',{name:'使用的模型',exact:true});await expect(trigger).toBeEnabled();await trigger.click()
       await page.getByRole('menuitem').filter({hasText:model.displayName||model.modelId}).first().click()
       const security=page.locator('#mode-work').getByRole('button',{name:/^切换本会话访问权限：/});await expect(security).toBeEnabled()
       if(!(await security.innerText()).includes('完全访问')){await security.click();await page.getByRole('menuitem',{name:/^完全访问/}).click()}

@@ -2,7 +2,7 @@
  * parameters, recursive unknown values and unchanged approval replies. */
 import { expect, test } from '@playwright/test'
 import { normalizePending, buildToolResponse } from '../src/renderer/src/core/engine/pending'
-import { permissionPresentation, type PermissionPresentation, type PermissionValueNode } from '../src/renderer/src/contrib/work/work-permission-presentation'
+import { permissionPresentation, type PermissionPresentation, type PermissionValueNode } from '../src/renderer/src/features/interactions/permission-presentation'
 
 function render(toolName: string, args: Record<string, unknown>, question = '请核对本次操作。'): PermissionPresentation {
   const pending = normalizePending({ permissionRequest: { requestId: 'generic-approval', toolName, description: question, args } })!

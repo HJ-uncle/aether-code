@@ -296,7 +296,7 @@ manifest 字段：${officeHandoffContract.manifestFields.join(', ')}；artifact 
     handoffContract: officeHandoffContract, acceptance: officeCompanyAcceptance,
     seedFiles: officeCompanySeedFiles,
     scheduling: {
-      requiredWorkSessions: 6, independentBaselineSubmissions: 6, minimumRevisionSubmissions: 6,
+      requiredSessionSessions: 6, independentBaselineSubmissions: 6, minimumRevisionSubmissions: 6,
       stages: [
         'Create six independent Work sessions and run all six BASE prompts concurrently.',
         'Verify six real v001 publications. Materialize revision-v2.json, then submit six REVISION prompts, including while other sessions are active to exercise independent queues.',

@@ -1,6 +1,6 @@
 import type { EngineRequestInput } from '@shared/ipc'
 import { getEngineSource, getExpectedEngine, subscribeEngineSource } from './source'
-import { requestWorkSessionRefresh } from '../workbench/preview-request'
+import { requestSessionRefresh } from '../workbench/preview-request'
 
 export type RevertStatus = 'reverted' | 'already_reverted' | 'conflict' | 'unavailable' | 'failed'
 export interface RevertItem {
@@ -140,7 +140,7 @@ export async function revertChanges(request: Request, intent: RevertIntent): Pro
   }
   reports.set(intent.sessionId, report)
   for (const item of report.results) outcomes.set(item.id, item)
-  requestWorkSessionRefresh(getEngineSource(), intent.sessionId)
+  requestSessionRefresh(getEngineSource(), intent.sessionId)
   for (const listener of listeners) listener()
   operation.assertCurrent()
   return report

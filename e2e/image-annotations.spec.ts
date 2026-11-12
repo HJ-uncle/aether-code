@@ -2,7 +2,7 @@
  * erasure, reversed drags, arrow heads and thin ellipse contour accuracy. */
 import { expect, test } from '@playwright/test'
 import { commitAnnotationHistory, createAnnotationHistory, hitTestAnnotation, redoAnnotationHistory, undoAnnotationHistory,
-  type ImageAnnotation } from '../src/renderer/src/contrib/chat/image-annotations'
+  type ImageAnnotation } from '../src/renderer/src/features/conversation/shared/image-annotations'
 
 const style = { id: 'annotation', color: 'currentColor', width: 4 }
 const stroke: ImageAnnotation = { ...style, kind: 'pen', points: [{ x: 10, y: 10 }, { x: 100, y: 10 }] }

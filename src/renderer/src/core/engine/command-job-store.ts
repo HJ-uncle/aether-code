@@ -53,6 +53,8 @@ const key = (sessionId: string, jobId: string): string => JSON.stringify([sessio
 function notify(): void { for (const listener of listeners) listener() }
 export function subscribeCommandJobs(listener: () => void): () => void { listeners.add(listener); return () => { listeners.delete(listener) } }
 export function getCommandJobs(sessionId: string | null): CommandJobSnapshot[] { return [...jobs.values()].filter(view => view.job.sessionId === sessionId).map(view => view.job) }
+/** Snapshot consumers must respect acknowledged deletion even while a parent still has an older array. */
+export function isCommandJobDeleted(sessionId: string, jobId: string): boolean { return deletedJobs.has(key(sessionId, jobId)) }
 export function useCommandJob(sessionId: string, jobId: string): CommandJobView | undefined {
   return useSyncExternalStore(subscribeCommandJobs, () => jobs.get(key(sessionId, jobId)))
 }

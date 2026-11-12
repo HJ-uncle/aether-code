@@ -2,7 +2,7 @@
 import { expect, test } from '@playwright/test'
 import { queueMentionToken, queueResourcesAfterDraftEdit } from '../src/shared/next-turn-queue-state'
 import type { NextTurnQueueEntry, NextTurnQueueEnvelope, QueueMention, QueueResourceSelection } from '../src/shared/next-turn-queue'
-import { editQueueDraft } from '../src/renderer/src/core/engine/work-queue-entry'
+import { editQueueDraft } from '../src/renderer/src/core/engine/session-queue-entry'
 
 type Draft = NextTurnQueueEnvelope['draft']
 type Resources = NextTurnQueueEnvelope['resources']

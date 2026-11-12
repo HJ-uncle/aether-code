@@ -2,19 +2,19 @@
 import { expect, test } from '@playwright/test'
 import { createServer } from 'node:http'
 import { builtinAgentReference, collaboratorIdentity } from '../src/shared/builtin-agents'
-import { buildAgentMentionMessage } from '../src/renderer/src/contrib/chat/agent-references'
-import { userMessageDraft } from '../src/renderer/src/contrib/chat/mention-context'
+import { buildAgentMentionMessage } from '../src/renderer/src/features/conversation/shared/agent-references'
+import { userMessageDraft } from '../src/renderer/src/features/conversation/shared/mention-context'
 import { assertQueueEnvelope } from '../src/shared/next-turn-queue-state'
 import type { NextTurnQueueEnvelope, NextTurnQueueScope } from '../src/shared/next-turn-queue'
 import { prepareRemoteChatBody } from '../src/main/engine/remote-workspace'
 import { normalizeFinalResult } from '../src/shared/final-result'
-import { workSubagentGroups, workSubagentIcon } from '../src/renderer/src/contrib/work/work-subagents'
+import { sessionSubagentGroups, sessionSubagentIcon } from '../src/renderer/src/features/collaboration/subagents'
 import type { SubagentRunV1 } from '../src/shared/subagent'
 import type { ToolActivity } from '../src/renderer/src/core/engine/useChat'
-import { subagentFollowupMessage } from '../src/renderer/src/contrib/work/subagent-followup-message'
+import { subagentFollowupMessage } from '../src/renderer/src/features/collaboration/subagent-followup-message'
 import { controllerSavedStatus, parseControllerContext, type ControllerSavedRecord } from '../src/renderer/src/core/engine/collaboration-contract'
 import { normalizeSubagentRun, isSubagentNeedsUser, toolStatusLabel } from '../src/renderer/src/core/engine/subagent-state'
-import { workTaskTitle } from '../src/renderer/src/contrib/work/work-task-title'
+import { sessionTaskTitle } from '../src/renderer/src/features/sessions/task-title'
 
 const first = builtinAgentReference('executor', 'instance-one'), second = builtinAgentReference('executor', 'instance-two')
 function draft() {
@@ -30,8 +30,8 @@ test('two selections of the same role preserve distinct instances through replay
   expect(new Set(sent.collaborators.map(collaboratorIdentity)).size).toBe(2)
   expect(buildAgentMentionMessage(sent.message, []).collaborators).toEqual([])
   expect(buildAgentMentionMessage(`@${first} 手工文本`, []).collaborators).toEqual([])
-  expect(workTaskTitle(original.text, original.mentions)).toBe('@执行 制作组件一 @执行 制作组件二')
-  expect(workTaskTitle(sent.message)).toBe('@执行 制作组件一 @执行 制作组件二')
+  expect(sessionTaskTitle(original.text, original.mentions)).toBe('@执行 制作组件一 @执行 制作组件二')
+  expect(sessionTaskTitle(sent.message)).toBe('@执行 制作组件一 @执行 制作组件二')
 })
 test('queued builtin identities require the exact authored chip', () => {
   const scope: NextTurnQueueScope = { source: { mode: 'embedded', endpoint: '', accountId: null }, tenantId: 'tenant', namespace: { id: 'test', generation: 'one' }, owner: 'work', taskId: 'task' }
@@ -63,12 +63,12 @@ test('same child has one group across completed and resumed invocations', () => 
   const run: SubagentRunV1 = { schemaVersion: 1, runId: 'first', tenantId: 'tenant', rootSessionId: 'parent', parentSessionId: 'parent', parentConversationId: 'turn',
     parentMessageId: 'assistant', parentToolCallId: 'tool-1', childSessionId: 'stable-child', task: '制作', description: '制作', modelId: 'model',
     status: 'succeeded', lastSeq: 1, createdAt: 1, updatedAt: 2, usage: {}, toolCalls: [], continuation: { builtinRole: 'executor', builtinRoleVersion: 1, readOnly: false } }
-  const groups = workSubagentGroups('parent', [], [run, { ...run, runId: 'second', parentToolCallId: 'tool-2', resumeFromRunId: 'first', status: 'running', createdAt: 3, updatedAt: 3 }])
+  const groups = sessionSubagentGroups('parent', [], [run, { ...run, runId: 'second', parentToolCallId: 'tool-2', resumeFromRunId: 'first', status: 'running', createdAt: 3, updatedAt: 3 }])
   expect(groups).toHaveLength(1); expect(groups[0].childSessionId).toBe('stable-child')
   expect(groups[0].tools).toHaveLength(2); expect(groups[0].active).toBe(true)
   expect(normalizeSubagentRun(run)?.continuation).toMatchObject({ builtinRole: 'executor', builtinRoleVersion: 1 })
   const blocked: SubagentRunV1 = { ...run, status: 'blocked', stopReason: 'needs_user', error: { code: 'NEEDS_USER', message: '请选择目标平台', retryable: false } }
-  const question = workSubagentGroups('parent', [], [blocked])[0]
+  const question = sessionSubagentGroups('parent', [], [blocked])[0]
   expect(isSubagentNeedsUser(blocked)).toBe(true)
   expect(toolStatusLabel(question.latest)).toBe('待回答')
   expect(question.active).toBe(false)
@@ -87,8 +87,8 @@ test('resumed role icons use continuation identity before stale invocation argum
       description: '已改名的协作任务', modelId: 'model', status: 'succeeded', lastSeq: 1, createdAt: 1, updatedAt: 2, usage: {}, toolCalls: [],
       continuation: { builtinRole: role, builtinRoleVersion: 1, readOnly: role === 'research' } }
     const tool: ToolActivity = { id: 'tool', name: 'subagent_followup', args: JSON.stringify({ builtinRole: previousRole }), result: '', state: 'done', subagent: run }
-    expect(workSubagentIcon(tool)).toBe(icon)
-    expect(workSubagentIcon({ ...tool, subagent: undefined, args: JSON.stringify({ builtinRole: role }) })).toBe(icon)
+    expect(sessionSubagentIcon(tool)).toBe(icon)
+    expect(sessionSubagentIcon({ ...tool, subagent: undefined, args: JSON.stringify({ builtinRole: role }) })).toBe(icon)
   }
 })
 
@@ -99,7 +99,7 @@ test('custom agents and malformed invocation arguments retain the generic agent 
     '{incomplete', 'null', '[]', '{}'
   ]) {
     const tool: ToolActivity = { id: 'custom-tool', name: 'subagent_start', args, result: '', state: 'done' }
-    expect(workSubagentIcon(tool)).toBe('account-outline')
+    expect(sessionSubagentIcon(tool)).toBe('account-outline')
   }
 })
 test('published child provenance is preserved, incomplete claims rejected', () => {

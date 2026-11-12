@@ -11,8 +11,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..'), boundary = 
 mkdirSync(boundary, { recursive: true })
 const folder = mkdtempSync(join(boundary, 'work-queue-rebase-')), bundle = join(folder, 'contracts.cjs')
 await build({ stdin: { contents: [
-  'src/renderer/src/contrib/work/work-next-turn-queue.ts', 'src/renderer/src/core/engine/source.ts',
-  'src/main/work-next-turn-owner.ts', 'src/main/next-turn-queue-store.ts'
+  'src/renderer/src/features/conversation/next-turn-queue.ts', 'src/renderer/src/core/engine/source.ts',
+  'src/main/session-next-turn-owner.ts', 'src/main/next-turn-queue-store.ts'
 ].map(path => `export * from ${JSON.stringify(join(root, path))}`).join('\n'), resolveDir: root, loader: 'ts' }, outfile: bundle,
   bundle: true, platform: 'node', format: 'cjs', external: ['react'], alias: { '@shared': join(root, 'src/shared'), '@renderer': join(root, 'src/renderer/src') } })
 const require = createRequire(import.meta.url), module = require(bundle), { act, createElement } = require('react')
@@ -25,7 +25,7 @@ const submission = () => ({ draft: { text: 'same authored request', revision: 3,
 const ok = revision => ({ ok: true, value: { state: empty(revision) } })
 const cas = () => ({ ok: false, code: 'CAS', message: 'Queue revision changed' })
 let dom, mounted, hook, originalGlobals
-function Probe({ taskId = scope.taskId } = {}) { hook = module.useWorkNextTurnQueue(taskId, module.getEngineSource(), true); return null }
+function Probe({ taskId = scope.taskId } = {}) { hook = module.useSessionNextTurnQueue(taskId, module.getEngineSource(), true); return null }
 async function mount(invoke) {
   dom = new JSDOM('<!doctype html><div id="root"></div>', { url: 'https://fixture.invalid' }); originalGlobals = new Map()
   dom.window.aether = { workQueue: { invoke, onChanged: () => () => {} } }
@@ -159,7 +159,7 @@ test('edit and reorder remain revision-sensitive and never auto-rebase', async (
 test('real owned journal preserves an intervening pause and replays lost ACK at the rebased revision without a duplicate', async () => {
   let handler, raced = false, loseAck = true, envelopeCount = 0
   const appends = [], controller = new AbortController(), snapshot = { mode: 'embedded', baseUrl: 'http://localhost:12345', instanceId: 'test-instance', phase: 'ready', accountId: 'test-account' }
-  const owner = module.createWorkNextTurnOwner({
+  const owner = module.createSessionNextTurnOwner({
     store: new module.NextTurnQueueStore(join(folder, 'real-owned-journal')),
     engine: { snapshot: () => snapshot, signal: () => controller.signal, subscribe: () => () => {} },
     ipc: { handle: (channel, listener) => { assert.equal(channel, 'work:next-turn-queue'); handler = listener }, removeHandler: () => {} },

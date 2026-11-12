@@ -1,8 +1,8 @@
 /** Pure draft-reference checks: edited images replace only owned chips, retain
  * user prose and snapshots, and reject stale anchors before changing a draft. */
 import { expect, test } from '@playwright/test'
-import { replaceImageAttachmentReferences } from '../src/renderer/src/contrib/chat/image-attachment-reference'
-import type { Mention } from '../src/renderer/src/contrib/chat/mention-context'
+import { replaceImageAttachmentReferences } from '../src/renderer/src/features/conversation/shared/image-attachment-reference'
+import type { Mention } from '../src/renderer/src/features/conversation/shared/mention-context'
 
 test('edited attachment updates repeated chips and later offsets without rewriting identical typed text', () => {
   const text = '保留手写 @old.png；请比较 @old.png 和 @old.png，再看 @notes.md。'

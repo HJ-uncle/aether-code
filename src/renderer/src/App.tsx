@@ -1,16 +1,16 @@
 import type { JSX } from 'react'
 import { AppProvider } from './core/app-context'
-import { Workbench } from './workbench/Workbench'
-import { ConfirmDialogHost } from './workbench/ConfirmDialog'
-import { DivergedStrategyDialogHost } from './contrib/git/DivergedStrategyDialog'
-import { ToastHost } from './workbench/ToastHost'
-import { IconProvider } from './workbench/icons'
+import { ApplicationShell } from './app/ApplicationShell'
+import { ConfirmDialogHost } from './ui/ConfirmDialog'
+import { DivergedStrategyDialogHost } from './features/git/DivergedStrategyDialog'
+import { ToastHost } from './ui/ToastHost'
+import { IconProvider } from './ui/icons'
 
 function App(): JSX.Element {
   return (
     <AppProvider>
       <IconProvider variant="outline">
-        <Workbench />
+        <ApplicationShell />
         <ConfirmDialogHost />
         <DivergedStrategyDialogHost />
         <ToastHost />

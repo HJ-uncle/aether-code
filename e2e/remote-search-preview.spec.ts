@@ -2,7 +2,7 @@
  * unchanged search snippet limits, row caps and exact write semantics. */
 import { expect, test } from '@playwright/test'
 import type { SearchOptions } from '../src/shared/ipc'
-import { previewRemoteReplace, replaceRemoteWorkspace, searchRemoteWorkspace, type RemoteSearchTransport } from '../src/renderer/src/contrib/search/remote-search'
+import { previewRemoteReplace, replaceRemoteWorkspace, searchRemoteWorkspace, type RemoteSearchTransport } from '../src/renderer/src/features/search/remote-search'
 
 const options: SearchOptions = { caseSensitive: true, wholeWord: false, useRegex: false, include: '', exclude: '' }
 function transport(content: string): { remote: RemoteSearchTransport; writes: { path: string; content: string }[] } {

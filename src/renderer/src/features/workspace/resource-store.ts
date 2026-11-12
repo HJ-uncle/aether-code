@@ -1,0 +1,130 @@
+import { useSyncExternalStore } from 'react'
+import { assertSessionFileTarget, paths, type SessionFileTarget } from '@renderer/core/workspace/fs-client'
+import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
+import type { BrowserTabState } from '@shared/browser'
+import { browserTabInScope } from '@renderer/core/browser/scope'
+import { getBrowserPresentationScope } from '@renderer/core/browser/presentation'
+
+export interface SessionFileResource {
+  id: string
+  path: string
+  name: string
+  /** Session target for engine-backed files; null for a user-opened local file. */
+  target: SessionFileTarget | null
+  /** Browser-owned handle for a file dropped from the desktop. The bytes are
+   * read only when that tab becomes visible, so opening several files does not
+   * duplicate their contents in the resource store. */
+  externalFile?: File
+  /** Absolute path selected from an artifact or native file chooser. It is
+   * read through the read-only main-process preview bridge; never a write
+   * target for the engine session. */
+  externalPath?: string
+}
+interface ResourceState {
+  files: readonly SessionFileResource[]
+  selected: string | null
+  reveal: number
+}
+const EMPTY: ResourceState = Object.freeze({ files: [], selected: null, reveal: 0 })
+const sessions = new Map<string, ResourceState>()
+const listeners = new Set<() => void>()
+let revision = 0
+const keyFor = (sessionId: string): string => `${getEngineSource()}:${sessionId}`
+const notify = (): void => { for (const listener of listeners) listener() }
+
+// Only lightweight tab descriptors survive selection changes; decoded document
+// bytes and renderer workers belong to the one visible preview component.
+subscribeEngineSource(() => { sessions.clear(); notify() })
+export function getSessionResources(sessionId: string): ResourceState {
+  return sessions.get(keyFor(sessionId)) ?? EMPTY
+}
+export function subscribeSessionResources(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => { listeners.delete(listener) }
+}
+export function useSessionResources(sessionId: string): ResourceState {
+  return useSyncExternalStore(subscribeSessionResources, () => getSessionResources(sessionId))
+}
+export function resolvedSessionResourceId(resources: ResourceState, webIds: readonly string[], activeWebId: string | null): string | null {
+  if (resources.files.some(file => file.id === resources.selected) || webIds.some(id => `web:${id}` === resources.selected)) return resources.selected
+  if (activeWebId && webIds.includes(activeWebId)) return `web:${activeWebId}`
+  return resources.files[0]?.id ?? (webIds[0] ? `web:${webIds[0]}` : null)
+}
+export function sessionResourceBrowserTabs(tabs: readonly BrowserTabState[], sessionId: string): BrowserTabState[] {
+  const scope = getBrowserPresentationScope('work', sessionId)
+  return tabs.filter(tab => browserTabInScope(tab, scope))
+}
+function update(sessionId: string, next: ResourceState): void {
+  const key = keyFor(sessionId)
+  sessions.delete(key)
+  sessions.set(key, next)
+  while (sessions.size > 64) sessions.delete(sessions.keys().next().value!)
+  notify()
+}
+export function openSessionFileResource(path: string, target: SessionFileTarget): void {
+  assertSessionFileTarget(target)
+  const previous = getSessionResources(target.sessionId)
+  const normalized = path.replace(/\\/g, '/')
+  const id = `file:${/^(?:[A-Za-z]:|\/\/)/.test(normalized) ? normalized.toLowerCase() : normalized}`
+  const existing = previous.files.find(file => file.id === id)
+  if (!existing && previous.files.length >= 32) throw new Error('此会话已打开 32 个文件，请先关闭不需要的标签。')
+  const file = { id, path, name: normalized.split('/').pop() || path, target }
+  update(target.sessionId, { files: existing ? previous.files.map(item => item.id === id ? file : item) : [...previous.files, file], selected: id, reveal: ++revision })
+}
+
+/**
+ * Add a file supplied by the user through the native file picker or a desktop
+ * drag. It intentionally carries no workspace target: this is a read-only
+ * viewer resource and must not make an untrusted path part of an engine task.
+ */
+export function openExternalSessionFileResource(file: File, sessionId: string): void {
+  const name = file.name || '未命名文件'
+  const id = `external:${name.toLowerCase()}:${file.size}:${file.lastModified}`
+  const previous = getSessionResources(sessionId)
+  const existing = previous.files.find(item => item.id === id)
+  if (!existing && previous.files.length >= 32) throw new Error('此会话已打开 32 个文件，请先关闭不需要的标签。')
+  const resource: SessionFileResource = { id, path: name, name, target: null, externalFile: file }
+  update(sessionId, { files: existing ? previous.files.map(item => item.id === id ? resource : item) : [...previous.files, resource], selected: id, reveal: ++revision })
+}
+
+export function openExternalSessionPathResource(path: string, sessionId: string): void {
+  const normalized = path.replace(/\\/g, '/')
+  const id = `external-path:${/^(?:[A-Za-z]:|\\\\)/.test(normalized) ? normalized.toLowerCase() : normalized}`
+  const previous = getSessionResources(sessionId)
+  const existing = previous.files.find(item => item.id === id)
+  if (!existing && previous.files.length >= 32) throw new Error('此会话已打开 32 个文件，请先关闭不需要的标签。')
+  const resource: SessionFileResource = {
+    id, path, name: normalized.split('/').pop() || path, target: null, externalPath: path
+  }
+  update(sessionId, { files: existing ? previous.files.map(item => item.id === id ? resource : item) : [...previous.files, resource], selected: id, reveal: ++revision })
+}
+export function selectSessionResource(sessionId: string, id: string): void {
+  const previous = getSessionResources(sessionId)
+  update(sessionId, { ...previous, selected: id, reveal: ++revision })
+}
+export function closeSessionResource(sessionId: string, id: string): void {
+  const previous = getSessionResources(sessionId)
+  const index = previous.files.findIndex(file => file.id === id)
+  const files = previous.files.filter(file => file.id !== id)
+  update(sessionId, { ...previous, files,
+    selected: previous.selected === id ? files[Math.min(Math.max(index, 0), files.length - 1)]?.id ?? null : previous.selected })
+}
+
+/** Completion belongs to its captured task even if another task is now visible.
+ * External resources and a newer workspace binding retain their own paths. */
+export function syncSessionFileOperation(target: SessionFileTarget, from: string, to?: string): void {
+  if (target.source !== getEngineSource()) return
+  const previous = getSessionResources(target.sessionId)
+  let selected = previous.selected, changed = false
+  const files = previous.files.flatMap(file => {
+    if (file.target?.key !== target.key || !paths.contains(from, file.path)) return [file]
+    changed = true
+    if (!to) { if (selected === file.id) selected = null; return [] }
+    const path = `${to}${file.path.replace(/\\/g, '/').slice(from.replace(/\\/g, '/').length)}`
+    const normalized = path.replace(/\\/g, '/')
+    const id = `file:${/^(?:[A-Za-z]:|\/\/)/.test(normalized) ? normalized.toLowerCase() : normalized}`
+    if (selected === file.id) selected = id
+    return [{ ...file, id, path, name: paths.basename(path) }]
+  })
+  if (changed) update(target.sessionId, { ...previous, files, selected })
+}

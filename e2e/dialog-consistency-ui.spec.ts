@@ -2,7 +2,7 @@
  * session color persistence/focus and full search replacement previews.
  * Only engine HTTP and the queue IPC boundary are controlled. Search reads
  * and writes real fixture files through production IPC. Build first, then run
- * with playwright.dialog-consistency.config.ts; workers must remain one. */
+ * with --config e2e/config/playwright.dialog-consistency.config.ts; workers must remain one. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer } from 'node:http'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -12,7 +12,7 @@ import type { CommandJobSnapshot } from '../src/shared/command-job'
 import type { EngineHistoryRow } from '../src/renderer/src/core/engine/chat-history'
 import type { NextTurnQueueEnvelope, NextTurnQueueState } from '../src/shared/next-turn-queue'
 import { applyNextTurnQueueMutation, assertQueueState, emptyNextTurnQueue } from '../src/shared/next-turn-queue-state'
-import { WORK_QUEUE_IPC, type WorkQueueRequest } from '../src/shared/work-next-turn-api'
+import { SESSION_QUEUE_IPC, type SessionQueueRequest } from '../src/shared/session-next-turn-api'
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
 const token = 'dialog-consistency-fixture', model = 'dialog-fixture-model', now = Date.now() - 10_000
@@ -25,14 +25,14 @@ const envelope = (data: unknown): string => JSON.stringify({ code: 200, message:
 const errors: string[] = [], unexpectedWrites: string[] = []
 const deletes: { sessionId: string; jobId: string }[] = []
 const roots = new Map<string, RootRun>(), jobs = new Map<string, CommandJobSnapshot>()
-type QueueFixture = { state: NextTurnQueueState; mutations: WorkQueueRequest[]; unexpected: WorkQueueRequest[] }
+type QueueFixture = { state: NextTurnQueueState; mutations: SessionQueueRequest[]; unexpected: SessionQueueRequest[] }
 type MainFixture = typeof globalThis & { __dialogQueue: QueueFixture }
-let app: ElectronApplication | undefined, page: Page, fixture = '', workCwd = '', codeCwd = '', searchFile = ''
+let app: ElectronApplication | undefined, page: Page, fixture = '', sessionCwd = '', codeCwd = '', searchFile = ''
 const marker = 'DIALOG_REPLACE_ME', longBefore = `${'长行前缀 '.repeat(60)}${marker}${' tail-content'.repeat(60)} FINAL_BEFORE`
 const replacement = `${'新内容 '.repeat(90)}FINAL_REPLACEMENT`
 const longAfter = longBefore.replace(marker, replacement)
 
-function workspacePath(id: string): string { return id === taskId ? workCwd : codeCwd }
+function workspacePath(id: string): string { return id === taskId ? sessionCwd : codeCwd }
 function history(id: string): EngineHistoryRow[] {
   const run = roots.get(id)
   return run ? [
@@ -42,7 +42,7 @@ function history(id: string): EngineHistoryRow[] {
 }
 function queueEnvelope(text: string): NextTurnQueueEnvelope {
   return { draft: { text, revision: 1, mentions: [] }, model: { kind: 'explicit', modelId: model },
-    workspace: { kind: 'local-workspace', identity: workCwd }, agent: { primaryAgentId: null, collaborators: [] },
+    workspace: { kind: 'local-workspace', identity: sessionCwd }, agent: { primaryAgentId: null, collaborators: [] },
     resources: { skills: { kind: 'inherit' }, mcpServers: { kind: 'inherit' }, knowledgeBases: { kind: 'inherit' } },
     thinking: { kind: 'off' }, memory: { kind: 'inherit' }, security: { policy: 'engine-session' }, attachments: [] }
 }
@@ -128,7 +128,7 @@ async function setQueue(state: NextTurnQueueState): Promise<void> {
   await app!.evaluate(({ BrowserWindow }, { state, channel }) => {
     ;(globalThis as MainFixture).__dialogQueue.state = state
     for (const window of BrowserWindow.getAllWindows()) window.webContents.send(channel, { scope: state.scope, revision: state.revision })
-  }, { state, channel: WORK_QUEUE_IPC.changed })
+  }, { state, channel: SESSION_QUEUE_IPC.changed })
   await expect(queue().locator('.work-next-turn__summary')).toContainText(`${state.entries.length} 条待发`)
 }
 async function openQueueClear(): Promise<Locator> {
@@ -152,8 +152,8 @@ async function tagColor(): Promise<string | null> {
 test.describe.serial('统一弹窗真实交互回归', () => {
   test.beforeAll(async () => {
     mkdirSync(fixtureRoot, { recursive: true }); fixture = mkdtempSync(join(fixtureRoot, 'dialog-consistency-profile-'))
-    workCwd = join(fixture, 'work-task'); codeCwd = join(fixture, 'code-project')
-    for (const directory of [workCwd, codeCwd]) mkdirSync(directory)
+    sessionCwd = join(fixture, 'work-task'); codeCwd = join(fixture, 'code-project')
+    for (const directory of [sessionCwd, codeCwd]) mkdirSync(directory)
     searchFile = join(codeCwd, 'replace-preview-long-line.txt'); writeFileSync(searchFile, `${longBefore}\n`, 'utf8')
     for (const sessionId of titles.keys()) roots.set(sessionId, { schemaVersion: 1, runId: `root-${sessionId}`, sessionId,
       turnId: `turn-${sessionId}`, userMessageId: `user-${sessionId}`, assistantMessageId: `assistant-${sessionId}`,
@@ -161,7 +161,7 @@ test.describe.serial('统一弹窗真实交互回归', () => {
       createdAt: now, updatedAt: now, finishedAt: now })
     for (const jobId of [runningJob, finishedJob]) jobs.set(jobId, { schemaVersion: 1, jobId, sessionId: taskId, ownerSessionId: taskId,
       runId: `root-${taskId}`, turnId: `turn-${taskId}`, toolCallId: `call-${jobId}`, version: 1,
-      status: jobId === runningJob ? 'running' : 'succeeded', command: 'node', args: [`${jobId}.js`], cwd: workCwd, background: true,
+      status: jobId === runningJob ? 'running' : 'succeeded', command: 'node', args: [`${jobId}.js`], cwd: sessionCwd, background: true,
       createdAt: now, updatedAt: now, ...(jobId === finishedJob ? { finishedAt: now } : {}),
       exitCode: jobId === runningJob ? null : 0, signal: null, cursor: 1, earliestCursor: 0 })
     await new Promise<void>((done, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', done) })
@@ -200,7 +200,7 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
       const fixture: QueueFixture = { state, mutations: [], unexpected: [] }
       ;(globalThis as MainFixture).__dialogQueue = fixture
       ipcMain.removeHandler(channel)
-      ipcMain.handle(channel, (_event, input: WorkQueueRequest) => {
+      ipcMain.handle(channel, (_event, input: SessionQueueRequest) => {
         if (input.taskId !== fixture.state.scope.taskId) {
           if (input.action.kind !== 'read') fixture.unexpected.push(input)
           return { ok: true, value: { state: { ...fixture.state, scope: { ...fixture.state.scope, taskId: input.taskId }, entries: [], removed: [] } } }
@@ -218,14 +218,14 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
         return { ok: true, value: { state: fixture.state } }
       })
       const window = BrowserWindow.getAllWindows()[0]; window.setContentSize(1440, 900); window.show(); window.focus()
-    }, { state: seededQueue(), channel: WORK_QUEUE_IPC.invoke })
+    }, { state: seededQueue(), channel: SESSION_QUEUE_IPC.invoke })
     await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
     await page.evaluate(({ taskId, title, now, workspacePath, model }) => {
       localStorage.setItem('aether.work.state.v1', JSON.stringify({ tasks: [{ id: taskId, title, status: 'done', draft: '',
         createdAt: now, updatedAt: now, workspacePath, modelId: model, attachments: [], sources: [] }], activeTaskId: taskId }))
       localStorage.setItem('aether.app.mode', 'work')
       localStorage.setItem('aether.work.view.v1', JSON.stringify({ page: 'home', collapsed: false, workspace: false, tab: 'files', pane: 'conversation', ratio: 50 }))
-    }, { taskId, title: titles.get(taskId), now, workspacePath: workCwd, model })
+    }, { taskId, title: titles.get(taskId), now, workspacePath: sessionCwd, model })
     await page.reload(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
     await expect(work().getByRole('heading', { name: titles.get(taskId), exact: true })).toBeVisible()
     await expect(queue()).toBeVisible()

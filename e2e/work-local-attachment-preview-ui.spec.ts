@@ -3,7 +3,7 @@
  * home inline image/directory references open their real viewer and local files.
  * The mock engine resolves unbound sessions to a different real scratch root;
  * local filesystem IPC remains production code throughout this test.
- * Build first; run serially with playwright.work-local-attachment-preview.config.ts. */
+ * Build first; run serially with --config e2e/config/playwright.work-local-attachment-preview.config.ts. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'

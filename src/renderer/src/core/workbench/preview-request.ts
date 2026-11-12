@@ -9,7 +9,7 @@ const listeners = new Set<() => void>()
 let nextRevision = 0
 const sessionKey = (source: number, sessionId: string | undefined) => JSON.stringify([source, sessionId])
 
-function requestSessionPreview(source: number, sessionId: string, revision: number): void {
+function rememberSessionRevision(source: number, sessionId: string, revision: number): void {
   const id = sessionKey(source, sessionId)
   const next = Math.max(sessionRevisions.get(id) ?? 0, revision)
   sessionRevisions.delete(id)
@@ -36,7 +36,7 @@ const key = (source: number, sessionId: string | undefined, path: string | undef
 
 /** One completion may affect several paths; publish one revision so retained
  * previews reread once even when receipts use different spellings of a path. */
-export function requestWorkPreviews(source: number, sessionId: string, paths: readonly string[], workspaceRoot?: string | null): number {
+export function requestSessionPreviews(source: number, sessionId: string, paths: readonly string[], workspaceRoot?: string | null): number {
   const targets = paths.filter(Boolean)
   const ids = new Set(targets.map(path => key(source, sessionId, path, workspaceRoot)))
   if (!ids.size) return nextRevision
@@ -45,7 +45,7 @@ export function requestWorkPreviews(source: number, sessionId: string, paths: re
   // known. A bounded session revision also covers batches larger than the
   // per-path cache, without refreshing unrelated tasks or engine sources.
   if (ids.size > MAX_REVISIONS || !workspaceRoot && targets.some(path => !/^(?:[a-z]:[\\/]|[\\/])/i.test(path))) {
-    requestSessionPreview(source, sessionId, revision)
+    rememberSessionRevision(source, sessionId, revision)
   } else {
     for (const id of ids) {
       revisions.delete(id)
@@ -53,7 +53,7 @@ export function requestWorkPreviews(source: number, sessionId: string, paths: re
       if (revisions.size > MAX_REVISIONS) {
         const oldest = revisions.keys().next().value!
         const [oldSource, oldSession] = JSON.parse(oldest) as [number, string, string]
-        requestSessionPreview(oldSource, oldSession, revisions.get(oldest)!)
+        rememberSessionRevision(oldSource, oldSession, revisions.get(oldest)!)
         revisions.delete(oldest)
       }
     }
@@ -61,24 +61,24 @@ export function requestWorkPreviews(source: number, sessionId: string, paths: re
   for (const listener of listeners) listener()
   return revision
 }
-export function requestWorkPreview(source: number, sessionId: string, path: string, workspaceRoot?: string | null): number {
-  return requestWorkPreviews(source, sessionId, [path], workspaceRoot)
+export function requestSessionPreview(source: number, sessionId: string, path: string, workspaceRoot?: string | null): number {
+  return requestSessionPreviews(source, sessionId, [path], workspaceRoot)
 }
 /** Rollback can affect files not mounted in the tree and command-created
  * directories. Invalidate the entire owning session, including retained tabs. */
-export function requestWorkSessionRefresh(source: number, sessionId: string): number {
+export function requestSessionRefresh(source: number, sessionId: string): number {
   const revision = ++nextRevision
-  requestSessionPreview(source, sessionId, revision)
+  rememberSessionRevision(source, sessionId, revision)
   for (const listener of listeners) listener()
   return revision
 }
-export function workPreviewRevision(source: number, sessionId: string | undefined, path: string | undefined, workspaceRoot?: string | null): number {
+export function sessionPreviewRevision(source: number, sessionId: string | undefined, path: string | undefined, workspaceRoot?: string | null): number {
   // Existing callers may issue an unrooted request; retain its exact-path
   // lookup while also matching relative receipts to absolute file previews.
   return Math.max(sessionRevisions.get(sessionKey(source, sessionId)) ?? 0,
     revisions.get(key(source, sessionId, path)) ?? 0, revisions.get(key(source, sessionId, path, workspaceRoot)) ?? 0)
 }
-export function subscribeWorkPreview(listener: () => void): () => void {
+export function subscribeSessionPreview(listener: () => void): () => void {
   listeners.add(listener)
   return () => { listeners.delete(listener) }
 }

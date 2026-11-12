@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { PluginTool } from '../src/renderer/src/core/engine/plugins'
-import { parsePluginForm, pluginFormDefaults, pluginFormFields, pluginResultHeadlineKey, pluginResultTable, pluginToolTitle, pluginValueText } from '../src/renderer/src/contrib/work/plugin-form'
+import { parsePluginForm, pluginFormDefaults, pluginFormFields, pluginResultHeadlineKey, pluginResultTable, pluginToolTitle, pluginValueText } from '../src/renderer/src/features/plugins/plugin-form'
 import { remoteRequestError } from '../src/main/engine/protocol'
 
 const tool: PluginTool = { name: 'convert', description: '示例工具', entry: 'main.mjs', inputSchema: { type: 'object', properties: {

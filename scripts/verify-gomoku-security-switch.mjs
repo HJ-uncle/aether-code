@@ -66,7 +66,7 @@ try {
   await app.evaluate(({ dialog }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }) }, workspace)
   await work.locator('.work-folder-button').click()
   await expect(work.locator('.work-folder-button')).toContainText(basename(workspace))
-  await work.getByRole('button', { name: 'Work 使用的模型', exact: true }).click()
+  await work.getByRole('button', { name: '使用的模型', exact: true }).click()
   await page.getByRole('menuitem', { name: new RegExp('^' + (model.displayName || model.modelId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }).click()
   const permission = page.getByRole('button', { name: /^切换本会话访问权限：/ }).filter({ visible: true })
   await expect(permission).toContainText('标准模式')

@@ -2,8 +2,8 @@
  * invalid typography is bounded, and point units remain independent of pixels. */
 import { expect, test } from '@playwright/test'
 import ExcelJS from 'exceljs'
-import { buildSpreadsheetPage } from '../src/renderer/src/contrib/documents/spreadsheet-page'
-import { spreadsheetCellStyle } from '../src/renderer/src/contrib/documents/spreadsheet-style'
+import { buildSpreadsheetPage } from '../src/renderer/src/features/documents/spreadsheet-page'
+import { spreadsheetCellStyle } from '../src/renderer/src/features/documents/spreadsheet-style'
 
 test('Excel font names and point sizes survive binary loading and page slicing', async () => {
   const source = new ExcelJS.Workbook(), sheet = source.addWorksheet('字体')

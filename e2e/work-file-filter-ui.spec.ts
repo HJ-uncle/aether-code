@@ -1,4 +1,4 @@
-/** Fresh isolated Electron acceptance of the actual WorkWorkspacePanel and
+/** Fresh isolated Electron acceptance of the actual WorkspacePanel and
  * fs-client: deep Chinese name filtering, cached enumeration, temporary
  * expansion, refresh, failed directories and late-session response isolation.
  * The HTTP fixture supplies directory metadata only; no model, old E2E,
@@ -108,14 +108,14 @@ test.beforeAll(async () => {
   writeFileSync(join(staticRoot, 'index.html'), '<!doctype html><html data-appearance="light"><head><meta charset="utf-8"><link rel="stylesheet" href="/entry.css"></head><body><div id="root"></div><script src="/entry.js"></script></body></html>')
   await build({ stdin: { contents: `
     import React from 'react'; import {createRoot} from 'react-dom/client';
-    import {WorkWorkspacePanel} from './src/renderer/src/contrib/work/WorkWorkspacePanel';
+    import {WorkspacePanel} from './src/renderer/src/features/workspace/WorkspacePanel';
     import {publishEngineSource,engineStorageKey,getExpectedEngine} from './src/renderer/src/core/engine/source';
     import {createFileTreeScope,readFileTreeMemory} from './src/renderer/src/core/workspace/file-tree-memory';
     import './src/renderer/src/assets/tokens.css'; import './src/renderer/src/assets/components.css';
     publishEngineSource({mode:'remote',baseUrl:${JSON.stringify(url)},instanceId:'filter-instance',phase:'ready'});
     const root=createRoot(document.getElementById('root'));let sessionId='',workspaceRoot='';
     const opened=[];
-    function open(id,path){sessionId=id;workspaceRoot=path;opened.length=0;root.render(<WorkWorkspacePanel sessionId={id} workspaceRoot={path} onOpenFile={path=>opened.push(path)}/>)}
+    function open(id,path){sessionId=id;workspaceRoot=path;opened.length=0;root.render(<WorkspacePanel sessionId={id} workspaceRoot={path} onOpenFile={path=>opened.push(path)}/>)}
     function memory(){return readFileTreeMemory(createFileTreeScope('work',engineStorageKey(getExpectedEngine()),sessionId,workspaceRoot))}
     window.filterHarness={open,memory,opened};
   `, resolveDir: root, loader: 'tsx' }, bundle: true, outfile: join(staticRoot, 'entry.js'), platform: 'browser', format: 'iife',

@@ -45,7 +45,7 @@ test.beforeAll(async () => {
   await page.setContent(captureBase)
   await page.addScriptTag({ content: readFileSync(join(root, 'node_modules/jszip/dist/jszip.min.js'), 'utf8') })
   await page.addScriptTag({ content: readFileSync(join(root, 'node_modules/docx-preview/dist/docx-preview.js'), 'utf8') })
-  const library = await build({ stdin: { contents: `export {docxPreviewRegions} from './src/renderer/src/core/workbench/docx-preview-regions';export {passiveDocumentHtml as sanitize} from './src/renderer/src/contrib/documents/document-html';`, resolveDir: root, loader: 'ts' }, bundle: true, write: false, format: 'iife', globalName: 'proposal', platform: 'browser', logLevel: 'silent' })
+  const library = await build({ stdin: { contents: `export {docxPreviewRegions} from './src/renderer/src/core/workbench/docx-preview-regions';export {passiveDocumentHtml as sanitize} from './src/renderer/src/features/documents/document-html';`, resolveDir: root, loader: 'ts' }, bundle: true, write: false, format: 'iife', globalName: 'proposal', platform: 'browser', logLevel: 'silent' })
   await page.addScriptTag({ content: library.outputFiles[0].text })
   await page.evaluate(() => {
     const w = window as unknown as HarnessWindow & { docx: { parseAsync(buffer: ArrayBuffer, options: object): Promise<unknown>; renderDocument(model: unknown, options: object): Promise<Node[]> }; proposal: BrowserHarness['proposal'] & { sanitize(html: string): string } }

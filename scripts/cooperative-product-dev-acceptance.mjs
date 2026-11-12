@@ -217,7 +217,7 @@ export async function launchController(options) {
       await surface.getByRole('button', { name: '选择工作区', exact: true }).click()
       await expect(surface.locator('.work-folder-button')).toContainText(basename(workspace))
     }
-    const picker = surface.getByRole('button', { name: owner.mode === 'work' ? 'Work 使用的模型' : '选择模型', exact: true })
+    const picker = surface.getByRole('button', { name: owner.mode === 'work' ? '使用的模型' : '选择模型', exact: true })
     await expect(picker).toBeEnabled({ timeout: 90_000 }); await picker.click()
     await page.getByRole('menuitem').filter({ hasText: model.displayName || model.modelId }).first().click()
     const permission = surface.getByRole('button', { name: /^切换本会话访问权限：/ })

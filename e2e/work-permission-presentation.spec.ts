@@ -8,7 +8,7 @@ import {
   normalizeRunPending,
   type PendingInteraction
 } from '../src/renderer/src/core/engine/pending'
-import { permissionPresentation } from '../src/renderer/src/contrib/work/work-permission-presentation'
+import { permissionPresentation } from '../src/renderer/src/features/interactions/permission-presentation'
 import { toolDisplayName } from '../src/renderer/src/core/engine/tool-labels'
 
 function pending(

@@ -1,11 +1,11 @@
 /** Pure attachment identity contracts: wire labels, draft persistence, queue
  * staging/merge, remote sanitization, history replay and readable export. */
 import { expect, test } from '@playwright/test'
-import { buildMentionMessage, parseMentionContent, userMessageDraft, type Mention } from '../src/renderer/src/contrib/chat/mention-context'
-import { loadChatDraftState, saveChatDraft, saveChatDraftForSubmission } from '../src/renderer/src/contrib/chat/draft-store'
+import { buildMentionMessage, parseMentionContent, userMessageDraft, type Mention } from '../src/renderer/src/features/conversation/shared/mention-context'
+import { loadChatDraftState, saveChatDraft, saveChatDraftForSubmission } from '../src/renderer/src/features/conversation/shared/draft-store'
 import { dispatchChatRequest } from '../src/renderer/src/core/engine/chat-send-request'
 import { replayMessages } from '../src/renderer/src/core/engine/chat-history'
-import { serializeMessages } from '../src/renderer/src/contrib/chat/message-export'
+import { serializeMessages } from '../src/renderer/src/features/conversation/shared/message-export'
 import { remoteAttachmentsForRequest, rememberRemoteAttachment, clearRemoteAttachments } from '../src/main/engine/remote-attachments'
 import { mergeQueueAttachmentReferences, remapQueueAttachmentReferences } from '../src/shared/queue-attachment-references'
 import type { QueueAttachmentReceipt } from '../src/shared/next-turn-queue'

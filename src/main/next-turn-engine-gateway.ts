@@ -4,7 +4,7 @@ import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { NextTurnQueueError, type NextTurnQueueEnvelope, type NextTurnQueueScope, type QueueAttachmentReceipt } from '../shared/next-turn-queue'
 import { assertQueueEnvelope, assertQueueJsonValue, queueResourcesAfterDraftEdit, queueDraftRemovesToolkit } from '../shared/next-turn-queue-state'
 import { parseSessionToolkits } from '../shared/toolkits'
-import type { WorkQueueDraft, WorkQueueTarget } from '../shared/work-next-turn-api'
+import type { SessionQueueDraft, SessionQueueTarget } from '../shared/session-next-turn-api'
 import type { EngineSnapshot } from '../shared/ipc'
 import type { TrustedQueueAuthorityLease } from './next-turn-queue-service'
 import type { QueueDispatchGateway } from './next-turn-dispatcher'
@@ -14,12 +14,12 @@ import { engineTargetError, subagentProtocolHeaders } from './engine/protocol'
 import { prepareRemoteChatBody } from './engine/remote-workspace'
 import { assertAllowed } from './fs/file-service'
 import { ATTACHMENTS_DIRECTORY } from '../shared/attachments'
-import { buildAgentMentionMessage } from '../renderer/src/contrib/chat/agent-references'
+import { buildAgentMentionMessage } from '../renderer/src/features/conversation/shared/agent-references'
 import { collaboratorIdentity } from '../shared/builtin-agents'
 import { canonicalAdmissionJson, parseAdmissionContext, parseExactAdmission, type AdmissionContext } from './next-turn-admission-protocol'
 import { remapQueueAttachmentReferences } from '../shared/queue-attachment-references'
 
-interface LeaseFacts { target: WorkQueueTarget; signal: AbortSignal }
+interface LeaseFacts { target: SessionQueueTarget; signal: AbortSignal }
 export interface QueueEnginePort {
   snapshot(): EngineSnapshot
   signal(): AbortSignal
@@ -35,9 +35,9 @@ const enginePort: QueueEnginePort = {
   request: engineRequest, fetch: (input, init) => fetch(input, init), remoteBody: prepareRemoteChatBody, allowed: assertAllowed
 }
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex')
-const sourceOf = (target: WorkQueueTarget): NextTurnQueueScope['source'] => ({ mode: target.mode,
+const sourceOf = (target: SessionQueueTarget): NextTurnQueueScope['source'] => ({ mode: target.mode,
   endpoint: target.mode === 'embedded' ? '' : new URL(target.baseUrl).href.replace(/\/+$/, ''), accountId: target.accountId ?? null })
-const sameSource = (scope: NextTurnQueueScope, target: WorkQueueTarget): boolean => canonicalAdmissionJson(scope.source) === canonicalAdmissionJson(sourceOf(target))
+const sameSource = (scope: NextTurnQueueScope, target: SessionQueueTarget): boolean => canonicalAdmissionJson(scope.source) === canonicalAdmissionJson(sourceOf(target))
 function fail(message: string): never { throw new NextTurnQueueError('AUTHORITY', message) }
 const relativeFile = (value: string): string => {
   const normalized = value.replace(/\\/g, '/')
@@ -171,7 +171,7 @@ export class EngineQueueGateway implements QueueDispatchGateway {
     } finally { await reader.cancel().catch(() => {}); reader.releaseLock() }
     this.assertFacts(facts); return Buffer.concat(chunks)
   }
-  private async stageAttachment(scope: NextTurnQueueScope, file: WorkQueueDraft['attachments'][number], budget: number, paths?: string[]): Promise<QueueAttachmentReceipt> {
+  private async stageAttachment(scope: NextTurnQueueScope, file: SessionQueueDraft['attachments'][number], budget: number, paths?: string[]): Promise<QueueAttachmentReceipt> {
     const { facts, context } = await this.scoped(scope)
     const source = file.path
     if (!source) fail('远端附件回执无效，请重新上传')
@@ -199,7 +199,7 @@ export class EngineQueueGateway implements QueueDispatchGateway {
       ...(file.attachmentId ? { attachmentId: file.attachmentId } : {}),
       ...(file.referenceLabel ? { referenceLabel: file.referenceLabel } : {}) }
   }
-  async editDraft(envelope: NextTurnQueueEnvelope, draft: WorkQueueDraft['draft'], scope?: NextTurnQueueScope): Promise<NextTurnQueueEnvelope> {
+  async editDraft(envelope: NextTurnQueueEnvelope, draft: SessionQueueDraft['draft'], scope?: NextTurnQueueScope): Promise<NextTurnQueueEnvelope> {
     let inheritedToolkits: string[] | undefined
     const selected = envelope.resources.toolkits
     if ((!selected || selected.kind === 'inherit') && queueDraftRemovesToolkit(envelope.draft, draft)) {
@@ -213,7 +213,7 @@ export class EngineQueueGateway implements QueueDispatchGateway {
     for (const selector of prepared.collaborators) if (!collaborators.some(item => collaboratorIdentity(item) === collaboratorIdentity(selector))) collaborators.push(selector)
     return { ...structuredClone(envelope), draft: structuredClone(draft), resources: structuredClone(resources), agent: { ...envelope.agent, collaborators } }
   }
-  async envelope(scope: NextTurnQueueScope, submission: WorkQueueDraft): Promise<NextTurnQueueEnvelope> {
+  async envelope(scope: NextTurnQueueScope, submission: SessionQueueDraft): Promise<NextTurnQueueEnvelope> {
     assertQueueJsonValue(submission)
     const { context } = await this.scoped(scope)
     if (!context.root) fail('先启动任务，再排下一轮；首页草稿不会被自动启动')

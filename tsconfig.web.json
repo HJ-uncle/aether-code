@@ -8,6 +8,7 @@
     "src/shared/**/*"
   ],
   "compilerOptions": {
+    "tsBuildInfoFile": "./.e2e-tmp/typescript/web.tsbuildinfo",
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {

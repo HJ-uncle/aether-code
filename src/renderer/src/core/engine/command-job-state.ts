@@ -3,6 +3,17 @@ import type { ChatMessage, ToolActivity } from './useChat'
 import { commandInvocation } from './tool-feedback'
 import { mergeFileChanges } from './tool-file-changes'
 
+/** One session's background jobs, merged by engine version before partitioning. */
+export function partitionCommandJobs(jobs: readonly CommandJobSnapshot[], sessionId: string): { running: CommandJobSnapshot[]; history: CommandJobSnapshot[] } {
+  const byId = new Map<string, CommandJobSnapshot>()
+  for (const job of jobs) {
+    if (!job.background || job.sessionId !== sessionId) continue
+    byId.set(job.jobId, mergeCommandJob(byId.get(job.jobId), job))
+  }
+  const services = [...byId.values()].sort((left, right) => right.updatedAt - left.updatedAt)
+  return { running: services.filter(commandJobActive), history: services.filter(job => !commandJobActive(job)) }
+}
+
 const statuses: CommandJobStatus[] = ['running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'timed_out', 'interrupted']
 export const commandStatusLabels: Record<CommandJobStatus, string> = {
   running: '运行中', cancelling: '正在停止', succeeded: '已完成', failed: '失败', cancelled: '已取消', timed_out: '已超时', interrupted: '已中断'

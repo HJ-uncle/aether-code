@@ -1,7 +1,7 @@
 /** Pure cache tests: full child transcripts use a shared byte budget without
  * losing selected content, scroll positions, disclosures, or unsent drafts. */
 import { expect, test } from '@playwright/test'
-import { trimWorkSubagentSessionCaches, trimWorkSubagentTranscriptWindows, WORK_SUBAGENT_TRANSCRIPT_CACHE_BYTES } from '../src/renderer/src/contrib/work/work-subagent-memory'
+import { trimSessionSubagentSessionCaches, trimSessionSubagentTranscriptWindows, SESSION_SUBAGENT_TRANSCRIPT_CACHE_BYTES } from '../src/renderer/src/features/collaboration/subagent-memory'
 
 function transcript(bytes?: number) {
   return { window: { residentBytes: bytes }, scrollTop: 321, expanded: new Map([['reply', 2]]), opened: new Set(['instruction']) }
@@ -18,7 +18,7 @@ test('inactive archives share one byte budget and preserve reading state when ev
     ['old-session', session(new Map([['oldest', oldest], ['recent', recent]]))],
     ['current-session', session(new Map([['newest', newest], ['active', active]]))]
   ])
-  trimWorkSubagentTranscriptWindows(memories, active, 9)
+  trimSessionSubagentTranscriptWindows(memories, active, 9)
   expect(oldest.window).toBeUndefined()
   expect(recent.window).toEqual({ residentBytes: 4 })
   expect(newest.window).toEqual({ residentBytes: 5 })
@@ -30,18 +30,18 @@ test('inactive archives share one byte budget and preserve reading state when ev
 })
 
 test('default budget frees an oversized inactive archive but never caps the selected archive', () => {
-  const oldest = transcript(WORK_SUBAGENT_TRANSCRIPT_CACHE_BYTES + 1), active = transcript(WORK_SUBAGENT_TRANSCRIPT_CACHE_BYTES * 4)
+  const oldest = transcript(SESSION_SUBAGENT_TRANSCRIPT_CACHE_BYTES + 1), active = transcript(SESSION_SUBAGENT_TRANSCRIPT_CACHE_BYTES * 4)
   const memories = new Map([['session', session(new Map([['oldest', oldest], ['active', active]]))]])
-  trimWorkSubagentTranscriptWindows(memories, active)
+  trimSessionSubagentTranscriptWindows(memories, active)
   expect(oldest.window).toBeUndefined()
-  expect(active.window.residentBytes).toBe(WORK_SUBAGENT_TRANSCRIPT_CACHE_BYTES * 4)
+  expect(active.window.residentBytes).toBe(SESSION_SUBAGENT_TRANSCRIPT_CACHE_BYTES * 4)
 })
 
 test('unmeasured archives release only inactive payloads without enumerating their content', () => {
   const unknown = transcript(), invalid = transcript(Number.NaN), active = transcript()
   Object.defineProperty(unknown.window, 'rows', { get() { throw new Error('Archive should not be scanned') } })
   const memories = new Map([['session', session(new Map([['unknown', unknown], ['invalid', invalid], ['active', active]]))]])
-  trimWorkSubagentTranscriptWindows(memories, active)
+  trimSessionSubagentTranscriptWindows(memories, active)
   expect(unknown.window).toBeUndefined()
   expect(invalid.window).toBeUndefined()
   expect(active.window).toEqual({ residentBytes: undefined })
@@ -50,8 +50,8 @@ test('unmeasured archives release only inactive payloads without enumerating the
 test('legacy identity aliases are counted once and repeated trimming is stable', () => {
   const shared = transcript(8), newest = transcript(1)
   const memories = new Map([['session', session(new Map([['old-alias', shared], ['new-alias', shared], ['newest', newest]]))]])
-  trimWorkSubagentTranscriptWindows(memories, undefined, 9)
-  trimWorkSubagentTranscriptWindows(memories, undefined, 9)
+  trimSessionSubagentTranscriptWindows(memories, undefined, 9)
+  trimSessionSubagentTranscriptWindows(memories, undefined, 9)
   expect(shared.window).toEqual({ residentBytes: 8 })
   expect(newest.window).toEqual({ residentBytes: 1 })
 })
@@ -63,7 +63,7 @@ test('old session archives can be removed while draft and attachment scopes surv
   attached.attachments.set('child', new Set(['notes.txt']))
   const memories = new Map([['draft', draft], ['attached', attached], ['empty', session()],
     ...Array.from({ length: 4 }, (_, index) => [`recent-${index}`, session()] as const)])
-  trimWorkSubagentSessionCaches(memories)
+  trimSessionSubagentSessionCaches(memories)
   expect(memories.has('empty')).toBe(false)
   expect(draft.transcripts.size).toBe(0)
   expect(draft.drafts.get('child')).toBe('Continue reviewing')

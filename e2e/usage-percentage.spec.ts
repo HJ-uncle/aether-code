@@ -3,9 +3,9 @@
 import { expect, test } from '@playwright/test'
 import type { ChatMessage, ToolActivity } from '../src/renderer/src/core/engine/useChat'
 import type { SubagentRunV1 } from '../src/shared/subagent'
-import { sumUsage, type UsageDetailRow, type UsageFrame, type UsageTotal } from '../src/renderer/src/contrib/chat/usage'
-import { usagePercentage } from '../src/renderer/src/contrib/chat/usage-percentage'
-import { createSessionUsageAnchor, sessionUsageTotal } from '../src/renderer/src/contrib/chat/session-usage'
+import { sumUsage, type UsageDetailRow, type UsageFrame, type UsageTotal } from '../src/renderer/src/features/conversation/shared/usage'
+import { usagePercentage } from '../src/renderer/src/features/conversation/shared/usage-percentage'
+import { createSessionUsageAnchor, sessionUsageTotal } from '../src/renderer/src/features/conversation/shared/session-usage'
 
 function row(patch: Partial<UsageDetailRow> = {}): UsageDetailRow {
   return { label: '累计输入 Prompt', group: 'input', tokens: 100, ...patch }

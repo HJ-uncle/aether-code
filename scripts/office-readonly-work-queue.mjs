@@ -7,7 +7,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import ts from 'typescript';
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const sourceNames = ['src/shared/next-turn-queue.ts', 'src/shared/next-turn-queue-state.ts', 'src/main/next-turn-queue-store.ts'];
+const sourceNames = ['src/shared/next-turn-queue.ts', 'src/shared/next-turn-queue-state.ts', 'src/main/next-turn-queue-store.ts',
+  'src/shared/builtin-agents.ts', 'src/shared/conversation-link.ts', 'src/shared/toolkits.ts'];
 const sha = data => createHash('sha256').update(data).digest('hex');
 const samePath = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
 const fail = code => { throw Object.assign(new Error(code), { code }); };
@@ -31,7 +32,8 @@ function sourceGraph(sourcePins) {
 }
 function loadGraph(sources, readOnlyFs) {
   const modules = new Map();
-  const aliases = { './next-turn-queue': sourceNames[0], '../shared/next-turn-queue': sourceNames[0], '../shared/next-turn-queue-state': sourceNames[1] };
+  const aliases = { './next-turn-queue': sourceNames[0], '../shared/next-turn-queue': sourceNames[0], '../shared/next-turn-queue-state': sourceNames[1],
+    './builtin-agents': sourceNames[3], './conversation-link': sourceNames[4], './toolkits': sourceNames[5] };
   const requireModule = name => {
     if (name === 'node:fs') return Object.freeze({ promises: readOnlyFs });
     if (name === 'node:path') return Object.freeze({ join: path.join, resolve: path.resolve });
@@ -52,7 +54,7 @@ function loadGraph(sources, readOnlyFs) {
   return { contract: modules.get(sourceNames[1]), Store: modules.get(sourceNames[2]).NextTurnQueueStore };
 }
 
-export function createReadonlyWorkQueueReader({ profile, backend, sourcePins, limits = {} }) {
+export function createReadonlySessionQueueReader({ profile, backend, sourcePins, limits = {} }) {
   if (backend !== 'json-journal' || process.env.AETHER_NEXT_TURN_BACKEND === 'sqlite-worker-opt-in') fail('QUEUE_BACKEND_UNSUPPORTED');
   if (!path.isAbsolute(profile) || !samePath(fs.realpathSync(profile), profile) || !fs.statSync(profile).isDirectory()) fail('QUEUE_PROFILE_REDIRECTED');
   const root = path.join(profile, 'next-turn-queue-v1');

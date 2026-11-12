@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { engineHost } from './engine/host'
-import { closeWorkNextTurnQueue } from './work-next-turn-ipc'
+import { closeSessionNextTurnQueue } from './session-next-turn-ipc'
 import * as fileService from './fs/file-service'
 import { abortAllStreams, disposeLsp, registerIpcHandlers } from './ipc'
 import { disposeAllTerminals } from './terminal/pty-service'
@@ -19,6 +19,7 @@ import { configureLaunchInstance } from './instance-profile'
 import { bindConversationLinkWindow, queueConversationLink, queueConversationLinkArguments, registerConversationLinkIpc } from './conversation-link'
 import { CONVERSATION_LINK_SCHEME } from '../shared/conversation-link'
 import { registerOpenWithIpc } from './open-with-ipc'
+import { registerPluginUi } from './plugin-ui'
 
 // An explicit instance profile is opt-in. It is applied before settings,
 // graphics recovery, or engine state are read so each desktop process gets an
@@ -205,6 +206,7 @@ if (!gotTheLock) {
     registerIpcHandlers()
     registerConversationLinkIpc()
     registerOpenWithIpc()
+    registerPluginUi()
 
     // 用英文输出，避免在非 UTF-8 控制台（Windows 默认 GBK）下显示成乱码
     console.log(
@@ -247,7 +249,7 @@ if (!gotTheLock) {
     event.preventDefault()
     if (shutdown) return
     abortAllStreams()
-    shutdown = Promise.allSettled([disposeAllTerminals(), remoteTerminalService.disposeAll(), closeWorkNextTurnQueue()]).then(async results => {
+    shutdown = Promise.allSettled([disposeAllTerminals(), remoteTerminalService.disposeAll(), closeSessionNextTurnQueue()]).then(async results => {
       for (const result of results) if (result.status === 'rejected') console.error('[shutdown] owned cleanup failed:', result.reason)
       disposeLsp()
       try { await engineHost.stop() }

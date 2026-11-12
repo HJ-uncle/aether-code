@@ -1,7 +1,7 @@
 /** Inline toolkit edits change selectors; ordinary text and sent-draft cleanup do not. */
 import { expect, test } from '@playwright/test'
-import { editDraftToolkits, draftToolkitIds } from '../src/renderer/src/contrib/work/work-toolkit-mentions'
-import { mentionToken, type Mention } from '../src/renderer/src/contrib/chat/mention-context'
+import { editDraftToolkits, draftToolkitIds } from '../src/renderer/src/features/composer/toolkit-mentions'
+import { mentionToken, type Mention } from '../src/renderer/src/features/conversation/shared/mention-context'
 
 const mention: Mention = { source: 'toolkit', path: 'agent-management', displayText: 'Agent 管理', textOffset: 2 }
 const selected = { text: `前 ${mentionToken(mention)} 后`, mentions: [mention] }

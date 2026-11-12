@@ -2,7 +2,7 @@
  * hidden polling, stop/restart, workspace/keyboard navigation and native PTYs.
  * The embedded HTTP proxy supplies deterministic engine records; PTY creation,
  * IPC, shell input and xterm attachment still use the production implementation.
- * Build first, then run with playwright.work-terminal.config.ts.
+ * Run with npm run test:e2e -- e2e/work-terminal-ui.spec.ts.
  * AETHER_E2E_APP_ENTRY can select an independently built application snapshot. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer, type ServerResponse } from 'node:http'
@@ -146,7 +146,8 @@ const server = createServer((request, response) => { void (async () => {
     : path === '/api/v1/workspace/directory' ? { root: workspacePath(id), bindingEpoch: 'one', entries: [] }
     : path === '/api/v1/workspace/bind' ? { workspaceRoot: workspacePath(id) }
     : path === '/api/v1/codegraph/status' ? { initialized: false, indexing: false }
-    : path === '/api/v1/command-jobs' ? { jobs: ownJobs } : []
+    : path === '/api/v1/command-jobs' ? { jobs: ownJobs }
+    : path === '/api/v1/plugins' ? { plugins: [] } : []
   response.end(envelope(data))
 })().catch(error => { errors.push(String(error)); if (!response.headersSent) response.writeHead(500); response.end(String(error)) }) })
 
@@ -164,9 +165,14 @@ async function settleMotion(target: Locator): Promise<void> {
   })
 }
 async function openRunning(): Promise<void> {
-  // The rail remains the existing user's entry point; its product label can
-  // change without turning this into a test of the former popover component.
-  await work().locator('.work-service-tray--rail').getByRole('button').click()
+  await work().locator('.service-tray--rail .service-tray__button').click()
+  const activity = page.locator('.service-tray__panel')
+  await expect(activity).toBeVisible()
+  const back = activity.getByRole('button', { name: '返回活动列表', exact: true })
+  if (await back.isVisible()) await back.click()
+  await activity.getByRole('tab', { name: '服务', exact: true }).click()
+  await activity.locator('.service-tray__row-main').first().click()
+  await activity.getByRole('button', { name: '在终端中查看', exact: true }).click()
   await expect(panel()).toBeVisible()
   await expect(panel().getByRole('tab', { name: /^后台运行/ })).toHaveAttribute('aria-selected', 'true')
 }
@@ -206,8 +212,8 @@ async function assertNavigationSpace(state: string, turns: number): Promise<void
   const measured = await body.evaluate(element => {
     const origin = element.getBoundingClientRect().left
     const content = element.querySelector<HTMLElement>('.work-conversation__content')!
-    const running = element.querySelector<HTMLElement>('.work-service-tray__button')!
-    const badge = running.querySelector('b')
+    const running = element.querySelector<HTMLElement>('.service-tray__button')!
+    const badge = running.querySelector('.service-tray__count')
     return {
       scrollOffset: element.querySelector('.work-conversation__scroll')!.getBoundingClientRect().left - origin,
       slotWidth: element.querySelector('.work-message-nav-slot')!.getBoundingClientRect().width,
@@ -221,7 +227,7 @@ async function assertNavigationSpace(state: string, turns: number): Promise<void
   expect(measured.runningRight, 'running button and badge must stay outside the text inset').toBeLessThanOrEqual(measured.contentLeft)
 }
 async function terminalReceipts(): Promise<TerminalReceipt[]> {
-  return app ? app.evaluate(() => (globalThis as typeof globalThis & { __workTerminalCreates?: TerminalReceipt[] }).__workTerminalCreates ?? []) : []
+  return app ? app.evaluate(() => (globalThis as typeof globalThis & { __sessionTerminalCreates?: TerminalReceipt[] }).__sessionTerminalCreates ?? []) : []
 }
 async function copyTerminal(view: Locator): Promise<string> {
   // Clipboard writes complete asynchronously; an earlier copy must never
@@ -314,7 +320,7 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
       const original = handlers.get('terminal:create')
       if (!original) throw new Error('Missing production terminal:create handler')
       const receipts: TerminalReceipt[] = []
-      ;(globalThis as typeof globalThis & { __workTerminalCreates: TerminalReceipt[] }).__workTerminalCreates = receipts
+      ;(globalThis as typeof globalThis & { __sessionTerminalCreates: TerminalReceipt[] }).__sessionTerminalCreates = receipts
       ipcMain.removeHandler('terminal:create')
       ipcMain.handle('terminal:create', async (event, input: TerminalReceipt['input']) => {
         const receipt: TerminalReceipt = { input: { ...input } }; receipts.push(receipt)
@@ -355,12 +361,12 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     }
   })
 
-  test('左侧运行入口一次打开工作区日志，stdout/stderr按游标追加且未选中任务不轮询', async ({}, info) => {
+  test('活动入口打开对应工作区日志，stdout/stderr按游标追加且未选中任务不轮询', async ({}, info) => {
     await expect(workspace()).toBeHidden()
     const readStart = outputReads.length
     await openRunning()
     await expect(panel()).toHaveAttribute('data-session-id', taskA)
-    await expect(page.locator('.work-service-tray__popover')).toHaveCount(0)
+    await expect(page.locator('.service-tray__popover')).toHaveCount(0)
     await expect(workspace().getByRole('tablist', { name: '已打开的工作区', exact: true }).getByRole('tab', { name: '终端', exact: true })).toHaveAttribute('aria-selected', 'true')
     await assertOutput(jobA)
     await assertNavigationSpace('single-turn-a', 1)
@@ -397,14 +403,27 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     await selectTask(taskA); await openRunning(); await assertOutput(jobA)
   })
 
-  test('停止读取最后日志，重启选择新job并保留旧历史', async () => {
+  test('服务菜单真实停止并生成未读通知，终端读取最后日志，重启选择新job并保留旧历史', async () => {
     await assertOutput(jobA)
     const actionStart = actions.length
-    await detail().getByRole('button', { name: '停止命令', exact: true }).click()
+    await work().locator('.service-tray__button').click()
+    const activity = page.locator('.service-tray__panel')
+    const back = activity.getByRole('button', { name: '返回活动列表', exact: true })
+    if (await back.isVisible()) await back.click()
+    await activity.getByRole('tab', { name: '服务', exact: true }).click()
+    const service = activity.locator(`.service-tray__row[data-service-id="command:${jobA}"]`)
+    await service.click({ button: 'right' })
+    await page.getByRole('menuitem', { name: '停止', exact: true }).click()
     await expect(detail()).toHaveAttribute('data-status', 'cancelled')
     await assertOutput(jobA)
     expect(actions.slice(actionStart)).toEqual([{ action: 'cancel', sessionId: taskA, jobId: jobA }])
     await expect(output()).toContainText(`STOP_TAIL_${jobA}`)
+    await activity.getByRole('tab', { name: /^通知/ }).click()
+    await expect(service).toHaveAttribute('data-unread', 'true')
+    await service.locator('.service-tray__row-main').click()
+    await expect(work().locator('.service-tray__button')).not.toHaveAccessibleName(/未读/)
+    await activity.getByRole('button', { name: '关闭服务与通知', exact: true }).click()
+    await expect(activity).toBeHidden()
     await detail().getByRole('button', { name: '重启服务', exact: true }).click()
     await expect.poll(() => actions.at(-1)?.action).toBe('restart')
     const restarted = actions.at(-1)!.nextId!
@@ -430,17 +449,17 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
       terminal().locator('.xterm-helper-textarea').waitFor({ state: 'visible', timeout: 30_000 }).then(() => 'ready' as const),
       terminal().getByRole('alert').waitFor({ state: 'visible', timeout: 30_000 }).then(() => 'unavailable' as const)
     ])
-    const receipts = await terminalReceipts(), workCreate = receipts.findLast(receipt => receipt.input.sessionId === taskA)
-    expect(workCreate?.input).toMatchObject({ cwd: cwdA, sessionId: taskA })
+    const receipts = await terminalReceipts(), sessionCreate = receipts.findLast(receipt => receipt.input.sessionId === taskA)
+    expect(sessionCreate?.input).toMatchObject({ cwd: cwdA, sessionId: taskA })
     if (capability === 'unavailable') {
       await expect(terminal().getByRole('alert')).toContainText('终端启动失败')
       await expect(terminal().locator('.terminal-view__error-detail')).toContainText(/Cannot launch conpty|ConPTY|spawn|EPERM|EACCES/i)
       await expect(terminal().getByRole('button', { name: '重试', exact: true })).toBeEnabled()
-      expect(workCreate?.error).toMatch(/Cannot launch conpty|ConPTY|spawn|EPERM|EACCES/i)
+      expect(sessionCreate?.error).toMatch(/Cannot launch conpty|ConPTY|spawn|EPERM|EACCES/i)
       info.annotations.push({ type: 'environment-capability', description: '本机PTY不可用，已验证创建归属与可见失败/重试；真实输入和挂载保持不适用于此环境。' })
       return
     }
-    expect(workCreate?.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+    expect(sessionCreate?.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
     const cwdProof = join(cwdA, 'actual-terminal-cwd.txt'), marker = 'WORK_PTY_READY_A'
     await terminal().locator('.xterm-helper-textarea').focus()
     await page.keyboard.type(`[IO.File]::WriteAllText(${psQuote(cwdProof)}, (Get-Location).Path); [Console]::WriteLine('WORK_'+'PTY_READY_A')`)

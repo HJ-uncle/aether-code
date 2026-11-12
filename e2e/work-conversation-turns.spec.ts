@@ -2,7 +2,7 @@
  * while the last assistant retains final identity and partial archives keep all source rows intact. */
 import { expect, test } from '@playwright/test'
 import type { ChatMessage, ToolActivity } from '../src/renderer/src/core/engine/useChat'
-import { workConversationEntries, workConversationGroups } from '../src/renderer/src/contrib/work/work-conversation-turns'
+import { sessionConversationEntries, sessionConversationGroups } from '../src/renderer/src/features/conversation/conversation-turns'
 
 const tool: ToolActivity = { id: 'read-input', name: 'read_file', args: '{"path":"input.txt"}', result: 'input contents', state: 'done' }
 function message(id: string, role: ChatMessage['role'], text: string, overrides: Partial<ChatMessage> = {}): ChatMessage {
@@ -22,7 +22,7 @@ test('ordinary assistant iterations share the complete ordered timeline and exac
       text: '核对完成。', items: [], publishedAt: 20 }
   })
   const messages = [admission(), progress(), operation(), last], original = structuredClone(messages)
-  const group = workConversationGroups(messages)[0], entries = workConversationEntries(group)
+  const group = sessionConversationGroups(messages)[0], entries = sessionConversationEntries(group)
   expect(entries).toHaveLength(2)
   expect(entries[0].message).toBe(messages[0])
   expect(entries[1].message).toBe(last)
@@ -40,7 +40,7 @@ test('ordinary assistant iterations share the complete ordered timeline and exac
 
 test('a single assistant keeps the original entry shape and process key', () => {
   const messages = [admission(), message('one', 'assistant', '直接答复。')]
-  const group = workConversationGroups(messages)[0], entries = workConversationEntries(group)
+  const group = sessionConversationGroups(messages)[0], entries = sessionConversationEntries(group)
   expect(entries).toEqual([
     { key: 'user', message: messages[0], segments: undefined },
     { key: `${group.id}:assistant`, message: messages[1], processKey: group.id,
@@ -51,7 +51,7 @@ test('a single assistant keeps the original entry shape and process key', () => 
 test('supplement messages remain chronological inside the shared process without rewriting original rows', () => {
   const supplement = followup(), last = message('final', 'assistant', '依据已补充。')
   const messages = [admission(), progress(), supplement, operation(), last], original = structuredClone(messages)
-  const entries = workConversationEntries(workConversationGroups(messages)[0])
+  const entries = sessionConversationEntries(sessionConversationGroups(messages)[0])
   expect(entries.map(entry => entry.message.id)).toEqual(['user', 'final'])
   expect(entries[1].segments?.map(segment => segment.kind)).toEqual(['content', 'followup', 'tools', 'content'])
   expect(entries[1].segments?.[1]).toEqual({ kind: 'followup', key: supplement.id, message: supplement })
@@ -63,8 +63,8 @@ test('supplement messages remain chronological inside the shared process without
 
 test('partial archives share their known turn without inventing an admission or repeating an orphan supplement', () => {
   for (const messages of [[progress(), operation()], [followup(), progress(), operation()]]) {
-    const original = structuredClone(messages), group = workConversationGroups(messages)[0]
-    const entries = workConversationEntries(group)
+    const original = structuredClone(messages), group = sessionConversationGroups(messages)[0]
+    const entries = sessionConversationEntries(group)
     const orphanSupplement = messages.find(item => item.role === 'user')
     expect(entries.map(entry => entry.message.id)).toEqual(orphanSupplement ? [orphanSupplement.id, 'operation'] : ['operation'])
     expect(entries.at(-1)?.message).toBe(messages.at(-1))
@@ -80,24 +80,24 @@ test('partial archives share their known turn without inventing an admission or 
 test('each root keeps its own admission and final owner across adjacent conversation turns', () => {
   const nextUser = message('next-user', 'user', '另一项任务', { runId: 'next-root', conversationId: 'next-turn' })
   const nextAnswer = message('next-answer', 'assistant', '另一项结论', { runId: 'next-root', conversationId: 'next-turn' })
-  const groups = workConversationGroups([admission(), progress(), operation(), nextUser, nextAnswer])
+  const groups = sessionConversationGroups([admission(), progress(), operation(), nextUser, nextAnswer])
   expect(groups).toHaveLength(2)
-  expect(workConversationEntries(groups[0]).map(entry => entry.message.id)).toEqual(['user', 'operation'])
-  expect(workConversationEntries(groups[1]).map(entry => entry.message.id)).toEqual(['next-user', 'next-answer'])
-  const partial = workConversationGroups([progress(), operation(), nextAnswer])
+  expect(sessionConversationEntries(groups[0]).map(entry => entry.message.id)).toEqual(['user', 'operation'])
+  expect(sessionConversationEntries(groups[1]).map(entry => entry.message.id)).toEqual(['next-user', 'next-answer'])
+  const partial = sessionConversationGroups([progress(), operation(), nextAnswer])
   expect(partial).toHaveLength(2)
-  expect(workConversationEntries(partial[0]).map(entry => entry.message.id)).toEqual(['operation'])
-  expect(workConversationEntries(partial[1]).map(entry => entry.message.id)).toEqual(['next-answer'])
+  expect(sessionConversationEntries(partial[0]).map(entry => entry.message.id)).toEqual(['operation'])
+  expect(sessionConversationEntries(partial[1]).map(entry => entry.message.id)).toEqual(['next-answer'])
 })
 
 test('unfinished turns retain last-assistant status and waiting user-only rows stay visible', () => {
   for (const status of ['streaming', 'waiting', 'error', 'aborted', 'interrupted'] as const) {
     const last = message('active-tail', 'assistant', '当前说明', { status })
-    const entries = workConversationEntries(workConversationGroups([admission(), progress(), operation(), last])[0])
+    const entries = sessionConversationEntries(sessionConversationGroups([admission(), progress(), operation(), last])[0])
     expect(entries[1].message).toBe(last)
     expect(entries[1].message.status).toBe(status)
     expect(entries[1].segments?.map(segment => segment.kind)).toEqual(['content', 'tools', 'content'])
   }
   const messages = [admission(), followup()]
-  expect(workConversationEntries(workConversationGroups(messages)[0]).map(entry => entry.message)).toEqual(messages)
+  expect(sessionConversationEntries(sessionConversationGroups(messages)[0]).map(entry => entry.message)).toEqual(messages)
 })

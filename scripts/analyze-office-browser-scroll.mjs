@@ -121,7 +121,7 @@ const fingerprint = { generatedAt: new Date().toISOString(), source: 'final-runt
 fs.writeFileSync(path.join(evidence, 'browser-bridge-runtime-artifact-fingerprint.json'), JSON.stringify(fingerprint, null, 2) + '\n')
 const report = { ...previous, generatedAt: new Date().toISOString(),
   verification: { ...previous.verification, build: 'Root built and restarted runtime-final-0203; disk artifact hashes matched final-runtime-manifest and saved live-client main/renderer paths are cross-checked in the artifact fingerprint.',
-    nativeWorkBridge: { phase: 'browser-final-bridge', roles: results.length, verifiedRoles: results.filter(row => row.verified).length,
+    nativeSessionBridge: { phase: 'browser-final-bridge', roles: results.length, verifiedRoles: results.filter(row => row.verified).length,
       scrollCalls: results.reduce((sum, row) => sum + row.operations.length, 0), verifiedDisplacements: results.reduce((sum, row) => sum + row.operations.filter(op => op.positionVerified).length, 0),
       screenshotCalls: results.reduce((sum, row) => sum + row.screenshots.length, 0), capturedRevealRequests: Array.isArray(reveals) ? reveals.length : null,
       failures, results, artifactFingerprint: 'browser-bridge-runtime-artifact-fingerprint.json' } },

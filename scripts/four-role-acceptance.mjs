@@ -186,7 +186,7 @@ export async function launchController(options) {
       owner.configuration.sessionId = owner.sessionId; save()
     }
     owner.configuration.phase = 'model'; save()
-    const picker = surface.getByRole('button', { name: owner.mode === 'work' ? 'Work 使用的模型' : '选择模型', exact: true })
+    const picker = surface.getByRole('button', { name: owner.mode === 'work' ? '使用的模型' : '选择模型', exact: true })
     await expect(picker).toBeEnabled({ timeout: 90_000 }); await picker.click()
     await page.getByRole('menuitem').filter({ hasText: model.displayName || model.modelId }).first().click()
     owner.configuration.phase = 'permission'; save()

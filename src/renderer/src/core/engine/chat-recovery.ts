@@ -35,7 +35,7 @@ export interface ChatRecoverySnapshot {
   commandJobs?: CommandJobSnapshot[]
   /** Full-session billing paired with the snapshot event watermark, independent of visible history. */
   sessionUsage?: Record<string, number>
-  sessionSubagentUsage?: import('@renderer/contrib/chat/session-usage').SessionSubagentUsage
+  sessionSubagentUsage?: import('@renderer/features/conversation/shared/session-usage').SessionSubagentUsage
   /** Child runs sampled with sessionSubagentUsage, before independent live refreshes. */
   subagentRuns?: import('@shared/subagent').SubagentRun[]
 }

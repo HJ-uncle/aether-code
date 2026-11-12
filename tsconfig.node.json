@@ -7,6 +7,7 @@
     "src/shared/**/*"
   ],
   "compilerOptions": {
+    "tsBuildInfoFile": "./.e2e-tmp/typescript/node.tsbuildinfo",
     "types": ["electron-vite/node"],
     "baseUrl": ".",
     "paths": {

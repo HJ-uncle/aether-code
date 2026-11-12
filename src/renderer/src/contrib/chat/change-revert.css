@@ -1,7 +1,0 @@
-.changes-panel > .change-revert-report { margin: var(--space-2); }
-
-.changes-panel__footer[hidden],
-.session-tray[hidden],
-.session-tray__body[hidden] {
-  display: none;
-}

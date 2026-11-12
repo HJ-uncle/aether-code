@@ -2,16 +2,16 @@
 import { expect, test } from '@playwright/test'
 import { createServer } from 'node:http'
 import { dispatchChatRequest } from '../src/renderer/src/core/engine/chat-send-request'
-import { queueSubmission, queueEntryDraft } from '../src/renderer/src/core/engine/work-queue-entry'
+import { queueSubmission, queueEntryDraft } from '../src/renderer/src/core/engine/session-queue-entry'
 import { hasAgentCatalogueChange } from '../src/renderer/src/core/engine/agent-catalogue'
 import { prepareRemoteChatBody } from '../src/main/engine/remote-workspace'
 import { normalizeRootRunRequestConfig } from '../src/shared/root-run'
-import { resolveSessionRequestConfig, saveSessionRequestSelection, loadSessionRequestSelection } from '../src/renderer/src/contrib/chat/session-request-config'
+import { resolveSessionRequestConfig, saveSessionRequestSelection, loadSessionRequestSelection } from '../src/renderer/src/features/conversation/shared/session-request-config'
 import { applyNextTurnQueueMutation, assertQueueEnvelope, assertQueueState, emptyNextTurnQueue } from '../src/shared/next-turn-queue-state'
 import type { NextTurnQueueEnvelope, NextTurnQueueScope } from '../src/shared/next-turn-queue'
-import { buildMentionMessage, isStoredMention, mentionTitle, mentionToken, parseMentionContent, refToMention, userMessageDraft, type Mention } from '../src/renderer/src/contrib/chat/mention-context'
-import { buildAgentMentionMessage } from '../src/renderer/src/contrib/chat/agent-references'
-import { rebindAttachmentClipboard } from '../src/renderer/src/contrib/chat/attachment-editor-transfer'
+import { buildMentionMessage, isStoredMention, mentionTitle, mentionToken, parseMentionContent, refToMention, userMessageDraft, type Mention } from '../src/renderer/src/features/conversation/shared/mention-context'
+import { buildAgentMentionMessage } from '../src/renderer/src/features/conversation/shared/agent-references'
+import { rebindAttachmentClipboard } from '../src/renderer/src/features/conversation/shared/attachment-editor-transfer'
 
 const scope: NextTurnQueueScope = { source: { mode: 'embedded', endpoint: '', accountId: null }, tenantId: 'toolkit-tenant',
   namespace: { id: 'toolkit-db', generation: 'one' }, owner: 'work', taskId: 'toolkit-session' }

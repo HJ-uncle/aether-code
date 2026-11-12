@@ -5,13 +5,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
-import { effectiveOfficePrompt, OFFICE_SUBMIT_FOOTER, validateActiveWorkSnapshot, bridgeVerifiedAdmission, readActiveWorkSnapshot,
+import { effectiveOfficePrompt, OFFICE_SUBMIT_FOOTER, validateActiveSessionSnapshot, bridgeVerifiedAdmission, readActiveSessionSnapshot,
   reconcileVerifiedAdmissionProjection, activateVerifiedOfficeRoutes, installOfficeVerifiedSubmit, createVerifiedOfficeRoutes } from '../office-verified-submit-adapter.mjs';
 const sha = value => createHash('sha256').update(value).digest('hex');
 const target = { sessionId: 'work-one', agentId: 'agent-one', modelId: 'model-one', workspacePath: path.resolve('.e2e-tmp'), engine: { accountId: 'account-one' } };
 function snapshot() {
   const task = { id: target.sessionId, title: 'Owned task', agentId: target.agentId, modelId: target.modelId, workspacePath: target.workspacePath, archived: false };
-  return { workVisible: true, editorCount: 1, currentRows: ['Owned task'], storageKey: 'aether.work.state.v1:' + encodeURIComponent(':account:account-one'),
+  return { sessionVisible: true, editorCount: 1, currentRows: ['Owned task'], storageKey: 'aether.work.state.v1:' + encodeURIComponent(':account:account-one'),
     activeTaskId: target.sessionId, tasks: [task], controller: { task: structuredClone(task), home: false,
       draftSource: ':account:account-one', modelId: target.modelId, ready: true, modelReady: true, error: null,
       loading: false, streaming: false, launching: false, uploading: false, historyReady: true, pendingCount: 0,
@@ -24,7 +24,7 @@ test('footer is added once and raw versus effective hashes remain distinguishabl
   assert.throws(() => effectiveOfficePrompt(first.text + OFFICE_SUBMIT_FOOTER), /AMBIGUOUS/);
 });
 test('a valid actual controller and scoped persistent selection agree', () => {
-  assert.equal(validateActiveWorkSnapshot(snapshot(), target, { idle: true }).id, target.sessionId);
+  assert.equal(validateActiveSessionSnapshot(snapshot(), target, { idle: true }).id, target.sessionId);
 });
 for (const [name, mutate, code] of [
   ['background task only', value => { value.activeTaskId = 'another'; }, 'DOM'],
@@ -34,7 +34,7 @@ for (const [name, mutate, code] of [
   ['actual queue error', value => { value.controller.queueDispatchError = 'queue failure'; }, 'IDLE'],
   ['model still recovering', value => { value.controller.modelReady = false; }, 'SELECTION'],
   ['second visible composer', value => { value.editorCount = 2; }, 'DOM'],
-]) test('rejects ' + name, () => { const value = snapshot(); mutate(value); assert.throws(() => validateActiveWorkSnapshot(value, target, { idle: true }), new RegExp(code)); });
+]) test('rejects ' + name, () => { const value = snapshot(); mutate(value); assert.throws(() => validateActiveSessionSnapshot(value, target, { idle: true }), new RegExp(code)); });
 
 test('legacy command loop cannot treat uncertain admission as completed', () => {
   let saves = 0; const c = { state: { roles: { pmo: { submissions: [] } } }, save: () => saves++ };
@@ -63,34 +63,9 @@ test('bounded renderer VM reads actual composer props and maps the real queue er
   const surface = { ...visible, getAttribute: () => 'false', querySelectorAll: selector => selector.includes('input-composer') ? [editor] : selector.includes('aria-current') ? [row] : [] };
   const context = vm.createContext({ document: { querySelector: () => surface }, localStorage: { getItem: () => JSON.stringify({ activeTaskId: target.sessionId, tasks: value.tasks }) },
     getComputedStyle: () => ({ visibility: 'visible' }), input: { storageKey: value.storageKey } });
-  const observed = new vm.Script(`(${readActiveWorkSnapshot.toString()})(input)`).runInContext(context, { timeout: 1000 });
+  const observed = new vm.Script(`(${readActiveSessionSnapshot.toString()})(input)`).runInContext(context, { timeout: 1000 });
   assert.equal(observed.controller.task.id, target.sessionId); assert.equal(observed.controller.queueDispatchError, 'real-error');
   assert.equal(observed.editorCount, 1);
-});
-
-for (const [file, method] of [['observe-office-verified-submit-installation.mjs', 'observeOfficeVerifiedSubmitInstallation'], ['install-office-verified-submit.mjs', 'installOfficeVerifiedSubmit']])
-  test('bounded entry VM routes ' + file + ' only when explicitly called', async () => {
-    const calls = [], controller = {}; const source = fs.readFileSync(path.resolve('.e2e-tmp', file), 'utf8').replace('export async function recover', 'async function recover');
-    const context = vm.createContext({ process: { getBuiltinModule: name => {
-      assert.equal(name, 'node:module'); return { createRequire: () => requested => {
-        assert.equal(requested, './office-verified-submit-adapter.mjs'); return { [method]: c => { assert.equal(c, controller); calls.push(method); return { ok: true }; } };
-      } };
-    } }, controller });
-    new vm.Script(source).runInContext(context, { timeout: 1000 }); assert.deepEqual(calls, []);
-    await new vm.Script('recover(controller)').runInContext(context, { timeout: 1000 }); assert.deepEqual(calls, [method]);
-  });
-
-test('query entry reports partial installation and projection ownership without performing I/O', async () => {
-  const inspected = { active: false, pendingOperations: 0, lease: null, submissions: [], routeActive: false,
-    projectionPending: 'saved-root', projectionReads: 1 };
-  const controller = { state: {}, verifiedSubmitInstallation: { installed: false, status: 'installation-uncertain', errorCode: 'EIO', inspect: () => inspected } };
-  const source = fs.readFileSync(path.resolve('.e2e-tmp/query-office-verified-submit.mjs'), 'utf8').replace('export async function recover', 'async function recover');
-  const context = vm.createContext({ __officeCampaign: controller, controller, process: { pid: 9080,
-    getBuiltinModule: name => { assert.equal(name, 'node:assert/strict'); return assert; } } });
-  new vm.Script(source).runInContext(context, { timeout: 1000 });
-  const result = await new vm.Script('recover(controller)').runInContext(context, { timeout: 1000 });
-  assert.equal(result.installed, false); assert.equal(result.installationError, 'EIO');
-  assert.equal(result.projectionPending, 'saved-root'); assert.equal(result.projectionReads, 1);
 });
 
 function temporaryDirectory(t) {

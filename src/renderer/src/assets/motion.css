@@ -78,7 +78,7 @@
  * reply footer is excluded so its usage text and controls stay in place. */
 :root :is(.message__actions, .work-user-message-actions,
   .editor-tab__close, .work-workspace__tab-close, .work-resource-tabs__close,
-  .session-tray__queue-remove, .welcome__recent-remove, .recent-dialog__remove,
+  .welcome__recent-remove, .recent-dialog__remove,
   .git-panel__group-btn, .git-panel__stash-actions, .explorer__recent-del,
   .logline__chevron, .work-agent-card__actions) {
   transition: opacity var(--motion-hover) var(--motion-ease),
@@ -87,11 +87,11 @@
   translate: -2px 0;
 }
 :root :is(.message, .work-message, .editor-tab, .work-workspace__tab, .work-resource-tabs__item,
-  .session-tray__queue-item, .welcome__recent, .recent-dialog__item, .git-panel__group-head,
+  .welcome__recent, .recent-dialog__item, .git-panel__group-head,
   .git-panel__stash-row, .explorer__recent-row, .work-sidebar__task, .logline-wrap, .work-agent-card):is(:hover, :focus-within)
   :is(.message__actions, .work-user-message-actions,
     .editor-tab__close, .work-workspace__tab-close, .work-resource-tabs__close,
-    .session-tray__queue-remove, .welcome__recent-remove, .recent-dialog__remove,
+    .welcome__recent-remove, .recent-dialog__remove,
     .git-panel__group-btn, .git-panel__stash-actions, .explorer__recent-del,
     .logline__chevron, .work-agent-card__actions),
 :root .editor-tab.is-active .editor-tab__close,

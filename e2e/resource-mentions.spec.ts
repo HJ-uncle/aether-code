@@ -1,9 +1,9 @@
 /** Pure composer resource selection and message round-trips; no browser or engine required. */
 import { expect, test } from '@playwright/test'
-import { buildMentionMessage, isStoredMention, mentionToken, parseMentionContent, userMessageDraft, type Mention, type ResourceMentionSource } from '../src/renderer/src/contrib/chat/mention-context'
-import { consumedResourcePatch, draftResourceBindings, editResourceBindings, hasNonResourceContent, resourceBindingEdits, resourceFollowupChanges, resourceMention, restoredResourcePatch, sameResourceBindings, type ResourceBindings, type ResourceDraft } from '../src/renderer/src/contrib/chat/resource-mentions'
-import { attachmentReferences, referencesAttachment } from '../src/renderer/src/contrib/chat/attachment-references'
-import { consumedWorkResourcePatch, workResourceFollowupChanges, workResourceSelection } from '../src/renderer/src/contrib/work/work-resource-selection'
+import { buildMentionMessage, isStoredMention, mentionToken, parseMentionContent, userMessageDraft, type Mention, type ResourceMentionSource } from '../src/renderer/src/features/conversation/shared/mention-context'
+import { consumedResourcePatch, draftResourceBindings, editResourceBindings, hasNonResourceContent, resourceBindingEdits, resourceFollowupChanges, resourceMention, restoredResourcePatch, sameResourceBindings, type ResourceBindings, type ResourceDraft } from '../src/renderer/src/features/conversation/shared/resource-mentions'
+import { attachmentReferences, referencesAttachment } from '../src/renderer/src/features/conversation/shared/attachment-references'
+import { consumedSessionResourcePatch, sessionResourceFollowupChanges, sessionResourceSelection } from '../src/renderer/src/features/workspace/resource-selection'
 
 const kinds = [['skill', 'skills', '技能'], ['mcp', 'mcpServers', 'MCP 服务'], ['kb', 'knowledgeBases', '知识库']] as const
 const empty = (): ResourceBindings => ({ skills: [], mcpServers: [], knowledgeBases: [] })
@@ -160,26 +160,26 @@ test('Work admission retains conversation knowledge while consuming single-turn 
   const current = { skills: ['skill'], mcpServers: ['server'], knowledgeBases: ['existing', 'sent', 'later'], knowledgeBaseMentionsConsumed: ['existing'] }
   const snapshot = structuredClone(current)
   const sent = draft([['skill', 'skill'], ['mcp', 'server'], ['kb', 'sent']])
-  const patch = consumedWorkResourcePatch(current, sent)
+  const patch = consumedSessionResourcePatch(current, sent)
   expect(patch).toEqual({ skills: [], mcpServers: [], knowledgeBaseMentionsConsumed: ['existing', 'sent'] })
   expect({ ...current, ...patch }.knowledgeBases).toEqual(['existing', 'sent', 'later'])
-  expect(consumedWorkResourcePatch({ ...empty(), knowledgeBases: ['sent'] }, plain, { knowledgeBases: ['sent'] }))
+  expect(consumedSessionResourcePatch({ ...empty(), knowledgeBases: ['sent'] }, plain, { knowledgeBases: ['sent'] }))
     .toEqual({ knowledgeBaseMentionsConsumed: ['sent'] })
-  expect(consumedWorkResourcePatch(empty(), sent).knowledgeBaseMentionsConsumed).toEqual([])
+  expect(consumedSessionResourcePatch(empty(), sent).knowledgeBaseMentionsConsumed).toEqual([])
   expect(current).toEqual(snapshot)
-  expect(workResourceSelection({ ...empty(), resourceOverrides: ['knowledgeBases'] }, 'knowledgeBases')).toEqual([])
-  expect(workResourceSelection(empty(), 'knowledgeBases')).toBeUndefined()
+  expect(sessionResourceSelection({ ...empty(), resourceOverrides: ['knowledgeBases'] }, 'knowledgeBases')).toEqual([])
+  expect(sessionResourceSelection(empty(), 'knowledgeBases')).toBeUndefined()
 })
 
 test('Work persistent knowledge permits plain follow-up after tool consumption and detects knowledge revocation', () => {
   const running = { skills: ['skill'], mcpServers: ['server'], knowledgeBases: ['library'] }
-  expect(workResourceFollowupChanges({ ...empty(), knowledgeBases: ['library'] }, running)).toBe(false)
-  expect(workResourceFollowupChanges({ knowledgeBases: ['library'] }, running)).toBe(false)
-  expect(workResourceFollowupChanges({ knowledgeBases: [] }, running)).toBe(true)
-  expect(workResourceFollowupChanges({ knowledgeBases: ['new'] }, running)).toBe(true)
-  expect(workResourceFollowupChanges({ knowledgeBases: undefined }, running)).toBe(false)
-  expect(workResourceFollowupChanges({ skills: [], mcpServers: ['server'], knowledgeBases: ['library'] }, running)).toBe(true)
-  expect(workResourceFollowupChanges({ skills: ['new'], knowledgeBases: ['library'] }, running)).toBe(true)
+  expect(sessionResourceFollowupChanges({ ...empty(), knowledgeBases: ['library'] }, running)).toBe(false)
+  expect(sessionResourceFollowupChanges({ knowledgeBases: ['library'] }, running)).toBe(false)
+  expect(sessionResourceFollowupChanges({ knowledgeBases: [] }, running)).toBe(true)
+  expect(sessionResourceFollowupChanges({ knowledgeBases: ['new'] }, running)).toBe(true)
+  expect(sessionResourceFollowupChanges({ knowledgeBases: undefined }, running)).toBe(false)
+  expect(sessionResourceFollowupChanges({ skills: [], mcpServers: ['server'], knowledgeBases: ['library'] }, running)).toBe(true)
+  expect(sessionResourceFollowupChanges({ skills: ['new'], knowledgeBases: ['library'] }, running)).toBe(true)
 })
 
 test('failed send restoration merges its resources with new choices without duplicates or unrelated category patches', () => {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { runCompactionProbe } from './run-context-compaction-probe.mjs'
-import { createReadonlyWorkQueueReader } from './office-readonly-work-queue.mjs'
+import { createReadonlySessionQueueReader } from './office-readonly-work-queue.mjs'
 import { createProbeOperationTracker, observeOfficeProbeTerminal, probeCommandFingerprint } from './office-context-probe-lifecycle.mjs'
 
 const owners = new WeakMap()
@@ -60,7 +60,7 @@ async function initializeReadBoundary(c, lease) {
     nativeQueue: process.env.AETHER_NEXT_TURN_BACKEND === 'sqlite-worker-opt-in' })))
   assert.equal(resolve(host.profile), resolve(lease.control.profile), 'QUEUE_PROFILE_CHANGED')
   assert.equal(host.nativeQueue, false, 'READONLY_NATIVE_QUEUE_UNSUPPORTED')
-  if (!lease.reader) lease.reader = await read('readonly queue validator', () => (lease.dependencies.createQueueReader || createReadonlyWorkQueueReader)({ profile: host.profile, backend: 'json-journal' }))
+  if (!lease.reader) lease.reader = await read('readonly queue validator', () => (lease.dependencies.createQueueReader || createReadonlySessionQueueReader)({ profile: host.profile, backend: 'json-journal' }))
   lease.control.queueValidatorSourceHashes = lease.reader.sourceHashes
   const engine = await read('initial engine identity', () => c.page.evaluate(() => window.aether.engine.getSnapshot()))
   assert.equal(engine.phase, 'ready'); assert.equal(engine.adopted, false)
@@ -111,7 +111,7 @@ export async function startOfficeContextProbe(c, options = {}, dependencies = {}
     try {
       const read = (label, fn) => lease.track.run(label, fn)
       await initializeReadBoundary(c, lease)
-      const tasks = await read('Work task restoration target', () => c.workTasks())
+      const tasks = await read('Work task restoration target', () => c.sessionTasks())
       control.restoreTaskId = options.restoreTaskId ?? tasks.find(task => task.active)?.id
       assert.ok(Object.values(c.state.roles).some(role => role.sessionId === control.restoreTaskId), 'Select an existing office task for restoration')
       const before = await observe(c, lease)

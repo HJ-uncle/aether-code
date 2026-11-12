@@ -1,0 +1,61 @@
+.chat__messages {
+  padding: 12px 16px;
+}
+
+/* 托盘和输入框共用尺寸与间距，避免主题覆盖后两块表面错位。 */
+.chat__composer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 16px;
+  border-top: 0;
+}
+
+.chat__composer > .chat__surface {
+  flex: none;
+  width: 100%;
+  min-width: 0;
+  max-width: 840px;
+  margin: 0 auto;
+}
+
+/* Compact Apple-style surfaces for the confirmation tray. The global rules
+   remain the compatibility baseline; these local rules only refine hierarchy. */
+
+/* 长改动列表只占有限高度，滚动留在列表内部，底部操作栏与说明始终可见。 */
+
+/* Remote status stays within the tray hierarchy instead of rendering as an
+   unstyled paragraph that competes with the file list. */
+
+/* 进度是任务标签的一部分，不再在滚动列表底部另起一条固定色带。
+   展开任务时只有一个稳定的控制层，列表末行也不会被覆盖。 */
+
+/* Input controls now resize inside the shared InputComposer container. */
+
+/* 顶部会话栏同样按自身宽度换行，避免工作区名称挤压新建/多选。 */
+.chat__topbar {
+  container-type: inline-size;
+  container-name: chat-topbar;
+}
+
+@container chat-topbar (max-width: 520px) {
+  .chat__topbar {
+    align-content: center;
+    min-height: 38px;
+    padding-inline: 8px;
+    gap: 3px 6px;
+  }
+
+  .chat__topbar .chat__workspace {
+    flex: 1 1 100px;
+  }
+
+  .chat__topbar .chat__toolbar-spacer {
+    display: none;
+  }
+
+  .chat__topbar .chat__toolbar-btn {
+    padding-inline: 6px;
+    font-size: 11px;
+  }
+}

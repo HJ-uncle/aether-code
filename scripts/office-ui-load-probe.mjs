@@ -135,7 +135,7 @@ function installRendererProbe({ key, durationMs }) {
   return { started, caps, visibility: document.visibilityState, supported: data.longTaskSupported }
 }
 
-async function workStore(c, key) {
+async function sessionStore(c, key) {
   return deadline(c.page.evaluate(({ key, ids }) => {
     const pick = value => ({ activeTaskId: value.activeTaskId, tasks: value.tasks.filter(task => ids.includes(task.id)).map(task => ({
       id: task.id, title: task.title, status: task.status, agentId: task.agentId, modelId: task.modelId, workspacePath: task.workspacePath })) })
@@ -193,7 +193,7 @@ async function captureDom(c) {
       name: groupNames[element.getAttribute('aria-label')] ?? 'unknown', visible: visible(element), top: element.getBoundingClientRect().top }))
     const status = work?.querySelector('.work-task-heading .work-status')
     const feedback = [...(work?.querySelectorAll('[data-current-run-feedback="true"]') ?? [])].filter(visible).slice(0, 2)
-    return { at: Date.now(), hidden: document.hidden, focused: document.hasFocus(), workVisible: work?.getAttribute('aria-hidden') === 'false',
+    return { at: Date.now(), hidden: document.hidden, focused: document.hasFocus(), sessionVisible: work?.getAttribute('aria-hidden') === 'false',
       heading: work?.querySelector('.work-task-heading h1')?.getAttribute('title'),
       workspace: work?.querySelector('.work-task-heading__project')?.getAttribute('title'),
       headingStatusClass: status?.className, headingStatusText: status?.textContent?.slice(0, 60),
@@ -287,7 +287,7 @@ export function startOfficeUiLoadProbe(c, options) {
     }
     const select = async role => {
       guard()
-      const current = await workStore(c, store.key), task = current.tasks.find(task => task.id === pinned[role].sessionId)
+      const current = await sessionStore(c, store.key), task = current.tasks.find(task => task.id === pinned[role].sessionId)
       const match = await deadline(c.page.locator('#mode-work .work-sidebar__task').evaluateAll((buttons, title) => {
         const indexes = buttons.flatMap((button, index) => button.querySelector('span')?.textContent === title ? [index] : [])
         return { indexes }
@@ -297,7 +297,7 @@ export function startOfficeUiLoadProbe(c, options) {
       const until = Date.now() + 5000
       for (;;) {
         guard()
-        const selected = await workStore(c, store.key), dom = await captureDom(c)
+        const selected = await sessionStore(c, store.key), dom = await captureDom(c)
         if (selected.activeTaskId === task.id && dom.heading === task.title) break
         if (Date.now() >= until) throw new Error('Task selection failed to settle for ' + role)
         await delay(150)
@@ -309,13 +309,13 @@ export function startOfficeUiLoadProbe(c, options) {
       assert.equal(actualEngine.instanceId, expectedEngine.instanceId)
       report.engine = { ...expectedEngine, buildId: actualEngine.buildId, phase: actualEngine.phase }
       assert.equal(actualEngine.phase, 'ready')
-      store = await workStore(c)
+      store = await sessionStore(c)
       assert.equal(store.tasks.length, 6)
       assert.ok(Object.values(pinned).some(item => item.sessionId === store.activeTaskId), 'An owned Work task must already be selected')
       restore = await deadline(c.page.evaluate(() => ({ tab: document.querySelector('#mode-work .work-workspace__tabs [aria-selected="true"]')?.id,
         workspaceOpen: document.querySelector('#mode-work .work-task-heading [aria-label="收起工作区"]')?.getAttribute('aria-pressed') === 'true',
-        hidden: document.hidden, workVisible: document.querySelector('#mode-work')?.getAttribute('aria-hidden') === 'false' })))
-      assert.ok(restore.workVisible && !restore.hidden, 'The existing Work renderer must be visible; this helper never opens or foregrounds windows')
+        hidden: document.hidden, sessionVisible: document.querySelector('#mode-work')?.getAttribute('aria-hidden') === 'false' })))
+      assert.ok(restore.sessionVisible && !restore.hidden, 'The existing Work renderer must be visible; this helper never opens or foregrounds windows')
       report.initialTaskId = store.activeTaskId; report.initialView = restore
       await sampleRoots()
       probeKey = '__officeUiLoadProbe_' + lease.id.replaceAll('-', '')
@@ -331,7 +331,7 @@ export function startOfficeUiLoadProbe(c, options) {
         if (await back.isVisible()) { guard(); await back.click({ timeout: 2500 }) }
         const childBefore = await childSummary(c, pinned[role].sessionId, expectedEngine)
         await delay(250)
-        guard(); const ui = await captureDom(c), selected = await workStore(c, store.key)
+        guard(); const ui = await captureDom(c), selected = await sessionStore(c, store.key)
         const after = await rootStatus(c, role, expectedEngine), childAfter = await childSummary(c, pinned[role].sessionId, expectedEngine)
         statusCache[role] = after
         const task = selected.tasks.find(task => task.id === pinned[role].sessionId)
@@ -358,7 +358,7 @@ export function startOfficeUiLoadProbe(c, options) {
         const visit = { role, index, elapsedMs: Date.now() - visitStarted, selectedTask: task, apiBefore: before, apiAfter: after,
           childrenBefore: childBefore, childrenAfter: childAfter, ui, stable,
           checks: { selectedTaskMatches: selected.activeTaskId === task.id && ui.heading === task.title,
-            workAndPanelVisible: ui.workVisible && ui.panelVisible && !ui.hidden,
+            sessionAndPanelVisible: ui.sessionVisible && ui.panelVisible && !ui.hidden,
             workspaceCorresponds: (ui.workspace ?? null) === (task.workspacePath ?? null),
             bindingUnchanged: ['modelId', 'agentId', 'workspacePath'].every(key => task[key] === baseline[key]),
             rootIdentityMatches: [before, after].every(value => value.run?.runId === pinned[role].runId && value.run?.sessionId === pinned[role].sessionId),

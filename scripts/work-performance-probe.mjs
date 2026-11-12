@@ -32,7 +32,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 async function startProbe(page) {
   await page.evaluate(() => {
-    window.__workProbe?.stop()
+    window.__sessionProbe?.stop()
     const data = { frames: [], longTasks: [], events: [], writes: [], observedTypes: [], observationErrors: [] }
     const probeStart = performance.now()
     const observers = []
@@ -55,11 +55,11 @@ async function startProbe(page) {
     let last = performance.now(), raf
     const tick = now => { data.frames.push(now - last); last = now; raf = requestAnimationFrame(tick) }
     raf = requestAnimationFrame(tick)
-    window.__workProbe = { data, stop() { cancelAnimationFrame(raf); for (const o of observers) o.disconnect(); Storage.prototype.setItem = original } }
+    window.__sessionProbe = { data, stop() { cancelAnimationFrame(raf); for (const o of observers) o.disconnect(); Storage.prototype.setItem = original } }
   })
 }
 async function stopProbe(page) {
-  const data = await page.evaluate(() => { window.__workProbe.stop(); return window.__workProbe.data })
+  const data = await page.evaluate(() => { window.__sessionProbe.stop(); return window.__sessionProbe.data })
   const durations = data.frames.slice(1)
   return { rafP50Ms: quantile(durations, .5), rafP95Ms: quantile(durations, .95), rafMaxMs: Math.max(0, ...durations),
     rafGapsOver34Ms: durations.filter(v => v > 34).length, frames: durations.length,

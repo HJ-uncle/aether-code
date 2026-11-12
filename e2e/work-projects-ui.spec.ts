@@ -8,7 +8,7 @@ import { createServer } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { RootRun } from '../src/shared/root-run'
-import type { WorkState, WorkTask } from '../src/renderer/src/contrib/work/work-state'
+import type { SessionState, SessionTask } from '../src/renderer/src/features/sessions/state'
 import { engineStorageKey, sessionStorageKey } from '../src/renderer/src/core/engine/source'
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
@@ -16,13 +16,13 @@ const token = 'disposable-projects-ui-token', now = Date.now() - 60_000
 const alphaPath = 'D:\\clients\\alpha\\web-2048', betaPath = 'D:\\clients\\beta\\web-go'
 const sameNamePath = 'D:\\archive\\客户资料与项目成果\\跨部门协作项目\\需要保留完整路径以便区分同名项目\\web-2048'
 const longTitle = '为当前 Web 项目整理面向技术客户的介绍材料，包含 Word 项目说明、Excel 功能清单与演示文稿，并核对最终交付文件'
-const task = (id: string, title: string, workspacePath: string | null, updatedAt: number, status: WorkTask['status'] = 'done'): WorkTask => ({
+const task = (id: string, title: string, workspacePath: string | null, updatedAt: number, status: SessionTask['status'] = 'done'): SessionTask => ({
   id, title, workspacePath, updatedAt, status, createdAt: updatedAt - 60_000, draft: '', modelId: '', attachments: [], sources: [],
 })
 const alphaTasks = Array.from({ length: 52 }, (_, index) => task(`work-project-alpha-${index}`,
   index === 0 ? longTitle : index === 51 ? '核对特殊验收关键词的历史任务' : `项目交付核对 ${String(index + 1).padStart(2, '0')}`,
   alphaPath, now - index * 60_000, index === 2 ? 'stopped' : index === 3 ? 'error' : 'done'))
-const tasks: WorkTask[] = [
+const tasks: SessionTask[] = [
   task('work-project-same-2', '归档目录中的独立成果', sameNamePath, now - 200_000),
   task('work-project-beta-2', '生成客户演示资料', betaPath, now - 150_000),
   ...alphaTasks.slice().reverse(),
@@ -32,7 +32,7 @@ const tasks: WorkTask[] = [
   { ...task('work-project-archived', '归档任务不应出现', 'D:\\archived-only', now + 1_000), archived: true },
   task('work-project-unbound', '无工作目录的独立会话', null, now + 2_000),
 ]
-const independentTasks: WorkTask[] = [
+const independentTasks: SessionTask[] = [
   task('work-independent-done', '独立会话：整理灵感记录', null, now + 8_000),
   { ...task('work-independent-running', '独立会话：正在整理资料', null, now + 3_000, 'running'),
     activity: { runId: 'root-work-independent-running', seq: 1, version: 2, status: 'running', updatedAt: now + 3_000, pendingAsk: 0, pendingPermission: 0 } },
@@ -55,7 +55,7 @@ const deletionFailureMessage = '删除服务暂时不可用，请重试'
 const workspaceBindings = new Map<string, string>()
 let app: ElectronApplication | undefined, page: Page, fixture = '', storageKey = '', preferencesKey = ''
 const envelope = (data: unknown): string => JSON.stringify({ code: 200, message: 'ok', data })
-const findTask = (id: string): WorkTask | undefined => seededTasks.find(item => item.id === id)
+const findTask = (id: string): SessionTask | undefined => seededTasks.find(item => item.id === id)
 const run = (id: string): RootRun | undefined => {
   const item = findTask(id)
   if (!item) return undefined
@@ -158,10 +158,10 @@ const sidebarTask = (id: string): Locator => page.locator(`.work-sidebar__task-r
 const taskMenu = (): Locator => page.locator('.context-menu').filter({ has: page.getByRole('menuitem', { name: '删除任务', exact: true }) })
 const taskAction = (name: string): Locator => taskMenu().getByRole('menuitem', { name, exact: true })
 const deleteConfirmation = (): Locator => page.getByRole('dialog', { name: '删除任务', exact: true })
-const state = (): Promise<WorkState> => page.evaluate(key => {
-  return JSON.parse(localStorage.getItem(key) ?? '{}') as WorkState
+const state = (): Promise<SessionState> => page.evaluate(key => {
+  return JSON.parse(localStorage.getItem(key) ?? '{}') as SessionState
 }, storageKey)
-async function seed(seedTasks = tasks, home: Partial<Pick<WorkState, 'homeDraft' | 'homeWorkspacePath' | 'homeAttachments' | 'homeSources' | 'homeSessionId'>> = {}): Promise<void> {
+async function seed(seedTasks = tasks, home: Partial<Pick<SessionState, 'homeDraft' | 'homeWorkspacePath' | 'homeAttachments' | 'homeSources' | 'homeSessionId'>> = {}): Promise<void> {
   seededTasks = seedTasks
   failNextDeletion.clear()
   await page.evaluate(({ storageKey, preferencesKey, tasks, home }) => {
@@ -714,7 +714,7 @@ test.describe.serial('Work 项目页', () => {
   })
 
   test('删除服务失败保留任务及未发送草稿，提示后可重试成功', async () => {
-    const target: WorkTask = { ...alphaTasks[1], draft: '删除失败后仍需保留的未发送内容\n下一轮继续处理',
+    const target: SessionTask = { ...alphaTasks[1], draft: '删除失败后仍需保留的未发送内容\n下一轮继续处理',
       attachments: [{ path: '/remote/retained-task.txt', name: '任务参考.txt', type: 'text/plain', size: 24 }],
       sources: [{ path: '/remote/retained-source.txt', name: '原始资料.txt', type: 'text/plain', size: 36 }] }
     const homeDraft = '首页另有未发送内容，删除其他任务不能影响它'
@@ -800,7 +800,7 @@ test.describe.serial('Work 项目页', () => {
     await option(betaPath).click({ button: 'right' }); await menuAction('在此项目中新建任务').click()
     await expect(projects()).toHaveCount(0)
     await expect.poll(() => page.evaluate(key => JSON.parse(localStorage.getItem(key) ?? '{}').tasks.length, storageKey)).toBe(tasks.length + 1)
-    const state = await page.evaluate(key => JSON.parse(localStorage.getItem(key) ?? '{}'), storageKey) as WorkState
+    const state = await page.evaluate(key => JSON.parse(localStorage.getItem(key) ?? '{}'), storageKey) as SessionState
     const created = state.tasks.find(task => task.id === state.activeTaskId)
     expect(created?.id).not.toBe(home.homeSessionId)
     expect(created).toMatchObject({ status: 'draft', workspacePath: betaPath, draft: '', attachments: [], sources: [] })

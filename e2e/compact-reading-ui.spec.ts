@@ -1,7 +1,7 @@
 /** Compact child reading in real Electron: authenticated archives retain full
  * instructions and answers while collapsed process text stays out of the body.
  * Includes full archive reading, reading/draft memory and stale source isolation.
- * Run with playwright.compact-reading.config.ts; AETHER_E2E_APP_ENTRY can override the build entry. */
+ * Run with npm run test:e2e -- e2e/compact-reading-ui.spec.ts; AETHER_E2E_APP_ENTRY can override the build entry. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer, type ServerResponse } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'

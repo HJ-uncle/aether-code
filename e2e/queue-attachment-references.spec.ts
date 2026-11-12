@@ -3,8 +3,8 @@
 import { expect, test } from '@playwright/test'
 import type { QueueAttachmentReceipt, QueueMention } from '../src/shared/next-turn-queue'
 import { mergeQueueAttachmentReferences, remapQueueAttachmentReferences } from '../src/shared/queue-attachment-references'
-import { buildMentionMessage, userMessageDraft } from '../src/renderer/src/contrib/chat/mention-context'
-import { freezeAttachmentReferences } from '../src/renderer/src/contrib/chat/attachment-references'
+import { buildMentionMessage, userMessageDraft } from '../src/renderer/src/features/conversation/shared/mention-context'
+import { freezeAttachmentReferences } from '../src/renderer/src/features/conversation/shared/attachment-references'
 
 test('queue merging and composer freezing agree on pasted text labels and independent file numbering', () => {
   const receipt = (id: string, name: string, mime: string): QueueAttachmentReceipt => ({

@@ -9,7 +9,7 @@ import { resolve } from 'node:path'
 const root = resolve(__dirname, '..')
 let browser: Browser, context: BrowserContext, page: Page, bundle: string
 let errors: string[] = []
-const css = ['assets/tokens.css', 'assets/base.css', 'assets/components.css', 'assets/motion.css', 'contrib/work/work-inline-activity.css', 'workbench/hover-detail.css']
+const css = ['assets/tokens.css', 'assets/base.css', 'assets/components.css', 'assets/motion.css', 'features/conversation/inline-activity.css', 'ui/hover-detail.css']
   .map(file => readFileSync(resolve(root, 'src/renderer/src', file), 'utf8')).join('\n')
 const files = [
   { path: 'D:/fixture/README.md', label: 'README.md', range: '1–255', title: 'D:/fixture/README.md\n本次读取第 1–255 行 · 文件共 500 行' },
@@ -25,15 +25,15 @@ test.beforeAll(async () => {
     import { createRoot } from 'react-dom/client'
     import { AppContext } from './src/renderer/src/core/app-context'
     import { DEFAULT_SETTINGS } from './src/shared/ipc'
-    import { CompactToolRow } from './src/renderer/src/contrib/chat/CompactToolRow'
-    import { WorkToolActivity } from './src/renderer/src/contrib/work/WorkToolActivity'
+    import { CompactToolRow } from './src/renderer/src/features/conversation/shared/CompactToolRow'
+    import { ToolActivity } from './src/renderer/src/features/conversation/ToolActivity'
     const root = createRoot(document.getElementById('fixture'))
     const value = { engine: { snapshot: { mode: 'local' } }, settings: DEFAULT_SETTINGS,
       userSettings: DEFAULT_SETTINGS, ready: false, settingsLoaded: true,
       updateSettings: async () => { throw new Error('Settings writes are forbidden in this fixture') } }
     window.renderFixture = ({ integration, ...props }) => root.render(
       <AppContext.Provider value={value}>
-        {integration ? <WorkToolActivity {...props} /> : <CompactToolRow {...props} />}
+        {integration ? <ToolActivity {...props} /> : <CompactToolRow {...props} />}
       </AppContext.Provider>)
   ` }, bundle: true, write: false, platform: 'browser', format: 'iife', jsx: 'automatic',
     tsconfig: resolve(root, 'tsconfig.web.json'), loader: { '.css': 'empty' }, define: { 'process.env.NODE_ENV': '"test"' },
@@ -214,7 +214,7 @@ test('long paths wrap inside a scrollable hover without clipping the last file',
   await page.keyboard.press('Escape'); await expect(tooltip).toHaveCount(0)
 })
 
-test('real WorkToolActivity receipt projection uses actual bounds and omits failed or cancelled ranges', async () => {
+test('real ToolActivity receipt projection uses actual bounds and omits failed or cancelled ranges', async () => {
   const version = { expectedHash: `sha256:${'a'.repeat(64)}`, encoding: 'utf-8', lineEnding: 'LF', utf8Bom: false }
   const result = JSON.stringify({ batch: true, files: [
     { path: files[0].path, success: true, output: { ...version, path: files[0].path, startLine: 1, endLine: 255, totalLines: 500, content: 'read content' } },

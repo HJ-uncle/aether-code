@@ -1,0 +1,107 @@
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
+import { requestOrThrow } from '@renderer/core/engine/client'
+import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
+import { subscribeAgentCatalogueChanges } from '@renderer/core/engine/agent-catalogue'
+import { agentMentionSearch, type AgentReferenceIdentity } from './agent-references'
+import { isMotionInteractive } from '@renderer/ui/motion'
+import { isTopOverlay } from '@renderer/ui/overlay'
+import { Icon } from '@renderer/ui/icons'
+import { BUILTIN_AGENTS, builtinAgentReference } from '@shared/builtin-agents'
+import { agentReferenceIcon } from './agent-mention-icon'
+
+const builtinAgents: AgentReferenceIdentity[] = BUILTIN_AGENTS.map(item => ({
+  id: `builtin:${item.role}`, name: item.name, description: item.description, builtinRole: item.role
+}))
+
+/** Data only: grouped completion owns one keyboard controller for every kind. */
+export function useAgentReferences(query: string) {
+  const source = useSyncExternalStore(subscribeEngineSource, getEngineSource)
+  const [agents, setAgents] = useState<AgentReferenceIdentity[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [reload, setReload] = useState(0)
+  useEffect(() => subscribeAgentCatalogueChanges(() => setReload(value => value + 1)), [])
+  useEffect(() => {
+    let alive = true
+    setLoading(true)
+    setAgents([])
+    setError(null)
+    void requestOrThrow<AgentReferenceIdentity[] | { list?: AgentReferenceIdentity[] }>({
+      method: 'GET', path: '/agents'
+    }).then(res => {
+      if (!alive || source !== getEngineSource()) return
+      const rows = Array.isArray(res) ? res : res.list ?? []
+      setAgents(rows.filter(item => typeof item.id === 'string' && Boolean(item.id.trim()) &&
+        typeof item.name === 'string' && Boolean(item.name.trim())))
+      setLoading(false)
+    }).catch(cause => {
+      if (alive && source === getEngineSource()) {
+        setLoading(false)
+        setError(cause instanceof Error ? cause.message : '无法读取 Agent 列表')
+      }
+    })
+    return () => { alive = false }
+  }, [source, reload])
+  const filtered = useMemo(() => {
+    const needle = (agentMentionSearch(query) ?? query).trim().toLowerCase()
+    return [...builtinAgents, ...agents].filter(item => !needle || `${item.name} ${item.id} ${item.description ?? ''}`.toLowerCase().includes(needle)).slice(0, 20)
+  }, [agents, query])
+  return { filtered, loading, error, retry: () => setReload(value => value + 1) }
+}
+
+export function selectedAgentReference(agent: AgentReferenceIdentity): AgentReferenceIdentity {
+  return agent.builtinRole ? { ...agent, id: builtinAgentReference(agent.builtinRole, crypto.randomUUID()) } : agent
+}
+
+export function AgentRefPicker({ query, onSelect, onClose }: {
+  query: string
+  onSelect: (agent: AgentReferenceIdentity) => void
+  onClose: () => void
+}): JSX.Element {
+  const { filtered, loading, error, retry } = useAgentReferences(query)
+  const [active, setActive] = useState(0)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const select = useCallback((agent: AgentReferenceIdentity): void => onSelect(selectedAgentReference(agent)), [onSelect])
+  useEffect(() => setActive(0), [query, filtered.length])
+  useEffect(() => {
+    if (!isMotionInteractive(rootRef.current)) return
+    rootRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
+  }, [active, filtered])
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (!isMotionInteractive(rootRef.current)) return
+      const owner = rootRef.current?.closest<HTMLElement>('[data-overlay-id]')?.dataset.overlayId
+      // Window capture precedes the shared document handler. Only the foremost
+      // completion owns selection keys; let its layer handle Escape itself.
+      if (owner && (!isTopOverlay(owner) || event.key === 'Escape')) return
+      if (event.isComposing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey) return
+      if (event.target instanceof Element && event.target.closest('[data-mention-list-control]')) return
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return }
+      if (!['ArrowDown', 'ArrowUp', 'Enter', 'Tab'].includes(event.key) || event.shiftKey) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (!filtered.length) return
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        setActive(index => (index + (event.key === 'ArrowDown' ? 1 : -1) + filtered.length) % filtered.length)
+      } else select(filtered[active] ?? filtered[0])
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [active, filtered, onClose, select])
+  return <div ref={rootRef} className="agent-ref-picker work-agent-picker" role="listbox" aria-label="选择协作 Agent" aria-busy={loading}>
+    <div className="agent-ref-picker__list">
+      {filtered.map((agent, index) =>
+          <button key={agent.id} type="button" role="option" aria-selected={index === active}
+            className={`agent-ref-picker__item work-agent-picker__item${index === active ? ' is-active' : ''}`}
+            onMouseDown={event => event.preventDefault()} onClick={() => select(agent)} onMouseEnter={() => setActive(index)}>
+            <span className="agent-ref-picker__badge" aria-hidden="true"><Icon name={agentReferenceIcon(agent.id, agent.builtinRole)} size={18} /></span>
+            <span className="agent-ref-picker__copy"><strong>{agent.name}</strong><small>{agent.description || agent.id}</small></span>
+          </button>)}
+      {loading ? <div className="mention-ref-picker__empty" role="status">正在加载自定义 Agent…</div> : error ?
+        <div className="mention-ref-picker__empty" role="alert">
+          <span>{error}</span>
+          <button type="button" data-mention-list-control className="mention-ref-picker__retry work-agent-picker__retry" onClick={retry}>重试</button>
+        </div> : !filtered.length ? <div className="mention-ref-picker__empty">没有匹配的 Agent</div> : null}
+    </div>
+  </div>
+}

@@ -2,8 +2,8 @@
  * snapshots, complete call-argument fallback and unchanged approval replies. */
 import { expect, test } from '@playwright/test'
 import { buildToolResponse, normalizePending } from '../src/renderer/src/core/engine/pending'
-import { permissionPresentation } from '../src/renderer/src/contrib/work/work-permission-presentation'
-import type { PermissionPresentation } from '../src/renderer/src/contrib/work/work-permission-presentation'
+import { permissionPresentation } from '../src/renderer/src/features/interactions/permission-presentation'
+import type { PermissionPresentation } from '../src/renderer/src/features/interactions/permission-presentation'
 
 const titles = {
   create: '创建 MCP 服务器', update: '编辑 MCP 服务器', set_enabled: '启停 MCP 服务器',

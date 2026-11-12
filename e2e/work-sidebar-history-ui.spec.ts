@@ -6,13 +6,13 @@ import { createServer } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { RootRun } from '../src/shared/root-run'
-import type { WorkState, WorkTask } from '../src/renderer/src/contrib/work/work-state'
+import type { SessionState, SessionTask } from '../src/renderer/src/features/sessions/state'
 import { engineStorageKey, sessionStorageKey } from '../src/renderer/src/core/engine/source'
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp/sidebar-history')
 const token = 'sidebar-history-token', modelId = 'sidebar-history-model', workspace = '/remote/sidebar-history'
 const now = Date.now() - 60_000
-const tasks: WorkTask[] = [false, true].flatMap(archived => Array.from({ length: archived ? 45 : 55 }, (_, index) => ({
+const tasks: SessionTask[] = [false, true].flatMap(archived => Array.from({ length: archived ? 45 : 55 }, (_, index) => ({
   id: `work-sidebar-${archived ? 'archive' : 'recent'}-${index}`,
   title: `${archived ? '归档' : '最近'}资料 ${String(index + 1).padStart(2, '0')}`,
   status: 'done' as const, createdAt: now - index * 60_000 - 5_000, updatedAt: now - index * 60_000,
@@ -90,10 +90,10 @@ async function loadNext(expected: number): Promise<void> {
   await panel().evaluate(element => { element.scrollTop = element.scrollHeight })
   await expect(rows()).toHaveCount(expected)
 }
-async function savedTask(id: string): Promise<WorkTask | undefined> {
+async function savedTask(id: string): Promise<SessionTask | undefined> {
   return page.evaluate(({ key, id }) => {
     window.dispatchEvent(new Event('blur'))
-    return (JSON.parse(localStorage.getItem(key) ?? '{}') as WorkState).tasks?.find(task => task.id === id)
+    return (JSON.parse(localStorage.getItem(key) ?? '{}') as SessionState).tasks?.find(task => task.id === id)
   }, { key: storageKey, id })
 }
 
@@ -202,14 +202,14 @@ test('取消置顶后选中任务跨出首批仍保留行与原会话', async ()
 })
 
 test('侧栏收起与窄窗抽屉保留分页能力，深浅色不挤压底部设置', async ({}, info) => {
-  await sidebar().getByRole('button', { name: '收起 Work 导航', exact: true }).click()
+  await sidebar().getByRole('button', { name: '收起 应用导航', exact: true }).click()
   await expect(panel()).toBeHidden()
-  await sidebar().getByRole('button', { name: '展开 Work 导航', exact: true }).click()
+  await sidebar().getByRole('button', { name: '展开 应用导航', exact: true }).click()
   await expect(rows()).toHaveCount(20)
   for (const appearance of ['light', 'dark']) for (const width of [1440, 780]) {
     await page.evaluate(appearance => { document.documentElement.dataset.appearance = appearance }, appearance)
     await windowSize(width)
-    if (width === 780) await sidebar().getByRole('button', { name: '展开 Work 导航', exact: true }).click()
+    if (width === 780) await sidebar().getByRole('button', { name: '展开 应用导航', exact: true }).click()
     await expect(tab('归档')).toBeInViewport({ ratio: 1 })
     await expect(sidebar().getByRole('button', { name: '设置', exact: true })).toBeInViewport({ ratio: 1 })
     expect(await panel().evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)

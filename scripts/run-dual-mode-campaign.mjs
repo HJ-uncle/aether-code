@@ -151,7 +151,7 @@ async function main() {
     return [mode, hash(value)]
   }))
   let app, page, plan, closing = false, currentMode = '', previousTick = Date.now(), lastMetrics = 0, lastRuntime = 0, lastTurnSnapshot = 0, lastModeExercise = 0, nextCounter = 0
-  let codeServer, workServer, auxiliaryElapsedMs = 0
+  let codeServer, sessionServer, auxiliaryElapsedMs = 0
   const started = Date.now(), deadline = started + maxMs
   const transient = error => /timeout|timed out|abort|请求超时|网络|ECONN|ETIMED|fetch failed|network|socket/i.test(String(error?.message || error)) || error?.httpStatus >= 500 || [408, 429].includes(error?.httpStatus)
   const observationGap = (context, error) => {
@@ -197,12 +197,12 @@ async function main() {
     await expect(page.locator('#mode-' + mode)).toHaveAttribute('aria-hidden', 'false')
     if (currentMode !== mode) { state.modeSwitches++; currentMode = mode }
   }
-  const workTask = () => page.evaluate(() => {
+  const sessionTask = () => page.evaluate(() => {
     const buckets = Object.entries(localStorage).filter(([key]) => key.startsWith('aether.work.state.v1')).map(([, value]) => JSON.parse(value))
     const bucket = buckets.find(value => value.activeTaskId)
     return bucket?.tasks.find(task => task.id === bucket.activeTaskId) ?? null
   })
-  const workQueue = async () => {
+  const sessionQueue = async () => {
     const snapshot = await page.evaluate(() => window.aether.engine.getSnapshot())
     const input = { taskId: state.modes.work.sessionId, expectedEngine: { mode: snapshot.mode, baseUrl: snapshot.baseUrl, instanceId: snapshot.instanceId, accountId: snapshot.accountId }, action: { kind: 'read' } }
     const result = await page.evaluate(value => window.aether.workQueue.invoke(value), input)
@@ -221,7 +221,7 @@ async function main() {
   }
   const chooseModel = async mode => {
     await selectMode(mode)
-    const trigger = page.locator('#mode-' + mode).getByRole('button', { name: mode === 'work' ? 'Work 使用的模型' : '选择模型', exact: true })
+    const trigger = page.locator('#mode-' + mode).getByRole('button', { name: mode === 'work' ? '使用的模型' : '选择模型', exact: true })
     await expect(trigger).toBeEnabled({ timeout: 30_000 })
     await trigger.click()
     const escaped = (model.displayName || model.modelId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -276,11 +276,11 @@ async function main() {
       await send.click()
       await expect(target).toHaveText('', { timeout: 15_000 })
       if (!owner.sessionId) {
-        await expect.poll(async () => (await workTask())?.id, { timeout: 30_000 }).toMatch(/^work-/)
-        owner.sessionId = (await workTask()).id
+        await expect.poll(async () => (await sessionTask())?.id, { timeout: 30_000 }).toMatch(/^work-/)
+        owner.sessionId = (await sessionTask()).id
       }
       if (kind !== 'baseline') {
-        const queue = await workQueue()
+        const queue = await sessionQueue()
         const entry = queue.state.entries.find(value => value.envelope.draft.text === text)
         if (entry) record.queueAck = { entryId: entry.id, revision: entry.revision, phase: entry.phase, stateRevision: queue.state.revision }
         if (record.submittedWhileRunning && !entry) throw new Error(`${id}: active Work submission has no durable queue acknowledgement`)
@@ -329,7 +329,7 @@ async function main() {
     ingestRuns(mode, runs)
     let queue
     if (mode === 'work') {
-      const observedQueue = await observe('Work durable queue read', workQueue)
+      const observedQueue = await observe('Work durable queue read', sessionQueue)
       if (!observedQueue.ok) return { complete: false, runs }
       queue = observedQueue.value
       for (const entry of queue.state.entries) {
@@ -413,7 +413,7 @@ async function main() {
       }
     }
     if (mode === 'work') {
-      const queue = refreshed.queue || (await observe('Work checkpoint queue read', workQueue)).value
+      const queue = refreshed.queue || (await observe('Work checkpoint queue read', sessionQueue)).value
       if (!queue) { owner.evidencePending = true; return null }
       artifact(filename + '-queue.json', queue)
       for (const entry of queue.state.entries) {
@@ -460,7 +460,7 @@ async function main() {
   const idleForAudit = async () => {
     if (!submissionsSettled() || modes.some(mode => state.modes[mode].blocked)) return false
     for (const mode of modes) if (executing(await status(mode))) return false
-    const queue = await workQueue()
+    const queue = await sessionQueue()
     return queue.state.entries.every(entry => entry.phase === 'terminal')
   }
   const processControls = async () => {
@@ -676,10 +676,10 @@ async function main() {
     }
   }
   try {
-    codeServer = await previewServer(workspaces.code, previousState?.origins.code); workServer = await previewServer(workspaces.work, previousState?.origins.work)
-    plan = createCampaignPlan({ codeWorkspace: workspaces.code, workWorkspace: workspaces.work, codeOrigin: codeServer.origin, workOrigin: workServer.origin })
+    codeServer = await previewServer(workspaces.code, previousState?.origins.code); sessionServer = await previewServer(workspaces.work, previousState?.origins.work)
+    plan = createCampaignPlan({ codeWorkspace: workspaces.code, sessionWorkspace: workspaces.work, codeOrigin: codeServer.origin, sessionOrigin: sessionServer.origin })
     artifact('campaign-plan.json', plan)
-    state.origins = { code: codeServer.origin, work: workServer.origin }
+    state.origins = { code: codeServer.origin, work: sessionServer.origin }
     if (resumeRoot) {
       const settings = JSON.parse(readFileSync(join(profile, 'settings.json'), 'utf8'))
       artifact('resume-settings-before.json', settings)
@@ -726,9 +726,9 @@ async function main() {
       }
       // Resuming an existing task renders its workspace breadcrumb. The folder
       // picker belongs only to the new-task composer and is absent here.
-      const restoredWorkTask = await workTask()
-      expect(restoredWorkTask?.id, 'restored Work task owner').toBe(state.modes.work.sessionId)
-      expect(normalized(restoredWorkTask?.workspacePath || ''), 'restored Work workspace').toBe(normalized(workspaces.work))
+      const restoredSessionTask = await sessionTask()
+      expect(restoredSessionTask?.id, 'restored Work task owner').toBe(state.modes.work.sessionId)
+      expect(normalized(restoredSessionTask?.workspacePath || ''), 'restored Work workspace').toBe(normalized(workspaces.work))
       const restoredWorkspace = page.locator('#mode-work .work-task-heading__project')
       await expect(restoredWorkspace).toContainText(basename(workspaces.work))
       expect(normalized(await restoredWorkspace.getAttribute('title') || '')).toBe(normalized(workspaces.work))
@@ -763,11 +763,11 @@ async function main() {
     await expect(page.locator('#mode-work .work-folder-button')).toContainText(basename(workspaces.work))
     await chooseModel('work'); await setFullMode('work')
     await expect.poll(() => page.evaluate(() => window.aether.browser.getConnection()).then(value => value.sessionId || ''), { timeout: 30_000 }).toMatch(/^work-/)
-    const workHomeConnection = await page.evaluate(() => window.aether.browser.getConnection())
+    const sessionHomeConnection = await page.evaluate(() => window.aether.browser.getConnection())
     await chooseModel('code'); await setFullMode('code')
     // Authentication selects an account-scoped Code session even though the
     // startup settings hold the new embedded fallback ID. Read the actual UI owner.
-    await expect.poll(() => page.evaluate(() => window.aether.browser.getConnection()).then(value => Boolean(value.sessionId && value.sessionId !== workHomeConnection.sessionId)), { timeout: 30_000 }).toBe(true)
+    await expect.poll(() => page.evaluate(() => window.aether.browser.getConnection()).then(value => Boolean(value.sessionId && value.sessionId !== sessionHomeConnection.sessionId)), { timeout: 30_000 }).toBe(true)
     const codeConnection = await page.evaluate(() => window.aether.browser.getConnection())
     state.modes.code.requestedStartupSessionId = state.modes.code.sessionId
     state.modes.code.sessionId = codeConnection.sessionId
@@ -913,7 +913,7 @@ async function main() {
   } finally {
     closing = true; save()
     await app?.close().catch(error => { state.issues.push({ kind: 'close', error: scrub(error) }) })
-    await codeServer?.close(); await workServer?.close()
+    await codeServer?.close(); await sessionServer?.close()
     artifact('report.json', { phase: state.phase, executionPassed: state.executionPassed, productAcceptance: state.productAcceptance, error: state.error,
       startedAt: state.startedAt, finishedAt: state.finishedAt, engine: state.engine, sampledActiveMs: state.sampledActiveMs, sampledConcurrentMs: state.sampledConcurrentMs,
       segmentId: state.segmentId, previousSegments: state.previousSegments, longestContinuousActiveMs: state.longestContinuousActiveMs,

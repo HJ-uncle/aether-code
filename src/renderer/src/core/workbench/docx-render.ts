@@ -1,7 +1,7 @@
 /** docx-preview sections can contain several screens of content without a page
  * break. Measure the rendered content before choosing inspection regions. */
-import { prepareOfficeArchiveOffThread } from '../../contrib/documents/office-archive-client'
-import { passiveDocumentHtml } from '../../contrib/documents/document-html'
+import { prepareOfficeArchiveOffThread } from '../../features/documents/office-archive-client'
+import { passiveDocumentHtml } from '../../features/documents/document-html'
 import { docxPreviewRegions } from './docx-preview-regions'
 
 export async function renderDocxPages(data: ArrayBuffer, signal: AbortSignal): Promise<string[]> {

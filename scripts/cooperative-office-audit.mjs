@@ -125,8 +125,8 @@ export function createAuditGuard({ page, signal, cancelFile }) {
     if (signal?.aborted) aborted()
     if (cancelFile && existsSync(cancelFile)) stop(new Error('AUDIT_CANCELLED: cancellation file detected'))
     if (reason) throw reason
-    const workActive = await page.evaluate(() => document.querySelector('#mode-work')?.getAttribute('aria-hidden') === 'false')
-    if (!workActive) stop(new Error('AUDIT_MODE_CHANGED: Work is no longer the active surface'))
+    const sessionActive = await page.evaluate(() => document.querySelector('#mode-work')?.getAttribute('aria-hidden') === 'false')
+    if (!sessionActive) stop(new Error('AUDIT_MODE_CHANGED: Work is no longer the active surface'))
     if (reason) throw reason
   }
   return {

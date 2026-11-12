@@ -112,7 +112,7 @@ exports.launch = async function (options = {}) {
     const owner=state.roles[id];await selectWork();await page.locator('#mode-work').getByRole('button',{name:'新任务',exact:true}).click()
     await page.locator('#mode-work .work-navigation').getByRole('button',{name:'Agent',exact:true}).click();await page.getByRole('button',{name:'使用 Agent '+owner.name,exact:true}).click()
     await page.locator('#mode-work .work-folder-button').click()
-    await page.locator('#mode-work').getByRole('button',{name:'Work 使用的模型',exact:true}).click();await page.getByRole('menuitem').filter({hasText:model.displayName||model.modelId}).first().click()
+    await page.locator('#mode-work').getByRole('button',{name:'使用的模型',exact:true}).click();await page.getByRole('menuitem').filter({hasText:model.displayName||model.modelId}).first().click()
     const security=page.locator('#mode-work').getByRole('button',{name:/^切换本会话访问权限：/});if(!(await security.innerText()).includes('完全访问')){await security.click();await page.getByRole('menuitem',{name:/^完全访问/}).click()};await expect(security).toContainText('完全访问')
     const admitted=await submit(id,prompt,'v1')
     await page.locator('#mode-work').getByRole('button',{name:'任务更多操作',exact:true}).click()

@@ -168,7 +168,7 @@ function fakeController(fixture) {
   const run = sessionId => ({ runId: 'run-' + sessionId, sessionId, status: 'succeeded', finishedAt: 1, pending: [] })
   return { app: { evaluate: async () => ({ profile: fixture, nativeQueue: false }) }, page: { evaluate: async () => engine },
     state: { runRoot: fixture, profile: fixture, roles, commands: [], engine }, effects,
-    workTasks: async () => [{ id: 'session0', active: true }],
+    sessionTasks: async () => [{ id: 'session0', active: true }],
     request: async (_method, endpoint, _body, query) => {
       if (endpoint === '/chat/status') return { running: false, run: run(query.sessionId) }
       if (endpoint === '/chat/runs') return { runs: [run(query.sessionId)] }

@@ -8,9 +8,9 @@ import { createServer } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { RootRun } from '../src/shared/root-run'
-import type { WorkState, WorkTask } from '../src/renderer/src/contrib/work/work-state'
+import type { SessionState, SessionTask } from '../src/renderer/src/features/sessions/state'
 import { engineStorageKey, sessionStorageKey } from '../src/renderer/src/core/engine/source'
-import { WORK_AGENT_TEMPLATES, type WorkAgentTemplate } from '../src/renderer/src/contrib/work/work-agent-templates'
+import { SESSION_AGENT_TEMPLATES, type SessionAgentTemplate } from '../src/renderer/src/features/agents/agent-templates'
 
 interface AgentConfig {
   id: string; name: string; description: string; systemPrompt: string; model: string; temperature?: number
@@ -47,7 +47,7 @@ const skills = [
 ]
 const mcpServers = [{ id: 'mcp-docs', name: '团队文档', description: '读取团队文档资料', enabled: true }]
 const knowledgeBases = [{ id: 'kb-team', name: '团队知识库', description: '已核实的团队知识', documentCount: 12, createdAt: 1 }]
-let agents = structuredClone(initialAgents), seededTask: WorkTask | null = null
+let agents = structuredClone(initialAgents), seededTask: SessionTask | null = null
 const mutations: Array<{ method: string; id: string; body: unknown }> = [], errors: string[] = [], forbidden: string[] = []
 const workspaceBindings: Array<{ sessionId: string; workspaceRoot: string }> = []
 let app: ElectronApplication | undefined, page: Page, fixture = '', storageKey = ''
@@ -142,7 +142,7 @@ const server = createServer((request, response) => { void (async () => {
 
 const manager = (): Locator => page.locator('.work-agent-manager-page')
 const form = (): Locator => page.locator('.work-agent-manager__form')
-const state = (): Promise<WorkState> => page.evaluate(key => JSON.parse(localStorage.getItem(key) ?? '{}') as WorkState, storageKey)
+const state = (): Promise<SessionState> => page.evaluate(key => JSON.parse(localStorage.getItem(key) ?? '{}') as SessionState, storageKey)
 const tab = (name: string): Locator => form().getByRole('tab', { name: new RegExp(`^${name}`) })
 const checkbox = (name: string): Locator => form().getByRole('checkbox', { name, exact: true })
 const temperature = (): Locator => form().getByRole('spinbutton', { name: '温度', exact: true })
@@ -151,7 +151,7 @@ async function chooseTemplate(label: string): Promise<void> {
   await templateSelector().click()
   await page.locator('.work-agent-manager__template-panel').getByRole('menuitem', { name: new RegExp(`^${label}(?:\\s|$)`) }).click()
 }
-async function assertTemplate(template: WorkAgentTemplate): Promise<void> {
+async function assertTemplate(template: SessionAgentTemplate): Promise<void> {
   await expect(templateSelector()).toContainText(template.label)
   await expect(form().getByLabel('名称', { exact: true })).toHaveValue(template.name)
   await expect(form().getByLabel('用途', { exact: true })).toHaveValue(template.description)
@@ -361,11 +361,11 @@ test.describe.serial('Work Agent 管理', () => {
 
   test('五种场景模板填充完整内容，直接切回空白不提交或触发多余确认', async () => {
     await manager().getByRole('button', { name: '新建 Agent', exact: true }).click()
-    await assertTemplate(WORK_AGENT_TEMPLATES[0])
+    await assertTemplate(SESSION_AGENT_TEMPLATES[0])
     const labels = ['软件开发工程师', '项目经理', '研究分析师', '办公文档助手', '内容策划']
-    expect(WORK_AGENT_TEMPLATES.map(template => template.label)).toEqual(['空白 Agent', ...labels])
+    expect(SESSION_AGENT_TEMPLATES.map(template => template.label)).toEqual(['空白 Agent', ...labels])
     for (const label of labels) {
-      const template = WORK_AGENT_TEMPLATES.find(item => item.label === label)!
+      const template = SESSION_AGENT_TEMPLATES.find(item => item.label === label)!
       expect(template.systemPrompt.length).toBeGreaterThan(300)
       expect(template.systemPrompt).toMatch(/1\.[\s\S]+5\./)
       await chooseTemplate(label); await assertTemplate(template)
@@ -373,7 +373,7 @@ test.describe.serial('Work Agent 管理', () => {
       expect(mutations).toEqual([])
     }
     await shot('agent-template-basics')
-    await chooseTemplate('空白 Agent'); await assertTemplate(WORK_AGENT_TEMPLATES[0])
+    await chooseTemplate('空白 Agent'); await assertTemplate(SESSION_AGENT_TEMPLATES[0])
     await expect(page.getByRole('dialog', { name: '替换模板内容？', exact: true })).toHaveCount(0)
     expect(mutations).toEqual([]); expect(agents).toEqual(initialAgents)
     await page.getByRole('button', { name: '返回 Agent 列表', exact: true }).click()
@@ -411,7 +411,7 @@ test.describe.serial('Work Agent 管理', () => {
     await chooseTemplate('研究分析师'); await expect(confirmation).toBeVisible()
     await confirmation.getByRole('button', { name: '替换内容', exact: true }).click()
     await expect(confirmation).toHaveCount(0)
-    const template = WORK_AGENT_TEMPLATES.find(item => item.id === 'research-analyst')!
+    const template = SESSION_AGENT_TEMPLATES.find(item => item.id === 'research-analyst')!
     await assertTemplate(template)
     await expect(form().getByRole('button', { name: 'Agent 默认模型', exact: true })).toContainText('配置测试模型')
     await tab('资源绑定').click(); await form().getByRole('button', { name: /^技能/ }).click()

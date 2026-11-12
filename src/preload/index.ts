@@ -5,8 +5,9 @@ import { isTrustedWorkbenchUrl } from '../shared/workbench-url'
 import { IPC } from '../shared/ipc'
 import { OFFICE_RENDER_IPC, type OfficePageRenderInput, type OfficePageRenderResult } from '../shared/office-render'
 import type { ConversationLink } from '../shared/conversation-link'
-import { WORK_QUEUE_IPC, type WorkNextTurnApi, type WorkQueueInvokeResult } from '../shared/work-next-turn-api'
+import { SESSION_QUEUE_IPC, type SessionNextTurnApi, type SessionQueueInvokeResult } from '../shared/session-next-turn-api'
 import type { GraphicsSnapshot } from '../shared/graphics'
+import { PLUGIN_UI_IPC, type PluginUiApi } from '../shared/plugin-ui'
 import { BROWSER_IPC, type BrowserApi, type BrowserConnectionState } from '../shared/browser-api'
 import type { BrowserEvent } from '../shared/browser'
 import type { AccountApi, AccountState } from '../shared/account'
@@ -96,15 +97,15 @@ async function invokeBrowser<T>(method: string, ...args: unknown[]): Promise<T> 
   return result.value
 }
 
-const workQueue: WorkNextTurnApi = {
+const workQueue: SessionNextTurnApi = {
   invoke: async input => {
     // contextBridge strips custom Error fields; the renderer owns typed error construction.
-    return await ipcRenderer.invoke(WORK_QUEUE_IPC.invoke, input) as WorkQueueInvokeResult
+    return await ipcRenderer.invoke(SESSION_QUEUE_IPC.invoke, input) as SessionQueueInvokeResult
   },
   onChanged: listener => {
-    const handler = (_event: unknown, payload: Parameters<Parameters<WorkNextTurnApi['onChanged']>[0]>[0]): void => listener(payload)
-    ipcRenderer.on(WORK_QUEUE_IPC.changed, handler)
-    return () => ipcRenderer.removeListener(WORK_QUEUE_IPC.changed, handler)
+    const handler = (_event: unknown, payload: Parameters<Parameters<SessionNextTurnApi['onChanged']>[0]>[0]): void => listener(payload)
+    ipcRenderer.on(SESSION_QUEUE_IPC.changed, handler)
+    return () => ipcRenderer.removeListener(SESSION_QUEUE_IPC.changed, handler)
   }
 }
 const browserApi: BrowserApi = {
@@ -144,6 +145,10 @@ const browserApi: BrowserApi = {
 }
 
 const api = {
+  pluginUi: {
+    create: html => ipcRenderer.invoke(PLUGIN_UI_IPC.create, html),
+    release: url => ipcRenderer.invoke(PLUGIN_UI_IPC.release, url)
+  } satisfies PluginUiApi,
   office: { renderPage: (input: OfficePageRenderInput): Promise<OfficePageRenderResult> => ipcRenderer.invoke(OFFICE_RENDER_IPC, input) },
   system: {
     getOpenWithApps: (): Promise<OpenWithApp[]> => ipcRenderer.invoke(IPC.invoke.systemGetOpenWithApps),

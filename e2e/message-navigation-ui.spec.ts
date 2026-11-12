@@ -13,10 +13,10 @@ import { engineStorageKey } from '../src/renderer/src/core/engine/source'
 type Mode = 'code' | 'work'
 const root = resolve(__dirname, '..'), fixtures = join(root, '.e2e-tmp')
 const codeId = 'message-nav-code', longCodeId = 'message-nav-code-long', nestedCodeId = 'message-nav-code-nested', followCodeId = 'message-nav-code-follow'
-const workId = 'work-message-nav', model = 'message-nav-fixture'
+const sessionId = 'work-message-nav', model = 'message-nav-fixture'
 const token = 'disposable-message-navigation-token', workspaceRoot = '/remote/message-navigation'
 const count = 12, longCount = 156, now = Date.now() - 180_000
-const session = (mode: Mode): string => mode === 'work' ? workId : codeId
+const session = (mode: Mode): string => mode === 'work' ? sessionId : codeId
 const prompt = (index: number): string => `导航第 ${String(index + 1).padStart(2, '0')} 条：检查这一项。`
 const userId = (id: string, index: number): string => `${id}-user-${index}`
 const nestedTable = [
@@ -25,7 +25,7 @@ const nestedTable = [
   `| ${Array.from({ length: 40 }, () => '是').join(' | ')} |`
 ].join('\n')
 const histories = new Map<string, EngineHistoryRow[]>(), runs = new Map<string, RootRun[]>()
-for (const id of [codeId, longCodeId, nestedCodeId, followCodeId, workId]) {
+for (const id of [codeId, longCodeId, nestedCodeId, followCodeId, sessionId]) {
   const roots = Array.from({ length: id === longCodeId ? longCount : count }, (_, index): RootRun => ({
     schemaVersion: 1, runId: `${id}-run-${index}`, sessionId: id, turnId: `${id}-turn-${index}`,
     userMessageId: userId(id, index), assistantMessageId: `${id}-assistant-${index}`,
@@ -82,7 +82,7 @@ const server = createServer((request, response) => { void (async () => {
       userMessageId: row.id, conversationId: row.conversationId, preview: row.content, createdAt: row.createdAt })),
       messages: rows.filter(row => ids.has(row.conversationId)), loadedTurnIds: selected.map(row => row.id),
       revision: `${id}-stable`, mutationRevision: 'unchanged', backend: 'jsonl', completeness: 'complete' })
-    if (id === workId && anchor === heldAnchor) { held = { response, body }; return }
+    if (id === sessionId && anchor === heldAnchor) { held = { response, body }; return }
     response.end(body); return
   }
   const data = path === '/health' ? { status: 'ok' }
@@ -90,10 +90,10 @@ const server = createServer((request, response) => { void (async () => {
       toolProfiles: ['general', 'code'], subagentSchemaVersion: 1, instanceId: 'message-navigation' }
     : path === '/api/v1/models' ? [{ id: model, modelId: model, provider: 'openai', displayName: '消息导航测试模型', isEnabled: true, capabilities: { toolCalling: true } }]
     : path === '/api/v1/chat/snapshot' ? { schemaVersion: 1, sessionId: id, source: 'persisted', eventId: null, finished: true,
-      history: id === workId ? rows.slice(-4) : rows, projection: [], run: current, runs: ownRuns, subagentRuns: [], todos: [], changes: [], commandJobs: [] }
+      history: id === sessionId ? rows.slice(-4) : rows, projection: [], run: current, runs: ownRuns, subagentRuns: [], todos: [], changes: [], commandJobs: [] }
     : path === '/api/v1/chat/status' ? { running: false, finished: true, run: current, lastEventId: null }
     : path === '/api/v1/chat/runs' ? { runs: ownRuns }
-    : path === '/api/v1/conversation/history' ? (id === workId ? rows.slice(-4) : rows)
+    : path === '/api/v1/conversation/history' ? (id === sessionId ? rows.slice(-4) : rows)
     : path === '/api/v1/conversation/sessions' ? [codeId, longCodeId, nestedCodeId, followCodeId].map(sessionId => ({ sessionId,
       title: sessionId === longCodeId ? 'Code 长会话消息导航' : sessionId === nestedCodeId ? 'Code 内层滚动导航'
         : sessionId === followCodeId ? 'Code 追加消息导航' : 'Code 消息导航', lastAt: now, messageCount: histories.get(sessionId)!.length }))
@@ -126,7 +126,7 @@ async function seed(mode: Mode, targetSessionId = session(mode)): Promise<void> 
       createdAt: now, updatedAt: now, workspacePath: workspaceRoot, modelId: model, attachments: [], sources: [] }], activeTaskId: id, homeSources: [] }))
     localStorage.setItem('aether.app.mode', mode)
     localStorage.setItem('aether.work.view.v1', JSON.stringify({ page: 'home', collapsed: false, workspace: false, tab: 'files', pane: 'conversation', ratio: 56 }))
-  }, { key: storageKey, mode, id: workId, model, workspaceRoot, now })
+  }, { key: storageKey, mode, id: sessionId, model, workspaceRoot, now })
   await page.reload(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
   if (mode === 'code') {
     const history = surface(mode).getByRole('button', { name: '会话历史', exact: true })
@@ -246,14 +246,14 @@ test.describe.serial('Code / Work 消息导航', () => {
 
   test('Work 上一条读取未加载正文后准确定位，并能继续双向逐条导航', async () => {
     await seed('work'); await openNav('work')
-    heldAnchor = userId(workId, 7)
+    heldAnchor = userId(sessionId, 7)
     await row('work', 7).click()
     await expect.poll(() => Boolean(held)).toBe(true)
     await expect(scroller('work').locator(`[data-turn-id="${turnId('work', 7)}"]`)).toHaveCount(0)
     releaseRead(); await assertTarget('work', 7)
     for (const index of [6, 5, 4]) {
       await nav('work').getByRole('button', { name: '上一条', exact: true }).click(); await assertTarget('work', index)
-      expect(reads.some(read => read.sessionId === workId && read.anchor === userId(workId, index))).toBe(true)
+      expect(reads.some(read => read.sessionId === sessionId && read.anchor === userId(sessionId, index))).toBe(true)
     }
     for (const index of [5, 6, 7]) {
       await nav('work').getByRole('button', { name: '下一条', exact: true }).click(); await assertTarget('work', index)
@@ -286,7 +286,7 @@ test.describe.serial('Code / Work 消息导航', () => {
 
   test('Work 旧历史响应晚到时保留最新上一条目标，不跳回旧轮次', async () => {
     await seed('work'); await openNav('work')
-    heldAnchor = userId(workId, 7)
+    heldAnchor = userId(sessionId, 7)
     await row('work', 7).click(); await expect.poll(() => Boolean(held)).toBe(true)
     await expect(row('work', 7)).toHaveAttribute('aria-current', 'true')
     await nav('work').getByRole('button', { name: '上一条', exact: true }).click()
@@ -297,9 +297,9 @@ test.describe.serial('Code / Work 消息导航', () => {
     }))
     // Display reads are serialized. Hold the newer request as soon as the old
     // response is released, exposing the otherwise brief stale-response window.
-    releaseRead(userId(workId, 6))
+    releaseRead(userId(sessionId, 6))
     await expect.poll(() => Boolean(held)).toBe(true)
-    expect(reads.at(-1)).toEqual({ sessionId: workId, anchor: userId(workId, 6), limit: 2 })
+    expect(reads.at(-1)).toEqual({ sessionId: sessionId, anchor: userId(sessionId, 6), limit: 2 })
     // Work caches the stale response but preserves firstId until the latest
     // navigation completes; an old response must not replace that mounted window.
     await expect.poll(() => scroller('work').evaluate(element => Array.from(element.querySelectorAll<HTMLElement>('.work-conversation__content > .work-conversation-turn')).map(turn => turn.dataset.turnId))).toEqual(readingWindow.anchors)

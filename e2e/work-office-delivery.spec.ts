@@ -11,11 +11,11 @@ import type { EngineTodo } from '../src/shared/ipc'
 import type { FinalResult } from '../src/shared/final-result'
 import type { ChatMessage } from '../src/renderer/src/core/engine/useChat'
 import { finalAnswerForMessage } from '../src/renderer/src/core/engine/final-result'
-import { workDeliveryProse } from '../src/renderer/src/contrib/work/work-delivery-prose'
-import { workMessagePresentation, workMessageTimeline } from '../src/renderer/src/contrib/work/work-message-timeline'
-import { workMessageRunning } from '../src/renderer/src/contrib/work/work-tool-presentation'
+import { sessionDeliveryProse } from '../src/renderer/src/features/conversation/delivery-prose'
+import { sessionMessagePresentation, sessionMessageTimeline } from '../src/renderer/src/features/conversation/message-timeline'
+import { sessionMessageRunning } from '../src/renderer/src/features/conversation/tool-presentation'
 
-let WorkTodoProgress: typeof import('../src/renderer/src/contrib/work/WorkTodoProgress').WorkTodoProgress
+let TodoProgress: typeof import('../src/renderer/src/features/conversation/TodoProgress').TodoProgress
 let fixture = ''
 test.beforeAll(async () => {
   // Playwright transforms imported JSX into its component-testing wire format.
@@ -24,9 +24,9 @@ test.beforeAll(async () => {
   mkdirSync(parent, { recursive: true })
   fixture = mkdtempSync(join(parent, 'office-delivery-ssr-'))
   const outfile = join(fixture, 'todo.cjs')
-  await build({ entryPoints: [resolve(__dirname, '../src/renderer/src/contrib/work/WorkTodoProgress.tsx')],
+  await build({ entryPoints: [resolve(__dirname, '../src/renderer/src/features/conversation/TodoProgress.tsx')],
     outfile, bundle: true, platform: 'node', format: 'cjs', jsx: 'automatic', external: ['react'] })
-  WorkTodoProgress = createRequire(__filename)(outfile).WorkTodoProgress
+  TodoProgress = createRequire(__filename)(outfile).TodoProgress
 })
 test.afterAll(() => {
   if (!fixture) return
@@ -48,21 +48,21 @@ const prose = `三份文件已完成。\n\n${list}\n\n**Excel 台账**：6 张�
 
 test('published Office cards replace only the duplicate download list, preserving manifest and source', () => {
   const manifest = { ...result, text: prose }, before = structuredClone(manifest)
-  const displayed = workDeliveryProse(prose, manifest, context)
+  const displayed = sessionDeliveryProse(prose, manifest, context)
   expect(displayed).not.toContain('/api/v1/workspace/file/download')
   expect(displayed).toContain('三份文件已完成。')
   expect(displayed).toContain('**Excel 台账**：6 张表、11 个公式。')
   expect(displayed).toContain('请核对 PPT 第 3 页。')
   expect(manifest).toEqual(before)
-  expect(workDeliveryProse(displayed, manifest, context)).toBe(displayed)
+  expect(sessionDeliveryProse(displayed, manifest, context)).toBe(displayed)
 })
 
 test('unpublished, empty, foreign-session and non-card views retain their only download entry', () => {
   for (const manifest of [undefined, { ...result, items: [] }, { ...result, sessionId: 'other' }]) {
-    expect(workDeliveryProse(prose, manifest, context)).toBe(prose)
+    expect(sessionDeliveryProse(prose, manifest, context)).toBe(prose)
   }
   const foreign = `- [${names[0]}](${link(0, 'other')})`
-  expect(workDeliveryProse(foreign, result, context)).toBe(foreign)
+  expect(sessionDeliveryProse(foreign, result, context)).toBe(foreign)
 })
 
 test('Windows exported answers remove the same list while preserving CRLF and mixed source newlines', () => {
@@ -71,7 +71,7 @@ test('Windows exported answers remove the same list while preserving CRLF and mi
     [prose.replace(/\n/g, '\r'), list.replace(/\n/g, '\r')],
     [`旧记录\r\n\r\n${prose}\r\n保留说明`, list]
   ]) {
-    const displayed = workDeliveryProse(text, result, context)
+    const displayed = sessionDeliveryProse(text, result, context)
     expect(displayed).toBe(text.replace(duplicateList, ''))
     expect(displayed).not.toContain('/api/v1/workspace/file/download')
     expect(displayed).toContain('**Excel 台账**：6 张表、11 个公式。')
@@ -81,13 +81,13 @@ test('Windows exported answers remove the same list while preserving CRLF and mi
 
 test('canonical manifest paths match relative downloads in the owning workspace, never just by filename', () => {
   const canonical = { ...result, items: result.items.map(item => ({ ...item, path: `d:\\PROJECT\\${item.path.replace(/\//g, '\\')}` })) }
-  expect(workDeliveryProse(prose, canonical, context)).toBe(workDeliveryProse(prose, result, context))
+  expect(sessionDeliveryProse(prose, canonical, context)).toBe(sessionDeliveryProse(prose, result, context))
   const sibling = { ...canonical, items: canonical.items.map(item => ({ ...item, path: item.path.replace('PROJECT', 'PROJECT-copy') })) }
-  expect(workDeliveryProse(prose, sibling, context)).toBe(prose)
-  expect(workDeliveryProse(prose, canonical, { sessionId: context.sessionId })).toBe(prose)
+  expect(sessionDeliveryProse(prose, sibling, context)).toBe(prose)
+  expect(sessionDeliveryProse(prose, canonical, { sessionId: context.sessionId })).toBe(prose)
   const linux = { ...result, items: result.items.map(item => ({ ...item, path: `/project/${item.path}` })) }
-  expect(workDeliveryProse(prose, linux, { ...context, workspaceRoot: '/project' })).not.toContain('/download?')
-  expect(workDeliveryProse(prose, linux, { ...context, workspaceRoot: '/Project' })).toBe(prose)
+  expect(sessionDeliveryProse(prose, linux, { ...context, workspaceRoot: '/project' })).not.toContain('/download?')
+  expect(sessionDeliveryProse(prose, linux, { ...context, workspaceRoot: '/Project' })).toBe(prose)
 })
 
 test('semantic labels, instructions, code, quotes, task lists, tables and mixed lists remain readable', () => {
@@ -104,16 +104,16 @@ test('semantic labels, instructions, code, quotes, task lists, tables and mixed 
     `下载 [${names[0]}](${link()}) 后检查第 2 页。`,
     `- [${names[0]}](https://unrelated.example${link()})`
   ]
-  for (const text of cases) expect(workDeliveryProse(text, result, context), text).toBe(text)
+  for (const text of cases) expect(sessionDeliveryProse(text, result, context), text).toBe(text)
 })
 
 test('verified local/API paths and reference links match exact manifest paths without rewriting surrounding text', () => {
   for (const href of [link(), `https://engine.example${link()}`, `<D:/project/${result.items[0].path}>`, `<${result.items[0].path}>`]) {
     const text = `before\n\n- [${names[0]}](${href})\n\nafter`
-    expect(workDeliveryProse(text, result, context, 'https://engine.example')).toMatch(/^before\s+after$/)
+    expect(sessionDeliveryProse(text, result, context, 'https://engine.example')).toMatch(/^before\s+after$/)
   }
   const references = `[office]: ${link()}\n\n介绍\n\n- [${names[0]}][office]\n\n说明`
-  expect(workDeliveryProse(references, result, context)).toBe(references.replace(`- [${names[0]}][office]`, ''))
+  expect(sessionDeliveryProse(references, result, context)).toBe(references.replace(`- [${names[0]}][office]`, ''))
 })
 
 test('stream and durable manifest converge to one answer, whose cards are the only bare download entry', () => {
@@ -124,11 +124,11 @@ test('stream and durable manifest converge to one answer, whose cards are the on
       userMessageId: 'user', assistantMessageId: 'assistant', seq: 1, version: 1, status: 'running', createdAt: 1, updatedAt: 2, pending: [] } }
   expect(finalAnswerForMessage(message, result.sessionId)).toBe(false)
   message.status = 'done'; message.run = { ...message.run!, status: 'succeeded' }
-  const presentation = workMessagePresentation(workMessageTimeline(message), undefined,
-    finalAnswerForMessage(message, result.sessionId), workMessageRunning(message))
+  const presentation = sessionMessagePresentation(sessionMessageTimeline(message), undefined,
+    finalAnswerForMessage(message, result.sessionId), sessionMessageRunning(message))
   const answers = presentation.filter(segment => segment.kind === 'answer')
   expect(answers).toHaveLength(1)
-  expect(workDeliveryProse(answers[0].text, result, context)).not.toContain('/download?')
+  expect(sessionDeliveryProse(answers[0].text, result, context)).not.toContain('/download?')
   expect(JSON.stringify(presentation.filter(segment => segment.kind === 'process'))).not.toContain('/download?')
   expect(message.content).toBe(prose)
 })
@@ -138,7 +138,7 @@ const todos: EngineTodo[] = Array.from({ length: 6 }, (_, index) => ({ id: `todo
 
 test('settled checklist preserves 5/6 truth and stops every spinner, including the collapsed detail DOM', () => {
   const before = structuredClone(todos)
-  const html = renderToStaticMarkup(createElement(WorkTodoProgress, { todos, running: false }))
+  const html = renderToStaticMarkup(createElement(TodoProgress, { todos, running: false }))
   expect(html).toContain('5 / 6 已完成')
   expect(html).toContain('登记并交付三份文件 · 未确认完成')
   expect(html).toContain('data-status="in_progress"')
@@ -148,10 +148,10 @@ test('settled checklist preserves 5/6 truth and stops every spinner, including t
 })
 
 test('live checklist retains progress and reconciled completion removes the pending description', () => {
-  const live = renderToStaticMarkup(createElement(WorkTodoProgress, { todos, running: true }))
+  const live = renderToStaticMarkup(createElement(TodoProgress, { todos, running: true }))
   expect(live).toContain('ui-spinner')
   expect(live).toContain('进行中')
-  const completed = renderToStaticMarkup(createElement(WorkTodoProgress, {
+  const completed = renderToStaticMarkup(createElement(TodoProgress, {
     todos: todos.map(todo => ({ ...todo, status: 'done' })), running: false
   }))
   expect(completed).toContain('6 / 6 已完成')

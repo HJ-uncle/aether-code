@@ -232,12 +232,12 @@ function lifecyclePeak(records) {
   }
   return peak
 }
-const successfulWorkTools = [...tools.values()].filter(tool => tool.success && !/^(subagent(?:_|$)|plan_update$|todo_)/.test(tool.name ?? ''))
-const toolActivity = { totalRecorded: tools.size, successfulRecorded: [...tools.values()].filter(tool => tool.success).length, successfulWorkTools: successfulWorkTools.length,
-  excludedFromWorkTools: 'subagent orchestration, plan_update, todo_*; successful tool receipts do not prove business correctness or visual acceptance.',
-  byPhase: phases.map(phase => ({ name: phase.name, rootSuccessfulWorkTools: successfulWorkTools.filter(tool => tool.round === phase.name && tool.kind === 'root').length,
-    childSuccessfulWorkTools: successfulWorkTools.filter(tool => tool.round === phase.name && tool.kind === 'child').length })),
-  timedSuccessfulTools: successfulWorkTools.filter(tool => finite(tool.startedAt) && finite(tool.finishedAt) && tool.finishedAt > tool.startedAt).length }
+const successfulSessionTools = [...tools.values()].filter(tool => tool.success && !/^(subagent(?:_|$)|plan_update$|todo_)/.test(tool.name ?? ''))
+const toolActivity = { totalRecorded: tools.size, successfulRecorded: [...tools.values()].filter(tool => tool.success).length, successfulSessionTools: successfulSessionTools.length,
+  excludedFromSessionTools: 'subagent orchestration, plan_update, todo_*; successful tool receipts do not prove business correctness or visual acceptance.',
+  byPhase: phases.map(phase => ({ name: phase.name, rootSuccessfulSessionTools: successfulSessionTools.filter(tool => tool.round === phase.name && tool.kind === 'root').length,
+    childSuccessfulSessionTools: successfulSessionTools.filter(tool => tool.round === phase.name && tool.kind === 'child').length })),
+  timedSuccessfulTools: successfulSessionTools.filter(tool => finite(tool.startedAt) && finite(tool.finishedAt) && tool.finishedAt > tool.startedAt).length }
 const enginePeriods = []
 for (const sample of metrics) {
   const identity = metricIdentity(sample)
@@ -268,8 +268,8 @@ const md = ['# 六角色原生办公性能审计', '', `数据截至：${local(c
   `跨全部阶段的生命周期峰值：${report.concurrency.peakRoots} 根、${report.concurrency.peakRoles} 个不同角色；六角色生命周期重叠总计 ${duration(report.concurrency.sixRoleDurationMs)}。这不等于六角色同时有工具/业务产出。`, '',
   `根与子任务生命周期合计峰值：${report.combinedLifecyclePeak.count} 个（${report.combinedLifecyclePeak.roots} 根 + ${report.combinedLifecyclePeak.children} 子），首次峰值区间 ${local(report.combinedLifecyclePeak.from)} — ${local(report.combinedLifecyclePeak.to)}；子任务按 runId 去重并使用 startedAt/finishedAt，缺 startedAt 时才回退 createdAt。父任务等待子任务也处于生命周期内，不能把此数当成并行 CPU 工作线程数。`, '',
   '| 阶段 | 根 + 子生命周期峰值 | 成功普通工具回执（根 / 子） |', '|---|---|---|',
-  ...report.combinedLifecycleByPhase.map(phase => { const activity = toolActivity.byPhase.find(value => value.name === phase.name); return `| ${phase.name} | ${phase.count}（${phase.roots} + ${phase.children}） | ${activity.rootSuccessfulWorkTools} / ${activity.childSuccessfulWorkTools} |` }), '',
-  `共保存 ${toolActivity.totalRecorded} 条去重工具回执，其中 ${toolActivity.successfulRecorded} 条标记成功；排除子任务编排、plan_update、todo_* 后为 ${toolActivity.successfulWorkTools} 条普通成功工具回执。包含真实读取、计算、浏览器观察与文件操作，仍不等于全部业务产物正确；JSON 保留 callId/runId 与时间证据。模型等待期间 CPU 低不能据此称 CPU 高压测试通过。`, '',
+  ...report.combinedLifecycleByPhase.map(phase => { const activity = toolActivity.byPhase.find(value => value.name === phase.name); return `| ${phase.name} | ${phase.count}（${phase.roots} + ${phase.children}） | ${activity.rootSuccessfulSessionTools} / ${activity.childSuccessfulSessionTools} |` }), '',
+  `共保存 ${toolActivity.totalRecorded} 条去重工具回执，其中 ${toolActivity.successfulRecorded} 条标记成功；排除子任务编排、plan_update、todo_* 后为 ${toolActivity.successfulSessionTools} 条普通成功工具回执。包含真实读取、计算、浏览器观察与文件操作，仍不等于全部业务产物正确；JSON 保留 callId/runId 与时间证据。模型等待期间 CPU 低不能据此称 CPU 高压测试通过。`, '',
   '| 阶段 | 根数 / 不同角色数 | 本阶段并发峰值 | 同时运行的其他阶段 |', '|---|---|---|---|',
   ...phases.map(phase => `| ${phase.name} | ${phase.rootCount} / ${phase.roleCount} | ${phase.concurrency.peakRoots} | ${phase.overlappingRounds.join('、') || '无'} |`), '',
   '以下各阶段指标是该时间窗口的共享引擎测量值。重叠阶段不可分别归因、相加成总成本；一个阶段不满六根并不代表遗漏任务，阶段完整性按该阶段实际接纳的 runId 判断。', '',

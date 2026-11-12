@@ -2,8 +2,8 @@
 import { test, expect } from '@playwright/test'
 import { createHash } from 'node:crypto'
 import type { FinalResultItem } from '../src/shared/final-result'
-import { decodeFinalResultAsset } from '../src/renderer/src/contrib/work/final-result-asset'
-import { finalResultText } from '../src/renderer/src/contrib/work/final-result-text'
+import { decodeFinalResultAsset } from '../src/renderer/src/features/artifacts/final-result-asset'
+import { finalResultText } from '../src/renderer/src/features/artifacts/final-result-text'
 
 function fixture(path: string, bytes: Buffer, mimeType = 'application/octet-stream') {
   const item: FinalResultItem = { path, name: '任意显示名称', id: 'asset', assetId: 'asset', kind: 'file',

@@ -1,6 +1,6 @@
 /** Read receipt compatibility and pagination presentation; pure functions, no Electron window or build. */
 import { expect, test } from '@playwright/test'
-import { readActivityFiles, readActivityPreview } from '../src/renderer/src/contrib/work/work-activity-presentation'
+import { readActivityFiles, readActivityPreview } from '../src/renderer/src/features/conversation/activity-presentation'
 
 const hash = 'a'.repeat(64)
 const version = { path: 'D:/workspace/example.ts', expectedHash: `sha256:${hash}`, encoding: 'utf-8', lineEnding: 'LF', utf8Bom: false }

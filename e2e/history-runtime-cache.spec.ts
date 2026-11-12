@@ -10,7 +10,7 @@ import { getSubagentRuns, ingestSubagentRun, refreshSubagentRun, restartSubagent
 import { activateCommandSession, deactivateCommandSession, getCommandJobs, ingestCommandJob,
   refreshCommandJobs, refreshCommandOutput } from '../src/renderer/src/core/engine/command-job-store'
 import { attachSubagentRuns } from '../src/renderer/src/core/engine/subagent-state'
-import { sumUsage } from '../src/renderer/src/contrib/chat/usage'
+import { sumUsage } from '../src/renderer/src/features/conversation/shared/usage'
 
 function child(id: string, sessionId = 'parent', totalTokens = 100): SubagentRunV1 {
   return { schemaVersion: 1, runId: id, tenantId: 'test', rootSessionId: sessionId,

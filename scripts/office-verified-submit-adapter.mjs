@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createVerifiedOfficeSubmit } from './office-verified-submit.mjs';
-import { createReadonlyWorkQueueReader } from './office-readonly-work-queue.mjs';
+import { createReadonlySessionQueueReader } from './office-readonly-work-queue.mjs';
 
 const ROOT = 'D:/dev/aether-code/.ae/office-company-20261023163242581';
 const RUNNER = 'D:/dev/aether-code/scripts/run-office-company-campaign.mjs';
@@ -34,7 +34,7 @@ export function effectiveOfficePrompt(raw) {
 }
 
 /** Executes inside the renderer. Reads only DOM/localStorage and existing React props. */
-export function readActiveWorkSnapshot({ storageKey }) {
+export function readActiveSessionSnapshot({ storageKey }) {
   const visible = element => Boolean(element && element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden');
   const surface = document.querySelector('#mode-work');
   const editors = surface ? [...surface.querySelectorAll('.input-composer__input[role="textbox"]')].filter(visible) : [];
@@ -47,16 +47,16 @@ export function readActiveWorkSnapshot({ storageKey }) {
     workspacePath: task.workspacePath, archived: task.archived === true }) : null;
   const editor = editors.length === 1 ? editors[0] : null;
   const key = editor && Object.keys(editor).find(name => name.startsWith('__reactFiber$'));
-  let fiber = key ? editor[key] : null, controller = null, workHome = null;
+  let fiber = key ? editor[key] : null, controller = null, sessionHome = null;
   for (let depth = 0; fiber && depth < 48; depth++, fiber = fiber.return) {
     const props = fiber.memoizedProps;
     if (props?.controller?.activeTask && typeof props.controller.draftSource === 'string') {
-      controller = props.controller; workHome = props.home === true; break;
+      controller = props.controller; sessionHome = props.home === true; break;
     }
   }
-  return { workVisible: surface?.getAttribute('aria-hidden') === 'false' && visible(surface), editorCount: editors.length,
+  return { sessionVisible: surface?.getAttribute('aria-hidden') === 'false' && visible(surface), editorCount: editors.length,
     currentRows: currentRows.map(row => row.getAttribute('title')), storageKey, activeTaskId: state.activeTaskId,
-    tasks: state.tasks.map(project), controller: controller ? { task: project(controller.activeTask), home: workHome,
+    tasks: state.tasks.map(project), controller: controller ? { task: project(controller.activeTask), home: sessionHome,
       draftSource: controller.draftSource, modelId: controller.modelId || controller.defaultModelId,
       ready: controller.ready, modelReady: controller.modelReady, error: controller.error ?? null,
       loading: controller.loading, streaming: controller.streaming, launching: controller.launching,
@@ -68,10 +68,10 @@ export function readActiveWorkSnapshot({ storageKey }) {
     sendLabels: surface ? [...surface.querySelectorAll('button.chat__send')].filter(visible).map(button => ({ label: button.getAttribute('aria-label'), disabled: button.disabled })) : [] };
 }
 
-export function validateActiveWorkSnapshot(snapshot, expected, { idle = false } = {}) {
+export function validateActiveSessionSnapshot(snapshot, expected, { idle = false } = {}) {
   const persisted = snapshot?.tasks?.filter(task => task.id === expected.sessionId) ?? [];
   need(persisted.length === 1 && !persisted[0].archived, 'WORK_TASK_MISSING_OR_AMBIGUOUS');
-  need(snapshot.workVisible && snapshot.editorCount === 1 && snapshot.activeTaskId === expected.sessionId
+  need(snapshot.sessionVisible && snapshot.editorCount === 1 && snapshot.activeTaskId === expected.sessionId
     && snapshot.currentRows.length === 1 && snapshot.currentRows[0] === persisted[0].title, 'WORK_ACTIVE_DOM_MISMATCH');
   const controller = snapshot.controller;
   need(controller && !controller.home && controller.task?.id === expected.sessionId, 'WORK_ACTIVE_CONTROLLER_MISMATCH');
@@ -298,7 +298,7 @@ export async function observeOfficeVerifiedSubmitInstallation(c) {
     need(samePath(host.userData, config.profile) && host.queueBackend !== 'sqlite-worker-opt-in', 'HOST_PROFILE_OR_QUEUE_BACKEND_MISMATCH');
     const snapshot = await read('engine', () => c.page.evaluate(() => window.aether.engine.getSnapshot()));
     assert.deepEqual(engineIdentity(snapshot), first.engine, 'ENGINE_IDENTITY_CHANGED');
-    const reader = createReadonlyWorkQueueReader({ profile: config.profile, backend: 'json-journal', sourcePins: QUEUE_PINS });
+    const reader = createReadonlySessionQueueReader({ profile: config.profile, backend: 'json-journal', sourcePins: QUEUE_PINS });
     const roles = {};
     for (const [role, target] of Object.entries(config.expectedTargets)) {
       const status = await read('status-' + role, () => c.request('GET', '/chat/status', undefined, { sessionId: target.sessionId }));
@@ -313,9 +313,9 @@ export async function observeOfficeVerifiedSubmitInstallation(c) {
       roles[role] = { sessionId: target.sessionId, runId: status.run.runId, rootStatus: status.run.status,
         queueRevision: queue.state.revision, queueSha256: sha(JSON.stringify(queue.state)), scope };
     }
-    const active = await read('active-ui', () => c.page.evaluate(readActiveWorkSnapshot, { storageKey: 'aether.work.state.v1:' + encodeURIComponent(':account:' + first.engine.accountId) }));
+    const active = await read('active-ui', () => c.page.evaluate(readActiveSessionSnapshot, { storageKey: 'aether.work.state.v1:' + encodeURIComponent(':account:' + first.engine.accountId) }));
     const activeRole = Object.keys(config.expectedTargets).find(role => config.expectedTargets[role].sessionId === active.activeTaskId);
-    need(activeRole, 'ACTIVE_ROLE_UNKNOWN'); validateActiveWorkSnapshot(active, config.expectedTargets[activeRole], { idle: true });
+    need(activeRole, 'ACTIVE_ROLE_UNKNOWN'); validateActiveSessionSnapshot(active, config.expectedTargets[activeRole], { idle: true });
     assert.deepEqual(engineIdentity(await read('engine-after', () => c.page.evaluate(() => window.aether.engine.getSnapshot()))), first.engine, 'ENGINE_CHANGED_DURING_OBSERVATION');
     need(control.pending === 0 && Date.now() <= deadline, 'INSTALL_OBSERVATION_INCOMPLETE');
     return { schemaVersion: 1, observedAt: new Date().toISOString(), ready: true, upgradeSha256: UPGRADE_SHA,
@@ -341,7 +341,7 @@ export async function installOfficeVerifiedSubmit(c) {
     need(false, 'PERSISTED_INSTALLATION_REQUIRES_REVIEW');
   }
   const proof = await observeOfficeVerifiedSubmitInstallation(c), config = frozenConfig(c);
-  const reader = createReadonlyWorkQueueReader({ profile: config.profile, backend: 'json-journal', sourcePins: QUEUE_PINS });
+  const reader = createReadonlySessionQueueReader({ profile: config.profile, backend: 'json-journal', sourcePins: QUEUE_PINS });
   const journal = { schemaVersion: 1, submissions: [], lease: null }, promptOrigins = new Map();
   const storageKey = 'aether.work.state.v1:' + encodeURIComponent(':account:' + proof.engine.accountId);
   const targetFor = sessionId => Object.values(config.expectedTargets).find(target => target.sessionId === sessionId);
@@ -352,28 +352,28 @@ export async function installOfficeVerifiedSubmit(c) {
   const readTarget = async role => {
     const expected = config.expectedTargets[role]; need(expected, 'UNKNOWN_ROLE');
     const engine = await checkEngine();
-    const observed = await c.page.evaluate(readActiveWorkSnapshot, { storageKey });
-    validateActiveWorkSnapshot(observed, expected);
+    const observed = await c.page.evaluate(readActiveSessionSnapshot, { storageKey });
+    validateActiveSessionSnapshot(observed, expected);
     return { ...expected, engine, newTask: false };
   };
   const ports = {
     async prepareTarget(role, _stage, options) {
       need(!options.startRole, 'unsupported-existing-campaign'); await checkEngine();
       await c.selectTask(role);
-      const observed = await c.page.evaluate(readActiveWorkSnapshot, { storageKey });
-      validateActiveWorkSnapshot(observed, config.expectedTargets[role], { idle: true });
+      const observed = await c.page.evaluate(readActiveSessionSnapshot, { storageKey });
+      validateActiveSessionSnapshot(observed, config.expectedTargets[role], { idle: true });
       return readTarget(role);
     }, readTarget,
     async prepareComposer(role, prompt) {
       await readTarget(role);
       const editor = c.page.locator('#mode-work .input-composer__input[role="textbox"]').filter({ visible: true });
       need(await editor.count() === 1, 'COMPOSER_AMBIGUOUS'); await editor.fill(prompt);
-      const observed = await c.page.evaluate(readActiveWorkSnapshot, { storageKey });
-      validateActiveWorkSnapshot(observed, config.expectedTargets[role], { idle: true }); return observed.editorText;
+      const observed = await c.page.evaluate(readActiveSessionSnapshot, { storageKey });
+      validateActiveSessionSnapshot(observed, config.expectedTargets[role], { idle: true }); return observed.editorText;
     },
     async clickSend(role) {
-      const observed = await c.page.evaluate(readActiveWorkSnapshot, { storageKey });
-      validateActiveWorkSnapshot(observed, config.expectedTargets[role], { idle: true });
+      const observed = await c.page.evaluate(readActiveSessionSnapshot, { storageKey });
+      validateActiveSessionSnapshot(observed, config.expectedTargets[role], { idle: true });
       need(observed.sendLabels.length === 1 && observed.sendLabels[0].label === '发送' && !observed.sendLabels[0].disabled, 'SEND_ACTION_NOT_IDLE_SEND');
       await checkEngine();
       const send = c.page.locator('#mode-work').getByRole('button', { name: '发送', exact: true }).filter({ visible: true });

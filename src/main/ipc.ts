@@ -11,7 +11,7 @@ import { IPC } from '../shared/ipc'
 import { readWindowVisibility } from './window-visibility'
 import { registerOfficeRender } from './office-render'
 import { accountService, configureAccountService } from './account/service'
-import { registerWorkNextTurnQueue } from './work-next-turn-ipc'
+import { registerSessionNextTurnQueue } from './session-next-turn-ipc'
 import { disconnectBrowserClients } from './browser-ipc'
 import type { AccountProfileInput } from '../shared/account'
 import type {
@@ -121,7 +121,7 @@ function broadcast(channel: string, payload: unknown): void {
 
 export function registerIpcHandlers(): void {
   registerOfficeRender()
-  registerWorkNextTurnQueue()
+  registerSessionNextTurnQueue()
   onGraphicsChanged(snapshot => broadcast(IPC.event.graphicsChanged, snapshot))
   ipcMain.handle(IPC.invoke.graphicsGetSnapshot, getGraphicsSnapshot)
   ipcMain.handle(IPC.invoke.graphicsResetRecovery, resetGraphicsRecovery)

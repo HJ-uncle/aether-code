@@ -33,7 +33,6 @@
 .output__toolbar,
 .git-panel__toolbar,
 .explorer__toolbar,
-.editor-toolbar,
 .browser-navigation,
 .browser-options {
   min-height: var(--chrome-h);
@@ -44,8 +43,7 @@
 .history-view__toolbar,
 .output__toolbar,
 .git-panel__toolbar,
-.explorer__toolbar,
-.editor-toolbar {
+.explorer__toolbar {
   padding-inline: var(--space-3);
 }
 
@@ -53,7 +51,6 @@
 .output__toolbar,
 .git-panel__toolbar,
 .explorer__toolbar,
-.editor-toolbar,
 .browser-navigation,
 .browser-options {
   backdrop-filter: blur(18px) saturate(150%);
@@ -120,8 +117,7 @@
 
 .history-view__empty--error,
 .notice--error,
-.browser-error,
-.changes-panel__error {
+.browser-error {
   color: var(--danger-fg);
   background: var(--danger-soft);
 }
@@ -1214,15 +1210,6 @@
   }
 }
 
-.todo-tray__content::-webkit-scrollbar {
-  width: 5px;
-}
-
-.todo-tray__content::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-  background-clip: content-box;
-}
-
 @container workbench (max-width: 520px) {
   .search-view__widget,
   .search-view__results {
@@ -1270,7 +1257,6 @@
   .output__toolbar,
   .git-panel__toolbar,
   .explorer__toolbar,
-  .editor-toolbar,
   .browser-navigation,
   .browser-options,
   .account-summary,

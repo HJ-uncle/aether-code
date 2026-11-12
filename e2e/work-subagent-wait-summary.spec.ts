@@ -4,7 +4,7 @@ import { chromium, expect, test, type Browser, type BrowserContext, type Page } 
 import { build } from 'esbuild'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { subagentWaitSummary } from '../src/renderer/src/contrib/chat/subagent-wait-summary'
+import { subagentWaitSummary } from '../src/renderer/src/features/conversation/shared/subagent-wait-summary'
 
 test('single and batch waits count only complete, distinct targets', () => {
   expect(subagentWaitSummary('{"runId":"legacy-run","timeoutMs":0}')).toBe('1 个任务')
@@ -24,7 +24,7 @@ test.describe('wait header DOM', () => {
   let browser: Browser, context: BrowserContext, page: Page, bundle: string
   let errors: string[]
   const css = ['assets/tokens.css', 'assets/base.css', 'assets/components.css', 'assets/motion.css',
-    'contrib/work/work-inline-activity.css', 'workbench/hover-detail.css']
+    'features/conversation/inline-activity.css', 'ui/hover-detail.css']
     .map(file => readFileSync(resolve(root, 'src/renderer/src', file), 'utf8')).join('\n')
 
   test.beforeAll(async () => {
@@ -33,14 +33,14 @@ test.describe('wait header DOM', () => {
       import { createRoot } from 'react-dom/client'
       import { AppContext } from './src/renderer/src/core/app-context'
       import { DEFAULT_SETTINGS } from './src/shared/ipc'
-      import { CompactToolRow } from './src/renderer/src/contrib/chat/CompactToolRow'
-      import { WorkToolActivity } from './src/renderer/src/contrib/work/WorkToolActivity'
-      import { serializeMessages } from './src/renderer/src/contrib/chat/message-export'
+      import { CompactToolRow } from './src/renderer/src/features/conversation/shared/CompactToolRow'
+      import { ToolActivity } from './src/renderer/src/features/conversation/ToolActivity'
+      import { serializeMessages } from './src/renderer/src/features/conversation/shared/message-export'
       const root = createRoot(document.getElementById('fixture'))
       const context = { engine: { snapshot: { mode: 'local' } }, settings: DEFAULT_SETTINGS, userSettings: DEFAULT_SETTINGS,
         ready: false, settingsLoaded: true, updateSettings: async () => { throw Error('No settings writes') } }
       window.renderWait = ({ mode = 'work', ...tool }) => root.render(<AppContext.Provider value={context}>
-        {mode === 'work' ? <WorkToolActivity tool={tool} fileContext={{sessionId:'wait-fixture',workspaceRoot:'D:/fixture'}} defaultOpen={false} />
+        {mode === 'work' ? <ToolActivity tool={tool} fileContext={{sessionId:'wait-fixture',workspaceRoot:'D:/fixture'}} defaultOpen={false} />
           : <CompactToolRow tool={tool} defaultOpen={false} />}
       </AppContext.Provider>)
       window.exportWait = tool => serializeMessages([{ id:'message',role:'assistant',content:'',thinking:'',tools:[tool],items:[],status:'done',createdAt:0 }])

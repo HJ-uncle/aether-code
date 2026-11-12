@@ -47,7 +47,7 @@ test.beforeAll(async () => {
     import { createRoot } from 'react-dom/client'
     import { AppContext } from './src/renderer/src/core/app-context'
     import { DEFAULT_SETTINGS } from './src/shared/ipc'
-    import { SubagentResultReader } from './src/renderer/src/contrib/chat/SubagentResultReader'
+    import { SubagentResultReader } from './src/renderer/src/features/conversation/shared/SubagentResultReader'
     import { publishEngineSource } from './src/renderer/src/core/engine/source'
     const root = createRoot(document.getElementById('fixture'))
     window.setFixtureSource = identity => publishEngineSource({ mode:'remote',baseUrl:${JSON.stringify(origin)},instanceId:identity,phase:'ready' })
@@ -81,7 +81,7 @@ test.beforeEach(async () => {
   context = await browser.newContext({ viewport: { width: 420, height: 600 }, reducedMotion: 'reduce' })
   page = await context.newPage(); page.on('pageerror', error => errors.push(error.message))
   await page.setContent('<html data-appearance="light"><body><main id="fixture"></main></body></html>')
-  const css = ['assets/tokens.css', 'assets/base.css', 'assets/motion.css', 'contrib/chat/subagent-result-reader.css']
+  const css = ['assets/tokens.css', 'assets/base.css', 'assets/motion.css', 'features/conversation/shared/subagent-result-reader.css']
     .map(file => readFileSync(resolve(root, 'src/renderer/src', file), 'utf8')).join('\n')
   await page.addStyleTag({ content: css + '\nbody{padding:16px;overflow:auto}#fixture{width:360px;max-width:100%}' })
   await page.addScriptTag({ content: bundle })

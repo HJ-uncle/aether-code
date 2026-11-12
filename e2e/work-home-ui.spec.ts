@@ -9,10 +9,10 @@ import { basename, dirname, join, resolve } from 'node:path'
 import type { RootRun } from '../src/shared/root-run'
 import type { ChatSsePayload } from '../src/shared/ipc'
 import type { EngineHistoryRow } from '../src/renderer/src/core/engine/chat-history'
-import type { WorkState, WorkTask } from '../src/renderer/src/contrib/work/work-state'
+import type { SessionState, SessionTask } from '../src/renderer/src/features/sessions/state'
 import type { ChatAttachment } from '../src/renderer/src/core/engine/useChat'
 import { engineStorageKey, sessionStorageKey } from '../src/renderer/src/core/engine/source'
-import { OUTLINE_ICON_PATHS } from '../src/renderer/src/workbench/outline-icons'
+import { OUTLINE_ICON_PATHS } from '../src/renderer/src/ui/outline-icons'
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
 const token = 'disposable-work-home-token', modelId = 'work-home-model'
@@ -22,7 +22,7 @@ const otherWorkspace = '/remote/home-ui/团队资料与项目成果/客户研究
 const foreignWorkspace = '/another-engine/private-workspace'
 const now = Date.now() - 60_000
 const longTitle = '请为当前项目整理一套面向技术客户的完整介绍材料，包含 Word 项目说明、Excel 功能清单与演示文稿，并逐项核对最终交付文件和资料来源'
-const tasks: WorkTask[] = Array.from({ length: 52 }, (_, index) => ({
+const tasks: SessionTask[] = Array.from({ length: 52 }, (_, index) => ({
   id: `work-home-task-${index}`, title: index === 0 ? '正在整理会议纪要' : index === 1 ? '等待确认项目交付范围'
     : index === 4 ? longTitle : index === 51 ? '核对验收搜索关键词的历史记录' : `项目资料核对 ${String(index + 1).padStart(2, '0')}`,
   status: index === 0 ? 'running' : index === 1 ? 'waiting' : index === 2 ? 'error' : index === 3 ? 'stopped' : 'done',
@@ -61,7 +61,7 @@ function closeLiveStreams(): void {
   liveStreams.clear()
 }
 
-function resetFixture(fixtureTasks: readonly WorkTask[] = tasks): void {
+function resetFixture(fixtureTasks: readonly SessionTask[] = tasks): void {
   closeLiveStreams(); streamRequests.length = 0
   generation++; runs.clear(); histories.clear(); admissions.clear(); bindings.clear(); uploads.length = 0; files.clear(); chats.length = 0; chatWorkspaces.length = 0; bindingEvents.length = 0
   homeSessions.clear(); homeSessions.add(homeId)
@@ -209,10 +209,10 @@ const composer = (): Locator => home().getByRole('textbox', { name: '任务目�
 const recent = (): Locator => home().locator('.work-recent')
 const taskRows = (): Locator => recent().locator('.work-task-row')
 const taskSearch = (): Locator => recent().getByRole('searchbox', { name: '搜索 Work 任务', exact: true })
-async function savedHome(): Promise<WorkState> {
-  return page.evaluate(key => { window.dispatchEvent(new Event('blur')); return JSON.parse(localStorage.getItem(key) ?? '{}') as WorkState }, storageKey)
+async function savedHome(): Promise<SessionState> {
+  return page.evaluate(key => { window.dispatchEvent(new Event('blur')); return JSON.parse(localStorage.getItem(key) ?? '{}') as SessionState }, storageKey)
 }
-async function seed(options: Partial<Pick<WorkState, 'homeDraft' | 'homeWorkspacePath' | 'homeAttachments' | 'homeMentions' | 'homeSources'>> = {}, workspaceHistory: WorkspaceHistoryEntry[] = [], fixtureTasks: readonly WorkTask[] = tasks): Promise<void> {
+async function seed(options: Partial<Pick<SessionState, 'homeDraft' | 'homeWorkspacePath' | 'homeAttachments' | 'homeMentions' | 'homeSources'>> = {}, workspaceHistory: WorkspaceHistoryEntry[] = [], fixtureTasks: readonly SessionTask[] = tasks): Promise<void> {
   resetFixture(fixtureTasks)
   if (options.homeWorkspacePath === null) bindings.delete(homeId)
   await page.evaluate(({ key, tasks, modelId, workspaceRoot, homeId, options, workspaceHistoryKey, foreignHistoryKey, workspaceHistory, foreignWorkspace }) => {
@@ -385,7 +385,7 @@ test.describe.serial('Work 首页', () => {
       await page.keyboard.press('Escape'); await expect(dialog).toHaveCount(0)
       await expect(trigger).toHaveAttribute('aria-expanded', 'false'); await expect(trigger).toBeFocused()
     }
-    const selectListedTask = async (task: WorkTask): Promise<void> => {
+    const selectListedTask = async (task: SessionTask): Promise<void> => {
       await dialog.locator('.work-run-list__item-main').filter({ hasText: task.title }).click()
       await expect(dialog).toHaveCount(0)
       await expect.poll(async () => (await savedHome()).activeTaskId).toBe(task.id)
@@ -421,7 +421,7 @@ test.describe.serial('Work 首页', () => {
         }
       }
       await setWindow(1440)
-      await page.locator('.work-sidebar').getByRole('button', { name: '收起 Work 导航', exact: true }).click()
+      await page.locator('.work-sidebar').getByRole('button', { name: '收起 应用导航', exact: true }).click()
       await expect(page.locator('.work-view')).toHaveAttribute('data-collapsed', 'true')
       await assertHomeEntry(); await openList(); await closeWithEscape()
       await openList(); await selectListedTask(tasks[1])
@@ -481,7 +481,7 @@ test.describe.serial('Work 首页', () => {
   })
 
   test('Work 图标：导航语义、跨门户一致性与浅深主题', async ({}, info) => {
-    const sidebar = page.getByRole('complementary', { name: 'Work 导航', exact: true })
+    const sidebar = page.getByRole('complementary', { name: '应用导航', exact: true })
     const navigation = [
       ['工作台', 'dashboard'], ['项目', 'folder-outline'], ['Agent', 'account-outline'],
       ['插件', 'puzzle'], ['浏览器', 'globe'], ['自动化', 'clock-outline'], ['引擎监控', 'activity'],

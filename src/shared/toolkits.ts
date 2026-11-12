@@ -5,7 +5,7 @@ export const KNOWLEDGE_MANAGEMENT_TOOLKIT = 'knowledge-management'
 export const AUTOMATION_TOOLKIT = 'automation'
 export const PLUGIN_MANAGEMENT_TOOLKIT = 'plugin-management'
 export const MCP_MANAGEMENT_TOOLKIT = 'mcp-management'
-export const WORK_TOOLKITS = [{
+export const SESSION_TOOLKITS = [{
   id: AGENT_MANAGEMENT_TOOLKIT,
   name: 'Agent 管理',
   description: '创建和管理 Agent',
@@ -44,10 +44,10 @@ export function withToolkitSelection(current: readonly string[], selected: strin
   return [...new Set([...current.filter(id => !identity || pluginToolkitIdentity(id) !== identity), selected])]
 }
 export function isToolkitId(id: unknown): id is string {
-  return WORK_TOOLKITS.some(toolkit => toolkit.id === id) || isPluginToolkitId(id)
+  return SESSION_TOOLKITS.some(toolkit => toolkit.id === id) || isPluginToolkitId(id)
 }
 
-export interface WorkToolkit {
+export interface SessionToolkit {
   id: string
   name: string
   description: string
@@ -57,13 +57,13 @@ export interface WorkToolkit {
 }
 
 /** Known IDs describe the protocol; only the connected engine declares support. */
-export function parseWorkToolkits(raw: unknown): WorkToolkit[] {
+export function parseToolkitCatalogue(raw: unknown): SessionToolkit[] {
   if (!raw || typeof raw !== 'object' || !('toolkits' in raw) || !Array.isArray(raw.toolkits)) return []
   const seen = new Set<string>()
   return raw.toolkits.flatMap((row: unknown) => {
     if (!row || typeof row !== 'object') return []
     const item = row as Record<string, unknown>
-    const known = WORK_TOOLKITS.find(toolkit => toolkit.id === item.id)
+    const known = SESSION_TOOLKITS.find(toolkit => toolkit.id === item.id)
     const identity = known ?? (isPluginToolkitId(item.id) && typeof item.name === 'string' && item.name.trim() && item.name.length <= 200 &&
       typeof item.description === 'string' && item.description.length <= 2000
       ? { id: item.id, name: item.name, description: item.description } : null)
@@ -82,13 +82,13 @@ export function parseSessionToolkits(raw: unknown): string[] {
 }
 
 export function toolkitName(id: string, fallback?: string): string {
-  return WORK_TOOLKITS.find(toolkit => toolkit.id === id)?.name ?? fallback ?? id
+  return SESSION_TOOLKITS.find(toolkit => toolkit.id === id)?.name ?? fallback ?? id
 }
 
 /** Spaces inside a known label stay part of @ completion, rather than ending it as prose. */
 export function isToolkitNameQuery(keyword: string): boolean {
   const normalized = keyword.replace(/[ \u00a0\u3000]+/g, ' ').toLowerCase()
-  return normalized.includes(' ') && WORK_TOOLKITS.some(toolkit => toolkit.name.toLowerCase().startsWith(normalized))
+  return normalized.includes(' ') && SESSION_TOOLKITS.some(toolkit => toolkit.name.toLowerCase().startsWith(normalized))
 }
 
 export function sameToolkits(left: readonly string[] = [], right: readonly string[] = []): boolean {

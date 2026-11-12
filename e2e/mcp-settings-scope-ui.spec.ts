@@ -11,11 +11,11 @@ import type { EngineHistoryRow } from '../src/renderer/src/core/engine/chat-hist
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
 const token = 'mcp-settings-scope-token', model = 'mcp-scope-model'
-const defaultRoot = '/remote/code-default', workA = '/remote/work-alpha', workB = '/remote/work-beta'
+const defaultRoot = '/remote/code-default', sessionA = '/remote/work-alpha', sessionB = '/remote/work-beta'
 const taskA = 'work-mcp-scope-alpha', taskB = 'work-mcp-scope-beta'
 const taskInfo = [
-  { id: taskA, title: 'MCP 范围任务甲', workspacePath: null, bindingRoot: workA },
-  { id: taskB, title: 'MCP 范围任务乙', workspacePath: '/remote/stale-beta-hint', bindingRoot: workB }
+  { id: taskA, title: 'MCP 范围任务甲', workspacePath: null, bindingRoot: sessionA },
+  { id: taskB, title: 'MCP 范围任务乙', workspacePath: '/remote/stale-beta-hint', bindingRoot: sessionB }
 ]
 interface ServerConfig {
   id: string; name: string; scope: 'project' | 'global'; transportType: 'stdio'; command: string
@@ -32,7 +32,7 @@ const envelope = (data: unknown): string => JSON.stringify({ code: 200, message:
 function answer(response: ServerResponse, data: unknown): void { if (!response.writableEnded && !response.destroyed) response.end(envelope(data)) }
 function resetFixture(): void {
   servers.clear(); receipts.length = 0; runs.clear(); histories.clear(); holdNext = undefined; failNextWorkspace = false
-  for (const [project, id, name] of [[workA, 'alpha-mcp', '甲项目 MCP'], [workB, 'beta-mcp', '乙项目 MCP'], [defaultRoot, 'code-mcp', 'Code 默认 MCP']])
+  for (const [project, id, name] of [[sessionA, 'alpha-mcp', '甲项目 MCP'], [sessionB, 'beta-mcp', '乙项目 MCP'], [defaultRoot, 'code-mcp', 'Code 默认 MCP']])
     servers.set(project, [{ id, name, scope: 'project', transportType: 'stdio', command: 'node', args: ['fixture-only.mjs'], enabled: true }])
   servers.set('global', [{ id: 'global-mcp', name: '全局 MCP', scope: 'global', transportType: 'stdio', command: 'node', args: ['global-fixture.mjs'], enabled: true }])
   for (const task of taskInfo) {
@@ -195,18 +195,18 @@ test.describe.serial('MCP 设置项目范围', () => {
 
   test('Work 会话读取自己的 MCP 列表和 JSON，切换项目不沿用 Code 默认目录', async ({}, info) => {
     await openSettings(); await expect(row('甲项目 MCP')).toBeVisible(); await expect(mcp()).not.toContainText('Code 默认 MCP')
-    await expect(mcp().locator('.mcp-context__path')).toHaveText(workA)
+    await expect(mcp().locator('.mcp-context__path')).toHaveText(sessionA)
     await settings().screenshot({ path: info.outputPath('mcp-current-work-project.png'), animations: 'disabled' })
     await readJson()
     await expect(mcp().getByRole('textbox', { name: 'MCP JSON 配置', exact: true })).toHaveValue(/alpha-mcp/)
-    expect(receipts.filter(item => item.endpoint.endsWith('/config/export')).at(-1)).toMatchObject({ project: workA, scope: 'project' })
-    servers.get(workA)![0].name = '甲项目 MCP 已刷新'
+    expect(receipts.filter(item => item.endpoint.endsWith('/config/export')).at(-1)).toMatchObject({ project: sessionA, scope: 'project' })
+    servers.get(sessionA)![0].name = '甲项目 MCP 已刷新'
     await mcp().getByRole('button', { name: '刷新 MCP 服务器', exact: true }).click(); await expect(row('甲项目 MCP 已刷新')).toBeVisible()
     await closeSettings(); await selectTask(taskInfo[1].title); await openSettings()
     await expect(row('乙项目 MCP')).toBeVisible(); await expect(mcp()).not.toContainText('甲项目 MCP')
     await readJson()
     await expect(mcp().getByRole('textbox', { name: 'MCP JSON 配置', exact: true })).toHaveValue(/beta-mcp/)
-    expect(receipts.filter(item => item.endpoint.endsWith('/config/export')).at(-1)?.project).toBe(workB)
+    expect(receipts.filter(item => item.endpoint.endsWith('/config/export')).at(-1)?.project).toBe(sessionB)
     await closeSettings()
   })
 
@@ -215,14 +215,14 @@ test.describe.serial('MCP 设置项目范围', () => {
     await row('甲项目 MCP').getByRole('button', { name: '测试', exact: true }).click()
     await expect(mcp()).toContainText('连接成功，发现 1 个工具')
     await row('甲项目 MCP').getByRole('switch', { name: '甲项目 MCP 启用', exact: true }).click()
-    await expect.poll(() => servers.get(workA)![0].enabled).toBe(false)
+    await expect.poll(() => servers.get(sessionA)![0].enabled).toBe(false)
     await row('甲项目 MCP').getByRole('button', { name: '甲项目 MCP 的更多操作', exact: true }).click()
     await page.locator('.mcp-server-menu:visible').getByRole('button', { name: '编辑', exact: true }).click()
     const editDialog = page.getByRole('dialog', { name: '编辑 MCP 服务器', exact: true })
     await editDialog.getByRole('textbox', { name: 'MCP 名称', exact: true }).fill('甲项目 MCP 已编辑')
     await editDialog.getByRole('button', { name: '保存', exact: true }).click(); await expect(editDialog).toHaveCount(0)
     await expect(row('甲项目 MCP 已编辑')).toBeVisible()
-    const imported = { ...servers.get(workA)![0], id: 'alpha-imported', name: '甲项目 JSON MCP' }
+    const imported = { ...servers.get(sessionA)![0], id: 'alpha-imported', name: '甲项目 JSON MCP' }
     await openJson()
     await mcp().getByRole('textbox', { name: 'MCP JSON 配置', exact: true }).fill(JSON.stringify({ mcpServers: { [imported.id]: imported } }))
     await mcp().getByRole('button', { name: '应用 JSON', exact: true }).click(); await expect(row(imported.name)).toBeVisible()
@@ -231,15 +231,15 @@ test.describe.serial('MCP 设置项目范围', () => {
       ['POST', '/api/v1/mcp/servers/alpha-mcp/test'], ['POST', '/api/v1/mcp/servers/alpha-mcp/disable'],
       ['PATCH', '/api/v1/mcp/servers/alpha-mcp'], ['POST', '/api/v1/mcp/config/import']
     ])
-    expect(mutations.map(item => item.project)).toEqual([workA, workA, workA, workA])
-    expect(servers.get(workB)![0]).toMatchObject({ id: 'beta-mcp', name: '乙项目 MCP', enabled: true })
+    expect(mutations.map(item => item.project)).toEqual([sessionA, sessionA, sessionA, sessionA])
+    expect(servers.get(sessionB)![0]).toMatchObject({ id: 'beta-mcp', name: '乙项目 MCP', enabled: true })
     expect(servers.get(defaultRoot)![0]).toMatchObject({ id: 'code-mcp', name: 'Code 默认 MCP', enabled: true })
     await closeSettings()
   })
 
   for (const endpoint of ['/api/v1/mcp/servers', '/api/v1/mcp/config/export']) test(`切换会话后忽略旧项目延迟返回：${endpoint}`, async () => {
     await openSettings(); await expect(row('甲项目 MCP')).toBeVisible()
-    holdNext = { endpoint, project: workA }
+    holdNext = { endpoint, project: sessionA }
     if (endpoint.endsWith('/servers')) await mcp().getByRole('button', { name: '刷新 MCP 服务器', exact: true }).click()
     else await readJson()
     await expect.poll(() => Boolean(held)).toBe(true)
@@ -268,7 +268,7 @@ test.describe.serial('MCP 设置项目范围', () => {
     expect(receipts).toEqual([])
     await mcp().getByRole('button', { name: '重试读取项目目录', exact: true }).click()
     await expect(row('甲项目 MCP')).toBeVisible()
-    expect(receipts.filter(item => item.endpoint.endsWith('/servers')).map(item => item.project)).toEqual([workA])
+    expect(receipts.filter(item => item.endpoint.endsWith('/servers')).map(item => item.project)).toEqual([sessionA])
     await closeSettings()
   })
 

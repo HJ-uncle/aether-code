@@ -34,8 +34,8 @@ Work 的导航、操作、状态和弹出菜单使用 `workbench/outline-icons.t
 先运行 `npm run build`，再运行：
 
 ```sh
-npx playwright test --config playwright.work-icons.config.ts
-npx playwright test --config playwright.mention-toolkit.config.ts --grep "@ 单列分组|MCP 管理工具包与插件共同选择|资源菜单紧凑"
+npx playwright test --config e2e/config/playwright.work-icons.config.ts
+npx playwright test --config e2e/config/playwright.mention-toolkit.config.ts --grep "@ 单列分组|MCP 管理工具包与插件共同选择|资源菜单紧凑"
 ```
 
 图标用例在隔离 Electron 配置中检查语义、尺寸、描边、门户继承、模式切换和全目录 SVG 边界，并输出深浅主题截图。不要用固定 SVG 子节点数量代替状态语义断言。

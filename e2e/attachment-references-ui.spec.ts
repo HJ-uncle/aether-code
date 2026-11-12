@@ -1,6 +1,6 @@
 /** Real Electron: Code/Work attachment identity, native drag caret/ghost and
  * cancellation, long-text clipboard paste, durable drafts and model-facing receipts.
- * Build first; run serially with playwright.attachment-references.config.ts. */
+ * Build first; run serially with --config e2e/config/playwright.attachment-references.config.ts. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -9,15 +9,15 @@ import type { RootRun, RootRunRequestConfig } from '../src/shared/root-run'
 import type { ChatSsePayload } from '../src/shared/ipc'
 import type { EngineHistoryRow } from '../src/renderer/src/core/engine/chat-history'
 import { engineStorageKey } from '../src/renderer/src/core/engine/source'
-import { parseMentionContent } from '../src/renderer/src/contrib/chat/mention-context'
-import { ATTACHMENT_CHIP_DRAG_TYPE } from '../src/renderer/src/contrib/chat/attachment-editor-transfer'
-import { WORK_TOOLKITS, type WorkToolkit } from '../src/shared/toolkits'
+import { parseMentionContent } from '../src/renderer/src/features/conversation/shared/mention-context'
+import { ATTACHMENT_CHIP_DRAG_TYPE } from '../src/renderer/src/features/conversation/shared/attachment-editor-transfer'
+import { SESSION_TOOLKITS, type SessionToolkit } from '../src/shared/toolkits'
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
 const token = 'attachment-reference-token', model = 'attachment-reference-model'
-const workId = 'work-attachment-references', codeId = 'code-attachment-references', workspaceRoot = '/remote/attachment-references'
+const sessionId = 'work-attachment-references', codeId = 'code-attachment-references', workspaceRoot = '/remote/attachment-references'
 const selectionFile = 'selection-guide.txt'
-const titles = new Map([[workId, '附件引用 Work 验证'], [codeId, '附件引用 Code 验证']])
+const titles = new Map([[sessionId, '附件引用 Work 验证'], [codeId, '附件引用 Code 验证']])
 const resourceSkills = Array.from({ length: 3 }, (_, index) => ({ id: `resource-skill-${index + 1}`, name: `资料核对 ${index + 1}`, description: `核对第 ${index + 1} 类资料并保留完整来源。`, enabled: true }))
 const officeSkill = { id: 'aether-office', name: 'aether-office', description: '办公文档指南', enabled: true }
 const methodologySkills = ['os-using-superpowers', 'os-brainstorming', 'os-writing-plans', 'os-tdd', 'os-systematic-debugging', 'os-subagent-driven-dev', 'os-verification-before-completion']
@@ -64,7 +64,7 @@ const files = new Map<string, UploadedFile>(), histories = new Map<string, Engin
 const admissions = new Map<string, { admission: Record<string, unknown>; run: RootRun }>()
 const sessionToolkits = new Map<string, string[]>()
 let toolkitDirectorySupported = true
-let extraToolkits: WorkToolkit[] = []
+let extraToolkits: SessionToolkit[] = []
 let mcpReadCount = 0
 let mcpReceiptProbe: { emit: (payload: ChatSsePayload) => void; finish: () => void } | undefined
 const unavailableToolkits = new Set<string>()
@@ -112,7 +112,7 @@ const server = createServer((request, response) => { void (async () => {
   const toolkitSession = /^\/api\/v1\/sessions\/([^/]+)\/toolkits$/.exec(path)
   if (path === '/api/v1/toolkits' && request.method === 'GET') {
     if (!toolkitDirectorySupported) { response.statusCode = 404; response.end(JSON.stringify({ code: 404, message: 'Not found' })); return }
-    const builtin = WORK_TOOLKITS.map(item => ({ ...item, toolNames: [`${item.id}_list`],
+    const builtin = SESSION_TOOLKITS.map(item => ({ ...item, toolNames: [`${item.id}_list`],
       available: !unavailableToolkits.has(item.id), ...(unavailableToolkits.has(item.id) ? { reason: '此 Agent 没有该工具包权限' } : {}) }))
     // Interleave sources to catch a keyboard order that disagrees with visible groups.
     response.end(envelope({ toolkits: [...builtin.slice(0, 1), ...extraToolkits, ...builtin.slice(1)] })); return
@@ -260,22 +260,22 @@ async function selectResource(mode: Mode, name: string): Promise<void> {
   await expect(picker).toHaveCount(0)
 }
 async function savedDraft(mode: Mode): Promise<SavedDraft> {
-  return page.evaluate(({ mode, key, workId, codeId }) => {
+  return page.evaluate(({ mode, key, sessionId, codeId }) => {
     window.dispatchEvent(new Event('blur'))
     const state = JSON.parse(localStorage.getItem(key) ?? '{}') as { tasks?: Array<SavedDraft & { id: string }> }
-    return state.tasks?.find(task => task.id === workId) ?? { mentions: [], attachments: [] }
-  }, { mode, key: storageKey, workId, codeId })
+    return state.tasks?.find(task => task.id === sessionId) ?? { mentions: [], attachments: [] }
+  }, { mode, key: storageKey, sessionId, codeId })
 }
 async function seed(mode: Mode): Promise<void> {
   resetHistory()
-  await page.evaluate(({ mode, key, workId, title, model, workspaceRoot }) => {
+  await page.evaluate(({ mode, key, sessionId, title, model, workspaceRoot }) => {
     window.dispatchEvent(new Event('blur'))
     for (const name of Object.keys(localStorage).filter(name => ['aether:chatDrafts', 'aether:session-request:', 'aether:composer-resources:', 'aether:knowledge-bases:'].some(prefix => name.startsWith(prefix)))) localStorage.removeItem(name)
-    localStorage.setItem(key, JSON.stringify({ tasks: [{ id: workId, title, status: 'done', draft: '', mentions: [], createdAt: Date.now(), updatedAt: Date.now(),
-      workspacePath: workspaceRoot, modelId: model, attachments: [], sources: [] }], activeTaskId: workId, homeDraft: '' }))
+    localStorage.setItem(key, JSON.stringify({ tasks: [{ id: sessionId, title, status: 'done', draft: '', mentions: [], createdAt: Date.now(), updatedAt: Date.now(),
+      workspacePath: workspaceRoot, modelId: model, attachments: [], sources: [] }], activeTaskId: sessionId, homeDraft: '' }))
     localStorage.setItem('aether.app.mode', mode)
     localStorage.setItem('aether.work.view.v1', JSON.stringify({ page: 'home', collapsed: false, workspace: false, tab: 'files', pane: 'conversation', ratio: 60 }))
-  }, { mode, key: storageKey, workId, title: titles.get(workId)!, model, workspaceRoot })
+  }, { mode, key: storageKey, sessionId, title: titles.get(sessionId)!, model, workspaceRoot })
   await page.reload(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
   await expect(composer(mode)).toBeVisible(); await expect(surface(mode)).toContainText('READY_FOR_REFERENCES')
 }
@@ -670,14 +670,14 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     await page.keyboard.press('ArrowDown'); await expect(active).toHaveAttribute('data-reference-kind', 'file')
     await page.keyboard.press('ArrowDown'); await expect(active).toHaveAttribute('data-reference-kind', 'agent')
     await expect(active).toContainText('调研')
-    await page.keyboard.press('End'); await expect(active).toHaveAttribute('data-toolkit-id', WORK_TOOLKITS.at(-1)!.id)
+    await page.keyboard.press('End'); await expect(active).toHaveAttribute('data-toolkit-id', SESSION_TOOLKITS.at(-1)!.id)
     await input.evaluate(element => element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true })))
     await expect(picker).toBeVisible(); await expect(toolkits).toHaveCount(0)
     await page.keyboard.press('Escape'); await expect(picker).toHaveCount(0); await expect(input).toHaveText('@')
     expect(chats).toHaveLength(beforeChats)
 
     await input.fill('@工具包')
-    await expect(picker.locator('[data-toolkit-id]')).toHaveCount(WORK_TOOLKITS.length)
+    await expect(picker.locator('[data-toolkit-id]')).toHaveCount(SESSION_TOOLKITS.length)
     await expectCompactMentionRows(picker, true)
     await picker.screenshot({ path: info.outputPath('toolkit-catalogue-packages.png'), animations: 'disabled' })
     await info.attach('toolkit-catalogue-packages', { path: info.outputPath('toolkit-catalogue-packages.png'), contentType: 'image/png' })
@@ -778,7 +778,7 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     await surface('work').getByRole('button', { name: '发送', exact: true }).click()
     await expect.poll(() => chats.length).toBe(beforeChats + 1)
     const request = chats[beforeChats]
-    expect(request).toMatchObject({ sessionId: workId, knowledgeBases: [resourceBases[0].id] })
+    expect(request).toMatchObject({ sessionId: sessionId, knowledgeBases: [resourceBases[0].id] })
     expect(request.toolkits ?? []).toEqual([])
     const message = parseMentionContent(String(request.message))
     expect(message.body).toContain(`知识库：${resourceBases[0].name}`)
@@ -788,12 +788,12 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     await expect.poll(async () => (await savedDraft('work')).resources).toMatchObject({
       knowledgeBases: [resourceBases[0].id], knowledgeBaseMentionsConsumed: [resourceBases[0].id]
     })
-    await page.evaluate(({ key, workId }) => {
+    await page.evaluate(({ key, sessionId }) => {
       const state = JSON.parse(localStorage.getItem(key)!)
-      state.tasks.push({ ...state.tasks.find((task: { id: string }) => task.id === workId),
+      state.tasks.push({ ...state.tasks.find((task: { id: string }) => task.id === sessionId),
         id: 'work-knowledge-isolated', title: 'KB_ISOLATED_TASK', resources: { skills: [], mcpServers: [], knowledgeBases: [] } })
       localStorage.setItem(key, JSON.stringify(state))
-    }, { key: storageKey, workId })
+    }, { key: storageKey, sessionId })
     await page.reload(); await expect(input).toBeVisible()
     await expect(input.locator('.mention-chip--kb')).toHaveCount(0)
     await expect(input).toBeEmpty()
@@ -803,7 +803,7 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     await expect(isolatedPicker.getByRole('option')).toHaveCount(3)
     await expect(isolatedPicker.locator('[aria-checked="true"]')).toHaveCount(0)
     await input.fill(''); await page.keyboard.press('Escape')
-    await page.locator(`.work-sidebar__task-row[data-task-id="${workId}"] .work-sidebar__task`).click()
+    await page.locator(`.work-sidebar__task-row[data-task-id="${sessionId}"] .work-sidebar__task`).click()
     await expect.poll(() => resourceBindings('work')).toEqual({ skills: [], mcpServers: [], knowledgeBases: [resourceBases[0].id] })
     await expect(input.locator('.mention-chip--kb')).toHaveCount(0)
     await input.fill('继续读取，不重新选择知识库')
@@ -863,7 +863,7 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
       await input.focus(); await page.keyboard.press('Control+End'); await page.keyboard.insertText(' 整理办公文档')
       await surface('work').getByRole('button', { name: '发送', exact: true }).click()
       await expect.poll(() => chats.length).toBe(beforeChats + 1)
-      expect(chats[beforeChats]).toMatchObject({ sessionId: workId, skills: [officeSkill.id] })
+      expect(chats[beforeChats]).toMatchObject({ sessionId: sessionId, skills: [officeSkill.id] })
       expect(parseMentionContent(String(chats[beforeChats].message)).refs.filter(ref => ref.t === 'skill').map(ref => ref.p)).toEqual([officeSkill.id])
       await expect(surface('work')).toContainText('REFERENCES_SENT_OK')
     } finally { modeFilteredSkills = false }
@@ -1000,7 +1000,7 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     await expect(surface('work').locator('.work-resource-strip')).toHaveCount(0)
     await surface('work').getByRole('button', { name: '发送', exact: true }).click()
     await expect.poll(() => chats.length).toBe(beforeChats + 1)
-    expect(chats[beforeChats]).toMatchObject({ sessionId: workId, skills: [resourceSkills[0].id],
+    expect(chats[beforeChats]).toMatchObject({ sessionId: sessionId, skills: [resourceSkills[0].id],
       mcpServers: [resourceMcp[1].id], knowledgeBases: [resourceBases[2].id] })
     const sent = parseMentionContent(String(chats[beforeChats].message))
     expect(sent.body).toContain('RESOURCE_BEFORE'); expect(sent.body).toContain('RESOURCE_AFTER')
@@ -1052,7 +1052,7 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     await info.attach(`${mode} 资源正文标签`, { path: capture, contentType: 'image/png' })
     await surface(mode).getByRole('button', { name: '发送', exact: true }).click()
     await expect.poll(() => chats.length).toBe(beforeChats + 1)
-    expect(chats[beforeChats]).toMatchObject({ sessionId: mode === 'work' ? workId : codeId, ...expected, skills: [] })
+    expect(chats[beforeChats]).toMatchObject({ sessionId: mode === 'work' ? sessionId : codeId, ...expected, skills: [] })
     const sent = parseMentionContent(String(chats[beforeChats].message))
     expect(sent.body).toContain('RESOURCE_LEFT'); expect(sent.body).toContain('RESOURCE_RIGHT')
     expect(sent.refs.filter(ref => ['skill', 'mcp', 'kb'].includes(ref.t)).map(ref => [ref.t, ref.p, ref.d]))
@@ -1070,7 +1070,7 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     await input.focus(); await page.keyboard.press('Control+End'); await page.keyboard.insertText('SECOND_RESOURCE_ROUND')
     await surface(mode).getByRole('button', { name: '发送', exact: true }).click()
     await expect.poll(() => chats.length).toBe(beforeChats + 2)
-    expect(chats[beforeChats + 1].sessionId).toBe(mode === 'work' ? workId : codeId)
+    expect(chats[beforeChats + 1].sessionId).toBe(mode === 'work' ? sessionId : codeId)
     for (const key of ['skills', 'mcpServers', 'knowledgeBases']) expect(chats[beforeChats + 1][key] ?? [])
       .toEqual(key === 'knowledgeBases' && mode === 'work' ? expected.knowledgeBases : [])
     const second = parseMentionContent(String(chats[beforeChats + 1].message))
@@ -1088,7 +1088,7 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     await selectResource(mode, resourceBases[2].name)
     await expect.poll(() => resourceBindings(mode)).toEqual(expected)
     const saved = await savedDraft(mode)
-    rejectNextChatFor = mode === 'work' ? workId : codeId
+    rejectNextChatFor = mode === 'work' ? sessionId : codeId
     const send = surface(mode).getByRole('button', { name: '发送', exact: true })
     await expect(send).toBeEnabled(); await send.click()
     await expect.poll(() => rejectedChats.length).toBe(beforeRejected + 1)
@@ -1114,14 +1114,14 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     const bindings: ResourceBindings = { skills: [resourceSkills[1].id], mcpServers: [resourceMcp[0].id], knowledgeBases: [resourceBases[1].id] }
     await input.fill('LEGACY_RESOURCE_PROSE ')
     await savedDraft(mode)
-    await page.evaluate(({ mode, key, source, workId, codeId, bindings }) => {
+    await page.evaluate(({ mode, key, source, sessionId, codeId, bindings }) => {
       window.dispatchEvent(new Event('blur'))
       if (mode === 'work') {
         const state = JSON.parse(localStorage.getItem(key)!) as { tasks: Array<SavedDraft & { id: string }> }
-        state.tasks.find(task => task.id === workId)!.resources = bindings
+        state.tasks.find(task => task.id === sessionId)!.resources = bindings
         localStorage.setItem(key, JSON.stringify(state))
       } else localStorage.setItem(`aether:composer-resources:${source}:${codeId}`, JSON.stringify(bindings))
-    }, { mode, key: storageKey, source: decodeURIComponent(storageKey.slice('aether.work.state.v1:'.length)), workId, codeId, bindings })
+    }, { mode, key: storageKey, source: decodeURIComponent(storageKey.slice('aether.work.state.v1:'.length)), sessionId, codeId, bindings })
     for (let reload = 0; reload < 2; reload++) {
       await page.reload(); await expect(input).toBeVisible()
       await expect(resourceChips(mode).locator('.mention-chip__label')).toHaveText([resourceSkills[1].name, resourceMcp[0].name, resourceBases[1].name])
@@ -1131,7 +1131,7 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     }
     await surface(mode).getByRole('button', { name: '发送', exact: true }).click()
     await expect.poll(() => chats.length).toBe(beforeChats + 1)
-    expect(chats[beforeChats]).toMatchObject({ sessionId: mode === 'work' ? workId : codeId, ...bindings })
+    expect(chats[beforeChats]).toMatchObject({ sessionId: mode === 'work' ? sessionId : codeId, ...bindings })
     await expect(resourceChips(mode)).toHaveCount(0)
     await expect(input).toBeEmpty()
     await expect.poll(() => resourceBindings(mode)).toEqual({ skills: [], mcpServers: [], knowledgeBases: mode === 'work' ? bindings.knowledgeBases : [] })
@@ -1145,27 +1145,27 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
       await seed('work')
       const input = composer('work'), picker = page.locator('.mention-ref-picker:visible')
       await input.fill('@工具包')
-      await expect(picker.locator('[data-toolkit-id]')).toHaveCount(WORK_TOOLKITS.length + 1)
+      await expect(picker.locator('[data-toolkit-id]')).toHaveCount(SESSION_TOOLKITS.length + 1)
       await expect(picker.locator('[data-toolkit-id="plugin-management"]')).toBeVisible()
       await expect(picker.locator(`[data-toolkit-id="${plugin.id}"]`)).toBeVisible()
       await expect(picker.locator('[data-toolkit-id="mcp-management"]')).toContainText('配置和测试 MCP 服务')
       const builtinGroup = picker.getByRole('group', { name: '内置工具包', exact: true })
       const pluginGroup = picker.getByRole('group', { name: '插件工具包', exact: true })
-      await expect(builtinGroup.getByRole('option')).toHaveCount(WORK_TOOLKITS.length)
+      await expect(builtinGroup.getByRole('option')).toHaveCount(SESSION_TOOLKITS.length)
       await expect(builtinGroup.locator('[data-toolkit-id="plugin-management"]')).toBeVisible()
       await expect(pluginGroup.getByRole('option')).toHaveCount(1)
       await expect(pluginGroup.locator(`[data-toolkit-id="${plugin.id}"]`)).toBeVisible()
       const menuGlyphs = await picker.locator('[data-toolkit-id]').evaluateAll(rows => Object.fromEntries(rows.map(row =>
         [row.getAttribute('data-toolkit-id')!, row.querySelector('.mention-ref-picker__icon path')!.getAttribute('d')!])))
-      expect(new Set(Object.values(menuGlyphs)).size).toBe(WORK_TOOLKITS.length + 1)
+      expect(new Set(Object.values(menuGlyphs)).size).toBe(SESSION_TOOLKITS.length + 1)
       const activeOption = picker.locator('[role="option"][aria-selected="true"]')
       await page.keyboard.press('Home')
-      for (const [index, id] of [...WORK_TOOLKITS.map(item => item.id), plugin.id].entries()) {
+      for (const [index, id] of [...SESSION_TOOLKITS.map(item => item.id), plugin.id].entries()) {
         if (index) await page.keyboard.press('ArrowDown')
         await expect(activeOption).toHaveAttribute('data-toolkit-id', id)
       }
       await page.keyboard.press('ArrowUp')
-      await expect(activeOption).toHaveAttribute('data-toolkit-id', WORK_TOOLKITS.at(-1)!.id)
+      await expect(activeOption).toHaveAttribute('data-toolkit-id', SESSION_TOOLKITS.at(-1)!.id)
       await page.keyboard.press('End')
       await expect(activeOption).toHaveAttribute('data-toolkit-id', plugin.id)
       await expectCompactMentionRows(picker, true)
@@ -1260,13 +1260,13 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
 
   test('Work：工具包目录继承多个选择，单项添加与移除保留其他包', async () => {
     await seed('work')
-    sessionToolkits.set(workId, ['skill-management', 'knowledge-management'])
-    await page.evaluate(({ key, workId }) => {
+    sessionToolkits.set(sessionId, ['skill-management', 'knowledge-management'])
+    await page.evaluate(({ key, sessionId }) => {
       const state = JSON.parse(localStorage.getItem(key)!)
-      const task = state.tasks.find((item: { id: string }) => item.id === workId)
+      const task = state.tasks.find((item: { id: string }) => item.id === sessionId)
       if (task.resources) delete task.resources.toolkits
       localStorage.setItem(key, JSON.stringify(state))
-    }, { key: storageKey, workId })
+    }, { key: storageKey, sessionId })
     await page.reload()
     const input = composer('work'), picker = page.locator('.mention-ref-picker:visible')
     await expect(input.locator('.mention-chip--toolkit')).toHaveCount(2)
@@ -1400,7 +1400,7 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     ])
     await expect(chips(mode)).toHaveText('legacy-inline.txt')
     const file = (await savedDraft(mode)).attachments![0]
-    await page.evaluate(({ mode, key, workId, codeId }) => {
+    await page.evaluate(({ mode, key, sessionId, codeId }) => {
       window.dispatchEvent(new Event('blur'))
       const migrate = (draft: SavedDraft): void => {
         if (mode === 'work') draft.draft = 'LEGACY_DRAFT '
@@ -1410,7 +1410,7 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
       }
       if (mode === 'work') {
         const state = JSON.parse(localStorage.getItem(key)!) as { tasks: Array<SavedDraft & { id: string }> }
-        migrate(state.tasks.find(task => task.id === workId)!)
+        migrate(state.tasks.find(task => task.id === sessionId)!)
         localStorage.setItem(key, JSON.stringify(state))
       } else {
         for (const name of Object.keys(localStorage).filter(name => name.startsWith('aether:chatDrafts'))) {
@@ -1418,7 +1418,7 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
           if (state[codeId]) { migrate(state[codeId]); localStorage.setItem(name, JSON.stringify(state)) }
         }
       }
-    }, { mode, key: storageKey, workId, codeId })
+    }, { mode, key: storageKey, sessionId, codeId })
     for (let reload = 0; reload < 2; reload++) {
       await page.reload(); await expect(input).toBeVisible()
       await expect(input).toContainText('LEGACY_DRAFT')
@@ -1498,7 +1498,7 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     const send = surface(mode).getByRole('button', { name: '发送', exact: true }); await expect(send).toBeEnabled(); await send.click()
     await expect.poll(() => chats.length).toBe(beforeChats + 1); await expect(surface(mode)).toContainText('REFERENCES_SENT_OK')
     const request = chats[beforeChats]
-    expect(request.sessionId).toBe(mode === 'work' ? workId : codeId)
+    expect(request.sessionId).toBe(mode === 'work' ? sessionId : codeId)
     expect(request.attachments).toEqual(savedAttachments.map((file, index) => expect.objectContaining({ name: file.path, type: file.type,
       attachmentId: file.attachmentId, displayName: file.name, referenceLabel: ['图1', '图2', '附件1'][index] })))
     const refs = parseMentionContent(String(request.message)).refs.filter(ref => ref.o === 'attachment')

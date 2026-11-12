@@ -780,13 +780,13 @@ export function cooperationAccounting(relays, integrations, failures, start, end
   const completeIntegrations = integrations.filter(item => item.passed && item.cases === 80 && item.at >= start && item.at <= end
     && accepted.some(ack => ack.fromLane === 'code-a' && ack.toLane === 'work-a' && ack.exchangeId === item.exchangeId && ack.receiverRunId === item.consumerRunId
       && ack.peerRunId === item.producerRunId && ack.peerSourceSha256 === item.producerSourceSha256 && ack.peerRevision === item.producerRevision && ack.receiverRevision === item.consumerRevision))
-  const usedWorkRuns = new Set(), usedReplies = new Set()
+  const usedSessionRuns = new Set(), usedReplies = new Set()
   const roundTrips = accepted.filter(item => item.fromLane === 'code-a' && item.toLane === 'work-a').flatMap(outbound => {
-    const reply = !usedWorkRuns.has(outbound.receiverRunId) && accepted.find(item => item.fromLane === 'work-a' && item.toLane === 'code-a' && item.peerRunId === outbound.receiverRunId
+    const reply = !usedSessionRuns.has(outbound.receiverRunId) && accepted.find(item => item.fromLane === 'work-a' && item.toLane === 'code-a' && item.peerRunId === outbound.receiverRunId
       && item.peerRevision === outbound.receiverRevision && item.at > outbound.at && !usedReplies.has(item.exchangeId))
     if (!reply) return []
-    usedWorkRuns.add(outbound.receiverRunId); usedReplies.add(reply.exchangeId)
-    return [{ at: reply.at, fromRunId: outbound.peerRunId, workRunId: outbound.receiverRunId, replyRunId: reply.receiverRunId, outboundExchangeId: outbound.exchangeId, replyExchangeId: reply.exchangeId }]
+    usedSessionRuns.add(outbound.receiverRunId); usedReplies.add(reply.exchangeId)
+    return [{ at: reply.at, fromRunId: outbound.peerRunId, sessionRunId: outbound.receiverRunId, replyRunId: reply.receiverRunId, outboundExchangeId: outbound.exchangeId, replyExchangeId: reply.exchangeId }]
   })
   const windows = []
   for (let begin = start; begin < end; begin += 30 * 60000) {

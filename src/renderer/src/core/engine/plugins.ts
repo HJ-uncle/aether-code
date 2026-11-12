@@ -1,8 +1,9 @@
 import { requestOrThrow } from './client'
+import type { PluginContributions } from '@shared/plugin-contributions'
 
 export interface PluginTool { name: string; description: string; inputSchema: Record<string, unknown>; entry: string }
 export interface PluginManifest {
-  apiVersion: 1; id: string; name: string; version: string; description: string; runtime: 'node'; tools: PluginTool[]
+  apiVersion: 1; id: string; name: string; version: string; description: string; runtime: 'node'; tools: PluginTool[]; contributes?: PluginContributions
 }
 export interface PluginRecord {
   id: string; name: string; description: string; enabled: boolean; revision: number; publishedRevision?: number
@@ -17,6 +18,7 @@ export interface PluginApplication {
   id: string; name: string; description: string; revision: number; hash: string; manifest: PluginManifest
   examples: Array<{ name: string; tool: string; args: Record<string, unknown> }>
   execution: { allowed: boolean; reason?: string }
+  uiDocuments?: Record<string, string>
 }
 export interface PluginInvocation {
   result: unknown; artifacts: Array<{ path: string; content: string; encoding?: 'utf8' | 'base64' }>; stderr: string; durationMs: number

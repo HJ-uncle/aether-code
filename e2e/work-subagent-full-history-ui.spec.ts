@@ -2,7 +2,7 @@
  * row/byte window loads automatically, prose stays readable, heavy process DOM
  * stays collapsed, refresh/selection races cannot replace another child, and
  * live progress does not repeatedly reload an already readable full archive.
- * Build first; use playwright.work-subagent-full-history.config.ts. */
+ * Run with npm run test:e2e -- e2e/work-subagent-full-history-ui.spec.ts. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer, type ServerResponse } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'

@@ -26,7 +26,6 @@
     .chat-panel__header,
     .editor-tabs,
     .panel__tabs,
-    .editor-toolbar,
     .history-view__toolbar,
     .output__toolbar,
     .git-panel__toolbar,
@@ -51,7 +50,6 @@
     .palette,
     .popover__panel,
     .context-menu,
-    .sec-picker__popup,
     .think-picker__popup,
     .replace-preview,
     .git-hovercard,
@@ -61,7 +59,6 @@
     .chat__nav-list,
     .tag-panel,
     .resource-picker,
-    .editor-path-picker,
     .ui-surface--floating
   ) {
   backdrop-filter: blur(var(--material-blur)) saturate(145%);
@@ -78,7 +75,6 @@
     .chat-panel__header,
     .editor-tabs,
     .panel__tabs,
-    .editor-toolbar,
     .history-view__toolbar,
     .output__toolbar,
     .git-panel__toolbar,
@@ -113,7 +109,6 @@
     .chat-panel__header,
     .editor-tabs,
     .panel__tabs,
-    .editor-toolbar,
     .history-view__toolbar,
     .output__toolbar,
     .git-panel__toolbar,
@@ -127,7 +122,6 @@
     .palette,
     .popover__panel,
     .context-menu,
-    .sec-picker__popup,
     .think-picker__popup,
     .replace-preview,
     .git-hovercard,
@@ -137,7 +131,6 @@
     .chat__nav-list,
     .tag-panel,
     .resource-picker,
-    .editor-path-picker,
     .ui-surface--floating
   ),
 :root[data-visual-effects='solid']
@@ -151,7 +144,6 @@
     .chat-panel__header,
     .editor-tabs,
     .panel__tabs,
-    .editor-toolbar,
     .history-view__toolbar,
     .output__toolbar,
     .git-panel__toolbar,
@@ -165,7 +157,6 @@
     .palette,
     .popover__panel,
     .context-menu,
-    .sec-picker__popup,
     .think-picker__popup,
     .replace-preview,
     .git-hovercard,
@@ -175,7 +166,6 @@
     .chat__nav-list,
     .tag-panel,
     .resource-picker,
-    .editor-path-picker,
     .ui-surface--floating
   ) {
   backdrop-filter: none !important;
@@ -198,7 +188,6 @@
       .chat-panel__header,
       .editor-tabs,
       .panel__tabs,
-      .editor-toolbar,
       .history-view__toolbar,
       .output__toolbar,
       .git-panel__toolbar,
@@ -212,7 +201,6 @@
       .palette,
       .popover__panel,
       .context-menu,
-      .sec-picker__popup,
       .think-picker__popup,
       .replace-preview,
       .git-hovercard,
@@ -222,7 +210,6 @@
       .chat__nav-list,
       .tag-panel,
       .resource-picker,
-      .editor-path-picker,
       .ui-surface--floating
     ) {
     backdrop-filter: none !important;

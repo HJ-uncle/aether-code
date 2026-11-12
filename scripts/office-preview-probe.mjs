@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto'
 const root = path.resolve(import.meta.dirname, '..')
 const source = process.env.AETHER_OFFICE_FIXTURE_ROOT || 'D:/trust-test/办公文档测试'
 const label = process.argv.find(arg => arg.startsWith('--label='))?.slice(8) || 'probe'
-const workMode = process.argv.includes('--work')
+const sessionMode = process.argv.includes('--work')
 const output = path.join(root, '.e2e-tmp', `office-preview-${label.replace(/[^a-z0-9-]/gi, '')}-${Date.now()}`)
 const workspace = path.join(output, 'workspace'), profile = path.join(output, 'profile'), frozen = path.join(output, 'app')
 await fs.mkdir(workspace, { recursive: true }); await fs.mkdir(profile)
@@ -26,12 +26,12 @@ const env = { ...process.env, AETHER_GLOBAL_DIR: path.join(output, 'global') }
 for (const key of ['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL', 'ELECTRON_EXEC_PATH', 'ELECTRON_CLI_ARGS', 'NODE_ENV_ELECTRON_VITE']) delete env[key]
 const rendererFiles = (await fs.readdir(path.join(frozen, 'out/renderer/assets'))).filter(name => /^(?:index-|OfficeDocumentPreview-|SpreadsheetDocumentPreview-|PdfDocumentPreview-|spreadsheet-preview\.worker-)/.test(name) && /\.(?:js|css)$/.test(name))
 const rendererHashes = Object.fromEntries(await Promise.all(rendererFiles.map(async name => [name, hash(await fs.readFile(path.join(frozen, 'out/renderer/assets', name)))])))
-const report = { label, mode: workMode ? 'work' : 'code', output, source, generatedAt: new Date().toISOString(), buildHash: hash(await fs.readFile(path.join(frozen, 'out/main/index.js'))), rendererHashes, measurements: [], errors: [], originalsUnchanged: false,
+const report = { label, mode: sessionMode ? 'work' : 'code', output, source, generatedAt: new Date().toISOString(), buildHash: hash(await fs.readFile(path.join(frozen, 'out/main/index.js'))), rendererHashes, measurements: [], errors: [], originalsUnchanged: false,
   boundary: 'Real Electron UI, copied local files, isolated profile, engine disabled. File first-content waits for decoded visible images/canvas/cells and two rAF; timing is not OS presented-frame timing.' }
 let app, page
 const save = () => fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2))
 const preview = () => page.locator('.document-preview:visible').last()
-const fileTab = name => page.locator(workMode ? '.work-view .work-workspace__tab-button' : '.editor-tab').filter({ hasText: name }).first()
+const fileTab = name => page.locator(sessionMode ? '.work-view .work-workspace__tab-button' : '.editor-tab').filter({ hasText: name }).first()
 async function rendered() {
   await expect(preview()).toBeVisible({ timeout: 65000 })
   await expect.poll(() => preview().evaluate(element => {
@@ -46,7 +46,7 @@ async function rendered() {
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
 }
 async function open(name) {
-  if (workMode) {
+  if (sessionMode) {
     await page.evaluate(() => { window.__officeStart = performance.now(); window.__officeLongTasks = [] })
     await page.locator('input.work-resource-tabs__file-input').setInputFiles(path.join(workspace, name))
     await rendered(); return
@@ -80,7 +80,7 @@ try {
   page.on('pageerror', error => report.errors.push(error.message))
   await expect(page.locator('.workbench')).toBeVisible()
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1500, 950))
-  if (workMode) {
+  if (sessionMode) {
     await page.evaluate(workspace => {
       localStorage.setItem('aether.app.mode', 'work')
       localStorage.setItem('aether.work.state.v1', JSON.stringify({ tasks: [{ id: 'work-office-probe', title: '办公预览性能', draft: '', status: 'draft', createdAt: Date.now(), updatedAt: Date.now(), workspacePath: workspace, modelId: '', attachments: [], sources: [] }], activeTaskId: 'work-office-probe', homeDraft: '', homeWorkspacePath: null, homeAttachments: [], homeModelId: '', homeSessionId: null, homeAgentId: '', homeMentions: [], homeResources: { skills: [], mcpServers: [], knowledgeBases: [] } }))

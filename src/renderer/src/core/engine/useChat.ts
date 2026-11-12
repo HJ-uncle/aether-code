@@ -12,11 +12,11 @@ import { attachSubagentRuns, applySubagentDeletions } from './subagent-state'
 import { ingestSubagentEventResult, ingestSubagentRun, ingestSubagentRunResult, getSubagentRuns, refreshSubagentRuns, subscribeSubagents, subscribeSubagentDeletions, hasActiveSubagents } from './subagent-store'
 import { invalidateHistoryRuntimeCache } from './history-runtime-cache'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { createSessionUsageAnchor, sessionUsageTotal, type SessionUsageAnchor } from '@renderer/contrib/chat/session-usage'
-import type { UsageTotal } from '@renderer/contrib/chat/usage'
+import { createSessionUsageAnchor, sessionUsageTotal, type SessionUsageAnchor } from '@renderer/features/conversation/shared/session-usage'
+import type { UsageTotal } from '@renderer/features/conversation/shared/usage'
 import { reducePayload } from './chat-payload'
 import { restoreChatSnapshot, type ChatRecoverySnapshot } from './chat-recovery'
-import { WorkTurnTodoLedger, workTodoToolOwners } from '@renderer/contrib/work/work-turn-todos'
+import { SessionTurnTodoLedger, sessionTodoToolOwners } from '@renderer/features/conversation/turn-todos'
 import { inspectStreamCursor, parseEngineStreamCursor } from '@shared/stream-event'
 import { snapshotRecoveryNotice, streamRecoveryNoticeText, type StreamRecoveryNotice } from './stream-recovery-notice'
 import { preparePublishedSnapshot } from './published-snapshot-client'
@@ -30,13 +30,13 @@ import type { EngineFileChange, EngineTodo, StreamEvent } from '@shared/ipc'
 import * as engine from './client'
 import { assertEngineSource, getEngineSource, isEngineReady, isRemoteEngine, subscribeEngineSource } from './source'
 import { getRevertReport, revertConversationFrom, subscribeReverts } from './change-revert'
-import { confirmDialog } from '@renderer/workbench/ConfirmDialog'
+import { confirmDialog } from '@renderer/ui/ConfirmDialog'
 import {
   buildToolResponse,
   normalizePending,
   type PendingInteraction
 } from './pending'
-import { patchSessionMeta } from '@renderer/contrib/history/session-meta'
+import { patchSessionMeta } from '@renderer/features/history/session-meta'
 import type { MemoryScope } from './memory'
 import { ARCHIVE_PAGE_SIZE, loadArchiveWindow, archiveDisplayHistory, type ArchiveWindow, type ArchivePageAction, type ArchivePageInfo } from './archive-pages'
 import { createIdleRootDiscovery } from './idle-root-discovery'
@@ -44,7 +44,6 @@ import { createHistoryMutationGuard } from './history-mutation'
 import { cacheDisplayHistory, checkDisplayHistory, mergeDisplayHistory, type DisplayHistoryCache, type DisplayHistoryCompleteness, type DisplayHistoryTurn } from './display-history'
 import { normalizeRootFollowupMessage, type RootFollowupMessage } from './root-followup-message'
 import { applyProjectedFinalResult } from './final-result'
-import { getAppMode } from '@renderer/core/platform/app-mode'
 import { applyProjectedUserMessage, bindProjectedAssistantId, applyProjectedUsage } from './chat-timeline'
 import { ChatRequestRejectedError, dispatchChatRequest } from './chat-send-request'
 
@@ -375,7 +374,7 @@ export function useChat(options: { commandOwner?: 'work' } = {}): {
   const restoredSessionRef = useRef<string | null>(null)
   const isHistoryReady = useCallback((sessionId: string): boolean => restoredSessionRef.current === sessionId && sourceRef.current === getEngineSource(), [])
   const [todos, setTodos] = useState<EngineTodo[]>([])
-  const todoLedgerRef = useRef(new WorkTurnTodoLedger())
+  const todoLedgerRef = useRef(new SessionTurnTodoLedger())
   const todoToolOwnersRef = useRef(new Map<string, string>())
   const lastTodoToolRef = useRef<string | null>(null)
   const updateTodos = useCallback((items: EngineTodo[], frame?: { runId?: string; turnId?: string }): void => {
@@ -742,7 +741,7 @@ export function useChat(options: { commandOwner?: 'work' } = {}): {
     const reconcileChildren = (force = false): void => {
       const sessionId = viewSessionRef.current
       if (!sessionId || !mountedRef.current || sourceRef.current !== getEngineSource() || !isEngineReady() ||
-        getAppMode() !== commandOwner || document.hidden || historyMutationGuard.blocked(recoveryScope(sessionId))) return
+        commandOwner !== 'work' || document.hidden || historyMutationGuard.blocked(recoveryScope(sessionId))) return
       const authority = sessionUsageAnchorRef.current?.publishedChildren
       if (authority) {
         const scope: PublishedUsageScope = { ...recoveryScope(sessionId), historyEpoch: historyRequestRef.current,
@@ -760,7 +759,7 @@ export function useChat(options: { commandOwner?: 'work' } = {}): {
       reconcileChildren()
       if (!sessionId) return
       const scope = recoveryScope(sessionId)
-      const current = (): boolean => scopeIsCurrent(scope) && isEngineReady() && getAppMode() === commandOwner &&
+      const current = (): boolean => scopeIsCurrent(scope) && isEngineReady() && commandOwner === 'work' &&
         restoredSessionRef.current === sessionId && !activeStreamRef.current && !stoppingRef.current &&
         !(rejectedSendScopeRef.current && sameRecoveryScope(rejectedSendScopeRef.current, scope)) &&
         !historyMutationGuard.blocked(scope) && !approvalRefreshRef.current && answeringRef.current.size === 0 && recoveryLoop.state().phase === 'idle'
@@ -1339,7 +1338,7 @@ export function useChat(options: { commandOwner?: 'work' } = {}): {
       activeRunIdRef.current = configuredRun?.runId ?? null
       activeSessionRef.current = sessionId
       todoLedgerRef.current.reset()
-      todoToolOwnersRef.current = workTodoToolOwners(restored.messages)
+      todoToolOwnersRef.current = sessionTodoToolOwners(restored.messages)
       lastTodoToolRef.current = restored.messages.flatMap(message => message.tools).findLast(tool => todoToolOwnersRef.current.has(tool.id))?.id ?? null
       consumedEventIdRef.current = snapshot.eventId
       optimisticIdsRef.current = {}
@@ -1429,7 +1428,7 @@ export function useChat(options: { commandOwner?: 'work' } = {}): {
       const configuredRun = snapshot.executionRun ?? snapshot.run ?? [...snapshot.runs].filter(run => run.sessionId === sessionId).sort((a, b) => b.createdAt - a.createdAt || b.updatedAt - a.updatedAt)[0]
       setSessionModel({ source, sessionId, modelId: configuredRun?.modelId, runId: configuredRun?.runId, requestConfig: normalizeRootRunRequestConfig(configuredRun?.requestConfig), compaction: normalizeRootRunCompaction(configuredRun?.compaction) })
       todoLedgerRef.current.reset()
-      todoToolOwnersRef.current = workTodoToolOwners(restored.messages)
+      todoToolOwnersRef.current = sessionTodoToolOwners(restored.messages)
       lastTodoToolRef.current = restored.messages.flatMap(message => message.tools).findLast(tool => todoToolOwnersRef.current.has(tool.id))?.id ?? null
       const restoredMessages = attachCommandJobs(attachSubagentRuns(restored.messages, getSubagentRuns(sessionId), window.revision !== undefined), getCommandJobs(sessionId), sessionId)
       commitUsageAnchor(createSessionUsageAnchor(restoredMessages, snapshot.sessionUsage, snapshot.sessionSubagentUsage, snapshot.subagentRuns, snapshot.publishedUsage))

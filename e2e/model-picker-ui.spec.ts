@@ -11,9 +11,9 @@ import type { EngineModel } from '../src/renderer/src/core/engine/models'
 import { engineStorageKey, sessionStorageKey } from '../src/renderer/src/core/engine/source'
 
 const root = resolve(__dirname, '..'), fixtures = join(root, '.e2e-tmp')
-const codeId = 'picker-code', workId = 'work-picker', token = 'disposable-picker-ui-token'
+const codeId = 'picker-code', sessionId = 'work-picker', token = 'disposable-picker-ui-token'
 const remoteRoot = '/remote/picker-ui', now = Date.now() - 1000
-const titles = new Map([[codeId, 'Code 模型选择测试'], [workId, 'Work 模型选择测试']])
+const titles = new Map([[codeId, 'Code 模型选择测试'], [sessionId, 'Work 模型选择测试']])
 const alphaId = 'fixture-reasoner-v2', betaId = 'fixture-writer-v1'
 const model = (id: string, modelId: string, displayName: string, provider: string): EngineModel => ({
   id, modelId, displayName, provider, tenantId: 'picker-fixture', apiKey: '...fixture-secret',
@@ -153,7 +153,7 @@ test.describe.serial('模型选择器', () => {
     const origin = `http://127.0.0.1:${address.port}`
     storageSource = engineStorageKey({ mode: 'remote', baseUrl: origin })
     writeFileSync(join(fixture, 'settings.json'), JSON.stringify({ engineMode: 'remote', remoteBaseUrl: origin, remoteWorkspaceRoot: remoteRoot,
-      autoStartEngine: true, lastSessionId: workId, lastFolder: '', lastModelId: '', appearance: 'light', thinkingMode: 'off' }))
+      autoStartEngine: true, lastSessionId: sessionId, lastFolder: '', lastModelId: '', appearance: 'light', thinkingMode: 'off' }))
     const env: Record<string, string> = Object.fromEntries(Object.entries(process.env).flatMap(([key, value]) => value === undefined ? [] : [[key, value]]))
     for (const key of Object.keys(env)) if (['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL', 'AETHER_IDE_REMOTE_API_KEY', 'AETHER_IDE_REMOTE_BEARER_TOKEN', 'AETHER_IDE_REMOTE_AUTH_URL'].includes(key.toUpperCase())) delete env[key]
     env.AETHER_IDE_REMOTE_INSTANCE_TOKEN = token; env.AETHER_GLOBAL_DIR = join(fixture, 'global')
@@ -161,12 +161,12 @@ test.describe.serial('模型选择器', () => {
     page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message)); page.on('crash', () => errors.push('Renderer crashed'))
     await app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.setContentSize(1440, 960); win.show(); win.focus() })
     await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
-    await page.evaluate(({ key, workId, title, now }) => {
-      localStorage.setItem(key, JSON.stringify({ tasks: [{ id: workId, title, status: 'done', draft: '', createdAt: now, updatedAt: now,
-        workspacePath: null, modelId: '', attachments: [], sources: [] }], activeTaskId: workId, homeDraft: '' }))
+    await page.evaluate(({ key, sessionId, title, now }) => {
+      localStorage.setItem(key, JSON.stringify({ tasks: [{ id: sessionId, title, status: 'done', draft: '', createdAt: now, updatedAt: now,
+        workspacePath: null, modelId: '', attachments: [], sources: [] }], activeTaskId: sessionId, homeDraft: '' }))
       localStorage.setItem('aether.app.mode', 'work')
       localStorage.setItem('aether.work.view.v1', JSON.stringify({ page: 'home', collapsed: false, workspace: false, tab: 'files', pane: 'conversation', ratio: 50 }))
-    }, { key: 'aether.work.state.v1:' + encodeURIComponent(storageSource), workId, title: titles.get(workId)!, now })
+    }, { key: 'aether.work.state.v1:' + encodeURIComponent(storageSource), sessionId, title: titles.get(sessionId)!, now })
     await page.reload(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
     await expect(page.locator('.work-view')).toContainText('模型选择不会发送新请求。')
   })
@@ -227,7 +227,7 @@ test.describe.serial('模型选择器', () => {
       const trigger = await openPicker(mode)
       await options().filter({ has: page.getByText('深度推理', { exact: true }) }).click()
       await expect(menu()).toHaveCount(0); await expect(trigger.locator('.select__value')).toHaveText('深度推理')
-      await expect.poll(() => selection(workId)).toEqual({ modelId: alphaId, anchorRunId: `root-${workId}` })
+      await expect.poll(() => selection(sessionId)).toEqual({ modelId: alphaId, anchorRunId: `root-${sessionId}` })
     }
   })
 
@@ -255,7 +255,7 @@ test.describe.serial('模型选择器', () => {
       await expect(beta).toBeFocused(); await expect(detail('轻快写作')).toBeVisible(); await expect(detail('深度推理')).toHaveCount(0)
       await page.keyboard.press('Enter'); await expect(menu()).toHaveCount(0); await expect(page.locator('.hover-detail')).toHaveCount(0)
       await expect(trigger).toBeFocused(); await expect(trigger.locator('.select__value')).toHaveText('轻快写作')
-      await expect.poll(() => selection(workId)).toEqual({ modelId: betaId, anchorRunId: `root-${workId}` })
+      await expect.poll(() => selection(sessionId)).toEqual({ modelId: betaId, anchorRunId: `root-${sessionId}` })
       await openPicker(mode); await expect(beta).toHaveAttribute('aria-current', 'true')
       await expect(menu().locator('.select__item[aria-current="true"]')).toHaveCount(1)
       await closePicker()

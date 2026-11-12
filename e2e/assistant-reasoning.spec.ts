@@ -2,8 +2,8 @@
 import { expect, test } from '@playwright/test'
 import { splitAssistantReasoning } from '../src/renderer/src/core/engine/assistant-reasoning'
 import type { ChatMessage } from '../src/renderer/src/core/engine/useChat'
-import { workMessagePresentation, workMessageTimeline } from '../src/renderer/src/contrib/work/work-message-timeline'
-import { subagentInstructionIssue } from '../src/renderer/src/contrib/work/subagent-followup-message'
+import { sessionMessagePresentation, sessionMessageTimeline } from '../src/renderer/src/features/conversation/message-timeline'
+import { subagentInstructionIssue } from '../src/renderer/src/features/collaboration/subagent-followup-message'
 
 const sample = (content: string, status: ChatMessage['status'] = 'done'): ChatMessage => ({
   id: 'reply', role: 'assistant', content, thinking: '', tools: [], items: [{ kind: 'content', text: content }], status, createdAt: 1
@@ -34,16 +34,16 @@ test('every streaming prefix of an envelope keeps reasoning out of answer conten
 
 test('cancelled reasoning-only output never becomes a final answer', () => {
   const message = sample('<think>尚未完成的核对', 'aborted')
-  const timeline = workMessageTimeline(message)
+  const timeline = sessionMessageTimeline(message)
   expect(timeline).toEqual([{ kind: 'thinking', key: 'content:0:thinking', text: '尚未完成的核对' }])
-  expect(workMessagePresentation(timeline, undefined, undefined, false).map(item => item.kind)).toEqual(['process'])
+  expect(sessionMessagePresentation(timeline, undefined, undefined, false).map(item => item.kind)).toEqual(['process'])
 })
 
 test('historical raw reasoning folds once and the manifest publishes only answer text', () => {
   const message = sample('<think>REASONING_ONLY</think>最终答复。\n![成品](D:/final.png)')
   const original = structuredClone(message)
-  const timeline = workMessageTimeline(message)
-  const presentation = workMessagePresentation(timeline, undefined, { text: message.content }, false)
+  const timeline = sessionMessageTimeline(message)
+  const presentation = sessionMessagePresentation(timeline, undefined, { text: message.content }, false)
   expect(presentation.map(item => item.kind)).toEqual(['process', 'answer'])
   expect(presentation[0]).toMatchObject({ segments: [{ kind: 'thinking', text: 'REASONING_ONLY' }] })
   expect(presentation[1]).toEqual({ kind: 'answer', key: 'final-result', text: '最终答复。\n![成品](D:/final.png)' })
@@ -51,7 +51,7 @@ test('historical raw reasoning folds once and the manifest publishes only answer
 })
 
 test('a manifest without transcript body still preserves its reasoning inside the process', () => {
-  expect(workMessagePresentation([], undefined, { text: '<think>已核对</think>完成。' }, false)).toEqual([
+  expect(sessionMessagePresentation([], undefined, { text: '<think>已核对</think>完成。' }, false)).toEqual([
     { kind: 'process', key: 'final-result-thinking', segments: [{ kind: 'thinking', key: 'final-result-thinking', text: '已核对' }] },
     { kind: 'answer', key: 'final-result', text: '完成。' }
   ])
@@ -60,6 +60,6 @@ test('a manifest without transcript body still preserves its reasoning inside th
 test('chunked timeline content joins before parsing and never changes a user message', () => {
   const message = sample('<think>核对</think>完成。')
   message.items = [{ kind: 'content', text: '<th' }, { kind: 'content', text: 'ink>核对</thi' }, { kind: 'content', text: 'nk>完成。' }]
-  expect(workMessageTimeline(message).map(item => item.kind)).toEqual(['thinking', 'content'])
-  expect(workMessageTimeline({ ...message, role: 'user' })).toEqual([{ kind: 'content', key: 'content', text: message.content }])
+  expect(sessionMessageTimeline(message).map(item => item.kind)).toEqual(['thinking', 'content'])
+  expect(sessionMessageTimeline({ ...message, role: 'user' })).toEqual([{ kind: 'content', key: 'content', text: message.content }])
 })

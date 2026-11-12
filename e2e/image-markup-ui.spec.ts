@@ -3,7 +3,7 @@
  * and native attachment/reference dragging with persisted identities and offsets,
  * including distinct builtin Agent glyphs shared by the picker and inline chips,
  * and the shared color panel's preview/cancel ownership without changing the app theme.
- * Build first, then run with playwright.work-local-attachment-preview.config.ts (one window only). */
+ * Build first, then run with --config e2e/config/playwright.work-local-attachment-preview.config.ts (one window only). */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page, type TestInfo } from '@playwright/test'
 import { createServer } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -13,7 +13,7 @@ import type { RootRun } from '../src/shared/root-run'
 import { ATTACHMENTS_DIRECTORY } from '../src/shared/attachments'
 import { engineStorageKey } from '../src/renderer/src/core/engine/source'
 import type { ChatAttachment } from '../src/renderer/src/core/engine/useChat'
-import { mentionToken, type Mention } from '../src/renderer/src/contrib/chat/mention-context'
+import { mentionToken, type Mention } from '../src/renderer/src/features/conversation/shared/mention-context'
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
 const sessionId = 'work-image-markup', title = '图片标注真实像素验证', token = 'image-markup-token', modelId = 'image-markup-model'

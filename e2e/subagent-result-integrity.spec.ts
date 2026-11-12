@@ -5,7 +5,7 @@ import type { ToolActivity } from '../src/renderer/src/core/engine/useChat'
 import { boundSubagentView, exportSubagentDetails, mergeSubagentRun, normalizeSubagentDeltaEvent, normalizeSubagentRun, reduceSubagentDelta,
   toSubagentView, toolStatusLabel } from '../src/renderer/src/core/engine/subagent-state'
 import { parseSubagentResultPage, subagentResultPresentation } from '../src/renderer/src/core/engine/subagent-result'
-import { serializeMessages } from '../src/renderer/src/contrib/chat/message-export'
+import { serializeMessages } from '../src/renderer/src/features/conversation/shared/message-export'
 
 const hash = 'a'.repeat(64), ref = `subagent-result:v1:${hash}`
 function run(patch: Partial<SubagentRunV1> = {}): SubagentRunV1 {

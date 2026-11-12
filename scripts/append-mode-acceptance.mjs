@@ -270,7 +270,7 @@ export async function auditCodeNavigation(page, owner, users) {
 }
 
 /** Read only React key, never title matching or calling component handlers. */
-export function workTaskRows() {
+export function sessionTaskRows() {
   return [...document.querySelectorAll('#mode-work .work-sidebar__task')].map((element, index) => {
     const key = Object.keys(element).find(name => name.startsWith('__reactFiber$'))
     return { index, sessionId: key ? element[key]?.key : null, visible: element.getClientRects().length > 0 }
@@ -300,7 +300,7 @@ export function assertCodeQueue(queue, sessionId, message) {
   return queue
 }
 
-export function workQueueScope(owner, run) {
+export function sessionQueueScope(owner, run) {
   const receipt = run.serverAdmissionReceipt ?? run.admissionReceipt
   text(receipt?.tenantId, 'admitted queue tenantId')
   text(receipt?.namespace?.id, 'admitted queue namespace.id')
@@ -311,7 +311,7 @@ export function workQueueScope(owner, run) {
 
 /** Clicking Enqueue precedes its async durable commit. r0 is an observation,
  * never evidence that the intended message is missing permanently or accepted. */
-export async function waitForWorkQueueEntry({ read, scope, message, onObservation = () => {}, timeoutMs = 20000, now = Date.now, pause = sleep }) {
+export async function waitForSessionQueueEntry({ read, scope, message, onObservation = () => {}, timeoutMs = 20000, now = Date.now, pause = sleep }) {
   assert.ok(Number.isFinite(timeoutMs) && timeoutMs > 0 && timeoutMs <= 20000, 'QUEUE_WAIT_MUST_BE_BOUNDED')
   const startedAt = now(), observations = []
   while (now() - startedAt <= timeoutMs) {
@@ -384,7 +384,7 @@ export async function selectExactSession(page, owner) {
   const surface = page.locator('#mode-' + owner.mode)
   await page.getByRole('tab', { name: owner.mode === 'code' ? 'Code 开发' : 'Work 办公', exact: true }).click()
   if (owner.mode === 'work') {
-    const rows = await page.evaluate(workTaskRows), matching = rows.filter(row => row.visible && row.sessionId === owner.sessionId)
+    const rows = await page.evaluate(sessionTaskRows), matching = rows.filter(row => row.visible && row.sessionId === owner.sessionId)
     assert.equal(matching.length, 1, 'EXACT_WORK_SESSION_NOT_IN_RECENT_LIST')
     const button = surface.locator('.work-sidebar__task').nth(matching[0].index)
     assert.equal(await button.evaluate(element => element[Object.keys(element).find(key => key.startsWith('__reactFiber$'))]?.key), owner.sessionId, 'WORK_ROW_CHANGED_BEFORE_CLICK')
@@ -545,11 +545,11 @@ export function createAppendPhases(controller) {
       for (const message of plan.current) accepted.push(await current(owner, first, message))
       assertFiveCurrent(accepted); persist(mode + '-accepted', accepted)
       await clickSend(owner, first, plan.next, 'next')
-      const queueObservation = await waitForWorkQueueEntry({
+      const queueObservation = await waitForSessionQueueEntry({
         read: () => page.evaluate(({ mode, input }) => (mode === 'work' ? window.aether.workQueue : window.aether.codeQueue).invoke(input), {
           mode, input: { taskId: owner.sessionId, expectedEngine: owner.engine, action: { kind: 'read' } }
         }),
-        scope: workQueueScope(owner, first), message: plan.next,
+        scope: sessionQueueScope(owner, first), message: plan.next,
         onObservation: observation => persist(mode + '-next-queue-observations', observation)
       })
       timings.push({ label: mode + '-next-queue-committed', ms: queueObservation.elapsedMs, observations: queueObservation.observations.length }); persist('timings', timings)

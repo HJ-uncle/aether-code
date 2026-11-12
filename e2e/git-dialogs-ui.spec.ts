@@ -5,7 +5,7 @@
  * against the exact session binding. Legacy names-only responses read actual
  * commits from an isolated temporary Git repository; user repositories and
  * remotes are never touched.
- * Build first and run with playwright.git-dialogs.config.ts (workers: 1). */
+ * Run with npm run test:e2e -- e2e/git-dialogs-ui.spec.ts (workers: 1). */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page, type TestInfo } from '@playwright/test'
 import { createServer } from 'node:http'
 import { execFileSync } from 'node:child_process'

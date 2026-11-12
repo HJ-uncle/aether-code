@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test'
 import { applyNextTurnQueueMutation, assertQueueEnvelope, assertQueueState, emptyNextTurnQueue, queueMentionToken, queueResourcesAfterDraftEdit } from '../src/shared/next-turn-queue-state'
 import { mergeQueueAttachmentReferences, remapQueueAttachmentReferences } from '../src/shared/queue-attachment-references'
 import type { NextTurnQueueEntry, NextTurnQueueEnvelope, NextTurnQueueScope, QueueAttachmentReceipt, QueueMention, QueueResourceSelection } from '../src/shared/next-turn-queue'
-import { editQueueDraft } from '../src/renderer/src/core/engine/work-queue-entry'
+import { editQueueDraft } from '../src/renderer/src/core/engine/session-queue-entry'
 
 const scope: NextTurnQueueScope = { source: { mode: 'embedded', endpoint: '', accountId: null },
   tenantId: 'toolkit-fixture', namespace: { id: 'fixture-db', generation: 'one' }, owner: 'work', taskId: 'work-toolkit-fixture' }

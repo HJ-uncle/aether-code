@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type JSX, type ReactNode, type RefObject } from 'react'
-import { ContextMenu, type ContextMenuItem } from '@renderer/workbench/ContextMenu'
+import { ContextMenu, type ContextMenuItem } from '@renderer/ui/ContextMenu'
 import { toast } from '@renderer/core/toast'
 import { DOCUMENT_CONTEXT_EVENT } from './document-menu-events'
 import { relativeFilePath } from './file-context-actions'

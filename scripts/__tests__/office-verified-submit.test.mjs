@@ -15,12 +15,20 @@ const shared = path.resolve(fixtures, '../src/shared')
 const compile = name => ts.transpileModule(fs.readFileSync(path.join(shared, name + '.ts'), 'utf8'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 }).outputText
-const queueExports = {}, stateExports = {}
-new Function('exports', compile('next-turn-queue'))(queueExports)
-new Function('require', 'exports', compile('next-turn-queue-state'))(name => {
-  assert.equal(name, './next-turn-queue'); return queueExports
-}, stateExports)
-const validateQueueState = stateExports.assertQueueState
+const modules = new Map()
+const queueModules = new Set(['next-turn-queue', 'next-turn-queue-state', 'builtin-agents', 'conversation-link', 'toolkits'])
+function loadQueueModule(name) {
+  assert.ok(queueModules.has(name), 'Unexpected queue dependency: ' + name)
+  if (modules.has(name)) return modules.get(name)
+  const exports = {}
+  modules.set(name, exports)
+  new Function('require', 'exports', compile(name))(specifier => {
+    assert.ok(specifier.startsWith('./'), 'Only pinned shared queue modules are allowed')
+    return loadQueueModule(specifier.slice(2))
+  }, exports)
+  return exports
+}
+const validateQueueState = loadQueueModule('next-turn-queue-state').assertQueueState
 const clone = value => structuredClone(value)
 const stage = { id: 'synthetic-command', kind: 'test', revision: 'r1', prompt: 'Generate the exact synthetic report.\nDo not dispatch twice.' }
 function queueEntry(target, changes = {}) {

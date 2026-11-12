@@ -31,23 +31,23 @@ const envelope = () => ({ draft: { text: token, revision: 1, mentions: [{ source
   resources: { skills: { kind: 'inherit' }, mcpServers: { kind: 'none' }, knowledgeBases: { kind: 'inherit' }, toolkits: { kind: 'inherit' } },
   thinking: { kind: 'inherit' }, memory: { kind: 'inherit' }, security: { policy: 'engine-session' }, attachments: [] })
 const afterRemoval = { text: '继续完成任务', revision: 2, mentions: [] }
-function gatewayFixture(resolveSelection = async () => ({ toolkits: ['agent-management', 'skill-management', 'automation'] }), owner = 'work') {
+function gatewayFixture(resolveSelection = async () => ({ toolkits: ['agent-management', 'skill-management', 'automation'] })) {
   let current = snapshot
   const controller = new AbortController(), calls = []
   const port = { snapshot: () => current, signal: () => controller.signal,
     request: async input => {
       calls.push(input)
       assert.equal(input.expectedEngine.instanceId, 'test-instance')
-      assert.equal(input.toolProfile, owner === 'work' ? 'general' : 'code')
+      assert.equal(input.toolProfile, 'general')
       if (input.path === '/chat/admission/context') return { ok: true, data: { protocolVersion: 1, tenantId: scope.tenantId, namespace: scope.namespace,
         sessionId: scope.taskId, root: { runId: 'root', attemptId: 'attempt', version: 1, status: 'running', workspacePaths: [] },
         predecessor: { runId: 'root', attemptId: 'attempt', version: 1 },
-        transport: { toolProfile: owner === 'work' ? 'general' : 'code', runLifetime: 'durable', subagentProtocol: 2 } } }
+        transport: { toolProfile: 'general', runLifetime: 'durable', subagentProtocol: 2 } } }
       assert.equal(input.path, '/sessions/toolkit-session/toolkits')
       return { ok: true, data: await resolveSelection() }
     }
   }
-  return { gateway: new module.EngineQueueGateway(port, owner), calls, switchSource: () => { current = { ...snapshot, instanceId: 'replacement' } } }
+  return { gateway: new module.EngineQueueGateway(port), calls, switchSource: () => { current = { ...snapshot, instanceId: 'replacement' } } }
 }
 
 test('main resolves inherited selection using trusted scope and only revokes the removed package', async () => {
@@ -81,20 +81,19 @@ test('main never treats failed or late inherited lookup as empty and explicit ed
   explicit.gateway.close()
 })
 
-test('Code replacement persists resolved inherited revocation through the real main dispatcher and journal', async () => {
-  const fixture = gatewayFixture(undefined, 'code'), directory = join(folder, 'code-journal')
+test('queued draft edits persist resolved inherited revocation through the real main dispatcher and journal', async () => {
+  const fixture = gatewayFixture(), directory = join(folder, 'session-journal')
   const store = new module.NextTurnQueueStore(directory)
   const service = new module.NextTurnQueueMutationService(store, fixture.gateway)
   const dispatcher = new module.NextTurnDispatcher(service, fixture.gateway)
   const original = envelope(), submission = { draft: original.draft, model: original.model, resources: original.resources,
-    thinking: original.thinking, code: { workspacePaths: [] }, attachments: [] }
+    thinking: original.thinking, attachments: [] }
   try {
     const queued = await dispatcher.enqueue(scope.taskId, 0, 'enqueue', 'entry', submission)
     const entry = queued.state.entries[0]
-    const edited = await dispatcher.changePending(scope.taskId, { kind: 'replace-submission', operationId: 'edit', id: entry.id,
-      expectedRevision: queued.state.revision, entryRevision: entry.revision, submission: { ...submission, draft: afterRemoval } })
+    const edited = await dispatcher.editDraft(scope.taskId, queued.state.revision, 'edit', entry.id, entry.revision, afterRemoval)
     assert.deepEqual(edited.state.entries[0].envelope.resources.toolkits, { kind: 'override', ids: ['skill-management', 'automation'] })
-    const restored = await new module.NextTurnQueueStore(directory).read({ ...scope, owner: 'code' })
+    const restored = await new module.NextTurnQueueStore(directory).read(scope)
     assert.deepEqual(restored.state.entries[0].envelope.resources.toolkits, { kind: 'override', ids: ['skill-management', 'automation'] })
     assert.deepEqual(restored.state.entries[0].envelope.draft, afterRemoval)
     assert.equal(fixture.calls.filter(item => item.path.endsWith('/toolkits')).length, 1)

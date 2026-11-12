@@ -15,7 +15,7 @@ const now = () => new Date().toISOString();
 const requiredHooks = ['openSampleByUi', 'assertPreview', 'exercisePdfPages', 'exerciseWorkbookPagesAndSheets', 'exercisePreviewError', 'exerciseResourceAndSessionSwitching'];
 
 /** Renderer-only bounded observation. Does not select a tab or invoke a controller. */
-export function readWorkResourceUi() {
+export function readSessionResourceUi() {
   const visible = element => Boolean(element && element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden');
   const work = document.querySelector('#mode-work');
   const lists = work ? [...work.querySelectorAll('[role="tablist"][aria-label="打开的资源"]')].filter(visible) : [];
@@ -25,7 +25,7 @@ export function readWorkResourceUi() {
     title: tab.getAttribute('title'), name: tab.textContent?.trim() ?? '', selected: tab.getAttribute('aria-selected') === 'true',
     closeLabel: tab.parentElement?.querySelector('button[aria-label^="关闭"]')?.getAttribute('aria-label') ?? null,
   })) : [];
-  return { workVisible: visible(work) && work.getAttribute('aria-hidden') === 'false', resourceListCount: lists.length,
+  return { sessionVisible: visible(work) && work.getAttribute('aria-hidden') === 'false', resourceListCount: lists.length,
     toolbarCount: tools.length, activeTaskTitles: rows.map(row => row.getAttribute('title')), tabs,
     selectedTool: tools.length === 1 ? tools[0].querySelector('button[aria-pressed="true"]')?.id ?? null : null,
     previewTitles: work ? [...work.querySelectorAll('.work-artifact-panel-v2__title')].filter(visible).map(row => row.getAttribute('title')) : [],
@@ -94,8 +94,8 @@ async function windowInventory(c) {
 export async function prepareOfficeResourceUiValidation(c, { samples = [] } = {}) {
   const plan = resourceUiScenarioPlan(samples); assertNoOtherOwner(c);
   const proof = await observeOfficeVerifiedSubmitInstallation(c);
-  const ui = await c.page.evaluate(readWorkResourceUi);
-  assert.ok(ui.workVisible && ui.resourceListCount === 1 && ui.toolbarCount === 1, 'UNIFIED_RESOURCE_UI_NOT_BUILT');
+  const ui = await c.page.evaluate(readSessionResourceUi);
+  assert.ok(ui.sessionVisible && ui.resourceListCount === 1 && ui.toolbarCount === 1, 'UNIFIED_RESOURCE_UI_NOT_BUILT');
   assert.ok(ui.activeTaskTitles.length === 1 && ui.tabs.length <= 64, 'RESOURCE_UI_AMBIGUOUS');
   assert.ok(ui.tabs.every(tab => tab.title && tab.closeLabel) && new Set(ui.tabs.map(tab => tab.title)).size === ui.tabs.length, 'RESOURCE_RESTORE_IDENTITY_AMBIGUOUS');
   const originals = samples.map(sample => {
@@ -137,7 +137,7 @@ export async function runOfficeResourceUiValidation(c, { samples, hooks } = {}) 
     for (const [name, guard] of Object.entries(guards)) assert.equal(c[name], guard, 'UI_PROBE_GUARD_REPLACED');
     return track.run(label, fn);
   };
-  const ui = () => call('resource-ui-snapshot', () => c.page.evaluate(readWorkResourceUi));
+  const ui = () => call('resource-ui-snapshot', () => c.page.evaluate(readSessionResourceUi));
   const capture = async label => {
     assert.ok(/^[a-z0-9-]+$/.test(label), 'EVIDENCE_LABEL_INVALID');
     const state = await ui(), screenshot = path.join(directory, label + '.png');

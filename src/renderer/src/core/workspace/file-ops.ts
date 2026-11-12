@@ -557,5 +557,5 @@ function closeDocumentsInside(targetPath: string): void {
     closeFile(doc.path)
   }
 
-  if (activeWasClosed) setLayout({ activeEditorView: 'chat' })
+  if (activeWasClosed) setLayout({ activeEditorView: '' })
 }

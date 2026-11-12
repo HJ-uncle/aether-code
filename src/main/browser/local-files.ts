@@ -1,4 +1,5 @@
-import { app, protocol, type Session } from 'electron'
+import { type Session } from 'electron'
+import '../protocol-schemes'
 import { randomBytes } from 'node:crypto'
 import { lstat, open, realpath, stat } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path'
@@ -19,9 +20,6 @@ const MIME: Record<string, string> = {
   '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.wasm': 'application/wasm',
   '.mp4': 'video/mp4', '.webm': 'video/webm', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.pdf': 'application/pdf'
 }
-
-// A standard origin supports module scripts and relative assets without a listening HTTP server.
-if (!app.isReady()) protocol.registerSchemesAsPrivileged([{ scheme: SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }])
 
 export interface LocalBrowserGrant { root: string; origin: string; url: string; userSelected?: true }
 export const isLocalFileUrl = (value: string): boolean => /^file:/i.test(value.trim())

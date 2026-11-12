@@ -1,8 +1,8 @@
 /** Pure tool image galleries: verified document receipts group across calls,
  * page identity survives equal pixels, and unrelated or incomplete receipts stay isolated. */
 import { expect, test } from '@playwright/test'
-import { parseToolResult } from '../src/renderer/src/contrib/chat/tool-result'
-import { buildToolImageGallery, toolImageReference } from '../src/renderer/src/contrib/chat/tool-image-gallery'
+import { parseToolResult } from '../src/renderer/src/features/conversation/shared/tool-result'
+import { buildToolImageGallery, toolImageReference } from '../src/renderer/src/features/conversation/shared/tool-image-gallery'
 
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lFEAAAAASUVORK5CYII='
 const hash = 'a'.repeat(64), sessionId = 'work-gallery', source = 7

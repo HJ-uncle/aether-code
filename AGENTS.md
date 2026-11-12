@@ -12,15 +12,33 @@ Aether：Electron + React + TypeScript 的桌面 IDE。
 |---|---|---|
 | `src/main/` | 主进程：文件服务、PTY 终端、git、搜索、引擎宿主 | Node |
 | `src/preload/` | IPC 桥（`window.aether`） | 桥接层 |
-| `src/renderer/src/` | 渲染进程：整个 IDE 界面 | Chromium |
+| `src/renderer/src/app/` | 默认应用壳、导航与页面装配 | Chromium |
+| `src/renderer/src/features/` | 会话、工作区、成果、插件、服务等功能域 | Chromium |
+| `src/renderer/src/ui/` | 共享控件、菜单、弹窗与布局原语 | Chromium |
+| `src/renderer/src/core/` | 引擎连接、平台、文件与共享状态设施 | Chromium |
 | `src/shared/ipc.ts` | IPC 契约类型，主/渲染两侧共享 | 类型 |
 | `e2e/` | Playwright 测试 | Node |
 
 引擎（AI agent runtime）在**同级仓库** `../ai-agent-engine`，通过 HTTP 通信。
 
+前端只有一个默认界面，结构及插件承载约定见 [docs/frontend-architecture.md](docs/frontend-architecture.md)。不要新建 Work / Code 模式目录。持久化键与 IPC 中的历史标识不随文件重命名变更。
+
 ---
 
 ## 改完代码必须验证
+
+### 测试文件统一归属
+
+用户明确要求保持根目录整洁，此规则适用于每次改动：
+
+- Playwright 的默认和专项配置统一放在 `e2e/config/`。优先复用默认配置，按测试文件或名称筛选，不为每次验证另建根目录配置。
+- 测试源码放在 `e2e/` 或已有测试目录；可复用诊断脚本放在 `scripts/diagnostics/`。
+- 临时配置、一次性脚本、日志、截图、报告、夹具与测试数据库统一放入 `.e2e-tmp/<任务名>/`（已被 Git 忽略），不散放在根目录或项目外。
+- TypeScript 构建信息写入 `.e2e-tmp/typescript/`，不把 `*.tsbuildinfo` 放到根目录或提交进 Git。
+- 新增和修改测试时检查真实输出路径以及失败分支，确保运行后根目录仍整洁。移动现有文件要同步修正相对路径、命令和引用，并保留必要诊断证据。
+- 删除或迁移文件后，同步清理遗留空目录；包含隐藏文件的目录不算空。自底向上逐个非递归删除，删除前再次检查；跳过联接点、符号链接、依赖和运行数据目录。
+
+### 常用验证入口
 
 ```bash
 npm run typecheck      # 必跑。node + web 两段
@@ -46,15 +64,15 @@ IPC 数据形状不匹配，**只有真实窗口里才暴露**。
 
 E2E 加载的是 `out/` 产物，不是源码。**忘了 build 就会拿旧产物跑测试，
 用一份通不过来掩盖真实失败。** `test:e2e` 已挂 `pretest:e2e` 自动 build，
-但手动跑 `playwright test` 时要自己先 build。
+但手动跑 `playwright test --config e2e/config/playwright.config.ts` 时要自己先 build。
 
 ### 其它跑法
 
 ```bash
 npm run test:e2e:headed                       # 看着窗口跑，调试用
 npm run test:e2e:ui                           # Playwright UI 模式
-npx playwright test e2e/smoke.spec.ts         # 单个文件（记得先 build）
-npx playwright test -g "资源管理器"            # 按用例名过滤
+npx playwright test --config e2e/config/playwright.config.ts e2e/smoke.spec.ts # 单个文件（记得先 build）
+npx playwright test --config e2e/config/playwright.config.ts -g "资源管理器" # 按用例名过滤
 npm run test:e2e -- --repeat-each=3           # 查偶发失败
 ```
 
@@ -64,7 +82,7 @@ E2E 强制 `workers: 1`：应用用了 `requestSingleInstanceLock`（第二个�
 ### 当前基线
 
 **全量 103 条用例，应为 102 passed / 0 failed / 1 skipped。** 若有红，先假定是自己改坏了。
-（数字会随用例增删变动。核对方式：`npx playwright test --list` 看 Total，
+（数字会随用例增删变动。核对方式：`npx playwright test --config e2e/config/playwright.config.ts --list` 看 Total，
 或挑纯函数 spec 跑一遍——它们不依赖真机，秒级完成。）
 
 唯一的 skip 是「内置终端多标签」：沙箱/CI 里 spawn 控制台进程被拒，
@@ -82,7 +100,7 @@ FAILURE #1
   title:    <用例名>
   file:     <相对路径>:<行号>
   status:   failed
-  repro:    npx playwright test <file> -g "<用例名>" --reporter=list   ← 直接复跑这一条
+  repro:    npx playwright test --config e2e/config/playwright.config.ts <file> -g "<用例名>" --reporter=list   ← 直接复跑这一条
   errors:   <截断后的断言差异>
   app-errors:  渲染进程/主进程侧报错（断言之外的独立信号，重复会折叠成 ×N）
   trace:    npx playwright show-trace ...

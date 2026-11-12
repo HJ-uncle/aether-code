@@ -1,14 +1,14 @@
 /**
  * 渲染进程启动引导
  *
- * 在挂载 React 之前完成贡献注册与快捷键安装，保证首帧渲染时
- * 视图与命令已经就位（否则 ActivityBar 会先渲染成空列表再抖动一下）。
+ * Register shared commands and platform bridges before React mounts.
  */
-import { registerContributions } from './contrib'
+import { registerContributions } from './app/register-builtins'
 import { installKeybindingDispatcher } from './core/platform/keybindings'
 import { installHorizontalWheelScrolling } from './core/platform/horizontal-scroll'
 import { wireBrowserConnection } from './core/browser/connection'
 import { wireBrowserPresentation } from './core/browser/presentation'
+import { startExtensionHost } from './features/extensions'
 
 /**
  * Monaco's native quick-input hover list rejects its pending Delayer when the
@@ -48,6 +48,7 @@ export function bootstrapRenderer(): () => void {
   const disposeHorizontalScrolling = installHorizontalWheelScrolling()
 
   const disposeBrowserConnection = wireBrowserConnection()
+  const disposeExtensions = startExtensionHost()
 
   return () => {
     disposeBrowserPresentation()
@@ -56,5 +57,6 @@ export function bootstrapRenderer(): () => void {
     disposeKeybindings()
     disposeHorizontalScrolling()
     disposeBrowserConnection()
+    disposeExtensions()
   }
 }

@@ -6,10 +6,10 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { normalizeRootRunActivity, type RootRun, type RootRunActivity } from '../src/shared/root-run'
 import { normalizeRootRun, mergeRootRun, applyRootRun } from '../src/renderer/src/core/engine/root-run-state'
-import { workTaskActivityFromRun, workTaskRunPatch, normalizeWorkTaskActivity } from '../src/renderer/src/contrib/work/work-status-poller'
-import { workDependencyProgress } from '../src/renderer/src/contrib/work/work-dependency-progress'
-import { workSidebarStatus } from '../src/renderer/src/contrib/work/work-sidebar-task'
-import type { WorkTask } from '../src/renderer/src/contrib/work/work-state'
+import { sessionTaskActivityFromRun, sessionTaskRunPatch, normalizeSessionTaskActivity } from '../src/renderer/src/features/sessions/status-poller'
+import { sessionDependencyProgress } from '../src/renderer/src/features/sessions/dependency-progress'
+import { sessionSidebarStatus } from '../src/renderer/src/features/sessions/sidebar-task'
+import type { SessionTask } from '../src/renderer/src/features/sessions/state'
 
 const activity = (): RootRunActivity => ({ phase: 'waiting_children', groups: [
   { id: 'A', label: '审阅接口', state: 'consumed', total: 1, settled: 1, failed: 0 },
@@ -19,9 +19,9 @@ const activity = (): RootRunActivity => ({ phase: 'waiting_children', groups: [
 const root = (patch: Partial<RootRun> = {}): RootRun => ({ schemaVersion: 1, runId: 'root', sessionId: 'session', turnId: 'turn',
   userMessageId: 'user', assistantMessageId: 'assistant', seq: 1, version: 2, status: 'running', createdAt: 100, updatedAt: 200,
   pending: [], activity: activity(), ...patch })
-const task = (patch: Partial<WorkTask> = {}): WorkTask => ({ id: 'session', title: '项目任务', draft: '', status: 'running',
+const task = (patch: Partial<SessionTask> = {}): SessionTask => ({ id: 'session', title: '项目任务', draft: '', status: 'running',
   createdAt: 100, updatedAt: 200, workspacePath: null, modelId: 'fixture', attachments: [], sources: [],
-  activity: workTaskActivityFromRun({ run: root() }, 'session'), ...patch })
+  activity: sessionTaskActivityFromRun({ run: root() }, 'session'), ...patch })
 
 test('the transport keeps bounded complete progress and rejects malformed counters', () => {
   expect(normalizeRootRunActivity(activity())).toEqual(activity())
@@ -46,36 +46,36 @@ test('SSE and HTTP status preserve one authoritative version without adding tool
   expect(updated[0].usage).toEqual(messages[0].usage)
   const current = task()
   expect(current.activity?.execution).toEqual(activity())
-  expect(normalizeWorkTaskActivity(current.activity)?.execution).toEqual(activity())
-  expect(workTaskRunPatch(current, { run: next }, 300)?.activity.execution?.phase).toBe('executing')
-  expect(workTaskRunPatch({ ...current, activity: workTaskActivityFromRun({ run: next }, 'session') }, { run: first }, 300)).toBeUndefined()
+  expect(normalizeSessionTaskActivity(current.activity)?.execution).toEqual(activity())
+  expect(sessionTaskRunPatch(current, { run: next }, 300)?.activity.execution?.phase).toBe('executing')
+  expect(sessionTaskRunPatch({ ...current, activity: sessionTaskActivityFromRun({ run: next }, 'session') }, { run: first }, 300)).toBeUndefined()
   for (const status of ['succeeded', 'failed', 'cancelled', 'interrupted', 'waiting'] as const) {
     expect(normalizeRootRun(root({ status }))?.activity).toBeUndefined()
-    expect(workTaskActivityFromRun({ run: root({ status }) }, 'session')?.execution).toBeUndefined()
+    expect(sessionTaskActivityFromRun({ run: root({ status }) }, 'session')?.execution).toBeUndefined()
   }
 })
 
 test('one named dependency group is shown, never summed across overlapping groups', () => {
-  expect(workDependencyProgress(root())).toMatchObject({ groupId: 'B', label: '等待依赖 · 1/2', accessibleLabel: '集成模块，等待依赖 · 1/2' })
-  expect(workDependencyProgress(root())?.detail).not.toContain('3/5')
+  expect(sessionDependencyProgress(root())).toMatchObject({ groupId: 'B', label: '等待依赖 · 1/2', accessibleLabel: '集成模块，等待依赖 · 1/2' })
+  expect(sessionDependencyProgress(root())?.detail).not.toContain('3/5')
   const blocked = activity(); blocked.groups[1] = { ...blocked.groups[1], state: 'blocked', failed: 1 }
-  expect(workDependencyProgress(root({ activity: blocked }))?.accessibleLabel).toBe('集成模块，依赖受阻 · 1/2，1 项未成功')
-  expect(workDependencyProgress(root({ status: 'succeeded' }))).toBeUndefined()
-  expect(workDependencyProgress(root({ activity: { phase: 'executing', groups: activity().groups } }))).toBeUndefined()
+  expect(sessionDependencyProgress(root({ activity: blocked }))?.accessibleLabel).toBe('集成模块，依赖受阻 · 1/2，1 项未成功')
+  expect(sessionDependencyProgress(root({ status: 'succeeded' }))).toBeUndefined()
+  expect(sessionDependencyProgress(root({ activity: { phase: 'executing', groups: activity().groups } }))).toBeUndefined()
 })
 
 test('sidebar remains active while question, disconnection, stop and terminal take precedence', () => {
-  expect(workSidebarStatus(task(), true)).toEqual({ kind: 'running', active: true, label: '集成模块，等待依赖 · 1/2' })
-  expect(workSidebarStatus(task(), true, true).kind).toBe('stopping')
-  expect(workSidebarStatus(task(), false).kind).toBe('disconnected')
-  expect(workSidebarStatus(task({ status: 'waiting' }), true).kind).toBe('question')
-  expect(workSidebarStatus(task({ status: 'done' }), true).label).toBe('已完成')
+  expect(sessionSidebarStatus(task(), true)).toEqual({ kind: 'running', active: true, label: '集成模块，等待依赖 · 1/2' })
+  expect(sessionSidebarStatus(task(), true, true).kind).toBe('stopping')
+  expect(sessionSidebarStatus(task(), false).kind).toBe('disconnected')
+  expect(sessionSidebarStatus(task({ status: 'waiting' }), true).kind).toBe('question')
+  expect(sessionSidebarStatus(task({ status: 'done' }), true).label).toBe('已完成')
 })
 
 test.describe('Work dependency feedback DOM', () => {
   const project = resolve(__dirname, '..')
   let browser: Browser, context: BrowserContext, page: Page, bundle: string, errors: string[]
-  const css = ['assets/tokens.css', 'assets/base.css', 'assets/components.css', 'assets/motion.css', 'contrib/work/work.css']
+  const css = ['assets/tokens.css', 'assets/base.css', 'assets/components.css', 'assets/motion.css', 'app/application.css']
     .map(file => readFileSync(resolve(project, 'src/renderer/src', file), 'utf8')).join('\n')
   test.beforeAll(async () => {
     const built = await build({ stdin: { loader: 'tsx', resolveDir: project, contents: `
@@ -83,16 +83,14 @@ test.describe('Work dependency feedback DOM', () => {
       import { createRoot } from 'react-dom/client'
       import { AppContext } from './src/renderer/src/core/app-context'
       import { DEFAULT_SETTINGS } from './src/shared/ipc'
-      import { WorkTurnFeedback, WorkRunStatus } from './src/renderer/src/contrib/work/WorkView'
-      import { setAppMode } from './src/renderer/src/core/platform/app-mode'
-      setAppMode('work')
+      import { SessionTurnFeedback, SessionRunStatus } from './src/renderer/src/features/conversation/SessionFeedback'
       const view = createRoot(document.getElementById('fixture'))
       const context = { engine:{snapshot:{mode:'local'}},settings:DEFAULT_SETTINGS,userSettings:DEFAULT_SETTINGS,ready:true,settingsLoaded:true,updateSettings:async()=>{} }
       window.stopCount = 0
       window.renderDependency = ({ run, footer = false, ...overrides }) => {
         const controller = { ready:true, pending:[], streaming:true, launching:false, stopping:false, messages:[{id:'assistant',role:'assistant',status:'streaming',createdAt:Date.now(),tools:[],content:'之前的进展',thinking:'之前的分析',run}],
           activeTask:{status:'running'}, agentIdentity:{name:'Agent'}, stop:async()=>{window.stopCount++}, ...overrides }
-        view.render(<AppContext.Provider value={context}>{footer ? <WorkRunStatus controller={controller}/> : <WorkTurnFeedback controller={controller} announce openActivity={()=>{throw Error('No synthetic activity')}}/>}</AppContext.Provider>)
+        view.render(<AppContext.Provider value={context}>{footer ? <SessionRunStatus controller={controller}/> : <SessionTurnFeedback controller={controller} announce openActivity={()=>{throw Error('No synthetic activity')}}/>}</AppContext.Provider>)
       }
     ` }, bundle: true, write: false, platform: 'browser', format: 'iife', jsx: 'automatic',
       tsconfig: resolve(project, 'tsconfig.web.json'), loader: { '.css': 'empty' }, define: { 'process.env.NODE_ENV': '"test"' },

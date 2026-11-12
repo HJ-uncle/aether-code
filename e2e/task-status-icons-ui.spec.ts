@@ -4,12 +4,12 @@
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
-import { workSidebarStatus } from '../src/renderer/src/contrib/work/work-sidebar-task'
-import type { WorkTask, WorkTaskStatus } from '../src/renderer/src/contrib/work/work-state'
+import { sessionSidebarStatus } from '../src/renderer/src/features/sessions/sidebar-task'
+import type { SessionTask, TaskStatus } from '../src/renderer/src/features/sessions/state'
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
 const now = Date.now()
-const task = (status: WorkTaskStatus, patch: Partial<WorkTask> = {}): WorkTask => ({
+const task = (status: TaskStatus, patch: Partial<SessionTask> = {}): SessionTask => ({
   id: `work-status-icon-${status}`, title: `图标核对 ${status}`, draft: '', status, createdAt: now, updatedAt: now,
   workspacePath: null, modelId: '', attachments: [], sources: [], ...patch
 })
@@ -17,21 +17,21 @@ const tasks = (['error', 'interrupted', 'done', 'running', 'waiting', 'stopped',
 
 test('异常状态保留警示语义，完成状态保持独立', () => {
   for (const status of ['error', 'interrupted'] as const) {
-    for (const ready of [false, true]) expect(workSidebarStatus(task(status), ready)).toMatchObject({ kind: status, icon: 'alert-circle' })
+    for (const ready of [false, true]) expect(sessionSidebarStatus(task(status), ready)).toMatchObject({ kind: status, icon: 'alert-circle' })
   }
   for (const status of ['running', 'waiting'] as const) {
-    expect(workSidebarStatus(task(status), false)).toMatchObject({ kind: 'disconnected', icon: 'alert-circle', label: '连接中断，等待恢复确认' })
+    expect(sessionSidebarStatus(task(status), false)).toMatchObject({ kind: 'disconnected', icon: 'alert-circle', label: '连接中断，等待恢复确认' })
   }
-  for (const ready of [false, true]) expect(workSidebarStatus(task('done'), ready)).toEqual({ kind: 'done', label: '已完成' })
+  for (const ready of [false, true]) expect(sessionSidebarStatus(task('done'), ready)).toEqual({ kind: 'done', label: '已完成' })
 })
 
 test('运行、等待回答、等待授权和停止的状态表达保持独立', () => {
-  expect(workSidebarStatus(task('running'), true)).toEqual({ kind: 'running', label: '运行中', active: true })
-  expect(workSidebarStatus(task('running'), false, true)).toEqual({ kind: 'stopping', label: '正在停止', active: true })
-  expect(workSidebarStatus(task('waiting'), true)).toMatchObject({ kind: 'question', icon: 'chat' })
-  expect(workSidebarStatus(task('waiting', { activity: { runId: 'permission-run', seq: 1, version: 1,
+  expect(sessionSidebarStatus(task('running'), true)).toEqual({ kind: 'running', label: '运行中', active: true })
+  expect(sessionSidebarStatus(task('running'), false, true)).toEqual({ kind: 'stopping', label: '正在停止', active: true })
+  expect(sessionSidebarStatus(task('waiting'), true)).toMatchObject({ kind: 'question', icon: 'chat' })
+  expect(sessionSidebarStatus(task('waiting', { activity: { runId: 'permission-run', seq: 1, version: 1,
     status: 'waiting', updatedAt: now, pendingAsk: 0, pendingPermission: 1 } }), true)).toMatchObject({ kind: 'permission', icon: 'shield' })
-  expect(workSidebarStatus(task('stopped'), true)).toEqual({ kind: 'stopped', label: '已停止' })
+  expect(sessionSidebarStatus(task('stopped'), true)).toEqual({ kind: 'stopped', label: '已停止' })
 })
 
 async function expectStatusGlyph(status: Locator, name: 'alert-circle' | 'check'): Promise<void> {
@@ -55,8 +55,8 @@ test.describe.serial('任务状态图标真机回归', () => {
   const errors: string[] = []
   let app: ElectronApplication | undefined, page: Page, fixture = ''
   const work = () => page.locator('.work-view')
-  const sidebarStatus = (status: WorkTaskStatus) => work().locator(`[data-task-id="work-status-icon-${status}"] .work-sidebar__task-status`)
-  const homeStatus = (status: WorkTaskStatus) => work().locator('.work-task-row').filter({ hasText: `图标核对 ${status}` }).locator('.work-status')
+  const sidebarStatus = (status: TaskStatus) => work().locator(`[data-task-id="work-status-icon-${status}"] .work-sidebar__task-status`)
+  const homeStatus = (status: TaskStatus) => work().locator('.work-task-row').filter({ hasText: `图标核对 ${status}` }).locator('.work-status')
 
   test.beforeAll(async () => {
     mkdirSync(fixtureRoot, { recursive: true }); fixture = mkdtempSync(join(fixtureRoot, 'task-status-icons-profile-'))
@@ -128,7 +128,7 @@ test.describe.serial('任务状态图标真机回归', () => {
     await expectStatusGlyph(homeStatus('done'), 'check')
     const path = info.outputPath(`task-status-icons-${appearance}.png`)
     await page.screenshot({ path }); await info.attach(`任务状态图标-${appearance}`, { path, contentType: 'image/png' })
-    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('aether.work.state.v1') ?? '{}') as { tasks: WorkTask[] })
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('aether.work.state.v1') ?? '{}') as { tasks: SessionTask[] })
     expect(stored.tasks.map(({ id, status }) => ({ id, status }))).toEqual(tasks.map(({ id, status }) => ({ id, status })))
   })
 })

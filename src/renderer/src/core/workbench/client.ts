@@ -1,13 +1,10 @@
 import { useEffect, useRef } from 'react'
 import { request } from '../engine/client'
 import { getEngineSource, getExpectedEngine, getEngineStorageKey } from '../engine/source'
-import { getAppMode, onAppModeChanged, type AppMode } from '../platform/app-mode'
-import { documentKey, getEditorState, getDocument, getDocumentIdentity, isDirty, isDocumentConnectionCurrent, onEditorChanged, openFile, type OpenDocument } from '../editor/editor-store'
-import { activateGroupTab, getEditorGroups } from '../editor/editor-groups'
-import { captureSessionFileTarget, type SessionFileTarget } from '../workspace/fs-client'
-import { getTerminalState, getSessionStatus } from '../../contrib/terminal/terminal-store'
+import type { ClientSurfaceScope } from '../platform/surface-scope'
+import { getTerminalState, getSessionStatus } from '../../features/terminal/terminal-store'
 import { PREVIEW_FORMATS, WORKBENCH_ACTIONS, setWorkbenchConnected } from './capabilities'
-import { deferredWorkPreview, isWorkbenchOwnerCurrent } from './connection-scope'
+import { isWorkbenchOwnerCurrent } from './connection-scope'
 import { renderWorkbenchPage } from './render'
 
 export interface WorkbenchCommand {
@@ -42,87 +39,17 @@ export function terminalSnapshot(sessionId: string, terminalId?: string, maxLine
   return { terminalId, title: session.title, status: getSessionStatus(terminalId), output: output.slice(-24000), truncated: start > 0 || output.length > 24000 }
 }
 
-function insideSessionRoot(path: string, root: string): boolean {
-  const normalize = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '')
-  let candidate = normalize(path), base = normalize(root)
-  if (/^(?:[A-Za-z]:|\/\/)/.test(base)) { candidate = candidate.toLowerCase(); base = base.toLowerCase() }
-  if (candidate.split('/').some(part => part === '.' || part === '..')) return false
-  return candidate.startsWith(base + '/')
-}
-
-function belongsToCodeSession(doc: OpenDocument, target: SessionFileTarget): boolean {
-  return isDocumentConnectionCurrent(doc) && insideSessionRoot(doc.path, target.root)
-    && (!doc.sessionFileTarget || doc.sessionFileTarget.key === target.key)
-}
-
-/** Existing loading buffers do not make openFile await their original read. */
-function waitForCodeDocument(path: string, instance: number | undefined, target: SessionFileTarget, current: () => boolean): Promise<OpenDocument> {
-  return new Promise((resolve, reject) => {
-    let settled = false
-    const finish = (doc?: OpenDocument, error?: Error) => {
-      if (settled) return
-      settled = true; unsubscribe(); clearInterval(interval); clearTimeout(timer)
-      if (error) reject(error); else resolve(doc!)
-    }
-    const check = () => {
-      if (!current()) return finish(undefined, new Error('会话或引擎已切换，文件未确认打开。'))
-      const doc = getDocument(path)
-      if (!doc || instance === undefined || getDocumentIdentity(path)?.instance !== instance)
-        return finish(undefined, new Error('文件已关闭或重新打开，请重新读取工作台状态。'))
-      if (!belongsToCodeSession(doc, target)) return finish(undefined, new Error('文件已不属于当前任务工作区。'))
-      if (doc.error) return finish(undefined, new Error(doc.error))
-      if (!doc.loading) finish(doc)
-    }
-    const unsubscribe = onEditorChanged(check)
-    const interval = setInterval(check, 50)
-    const timer = setTimeout(() => finish(undefined, new Error('文件读取未及时完成，请查询工作台状态。')), 10_000)
-    check()
-  })
-}
-
-export function codeWorkbenchAdapter(sessionId: string): WorkbenchAdapter {
-  return {
-    async context() {
-      const target = await captureSessionFileTarget(sessionId)
-      const state = getEditorState()
-      const docs = [...state.docs.values()].filter(item => belongsToCodeSession(item, target))
-      return { mode: 'code', workspaceRoot: target.root, activePath: docs.some(item => item.path === state.activePath) ? state.activePath : null,
-        files: docs.slice(0, 100).map(item => ({ path: item.path, name: item.name, loading: item.loading, error: item.error, dirty: isDirty(item) })), hasMoreFiles: docs.length > 100 }
-    },
-    async open(path, line, current) {
-      const target = await captureSessionFileTarget(sessionId)
-      if (!current()) throw new Error('会话或引擎已切换，文件未打开。')
-      if (!insideSessionRoot(path, target.root)) throw new Error('文件不属于当前任务工作区。')
-      const existing = getDocument(path)
-      if (existing && !belongsToCodeSession(existing, target)) throw new Error('此文件由其他工作区会话打开，请先核对当前工作区。')
-      // Keep the buffer's owner, especially for ordinary Code tabs with unsaved edits.
-      const opening = openFile(path, line, undefined, undefined, existing ? existing.sessionFileTarget : target)
-      const instance = getDocumentIdentity(path)?.instance
-      await opening
-      const doc = await waitForCodeDocument(path, instance, target, current)
-      if (!current()) throw new Error('会话或引擎已切换，请重新读取工作台状态。')
-      activateGroupTab(getEditorGroups().focusedGroupId, documentKey(doc.path))
-      if (getEditorState().activePath !== doc.path) throw new Error('文件尚未激活，请重新读取工作台状态。')
-      const foreground = getAppMode() === 'code'
-      return { path: doc.path, opened: true, foreground, dirty: isDirty(doc), contentSource: 'editor-buffer', readStatus: doc.tooLarge ? 'too-large' : doc.truncated ? 'partial' : 'ready', renderStatus: foreground ? 'preview-requested' : 'deferred-until-visible', visualVerification: false }
-    }
-  }
-}
-
 /** Readiness acknowledges the actual selected preview, not just a setState call. */
-export function waitForWorkPreview(sessionId: string, path: string, current: () => boolean, revision?: number): Promise<Record<string, unknown>> {
+export function waitForSessionPreview(sessionId: string, path: string, current: () => boolean, revision?: number): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     let settled = false
     const finish = (value?: Record<string, unknown>, error?: Error) => {
       if (settled) return
-      settled = true; observer.disconnect(); unsubscribeMode(); clearTimeout(timer)
+      settled = true; observer.disconnect(); clearTimeout(timer)
       if (error) reject(error); else resolve(value!)
     }
     const check = () => {
       if (!current()) return finish(undefined, new Error('会话或引擎已切换，请重新查询工作台。'))
-      // Hidden Work panes intentionally suspend document reads. Keep the
-      // requested selection without stealing focus or claiming it was rendered.
-      if (getAppMode() !== 'work') return finish(deferredWorkPreview(path))
       const panel = [...document.querySelectorAll<HTMLElement>('[data-document-path][data-file-read-status]')]
         .find(item => item.dataset.documentSession === sessionId && item.dataset.documentPath === path && item.getClientRects().length > 0 && item.dataset.documentActive !== 'false'
           && (revision === undefined || item.dataset.workbenchRequest === String(revision)))
@@ -132,7 +59,6 @@ export function waitForWorkPreview(sessionId: string, path: string, current: () 
       finish({ path, opened: true, foreground: true, readStatus, renderStatus: 'preview-requested', visualVerification: false })
     }
     const observer = new MutationObserver(check)
-    const unsubscribeMode = onAppModeChanged(check)
     const timer = setTimeout(() => finish(undefined, new Error('预览未及时确认。请查询工作台状态，不要把请求发出当作内容已显示。')), 10_000)
     observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-file-read-status', 'data-document-path', 'data-document-active', 'data-workbench-request', 'style', 'class'] })
     check()
@@ -140,7 +66,7 @@ export function waitForWorkPreview(sessionId: string, path: string, current: () 
 }
 
 /** Work is the only mounted session bridge. */
-export function useWorkbenchClient(sessionId: string | null, enabled: boolean, mode: AppMode, adapter: WorkbenchAdapter): void {
+export function useWorkbenchClient(sessionId: string | null, enabled: boolean, mode: ClientSurfaceScope, adapter: WorkbenchAdapter): void {
   const source = getEngineSource()
   const latest = useRef({ adapter, sessionId, source, mode, enabled })
   latest.current = { adapter, sessionId, source, mode, enabled }
@@ -199,7 +125,7 @@ export function useWorkbenchClient(sessionId: string | null, enabled: boolean, m
             }, 5000) : undefined
             try {
               const data = command.action === 'workspace.context'
-                ? { ...await latest.current.adapter.context(), foreground: mode === getAppMode(), ...terminalSnapshot(sessionId), previewFormats: PREVIEW_FORMATS, actions }
+                ? { ...await latest.current.adapter.context(), foreground: true, ...terminalSnapshot(sessionId), previewFormats: PREVIEW_FORMATS, actions }
                 : command.action === 'terminal.read'
                   ? terminalSnapshot(sessionId, command.args.terminalId, command.args.maxLines)
                   : command.action === 'artifact.render' ? await renderWorkbenchPage(sessionId, command.args, commandCurrent)

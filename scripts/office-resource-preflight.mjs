@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { createReadonlyWorkQueueReader } from './office-readonly-work-queue.mjs';
+import { createReadonlySessionQueueReader } from './office-readonly-work-queue.mjs';
 
 const ROOT = 'D:/dev/aether-code/.ae/office-company-20261023163242581';
 const RUNNER = 'D:/dev/aether-code/scripts/run-office-company-campaign.mjs';
@@ -55,7 +55,7 @@ export async function observeOfficeResourceIdle(c, { allowResourceValidation = f
     assert.ok(samePath(host.profile, profile) && !host.native, 'READONLY_QUEUE_BACKEND_OR_PROFILE_CHANGED');
     assert.equal(host.windows.length, 1, 'EXACTLY_ONE_EXISTING_WINDOW_REQUIRED');
     assert.deepEqual(identity(await read('engine', () => c.page.evaluate(() => window.aether.engine.getSnapshot()))), expectedEngine, 'ENGINE_IDENTITY_CHANGED');
-    const reader = createReadonlyWorkQueueReader({ profile, backend: 'json-journal' });
+    const reader = createReadonlySessionQueueReader({ profile, backend: 'json-journal' });
     const roles = {}, expectedTargets = {};
     assert.equal(upgrade.after.tasks.length, 6);
     for (const task of upgrade.after.tasks) {

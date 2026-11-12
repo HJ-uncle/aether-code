@@ -11,7 +11,7 @@ export function isWorkbenchOwnerCurrent(owner: WorkbenchOwner, latest: Workbench
     owner.sessionId === latest.sessionId && owner.mode === latest.mode
 }
 
-export function deferredWorkPreview(path: string): Record<string, unknown> {
+export function deferredSessionPreview(path: string): Record<string, unknown> {
   return { path, opened: true, foreground: false, readStatus: 'not-confirmed', renderStatus: 'deferred-until-visible', visualVerification: false,
     message: '已在所属任务保留预览入口；该任务在后台，切回后才读取并显示文件，尚未确认内容或版式。' }
 }

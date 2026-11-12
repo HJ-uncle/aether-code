@@ -5,12 +5,13 @@
  *   1. tokens.css     变量与主题（深/浅外观、强调色、材质）—— 必须最先，
  *                     否则后面的规则引用 var() 时变量还不存在
  *   2. base.css       重置、元素默认值、焦点环、滚动条
- *   3. components.css 各功能区的具体外观
+ *   3. components.css 跨功能域共享组件的基础外观
  *
  * 新增样式的归属判断：
  *   - 要加一个新颜色/圆角/间距 → tokens.css
  *   - 要改焦点环、滚动条、标签默认样式 → base.css
- *   - 某个业务控件的外观 → components.css
+ *   - 共享控件的外观 → components.css 或对应 ui 组件
+ *   - 某个业务区域的外观 → 对应 features 目录，由该区域组件导入
  *
  * 主题切换见 tokens.css 顶部说明：靠 <html> 上的 data-appearance / data-accent。
  */
@@ -19,5 +20,5 @@
 @import './components.css';
 @import './monaco-menu.css';
 @import './page-surfaces.css';
-@import '../contrib/git/git-dialog.css';
+@import '../features/git/git-dialog.css';
 @import './input-controls.css';

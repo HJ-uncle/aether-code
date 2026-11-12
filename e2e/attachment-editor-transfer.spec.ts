@@ -1,8 +1,8 @@
 /** Pure editor transfer checks: foreign drags cannot supply resources; copied
  * attachment occurrences rebind only to still-owned IDs, without altering prose. */
 import { expect, test } from '@playwright/test'
-import { attachmentReferences, attachmentMention } from '../src/renderer/src/contrib/chat/attachment-references'
-import { attachmentDragKey, attachmentDropReference, rebindAttachmentClipboard } from '../src/renderer/src/contrib/chat/attachment-editor-transfer'
+import { attachmentReferences, attachmentMention } from '../src/renderer/src/features/conversation/shared/attachment-references'
+import { attachmentDragKey, attachmentDropReference, rebindAttachmentClipboard } from '../src/renderer/src/features/conversation/shared/attachment-editor-transfer'
 
 const files = attachmentReferences([
   { attachmentId: 'photo-a', path: 'a.png', name: 'a.png', type: 'image/png', size: 1 },

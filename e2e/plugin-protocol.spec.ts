@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
-import { isPluginToolkitId, parseWorkToolkits } from '../src/shared/toolkits'
-import { buildMentionMessage, userMessageDraft, mentionToken } from '../src/renderer/src/contrib/chat/mention-context'
-import { draftToolkitIds, editDraftToolkits } from '../src/renderer/src/contrib/work/work-toolkit-mentions'
+import { isPluginToolkitId, parseToolkitCatalogue } from '../src/shared/toolkits'
+import { buildMentionMessage, userMessageDraft, mentionToken } from '../src/renderer/src/features/conversation/shared/mention-context'
+import { draftToolkitIds, editDraftToolkits } from '../src/renderer/src/features/composer/toolkit-mentions'
 import { parsePluginDraft, pluginExampleArgs } from '../src/renderer/src/core/engine/plugins'
 import { newPlugin } from './fixtures/plugin'
 import { resourceCatalogueChange } from '../src/renderer/src/core/engine/resource-catalogue'
@@ -9,7 +9,7 @@ import { remoteRequestError } from '../src/main/engine/protocol'
 
 test('dynamic plugin catalogue accepts only pinned validated identities with engine availability', () => {
   const plugin = { id: 'plugin-report-helper--r12', name: '报告助手', description: '整理报告', toolNames: ['plugin_report_helper_summarize'], available: true }
-  expect(parseWorkToolkits({ toolkits: [plugin, plugin, { ...plugin, id: 'arbitrary' }, { ...plugin, id: 'plugin-escape--r0' }] })).toEqual([plugin])
+  expect(parseToolkitCatalogue({ toolkits: [plugin, plugin, { ...plugin, id: 'arbitrary' }, { ...plugin, id: 'plugin-escape--r0' }] })).toEqual([plugin])
   expect(isPluginToolkitId('plugin-report-helper--r12')).toBe(true)
   expect(isPluginToolkitId('plugin-3d-tools--r1')).toBe(true)
   expect(isPluginToolkitId('plugin-../../file--r1')).toBe(false)

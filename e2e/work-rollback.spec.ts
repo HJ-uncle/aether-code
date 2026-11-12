@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test'
 import type { EngineRequestInput } from '../src/shared/ipc'
 import { getRevertReport, revertConversationFrom, revertSummary, type RevertReport } from '../src/renderer/src/core/engine/change-revert'
 import { getEngineSource, publishEngineSource } from '../src/renderer/src/core/engine/source'
-import { workPreviewRevision } from '../src/renderer/src/core/workbench/preview-request'
+import { sessionPreviewRevision } from '../src/renderer/src/core/workbench/preview-request'
 import { remoteRequestError } from '../src/main/engine/protocol'
 
 const user = { id: 'user', role: 'user', content: '生成文档' }
@@ -39,7 +39,7 @@ test('summary includes implicitly cleaned folders without counting them as files
 
 test('one scope preview confirms command IDs and truncates only after all files succeed', async () => {
   const { calls, request } = fixture()
-  const source = getEngineSource(), before = workPreviewRevision(source, 'session', undefined)
+  const source = getEngineSource(), before = sessionPreviewRevision(source, 'session', undefined)
   await revertConversationFrom(request, 'session', user, async preview => {
     expect(preview.changes).toEqual(changes)
     expect(calls.map(call => call.path)).toEqual(['/conversation/history', '/changes/revert-preview'])
@@ -48,9 +48,9 @@ test('one scope preview confirms command IDs and truncates only after all files 
   expect(calls.map(call => call.path)).toEqual(['/conversation/history', '/changes/revert-preview', '/changes/revert-batch', '/conversation/truncate'])
   expect(calls[2].body).toEqual({ sessionId: 'session', scope: 'all', fromTurnId: 'turn-1', reviewedCommandChangeIds: ['command'] })
   expect(calls[3].body).toEqual({ sessionId: 'session', messageId: 'user' })
-  expect(workPreviewRevision(source, 'session', undefined)).toBeGreaterThan(before)
-  expect(workPreviewRevision(source, 'session', '/unmounted/file')).toBeGreaterThan(before)
-  expect(workPreviewRevision(source, 'other-session', undefined)).toBe(0)
+  expect(sessionPreviewRevision(source, 'session', undefined)).toBeGreaterThan(before)
+  expect(sessionPreviewRevision(source, 'session', '/unmounted/file')).toBeGreaterThan(before)
+  expect(sessionPreviewRevision(source, 'other-session', undefined)).toBe(0)
 })
 
 test('cancel after scope preview performs no rollback or history mutation', async () => {
@@ -68,7 +68,7 @@ test('partial rollback publishes persistent result and invalidates files before 
   await expect(revertConversationFrom(request, 'partial', user, async () => true)).rejects.toThrow('对话历史已保留')
   expect(calls.some(call => call.path === '/conversation/truncate')).toBe(false)
   expect(getRevertReport('partial')).toEqual(partial)
-  expect(workPreviewRevision(source, 'partial', '/project/交付/report.txt')).toBeGreaterThan(0)
+  expect(sessionPreviewRevision(source, 'partial', '/project/交付/report.txt')).toBeGreaterThan(0)
 })
 
 test('changing engine while confirmation is open cannot mutate the new engine', async () => {

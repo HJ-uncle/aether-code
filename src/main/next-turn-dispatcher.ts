@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { NextTurnQueueError, type NextTurnQueueEnvelope, type NextTurnQueueScope, type NextTurnQueueState, type QueueCommitResult } from '../shared/next-turn-queue'
 import { queueScopeIdentity, sameQueueScope } from '../shared/next-turn-queue-state'
-import type { WorkQueueDraft, WorkQueueRead } from '../shared/work-next-turn-api'
+import type { SessionQueueDraft, SessionQueueRead } from '../shared/session-next-turn-api'
 import { NextTurnQueueMutationService, type QueueOwnerCapability, type TrustedQueueAuthority } from './next-turn-queue-service'
 import type { AdmissionContext, ExactAdmission } from './next-turn-admission-protocol'
 import { freezeQueueRequest, assertFrozenQueueRequest, canonicalAdmissionJson } from './next-turn-admission-protocol'
@@ -11,9 +11,9 @@ export interface QueueDispatchGateway extends TrustedQueueAuthority {
   close?(): void
   context(scope: NextTurnQueueScope): Promise<AdmissionContext>
   prepare(scope: NextTurnQueueScope, envelope: NextTurnQueueEnvelope, context: AdmissionContext): Promise<Record<string, unknown>>
-  envelope(scope: NextTurnQueueScope, draft: WorkQueueDraft): Promise<NextTurnQueueEnvelope>
+  envelope(scope: NextTurnQueueScope, draft: SessionQueueDraft): Promise<NextTurnQueueEnvelope>
   recoveryEnvelope?(scope: NextTurnQueueScope, runId: string): Promise<NextTurnQueueEnvelope>
-  editDraft(envelope: NextTurnQueueEnvelope, draft: WorkQueueDraft['draft'], scope?: NextTurnQueueScope): NextTurnQueueEnvelope | Promise<NextTurnQueueEnvelope>
+  editDraft(envelope: NextTurnQueueEnvelope, draft: SessionQueueDraft['draft'], scope?: NextTurnQueueScope): NextTurnQueueEnvelope | Promise<NextTurnQueueEnvelope>
   submit(scope: NextTurnQueueScope, wireBody: string, signal: AbortSignal): Promise<void>
   receipt(scope: NextTurnQueueScope, entry: Exclude<NextTurnQueueState['entries'][number], { phase: 'pending' }>): Promise<ExactAdmission>
 }
@@ -25,7 +25,7 @@ export class NextTurnDispatcher {
   private readonly controller = new AbortController()
   private readonly operations = new Set<Promise<unknown>>()
   private readonly pendingEnqueues = new Map<string, { id: string; expectedRevision: number; inputDigest: string; result: Promise<QueueCommitResult> }>()
-  private readonly pendingRestarts = new Map<string, Promise<WorkQueueRead>>()
+  private readonly pendingRestarts = new Map<string, Promise<SessionQueueRead>>()
   private readonly retainedTasks = new Map<string, number>()
   private eviction?: Promise<boolean>
   private evictions = 0
@@ -146,8 +146,8 @@ export class NextTurnDispatcher {
       throw error
     }
   }
-  read(taskId: string): Promise<WorkQueueRead> { return this.owned(() => this.readOnce(taskId), taskId) }
-  restart(taskId: string, runId: string): Promise<WorkQueueRead> {
+  read(taskId: string): Promise<SessionQueueRead> { return this.owned(() => this.readOnce(taskId), taskId) }
+  restart(taskId: string, runId: string): Promise<SessionQueueRead> {
     return this.owned(async () => {
       if (typeof runId !== 'string' || !runId.trim() || runId.length > 256 || /[\x00-\x1f\x7f]/.test(runId))
         throw new NextTurnQueueError('INVALID', '需要明确的待恢复任务身份')
@@ -160,7 +160,7 @@ export class NextTurnDispatcher {
       try { return await operation } finally { if (this.pendingRestarts.get(key) === operation) this.pendingRestarts.delete(key) }
     }, taskId)
   }
-  private async restartOnce(job: Job, runId: string): Promise<WorkQueueRead> {
+  private async restartOnce(job: Job, runId: string): Promise<SessionQueueRead> {
     while (job.busy) await job.busy
     if (this.closing) throw new NextTurnQueueError('AUTHORITY', 'Queue dispatcher is closing')
     if (this.running >= 2) throw new NextTurnQueueError('CAPACITY', '队列正在核对其他任务，请稍后重试')
@@ -206,15 +206,15 @@ export class NextTurnDispatcher {
     try { await operation } finally { this.running--; if (job.busy === operation) job.busy = undefined }
     return this.readOnce(job.scope.taskId)
   }
-  private async readOnce(taskId: string): Promise<WorkQueueRead> {
+  private async readOnce(taskId: string): Promise<SessionQueueRead> {
     const job = await this.bind(taskId), current = await this.service.read(job.capability)
     this.observe(job, current.state)
     return { state: current.state, ...(job.error ? { dispatchError: job.error } : {}) }
   }
-  enqueue(taskId: string, expectedRevision: number, operationId: string, id: string, submission: WorkQueueDraft) {
+  enqueue(taskId: string, expectedRevision: number, operationId: string, id: string, submission: SessionQueueDraft) {
     return this.owned(() => this.enqueueOnce(taskId, expectedRevision, operationId, id, submission), taskId)
   }
-  private async enqueueOnce(taskId: string, expectedRevision: number, operationId: string, id: string, submission: WorkQueueDraft) {
+  private async enqueueOnce(taskId: string, expectedRevision: number, operationId: string, id: string, submission: SessionQueueDraft) {
     const captured = structuredClone(submission), job = await this.bind(taskId)
     const inputDigest = createHash('sha256').update(canonicalAdmissionJson(captured)).digest('hex')
     const key = JSON.stringify([queueScopeIdentity(job.scope), operationId]), pending = this.pendingEnqueues.get(key)
@@ -232,7 +232,7 @@ export class NextTurnDispatcher {
       this.enqueues--
     }
   }
-  private async commitEnqueue(job: Job, expectedRevision: number, operationId: string, id: string, captured: WorkQueueDraft, inputDigest: string): Promise<QueueCommitResult> {
+  private async commitEnqueue(job: Job, expectedRevision: number, operationId: string, id: string, captured: SessionQueueDraft, inputDigest: string): Promise<QueueCommitResult> {
     const prior = await this.service.findCommitted(job.capability, operationId)
     // An ACK-loss replay must return the original local commit, without re-reading files or preparing collaborators.
     if (prior) {
@@ -250,10 +250,10 @@ export class NextTurnDispatcher {
     this.observe(job, result.state)
     this.publish(result.state.scope, result.state.revision); this.wake(job); return result
   }
-  editDraft(taskId: string, expectedRevision: number, operationId: string, id: string, entryRevision: number, draft: WorkQueueDraft['draft']) {
+  editDraft(taskId: string, expectedRevision: number, operationId: string, id: string, entryRevision: number, draft: SessionQueueDraft['draft']) {
     return this.owned(() => this.editDraftOnce(taskId, expectedRevision, operationId, id, entryRevision, draft), taskId)
   }
-  private async editDraftOnce(taskId: string, expectedRevision: number, operationId: string, id: string, entryRevision: number, draft: WorkQueueDraft['draft']) {
+  private async editDraftOnce(taskId: string, expectedRevision: number, operationId: string, id: string, entryRevision: number, draft: SessionQueueDraft['draft']) {
     const job = await this.bind(taskId), state = (await this.service.read(job.capability)).state
     const entry = state.entries.find(item => item.id === id)
     if (!entry || entry.phase !== 'pending') throw new NextTurnQueueError('CONFLICT', 'Only pending messages can be edited')
@@ -262,10 +262,10 @@ export class NextTurnDispatcher {
     this.observe(job, result.state)
     this.publish(result.state.scope, result.state.revision); this.wake(job); return result
   }
-  mutate(taskId: string, expectedRevision: number, operationId: string, operation: import('../shared/work-next-turn-api').WorkQueueAction & { kind: 'mutate' }) {
+  mutate(taskId: string, expectedRevision: number, operationId: string, operation: import('../shared/session-next-turn-api').SessionQueueAction & { kind: 'mutate' }) {
     return this.owned(() => this.mutateOnce(taskId, expectedRevision, operationId, operation), taskId)
   }
-  private async mutateOnce(taskId: string, expectedRevision: number, operationId: string, operation: import('../shared/work-next-turn-api').WorkQueueAction & { kind: 'mutate' }) {
+  private async mutateOnce(taskId: string, expectedRevision: number, operationId: string, operation: import('../shared/session-next-turn-api').SessionQueueAction & { kind: 'mutate' }) {
     const job = await this.bind(taskId)
     // A resumed queue may already have advanced its root by the time its ACK is
     // recovered. Rebuild the original payload from the committed snapshot; the
@@ -279,8 +279,8 @@ export class NextTurnDispatcher {
     this.publish(result.state.scope, result.state.revision); this.wake(job); return result
   }
   /** Normal background checks never retry an unknown request. The user's exact absent retry keeps its frozen key/body. */
-  reconcile(taskId: string, retryIfAbsent = false): Promise<WorkQueueRead> { return this.owned(() => this.reconcileOnce(taskId, retryIfAbsent), taskId) }
-  private async reconcileOnce(taskId: string, retryIfAbsent: boolean): Promise<WorkQueueRead> {
+  reconcile(taskId: string, retryIfAbsent = false): Promise<SessionQueueRead> { return this.owned(() => this.reconcileOnce(taskId, retryIfAbsent), taskId) }
+  private async reconcileOnce(taskId: string, retryIfAbsent: boolean): Promise<SessionQueueRead> {
     const job = await this.bind(taskId)
     while (job.busy) await job.busy
     if (this.closing) throw new NextTurnQueueError('AUTHORITY', 'Queue dispatcher is closing')

@@ -1,8 +1,8 @@
 /** Pure composer identity, pasted text labels and numbering: file order, repeated references,
  * frozen messages and stale drag events; no Electron/engine required. */
 import { test, expect } from '@playwright/test'
-import { attachmentIdentity, attachmentMention, attachmentReferences, draftAttachmentSelection, freezeAttachmentReferences, referencesAttachment, reorderAttachments } from '../src/renderer/src/contrib/chat/attachment-references'
-import { storedAttachments } from '../src/renderer/src/contrib/chat/attachment-storage'
+import { attachmentIdentity, attachmentMention, attachmentReferences, draftAttachmentSelection, freezeAttachmentReferences, referencesAttachment, reorderAttachments } from '../src/renderer/src/features/conversation/shared/attachment-references'
+import { storedAttachments } from '../src/renderer/src/features/conversation/shared/attachment-storage'
 import type { ChatAttachment } from '../src/renderer/src/core/engine/useChat'
 import { pastedTextLabel } from '../src/shared/pasted-text-label'
 

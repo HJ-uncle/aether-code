@@ -28,9 +28,9 @@ export const campaignRequirements = {
 
 const browserInstructions = (origin) => `开发和验收必须使用 Aether 内置 browser_* 工具，不得用外部浏览器、Playwright/Puppeteer 或 shell 截图替代。页面预览地址固定为 ${origin}。先 browser_tabs 复用本会话标签，未有标签才 browser_open；修改后 browser_navigate 到带版本查询参数的本项目地址并重新 browser_snapshot。点击/填写/按键前使用最新 navigationId。每条需求至少做一个与该需求有关的真实浏览器操作并核对 DOM 状态，之后读 browser_console 和 browser_network。视口验证用 browser_set_viewport。验收后保留本会话预览标签供下一轮复用，不要主动关闭。模型无视觉能力时用结构快照验证并明确该限制；不要反复调用不支持的 screenshot。文件只能写当前项目目录，不读取、修改、打开另一个游戏的目录、端口或标签。不要关闭其他会话标签或服务。`
 
-export function createCampaignPlan({ codeWorkspace, workWorkspace, codeOrigin, workOrigin }) {
-  if (![codeWorkspace, workWorkspace, codeOrigin, workOrigin].every(value => typeof value === 'string' && value)) throw new Error('Both owned workspaces and preview origins are required')
-  if (codeWorkspace.toLowerCase() === workWorkspace.toLowerCase() || codeOrigin === workOrigin) throw new Error('Code and Work must use distinct workspaces and origins')
+export function createCampaignPlan({ codeWorkspace, sessionWorkspace, codeOrigin, sessionOrigin }) {
+  if (![codeWorkspace, sessionWorkspace, codeOrigin, sessionOrigin].every(value => typeof value === 'string' && value)) throw new Error('Both owned workspaces and preview origins are required')
+  if (codeWorkspace.toLowerCase() === sessionWorkspace.toLowerCase() || codeOrigin === sessionOrigin) throw new Error('Code and Work must use distinct workspaces and origins')
   const make = (mode, workspace, origin, base) => ({
     mode, workspace, origin,
     baseline: `${base}\n当前项目目录：${workspace}。使用原生 HTML/CSS/JavaScript 的模块化静态 web 项目，真实写入 index.html、独立样式和规则/界面模块；不依赖 CDN。界面为中文，Apple 风格内容优先、稀疏工具栏、清楚的主次层级，桌面及 H5 均可操作；保持高对比、可见键盘焦点和减少动态效果，避免重型 3D、持续动画和无意义装饰。自行运行有意义的规则测试。建立 CHANGELOG.md 与 README.md，记录实际完成和未解决问题。先完成本条基础任务，后续会逐批增加需求。\n${browserInstructions(origin)}`,
@@ -42,6 +42,6 @@ export function createCampaignPlan({ codeWorkspace, workWorkspace, codeOrigin, w
     incrementalRequirementsPerProject: 10,
     batchesPerProject: 5,
     code: make('code', codeWorkspace, codeOrigin, '开发可运行的 15×15 五子棋：本地双人黑白轮流落子，采用自由五子棋（至少五连即胜，不含禁手），四方向胜负、重复点/越界/终局后禁止落子、基础悔棋和重开、当前执棋和坐标提示。棋盘使用语义可操作交叉点。'),
-    work: make('work', workWorkspace, workOrigin, '开发可运行的 9 路本地双人围棋：黑白轮流落子、同色棋块与气、提子、禁止自杀、基础立即回提劫限制、停一手、重开，明确显示当前执棋和提子数。棋盘使用语义可操作交叉点。基础完成后再逐项扩展完整对局功能。')
+    work: make('work', sessionWorkspace, sessionOrigin, '开发可运行的 9 路本地双人围棋：黑白轮流落子、同色棋块与气、提子、禁止自杀、基础立即回提劫限制、停一手、重开，明确显示当前执棋和提子数。棋盘使用语义可操作交叉点。基础完成后再逐项扩展完整对局功能。')
   }
 }

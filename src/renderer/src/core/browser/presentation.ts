@@ -1,14 +1,14 @@
 import type { BrowserSurfaceOwner, BrowserTabPresentation } from '@shared/browser'
-import { getAppMode, onAppModeChanged } from '../platform/app-mode'
+import type { ClientSurfaceScope } from '../platform/surface-scope'
 import { getAppSettings, onAppSettingsChanged } from '../app-provider'
 import { engineConnectionKey, getExpectedEngine, isEngineReady, subscribeEngineSource } from '../engine/source'
 import { getBrowserSessionId, onBrowserSessionChanged } from './connection'
 import { browserPendingSourceId, browserScopeKey } from './scope'
 
-let current: BrowserSurfaceOwner = { mode: getAppMode(), generation: 0 }
+let current: BrowserSurfaceOwner = { mode: 'work', generation: 0 }
 const listeners = new Set<() => void>()
 export function getBrowserSurfaceOwner(): BrowserSurfaceOwner { return current }
-export function getBrowserPresentationScope(mode = getAppMode(), sessionId = getBrowserSessionId(mode)): BrowserTabPresentation {
+export function getBrowserPresentationScope(mode: ClientSurfaceScope = 'work', sessionId = getBrowserSessionId(mode)): BrowserTabPresentation {
   const expected = getExpectedEngine(), settings = getAppSettings()
   return { mode, sessionId, ...(isEngineReady()
     ? { engineId: engineConnectionKey({ ...expected, phase: 'ready' }) }
@@ -31,7 +31,7 @@ export function wireBrowserPresentation(): () => void {
     void window.aether.browser.activateSurface(current).catch(() => {})
     for (const listener of listeners) listener()
   }
-  const subscriptions = [onAppModeChanged(sync), onAppSettingsChanged(sync), subscribeEngineSource(sync), onBrowserSessionChanged(sync)]
+  const subscriptions = [onAppSettingsChanged(sync), subscribeEngineSource(sync), onBrowserSessionChanged(sync)]
   sync()
   return () => { for (const unsubscribe of subscriptions) unsubscribe() }
 }
